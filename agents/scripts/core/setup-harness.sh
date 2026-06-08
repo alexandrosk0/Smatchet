@@ -22,8 +22,8 @@ Usage: bash agents/scripts/core/setup-harness.sh <harness>
 Harnesses:
   claude-code   Generate .claude/ with junctions/symlinks into agents/ +
                 copies of settings.json, CLAUDE.md, lint hooks.
-  codex         No local setup needed — Codex reads AGENTS.md directly per
-                the agents.md spec. Run for confirmation.
+  codex         Verify AGENTS.md + agents/{core,project}/*.md and install
+                repo-owned git hooks. No .codex adapter mirror is created.
   cursor        Generate .cursor/rules/agents.mdc.
   pi            Generate .pi/agents/*.md (pi-native, from agents/{core,project}/)
                 + install the subagent extension into .pi/extensions/ with
@@ -56,10 +56,23 @@ to_win_path() {
   fi
 }
 
+git_cmd() {
+  if git "$@" 2>/dev/null; then
+    return 0
+  fi
+  if command -v git.exe >/dev/null 2>&1; then
+    git.exe "$@"
+    return $?
+  fi
+  return 1
+}
+
 # Idempotent dir link.
 link_dir() {
   local link="$1" target="$2"
-  if [[ -L "$link" || -d "$link" ]]; then
+  if [[ -L "$link" && ! -e "$link" ]]; then
+    rm -f "$link"
+  elif [[ -L "$link" || -d "$link" ]]; then
     return 0
   fi
   mkdir -p "$(dirname "$link")"
@@ -69,7 +82,7 @@ link_dir() {
     target_win="$(to_win_path "$ROOT/$target")"
     cmd.exe //c mklink //J "$link_win" "$target_win" >/dev/null
   else
-    ln -s "$target" "$link"
+    ln -s "$(realpath --relative-to="$(dirname "$link")" "$target" 2>/dev/null || echo "$ROOT/$target")" "$link"
   fi
   echo "  link-dir   $link -> $target"
 }
@@ -180,7 +193,7 @@ gen_subsystem_claude_shims() {
       printf '@AGENTS.md\n\n<!-- Generated gitignored shim (setup-harness.sh). Claude Code lazy-loads nested CLAUDE.md, not AGENTS.md; this imports the sibling leaf rules. Edit AGENTS.md, not this file. -->\n' > "$shim"
       count=$((count + 1))
     fi
-  done < <(git ls-files 'Source/Core/src/*/AGENTS.md' 2>/dev/null)
+  done < <(git_cmd ls-files 'Source/Core/src/*/AGENTS.md' 2>/dev/null || true)
   echo "  subsystem-shims  $count new CLAUDE.md shim(s) beside Source/Core/src/*/AGENTS.md (gitignored)"
 }
 
@@ -265,18 +278,19 @@ setup_claude_code() {
 }
 
 # install_git_hooks: point core.hooksPath at scripts/git-hooks/ so the
-# tracked pre-push merged-PR guard fires on every push. Only acts when the
+# tracked pre-commit / pre-push guards fire locally. Only acts when the
 # current core.hooksPath is unset or already equal to scripts/git-hooks
 # (don't trample a user-set custom hooks path).
 #
 # Plan: docs/plans/shipped/process-backlog-tighten-1-2-3-9-11-12.md § Slice 3
 install_git_hooks() {
   local target="scripts/git-hooks"
-  local current
-  current="$(git config --local --get core.hooksPath 2>/dev/null || echo '')"
+  local current normalized_current
+  current="$(git_cmd config --local --get core.hooksPath 2>/dev/null || echo '')"
+  normalized_current="${current//\\//}"
 
-  if [[ -z "$current" ]]; then
-    git config --local core.hooksPath "$target"
+  if [[ -z "$current" || "$normalized_current" == ".git/hooks" || "$normalized_current" == */.git/hooks ]]; then
+    git_cmd config --local core.hooksPath "$target"
     echo "  git-hooks  core.hooksPath set to $target"
   elif [[ "$current" == "$target" ]]; then
     echo "  git-hooks  core.hooksPath already $target"
@@ -349,14 +363,55 @@ setup_pi() {
 }
 
 setup_codex() {
-  echo "Codex / OpenAI Agents reads AGENTS.md + agents/*.md directly per the"
-  echo "agents.md spec — no local adapter required."
+  echo "Setting up Codex / OpenAI Agents repo-owned wiring ..."
+  echo "Codex reads AGENTS.md + agents/{core,project}/*.md directly per the"
+  echo "agents.md spec; no .codex adapter mirror is created."
   echo
   echo "Verify:"
-  if [[ -f "AGENTS.md" ]]; then echo "  OK  AGENTS.md present at repo root"; else echo "  FAIL AGENTS.md missing"; exit 1; fi
-  local count
-  count="$(find agents/core agents/project -maxdepth 1 -name '*.md' | wc -l | tr -d ' ')"
-  echo "  OK  agents/{core,project}/*.md = $count files"
+  if [[ -f "AGENTS.md" ]]; then
+    echo "  OK  AGENTS.md present at repo root"
+  else
+    echo "  FAIL AGENTS.md missing"
+    exit 1
+  fi
+
+  local core_count project_count count duplicate_basenames leaf_count
+  core_count="$(find agents/core -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
+  project_count="$(find agents/project -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
+  count=$((core_count + project_count))
+  if [[ "$count" -eq 0 ]]; then
+    echo "  FAIL agents/{core,project}/*.md has no agent definitions"
+    exit 1
+  fi
+  echo "  OK  agents/{core,project}/*.md = $count files ($core_count core, $project_count project)"
+
+  duplicate_basenames="$(
+    find agents/core agents/project -maxdepth 1 -name '*.md' -exec basename {} \; 2>/dev/null \
+      | sort | uniq -d
+  )"
+  if [[ -n "$duplicate_basenames" ]]; then
+    echo "  WARN duplicate agent basenames across core/project:"
+    echo "$duplicate_basenames" | sed 's/^/        /'
+  else
+    echo "  OK  no duplicate agent basenames across core/project"
+  fi
+
+  leaf_count="$(git_cmd ls-files 'Source/Core/src/*/AGENTS.md' 2>/dev/null | wc -l | tr -d ' ' || true)"
+  echo "  OK  Codex native nearest-AGENTS leaf rules = $leaf_count file(s)"
+
+  install_git_hooks
+
+  cat <<'EOF'
+
+Codex parity report:
+  OK   Agent/rule discovery is native: AGENTS.md + agents/{core,project}/*.md.
+  OK   Stable repo hooks are wired through scripts/git-hooks when core.hooksPath allows it.
+  NOTE Claude Code hook events are runtime-owned, not repo-owned:
+       SessionStart, PreToolUse, PostToolUse, Stop, and SubagentStop hooks do
+       not run in Codex unless a future Codex runtime exposes equivalent events.
+       Use docs/harness/codex/hooks-equivalent.md for the manual/git-hook
+       equivalents that this repo can enforce today.
+EOF
 }
 
 setup_cursor() {

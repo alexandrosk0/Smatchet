@@ -9,6 +9,9 @@
 #   5. SKILL.md aliases exist + contain a sync-warning header comment.
 #   6. V7 doc-consistency: rg matches in agents/ + docs/ are consistent with dual-publish wording
 #      (perf-detective / spike-hunter / debug-detective all mention skill-form availability).
+#   7. sync-settings-hooks.sh heals missing template hooks additively.
+#   8. Codex setup verifies native agent discovery and reports repo-owned hook
+#      wiring instead of pretending to install a .codex mirror.
 #
 # Auto-enrolled by scripts/dev/test-all.sh.
 
@@ -16,6 +19,15 @@ set -u
 
 PROJ_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../../.." && pwd)}"
 cd "$PROJ_DIR"
+
+PY=""
+for _c in python3 python py; do
+    _p="$(command -v "$_c" 2>/dev/null)" || continue
+    if "$_p" -c "" >/dev/null 2>&1; then
+        PY="$_p"
+        break
+    fi
+done
 
 PASS=0
 FAIL=0
@@ -162,7 +174,9 @@ JSON
     bash "$T7_SYNC" "$T7_TMPL" "$T7_DEP" >/dev/null 2>&1 || true   # 2nd run = idempotent?
     T7_AFTER="$(cat "$T7_DEP")"
 
-    if python3 - "$T7_DEP" "$T7_TMPL" <<'PY'
+    if [[ -z "$PY" ]]; then
+        nope "Test 7 - python not found for sync-settings-hooks assertion"
+    elif "$PY" - "$T7_DEP" "$T7_TMPL" <<'PY'
 import json, sys
 dep = json.load(open(sys.argv[1])); tmpl = json.load(open(sys.argv[2]))
 assert dep.get("permissions") == {"defaultMode": "plan", "allow": ["Bash(ls:*)"]}, "permissions clobbered"
@@ -186,6 +200,25 @@ PY
         nope "sync not idempotent — 2nd run changed the file"
     fi
     rm -rf "$T7_DIR"
+fi
+
+# -------------------------------------------------------------------- Test 8
+note "Test 8 - codex setup verifies native discovery + repo hook wiring"
+SETUP_CODEX_OUT=$(bash agents/scripts/core/setup-harness.sh codex 2>&1)
+if echo "$SETUP_CODEX_OUT" | grep -q 'Codex parity report:'; then
+    ok "codex setup emits parity report"
+else
+    nope "codex setup missing parity report"
+fi
+if echo "$SETUP_CODEX_OUT" | grep -q 'agents/{core,project}/\*.md = '; then
+    ok "codex setup counts agents/{core,project}/*.md"
+else
+    nope "codex setup did not count canonical agent files"
+fi
+if echo "$SETUP_CODEX_OUT" | grep -q 'git-hooks'; then
+    ok "codex setup reports git-hook wiring state"
+else
+    nope "codex setup missing git-hook wiring report"
 fi
 
 # -------------------------------------------------------------------- Report

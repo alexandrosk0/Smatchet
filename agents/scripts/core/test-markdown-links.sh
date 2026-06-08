@@ -29,7 +29,7 @@
 # Exit codes:
 #   0 — every relative link in every scanned markdown resolves to an existing file
 #   1 — at least one dangling link
-#   2 — missing binary (python3)
+#   2 — missing binary (python)
 
 set -euo pipefail
 cd "$(dirname "$0")/../../.."
@@ -40,7 +40,22 @@ if [ "${SMATCHET_SKIP_MARKDOWN_LINK_CHECK:-0}" = "1" ]; then
     exit 0
 fi
 
-command -v python3 >/dev/null 2>&1 || { echo "python3 required" >&2; exit 2; }
+PY="${PYTHON:-}"
+if [ -n "$PY" ]; then
+    if ! "$PY" -c "" >/dev/null 2>&1; then
+        echo "test-markdown-links: PYTHON='$PY' is not executable" >&2
+        exit 2
+    fi
+else
+    for _c in python3 python py; do
+        _p="$(command -v "$_c" 2>/dev/null)" || continue
+        if "$_p" -c "" >/dev/null 2>&1; then
+            PY="$_p"
+            break
+        fi
+    done
+fi
+[ -n "$PY" ] || { echo "test-markdown-links: python not found" >&2; exit 2; }
 
 # Diff-scope by default; --all overrides for whole-repo audit.
 SCOPE="diff"
@@ -49,7 +64,7 @@ if [ "${1:-}" = "--all" ]; then
 fi
 export SCOPE
 
-python3 - <<'PY'
+"$PY" - <<'PY'
 import os
 import re
 import sys

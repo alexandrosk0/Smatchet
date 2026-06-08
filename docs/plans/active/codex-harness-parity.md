@@ -26,7 +26,15 @@ Document the equivalent local workflows for hooks that Codex cannot receive dire
 4. `agents/scripts/core/setup-harness.sh`: improve `setup_codex` so it validates the canonical agent files and installs/verifies stable git-hook wiring without creating a `.codex/` adapter mirror.
 5. `agents/scripts/core/setup-harness.ps1`: mirror the Codex setup behavior for Windows users.
 6. `scripts/git-hooks/pre-commit`: add a stable Codex-friendly pre-commit hook if the repo does not already ship one, scoped to cheap local checks.
-7. `docs/plans/active/codex-harness-parity.md`: track the plan and verification outcomes.
+7. `scripts/git-hooks/pre-push`: refresh comments so the tracked hook is described as repo-owned, not Claude-only.
+8. `scripts/dev/check-required-tools.sh`: make tool probing reliable from Codex/Git Bash/WSL when Windows-side tools are installed.
+9. `agents/scripts/core/test-setup-harness.sh`: assert the strengthened Codex setup path.
+10. `agents/scripts/core/test-markdown-links.sh`: reuse robust Python discovery so Git Bash does not trip over inert Windows Store aliases.
+11. `agents/core/debug-detective.md`: repair the existing contract phrase expected by the agent-contract selftest.
+12. `docs/harness/capability-adapter.md`: document Codex's native agent discovery and search fallback accurately.
+13. `docs/harness/cursor/hooks-equivalent.md`: point Cursor at the same tracked repo hook path so hook docs stay consistent across non-Claude harnesses.
+14. `AGENTS.md`: clarify that Codex uses native `AGENTS.md` discovery rather than a generated `.codex` mirror.
+15. `docs/plans/active/codex-harness-parity.md`: track the plan and verification outcomes.
 
 ## Existing utilities reused
 
@@ -34,6 +42,7 @@ Document the equivalent local workflows for hooks that Codex cannot receive dire
 - `scripts/git-hooks/pre-push`: existing repo-owned pre-push hook path installed via `core.hooksPath`.
 - `scripts/dev/pillar2-scan.sh`: existing harness-agnostic Pillar 2 scanner for Codex manual/pre-commit equivalents.
 - `agents/scripts/project/test-lint-rules.sh`: existing pre-ship lint gate used by Claude Code Stop hooks and manual Codex verification.
+- `agents/scripts/core/test-portable-purity.sh`: existing robust Python probe pattern reused for the markdown-link gate.
 
 ## UX Pillar callouts
 
