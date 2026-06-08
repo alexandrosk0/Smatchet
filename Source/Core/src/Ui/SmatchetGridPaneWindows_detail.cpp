@@ -27,6 +27,30 @@ std::string GenerateUniquePaneId(const std::vector<GridPane>& panes) {
     }
 }
 
+std::string NextPaneId(const std::vector<GridPane>& panes, const std::string& currentId) {
+    if (panes.empty()) {
+        return std::string();
+    }
+    for (size_t i = 0; i < panes.size(); ++i) {
+        if (panes[i].id == currentId) {
+            return panes[(i + 1) % panes.size()].id;
+        }
+    }
+    return panes.front().id; // current not found → safe fallback to the first pane.
+}
+
+std::string PrevPaneId(const std::vector<GridPane>& panes, const std::string& currentId) {
+    if (panes.empty()) {
+        return std::string();
+    }
+    for (size_t i = 0; i < panes.size(); ++i) {
+        if (panes[i].id == currentId) {
+            return panes[(i + panes.size() - 1) % panes.size()].id;
+        }
+    }
+    return panes.front().id;
+}
+
 namespace detail {
 
 PaneRequestApplyOutcome ApplyPaneAddAndCloseRequestsCore(std::vector<GridPane>& panes, std::string& focusedPaneId,

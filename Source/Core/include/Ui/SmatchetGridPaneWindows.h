@@ -38,6 +38,15 @@ void DrainPanesSaveIfDue(UiDrawSession& d);
 /// "pane-N" id not colliding with any existing pane id.
 std::string GenerateUniquePaneId(const std::vector<GridPane>& panes);
 
+/// Next pane id after `currentId` in render order, wrapping past the end (multi-grid
+/// Slice 4 — drives `pane.next`). Empty panes → empty string; `currentId` not found →
+/// the first pane's id (a safe focus fallback). Pure so bucket-A covers the wrap.
+std::string NextPaneId(const std::vector<GridPane>& panes, const std::string& currentId);
+
+/// Previous pane id before `currentId` in render order, wrapping past the front
+/// (drives `pane.prev`). Same empty / not-found semantics as NextPaneId.
+std::string PrevPaneId(const std::vector<GridPane>& panes, const std::string& currentId);
+
 /// Apply the deferred "+" (duplicate source pane) and close-X requests AFTER the
 /// window loop — never mutates gridPanes mid-iteration; at least one pane always
 /// survives a close sweep. Returns true when the pane set changed. Sets

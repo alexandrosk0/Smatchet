@@ -167,6 +167,31 @@ Legacy shape for examples that use `tracker.get_type()` / `tracker.create_issue(
 | `tracker.get_type()` | Returns the configured backend type string (e.g. `Jira`, `Plane`), trimmed. |
 | `tracker.create_issue(fields)` | Same draft/create path as `smatchet.create_issue`. Returns **`(issue_key, err)`**: on success `issue_key ~= ""` and `err == ""`; on failure `issue_key == ""` and `err` explains the error (including pre-flight failures). |
 
+### `commands` Module
+
+Calls any command in the unified command registry — the same registry behind the CLI, the Command Palette, and the MCP tools. One registration surfaces a command on every frontend, so anything you can run as `Smatchet.exe cmd <name>` is reachable here.
+
+| Function | Description |
+| :--- | :--- |
+| `commands.invoke(name [, args])` | Dispatches the registered command `name`. `args` is an optional table of param → value. Returns a table `{ok = bool, data = <table>, error = <table>}` (the structured result envelope). |
+
+This includes the `view.*` (saved-view CRUD) and `pane.*` (grid-pane scripting) groups. The pane group: `pane.list`, `pane.focus{id=...}`, `pane.next` / `pane.prev`, `pane.new` / `pane.duplicate` / `pane.split{direction=...}` (direction advisory), `pane.close{id=...}` (focused pane when omitted), and `pane.rename{title=..., id=...}` (session-scoped label override).
+
+```lua
+-- Focus the next grid pane, then rename it.
+commands.invoke("pane.next")
+local r = commands.invoke("pane.rename", { title = "Blockers" })
+if not r.ok then
+    print("rename failed: " .. (r.error and r.error.message or "?"))
+end
+
+-- Enumerate open panes.
+local list = commands.invoke("pane.list")
+for _, p in ipairs(list.data.items) do
+    print(p.id, p.title, p.focused)
+end
+```
+
 ---
 
 ## 3. Writing Scripts

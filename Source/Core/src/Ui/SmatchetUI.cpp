@@ -6,6 +6,7 @@
 #include "Commands/CommandPaletteUi.h"
 #include "Commands/CommandRegistry.h"
 #include "Commands/Scenarios/IScenario.h"
+#include "Commands/PaneCommands.h"
 #include "Commands/ViewCommands.h"
 #include "ConfigManager.h"
 #include "TrackerGridFieldDisplay.h"
@@ -506,6 +507,9 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
     }
     // Register view.* commands once ViewState is loaded (idempotent — skips on 2nd+ call).
     smatchet::cmd::RegisterViewCommands(app, ViewState);
+    // Register pane.* commands (multi-grid Slice 4) — same idempotent guard; the grid-pane
+    // state lives on the UiDrawSession singleton, so pass the live session in.
+    smatchet::cmd::RegisterPaneCommands(app, d);
     {
         SMATCHET_UI_PERF_SCOPE("TickTrackerConnectivityMonitor");
         app.TickTrackerConnectivityMonitor(g_ui.cfg);

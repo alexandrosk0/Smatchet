@@ -303,7 +303,9 @@ void SmatchetUI::syncFocusedPaneWithActiveView(AppController& app, UiDrawSession
             pane.viewId = nowActive->Id;
             identityChanged = true;
         }
-        if (pane.title != nowActive->Name) {
+        // A `pane.rename`-pinned custom label stops following the active view name
+        // (multi-grid Slice 4). viewId/backendKey below still track the live context.
+        if (!pane.titleOverridden && pane.title != nowActive->Name) {
             pane.title = nowActive->Name;
             identityChanged = true;
         }

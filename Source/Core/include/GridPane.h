@@ -36,6 +36,14 @@ struct GridPane {
     bool focused = false; ///< Mirrors UiDrawSession::focusedPaneId — set by the pane-window host.
     bool open = true;     ///< ImGui close-X writes false; the host enforces the min-1-pane invariant.
 
+    /// Set by the `pane.rename` command: the user pinned a custom tab label, so the
+    /// steady-state pane↔active-view lockstep (syncFocusedPaneWithActiveView) must STOP
+    /// re-deriving `title` from the active view name. Session-scoped (not serialized to
+    /// smatchet_panes.json): the custom label is written to disk via the `title` field
+    /// but is reset to the view-derived name on the next launch's first focus sync.
+    /// viewId/backendKey still track the live context — only the label is pinned.
+    bool titleOverridden = false;
+
     SpreadsheetState gridState; ///< Active issue, cell edit state, rectangular selection.
     char gridFilterBuf[128] = {};
     char lastFilterBuf[128] = {}; ///< Last filter applied to the cached projection (change detector).
