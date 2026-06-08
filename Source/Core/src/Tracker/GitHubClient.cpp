@@ -486,8 +486,15 @@ bool GitHubClient::BuildCreatePayload(const IssueDraft& draft, const std::vector
         return it == draft.FieldValues.end() ? std::string() : it->second;
     };
 
-    return smatchet::github::BuildGitHubCreatePayload(fieldOr("summary"), fieldOr("description"), fieldOr("labels"),
-                                                      fieldOr("assignees"), owner, repo, outPayload, outError);
+    auto payloadResult = smatchet::github::BuildGitHubCreatePayload(
+        fieldOr("summary"), fieldOr("description"), fieldOr("labels"), fieldOr("assignees"), owner, repo);
+    if (!payloadResult) {
+        outError = payloadResult.error();
+        return false;
+    }
+    outPayload = std::move(payloadResult.value());
+    outError.clear();
+    return true;
 }
 
 std::string GitHubClient::ResolveDisplayValue(const std::string& fieldId, const TrackerField* /*field*/,

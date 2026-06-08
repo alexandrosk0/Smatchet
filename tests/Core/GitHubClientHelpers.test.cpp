@@ -54,23 +54,24 @@ TEST_CASE("BuildIssuePatchUrlSuffix — shapes /repos/o/r/issues/N") {
 }
 
 TEST_CASE("IsValidGitHubBaseUrl — strict: only api.github.com or <host>/api/v3 accepted") {
-    std::string err;
-    // Accept the two canonical shapes.
-    CHECK(IsValidGitHubBaseUrl("https://api.github.com", err));
-    CHECK(err.empty());
-    CHECK(IsValidGitHubBaseUrl("https://github.example.com/api/v3", err));
-    CHECK(err.empty());
-    // Reject empty / non-https / trailing-slash / random path.
-    CHECK_FALSE(IsValidGitHubBaseUrl("", err));
-    CHECK_FALSE(err.empty());
-    CHECK_FALSE(IsValidGitHubBaseUrl("http://api.github.com", err));
-    CHECK(err.find("https") != std::string::npos);
-    CHECK_FALSE(IsValidGitHubBaseUrl("https://api.github.com/", err));
-    CHECK(err.find("trailing slash") != std::string::npos);
+    // Accept the two canonical shapes — Ok(true), no error.
+    CHECK(IsValidGitHubBaseUrl("https://api.github.com"));
+    CHECK(IsValidGitHubBaseUrl("https://api.github.com").value());
+    CHECK(IsValidGitHubBaseUrl("https://github.example.com/api/v3"));
+    // Reject empty / non-https / trailing-slash / random path — Err carries the message.
+    const auto empty = IsValidGitHubBaseUrl("");
+    CHECK_FALSE(empty);
+    CHECK_FALSE(empty.error().empty());
+    const auto notHttps = IsValidGitHubBaseUrl("http://api.github.com");
+    CHECK_FALSE(notHttps);
+    CHECK(notHttps.error().find("https") != std::string::npos);
+    const auto trailing = IsValidGitHubBaseUrl("https://api.github.com/");
+    CHECK_FALSE(trailing);
+    CHECK(trailing.error().find("trailing slash") != std::string::npos);
     // Per CodeRabbit on PR #357 — reject arbitrary https paths.
-    CHECK_FALSE(IsValidGitHubBaseUrl("https://github.com", err)); // not /api/v3
-    CHECK_FALSE(IsValidGitHubBaseUrl("https://example.com/somewhere", err));
-    CHECK_FALSE(IsValidGitHubBaseUrl("https:///api/v3", err)); // empty host
+    CHECK_FALSE(IsValidGitHubBaseUrl("https://github.com")); // not /api/v3
+    CHECK_FALSE(IsValidGitHubBaseUrl("https://example.com/somewhere"));
+    CHECK_FALSE(IsValidGitHubBaseUrl("https:///api/v3")); // empty host
 }
 
 // github-commit-tracker-rows — commit key parser + commit URL helpers.
@@ -123,42 +124,78 @@ TEST_CASE("ExtractGitHubErrorMessage — pulls 'message' from JSON; falls back t
 }
 
 TEST_CASE("ParseIso8601ToUnixSec — timezone-aware (Z + ±HH:MM + ±HHMM)") {
-    std::string err;
-    CHECK(ParseIso8601ToUnixSec("1970-01-01T00:00:00Z", err) == 0);
-    CHECK(err.empty());
-    CHECK(ParseIso8601ToUnixSec("2024-01-15T00:00:00Z", err) == 1705276800);
-    CHECK(err.empty());
+    // Ok path — value carries the epoch seconds.
+    {
+        const auto r = ParseIso8601ToUnixSec("1970-01-01T00:00:00Z");
+        REQUIRE(r);
+        CHECK(r.value() == 0);
+    }
+    {
+        const auto r = ParseIso8601ToUnixSec("2024-01-15T00:00:00Z");
+        REQUIRE(r);
+        CHECK(r.value() == 1705276800);
+    }
     // +00:00 equals Z.
-    CHECK(ParseIso8601ToUnixSec("2024-01-15T00:00:00+00:00", err) == 1705276800);
-    CHECK(err.empty());
+    {
+        const auto r = ParseIso8601ToUnixSec("2024-01-15T00:00:00+00:00");
+        REQUIRE(r);
+        CHECK(r.value() == 1705276800);
+    }
     // Per CodeRabbit on PR #357 — non-zero offset now adjusts the epoch.
     // 2024-01-15T12:00:00 +05:30 = 2024-01-15T06:30:00 UTC.
     // 1705276800 (Jan 15 00:00 UTC) + 12*3600 (12h) - 19800 (5h30m offset) = 1705300200.
-    CHECK(ParseIso8601ToUnixSec("2024-01-15T12:00:00+05:30", err) == 1705300200);
-    CHECK(err.empty());
+    {
+        const auto r = ParseIso8601ToUnixSec("2024-01-15T12:00:00+05:30");
+        REQUIRE(r);
+        CHECK(r.value() == 1705300200);
+    }
     // Negative offset.
     // 2024-01-15T00:00:00 -08:00 = 2024-01-15T08:00:00 UTC = 1705305600.
-    CHECK(ParseIso8601ToUnixSec("2024-01-15T00:00:00-08:00", err) == 1705305600);
-    CHECK(err.empty());
+    {
+        const auto r = ParseIso8601ToUnixSec("2024-01-15T00:00:00-08:00");
+        REQUIRE(r);
+        CHECK(r.value() == 1705305600);
+    }
     // No-colon offset form.
-    CHECK(ParseIso8601ToUnixSec("2024-01-15T00:00:00+0530", err) == 1705257000);
-    CHECK(err.empty());
+    {
+        const auto r = ParseIso8601ToUnixSec("2024-01-15T00:00:00+0530");
+        REQUIRE(r);
+        CHECK(r.value() == 1705257000);
+    }
     // Missing suffix is now an error (was silently treated as UTC).
-    CHECK(ParseIso8601ToUnixSec("2024-01-15T00:00:00", err) == 0);
-    CHECK(err.find("timezone") != std::string::npos);
+    {
+        const auto r = ParseIso8601ToUnixSec("2024-01-15T00:00:00");
+        CHECK_FALSE(r);
+        CHECK(r.error().find("timezone") != std::string::npos);
+    }
     // Bad format.
-    CHECK(ParseIso8601ToUnixSec("not a date", err) == 0);
-    CHECK_FALSE(err.empty());
+    {
+        const auto r = ParseIso8601ToUnixSec("not a date");
+        CHECK_FALSE(r);
+        CHECK_FALSE(r.error().empty());
+    }
     // Unrecognised suffix.
-    CHECK(ParseIso8601ToUnixSec("2024-01-15T00:00:00X", err) == 0);
-    CHECK_FALSE(err.empty());
+    {
+        const auto r = ParseIso8601ToUnixSec("2024-01-15T00:00:00X");
+        CHECK_FALSE(r);
+        CHECK_FALSE(r.error().empty());
+    }
     // Per CodeRabbit nitpick on PR #358 — out-of-range offsets rejected (max real-world is +14:00).
-    CHECK(ParseIso8601ToUnixSec("2024-01-15T00:00:00+53:99", err) == 0);
-    CHECK(err.find("out of range") != std::string::npos);
-    CHECK(ParseIso8601ToUnixSec("2024-01-15T00:00:00+15:00", err) == 0);
-    CHECK(err.find("out of range") != std::string::npos);
-    CHECK(ParseIso8601ToUnixSec("2024-01-15T00:00:00+14:01", err) == 0);
-    CHECK(err.find("out of range") != std::string::npos);
+    {
+        const auto r = ParseIso8601ToUnixSec("2024-01-15T00:00:00+53:99");
+        CHECK_FALSE(r);
+        CHECK(r.error().find("out of range") != std::string::npos);
+    }
+    {
+        const auto r = ParseIso8601ToUnixSec("2024-01-15T00:00:00+15:00");
+        CHECK_FALSE(r);
+        CHECK(r.error().find("out of range") != std::string::npos);
+    }
+    {
+        const auto r = ParseIso8601ToUnixSec("2024-01-15T00:00:00+14:01");
+        CHECK_FALSE(r);
+        CHECK(r.error().find("out of range") != std::string::npos);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -166,11 +203,11 @@ TEST_CASE("ParseIso8601ToUnixSec — timezone-aware (Z + ±HH:MM + ±HHMM)") {
 // ---------------------------------------------------------------------------
 
 TEST_CASE("BuildGitHubCreatePayload — title/body/labels/assignees + __target") {
-    nlohmann::json out;
-    std::string err;
-    REQUIRE(BuildGitHubCreatePayload("Grid freezes when sorting by date", "Steps:\n1. open grid\n2. sort by date",
-                                     "bug, ui", "alice , bob", "acme", "tracker", out, err));
-    CHECK(err.empty());
+    const auto r =
+        BuildGitHubCreatePayload("Grid freezes when sorting by date", "Steps:\n1. open grid\n2. sort by date",
+                                 "bug, ui", "alice , bob", "acme", "tracker");
+    REQUIRE(r);
+    const nlohmann::json& out = r.value();
     CHECK(out["title"] == "Grid freezes when sorting by date");
     CHECK(out["body"] == "Steps:\n1. open grid\n2. sort by date");
     REQUIRE(out["labels"].is_array());
@@ -187,9 +224,9 @@ TEST_CASE("BuildGitHubCreatePayload — title/body/labels/assignees + __target")
 }
 
 TEST_CASE("BuildGitHubCreatePayload — minimal (title only, no body/labels/assignees)") {
-    nlohmann::json out;
-    std::string err;
-    REQUIRE(BuildGitHubCreatePayload("just a title", "", "", "", "o", "r", out, err));
+    const auto r = BuildGitHubCreatePayload("just a title", "", "", "", "o", "r");
+    REQUIRE(r);
+    const nlohmann::json& out = r.value();
     CHECK(out["title"] == "just a title");
     CHECK_FALSE(out.contains("body"));
     CHECK_FALSE(out.contains("labels"));
@@ -198,11 +235,10 @@ TEST_CASE("BuildGitHubCreatePayload — minimal (title only, no body/labels/assi
 }
 
 TEST_CASE("BuildGitHubCreatePayload — blank CSV entries are skipped, not emitted") {
-    nlohmann::json out;
-    std::string err;
-    REQUIRE(BuildGitHubCreatePayload("t", "", " , ,, ", "", "o", "r", out, err));
+    const auto r = BuildGitHubCreatePayload("t", "", " , ,, ", "", "o", "r");
+    REQUIRE(r);
     // All-blank labels CSV → key omitted entirely.
-    CHECK_FALSE(out.contains("labels"));
+    CHECK_FALSE(r.value().contains("labels"));
 }
 
 // ---------------------------------------------------------------------------
@@ -250,16 +286,15 @@ TEST_CASE("ResolveGitHubRequestAuth — cfg base URL wins over ctor snapshot") {
 }
 
 TEST_CASE("BuildGitHubCreatePayload — rejects empty summary + empty repo target") {
-    nlohmann::json out;
-    std::string err;
-    CHECK_FALSE(BuildGitHubCreatePayload("", "body", "", "", "o", "r", out, err));
-    CHECK_FALSE(err.empty());
-    err.clear();
-    CHECK_FALSE(BuildGitHubCreatePayload("title", "", "", "", "", "r", out, err));
-    CHECK_FALSE(err.empty());
-    err.clear();
-    CHECK_FALSE(BuildGitHubCreatePayload("title", "", "", "", "o", "", out, err));
-    CHECK_FALSE(err.empty());
+    const auto emptySummary = BuildGitHubCreatePayload("", "body", "", "", "o", "r");
+    CHECK_FALSE(emptySummary);
+    CHECK_FALSE(emptySummary.error().empty());
+    const auto emptyOwner = BuildGitHubCreatePayload("title", "", "", "", "", "r");
+    CHECK_FALSE(emptyOwner);
+    CHECK_FALSE(emptyOwner.error().empty());
+    const auto emptyRepo = BuildGitHubCreatePayload("title", "", "", "", "o", "");
+    CHECK_FALSE(emptyRepo);
+    CHECK_FALSE(emptyRepo.error().empty());
 }
 
 TEST_CASE("FormatGitHubIssueKey — composes owner/repo#N (inverse of ParseGitHubIssueKey)") {

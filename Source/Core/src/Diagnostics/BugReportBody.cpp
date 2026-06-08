@@ -111,9 +111,9 @@ ResolvedBugTarget ResolveBugReportTarget(const TrackerConfig& cfg, const std::st
     if (baseUrl.empty()) {
         baseUrl = "https://api.github.com";
     }
-    std::string baseErr;
-    if (!smatchet::github::IsValidGitHubBaseUrl(baseUrl, baseErr)) {
-        out.Error = "Bug-report GitHub base URL invalid: " + baseErr;
+    const auto baseUrlValid = smatchet::github::IsValidGitHubBaseUrl(baseUrl);
+    if (!baseUrlValid) {
+        out.Error = "Bug-report GitHub base URL invalid: " + baseUrlValid.error();
         return out;
     }
     out.BaseUrl = baseUrl;
