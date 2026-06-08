@@ -35,7 +35,12 @@ class MainThreadDispatcher {
     /// unbudgeted, so a burst of decode→upload completions could spike a single frame). Generous
     /// on purpose: a normal frame drains far under it and behaves exactly as before — only a
     /// genuine spike spreads across frames. Ignored during shutdown so the final drain runs all.
-    static constexpr std::chrono::microseconds kDrainBudget{4000};
+    /// Exposed as a constexpr function (not a static constexpr member): a class-type constexpr
+    /// member is ODR-used when bound by reference (here `time_point + duration`), which in C++14
+    /// requires an out-of-line definition; MSVC and optimised Clang fold the constant and never
+    /// emit the reference, but a `-O0` Android debug build does — so the member form fails to link
+    /// libSmatchetMobile.so. A constexpr function is implicitly inline and needs no definition.
+    static constexpr std::chrono::microseconds DrainBudget() { return std::chrono::microseconds{4000}; }
 
     /// Post a task to be run on the UI thread at the next `Drain()`. Safe to call from any
     /// thread. No-ops if `BeginShutdown()` has been called.
@@ -58,7 +63,7 @@ class MainThreadDispatcher {
     }
 
     /// Drain queued tasks on the calling thread (must be the UI thread), FIFO, until the queue
-    /// empties or `kDrainBudget` is exceeded — in which case the untouched tail is requeued ahead
+    /// empties or `DrainBudget()` is exceeded — in which case the untouched tail is requeued ahead
     /// of any task posted meanwhile and runs next frame. Tasks are moved out and each `Task` is
     /// released after invocation so captures (especially shared_ptr / large state) do not live
     /// across the whole drain loop.
@@ -75,7 +80,7 @@ class MainThreadDispatcher {
             tasks.swap(queue_);
         }
         const bool budgeted = !shuttingDown_.load(std::memory_order_acquire);
-        const auto deadline = std::chrono::steady_clock::now() + kDrainBudget;
+        const auto deadline = std::chrono::steady_clock::now() + DrainBudget();
         std::size_t ran = 0;
         std::size_t deferred = 0;
         for (std::size_t i = 0; i < tasks.size(); ++i) {

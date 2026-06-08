@@ -1,0 +1,74 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.smatchet.mobile'
+    compileSdk 34
+    ndkVersion '26.3.11579264'
+
+    defaultConfig {
+        applicationId 'com.smatchet.mobile'
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName '0.6.7'
+
+        ndk {
+            abiFilters 'arm64-v8a', 'x86_64'
+        }
+
+        externalNativeBuild {
+            cmake {
+                // Build only the Android shared library from the shared core.
+                targets 'SmatchetMobile'
+
+                // Android light-feature flag set — must mirror the CI mobile job and
+                // the raw-cmake local build (no Lua/MCP/AI/Whisper, OpenSSL TLS backend).
+                def cmakeArgs = [
+                    '-DSMATCHET_WITH_LUA_AUTOMATION=OFF',
+                    '-DSMATCHET_WITH_MCP=OFF',
+                    '-DSMATCHET_WITH_AI=OFF',
+                    '-DSMATCHET_WITH_WHISPER=OFF',
+                    '-DSMATCHET_WHISPER_LOCAL_BACKEND=OFF',
+                    '-DCPR_FORCE_USE_SYSTEM_CURL=OFF',
+                    '-DSMATCHET_WARNINGS_AS_ERRORS=OFF',
+                ]
+
+                // Per-ABI OpenSSL static libs: smatchet_prepare_cpr() derives
+                // <base>/${ANDROID_ABI} when OPENSSL_ROOT_DIR is unset. Pass the base
+                // via -PsmatchetOpensslBase=... or the SMATCHET_ANDROID_OPENSSL_BASE env var.
+                def opensslBase = project.findProperty('smatchetOpensslBase') ?: System.getenv('SMATCHET_ANDROID_OPENSSL_BASE')
+                if (opensslBase) {
+                    cmakeArgs += "-DSMATCHET_ANDROID_OPENSSL_BASE=${opensslBase}".toString()
+                }
+
+                arguments(*cmakeArgs)
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            // Repo-root CMakeLists.txt — four levels up from this app module dir
+            // (app → AndroidApp → Mobile → Source → repo root).
+            // Root CMakeLists requires CMake >= 3.24, but the Android SDK ships only
+            // 3.22.1. Requesting a non-SDK version forces AGP to resolve cmake from
+            // `cmake.dir` (local.properties) / PATH instead of the bundled package —
+            // both the local build and the APK CI job point that at a CMake >= 3.24.
+            path '../../../../CMakeLists.txt'
+            version '3.24.0+'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}

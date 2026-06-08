@@ -849,7 +849,7 @@ jobs:
           echo "strict-zone narrowing-conversions: clean (0 first-party)"
 
   # ===========================================================================
-  # Phase-0 mobile triple-target spike (docs/plans/active/mobile-app-jql-mvp.md)
+  # Phase-0 mobile triple-target spike (docs/plans/mobile-app-jql-mvp.md)
   # ---------------------------------------------------------------------------
   # Both jobs below are ADVISORY — NOT on the develop merge-gate required-check
   # list (only "Windows + MSVC" and "Windows + MSVC light" are required) and NOT
@@ -1029,3 +1029,141 @@ jobs:
         # -Wl,-z,undefs (set on the target) permits the host symbols Slice 3 resolves.
         # `-- -k 0` (ninja keep-going) enumerates every failing TU in one run.
         run: cmake --build --preset android-ndk-arm64 --target SmatchetMobile -- -k 0
+
+  mobile-android-apk:
+    name: Mobile — Android APK (Gradle assembleDebug arm64-v8a, advisory)
+    # Validates Slice 4 — the full Gradle externalNativeBuild path that the .so-only
+    # mobile-android-ndk job stops short of: it drives the same root CMakeLists through
+    # AGP, links the SHARED .so into an installable debug APK, and uploads it. Advisory
+    # (never required) — same pins as mobile-android-ndk; restored OpenSSL cache wins.
+    needs: [changes, mobile-android-ndk]
+    if: ${{ needs.changes.outputs.code == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      # Keep these in lockstep with mobile-android-ndk (same OpenSSL/NDK pins so the
+      # arm64-v8a OpenSSL cache key matches and the restore hits the prior job's build).
+      OPENSSL_VERSION: "3.5.6"
+      OPENSSL_SHA256: "deae7c80cba99c4b4f940ecadb3c3338b13cb77418409238e57d7f31f2a3b736"
+      NDK_VERSION: "26.3.11579264"
+      ANDROID_API: "24"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 17 (AGP 8.5 toolchain)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install OpenSSL build prereqs + ninja
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y make perl ninja-build
+
+      - name: Install + pin Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          test -n "$SDK" || { echo "::error::ANDROID_SDK_ROOT/ANDROID_HOME unset on runner"; exit 1; }
+          SDKMANAGER="${SDK}/cmdline-tools/latest/bin/sdkmanager"
+          yes 2>/dev/null | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "ndk;${NDK_VERSION}" >/dev/null
+          NDK="${SDK}/ndk/${NDK_VERSION}"
+          test -d "$NDK" || { echo "::error::NDK ${NDK_VERSION} not found at $NDK"; exit 1; }
+          echo "ANDROID_NDK_ROOT=$NDK" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          echo "OPENSSL_BASE=${RUNNER_TEMP}/openssl-android" >> "$GITHUB_ENV"
+          echo "OPENSSL_PREFIX=${RUNNER_TEMP}/openssl-android/arm64-v8a" >> "$GITHUB_ENV"
+
+      - name: Cache prebuilt OpenSSL (arm64-v8a)
+        id: openssl-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/openssl-android/arm64-v8a
+          # Same key as mobile-android-ndk → this restores that job's build (needs: orders it first).
+          key: openssl-${{ env.OPENSSL_VERSION }}-ndk-${{ env.NDK_VERSION }}-arm64-v8a-api${{ env.ANDROID_API }}
+
+      - name: Build static OpenSSL for arm64-v8a (NDK clang) — fallback on cache miss
+        if: steps.openssl-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}"
+          curl -fsSL \
+            "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" \
+            -o openssl.tar.gz
+          echo "${OPENSSL_SHA256}  openssl.tar.gz" | sha256sum -c -
+          tar xzf openssl.tar.gz
+          cd "openssl-${OPENSSL_VERSION}"
+          export PATH="${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin:${PATH}"
+          ./Configure android-arm64 -D__ANDROID_API__="${ANDROID_API}" \
+            no-shared no-tests no-apps no-docs --libdir=lib --prefix="${OPENSSL_PREFIX}"
+          make -j"$(nproc)"
+          make install_sw
+
+      - name: Verify OpenSSL static libs present
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "${OPENSSL_PREFIX}/lib/libssl.a"    || { echo "::error::libssl.a missing"; exit 1; }
+          test -f "${OPENSSL_PREFIX}/lib/libcrypto.a" || { echo "::error::libcrypto.a missing"; exit 1; }
+
+      - name: Cache FetchContent _deps (android-ndk)
+        uses: actions/cache@v4
+        with:
+          path: .fetchcontent-src
+          key: ${{ runner.os }}-fetchcontent-android-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Write local.properties (sdk.dir + cmake.dir ≥ 3.24)
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          # Root CMakeLists requires CMake >= 3.24; the SDK bundles only 3.22.1, so point
+          # AGP (build.gradle requests version '3.24.0+') at the runner's system cmake.
+          CMAKE_BIN="$(command -v cmake)"
+          CMAKE_DIR="$(dirname "$(dirname "$CMAKE_BIN")")"
+          cmake --version | head -1
+          {
+            echo "sdk.dir=${SDK}"
+            echo "cmake.dir=${CMAKE_DIR}"
+          } > Source/Mobile/AndroidApp/local.properties
+          cat Source/Mobile/AndroidApp/local.properties
+
+      - name: Gradle assembleDebug (arm64-v8a only)
+        shell: bash
+        env:
+          # build.gradle derives <base>/${ANDROID_ABI} per ABI when OPENSSL_ROOT_DIR is unset.
+          SMATCHET_ANDROID_OPENSSL_BASE: ${{ env.OPENSSL_BASE }}
+        run: |
+          set -euo pipefail
+          cd Source/Mobile/AndroidApp
+          chmod +x ./gradlew
+          ./gradlew --no-daemon assembleDebug -Pandroid.injected.build.abi=arm64-v8a
+
+      - name: Verify APK produced
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="Source/Mobile/AndroidApp/app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK" || { echo "::error::debug APK not produced at $APK"; exit 1; }
+          ls -l "$APK"
+
+      - name: Upload debug APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: smatchet-mobile-debug-apk-arm64-v8a
+          path: Source/Mobile/AndroidApp/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14

@@ -217,7 +217,7 @@ option(SMATCHET_BUILD_UI_TESTS "Build ImGui Test Engine bucket-E surface (in-pro
 # only the portable, ImGui-free threading subset. Pure-additive (hardening #10).
 option(SMATCHET_BUILD_APP "Build the GUI application + GLFW/ImGui/Lua/whisper/Standalone/DX12 targets (OFF for the headless TSan-subset Linux preset)" ON)
 option(SMATCHET_BUILD_LUA_TESTS "Build SmatchetLuaTests binary (sandbox + timeout + stubs-compile drift sentinel; requires SMATCHET_WITH_LUA_AUTOMATION=ON)" OFF)
-# Slice 0b of the Phase-0 mobile triple-target spike (docs/plans/active/mobile-app-jql-mvp.md).
+# Slice 0b of the Phase-0 mobile triple-target spike (docs/plans/mobile-app-jql-mvp.md).
 # Compile-only portability gate: builds CORE_SOURCES with host Linux clang through the
 # non-_WIN32 (#else) side of every platform #ifdef BEFORE the NDK toolchain adds ABI /
 # sysroot variables. Realized as a STATIC EXCLUDE_FROM_ALL lib (SmatchetCore_PosixCheck)
@@ -1241,25 +1241,36 @@ endif()
 # STATIC lib): a SHARED .so over the SAME engine-agnostic CORE_SOURCES, compiled by
 # the NDK toolchain through the non-_WIN32 (#else) side of the platform #ifdefs.
 #
-# Slice 2 deliverable is the empty-.so configure+link. The host shell (android_main,
-# native_app_glue, the JNI bridge that provides the SmatchetImGuiHost symbols pruned
-# from CORE_SOURCES at the glob above) lands in Slice 3, so MOBILE_SOURCES is an empty
-# placeholder. Until that host exists CORE_SOURCES has unresolved host-provided
-# symbols; a SHARED object legally carries undefined symbols (resolved at load), so we
-# explicitly permit them with -Wl,-z,undefs in case the active NDK defaults shared
-# links to -Wl,--no-undefined. Slice 3 removes this once the host resolves them.
+# Slice 3b deliverable is the working host shell: Source/Mobile/Android/*.cpp (android_main,
+# the EGL/GLES context, the JNI IME bridge, the APK asset/density helpers) compiled into the
+# .so alongside CORE_SOURCES, plus the NDK android_native_app_glue static lib that provides
+# the ANativeActivity_onCreate entry point and the android_app event pump. With the host in
+# place every symbol CORE_SOURCES needs is now defined, so the Slice-2 -Wl,-z,undefs escape
+# is dropped in favour of -u ANativeActivity_onCreate (force-keep the glue entry point so the
+# linker does not garbage-collect it out of the static archive).
 if(ANDROID)
-    set(MOBILE_SOURCES "")  # Slice 3: host shell (android_main + native_app_glue) + JNI bridge.
+    file(GLOB MOBILE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Source/Mobile/Android/*.cpp")
     add_library(SmatchetMobile SHARED ${CORE_SOURCES} ${MOBILE_SOURCES})
     smatchet_configure_mobile_core_impl_target(SmatchetMobile)
     smatchet_apply_strict_warnings(SmatchetMobile)
-    # Android system libs for the GLES3 + EGL render path and platform logging.
-    # android_native_app_glue is deferred to Slice 3 (it is an NDK-sources static lib
-    # consumed only by the android_main host, which does not exist yet).
-    target_link_libraries(SmatchetMobile PRIVATE log android EGL GLESv3)
-    # TODO(Slice-3): drop -Wl,-z,undefs once the android_main host provides the
-    # SmatchetImGuiHost symbols CORE_SOURCES currently leaves undefined.
-    target_link_options(SmatchetMobile PRIVATE -Wl,-z,undefs)
+
+    # android_native_app_glue: NDK-sources static lib that turns the NativeActivity callbacks
+    # into the android_app event loop android_main() consumes. Built from the active NDK's
+    # source tree; its include dir is propagated PUBLIC so android_main.cpp resolves the header.
+    if(DEFINED ANDROID_NDK)
+        set(_smatchet_ndk_root "${ANDROID_NDK}")
+    else()
+        set(_smatchet_ndk_root "${CMAKE_ANDROID_NDK}")
+    endif()
+    set(_smatchet_glue_dir "${_smatchet_ndk_root}/sources/android/native_app_glue")
+    add_library(native_app_glue STATIC "${_smatchet_glue_dir}/android_native_app_glue.c")
+    target_include_directories(native_app_glue PUBLIC "${_smatchet_glue_dir}")
+
+    # Android system libs for the GLES3 + EGL render path and platform logging, plus the glue.
+    target_link_libraries(SmatchetMobile PRIVATE native_app_glue log android EGL GLESv3)
+    # Force-keep the glue's ANativeActivity_onCreate (the .so entry point dlsym'd by the
+    # framework) — without -u the linker prunes it as unreferenced from the static archive.
+    target_link_options(SmatchetMobile PRIVATE -u ANativeActivity_onCreate)
 endif()
 
 # ==============================================================================
