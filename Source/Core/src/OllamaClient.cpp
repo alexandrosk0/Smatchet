@@ -178,14 +178,14 @@ void OllamaClient::SendStreaming(const AiClientConfig& cfg, const AiChatRequest&
         // Provider HTTP error visibility - see parallel comment in
         // AnthropicClient.cpp. LOG_ERROR carries the redacted body so users
         // can diagnose 400/401/429/5xx without leaking secrets.
-        const std::string redactedBody = smatchet::ai::pure::RedactProviderErrorBody(r.text);
-        LOG_ERROR("OllamaClient: HTTP %ld - body: %s", static_cast<long>(r.status_code), redactedBody.c_str());
+        LOG_ERROR("OllamaClient: HTTP %ld - body: %s", static_cast<long>(r.status_code),
+                  smatchet::ai::pure::RedactProviderErrorBody(r.text).c_str());
         AiStreamError err;
         err.HttpStatus = r.status_code;
         err.Message = std::string("HTTP ") + std::to_string(r.status_code);
-        if (!redactedBody.empty()) {
+        if (!r.text.empty()) {
             err.Message.append(": ");
-            err.Message.append(redactedBody);
+            err.Message.append(smatchet::ai::pure::RedactProviderErrorBody(r.text));
         }
         onError(err);
         return;
