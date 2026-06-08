@@ -2,7 +2,7 @@
 
 > **Slug**: `codex-native-parity`
 >
-> **Status**: `active`
+> **Status**: `shipped`
 
 ## Context
 
@@ -60,12 +60,18 @@ N/A - the diff does not touch `Source/Core/` or runtime UI code.
 
 ## Implementation log
 
-*(populated post-ship)*
+- `36935e00` - generated the Codex-native harness layer and merged PR #1025.
 
 ## Deviations from plan
 
-*(populated post-ship)*
+- PowerShell setup also reused the new Python resolver for pi setup, preserving behavior while avoiding Windows Store alias failures.
+- CodeRabbit produced status-only evidence after a rate-limit warning; merge used the repo merge-gates grace-window path after a manual `@coderabbitai review` completed with zero actionable findings.
 
 ## Verification (actual)
 
-*(populated post-ship)*
+- `C:\Program Files\Git\bin\bash.exe -lc 'bash agents/scripts/core/test-setup-harness.sh'` - passed.
+- `C:\Program Files\Git\bin\bash.exe -lc 'bash scripts/dev/test-docs.sh'` - passed.
+- `C:\Program Files\Git\bin\bash.exe -lc 'bash agents/scripts/project/test-lint-rules.sh --diff origin/develop'` - passed.
+- `powershell -NoProfile -ExecutionPolicy Bypass -File agents\scripts\core\setup-harness.ps1 codex` - passed.
+- `python -m py_compile agents/scripts/core/gen-codex-agents.py` - passed.
+- `python -m json.tool docs/harness/codex/hooks.json.tmpl` - passed.
