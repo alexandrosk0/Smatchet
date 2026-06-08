@@ -226,23 +226,38 @@ void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
 void SmatchetUI::syncFocusedPaneWithActiveView(AppController& app, UiDrawSession& d, GridPane& pane,
                                                bool focusSwitched) {
     if (focusSwitched) {
+        // Slice-3 follow-up: every VISIBLE pane already owns a live GridLiveContext whose
+        // own sync ran (EnsurePaneContextLive / EnsurePaneLiveSyncStarted). When that holds,
+        // a focus switch only ADOPTS the pane's view + backend identity — kicking another
+        // SyncWithBackend would re-fetch data the pane's context already published (the
+        // user-visible "updating" flash on every cross-pane click). A pane whose context is
+        // NOT yet sync-live (cold start / restored-from-disk before its first draw) keeps
+        // the full sync path.
+        const bool paneSyncLive = app.IsPaneSyncLive(pane.id);
         const std::string cfgKey = ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
         if (!pane.backendKey.empty() && pane.backendKey != cfgKey) {
-            // SLICE-2 BOUNDARY: one live GridLiveContext. Re-point the config at the
-            // pane's backend; the SESSION-level lastViewsBackendKey delta (consumed
-            // in drawViewStateAndConnectivity — review HIGH-4) resets catalog +
-            // initial sync next frame, and the sync path performs the actual swap.
+            // Re-point the config at the pane's backend; the SESSION-level
+            // lastViewsBackendKey delta (consumed in drawViewStateAndConnectivity —
+            // review HIGH-4) resets catalog + initial sync next frame, and the sync
+            // path performs the actual swap.
             d.cfg.TrackerType = pane.backendKey;
             ConfigManager::Save(d.cfg);
             ViewState.EnsureLoaded(d.cfg);
+            if (paneSyncLive) {
+                // The session reset must still run (catalog refetch targets this pane's
+                // context), but its downstream initial SyncWithBackend kick would
+                // double-sync a context that already fetched — suppress that one kick.
+                d.suppressNextBackendSwitchInitialSync = true;
+            }
             LOG_INFO("GridPaneWindows: focused pane '%s' re-pointed backend to '%s'", pane.id.c_str(),
                      pane.backendKey.c_str());
         }
         const ViewDefinition* active = ViewState.GetActiveView();
         if (!pane.viewId.empty() && (active == nullptr || active->Id != pane.viewId)) {
-            // Views::Activate(pane.viewId) + JQL/fields adoption + SyncWithCurrentView
-            // (which routes through SwapBackendIfTrackerChanged) — the existing path.
-            viewsActivateView(app, d, pane.viewId);
+            // Views::Activate(pane.viewId) + JQL/fields adoption; SyncWithCurrentView
+            // (which routes through SwapBackendIfTrackerChanged) only when the pane's
+            // context is not already sync-live.
+            viewsActivateView(app, d, pane.viewId, /*kickSync=*/!paneSyncLive);
         }
     }
 

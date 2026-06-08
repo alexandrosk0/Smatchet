@@ -1060,6 +1060,11 @@ class AppController
     /// (Pillar 2 — no disk I/O on the UI thread), then hops back via mainThreadDispatcher
     /// to start the sync on the pane's own TicketSyncService.
     void EnsurePaneLiveSyncStarted(const std::string& paneId, const TrackerConfig& paneCfg, const std::string& viewId);
+    /// UI thread. True when `paneId` has a live GridLiveContext whose own first sync was
+    /// already kicked (EnsurePaneLiveSyncStarted latch). Consumed by the pane-focus-switch
+    /// path: a sync-live pane's data is already fresh from its OWN context, so adopting its
+    /// view on focus must not kick a redundant SyncWithBackend (Slice-3 follow-up).
+    bool IsPaneSyncLive(const std::string& paneId) const;
     /// Any pane's live published snapshot (null when the pane has no live context yet).
     std::shared_ptr<const std::vector<CachedTicket>> GetPaneTicketsSnapshot(const std::string& paneId) const;
     /// Per-pane ActiveTickets revision (0 when the pane has no live context).

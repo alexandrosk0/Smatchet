@@ -459,6 +459,13 @@ struct UiDrawSession {
     /// the returning pane's own key never changed (review HIGH-4). Fires on host pane
     /// focus switches too, since a switch re-points cfg.TrackerType.
     std::string lastViewsBackendKey;
+    /// Consume-once latch set by the pane focus-switch path when it re-points
+    /// cfg.TrackerType at a pane whose own GridLiveContext is already sync-live
+    /// (Slice 3): the lastViewsBackendKey session reset above must still fire
+    /// (catalog refetch, editor-buffer reset), but its downstream initial
+    /// SyncWithBackend kick would be a redundant network re-fetch of data the
+    /// pane's context already holds — the kick consumes this flag and skips it.
+    bool suppressNextBackendSwitchInitialSync = false;
     /// One-frame latch: the HOST reassigned focusedPaneId outside the normal
     /// window-focus path (focused-pane close, "+" duplicate, bootstrap restore).
     /// Consumed by drawGridPaneWindows, which treats it as a real focus switch so

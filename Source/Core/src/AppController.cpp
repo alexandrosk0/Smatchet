@@ -499,6 +499,11 @@ void AppController::EnsurePaneLiveSyncStarted(const std::string& paneId, const T
     });
 }
 
+bool AppController::IsPaneSyncLive(const std::string& paneId) const {
+    std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.find(paneId);
+    return it != gridContexts_.end() && it->second->initialSyncKicked;
+}
+
 std::shared_ptr<const std::vector<CachedTicket>>
 AppController::GetPaneTicketsSnapshot(const std::string& paneId) const {
     std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.find(paneId);
