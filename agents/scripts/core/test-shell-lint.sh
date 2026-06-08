@@ -108,7 +108,14 @@ check_deps() {
         # Does the script have ANY preflight for this tool? Strip comments
         # first so a comment mentioning "command -v <tool>" (e.g. in this
         # fixture's own header) doesn't fool the check.
-        if printf '%s\n' "$nc" | grep -qE "(command -v|which|type -p)[[:space:]]+${tool_escaped}\\b"; then
+        # Here-string, NOT `printf | grep -q`: grep -q exits on the first match
+        # and closes the pipe, SIGPIPE-ing printf; under `set -o pipefail` the
+        # pipeline then returns non-zero, the `if` reads as "no preflight", and a
+        # false SHELL_LINT_DEPS fires on any script whose preflight isn't the
+        # last `gh`/tool token (e.g. merge-gates.sh's L117 preflight + a later
+        # help-string `gh`). CI-only — msys bash ignores SIGPIPE, so it passed
+        # locally while reddening every PR's Shell-lint job.
+        if grep -qE "(command -v|which|type -p)[[:space:]]+${tool_escaped}\\b" <<<"$nc"; then
             continue
         fi
         # First line's leading line-number (grep -n "<lno>:..."). Pure param
