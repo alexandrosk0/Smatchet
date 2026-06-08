@@ -1,5 +1,5 @@
 // data_dependent_windows_smoke.test.cpp — bucket-E render-smoke tests for the
-// 5 data-dependent UI windows identified in plan #12 (batch 1 of 2).
+// 8 data-dependent UI windows identified in plan #12 (batches 1 + 2, complete).
 //
 // PURPOSE — STRUCTURAL coverage for ImGui window-draw functions whose body
 // depends on tracker/config/plan data. Each test opens the target window with
@@ -53,25 +53,63 @@
 //      "##annotate_export_csv" Button is submitted unconditionally once Begin()
 //      succeeds and is the robust probe.
 //
-// Deferred (batch 2 — see §Deviations in the plan doc):
-//   6. Attachment Preview ("Attachment Preview") — needs live attachment entries
-//      in attachmentCollectionQueue to render past the "no entries" guard.
-//   7. New Issue Draft inline row — embedded in drawActiveProjectWindow, not a
-//      separate top-level window; needs fixture data + draft activation.
-//   8. Offline Queue panel — also embedded inline (drawSecondaryWindows), no
-//      separate top-level Begin; separate PR once the inline-panel smoke recipe
-//      is established.
+// Windows covered in this file (plan #12 batch 2 — completes 8/8):
+//
+//   6. Attachment Preview (drawAttachmentPreviewWindow, SmatchetAttachmentPreviewUi.cpp)
+//      Title: "Attachment Preview". The draw fn early-returns BEFORE Begin() when
+//      attachmentWindowEntries is empty (the "no entries" guard), so the window
+//      object never materialises. We inject one synthetic non-image entry directly
+//      into g_ui.attachmentWindowEntries + set attachmentPreviewWindowOpen — the
+//      same post-state IngestAttachmentCollection produces from the collection
+//      queue, minus the mutex/AttachmentCollectionRequest plumbing and with a
+//      non-image MIME so no download/decode is kicked. Because Begin() only runs
+//      PAST the entries guard, WindowIsLive("Attachment Preview") is itself proof
+//      the draw body ticked on real entry data — the robust structural probe. The
+//      empty path (no window) is covered too: with entries cleared the window
+//      must NOT be live.
+//
+//   7. New Issue Draft inline row (RenderNewIssueDraftRow, SmatchetNewIssueDraftUi.cpp)
+//      Embedded in the active-project grid table (drawActiveProjectGridNewIssue),
+//      NOT a standalone window. The draft row only renders inside the live ticket
+//      table, which short-circuits on an empty tickets snapshot — so this is the
+//      same FIXTURE-COUPLED recipe funcsize_grid_render.test.cpp pilots: boot with
+//      the deterministic Jira fixture, sync, wait for tickets, focus the
+//      always-drawn "Smatchet - Active Project" window, then flip
+//      newIssueDraftActive + seed a synthetic draft so RenderNewIssueDraftRow runs
+//      its ACTIVE branch (DrawDraftIdColumnCell Create/Cancel + per-field cells)
+//      instead of the inactive "[+ new]" cell. The inactive branch is exercised
+//      for free every frame before activation. SKIPS without the fixture env.
+//      Structural probe: the draft stays active across frames AND the host window
+//      is live — the engine traps any Begin/End or PushID/PopID imbalance the
+//      draft row's grouped cells introduce.
+//
+//   8. Offline Queue panel (DrawUnifiedOfflineQueuesPanel, SmatchetOfflineQueueUi.cpp)
+//      Embedded inline in drawActiveProjectUnsavedStrip (focused pane only), NOT a
+//      standalone window — invoked every frame from the always-drawn host window.
+//      EMPTY path (always covered): host window live ⇒ the panel's total==0
+//      early-return branch ticked under the engine's assert trap (no data needed).
+//      POPULATED path (opportunistic): enqueue one synthetic create via
+//      AppController::QueueCreateOffline (a pure local-SQLite write — no backend) so
+//      total>0 forces the panel body (header + toolbar + table) to render. The
+//      OfflineQueueService only exists when the local cache is live, which the
+//      minimal UiTestScenario boot does not always provide; QueueCreateOffline
+//      returning 0 keeps the test on the empty-path coverage instead of failing
+//      (it self-upgrades once the harness gains a live cache — see tooling backlog).
+//      The synthetic row is removed via DeletePendingCreates so it never leaks.
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
 
 #include "AppController.h"
 #include "Commands/Scenarios/UiTestScenario.h"
+#include "IssueDraft.h" // synthetic offline-create enqueue (case 8)
 #include "SmatchetUiSession.h"
 
 #include "imgui.h"
 #include "imgui_internal.h" // ImGuiWindow, FindWindowByName — proven real-window probe
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
+
+#include <cstdlib> // getenv — fixture-env gate (case 7)
 
 // g_ui — the shared bag of UI-thread visibility flags. ViewToggleCommands.cpp
 // flips these same fields to open/close panels; we set them directly here to
@@ -100,6 +138,22 @@ template <typename Pred> bool YieldUntil(ImGuiTestContext* ctx, Pred pred, int m
 bool WindowIsLive(const char* title) {
     const ImGuiWindow* win = ImGui::FindWindowByName(title);
     return win != nullptr && win->Active;
+}
+
+// True if the deterministic-Jira-backend fixture env var is set. Case 7 (New Issue
+// Draft row) needs loaded tickets for the grid table — and therefore the draft row —
+// to render; without the fixture no tickets ever load, so the test SKIPS with a log
+// rather than asserting on an empty grid. Same gate as funcsize_grid_render.test.cpp.
+bool FixtureEnvSet() {
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
+#endif
+    const bool set = std::getenv("SMATCHET_TEST_JIRA_BACKEND_FIXTURE") != nullptr;
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+    return set;
 }
 
 // Shared body for the standard docked-window smoke recipe:
@@ -359,6 +413,224 @@ void RegisterAnnotateAnalysisWindowRenderSmoke(ImGuiTestEngine* engine) {
     };
 }
 
+// ============================================================================
+// 6. Attachment Preview window
+// ============================================================================
+// drawAttachmentPreviewWindow (SmatchetAttachmentPreviewUi.cpp). Title
+// "Attachment Preview". Called unconditionally every frame from drawSecondaryWindows,
+// but the body early-returns BEFORE prepareTopLevelWindow/Begin() when
+// attachmentWindowEntries is empty (the "no entries" guard) — so the window object
+// only ever exists once entries are present. We inject one synthetic non-image entry
+// directly into g_ui.attachmentWindowEntries and flip attachmentPreviewWindowOpen,
+// reproducing IngestAttachmentCollection's post-state without the mutex /
+// AttachmentCollectionRequest plumbing. The non-image MIME ("text/plain") keeps
+// IsSupportedImageMime false so no download or thumbnail decode is kicked.
+//
+// Robust probe: because Begin("Attachment Preview") only runs PAST the entries
+// guard, WindowIsLive("Attachment Preview") being true is itself proof the draw
+// body ticked on real entry data (the list + details panes both submit). The empty
+// path (entries cleared → no window) is covered too.
+void RegisterAttachmentPreviewWindowRenderSmoke(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "DataDependentWindowsSmoke", "AttachmentPreview_RendersWithSyntheticEntry");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        const AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+            return;
+        }
+
+        // Empty path first: with no entries the window must NOT be live (the guard
+        // returns before Begin). This is the cheap "no data" coverage.
+        g_ui.attachmentWindowEntries.clear();
+        g_ui.attachmentPreviewWindowOpen = false;
+        ctx->Yield();
+        ctx->Yield();
+        const char* kWindowTitle = "Attachment Preview";
+        IM_CHECK_NO_RET(!WindowIsLive(kWindowTitle));
+
+        // Inject one synthetic non-image entry + open the window. This is the exact
+        // post-state IngestAttachmentCollection leaves, minus the network plumbing.
+        AttachmentWindowEntry entry;
+        entry.Filename = "synthetic-smoke.txt";
+        entry.Url = "smatchet-test://synthetic-smoke";
+        entry.MimeType = "text/plain"; // non-image: no preview/thumbnail work kicked
+        g_ui.attachmentWindowEntries.clear();
+        g_ui.attachmentWindowEntries.push_back(entry);
+        g_ui.attachmentWindowSelectedIndex = 0;
+        g_ui.attachmentPreviewWindowOpen = true;
+
+        ctx->SetRef(kWindowTitle);
+        const bool visible = YieldUntil(ctx, [&] { return WindowIsLive(kWindowTitle); });
+        // Structural assertion: Begin() ran past the entries guard and the list +
+        // details panes ticked without an ImGui assertion (the engine traps one).
+        IM_CHECK_NO_RET(visible);
+        if (visible) {
+            // Best-effort body probe: the details pane submits a "Close" Button
+            // unconditionally once a selected entry exists. It lives inside the
+            // AttachmentDetailsPane child window, so address it through that scope.
+            // Logged (not asserted) — WindowIsLive is the hard past-guard proof.
+            const bool closePresent = ctx->ItemExists("AttachmentDetailsPane/Close");
+            ctx->LogInfo("AttachmentPreview details-pane Close button reachable: %d", closePresent ? 1 : 0);
+        }
+
+        // Restore: clear the synthetic entry and close the window.
+        g_ui.attachmentPreviewWindowOpen = false;
+        g_ui.attachmentWindowEntries.clear();
+        g_ui.attachmentWindowSelectedIndex = 0;
+        ctx->Yield();
+    };
+}
+
+// ============================================================================
+// 7. New Issue Draft inline row
+// ============================================================================
+// RenderNewIssueDraftRow (SmatchetNewIssueDraftUi.cpp), drawn inside the
+// active-project grid table by drawActiveProjectGridNewIssue — NOT a standalone
+// window. The draft row's ACTIVE branch (DrawDraftIdColumnCell Create/Cancel +
+// per-field cells) only runs when newIssueDraftActive is true AND the grid table
+// is rendering, which requires loaded tickets/columns. This is the same
+// fixture-coupled recipe funcsize_grid_render.test.cpp pilots; without the fixture
+// the test SKIPS.
+//
+// Structural probe: with the draft armed across frames, the host window stays live
+// and newIssueDraftActive stays true (proving the row drew its active branch
+// without firing Cancel / crashing). The engine traps any Begin/End or PushID/PopID
+// imbalance the grouped draft cells introduce — that is the coverage.
+void RegisterNewIssueDraftRowRenderSmoke(ImGuiTestEngine* engine) {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "DataDependentWindowsSmoke", "NewIssueDraftRow_RendersActiveBranchOnFixtureData");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!FixtureEnvSet()) {
+            ctx->LogInfo(
+                "SKIP: SMATCHET_TEST_JIRA_BACKEND_FIXTURE not set — no tickets load, grid table short-circuits");
+            return;
+        }
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+            return;
+        }
+
+        // Boot the fixture grid: sync, then wait for tickets so the table (and thus
+        // the draft row) renders. Inactive-branch coverage ("[+ new]" cell) runs for
+        // free here every frame before we activate the draft.
+        app->SyncWithBackend();
+        const bool syncDone = YieldUntil(ctx, [&] { return !app->IsStreamingSyncActive(); });
+        IM_CHECK_NO_RET(syncDone);
+        const auto tickets = app->GetActiveTickets();
+        IM_CHECK_NO_RET(!tickets.empty());
+
+        const char* kWindowTitle = "Smatchet - Active Project";
+        ctx->SetRef(kWindowTitle);
+        const bool visible = YieldUntil(ctx, [&] {
+            g_ui.requestActiveProjectFocus = true;
+            return WindowIsLive(kWindowTitle);
+        });
+        IM_CHECK_NO_RET(visible);
+
+        if (visible) {
+            // Arm the draft. Seed a synthetic project + summary so the active branch
+            // has content; re-arm newIssueDraftActive each frame (a grid-context
+            // change frame could otherwise clear it) and let the row tick.
+            g_ui.newIssueDraft = IssueDraft{};
+            g_ui.newIssueDraft.ProjectKey = "SMAT";
+            g_ui.newIssueDraft.FieldValues["summary"] = "Draft row render smoke";
+            g_ui.newIssueDraftActive = true;
+            for (int i = 0; i < 30; ++i) {
+                g_ui.newIssueDraftActive = true;
+                ctx->Yield();
+            }
+            // The active draft row drew across all those frames without the engine
+            // trapping an in-frame assertion. newIssueDraftActive surviving proves the
+            // row ran its active branch (Cancel would have cleared it).
+            IM_CHECK_NO_RET(g_ui.newIssueDraftActive);
+            IM_CHECK_NO_RET(WindowIsLive(kWindowTitle));
+        }
+
+        // Restore: disarm the draft and clear the synthetic payload.
+        g_ui.newIssueDraftActive = false;
+        g_ui.newIssueDraft = IssueDraft{};
+        g_ui.newIssueDraftEditBufs.clear();
+        g_ui.newIssueMissingFieldIds.clear();
+        ctx->Yield();
+    };
+}
+
+// ============================================================================
+// 8. Offline Queue panel
+// ============================================================================
+// DrawUnifiedOfflineQueuesPanel (SmatchetOfflineQueueUi.cpp), drawn inline by
+// drawActiveProjectUnsavedStrip (focused pane only) — NOT a standalone window. The
+// panel is invoked every frame from the always-drawn "Smatchet - Active Project"
+// window; it early-returns when the offline queue is empty (total==0).
+//
+// Two paths, both covered:
+//   a) EMPTY (always): the host window being live proves the panel's empty-guard
+//      branch (FetchOfflineQueueData → total==0 → return false) ticked under the
+//      engine's in-frame assert trap. This is the HARD assertion and needs no data.
+//   b) POPULATED (opportunistic): we enqueue one synthetic create via
+//      AppController::QueueCreateOffline (a pure local-SQLite write — no backend) so
+//      total>0 forces the panel BODY (header + toolbar + table) to render. The
+//      OfflineQueueService is only constructed when the local cache is live, which
+//      the minimal UiTestScenario boot does not always provide — so when
+//      QueueCreateOffline returns 0 we log it and stay on the empty-path coverage
+//      rather than failing (the test self-upgrades the day the harness gains a live
+//      cache; see the tooling backlog entry). When it succeeds we clean up the row
+//      via DeletePendingCreates so it never leaks into a later test.
+void RegisterOfflineQueuePanelRenderSmoke(ImGuiTestEngine* engine) {
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "DataDependentWindowsSmoke", "OfflineQueuePanel_RendersInlineInActiveProject");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+            return;
+        }
+
+        const char* kWindowTitle = "Smatchet - Active Project";
+        ctx->SetRef(kWindowTitle);
+        const bool visible = YieldUntil(ctx, [&] {
+            g_ui.requestActiveProjectFocus = true;
+            return WindowIsLive(kWindowTitle);
+        });
+        // Empty-path coverage: the host window ticked, so the inline panel's
+        // total==0 early-return branch ran without an ImGui assertion.
+        IM_CHECK_NO_RET(visible);
+
+        // Populated-path coverage (opportunistic — needs a live local cache).
+        IssueDraft draft;
+        draft.ProjectKey = "SMAT";
+        draft.IssueTypeName = "Task";
+        draft.FieldValues["summary"] = "Offline queue panel render smoke";
+        const std::int64_t queuedId = app->QueueCreateOffline(draft);
+        if (queuedId <= 0) {
+            ctx->LogInfo("OfflineQueue populated path SKIPPED: QueueCreateOffline returned %lld "
+                         "(OfflineQueueService not constructed — no live local cache under this harness). "
+                         "Empty-guard path covered above.",
+                         static_cast<long long>(queuedId));
+            return;
+        }
+        // Precondition for the panel body: total>0, so it must render past the guard.
+        IM_CHECK_NO_RET(!app->GetPendingCreates().empty());
+        const bool stillVisible = YieldUntil(ctx, [&] {
+            g_ui.requestActiveProjectFocus = true;
+            return WindowIsLive(kWindowTitle);
+        });
+        IM_CHECK_NO_RET(stillVisible);
+        if (stillVisible) {
+            // The panel wraps its toolbar in PushID("unifiedOfflineQueues"); address
+            // the Copy button through that scope. Best-effort (logged, not asserted) —
+            // the host-window-live + non-empty-queue pair is the hard past-guard proof.
+            const bool copyBtnPresent = ctx->ItemExists("unifiedOfflineQueues/Copy selected##unifiedoff");
+            ctx->LogInfo("OfflineQueue toolbar Copy button reachable: %d", copyBtnPresent ? 1 : 0);
+        }
+
+        // Restore: delete the synthetic row so it never leaks into a later test.
+        app->DeletePendingCreates({queuedId});
+        ctx->Yield();
+    };
+}
+
 } // namespace
 
 extern "C" void SmatchetRegisterDataDependentWindowsSmokeTests(ImGuiTestEngine* engine) {
@@ -367,6 +639,9 @@ extern "C" void SmatchetRegisterDataDependentWindowsSmokeTests(ImGuiTestEngine* 
     RegisterPlanDocViewerWindowRenderSmoke(engine);
     RegisterPerformanceWindowRenderSmoke(engine);
     RegisterAnnotateAnalysisWindowRenderSmoke(engine);
+    RegisterAttachmentPreviewWindowRenderSmoke(engine);
+    RegisterNewIssueDraftRowRenderSmoke(engine);
+    RegisterOfflineQueuePanelRenderSmoke(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS
