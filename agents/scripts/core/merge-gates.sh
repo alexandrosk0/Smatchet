@@ -384,7 +384,7 @@ poll_merge_gates() {
     | (.body // "")]
    | any(
        contains("skip review by coderabbit.ai")
-       or (contains("Review skipped") and contains("Too many files")))) as $crskip
+       or (test("##[[:space:]]*Review skipped"; "i") and (ascii_downcase | contains("too many files"))))) as $crskip
 # crReviewSkipped — the GENERIC terminal "Review skipped" (docs-only /
 # path-filtered / trivial diff per .coderabbit.yaml): the "CodeRabbit"
 # StatusContext is SUCCESS and its description says "Review skipped" WITHOUT

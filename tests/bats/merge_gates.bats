@@ -515,17 +515,18 @@ set_fixture() {
 
 @test "CR size-skip (Too many files) still BLOCKS even though description says Review skipped" {
     # Guard: the too-many-files size-skip arm must win over the new generic
-    # terminal-skip pass. Here CR posts BOTH a size-skip conversation comment
-    # AND a StatusContext SUCCESS whose description contains "Review skipped".
-    # The size-skip arm is ordered first, so this must still BLOCK — the
-    # terminal-skip pass must never wave a 600-file reorg through.
+    # terminal-skip pass. Here CR posts BOTH a real size-skip conversation
+    # comment (structural "## Review skipped" callout + "Too many files!") AND a
+    # StatusContext SUCCESS whose description contains "Review skipped". The
+    # size-skip arm is ordered first, so this must still BLOCK — the terminal-skip
+    # pass must never wave a 600-file reorg through.
     local f
     f="$(mktemp)"
     jq '.data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes
             += [{"__typename":"StatusContext","context":"CodeRabbit","state":"SUCCESS","description":"Review skipped — Too many files","isRequired":false}]
         | .data.repository.pullRequest.comments.nodes
             += [{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},
-                 "body":"Review skipped\n\nToo many files to review."}]' \
+                 "body":"> [!IMPORTANT]\n> ## Review skipped\n>\n> Too many files!\n>\n> This PR contains 300 files."}]' \
         "$FIXTURES_DIR/merge_gates_pass.json" > "$f"
     export MERGE_GATES_CR_INSTALLED=true
     set_fixture "$f"
@@ -1167,9 +1168,12 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
 }
 
-@test "CR size-skip via fallback text (Review skipped + Too many files, no HTML marker) → BLOCK" {
-    # Robustness: even if CR drops the HTML comment marker, the fallback
-    # text match (Review skipped AND Too many files) still detects the skip.
+@test "CR size-skip via structural heading (## Review skipped + Too many files, no HTML marker) → BLOCK" {
+    # Robustness: even if CR drops the HTML comment marker, the structural
+    # fallback (a "## Review skipped" heading together with "too many files")
+    # still detects the skip. NOTE: the match is anchored to the heading, NOT a
+    # loose contains() of the two phrases anywhere in the body — see the
+    # prose-only regression below.
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_size_skip.json" \
         "data.repository.pullRequest.comments.nodes.1.body" \
@@ -1180,6 +1184,29 @@ set_fixture() {
     run poll_merge_gates org repo 1
     [ "$status" -eq 1 ]
     [[ "$output" == *"NONE+size-skip"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
+}
+
+@test "CR clean summary that merely mentions 'Review skipped' + 'Too many files' as prose → NOT size-skip" {
+    # PR #980 regression: a CLEAN PR whose own diff/walkthrough discusses CR's
+    # size-skip behaviour makes CR echo the phrases 'Review skipped' and 'Too
+    # many files' into its summary walkthrough as PROSE — no HTML skip marker,
+    # no '## Review skipped' heading. The old loose contains-AND-contains check
+    # false-positived this as a size-skip and hard-blocked a clean PR. The
+    # tightened detection (HTML marker OR structural heading) must NOT fire here;
+    # with CI/user/reviewDecision all green this is a clean CR pass.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.comments.nodes" \
+        '[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"body":"<!-- This is an auto-generated comment: summarize by coderabbit.ai -->\nNo actionable comments were generated. 🎉\n\nAdds crReviewSkipped when StatusContext is SUCCESS with \"Review skipped\" in description (excluding the \"Too many files\" size-skip variant)."}]')"
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_CR_GRACE_POLLS=0
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" != *"size-skip"* ]]
     rm -f "$f"
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
 }
