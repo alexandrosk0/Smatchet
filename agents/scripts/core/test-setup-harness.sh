@@ -10,8 +10,8 @@
 #   6. V7 doc-consistency: rg matches in agents/ + docs/ are consistent with dual-publish wording
 #      (perf-detective / spike-hunter / debug-detective all mention skill-form availability).
 #   7. sync-settings-hooks.sh heals missing template hooks additively.
-#   8. Codex setup verifies native agent discovery and reports repo-owned hook
-#      wiring instead of pretending to install a .codex mirror.
+#   8. Codex setup verifies native discovery, generates Codex-native
+#      hooks/custom agents, and does not clobber Claude Code setup.
 #
 # Auto-enrolled by scripts/dev/test-all.sh.
 
@@ -203,7 +203,7 @@ PY
 fi
 
 # -------------------------------------------------------------------- Test 8
-note "Test 8 - codex setup verifies native discovery + repo hook wiring"
+note "Test 8 - codex setup generates native hooks/agents without clobbering Claude setup"
 SETUP_CODEX_OUT=$(bash agents/scripts/core/setup-harness.sh codex 2>&1)
 if echo "$SETUP_CODEX_OUT" | grep -q 'Codex parity report:'; then
     ok "codex setup emits parity report"
@@ -215,10 +215,51 @@ if echo "$SETUP_CODEX_OUT" | grep -q 'agents/{core,project}/\*.md = '; then
 else
     nope "codex setup did not count canonical agent files"
 fi
+if echo "$SETUP_CODEX_OUT" | grep -q '\.codex/agents/\*\.toml'; then
+    ok "codex setup reports generated custom agents"
+else
+    nope "codex setup missing generated custom-agent report"
+fi
+if echo "$SETUP_CODEX_OUT" | grep -q 'Safe SessionStart/Stop command hooks'; then
+    ok "codex setup reports Codex-native hook install"
+else
+    nope "codex setup missing Codex-native hook install report"
+fi
 if echo "$SETUP_CODEX_OUT" | grep -q 'git-hooks'; then
     ok "codex setup reports git-hook wiring state"
 else
     nope "codex setup missing git-hook wiring report"
+fi
+if [[ -f ".codex/config.toml" && -f ".codex/hooks.json" ]]; then
+    ok ".codex config + hooks generated"
+else
+    nope ".codex config or hooks missing after codex setup"
+fi
+CANONICAL_AGENT_COUNT=$(( $(find agents/core -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ') + $(find agents/project -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ') ))
+CODEX_AGENT_COUNT=$(find .codex/agents -maxdepth 1 -name '*.toml' 2>/dev/null | wc -l | tr -d ' ')
+if [[ "$CODEX_AGENT_COUNT" -eq "$CANONICAL_AGENT_COUNT" ]]; then
+    ok ".codex/agents count matches canonical agent count"
+else
+    nope ".codex/agents count $CODEX_AGENT_COUNT did not match canonical count $CANONICAL_AGENT_COUNT"
+fi
+if [[ -f ".codex/agents/code-review.toml" ]] \
+    && grep -q 'name = "code-review"' ".codex/agents/code-review.toml" \
+    && grep -q 'developer_instructions =' ".codex/agents/code-review.toml"; then
+    ok "generated code-review Codex agent has required fields"
+else
+    nope "generated code-review Codex agent missing required fields"
+fi
+if [[ -n "$PY" ]] && "$PY" -m json.tool ".codex/hooks.json" >/dev/null 2>&1; then
+    ok ".codex/hooks.json is valid JSON"
+elif [[ -z "$PY" ]]; then
+    nope "python not found for .codex/hooks.json validation"
+else
+    nope ".codex/hooks.json is invalid JSON"
+fi
+if [[ -f ".claude/settings.json" && -e ".claude/skills/perf-measure/SKILL.md" ]]; then
+    ok "codex setup left Claude Code adapter intact"
+else
+    nope "codex setup clobbered Claude Code adapter files"
 fi
 
 # -------------------------------------------------------------------- Report

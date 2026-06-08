@@ -20,7 +20,7 @@ Trigger: **mapping an agent's capability tags to a specific harness's tools** (p
 ## Harness notes
 
 - **Claude Code** discovers agents at `.claude/agents/` — a junction into the canonical `agents/` tree created by `bash agents/scripts/core/setup-harness.sh claude-code`. Edits to `agents/*.md` are visible immediately; no sync step.
-- **Codex / OpenAI Agents** reads `AGENTS.md` per the [agents.md spec](https://agents.md/). Discover individual agents at `agents/{core,project}/*.md`. vexp is optional, not provisioned by the Codex adapter.
+- **Codex / OpenAI Agents** reads `AGENTS.md` per the [agents.md spec](https://agents.md/). Discover individual agents at `agents/{core,project}/*.md`; `setup-harness codex` also generates `.codex/agents/*.toml` custom agents from those canonical prompts. vexp is optional, not provisioned by the Codex adapter.
 - **Cursor / Aider / generic** — human-driven. Agent files at `agents/` are reference docs the user pastes or invokes manually.
 - **pi** discovers a **flat** `.pi/agents/*.md` (parser reads only `name`/`description`/`tools`/`model`) and auto-loads extensions from `.pi/extensions/`. Both are generated/patched (gitignored) by `bash agents/scripts/core/setup-harness.sh pi` — the `capabilities:`→`tools:` mapping above plus a tier→model map. Project agents are off + confirm-gated in stock pi; the adapter relaxes that for this trusted repo. Bring-up + the security note: [`pi/README.md`](pi/README.md).
 - Harnesses without `semantic-code-search` should fall back to text-search with the symbol set named in each agent's prose. Output is degraded but workable — expect more round-trips and larger context per query.

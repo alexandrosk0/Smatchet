@@ -30,8 +30,8 @@ Usage: pwsh agents/scripts/core/setup-harness.ps1 <harness>
 Harnesses:
   claude-code   Generate .claude/ with junctions/symlinks into agents/ +
                 copies of settings.json, CLAUDE.md, lint hooks.
-  codex         Verify AGENTS.md + agents\{core,project}\*.md and install
-                repo-owned git hooks. No .codex adapter mirror is created.
+  codex         Generate .codex\ config/hooks/custom agents from tracked
+                templates + verify AGENTS.md and repo-owned git hooks.
   cursor        Generate .cursor/rules/agents.mdc.
   pi            Generate .pi\agents\*.md (pi-native) + patched subagent extension.
 
@@ -82,6 +82,17 @@ function Copy-Template {
     }
     Copy-Item -LiteralPath $Src -Destination $Dst
     Write-Host "  copy       $Dst"
+}
+
+function Resolve-Python {
+    foreach ($name in @('python', 'py', 'python3')) {
+        $cmd = Get-Command $name -ErrorAction SilentlyContinue
+        if (-not $cmd) { continue }
+        if ($cmd.Source -like '*\WindowsApps\python*.exe') { continue }
+        & $cmd.Source -c "pass" 1>$null 2>$null
+        if ($LASTEXITCODE -eq 0) { return $cmd.Source }
+    }
+    return $null
 }
 
 function Gen-SubsystemClaudeShims {
@@ -144,9 +155,19 @@ function Install-GitHooks {
 
 function Setup-Codex {
     Write-Host 'Setting up Codex / OpenAI Agents repo-owned wiring ...'
-    Write-Host 'Codex reads AGENTS.md + agents\{core,project}\*.md directly per the'
-    Write-Host 'agents.md spec; no .codex adapter mirror is created.'
+    Write-Host 'Codex reads AGENTS.md natively; setup adds gitignored .codex\'
+    Write-Host 'config/hooks/custom-agent files generated from tracked templates.'
     Write-Host ''
+    Copy-Template 'docs\harness\codex\config.toml.tmpl' '.codex\config.toml'
+    Copy-Template 'docs\harness\codex\hooks.json.tmpl'  '.codex\hooks.json'
+
+    $py = Resolve-Python
+    if (-not $py) {
+        Write-Host '  FAIL python not found - needed to generate .codex\agents\*.toml'
+        exit 1
+    }
+    & $py 'agents/scripts/core/gen-codex-agents.py' (Get-Location).Path (Join-Path (Get-Location).Path '.codex/agents')
+
     Write-Host 'Verify:'
     if (Test-Path 'AGENTS.md') { Write-Host '  OK  AGENTS.md present at repo root' }
     else { Write-Host '  FAIL AGENTS.md missing'; exit 1 }
@@ -160,6 +181,14 @@ function Setup-Codex {
     }
     Write-Host "  OK  agents\{core,project}\*.md = $count files ($($coreAgents.Count) core, $($projectAgents.Count) project)"
 
+    $codexAgents = @(Get-ChildItem '.codex\agents' -Filter '*.toml' -File -ErrorAction SilentlyContinue)
+    if ($codexAgents.Count -eq $count) {
+        Write-Host "  OK  .codex\agents\*.toml = $($codexAgents.Count) generated custom agent(s)"
+    } else {
+        Write-Host "  FAIL .codex\agents\*.toml = $($codexAgents.Count) generated custom agent(s), expected $count"
+        exit 1
+    }
+
     $dups = @($coreAgents + $projectAgents | Group-Object Name | Where-Object { $_.Count -gt 1 })
     if ($dups.Count -gt 0) {
         Write-Host '  WARN duplicate agent basenames across core/project:'
@@ -171,17 +200,26 @@ function Setup-Codex {
     $leafRules = @(& git ls-files 'Source/Core/src/*/AGENTS.md' 2>$null)
     Write-Host "  OK  Codex native nearest-AGENTS leaf rules = $($leafRules.Count) file(s)"
 
+    if ((Test-Path '.codex\config.toml') -and (Test-Path '.codex\hooks.json')) {
+        Write-Host '  OK  Codex-native hooks/config installed under .codex\ (trust locally before use)'
+    } else {
+        Write-Host '  FAIL .codex\config.toml or .codex\hooks.json missing'
+        exit 1
+    }
+
     Install-GitHooks
 
     Write-Host ''
     Write-Host 'Codex parity report:'
     Write-Host '  OK   Agent/rule discovery is native: AGENTS.md + agents\{core,project}\*.md.'
+    Write-Host '  OK   Project specialist agents are generated as .codex\agents\*.toml.'
+    Write-Host '  OK   Safe SessionStart/Stop command hooks are installed in .codex\hooks.json.'
     Write-Host '  OK   Stable repo hooks are wired through scripts/git-hooks when core.hooksPath allows it.'
-    Write-Host '  NOTE Claude Code hook events are runtime-owned, not repo-owned:'
-    Write-Host '       SessionStart, PreToolUse, PostToolUse, Stop, and SubagentStop hooks do'
-    Write-Host '       not run in Codex unless a future Codex runtime exposes equivalent events.'
-    Write-Host '       Use docs/harness/codex/hooks-equivalent.md for the manual/git-hook'
-    Write-Host '       equivalents that this repo can enforce today.'
+    Write-Host '  NOTE Payload-dependent Claude Code hooks remain intentionally unwired in Codex:'
+    Write-Host '       PreToolUse edit/HEAD guards, PostToolUse edit lint, Bash PR'
+    Write-Host '       autoregistration, and SubagentStop token telemetry need Codex payload'
+    Write-Host '       validation before they can block safely. See'
+    Write-Host '       docs/harness/codex/hooks-equivalent.md.'
 }
 
 function Setup-Cursor {
@@ -200,10 +238,9 @@ function Setup-Cursor {
 function Setup-Pi {
     Write-Host 'Setting up pi adapter at .pi\ ...'
     # 1. Generate the pi-native agent files (flatten + capability->tools + model map).
-    $py = Get-Command python3 -ErrorAction SilentlyContinue
-    if (-not $py) { $py = Get-Command python -ErrorAction SilentlyContinue }
+    $py = Resolve-Python
     if (-not $py) { Write-Error 'python3 not found - needed to generate .pi\agents\*.md'; exit 1 }
-    & $py.Source 'agents/scripts/core/gen-pi-agents.py' (Get-Location).Path (Join-Path (Get-Location).Path '.pi/agents')
+    & $py 'agents/scripts/core/gen-pi-agents.py' (Get-Location).Path (Join-Path (Get-Location).Path '.pi/agents')
 
     # 2. Install + patch the subagent extension from the installed pi package.
     $dst = '.pi\extensions\subagent'
