@@ -264,3 +264,69 @@ TEST_CASE("BuildMarkdownBody — caps body and emits truncation marker on huge l
     CHECK(body.find("line number 4999") != std::string::npos);
     CHECK(body.find("line number 0\n") == std::string::npos);
 }
+
+// ---- #989 regression: uncapped blocks + UTF-8-unsafe backstop → GitHub 422 ----
+
+TEST_CASE("TruncateUtf8 — never splits a multi-byte sequence") {
+    // "é" = 0xC3 0xA9. Cap landing on the continuation byte must back off.
+    std::string s = u8"abcé";
+    smatchet::diagnostics::TruncateUtf8(s, 4); // byte 4 = 0xA9 (continuation)
+    CHECK(s == "abc");
+
+    std::string ascii = "abcdef";
+    smatchet::diagnostics::TruncateUtf8(ascii, 4);
+    CHECK(ascii == "abcd");
+
+    std::string untouched = u8"aé";
+    smatchet::diagnostics::TruncateUtf8(untouched, 16);
+    CHECK(untouched == u8"aé");
+}
+
+TEST_CASE("BuildMarkdownBody — huge crash-mode description is capped with marker (issue #989)") {
+    BugReportOptions opts;
+    // Crash mode seeds the description with the crash context incl. a log tail —
+    // simulate a 100KB description ending in multi-byte chars.
+    opts.UserDescription = "Smatchet closed unexpectedly.\n";
+    for (int i = 0; i < 4000; ++i) {
+        opts.UserDescription += u8"log line with unicode — arrows → and dashes — number " + std::to_string(i) + "\n";
+    }
+    const std::string body = BuildMarkdownBody(opts, MakeBundle(), "");
+    CHECK(body.size() <= 65536);
+    CHECK(body.find(u8"… _(description truncated") != std::string::npos);
+    // Env/audit tail blocks must survive (description can't starve them).
+    CHECK(body.find("<details><summary>Recent log") != std::string::npos);
+}
+
+TEST_CASE("BuildMarkdownBody — huge audit-event dump is capped with marker (issue #989)") {
+    ContextBundle bundle = MakeBundle();
+    bundle.AuditEvents = nlohmann::json::array();
+    for (int i = 0; i < 2000; ++i) {
+        bundle.AuditEvents.push_back({{"event", "field-edit"},
+                                      {"ticket", "SMA-" + std::to_string(i)},
+                                      {"detail", u8"long value with unicode → → → padding padding padding"}});
+    }
+    BugReportOptions opts;
+    opts.UserDescription = "audit flood";
+    const std::string body = BuildMarkdownBody(opts, bundle, "");
+    CHECK(body.size() <= 65536);
+    CHECK(body.find("… (truncated)") != std::string::npos);
+}
+
+TEST_CASE("BuildIssueTitle — first line, 256-char GitHub cap, UTF-8-safe (issue #989)") {
+    CHECK(smatchet::diagnostics::BuildIssueTitle("") == "[Bug] Report from Smatchet");
+    CHECK(smatchet::diagnostics::BuildIssueTitle("short title\nrest") == "[Bug] short title");
+
+    std::string longLine(300, 'x');
+    const std::string capped = smatchet::diagnostics::BuildIssueTitle(longLine + "\nbody");
+    CHECK(capped.size() < 256);
+    CHECK(capped.find(u8"…") != std::string::npos);
+
+    // Multi-byte char straddling the cap must not be split: the é starts at
+    // byte 199, the 200-byte cap lands on its continuation byte, so the whole
+    // é is dropped — no lone 0xC3 lead byte may survive.
+    std::string tricky(199, 'y');
+    tricky += u8"é"; // bytes 199-200 = the 2-byte é
+    const std::string safe = smatchet::diagnostics::BuildIssueTitle(tricky);
+    CHECK(safe.find('\xC3') == std::string::npos);
+    CHECK(safe.find(u8"…") != std::string::npos);
+}

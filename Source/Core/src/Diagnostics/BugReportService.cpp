@@ -305,11 +305,6 @@ std::string UploadCrashDumpRelease(const std::string& baseUrl, const std::string
     }
 }
 
-std::string FirstLine(const std::string& s) {
-    const std::size_t nl = s.find('\n');
-    return nl == std::string::npos ? s : s.substr(0, nl);
-}
-
 // Relay path — POST the report to the server-side relay (tools/bug-report-relay).
 // The relay holds the GitHub token and does the issue create + screenshot upload,
 // so no GitHub credential is needed on the client.
@@ -321,8 +316,7 @@ SubmitResult SubmitViaRelay(const ResolvedBugTarget& target, const BugReportOpti
     // markdown here. WYSIWYG: a user-edited preview overrides the generated body.
     const std::string body =
         opts.BodyOverride.empty() ? BuildMarkdownBody(opts, bundle, std::string()) : opts.BodyOverride;
-    const std::string firstLine = FirstLine(opts.UserDescription);
-    const std::string title = std::string("[Bug] ") + (firstLine.empty() ? "Report from Smatchet" : firstLine);
+    const std::string title = BuildIssueTitle(opts.UserDescription);
 
     std::string screenshotBase64;
     if (opts.IncludeScreenshot && !opts.ScreenshotAbsPath.empty()) {
@@ -537,8 +531,7 @@ SubmitResult SubmitBugReport(AppController& app, const BugReportOptions& opts) {
 
     IssueDraft draft;
     draft.ProjectKey = target.Owner + "/" + target.Repo;
-    const std::string firstLine = FirstLine(opts.UserDescription);
-    draft.FieldValues["summary"] = std::string("[Bug] ") + (firstLine.empty() ? "Report from Smatchet" : firstLine);
+    draft.FieldValues["summary"] = BuildIssueTitle(opts.UserDescription);
     draft.FieldValues["description"] = body;
 
     GitHubClient devClient(target.BaseUrl, target.Pat);
