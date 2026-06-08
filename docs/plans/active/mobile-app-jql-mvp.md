@@ -143,7 +143,7 @@ Per `AGENTS.md` § Verification automation. Note the structural constraint: **bu
 
 ## Phase 1 — Fuller app integration (skeleton)
 
-*Lower-resolution by design: file lists + line citations harden at Phase-0 close (follow-up plan `docs/plans/active/mobile-app-fuller-integration.md`). **Depends on Phase 0** — every slice here assumes the host shell (Slice 3) + the wired data path (Slice 4) exist. Sequence P1.0→P1.1 first (security + offline correctness); P1.2–P1.5 parallelize.* Effort: several engineer-weeks total.
+*Lower-resolution by design: file lists + line citations harden at Phase-0 close (follow-up plan `mobile-app-fuller-integration`, lands in `docs/plans/active/`). **Depends on Phase 0** — every slice here assumes the host shell (Slice 3) + the wired data path (Slice 4) exist. Sequence P1.0→P1.1 first (security + offline correctness); P1.2–P1.5 parallelize.* Effort: several engineer-weeks total.
 
 - **P1.0 — credential UI + Android Keystore** *(gate for "shippable to a real user")*: a touch settings form (Domain/Email/Token/JQL) feeding `TrackerConfig`, replacing the Slice-4 hardcode; promote file #15 from interim-plaintext to real Android Keystore. **Spike**: Keystore via JNI without leaking NDK headers into Core — Core exposes a caller-supplied encrypt/decrypt callback pair (same host-injection pattern as fonts/`filesDir`), the host implements it against `KeyStore`/`Cipher`. **Exit-gate**: the API token round-trips through Keystore and is never written plaintext (grep the on-disk config to confirm).
 - **P1.1 — SQLite offline cache + `OfflineQueueService` replay**: `LocalCacheManager` / `TicketSyncService` already port (the SQLite stack cross-compiles in Phase-0 Slice 2); wire the mobile DB path to `filesDir` (Phase-0 file #14) and surface the replay UI. **Exit-gate**: kill the network mid-edit → the edit queues → reconnect → it replays → the Jira write is confirmed.
@@ -155,7 +155,7 @@ Per `AGENTS.md` § Verification automation. Note the structural constraint: **bu
 
 ## Phase 2 — iOS / iPhone (skeleton)
 
-*Lower-resolution by design (follow-up plan `docs/plans/active/mobile-app-ios.md`, authored at Phase-1 close). **The Core + data path are shared with Phase 0** — iOS is mostly a second host shell + Keychain + Metal + a CI runner. Most Phase-0 Core edits (#12–15, host-injection seams) are reused verbatim; the host re-implements them against UIKit/Metal.* The hard gate is the runner, not the code.
+*Lower-resolution by design (follow-up plan `mobile-app-ios`, lands in `docs/plans/active/` at Phase-1 close). **The Core + data path are shared with Phase 0** — iOS is mostly a second host shell + Keychain + Metal + a CI runner. Most Phase-0 Core edits (#12–15, host-injection seams) are reused verbatim; the host re-implements them against UIKit/Metal.* The hard gate is the runner, not the code.
 
 - **P2.0 — `macos-*` CI runner decision (the Phase-2 gate)**: every current job is `windows-2022`/`ubuntu-latest`; iOS needs macOS (GitHub-hosted `macos-14` or self-hosted — a real cost/billing decision, surface to the user). **Exit-gate**: a `macos-*` job builds a trivial target green. *Until this clears, Phase 2 cannot start — mirror of how Slice 1 gates Phase 0.*
 - **P2.1 — iOS toolchain + app-bundle host**: `add_executable(... MACOSX_BUNDLE)` / framework; `UIApplicationMain` + an Obj-C++ shim host modelled on the Phase-0 Android host **and** `SmatchetImGuiHost.cpp` (the same `ImGuiIO`-only per-frame contract). **Exit-gate**: an empty app launches on the iOS simulator.
@@ -169,7 +169,7 @@ Per `AGENTS.md` § Verification automation. Note the structural constraint: **bu
 
 **Deferral residue-sweep (keep this note)** — per `AGENTS.md` § Process rules § Scope-reduction edits: before finalising, grep `**/CONTEXT*.md`, `docs/adr/`, `agents/*.md`, and `docs/self-improvement/categories/` for stray references to anything deferred here, and revise or delete them. *(This is a net-new plan adding a subsystem, not reducing scope, so the sweep is expected to find nothing — but run it to confirm no stale "mobile" placeholder refs exist.)*
 
-- **Phase 1** (fuller integration) and **Phase 2** (iOS) are **planned to skeleton resolution** in their own sections above — not designed to file/line resolution until their predecessor phase de-risks the shared infra. Follow-up plans: `docs/plans/active/mobile-app-fuller-integration.md` (Phase-0 close) and `docs/plans/active/mobile-app-ios.md` (Phase-1 close).
+- **Phase 1** (fuller integration) and **Phase 2** (iOS) are **planned to skeleton resolution** in their own sections above — not designed to file/line resolution until their predecessor phase de-risks the shared infra. Follow-up plans (both land in `docs/plans/active/`): `mobile-app-fuller-integration` (Phase-0 close) and `mobile-app-ios` (Phase-1 close).
 - **Push notifications / background sync**: no-action for the foreseeable roadmap; named so a reviewer doesn't assume the offline-queue implies background delivery.
 - **Tablet / responsive layout**: phone-portrait only for MVP; responsive density is a Phase-1 polish item.
 
@@ -185,7 +185,7 @@ Per `AGENTS.md` § Verification automation. Note the structural constraint: **bu
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *In the SAME PR that populates the three sections above —*
 1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/mobile-app-jql-mvp.md docs/plans/shipped/mobile-app-jql-mvp.md`,*
+2. *`git mv docs/plans/active/mobile-app-jql-mvp.md docs/plans/shipped/`,*
 3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
 
 *(Delete this `## Archive` block as part of step 2.)*
