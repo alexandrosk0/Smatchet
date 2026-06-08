@@ -126,3 +126,25 @@ teardown() {
     echo "$output" | grep -q "runs-on: ubuntu-latest"
     ! echo "$output" | grep -q "FULLY SUPERSEDED"
 }
+
+@test "parser temp path survives MSYS conversion being disabled (native python handoff)" {
+    # Complementary to the colon-mangling guard above. Operators sometimes export
+    # MSYS_NO_PATHCONV / MSYS2_ARG_CONV_EXCL globally (e.g. to keep <rev>:<path>
+    # git args intact). With conversion OFF, the POSIX mktemp parser path
+    # (/tmp/tmp.XXXX.py) reaches a NATIVE Windows python verbatim and is
+    # mis-resolved as C:\tmp\.. — the script must cygpath-normalise it before the
+    # handoff. No-op on Linux/macOS (vars unused, cygpath absent), so the
+    # assertions hold either way.
+    export MSYS_NO_PATHCONV=1
+    export MSYS2_ARG_CONV_EXCL='*'
+    printf 'survive1\nsurvive2\n' > m.txt
+    git add m.txt && git commit -qm "A: two lines"
+    A="$(git rev-parse HEAD)"
+    echo "elsewhere" > n.txt && git add n.txt && git commit -qm "B: unrelated file"
+
+    run bash "$SCRIPT" "$A"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "survive1"
+    echo "$output" | grep -q "survive2"
+    echo "$output" | grep -q "2/2 introduced line(s) still alive"
+}

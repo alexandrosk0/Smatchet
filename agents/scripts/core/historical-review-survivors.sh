@@ -30,11 +30,12 @@ set -euo pipefail
 # .github\workflows\x.yml" (fatal=128) and the existence guard SILENTLY dropped
 # live survivor files under .github/ etc. The fix is STRUCTURAL — the existence
 # guard below uses `git ls-tree <ref> -- <path>` (separate args, no colon) so
-# nothing trips the heuristic. Do NOT "fix" this by globally exporting
-# MSYS2_ARG_CONV_EXCL / MSYS_NO_PATHCONV: the parser temp file is an MSYS
-# "/tmp/…py" path that RELIES on conversion to reach native Windows python.exe,
-# and disabling it globally feeds python.exe a raw "/tmp/…" it reads as
-# "C:\tmp\…" and cannot open. Scope any such exclusion to the one git call only.
+# nothing trips the heuristic. The parser temp file (an MSYS "/tmp/…py" path) is
+# handed to native python.exe as a cygpath-normalised Windows path (see PARSER_PY
+# below), so it resolves whether or not MSYS path-conversion is on — an operator
+# may safely export MSYS2_ARG_CONV_EXCL / MSYS_NO_PATHCONV globally without breaking
+# the python handoff. (Before that hardening, a global export fed python.exe a raw
+# "/tmp/…" it read as "C:\tmp\…" and could not open.)
 
 # Resolve a working Python (Windows ships `python`; bare `python3` may hit the
 # Microsoft Store alias stub). Prefer an explicit $PYTHON, then python3/python/py.
@@ -148,6 +149,19 @@ TMP_BODY="$(mktemp)"
 PARSER="$(mktemp --suffix=.py 2>/dev/null || mktemp)"
 trap 'rm -f "$TMP_BODY" "$PARSER"' EXIT
 
+# Path to hand the Python interpreter. On Git-for-Windows, mktemp emits a POSIX
+# path (/tmp/tmp.XXXX.py) but $PY is usually a NATIVE Windows python, which reads
+# /tmp/.. as the drive-relative C:\tmp\.. — a different, nonexistent location. MSYS
+# auto-converts the arg only while path-conversion is ON; an operator who globally
+# exports MSYS_NO_PATHCONV / MSYS2_ARG_CONV_EXCL (e.g. to keep <rev>:<path> git args
+# intact) disables it and breaks the handoff. cygpath -w gives a path both MSYS and
+# native python resolve identically regardless of conversion state; absent (Linux/
+# macOS) it's a plain no-op. $PARSER itself stays POSIX so the trap's rm still finds it.
+PARSER_PY="$PARSER"
+if command -v cygpath >/dev/null 2>&1; then
+    PARSER_PY="$(cygpath -w "$PARSER")"
+fi
+
 # Porcelain parser lives in its own file so the blame stream (stdin via pipe) is
 # NOT shadowed by a heredoc — `python - <<EOF` would make the heredoc, not the
 # pipe, become stdin. argv: <target-sha> <context> <path>; reads blame on stdin.
@@ -224,7 +238,7 @@ for f in "${FILES[@]}"; do
     total_introduced=$((total_introduced + added))
 
     # Surviving lines: blame the review ref, keep lines still attributed to $SHA.
-    surv="$(git blame --line-porcelain "$REVIEW_REF" -- "$f" 2>/dev/null | $PY "$PARSER" "$SHA" "$CONTEXT" "$f" "$REVIEW_REF")"
+    surv="$(git blame --line-porcelain "$REVIEW_REF" -- "$f" 2>/dev/null | $PY "$PARSER_PY" "$SHA" "$CONTEXT" "$f" "$REVIEW_REF")"
 
     [ -z "$surv" ] && continue
     alive="$(printf '%s\n' "$surv" | sed -n 's/^__ALIVE__ //p')"
