@@ -327,6 +327,11 @@ FetchContent_Declare(json GIT_REPOSITORY https://github.com/nlohmann/json.git GI
     GIT_SUBMODULES "")
 FetchContent_MakeAvailable(json)
 
+# cpr (libcurl HTTP) is app-only — the headless TSan subset links no HTTP client.
+# Gated behind SMATCHET_BUILD_APP so the Linux runner never FetchContent-builds
+# cpr's bundled curl (heavy, and the codeload download is 504-flaky). Pure-additive:
+# ON for every existing preset, so the Windows test rig still gets cpr.
+if(SMATCHET_BUILD_APP)
 smatchet_fetch_status("Fetching cpr (C++ Requests)...")
 smatchet_prepare_cpr()
 # Pinned to the exact commit the 1.9.2 tag resolves to (reproducible builds /
@@ -352,6 +357,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     file(WRITE "${cpr_SOURCE_DIR}/CMakeLists.txt" "${_cpr_cml}")
 endif()
 add_subdirectory("${cpr_SOURCE_DIR}" "${cpr_BINARY_DIR}" EXCLUDE_FROM_ALL)
+endif() # SMATCHET_BUILD_APP — cpr/curl (app-only HTTP)
 
 smatchet_fetch_status("Fetching SQLiteCpp...")
 smatchet_prepare_sqlitecpp()
