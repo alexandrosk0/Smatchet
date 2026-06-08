@@ -83,6 +83,10 @@ endif()
 # static lib only if per-test link lists grow unwieldy.
 add_executable(SmatchetTests
     test_main.cpp
+    # build-quality-velocity-hardening #21 — project-local Optional<T>/Result<T,E>
+    # value types (C++14 bans std::optional/std::variant). Header-only
+    # (Source/Core/include/SmatchetResult.h); no production .cpp to link.
+    Core/SmatchetResult.test.cpp
     Core/AnnotateAnalysisConfig.test.cpp
     Core/AnnotateLocalization.test.cpp
     Core/ConfigSaveConcurrency.test.cpp
