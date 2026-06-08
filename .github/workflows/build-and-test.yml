@@ -847,3 +847,173 @@ jobs:
             exit 1
           fi
           echo "strict-zone narrowing-conversions: clean (0 first-party)"
+
+  # ===========================================================================
+  # Phase-0 mobile triple-target spike (docs/plans/active/mobile-app-jql-mvp.md)
+  # ---------------------------------------------------------------------------
+  # Both jobs below are ADVISORY — NOT on the develop merge-gate required-check
+  # list (only "Windows + MSVC" and "Windows + MSVC light" are required) and NOT
+  # on the merge-gate poller's meant-to-block allow-list (Coverage/Sanitizer/
+  # Bucket-). A red here surfaces a mobile-port regression without wedging the
+  # ship-line. They gate on `changes.code` so docs-only PRs skip them.
+  # ===========================================================================
+
+  mobile-posix-core-check:
+    name: Mobile — POSIX core compile gate (Linux clang, advisory)
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install clang + X11/GL dev headers (glfw configure-time deps)
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          # clang/lld: the host Linux toolchain (Slice 0b — this is the #else side
+          # of every platform #ifdef). xorg-dev + libgl1-mesa-dev: GLFW 3.3.8's
+          # add_subdirectory runs find_package(X11 REQUIRED) at CONFIGURE time and
+          # FATALs without them (3.3.8 predates GLFW_BUILD_X11=OFF, added in 3.4).
+          # glfw IS fetched on Linux (its guard is `NOT ANDROID AND NOT IOS`) but is
+          # never BUILT: the build step targets only SmatchetCore_PosixCheck + its
+          # non-glfw deps (cpr/sqlite/md4c), none of which pull glfw.
+          sudo apt-get install -y clang lld xorg-dev libgl1-mesa-dev
+
+      - name: Cache FetchContent _deps (posix-core-check)
+        uses: actions/cache@v4
+        with:
+          path: .fetchcontent-src
+          key: ${{ runner.os }}-fetchcontent-posixcheck-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Configure posix-core-check
+        # SMATCHET_BUILD_POSIX_CORE_CHECK=ON (via the preset) declares the
+        # SmatchetCore_PosixCheck STATIC EXCLUDE_FROM_ALL lib over CORE_SOURCES.
+        # cpr auto-detects the host's system OpenSSL here (no NDK cross-TLS yet).
+        run: cmake --preset posix-core-check
+
+      - name: Compile CORE_SOURCES (host Linux clang, compile-only)
+        # A static archive only compiles its objects; it never links, so there is
+        # zero GLFW/GL/X11 link surface. Green == every #else branch in the
+        # engine-agnostic core compiles under a non-_WIN32 clang.
+        run: cmake --build --preset posix-core-check --target SmatchetCore_PosixCheck
+
+  mobile-android-ndk:
+    name: Mobile — Android NDK arm64-v8a (.so configure+link, advisory)
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      # Pin the toolchain + TLS source. Bump OPENSSL_SHA256 in lockstep with
+      # OPENSSL_VERSION (sha256 of openssl-<ver>.tar.gz from the official release
+      # asset openssl-<ver>.tar.gz.sha256 — mirrors the Font Awesome pin pattern
+      # in the windows-msvc job). NDK_VERSION drift intentionally poisons the
+      # OpenSSL cache key (a new NDK ABI/sysroot needs a fresh OpenSSL build).
+      OPENSSL_VERSION: "3.5.6"
+      OPENSSL_SHA256: "deae7c80cba99c4b4f940ecadb3c3338b13cb77418409238e57d7f31f2a3b736"
+      NDK_VERSION: "26.3.11579264"
+      ANDROID_API: "24"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install OpenSSL build prereqs (make + perl)
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y make perl
+
+      - name: Install + pin Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          test -n "$SDK" || { echo "::error::ANDROID_SDK_ROOT/ANDROID_HOME unset on runner"; exit 1; }
+          yes | "${SDK}/cmdline-tools/latest/bin/sdkmanager" "ndk;${NDK_VERSION}" >/dev/null
+          NDK="${SDK}/ndk/${NDK_VERSION}"
+          test -d "$NDK" || { echo "::error::NDK ${NDK_VERSION} not found at $NDK"; exit 1; }
+          # Export for every subsequent step: the android.toolchain.cmake path in the
+          # preset reads $env{ANDROID_NDK_ROOT}; OpenSSL's Configure reads it too.
+          echo "ANDROID_NDK_ROOT=$NDK" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          echo "OPENSSL_PREFIX=${RUNNER_TEMP}/openssl-android/arm64-v8a" >> "$GITHUB_ENV"
+
+      - name: Cache prebuilt OpenSSL (arm64-v8a)
+        id: openssl-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/openssl-android/arm64-v8a
+          key: openssl-${{ env.OPENSSL_VERSION }}-ndk-${{ env.NDK_VERSION }}-arm64-v8a-api${{ env.ANDROID_API }}
+
+      - name: Build static OpenSSL for arm64-v8a (NDK clang)
+        if: steps.openssl-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}"
+          curl -fsSL \
+            "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" \
+            -o openssl.tar.gz
+          # Pinned-checksum gate (fail-closed): a hijacked/changed tarball aborts here.
+          echo "${OPENSSL_SHA256}  openssl.tar.gz" | sha256sum -c -
+          tar xzf openssl.tar.gz
+          cd "openssl-${OPENSSL_VERSION}"
+          export PATH="${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin:${PATH}"
+          # --libdir=lib pins the install layout (some hosts default to lib64, which
+          # would desync the explicit OPENSSL_*_LIBRARY paths passed at configure).
+          # __ANDROID_API__ MUST equal ANDROID_PLATFORM (android-24) in the preset.
+          ./Configure android-arm64 -D__ANDROID_API__="${ANDROID_API}" \
+            no-shared no-tests no-apps no-docs --libdir=lib --prefix="${OPENSSL_PREFIX}"
+          make -j"$(nproc)"
+          make install_sw
+
+      - name: Verify OpenSSL static libs present
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "${OPENSSL_PREFIX}/lib/libssl.a"               || { echo "::error::libssl.a missing"; exit 1; }
+          test -f "${OPENSSL_PREFIX}/lib/libcrypto.a"            || { echo "::error::libcrypto.a missing"; exit 1; }
+          test -f "${OPENSSL_PREFIX}/include/openssl/opensslv.h" || { echo "::error::opensslv.h missing"; exit 1; }
+          ls -l "${OPENSSL_PREFIX}/lib"
+
+      - name: Cache FetchContent _deps (android-ndk)
+        uses: actions/cache@v4
+        with:
+          path: .fetchcontent-src
+          key: ${{ runner.os }}-fetchcontent-android-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Configure android-ndk-arm64 (validates Slice 1 — TLS backend)
+        # The preset forces CPR_FORCE_OPENSSL_BACKEND + widens CMAKE_FIND_ROOT_PATH_MODE_*
+        # to BOTH so find_package(OpenSSL) sees the prebuilt outside the NDK sysroot.
+        # The absolute OpenSSL paths are runtime-dependent ($RUNNER_TEMP) so they are
+        # passed here, not baked into the preset.
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset android-ndk-arm64 \
+            -DOPENSSL_ROOT_DIR="${OPENSSL_PREFIX}" \
+            -DOPENSSL_INCLUDE_DIR="${OPENSSL_PREFIX}/include" \
+            -DOPENSSL_SSL_LIBRARY="${OPENSSL_PREFIX}/lib/libssl.a" \
+            -DOPENSSL_CRYPTO_LIBRARY="${OPENSSL_PREFIX}/lib/libcrypto.a" \
+            -DCMAKE_FIND_ROOT_PATH="${OPENSSL_PREFIX}"
+
+      - name: Compile + link SmatchetMobile .so (validates Slice 2 — empty .so link)
+        # Builds CORE_SOURCES through the NDK (#else side) and links the SHARED object.
+        # -Wl,-z,undefs (set on the target) permits the host symbols Slice 3 resolves.
+        run: cmake --build --preset android-ndk-arm64 --target SmatchetMobile

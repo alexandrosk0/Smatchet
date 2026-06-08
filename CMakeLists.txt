@@ -217,6 +217,15 @@ option(SMATCHET_BUILD_UI_TESTS "Build ImGui Test Engine bucket-E surface (in-pro
 # only the portable, ImGui-free threading subset. Pure-additive (hardening #10).
 option(SMATCHET_BUILD_APP "Build the GUI application + GLFW/ImGui/Lua/whisper/Standalone/DX12 targets (OFF for the headless TSan-subset Linux preset)" ON)
 option(SMATCHET_BUILD_LUA_TESTS "Build SmatchetLuaTests binary (sandbox + timeout + stubs-compile drift sentinel; requires SMATCHET_WITH_LUA_AUTOMATION=ON)" OFF)
+# Slice 0b of the Phase-0 mobile triple-target spike (docs/plans/active/mobile-app-jql-mvp.md).
+# Compile-only portability gate: builds CORE_SOURCES with host Linux clang through the
+# non-_WIN32 (#else) side of every platform #ifdef BEFORE the NDK toolchain adds ABI /
+# sysroot variables. Realized as a STATIC EXCLUDE_FROM_ALL lib (SmatchetCore_PosixCheck)
+# — a static archive only compiles, never links, so it exercises the #else branches with
+# zero GLFW/GL/X11 link surface (TLS/cpr resolve against the host's system OpenSSL). Built
+# only by the advisory Linux-clang CI job; default OFF keeps every existing preset
+# byte-for-byte unaffected.
+option(SMATCHET_BUILD_POSIX_CORE_CHECK "Compile CORE_SOURCES under host Linux clang (non-_WIN32 #else portability gate; compile-only static lib, no link)" OFF)
 # Slice 7 of docs/design/autonomous-debugging-no-creds.md — production-resident
 # NDJSON helper at tests/_debug/SmatchetAgentDebug.h. OFF in iter/publish
 # (macro expands to ((void)0); zero overhead); ON in debug/asan/ui-test
@@ -469,17 +478,24 @@ add_subdirectory("${ghc_filesystem_SOURCE_DIR}" "${ghc_filesystem_BINARY_DIR}" E
 # ============================================================================
 if(SMATCHET_BUILD_APP)
 
-smatchet_fetch_status("Fetching GLFW...")
-set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-# Pinned to the exact commit the 3.3.8 annotated tag resolves to (reproducible
-# builds / supply chain) — same content the floating tag points to today, zero
-# behaviour change. 3.3.8 is an annotated tag; resolved to its underlying commit
-# (NOT the tag-object SHA, which would re-fetch) via:
-# git ls-remote https://github.com/glfw/glfw.git 'refs/tags/3.3.8^{}'
-FetchContent_Declare(glfw GIT_REPOSITORY https://github.com/glfw/glfw.git GIT_TAG 7482de6071d21db77a7236155da44c172a7f6c9e)  # glfw 3.3.8
-FetchContent_MakeAvailable(glfw)
+# GLFW is the desktop windowing/GL-context backend. Mobile (Android/iOS) drives
+# the GL context through the platform host (EGL on Android), so skip the GLFW
+# fetch+build entirely there — building GLFW against the NDK sysroot has no X11/
+# Win32/Cocoa surface and would fail configure. ImGuiLib_Mobile (below) pairs the
+# android + opengl3 backends in place of imgui_impl_glfw.
+if(NOT ANDROID AND NOT IOS)
+    smatchet_fetch_status("Fetching GLFW...")
+    set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    # Pinned to the exact commit the 3.3.8 annotated tag resolves to (reproducible
+    # builds / supply chain) — same content the floating tag points to today, zero
+    # behaviour change. 3.3.8 is an annotated tag; resolved to its underlying commit
+    # (NOT the tag-object SHA, which would re-fetch) via:
+    # git ls-remote https://github.com/glfw/glfw.git 'refs/tags/3.3.8^{}'
+    FetchContent_Declare(glfw GIT_REPOSITORY https://github.com/glfw/glfw.git GIT_TAG 7482de6071d21db77a7236155da44c172a7f6c9e)  # glfw 3.3.8
+    FetchContent_MakeAvailable(glfw)
+endif()
 
 # ==============================================================================
 # LUA & SOL2 (C++14 COMPATIBLE) — optional (SMATCHET_WITH_LUA_AUTOMATION)
@@ -776,28 +792,52 @@ FetchContent_GetProperties(imgui)
 if(NOT imgui_POPULATED)
     FetchContent_Populate(imgui)
 endif()
-file(GLOB IMGUI_SOURCES "${imgui_SOURCE_DIR}/*.cpp")
-list(APPEND IMGUI_SOURCES "${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp" "${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp")
-add_library(ImGuiLib STATIC ${IMGUI_SOURCES})
-target_include_directories(ImGuiLib PUBLIC
-        ${imgui_SOURCE_DIR}
-        ${imgui_SOURCE_DIR}/backends
-        ${glfw_SOURCE_DIR}/include
-        # Source/Core/include hosts SmatchetImConfig.h — the single source of
-        # ImGui compile-time configuration (IMGUI_USE_WCHAR32, optional test
-        # engine hookup). Adding it PUBLIC so every linking target's #include
-        # "imgui.h" → IMGUI_USER_CONFIG path resolves cleanly without a
-        # per-target include-dir tweak.
-        ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/include
-)
-# Route every TU that includes imgui.h through SmatchetImConfig.h. The file
-# carries IMGUI_USE_WCHAR32 (supplementary-plane Unicode) plus the
-# bucket-E test-engine hooks when SMATCHET_BUILD_UI_TESTS is ON. Consolidated
-# from a previous PUBLIC IMGUI_USE_WCHAR32 define — having both mechanisms
-# split is the easiest way to desync ImWchar across TUs.
-target_compile_definitions(ImGuiLib PUBLIC IMGUI_USER_CONFIG="SmatchetImConfig.h")
-if(SMATCHET_BUILD_UI_TESTS)
-    target_compile_definitions(ImGuiLib PUBLIC SMATCHET_BUILD_UI_TESTS=1)
+# Desktop world (GLFW + OpenGL3 backends). Guarded out on Android — glfw is not
+# fetched there and imgui_impl_glfw.cpp #includes <GLFW/glfw3.h>, so building this
+# variant on the NDK toolchain would fail. The Android world builds ImGuiLib_Mobile
+# in the else() arm instead.
+if(NOT ANDROID)
+    file(GLOB IMGUI_SOURCES "${imgui_SOURCE_DIR}/*.cpp")
+    list(APPEND IMGUI_SOURCES "${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp" "${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp")
+    add_library(ImGuiLib STATIC ${IMGUI_SOURCES})
+    target_include_directories(ImGuiLib PUBLIC
+            ${imgui_SOURCE_DIR}
+            ${imgui_SOURCE_DIR}/backends
+            ${glfw_SOURCE_DIR}/include
+            # Source/Core/include hosts SmatchetImConfig.h — the single source of
+            # ImGui compile-time configuration (IMGUI_USE_WCHAR32, optional test
+            # engine hookup). Adding it PUBLIC so every linking target's #include
+            # "imgui.h" → IMGUI_USER_CONFIG path resolves cleanly without a
+            # per-target include-dir tweak.
+            ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/include
+    )
+    # Route every TU that includes imgui.h through SmatchetImConfig.h. The file
+    # carries IMGUI_USE_WCHAR32 (supplementary-plane Unicode) plus the
+    # bucket-E test-engine hooks when SMATCHET_BUILD_UI_TESTS is ON. Consolidated
+    # from a previous PUBLIC IMGUI_USE_WCHAR32 define — having both mechanisms
+    # split is the easiest way to desync ImWchar across TUs.
+    target_compile_definitions(ImGuiLib PUBLIC IMGUI_USER_CONFIG="SmatchetImConfig.h")
+    if(SMATCHET_BUILD_UI_TESTS)
+        target_compile_definitions(ImGuiLib PUBLIC SMATCHET_BUILD_UI_TESTS=1)
+    endif()
+else()
+    # Android world — imgui_impl_android + imgui_impl_opengl3 (the GL3 backend
+    # auto-selects the GLES3 path on __ANDROID__). No GLFW dependency: the platform
+    # host owns the EGL surface. Same IMGUI_USER_CONFIG=SmatchetImConfig.h as the
+    # desktop lib so ImWchar / supplementary-plane config + the test-engine hooks
+    # stay ABI-identical across worlds (mirrors the per-world ImGuiLib_DX12 split).
+    file(GLOB IMGUI_MOBILE_SOURCES "${imgui_SOURCE_DIR}/*.cpp")
+    list(APPEND IMGUI_MOBILE_SOURCES "${imgui_SOURCE_DIR}/backends/imgui_impl_android.cpp" "${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp")
+    add_library(ImGuiLib_Mobile STATIC ${IMGUI_MOBILE_SOURCES})
+    target_include_directories(ImGuiLib_Mobile PUBLIC
+            ${imgui_SOURCE_DIR}
+            ${imgui_SOURCE_DIR}/backends
+            ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/include
+    )
+    target_compile_definitions(ImGuiLib_Mobile PUBLIC IMGUI_USER_CONFIG="SmatchetImConfig.h")
+    if(SMATCHET_BUILD_UI_TESTS)
+        target_compile_definitions(ImGuiLib_Mobile PUBLIC SMATCHET_BUILD_UI_TESTS=1)
+    endif()
 endif()
 
 # Dear ImGui variant for Unreal/DX12 embedding (no GLFW/OpenGL dependency).
@@ -858,7 +898,14 @@ endif()
 
 # Standalone (OpenGL/GLFW) world — inherits ImGuiLib's PUBLIC include dirs + IMGUI config.
 add_library(SmatchetTextEdit OBJECT "${_SMATCHET_IMGUI_TEXTEDIT_CPP}")
-target_link_libraries(SmatchetTextEdit PRIVATE ImGuiLib)
+# Inherit the matching per-world ImGui config: ImGuiLib_Mobile on Android (no glfw
+# include), ImGuiLib on desktop. The TU only needs imgui.h include propagation +
+# the shared IMGUI_USER_CONFIG, so the ABI stays identical to its consuming target.
+if(ANDROID)
+    target_link_libraries(SmatchetTextEdit PRIVATE ImGuiLib_Mobile)
+else()
+    target_link_libraries(SmatchetTextEdit PRIVATE ImGuiLib)
+endif()
 if(_SMATCHET_TEXTEDIT_WARN_FLAG)
     target_compile_options(SmatchetTextEdit PRIVATE ${_SMATCHET_TEXTEDIT_WARN_FLAG})
 endif()
@@ -1130,6 +1177,19 @@ function(smatchet_configure_opengl_core_impl_target _target)
     endif()
 endfunction()
 
+# Android sibling of smatchet_configure_opengl_core_impl_target — same engine-agnostic
+# Source/Core wiring, but ImGuiLib_Mobile (android + GLES3 backends, no glfw) instead
+# of ImGuiLib + glfw, and none of the Windows-only WIC / shell32 / win32 codepaths.
+# MCP / AI shims are intentionally absent: those features are OFF in the Phase-0 mobile
+# preset, so the shim targets are not even declared. This is the Slice-1/2 fork.
+function(smatchet_configure_mobile_core_impl_target _target)
+    smatchet_configure_core_impl_target("${_target}")
+    target_link_libraries("${_target}" PRIVATE ImGuiLib_Mobile)
+    # Vendored ImGuiColorTextEdit TU — same OBJECT lib as desktop; on Android it
+    # inherits ImGuiLib_Mobile's ImGui config (see the SmatchetTextEdit block above).
+    target_link_libraries("${_target}" PRIVATE SmatchetTextEdit)
+endfunction()
+
 function(smatchet_configure_dx12_core_impl_target _target)
     smatchet_configure_core_impl_target("${_target}")
     # Vendored ImGuiColorTextEdit TU — DX12-world OBJECT lib (no /W4; matching ImGui config).
@@ -1172,6 +1232,54 @@ if(WIN32)
     add_library(SmatchetCore_DX12 STATIC EXCLUDE_FROM_ALL ${CORE_SOURCES})
     smatchet_configure_dx12_core_impl_target(SmatchetCore_DX12)
     smatchet_apply_strict_warnings(SmatchetCore_DX12)
+endif()
+
+# ==============================================================================
+# 3a. SMATCHET MOBILE SHARED LIBRARY (Android, Phase 0)
+# ==============================================================================
+# Third sibling of SmatchetStandalone (GLFW/GL exe) and SmatchetCore_DX12 (Unreal
+# STATIC lib): a SHARED .so over the SAME engine-agnostic CORE_SOURCES, compiled by
+# the NDK toolchain through the non-_WIN32 (#else) side of the platform #ifdefs.
+#
+# Slice 2 deliverable is the empty-.so configure+link. The host shell (android_main,
+# native_app_glue, the JNI bridge that provides the SmatchetImGuiHost symbols pruned
+# from CORE_SOURCES at the glob above) lands in Slice 3, so MOBILE_SOURCES is an empty
+# placeholder. Until that host exists CORE_SOURCES has unresolved host-provided
+# symbols; a SHARED object legally carries undefined symbols (resolved at load), so we
+# explicitly permit them with -Wl,-z,undefs in case the active NDK defaults shared
+# links to -Wl,--no-undefined. Slice 3 removes this once the host resolves them.
+if(ANDROID)
+    set(MOBILE_SOURCES "")  # Slice 3: host shell (android_main + native_app_glue) + JNI bridge.
+    add_library(SmatchetMobile SHARED ${CORE_SOURCES} ${MOBILE_SOURCES})
+    smatchet_configure_mobile_core_impl_target(SmatchetMobile)
+    smatchet_apply_strict_warnings(SmatchetMobile)
+    # Android system libs for the GLES3 + EGL render path and platform logging.
+    # android_native_app_glue is deferred to Slice 3 (it is an NDK-sources static lib
+    # consumed only by the android_main host, which does not exist yet).
+    target_link_libraries(SmatchetMobile PRIVATE log android EGL GLESv3)
+    target_link_options(SmatchetMobile PRIVATE -Wl,-z,undefs)
+endif()
+
+# ==============================================================================
+# 3a-check. POSIX CORE COMPILE GATE (Slice 0b — host Linux clang, compile-only)
+# ==============================================================================
+# Cheapest exercise of every `#if defined(_WIN32)` `#else` branch in CORE_SOURCES:
+# compile the whole engine-agnostic core with host Linux clang BEFORE the NDK
+# toolchain adds ABI/sysroot variables. A STATIC archive only compiles its objects
+# (never links), so this carries zero GLFW/GL/X11 link surface; the imgui *headers*
+# are still needed (Core Ui TUs #include "imgui.h") but Core makes no raw gl* calls.
+# cpr/TLS resolve against the host's system OpenSSL here (no NDK cross-TLS yet). Reuses
+# the shared core-impl configure-fn + adds the imgui include set the per-world imgui
+# lib would otherwise supply. No strict-warnings: 0b is a portability gate, not a
+# warning-policy gate (the Android warning surface is triaged in a later slice).
+if(SMATCHET_BUILD_POSIX_CORE_CHECK)
+    add_library(SmatchetCore_PosixCheck STATIC EXCLUDE_FROM_ALL ${CORE_SOURCES})
+    smatchet_configure_core_impl_target(SmatchetCore_PosixCheck)
+    target_include_directories(SmatchetCore_PosixCheck PRIVATE
+            ${imgui_SOURCE_DIR}
+            ${imgui_SOURCE_DIR}/backends
+            ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/include)
+    target_compile_definitions(SmatchetCore_PosixCheck PRIVATE IMGUI_USER_CONFIG="SmatchetImConfig.h")
 endif()
 
 # ==============================================================================
@@ -1394,6 +1502,12 @@ endif()
 # ==============================================================================
 # 4. SMATCHET STANDALONE EXECUTABLE
 # ==============================================================================
+# Desktop-only: this whole section builds the GLFW/OpenGL executable and links the
+# glfw target, which is not fetched on Android (see the GLFW fetch guard above). On
+# Android the SmatchetMobile SHARED lib (section 3a) is the app target instead. The
+# guard is `NOT ANDROID` (not `NOT ANDROID AND NOT IOS`) because iOS is a later phase;
+# ANDROID is falsy on every desktop build, so this is a no-op for Windows/macOS/Linux.
+if(NOT ANDROID)
 file(GLOB STANDALONE_SOURCES "Source/Standalone/*.cpp")
 
 if(WIN32)
@@ -1731,6 +1845,8 @@ if(SMATCHET_AGENT_DEBUG)
     target_compile_definitions(SmatchetStandalone PRIVATE SMATCHET_AGENT_DEBUG=1)
     target_include_directories(SmatchetStandalone PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests/_debug")
 endif()
+
+endif() # NOT ANDROID — desktop SmatchetStandalone (GLFW/GL) target + its config tail
 
 endif() # SMATCHET_BUILD_APP — GUI/app surface (GLFW/ImGui/Lua/whisper/Standalone/DX12)
 

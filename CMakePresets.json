@@ -316,6 +316,47 @@
                 "SMATCHET_AGENT_DEBUG": "OFF",
                 "SMATCHET_BUILD_AGENT_DEBUG_TESTS": "OFF"
             }
+        },
+        {
+            "name": "android-ndk-arm64",
+            "inherits": [
+                "_smatchet-light-features"
+            ],
+            "displayName": "Android NDK (arm64-v8a)",
+            "description": "Phase-0 mobile triple-target spike: cross-compiles the SmatchetMobile .so for arm64-v8a via the NDK toolchain. Forces the cpr OpenSSL TLS backend (Android has no system TLS) and links a per-ABI prebuilt static OpenSSL provisioned by the caller — OPENSSL_ROOT_DIR / OPENSSL_{SSL,CRYPTO}_LIBRARY / OPENSSL_INCLUDE_DIR are runtime-dependent ($RUNNER_TEMP in CI) and passed as -D flags, not hardcoded here. Requires ANDROID_NDK_ROOT in the environment. Advisory job (not on the develop merge-gate); warnings-as-errors stays off until the Android warning surface is triaged in a later slice.",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/android-ndk-arm64",
+            "toolchainFile": "$env{ANDROID_NDK_ROOT}/build/cmake/android.toolchain.cmake",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "ANDROID_ABI": "arm64-v8a",
+                "ANDROID_PLATFORM": "android-24",
+                "CPR_FORCE_USE_SYSTEM_CURL": "OFF",
+                "CPR_FORCE_OPENSSL_BACKEND": "ON",
+                "OPENSSL_USE_STATIC_LIBS": "TRUE",
+                "CMAKE_FIND_ROOT_PATH_MODE_PACKAGE": "BOTH",
+                "CMAKE_FIND_ROOT_PATH_MODE_LIBRARY": "BOTH",
+                "CMAKE_FIND_ROOT_PATH_MODE_INCLUDE": "BOTH",
+                "SMATCHET_WITH_LUA_AUTOMATION": "OFF",
+                "SMATCHET_WARNINGS_AS_ERRORS": "OFF"
+            }
+        },
+        {
+            "name": "posix-core-check",
+            "inherits": [
+                "_smatchet-clang-linux-base",
+                "_smatchet-light-features"
+            ],
+            "displayName": "POSIX Core Compile Gate (Linux Clang)",
+            "description": "Slice-0b portability gate: compiles CORE_SOURCES with host Linux clang through the non-_WIN32 (#else) side of every platform #ifdef, BEFORE the NDK toolchain adds ABI/sysroot variables. SMATCHET_BUILD_POSIX_CORE_CHECK=ON builds the SmatchetCore_PosixCheck STATIC EXCLUDE_FROM_ALL lib (compile-only — a static archive never links, so zero GLFW/GL/X11 link surface; cpr/TLS resolve against the host's system OpenSSL). Feature flags match the android-ndk-arm64 source set (Lua/MCP/AI/Whisper OFF) so a green gate here means the same core TUs compile for Android. Warnings-as-errors off (portability gate, not warning-policy gate). glfw still *configures* on Linux (its add_subdirectory find_package(X11 REQUIRED) needs xorg-dev libgl1-mesa-dev) but never *builds* — only the check target + its non-glfw deps compile. Advisory job (not on the develop merge-gate).",
+            "binaryDir": "${sourceDir}/build/posix-core-check",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_BUILD_POSIX_CORE_CHECK": "ON",
+                "SMATCHET_WITH_LUA_AUTOMATION": "OFF",
+                "SMATCHET_WARNINGS_AS_ERRORS": "OFF"
+            }
         }
     ],
     "buildPresets": [
@@ -440,6 +481,22 @@
             "inheritConfigureEnvironment": true,
             "targets": [
                 "SmatchetTsanTests"
+            ]
+        },
+        {
+            "name": "android-ndk-arm64",
+            "configurePreset": "android-ndk-arm64",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetMobile"
+            ]
+        },
+        {
+            "name": "posix-core-check",
+            "configurePreset": "posix-core-check",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetCore_PosixCheck"
             ]
         }
     ]
