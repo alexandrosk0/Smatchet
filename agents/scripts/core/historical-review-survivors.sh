@@ -23,6 +23,19 @@
 # Read-only. No git mutations.
 set -euo pipefail
 
+# Git-for-Windows / MSYS arg-mangling note. MSYS rewrites any argument that
+# looks like a POSIX path-list — notably the "<rev>:<path>" form — turning ':'
+# into ';' and '/' into '\', so e.g. `git cat-file -e "origin/develop:.github/
+# workflows/x.yml"` reached git as the bogus object name "origin\develop;
+# .github\workflows\x.yml" (fatal=128) and the existence guard SILENTLY dropped
+# live survivor files under .github/ etc. The fix is STRUCTURAL — the existence
+# guard below uses `git ls-tree <ref> -- <path>` (separate args, no colon) so
+# nothing trips the heuristic. Do NOT "fix" this by globally exporting
+# MSYS2_ARG_CONV_EXCL / MSYS_NO_PATHCONV: the parser temp file is an MSYS
+# "/tmp/…py" path that RELIES on conversion to reach native Windows python.exe,
+# and disabling it globally feeds python.exe a raw "/tmp/…" it reads as
+# "C:\tmp\…" and cannot open. Scope any such exclusion to the one git call only.
+
 # Resolve a working Python (Windows ships `python`; bare `python3` may hit the
 # Microsoft Store alias stub). Prefer an explicit $PYTHON, then python3/python/py.
 PY=""
@@ -191,8 +204,20 @@ total_alive=0
 files_with_survivors=0
 
 for f in "${FILES[@]}"; do
-    # Skip files that no longer exist at the review ref (deleted/renamed = "touched").
-    git cat-file -e "$REVIEW_REF:$f" 2>/dev/null || continue
+    # Existence guard against the review ref. Use `ls-tree` (separate <ref> and
+    # `-- <path>` args, no colon) NOT `cat-file -e "<ref>:<path>"`: the colon
+    # form trips MSYS arg-mangling (see top-of-file note) AND can't tell
+    # "absent" from "errored" by exit code — both are fatal=128. ls-tree avoids
+    # the colon and gives a clean three-way so a future mangling-class bug
+    # surfaces LOUDLY instead of silently dropping a live file:
+    #   nonzero rc      -> the check itself errored: warn, do NOT skip
+    #   rc 0 + empty    -> genuinely absent at the ref (deleted/renamed): skip
+    #   rc 0 + nonempty -> present at the ref: review it
+    if ! present="$(git ls-tree --name-only "$REVIEW_REF" -- "$f" 2>/dev/null)"; then
+        echo "historical-review-survivors: WARNING — existence check for '$f' at '$REVIEW_REF' errored; NOT skipping it (possible path-mangling regression — review '$f' manually)." >&2
+    elif [ -z "$present" ]; then
+        continue
+    fi
 
     # Net lines this commit added to this file (for the supersede ratio).
     added="$(git log -1 --format= --numstat "$SHA" -- "$f" | awk 'NF>=3 && $1!="-"{s+=$1} END{print s+0}')"
