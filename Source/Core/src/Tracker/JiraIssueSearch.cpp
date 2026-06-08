@@ -367,20 +367,22 @@ TrackerIssueFetchSummary JiraClient::FetchIssuesStreamed(const BatchCallback& on
     return summary;
 }
 
-bool JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
-                                    const ViewsStore& viewStore, std::vector<CachedTicket>& outTickets,
-                                    std::string& outError) {
-    outError.clear();
+Result<std::vector<CachedTicket>, TrackerError>
+JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
+                               const ViewsStore& viewStore) {
+    using FetchResult = Result<std::vector<CachedTicket>, TrackerError>;
+    std::vector<CachedTicket> outTickets;
+    std::string outError;
     if (issueKeys.empty()) {
-        return true;
+        return FetchResult::Ok(std::move(outTickets));
     }
     if (!EnsureTrackerAuthConfig(cfg, outError)) {
-        return false;
+        return FetchResult::Err(TrackerErrorAuth(outError));
     }
 
     const std::vector<std::string> keys = DedupeIssueKeys(issueKeys);
     if (keys.empty()) {
-        return true;
+        return FetchResult::Ok(std::move(outTickets));
     }
 
     std::vector<std::string> fieldsList;
@@ -406,13 +408,19 @@ bool JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<
         if (response.status_code != 200) {
             outError = "Fetch by key failed: HTTP " + std::to_string(response.status_code);
             LOG_WARN("JiraClient::FetchIssuesForKeys: %s", outError.c_str());
-            return false;
+            // Guard the `!= 200` branch before FromHttpStatus: a 2xx-other (201/204) would map to
+            // Ok() and yield an Err(Kind::None) with empty Detail (FIX-1 / Slice-2). Detail is
+            // preserved verbatim for the caller's IsTrackerTransportErrorText text check.
+            if (response.status_code >= 200 && response.status_code < 300) {
+                return FetchResult::Err(TrackerErrorUnknown(outError, response.status_code));
+            }
+            return FetchResult::Err(TrackerErrorFromHttpStatus(response.status_code, outError));
         }
         try {
             auto json = nlohmann::json::parse(response.text);
             if (!json.contains("issues") || !json["issues"].is_array()) {
                 outError = "Fetch by key: response missing issues array.";
-                return false;
+                return FetchResult::Err(TrackerErrorParse(outError));
             }
             std::unordered_set<std::string> fetchedKeys;
             for (const auto& issue : json["issues"]) {
@@ -449,8 +457,8 @@ bool JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<
             }
         } catch (const std::exception& ex) {
             outError = std::string("Fetch by key parse error: ") + ex.what();
-            return false;
+            return FetchResult::Err(TrackerErrorParse(outError));
         }
     }
-    return true;
+    return FetchResult::Ok(std::move(outTickets));
 }

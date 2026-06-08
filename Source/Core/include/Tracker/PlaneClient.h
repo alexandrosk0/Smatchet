@@ -40,9 +40,9 @@ class PlaneClient : public ITrackerBackend,
                                                  const TrackerConfig* configOverride = nullptr,
                                                  const ViewsStore* viewsOverride = nullptr) override;
 
-    bool FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
-                            const ViewsStore& views, std::vector<CachedTicket>& outTickets,
-                            std::string& outError) override;
+    Result<std::vector<CachedTicket>, TrackerError> FetchIssuesForKeys(const TrackerConfig& cfg,
+                                                                       const std::vector<std::string>& issueKeys,
+                                                                       const ViewsStore& views) override;
 
     Result<TrackerFieldCatalogResult, TrackerError> FetchFieldCatalog(const TrackerConfig& cfg,
                                                                       const std::string& projectKey) override;

@@ -527,23 +527,24 @@ FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat, const 
     return results;
 }
 
-bool FetchIssuesForKeysViaRestApi(const std::string& baseUrl, const std::string& pat,
-                                  const std::vector<std::string>& issueKeys, std::vector<CachedTicket>& outTickets,
-                                  std::string& outError) {
+Result<std::vector<CachedTicket>, TrackerError>
+FetchIssuesForKeysViaRestApi(const std::string& baseUrl, const std::string& pat,
+                             const std::vector<std::string>& issueKeys) {
+    using FetchResult = Result<std::vector<CachedTicket>, TrackerError>;
+    std::vector<CachedTicket> outTickets;
     if (issueKeys.empty()) {
-        return true;
+        return FetchResult::Ok(std::move(outTickets));
     }
     if (pat.empty()) {
-        outError = kPatMissingError;
-        return false;
+        return FetchResult::Err(TrackerErrorAuth(kPatMissingError));
     }
 
     const cpr::Header headers = BuildGitHubHeaders(pat);
     for (const std::string& key : issueKeys) {
         ParsedIssueKey parsed;
         if (!ParseGitHubIssueKey(key, parsed)) {
-            outError = std::string("Invalid GitHub issue key (expected owner/repo#N): ") + key;
-            return false;
+            return FetchResult::Err(
+                TrackerErrorInvalidRequest(std::string("Invalid GitHub issue key (expected owner/repo#N): ") + key));
         }
         const std::string url =
             baseUrl + "/repos/" + parsed.Owner + "/" + parsed.Repo + "/issues/" + std::to_string(parsed.Number);
@@ -551,16 +552,20 @@ bool FetchIssuesForKeysViaRestApi(const std::string& baseUrl, const std::string&
             TrackerGetLogged("GitHubClient", url, headers, kGitHubFetchConnectTimeoutMs, kGitHubFetchOverallTimeoutMs);
         if (resp.status_code != 200) {
             const std::string msg = ExtractGitHubErrorMessage(static_cast<int>(resp.status_code), resp.text);
-            outError = std::string("GitHub fetch error for ") + key + " (HTTP " + std::to_string(resp.status_code) +
-                       "): " + msg;
+            const std::string outError = std::string("GitHub fetch error for ") + key + " (HTTP " +
+                                         std::to_string(resp.status_code) + "): " + msg;
             LOG_ERROR("GitHubIssueSearch::FetchIssuesForKeysViaRestApi HTTP %ld on %s: %s", resp.status_code,
                       key.c_str(), msg.c_str());
-            return false;
+            // Guard the `!= 200` branch before FromHttpStatus (FIX-1): a 2xx-other → Unknown, never a
+            // dropped Ok(). Detail preserved verbatim for the caller's text checks.
+            if (resp.status_code >= 200 && resp.status_code < 300) {
+                return FetchResult::Err(TrackerErrorUnknown(outError, static_cast<int>(resp.status_code)));
+            }
+            return FetchResult::Err(TrackerErrorFromHttpStatus(static_cast<int>(resp.status_code), outError));
         }
         nlohmann::json parsed_json = nlohmann::json::parse(resp.text, nullptr, false);
         if (parsed_json.is_discarded() || !parsed_json.is_object()) {
-            outError = std::string("Invalid JSON in single-issue response for ") + key;
-            return false;
+            return FetchResult::Err(TrackerErrorParse(std::string("Invalid JSON in single-issue response for ") + key));
         }
         try {
             CachedTicket t = MapIssueOrPullRequestJsonToCachedTicket(parsed_json, parsed.Owner, parsed.Repo);
@@ -570,11 +575,10 @@ bool FetchIssuesForKeysViaRestApi(const std::string& baseUrl, const std::string&
             t.fieldValues.erase(kIsPullRequestSentinel);
             outTickets.push_back(std::move(t));
         } catch (const std::exception& ex) {
-            outError = std::string("Failed to parse issue ") + key + ": " + ex.what();
-            return false;
+            return FetchResult::Err(TrackerErrorParse(std::string("Failed to parse issue ") + key + ": " + ex.what()));
         }
     }
-    return true;
+    return FetchResult::Ok(std::move(outTickets));
 }
 
 } // namespace github

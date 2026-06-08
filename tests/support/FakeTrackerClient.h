@@ -130,17 +130,16 @@ class FakeTrackerClient : public ITrackerBackend,
         return fetchTickets_;
     }
 
-    bool FetchIssuesForKeys(const TrackerConfig& /*cfg*/, const std::vector<std::string>& issueKeys,
-                            const ViewsStore& /*views*/, std::vector<CachedTicket>& outTickets,
-                            std::string& outError) override {
+    Result<std::vector<CachedTicket>, TrackerError> FetchIssuesForKeys(const TrackerConfig& /*cfg*/,
+                                                                       const std::vector<std::string>& issueKeys,
+                                                                       const ViewsStore& /*views*/) override {
         ++fetchIssuesForKeysCalls_;
         fetchIssuesForKeysLastKeys_ = issueKeys;
         if (!fetchIssuesForKeysOk_) {
-            outError = fetchIssuesForKeysError_;
-            return false;
+            return Result<std::vector<CachedTicket>, TrackerError>::Err(
+                TrackerErrorInvalidRequest(fetchIssuesForKeysError_));
         }
-        outTickets = fetchIssuesForKeysTickets_;
-        return true;
+        return Result<std::vector<CachedTicket>, TrackerError>::Ok(fetchIssuesForKeysTickets_);
     }
 
     TrackerError UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) override {

@@ -115,9 +115,9 @@ class JiraClient : public ITrackerBackend,
      * Search by explicit issue keys (same field selection as FetchIssues for `viewStore`).
      * Used to hydrate the local cache when bulk-import rows reference issues outside the current JQL.
      */
-    bool FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
-                            const ViewsStore& viewStore, std::vector<CachedTicket>& outTickets,
-                            std::string& outError) override;
+    Result<std::vector<CachedTicket>, TrackerError> FetchIssuesForKeys(const TrackerConfig& cfg,
+                                                                       const std::vector<std::string>& issueKeys,
+                                                                       const ViewsStore& viewStore) override;
 
     /** GET /rest/api/3/user/search — for matching Perforce users to Jira accounts. */
     bool SearchUsersByQuery(const TrackerConfig& cfg, const std::string& query, std::vector<TrackerUser>& outUsers,

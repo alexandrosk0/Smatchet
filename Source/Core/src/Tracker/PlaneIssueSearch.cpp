@@ -539,11 +539,13 @@ TrackerReachabilityProbeResult PlaneClient::ProbeReachability(const TrackerConfi
     return out;
 }
 
-bool PlaneClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
-                                     const ViewsStore& /*views*/, std::vector<CachedTicket>& outTickets,
-                                     std::string& outError) {
+Result<std::vector<CachedTicket>, TrackerError>
+PlaneClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
+                                const ViewsStore& /*views*/) {
+    using FetchResult = Result<std::vector<CachedTicket>, TrackerError>;
+    std::vector<CachedTicket> outTickets;
     if (issueKeys.empty()) {
-        return true;
+        return FetchResult::Ok(std::move(outTickets));
     }
 
     // Stream pages and early-exit once every requested key has been found. Cuts wall-time and
@@ -575,10 +577,12 @@ bool PlaneClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector
 
     TrackerIssueFetchSummary summary = FetchIssuesStreamed(onBatch, shouldCancel, &cfg, nullptr);
     if (!summary.FetchError.empty()) {
-        outError = summary.FetchError;
-        return false;
+        // FetchIssuesStreamed surfaces only a string (no HTTP status); wrap Unknown with the Detail
+        // preserved verbatim (the caller's IsTrackerTransportErrorText reads the text). TODO(#21b
+        // later slice): thread a TrackerError through the streamed-fetch summary for .Kind.
+        return FetchResult::Err(TrackerErrorUnknown(summary.FetchError));
     }
-    return true;
+    return FetchResult::Ok(std::move(outTickets));
 }
 
 std::string PlaneClient::ExtractProjectFromQuery(const std::string& query) const {
