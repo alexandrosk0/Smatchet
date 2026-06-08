@@ -1,4 +1,5 @@
 #include "AppController.h"
+#include "AppControllerImpl.h" // AppController::Impl — cold sol2/automation member storage (pImpl #19b)
 #include "ILuaBindingHost.h"
 #include "LuaAutomationHost.h"
 
@@ -638,6 +639,7 @@ void LuaAiPromptGlue(sol::this_state L, const std::string& prompt, sol::optional
 } // namespace smatchet_lua_init_detail
 
 void AppController::InitLua() {
+    sol::state& lua = impl_->lua; // pImpl #19b: the sol::state member now lives in AppController::Impl
     InitLuaCore(lua);
     InitLuaUi(lua);
 }
@@ -718,8 +720,8 @@ void AppController::InitLuaUi(sol::state& state) {
 
 void AppController::LuaLogInfoBind(const std::string& msg) {
     const std::string clean = SanitizeLogText(msg);
-    if (luaHost_ && !luaHost_->SnapshotLogSinks().empty()) {
-        for (const auto& sink : luaHost_->SnapshotLogSinks()) {
+    if (impl_->luaHost_ && !impl_->luaHost_->SnapshotLogSinks().empty()) {
+        for (const auto& sink : impl_->luaHost_->SnapshotLogSinks()) {
             sink(clean);
         }
     } else {
@@ -839,7 +841,7 @@ void AppController::LuaRegisterFieldDisplayCachedBind(const std::string& fieldId
     if (fieldId.empty() || !fn.valid()) {
         return;
     }
-    fieldDisplayCachedProviders_[fieldId] = sol::protected_function(std::move(fn));
+    impl_->fieldDisplayCachedProviders_[fieldId] = sol::protected_function(std::move(fn));
     // Bump invalidates every cached entry that holds a (possibly-stale) provider ref. Per-entry
     // input comparison in TryRenderCachedLuaField handles ordinary value changes; this is the
     // explicit "registration churn happened" channel.
@@ -847,7 +849,7 @@ void AppController::LuaRegisterFieldDisplayCachedBind(const std::string& fieldId
 }
 
 void AppController::LuaUnregisterFieldDisplayCachedBind(const std::string& fieldId) {
-    fieldDisplayCachedProviders_.erase(fieldId);
+    impl_->fieldDisplayCachedProviders_.erase(fieldId);
     luaProviderGen_.fetch_add(1);
 }
 
@@ -855,12 +857,12 @@ void AppController::LuaRegisterFieldDisplayCachedByNameBind(const std::string& d
     if (displayName.empty() || !fn.valid()) {
         return;
     }
-    fieldDisplayCachedProvidersByName_[AsciiLowerCopy(displayName)] = sol::protected_function(std::move(fn));
+    impl_->fieldDisplayCachedProvidersByName_[AsciiLowerCopy(displayName)] = sol::protected_function(std::move(fn));
     luaProviderGen_.fetch_add(1);
 }
 
 void AppController::LuaUnregisterFieldDisplayCachedByNameBind(const std::string& displayName) {
-    fieldDisplayCachedProvidersByName_.erase(AsciiLowerCopy(displayName));
+    impl_->fieldDisplayCachedProvidersByName_.erase(AsciiLowerCopy(displayName));
     luaProviderGen_.fetch_add(1);
 }
 
@@ -875,20 +877,20 @@ void AppController::LuaRegisterFieldIconMapBind(const std::string& fieldKey, sol
             inner[ToLowerAsciiCopy(kObj.as<std::string>())] = vObj.as<std::string>();
         }
     });
-    std::lock_guard<std::mutex> lock(fieldIconMapsMutex_);
+    std::lock_guard<std::mutex> lock(impl_->fieldIconMapsMutex_);
     if (byName.value_or(false)) {
-        fieldIconMapsByDisplayName_[ToLowerAsciiCopy(fieldKey)] = std::move(inner);
+        impl_->fieldIconMapsByDisplayName_[ToLowerAsciiCopy(fieldKey)] = std::move(inner);
     } else {
-        fieldIconMapsByFieldId_[fieldKey] = std::move(inner);
+        impl_->fieldIconMapsByFieldId_[fieldKey] = std::move(inner);
     }
 }
 
 void AppController::LuaUnregisterFieldIconMapBind(const std::string& fieldKey, sol::optional<bool> byName) {
-    std::lock_guard<std::mutex> lock(fieldIconMapsMutex_);
+    std::lock_guard<std::mutex> lock(impl_->fieldIconMapsMutex_);
     if (byName.value_or(false)) {
-        fieldIconMapsByDisplayName_.erase(ToLowerAsciiCopy(fieldKey));
+        impl_->fieldIconMapsByDisplayName_.erase(ToLowerAsciiCopy(fieldKey));
     } else {
-        fieldIconMapsByFieldId_.erase(fieldKey);
+        impl_->fieldIconMapsByFieldId_.erase(fieldKey);
     }
 }
 
@@ -903,14 +905,14 @@ bool AppController::LuaImGuiImageBind(const std::string& path, float w, float h)
 void AppController::ApplyOrQueueLuaWindowOp(PendingLuaWindowOp op) {
     // UI-thread-only. See plan §Explicit window invalidation (F1).
     if (inDrawLuaWindows_) {
-        pendingLuaWindowOps_.push_back(std::move(op));
+        impl_->pendingLuaWindowOps_.push_back(std::move(op));
         return;
     }
     switch (op.kind) {
     case PendingLuaWindowOp::Kind::Invalidate: {
-        auto it = std::find_if(luaWindows_.begin(), luaWindows_.end(),
+        auto it = std::find_if(impl_->luaWindows_.begin(), impl_->luaWindows_.end(),
                                [&](const LuaWindowEntry& w) { return w.name == op.name; });
-        if (it != luaWindows_.end()) {
+        if (it != impl_->luaWindows_.end()) {
             it->dirty = true;
             it->hasError = false;
             it->errorMessage.clear();
@@ -919,21 +921,21 @@ void AppController::ApplyOrQueueLuaWindowOp(PendingLuaWindowOp op) {
         break;
     }
     case PendingLuaWindowOp::Kind::Register: {
-        auto it = std::find_if(luaWindows_.begin(), luaWindows_.end(),
+        auto it = std::find_if(impl_->luaWindows_.begin(), impl_->luaWindows_.end(),
                                [&](const LuaWindowEntry& w) { return w.name == op.name; });
-        if (it != luaWindows_.end())
-            luaWindows_.erase(it);
+        if (it != impl_->luaWindows_.end())
+            impl_->luaWindows_.erase(it);
         LuaWindowEntry e;
         e.name = op.name;
         e.drawFn = std::move(op.drawFn);
         e.dirty = true;
-        luaWindows_.push_back(std::move(e));
+        impl_->luaWindows_.push_back(std::move(e));
         break;
     }
     case PendingLuaWindowOp::Kind::Unregister:
-        luaWindows_.erase(std::remove_if(luaWindows_.begin(), luaWindows_.end(),
-                                         [&](const LuaWindowEntry& w) { return w.name == op.name; }),
-                          luaWindows_.end());
+        impl_->luaWindows_.erase(std::remove_if(impl_->luaWindows_.begin(), impl_->luaWindows_.end(),
+                                                [&](const LuaWindowEntry& w) { return w.name == op.name; }),
+                                 impl_->luaWindows_.end());
         break;
     }
 }
@@ -990,15 +992,15 @@ void AppController::LuaUiInvalidateFieldCacheBind(sol::optional<std::string> tic
     const bool hasField = static_cast<bool>(fieldId);
     auto apply = [this, hasTicket, hasField, tid, fid]() {
         if (!hasTicket) {
-            luaFieldCache_.clear();
+            impl_->luaFieldCache_.clear();
             return;
         }
         if (!hasField) {
-            for (auto it = luaFieldCache_.begin(); it != luaFieldCache_.end();) {
+            for (auto it = impl_->luaFieldCache_.begin(); it != impl_->luaFieldCache_.end();) {
                 const std::string& key = it->first;
                 const std::size_t nul = key.find('\0');
                 if (nul != std::string::npos && key.compare(0, nul, tid) == 0)
-                    it = luaFieldCache_.erase(it);
+                    it = impl_->luaFieldCache_.erase(it);
                 else
                     ++it;
             }
@@ -1007,7 +1009,7 @@ void AppController::LuaUiInvalidateFieldCacheBind(sol::optional<std::string> tic
         std::string key = tid;
         key.push_back('\0');
         key.append(fid);
-        luaFieldCache_.erase(key);
+        impl_->luaFieldCache_.erase(key);
     };
     if (IsOnUiThread()) {
         apply();
@@ -1019,25 +1021,25 @@ void AppController::LuaUiInvalidateFieldCacheBind(sol::optional<std::string> tic
 void AppController::NotifyLuaTicketDataChanged() { luaWindowDataGen_.fetch_add(1); }
 
 void AppController::LuaUiRegisterTicketActionBind(const std::string& name, const std::string& callbackFuncName) {
-    std::lock_guard<std::mutex> lock(luaActionsMutex_);
-    luaTicketActions_.erase(
-        std::remove_if(luaTicketActions_.begin(), luaTicketActions_.end(),
+    std::lock_guard<std::mutex> lock(impl_->luaActionsMutex_);
+    impl_->luaTicketActions_.erase(
+        std::remove_if(impl_->luaTicketActions_.begin(), impl_->luaTicketActions_.end(),
                        [&](const std::pair<std::string, std::string>& p) { return p.first == name; }),
-        luaTicketActions_.end());
+        impl_->luaTicketActions_.end());
     if (!callbackFuncName.empty()) {
-        luaTicketActions_.push_back({name, callbackFuncName});
+        impl_->luaTicketActions_.push_back({name, callbackFuncName});
     }
 }
 
 void AppController::LuaUiRegisterGlobalActionBind(const std::string& name, const std::string& callbackFuncName) {
     {
-        std::lock_guard<std::mutex> lock(luaActionsMutex_);
-        luaGlobalActions_.erase(
-            std::remove_if(luaGlobalActions_.begin(), luaGlobalActions_.end(),
+        std::lock_guard<std::mutex> lock(impl_->luaActionsMutex_);
+        impl_->luaGlobalActions_.erase(
+            std::remove_if(impl_->luaGlobalActions_.begin(), impl_->luaGlobalActions_.end(),
                            [&](const std::pair<std::string, std::string>& p) { return p.first == name; }),
-            luaGlobalActions_.end());
+            impl_->luaGlobalActions_.end());
         if (!callbackFuncName.empty()) {
-            luaGlobalActions_.push_back({name, callbackFuncName});
+            impl_->luaGlobalActions_.push_back({name, callbackFuncName});
         }
     }
     // commandRegistry_ has its own internal locking; do NOT hold luaActionsMutex_ across this
@@ -1101,40 +1103,40 @@ void AppController::LuaMcpRegisterToolBind(sol::table toolDef, sol::function cal
     ParseMcpToolDef(toolDef, def);
     def.callback = sol::protected_function(std::move(callback));
 
-    std::lock_guard<std::mutex> lock(luaMcpToolsMutex_);
-    luaMcpTools_.erase(std::remove_if(luaMcpTools_.begin(), luaMcpTools_.end(),
-                                      [&](const McpToolDefinition& d) { return d.name == def.name; }),
-                       luaMcpTools_.end());
+    std::lock_guard<std::mutex> lock(impl_->luaMcpToolsMutex_);
+    impl_->luaMcpTools_.erase(std::remove_if(impl_->luaMcpTools_.begin(), impl_->luaMcpTools_.end(),
+                                             [&](const McpToolDefinition& d) { return d.name == def.name; }),
+                              impl_->luaMcpTools_.end());
 
-    luaMcpTools_.push_back(std::move(def));
+    impl_->luaMcpTools_.push_back(std::move(def));
 }
 
 void AppController::ClearLuaTicketContextGlue() {
     // Clear every container that holds sol::protected_function refs BEFORE nulling the
-    // __smatchet_app pointer. RAII reverse-declaration destruction in ~AppController already
-    // destroys these containers before `lua` (member-order invariant in AppController.h), but
+    // __smatchet_app pointer. RAII reverse-declaration destruction already destroys these
+    // containers before `lua` (member-order invariant inside AppController::Impl), but
     // belt-and-suspenders: explicitly drop the handles here so a future re-ordering can't
     // turn this into a UAF. See plan §Shutdown ordering.
-    luaFieldCache_.clear();
-    fieldDisplayCachedProviders_.clear();
-    fieldDisplayCachedProvidersByName_.clear();
-    luaWindows_.clear();
-    pendingLuaWindowOps_.clear();
-    lua["__smatchet_app"] = sol::lua_nil;
-    lua["__smatchet_app_ui"] = sol::lua_nil;
+    impl_->luaFieldCache_.clear();
+    impl_->fieldDisplayCachedProviders_.clear();
+    impl_->fieldDisplayCachedProvidersByName_.clear();
+    impl_->luaWindows_.clear();
+    impl_->pendingLuaWindowOps_.clear();
+    impl_->lua["__smatchet_app"] = sol::lua_nil;
+    impl_->lua["__smatchet_app_ui"] = sol::lua_nil;
 }
 
 void AppController::RunAutoScript(const std::string& scriptPath, const std::vector<std::string>& selectedIds,
                                   bool processAll) {
-    std::lock_guard<std::mutex> lock(automationJobMutex_);
-    automationJobs_.push_back({AutomationJob::Type::RunAutoScript, scriptPath, selectedIds, "", processAll});
-    automationJobCv_.notify_one();
+    std::lock_guard<std::mutex> lock(impl_->automationJobMutex_);
+    impl_->automationJobs_.push_back({AutomationJob::Type::RunAutoScript, scriptPath, selectedIds, "", processAll});
+    impl_->automationJobCv_.notify_one();
 }
 
 void AppController::RunFlatScriptAsync(const std::string& scriptPath) {
-    std::lock_guard<std::mutex> lock(automationJobMutex_);
-    automationJobs_.push_back({AutomationJob::Type::RunFlatScript, scriptPath, {}, ""});
-    automationJobCv_.notify_one();
+    std::lock_guard<std::mutex> lock(impl_->automationJobMutex_);
+    impl_->automationJobs_.push_back({AutomationJob::Type::RunFlatScript, scriptPath, {}, ""});
+    impl_->automationJobCv_.notify_one();
 }
 
 void AppController::PrepareFreshLuaState(sol::state& state) {
@@ -1151,8 +1153,8 @@ void AppController::ReplayActiveSetupScripts(sol::state& state, sol::environment
     // iteration below sees a stable view even if the UI thread mutates the vector mid-job.
     std::vector<std::string> setupScriptsSnapshot;
     {
-        std::lock_guard<std::mutex> lock(automationJobMutex_);
-        setupScriptsSnapshot = activeSetupScripts_;
+        std::lock_guard<std::mutex> lock(impl_->automationJobMutex_);
+        setupScriptsSnapshot = impl_->activeSetupScripts_;
     }
 
     // Load and run setup scripts so global actions / mcp.register_tool definitions are
@@ -1206,15 +1208,16 @@ void AppController::AutomationWorkerLoop() {
     while (true) {
         AutomationJob job;
         {
-            std::unique_lock<std::mutex> lock(automationJobMutex_);
-            automationJobCv_.wait(lock, [this]() {
-                return shuttingDown_.load() || automationWorkerShuttingDown_.load() || !automationJobs_.empty();
+            std::unique_lock<std::mutex> lock(impl_->automationJobMutex_);
+            impl_->automationJobCv_.wait(lock, [this]() {
+                return shuttingDown_.load() || impl_->automationWorkerShuttingDown_.load() ||
+                       !impl_->automationJobs_.empty();
             });
-            if (shuttingDown_.load() || automationWorkerShuttingDown_.load()) {
+            if (shuttingDown_.load() || impl_->automationWorkerShuttingDown_.load()) {
                 break;
             }
-            job = std::move(automationJobs_.front());
-            automationJobs_.pop_front();
+            job = std::move(impl_->automationJobs_.front());
+            impl_->automationJobs_.pop_front();
         }
 
         try {
@@ -1386,8 +1389,8 @@ void AppController::RunLuaSetupScript(const std::string& scriptPath) {
     auto logErr = [this](const char* prefix, const std::string& detail) {
         const std::string bare = std::string(prefix) + detail;
         const std::string decorated = std::string("[ERROR] ") + bare;
-        if (luaHost_ && !luaHost_->SnapshotLogSinks().empty()) {
-            for (const auto& sink : luaHost_->SnapshotLogSinks()) {
+        if (impl_->luaHost_ && !impl_->luaHost_->SnapshotLogSinks().empty()) {
+            for (const auto& sink : impl_->luaHost_->SnapshotLogSinks()) {
                 sink(decorated);
             }
         } else {
@@ -1408,16 +1411,17 @@ void AppController::RunLuaSetupScript(const std::string& scriptPath) {
     // activeSetupScripts_ is read by AutomationWorkerLoop on the worker thread — every mutation
     // must take automationJobMutex_ so the worker's snapshot copy sees a consistent vector.
     {
-        std::lock_guard<std::mutex> lock(automationJobMutex_);
-        if (std::find(activeSetupScripts_.begin(), activeSetupScripts_.end(), scriptPath) ==
-            activeSetupScripts_.end()) {
-            activeSetupScripts_.push_back(scriptPath);
+        std::lock_guard<std::mutex> lock(impl_->automationJobMutex_);
+        if (std::find(impl_->activeSetupScripts_.begin(), impl_->activeSetupScripts_.end(), scriptPath) ==
+            impl_->activeSetupScripts_.end()) {
+            impl_->activeSetupScripts_.push_back(scriptPath);
         }
     }
 
     LOG_TRACE("RunLuaSetupScript: begin path=%s scriptPath=%s", path.c_str(), scriptPath.c_str());
     FieldEditAuditSource::ScopedOverride luaSource(FieldEditAuditSource::kLua);
 
+    sol::state& lua = impl_->lua; // pImpl #19b: the sol::state member now lives in AppController::Impl
     sol::environment sandbox = CreateSandboxEnvironment(lua);
     sol::load_result script = lua.load_file(path);
     if (!script.valid()) {

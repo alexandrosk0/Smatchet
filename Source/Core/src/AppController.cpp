@@ -16,6 +16,7 @@
 #endif
 
 #include "AppController.h"
+#include "AppControllerImpl.h"
 #include "GridContextDepsAdapter.h"
 #include "GridPaneEvictionPolicy.h"
 
@@ -411,13 +412,11 @@ namespace {
 const std::chrono::milliseconds kHiddenContextGrace(30000);
 } // namespace
 
-// pImpl (hardening #19): COLD, sol2-/subsystem-heavy state moved off AppController.h so
-// the header no longer needs <sol/sol.hpp>. Defined here where Impl's member types are
-// complete. Step 19a introduces it empty (pure plumbing, no behaviour change); 19b migrates
-// the cold member block in. The out-of-line ctor/dtor below keep the incomplete-type
-// unique_ptr<Impl> in the header legal.
-struct AppController::Impl {};
-
+// pImpl (hardening #19): COLD, sol2-/subsystem-heavy state moved off AppController.h so the
+// header no longer needs <sol/sol.hpp>. `struct AppController::Impl` is now defined in the
+// src-only AppControllerImpl.h (included above) where its sol2 / subsystem member types are
+// complete. The out-of-line ctor/dtor here keep the incomplete-type unique_ptr<Impl> in the
+// header legal.
 AppController::AppController() : impl_(std::make_unique<Impl>()) {
     // Multi-grid (ADR-0018): the default context is created here — not lazily — and is
     // PERMANENT, so focusedContext()'s fallback stays valid for the controller's entire
@@ -793,7 +792,7 @@ AppController::~AppController() {
     // dispatcher safely BeginShutdown(), because callbacks already in flight will
     // hand off through `mainThreadDispatcher.PostToMainThread` (still accepting posts
     // at this instant) and the controller's join blocks until those callbacks return.
-    aiAssistant_.reset();
+    impl_->aiAssistant_.reset();
     // Phase 3 of ai-chat-claude-desktop-parity. Stop the chat-persist worker after
     // the AI assistant finishes (no more new Enqueue calls from a streaming callback)
     // but BEFORE `mainThreadDispatcher.BeginShutdown()` and before LCM destructs at
@@ -817,16 +816,16 @@ AppController::~AppController() {
 
     {
 
-        std::lock_guard<std::mutex> lock(automationJobMutex_);
+        std::lock_guard<std::mutex> lock(impl_->automationJobMutex_);
 
-        automationWorkerShuttingDown_.store(true);
+        impl_->automationWorkerShuttingDown_.store(true);
     }
 
-    automationJobCv_.notify_all();
+    impl_->automationJobCv_.notify_all();
 
-    if (automationWorker_.joinable()) {
+    if (impl_->automationWorker_.joinable()) {
 
-        automationWorker_.join();
+        impl_->automationWorker_.join();
     }
 
 #endif
@@ -1162,21 +1161,21 @@ std::string PrefixMcpActivityLine(const std::string& msg) {
 
 void AppController::AppendMcpActivity(const std::string& line) {
 
-    std::lock_guard<std::mutex> lock(mcpActivityMutex_);
+    std::lock_guard<std::mutex> lock(impl_->mcpActivityMutex_);
 
-    mcpActivityLog_.push_back(PrefixMcpActivityLine(line));
+    impl_->mcpActivityLog_.push_back(PrefixMcpActivityLine(line));
 
-    while (mcpActivityLog_.size() > kMcpActivityLogMax) {
+    while (impl_->mcpActivityLog_.size() > impl_->kMcpActivityLogMax) {
 
-        mcpActivityLog_.pop_front();
+        impl_->mcpActivityLog_.pop_front();
     }
 }
 
 std::vector<std::string> AppController::CopyMcpActivityLog() const {
 
-    std::lock_guard<std::mutex> lock(mcpActivityMutex_);
+    std::lock_guard<std::mutex> lock(impl_->mcpActivityMutex_);
 
-    return std::vector<std::string>(mcpActivityLog_.begin(), mcpActivityLog_.end());
+    return std::vector<std::string>(impl_->mcpActivityLog_.begin(), impl_->mcpActivityLog_.end());
 }
 
 void AppController::NotifyMcpClientHttpActivity() {
@@ -1292,8 +1291,8 @@ void AppController::OpenUrl(const std::string& url) const {
 // the item 14 extraction. Thin delegators below.
 
 void AppController::AddAutomationLogSink(std::function<void(const std::string&)> sink) {
-    if (luaHost_) {
-        luaHost_->AddAutomationLogSink(std::move(sink));
+    if (impl_->luaHost_) {
+        impl_->luaHost_->AddAutomationLogSink(std::move(sink));
     } else {
         // OnEarlyInit fires before Initialize constructs luaHost_. Buffer the sink;
         // Initialize drains pendingLogSinks_ into luaHost_ immediately after construction.
@@ -1304,8 +1303,8 @@ void AppController::AddAutomationLogSink(std::function<void(const std::string&)>
 }
 
 void AppController::ClearAutomationLogSinks() {
-    if (luaHost_) {
-        luaHost_->ClearAutomationLogSinks();
+    if (impl_->luaHost_) {
+        impl_->luaHost_->ClearAutomationLogSinks();
     }
 }
 
@@ -1622,13 +1621,13 @@ void AppController::InitConfig(const std::string& dbPath, const std::string& bac
     }
     // Construct LuaAutomationHost so `AddAutomationLogSink` calls from plugins'
     // OnEarlyInit have a target (item 14 extraction, Phase 1A).
-    if (!luaHost_) {
-        luaHost_ = std::make_unique<LuaAutomationHost>();
+    if (!impl_->luaHost_) {
+        impl_->luaHost_ = std::make_unique<LuaAutomationHost>();
     }
     // Drain sinks buffered by AddAutomationLogSink calls during OnEarlyInit (which runs
     // before Initialize). From this point forward AddAutomationLogSink forwards directly.
     for (auto& s : pendingLogSinks_) {
-        luaHost_->AddAutomationLogSink(std::move(s));
+        impl_->luaHost_->AddAutomationLogSink(std::move(s));
     }
     pendingLogSinks_.clear();
 
@@ -2005,7 +2004,7 @@ void AppController::InitPlugins(const std::string& activeTrackerType) {
 
     RunLuaSetupScript("SmatchetHooks.lua");
 
-    automationWorker_ = std::thread(&AppController::AutomationWorkerLoop, this);
+    impl_->automationWorker_ = std::thread(&AppController::AutomationWorkerLoop, this);
 
 #endif
 
@@ -2095,18 +2094,20 @@ void AppController::InitCommands() {
     // controller spawns its worker thread in its own constructor — no further wiring
     // needed. Lifetime contract: destroyed at the top of ~AppController.
     try {
-        aiAssistant_ = std::make_unique<AiAssistantController>(*this);
+        impl_->aiAssistant_ = std::make_unique<AiAssistantController>(*this);
     } catch (const std::exception& ex) {
         LOG_ERROR("AppController::Initialize: AiAssistantController init failed: %s", ex.what());
-        aiAssistant_.reset();
+        impl_->aiAssistant_.reset();
     } catch (...) {
         LOG_ERROR("AppController::Initialize: AiAssistantController init failed: unknown exception");
-        aiAssistant_.reset();
+        impl_->aiAssistant_.reset();
     }
 #endif
 }
 
 #if defined(SMATCHET_WITH_AI)
+bool AppController::HasAiAssistantController() const { return impl_->aiAssistant_ != nullptr; }
+
 AiAssistantController& AppController::GetAiAssistantController() {
     // No lazy construction. Callers MUST guard with HasAiAssistantController()
     // first — the controller is constructed exactly once at the end of
@@ -2119,14 +2120,14 @@ AiAssistantController& AppController::GetAiAssistantController() {
     // throw on a bad provider, but the try/catch in Initialize already swallows
     // the exception and leaves aiAssistant_ null — at which point
     // HasAiAssistantController() correctly returns false and callers handle it.
-    return *aiAssistant_; // pre-condition: HasAiAssistantController() == true
+    return *impl_->aiAssistant_; // pre-condition: HasAiAssistantController() == true
 }
 #endif
 
 void AppController::AddAiContext(const AiContextBlock& block) {
 #if defined(SMATCHET_WITH_AI)
-    if (aiAssistant_) {
-        aiAssistant_->AddAiContext(block);
+    if (impl_->aiAssistant_) {
+        impl_->aiAssistant_->AddAiContext(block);
     }
 #else
     (void)block;
@@ -2135,16 +2136,16 @@ void AppController::AddAiContext(const AiContextBlock& block) {
 
 void AppController::ClearAiContext() {
 #if defined(SMATCHET_WITH_AI)
-    if (aiAssistant_) {
-        aiAssistant_->ClearAiContext();
+    if (impl_->aiAssistant_) {
+        impl_->aiAssistant_->ClearAiContext();
     }
 #endif
 }
 
 std::vector<AiContextBlock> AppController::GetAiContext() const {
 #if defined(SMATCHET_WITH_AI)
-    if (aiAssistant_) {
-        return aiAssistant_->GetAiContext();
+    if (impl_->aiAssistant_) {
+        return impl_->aiAssistant_->GetAiContext();
     }
 #endif
     return {};
@@ -2152,14 +2153,14 @@ std::vector<AiContextBlock> AppController::GetAiContext() const {
 
 void AppController::PromptAi(const std::string& prompt) {
 #if defined(SMATCHET_WITH_AI)
-    if (aiAssistant_) {
+    if (impl_->aiAssistant_) {
         // Use a process-local counter so the panel-side and Lua-side turn-gens never
         // collide. Reading `g_ui.assistantTurnGen` would be safer but pulls a UI-side
         // global into AppController; for Phase B the controller's caller (the UI panel)
         // owns the gen-counter mutation and Lua glue lands in Phase E.
         static std::atomic<uint64_t> s_promptAiSeq{1ULL << 32};
         const uint64_t turnGen = s_promptAiSeq.fetch_add(1, std::memory_order_relaxed);
-        aiAssistant_->Submit(turnGen, prompt, aiAssistant_->GetAiContext());
+        impl_->aiAssistant_->Submit(turnGen, prompt, impl_->aiAssistant_->GetAiContext());
     }
 #else
     (void)prompt;

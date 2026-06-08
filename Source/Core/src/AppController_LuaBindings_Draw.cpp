@@ -8,6 +8,7 @@
 // functions defined in AppController_LuaBindings.cpp.
 
 #include "AppController.h"
+#include "AppControllerImpl.h" // AppController::Impl — cold sol2/automation member storage (pImpl #19b)
 #include "ILuaBindingHost.h"
 #include "LuaAutomationHost.h"
 
@@ -502,13 +503,13 @@ void InvokeCachedFieldProvider(sol::state& lua, sol::protected_function& provide
 
 sol::protected_function* AppController::ResolveLuaFieldProvider(const std::string& fieldId,
                                                                 const TrackerField* fieldMeta) {
-    const auto itId = fieldDisplayCachedProviders_.find(fieldId);
-    if (itId != fieldDisplayCachedProviders_.end() && itId->second.valid()) {
+    const auto itId = impl_->fieldDisplayCachedProviders_.find(fieldId);
+    if (itId != impl_->fieldDisplayCachedProviders_.end() && itId->second.valid()) {
         return &itId->second;
     }
-    if (fieldMeta && !fieldMeta->Name.empty() && !fieldDisplayCachedProvidersByName_.empty()) {
-        const auto itName = fieldDisplayCachedProvidersByName_.find(AsciiLowerCopy(fieldMeta->Name));
-        if (itName != fieldDisplayCachedProvidersByName_.end() && itName->second.valid()) {
+    if (fieldMeta && !fieldMeta->Name.empty() && !impl_->fieldDisplayCachedProvidersByName_.empty()) {
+        const auto itName = impl_->fieldDisplayCachedProvidersByName_.find(AsciiLowerCopy(fieldMeta->Name));
+        if (itName != impl_->fieldDisplayCachedProvidersByName_.end() && itName->second.valid()) {
             return &itName->second;
         }
     }
@@ -528,6 +529,7 @@ void AppController::SurfaceLuaFieldError(const std::string& fieldName, const std
 bool AppController::TryRenderCachedLuaField(const std::string& fieldId, const CachedTicket& ticket,
                                             const std::string& rawValue, float availWidth,
                                             const TrackerField* fieldMeta, bool allowEdits) {
+    sol::state& lua = impl_->lua; // pImpl #19b: the sol::state member now lives in AppController::Impl
     // 1. Provider lookup — by field id first, then lowercased display name.
     sol::protected_function* providerSlot = ResolveLuaFieldProvider(fieldId, fieldMeta);
     if (providerSlot == nullptr)
@@ -544,8 +546,8 @@ bool AppController::TryRenderCachedLuaField(const std::string& fieldId, const Ca
     std::string key = ticket.id;
     key.push_back('\0');
     key.append(fieldId);
-    auto cit = luaFieldCache_.find(key);
-    if (cit != luaFieldCache_.end()) {
+    auto cit = impl_->luaFieldCache_.find(key);
+    if (cit != impl_->luaFieldCache_.end()) {
         LuaFieldCacheEntry& entry = cit->second;
         const bool inputsMatch = entry.rawValue == rawValue && entry.fieldName == fieldName &&
                                  entry.intAvailWidth == intAvailWidth && entry.isReadOnly == isReadOnly &&
@@ -599,7 +601,7 @@ bool AppController::TryRenderCachedLuaField(const std::string& fieldId, const Ca
         // Replay the freshly-recorded list immediately so this frame paints.
         ReplayCmdList(entry.cmds, *this, lua, ticket.id, fieldId, entry.isReadOnly);
     }
-    luaFieldCache_[key] = std::move(entry);
+    impl_->luaFieldCache_[key] = std::move(entry);
     return handled;
 }
 
@@ -612,6 +614,7 @@ bool AppController::ScenarioRegisterLuaCachedProvider(const std::string& fieldId
                                                       const std::vector<std::string>& extraScripts,
                                                       std::string& outError) {
     namespace fs = ghc::filesystem;
+    sol::state& lua = impl_->lua; // pImpl #19b: the sol::state member now lives in AppController::Impl
     outError.clear();
     if (fieldId.empty() || luaFnName.empty()) {
         outError = "fieldId and luaFnName required";
@@ -688,16 +691,16 @@ bool AppController::ScenarioRegisterLuaCachedProvider(const std::string& fieldId
     // Stash any pre-existing user-side provider so Unregister can restore it. Tracked
     // separately for "had a provider" vs "had nothing" so we never accidentally synthesise
     // an empty entry on restore.
-    auto existing = fieldDisplayCachedProviders_.find(fieldId);
-    if (existing != fieldDisplayCachedProviders_.end()) {
-        scenarioPriorFieldProviders_[fieldId] = existing->second;
-        scenarioPriorEmptyFields_.erase(fieldId);
+    auto existing = impl_->fieldDisplayCachedProviders_.find(fieldId);
+    if (existing != impl_->fieldDisplayCachedProviders_.end()) {
+        impl_->scenarioPriorFieldProviders_[fieldId] = existing->second;
+        impl_->scenarioPriorEmptyFields_.erase(fieldId);
     } else {
-        scenarioPriorFieldProviders_.erase(fieldId);
-        scenarioPriorEmptyFields_.insert(fieldId);
+        impl_->scenarioPriorFieldProviders_.erase(fieldId);
+        impl_->scenarioPriorEmptyFields_.insert(fieldId);
     }
 
-    fieldDisplayCachedProviders_[fieldId] = std::move(fn);
+    impl_->fieldDisplayCachedProviders_[fieldId] = std::move(fn);
     luaProviderGen_.fetch_add(1);
     LOG_INFO("ScenarioRegisterLuaCachedProvider: bound field=%s fn=%s", fieldId.c_str(), luaFnName.c_str());
     return true;
@@ -705,28 +708,28 @@ bool AppController::ScenarioRegisterLuaCachedProvider(const std::string& fieldId
 
 void AppController::ScenarioUnregisterLuaCachedProvider(const std::string& fieldId) {
     // Restore the user-side provider that Register displaced, or erase if there was none.
-    auto priorIt = scenarioPriorFieldProviders_.find(fieldId);
-    const bool hadPrior = (priorIt != scenarioPriorFieldProviders_.end());
-    const bool hadEmptyPrior = scenarioPriorEmptyFields_.count(fieldId) > 0;
+    auto priorIt = impl_->scenarioPriorFieldProviders_.find(fieldId);
+    const bool hadPrior = (priorIt != impl_->scenarioPriorFieldProviders_.end());
+    const bool hadEmptyPrior = impl_->scenarioPriorEmptyFields_.count(fieldId) > 0;
     if (!hadPrior && !hadEmptyPrior) {
         // Field was never registered through the scenario surface — leave alone.
         return;
     }
 
     if (hadPrior) {
-        fieldDisplayCachedProviders_[fieldId] = std::move(priorIt->second);
-        scenarioPriorFieldProviders_.erase(priorIt);
+        impl_->fieldDisplayCachedProviders_[fieldId] = std::move(priorIt->second);
+        impl_->scenarioPriorFieldProviders_.erase(priorIt);
     } else {
-        fieldDisplayCachedProviders_.erase(fieldId);
+        impl_->fieldDisplayCachedProviders_.erase(fieldId);
     }
-    scenarioPriorEmptyFields_.erase(fieldId);
+    impl_->scenarioPriorEmptyFields_.erase(fieldId);
     luaProviderGen_.fetch_add(1);
 
-    for (auto it = luaFieldCache_.begin(); it != luaFieldCache_.end();) {
+    for (auto it = impl_->luaFieldCache_.begin(); it != impl_->luaFieldCache_.end();) {
         const std::string& key = it->first;
         const std::size_t nul = key.find('\0');
         if (nul != std::string::npos && key.compare(nul + 1, std::string::npos, fieldId) == 0) {
-            it = luaFieldCache_.erase(it);
+            it = impl_->luaFieldCache_.erase(it);
         } else {
             ++it;
         }
@@ -735,7 +738,7 @@ void AppController::ScenarioUnregisterLuaCachedProvider(const std::string& field
              hadPrior ? "user-provider" : "(none)");
 }
 
-void AppController::ScenarioInvalidateLuaFieldCache() { luaFieldCache_.clear(); }
+void AppController::ScenarioInvalidateLuaFieldCache() { impl_->luaFieldCache_.clear(); }
 
 bool AppController::TryGetFieldIconMapTarget(const std::string& fieldId, const TrackerField* field,
                                              const std::string& rawValue, std::string& outPathOrUrl) const {
@@ -776,12 +779,12 @@ bool AppController::TryGetFieldIconMapTarget(const std::string& fieldId, const T
         return false;
     };
 
-    std::lock_guard<std::mutex> lock(fieldIconMapsMutex_);
-    if (lookupInner(fieldIconMapsByFieldId_, fieldId)) {
+    std::lock_guard<std::mutex> lock(impl_->fieldIconMapsMutex_);
+    if (lookupInner(impl_->fieldIconMapsByFieldId_, fieldId)) {
         return true;
     }
     if (field != nullptr && !field->Name.empty()) {
-        if (lookupInner(fieldIconMapsByDisplayName_, ToLowerAsciiCopy(field->Name))) {
+        if (lookupInner(impl_->fieldIconMapsByDisplayName_, ToLowerAsciiCopy(field->Name))) {
             return true;
         }
     }
@@ -804,8 +807,8 @@ std::string McpLuaResultToString(sol::protected_function_result& result) {
 } // namespace
 
 std::vector<AppController::McpToolDefinition> AppController::GetLuaMcpTools() const {
-    std::lock_guard<std::mutex> lock(luaMcpToolsMutex_);
-    return luaMcpTools_;
+    std::lock_guard<std::mutex> lock(impl_->luaMcpToolsMutex_);
+    return impl_->luaMcpTools_;
 }
 
 std::string AppController::ExecuteLuaMcpTool(const std::string& name, const std::string& paramsJson,
@@ -815,8 +818,8 @@ std::string AppController::ExecuteLuaMcpTool(const std::string& name, const std:
     // paying fresh-state setup. (The MCP dispatcher already gates on GetLuaMcpTools,
     // so this is defensive.)
     {
-        std::lock_guard<std::mutex> lock(luaMcpToolsMutex_);
-        const bool known = std::any_of(luaMcpTools_.begin(), luaMcpTools_.end(),
+        std::lock_guard<std::mutex> lock(impl_->luaMcpToolsMutex_);
+        const bool known = std::any_of(impl_->luaMcpTools_.begin(), impl_->luaMcpTools_.end(),
                                        [&](const McpToolDefinition& tool) { return tool.name == name; });
         if (!known) {
             outError = "Tool not found";
@@ -969,6 +972,7 @@ bool AppController::ExecuteLuaConsoleSnippet(const std::string& code, std::strin
 
     LOG_TRACE("ExecuteLuaConsoleSnippet: begin code_len=%zu", code.size());
 
+    sol::state& lua = impl_->lua; // pImpl #19b: the sol::state member now lives in AppController::Impl
     sol::environment sandbox = CreateSandboxEnvironment(lua);
     sol::load_result script = lua.load(code, "lua_console.oneshot");
     if (!script.valid()) {
@@ -1088,6 +1092,7 @@ std::string AppController::ExecuteLuaScriptForMcp(const std::string& scriptName,
 
 void AppController::RecordLuaWindow(smatchet::lua::LuaWindowEntry& w, std::uint64_t curDataGen,
                                     std::uint64_t curProviderGen) {
+    sol::state& lua = impl_->lua; // pImpl #19b: the sol::state member now lives in AppController::Impl
     auto rec = std::make_shared<LuaDrawList>();
     FieldEditAuditSource::ScopedOverride luaSource(FieldEditAuditSource::kLua);
     sol::protected_function drawFnCopy = w.drawFn; // Crash-safety §C3
@@ -1146,12 +1151,13 @@ void AppController::RecordLuaWindow(smatchet::lua::LuaWindowEntry& w, std::uint6
 }
 
 void AppController::DrawLuaWindows() {
+    sol::state& lua = impl_->lua; // pImpl #19b: the sol::state member now lives in AppController::Impl
     // Recorded-cmd-list draw path. The Lua draw fn runs only on a dirty / gen-mismatch
     // frame; otherwise we replay the cached recording. See plan §Window draw.
     inDrawLuaWindows_ = true;
     const std::uint64_t curDataGen = luaWindowDataGen_.load();
     const std::uint64_t curProviderGen = luaProviderGen_.load();
-    for (LuaWindowEntry& w : luaWindows_) {
+    for (LuaWindowEntry& w : impl_->luaWindows_) {
         if (!w.drawFn.valid())
             continue;
         bool open = true;
@@ -1187,33 +1193,33 @@ void AppController::DrawLuaWindows() {
     // Drain ops enqueued mid-iteration (button callbacks that called register/unregister/
     // invalidate). ApplyOrQueueLuaWindowOp now hits the direct-mutation path because the
     // flag flipped to false.
-    if (!pendingLuaWindowOps_.empty()) {
+    if (!impl_->pendingLuaWindowOps_.empty()) {
         std::vector<PendingLuaWindowOp> drained;
-        drained.swap(pendingLuaWindowOps_);
+        drained.swap(impl_->pendingLuaWindowOps_);
         for (PendingLuaWindowOp& op : drained) {
             ApplyOrQueueLuaWindowOp(std::move(op));
         }
     }
 
-    luaWindows_.erase(std::remove_if(luaWindows_.begin(), luaWindows_.end(),
-                                     [](const LuaWindowEntry& w) { return !w.drawFn.valid(); }),
-                      luaWindows_.end());
+    impl_->luaWindows_.erase(std::remove_if(impl_->luaWindows_.begin(), impl_->luaWindows_.end(),
+                                            [](const LuaWindowEntry& w) { return !w.drawFn.valid(); }),
+                             impl_->luaWindows_.end());
 }
 
 std::vector<std::string> AppController::GetLuaTicketActionNames() const {
-    std::lock_guard<std::mutex> lock(luaActionsMutex_);
+    std::lock_guard<std::mutex> lock(impl_->luaActionsMutex_);
     std::vector<std::string> names;
-    names.reserve(luaTicketActions_.size());
-    std::transform(luaTicketActions_.begin(), luaTicketActions_.end(), std::back_inserter(names),
+    names.reserve(impl_->luaTicketActions_.size());
+    std::transform(impl_->luaTicketActions_.begin(), impl_->luaTicketActions_.end(), std::back_inserter(names),
                    [](const auto& pair) { return pair.first; });
     return names;
 }
 
 std::vector<std::string> AppController::GetLuaGlobalActionNames() const {
-    std::lock_guard<std::mutex> lock(luaActionsMutex_);
+    std::lock_guard<std::mutex> lock(impl_->luaActionsMutex_);
     std::vector<std::string> names;
-    names.reserve(luaGlobalActions_.size());
-    std::transform(luaGlobalActions_.begin(), luaGlobalActions_.end(), std::back_inserter(names),
+    names.reserve(impl_->luaGlobalActions_.size());
+    std::transform(impl_->luaGlobalActions_.begin(), impl_->luaGlobalActions_.end(), std::back_inserter(names),
                    [](const auto& pair) { return pair.first; });
     return names;
 }
@@ -1221,11 +1227,11 @@ std::vector<std::string> AppController::GetLuaGlobalActionNames() const {
 void AppController::ExecuteLuaTicketAction(const std::string& name, const std::string& issueId) {
     std::string callbackFuncName;
     {
-        std::lock_guard<std::mutex> lock(luaActionsMutex_);
+        std::lock_guard<std::mutex> lock(impl_->luaActionsMutex_);
         const auto it =
-            std::find_if(luaTicketActions_.begin(), luaTicketActions_.end(),
+            std::find_if(impl_->luaTicketActions_.begin(), impl_->luaTicketActions_.end(),
                          [&](const std::pair<std::string, std::string>& pair) { return pair.first == name; });
-        if (it != luaTicketActions_.end()) {
+        if (it != impl_->luaTicketActions_.end()) {
             callbackFuncName = it->second;
         }
     }
@@ -1233,20 +1239,20 @@ void AppController::ExecuteLuaTicketAction(const std::string& name, const std::s
         return;
     }
     {
-        std::lock_guard<std::mutex> lock(automationJobMutex_);
-        automationJobs_.push_back({AutomationJob::Type::TicketAction, callbackFuncName, {}, issueId});
+        std::lock_guard<std::mutex> lock(impl_->automationJobMutex_);
+        impl_->automationJobs_.push_back({AutomationJob::Type::TicketAction, callbackFuncName, {}, issueId});
     }
-    automationJobCv_.notify_one();
+    impl_->automationJobCv_.notify_one();
 }
 
 void AppController::ExecuteLuaGlobalAction(const std::string& name) {
     std::string callbackFuncName;
     {
-        std::lock_guard<std::mutex> lock(luaActionsMutex_);
+        std::lock_guard<std::mutex> lock(impl_->luaActionsMutex_);
         const auto it =
-            std::find_if(luaGlobalActions_.begin(), luaGlobalActions_.end(),
+            std::find_if(impl_->luaGlobalActions_.begin(), impl_->luaGlobalActions_.end(),
                          [&](const std::pair<std::string, std::string>& pair) { return pair.first == name; });
-        if (it != luaGlobalActions_.end()) {
+        if (it != impl_->luaGlobalActions_.end()) {
             callbackFuncName = it->second;
         }
     }
@@ -1254,8 +1260,8 @@ void AppController::ExecuteLuaGlobalAction(const std::string& name) {
         return;
     }
     {
-        std::lock_guard<std::mutex> lock(automationJobMutex_);
-        automationJobs_.push_back({AutomationJob::Type::GlobalAction, callbackFuncName, {}, ""});
+        std::lock_guard<std::mutex> lock(impl_->automationJobMutex_);
+        impl_->automationJobs_.push_back({AutomationJob::Type::GlobalAction, callbackFuncName, {}, ""});
     }
-    automationJobCv_.notify_one();
+    impl_->automationJobCv_.notify_one();
 }

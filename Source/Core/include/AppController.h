@@ -325,7 +325,8 @@ class AppController
     /// `mainThreadDispatcher` while in-flight callbacks drain.
     AiAssistantController& GetAiAssistantController();
     /// Phase B safety probe — false during early init before the controller is wired.
-    bool HasAiAssistantController() const { return aiAssistant_ != nullptr; }
+    /// Out-of-line (pImpl #19b): `aiAssistant_` now lives in the src-only AppController::Impl.
+    bool HasAiAssistantController() const;
 #endif
 
     /// Always-on no-op stubs (gated only on the implementation side via SMATCHET_WITH_AI).
@@ -1119,11 +1120,7 @@ class AppController
     /// frees the least-recently-visible one. Resolved from cfg.HiddenPaneResidentCap at
     /// InitConfig (0/negative → default 4). Visible + focused panes are exempt.
     std::size_t hiddenPaneResidentCap_ = 4;
-    /// Owns the Lua sandbox + automation worker + Lua bindings. Phase 1A of the item 14
-    /// extraction only routes log-sink methods through it; later phases migrate the Lua
-    /// state and worker thread. Constructed eagerly in `Initialize` to keep the
-    /// `Add*LogSink` calls from `OnEarlyInit` working.
-    std::unique_ptr<LuaAutomationHost> luaHost_;
+    // `luaHost_` (unique_ptr<LuaAutomationHost>) moved into AppController::Impl (pImpl #19b).
     /// Unified Command System registry — owns the catalog of named commands and dispatches them to
     /// CLI / MCP / Lua / Palette callers. Constructed eagerly in `Initialize` after the tracker
     /// backend so handlers can capture `*this` and safely call AppController methods.
@@ -1186,56 +1183,22 @@ class AppController
     void ApplyOrQueueLuaWindowOp(PendingLuaWindowOp op);
 
   private:
-    // Member-order invariant: `sol::state lua` MUST be declared BEFORE every container that
-    // stores `sol::protected_function`. C++ destroys members in reverse declaration order, so
-    // the containers below tear down first (their Lua-handle members touch a still-alive
-    // state), then `lua` last. Inverting this order is a UAF — see plan §Shutdown ordering.
-    // Threading invariant: `lua` is driven EXCLUSIVELY by the UI thread (DrawLuaWindows,
-    // cell-providers, ExecuteLuaConsoleSnippet). Off-UI-thread Lua execution (MCP run_lua /
-    // registered-tool handlers on httplib workers, the automation worker) MUST run on a fresh
-    // per-call sol::state via PrepareFreshLuaState — never `lua`. Two threads through one
-    // lua_State is UB. See docs/plans/shipped/mcp-lua-fresh-state-race.md.
-    sol::state lua;
-    std::unordered_map<std::string, sol::protected_function> fieldDisplayCachedProviders_;
-    /** Lowercased Jira field display name (from catalog) -> handler. */
-    std::unordered_map<std::string, sol::protected_function> fieldDisplayCachedProvidersByName_;
-    /// Per-cell cmd-list cache. Key = `ticket.id + '\0' + fieldId`. UI-thread only.
-    std::unordered_map<std::string, LuaFieldCacheEntry> luaFieldCache_;
+    // pImpl (hardening #19, step 19b): the sol-typed STORAGE for this Lua block (`sol::state lua`
+    // + the three `sol::protected_function` maps + the field-cache / window / mcp-tool / action /
+    // icon-map containers + their mutexes) moved into `struct AppController::Impl` (defined in
+    // AppControllerImpl.h, included only by the AppController*.cpp TUs). The member-order /
+    // shutdown-destruction invariant (`sol::state lua` declared FIRST so it tears down LAST,
+    // after the protected_function containers) is preserved verbatim inside Impl. Only these
+    // NON-sol-typed generation/iteration scalars stay here (hot, read per-cell; no sol2 needed):
     /// Bumped on provider (un)register. Init to 1 so cached entries with `providerGen=0`
     /// always miss on first compare.
     std::atomic<std::uint64_t> luaProviderGen_{1};
     /// Bumped by NotifyLuaTicketDataChanged; cells use per-entry comparison instead.
     std::atomic<std::uint64_t> luaWindowDataGen_{1};
-    std::vector<LuaWindowEntry> luaWindows_;
-    std::vector<PendingLuaWindowOp> pendingLuaWindowOps_;
-    /// Snapshot of user-side providers displaced by a scenario register call. Keyed by
-    /// fieldId; the value is the *prior* provider (may be empty if the field had none).
-    /// `ScenarioUnregisterLuaCachedProvider` restores from this map so a scenario run never
-    /// silently destroys a user-side provider for the session.
-    std::unordered_map<std::string, sol::protected_function> scenarioPriorFieldProviders_;
-    /// Set membership tracks fields whose prior was *empty* (no provider) — distinguishes
-    /// "had nothing, restore to nothing" from "field absent in scenario map → leave alone".
-    std::unordered_set<std::string> scenarioPriorEmptyFields_;
     /// True while inside DrawLuaWindows iteration. Callbacks fired during replay route
     /// register/unregister/invalidate ops into pendingLuaWindowOps_ instead of mutating
     /// luaWindows_ directly. Plain bool — UI-thread-only.
     bool inDrawLuaWindows_ = false;
-    std::vector<McpToolDefinition> luaMcpTools_;
-    mutable std::mutex luaMcpToolsMutex_;
-    /// Guards `luaTicketActions_` and `luaGlobalActions_`. Both vectors are mutated from
-    /// the worker thread when `AutomationWorkerLoop` re-executes setup scripts (e.g.
-    /// `SmatchetHooks.lua`) which call `ui.register_ticket_action` / `ui.register_global_action`
-    /// — these resolve `__smatchet_app_ui` on the worker `bgState` and call
-    /// `LuaUiRegister{Ticket,Global}ActionBind` on the worker thread. Meanwhile UI thread reads
-    /// them every frame via `Get{Ticket,Global}ActionNames()` (LuaConsolePlugin). Without this
-    /// lock the std::vector erase/push_back reallocates concurrently with std::transform — UB,
-    /// crash. Mirrors the `luaMcpToolsMutex_` pattern for the same shape on `luaMcpTools_`.
-    mutable std::mutex luaActionsMutex_;
-    std::vector<std::pair<std::string, std::string>> luaTicketActions_;
-    std::vector<std::pair<std::string, std::string>> luaGlobalActions_;
-    mutable std::mutex fieldIconMapsMutex_;
-    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> fieldIconMapsByFieldId_;
-    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> fieldIconMapsByDisplayName_;
 
 #endif
 
@@ -1384,22 +1347,19 @@ class AppController
     PluginHost* runtimePluginHost_ = nullptr;
 
 #if defined(SMATCHET_WITH_MCP)
-    static constexpr size_t kMcpActivityLogMax = 100;
-    mutable std::mutex mcpActivityMutex_;
-    std::deque<std::string> mcpActivityLog_;
+    // `kMcpActivityLogMax` + `mcpActivityMutex_` + `mcpActivityLog_` moved into
+    // AppController::Impl (pImpl #19b). The HTTP-traffic tracking atomics below stay (hot,
+    // lock-free, read on the UI thread; not part of the activity-log storage).
     /** `steady_clock` epoch offset in nanoseconds; 0 means no client HTTP activity yet. */
     std::atomic<std::uint64_t> mcpLastClientHttpActivityNs_{0};
     std::atomic<std::uint64_t> mcpHttpTrafficEpoch_{0};
 #endif
 
 #if defined(SMATCHET_WITH_AI)
-    // Smatchet Assistant — Phase B. Held in a unique_ptr so the header can forward-declare
-    // `AiAssistantController` and avoid pulling in AiTypes.h + AiClientFactory transitively.
-    // Lifetime contract: constructed at the end of `Initialize` (after ConfigManager::Load
-    // has settled the Ai* config fields); destroyed at the *top* of `~AppController` BEFORE
-    // mainThreadDispatcher.BeginShutdown() fires, so any in-flight worker callback can
-    // still post to the dispatcher during its shutdown drain.
-    std::unique_ptr<AiAssistantController> aiAssistant_;
+    // Smatchet Assistant — Phase B. `aiAssistant_` (unique_ptr<AiAssistantController>) moved into
+    // AppController::Impl (pImpl #19b). Lifetime contract unchanged: constructed at the end of
+    // `Initialize`; destroyed at the *top* of `~AppController` (impl_->aiAssistant_.reset())
+    // BEFORE mainThreadDispatcher.BeginShutdown() fires.
 #endif
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
@@ -1414,18 +1374,14 @@ class AppController
         // no silent no-op). See RunAutomationAutoScript and Issue #824.
         bool processAll = false;
     };
-    mutable std::mutex automationJobMutex_;
-    std::condition_variable automationJobCv_;
-    std::deque<AutomationJob> automationJobs_;
-    // Lifetime contract (see ~AppController and AutomationWorkerLoop):
+    // The automation queue + worker member STORAGE (automationJobMutex_ / automationJobCv_ /
+    // automationJobs_ / automationWorker_ / automationWorkerShuttingDown_ / activeSetupScripts_,
+    // below) moved into AppController::Impl (pImpl #19b). Lifetime contract unchanged:
     //   - The worker reads `this` indirectly via each iteration's `bgState["__smatchet_app"] = this`.
-    //   - `bgState` is a stack-local per iteration; it never escapes the iteration's try-block.
-    //   - `~AppController` flips `automationWorkerShuttingDown_` and `automationWorker_.join()` BEFORE
-    //     any AppController member is destroyed. The join therefore provides both the
-    //     happens-before barrier and the guarantee that no live `bgState` (and no `__smatchet_app`
-    //     pointer reachable from worker code) survives into member destruction.
-    std::thread automationWorker_;
-    std::atomic<bool> automationWorkerShuttingDown_{false};
+    //   - `~AppController` flips `impl_->automationWorkerShuttingDown_` and joins
+    //     `impl_->automationWorker_` in the dtor BODY — impl_ is still alive there — BEFORE any
+    //     member (impl_ included) is destroyed. The join is the happens-before barrier guaranteeing
+    //     no live `bgState`/`__smatchet_app` reachable from worker code survives into destruction.
     void AutomationWorkerLoop();
     void RunAutomationJob(sol::state& state, sol::environment& env, const AutomationJob& job);
     // RunAutomationJob branch bodies, split out to keep the dispatcher under the size cap.
@@ -1435,7 +1391,7 @@ class AppController
     void RunAutomationFlatScript(sol::state& state, const AutomationJob& job, const AutomationErrorSink& logErr);
     void RunAutomationActionCall(sol::environment& env, const AutomationJob& job, bool passTargetId,
                                  const AutomationErrorSink& logErr);
-    std::vector<std::string> activeSetupScripts_;
+    // `activeSetupScripts_` moved into AppController::Impl (pImpl #19b).
 #endif
 
   private:
