@@ -186,17 +186,17 @@ bool JiraClient::AddIssueWatcher(const TrackerConfig& cfg, const std::string& is
     return true;
 }
 
-bool JiraClient::FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issueKeyOrId,
-                                    std::unordered_map<std::string, bool>& outFieldIdCanEdit, std::string& outError) {
-    outFieldIdCanEdit.clear();
-    outError.clear();
+Result<std::unordered_map<std::string, bool>, TrackerError>
+JiraClient::FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issueKeyOrId) {
+    using EditMetaResult = Result<std::unordered_map<std::string, bool>, TrackerError>;
+    std::unordered_map<std::string, bool> outFieldIdCanEdit;
+    std::string outError;
 
     if (!EnsureTrackerAuthConfig(cfg, outError)) {
-        return false;
+        return EditMetaResult::Err(TrackerErrorInvalidRequest(std::move(outError)));
     }
     if (issueKeyOrId.empty()) {
-        outError = "Issue key or id is empty.";
-        return false;
+        return EditMetaResult::Err(TrackerErrorInvalidRequest("Issue key or id is empty."));
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
@@ -210,7 +210,13 @@ bool JiraClient::FetchIssueEditMeta(const TrackerConfig& cfg, const std::string&
             outError += TruncateForLog(response.text, 800);
         }
         LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueKeyOrId.c_str());
-        return false;
+        // A 2xx-non-200 (201/202/204) reaches this failure branch; for a 2xx, TrackerErrorFromHttpStatus
+        // yields an Ok sentinel (Kind==None, detail discarded). Carry the verbatim detail under an
+        // explicit non-OK kind so the user-visible .Detail never vanishes. Genuine non-2xx classifies normally.
+        if (response.status_code >= 200 && response.status_code < 300) {
+            return EditMetaResult::Err(TrackerErrorUnknown(std::move(outError), response.status_code));
+        }
+        return EditMetaResult::Err(TrackerErrorFromHttpStatus(response.status_code, std::move(outError)));
     }
 
     try {
@@ -219,7 +225,7 @@ bool JiraClient::FetchIssueEditMeta(const TrackerConfig& cfg, const std::string&
             outError = "Invalid editmeta response: missing fields object.";
             LOG_ERROR("JiraClient: %s issue=%s body=%s", outError.c_str(), issueKeyOrId.c_str(),
                       TruncateForLog(response.text, 400).c_str());
-            return false;
+            return EditMetaResult::Err(TrackerErrorParse(std::move(outError)));
         }
         const auto& fields = root["fields"];
         for (auto it = fields.begin(); it != fields.end(); ++it) {
@@ -229,10 +235,10 @@ bool JiraClient::FetchIssueEditMeta(const TrackerConfig& cfg, const std::string&
     } catch (const std::exception& ex) {
         outError = std::string("Failed to parse editmeta response: ") + ex.what();
         LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueKeyOrId.c_str());
-        return false;
+        return EditMetaResult::Err(TrackerErrorParse(std::move(outError)));
     }
 
-    return true;
+    return EditMetaResult::Ok(std::move(outFieldIdCanEdit));
 }
 
 bool JiraClient::FetchIssueVotes(const TrackerConfig& cfg, const std::string& issueKey,

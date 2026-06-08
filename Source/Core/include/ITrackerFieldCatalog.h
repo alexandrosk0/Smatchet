@@ -2,31 +2,39 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include "SmatchetResult.h"
+#include "TrackerError.h"
 #include "TrackerFieldSchema.h"
 
 struct TrackerConfig;
+
+/// Multi-out payload for FetchProjectComponents (Jira-only) — the per-project
+/// component list plus the parallel dropdown options, returned together as the
+/// Result Ok value (replaces the prior pair of out-vector params).
+struct TrackerProjectComponents {
+    std::vector<TrackerComponent> Components;
+    std::vector<TrackerFieldOption> Options;
+};
 
 class ITrackerFieldCatalog {
   public:
     virtual ~ITrackerFieldCatalog() = default;
 
-    virtual bool FetchFieldCatalog(const TrackerConfig& /*cfg*/, const std::string& /*projectKey*/,
-                                   TrackerFieldCatalogResult& /*outCatalog*/, std::string& outError) {
-        outError = "FetchFieldCatalog is not supported by this backend.";
-        return false;
+    virtual Result<TrackerFieldCatalogResult, TrackerError> FetchFieldCatalog(const TrackerConfig& /*cfg*/,
+                                                                              const std::string& /*projectKey*/) {
+        return Result<TrackerFieldCatalogResult, TrackerError>::Err(
+            TrackerErrorInvalidRequest("FetchFieldCatalog is not supported by this backend."));
     }
 
-    virtual bool FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string& /*issueKeyOrId*/,
-                                    std::unordered_map<std::string, bool>& /*outFieldIdCanEdit*/,
-                                    std::string& outError) {
-        outError = "FetchIssueEditMeta is not supported by this backend.";
-        return false;
+    virtual Result<std::unordered_map<std::string, bool>, TrackerError>
+    FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string& /*issueKeyOrId*/) {
+        return Result<std::unordered_map<std::string, bool>, TrackerError>::Err(
+            TrackerErrorInvalidRequest("FetchIssueEditMeta is not supported by this backend."));
     }
 
-    virtual bool FetchProjectComponents(const TrackerConfig& /*cfg*/, const std::string& /*projectKey*/,
-                                        std::vector<TrackerComponent>& /*outComponents*/,
-                                        std::vector<TrackerFieldOption>& /*outOptions*/, std::string& outError) {
-        outError = "FetchProjectComponents is not supported by this backend.";
-        return false;
+    virtual Result<TrackerProjectComponents, TrackerError> FetchProjectComponents(const TrackerConfig& /*cfg*/,
+                                                                                  const std::string& /*projectKey*/) {
+        return Result<TrackerProjectComponents, TrackerError>::Err(
+            TrackerErrorInvalidRequest("FetchProjectComponents is not supported by this backend."));
     }
 };

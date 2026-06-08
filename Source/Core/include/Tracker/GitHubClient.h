@@ -56,8 +56,8 @@ class GitHubClient : public ITrackerBackend,
     bool FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
                             const ViewsStore& views, std::vector<CachedTicket>& outTickets,
                             std::string& outError) override;
-    bool FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey,
-                           TrackerFieldCatalogResult& outCatalog, std::string& outError) override;
+    Result<TrackerFieldCatalogResult, TrackerError> FetchFieldCatalog(const TrackerConfig& cfg,
+                                                                      const std::string& projectKey) override;
     std::string BuildBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const override;
     bool UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields, std::string& outError) override;
     bool UpdateField(const std::string& issueId, const TrackerField& field, const std::vector<std::string>& values,
@@ -75,8 +75,8 @@ class GitHubClient : public ITrackerBackend,
     // Jira's `/issue/{key}/editmeta`). All 6 native fields are editable when the PAT has
     // repo write scope. Return an all-`true` map for the static catalog so AppController
     // caches a positive result and stops re-fetching per UI frame.
-    bool FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issueKeyOrId,
-                            std::unordered_map<std::string, bool>& outFieldIdCanEdit, std::string& outError) override;
+    Result<std::unordered_map<std::string, bool>, TrackerError>
+    FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issueKeyOrId) override;
 
   private:
     /// Issue #979 — resolve baseUrl + PAT for one request. `configOverride` non-null →

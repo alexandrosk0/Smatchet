@@ -44,8 +44,8 @@ class PlaneClient : public ITrackerBackend,
                             const ViewsStore& views, std::vector<CachedTicket>& outTickets,
                             std::string& outError) override;
 
-    bool FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey,
-                           TrackerFieldCatalogResult& outCatalog, std::string& outError) override;
+    Result<TrackerFieldCatalogResult, TrackerError> FetchFieldCatalog(const TrackerConfig& cfg,
+                                                                      const std::string& projectKey) override;
 
     std::string BuildBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const override;
 
@@ -71,8 +71,8 @@ class PlaneClient : public ITrackerBackend,
 
     bool AddIssueToSprint(const std::string& issueKey, const std::string& sprintId, std::string& outError) override;
 
-    bool FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issueKeyOrId,
-                            std::unordered_map<std::string, bool>& outFieldIdCanEdit, std::string& outError) override;
+    Result<std::unordered_map<std::string, bool>, TrackerError>
+    FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issueKeyOrId) override;
 
     std::string ExtractProjectFromQuery(const std::string& query) const override;
 

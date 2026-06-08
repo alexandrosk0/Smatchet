@@ -322,14 +322,17 @@ bool FetchAndParseFieldList(const std::string& base, const cpr::Header& headers,
 
 } // namespace
 
-bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey,
-                                   TrackerFieldCatalogResult& outCatalog, std::string& outError) {
-    outCatalog = TrackerFieldCatalogResult{};
+Result<TrackerFieldCatalogResult, TrackerError> JiraClient::FetchFieldCatalog(const TrackerConfig& cfg,
+                                                                              const std::string& projectKey) {
+    TrackerFieldCatalogResult outCatalog;
     std::vector<TrackerField> fields;
     std::vector<TrackerComponent> components;
     std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta;
+    std::string outError;
     if (!FetchFieldCatalog(cfg, projectKey, fields, components, issueTypeMeta, outError)) {
-        return false;
+        // TODO(#21b later slice): re-thread status from inner helper instead of collapsing to Unknown — IsRetryable()
+        // consumers land in a later slice.
+        return Result<TrackerFieldCatalogResult, TrackerError>::Err(TrackerErrorUnknown(std::move(outError)));
     }
 
     std::vector<TrackerUser> users;
@@ -361,7 +364,7 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& 
     outCatalog.Components = components;
     outCatalog.IssueTypeMeta = issueTypeMeta;
     outCatalog.Users = users;
-    return true;
+    return Result<TrackerFieldCatalogResult, TrackerError>::Ok(std::move(outCatalog));
 }
 
 bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey,
@@ -416,19 +419,17 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& 
     return true;
 }
 
-bool JiraClient::FetchProjectComponents(const TrackerConfig& cfg, const std::string& projectKey,
-                                        std::vector<TrackerComponent>& outComponents,
-                                        std::vector<TrackerFieldOption>& outOptions, std::string& outError) {
-    outComponents.clear();
-    outOptions.clear();
-    outError.clear();
+Result<TrackerProjectComponents, TrackerError> JiraClient::FetchProjectComponents(const TrackerConfig& cfg,
+                                                                                  const std::string& projectKey) {
+    TrackerProjectComponents out;
+    std::string outError;
 
     if (!EnsureTrackerAuthConfig(cfg, outError)) {
-        return false;
+        return Result<TrackerProjectComponents, TrackerError>::Err(TrackerErrorInvalidRequest(std::move(outError)));
     }
     if (projectKey.empty()) {
-        outError = "FetchProjectComponents called with an empty project key.";
-        return false;
+        return Result<TrackerProjectComponents, TrackerError>::Err(
+            TrackerErrorInvalidRequest("FetchProjectComponents called with an empty project key."));
     }
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
@@ -448,22 +449,30 @@ bool JiraClient::FetchProjectComponents(const TrackerConfig& cfg, const std::str
         if (response.status_code != 200) {
             LOG_WARN("JiraClient: per-project components fetch failed for %s. HTTP %d", projectKey.c_str(),
                      response.status_code);
-            outError = "Per-project components fetch failed (HTTP " + std::to_string(response.status_code) + ").";
-            return false;
+            std::string detail =
+                "Per-project components fetch failed (HTTP " + std::to_string(response.status_code) + ").";
+            // A 2xx-non-200 reaches this failure branch; TrackerErrorFromHttpStatus would return Ok()
+            // (Kind==None, detail discarded). Carry the verbatim detail under an explicit non-OK kind.
+            if (response.status_code >= 200 && response.status_code < 300) {
+                return Result<TrackerProjectComponents, TrackerError>::Err(
+                    TrackerErrorUnknown(std::move(detail), response.status_code));
+            }
+            return Result<TrackerProjectComponents, TrackerError>::Err(
+                TrackerErrorFromHttpStatus(response.status_code, std::move(detail)));
         }
 
         auto json = nlohmann::json::parse(response.text, nullptr, false);
         if (json.is_discarded() || !json.is_object()) {
             LOG_WARN("JiraClient: per-project components response parse failed for %s.", projectKey.c_str());
-            outError = "Per-project components response parse failed.";
-            return false;
+            return Result<TrackerProjectComponents, TrackerError>::Err(
+                TrackerErrorParse("Per-project components response parse failed."));
         }
 
         const auto valuesIt = json.find("values");
         if (valuesIt == json.end() || !valuesIt->is_array()) {
             LOG_WARN("JiraClient: per-project components response missing values array for %s.", projectKey.c_str());
-            outError = "Per-project components response missing values array.";
-            return false;
+            return Result<TrackerProjectComponents, TrackerError>::Err(
+                TrackerErrorParse("Per-project components response missing values array."));
         }
 
         for (const auto& node : *valuesIt) {
@@ -472,8 +481,8 @@ bool JiraClient::FetchProjectComponents(const TrackerConfig& cfg, const std::str
             if (!ExtractComponentOption(node, component, option)) {
                 continue;
             }
-            outComponents.push_back(component);
-            outOptions.push_back(option);
+            out.Components.push_back(component);
+            out.Options.push_back(option);
         }
 
         const bool isLast = json.value("isLast", false);
@@ -490,11 +499,11 @@ bool JiraClient::FetchProjectComponents(const TrackerConfig& cfg, const std::str
         LOG_WARN("JiraClient: per-project components fetch hit page cap (%d) for %s without a terminal page; "
                  "result is incomplete.",
                  kMaxPages, projectKey.c_str());
-        outError = "Per-project components fetch incomplete (page cap reached).";
-        return false;
+        return Result<TrackerProjectComponents, TrackerError>::Err(
+            TrackerErrorInvalidRequest("Per-project components fetch incomplete (page cap reached)."));
     }
 
-    std::sort(outOptions.begin(), outOptions.end(), [](const TrackerFieldOption& a, const TrackerFieldOption& b) {
+    std::sort(out.Options.begin(), out.Options.end(), [](const TrackerFieldOption& a, const TrackerFieldOption& b) {
         const std::string lowerA = ToLowerAsciiCopy(a.Value);
         const std::string lowerB = ToLowerAsciiCopy(b.Value);
         if (lowerA != lowerB) {
@@ -502,5 +511,5 @@ bool JiraClient::FetchProjectComponents(const TrackerConfig& cfg, const std::str
         }
         return a.Id < b.Id;
     });
-    return true;
+    return Result<TrackerProjectComponents, TrackerError>::Ok(std::move(out));
 }

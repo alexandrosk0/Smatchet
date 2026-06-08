@@ -364,10 +364,10 @@ std::vector<CachedT> PairsToCached(std::vector<std::pair<std::string, std::strin
 
 } // namespace
 
-bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKeyArg,
-                                    TrackerFieldCatalogResult& outCatalog, std::string& outError) {
-    outCatalog = TrackerFieldCatalogResult{};
-    outError.clear();
+Result<TrackerFieldCatalogResult, TrackerError> PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg,
+                                                                               const std::string& projectKeyArg) {
+    TrackerFieldCatalogResult outCatalog;
+    std::string outError;
     std::vector<std::string> warns;
 
     // PR 6: project is now an explicit per-call argument (legacy cfg.PlaneProjectId removed).
@@ -376,13 +376,13 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string&
     const std::string projectKey = projectKeyArg;
 
     if (cfg.PlaneUrl.empty() || cfg.PlaneWorkspaceSlug.empty() || projectKey.empty()) {
-        outError = "Plane is not configured or no project was supplied. "
-                   "Set URL / Workspace Slug in Preferences, and pick a project before refreshing the field catalog.";
-        return false;
+        return Result<TrackerFieldCatalogResult, TrackerError>::Err(TrackerErrorInvalidRequest(
+            "Plane is not configured or no project was supplied. "
+            "Set URL / Workspace Slug in Preferences, and pick a project before refreshing the field catalog."));
     }
     if (cfg.PlaneApiKey.empty()) {
-        outError = "Plane API key is missing. Set it in Preferences → Tracker.";
-        return false;
+        return Result<TrackerFieldCatalogResult, TrackerError>::Err(
+            TrackerErrorInvalidRequest("Plane API key is missing. Set it in Preferences → Tracker."));
     }
 
     const std::string planeApi = NormalizePlaneApiBase(cfg.PlaneUrl);
@@ -395,7 +395,9 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string&
     std::string resolvedProjectIdentifier;
     if (!ResolvePlaneProject(planeApi, cfg, projectKey, headers, resolvedProjectId, resolvedProjectIdentifier,
                              &outError)) {
-        return false;
+        // TODO(#21b later slice): re-thread status from inner helper instead of collapsing to Unknown — IsRetryable()
+        // consumers land in a later slice.
+        return Result<TrackerFieldCatalogResult, TrackerError>::Err(TrackerErrorUnknown(std::move(outError)));
     }
     const std::string planeProjectId = resolvedProjectId;
 
@@ -460,13 +462,12 @@ bool PlaneClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string&
         cachedLabels_ = std::move(localLabels);
     }
 
-    return true;
+    return Result<TrackerFieldCatalogResult, TrackerError>::Ok(std::move(outCatalog));
 }
 
-bool PlaneClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string& /*issueKeyOrId*/,
-                                     std::unordered_map<std::string, bool>& outFieldIdCanEdit, std::string& outError) {
-    outError.clear();
-    outFieldIdCanEdit.clear();
+Result<std::unordered_map<std::string, bool>, TrackerError>
+PlaneClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string& /*issueKeyOrId*/) {
+    std::unordered_map<std::string, bool> outFieldIdCanEdit;
     // Plane v1 has no per-issue capability endpoint; report every built-in field the mutation
     // paths (`BuildCreatePayload`, `BuildUpdatePayload`, `AddIssueToSprint`) can serialize as
     // editable. Server still gets the final say — a rejected update surfaces through the same
@@ -477,7 +478,7 @@ bool PlaneClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::st
          {"summary", "description", "priority", "status", "assignee", "labels", "sprint", "type", "parent"}) {
         outFieldIdCanEdit[fieldId] = true;
     }
-    return true;
+    return Result<std::unordered_map<std::string, bool>, TrackerError>::Ok(std::move(outFieldIdCanEdit));
 }
 
 std::string PlaneClient::BuildBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const {
