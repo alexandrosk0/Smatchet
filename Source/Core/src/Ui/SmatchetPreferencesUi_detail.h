@@ -1,5 +1,8 @@
 #pragma once
 
+#include "ConfigManager.h"
+#include "StringUtil.h"
+
 #include <string>
 
 // Private header for SmatchetPreferencesUi split TUs. Not installed — included only
@@ -40,6 +43,25 @@ inline std::string DateFormatIndexToOption(int index) {
     default:
         return "compact";
     }
+}
+
+/// Issue #979 — trim leading/trailing ASCII whitespace from every credential /
+/// identity field `onPreferencesSaveAndSync` writes back from the text buffers.
+/// A trailing space in the Jira email (observed on a real user config) makes
+/// Atlassian reject basic auth with a persistent 401; the same failure class
+/// applies to tokens, PATs, URLs, and owner/repo. Pure — no ImGui / no session
+/// state — so it is bucket-A testable in isolation.
+inline void TrimTrackerCredentialFields(TrackerConfig& cfg) {
+    cfg.Domain = TrimCopyAsciiWhitespace(cfg.Domain);
+    cfg.Email = TrimCopyAsciiWhitespace(cfg.Email);
+    cfg.ApiToken = TrimCopyAsciiWhitespace(cfg.ApiToken);
+    cfg.PlaneUrl = TrimCopyAsciiWhitespace(cfg.PlaneUrl);
+    cfg.PlaneWorkspaceSlug = TrimCopyAsciiWhitespace(cfg.PlaneWorkspaceSlug);
+    cfg.PlaneApiKey = TrimCopyAsciiWhitespace(cfg.PlaneApiKey);
+    cfg.GitHubBaseUrl = TrimCopyAsciiWhitespace(cfg.GitHubBaseUrl);
+    cfg.GitHubPat = TrimCopyAsciiWhitespace(cfg.GitHubPat);
+    cfg.GitHubOwner = TrimCopyAsciiWhitespace(cfg.GitHubOwner);
+    cfg.GitHubRepo = TrimCopyAsciiWhitespace(cfg.GitHubRepo);
 }
 
 } // namespace SmatchetPreferencesUiDetail
