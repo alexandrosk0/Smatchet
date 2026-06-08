@@ -93,6 +93,10 @@ TEST_CASE("DownscaleToMaxDimension — shrinks longest side, updates dims, no-op
 
 static TrackerConfig MakeCfg() {
     TrackerConfig cfg;
+    // Direct-mode helper: clear the seeded default relay so these cases exercise
+    // the owner/repo/PAT path (relay overrides direct when its URL is set).
+    cfg.BugReportRelayUrl.clear();
+    cfg.BugReportRelayKey.clear();
     cfg.BugReportGitHubOwner = "acme";
     cfg.BugReportGitHubRepo = "tracker";
     return cfg;
@@ -175,8 +179,22 @@ TEST_CASE("BuildRelayRequest — title/body/censored; screenshot only when prese
     CHECK(d["dumpName"] == "crash-123.dmp");
 }
 
+TEST_CASE("ResolveBugReportTarget — fresh-install default seeds the project relay (issue #989 follow-up)") {
+    // A brand-new TrackerConfig (no user edits) must resolve via the bundled
+    // relay so bug/crash reporting works with zero setup.
+    TrackerConfig fresh;
+    const ResolvedBugTarget t = ResolveBugReportTarget(fresh, "");
+    REQUIRE(t.Ok);
+    CHECK(t.UseRelay);
+    CHECK(t.RelayUrl == SmatchetDefaults::kDefaultBugReportRelayUrl);
+    CHECK(t.RelayKey == SmatchetDefaults::kDefaultBugReportRelayKey);
+    CHECK(t.Pat.empty());
+}
+
 TEST_CASE("ResolveBugReportTarget — error paths: missing repo / no PAT / bad baseUrl") {
     TrackerConfig empty;
+    empty.BugReportRelayUrl.clear(); // disable the seeded relay to reach the direct-path errors
+    empty.BugReportRelayKey.clear();
     CHECK_FALSE(ResolveBugReportTarget(empty, "tok").Ok); // no owner/repo
 
     TrackerConfig noPat = MakeCfg();
