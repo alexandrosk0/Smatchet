@@ -2,6 +2,7 @@
 
 #include "AiErrorRedact.h"
 #include "AiNdjsonParser.h"
+#include "OllamaStreamError.h"
 #include "Logger.h"
 #include "NetworkUsageTracker.h"
 
@@ -169,7 +170,7 @@ void OllamaClient::SendStreaming(const AiClientConfig& cfg, const AiChatRequest&
                   r.error.message.c_str());
         AiStreamError err;
         err.HttpStatus = r.status_code;
-        err.Message = std::string("transport: ") + r.error.message;
+        err.Message = smatchet::ai::pure::FormatOllamaTransportError(r.error.message);
         onError(err);
         return;
     }
@@ -182,11 +183,7 @@ void OllamaClient::SendStreaming(const AiClientConfig& cfg, const AiChatRequest&
         LOG_ERROR("OllamaClient: HTTP %ld - body: %s", static_cast<long>(r.status_code), redactedBody.c_str());
         AiStreamError err;
         err.HttpStatus = r.status_code;
-        err.Message = std::string("HTTP ") + std::to_string(r.status_code);
-        if (!redactedBody.empty()) {
-            err.Message.append(": ");
-            err.Message.append(redactedBody);
-        }
+        err.Message = smatchet::ai::pure::FormatOllamaHttpError(r.status_code, redactedBody);
         onError(err);
         return;
     }
