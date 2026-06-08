@@ -411,7 +411,14 @@ namespace {
 const std::chrono::milliseconds kHiddenContextGrace(30000);
 } // namespace
 
-AppController::AppController() {
+// pImpl (hardening #19): COLD, sol2-/subsystem-heavy state moved off AppController.h so
+// the header no longer needs <sol/sol.hpp>. Defined here where Impl's member types are
+// complete. Step 19a introduces it empty (pure plumbing, no behaviour change); 19b migrates
+// the cold member block in. The out-of-line ctor/dtor below keep the incomplete-type
+// unique_ptr<Impl> in the header legal.
+struct AppController::Impl {};
+
+AppController::AppController() : impl_(std::make_unique<Impl>()) {
     // Multi-grid (ADR-0018): the default context is created here — not lazily — and is
     // PERMANENT, so focusedContext()'s fallback stays valid for the controller's entire
     // lifetime (delegators, the deps adapter, and the destructor all assume it exists).
