@@ -63,20 +63,27 @@ _line_is_no_runtime_surface() {
     # Blank line — no surface.
     [ -z "$line" ] && return 0
 
-    # Whole-line single-line block comment: /* … */
-    case "$line" in
-        '/*'*'*/') return 0 ;;
-    esac
-
-    # Line comment / doc-comment continuation / block-comment open or close.
-    #   //…            line comment
-    #   /*…            block comment open (may not close on this line)
-    #   *… or */       continuation / close of a block comment
+    # Whole-line `//` comment.
     case "$line" in
         '//'*) return 0 ;;
-        '/*'*) return 0 ;;
-        '*/'*) return 0 ;;
-        '*'*)  return 0 ;;
+    esac
+
+    # A leading `/* … */` span: strip it and classify the RESIDUAL.
+    # Historically this was `'/*'*) return 0`, which exempted
+    # `/* note */ launchTask();` — real surface (#918 MEDIUM). The bare `'*'*`
+    # and `'*/'*` continuation cases were ALSO removed: genuine block-comment
+    # continuation lines are consumed by the `in_block_comment` state machine in
+    # the caller BEFORE reaching this helper, so a line arriving here that starts
+    # with `*` is a pointer-deref statement (`*out = compute();`, `*it = next();`),
+    # NOT a comment — exempting it falsely PASSED the required test-delta gate on
+    # output-pointer writes (#918 `'*'*` finding).
+    case "$line" in
+        '/*'*'*/'*)
+            local rest="${line#*\*/}"
+            rest="${rest#"${rest%%[![:space:]]*}"}"
+            [ -z "$rest" ] && return 0   # comment-only — no surface
+            line="$rest"                 # fall through to classify the residual code
+            ;;
     esac
 
     # Strip a trailing line-comment so an exempt token followed by `// note`
@@ -366,6 +373,27 @@ diff --git a/Source/Core/src/Commands/Cmd.cpp b/Source/Core/src/Commands/Cmd.cpp
 @@ -5,1 +5,3 @@
 +// adjust the cap
 +maxRetries = maxRetries + 1;
+EOF
+
+    # #918 — output-pointer-deref writes must NOT be exempted by the old `'*'*`
+    # comment-continuation case (real runtime surface).
+    _expect FALLTHROUGH "pointer-deref output writes (#918 '*'*)" <<'EOF'
+diff --git a/Source/Core/src/Sync/Deref.cpp b/Source/Core/src/Sync/Deref.cpp
+--- a/Source/Core/src/Sync/Deref.cpp
++++ b/Source/Core/src/Sync/Deref.cpp
+@@ -10,0 +11,3 @@
++    *out = compute();
++    *it = next();
++    *(p + i) = v;
+EOF
+
+    # #918 — `/* … */ <code>` on one line is real surface, not comment-only.
+    _expect FALLTHROUGH "trailing code after a /* */ span (#918 MEDIUM)" <<'EOF'
+diff --git a/Source/Core/src/Config/Trail.cpp b/Source/Core/src/Config/Trail.cpp
+--- a/Source/Core/src/Config/Trail.cpp
++++ b/Source/Core/src/Config/Trail.cpp
+@@ -5,0 +6,1 @@
++    /* note */ launchTask();
 EOF
 
     if [ "$fail" -eq 0 ]; then

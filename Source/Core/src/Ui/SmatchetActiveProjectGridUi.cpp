@@ -1,5 +1,5 @@
 #include "SmatchetUI.h"
-#include "SmatchetGridPaneWindows.h" // detail::PaneViewSelfRepairAllowed (review HIGH-1)
+#include "SmatchetGridPaneWindows.h" // detail::PaneViewSelfRepairAllowed (HIGH-1) + ChoosePaneColumnsSource
 #include "SmatchetGridUiSupport.h"
 #include "SmatchetViewsDashboardUi_detail.h"
 
@@ -484,10 +484,13 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
 // pane referencing a deleted/unknown view falls back to the ACTIVE view and
 // self-repairs its viewId (Pillar 3 — never dangle). A CROSS-backend pane's viewId
 // lives in ITS OWN backend's bucket — the loaded slice simply can't see it — so it
-// renders the active-view fallback WITHOUT any identity write (review HIGH-1: the
+// returns the active-view FALLBACK without any identity write (review HIGH-1: the
 // unconditional repair rebound such panes to the focused view every frame, and the
-// debounced PersistPanes made the loss durable). Returns null only when the loaded
-// bucket has no views at all.
+// debounced PersistPanes made the loss durable). Callers must treat the fallback as
+// NOT the pane's own view (strict id-vs-pane.viewId match): the sort mirror refuses
+// to write through it, and resolvePaneColumns refuses to render its field set
+// (per-pane column isolation — the frozen bind-time capture wins). Returns null only
+// when the loaded bucket has no views at all.
 ViewDefinition* SmatchetUI::resolvePaneView(UiDrawSession& d, GridPane& pane) {
     ViewsStore& store = ViewState.GetStoreMutable();
     for (auto& view : store.Views) {
@@ -503,24 +506,42 @@ ViewDefinition* SmatchetUI::resolvePaneView(UiDrawSession& d, GridPane& pane) {
     return active;
 }
 
-// Column set for a pane: the shared per-frame GridFrameContext when the pane renders the
-// active view (the common case — zero copies), otherwise a PER-PANE cached build keyed on
-// catalog/views revisions + viewId (rebuilt on revision change only, never per frame).
+// Column set for a pane (per-pane column isolation — the unfocused pane must keep ITS
+// OWN view's field set across focus switches). Source policy is the pure
+// ChoosePaneColumnsSource core (bucket-A covered): the shared per-frame GridFrameContext
+// only when the pane's OWN view (strict id match — same discipline as the sort-mirror
+// gate) is the active one; an own-but-inactive view uses the per-pane cached build; a
+// fallback-resolved view (cross-backend pane whose views bucket isn't loaded) renders
+// the FROZEN bind-time capture instead of leaking the focused view's columns (user
+// defect: focusing pane B changed unfocused pane A's columns). The capture below is
+// keyed on catalog/views revisions + viewId — refreshed on change only, never per frame.
 const std::vector<TicketGridColumn>& SmatchetUI::resolvePaneColumns(GridPane& pane,
                                                                     const TrackerFieldCatalogIndex& catalogIndex,
                                                                     const ViewDefinition* paneView) {
-    if (!paneView || paneView->Id == gridFrameCtx_.activeViewId) {
+    typedef SmatchetGridPaneWindows::detail::PaneColumnsSource PaneColumnsSource;
+    const PaneColumnsSource source = SmatchetGridPaneWindows::detail::ChoosePaneColumnsSource(
+        pane.viewId, paneView ? paneView->Id : std::string(), gridFrameCtx_.activeViewId, pane.cachedColumnsValid,
+        pane.cachedColumnsViewId);
+    if (source == PaneColumnsSource::SharedFallback) {
         return gridFrameCtx_.columns;
     }
+    if (source == PaneColumnsSource::CachedFrozen) {
+        return pane.cachedColumns;
+    }
+    // Own view resolved (SharedActive / OwnViewBuild): keep the per-pane capture fresh.
+    // SharedActive copies the shared build (no second TicketGridColumnsBuilder run) so a
+    // later cross-backend focus switch still finds this pane's own column set cached.
     if (!pane.cachedColumnsValid || pane.cachedColumnsCatalogRevision != gridFrameCtx_.catalogRevision ||
         pane.cachedColumnsViewsRevision != gridFrameCtx_.viewsRevision || pane.cachedColumnsViewId != paneView->Id) {
-        pane.cachedColumns = TicketGridColumnsBuilder::Build(*paneView, catalogIndex);
+        pane.cachedColumns = (source == PaneColumnsSource::SharedActive)
+                                 ? gridFrameCtx_.columns
+                                 : TicketGridColumnsBuilder::Build(*paneView, catalogIndex);
         pane.cachedColumnsCatalogRevision = gridFrameCtx_.catalogRevision;
         pane.cachedColumnsViewsRevision = gridFrameCtx_.viewsRevision;
         pane.cachedColumnsViewId = paneView->Id;
         pane.cachedColumnsValid = true;
     }
-    return pane.cachedColumns;
+    return (source == PaneColumnsSource::SharedActive) ? gridFrameCtx_.columns : pane.cachedColumns;
 }
 
 // View-switch + grid-context-change bookkeeping. Split out of drawActiveProjectWindow under the
@@ -531,8 +552,15 @@ void SmatchetUI::applyActiveProjectViewChange(ActiveProjectDrawCtx& ctx) {
     GridPane& pane = ctx.pane;
     ViewDefinition* activeViewForGrid = ctx.activeViewForGrid;
 
-    const bool viewChanged = activeViewForGrid && (activeViewForGrid->Id != pane.lastGridActiveViewId);
-    if (viewChanged && activeViewForGrid) {
+    // Sort-read ownership gate (PR #986 review HIGH-2, same class as the columns fix):
+    // for a pane whose resolved view is the FALLBACK (cross-backend unfocused pane —
+    // resolvePaneView returned the other backend's active view), tracking that fallback
+    // id in lastGridActiveViewId flipped viewChanged on every focus switch, which reset
+    // the pane's sort and applied the FOCUSED view's SortSpecs onto it. A non-owned
+    // resolution leaves the pane's view-change tracking and sort environment untouched.
+    const bool viewIsPanesOwn = activeViewForGrid && activeViewForGrid->Id == pane.viewId;
+    const bool viewChanged = viewIsPanesOwn && (activeViewForGrid->Id != pane.lastGridActiveViewId);
+    if (viewChanged) {
         pane.lastGridActiveViewId = activeViewForGrid->Id;
         // Session-level unsaved-edit state belongs to the focused pane's view only.
         if (pane.focused) {
@@ -552,7 +580,20 @@ void SmatchetUI::applyActiveProjectViewChange(ActiveProjectDrawCtx& ctx) {
         }
     }
 
-    const std::string gridContextSignature = BuildGridContextSignature(activeViewForGrid, d.cfg.JqlQuery);
+    // Signature keyed on the pane's OWN identity (review HIGH-2 second part): using the
+    // session JQL (d.cfg.JqlQuery) for every pane meant each focus switch rewrote every
+    // pane's signature → cachedSortValid invalidated across all panes (resort cascade).
+    // Focused pane: session JQL (tracks ad-hoc JQL edits, the original behaviour).
+    // Unfocused owned pane: the view's saved JQL (its query of record — stable across
+    // focus switches). Non-owned (fallback) resolution: freeze on the pane's stored
+    // identity so the signature can't follow the other backend's active view.
+    std::string gridContextSignature;
+    if (viewIsPanesOwn) {
+        gridContextSignature =
+            BuildGridContextSignature(activeViewForGrid, pane.focused ? d.cfg.JqlQuery : activeViewForGrid->Jql);
+    } else {
+        gridContextSignature = std::string("frozen\x1e") + pane.viewId;
+    }
     const bool gridContextChanged =
         !pane.lastGridContextSignature.empty() && gridContextSignature != pane.lastGridContextSignature;
     if (gridContextChanged && pane.focused) {
@@ -825,7 +866,11 @@ void SmatchetUI::drawActiveProjectGridSetup(ActiveProjectDrawCtx& ctx) {
     }
 
     // Apply persisted sort from the view only when the grid context changes or the Sort By popup edits it.
-    if (activeViewForGrid) {
+    // Ownership-gated (review HIGH-2): a fallback-resolved view (cross-backend unfocused
+    // pane) must never push ITS SortSpecs onto this pane — shared column keys like
+    // status/summary would match and re-sort the wrong grid. Same strict-Id discipline
+    // as the sort WRITE mirror in drawActiveProjectGridSort.
+    if (activeViewForGrid && activeViewForGrid->Id == ctx.pane.viewId) {
         ImGuiTableSortSpecs* specs = ImGui::TableGetSortSpecs();
         const bool hasPersistedSort = !activeViewForGrid->SortSpecs.empty();
         const bool shouldApplyPersistedSort = specs && (gridSortEnvironmentChanged || ctx.pane.forceApplySortSpecs);

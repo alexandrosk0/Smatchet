@@ -74,6 +74,14 @@ class ITicketSyncDeps {
     /// the two services don't need direct knowledge of each other.
     virtual void PushOfflineReplayTimersDuringTransportOutage(std::chrono::steady_clock::time_point now) = 0;
     virtual void RequestDeferredLiveTrackerBackendSuccessNotify() = 0;
+    /// Session-end notification (UI thread — fired once per streaming session from
+    /// `FinalizeStreamingSessionIfDone`, after the error/warning classification).
+    /// `fetchOk` is false when the session ended with a non-empty fetch error.
+    /// GridContextDepsAdapter uses a failed end to re-arm the context's initial-sync
+    /// latch + drop its recorded JQL so the next pane focus switch retries instead of
+    /// adopting the failed result forever (review MEDIUM-1). Defaulted no-op so test
+    /// fixtures and future deps implementers without per-pane latches need no stub.
+    virtual void OnStreamingSyncSessionFinished(bool fetchOk) { (void)fetchOk; }
 
     // ---- Active-tickets cache ---------------------------------------------------------
     virtual std::mutex& ActiveTicketsMutex() = 0;
