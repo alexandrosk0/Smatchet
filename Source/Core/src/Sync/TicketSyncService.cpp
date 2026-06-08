@@ -395,6 +395,11 @@ void TicketSyncService::FinalizeStreamingSessionIfDone() {
         SmatchetToastManager::Instance().Push("Sync Complete", msg, ToastType::Success, 4000);
     }
 
+    // Session-end deps hook (review MEDIUM-1): a failed session re-arms the owning pane
+    // context's initial-sync latch so the next focus switch retries instead of adopting
+    // the failed result forever. UI thread (TickStreamingApply), once per session.
+    deps_.OnStreamingSyncSessionFinished(fetchError.empty());
+
     totalStaleToDelete_ = 0;
     staleDeletedSoFar_ = 0;
     staleIdsToDelete_.clear();

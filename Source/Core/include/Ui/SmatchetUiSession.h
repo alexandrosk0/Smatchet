@@ -466,6 +466,11 @@ struct UiDrawSession {
     /// SyncWithBackend kick would be a redundant network re-fetch of data the
     /// pane's context already holds — the kick consumes this flag and skips it.
     bool suppressNextBackendSwitchInitialSync = false;
+    /// Backend key the suppress latch above was set FOR (PR #986 review LOW): the
+    /// consume site honours the latch only while the session tracker still matches,
+    /// so a same-frame Preferences backend switch can't have its legitimate initial
+    /// sync swallowed by a stale pane-focus suppression.
+    std::string suppressNextBackendSwitchInitialSyncKey;
     /// One-frame latch: the HOST reassigned focusedPaneId outside the normal
     /// window-focus path (focused-pane close, "+" duplicate, bootstrap restore).
     /// Consumed by drawGridPaneWindows, which treats it as a real focus switch so

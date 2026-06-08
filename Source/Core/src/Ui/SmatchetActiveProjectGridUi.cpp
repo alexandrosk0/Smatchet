@@ -552,8 +552,15 @@ void SmatchetUI::applyActiveProjectViewChange(ActiveProjectDrawCtx& ctx) {
     GridPane& pane = ctx.pane;
     ViewDefinition* activeViewForGrid = ctx.activeViewForGrid;
 
-    const bool viewChanged = activeViewForGrid && (activeViewForGrid->Id != pane.lastGridActiveViewId);
-    if (viewChanged && activeViewForGrid) {
+    // Sort-read ownership gate (PR #986 review HIGH-2, same class as the columns fix):
+    // for a pane whose resolved view is the FALLBACK (cross-backend unfocused pane —
+    // resolvePaneView returned the other backend's active view), tracking that fallback
+    // id in lastGridActiveViewId flipped viewChanged on every focus switch, which reset
+    // the pane's sort and applied the FOCUSED view's SortSpecs onto it. A non-owned
+    // resolution leaves the pane's view-change tracking and sort environment untouched.
+    const bool viewIsPanesOwn = activeViewForGrid && activeViewForGrid->Id == pane.viewId;
+    const bool viewChanged = viewIsPanesOwn && (activeViewForGrid->Id != pane.lastGridActiveViewId);
+    if (viewChanged) {
         pane.lastGridActiveViewId = activeViewForGrid->Id;
         // Session-level unsaved-edit state belongs to the focused pane's view only.
         if (pane.focused) {
@@ -573,7 +580,20 @@ void SmatchetUI::applyActiveProjectViewChange(ActiveProjectDrawCtx& ctx) {
         }
     }
 
-    const std::string gridContextSignature = BuildGridContextSignature(activeViewForGrid, d.cfg.JqlQuery);
+    // Signature keyed on the pane's OWN identity (review HIGH-2 second part): using the
+    // session JQL (d.cfg.JqlQuery) for every pane meant each focus switch rewrote every
+    // pane's signature → cachedSortValid invalidated across all panes (resort cascade).
+    // Focused pane: session JQL (tracks ad-hoc JQL edits, the original behaviour).
+    // Unfocused owned pane: the view's saved JQL (its query of record — stable across
+    // focus switches). Non-owned (fallback) resolution: freeze on the pane's stored
+    // identity so the signature can't follow the other backend's active view.
+    std::string gridContextSignature;
+    if (viewIsPanesOwn) {
+        gridContextSignature =
+            BuildGridContextSignature(activeViewForGrid, pane.focused ? d.cfg.JqlQuery : activeViewForGrid->Jql);
+    } else {
+        gridContextSignature = std::string("frozen\x1e") + pane.viewId;
+    }
     const bool gridContextChanged =
         !pane.lastGridContextSignature.empty() && gridContextSignature != pane.lastGridContextSignature;
     if (gridContextChanged && pane.focused) {
@@ -846,7 +866,11 @@ void SmatchetUI::drawActiveProjectGridSetup(ActiveProjectDrawCtx& ctx) {
     }
 
     // Apply persisted sort from the view only when the grid context changes or the Sort By popup edits it.
-    if (activeViewForGrid) {
+    // Ownership-gated (review HIGH-2): a fallback-resolved view (cross-backend unfocused
+    // pane) must never push ITS SortSpecs onto this pane — shared column keys like
+    // status/summary would match and re-sort the wrong grid. Same strict-Id discipline
+    // as the sort WRITE mirror in drawActiveProjectGridSort.
+    if (activeViewForGrid && activeViewForGrid->Id == ctx.pane.viewId) {
         ImGuiTableSortSpecs* specs = ImGui::TableGetSortSpecs();
         const bool hasPersistedSort = !activeViewForGrid->SortSpecs.empty();
         const bool shouldApplyPersistedSort = specs && (gridSortEnvironmentChanged || ctx.pane.forceApplySortSpecs);

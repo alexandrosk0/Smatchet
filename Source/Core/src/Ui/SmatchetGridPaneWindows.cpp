@@ -235,7 +235,8 @@ void SmatchetUI::syncFocusedPaneWithActiveView(AppController& app, UiDrawSession
         // the full sync path.
         const bool paneSyncLive = app.IsPaneSyncLive(pane.id);
         const std::string cfgKey = ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
-        if (!pane.backendKey.empty() && pane.backendKey != cfgKey) {
+        const bool crossBackend = !pane.backendKey.empty() && pane.backendKey != cfgKey;
+        if (crossBackend) {
             // Re-point the config at the pane's backend; the SESSION-level
             // lastViewsBackendKey delta (consumed in drawViewStateAndConnectivity —
             // review HIGH-4) resets catalog + initial sync next frame, and the sync
@@ -243,21 +244,43 @@ void SmatchetUI::syncFocusedPaneWithActiveView(AppController& app, UiDrawSession
             d.cfg.TrackerType = pane.backendKey;
             ConfigManager::Save(d.cfg);
             ViewState.EnsureLoaded(d.cfg);
-            if (paneSyncLive) {
-                // The session reset must still run (catalog refetch targets this pane's
-                // context), but its downstream initial SyncWithBackend kick would
-                // double-sync a context that already fetched — suppress that one kick.
-                d.suppressNextBackendSwitchInitialSync = true;
-            }
             LOG_INFO("GridPaneWindows: focused pane '%s' re-pointed backend to '%s'", pane.id.c_str(),
                      pane.backendKey.c_str());
+        }
+        // JQL-drift guard (review MEDIUM-2 + the HIGH-1 provenance rule): "the pane's
+        // data is already fresh" only holds when its context actually fetched with the
+        // view's CURRENT saved JQL. A drift (view edited after the context synced, or a
+        // failed first sync whose session-end hook cleared the recorded JQL) re-kicks.
+        // Looked up AFTER EnsureLoaded so the store holds the pane's backend bucket.
+        std::string adoptedViewJql;
+        const ViewsStore& store = ViewState.GetStore();
+        for (size_t i = 0; i < store.Views.size(); ++i) {
+            if (store.Views[i].Id == pane.viewId) {
+                adoptedViewJql = store.Views[i].Jql;
+                break;
+            }
+        }
+        const bool provenanceTrusted = paneSyncLive && app.GetPaneLastSyncedJql(pane.id) == adoptedViewJql;
+        if (crossBackend && provenanceTrusted) {
+            // The session reset must still run (catalog refetch targets this pane's
+            // context), but its downstream initial SyncWithBackend kick would
+            // double-sync a context that already fetched with this exact JQL —
+            // suppress that one kick, bound to this pane's backend key (review LOW).
+            d.suppressNextBackendSwitchInitialSync = true;
+            d.suppressNextBackendSwitchInitialSyncKey = pane.backendKey;
         }
         const ViewDefinition* active = ViewState.GetActiveView();
         if (!pane.viewId.empty() && (active == nullptr || active->Id != pane.viewId)) {
             // Views::Activate(pane.viewId) + JQL/fields adoption; SyncWithCurrentView
             // (which routes through SwapBackendIfTrackerChanged) only when the pane's
-            // context is not already sync-live.
-            viewsActivateView(app, d, pane.viewId, /*kickSync=*/!paneSyncLive);
+            // context data provenance can't be trusted.
+            viewsActivateView(app, d, pane.viewId, /*kickSync=*/!provenanceTrusted);
+            if (!provenanceTrusted) {
+                // Stamp the kick so the NEXT focus switch onto this pane sees a matching
+                // JQL and adopts without another re-fetch (the deps session-end hook
+                // clears the stamp again if this kick fails).
+                app.RecordPaneSyncKick(pane.id, adoptedViewJql);
+            }
         }
     }
 

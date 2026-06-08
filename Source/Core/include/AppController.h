@@ -1065,6 +1065,16 @@ class AppController
     /// path: a sync-live pane's data is already fresh from its OWN context, so adopting its
     /// view on focus must not kick a redundant SyncWithBackend (Slice-3 follow-up).
     bool IsPaneSyncLive(const std::string& paneId) const;
+    /// UI thread. The JQL the pane context's most-recent kicked sync used (empty when the
+    /// pane has no live context or its sync failed — the session-end deps hook clears it).
+    /// The focus-switch path compares it against the adopted view's saved JQL: a mismatch
+    /// (view edited after the context synced, or a failed first sync) re-kicks instead of
+    /// adopting stale rows (review MEDIUM-1/2).
+    std::string GetPaneLastSyncedJql(const std::string& paneId) const;
+    /// UI thread. Stamp the pane context as sync-kicked for `jql`. Called by the pane
+    /// focus-switch path when it decides to KICK (mismatch/cold) so the next focus switch
+    /// onto the same pane sees a matching JQL and adopts without a redundant re-fetch.
+    void RecordPaneSyncKick(const std::string& paneId, const std::string& jql);
     /// Any pane's live published snapshot (null when the pane has no live context yet).
     std::shared_ptr<const std::vector<CachedTicket>> GetPaneTicketsSnapshot(const std::string& paneId) const;
     /// Per-pane ActiveTickets revision (0 when the pane has no live context).
