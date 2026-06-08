@@ -9,6 +9,15 @@
 // Call once after ImGui::CreateContext(), before the first font atlas build / backend init.
 void SmatchetApplyImGuiDefaultFontWithExtendedGlyphs(ImGuiIO& io);
 
+// Host-injected font bytes (#12, mobile host-injection seam). A host that cannot expose a
+// system-font *path* to Core (Android — Core TUs include no <android/...> headers) reads a
+// bundled TTF itself and injects the raw bytes here. Call ONCE before the first
+// SmatchetApplyImGuiFont* call: the bytes are copied into a Core-owned buffer and loaded via
+// AddFontFromMemoryTTF on every platform, taking precedence over the per-OS font-file path.
+// `data`==null / `dataSize`<=0 / `sizePixels`<=0 clears the injection (resume default path).
+// Desktop never calls this (it has the system-font path); the seam stays desktop-compilable.
+void SmatchetSetInjectedFontBytes(const void* data, int dataSize, float sizePixels);
+
 // Request a dynamic font change on the next frame boundary.
 void SmatchetRequestFontReload(const std::string& fontName, float fontSizePixels);
 

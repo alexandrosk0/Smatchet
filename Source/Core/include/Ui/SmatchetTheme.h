@@ -56,6 +56,15 @@ namespace SmatchetTheme {
 /** Apply the named style palette to the current ImGui context. */
 void ApplyStyle(ThemeId theme);
 
+/** Scale every size / spacing / rounding metric of the current style by `densityScale`
+ *  (wraps ImGui::GetStyle().ScaleAllSizes). Mobile host-injection seam (#13): a high-DPI
+ *  touch host calls this AFTER ApplyStyle — which rebuilds the style from scratch and would
+ *  otherwise wipe any earlier scaling — to enlarge controls to finger size; the host also
+ *  sets io.DisplayFramebufferScale per frame for crisp rasterization. No-op when
+ *  `densityScale` <= 0 or NaN (caller error — current style is left intact). Desktop never
+ *  calls it (scale stays 1.0), so the seam is inert and fully desktop-compilable. */
+void ApplyUiDensityScale(float densityScale);
+
 /** Active theme's C++ syntax-highlight palette. Updated by ApplyStyle. */
 const SmatchetThemeSyntaxColors& GetSyntaxColors();
 

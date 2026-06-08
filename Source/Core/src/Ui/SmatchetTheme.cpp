@@ -787,6 +787,14 @@ void SmatchetTheme::ApplyStyle(ThemeId theme) {
     g_themeRevision.fetch_add(1, std::memory_order_release);
 }
 
+void SmatchetTheme::ApplyUiDensityScale(float densityScale) {
+    // Guard non-positive / NaN — `!(x > 0)` rejects NaN too. Leave the current style untouched.
+    if (!(densityScale > 0.0f)) {
+        return;
+    }
+    ImGui::GetStyle().ScaleAllSizes(densityScale);
+}
+
 const SmatchetThemeSyntaxColors& SmatchetTheme::GetSyntaxColors() { return gSyntaxColors; }
 
 const SmatchetThemeAiColors& SmatchetTheme::GetActiveAiColors() { return gAiColors; }
