@@ -183,6 +183,11 @@ add_executable(SmatchetTests
     Core/AiNdjsonParser.test.cpp
     Core/AiContextBuilder.test.cpp
     Core/AiErrorRedact.test.cpp
+    # PR #991 — pure Ollama stream-error message formatting (transport + non-2xx
+    # HTTP) extracted from OllamaClient::SendStreaming. OllamaStreamError.cpp is
+    # cpr-free (delegates body redaction to AiErrorRedact), linked in the CORE
+    # source block below; this entry adds the doctest TU.
+    Core/OllamaStreamError.test.cpp
     Core/AiModelCatalog.test.cpp
     Core/AiModelSignature.test.cpp
     # Pure helpers extracted from AiAssistantController::RunRequest (monoliths
@@ -381,6 +386,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/OpenAiClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AnthropicClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/OllamaClient.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/OllamaStreamError.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AgentsMdLoader.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AiContextBuilder.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AiModelCatalog.cpp"
