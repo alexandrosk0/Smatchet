@@ -1,6 +1,7 @@
 #include "JiraClient.h"
 
 #include "BackendAuditTrail.h"
+#include "JiraIssueMappingPure.h"
 #include "TrackerFieldValueParser.h"
 #include "TrackerHttpUtils.h"
 #include "Logger.h"
@@ -25,67 +26,20 @@
 
 namespace {
 
-// Scans the "transitions" JSON array and returns the transition id (Jira string)
-// that leads to the requested status. Matches by status id first, then status
-// name (case-insensitive), then transition name as a fallback. Returns empty
-// string when no candidate is found.
+// Returns the transition id leading to the requested status (status id → to.name →
+// transition-name fallback, prioritised GLOBALLY). The matcher is the pure,
+// unit-tested smatchet::jira::FindJiraTransitionId; the LOG_WARN for a name-fallback
+// match lives here because the pure unit is Logger-free (#670).
 std::string FindTransitionIdInArray(const nlohmann::json& transitionsArray, const std::string& targetStatusId,
                                     const std::string& targetStatusName) {
-    const auto iequals = [](const std::string& a, const std::string& b) {
-        if (a.size() != b.size())
-            return false;
-        for (size_t i = 0; i < a.size(); ++i) {
-            if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i])))
-                return false;
-        }
-        return true;
-    };
-
-    for (const auto& transition : transitionsArray) {
-        if (!transition.is_object())
-            continue;
-        std::string thisId;
-        if (transition.contains("id")) {
-            if (transition["id"].is_string()) {
-                thisId = transition["id"].get<std::string>();
-            } else if (transition["id"].is_number_integer()) {
-                thisId = std::to_string(transition["id"].get<long long>());
-            } else if (transition["id"].is_number_unsigned()) {
-                thisId = std::to_string(transition["id"].get<unsigned long long>());
-            }
-        }
-        if (thisId.empty())
-            continue;
-
-        std::string transitionName = transition.value("name", std::string());
-        std::string toStatusId;
-        std::string toStatusName;
-        if (transition.contains("to") && transition["to"].is_object()) {
-            const auto& to = transition["to"];
-            if (to.contains("id")) {
-                if (to["id"].is_string()) {
-                    toStatusId = to["id"].get<std::string>();
-                } else if (to["id"].is_number_integer()) {
-                    toStatusId = std::to_string(to["id"].get<long long>());
-                } else if (to["id"].is_number_unsigned()) {
-                    toStatusId = std::to_string(to["id"].get<unsigned long long>());
-                }
-            }
-            toStatusName = to.value("name", std::string());
-        }
-
-        if ((!targetStatusId.empty() && toStatusId == targetStatusId) ||
-            (!targetStatusName.empty() && iequals(toStatusName, targetStatusName))) {
-            return thisId;
-        }
-        if (!targetStatusName.empty() && iequals(transitionName, targetStatusName)) {
-            LOG_WARN("JiraClient: transition name fallback triggered: transition '%s' matched target "
-                     "status name '%s' but status name is '%s' — workflow may have diverged.",
-                     transitionName.c_str(), targetStatusName.c_str(), toStatusName.c_str());
-            return thisId;
-        }
+    const smatchet::jira::JiraTransitionMatch match =
+        smatchet::jira::FindJiraTransitionId(transitionsArray, targetStatusId, targetStatusName);
+    if (match.usedNameFallback) {
+        LOG_WARN("JiraClient: transition name fallback triggered: transition '%s' matched target "
+                 "status name '%s' but status name is '%s' — workflow may have diverged.",
+                 match.transitionName.c_str(), targetStatusName.c_str(), match.toStatusName.c_str());
     }
-    return std::string();
+    return match.id;
 }
 
 nlohmann::json AdfDocumentFromPlainText(const std::string& plainText) {
