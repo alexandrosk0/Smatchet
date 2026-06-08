@@ -16,7 +16,7 @@ Default when the task is NOT an AI/Whisper/MCP feature — faster, fewer moving 
 
 ## MSYS2 retired
 
-**Never propose MSYS2 for building Smatchet** — the `*-msys2` presets are **retired** (use `ninja-iter-msvc` or `ninja-iter-clang`); the repo-owned PowerShell scripts (`scripts/dev/build_and_run.ps1` / `build_standalone.ps1`) auto-bootstrap the MSVC env via `vswhere`→`vcvars64`, so no Developer Prompt or MSYS2 is required, and a `*-msys2` preset is rejected fast with that hint.
+**Never propose MSYS2 for building Smatchet** — the `*-msys2` presets are **retired** (use `ninja-iter-msvc` or `ninja-iter-clang`); the repo-owned PowerShell scripts (`scripts/dev/local/build_and_run.ps1` / `scripts/dev/local/build_standalone.ps1`) auto-bootstrap the MSVC env via `vswhere`→`vcvars64`, so no Developer Prompt or MSYS2 is required, and a `*-msys2` preset is rejected fast with that hint.
 
 ## Dual-target verify
 
@@ -28,7 +28,7 @@ Build from bash through the wrapper — it sources `vcvars64` with the pinned to
 
 `bash scripts/dev/with-msvc-env.sh cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`
 
-(PowerShell equivalents: `scripts/dev/with-msvc.ps1`, `scripts/dev/build_and_run.ps1`.) Without a wrapper, a bare `cmake --build` from bash fails with `Cannot open include file: 'stdio.h'` (no `INCLUDE`).
+(PowerShell equivalents: `scripts/dev/with-msvc.ps1`, `scripts/dev/local/build_and_run.ps1`.) Without a wrapper, a bare `cmake --build` from bash fails with `Cannot open include file: 'stdio.h'` (no `INCLUDE`).
 
 The toolset pin is `build.msvc_toolset_pin` in `project.config.json` (currently `14.38`; override with `$SMATCHET_VCVARS_VER`). It matters on a multi-VS box: an **unpinned** `vcvars64` selects the *newest* installed toolset, whose STL headers reject the cached older `cl.exe` with **`error STL1001`** — which can cascade to `C2801`/`C2333` inside `<memory>`/`<vector>`/`<thread>` (the C++23 `static operator()` STL under `/std:c++14`). The wrappers pass `-vcvars_ver=<pin>`; if you call `vcvars64.bat` by hand, pass the same `-vcvars_ver` (the configured toolset is in `build/<preset>/CMakeCache.txt`). On a VS-18 box the working manual invocation is `"C:\Program Files\Microsoft Visual Studio\18\Community\Common7\Tools\VsDevCmd.bat" -arch=x64 -vcvars_ver=14.38.33130` (locate via vswhere; the default 14.50 toolset fails in STL headers against the cached configure).
 

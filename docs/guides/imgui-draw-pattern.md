@@ -88,7 +88,7 @@ void FooUi::Draw(AppController& app, UiDrawSession& d) {
    struct on the owning UI object. For Smatchet's singleton windows this is
    behaviour-identical; for any future multi-instance window it's a strict
    improvement (per-instance, not shared). Audit:
-   `grep -nE "static .*(Buf|bool s_|\[)" Source/Core/src/Smatchet*Ui*.cpp`.
+   `grep -nE "static .*(Buf|bool s_|\[)" Source/Core/src/Ui/Smatchet*Ui*.cpp`.
 5. **Action handlers** (button click → mutation) move into `OnX()` methods returning
    `void`/`bool`. Keeps the draw body layout-only.
 6. **Section-file split when a `.cpp` exceeds ~1500 lines.** Precedent:
