@@ -194,7 +194,15 @@ check_flag_parity() {
             # (not sed range) so the start line itself is checked for `;;`
             # (sed's `,/p/` skips the start-line match).
             local body
-            body=$(awk -v start="$lno" 'NR<start{next} {print; if (/;;/) exit}' "$script" | head -10)
+            # Cap at 10 lines INSIDE awk — NOT `awk … | head -10`: the SAME
+            # SIGPIPE-under-pipefail class as the deps-rule fix above, and the
+            # SECOND trigger of the exit-141 develop breakage (#995 fixed only
+            # the deps-rule pipe). Here awk STREAMS a whole script file; on a CI
+            # runner a large scanned script (e.g. setup-harness.sh, a 200-line
+            # case-branch body with no early `;;`) keeps awk writing after
+            # `head -10` closes the pipe → awk SIGPIPE → 141. No pipe → no
+            # SIGPIPE; the first ≤10 lines (through the `;;` line) are identical.
+            body=$(awk -v start="$lno" 'NR<start{next} {print; n++; if (n>=10 || /;;/) exit}' "$script")
             # Value-taking signal: shift 2 OR $2 reference in the branch body.
             if echo "$body" | grep -qE '(shift[[:space:]]+2|\$2|\$\{2)'; then
                 value_flags["$flag"]=1
