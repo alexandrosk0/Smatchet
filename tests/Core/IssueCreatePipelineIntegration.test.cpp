@@ -400,3 +400,62 @@ TEST_CASE("BuildCreatePayload returns Ok json on success and InvalidRequest Err 
         CHECK(r.error().Detail == "Project key is empty.");
     }
 }
+
+// Slice 4 of the tracker Result<T> migration flipped the ITrackerIssueMutations void-payload
+// writes from `bool(..., std::string& outError)` to a bare `TrackerError` return (no payload —
+// ok-ness is carried by TrackerError::IsOk()). These cases pin the migrated shape directly:
+// success returns an Ok TrackerError (empty Detail); a scripted failure returns a non-Ok
+// TrackerError whose Detail is the verbatim scripted message — the contract the AppController
+// wrappers + OfflineQueueService + IssueCreatePipeline translate back to their string surfaces
+// (where ErrorTextContainsHttpStatus / IsTrackerTransportErrorText parse it verbatim).
+TEST_CASE("UpdateIssueFields returns Ok TrackerError on success and a detail-carrying Err on failure") {
+    FakeTrackerClient client;
+
+    SUBCASE("success is an Ok TrackerError with empty detail") {
+        client.EnqueueUpdateIssueFieldsSuccess();
+        const TrackerError e = client.UpdateIssueFields("PROJ-1", nlohmann::json{{"summary", "x"}});
+        CHECK(e.IsOk());
+        CHECK(e.Detail.empty());
+    }
+
+    SUBCASE("failure carries the verbatim scripted detail") {
+        client.EnqueueUpdateIssueFieldsFailure("HTTP 422: Unprocessable Entity");
+        const TrackerError e = client.UpdateIssueFields("PROJ-1", nlohmann::json{{"summary", "x"}});
+        CHECK_FALSE(e.IsOk());
+        CHECK(e.Detail == "HTTP 422: Unprocessable Entity");
+    }
+}
+
+TEST_CASE("UpdateField returns Ok TrackerError on success and a detail-carrying Err on failure") {
+    FakeTrackerClient client;
+
+    SUBCASE("success is an Ok TrackerError") {
+        client.SetDefaultUpdateFieldResult(true);
+        const TrackerError e = client.UpdateField("PROJ-1", MakeField("summary"), {"x"});
+        CHECK(e.IsOk());
+    }
+
+    SUBCASE("failure carries the verbatim scripted detail") {
+        client.SetDefaultUpdateFieldResult(false, "field rejected");
+        const TrackerError e = client.UpdateField("PROJ-1", MakeField("summary"), {"x"});
+        CHECK_FALSE(e.IsOk());
+        CHECK(e.Detail == "field rejected");
+    }
+}
+
+TEST_CASE("AddIssueToSprint returns Ok TrackerError on success and a detail-carrying Err on failure") {
+    FakeTrackerClient client;
+
+    SUBCASE("success is an Ok TrackerError") {
+        client.EnqueueAddIssueToSprintSuccess();
+        const TrackerError e = client.AddIssueToSprint("PROJ-1", "101");
+        CHECK(e.IsOk());
+    }
+
+    SUBCASE("failure carries the verbatim scripted detail") {
+        client.EnqueueAddIssueToSprintFailure("sprint not found");
+        const TrackerError e = client.AddIssueToSprint("PROJ-1", "101");
+        CHECK_FALSE(e.IsOk());
+        CHECK(e.Detail == "sprint not found");
+    }
+}

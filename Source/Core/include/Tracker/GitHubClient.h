@@ -59,9 +59,9 @@ class GitHubClient : public ITrackerBackend,
     Result<TrackerFieldCatalogResult, TrackerError> FetchFieldCatalog(const TrackerConfig& cfg,
                                                                       const std::string& projectKey) override;
     std::string BuildBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const override;
-    bool UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields, std::string& outError) override;
-    bool UpdateField(const std::string& issueId, const TrackerField& field, const std::vector<std::string>& values,
-                     std::string& outError) override;
+    TrackerError UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) override;
+    TrackerError UpdateField(const std::string& issueId, const TrackerField& field,
+                             const std::vector<std::string>& values) override;
     Result<nlohmann::json, TrackerError> BuildFieldPayload(const TrackerField& field,
                                                            const std::vector<std::string>& values) override;
     Result<nlohmann::json, TrackerError> BuildCreatePayload(const IssueDraft& draft,

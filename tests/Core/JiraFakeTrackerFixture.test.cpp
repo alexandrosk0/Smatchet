@@ -159,9 +159,9 @@ TEST_CASE("JiraFakeTrackerFixture — UpdateIssueFields scripted success") {
     const auto fixture = JiraFakeTrackerFixture::LoadFromString(kBasicFixture);
     const auto client = fixture.CreateClient();
 
-    std::string err;
-    CHECK(client->UpdateIssueFields("SMAT-1", {{"summary", "new"}}, err));
-    CHECK(err.empty());
+    const TrackerError err = client->UpdateIssueFields("SMAT-1", {{"summary", "new"}});
+    CHECK(err.IsOk());
+    CHECK(err.Detail.empty());
     CHECK(client->UpdateIssueFieldsCallCount() == 1);
 }
 

@@ -71,11 +71,12 @@ bool ApplyPostIssueStatusStep(ITrackerIssueMutations& client, const std::string&
         !statusValue.is_null()) {
         nlohmann::json statusUpdate = nlohmann::json::object();
         statusUpdate["status"] = std::move(statusValue);
-        std::string transitionErr;
-        if (client.UpdateIssueFields(issueKey, statusUpdate, transitionErr)) {
+        const TrackerError transitionErr = client.UpdateIssueFields(issueKey, statusUpdate);
+        if (transitionErr.IsOk()) {
             return true;
         }
-        LOG_WARN("IssueCreatePipeline: issue %s: status not applied: %s", issueKey.c_str(), transitionErr.c_str());
+        LOG_WARN("IssueCreatePipeline: issue %s: status not applied: %s", issueKey.c_str(),
+                 transitionErr.Detail.c_str());
     } else if (!statusBuildErr.empty()) {
         LOG_WARN("IssueCreatePipeline: issue %s: status payload invalid: %s", issueKey.c_str(), statusBuildErr.c_str());
     }
@@ -102,10 +103,11 @@ bool ApplySprintFieldSegments(ITrackerIssueMutations& client, const std::string&
         if (!appliedSprintIds.insert(sprintId).second) {
             continue;
         }
-        std::string sprintErr;
-        if (!client.AddIssueToSprint(issueKey, sprintId, sprintErr)) {
+        const TrackerError sprintErr = client.AddIssueToSprint(issueKey, sprintId);
+        if (!sprintErr.IsOk()) {
             allOk = false;
-            LOG_WARN("IssueCreatePipeline: issue %s: AddIssueToSprint failed: %s", issueKey.c_str(), sprintErr.c_str());
+            LOG_WARN("IssueCreatePipeline: issue %s: AddIssueToSprint failed: %s", issueKey.c_str(),
+                     sprintErr.Detail.c_str());
         }
     }
     if (!sprintSegmentSeen) {
@@ -269,9 +271,9 @@ IssueCreateResult RunUpdateExisting(ITrackerIssueMutations& client, LocalCacheMa
     nlohmann::json fields = std::move(updatePayloadResult.value());
 
     if (!fields.empty()) {
-        std::string updateErr;
-        if (!client.UpdateIssueFields(issueKey, fields, updateErr)) {
-            result.Error = updateErr.empty() ? "Update failed." : updateErr;
+        const TrackerError updateErr = client.UpdateIssueFields(issueKey, fields);
+        if (!updateErr.IsOk()) {
+            result.Error = updateErr.Detail.empty() ? "Update failed." : updateErr.Detail;
             LOG_ERROR("IssueCreatePipeline: UpdateIssue failed: %s", result.Error.c_str());
             return result;
         }

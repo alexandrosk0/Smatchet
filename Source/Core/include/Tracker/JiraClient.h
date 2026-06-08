@@ -37,9 +37,9 @@ class JiraClient : public ITrackerBackend,
     TrackerReachabilityProbeResult ProbeReachability(const TrackerConfig& cfg) override;
     bool FetchUsers(const TrackerConfig& cfg, std::vector<TrackerUser>& outUsers, std::string& outError);
 
-    bool UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields, std::string& outError) override;
-    bool UpdateField(const std::string& issueId, const TrackerField& field, const std::vector<std::string>& values,
-                     std::string& outError) override;
+    TrackerError UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) override;
+    TrackerError UpdateField(const std::string& issueId, const TrackerField& field,
+                             const std::vector<std::string>& values) override;
     Result<nlohmann::json, TrackerError> BuildFieldPayload(const TrackerField& field,
                                                            const std::vector<std::string>& values) override;
     Result<nlohmann::json, TrackerError> BuildCreatePayload(const IssueDraft& draft,
@@ -61,7 +61,7 @@ class JiraClient : public ITrackerBackend,
                             std::vector<std::pair<std::string, std::string>>& outFailures,
                             std::string& outError) override;
 
-    bool AddIssueToSprint(const std::string& issueKey, const std::string& sprintId, std::string& outError) override;
+    TrackerError AddIssueToSprint(const std::string& issueKey, const std::string& sprintId) override;
 
     bool FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey,
                            std::vector<TrackerField>& outFields, std::vector<TrackerComponent>& outComponents,

@@ -1078,9 +1078,9 @@ void OfflineQueueService::ReplayOneFieldEdit(const PendingFieldEditRecord& row, 
         return;
     }
 
-    std::string err;
-    if (!mutations->UpdateIssueFields(row.IssueKey, fieldsPayload, err)) {
-        HandleFieldEditUpdateFailure(row, cache, err, tally);
+    const TrackerError updateErr = mutations->UpdateIssueFields(row.IssueKey, fieldsPayload);
+    if (!updateErr.IsOk()) {
+        HandleFieldEditUpdateFailure(row, cache, updateErr.Detail, tally);
         return;
     }
 
