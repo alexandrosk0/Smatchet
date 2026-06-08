@@ -481,7 +481,17 @@ bool AppController::TryBuildFieldEditPayloadForNetwork(
     }
 
     nlohmann::json valuePayload;
-    if (!backend->Mutations() || !backend->Mutations()->BuildFieldPayload(field, rawValues, valuePayload, outError)) {
+    bool built = false;
+    if (backend->Mutations()) {
+        auto payloadResult = backend->Mutations()->BuildFieldPayload(field, rawValues);
+        if (payloadResult) {
+            valuePayload = std::move(payloadResult.value());
+            built = true;
+        } else {
+            outError = payloadResult.error().Detail;
+        }
+    }
+    if (!built) {
         LOG_WARN("AppController::TryBuildFieldEditPayloadForNetwork build failed issue=%s field=%s err=%s",
                  issueId.c_str(), field.Id.c_str(), outError.c_str());
         return false;
@@ -1095,12 +1105,14 @@ bool AppController::SubmitFieldEditRegular(const SubmitFieldEditCtx& ctx, std::s
         return false;
     }
 
-    nlohmann::json fieldsPayload;
-    if (!mutations->BuildFieldPayload(field, rawValues, fieldsPayload, outError)) {
+    auto fieldPayloadResult = mutations->BuildFieldPayload(field, rawValues);
+    if (!fieldPayloadResult) {
+        outError = fieldPayloadResult.error().Detail;
         LOG_WARN("AppController::SubmitFieldEdit invalid value issue=%s field=%s err=%s", issueId.c_str(),
                  field.Id.c_str(), outError.c_str());
         return false;
     }
+    nlohmann::json fieldsPayload = std::move(fieldPayloadResult.value());
 
     auto ticketIt =
         std::find_if(tickets.begin(), tickets.end(), [&](const CachedTicket& ticket) { return ticket.id == issueId; });

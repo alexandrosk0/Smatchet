@@ -259,13 +259,14 @@ IssueCreateResult RunUpdateExisting(ITrackerIssueMutations& client, LocalCacheMa
         return result;
     }
 
-    nlohmann::json fields;
-    std::string buildErr;
-    if (!client.BuildUpdatePayload(draft, catalog, fields, buildErr)) {
+    auto updatePayloadResult = client.BuildUpdatePayload(draft, catalog);
+    if (!updatePayloadResult) {
+        const std::string& buildErr = updatePayloadResult.error().Detail;
         result.Error = buildErr.empty() ? "Failed to build update payload." : buildErr;
         LOG_ERROR("IssueCreatePipeline: %s", result.Error.c_str());
         return result;
     }
+    nlohmann::json fields = std::move(updatePayloadResult.value());
 
     if (!fields.empty()) {
         std::string updateErr;
@@ -329,13 +330,14 @@ IssueCreateResult Run(ITrackerIssueMutations& client, LocalCacheManager* cache, 
     LOG_DEBUG("IssueCreatePipeline: building create payload for project=%s issuetype=%s", work.ProjectKey.c_str(),
               work.IssueTypeId.c_str());
 
-    nlohmann::json fields;
-    std::string buildErr;
-    if (!client.BuildCreatePayload(work, catalog, fields, buildErr)) {
+    auto createPayloadResult = client.BuildCreatePayload(work, catalog);
+    if (!createPayloadResult) {
+        const std::string& buildErr = createPayloadResult.error().Detail;
         result.Error = buildErr.empty() ? "Failed to build create payload." : buildErr;
         LOG_ERROR("IssueCreatePipeline: %s", result.Error.c_str());
         return result;
     }
+    nlohmann::json fields = std::move(createPayloadResult.value());
 
     std::string createErr;
     LOG_DEBUG("IssueCreatePipeline: calling CreateIssue with payload: %s", fields.dump().c_str());

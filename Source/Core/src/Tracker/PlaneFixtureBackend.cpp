@@ -146,10 +146,9 @@ bool PlaneFixtureBackend::UpdateField(const std::string& /*issueId*/, const Trac
     return false;
 }
 
-bool PlaneFixtureBackend::BuildFieldPayload(const TrackerField& /*field*/, const std::vector<std::string>& /*values*/,
-                                            nlohmann::json& outPayload, std::string& /*outError*/) {
-    outPayload = nlohmann::json::object();
-    return true;
+Result<nlohmann::json, TrackerError>
+PlaneFixtureBackend::BuildFieldPayload(const TrackerField& /*field*/, const std::vector<std::string>& /*values*/) {
+    return Result<nlohmann::json, TrackerError>::Ok(nlohmann::json::object());
 }
 
 std::unique_ptr<ITrackerBackendFactory> MakePlaneFixtureBackendFactory(const std::string& fixturePath) {

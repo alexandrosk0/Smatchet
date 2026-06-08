@@ -355,3 +355,48 @@ TEST_CASE("IssueCreatePipeline: empty ExistingIssueKey falls through to create e
     CHECK(client.CreateIssueCallCount() == 1);
     CHECK(client.UpdateIssueFieldsCallCount() == 0);
 }
+
+// Slice 3 of the tracker Result<T> migration flipped the ITrackerIssueMutations payload
+// builders from `bool(..., json& out, std::string& outError)` to
+// `Result<nlohmann::json, TrackerError>`. These cases pin the migrated return shape directly:
+// Ok carries the built json, Err carries a TrackerErrorInvalidRequest whose Detail is the
+// verbatim builder message (the contract the AppController wrappers + IssueCreatePipeline
+// translate back to their bool+outError / IssueCreateResult.Error surfaces).
+TEST_CASE("BuildFieldPayload returns Ok json on success and InvalidRequest Err on failure") {
+    FakeTrackerClient client;
+
+    SUBCASE("ok carries the built payload") {
+        client.SetBuildFieldPayloadResult(true);
+        auto r = client.BuildFieldPayload(MakeField("summary"), {"hello"});
+        REQUIRE(static_cast<bool>(r));
+        CHECK(r.value().contains("values"));
+        CHECK(r.value()["values"].size() == 1);
+    }
+
+    SUBCASE("err carries the verbatim detail under InvalidRequest") {
+        client.SetBuildFieldPayloadResult(false, "Field 'summary': bad value.");
+        auto r = client.BuildFieldPayload(MakeField("summary"), {"x"});
+        REQUIRE_FALSE(static_cast<bool>(r));
+        CHECK(r.error().Kind == TrackerErrorKind::InvalidRequest);
+        CHECK(r.error().Detail == "Field 'summary': bad value.");
+    }
+}
+
+TEST_CASE("BuildCreatePayload returns Ok json on success and InvalidRequest Err on failure") {
+    FakeTrackerClient client;
+
+    SUBCASE("ok carries the built payload") {
+        client.SetBuildCreatePayloadResult(true, nlohmann::json{{"fields", nlohmann::json::object()}});
+        auto r = client.BuildCreatePayload(MakeBasicCreateDraft(), BasicCatalog());
+        REQUIRE(static_cast<bool>(r));
+        CHECK(r.value().contains("fields"));
+    }
+
+    SUBCASE("err carries the verbatim detail under InvalidRequest") {
+        client.SetBuildCreatePayloadResult(false, nlohmann::json::object(), "Project key is empty.");
+        auto r = client.BuildCreatePayload(MakeBasicCreateDraft(), BasicCatalog());
+        REQUIRE_FALSE(static_cast<bool>(r));
+        CHECK(r.error().Kind == TrackerErrorKind::InvalidRequest);
+        CHECK(r.error().Detail == "Project key is empty.");
+    }
+}
