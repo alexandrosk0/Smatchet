@@ -1416,10 +1416,11 @@ class AppController
     std::thread::id uiThreadId_{};
 
     // pImpl (hardening #19) — the COLD, sol2-/subsystem-heavy state lives in
-    // `struct Impl` (defined in AppController.cpp where its full member types,
-    // including sol2, are visible). Lifting it out of this header is what lets
-    // AppController.h stop including <sol/sol.hpp>, so the ~100 header includers
-    // no longer pull sol2 into their compile. Hot, per-frame members stay inline
+    // `struct Impl` (defined in the src-only header AppControllerImpl.h, included
+    // by the AppController*.cpp TUs where its full member types, including sol2,
+    // are visible). Lifting it out of this header is what lets AppController.h
+    // stop including <sol/sol.hpp> (step 19c), so the ~100 header includers no
+    // longer pull sol2 into their compile. Hot, per-frame members stay inline
     // above (zero perf delta). MUST be declared LAST: it is constructed last and
     // destroyed first, and its ctor/dtor are out-of-line in AppController.cpp
     // where Impl is a complete type (incomplete-type unique_ptr discipline).

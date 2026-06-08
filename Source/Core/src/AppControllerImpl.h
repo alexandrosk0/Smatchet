@@ -52,6 +52,10 @@ struct AppController::Impl {
 
     /// Owns the Lua sandbox + automation worker + Lua bindings. Constructed eagerly in
     /// `Initialize` to keep the `Add*LogSink` calls from `OnEarlyInit` working.
+    /// Destruction-order note (review #1016): declared AFTER the `lua`/provider block, so it
+    /// destructs BEFORE `lua` — benign today because LuaAutomationHost holds only a log-sink
+    /// callback list (no `sol` handles, no `Impl::lua` reference). If item-14 later migrates
+    /// real sol-referencing state into LuaAutomationHost, move this back ABOVE `lua`.
     std::unique_ptr<LuaAutomationHost> luaHost_;
 
 #if defined(SMATCHET_WITH_AI)
