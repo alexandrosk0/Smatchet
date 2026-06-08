@@ -11,6 +11,46 @@
 > auto-fixed. User-visible product defects should be elevated to GitHub Issues
 > (ADR-0014); the rest is tech-debt. Newest batch on top.
 
+## Remediation log (2026-06-08)
+
+Autonomous fix pass over the safe, deterministic findings (gate-false-pass +
+doc-drift); user-visible product correctness/data-loss bugs routed to their own
+PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
+`origin/develop` before acting; already-fixed ones marked accordingly.
+
+- ✅ **#918** (coverage-delta-gate false-exempt) — FIXED: dropped the `'*'*` /
+  `'*/'` bare comment-continuation cases (genuine continuations are consumed by
+  the caller's `in_block_comment` state machine, so a `*`-leading line reaching
+  the helper is a pointer-deref statement, not a comment) and replaced the broad
+  `'/*'*) return 0` with a strip-and-classify-residual so `/* note */ code();`
+  no longer exempts real surface. +2 `--selftest` FALLTHROUGH fixtures.
+- ✅ **#834** (coverage.sh bare `Ui` token) — ALREADY FIXED on develop
+  (`--excluded_sources "Source*Core*src*Ui"`, dir-anchored). No action.
+- ✅ **#909 / #855** (build.md `build_and_run.ps1`/`build_standalone.ps1` refs) —
+  FIXED → `scripts/dev/local/…`.
+- ✅ **#630** (imgui-draw-pattern audit grep) — FIXED → `Source/Core/src/Ui/Smatchet*Ui*.cpp`.
+- ✅ **#657** (CONTEXT.md AppController line-pins :574/:595) — FIXED → symbol-only
+  (drift-proof).
+- ✅ **#722** (CONTEXT.md header paths) — FIXED → `Source/Core/include/Tracker/{LabelEditDiffPure,GitHubClientHelpers}.h`.
+- ✅ **#755** (test-rig.md `AppControllerDepsAdapter.cpp`) — FIXED → `GridContextDepsAdapter.cpp`.
+- ✅ **#853** (ADR-0016 line-pin `OfflineQueueService.cpp:788`) — FIXED → symbol-only.
+- ✅ **#940** (ADR-0018 plan ref) — ALREADY RESOLVED: tier-less
+  `docs/plans/multi-grid-tabs.md` resolves via the ref-integrity resolver
+  (117/117). No action.
+- ✅ **#670** (Jira wrong-status transition, user-visible correctness) — FIXED:
+  matcher extracted to the pure, Logger-free unit `smatchet::jira::FindJiraTransitionId`
+  (`JiraIssueMappingPure.{h,cpp}`) with GLOBAL two-pass priority (exact status
+  id / `to.name` across all transitions BEFORE the transition-name fallback);
+  `JiraIssueMutation.cpp` calls it + logs the divergence warn on a name-fallback.
+  4 doctest cases incl. the exact #670 shape (name-"Done" transition leading to
+  "In Review" must lose to a later transition leading to "Done").
+- ⏭ **#854** (offline scalar-edit data-loss), **#611 / #761 / #732 / #767 / #892**
+  (sync-I/O on UI render thread → freeze), **#671** (orphaned subprocess),
+  **#948** (tickets_v2 migration key) — user-visible → GitHub Issues (ADR-0014),
+  not batched here.
+- ⏭ **#908** (CMake dead sol2 re-run-cleanup group) — left as-is: editing the
+  sol2 patch chain is higher-risk than the harmless dead comment; deferred.
+
 ## Sweep status & remaining work (as of 2026-06-07)
 
 - **Swept:** PRs **#602–#951** — **325 reviewed** across batches 1–5 (below).

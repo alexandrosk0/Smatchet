@@ -493,3 +493,53 @@ TEST_CASE("WS2 edge — array field of nulls collapses to empty string") {
     REQUIRE(results.size() == 1);
     CHECK(GetField(results[0], "labels").empty());
 }
+
+// ---- #670: transition matching prioritises status id/name GLOBALLY ----
+
+using smatchet::jira::FindJiraTransitionId;
+using smatchet::jira::JiraTransitionMatch;
+
+TEST_CASE("FindJiraTransitionId — exact to.name beats an earlier transition-name match (#670)") {
+    // Transition #11 is *named* "Done" but leads to status "In Review"; transition
+    // #21 actually leads to status "Done". A per-transition priority returned #11
+    // (name match) → the issue moved to the WRONG status. Global priority must pick #21.
+    const nlohmann::json transitions = nlohmann::json::array({
+        {{"id", "11"}, {"name", "Done"}, {"to", {{"id", "10001"}, {"name", "In Review"}}}},
+        {{"id", "21"}, {"name", "Resolve Issue"}, {"to", {{"id", "10002"}, {"name", "Done"}}}},
+    });
+    const JiraTransitionMatch m = FindJiraTransitionId(transitions, "", "Done");
+    CHECK(m.id == "21");
+    CHECK_FALSE(m.usedNameFallback);
+}
+
+TEST_CASE("FindJiraTransitionId — status id wins outright") {
+    const nlohmann::json transitions = nlohmann::json::array({
+        {{"id", "11"}, {"name", "Done"}, {"to", {{"id", "10001"}, {"name", "In Review"}}}},
+        {{"id", "21"}, {"name", "Finish"}, {"to", {{"id", "10002"}, {"name", "Done"}}}},
+    });
+    const JiraTransitionMatch m = FindJiraTransitionId(transitions, "10002", "Done");
+    CHECK(m.id == "21");
+    CHECK_FALSE(m.usedNameFallback);
+}
+
+TEST_CASE("FindJiraTransitionId — transition-name fallback only when no status match exists") {
+    // No transition's to.name is "Done"; the only "Done" signal is a transition NAME.
+    const nlohmann::json transitions = nlohmann::json::array({
+        {{"id", "11"}, {"name", "Start"}, {"to", {{"id", "10001"}, {"name", "In Progress"}}}},
+        {{"id", "31"}, {"name", "Done"}, {"to", {{"id", "10009"}, {"name", "Closed"}}}},
+    });
+    const JiraTransitionMatch m = FindJiraTransitionId(transitions, "", "Done");
+    CHECK(m.id == "31");
+    CHECK(m.usedNameFallback);
+    CHECK(m.toStatusName == "Closed");
+}
+
+TEST_CASE("FindJiraTransitionId — no candidate returns empty, integer ids stringified") {
+    const nlohmann::json none = nlohmann::json::array({
+        {{"id", 41}, {"name", "Reopen"}, {"to", {{"id", 10005}, {"name", "Reopened"}}}},
+    });
+    CHECK(FindJiraTransitionId(none, "", "Done").id.empty());
+    // Integer id forms are accepted and stringified.
+    const JiraTransitionMatch m = FindJiraTransitionId(none, "10005", "");
+    CHECK(m.id == "41");
+}

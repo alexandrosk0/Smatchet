@@ -73,6 +73,33 @@ TEST_CASE("CrashSink — log-tail: stashes the crashed session's log path across
     CHECK(info.LogTail.find("supersecretvalue123") == std::string::npos); // redacted
 }
 
+TEST_CASE("CrashSink — append-breadcrumb-line keeps the activity breadcrumb and adds the terminate reason") {
+    const std::string dir = MakeTempDir();
+    CrashSinkInit(dir);
+    CrashSinkBreadcrumb("editing grid");
+
+    // #987: terminate handler appends the active exception's what() — the
+    // normal activity breadcrumb must survive above it, newline-separated.
+    CrashSinkAppendBreadcrumbLine("terminate: ", "system_error: thread ctor failed");
+    CrashSinkWriteMarkerAsyncSafe("std::terminate (unhandled C++ exception)");
+
+    const CrashInfo info = CrashSinkConsume();
+    REQUIRE(info.Pending);
+    CHECK(info.Breadcrumb == "editing grid\nterminate: system_error: thread ctor failed");
+}
+
+TEST_CASE("CrashSink — append-breadcrumb-line tolerates null prefix/text") {
+    const std::string dir = MakeTempDir();
+    CrashSinkInit(dir);
+    CrashSinkBreadcrumb("idle");
+    CrashSinkAppendBreadcrumbLine(nullptr, "only text");
+    CrashSinkAppendBreadcrumbLine("only prefix: ", nullptr);
+    CrashSinkWriteMarkerAsyncSafe("std::terminate (unhandled C++ exception)");
+    const CrashInfo info = CrashSinkConsume();
+    REQUIRE(info.Pending);
+    CHECK(info.Breadcrumb == "idle\nonly text\nonly prefix: ");
+}
+
 TEST_CASE("CrashSink — pending dump path is non-empty after Init") {
     const std::string dir = MakeTempDir();
     CrashSinkInit(dir);
