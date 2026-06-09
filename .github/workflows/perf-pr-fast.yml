@@ -245,6 +245,15 @@ jobs:
           regression_count=0
           run_failure_count=0
           missing_baseline_count=0
+          # A run-failure increments run_failure_count and `continue`s without a
+          # per-scope table (there is no usable snapshot to diff). Mirror a named
+          # failure line into BOTH the step-summary report AND the PR-comment
+          # twin so a pure run-failure comment names the broken scenario instead
+          # of showing only boilerplate + clean rows. (CodeRabbit PR #1097 #1.)
+          note_run_failure() {
+            printf '### `%s` — ❌ run failure (%s)\n\n' "$1" "$2" >> /tmp/perf-report.md
+            printf '### `%s` — ❌ run failure (%s)\n\n' "$1" "$2" >> /tmp/perf-summary.md
+          }
           for scen in $(python -c "import json; print(' '.join(json.load(open('scripts/dev/perf-pr-fast-set.json'))['scenarios']))"); do
             echo "::group::Scenario $scen"
             # Median-of-3 with a discarded warmup (perf-gate-revival § Flake
@@ -257,6 +266,7 @@ jobs:
             if [ ! -f "$warmup" ]; then
               echo "FAIL: warmup scenario.run did not produce $warmup" >&2
               run_failure_count=$((run_failure_count + 1))
+              note_run_failure "$scen" "warmup scenario.run produced no snapshot"
               echo "::endgroup::"
               continue
             fi
@@ -278,6 +288,7 @@ jobs:
               runs+=("$r")
             done
             if [ "$run_broke" = "1" ]; then
+              note_run_failure "$scen" "measured scenario.run produced no snapshot"
               echo "::endgroup::"
               continue
             fi
@@ -285,6 +296,7 @@ jobs:
             if [ ! -f "$result" ]; then
               echo "FAIL: perf-median did not select a usable snapshot for $scen" >&2
               run_failure_count=$((run_failure_count + 1))
+              note_run_failure "$scen" "perf-median selected no usable snapshot"
               echo "::endgroup::"
               continue
             fi

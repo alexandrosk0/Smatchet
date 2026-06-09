@@ -361,12 +361,17 @@ def main(argv: List[str]) -> int:
         default=os.path.join("docs", "perf", "regression-policy.json"),
         help="Regression policy JSON. Default: docs/perf/regression-policy.json.",
     )
-    parser.add_argument(
+    # --markdown-only and --summary-only both suppress the gate exit code and
+    # pick a different render; selecting both is a caller bug (which render
+    # wins is non-obvious). argparse rejects the combination. (CodeRabbit
+    # PR #1097 #2.)
+    output_mode = parser.add_mutually_exclusive_group()
+    output_mode.add_argument(
         "--markdown-only",
         action="store_true",
         help="Print only the markdown report; do not change exit code on regression.",
     )
-    parser.add_argument(
+    output_mode.add_argument(
         "--summary-only",
         action="store_true",
         help="Print only the compact per-scenario verdict + regressing rows "
