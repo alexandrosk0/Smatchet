@@ -53,7 +53,7 @@ Smatchet is built from one shared, engine-agnostic `Source/Core` against **three
 | &nbsp;&nbsp;`emulator` + `system-images;android-34;google_apis;x86_64` | for emulator runs | Only needed to run the APK on an emulator ([§6](#6-run-on-emulator--device)). |
 | **External CMake** | **≥ 3.24** | **Required separately from the SDK.** The SDK's bundled CMake is only **3.22.1** (the newest `sdkmanager` offers) and is **too old** — root `CMakeLists.txt` line 1 is `cmake_minimum_required(VERSION 3.24)`. Install a standalone CMake ≥ 3.24 and point `cmake.dir` at it ([§3.5](#35-install-external-cmake--324)). |
 | **Ninja** | recent | The Android CMake generator is Ninja. **Not bundled with the standalone CMake on Windows** — install it separately and put it on `PATH` ([§3.6](#36-install-ninja)). |
-| **make + perl** | recent | Needed **only to build OpenSSL** ([§3.7](#37-build-static-openssl-for-both-abis)). `perl` ships with Git for Windows; **`make` does not** — install it ([§3.7](#37-build-static-openssl-for-both-abis)). |
+| **make + perl** | recent | Needed **only to build OpenSSL** ([§3.7](#37-build-static-openssl-for-both-abis)). `perl` ships with Git for Windows (the repo vendors small first-party shims for the few `Configure` modules Git's perl is stripped of — **no MSYS2 / Strawberry Perl needed**); **`make` does not** — install `mingw32-make` ([§3.7](#37-build-static-openssl-for-both-abis)). |
 | **OpenSSL** | **3.5.6** | Built as **static, per-ABI** libs (`libssl.a` + `libcrypto.a`). SHA-256 of the source tarball: `deae7c80cba99c4b4f940ecadb3c3338b13cb77418409238e57d7f31f2a3b736`. **Hard link requirement** — see [§3.7](#37-build-static-openssl-for-both-abis). |
 | **Android Gradle Plugin (AGP)** | **8.5.2** | Declared `apply false` in `build.gradle`; applied without a version in `app/build.gradle`. |
 | **Gradle** | **8.7** (`-bin`) | Supplied by the committed wrapper (`distributionUrl = …/gradle-8.7-bin.zip`). Use `./gradlew` — do not install Gradle separately. |
@@ -66,7 +66,7 @@ Smatchet is built from one shared, engine-agnostic `Source/Core` against **three
 > - **Android SDK root:** `C:/Android/sdk`, with `cmdline-tools;latest`, `platform-tools`, `platforms;android-34`, `build-tools;34.0.0`, `ndk;26.3.11579264`.
 > - **External CMake:** `C:/Program Files/CMake` (**CMake 4.3.0-rc3** — satisfies `≥ 3.24`).
 > - **Ninja:** installed separately via `winget install Ninja-build.Ninja`, resolved on `PATH` (**not** co-located with CMake).
-> - **make:** `mingw32-make` (from a WinLibs / CLion MinGW install on `PATH`); `perl` from Git for Windows.
+> - **make:** `mingw32-make` (from a WinLibs / CLion MinGW install on `PATH`); `perl` from Git for Windows (with the repo's [`scripts/mobile/openssl/perl-shim/`](../../scripts/mobile/openssl/perl-shim/) on `PERL5LIB` — **no MSYS2**).
 > - **OpenSSL:** static, per-ABI, at `C:/Android/openssl-android/{x86_64,arm64-v8a}` (on this machine only `x86_64` is built so far).
 
 ---
@@ -235,13 +235,10 @@ ninja --version   # confirm it resolves on PATH
 
 **Pins (mirror CI):** OpenSSL **3.5.6**, SHA-256 `deae7c80cba99c4b4f940ecadb3c3338b13cb77418409238e57d7f31f2a3b736`, NDK **26.3.11579264**, `__ANDROID_API__` = **24** (must equal `ANDROID_PLATFORM = android-24`).
 
-**Prereqs — `make` + `perl`:**
-- **`perl`** ships with **Git for Windows** (Git Bash) — already present.
-- **`make` is NOT in Git Bash.** Install one of:
-  - **MinGW `mingw32-make`** — e.g. from a WinLibs install (`winget install BrechtSanders.WinLibs.POSIX.UCRT`) or a CLion-bundled MinGW. Then invoke it as `mingw32-make` (or alias `make=mingw32-make` for the snippet below). *(This is what the reference machine uses.)*
-  - **Chocolatey:** `choco install make`.
-  - **MSYS2:** `pacman -S make` (run the OpenSSL build from the MSYS2 shell **only if** it carries `USERPROFILE`/`LOCALAPPDATA` — see [TRAP 3](#7-troubleshooting)).
-- On Linux/CI: `sudo apt-get install -y make perl`.
+**Prereqs — `make` + `perl` (NO MSYS2):**
+- **`perl`** ships with **Git for Windows** (Git Bash) — already present. Git's perl is *stripped* of three pure-perl modules `./Configure` pulls in; the repo vendors first-party shims for exactly those at [`scripts/mobile/openssl/perl-shim/`](../../scripts/mobile/openssl/perl-shim/) and puts them on `PERL5LIB` — so **no MSYS2 or Strawberry Perl is required** (the helper script in the next step wires this up for you). The module cascade + why-shims-not-the-17-real-files is in [`perl-shim/README.md`](../../scripts/mobile/openssl/perl-shim/README.md).
+- **`make` is NOT in Git Bash.** Install **MinGW `mingw32-make`** (native Win32 — `winget install BrechtSanders.WinLibs.POSIX.UCRT`, or a CLion-bundled MinGW) **or** `choco install make`. The helper script and snippets below invoke it as `mingw32-make`. *(Do **not** use MSYS2's `make` — its `-lc` login shell strips `USERPROFILE`/`LOCALAPPDATA` and breaks ccache; see [TRAP 3](#7-troubleshooting).)*
+- On Linux/CI: `sudo apt-get install -y make perl` (CI's perl is not stripped, so no shim is needed there).
 
 **Choose a scratch dir and a base directory.** The base holds one subdir per ABI:
 
@@ -253,6 +250,19 @@ ninja --version   # confirm it resolves on PATH
 
 > **Reference machine:** `<base> = C:/Android/openssl-android` → `C:/Android/openssl-android/x86_64` and `C:/Android/openssl-android/arm64-v8a`. This layout is exactly what `SMATCHET_ANDROID_OPENSSL_BASE` expects ([§3.0](#30-set-environment-variables-do-this-first-every-shell) / [TRAP 5](#7-troubleshooting)).
 
+**One command — the helper script (recommended).** From the **repo root**, with `mingw32-make` on `PATH` (prereqs above):
+
+```bash
+export ANDROID_NDK_ROOT="C:/Android/sdk/ndk/26.3.11579264"
+export SMATCHET_ANDROID_OPENSSL_BASE="C:/Android/openssl-android"   # <base>
+bash scripts/mobile/openssl/build-android-openssl.sh
+```
+
+It downloads + SHA-256-verifies OpenSSL 3.5.6, then Configures + builds + installs **both** ABIs into `<base>/{arm64-v8a,x86_64}` — exactly the layout `SMATCHET_ANDROID_OPENSSL_BASE` expects. Under the hood it runs Git's perl with the repo [`perl-shim/`](../../scripts/mobile/openssl/perl-shim/) on `PERL5LIB`, invokes perl as `/usr/bin/perl` (space-free — the space in `C:\Program Files\Git\…` otherwise breaks the generated Makefile's unquoted `$(PERL)` recipes), and finishes with an `llvm-objdump -f` architecture check per ABI (`aarch64` / `x86_64`). **No MSYS2.** Env overrides: `OPENSSL_TARBALL=<path>` (skip the download), `MAKE=<prog>` / `MAKE_JOBS=<n>`, `ANDROID_API=<n>`, `WORK_DIR=<dir>`. ~10 min per ABI (one-time; CI caches it).
+
+<details>
+<summary><b>Manual build — what the script does, step by step</b></summary>
+
 **Download + verify the source (once):**
 
 ```bash
@@ -262,39 +272,35 @@ curl -fsSL \
   "https://github.com/openssl/openssl/releases/download/openssl-3.5.6/openssl-3.5.6.tar.gz" \
   -o openssl.tar.gz
 echo "deae7c80cba99c4b4f940ecadb3c3338b13cb77418409238e57d7f31f2a3b736  openssl.tar.gz" | sha256sum -c -
-tar xzf openssl.tar.gz
-cd openssl-3.5.6
 ```
 
-**Put the NDK clang toolchain on `PATH`** (pick the bin for your build host):
+**Put the NDK clang toolchain on `PATH`** and the perl-shim on `PERL5LIB`:
 
 ```bash
-# Windows reference machine (Git Bash): use the windows-x86_64 prebuilt:
+# Windows (Git Bash): windows-x86_64 prebuilt. Linux/CI: swap in linux-x86_64.
 export PATH="${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/windows-x86_64/bin:$PATH"
-# Linux / CI: use the linux-x86_64 prebuilt instead:
-# export PATH="${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
+# Git's perl is stripped of three Configure modules — the repo shims cover them:
+export PERL5LIB="<repo>/scripts/mobile/openssl/perl-shim"
 ```
 
-**Build each ABI** (`--libdir=lib` pins the layout — some hosts default to `lib64`). On Windows substitute `mingw32-make` for `make`:
+**Build each ABI into `<base>/<abi>`** (`--libdir=lib` pins the layout — some hosts default to `lib64`). OpenSSL configures **in-tree**, so extract a *fresh* tree per ABI; copy the shim into it too so `mingw32-make`'s `perl -I.` recipes resolve it; and run perl as `/usr/bin/perl` (space-free):
 
 ```bash
-# ---- x86_64 (emulator on an x86 host) ----
-./Configure android-x86_64 -D__ANDROID_API__=24 \
-  no-shared no-tests no-apps no-docs --libdir=lib \
-  --prefix=C:/Android/openssl-android/x86_64
-make -j
-make install_sw
-
-# ---- arm64-v8a (physical devices + CI parity) ----
-# (reset the source tree first — see the note below)
-./Configure android-arm64 -D__ANDROID_API__=24 \
-  no-shared no-tests no-apps no-docs --libdir=lib \
-  --prefix=C:/Android/openssl-android/arm64-v8a
-make -j
-make install_sw
+SHIM="<repo>/scripts/mobile/openssl/perl-shim"
+for pair in "android-arm64:arm64-v8a" "android-x86_64:x86_64"; do
+  target="${pair%%:*}"; abi="${pair##*:}"
+  rm -rf "$SCRATCH/$target" && mkdir "$SCRATCH/$target" && cd "$SCRATCH/$target"
+  tar xzf "$SCRATCH/openssl.tar.gz" && cd "openssl-3.5.6"
+  cp -r "$SHIM/." .                       # make recipes find the shim via -I.
+  /usr/bin/perl ./Configure "$target" -D__ANDROID_API__=24 \
+    no-shared no-tests no-apps no-docs --libdir=lib \
+    --prefix="$SMATCHET_ANDROID_OPENSSL_BASE/$abi"
+  mingw32-make -j8                        # 'make -j' on Linux/CI
+  mingw32-make install_sw
+done
 ```
 
-> **Note (OpenSSL configures in-tree):** OpenSSL builds inside its own source tree, so you cannot run two `./Configure` invocations back-to-back in the same checkout without resetting it. Between the two ABIs run `make distclean` (or unpack a fresh `openssl-3.5.6` source copy per ABI), then re-run `./Configure …` for the next ABI. The CI job builds only `arm64-v8a` in a fresh extracted tree, so it never hits this; a local both-ABI build does.
+</details>
 
 **Verify each ABI produced the static libs:**
 
@@ -304,8 +310,6 @@ test -f "$SMATCHET_ANDROID_OPENSSL_BASE/x86_64/lib/libcrypto.a"
 test -f "$SMATCHET_ANDROID_OPENSSL_BASE/x86_64/include/openssl/opensslv.h"
 # repeat for arm64-v8a
 ```
-
-**Build-time expectation:** ~10 min per ABI (one-time; CI caches it).
 
 ---
 
@@ -415,7 +419,9 @@ Build with the arm64 ABI present (full both-ABI build, or `-Pandroid.injected.bu
 | `'ninja' is not recognized` / generator not found. | Ninja is not on `PATH` (it is **not** bundled with the standalone CMake on Windows). | Install Ninja separately (`winget install Ninja-build.Ninja`) and ensure it resolves on `PATH`. ([§3.6](#36-install-ninja)) |
 | `SDK location not found` / `JAVA_HOME is not set` — even on `gradle wrapper`. | `JAVA_HOME` and/or `ANDROID_SDK_ROOT`/`ANDROID_HOME` not exported. Any Gradle task configures `:app`, which loads AGP, which needs the SDK location. | Export `JAVA_HOME`, `ANDROID_HOME`, **and** `ANDROID_SDK_ROOT` before *any* Gradle invocation (including the wrapper bootstrap). ([§3.0](#30-set-environment-variables-do-this-first-every-shell)) |
 | ccache breaks / user-profile lookups fail mid-build. | An MSYS2 `-lc` login shell strips `USERPROFILE` and `LOCALAPPDATA`. | Run from a shell with the **full** Windows environment — **Git Bash** or a normal terminal (both inherit the complete Windows env). ([§3.0](#30-set-environment-variables-do-this-first-every-shell)) |
-| OpenSSL build: `make: command not found`. | `make` is **not** in Git for Windows (only `perl` is). | Install `mingw32-make` (WinLibs/CLion MinGW), or `choco install make`, or MSYS2 `pacman -S make`; invoke as `mingw32-make` if that's what you installed. ([§3.7](#37-build-static-openssl-for-both-abis)) |
+| OpenSSL build: `make: command not found`. | `make` is **not** in Git for Windows (only `perl` is). | Install **`mingw32-make`** (WinLibs `winget install BrechtSanders.WinLibs.POSIX.UCRT`, or CLion MinGW) or `choco install make` — **no MSYS2 needed**; the helper script and snippets invoke it as `mingw32-make`. ([§3.7](#37-build-static-openssl-for-both-abis)) |
+| OpenSSL `Configure`: `Can't locate Locale/Maketext/Simple.pm` (or `ExtUtils/MakeMaker.pm`, `Pod/Usage.pm`) in `@INC`. | Git-for-Windows perl is stripped of these pure-perl modules. | Put the repo shims on `PERL5LIB`: `export PERL5LIB="<repo>/scripts/mobile/openssl/perl-shim"` — the helper script does this automatically. **No MSYS2 / Strawberry Perl.** ([§3.7](#37-build-static-openssl-for-both-abis)) |
+| OpenSSL `make`: `/usr/bin/sh: /c/Program: No such file or directory`. | The space in `C:\Program Files\Git\…\perl` baked into the generated Makefile's unquoted `$(PERL)` recipes. | Invoke perl by its space-free POSIX path: `/usr/bin/perl ./Configure …` (the helper script does this). ([§3.7](#37-build-static-openssl-for-both-abis)) |
 | Link failure: `not able to find OpenSSL` (or missing `libssl`/`libcrypto`). | cpr forces the OpenSSL TLS backend on Android; the static libs for the **target ABI** are missing. | Build static OpenSSL **per ABI before** the app, laid out as `<base>/{x86_64,arm64-v8a}`, and hand the base to the build via `SMATCHET_ANDROID_OPENSSL_BASE` / `-PsmatchetOpensslBase`. ([§3.7](#37-build-static-openssl-for-both-abis)) |
 | OpenSSL built but still not found. | `OPENSSL_ROOT_DIR` unset and the `<base>/${ANDROID_ABI}/lib/libssl.a` derived path doesn't exist (wrong layout, or wrong `--libdir`). | Ensure the per-ABI subdir name is exactly `x86_64` / `arm64-v8a` and that OpenSSL was configured with `--libdir=lib` (some hosts default to `lib64`). `smatchet_prepare_cpr()` derives `<base>/${ANDROID_ABI}` and looks for `lib/libssl.a`; if missing it only warns and falls back to probing. |
 | `There are no .so files available to package in the APK for arm64-v8a`. | Harmless. You used `-Pandroid.injected.build.abi=x86_64` but `abiFilters` still lists both ABIs. | Ignore for `x86_64`-only inner-loop builds. Build both ABIs for a release APK. ([§4](#4-building-the-apk)) |
