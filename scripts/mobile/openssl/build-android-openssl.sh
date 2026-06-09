@@ -93,7 +93,7 @@ if [ -z "${tarball}" ]; then
         elif command -v wget >/dev/null 2>&1; then
             wget -qO "${tarball}" "${url}"
         else
-            die "neither curl nor wget available to fetch OpenSSL; set OPENSSL_TARBALL"
+            die "no curl/wget available to fetch OpenSSL; set OPENSSL_TARBALL"
         fi
     fi
 fi

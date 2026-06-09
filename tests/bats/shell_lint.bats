@@ -141,3 +141,17 @@ setup() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"Passed: 1  Failed: 0"* ]]
 }
+
+# ---------- scope coverage: --list-targets includes the new dirs ----------
+
+@test "default target set covers scripts/mobile (recursive) and docs/harness hooks" {
+    # Guards the scope extension: a regression that reverts the target
+    # derivation back to the flat maxdepth-1 set would silently drop the
+    # mobile build helpers (nested under openssl/) and the per-harness guard
+    # scripts from the required Shell-lint gate. Path-prefix asserts (not exact
+    # filenames) so individual script renames don't break this.
+    run bash "$LINT" --list-targets
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"scripts/mobile/"* ]]
+    [[ "$output" == *"docs/harness/"*"/hooks/"* ]]
+}
