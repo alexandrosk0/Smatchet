@@ -1,6 +1,6 @@
 # Perforce — GitHub → p4d one-way mirror (Helix4Git Git Connector)
 
-> **Plan**: [`docs/plans/active/p4-git-connector-github-mirror.md`](../plans/active/p4-git-connector-github-mirror.md).
+> **Plan**: [`docs/plans/shipped/p4-git-connector-github-mirror.md`](../plans/shipped/p4-git-connector-github-mirror.md).
 > **Sibling docs**: [`SETUP.md`](SETUP.md) — Phase-0 server bring-up (prerequisite). [`AGENT_FLOWS.md`](AGENT_FLOWS.md) — topology + which verb when. [`RUNBOOK.md`](RUNBOOK.md) — day-to-day ops.
 > **Audience**: operator standing up (or tearing down) the read-only GitHub mirror on the dev box. Agents do **not** read or write the mirror — it is non-authoritative and off the ship-line.
 
@@ -41,14 +41,18 @@ printf 'User:\tgconn\nEmail:\tgconn@localhost\nFullName:\tGit Connector service\
   | p4 -p Mainbot:1666 -u alexk user -f -i
 ```
 
-Grant `gconn` write **only** on `//repo/...` (it must never touch `//smatchet/...`, the classic agentic-WIP depot). Append to `p4 protect`:
+Grant `gconn` admin on the **graph depot** `repo`. Graph-depot ACLs are managed by `p4 grant-permission` — **not** the classic `p4 protect` table (that governs classic depots like `//smatchet`; a `protect` entry does nothing for a graph depot):
 
-```
-write   user   gconn   *   //repo/...
-list    user   gconn   *   //repo/...
+```bash
+# Depot-wide grant: gconn admin on every repo under //repo/... .
+p4 -p Mainbot:1666 -u alexk grant-permission -d repo -u gconn -p admin
+# Verify (the //repo/smatchet owner grant is implicit from the repo spec's Owner: gconn):
+p4 -p Mainbot:1666 -u alexk show-permission -d repo
+#   //repo/...      * user  gconn admin
+#   //repo/smatchet * owner gconn admin
 ```
 
-`//smatchet` (classic stream depot) and `//repo` (graph mirror) are two depots, two purposes, zero interference.
+`gconn` needs **no** entry in the classic `p4 protect` table — it only ever touches the graph depot. `//smatchet` (classic stream depot, agentic-WIP) and `//repo` (graph mirror) are two depots, two purposes, zero interference.
 
 ## 2. WSL2 connector host
 
@@ -79,9 +83,13 @@ P4PORT=<windows-host>:1666 p4 -u gconn info     # must print Server address / ve
 
 The LAN firewall rule already exists ([`SETUP.md`](SETUP.md) § 7, Private/Domain profile). If WSL2 can't reach it, add the host's LAN IP explicitly (`cat /etc/resolv.conf` gives the Windows host IP under default WSL2 NAT).
 
-## 3. GitHub authentication — read-only Deploy Key
+## 3. GitHub authentication — anonymous HTTPS (repo is public)
 
-The mirror needs **read** on GitHub. Use a least-privilege, single-repo **read-only Deploy Key** (operator's chosen auth):
+**As wired (this standup): anonymous HTTPS, no credential.** `alexandrosk0/Smatchet` is a **public** repo, so the connector reads it over the bare HTTPS URL `https://github.com/alexandrosk0/Smatchet.git` — no Deploy Key, no PAT, no SSH key, no GitHub-settings change. This is the simplest least-privilege path while the repo is public (read-only by construction — anonymous HTTPS cannot push), and it is what `gconn --mirrorhooks add` (§ 4) was pointed at.
+
+### Optional — read-only Deploy Key (only if the repo flips to private)
+
+If `alexandrosk0/Smatchet` is ever made private, anonymous HTTPS stops working and the mirror needs an explicit **read** credential. Use a least-privilege, single-repo **read-only Deploy Key** (not a broad PAT):
 
 ```bash
 # In WSL2, generate a dedicated keypair OUTSIDE the repo tree:
@@ -92,7 +100,7 @@ cat ~/.ssh/smatchet_mirror.pub
 Add the **public** key at `https://github.com/alexandrosk0/Smatchet/settings/keys` → *Add deploy key* → **leave "Allow write access" UNCHECKED** (read-only). Then pin it for the mirror remote:
 
 ```sshconfig
-# ~/.ssh/config
+# ~/.ssh/config (as the connector OS user `git`)
 Host github-smatchet-mirror
     HostName github.com
     User git
@@ -100,53 +108,92 @@ Host github-smatchet-mirror
     IdentitiesOnly yes
 ```
 
-The connector's upstream GitHub URL is then `git@github-smatchet-mirror:alexandrosk0/Smatchet.git`.
-
-> **Note — the repo is currently PUBLIC.** Anonymous `https://github.com/alexandrosk0/Smatchet` read works today with no credential at all. The Deploy Key is kept anyway because it (a) future-proofs a flip to private with zero re-plumbing and (b) avoids unauthenticated API/clone rate limits. If you prefer the simplest path while public, point the connector at the public HTTPS URL and skip this section — the health-check works either way.
+The connector's upstream URL would then become `git@github-smatchet-mirror:alexandrosk0/Smatchet.git` (re-point with `gconn --mirrorhooks setremote`, § 4). The private key stays **outside** the repo tree; revoke the Deploy Key on teardown (§ 7).
 
 ## 4. Configure the one-way mirror
 
-Point the connector at the GitHub upstream in **mirror (read-only) mode**, targeting `//repo/smatchet`. The exact connector config keys are **version-sensitive** — follow the P4SAG "Mirror a repo from an external repository" for your connector build:
-<https://help.perforce.com/helix-core/server-apps/p4sag/current/Content/P4SAG/overview.architecture.html> (architecture) + the connector package's `Mirroring` section.
+The mirror is driven by the connector's **mirrorhooks** subsystem (`gconn --mirrorhooks`), pointed at the GitHub upstream. This standup uses a **minimal hand-rolled `gconn.conf`** rather than the package's `configure-git-connector.sh` — that script also stands up Apache + SSH to *serve* git over smart-http, which a pull-only backup mirror does not need (the connector only has to *fetch* from GitHub and *write* into `p4d`). Skipping it keeps the surface small; the cost is no smart-http endpoint, so the health-check uses its `MIRROR_RESOLVE=p4` path (§ 6).
 
-Config shape (fill the version-specific keys from the P4SAG):
-- **upstream URL** = `git@github-smatchet-mirror:alexandrosk0/Smatchet.git` (or the public HTTPS URL while public),
-- **mirror** = on / read-only (never push back),
-- **target graph repo** = `//repo/smatchet`,
-- **refs** = `develop` + tags (per plan Non-goals: not every PR branch).
+> **Run as the connector OS user `git` — never root.** `gconn` refuses to run as root and trips git's dubious-ownership guard otherwise. The OS user is `git` (uid 1001, group `gconn-auth`); drive every `gconn` call via `runuser -u git -- env GCONN_CONFIG=… gconn …`.
 
-Initial population:
+**(a) Connector config** — `/opt/perforce/git-connector/gconn.conf` (owned `git:gconn-auth`). Minimal working shape:
+
+```json
+{
+  "gconn": {
+    "reposDir":      "/opt/perforce/git-connector/repos",
+    "p4User":        "gconn",
+    "p4Port":        "Mainbot:1666",
+    "p4TicketsFile": "/opt/perforce/git-connector/.p4tickets",
+    "p4TrustFile":   "/opt/perforce/git-connector/.p4trust",
+    "authKeysFile":  "none",
+    "gitExecPath":   "/usr/bin",
+    "envPath":       "/usr/bin:/usr/local/bin:/opt/perforce/git-connector/bin",
+    "authGroup":     "gconn-auth",
+    "serverId":      "gconn-Brick"
+  }
+}
+```
+
+The connector authenticates to `p4d` as the **`gconn` p4 user** via the ticket in `p4TicketsFile` — ensure that ticket is valid before the first fetch (`p4 -p Mainbot:1666 -u gconn login`, writing to `/opt/perforce/git-connector/.p4tickets`; the free-tier server here uses a non-expiring ticket).
+
+**(b) Register the mirror + initial population** — one command does both (registers the repo spec's `GconnMirror*` fields and performs the first fetch):
 
 ```bash
-# Trigger the first fetch (exact verb per your connector build), then verify server-side:
-p4 -p Mainbot:1666 -u alexk repos                       # //repo/smatchet listed
-git ls-remote <connector-smart-http-base>/repo/smatchet refs/heads/develop   # SHA appears
+# As the connector OS user `git`. Upstream = public HTTPS (§ 3).
+runuser -u git -- env GCONN_CONFIG=/opt/perforce/git-connector/gconn.conf \
+  gconn --mirrorhooks add repo/smatchet https://github.com/alexandrosk0/Smatchet.git
+
+# Confirm it registered:
+runuser -u git -- env GCONN_CONFIG=/opt/perforce/git-connector/gconn.conf \
+  gconn --mirrorhooks list
+#   //repo/smatchet <<< https://github.com/alexandrosk0/Smatchet.git
 ```
+
+**(c) Verify server-side** (from any `p4` client, e.g. Windows):
+
+```bash
+p4 -p Mainbot:1666 -u alexk repos                       # //repo/smatchet listed, "Mirror of …"
+p4 -p Mainbot:1666 -u gconn graph log -n //repo/smatchet -m 1 develop   # tip commit SHA appears
+```
+
+> **Ref scope is the WHOLE repo, not just `develop` + tags.** `mirrorhooks` has **no ref-filter / exclude option** — it mirrors *every* ref GitHub serves (all `refs/heads/*`, `refs/tags/*`, and `refs/pull/*/head`). The plan's original "`develop` + tags only" scope is **not achievable** through the connector; the full-mirror consequence (ephemeral `refs/pull/*/merge` refs make the fetch exit non-zero) is covered in § Known issues. `develop` — the only ref the health-check asserts — mirrors correctly regardless.
 
 ## 5. Cadence — pull-based fetch + WSL2 lifecycle
 
-GitHub Actions **cannot** reach a local `p4d` ([`AGENT_FLOWS.md`](AGENT_FLOWS.md) § When NOT to use Perforce), so freshness is **pull-based**: a WSL2 cron triggers the connector fetch.
+GitHub Actions **cannot** reach a local `p4d` ([`AGENT_FLOWS.md`](AGENT_FLOWS.md) § When NOT to use Perforce), so freshness is **pull-based**: a WSL2 cron triggers the connector fetch, then runs the health-check.
+
+The `cron` daemon is **not** running in a default WSL2 distro — enable it once (systemd-in-WSL is simplest): set `[boot] systemd=true` in `/etc/wsl.conf`, `wsl --shutdown`, then `sudo systemctl enable --now cron`. The cron lives in **root's** crontab (it uses `runuser -u git` for the fetch):
 
 ```cron
-# crontab -e inside WSL2 — fetch every 15 min, then health-check.
-*/15 * * * * /opt/perforce/git-connector/bin/<fetch-verb> >/dev/null 2>&1 ; \
-             MIRROR_REMOTE=http://localhost:1680 \
+# sudo crontab -e inside WSL2 — fetch every 15 min, then health-check.
+# The fetch exits NON-ZERO by design (ephemeral refs/pull/*/merge — see § Known issues);
+# `|| true` swallows it, and the health-check (develop SHA match) is the authoritative signal.
+*/15 * * * * runuser -u git -- env GCONN_CONFIG=/opt/perforce/git-connector/gconn.conf \
+               gconn --mirrorhooks fetch repo/smatchet >/dev/null 2>&1 || true ; \
+             MIRROR_RESOLVE=p4 P4PORT=Mainbot:1666 P4USER=gconn \
+             P4TICKETS=/opt/perforce/git-connector/.p4tickets \
              /mnt/c/Dev/Smatchet/scripts/dev/p4-mirror-healthcheck.sh \
-             >> ~/smatchet-mirror-health.log 2>&1
+             >> /var/log/smatchet-mirror-health.log 2>&1
 ```
 
-**WSL2 auto-start** (else the cron never fires after a reboot): register a Windows Task-Scheduler logon task running `wsl -d Ubuntu-22.04 -e true` (boots the distro), or enable systemd-in-WSL with the connector as a service. Without this, the mirror silently staledates — which the health-check below makes loud.
+`MIRROR_RESOLVE=p4` is used (not the smart-http `git` path) because this standup does not serve smart-http (§ 4). The health-check's `p4 graph log` reads the graph depot, which the `//repo/...` ACL grants the **`gconn`** p4 user — hence `P4USER=gconn` + the connector's ticket file.
+
+**WSL2 auto-start** (else the cron never fires after a reboot): register a Windows Task-Scheduler **logon** task running `wsl.exe -d Ubuntu -e true` (boots the distro so its systemd — and thus `cron` — comes up). Without this, the mirror silently staledates — which the health-check makes loud.
 
 ## 6. Health-check — `scripts/dev/p4-mirror-healthcheck.sh`
 
 Asserts the graph-depot `develop` SHA == GitHub's `develop` SHA. Exit 0 = in sync; non-zero + diagnostic = drift / staleness / unreachable.
 
 ```bash
-# Primary (connector serves smart-http):
-MIRROR_REMOTE=http://localhost:1680 scripts/dev/p4-mirror-healthcheck.sh
+# This standup (no smart-http served) — query the graph depot directly via p4.
+# P4USER=gconn because the //repo/... graph ACL grants gconn (not the OS/login user).
+MIRROR_RESOLVE=p4 P4PORT=Mainbot:1666 P4USER=gconn \
+  P4TICKETS=/opt/perforce/git-connector/.p4tickets \
+  scripts/dev/p4-mirror-healthcheck.sh
 
-# Fallback (smart-http not served) — query the graph depot directly via p4:
-MIRROR_RESOLVE=p4 scripts/dev/p4-mirror-healthcheck.sh
+# Alternative, ONLY if you ran configure-git-connector.sh to serve smart-http:
+MIRROR_REMOTE=http://localhost:1680 scripts/dev/p4-mirror-healthcheck.sh
 ```
 
 Env knobs: `GITHUB_REMOTE`, `MIRROR_REMOTE`, `MIRROR_REPO_PATH` (default `repo/smatchet`), `MIRROR_REF` (default `develop`), `MIRROR_RESOLVE` (`git`|`p4`). Tests: [`tests/bats/p4_mirror_healthcheck.bats`](../../tests/bats/p4_mirror_healthcheck.bats).
@@ -163,6 +210,7 @@ Then in WSL2: stop the cron + connector, `rm ~/.ssh/smatchet_mirror*`, and **rev
 
 ## Known issues
 
+- **The fetch verb exits NON-ZERO every run (ephemeral `refs/pull/*/merge`) — by design, not a failure.** GitHub auto-computes a `refs/pull/N/merge` ref for each open mergeable PR and prunes/recomputes them constantly. A `gconn --mirrorhooks fetch` grabs the current set, then `git push --mirror`-es into `p4d`; by the time the push runs, a handful of those `merge` refs point at commits GitHub has already pruned, so `p4d` rejects them (`Reference refs/pull/N/merge specifies a non-existent commit …`) and the whole command returns **256**. **`git push --mirror` is per-ref, not atomic**, so every *stable* ref still updates — `develop`, all `refs/heads/*`, `refs/tags/*`, and the stable `refs/pull/*/head` refs sync correctly; only the ~4 volatile `*/merge` refs fail. `mirrorhooks` has **no ref-filter / exclude option** (verified: `--mirrorhooks` verbs are add/remove/list/setremote/fetch only; the repo spec has no `ExcludedBranches` field), so the non-zero exit is **permanent and unavoidable** while mirroring a repo with open PRs. The cron (§ 5) swallows it with `|| true` and treats the **health-check's `develop`-SHA match as the authoritative signal** — which is exactly what "in sync" means for this backup. To silence it entirely you would have to *not* mirror `refs/pull/*` at all, which `mirrorhooks` cannot express.
 - **Graph-depot delete hits a server lock-order abort.** `p4 depot -d <graph-depot>` on this `p4d` 2025.2 fails reproducibly with `Locking failure: db.counters locked after db.group!` (independent of `-f`). Root cause is the server's lockless-read lock-order check (`db.peeking`) on the depot-delete path. Workaround: set `p4 configure set db.peeking=0`, **restart `p4d`**, delete, then restore `db.peeking=2` + restart. Do this only in a maintenance window — it is disproportionate for routine teardown, so prefer leaving an empty graph depot in place (zero repos = zero data). The connector's steady-state writes never touch this delete path, so the mirror is unaffected.
 - **Stray probe depot `testgraphprobe`.** A `p4 depot -t graph` capability probe (2026-06-08) left an **empty** graph depot `testgraphprobe` that the lock-order bug above blocks deleting remotely. Harmless (0 repos, 0 data, no effect on `//repo` or `//smatchet`). Clear it during the next `db.peeking` maintenance window, or from the server host.
 - **WSL2 lifecycle** is the most likely staleness source (no auto-start after reboot). The health-check + its cron log are the detection net.
