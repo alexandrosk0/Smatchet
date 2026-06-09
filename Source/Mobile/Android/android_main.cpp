@@ -22,6 +22,7 @@
 #include "SmatchetImGuiFonts.h"
 #include "SmatchetTheme.h"
 #include "SmatchetUI.h"
+#include "Tracker/TrackerHttpPure.h"
 
 #include "imgui.h"
 #include "imgui_impl_android.h"
@@ -88,13 +89,21 @@ void BootCoreOnce(android_app* app, AndroidHostState& s) {
     // the only diagnostics are the in-memory ring buffer. Readable off-device via `run-as cat`.
     Logger::Instance().SetFileSinkPath(dataDir + "smatchet.log");
 
-    // TLS trust anchor. libcurl (built against the NDK OpenSSL via cpr) has no CA bundle on a
-    // stock Android device, so a default CURLOPT_SSL_VERIFYPEER handshake to Jira dies with
-    // "unable to get local issuer certificate" (HTTP 0). The build bakes a compile-time
-    // CURL_CA_BUNDLE define (cmake/SmatchetThirdParty.cmake) = libcurl's default CAINFO = this
-    // exact private-dir path; all this code does is materialise the APK-shipped Mozilla cacert.pem
-    // at that path so the baked default resolves. No per-request SslOptions edit in Core/Tracker
-    // needed (proven live: read HTTP 200 + write PUT HTTP 204 against real Jira).
+    // TLS trust anchor (WS2 / Issue #1068). libcurl (built against the NDK OpenSSL via cpr) has
+    // no CA bundle on a stock Android device, so a default CURLOPT_SSL_VERIFYPEER handshake to
+    // Jira dies with "unable to get local issuer certificate" (HTTP 0). We materialise the
+    // APK-shipped Mozilla cacert.pem into the app's private dir, then feed that path into Core's
+    // runtime trust seam via TrackerHttpPure::SetCaBundlePath — every tracker verb then applies it
+    // as an explicit CURLOPT_CAINFO (TrackerHttpUtils::MakeTrackerSslOptions). This runs before
+    // ConfigManager::Load / AppController::Initialize below, i.e. before the first HTTPS request.
+    //
+    // The runtime seam is now the load-bearing trust anchor (replaces the prior reliance on the
+    // baked compile-time CURL_CA_BUNDLE define + the CURL_CA_BUNDLE *env* var, which this NDK-built
+    // libcurl ignores). The compile-time define is demoted to a documented defense-in-depth
+    // fallback (cmake/SmatchetThirdParty.cmake). SSL_CERT_FILE is OpenSSL's own env var, kept as a
+    // secondary belt-and-suspenders path. The seam only ever ADDS a CAINFO; it never disables
+    // verification (peer/host verify stay on — cpr defaults). Proven live earlier: read HTTP 200 +
+    // write PUT HTTP 204 against real Jira.
     if (app->activity != nullptr && app->activity->assetManager != nullptr) {
         const std::vector<unsigned char> caBytes =
             smatchet::mobile::ReadApkAsset(app->activity->assetManager, "certs/cacert.pem");
@@ -105,13 +114,11 @@ void BootCoreOnce(android_app* app, AndroidHostState& s) {
                 caOut.write(reinterpret_cast<const char*>(caBytes.data()),
                             static_cast<std::streamsize>(caBytes.size()));
                 caOut.close();
-                // Belt-and-suspenders env vars. The load-bearing trust anchor is the baked
-                // compile-time CURL_CA_BUNDLE define (set in CMake) — this NDK-built libcurl reads
-                // it as the default CAINFO and IGNORES the CURL_CA_BUNDLE *env* var, so the setenv
-                // below is a no-op net for that name. SSL_CERT_FILE is OpenSSL's own, honored via
-                // CURL_CA_FALLBACK as a secondary path should the baked CAINFO ever be unset. Both
-                // are set so any future libcurl/cpr ordering change still resolves.
-                setenv("CURL_CA_BUNDLE", caPath.c_str(), 1);
+                // Load-bearing: hand the cafile to Core's per-request CURLOPT_CAINFO seam. Set once
+                // here, before Core boots; read by every tracker verb for the process lifetime.
+                TrackerHttpPure::SetCaBundlePath(caPath);
+                // Secondary: OpenSSL's own env var, honored via CURL_CA_FALLBACK should the explicit
+                // CAINFO ever be unset.
                 setenv("SSL_CERT_FILE", caPath.c_str(), 1);
                 SLOG("TLS CA bundle ready (%zu bytes) -> %s", caBytes.size(), caPath.c_str());
             } else {
