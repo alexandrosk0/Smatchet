@@ -2,9 +2,18 @@ package com.smatchet.mobile;
 
 import android.app.NativeActivity;
 import android.content.Context;
+import android.graphics.Insets;
+import android.os.Build;
 import android.os.Bundle;
+import android.text.InputType;
+import android.view.DisplayCutout;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.ViewGroup;
+import android.view.WindowInsets;
+import android.view.inputmethod.BaseInputConnection;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputConnection;
 import android.view.inputmethod.InputMethodManager;
 
 import java.util.concurrent.LinkedBlockingQueue;
@@ -26,9 +35,114 @@ public class SmatchetActivity extends NativeActivity {
     // rather than blocking the UI thread.
     private final LinkedBlockingQueue<Integer> unicodeQueue = new LinkedBlockingQueue<>(256);
 
+    // Cached safe-area insets in surface pixels (status bar / nav bar / display cutout). The native
+    // render loop reads these via pollContentInsets() so the menu bar + dockspace stay out from
+    // under the system chrome. volatile: written on the UI thread (inset dispatch), read on the
+    // render thread (JNI).
+    private volatile int insetLeft = 0;
+    private volatile int insetTop = 0;
+    private volatile int insetRight = 0;
+    private volatile int insetBottom = 0;
+
+    // Hidden focusable view that owns the IME InputConnection. NativeActivity's content is a native
+    // surface view that can't be a text editor, so the soft keyboard is targeted at this instead.
+    private View imeView;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        installWindowInsetsListener();
+        installImeCaptureView();
+    }
+
+    // Add a hidden, focusable 0-px view that returns our InputConnection (see SmatchetInputConnection)
+    // so committed text — crucially clipboard paste, which the IME delivers via commitText rather
+    // than key events — reaches the native queue. The native surface view cannot own an
+    // InputConnection, so without this paste is silently dropped. Touch + native key input are
+    // dispatched at window level and are unaffected by this view holding IME focus.
+    private void installImeCaptureView() {
+        imeView = new View(this) {
+            @Override
+            public boolean onCheckIsTextEditor() {
+                return true;
+            }
+
+            @Override
+            public InputConnection onCreateInputConnection(EditorInfo outAttrs) {
+                if (outAttrs != null) {
+                    outAttrs.inputType =
+                            InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS;
+                    outAttrs.imeOptions =
+                            EditorInfo.IME_FLAG_NO_FULLSCREEN | EditorInfo.IME_FLAG_NO_EXTRACT_UI;
+                }
+                return new SmatchetInputConnection(this);
+            }
+        };
+        imeView.setFocusable(true);
+        imeView.setFocusableInTouchMode(true);
+        // 1x1, not 0x0: apps targeting Android P+ require View.hasSize() (right>left && bottom>top) for
+        // requestFocus() to succeed, so a zero-area view can never become the IME-served view and
+        // showSoftInput() is silently ignored ("view ... is not served"). A single pixel in the top-left
+        // corner is laid out and focusable while intercepting effectively no touches from the native surface.
+        addContentView(imeView, new ViewGroup.LayoutParams(1, 1));
+    }
+
+    // Subscribe to window-inset changes on the decor view and cache the system-bar + display-cutout
+    // insets. The native EGL surface fills the whole window (system-chrome area included), so the
+    // render loop applies these as the ImGui main-viewport work area. Forwards to the default
+    // handler so normal inset behavior is preserved.
+    private void installWindowInsetsListener() {
+        final View decor = getWindow().getDecorView();
+        decor.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
+            @Override
+            public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
+                int left;
+                int top;
+                int right;
+                int bottom;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    Insets bars = insets.getInsets(
+                            WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
+                    left = bars.left;
+                    top = bars.top;
+                    right = bars.right;
+                    bottom = bars.bottom;
+                } else {
+                    left = insets.getSystemWindowInsetLeft();
+                    top = insets.getSystemWindowInsetTop();
+                    right = insets.getSystemWindowInsetRight();
+                    bottom = insets.getSystemWindowInsetBottom();
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        DisplayCutout cutout = insets.getDisplayCutout();
+                        if (cutout != null) {
+                            left = Math.max(left, cutout.getSafeInsetLeft());
+                            top = Math.max(top, cutout.getSafeInsetTop());
+                            right = Math.max(right, cutout.getSafeInsetRight());
+                            bottom = Math.max(bottom, cutout.getSafeInsetBottom());
+                        }
+                    }
+                }
+                insetLeft = left;
+                insetTop = top;
+                insetRight = right;
+                insetBottom = bottom;
+                return v.onApplyWindowInsets(insets);
+            }
+        });
+        decor.requestApplyInsets();
+    }
+
+    /**
+     * Called from native code (JNI) each frame to read the cached safe-area insets, packed as four
+     * unsigned 16-bit pixel counts: [left:16][top:16][right:16][bottom:16]. Recomputed only on
+     * inset changes, so this is a cheap field read.
+     */
+    @SuppressWarnings("unused")
+    public long pollContentInsets() {
+        return ((long) (insetLeft & 0xFFFF) << 48)
+                | ((long) (insetTop & 0xFFFF) << 32)
+                | ((long) (insetRight & 0xFFFF) << 16)
+                | (long) (insetBottom & 0xFFFF);
     }
 
     /** Called from native code (JNI) to raise the soft keyboard. */
@@ -37,7 +151,7 @@ public class SmatchetActivity extends NativeActivity {
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                View view = getWindow().getDecorView();
+                View view = imeView != null ? imeView : getWindow().getDecorView();
                 view.requestFocus();
                 InputMethodManager imm =
                         (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
@@ -54,7 +168,7 @@ public class SmatchetActivity extends NativeActivity {
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                View view = getWindow().getDecorView();
+                View view = imeView != null ? imeView : getWindow().getDecorView();
                 InputMethodManager imm =
                         (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
                 if (imm != null) {
@@ -85,5 +199,41 @@ public class SmatchetActivity extends NativeActivity {
             }
         }
         return super.dispatchKeyEvent(event);
+    }
+
+    private void enqueueText(CharSequence text) {
+        if (text == null) {
+            return;
+        }
+        int length = text.length();
+        for (int i = 0; i < length; ) {
+            int codePoint = Character.codePointAt(text, i);
+            if (codePoint != 0) {
+                unicodeQueue.offer(codePoint);
+            }
+            i += Character.charCount(codePoint);
+        }
+    }
+
+    // BaseInputConnection in dummy-editor mode whose commitText enqueues each pasted/typed code
+    // point into unicodeQueue (drained by the native pollUnicodeChar loop). Backspace / enter /
+    // arrows still arrive as key events and are handled by the ImGui Android backend.
+    private final class SmatchetInputConnection extends BaseInputConnection {
+        SmatchetInputConnection(View targetView) {
+            super(targetView, false);
+        }
+
+        @Override
+        public boolean commitText(CharSequence text, int newCursorPosition) {
+            // Enqueue directly and DON'T call super. In dummy-editor mode BaseInputConnection.commitText
+            // synthesizes KeyEvents for committed text (sendCurrentText -> sendKeyEvent), which loop back
+            // through SmatchetActivity.dispatchKeyEvent and enqueue every character a SECOND time —
+            // doubling each keystroke. (Paste escaped this because multi-char text is sent as one
+            // ACTION_MULTIPLE event whose getUnicodeChar() is 0, so it was never re-enqueued.) Enqueuing
+            // here is the single source of truth for IME-committed characters; backspace / enter / arrows
+            // still arrive as real key events handled by the ImGui Android backend.
+            enqueueText(text);
+            return true;
+        }
     }
 }

@@ -150,6 +150,29 @@ void BootCoreOnce(android_app* app, AndroidHostState& s) {
     }
 }
 
+// Bridge used by PollWorkAreaInsets, an ImGui C callback with no user-data slot. Set once in
+// InitImGuiFirstTime; both the bridge (a member of the android_main-local state) and the ImGui
+// context live for the whole process, so this raw pointer never dangles.
+smatchet::mobile::SmatchetAndroidImeBridge* g_insetBridge = nullptr;
+
+// ImGui safe-area hook. ImGui invokes this for the main viewport inside NewFrame
+// (UpdateViewportsNewFrame) and folds the result into the viewport work-inset, so both
+// DockSpaceOverViewport (WorkPos/WorkSize) and BeginMainMenuBar (build work rect) lay out clear of
+// the system chrome — without it the menu bar draws at y=0 under the status bar / cutout and is
+// unreachable. ImVec4 = (left, top, right, bottom) in surface pixels (1:1 with DisplaySize here);
+// ImGui asserts each >= 0, which the unsigned-packed insets always satisfy.
+ImVec4 PollWorkAreaInsets(ImGuiViewport*) {
+    int left = 0;
+    int top = 0;
+    int right = 0;
+    int bottom = 0;
+    if (g_insetBridge != nullptr) {
+        g_insetBridge->PollContentInsets(left, top, right, bottom);
+    }
+    return ImVec4(static_cast<float>(left), static_cast<float>(top), static_cast<float>(right),
+                  static_cast<float>(bottom));
+}
+
 // One-time ImGui setup on the first INIT_WINDOW (context already current). Font bytes are
 // injected from the APK BEFORE the first atlas build (seam #12); density scaling is applied
 // AFTER the style so it is not wiped (seam #13 — persisted across later ApplyStyle by
@@ -189,6 +212,8 @@ void InitImGuiFirstTime(android_app* app, AndroidHostState& s) {
     ImGui_ImplAndroid_Init(app->window);
     ImGui_ImplOpenGL3_Init("#version 300 es");
     s.ime.Init(app->activity->vm, app->activity->clazz);
+    g_insetBridge = &s.ime;
+    ImGui::GetPlatformIO().Platform_GetWindowWorkAreaInsets = &PollWorkAreaInsets;
     s.imguiReady = true;
     SLOG("ImGui ready (density=%.2f font=%.1fpx)", s.densityScale, fontPx);
 }
@@ -209,6 +234,11 @@ void RenderOneFrame(AndroidHostState& s) {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplAndroid_NewFrame();
     ImGui::NewFrame();
+
+    // The device safe area (status bar / nav bar / display cutout) is applied as the main-viewport
+    // work-area inset by PollWorkAreaInsets (registered in InitImGuiFirstTime), which ImGui folds in
+    // during the NewFrame above. So DockSpaceOverViewport and the main menu bar both lay out clear of
+    // the system chrome with no manual WorkPos fix-up here.
     ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_None);
     s.mainWindow->Draw(*s.app);
     s.pluginHost->OnDraw(*s.app);

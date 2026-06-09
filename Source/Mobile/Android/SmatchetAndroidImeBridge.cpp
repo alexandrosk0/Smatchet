@@ -29,6 +29,12 @@ bool SmatchetAndroidImeBridge::Init(JavaVM* vm, jobject activity) {
     showSoftInput_ = env->GetMethodID(clazz, "showSoftInput", "()V");
     hideSoftInput_ = env->GetMethodID(clazz, "hideSoftInput", "()V");
     pollUnicodeChar_ = env->GetMethodID(clazz, "pollUnicodeChar", "()I");
+    // Window-inset getter is optional: resolved independently of the IME methods so a build/Activity
+    // without it still gets a working keyboard — insets just stay 0 (full-screen, pre-fix behavior).
+    pollContentInsets_ = env->GetMethodID(clazz, "pollContentInsets", "()J");
+    if (pollContentInsets_ == nullptr && env->ExceptionCheck()) {
+        env->ExceptionClear();
+    }
     env->DeleteLocalRef(clazz);
 
     if (showSoftInput_ == nullptr || hideSoftInput_ == nullptr || pollUnicodeChar_ == nullptr) {
@@ -110,6 +116,27 @@ void SmatchetAndroidImeBridge::PollUnicodeChars(ImGuiIO& io) {
         }
         io.AddInputCharacter(static_cast<unsigned int>(codepoint));
     }
+}
+
+void SmatchetAndroidImeBridge::PollContentInsets(int& left, int& top, int& right, int& bottom) {
+    left = 0;
+    top = 0;
+    right = 0;
+    bottom = 0;
+    if (!ready_ || pollContentInsets_ == nullptr) {
+        return;
+    }
+    JNIEnv* env = AcquireEnv();
+    if (env == nullptr) {
+        return;
+    }
+    // Packed by SmatchetActivity.pollContentInsets(): [left:16][top:16][right:16][bottom:16], each
+    // an unsigned pixel count (< 65536).
+    const jlong packed = env->CallLongMethod(activity_, pollContentInsets_);
+    left = static_cast<int>((packed >> 48) & 0xFFFF);
+    top = static_cast<int>((packed >> 32) & 0xFFFF);
+    right = static_cast<int>((packed >> 16) & 0xFFFF);
+    bottom = static_cast<int>(packed & 0xFFFF);
 }
 
 } // namespace mobile

@@ -1,11 +1,12 @@
 #pragma once
 
-// JNI bridge to the soft keyboard + Unicode text input. imgui_impl_android only emits raw
-// AddKeyEvent (keycodes) and cannot raise the IME or produce characters (upstream FIXMEs,
-// imgui issue #3446), so the host owns text input: a Kotlin SmatchetActivity exposes
-// showSoftInput / hideSoftInput / pollUnicodeChar, and this bridge drives them from the
+// JNI bridge to host-Activity services: soft keyboard + Unicode text input, plus window insets.
+// imgui_impl_android only emits raw AddKeyEvent (keycodes) and cannot raise the IME or produce
+// characters (upstream FIXMEs, imgui issue #3446), so the host owns text input: SmatchetActivity
+// exposes showSoftInput / hideSoftInput / pollUnicodeChar, and this bridge drives them from the
 // render thread. Calls are debounced on io.WantTextInput edges to keep JNI overhead off the
-// 6.94 ms frame budget (Quality Pillar 1).
+// 6.94 ms frame budget (Quality Pillar 1). The Activity additionally exposes pollContentInsets
+// (safe-area pixels) so the render loop can keep the UI clear of the status bar / nav bar / cutout.
 
 #include <jni.h>
 
@@ -33,6 +34,11 @@ public:
     // call returning the empty sentinel).
     void PollUnicodeChars(ImGuiIO& io);
 
+    // Read the current safe-area insets (status bar / nav bar / display cutout) in surface pixels
+    // from the host Activity. All four default to 0 when unresolved (older Activity, or the lookup
+    // failed) so the UI simply falls back to full-screen. One JNI call returning a packed long.
+    void PollContentInsets(int& left, int& top, int& right, int& bottom);
+
 private:
     JNIEnv* AcquireEnv();
 
@@ -41,6 +47,7 @@ private:
     jmethodID showSoftInput_ = nullptr;
     jmethodID hideSoftInput_ = nullptr;
     jmethodID pollUnicodeChar_ = nullptr;
+    jmethodID pollContentInsets_ = nullptr;
     bool lastWantTextInput_ = false;
     bool ready_ = false;
 };

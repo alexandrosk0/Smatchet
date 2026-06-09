@@ -1271,6 +1271,12 @@ if(ANDROID)
     # Force-keep the glue's ANativeActivity_onCreate (the .so entry point dlsym'd by the
     # framework) — without -u the linker prunes it as unreferenced from the static archive.
     target_link_options(SmatchetMobile PRIVATE -u ANativeActivity_onCreate)
+    # 16 KB page-size compatibility (Android 15+: Pixel/devices boot with 16 KB pages and
+    # reject .so files whose LOAD segments are 4 KB-aligned). NDK r27+ defaults to 16 KB;
+    # NDK 26 still emits 0x1000 alignment, so force the ELF max-page-size to 16384. AGP
+    # 8.5.1+ separately zip-aligns the stored uncompressed .so to a 16 KB boundary.
+    target_link_options(SmatchetMobile PRIVATE
+        "-Wl,-z,max-page-size=16384" "-Wl,-z,common-page-size=16384")
 endif()
 
 # ==============================================================================
