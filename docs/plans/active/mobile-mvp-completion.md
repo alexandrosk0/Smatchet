@@ -127,7 +127,9 @@ Per `AGENTS.md` § Verification automation. Per-PR buckets declared in each PR; 
 - **Desktop parity** — explicit non-goal for Phase-0.
 
 ## Implementation log
-*(populated post-ship — bullet per shipped commit: `<sha> · <one-line summary>`)*
+*(bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+- **WS2 / PR-2 (Fixes #1068)** — runtime-resolved CA seam. New cpr-free pure unit `TrackerHttpPure` (`ResolveSslConfig` + a process-global CA-path holder `Set/GetCaBundlePath`); `TrackerHttpUtils::MakeTrackerSslOptions()` turns the path into `cpr::SslOptions` applied to all 5 tracker verbs (Get×2/Post/Put/Patch) — empty path ⇒ default `cpr::SslOptions{}` (libcurl default CAINFO untouched, desktop unchanged), non-empty ⇒ explicit `CURLOPT_CAINFO`. `android_main.cpp` boot feeds the extracted cacert.pem path via `SetCaBundlePath` before Core init. `cmake/SmatchetThirdParty.cmake` CURL_CA_* defines demoted to documented defense-in-depth (kept, not removed). Bucket-A test `TrackerHttpSslPure.test.cpp`.
 
 **WS5 — Test / CI enablement (one PR, items 17+18+19):**
 - `7689ccbe` · item 19 — OpenSSL fail-fast behavioral configure-probe (`tests/bats/android_openssl_failfast.bats` + ctest mirror over `tests/fixtures/android-openssl/probe.cmake`, `cmake -P` script mode; bats marker-text precision, ctest exit-code WILL_FAIL).
@@ -137,10 +139,17 @@ Per `AGENTS.md` § Verification automation. Per-PR buckets declared in each PR; 
 ## Deviations from plan
 *(populated post-ship)*
 
+- **WS2 cmake — demoted, not removed.** § Files-to-modify row said "retire cmake `CURL_CA_BUNDLE` primary literal". Actual: the three `set(CURL_CA_BUNDLE/CURL_CA_PATH/CURL_CA_FALLBACK …)` lines are **kept** and re-documented as a defense-in-depth fallback (help-strings + comments only). Removing the baked literal would be a fail-closed regression if the runtime seam is ever skipped (e.g. a boot path that doesn't call `SetCaBundlePath`); demotion keeps the backstop while making the runtime CAINFO load-bearing. Trust model unchanged — the seam only ever *adds* a CAINFO, never disables verification.
 - **WS5 item 17 CI placement** — plan said "lands before PR-4"; the JVM test is *wired* (CI step present) ahead of WS3, but the Robolectric `testDebugUnitTest` + the emulator boot are **executed only in advisory CI** — no local JVM/Android SDK on the authoring host (validation-strategy decision: "ship + flag residue"). Local validation done: shellcheck (both scripts), YAML parse (both workflows), bats failfast 5/5, mobile-security gate. JVM/emulator execution is flagged in the final manual/CI-verification checklist.
 
 ## Verification (actual)
 *(populated post-ship)*
+
+- **WS2 / PR-2** — local, pre-push:
+  - **Lint** (`test-lint-rules.sh --diff origin/develop`): PASS 6/6 (strict-zone · comment-noise · no-raw-new/deviation/detach · GLFW-in-core-headers · function-too-long · agent-prompt-size).
+  - **Bucket A** (`smatchet_tests`, doctest+CTest): new `TrackerHttpSslPure.test.cpp` — 3 cases / 14 assertions PASS (empty→no-attach; realistic Android private-dir paths user 0 / user 10 / arbitrary → attach; Set/Get round-trip + reset-disarm). Full umbrella suite green (1/1, 8.24 s) — no regression from the new `TrackerHttpPure.cpp` link.
+  - **Dual-target** (`ninja-iter-msvc`): `SmatchetStandalone` (GL) → `Smatchet.exe` linked + `SmatchetCore_DX12.lib` built — both green, confirms the Core seam compiles in the DX12/Unreal world (no GLFW/GL leak into Core headers).
+  - **Real-hardware TLS (Pillar-1 / live Jira)**: deferred manual residue — emulator-only injection per the physical-device safety mishap; the runtime CAINFO path is exercised by the Bucket-A unit + the prior live-Jira read-200/write-204 proof. Flagged, not auto-validated.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 1. flip § Status to `shipped`,

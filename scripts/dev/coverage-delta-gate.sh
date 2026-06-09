@@ -22,6 +22,11 @@
 #   * logging-only         — LOG_{DEBUG,INFO,WARN,ERROR,TRACE}(…) calls
 #   * static_assert-only   — static_assert(…) (compile-time; the build is the test)
 #   * include/using-only   — #include / using directives
+#   * preprocessor-guard   — #if/#ifdef/#ifndef/#elif/#else/#endif conditional
+#                            directives (compile-config selection; the wrapped
+#                            code is classified on its own added lines, so a guard
+#                            around NEW statements still falls through). NOT
+#                            #define/#undef/#pragma (a macro can carry real logic).
 #   * catch-scaffold       — exception-handler structure (catch (…) { , try { ,
 #                            and the brace/closing tokens) whose body is only the
 #                            above (the swallow→log pattern: no rethrow, no logic)
@@ -99,6 +104,16 @@ _line_is_no_runtime_surface() {
         '#include'*) return 0 ;;
         '#pragma once'*) return 0 ;;
         'using '*) return 0 ;;
+    esac
+
+    # Preprocessor conditional guards — #if/#ifdef/#ifndef/#elif/#else/#endif.
+    # A guard wrapping EXISTING code is compile-config selection (no runtime
+    # surface); NEW code inside the guard arrives as its own added line and is
+    # classified on its own merits, so a guard around new statements still falls
+    # through. NOT #define/#undef/#pragma (a macro can carry real logic).
+    case "$code" in
+        # '#if'* subsumes '#ifdef'/'#ifndef'; '#elif'/'#else'/'#endif' are explicit.
+        '#if'*|'#elif'*|'#else'*|'#endif'*) return 0 ;;
     esac
 
     # static_assert(…) — compile-time; the build is the test.
@@ -295,6 +310,25 @@ diff --git a/Source/Core/include/AppController.h b/Source/Core/include/AppContro
 +using tracker::TrackerConfig;
 EOF
 
+    # #1082-equivalent — a #ifndef/#endif compile-config guard wrapped around an
+    # EXISTING function (the def lines are diff CONTEXT, only the directives +
+    # comments are added). DX12 dual-target -Wunused-function fix shape.
+    _expect EXEMPT "preprocessor-guard around existing code (#1082)" <<'EOF'
+diff --git a/Source/Core/src/Ui/SmatchetBugReportUi.cpp b/Source/Core/src/Ui/SmatchetBugReportUi.cpp
+--- a/Source/Core/src/Ui/SmatchetBugReportUi.cpp
++++ b/Source/Core/src/Ui/SmatchetBugReportUi.cpp
+@@ -38,6 +38,11 @@
++#ifndef SMATCHET_EMBEDDED_IN_UNREAL
++// Only used by the screenshot-attach path below, which is itself
++// #ifndef SMATCHET_EMBEDDED_IN_UNREAL — guard the def too, else the DX12
++// target compiles it out of every call site and trips -Wunused-function -Werror.
+ std::string PendingShotStamp() {
+     const auto now = std::chrono::steady_clock::now().time_since_epoch();
+     return std::to_string(ms);
+ }
++#endif
+EOF
+
     # CMake-only (#917-equivalent: build/CI/scripts, no C++ TU).
     _expect EXEMPT "build-only / CMake-only (#917)" <<'EOF'
 diff --git a/CMakeLists.txt b/CMakeLists.txt
@@ -397,6 +431,19 @@ diff --git a/Source/Core/src/Config/Trail.cpp b/Source/Core/src/Config/Trail.cpp
 +    /* note */ launchTask();
 EOF
 
+    # A #ifndef guard wrapping a NEW statement — the directives are exempt but
+    # the wrapped assignment is real runtime surface, so the diff falls through
+    # (proves the guard exemption can't be used to smuggle in untested logic).
+    _expect FALLTHROUGH "preprocessor-guard wrapping a new statement" <<'EOF'
+diff --git a/Source/Core/src/Sync/Guarded.cpp b/Source/Core/src/Sync/Guarded.cpp
+--- a/Source/Core/src/Sync/Guarded.cpp
++++ b/Source/Core/src/Sync/Guarded.cpp
+@@ -10,0 +11,3 @@
++#ifndef SMATCHET_EMBEDDED_IN_UNREAL
++    g_counter = computeStamp();
++#endif
+EOF
+
     if [ "$fail" -eq 0 ]; then
         echo "coverage-delta-gate --selftest: PASS"
         exit 0
@@ -489,7 +536,7 @@ EXEMPTION="$(git diff --diff-filter=ACMR "$MERGE_BASE"...HEAD -- \
 if [ "$EXEMPTION" = "EXEMPT" ]; then
     echo "[coverage-delta-gate] PASS — test-light exemption: every product-code"
     echo "[coverage-delta-gate]        change is no-new-runtime-surface"
-    echo "[coverage-delta-gate]        (comment/log/static_assert/include/catch-scaffold)."
+    echo "[coverage-delta-gate]        (comment/log/static_assert/include/preprocessor-guard/catch-scaffold)."
     exit 0
 fi
 
@@ -506,7 +553,8 @@ done
 echo
 echo "Add tests under tests/Core/ (or tests/Lua/, tests/Plugins/) for the"
 echo "changed units. Changes that add no new runtime surface (comment-only,"
-echo "logging-only, static_assert-only, include-only, swallow->log catch) are"
-echo "auto-exempted; if yours genuinely cannot be unit-tested, apply the"
+echo "logging-only, static_assert-only, include-only, preprocessor-guard-only,"
+echo "swallow->log catch) are auto-exempted; if yours genuinely cannot be"
+echo "unit-tested, apply the"
 echo "'tests-out-of-band' PR label to dismiss this gate."
 exit 1
