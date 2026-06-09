@@ -5,6 +5,7 @@
 #include <ghc/filesystem.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
@@ -38,6 +39,11 @@ char g_crashDir[kPathCap] = {0};
 char g_sessionLogRecordPath[kPathCap] = {0}; // crashes/session_log.txt — points at the active log
 bool g_inited = false;
 std::string g_crashedLogPath; // crashed session's log path, stashed at Init when a crash is pending
+// First-write-wins for the crash marker: the earliest handler to fire is closest to the root
+// cause (the frame-loop SEH filter writes "SEH exception in frame loop"; the std::exit() it
+// triggers used to overwrite that with a less-specific "std::terminate"). Detection only needs
+// the file to exist, so preserving the first reason string loses nothing and keeps the root.
+std::atomic<bool> g_markerWritten{false};
 
 void CopyPath(char* dst, const std::string& s) {
     const std::size_t n = s.size() < (kPathCap - 1) ? s.size() : (kPathCap - 1);
@@ -144,6 +150,11 @@ void CrashSinkInit(const std::string& userDataDir, const std::string& activeLogP
     }
 
     RotateDumps(crashDir, 5);
+    // Fresh session: clear the marker first-write-wins latch so this session's first crash
+    // marker is recorded. The latch only suppresses a SECOND, less-specific overwrite within a
+    // single crash; without resetting it here a long-lived process that re-inits the sink (the
+    // test harness runs many crash scenarios back-to-back) would record only the first marker.
+    g_markerWritten.store(false, std::memory_order_release);
     g_inited = true;
 }
 
@@ -187,6 +198,10 @@ void CrashSinkAppendBreadcrumbLine(const char* prefix, const char* text) noexcep
 void CrashSinkWriteMarkerAsyncSafe(const char* reason) noexcept {
     if (g_markerPath[0] == '\0') {
         return;
+    }
+    bool expected = false;
+    if (!g_markerWritten.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        return; // a marker (closer to the root cause) was already written this session
     }
     const char* msg = (reason != nullptr) ? reason : "unknown";
     const std::size_t len = std::strlen(msg);

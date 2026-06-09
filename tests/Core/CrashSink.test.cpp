@@ -100,6 +100,26 @@ TEST_CASE("CrashSink — append-breadcrumb-line tolerates null prefix/text") {
     CHECK(info.Breadcrumb == "idle\nonly text\nonly prefix: ");
 }
 
+TEST_CASE("CrashSink — marker first-write-wins: a later overwrite cannot clobber the root reason") {
+    const std::string dir = MakeTempDir();
+    CrashSinkInit(dir);
+    // A single crash that fires two handlers: the frame-loop SEH filter records the root
+    // reason, then the std::exit() it triggers used to overwrite the marker with the less-
+    // specific terminate reason. First-write-wins must preserve the root.
+    CrashSinkWriteMarkerAsyncSafe("SEH exception in frame loop");
+    CrashSinkWriteMarkerAsyncSafe("std::terminate (unhandled C++ exception)");
+    const CrashInfo info = CrashSinkConsume();
+    REQUIRE(info.Pending);
+    CHECK(info.Reason == "SEH exception in frame loop");
+
+    // A fresh session (re-Init) clears the per-session latch so the next crash is recorded.
+    CrashSinkInit(dir);
+    CrashSinkWriteMarkerAsyncSafe("SIGSEGV (segfault)");
+    const CrashInfo info2 = CrashSinkConsume();
+    REQUIRE(info2.Pending);
+    CHECK(info2.Reason == "SIGSEGV (segfault)");
+}
+
 TEST_CASE("CrashSink — pending dump path is non-empty after Init") {
     const std::string dir = MakeTempDir();
     CrashSinkInit(dir);

@@ -37,6 +37,25 @@ struct WorkerState {
     LocalCacheManager* lcm = nullptr;
     MainThreadDispatcher* dispatcher = nullptr;
     OnAppendCallback onAppend;
+
+    // State() is a function-local static; this destructor runs during exit()/static
+    // teardown. If the worker is still joinable then — e.g. the standalone crash handler's
+    // frame-loop SEH path calls std::exit() WITHOUT the app's orderly chat_persist::Stop() —
+    // std::thread::~thread() would call std::terminate(), turning an already-caught crash
+    // into a hard process kill that bypasses WER. Signal + join here so abnormal exits tear
+    // down cleanly. Join (never detach): WorkerLoop dereferences this very singleton, so it
+    // must finish before our members are destroyed. No-ops after a normal Stop() (thread
+    // already moved out + joined, so not joinable).
+    ~WorkerState() {
+        {
+            std::lock_guard<std::mutex> lk(mtx);
+            shouldStop.store(true, std::memory_order_release);
+        }
+        cv.notify_all();
+        if (thread.joinable()) {
+            thread.join();
+        }
+    }
 };
 
 WorkerState& State() {

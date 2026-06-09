@@ -1342,6 +1342,19 @@ bool TicketFieldEditor::DispatchEditorByPlan(AppController& app, const CachedTic
                             thresholdDays, disabled);
     };
 
+    // A column can resolve its field to nullptr transiently when the active field catalog is
+    // swapped out from under the grid — e.g. rapidly switching the focused pane between panes
+    // bound to different backends (Jira<->GitHub): the column keeps its old RenderPlan but the
+    // field id no longer exists in the just-activated backend's catalog. Every interactive
+    // editor case below dereferences *field (RenderSingleSelectEditor -> TryGetInlineFieldIcon-
+    // Texture read field.Id through the null pointer -> AV in std::hash). Fall back to a
+    // read-only plain-text cell for that frame instead of crashing; the next frame resolves the
+    // field against the new catalog. RenderPlainTextCell is null-field-safe.
+    if (field == nullptr) {
+        renderPlainText(true);
+        return true;
+    }
+
     switch (column.Plan) {
     case TicketGridColumn::RenderPlan::SpecialTimeSpent:
         RenderTimeSpentButton(ticket, currentValue, availWidth, tooltipsEnabled);
