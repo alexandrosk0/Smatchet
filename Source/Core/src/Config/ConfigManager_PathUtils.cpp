@@ -680,6 +680,15 @@ std::string ConfigManager::GetImGuiSettingsPath() {
     return base + "imgui.ini";
 }
 
+std::string ConfigManager::GetMobileImGuiSettingsPath() {
+    // Sibling of imgui.ini for the mobile content-dockspace layout. GetUserDataDirectory()
+    // already resolves to the host-injected filesDir on Android, so the same base applies.
+    const std::string& base = GetUserDataDirectory();
+    if (base.empty())
+        return "imgui_mobile.ini";
+    return base + "imgui_mobile.ini";
+}
+
 bool ConfigManager::WriteDefaultImGuiSettingsFile() {
     const std::string path = GetImGuiSettingsPath();
     std::lock_guard<std::mutex> lock(GetIoMutexRef());

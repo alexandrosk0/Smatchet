@@ -360,6 +360,10 @@ void SaveEnumFields(nlohmann::json& j, const TrackerConfig& config) {
         break;
     }
     j["theme"] = themeStr;
+    j["uiMode"] = uiModeToString(config.UiMode);
+    j["mobileNav"] = config.MobileNavPages;
+    j["mobileHome"] = config.MobileHomePage;
+    j["mobileDensity"] = mobileTouchDensityToString(config.MobileTouchDensity);
     j["ui_language"] = ConfigManager::NormalizeUiLanguageCode(config.UiLanguage);
 }
 
@@ -686,6 +690,42 @@ void ConfigManager::SaveAnnotateAnalysis(const AnnotateAnalysisConfig& b) {
     WriteConfigJson(j);
 }
 
+// Repair a corrupt/hand-edited mobile-nav config in place. Defined outside the
+// anonymous namespace below since it is a ConfigManager member. Runs on every
+// load + after a Preferences Mobile-group edit so the bottom nav can never
+// render zero pages or a home page with no reachable button.
+void ConfigManager::SanitizeMobileNav(TrackerConfig& cfg) {
+    static const char* const kKnownPages[] = {"grid", "views", "log", "settings", "ai"};
+    const auto isKnown = [](const std::string& id) {
+        for (const char* k : kKnownPages) {
+            if (id == k) {
+                return true;
+            }
+        }
+        return false;
+    };
+    // Drop unknown ids + dedup (keep first occurrence's order).
+    std::vector<std::string> cleaned;
+    for (const std::string& id : cfg.MobileNavPages) {
+        if (isKnown(id) && std::find(cleaned.begin(), cleaned.end(), id) == cleaned.end()) {
+            cleaned.push_back(id);
+        }
+    }
+    // Empty (all-unknown / hand-cleared) → restore the full default order (>=1 visible).
+    if (cleaned.empty()) {
+        cleaned.assign({"grid", "views", "log", "settings", "ai"});
+    }
+    // Home page must be a known id; an unknown value degrades to the grid home.
+    if (!isKnown(cfg.MobileHomePage)) {
+        cfg.MobileHomePage = "grid";
+    }
+    // Force the home page present so the shell always opens on a nav-reachable page.
+    if (std::find(cleaned.begin(), cleaned.end(), cfg.MobileHomePage) == cleaned.end()) {
+        cleaned.insert(cleaned.begin(), cfg.MobileHomePage);
+    }
+    cfg.MobileNavPages = std::move(cleaned);
+}
+
 // ConfigManager — Load(CliOverrides) helper functions.
 // Each helper owns one cohesive slice of the former Load monolith. They are free functions in
 // the anonymous namespace (no ConfigManager state beyond the json and the cfg being built),
@@ -941,6 +981,20 @@ void LoadEnumAndClampedFields(const nlohmann::json& j, TrackerConfig& cfg) {
         // Covers the literal "ImGuiDefaultDark" string AND any unknown / future value —
         // unknown serialized themes degrade to the fresh-install default.
         cfg.Theme = ThemeId::ImGuiDefaultDark;
+    // UI layout mode + mobile-shell prefs. All optional with defaults; unknown
+    // serialized values degrade to the fresh-install default via *FromString.
+    cfg.UiMode = uiModeFromString(j.value("uiMode", std::string("auto")));
+    if (j.contains("mobileNav") && j["mobileNav"].is_array()) {
+        cfg.MobileNavPages.clear();
+        for (const auto& item : j["mobileNav"]) {
+            if (item.is_string()) {
+                cfg.MobileNavPages.push_back(item.get<std::string>());
+            }
+        }
+    }
+    cfg.MobileHomePage = j.value("mobileHome", cfg.MobileHomePage);
+    cfg.MobileTouchDensity = mobileTouchDensityFromString(j.value("mobileDensity", std::string("comfortable")));
+    ConfigManager::SanitizeMobileNav(cfg);
     cfg.UiLanguage = ConfigManager::NormalizeUiLanguageCode(j.value("ui_language", cfg.UiLanguage));
 }
 

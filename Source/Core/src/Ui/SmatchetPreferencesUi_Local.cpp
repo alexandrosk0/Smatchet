@@ -395,6 +395,27 @@ void DrawAppearanceUpdatesSection(AppController& app, UiDrawSession& d) {
     ImGui::TextDisabled("GitHub release repo: %s", d.cfg.UpdateGithubRepo.c_str());
 }
 
+// Layout-mode section of the Appearance tab: Desktop / Mobile / Auto selector.
+// Auto resolves by viewport width per frame; Desktop/Mobile pin the mode. Saves
+// immediately via MarkPrefsDirty like the sibling Appearance toggles. The combo
+// index maps 1:1 onto the UiMode enum order (Desktop=0/Mobile=1/Auto=2).
+void DrawAppearanceUiModeSection(UiDrawSession& d) {
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Layout mode");
+    ImGui::Separator();
+    const char* modes[] = {"Desktop", "Mobile", "Auto (by width)"};
+    int currentMode = static_cast<int>(d.cfg.UiMode);
+    if (ImGui::Combo("UI mode", &currentMode, modes, IM_ARRAYSIZE(modes))) {
+        if (currentMode >= 0 && currentMode <= 2) {
+            d.cfg.UiMode = static_cast<UiMode>(currentMode);
+            MarkPrefsDirty(d);
+        }
+    }
+    ImGui::SetItemTooltip(
+        "Desktop = docking workspace. Mobile = single-column shell with top bar + bottom nav. "
+        "Auto switches by window width.");
+}
+
 // "Appearance" tab body — owns its own tab-item begin/end pair (the end runs only when
 // the begin returned true). Split out of DrawLocalAndAppearancePreferencesTabs during the
 // function-size decomposition; behaviour-identical.
@@ -404,6 +425,7 @@ void DrawAppearanceTab(AppController& app, UiDrawSession& d) {
         DrawAppearanceGridTextSection(d);
         DrawAppearanceDateSection(d);
         DrawAppearanceDisplaySection(d);
+        DrawAppearanceUiModeSection(d);
         DrawAppearanceUpdatesSection(app, d);
         ImGui::EndTabItem();
     }
