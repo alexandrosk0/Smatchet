@@ -1,5 +1,7 @@
 #include "SmatchetTheme.h"
 
+#include "SmatchetThemeDensity.h"
+
 #include <atomic>
 
 namespace {
@@ -53,7 +55,7 @@ void SetAiColors(const SmatchetThemeAiColors& a) { gAiColors = a; }
 // ApplyStyle resets `style = ImGuiStyle{}` every call, so this re-asserts the boot
 // density the host set via ApplyUiDensityScale. Desktop leaves the scale at 1.0 → no-op.
 void ReapplyHostDensityScale(ImGuiStyle& style) {
-    if (g_hostDensityScale > 0.0f && g_hostDensityScale != 1.0f) {
+    if (SmatchetTheme::ShouldApplyDensityScale(g_hostDensityScale)) {
         style.ScaleAllSizes(g_hostDensityScale);
     }
 }
