@@ -1188,9 +1188,11 @@ class AppController {
     void WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker);
     /// Background-task body of WarmIssueTypeEditMetaAtStartAsync: load editmeta for the
     /// representative issues, then warm per-project component options. Runs off the UI thread.
+    /// `catPtr` is the KICK-TIME context catalog captured by the caller (#975) — the worker must
+    /// mutate THAT context's projectComponentsInFlight_ markers, not a completion-time re-resolve.
     void WarmIssueTypeEditMetaWorker(const std::vector<std::pair<std::string, std::string>>& representatives,
                                      const std::vector<std::string>& componentProjectKeys,
-                                     const std::shared_ptr<ITrackerBackend>& backend,
+                                     const std::shared_ptr<ITrackerBackend>& backend, GridContextFieldCatalog* catPtr,
                                      TrackerConfig trackerCfgForWorker);
     void EnsureCatalogHistoryField();
     bool TryBuildFieldEditPayloadForNetwork(const std::string& issueId, const TrackerField& field,
