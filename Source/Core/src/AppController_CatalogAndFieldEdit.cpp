@@ -570,16 +570,24 @@ void AppController::WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgFo
     if (representatives.empty() && componentProjectKeys.empty()) {
         return;
     }
-    LaunchBackgroundTask([this, representatives, componentProjectKeys, backend,
+    // Capture the KICK-TIME catalog by pointer (#975, sibling of EnsureProjectComponentsLoaded):
+    // the worker warms projectComponentsInFlight_ markers (one per project key), so a
+    // completion-time fieldCatalog() re-resolve under a focus switch would leak the kick-time
+    // context's markers ("Loading components…" forever) and write the completion-time context.
+    // Dangle-safety is identical to the lazy path: the catalog is a subobject of a GridLiveContext
+    // that the husk graveyard (retiredContexts_) keeps alive until ~AppController.
+    GridContextFieldCatalog* catPtr = &fieldCatalog();
+    LaunchBackgroundTask([this, representatives, componentProjectKeys, backend, catPtr,
                           trackerCfgForWorker = std::move(trackerCfgForWorker)]() mutable {
-        WarmIssueTypeEditMetaWorker(representatives, componentProjectKeys, backend, std::move(trackerCfgForWorker));
+        WarmIssueTypeEditMetaWorker(representatives, componentProjectKeys, backend, catPtr,
+                                    std::move(trackerCfgForWorker));
     });
 }
 
 void AppController::WarmIssueTypeEditMetaWorker(const std::vector<std::pair<std::string, std::string>>& representatives,
                                                 const std::vector<std::string>& componentProjectKeys,
                                                 const std::shared_ptr<ITrackerBackend>& backend,
-                                                TrackerConfig trackerCfgForWorker) {
+                                                GridContextFieldCatalog* catPtr, TrackerConfig trackerCfgForWorker) {
     for (const auto& pair : representatives) {
         if (shuttingDown_.load()) {
             break;
@@ -592,11 +600,11 @@ void AppController::WarmIssueTypeEditMetaWorker(const std::vector<std::pair<std:
     if (catalog == nullptr) {
         return;
     }
-    // Latch the catalog once for the whole worker run: fieldCatalog() re-resolves
-    // focusedContextPtr_ per call, and this loop runs on a background worker — a focus switch
-    // mid-loop would lock context A's mutex while mutating context B (Pillar 3). The
-    // retired-context husk graveyard keeps the latched reference valid.
-    GridContextFieldCatalog& cat = fieldCatalog();
+    // Operate on the KICK-TIME catalog captured by the caller (#975) — NOT a completion-time
+    // fieldCatalog() re-resolve, which would target whatever context is focused when the worker
+    // finishes and leak this run's projectComponentsInFlight_ markers on the kick-time context.
+    // The retired-context husk graveyard (retiredContexts_) keeps catPtr valid for the whole run.
+    GridContextFieldCatalog& cat = *catPtr;
     for (const auto& projectKey : componentProjectKeys) {
         if (shuttingDown_.load()) {
             break;
@@ -691,10 +699,25 @@ void AppController::EnsureProjectComponentsLoaded(const std::string& projectKey)
         }
     }
     TrackerConfig trackerCfgForWorker = ConfigManager::Load();
-    LaunchBackgroundTask([this, projectKey, backend, trackerCfgForWorker = std::move(trackerCfgForWorker)]() mutable {
-        // Worker-side latch: this lambda runs later on a background thread — latch once at
-        // entry so every locked region below locks and mutates the SAME context (Pillar 3).
-        GridContextFieldCatalog& cat = fieldCatalog();
+    // Capture the KICK-TIME catalog by pointer (#975). fieldCatalog() re-resolves
+    // focusedContextPtr_ at CALL time; re-resolving it inside the worker would target whatever
+    // context is focused at COMPLETION time, not the one whose projectComponentsInFlight_ marker
+    // we just inserted above. A focus switch mid-fetch would then leave THIS context's marker set
+    // forever (the pane stuck "Loading components…" until restart) while spuriously
+    // erasing/writing the completion-time context. Capturing &catPtr pins the kick-time context's
+    // catalog for the whole worker run.
+    // Dangle-safety: a GridContextFieldCatalog is a subobject of a GridLiveContext. The UI thread
+    // never frees a live context mid-session — on retirement it moves the context (as a defer-free
+    // husk) into retiredContexts_, which survives until ~AppController (ADR-0012 graveyard applied
+    // to contexts; see AppController.h retiredContexts_). The husk's availableFieldsMutex_ and
+    // containers stay valid (cleared, not destroyed), so this raw pointer is always safe to lock
+    // and mutate. If the context was retired mid-fetch, erasing the marker on the husk is a no-op
+    // that leaks nothing visible (a husk is never painted), so no extra guard is needed.
+    GridContextFieldCatalog* catPtr = &cat;
+    LaunchBackgroundTask([this, projectKey, backend, catPtr,
+                          trackerCfgForWorker = std::move(trackerCfgForWorker)]() mutable {
+        // Operate on the kick-time context (#975) — NOT a completion-time fieldCatalog() re-resolve.
+        GridContextFieldCatalog& cat = *catPtr;
         if (shuttingDown_.load()) {
             std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
             cat.projectComponentsInFlight_.erase(projectKey);
