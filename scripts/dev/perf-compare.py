@@ -11,8 +11,13 @@
 #
 # Usage:
 #   python scripts/dev/perf-compare.py <baseline.json> <fresh.json>
-#                                      [--policy <path>] [--markdown-only]
+#                                      [--policy <path>]
+#                                      [--markdown-only | --summary-only]
 #                                      [--scenario-id <id>]
+#
+# --markdown-only emits the full per-scope delta table (for the Step Summary);
+# --summary-only emits the compact per-scenario verdict + regressing rows only
+# (for the PR comment). Both suppress the regression exit code.
 #
 # Exit codes:
 #   0 — no regression beyond policy thresholds.
@@ -326,6 +331,27 @@ def emit_markdown(
     return "\n".join(lines)
 
 
+def emit_summary(scenario_id: str, regressions: List[str]) -> str:
+    """Compact per-scenario verdict for the PR comment (no per-scope table).
+
+    The full per-scope delta table is enormous (one row per profiled scope ×
+    every scenario) and already lands in the run's Step Summary. The PR thread
+    only needs the verdict + the regressing rows, so a clean scenario collapses
+    to a single ✅ line and a regressing one lists just its offending scopes.
+    (Anti-spam comment policy, perf-pr-fast.yml § Publish perf report.)
+    """
+    lines: List[str] = []
+    if regressions:
+        lines.append(f"### `{scenario_id}` — ❌ {len(regressions)} regression(s)")
+        lines.append("")
+        for r in regressions:
+            lines.append(f"- {r}")
+    else:
+        lines.append(f"### `{scenario_id}` — ✅ within policy")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def main(argv: List[str]) -> int:
     parser = argparse.ArgumentParser(description="Compare a fresh perf snapshot against a baseline.")
     parser.add_argument("baseline", help="Path to the baseline JSON.")
@@ -339,6 +365,13 @@ def main(argv: List[str]) -> int:
         "--markdown-only",
         action="store_true",
         help="Print only the markdown report; do not change exit code on regression.",
+    )
+    parser.add_argument(
+        "--summary-only",
+        action="store_true",
+        help="Print only the compact per-scenario verdict + regressing rows "
+        "(no per-scope table); do not change exit code on regression. For the "
+        "PR comment — the full table lives in the run's Step Summary.",
     )
     parser.add_argument(
         "--scenario-id",
@@ -374,6 +407,11 @@ def main(argv: List[str]) -> int:
     except ValueError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
+
+    if args.summary_only:
+        # Compact verdict for the PR comment; never gates (like --markdown-only).
+        print(emit_summary(scenario_id, regressions))
+        return 0
 
     print(emit_markdown(scenario_id, baseline, fresh, rows, regressions, policy))
 

@@ -234,6 +234,14 @@ jobs:
           : > /tmp/perf-report.md
           echo "## Perf delta — PR-fast subset (ci-windows-latest)" >> /tmp/perf-report.md
           echo "" >> /tmp/perf-report.md
+          # Trimmed twin of the report for the PR comment: per-scenario verdict
+          # + regressing rows only (no per-scope table). The full table is in
+          # /tmp/perf-report.md -> Step Summary. (Anti-spam comment policy.)
+          : > /tmp/perf-summary.md
+          echo "## Perf delta — PR-fast subset" >> /tmp/perf-summary.md
+          echo "" >> /tmp/perf-summary.md
+          echo "_Per-scenario verdict only — full per-scope table in the run's Step Summary._" >> /tmp/perf-summary.md
+          echo "" >> /tmp/perf-summary.md
           regression_count=0
           run_failure_count=0
           missing_baseline_count=0
@@ -294,10 +302,14 @@ jobs:
               python scripts/dev/perf-baseline-bootstrap.py "$result" "$baseline" "$scen"
               echo "### $scen — baseline captured (first run)" >> /tmp/perf-report.md
               echo "" >> /tmp/perf-report.md
+              echo "### \`$scen\` — baseline captured (first run)" >> /tmp/perf-summary.md
+              echo "" >> /tmp/perf-summary.md
             else
               python scripts/dev/perf-compare.py "$baseline" "$result" --markdown-only >> /tmp/perf-report.md
-              # Re-run the comparison WITHOUT --markdown-only to get the exit
-              # code used for gating.
+              # Compact verdict twin for the PR comment (no per-scope table).
+              python scripts/dev/perf-compare.py "$baseline" "$result" --summary-only >> /tmp/perf-summary.md
+              # Re-run the comparison WITHOUT --markdown-only/--summary-only to
+              # get the exit code used for gating.
               python scripts/dev/perf-compare.py "$baseline" "$result" > /dev/null 2>&1
               rc=$?
               if [ "$rc" -ne 0 ]; then
@@ -357,7 +369,12 @@ jobs:
           # reaches the step summary + Gate-decision ::notice::.
           notable=$(( ${REGRESSION_COUNT:-0} + ${RUN_FAILURE_COUNT:-0} ))
           if [ "$notable" -gt 0 ]; then
-            { echo "$MARKER"; cat /tmp/perf-report.md; } > /tmp/perf-comment.md
+            # Comment body = trimmed verdict twin (regressing rows + per-scenario
+            # verdict), NOT the full per-scope table — that already went to the
+            # Step Summary above. Falls back to the report if the trim is empty.
+            body_src=/tmp/perf-summary.md
+            [ -s "$body_src" ] || body_src=/tmp/perf-report.md
+            { echo "$MARKER"; cat "$body_src"; } > /tmp/perf-comment.md
             if [ -n "$existing_id" ]; then
               gh api -X PATCH "repos/${{ github.repository }}/issues/comments/${existing_id}" \
                 -F body=@/tmp/perf-comment.md >/dev/null || true
