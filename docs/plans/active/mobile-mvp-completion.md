@@ -33,27 +33,27 @@ Per the four approved decisions (2026-06-09): **#1067 → `allowBackup=false`** 
 Grouped by workstream. Anchors verified against `origin/develop` 2026-06-09.
 
 **WS1 — Security + build guardrails (PR-1, CI-only):**
-1. [`Source/Mobile/AndroidApp/app/src/main/AndroidManifest.xml:7`](../../Source/Mobile/AndroidApp/app/src/main/AndroidManifest.xml) — `allowBackup="true"` → `"false"`.
+1. [`Source/Mobile/AndroidApp/app/src/main/AndroidManifest.xml:7`](../../../Source/Mobile/AndroidApp/app/src/main/AndroidManifest.xml) — `allowBackup="true"` → `"false"`.
 2. New CI grep gate (extend an existing mobile lint step in `.github/workflows/`) — fail if `allowBackup="true"` reappears; route onto the **blocking** path (merge-gate poller allow-list), not advisory.
-3. [`cmake/SmatchetThirdParty.cmake:108,114-115`](../../cmake/SmatchetThirdParty.cmake) — per-ABI OpenSSL discovery: `message(WARNING)`+sysroot-fallback → `FATAL_ERROR` when `libssl.a` / `libcrypto.a` / `include/` are missing for the ABI.
+3. [`cmake/SmatchetThirdParty.cmake:108,114-115`](../../../cmake/SmatchetThirdParty.cmake) — per-ABI OpenSSL discovery: `message(WARNING)`+sysroot-fallback → `FATAL_ERROR` when `libssl.a` / `libcrypto.a` / `include/` are missing for the ABI.
 
 **WS2 — TLS runtime-resolved CA (PR-2, Source/Core seam):**
-4. [`cmake/SmatchetThirdParty.cmake:90`](../../cmake/SmatchetThirdParty.cmake) — retire the hardcoded `CURL_CA_BUNDLE` literal as the *primary* trust root.
+4. [`cmake/SmatchetThirdParty.cmake:90`](../../../cmake/SmatchetThirdParty.cmake) — retire the hardcoded `CURL_CA_BUNDLE` literal as the *primary* trust root.
 5. New `CURLOPT_CAINFO` / cpr `SslOptions` seam in the Tracker HTTP layer (`Source/Core/src/Tracker/` — greenfield; grep confirms no existing `CAINFO`/`SslOptions`/`CURLOPT` usage), fed the host-provided runtime path.
-6. [`Source/Mobile/Android/android_main.cpp:115`](../../Source/Mobile/Android/android_main.cpp) — pass the JNI-resolved `internalDataPath`/`files/cacert.pem` into the new seam at boot (currently only `setenv("SSL_CERT_FILE", …)`).
+6. [`Source/Mobile/Android/android_main.cpp:115`](../../../Source/Mobile/Android/android_main.cpp) — pass the JNI-resolved `internalDataPath`/`files/cacert.pem` into the new seam at boot (currently only `setenv("SSL_CERT_FILE", …)`).
 
 **WS3 — IME reliability + boot-error surfacing (PR-3, PR-4):**
-7. New on-screen boot/error panel — **must render via raw GL** (clear-color + minimal text), not ImGui: the dominant failure path is `BootCoreOnce` failing → `coreBooted=false` → `RenderOneFrame` early-returns at [`android_main.cpp:222`](../../Source/Mobile/Android/android_main.cpp) before ImGui is ever initialized.
-8. [`android_main.cpp:214,217`](../../Source/Mobile/Android/android_main.cpp) — capture `s.ime.Init(...)` return, `SLOGE` + degraded cue; **do NOT** gate `s.imguiReady` on it (gating blanks the whole UI). (#1069)
-9. [`SmatchetActivity.java:36,198,212`](../../Source/Mobile/AndroidApp/app/src/main/java/com/smatchet/mobile/SmatchetActivity.java) + [`SmatchetAndroidImeBridge.cpp:112`](../../Source/Mobile/Android/SmatchetAndroidImeBridge.cpp) — paste truncation: deliver full clipboard text via the chosen non-blocking mechanism (see open question), remove the 256-cap drop and the 64-char/frame native drain throttle. (#1070)
+7. New on-screen boot/error panel — **must render via raw GL** (clear-color + minimal text), not ImGui: the dominant failure path is `BootCoreOnce` failing → `coreBooted=false` → `RenderOneFrame` early-returns at [`android_main.cpp:222`](../../../Source/Mobile/Android/android_main.cpp) before ImGui is ever initialized.
+8. [`android_main.cpp:214,217`](../../../Source/Mobile/Android/android_main.cpp) — capture `s.ime.Init(...)` return, `SLOGE` + degraded cue; **do NOT** gate `s.imguiReady` on it (gating blanks the whole UI). (#1069)
+9. [`SmatchetActivity.java:36,198,212`](../../../Source/Mobile/AndroidApp/app/src/main/java/com/smatchet/mobile/SmatchetActivity.java) + [`SmatchetAndroidImeBridge.cpp:112`](../../../Source/Mobile/Android/SmatchetAndroidImeBridge.cpp) — paste truncation: deliver full clipboard text via the chosen non-blocking mechanism (see open question), remove the 256-cap drop and the 64-char/frame native drain throttle. (#1070)
 10. `SmatchetActivity.java` — intercept `KEYCODE_BACK` so Back dismisses the IME and the app stays foreground. (#1054)
-11. [`SmatchetAndroidImeBridge.cpp:89-93`](../../Source/Mobile/Android/SmatchetAndroidImeBridge.cpp) (C++ rising-edge `want == lastWantTextInput_` early-return) **+** [`SmatchetActivity.java:159`](../../Source/Mobile/AndroidApp/app/src/main/java/com/smatchet/mobile/SmatchetActivity.java) (retire `SHOW_FORCED`, use `WindowInsets.Type.ime()`) — re-tap re-raises the IME. The C++ edge is the root cause; a Java-only change leaves re-raise broken. (#1055)
+11. [`SmatchetAndroidImeBridge.cpp:89-93`](../../../Source/Mobile/Android/SmatchetAndroidImeBridge.cpp) (C++ rising-edge `want == lastWantTextInput_` early-return) **+** [`SmatchetActivity.java:159`](../../../Source/Mobile/AndroidApp/app/src/main/java/com/smatchet/mobile/SmatchetActivity.java) (retire `SHOW_FORCED`, use `WindowInsets.Type.ime()`) — re-tap re-raises the IME. The C++ edge is the root cause; a Java-only change leaves re-raise broken. (#1055)
 
 **WS4 — Render robustness + lifecycle/perf (PR-5, PR-6):**
-12. [`android_main.cpp:252`](../../Source/Mobile/Android/android_main.cpp) + [`SmatchetAndroidEgl.cpp:121-126`](../../Source/Mobile/Android/SmatchetAndroidEgl.cpp) — detect `EGL_CONTEXT_LOST` on swap, tear down + recreate ImGui device objects + context/surface. (#1071)
+12. [`android_main.cpp:252`](../../../Source/Mobile/Android/android_main.cpp) + [`SmatchetAndroidEgl.cpp:121-126`](../../../Source/Mobile/Android/SmatchetAndroidEgl.cpp) — detect `EGL_CONTEXT_LOST` on swap, tear down + recreate ImGui device objects + context/surface. (#1071)
 13. `android_main.cpp` — pause the render/swap loop on `APP_CMD_PAUSE` / `APP_CMD_LOST_FOCUS`.
 14. `android_main.cpp` — handle `APP_CMD_SAVE_STATE` / restore-on-resume (process-death state restore).
-15. [`android_main.cpp:203-210`](../../Source/Mobile/Android/android_main.cpp) — re-apply density scale + font atlas on `APP_CMD_CONFIG_CHANGED` (density currently resolved once at boot); the font-atlas rebuild must stay under the Pillar-2 100 ms UI-block budget.
+15. [`android_main.cpp:203-210`](../../../Source/Mobile/Android/android_main.cpp) — re-apply density scale + font atlas on `APP_CMD_CONFIG_CHANGED` (density currently resolved once at boot); the font-atlas rebuild must stay under the Pillar-2 100 ms UI-block budget.
 16. **Stray-PUT-on-Escape** (commit-fires-on-deactivate writes wrong data to a real Jira) — **re-tiered from Phase-1 polish to a WS4 correctness item**; route to `tracker-backend`.
 
 **WS5 — Test / CI enablement (PR-7, runs parallel with WS1):**
@@ -70,10 +70,10 @@ Grouped by workstream. Anchors verified against `origin/develop` 2026-06-09.
 
 ## Existing utilities reused
 
-- `SLOG` / `SLOGE` — logcat wrappers at [`SmatchetAndroidPlatform.h:21-22`](../../Source/Mobile/Android/SmatchetAndroidPlatform.h). **Use these, not `LOG_*`** — `Logger.h` `LOG_*` macros have no logcat sink on Android ([`android_main.cpp:87-89`](../../Source/Mobile/Android/android_main.cpp)).
-- `SmatchetAndroidImeBridge::Init` already `SLOGE`s internally on a missing Java method ([`SmatchetAndroidImeBridge.cpp:45`](../../Source/Mobile/Android/SmatchetAndroidImeBridge.cpp)) and degrades to a safe no-op — #1069's gap is only the **call-site** capture + user cue, not a crash.
-- `CURL_CA_FALLBACK=ON` ([`cmake:92`](../../cmake/SmatchetThirdParty.cmake)) + `setenv("SSL_CERT_FILE", …)` ([`android_main.cpp:115`](../../Source/Mobile/Android/android_main.cpp)) — the existing fragile-but-working secondary trust net WS2 replaces with an explicit `CAINFO` seam.
-- `WindowInsets` listener already installed at [`SmatchetActivity.java:54,94`](../../Source/Mobile/AndroidApp/app/src/main/java/com/smatchet/mobile/SmatchetActivity.java) — #1055's `WindowInsets.Type.ime()` path builds on existing infrastructure, not greenfield.
+- `SLOG` / `SLOGE` — logcat wrappers at [`SmatchetAndroidPlatform.h:21-22`](../../../Source/Mobile/Android/SmatchetAndroidPlatform.h). **Use these, not `LOG_*`** — `Logger.h` `LOG_*` macros have no logcat sink on Android ([`android_main.cpp:87-89`](../../../Source/Mobile/Android/android_main.cpp)).
+- `SmatchetAndroidImeBridge::Init` already `SLOGE`s internally on a missing Java method ([`SmatchetAndroidImeBridge.cpp:45`](../../../Source/Mobile/Android/SmatchetAndroidImeBridge.cpp)) and degrades to a safe no-op — #1069's gap is only the **call-site** capture + user cue, not a crash.
+- `CURL_CA_FALLBACK=ON` ([`cmake:92`](../../../cmake/SmatchetThirdParty.cmake)) + `setenv("SSL_CERT_FILE", …)` ([`android_main.cpp:115`](../../../Source/Mobile/Android/android_main.cpp)) — the existing fragile-but-working secondary trust net WS2 replaces with an explicit `CAINFO` seam.
+- `WindowInsets` listener already installed at [`SmatchetActivity.java:54,94`](../../../Source/Mobile/AndroidApp/app/src/main/java/com/smatchet/mobile/SmatchetActivity.java) — #1055's `WindowInsets.Type.ime()` path builds on existing infrastructure, not greenfield.
 
 ## UX Pillar callouts
 
@@ -111,7 +111,7 @@ Per `AGENTS.md` § Verification automation. Per-PR buckets declared in each PR; 
 
 - **Bucket A (pure-logic ctest, `test-rig`)**: WS2 CAINFO-seam injection unit test; #1067 manifest assertion is a CI grep gate.
 - **Bucket E / emulator (WS5)**: boot/error panel renders on forced boot-failure; #1069 degraded cue + `imguiReady` stays true; #1054 Back closes IME + app foreground; #1055 re-tap re-raises (API 30+); density rescale live + < 100 ms. **These depend on the WS5 emulator harness landing first.**
-- **JVM/Robolectric (WS5)**: #1070 — paste a >256-char / >64-char-per-frame string, assert full delivery + non-blocking `put()`. *Caveat:* the Robolectric test covers the Java queue half; the **C++ 64-char/frame drain** ([`ImeBridge.cpp:112`](../../Source/Mobile/Android/SmatchetAndroidImeBridge.cpp)) is native and needs a separate Source/Core or device check.
+- **JVM/Robolectric (WS5)**: #1070 — paste a >256-char / >64-char-per-frame string, assert full delivery + non-blocking `put()`. *Caveat:* the Robolectric test covers the Java queue half; the **C++ 64-char/frame drain** ([`ImeBridge.cpp:112`](../../../Source/Mobile/Android/SmatchetAndroidImeBridge.cpp)) is native and needs a separate Source/Core or device check.
 - **Build gate**: each mobile PR must pass `android-ndk-arm64` (the only Bionic-`#else` compile); Source/Core PRs add `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`.
 - **Real-hardware perf (WS4)**: Pillar-1 steady-state ≤ 6.94 ms / p99 ≤ 10 ms measured on a physical device — emulator does NOT satisfy this.
 - **Doc validation (blocks plan-doc PRs)**: `scripts/dev/test-docs.sh` suite green.
