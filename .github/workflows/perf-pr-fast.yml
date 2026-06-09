@@ -292,11 +292,18 @@ jobs:
             build/perf-runs/*.json
             docs/perf/baselines/*.ci-windows-latest.json
 
-      # Anti-spam comment policy (user-mandated 2026-06-07): the full delta
-      # table ALWAYS lands in the run's Step Summary; the PR thread gets a
-      # comment ONLY on a notable outcome (regression / run failure / baseline
-      # bootstrap) — a clean pass is already communicated by the green required
-      # check. The comment is single + updated-in-place via a hidden marker, so
+      # Anti-spam comment policy (user-mandated 2026-06-07; hardened
+      # 2026-06-09): the full delta table ALWAYS lands in the run's Step
+      # Summary; the PR thread gets a comment ONLY on a regression or run
+      # failure — a clean pass is already communicated by the green required
+      # check. A pure missing-baseline run (new scenario added without a
+      # committed ci-windows-latest baseline) is deliberately NOT comment-
+      # worthy: it is a persistent state that re-fires on EVERY open PR until
+      # a human commits the bootstrapped baseline, so commenting on it spams
+      # every unrelated PR (root cause of the #1013 side-by-side-2-grid /
+      # concurrent-sync spam). The bootstrap signal still surfaces via the
+      # step summary, the uploaded artefact, and the Gate-decision ::notice::.
+      # The comment is single + updated-in-place via a hidden marker, so
       # reruns and follow-up pushes never stack duplicates; if a prior notable
       # comment exists and the run is now clean, it is updated to say so
       # (never left stale-red).
@@ -308,7 +315,6 @@ jobs:
           PR: ${{ github.event.pull_request.number }}
           REGRESSION_COUNT: ${{ steps.perf.outputs.regression_count }}
           RUN_FAILURE_COUNT: ${{ steps.perf.outputs.run_failure_count }}
-          MISSING_COUNT: ${{ steps.perf.outputs.missing_baseline_count }}
         run: |
           MARKER='<!-- perf-pr-fast-report -->'
           [ -s /tmp/perf-report.md ] || exit 0
@@ -317,7 +323,10 @@ jobs:
           # 2. Find a prior marker comment (update target), if any.
           existing_id=$(gh api "repos/${{ github.repository }}/issues/${PR}/comments" --paginate \
             -q ".[] | select(.body | startswith(\"$MARKER\")) | .id" | head -1) || existing_id=""
-          notable=$(( ${REGRESSION_COUNT:-0} + ${RUN_FAILURE_COUNT:-0} + ${MISSING_COUNT:-0} ))
+          # MISSING_COUNT is intentionally EXCLUDED — a pure missing-baseline
+          # run must not post a PR comment (see policy note above). It still
+          # reaches the step summary + Gate-decision ::notice::.
+          notable=$(( ${REGRESSION_COUNT:-0} + ${RUN_FAILURE_COUNT:-0} ))
           if [ "$notable" -gt 0 ]; then
             { echo "$MARKER"; cat /tmp/perf-report.md; } > /tmp/perf-comment.md
             if [ -n "$existing_id" ]; then
