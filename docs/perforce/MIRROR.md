@@ -157,29 +157,31 @@ p4 -p Mainbot:1666 -u alexk repos                       # //repo/smatchet listed
 p4 -p Mainbot:1666 -u gconn graph log -n //repo/smatchet -m 1 develop   # tip commit SHA appears
 ```
 
-> **Ref scope is the WHOLE repo, not just `develop` + tags.** `mirrorhooks` has **no ref-filter / exclude option** — it mirrors *every* ref GitHub serves (all `refs/heads/*`, `refs/tags/*`, and `refs/pull/*/head`). The plan's original "`develop` + tags only" scope is **not achievable** through the connector; the full-mirror consequence (ephemeral `refs/pull/*/merge` refs make the fetch exit non-zero) is covered in § Known issues. `develop` — the only ref the health-check asserts — mirrors correctly regardless.
+> **Ref scope is the WHOLE repo, not just `develop` + tags.** `mirrorhooks` has **no ref-filter / exclude option** — it mirrors *every* ref GitHub serves (all `refs/heads/*`, `refs/tags/*`, and `refs/pull/*/head`). The plan's original "`develop` + tags only" scope is **not achievable** through the connector; the full-mirror consequence (ephemeral `refs/pull/*/merge` refs make the inner `git push --mirror` log a `256`, though the `--mirrorhooks fetch` verb itself still exits 0) is covered in § Known issues. `develop` — the only ref the health-check asserts — mirrors correctly regardless.
 
 ## 5. Cadence — pull-based fetch + WSL2 lifecycle
 
-GitHub Actions **cannot** reach a local `p4d` ([`AGENT_FLOWS.md`](AGENT_FLOWS.md) § When NOT to use Perforce), so freshness is **pull-based**: a WSL2 cron triggers the connector fetch, then runs the health-check.
+GitHub Actions **cannot** reach a local `p4d` ([`AGENT_FLOWS.md`](AGENT_FLOWS.md) § When NOT to use Perforce), so freshness is **pull-based**: a WSL2 cron triggers the connector fetch, then runs the health-check. **Wired live this standup** — cron daemon `active`, Windows logon task `SmatchetMirrorKeepWSL` `Running`.
 
-The `cron` daemon is **not** running in a default WSL2 distro — enable it once (systemd-in-WSL is simplest): set `[boot] systemd=true` in `/etc/wsl.conf`, `wsl --shutdown`, then `sudo systemctl enable --now cron`. The cron lives in **root's** crontab (it uses `runuser -u git` for the fetch):
+The `cron` daemon must be running in WSL2 (systemd-in-WSL is simplest, already in place on this host): `[boot] systemd=true` in `/etc/wsl.conf`, `wsl --shutdown`, then `sudo systemctl enable --now cron`. The health-check script is **installed beside the connector** — `/opt/perforce/git-connector/p4-mirror-healthcheck.sh` — so the mirror infra is **self-contained** and does not depend on a developer checkout (the integration tree at `/mnt/c/Dev/Smatchet` legitimately floats across commits/branches and may not even contain the script on an older HEAD). Re-install after a script change with `install -m0755 <repo>/scripts/dev/p4-mirror-healthcheck.sh /opt/perforce/git-connector/`.
+
+The cron lives in **root's** crontab (it uses `runuser -u git` for the fetch; absolute binaries + an explicit `PATH` because cron's default env omits `/usr/sbin`):
 
 ```cron
-# sudo crontab -e inside WSL2 — fetch every 15 min, then health-check.
-# The fetch exits NON-ZERO by design (ephemeral refs/pull/*/merge — see § Known issues);
-# `|| true` swallows it, and the health-check (develop SHA match) is the authoritative signal.
-*/15 * * * * runuser -u git -- env GCONN_CONFIG=/opt/perforce/git-connector/gconn.conf \
-               gconn --mirrorhooks fetch repo/smatchet >/dev/null 2>&1 || true ; \
-             MIRROR_RESOLVE=p4 P4PORT=Mainbot:1666 P4USER=gconn \
-             P4TICKETS=/opt/perforce/git-connector/.p4tickets \
-             /mnt/c/Dev/Smatchet/scripts/dev/p4-mirror-healthcheck.sh \
-             >> /var/log/smatchet-mirror-health.log 2>&1
+# root crontab inside WSL2 (`sudo crontab -e`) — fetch every 15 min, then health-check.
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+*/15 * * * * /usr/sbin/runuser -u git -- env GCONN_CONFIG=/opt/perforce/git-connector/gconn.conf /usr/bin/gconn --mirrorhooks fetch repo/smatchet >/dev/null 2>&1 || true ; MIRROR_RESOLVE=p4 P4PORT=Mainbot:1666 P4USER=gconn P4TICKETS=/opt/perforce/git-connector/.p4tickets /opt/perforce/git-connector/p4-mirror-healthcheck.sh >> /var/log/smatchet-mirror-health.log 2>&1
 ```
 
-`MIRROR_RESOLVE=p4` is used (not the smart-http `git` path) because this standup does not serve smart-http (§ 4). The health-check's `p4 graph log` reads the graph depot, which the `//repo/...` ACL grants the **`gconn`** p4 user — hence `P4USER=gconn` + the connector's ticket file.
+`gconn --mirrorhooks fetch` **exits 0** even though its inner `git push --mirror` logs `Return value: 256` for the ephemeral `refs/pull/*/merge` refs (§ Known issues) — the `|| true` is belt-and-suspenders, not load-bearing. `MIRROR_RESOLVE=p4` is used (not the smart-http `git` path) because this standup does not serve smart-http (§ 4). The health-check's `p4 graph log` reads the graph depot, which the `//repo/...` ACL grants the **`gconn`** p4 user — hence `P4USER=gconn` + the connector's ticket file.
 
-**WSL2 auto-start** (else the cron never fires after a reboot): register a Windows Task-Scheduler **logon** task running `wsl.exe -d Ubuntu -e true` (boots the distro so its systemd — and thus `cron` — comes up). Without this, the mirror silently staledates — which the health-check makes loud.
+**WSL2 auto-start** (else the cron never fires — WSL2 does not auto-start after a reboot, and its lightweight VM idle-shuts-down when no session is held, taking `cron` with it): a Windows Task-Scheduler **logon** task `SmatchetMirrorKeepWSL` runs
+
+```text
+conhost.exe --headless  wsl.exe -d Ubuntu -u root --exec /bin/sh -c "exec sleep infinity"
+```
+
+`--headless` keeps it windowless (Win11), and the `sleep infinity` holds one WSL session open so systemd — and thus `cron` — stays up continuously. The task restarts on failure (3×, 1-min interval) and runs only when the user is logged on (no stored password — `wsl -u root` is passwordless on this host). Without it the mirror silently staledates, which the health-check then makes loud.
 
 ## 6. Health-check — `scripts/dev/p4-mirror-healthcheck.sh`
 
@@ -210,7 +212,7 @@ Then in WSL2: stop the cron + connector, `rm ~/.ssh/smatchet_mirror*`, and **rev
 
 ## Known issues
 
-- **The fetch verb exits NON-ZERO every run (ephemeral `refs/pull/*/merge`) — by design, not a failure.** GitHub auto-computes a `refs/pull/N/merge` ref for each open mergeable PR and prunes/recomputes them constantly. A `gconn --mirrorhooks fetch` grabs the current set, then `git push --mirror`-es into `p4d`; by the time the push runs, a handful of those `merge` refs point at commits GitHub has already pruned, so `p4d` rejects them (`Reference refs/pull/N/merge specifies a non-existent commit …`) and the whole command returns **256**. **`git push --mirror` is per-ref, not atomic**, so every *stable* ref still updates — `develop`, all `refs/heads/*`, `refs/tags/*`, and the stable `refs/pull/*/head` refs sync correctly; only the ~4 volatile `*/merge` refs fail. `mirrorhooks` has **no ref-filter / exclude option** (verified: `--mirrorhooks` verbs are add/remove/list/setremote/fetch only; the repo spec has no `ExcludedBranches` field), so the non-zero exit is **permanent and unavoidable** while mirroring a repo with open PRs. The cron (§ 5) swallows it with `|| true` and treats the **health-check's `develop`-SHA match as the authoritative signal** — which is exactly what "in sync" means for this backup. To silence it entirely you would have to *not* mirror `refs/pull/*` at all, which `mirrorhooks` cannot express.
+- **The inner `git push --mirror` logs `Return value: 256` (ephemeral `refs/pull/*/merge`) — but `gconn --mirrorhooks fetch` itself exits 0.** GitHub auto-computes a `refs/pull/N/merge` ref for each open mergeable PR and prunes/recomputes them constantly. A `gconn --mirrorhooks fetch` grabs the current set, then `git push --mirror`-es into `p4d`; by the time the push runs, a handful of those `merge` refs point at commits GitHub has already pruned, so `p4d` rejects them (`Reference refs/pull/N/merge specifies a non-existent commit …`) and the **sub-push** returns **256** — surfaced only as a `remote:gconn: … Return value: 256` log line. **`git push --mirror` is per-ref, not atomic**, so every *stable* ref still updates — `develop`, all `refs/heads/*`, `refs/tags/*`, and the stable `refs/pull/*/head` refs sync correctly; only the ~4 volatile `*/merge` refs fail. Crucially the **`--mirrorhooks fetch` client verb wraps this and exits 0** (the 256 is the sub-push's return value, not the verb's — verified live: the run ends `Fetched content for repo 'repo/smatchet.git' …`, `$? == 0`). `mirrorhooks` has **no ref-filter / exclude option** (verified: verbs are add/remove/list/setremote/fetch only; the repo spec has no `ExcludedBranches` field), so the inner-push 256 is permanent while mirroring a repo with open PRs — but it is **cosmetic**: the cron's authoritative signal is the health-check's `develop`-SHA match. The cron's `|| true` (§ 5) is belt-and-suspenders should a future `gconn` ever propagate the sub-push code to the verb's exit.
 - **Graph-depot delete hits a server lock-order abort.** `p4 depot -d <graph-depot>` on this `p4d` 2025.2 fails reproducibly with `Locking failure: db.counters locked after db.group!` (independent of `-f`). Root cause is the server's lockless-read lock-order check (`db.peeking`) on the depot-delete path. Workaround: set `p4 configure set db.peeking=0`, **restart `p4d`**, delete, then restore `db.peeking=2` + restart. Do this only in a maintenance window — it is disproportionate for routine teardown, so prefer leaving an empty graph depot in place (zero repos = zero data). The connector's steady-state writes never touch this delete path, so the mirror is unaffected.
 - **Stray probe depot `testgraphprobe`.** A `p4 depot -t graph` capability probe (2026-06-08) left an **empty** graph depot `testgraphprobe` that the lock-order bug above blocks deleting remotely. Harmless (0 repos, 0 data, no effect on `//repo` or `//smatchet`). Clear it during the next `db.peeking` maintenance window, or from the server host.
 - **WSL2 lifecycle** is the most likely staleness source (no auto-start after reboot). The health-check + its cron log are the detection net.
