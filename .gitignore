@@ -43,6 +43,9 @@ Desktop.ini
 *.pem
 *.pfx
 credentials*.json
+# Exception: the vendored Mozilla CA root bundle is a public artifact (not a
+# secret) that ships in the Android APK; see THIRD_PARTY_LICENSES.md.
+!Source/Mobile/AndroidApp/app/src/main/assets/certs/cacert.pem
 
 # App local state / logs
 Smatchet_LocalCache.sqlite

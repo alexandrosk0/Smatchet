@@ -68,6 +68,54 @@ function(smatchet_prepare_cpr)
         set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH CACHE STRING "Android: find OpenSSL outside the NDK sysroot" FORCE)
         set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY BOTH CACHE STRING "Android: find OpenSSL outside the NDK sysroot" FORCE)
         set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE BOTH CACHE STRING "Android: find OpenSSL outside the NDK sysroot" FORCE)
+
+        # CA trust. A stock Android device exposes no CA bundle to the NDK-built libcurl, and
+        # libcurl (unlike the curl CLI) never reads the CURL_CA_BUNDLE *env* var — only the
+        # compile-time CURL_CA_BUNDLE define (its default CAINFO) or an explicit CURLOPT_CAINFO.
+        # The load-bearing var is CURL_CA_BUNDLE:
+        #   * CURL_CA_BUNDLE — baked default CAINFO = the exact private-dir path android_main.cpp
+        #     extracts the APK-bundled Mozilla cacert.pem to at boot. The path is deterministic
+        #     for the pinned applicationId on the primary user (user 0):
+        #     /data/user/0/<applicationId>/files/cacert.pem. An explicit cafile is consulted by
+        #     OpenSSL at verify time regardless of any CApath, so this alone arms TLS (proven
+        #     live: read HTTP 200 + write PUT HTTP 204 against real Jira).
+        #   * CURL_CA_PATH=none — we FORCE it to disable curl's autodetected
+        #     /system/etc/security/cacerts default CApath, but this does NOT survive: cpr's own
+        #     CMakeLists.txt re-sets CURL_CA_PATH back to the system store AFTER this block runs
+        #     (it is included via add_subdirectory below). Harmless — the baked CAINFO above is an
+        #     explicit cafile and takes precedence, so the stale system CApath is never consulted.
+        #     Left in for documentation + in case cpr's ordering changes upstream.
+        # CURL_CA_FALLBACK stays on so OpenSSL's SSL_CERT_FILE env (also set by the host shell)
+        # is honored as a secondary net if the baked CAINFO is ever unset.
+        set(CURL_CA_BUNDLE "/data/user/0/com.smatchet.mobile/files/cacert.pem" CACHE STRING "Android: baked default CAINFO; host shell extracts the APK cacert.pem here at boot" FORCE)
+        set(CURL_CA_PATH "none" CACHE STRING "Android: attempt to disable the autodetected system CApath (cpr re-sets this; baked CAINFO wins anyway)" FORCE)
+        set(CURL_CA_FALLBACK ON CACHE BOOL "Android: also honor OpenSSL SSL_CERT_FILE as a secondary CA net" FORCE)
+
+        # Gradle multi-ABI convenience. CI / the arm64 preset pin OPENSSL_ROOT_DIR (+ the
+        # explicit lib/include paths) per single-ABI build. The Gradle externalNativeBuild
+        # path drives BOTH abis from one invocation and cannot interpolate ${ANDROID_ABI}
+        # into a static -D argument, so when the caller did NOT pin OPENSSL_ROOT_DIR we
+        # derive the per-ABI prebuilt from one base dir + ${ANDROID_ABI} (x86_64 /
+        # arm64-v8a subdirs, the layout build-android-openssl.sh installs). The base may
+        # arrive via -D or the environment; the explicit FindOpenSSL vars below make the
+        # later find_package(OpenSSL) a direct path lookup (no sysroot probe).
+        if(NOT OPENSSL_ROOT_DIR)
+            if(NOT SMATCHET_ANDROID_OPENSSL_BASE AND DEFINED ENV{SMATCHET_ANDROID_OPENSSL_BASE})
+                set(SMATCHET_ANDROID_OPENSSL_BASE "$ENV{SMATCHET_ANDROID_OPENSSL_BASE}")
+            endif()
+            if(SMATCHET_ANDROID_OPENSSL_BASE)
+                set(_smatchet_ossl_abi "${SMATCHET_ANDROID_OPENSSL_BASE}/${ANDROID_ABI}")
+                if(EXISTS "${_smatchet_ossl_abi}/lib/libssl.a")
+                    set(OPENSSL_ROOT_DIR "${_smatchet_ossl_abi}" CACHE PATH "Android per-ABI OpenSSL (derived from base)" FORCE)
+                    set(OPENSSL_INCLUDE_DIR "${_smatchet_ossl_abi}/include" CACHE PATH "Android per-ABI OpenSSL include (derived)" FORCE)
+                    set(OPENSSL_SSL_LIBRARY "${_smatchet_ossl_abi}/lib/libssl.a" CACHE FILEPATH "Android per-ABI libssl (derived)" FORCE)
+                    set(OPENSSL_CRYPTO_LIBRARY "${_smatchet_ossl_abi}/lib/libcrypto.a" CACHE FILEPATH "Android per-ABI libcrypto (derived)" FORCE)
+                    message(STATUS "Smatchet: derived Android OpenSSL for ${ANDROID_ABI}: ${_smatchet_ossl_abi}")
+                else()
+                    message(WARNING "SMATCHET_ANDROID_OPENSSL_BASE='${SMATCHET_ANDROID_OPENSSL_BASE}' set but ${_smatchet_ossl_abi}/lib/libssl.a missing — OpenSSL find_package will fall back to probing.")
+                endif()
+            endif()
+        endif()
     endif()
     # Smatchet uses libcurl for HTTPS transport but does not need zlib-backed
     # transfer decoding in the standalone runtime.

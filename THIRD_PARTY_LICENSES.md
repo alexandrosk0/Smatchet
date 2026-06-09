@@ -63,3 +63,48 @@ commercial products, subject to two conditions: (1) the font itself may not be
 sold standalone (Smatchet ships it bundled with the application, not as a font
 package), and (2) the reserved font names "Font Awesome" and "Font Awesome 6"
 may not be used to identify derivative works.
+
+## Roboto Medium — `Source/Mobile/AndroidApp/app/src/main/assets/fonts/Roboto-Medium.ttf`
+
+Source: <https://github.com/googlefonts/roboto> (vendored copy from the Dear ImGui
+`misc/fonts/` distribution)
+Distribution: committed to this repo and packaged into the Android APK assets as
+the base UI font (injected at startup via `SmatchetSetInjectedFontBytes`). The
+desktop builds embed the same typeface as a compiled-in byte array instead.
+
+License: **Apache License 2.0**
+
+```
+Copyright 2011 The Roboto Project Authors (https://github.com/googlefonts/roboto)
+```
+
+Full Apache 2.0 text: <https://www.apache.org/licenses/LICENSE-2.0>
+
+The license permits redistribution, modification, and embedding of the font in
+commercial products with attribution. This NOTICE entry satisfies the Apache 2.0
+attribution requirement for the bundled binary.
+
+## Mozilla CA certificate bundle — `Source/Mobile/AndroidApp/app/src/main/assets/certs/cacert.pem`
+
+Source: <https://curl.se/docs/caextract.html> (the curl project's PEM extract of
+the Mozilla NSS root CA store)
+Vendored snapshot: "Certificate data from Mozilla as of: Thu May 14 03:12:02 2026 GMT"
+SHA-256: `86a1f3366afac7c6f8ae9f3c779ac221129328c43f0ab2b8817eb2f362a5025c`
+Distribution: committed to this repo and packaged into the Android APK assets;
+extracted to the app's private dir at boot. libcurl finds it via a baked
+compile-time `CURL_CA_BUNDLE` define (the on-device private-dir path, set in
+`cmake/SmatchetThirdParty.cmake`) so it can verify TLS peers (a stock Android
+device ships no CA bundle reachable by the NDK-built libcurl). Desktop builds
+rely on the OS trust store instead. Refresh cadence: re-pull when the Mozilla
+snapshot date is materially stale (the upstream is regenerated roughly quarterly).
+
+License: **Mozilla Public License 2.0** (the certificate data originates from
+Mozilla's NSS; the curl maintainers distribute the extract under MPL-2.0)
+
+```
+This Source Code Form is subject to the terms of the Mozilla Public License,
+v. 2.0. If a copy of the MPL was not distributed with this file, You can obtain
+one at https://mozilla.org/MPL/2.0/.
+```
+
+Full MPL 2.0 text: <https://mozilla.org/MPL/2.0/>
