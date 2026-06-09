@@ -167,3 +167,64 @@ TEST_CASE("Result: custom error type") {
     Result<int, int> ok = Result<int, int>::Ok(200);
     CHECK(ok.value() == 200);
 }
+
+// --- #1017: Result copy-assignment exception-safety (the reachable construct-then-throw UB) ---
+namespace {
+
+// A payload whose COPY ctor throws on demand but whose MOVE ctor is noexcept — exactly the
+// shape of Result<vector/string/json>: a copy can bad_alloc, a move never throws. liveCount
+// balances ctor/dtor so a double-destroy (the old Destroy()-then-throwing-copy bug) shows up as
+// a non-zero residual after scope exit (and ASan/UBSan flags the actual UB in the sanitizer lane).
+struct ThrowOnCopy {
+    int id;
+    bool armed; // when copied while armed, the copy throws
+    static int liveCount;
+    ThrowOnCopy(int i, bool arm) : id(i), armed(arm) { ++liveCount; }
+    ThrowOnCopy(const ThrowOnCopy& o) : id(o.id), armed(o.armed) {
+        if (o.armed) {
+            throw std::runtime_error("ThrowOnCopy: copy boom");
+        }
+        ++liveCount; // only a *successful* copy creates a live object
+    }
+    ThrowOnCopy(ThrowOnCopy&& o) noexcept : id(o.id), armed(o.armed) {
+        ++liveCount;
+        o.id = -1;
+    }
+    ~ThrowOnCopy() { --liveCount; }
+};
+int ThrowOnCopy::liveCount = 0;
+
+} // namespace
+
+TEST_CASE("Result: copy-assignment is exception-safe when the copy throws (#1017)") {
+    ThrowOnCopy::liveCount = 0;
+    {
+        // target holds id=1 (unarmed); source holds id=2 (armed → its copy throws).
+        Result<ThrowOnCopy, std::string> target = Result<ThrowOnCopy, std::string>::Ok(ThrowOnCopy(1, false));
+        Result<ThrowOnCopy, std::string> source = Result<ThrowOnCopy, std::string>::Ok(ThrowOnCopy(2, true));
+
+        // The copy in `target = source` throws. Pre-fix this Destroy()'d target FIRST, so the
+        // throw left target's storage destroyed-but-ok_ → ~target double-destroyed = UB.
+        CHECK_THROWS_AS(target = source, std::runtime_error);
+
+        // Strong guarantee: target is untouched — still its original ok-value.
+        CHECK(target.has_value());
+        CHECK(target.value().id == 1);
+    }
+    // Both Results destructed once each; the failed copy left no live object. A double-destroy
+    // (the old bug) would drive this negative.
+    CHECK(ThrowOnCopy::liveCount == 0);
+}
+
+TEST_CASE("Result: copy-assignment onto an error state stays exception-safe (#1017)") {
+    ThrowOnCopy::liveCount = 0;
+    {
+        Result<ThrowOnCopy, std::string> target = Result<ThrowOnCopy, std::string>::Err("orig-err");
+        Result<ThrowOnCopy, std::string> source = Result<ThrowOnCopy, std::string>::Ok(ThrowOnCopy(7, true));
+        CHECK_THROWS_AS(target = source, std::runtime_error);
+        // target unchanged — still the original error.
+        CHECK_FALSE(target.has_value());
+        CHECK(target.error() == "orig-err");
+    }
+    CHECK(ThrowOnCopy::liveCount == 0);
+}
