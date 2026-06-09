@@ -3,7 +3,7 @@
 
 ## Context
 
-Smatchet's 18-agent system delegates work across Opus / Sonnet / Haiku tiers. Cost visibility today: zero. Caveman reports compression savings, vexp reports semantic-search hits, but per-agent token spend per session is invisible. Need a way to see which agents burned the most tokens, what the session cost, and whether the delegation routing actually saves money vs running everything in the orchestrator.
+Smatchet's 18-agent system delegates work across Opus / Sonnet / Haiku tiers. Cost visibility today: zero. Caveman reports compression savings, but per-agent token spend per session is invisible. Need a way to see which agents burned the most tokens, what the session cost, and whether the delegation routing actually saves money vs running everything in the orchestrator.
 
 Three layers, smallest viable subset first:
 

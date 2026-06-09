@@ -88,8 +88,8 @@ const reviewPrompt = (lens) =>
   (target.kind === 'pr'
     ? 'Target: GitHub PR #' + target.ref + ' (use gh to fetch the diff). '
     : 'Target: diff the current working branch against ' + target.ref + '. ') +
-  'Read-only — do NOT edit any files; discover via semantic search (run_pipeline / ' +
-  'get_skeleton), not raw Grep/Glob (vexp-guard blocks them). Return a severity-tagged ' +
+  'Read-only — do NOT edit any files; discover via semantic search / code-graph ' +
+  'queries first, falling back to Grep/Glob. Return a severity-tagged ' +
   'punch list: each finding = severity (CRITICAL/HIGH/MEDIUM/LOW), file (path:line when ' +
   'known), category, a one-line title, detail, and a suggested_fix. Empty findings is a ' +
   'valid clean result — do not invent issues.'

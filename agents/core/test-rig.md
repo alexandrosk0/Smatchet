@@ -43,7 +43,7 @@ Own the doctest rig under `tests/`. Scope is **pure C++14 logic** that lives in 
 
 ## Workflow
 
-1. Identify the pure-logic unit. `get_skeleton` the candidate's `.h` to confirm no banned includes (transitive ImGui / cpr / SQLite / GLFW / Lua). Read enough of `.cpp` to know the contract of each function under test.
+1. Identify the pure-logic unit. Skeleton-view (or `Read`) the candidate's `.h` to confirm no banned includes (transitive ImGui / cpr / SQLite / GLFW / Lua). Read enough of `.cpp` to know the contract of each function under test.
 2. Add `tests/Core/<Unit>.test.cpp` with one `TEST_CASE` per public function with non-trivial behaviour. Cover happy path + at least one edge case (empty input, oversized input, malformed input, boundary value). Doctest macros: `TEST_CASE`, `SUBCASE`, `CHECK`, `CHECK_FALSE`, `REQUIRE`, `CHECK_EQ`. Prefer `CHECK` (test continues on failure) over `REQUIRE` unless a later assertion would crash on the bad value.
 3. Edit `tests/CMakeLists.txt`: append the new test `.cpp` and any newly-required `Source/Core/src/<Dep>.cpp` to `add_executable(SmatchetTests ...)`. Read each dep's transitive include chain — never pull `cpr` / `SQLite` / `ImGui` into the test exe.
 4. Build: `cmake --build --preset ninja-test-msvc --target SmatchetTests`.

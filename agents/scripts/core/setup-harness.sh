@@ -241,7 +241,6 @@ setup_claude_code() {
   copy_template "docs/harness/claude-code/hooks/lint-cpp-drain.sh"   ".claude/hooks/lint-cpp-drain.sh"
   copy_template "docs/harness/claude-code/hooks/pre-ship-stop-gate.sh" ".claude/hooks/pre-ship-stop-gate.sh"
   copy_template "docs/harness/claude-code/hooks/clear-tree-dirty.sh" ".claude/hooks/clear-tree-dirty.sh"
-  copy_template "docs/harness/claude-code/hooks/vexp-guard.sh"       ".claude/hooks/vexp-guard.sh"
   copy_template "docs/harness/claude-code/hooks/lint-syntax-both.py" ".claude/hooks/lint-syntax-both.py"
   copy_template "docs/harness/claude-code/hooks/autoregister-pr.sh"  ".claude/hooks/autoregister-pr.sh"
   copy_template "docs/harness/claude-code/hooks/guard-head-drift.sh"     ".claude/hooks/guard-head-drift.sh"
@@ -458,7 +457,7 @@ EOF
 setup_cursor() {
   echo "Setting up Cursor adapter at .cursor/ ..."
   # Cursor accepts .cursor/rules as either a single file or a dir of .mdc rules.
-  # Some tools (e.g. vexp) write to .cursor/rules as a single file. Detect that
+  # Some tools write to .cursor/rules as a single file. Detect that
   # and bail with a fix-it message rather than clobbering user state.
   if [[ -f ".cursor/rules" ]]; then
     echo "  error: .cursor/rules exists as a file (not a directory)." >&2

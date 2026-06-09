@@ -175,6 +175,4 @@ When an agent's `## Self-improvement` section identifies a codebase-side depende
 
 | Item | Why deferred | Source |
 |---|---|---|
-| vexp `<!-- vexp -->` block autoregenerates inside `AGENTS.md` instead of `.claude/CLAUDE.md` | vexp tool source lives outside this repo. File upstream issue/PR. Workaround: leave block alone; ~250 input tokens/session is small vs autoregen friction. | AGENT_SELF_IMPROVEMENT.md `2026-05-13 · orchestrator · process` |
-| `mcp__vexp__run_pipeline` rejects `max_tokens` as float | vexp tool source. Workaround: pass int literal. | AGENT_SELF_IMPROVEMENT.md `2026-05-12 · tracker-backend · tooling` |
 | ~~ImGui Test Engine bucket E~~ | Applied 2026-05-15 — see `docs/plans/shipped/imgui-test-engine-bucket-e-execution.md`. Phase 1 infra shipped; Phase 2 + Phase 3 deferred (debug-detective + grid-engine handoff). | AGENT_SELF_IMPROVEMENT.md `2026-05-13 · test-author · new-agent / tooling` |

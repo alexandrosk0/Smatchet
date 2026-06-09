@@ -95,7 +95,6 @@ smatchet_backend_audit.jsonl
 smatchet_field_catalog_cache.json
 
 # ----- Agent / harness scratch -----
-.vexp/
 .worktrees/
 .claude/
 !.claude/streams/

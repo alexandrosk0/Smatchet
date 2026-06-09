@@ -40,7 +40,6 @@ git config --local --unset core.hooksPath
 | Claude Code surface | Codex equivalent | Status |
 |---|---|---|
 | `SessionStart` scratchpad reset / nudges | `.codex/hooks.json` runs memory drain, postmortem owed, due follow-up, and plan archival nudges | Codex-native after trust |
-| `PreToolUse` raw-search vexp guard | Use semantic search when available; otherwise follow `AGENTS.md` text-search fallback | Manual |
 | `PreToolUse` HEAD/shared-tree guards | Prefer Codex worktrees under `.codex/worktrees/`; run `git status --short --branch` before edits/commits | Manual |
 | `PostToolUse` edit lint | `scripts/git-hooks/pre-commit` runs staged-file Pillar 2 scan; run lint scripts manually for broader checks | Partial |
 | `PostToolUse` Bash PR autoregistration | Merge-watcher registration remains manual unless an external watcher is running | Manual |

@@ -20,7 +20,7 @@ version: 2
 
 Mechanical perf-marker editor for Smatchet. Same procedure as `agents/core/perf-instrument.md`, minus agent-spawn telemetry (banner / `## Outcome` / `## Self-improvement`).
 
-**Tooling** — use **text-search** for exhaustive cleanup enumeration (you need every match). Call your harness's semantic codebase search (e.g. vexp `run_pipeline`) only when the spec doesn't name a file and you need to locate a call site.
+**Tooling** — use **text-search** for exhaustive cleanup enumeration (you need every match). Call your harness's semantic codebase search only when the spec doesn't name a file and you need to locate a call site.
 
 ## The macro
 

@@ -44,23 +44,17 @@ no worktree, no lock:
 `perf-measure` · `security-review` · `spike-hunter`
 
 Any **write** fan-out (parallel editors / subsystem specialists mutating disjoint
-zones) is NOT default-safe — see Boundary 2.
+zones) is NOT default-safe — see Boundary 1.
 
-## The three boundaries (hard rules)
+## The two boundaries (hard rules)
 
-1. **vexp-guard denies raw Grep/Glob.** The PreToolUse hook blocks `Grep`/`Glob`
-   when the vexp daemon runs. Workflow subagents MUST discover via semantic search
-   (`run_pipeline` / `get_skeleton`), not raw text-search — else a subagent stalls
-   on a denied call. The read-only reviewers already declare `semantic-code-search`
-   and avoid raw Grep/Glob, so they are vexp-safe today. (`rg` is also off-PATH in
-   the Bash tool — semantic-first is the right default regardless.)
-2. **Write fan-out needs isolation + a lock check.** Two agents editing the same
+1. **Write fan-out needs isolation + a lock check.** Two agents editing the same
    shared clone in parallel clobber each other. A workflow that mutates files MUST
    give each writer its own git worktree (`isolation: 'worktree'` per `agent()`)
    AND pass `bash agents/scripts/core/locks-show.sh` (plan-lock collision check,
    [`delegation.md`](delegation.md)) before dispatch. Default to read-only fan-out;
    reach for write fan-out only with disjoint zones + worktree + lock pass.
-3. **The gated ship-loop tail stays orchestrator-owned.** Workflows are scoped to
+2. **The gated ship-loop tail stays orchestrator-owned.** Workflows are scoped to
    **diagnose / review / analyze** phases only. `commit → push → open PR →
    gate-check → squash-merge → git-janitor` is sequential, determinism-critical,
    and **never** wrapped in a Workflow (`ship-loops.md`). A workflow produces

@@ -17,7 +17,6 @@ Idempotent. Run it after every clone and any time the canonical templates change
 | `CLAUDE.md` | copy | `docs/harness/claude-code/CLAUDE.md.tmpl` |
 | `settings.json` | copy | `docs/harness/claude-code/settings.json.tmpl` |
 | `hooks/lint-cpp.sh` | copy | `docs/harness/claude-code/hooks/lint-cpp.sh` |
-| `hooks/vexp-guard.sh` | copy | `docs/harness/claude-code/hooks/vexp-guard.sh` |
 | `hooks/lint-syntax-both.py` | copy | `docs/harness/claude-code/hooks/lint-syntax-both.py` |
 | `hooks/autoregister-pr.sh` | copy | `docs/harness/claude-code/hooks/autoregister-pr.sh` |
 | `agents/` | dir link | `agents/` (junction on Windows, symlink on Unix) |
@@ -39,7 +38,7 @@ Edits to `agents/core/architect.md` are visible to Claude Code immediately. Addi
 
 `settings.json` carries hook wiring. Some devs add project-local permissions or extra hooks. If `settings.json` were a link, those edits would silently leak back into the tracked template via `git add`. Copies isolate per-machine tweaks.
 
-The lint hooks (`lint-cpp.sh`, `vexp-guard.sh`, `lint-syntax-both.py`) are copies for the same reason — devs sometimes patch them for local clang-tidy versions or to disable a check.
+The lint hooks (`lint-cpp.sh`, `lint-syntax-both.py`) are copies for the same reason — devs sometimes patch them for local clang-tidy versions or to disable a check.
 
 ## Windows specifics
 
@@ -52,7 +51,6 @@ The lint hooks (`lint-cpp.sh`, `vexp-guard.sh`, `lint-syntax-both.py`) are copie
 `.claude/settings.json` wires these hook surfaces:
 
 - **SessionStart** — `agents/scripts/core/clear-session-context.sh` archives the prior session scratchpad.
-- **PreToolUse** (Grep/Glob/Regex) — `.claude/hooks/vexp-guard.sh` blocks raw text-search when the vexp daemon is running.
 - **PostToolUse** (Edit/Write) — `.claude/hooks/lint-cpp.sh` runs `clang-format`, `cppcheck`, `clang-tidy` on edited C++ files.
 - **PostToolUse** (Bash) — `.claude/hooks/autoregister-pr.sh` registers a newly-created PR (`gh pr create`) with smatchet-merge-watcher so the daemon owns it (gate-poll + auto-merge).
 - **SubagentStop** — `.claude/hooks/agent-token-log.py` appends per-agent token usage to `.claude/.agent-tokens.jsonl`.
