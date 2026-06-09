@@ -45,7 +45,11 @@ resolve_mirror_sha() {
     if [ "$MIRROR_RESOLVE" = "p4" ]; then
         local out
         command -v p4 >/dev/null 2>&1 || die "MIRROR_RESOLVE=p4 but 'p4' not on PATH — install the Helix client or use MIRROR_RESOLVE=git. See docs/perforce/MIRROR.md."
-        out="$(p4 graph log -n 1 -m1 "//${MIRROR_REPO_PATH}" "$MIRROR_REF" 2>/dev/null)" || return 1
+        # `p4 graph log -n <repo>` — `-n` names the graph repo (NOT a count); `-m 1`
+        # caps to the tip commit, and the ref is the trailing positional. The repo
+        # path must reach -n: `-n 1` is parsed as repo name "1" → "Repo name '1'
+        # invalid" → empty SHA → a false "ref not found" (the original bug).
+        out="$(p4 graph log -n "//${MIRROR_REPO_PATH}" -m 1 "$MIRROR_REF" 2>/dev/null)" || return 1
         printf '%s\n' "$out" | awk '/^commit /{print $2; exit}'
     else
         [ -n "$MIRROR_REMOTE" ] || die "MIRROR_REMOTE unset (connector smart-http base URL, e.g. http://localhost:1680). See docs/perforce/MIRROR.md."

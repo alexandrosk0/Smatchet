@@ -57,6 +57,47 @@ else
 fi
 [ -n "$PY" ] || { echo "test-markdown-links: python not found" >&2; exit 2; }
 
+# --selftest — prove the diff-scope path INCLUDES untracked files (Slice 8a).
+# Regression killed: an UNTRACKED new markdown (e.g. a fresh
+# docs/plans/active/<slug>.md) is invisible to `git diff` so it false-passed
+# pre-push then failed CI on the same content. We synthesize an untracked
+# markdown with a dangling link, run the diff-scope scan, and assert it FAILS
+# (caught) — then a clean untracked file must PASS.
+if [ "${1:-}" = "--selftest" ]; then
+    fail=0
+    stamp="docs/.slice8-mdlink-selftest-$$"
+    bad="$stamp-bad.md"
+    good="$stamp-good.md"
+    # Ensure these never linger as tracked refs and always get cleaned.
+    cleanup() { rm -f "$bad" "$good"; }
+    trap cleanup EXIT
+    # An untracked markdown with a dangling relative link.
+    printf '# selftest\n\nsee [missing](./this-target-does-not-exist-xyz.md)\n' > "$bad"
+    # selftest: asserts-failure — an untracked file with a dangling link MUST be
+    # detected; if the diff-scope skips untracked files this scan wrongly passes.
+    # Re-invoke with no args -> the default diff-scope path (which now unions
+    # untracked files). The new untracked file must drive a non-zero exit.
+    if "$0" >/dev/null 2>&1; then
+        echo "test-markdown-links --selftest: FAIL — untracked dangling link NOT detected (scope skipped untracked)" >&2
+        fail=1
+    fi
+    rm -f "$bad"
+    # A clean untracked markdown (no relative links) must PASS.
+    printf '# selftest\n\nno relative links here\n' > "$good"
+    if ! "$0" >/dev/null 2>&1; then
+        echo "test-markdown-links --selftest: FAIL — clean untracked file wrongly flagged" >&2
+        fail=1
+    fi
+    cleanup
+    trap - EXIT
+    if [ "$fail" = "0" ]; then
+        echo "test-markdown-links --selftest: PASS (untracked files are in diff-scope)"
+        exit 0
+    fi
+    echo "test-markdown-links --selftest: FAIL" >&2
+    exit 1
+fi
+
 # Diff-scope by default; --all overrides for whole-repo audit.
 SCOPE="diff"
 if [ "${1:-}" = "--all" ]; then
@@ -116,6 +157,15 @@ if SCOPE == "diff":
         # Also include uncommitted working-tree changes.
         out += subprocess.run(
             ["git", "diff", "--name-only", "HEAD"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        # And UNTRACKED files (respecting .gitignore via --exclude-standard).
+        # A brand-new uncommitted markdown file is invisible to `git diff` (it
+        # has no tracked baseline) yet CI sees it the moment it's committed — so
+        # the local mirror must scope it identically or a new doc/plan file
+        # false-passes pre-push then fails CI (close-gate-gaps Slice 8a).
+        out += subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"],
             capture_output=True, text=True, check=True,
         ).stdout
     except subprocess.CalledProcessError as exc:

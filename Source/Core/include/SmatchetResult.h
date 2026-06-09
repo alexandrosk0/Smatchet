@@ -121,10 +121,10 @@ template <typename T, typename E = std::string> class Result {
 
     Result(const Result& other) : ok_(other.ok_) {
         if (ok_) {
-            // placement-new into in-object storage — no heap allocation
+            // placement-new into in-object storage (copying T may itself allocate, e.g. vector/json)
             ::new (static_cast<void*>(&storage_)) T(*other.ValuePtr());
         } else {
-            // placement-new into in-object storage — no heap allocation
+            // placement-new into in-object storage (copying E may itself allocate)
             ::new (static_cast<void*>(&storage_)) E(*other.ErrorPtr());
         }
     }
@@ -140,15 +140,27 @@ template <typename T, typename E = std::string> class Result {
     }
 
     Result& operator=(const Result& other) {
+        // Construct-then-commit (strong exception-safety; mirrors Optional's copy-and-swap).
+        // The old code Destroy()'d FIRST, then placement-new'd a copy of T/E — but that copy can
+        // throw (bad_alloc copying a Result<vector/string/json/...>, the tracker layer's heaviest
+        // Result types), leaving storage destroyed yet ok_ set → the next ~Result double-destroys
+        // unconstructed storage = UB (#1017). Instead: build the copy in a local FIRST (a throw
+        // there leaves *this untouched), then Destroy() and commit via a noexcept move.
+        static_assert(std::is_nothrow_move_constructible<T>::value &&
+                          std::is_nothrow_move_constructible<E>::value,
+                      "Result copy-assignment commits via a noexcept move; T and E must be "
+                      "nothrow-move-constructible (vector/string/json/TrackerError all are).");
         if (this != &other) {
-            Destroy();
-            ok_ = other.ok_;
-            if (ok_) {
-                // placement-new into in-object storage — no heap allocation
-                ::new (static_cast<void*>(&storage_)) T(*other.ValuePtr());
+            if (other.ok_) {
+                T tmp(*other.ValuePtr()); // may throw — *this still intact (strong guarantee)
+                Destroy();
+                ::new (static_cast<void*>(&storage_)) T(std::move(tmp)); // noexcept commit
+                ok_ = true;
             } else {
-                // placement-new into in-object storage — no heap allocation
-                ::new (static_cast<void*>(&storage_)) E(*other.ErrorPtr());
+                E tmp(*other.ErrorPtr()); // may throw — *this still intact
+                Destroy();
+                ::new (static_cast<void*>(&storage_)) E(std::move(tmp)); // noexcept commit
+                ok_ = false;
             }
         }
         return *this;

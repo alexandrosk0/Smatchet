@@ -22,6 +22,7 @@
 #include <chrono>
 #include <cstdio>
 #include <functional>
+#include <memory>
 #include <nlohmann/json.hpp>
 #include <utility>
 #include <vector>
@@ -570,14 +571,25 @@ std::vector<DeadPendingFieldEdit> OfflineQueueService::GetDeadPendingFieldEdits(
     }
 }
 
+const TrackerField* OfflineQueueService::FindCatalogField(const std::string& fieldId) const {
+    const std::vector<TrackerField>& catalog = deps_.AvailableFields();
+    const auto it =
+        std::find_if(catalog.begin(), catalog.end(), [&](const TrackerField& f) { return f.Id == fieldId; });
+    if (it == catalog.end()) {
+        return nullptr;
+    }
+    return &(*it);
+}
+
 void OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedValue,
                                                    const std::string& richKind, const std::string& kind) {
     if (!deps_.Cache())
         return;
     // ADR-0016 resolution shapes. A rich `text` resolution reconverts the resolved Markdown to
-    // ADF/HTML via `richKind` and writes it into the payload key. A `scalar` resolution writes
-    // the chosen display value into the payload key verbatim (no conversion). An `unverified`
-    // resolution ("Force Mine") keeps the original queued payload unchanged and just replays it.
+    // ADF/HTML via `richKind` and writes it into the payload key. A `scalar` resolution rebuilds
+    // the payload through the production `BuildFieldPayload` builder so structured fields keep
+    // their `{"id":...}` / array shape (#854 — a bare display string dead-letters with HTTP 400).
+    // An `unverified` resolution ("Force Mine") keeps the original queued payload unchanged.
     const bool isRichText = (kind != "scalar" && kind != "unverified");
     const bool isUnverified = (kind == "unverified");
     try {
@@ -612,9 +624,39 @@ void OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::s
                         newPayload[payloadKey] = MarkdownConvert::MarkdownToHtml(resolvedValue);
                     }
                 } else {
-                    // Scalar: the chosen display value is written under the same key the queued
-                    // payload already used (scalar payloads store a display-compatible string).
-                    newPayload[payloadKey] = resolvedValue;
+                    // Scalar (#854): rebuild the payload through the SAME production builder the
+                    // live edit path uses (`BuildFieldPayload` -> `BuildValue`), so a structured
+                    // field (single/multi-select, status, priority, issuetype, user, component,
+                    // cascading, labels) keeps its `{"id":...}` / array shape instead of being
+                    // clobbered with the bare display string (which Jira rejects with HTTP 400 ->
+                    // retry -> dead-letter -> silent data loss). `mine`/`theirs` are display labels
+                    // and `BuildValue` resolves them (by id OR label) exactly as on a normal edit.
+                    // Genuinely string-valued fields (summary, free text) naturally come back as a
+                    // bare string, so no special-casing is needed. The legacy verbatim write is the
+                    // degraded fallback only when the field schema or the mutations builder is
+                    // unavailable (so resolution still completes rather than no-ops).
+                    bool rebuilt = false;
+                    const TrackerField* field = FindCatalogField(row.FieldId);
+                    if (field) {
+                        const std::shared_ptr<ITrackerIssueMutations> mutations = deps_.MutationsShared();
+                        if (mutations) {
+                            std::vector<std::string> rawValues;
+                            rawValues.push_back(resolvedValue);
+                            const Result<nlohmann::json, TrackerError> built =
+                                mutations->BuildFieldPayload(*field, rawValues);
+                            if (built) {
+                                newPayload = built.value();
+                                rebuilt = true;
+                            } else {
+                                LOG_WARN("OfflineQueueService::ResolveFieldEditConflict id=%lld field=%s — "
+                                         "BuildFieldPayload failed (%s); falling back to verbatim string",
+                                         static_cast<long long>(id), row.FieldId.c_str(), built.error().Detail.c_str());
+                            }
+                        }
+                    }
+                    if (!rebuilt) {
+                        newPayload[payloadKey] = resolvedValue;
+                    }
                 }
                 deps_.Cache()->ResolveFieldEditConflict(id, newPayload.dump());
                 return;

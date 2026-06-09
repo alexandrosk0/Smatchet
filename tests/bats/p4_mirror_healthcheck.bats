@@ -51,9 +51,25 @@ STUB
 # Stub p4 graph log, controlled via env:
 #   STUB_P4_MIRROR_SHA   — SHA emitted as the `commit <sha>` line (empty => no output)
 #   STUB_P4_FAIL         — when set, exit 2 with no output
+#   STUB_P4_ARGV_LOG     — when set, dump the full argv (one token per line) here
+#
+# Models the real p4d contract: `-n` names the graph repo. A correct invocation
+# passes the `//repo/...` path to -n; the historical `-n 1` bug passed a count,
+# which p4d rejects as "Repo name '1' invalid" → no `commit` line. The stub
+# reproduces that so the in-sync / arg-order tests fail against the buggy form.
 if [ "$1" = "graph" ] && [ "$2" = "log" ]; then
+    [ -n "${STUB_P4_ARGV_LOG:-}" ] && printf '%s\n' "$@" > "$STUB_P4_ARGV_LOG"
     [ -n "${STUB_P4_FAIL:-}" ] && exit 2
-    [ -n "${STUB_P4_MIRROR_SHA:-}" ] && printf 'commit %s\n' "$STUB_P4_MIRROR_SHA"
+    repo=""; shift 2
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -n) repo="${2:-}"; shift 2 ;;
+            *)  shift ;;
+        esac
+    done
+    case "$repo" in
+        //*) [ -n "${STUB_P4_MIRROR_SHA:-}" ] && printf 'commit %s\n' "$STUB_P4_MIRROR_SHA" ;;
+    esac
     exit 0
 fi
 exit 0
@@ -133,4 +149,17 @@ teardown() {
     run bash "$SCRIPT"
     [ "$status" -ne 0 ]
     [[ "$output" == *"cannot reach mirror"* ]]
+}
+
+@test "p4 fallback passes the //repo path to -n (regression: the -n 1 bug)" {
+    export MIRROR_RESOLVE="p4"
+    unset MIRROR_REMOTE
+    export STUB_GIT_GITHUB_SHA="abc123def4567890"
+    export STUB_P4_MIRROR_SHA="abc123def4567890"
+    export STUB_P4_ARGV_LOG="$STUB_BIN_DIR/p4.argv"
+    run bash "$SCRIPT"
+    [ "$status" -eq 0 ]
+    # The token following -n must be the graph repo path, never a bare count.
+    n_arg="$(awk '/^-n$/{getline; print; exit}' "$STUB_P4_ARGV_LOG")"
+    [ "$n_arg" = "//repo/smatchet" ]
 }

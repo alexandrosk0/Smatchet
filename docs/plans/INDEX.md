@@ -124,9 +124,11 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`perf-gate-revival`](shipped/perf-gate-revival.md) | 2026-06-06 | Perf-gate revival (Pillar 1) — execution playbook |
 | [`shrink-over-100-line-functions`](shipped/shrink-over-100-line-functions.md) | 2026-06-06 | Decompose all 68 functions over the 100-line soft-warn tier (UI + non-UI) under 100 lines, ideally 40-80. Follow-up to decompose-top-20-monoliths (which cleared the hard cap). |
 | [`vsync-toggle`](shipped/vsync-toggle.md) | 2026-06-06 | Full vsync toggle exposed across persisted config, the config.set command (CLI/MCP/Lua/palette), a --no-vsync CLI flag, a Preferences checkbox, the SMATCHET_FPS_VSYNC env var, applied live via a Core VsyncControl hub. |
+| [`close-gate-gaps`](shipped/close-gate-gaps.md) | 2026-06-08 | Plan — Close the prevention-gate gaps (historical-review recurrence-proofing) |
 | [`codex-harness-parity`](shipped/codex-harness-parity.md) | 2026-06-08 | Plan - Codex harness parity |
 | [`codex-native-parity`](shipped/codex-native-parity.md) | 2026-06-08 | Plan - Codex native parity |
 | [`mobile-app-jql-mvp`](shipped/mobile-app-jql-mvp.md) | 2026-06-08 | Plan — Mobile app (Android-first) — Jira JQL → editable-column ticket list |
+| [`p4-git-connector-github-mirror`](shipped/p4-git-connector-github-mirror.md) | 2026-06-08 | Plan — GitHub → p4d one-way mirror via Helix4Git Git Connector (WSL2) |
 <!-- END auto-plan-index -->
 
 ### Notes

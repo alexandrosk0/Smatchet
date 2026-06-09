@@ -158,6 +158,7 @@ run_selftest() {
     if [ "$(jq -rs '.[1].redChecks | length' "$tmp")" != "1" ]; then echo "selftest FAIL: redChecks csv->array wrong on line 2" >&2; fails=$((fails+1)); fi
 
     # 4. Missing/malformed args fail cleanly (non-zero, no line written).
+    # selftest: asserts-failure — known-bad args must return non-zero (the failure path).
     rc=0; append_merge_snapshot 1 2 3 >/dev/null 2>&1 || rc=$?
     if [ "$rc" -eq 0 ]; then echo "selftest FAIL: too-few-args should fail" >&2; fails=$((fails+1)); fi
     rc=0; append_merge_snapshot abc m h GATES_PASSED "" "" orchestrator >/dev/null 2>&1 || rc=$?

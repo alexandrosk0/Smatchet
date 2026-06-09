@@ -128,6 +128,7 @@ EOF
         bash agents/scripts/core/plan-archival-owed.sh --list 2>/dev/null > "$tmp/out" || true
     assert_has()  { grep -q "plan archival owed: $1\b" "$tmp/out" || { echo "FAIL: expected $1 owed"; fail=1; }; }
     assert_miss() { grep -q "plan archival owed: $1\b" "$tmp/out" && { echo "FAIL: $1 should NOT be owed"; fail=1; } || true; }
+    # selftest: asserts-failure — a shipped-but-unarchived plan fixture must be detected as owed (the gate's flag path).
     assert_has  "done-a"        # explicit shipped marker
     assert_has  "done-b"        # all-caps legacy form
     assert_miss "live"          # active value, shipped only in prose

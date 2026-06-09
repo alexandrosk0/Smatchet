@@ -197,6 +197,7 @@ sr_selftest() {
 
   # pid authority
   sr_pid_authoritative 12345 && _sr_ok "authoritative: 12345" || _sr_fail "authoritative: 12345"
+  # selftest: asserts-failure — known-bad pids (0/4/empty/non-numeric) must be rejected as non-authoritative.
   for bad in 1 0 4 "" abc 12x; do
     if sr_pid_authoritative "$bad"; then _sr_fail "non-authoritative rejects '$bad'"; else _sr_ok "non-authoritative rejects '$bad'"; fi
   done

@@ -87,6 +87,14 @@ Bulleted. Sister-features the user might assume are included; name + one-line "f
 *The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
 1. *flip the § Status header to `shipped`,*
 2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
+   > **Keep the literal `<slug>` placeholder in this committed step — do NOT
+   > expand it to this plan's real filename.** Writing the actual basename here
+   > manufactures a `docs/plans/shipped/<name>.md` path that points at a file
+   > still living in `active/` (the move hasn't happened yet), which
+   > `test-plan-ref-integrity.sh` reports as a dangling self-reference. The gate
+   > carves out the *placeholder* form on the Archive `git mv` line; the
+   > expanded form defeats that carve-out. Run the literal command with your
+   > slug substituted at the shell — never bake the expansion into the file.
 3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
 
 *No ref-sweep — references use the tier-less form `docs/plans/<slug>.md` (the gates resolve it against any tier; PR #890), so the move can't break them. Write new plan references tier-less.*
