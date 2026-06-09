@@ -974,3 +974,67 @@ shipped in this PR. That stops the false-escape nudges that obscured this real o
 ### Filed as
 This entry + the `postmortem-owed.sh` subject-match fix in this PR (no category entry —
 the revert owes no gate; the detector fix is the change).
+
+## 2026-06-09 · PR #1092, #1095 · override: cr-out-of-band (+ phantom red Test-delta on #1095)
+
+### What escaped
+Both merged to `develop` with the `cr-out-of-band` label, waiving the CodeRabbit review
+block: CodeRabbit was org-credit/rate-limited for the **entire session**, so the label was
+applied to keep shipping. #1092 is a 12-file Core refactor (`refactor(tracker): dedup
+query-suggest helpers`); #1095 is a docs-only ADR (`docs(adr): ADR-0019`) whose snapshot
+*additionally* shows a red `Test-delta gate`.
+
+### Root cause
+Two distinct things the sweep conflated:
+1. **#1092 (real)** — a Core-cpp refactor merged without an automated CodeRabbit pass. The
+   override was *operationally* correct (CR genuinely unavailable), and the diff still
+   cleared CI + delta-lint + the coverage gate + orchestrator review, so no defect shipped —
+   but the automated review surface was skipped, a true (if low-residual-risk) gap.
+2. **#1095 (false)** — `cr-out-of-band` on a docs-only diff waives nothing material (CR is
+   advisory and adds little to prose), and the red `Test-delta gate` is a phantom:
+   `coverage-delta-gate.sh` PASSES any diff with zero `Source/Core/src/*.cpp` files
+   (`PROD_CHANGES==0 → exit 0`), so it cannot legitimately fail a docs-only ADR — the
+   snapshot captured a transient non-terminal check state. Both triggers are Core-cpp-scoped
+   yet fired on a no-Core-cpp PR.
+
+### Preventing gate
+`postmortem-owed.sh` now **drops a flagged PR whose SOLE trigger(s) are `cr-out-of-band`
+and/or a red `Test-delta gate` when the PR touched no `Source/Core/src/*.cpp`** (new
+`core_scoped_only_trigger` + `pr_touches_core_cpp` guards). Both gates are Core-cpp-scoped,
+so their trigger on a non-Core-cpp diff is a false positive — same spirit as the
+revert-subject fix above. This de-noises #1095 (and every future docs/non-Core PR) so the
+ledger stays focused on real escapes like #1092. For #1092 the residual action is a
+post-recovery CodeRabbit pass (CR-on-`develop`) once org credit is restored — tracked here,
+not auto-enforced (advisory-CR, solo-repo human-on-the-loop).
+
+### Filed as
+This entry (resolves the owe for both PRs) + the `postmortem-owed.sh` Core-cpp-scope
+de-noise gate in this PR.
+
+## 2026-06-09 · PR #1096 · override: tests-out-of-band (+ red Test-delta gate)
+
+### What escaped
+`perf(ui): off-thread the toolbar per-tracker append disk read (#611 site #7)` merged with
+the `tests-out-of-band` label dismissing the red `Test-delta gate`. The diff is UI-only
+(`Source/Core/src/Ui/SmatchetToolbarUi.cpp` + its header) — moving a per-frame
+`LoadPersistentViewsFromDisk` onto a `LaunchBackgroundTask` worker — with no paired test.
+
+### Root cause
+The coverage delta gate requires a paired `tests/Core/*.test.cpp` delta for any
+`Source/Core/src/*.cpp` change, and that glob includes `Source/Core/src/Ui/` even though
+ImGui render code has no unit-test surface (it is covered by bucket-C/E visual + scenario
+harnesses, not doctest). `tests-out-of-band` is the documented, intended override for exactly
+that case; it was applied correctly. No defect — the change only *removes* UI-thread work.
+(Process note: it was armed for auto-merge and landed before the held visual sign-off; the
+toolbar append behaviour should still be eyeballed post-merge, revert if wrong.)
+
+### Preventing gate
+`tests-out-of-band` on a diff whose only `Source/Core/src/*.cpp` files are under `Ui/` is an
+**intended** override, not an escape — the same false-positive shape as the cr-out-of-band
+Core-cpp-scope de-noise added in this PR. Deliberately NOT folded into that de-noise yet:
+suppressing `tests-out-of-band` UI merges wholesale risks hiding a UI `.cpp` that *does* carry
+testable non-render logic, so it stays a visible (cheap) ledger line pending a tighter
+"render-only" classifier. Tracked here as the named follow-up gate.
+
+### Filed as
+This entry. Follow-up gate (render-only `tests-out-of-band` de-noise) noted, not yet shipped.
