@@ -20,6 +20,7 @@ Concern-oriented summary of which side owns which agentic-WIP primitive — abso
 | Stale-stream GC | (cron via `agents/core/git-janitor.md`) | `agents/core/p4-janitor.md` + `agents/scripts/project/p4-task-stream-gc.sh` |
 | Exclusive file lock | (no equivalent) | `p4 edit -t +l <file>` (+ optional `pretool-edit-p4-lock-check.sh` hook) |
 | Ship-line (PR review + CI + merge) | ALWAYS git/GitHub | (never p4 — GitHub Actions can't reach a local `p4d`) |
+| GitHub → p4d backup mirror | (canonical — GitHub) | `//repo/smatchet` graph depot via Git Connector (one-way, non-authoritative — [`MIRROR.md`](MIRROR.md)) |
 
 The verb-level TL;DR below extends this concern view with per-operation guidance. Existing git-centric AGENTS.md sections (merge-gates, plan-locks default, force-push carve-out, destructive-git-op preflight, ship-loops) are unchanged — the Perforce layer is purely additive, never required, never authoritative, never on the ship-line.
 
@@ -173,6 +174,7 @@ If they disagree, something has gone wrong with the dual-VCS state — investiga
 - **`smatchet-merge-watcher`**: polls GitHub PR state; p4-only changes aren't visible.
 - **Issue tracking**: GitHub Issues / Jira / Plane (whichever the user uses) — p4 has its own `p4 jobs` system but Smatchet doesn't wire it.
 - **Public discoverability**: the GitHub repo is the public face; p4 depot is private to the dev box.
+- **The `//repo/smatchet` graph-depot mirror is read-only and one-way** ([`MIRROR.md`](MIRROR.md)): GitHub → p4d only. Never push from `//repo/smatchet` back to GitHub, never treat it as a review/merge source of truth. It is a backup/visibility copy; losing it is annoyance, not data loss.
 
 For all of these, ship via git/GitHub. The Perforce layer is purely for agentic-WIP primitives that git can't express.
 
