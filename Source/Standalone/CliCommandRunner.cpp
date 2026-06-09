@@ -919,6 +919,14 @@ int SpawnAndRunHandleAsync(const ParsedArgs& pa, httplib::Client& cli, const std
         errEnv["error"] = {{"code", "handler-error"},
                            {"message", "--spawn: result file is not valid JSON: " + outPath}};
         EmitErrorToStderr(errEnv);
+        // #671: send app.quit on THIS failure path too (mirrors the timeout + file-read
+        // branches above) — honour the documented invariant at this function's header that
+        // every failure path quits the spawned app. Omitting it orphaned the ephemeral
+        // instance (TCP port held) whenever the result file existed but wasn't valid JSON.
+        nlohmann::json quitBody;
+        quitBody["name"] = "app.quit";
+        quitBody["arguments"] = {{"__confirm", true}}; // app.quit is Destructive
+        cli.Post("/mcp/tools/call", quitBody.dump(), "application/json");
         return kExitHandler;
     }
     return kExitOk;
