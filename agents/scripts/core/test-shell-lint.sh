@@ -14,7 +14,9 @@
 #   5. --key=value ↔ --key value parity when the flag takes a value.
 #
 # Targets: scripts/dev/*.sh + agents/scripts/{core,project}/*.sh (post-#609
-# layout; maxdepth 1, so scripts/dev/local/ is excluded). Lints itself.
+# layout; maxdepth 1, so scripts/dev/local/ is excluded) + scripts/mobile/**
+# (recursive — build helpers nest under openssl/) + docs/harness/<h>/hooks/*.sh
+# (the PreToolUse/SessionStart guard scripts). Lints itself.
 #
 # Bypass: SMATCHET_SKIP_SHELL_LINT=1 (logged when used).
 #
@@ -32,6 +34,31 @@ if [ "${SMATCHET_SKIP_SHELL_LINT:-0}" = "1" ]; then
     exit 0
 fi
 
+# Target set — the scripts this gate lints. Derived before the shellcheck
+# preflight so --list-targets resolves even without shellcheck on PATH.
+#   --target <path>   lint a single script (bats fixture harness)
+#   --list-targets    print the resolved set and exit 0 (scope-coverage test)
+# Flat (maxdepth 1): scripts/dev + agents/scripts/{core,project}. Recursive:
+# scripts/mobile (build helpers nest under openssl/). Per-harness guards:
+# docs/harness/<harness>/hooks/*.sh.
+TARGETS=()
+if [ "${1:-}" = "--target" ] && [ -n "${2:-}" ]; then
+    TARGETS=("$2")
+else
+    while IFS= read -r f; do TARGETS+=("$f"); done < <(
+        {
+            find scripts/dev agents/scripts/core agents/scripts/project \
+                -maxdepth 1 -type f -name '*.sh'
+            if [ -d scripts/mobile ]; then find scripts/mobile -type f -name '*.sh'; fi
+            if [ -d docs/harness ]; then find docs/harness -path '*/hooks/*.sh' -type f; fi
+        } | sort -u
+    )
+fi
+if [ "${1:-}" = "--list-targets" ]; then
+    printf '%s\n' "${TARGETS[@]}"
+    exit 0
+fi
+
 if ! command -v shellcheck >/dev/null 2>&1; then
     echo "test-shell-lint: WARN: shellcheck not on PATH; install via 'npm install -g shellcheck'" >&2
     echo "Passed: 0  Failed: 0"
@@ -44,15 +71,6 @@ fi
 # and preflighting it generated 25 violations across the existing tree with
 # near-zero practical value. Captured in plan § Deviations.
 ALLOWLIST=(curl gh cmake python python3 jq 7z cppcheck clang-format clang-tidy shellcheck actionlint bats p4 cl.exe clang-cl link.exe cygpath tasklist)
-
-# --target <path> lints a single script (used by bats fixture harness).
-TARGETS=()
-if [ "${1:-}" = "--target" ] && [ -n "${2:-}" ]; then
-    TARGETS=("$2")
-else
-    while IFS= read -r f; do TARGETS+=("$f"); done \
-        < <(find scripts/dev agents/scripts/core agents/scripts/project -maxdepth 1 -type f -name '*.sh' | sort)
-fi
 
 VIOLATIONS=()
 emit() { VIOLATIONS+=("$1:$2: $3: $4"); }
@@ -173,7 +191,11 @@ check_curl_fail() {
     done < <(non_comment "$script" | grep -nE '\bcurl\b' || true)
 }
 
-# Rule 4 — sha256 within 10 lines after curl writes to a file.
+# Rule 4 — sha256 within 10 lines after curl writes to a file. Two accepted
+# shapes: (a) `sha256sum -c` / `--checksum` against a manifest, and (b) the
+# capture-compare idiom `actual=$(sha256sum FILE …)` followed by an equality
+# test — both genuinely verify the download. `known-bad-4-no-sha.sh` (curl to
+# file, zero sha256sum) still has neither and stays a finding.
 check_sha256() {
     local script="$1"
     while IFS=: read -r lno content; do
@@ -182,7 +204,7 @@ check_sha256() {
         if [[ "$content" =~ /dev/null ]]; then continue; fi
         local window
         window=$(sed -n "$((lno+1)),$((lno+10))p" "$script")
-        if echo "$window" | grep -qE '(sha256sum[[:space:]]+-c|--checksum)'; then continue; fi
+        if echo "$window" | grep -qE '(sha256sum[[:space:]]+-c|--checksum|\$\([[:space:]]*sha256sum|`[[:space:]]*sha256sum)'; then continue; fi
         emit "$script" "$lno" "SHELL_LINT_SHA256" "curl writes to file without sha256 verify within 10 lines"
     done < <(non_comment "$script" | grep -nE 'curl.*([[:space:]]-o[[:space:]]|--output[[:space:]])' || true)
 }

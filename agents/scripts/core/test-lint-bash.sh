@@ -49,13 +49,16 @@ fi
 FAIL_RULES="SC2086,SC2046,SC2155"
 
 # Targets — build/infra scripts in scripts/dev/ plus the agentic scripts that
-# #609 relocated to agents/scripts/{core,project}/ (previously unscanned). Flat
-# globs (non-recursive), matching the historical scripts/dev/*.sh behaviour.
-# nullglob: an unmatched glob expands to nothing rather than the literal pattern
-# (which would otherwise reach shellcheck as a bogus filename).
-shopt -s nullglob
-TARGETS=(scripts/dev/*.sh agents/scripts/core/*.sh agents/scripts/project/*.sh)
-shopt -u nullglob
+# #609 relocated to agents/scripts/{core,project}/, plus the mobile build
+# helpers (scripts/mobile/**, which nest under openssl/) and the per-harness
+# PreToolUse/SessionStart guards (docs/harness/<harness>/hooks/). nullglob: an
+# unmatched glob expands to nothing rather than the literal pattern (which would
+# otherwise reach shellcheck as a bogus filename). globstar: ** recurses so
+# scripts/mobile/openssl/*.sh is covered.
+shopt -s nullglob globstar
+TARGETS=(scripts/dev/*.sh agents/scripts/core/*.sh agents/scripts/project/*.sh
+         scripts/mobile/**/*.sh docs/harness/*/hooks/*.sh)
+shopt -u nullglob globstar
 
 # Phase 1 — strict pass on the fail-set. Non-zero exit means real findings.
 strict_out=$(shellcheck --include="$FAIL_RULES" --severity=warning "${TARGETS[@]}" 2>&1 || true)
