@@ -126,6 +126,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`vsync-toggle`](shipped/vsync-toggle.md) | 2026-06-06 | Full vsync toggle exposed across persisted config, the config.set command (CLI/MCP/Lua/palette), a --no-vsync CLI flag, a Preferences checkbox, the SMATCHET_FPS_VSYNC env var, applied live via a Core VsyncControl hub. |
 | [`codex-harness-parity`](shipped/codex-harness-parity.md) | 2026-06-08 | Plan - Codex harness parity |
 | [`codex-native-parity`](shipped/codex-native-parity.md) | 2026-06-08 | Plan - Codex native parity |
+| [`close-gate-gaps`](shipped/close-gate-gaps.md) | — | Plan — Close the prevention-gate gaps (historical-review recurrence-proofing) |
 <!-- END auto-plan-index -->
 
 ### Notes
