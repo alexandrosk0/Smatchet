@@ -40,25 +40,37 @@ Two things, neither of which shipped *broken* to develop, but both owe the ledge
 ### Filed as
 `docs/self-improvement/categories/infra.md` (local-dev gates must be CI-scoped; subagent build-dir reconfigure hazard).
 
-## 2026-06-09 · PR #1046, PR #1049, PR #1052, PR #1053, PR #1056, PR #1057, PR #1058, PR #1059, PR #1060, PR #1061, PR #1062, PR #1064, PR #1072 · `postmortem-owed` batch (13 PRs) — `cr-out-of-band` ×13 + phantom red-checks
+## 2026-06-09 · PR #1046, PR #1049, PR #1052, PR #1053, PR #1056, PR #1057, PR #1058, PR #1059, PR #1060, PR #1061, PR #1062, PR #1064, PR #1072, PR #1075 · `postmortem-owed` batch (14 PRs) — `cr-out-of-band` ×14 + phantom red-checks
+
+> **#1075 folded in (2026-06-09, post-merge of this entry).** A later
+> same-class straggler from the same close-gate-gaps sprint, flagged by the next
+> SessionStart nudge after this batch shipped. Identical disposition — routine
+> `cr-out-of-band` + a phantom `CANCELLED`-beside-`SUCCESS` Test-delta twin
+> (CANCELLED 14:27:17 + SUCCESS 14:27:27). No new RCA or gate; referenced here
+> so `postmortem-owed.sh` dedupes it. Counts below updated 13→14 / 11→12.
+> (#1075 is also covered by the `PR #1074, PR #1075` entry above, filed
+> concurrently by PR #1078; the double reference is intentional — either entry
+> dedupes it.)
 
 ### What escaped
-A single SessionStart `postmortem-owed` nudge for **13 develop merges**. Triaged
-against the live `statusCheckRollup` (the snapshot ledger is uncommitted on
-develop — see Root cause), **11 of 13 are detector false-positives, not real
-escapes**; 2 facets are real-but-healed:
+A single SessionStart `postmortem-owed` nudge for **14 develop merges** (13 in
+the original batch + #1075 folded in). Triaged against the live
+`statusCheckRollup` (the snapshot ledger is uncommitted on develop — see Root
+cause), **12 of 14 are detector false-positives, not real escapes**; 2 facets
+are real-but-healed:
 
-- **`cr-out-of-band` ×13 (all of them)** — every PR in a ~13-PR "close-gate-gaps"
-  burst (#1046–#1072) carried `cr-out-of-band`. CodeRabbit's hourly per-author
+- **`cr-out-of-band` ×14 (all of them)** — every PR in a ~14-PR "close-gate-gaps"
+  burst (#1046–#1075) carried `cr-out-of-band`. CodeRabbit's hourly per-author
   review quota was exhausted by the burst (CR posted its rate-limit auto-comment
   on #1046 and #1052), so CR could not review most of them in time → the label
-  downgraded the CR block to WARN ×13. **Exact recurrence of the 2026-06-06
+  downgraded the CR block to WARN ×14. **Exact recurrence of the 2026-06-06
   #905–#908 PR-burst cascade.**
-- **"red `Test-delta gate`" on #1072/#1062/#1064/#1060/#1058/#1059/#1049 —
+- **"red `Test-delta gate`" on #1072/#1062/#1064/#1060/#1058/#1059/#1049/#1075 —
   phantom.** Each is a `CANCELLED` concurrency-superseded twin sitting ~10 s
   beside a `SUCCESS` run for the same context (verified on #1072: CANCELLED
-  13:21:47 + SUCCESS 13:21:57). The gate passed; GitHub merged on the SUCCESS
-  run; the detector read the CANCELLED twin.
+  13:21:47 + SUCCESS 13:21:57; and on #1075: CANCELLED 14:27:17 + SUCCESS
+  14:27:27). The gate passed; GitHub merged on the SUCCESS run; the detector read
+  the CANCELLED twin.
 - **#1064 `Mobile — Android NDK arm64-v8a` (advisory) red — phantom.** A transient
   `sdkmanager` "Error on ZipFile" at the NDK install step on a `continue-on-error`
   lane outside the merge-gates meant-to-block allow-list — it can never block a
@@ -87,8 +99,8 @@ Two independent gate holes plus a shared meta-cause:
    per context, (b) the merge-gates blocking scope (required ∪
    `Coverage|Sanitizer|Bucket-`), or (c) a genuine terminal FAILURE. So a
    CANCELLED concurrency twin, an advisory-lane flake, and an IN_PROGRESS-then-
-   SUCCESS check all read identically to a hard required-check failure — 9 of the
-   13 phantom rows come from this alone.
+   SUCCESS check all read identically to a hard required-check failure — 10 of the
+   14 phantom rows come from this alone.
 2. **PR-batching is prose-only.** `AGENTS.md` § Autonomous ship-loop "one PR per
    logical feature" is unenforced; nothing measures the burst or the CR
    rate-limit comment before opening PR N+1, so the quota blew exactly as on
