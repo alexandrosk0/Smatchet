@@ -96,6 +96,22 @@ defaults to running the build, never to skipping a code PR's required check.
 
 This is the form used by `.github/workflows/build-and-test.yml`.
 
+### Multiple skip dimensions (e.g. android-only diffs)
+
+The detect-changes job can output **more than one** skip signal. Beyond `code`
+(docs-only → skip the build jobs), `build-and-test.yml` + `perf-pr-fast.yml`
+also emit `android_only` — `true` when **every** changed file is an
+Android-specific path (`Source/Mobile/**`, `cmake/toolchains/**`) or an
+uncompiled docs-class path. The desktop build jobs gate on
+`code == 'true' && android_only != 'true'`, so an android-only PR **skips** the
+desktop standalone builds (`Windows + MSVC`, `…light`, `Perf PR-fast`) while the
+`mobile-android-ndk` job — which gates on `code` alone — still runs. Same
+safety as the docs-only case: the skipped jobs are **required** checks, and a
+skipped required check counts as **success** for branch protection. Fail-safe
+is **FALSE** (run the full desktop suite) on any uncertainty or any non-android,
+non-docs path. The two workflows compute `android_only` independently with the
+same tolerated set, so they agree on what counts as android-only.
+
 ## Invariant
 
 For any context in `required_status_checks`, a job emitting that context name

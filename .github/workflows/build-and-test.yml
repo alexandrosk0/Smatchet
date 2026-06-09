@@ -63,6 +63,7 @@ jobs:
     outputs:
       code: ${{ steps.detect.outputs.code }}
       source_core_cpp: ${{ steps.detect.outputs.source_core_cpp }}
+      android_only: ${{ steps.detect.outputs.android_only }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -82,6 +83,7 @@ jobs:
             echo "merge_group event — forcing full build (code=true, asan=true)."
             echo "code=true" >> "$GITHUB_OUTPUT"
             echo "source_core_cpp=true" >> "$GITHUB_OUTPUT"
+            echo "android_only=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -153,11 +155,45 @@ jobs:
           fi
           echo "Source/Core|Plugins C++ changed (asan gate): ${source_core_cpp}"
           echo "source_core_cpp=${source_core_cpp}" >> "$GITHUB_OUTPUT"
+          # Android-only diff gate: skip the desktop standalone builds + their
+          # downstream tests when the diff touches ONLY android/mobile paths —
+          # Source/Mobile/** (the mobile source tree, compiled by NO desktop job)
+          # and cmake/toolchains/** (the NDK toolchain wrapper, consumed only by
+          # the android-ndk preset). The mobile-android-ndk job — the ONLY job
+          # that compiles Source/Mobile — gates on `code`, not this, so it still
+          # runs; mobile-posix-core-check (CORE-only, host clang) is skipped since
+          # a Source/Mobile change can't affect CORE_SOURCES and android-ndk
+          # already cross-compiles CORE for the android-only case.
+          # Set true ONLY when code==true AND every changed file is an android-only
+          # path OR a docs-class path the `code` gate above already treats as
+          # non-compiling (so a mobile change + its plan-doc update still skips
+          # desktop). The two build-invoked arms (test-lint-rules.sh / test-docs.sh)
+          # MIRROR the `code` arms above so a gate-script change can't be mis-skipped.
+          # **Fail-safe = FALSE** (run the full desktop suite) on ANY uncertainty:
+          # empty/failed diff or code==false leaves it false; any non-android,
+          # non-docs file flips it false. A skipped REQUIRED check (windows-msvc /
+          # -light) counts as success for branch protection — same as docs-only.
+          android_only=false
+          if [ "$code" = "true" ] && [ -n "$files" ]; then
+            android_only=true
+            while IFS= read -r f; do
+              [ -z "$f" ] && continue
+              case "$f" in
+                agents/scripts/project/test-lint-rules.sh) android_only=false; break ;;
+                Source/Mobile/*|cmake/toolchains/*) ;;
+                scripts/dev/test-docs.sh) ;;
+                *.md|docs/*|agents/*|scripts/dev/local/*|.gitignore|.gitattributes|.coderabbit.yaml|.github/CODEOWNERS|.github/pull_request_template.md) ;;
+                *) android_only=false; break ;;
+              esac
+            done <<< "$files"
+          fi
+          echo "android-only diff (skip desktop builds): ${android_only}"
+          echo "android_only=${android_only}" >> "$GITHUB_OUTPUT"
 
   windows-msvc:
     name: Windows + MSVC
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.code == 'true' && needs.changes.outputs.android_only != 'true' }}
     runs-on: windows-2022
     timeout-minutes: 45
 
@@ -288,7 +324,7 @@ jobs:
   windows-msvc-light:
     name: Windows + MSVC (Smatchet light — AI/Whisper/MCP off)
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.code == 'true' && needs.changes.outputs.android_only != 'true' }}
     runs-on: windows-2022
     timeout-minutes: 30
     permissions:
@@ -709,7 +745,7 @@ jobs:
     # NOT a required branch-protection check (branch-protection changes are
     # out-of-scope); it runs as a non-required advisory PR check.
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.code == 'true' && needs.changes.outputs.android_only != 'true' }}
     runs-on: windows-2022
     timeout-minutes: 20
 
@@ -861,7 +897,7 @@ jobs:
   mobile-posix-core-check:
     name: Mobile — POSIX core compile gate (Linux clang, advisory)
     needs: changes
-    if: ${{ needs.changes.outputs.code == 'true' }}
+    if: ${{ needs.changes.outputs.code == 'true' && needs.changes.outputs.android_only != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

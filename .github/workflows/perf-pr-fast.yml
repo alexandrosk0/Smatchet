@@ -58,6 +58,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       perf: ${{ steps.detect.outputs.perf }}
+      android_only: ${{ steps.detect.outputs.android_only }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -94,11 +95,39 @@ jobs:
           fi
           echo "perf-relevant changes present: ${perf}"
           echo "perf=${perf}" >> "$GITHUB_OUTPUT"
+          # ---------------------------------------------------------------
+          # android_only: a perf-relevant diff whose EVERY changed file is
+          # Android-specific (the mobile tree or the NDK toolchain wrappers)
+          # or an uncompiled docs/metadata path — so the desktop standalone
+          # perf build is unnecessary (Source/Mobile/* matched Source/* above,
+          # so a mobile-only PR would otherwise spin up the full desktop perf
+          # gate). Mirrors the same dimension + tolerated set in
+          # build-and-test.yml so the two required checks agree on what counts
+          # as android-only. Fail-safe is FALSE (run the full desktop perf
+          # gate) on any non-android-specific path. Only narrows an already
+          # perf=true diff; an empty/failed diff leaves perf=true above and
+          # android_only=false here, so the desktop gate still runs. The Android
+          # NDK build surface is covered by build-and-test.yml's mobile-android-ndk.
+          android_only=false
+          if [ "$perf" = "true" ] && [ -n "$files" ]; then
+            android_only=true
+            while IFS= read -r f; do
+              [ -z "$f" ] && continue
+              case "$f" in
+                Source/Mobile/*|cmake/toolchains/*) ;;
+                scripts/dev/test-docs.sh) ;;
+                *.md|docs/*|agents/*|scripts/dev/local/*|.gitignore|.gitattributes|.coderabbit.yaml|.github/CODEOWNERS|.github/pull_request_template.md) ;;
+                *) android_only=false; break ;;
+              esac
+            done <<< "$files"
+          fi
+          echo "android-only diff (skip desktop perf build): ${android_only}"
+          echo "android_only=${android_only}" >> "$GITHUB_OUTPUT"
 
   perf-pr-fast:
     name: Perf PR-fast (windows-2022)
     needs: changes
-    if: ${{ needs.changes.outputs.perf == 'true' }}
+    if: ${{ needs.changes.outputs.perf == 'true' && needs.changes.outputs.android_only != 'true' }}
     runs-on: windows-2022
     timeout-minutes: 30
 
