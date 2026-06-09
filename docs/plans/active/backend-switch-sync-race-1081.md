@@ -1,0 +1,58 @@
+# backend-switch-sync-race-1081 — fix plan
+
+Fixes GitHub issue #1081: **crash: backend switch (Jira→GitHub) races in-flight sync workers → `std::terminate`**. Diagnosis by debug-detective (trusted, not re-derived here): the backend-swapped branch of `TicketSyncService::SwapBackendIfTrackerChanged` publishes the empty ActiveTickets snapshot OUTSIDE `ActiveTicketsMutex()` (finding A — shared_ptr control-block UB against worker-thread writers/readers, primary terminate candidate), and in-flight workers (offline replay completions, `UpdateTicket`, the `EnsurePaneLiveSyncStarted` main-thread post) apply stale-backend results into the post-switch context (finding B — TOCTOU contamination + stale-cfg backend flip-flop), amplified by an unbounded frame-rate sync-retry storm on fast-fail (`OnStreamingSyncSessionFinished(fetchOk=false)` re-arms `initialSyncKicked` every failed session).
+
+## Fixes
+
+1. **Lock fix** — widen the `ActiveTicketsMutex()` scope in the backend-swapped branch so clear + `SetActiveTicketsPublished` happen under ONE lock (contract: `GridLiveContext.h:71-75`). Comment-enforce the must-hold-mutex contract at `GridContextDepsAdapter::SetActiveTicketsPublished`.
+2. **Backend-generation token** — `std::atomic<std::uint64_t> backendGeneration_{0}` on `GridLiveContext`; bumped in `GridContextDepsAdapter::SetBackend` (after the atomic_exchange) and in `AppController::retireExpiredHiddenContexts_`. Cancel/await was REJECTED by the diagnosis (UI-thread block up to an HTTP timeout — Pillar 2).
+3. **Capture-then-check apply sites** — capture generation (+ cache backend key) at work-capture time; re-check before mutating; on mismatch drop the apply + `LOG_INFO`:
+   - `AppController::RefreshLocalData` gains a generation-checked overload (check under `activeTicketsMutex_`); UI-thread callers keep the unchecked path.
+   - `AppController::UpdateTicket` latches key+generation once at entry; skips `SaveTicket` + refresh on mismatch.
+   - Offline replay (`TickOfflineCreates` / `TickOfflineFieldEdits`): capture generation + backend key at tick time; gen-check before `RefreshLocalData`; pass the CAPTURED key into `IssueCreatePipeline::Run` (replaces the write-time `depsRef.CacheBackendKey()` re-read). New `IOfflineQueueDeps::BackendGeneration()`.
+   - `EnsurePaneLiveSyncStarted`: capture generation at kick; the main-thread post drops BOTH `SyncPaneWithBackend` (stale-cfgCopy backend flip-flop) and the cache seed on mismatch, and **re-arms `initialSyncKicked`** so the pane re-kicks with fresh state instead of dead-latching (necessary consequence of dropping the kick; flagged in §Deviations).
+   - `TicketSyncService` internal drains: NO token (already serialized — worker joined before swap; drains UI-thread).
+4. **Sync-storm damping** — `syncRetryAfter` time-point on `GridLiveContext` (UI-thread-only, same discipline as `initialSyncKicked`); set `now + 30 s` in the `fetchOk=false` branch; `EnsurePaneLiveSyncStarted` bails inside the window via the pure helper `smatchet::ShouldKickInitialSync(now, kicked, retryAfter)` (header-pure, `BackgroundWorkerReap.h` precedent; mirrors the `projectComponentsRetryAfter_` 30 s pattern).
+
+## Files-to-modify
+
+| File | Change |
+|---|---|
+| `Source/Core/include/GridLiveContext.h` | add `backendGeneration_` atomic + `syncRetryAfter` time-point |
+| `Source/Core/include/PaneSyncKickPolicy.h` | NEW — pure kick/apply decision helpers (`ShouldKickInitialSync`, `PaneSyncKickStillCurrent`) |
+| `Source/Core/include/IOfflineQueueDeps.h` | add `BackendGeneration()` |
+| `Source/Core/include/GridContextDepsAdapter.h` | declare `BackendGeneration()` override |
+| `Source/Core/src/GridContextDepsAdapter.cpp` | gen bump in `SetBackend`; `syncRetryAfter` in `OnStreamingSyncSessionFinished`; publish-contract comment; `BackendGeneration()` |
+| `Source/Core/src/Sync/TicketSyncService.cpp` | Fix 1 — publish under the lock |
+| `Source/Core/src/Sync/OfflineQueueService.cpp` | capture key+gen at tick; gen-check before refresh; captured key through `ReplayOneCreate` → `IssueCreatePipeline::Run` |
+| `Source/Core/include/Sync/OfflineQueueService.h` | `ReplayOneCreate` signature (+ captured key param) |
+| `Source/Core/src/AppController.cpp` | gen capture/check + retry-window bail in `EnsurePaneLiveSyncStarted`; gen bump in `retireExpiredHiddenContexts_` |
+| `Source/Core/src/AppController_CatalogAndFieldEdit.cpp` | `RefreshLocalData` gen-checked overload; `UpdateTicket` key+gen latch |
+| `Source/Core/include/AppController.h` | declare the overload |
+| `tests/support/FakeOfflineQueueDeps.h` | `BackendGenerationImpl` member + override |
+| `tests/support/FakeTicketSyncDeps.h` | publish-under-lock recorder (cross-thread try_lock probe — NOT same-thread try_lock) |
+| `tests/Core/BackendSwitchRace1081.test.cpp` | NEW — tests 1–5 below |
+| `tests/CMakeLists.txt` | register the new test TU |
+
+## Perf-gate (mandatory — diff touches Source/Core/)
+
+All added steady-state work is O(1): the generation token is a relaxed-cost `std::atomic<uint64_t>` load at work-capture/apply sites (off the per-frame hot path — replay ticks, swap path, one-shot kick), the storm-damping check is one `steady_clock` compare on the already-early-out `EnsurePaneLiveSyncStarted` path, and Fix 1 only widens an existing lock scope by one shared_ptr assignment (swap path, not per-frame). No new allocation, no new locks, no per-frame cost. Net: the storm fix REMOVES unbounded frame-rate re-sync work. No perf gate run needed beyond the standard suite.
+
+## Verification
+
+- Build: `cmake --build --preset ninja-iter-msvc`.
+- Tests: `scripts/dev/test-all.sh` (or ctest preset) — new doctest cases:
+  1. Publish-under-lock contract (fails pre-Fix-1, passes post) via instrumented `FakeTicketSyncDeps` + `SyncWithBackend` backend-kind change.
+  2. Generation drop: gen bumped between capture and apply → `RefreshLocalData` not called; control case (no bump) → called.
+  3. Storm damping: `ShouldKickInitialSync` decision matrix (inside window → no kick; past window → kick; latched → no kick).
+  4. Stale-cfg no-reswap decision: `PaneSyncKickStillCurrent` (context-gone / gen-moved → drop) — AppController wiring itself is not unit-reachable, see §Deviations.
+  5. Replay key latch: queued row under key "Jira", key+gen switched mid-replay (deferred `BackgroundTaskRunner`) → write lands under "Jira", absent under "GitHub", refresh skipped.
+- Lint: `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop` + `clang-format -i` on touched C++.
+
+## Implementation log
+
+- (post-fill)
+
+## Deviations
+
+- (post-fill)
