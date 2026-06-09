@@ -89,6 +89,16 @@ foreach ($line in $setDump) {
     }
 }
 
+# vcvars64 prepends the VS-bundled LLVM (older clang) to PATH. The ninja-clang-*
+# presets call bare `clang-cl`, which would then resolve to that older VS clang
+# instead of the standalone LLVM that CI pins (both workflows echo LLVM\bin onto
+# the path after msvc-dev-cmd). Mirror CI: put standalone LLVM first. Guarded —
+# no-op if absent; harmless for MSVC presets (cl/link.exe aren't in LLVM\bin).
+$LlvmBin = 'C:\Program Files\LLVM\bin'
+if (Test-Path (Join-Path $LlvmBin 'clang-cl.exe')) {
+    $env:PATH = $LlvmBin + ';' + $env:PATH
+}
+
 # Execute the passed argument vector in the now-MSVC environment.
 $exe = $Command[0]
 $rest = @()
