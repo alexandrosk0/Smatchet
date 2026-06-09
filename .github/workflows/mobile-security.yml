@@ -1,6 +1,6 @@
 name: Mobile security
 
-# Android security guardrails gate (WS1 of docs/plans/active/mobile-mvp-completion.md,
+# Android security guardrails gate (WS1 of the mobile-mvp-completion plan,
 # Issues #1067 + #1068). Two file-content regressions that the ADVISORY mobile CI
 # jobs (Mobile — POSIX core / Android NDK / Android APK) do NOT catch:
 #
