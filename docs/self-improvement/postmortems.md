@@ -27,6 +27,100 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-09 · PR #1046, PR #1049, PR #1052, PR #1053, PR #1056, PR #1057, PR #1058, PR #1059, PR #1060, PR #1061, PR #1062, PR #1064, PR #1072 · `postmortem-owed` batch (13 PRs) — `cr-out-of-band` ×13 + phantom red-checks
+
+### What escaped
+A single SessionStart `postmortem-owed` nudge for **13 develop merges**. Triaged
+against the live `statusCheckRollup` (the snapshot ledger is uncommitted on
+develop — see Root cause), **11 of 13 are detector false-positives, not real
+escapes**; 2 facets are real-but-healed:
+
+- **`cr-out-of-band` ×13 (all of them)** — every PR in a ~13-PR "close-gate-gaps"
+  burst (#1046–#1072) carried `cr-out-of-band`. CodeRabbit's hourly per-author
+  review quota was exhausted by the burst (CR posted its rate-limit auto-comment
+  on #1046 and #1052), so CR could not review most of them in time → the label
+  downgraded the CR block to WARN ×13. **Exact recurrence of the 2026-06-06
+  #905–#908 PR-burst cascade.**
+- **"red `Test-delta gate`" on #1072/#1062/#1064/#1060/#1058/#1059/#1049 —
+  phantom.** Each is a `CANCELLED` concurrency-superseded twin sitting ~10 s
+  beside a `SUCCESS` run for the same context (verified on #1072: CANCELLED
+  13:21:47 + SUCCESS 13:21:57). The gate passed; GitHub merged on the SUCCESS
+  run; the detector read the CANCELLED twin.
+- **#1064 `Mobile — Android NDK arm64-v8a` (advisory) red — phantom.** A transient
+  `sdkmanager` "Error on ZipFile" at the NDK install step on a `continue-on-error`
+  lane outside the merge-gates meant-to-block allow-list — it can never block a
+  merge, so it owes no postmortem.
+- **#1062/#1049/#1046 `tests-out-of-band` — moot.** Test-delta gate was `SUCCESS`
+  on the merge head; the override was non-load-bearing. **Recurrence of the
+  2026-06-08 #991 moot-override class.**
+- **#1072 `Sanitizer (UBSan via Clang)` — real-but-healed.** Genuinely
+  `IN_PROGRESS` at the maintainer's manual merge (started 13:33:41, merge
+  13:36:14) and only reached `SUCCESS` at 13:44:14 — a manual `PUT …/merge` fired
+  past a non-terminal meant-to-block allow-list check, which then passed. No
+  product harm; the automated poller would have blocked (the manual merge bypassed
+  it).
+- **#1046 `Bucket-E UI tests` red — real-but-healed.** The `Run bucket-E …`
+  scenario step PASSED; the red was an `actions/cache` "Post Cache FetchContent
+  _deps" teardown SAVE failure after the tests, manually merged past by the
+  maintainer (Bucket- is on the meant-to-block allow-list, so the teardown-red
+  twin tripped it).
+
+### Root cause
+Two independent gate holes plus a shared meta-cause:
+
+1. **Detector over-reports (the dominant hole).** `postmortem-owed.sh`'s JQ_ROWS
+   filter flags any `statusCheckRollup` row whose conclusion ∉
+   {SUCCESS, SKIPPED, NEUTRAL}, with **no** reconciliation to (a) the latest run
+   per context, (b) the merge-gates blocking scope (required ∪
+   `Coverage|Sanitizer|Bucket-`), or (c) a genuine terminal FAILURE. So a
+   CANCELLED concurrency twin, an advisory-lane flake, and an IN_PROGRESS-then-
+   SUCCESS check all read identically to a hard required-check failure — 9 of the
+   13 phantom rows come from this alone.
+2. **PR-batching is prose-only.** `AGENTS.md` § Autonomous ship-loop "one PR per
+   logical feature" is unenforced; nothing measures the burst or the CR
+   rate-limit comment before opening PR N+1, so the quota blew exactly as on
+   #905–#908.
+3. **Meta-cause — the snapshot ledger is dark.** `merge-snapshots.jsonl` is
+   uncommitted/0-bytes on develop, so `postmortem-owed.sh` runs **entirely on the
+   degraded live-`statusCheckRollup` fallback**, where post-merge re-runs +
+   CANCELLED twins + non-terminal rows are all visible. A lossless ADR-0017
+   snapshot would record the single terminal conclusion per context at merge and
+   starve both hole (1) and the #991 moot-override class at the source.
+
+Blameless: no operator did anything wrong — the burst followed a legitimate
+gate-hardening sprint, the manual merges were past genuinely-green test steps,
+and the overrides were correct. Every false "owed" is a **gate-don't-trust
+inversion**: the detector cries wolf 11/13, training the operator to wave the
+nudge through — which is precisely how a real escape would slip past.
+
+### Preventing gate
+- **NEW (P1):** `postmortem-owed.sh` must reconcile the rollup the way
+  `merge-gates.sh` does before flagging a `red-check` — dedupe to the latest run
+  per context (drop CANCELLED-beside-SUCCESS twins / exclude CANCELLED), restrict
+  to the merge-gates blocking scope (advisory lanes dropped), and require a
+  terminal FAILURE.
+- **ESCALATED P2→P1:** `pr-burst-guard` (infra) — a pre-ship check that counts
+  open-PR / `gh pr create` rate (and/or detects the CR rate-limit comment) and
+  pauses before blowing the quota. Second confirmed occurrence (#905–#908, now
+  #1046–#1072) → escalated.
+- **Reinforced (already filed, recurred):** `postmortem-owed-moot-override-false-positive`
+  (tooling P2, #991 — #1062/#1049/#1046 again); `cr-out-of-band-disposition-trail`
+  (process P3 — all 13 lacked a disposition trail);
+  `mandatory-merge-snapshot-on-override-merge` (tooling P1, #966 — the dark-ledger
+  meta-cause). No new entry for the #1072/#1046 manual-merge-past-running-check
+  facet — the detector terminal-state fix covers the false nudge, and the
+  bypass-the-poller theme is already tracked by `postmortem-owed-direct-push-blindspot`
+  (tooling P2).
+
+### Filed as
+- `docs/self-improvement/categories/tooling.md` — NEW P1
+  `postmortem-owed-overreports-nonblocking-and-cancelled-twins`; recurrence note
+  on `postmortem-owed-moot-override-false-positive`.
+- `docs/self-improvement/categories/infra.md` — `pr-burst-guard` escalated
+  P2→P1 + recurrence note.
+- `docs/self-improvement/categories/process.md` — recurrence note on
+  `cr-out-of-band-disposition-trail`.
+
 ## 2026-06-08 · PR #1021, #1016 · `tests-out-of-band` override (load-bearing, both legitimate)
 
 ### What escaped
