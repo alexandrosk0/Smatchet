@@ -78,6 +78,7 @@ def selftest():
     good = ["> a", ">", "> b"]
     bad = ["> a", "", "> b"]
     assert check_md028(good) == [], "false positive on >-prefixed blank"
+    # selftest: asserts-failure — a known MD028-violating fixture must be flagged (the rule's detection path).
     assert check_md028(bad) == [(2, check_md028(bad)[0][1])], "missed MD028"
     print("md_lint: selftest OK (%d rule(s))" % len(RULES))
 

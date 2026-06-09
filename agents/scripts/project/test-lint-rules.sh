@@ -558,6 +558,7 @@ case "$MODE" in
     _idoc_pins=$'ITrackerIssueMutations::UpdateField'
     _idoc_hit=$'-    TrackerError UpdateField(const std::string& issueId, const TrackerField& field);\n+    Result<nlohmann::json, TrackerError> UpdateField(const std::string& issueId);'
     _idoc_miss=$'+    void SomeUnrelatedThing();'
+    # selftest: asserts-failure — interface-doc must WARN on real drift (pinned symbol changed, doc untouched).
     if [ -z "$(interface_doc_emit "Source/Core/src/Tracker/AGENTS.md" 0 "$_idoc_pins" "$_idoc_hit" 2>&1 1>/dev/null)" ]; then
         echo "SELFTEST FAIL: interface-doc did not WARN when a doc-pinned symbol changed without a doc touch" >&2; miss=1; fi
     if [ -n "$(interface_doc_emit "Source/Core/src/Tracker/AGENTS.md" 1 "$_idoc_pins" "$_idoc_hit" 2>&1 1>/dev/null)" ]; then

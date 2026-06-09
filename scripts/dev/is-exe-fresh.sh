@@ -61,6 +61,7 @@ if [ "${1:-}" = "--selftest" ]; then
     touch "$exe"
     [ "$(_freshness "$exe" "$tmp/Source")" = fresh ] || { echo "FAIL: expected fresh"; fail=1; }
     # make a source newer than the exe -> stale
+    # selftest: asserts-failure — a source newer than the exe must be detected as stale (the warn path).
     sleep 1; : > "$tmp/Source/b.cpp"
     [ "$(_freshness "$exe" "$tmp/Source")" = stale ] || { echo "FAIL: expected stale"; fail=1; }
     # missing exe -> indeterminate (never hard-fails)

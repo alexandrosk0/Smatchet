@@ -76,7 +76,7 @@ run_check() {
 
 run_selftest() {
     local miss=0
-    # A deliberately-dead glob must be detected as zero-match (the bug class this guards).
+    # selftest: asserts-failure — a deliberately-dead glob must be detected as zero-match (the bug class this guards).
     if [ "$(glob_count '**/Locales/*.json')" -ne 0 ]; then
         echo "SELFTEST FAIL: the historically-dead glob '**/Locales/*.json' now matches tracked files"
         echo "               — if Locales/*.json are now committed, update this selftest fixture." >&2

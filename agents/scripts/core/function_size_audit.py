@@ -745,6 +745,7 @@ def run_selftest():
         (RULE_LONG, "Big.cpp", "Cls::RenderBigPanel", 2):
             ("Source/Core/src/Ui/Big.cpp", 10, 321, 5),
     }
+    # selftest: asserts-failure — a still-over-cap function must report hits (assert-absent would FAIL).
     # Still-over-cap by qualified name -> must report hits (assertion would FAIL).
     if not _absent_hits(over_head, "Cls::RenderBigPanel"):
         print("SELFTEST FAIL: assert-absent matched nothing for a STILL-over-cap function "

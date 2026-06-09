@@ -27,8 +27,13 @@ set -uo pipefail
 
 cd "$(dirname "$0")/../../.."
 
-MAP="CONTEXT-MAP.md"
-SRC_GLOB="Source/Core/src"
+# MAP/SRC_GLOB are read-only override seams (no command-from-env injection) so
+# --selftest can point check 1 (registered-leaf-missing-on-disk) at a synthetic
+# temp registry and assert the REAL detection path FAILS on a known-bad fixture.
+# Defaults are unchanged in every real invocation (no env set) — a test seam, not
+# a logic change. SUBSYS_DOCS_NEGCHECK guards against selftest re-entrancy.
+MAP="${SUBSYS_DOCS_MAP:-CONTEXT-MAP.md}"
+SRC_GLOB="${SUBSYS_DOCS_SRC_GLOB:-Source/Core/src}"
 CENTRAL="agents/core/code-review.md"
 
 # Default (no args, as test-all.sh invokes it): structural checks + staleness vs
@@ -47,6 +52,29 @@ esac
 # (shallow CI clone, detached HEAD) rather than erroring.
 if [[ "$MODE" == "diff" ]] && ! git rev-parse --verify --quiet "$DIFF_REF" >/dev/null 2>&1; then
   MODE="structural"
+fi
+
+# --- selftest negative fixture (Gap C / Slice 3) -----------------------------
+# selftest: asserts-failure — feed a synthetic registry that names a leaf NOT on
+# disk and assert the REAL check-1 path returns non-zero. Re-enters this same
+# script (so it exercises production logic, not a copy) with the MAP/SRC_GLOB
+# seams pointed at a temp tree; SUBSYS_DOCS_NEGCHECK breaks the recursion.
+if [[ "$MODE" == "selftest" && "${SUBSYS_DOCS_NEGCHECK:-0}" != "1" ]]; then
+  _neg_tmp="$(mktemp -d)" || { echo "test-subsystem-docs selftest: mktemp failed" >&2; exit 1; }
+  trap 'rm -rf "$_neg_tmp"' EXIT
+  # A registry section that registers a leaf which does not exist on disk.
+  cat > "$_neg_tmp/MAP.md" <<EOF
+## Registry
+- \`$_neg_tmp/src/ghost/AGENTS.md\` — a deliberately absent leaf (selftest fixture).
+## Next section
+EOF
+  mkdir -p "$_neg_tmp/src"   # SRC_GLOB root exists but holds no */AGENTS.md
+  if SUBSYS_DOCS_NEGCHECK=1 SUBSYS_DOCS_MAP="$_neg_tmp/MAP.md" \
+       SUBSYS_DOCS_SRC_GLOB="$_neg_tmp/src" bash "$0" --selftest >/dev/null 2>&1; then
+    echo "test-subsystem-docs selftest: FAIL — a registry naming a missing-on-disk leaf was NOT detected" >&2
+    exit 1
+  fi
+  rm -rf "$_neg_tmp"; trap - EXIT
 fi
 
 fail=0

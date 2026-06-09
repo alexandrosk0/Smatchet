@@ -404,6 +404,7 @@ def run_selftest():
             print("SELFTEST FAIL: classify(%r) = %s, expected %s/blocks=%s"
                   % (path, got, name, blocks), file=sys.stderr)
             miss = 1
+    # selftest: asserts-failure — non-prompt / out-of-tree paths must classify as out-of-scope (None).
     for path in ("agents/README.md", "README.md", "agents/_shared/token-tracking/SKILL.md"):
         # token-tracking is NOT under _shared/skills/, README is not a prompt — all out of scope.
         if path == "agents/_shared/token-tracking/SKILL.md":
