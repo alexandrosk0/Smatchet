@@ -4,9 +4,18 @@
     <uses-permission android:name="android.permission.INTERNET" />
 
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:label="Smatchet"
         android:hasCode="true">
+        <!-- allowBackup=false (Issue #1067): the app's private files dir holds the
+             extracted CA bundle and (once Keystore lands) credential material.
+             allowBackup=false disables cloud Auto Backup and adb backup of that dir.
+             SCOPE LIMIT — on API 31+ (this app: targetSdk 34) it does NOT cover
+             device-to-device (D2D) transfer; that channel is governed by
+             android:dataExtractionRules <device-transfer>, which is not set here.
+             Closing the D2D path is Keystore-time work (epic #1018): add a
+             dataExtractionRules resource with a <device-transfer> exclude alongside
+             the secure-storage migration. -->
 
         <activity
             android:name=".SmatchetActivity"

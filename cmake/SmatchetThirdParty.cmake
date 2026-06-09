@@ -105,14 +105,28 @@ function(smatchet_prepare_cpr)
             endif()
             if(SMATCHET_ANDROID_OPENSSL_BASE)
                 set(_smatchet_ossl_abi "${SMATCHET_ANDROID_OPENSSL_BASE}/${ANDROID_ABI}")
-                if(EXISTS "${_smatchet_ossl_abi}/lib/libssl.a")
+                # Issue #1068: a complete static OpenSSL for the ABI means ALL THREE —
+                # libssl.a, libcrypto.a, and the public headers. A partial tree (e.g. a
+                # half-finished build-android-openssl.sh run, or a base dir missing one
+                # ABI) used to emit message(WARNING) and fall through to a sysroot probe.
+                # A stock NDK sysroot has NO OpenSSL, so that probe finds nothing and the
+                # build silently ships a TLS-broken APK (no Jira over HTTPS). Fail-fast at
+                # configure instead — a loud, actionable error beats a runtime TLS failure.
+                if(EXISTS "${_smatchet_ossl_abi}/lib/libssl.a"
+                   AND EXISTS "${_smatchet_ossl_abi}/lib/libcrypto.a"
+                   AND EXISTS "${_smatchet_ossl_abi}/include/openssl/opensslv.h")
                     set(OPENSSL_ROOT_DIR "${_smatchet_ossl_abi}" CACHE PATH "Android per-ABI OpenSSL (derived from base)" FORCE)
                     set(OPENSSL_INCLUDE_DIR "${_smatchet_ossl_abi}/include" CACHE PATH "Android per-ABI OpenSSL include (derived)" FORCE)
                     set(OPENSSL_SSL_LIBRARY "${_smatchet_ossl_abi}/lib/libssl.a" CACHE FILEPATH "Android per-ABI libssl (derived)" FORCE)
                     set(OPENSSL_CRYPTO_LIBRARY "${_smatchet_ossl_abi}/lib/libcrypto.a" CACHE FILEPATH "Android per-ABI libcrypto (derived)" FORCE)
                     message(STATUS "Smatchet: derived Android OpenSSL for ${ANDROID_ABI}: ${_smatchet_ossl_abi}")
                 else()
-                    message(WARNING "SMATCHET_ANDROID_OPENSSL_BASE='${SMATCHET_ANDROID_OPENSSL_BASE}' set but ${_smatchet_ossl_abi}/lib/libssl.a missing — OpenSSL find_package will fall back to probing.")
+                    message(FATAL_ERROR
+                        "SMATCHET_ANDROID_OPENSSL_BASE='${SMATCHET_ANDROID_OPENSSL_BASE}' is set but a complete "
+                        "static OpenSSL for ABI '${ANDROID_ABI}' was not found under '${_smatchet_ossl_abi}' "
+                        "(need lib/libssl.a, lib/libcrypto.a, include/openssl/opensslv.h). "
+                        "Android requires a pinned static OpenSSL — silent sysroot fallback ships a TLS-broken build. "
+                        "Build it with scripts/dev/build-android-openssl.sh, or pin OPENSSL_ROOT_DIR explicitly. (Issue #1068)")
                 endif()
             endif()
         endif()

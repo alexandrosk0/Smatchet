@@ -357,16 +357,21 @@ poll_merge_gates() {
       # allow-list AND is not explicitly "advisory". This closes the gate-escape
       # where the watcher auto-merged #923 past a RED non-required "Coverage"
       # check (postmortems.md 2026-06-06 "#923", option B). The allow-list is
-      # deliberately tight (Coverage / Sanitizer / Bucket-* / Perf PR-fast) — a
-      # non-allow-listed non-required red (e.g. the `non-required-fail` test
-      # fixture, or "Duplication scanner (advisory)") still passes, preserving
-      # the prior "non-required → pass" contract. Extend the regex to gate more
-      # checks. "Perf PR-fast" added 2026-06-07 (perf-gate-revival step 6a) —
-      # the gate is armed now that ci-windows-latest baselines exist; the
-      # perf-out-of-band downgrade below remains the override hatch.
+      # deliberately tight (Coverage / Sanitizer / Bucket-* / Perf PR-fast /
+      # Android security gate) — a non-allow-listed non-required red (e.g. the
+      # `non-required-fail` test fixture, or "Duplication scanner (advisory)")
+      # still passes, preserving the prior "non-required → pass" contract.
+      # Extend the regex to gate more checks. "Perf PR-fast" added 2026-06-07
+      # (perf-gate-revival step 6a) — armed now that ci-windows-latest baselines
+      # exist; the perf-out-of-band downgrade below remains the override hatch.
+      # "Android security gate" added 2026-06-09 (mobile-mvp-completion WS1,
+      # Issues #1067/#1068): the advisory mobile jobs (posix-core / android-ndk /
+      # apk) let a green develop ship mobile breakage (precedent #1021/#1064), so
+      # the manifest-allowBackup + OpenSSL-fail-fast regression gate is routed
+      # onto the blocking path here, NOT left advisory.
       ((.isRequired == true)
        or ((if .__typename == "CheckRun" then (.name // "") else (.context // "") end)
-           | (test("Coverage|Sanitizer|Bucket-|Perf PR-fast"; "i")
+           | (test("Coverage|Sanitizer|Bucket-|Perf PR-fast|Android security gate"; "i")
               and (ascii_downcase | contains("advisory") | not)))))]) as $failing
 | ([$failing[] | select(
       ($tests and .__typename == "CheckRun" and .name == "Test-delta gate") or
