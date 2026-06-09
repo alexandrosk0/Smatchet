@@ -15,6 +15,7 @@
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 #include "Config/ConfigManager.h"
+#include "ConfigSaveWorker.h"
 #include "ITrackerConnectivity.h"
 #include "IconsFontAwesome6.h"
 #include "Logger.h"
@@ -223,7 +224,7 @@ void SmatchetToolbarUi::RenderBar(AppController& app, TrackerConfig& cfg) {
             }
             if (ImGui::MenuItem("Hide Toolbar")) {
                 cfg.Toolbar.Visible = false;
-                ConfigManager::Save(cfg);
+                smatchet::config_save::EnqueueTrackerConfig(cfg);
             }
             ImGui::EndPopup();
         }
@@ -247,22 +248,22 @@ void SmatchetToolbarUi::RenderButtonContextMenu(TrackerConfig& cfg, int src) {
     ImGui::Separator();
     if (ImGui::MenuItem("Move Left", nullptr, false, src > 0)) {
         std::swap(buttons[src], buttons[src - 1]);
-        ConfigManager::Save(cfg);
+        smatchet::config_save::EnqueueTrackerConfig(cfg);
     }
     if (ImGui::MenuItem("Move Right", nullptr, false, src < count - 1)) {
         std::swap(buttons[src], buttons[src + 1]);
-        ConfigManager::Save(cfg);
+        smatchet::config_save::EnqueueTrackerConfig(cfg);
     }
     if (ImGui::MenuItem("Insert Separator")) {
         ToolbarButton sep;
         sep.Kind = ToolbarButtonKind::Separator;
         buttons.insert(buttons.begin() + src + 1, sep); // after the clicked button
-        ConfigManager::Save(cfg);
+        smatchet::config_save::EnqueueTrackerConfig(cfg);
     }
     ImGui::Separator();
     if (ImGui::MenuItem("Delete")) {
         buttons.erase(buttons.begin() + src);
-        ConfigManager::Save(cfg);
+        smatchet::config_save::EnqueueTrackerConfig(cfg);
     }
 }
 
@@ -549,7 +550,7 @@ void SmatchetToolbarUi::DrawEditorFooter(EditorCtx& ctx, TrackerConfig& cfg) {
             trackerAppendCacheLoaded_ = false; // force RenderBar to reload the active append
         } else {
             cfg.Toolbar = editBuf_;
-            ConfigManager::Save(cfg);
+            smatchet::config_save::EnqueueTrackerConfig(cfg);
         }
         ImGui::CloseCurrentPopup();
     }
