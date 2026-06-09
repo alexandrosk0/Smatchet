@@ -58,7 +58,13 @@ option(SMATCHET_ALLOW_TOOLSET_MISMATCH
     "Downgrade the MSVC toolset-consistency guard from FATAL_ERROR to WARNING (deliberate off-pin toolset)"
     OFF)
 
-if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+# LOCAL-ONLY: the pin (e.g. 14.38) is a LOCAL-dev convention matching the cached
+# build dirs the wrappers configure. CI runners use their own (consistent,
+# possibly newer) toolset and configure FRESH every run, so they can never hit
+# the stale-cache cl-vs-headers mismatch this guard targets — and enforcing the
+# local pin on CI would falsely FATAL every runner whose toolset != the pin.
+# `CI` is set by GitHub Actions (and virtually every CI system), so skip there.
+if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND NOT DEFINED ENV{CI})
     # Read the pinned toolset minor straight out of project.config.json (single
     # source of truth — same scalar the bash/PowerShell wrappers grep). Matches
     # the wrapper's regex style: "msvc_toolset_pin": "<major>.<minor>".
