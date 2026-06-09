@@ -21,6 +21,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -54,6 +55,13 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
     std::vector<CachedTicket> ActiveTicketsImpl;
     std::shared_ptr<const std::vector<CachedTicket>> ActiveTicketsPublishedImpl;
     int ActiveTicketsRevisionImpl = 0;
+    /// Publish-under-lock recorder (issue #1081): counts SetActiveTicketsPublished calls and
+    /// how many of them happened while ActiveTicketsMutexImpl was held. Probed from a helper
+    /// thread via try_lock — a SAME-thread try_lock on a std::mutex the thread already holds
+    /// is UB, so the probe must run on its own thread. Tests drive the service single-threaded
+    /// at publish time, so "held" means "held by the publishing caller".
+    int PublishCalls = 0;
+    int PublishCallsUnderLock = 0;
 
     int PruneEditMetaCalls = 0;
     int WarmIssueTypeEditMetaCalls = 0;
@@ -88,6 +96,18 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
     std::mutex& ActiveTicketsMutex() override { return ActiveTicketsMutexImpl; }
     std::vector<CachedTicket>& ActiveTickets() override { return ActiveTicketsImpl; }
     void SetActiveTicketsPublished(std::shared_ptr<const std::vector<CachedTicket>> snap) override {
+        ++PublishCalls;
+        bool heldByCaller = true;
+        std::thread probe([this, &heldByCaller]() {
+            if (ActiveTicketsMutexImpl.try_lock()) {
+                heldByCaller = false;
+                ActiveTicketsMutexImpl.unlock();
+            }
+        });
+        probe.join();
+        if (heldByCaller) {
+            ++PublishCallsUnderLock;
+        }
         ActiveTicketsPublishedImpl = std::move(snap);
     }
     void BumpActiveTicketsRevision() override { ++ActiveTicketsRevisionImpl; }

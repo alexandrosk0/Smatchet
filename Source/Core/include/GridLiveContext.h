@@ -67,6 +67,14 @@ struct GridLiveContext {
     /// through atomic store/exchange — shared_ptr is not concurrently copy-safe. See ADR 0012.
     std::shared_ptr<ITrackerBackend> Backend;
 
+    /// Backend-generation token (issue #1081): bumped by GridContextDepsAdapter::SetBackend
+    /// (after the atomic_exchange) and by AppController::retireExpiredHiddenContexts_. In-flight
+    /// workers capture the value at work-capture time and re-check it immediately before
+    /// applying results into this context — a mismatch means the backend was swapped/retired
+    /// mid-flight and the stale apply is dropped (capture-then-check; cancel/await was rejected:
+    /// it would block the UI thread up to an HTTP timeout, Pillar 2).
+    std::atomic<std::uint64_t> backendGeneration_{0};
+
     std::vector<CachedTicket> ActiveTickets;
     mutable std::shared_ptr<const std::vector<CachedTicket>> activeTicketsPublished_;
     std::atomic<std::uint64_t> ActiveTicketsRevision{0};
@@ -121,6 +129,14 @@ struct GridLiveContext {
     /// when the session ends with a fetch error, so the next focus switch / visibility kick
     /// retries instead of suppressing the re-sync forever (review MEDIUM-1).
     bool initialSyncKicked = false;
+    /// Failure backoff for the initial-sync kick (issue #1081 sync-storm fix). Set to
+    /// now + 30 s by GridContextDepsAdapter::OnStreamingSyncSessionFinished(fetchOk=false)
+    /// alongside the latch re-arm above; AppController::EnsurePaneLiveSyncStarted bails while
+    /// now < syncRetryAfter (see PaneSyncKickPolicy.h). Without it a fast-failing backend
+    /// re-kicked a full sync EVERY FRAME (re-arm each failed session + per-frame kick site).
+    /// UI thread only — same single-thread discipline as initialSyncKicked. Mirrors the
+    /// projectComponentsRetryAfter_ 30 s pattern above.
+    std::chrono::steady_clock::time_point syncRetryAfter{};
     /// JQL the most-recent kicked sync for this context used (UI thread only — written by
     /// the EnsurePaneLiveSyncStarted main-thread post and AppController::RecordPaneSyncKick,
     /// cleared by the session-end deps hook on fetch error; same single-thread discipline

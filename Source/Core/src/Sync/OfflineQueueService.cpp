@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <functional>
 #include <memory>
@@ -780,6 +781,10 @@ void OfflineQueueService::TickOfflineFieldEdits() {
         offlineFieldEditReplayInFlight_ = false;
         return;
     }
+    // Capture-then-check token (issue #1081): latched at work-capture time, re-checked
+    // before the post-replay RefreshLocalData below so a replay that completed against the
+    // OLD backend never wholesale-replaces the NEW backend's ActiveTickets after a swap.
+    const std::uint64_t capturedGeneration = deps_.BackendGeneration();
     // Backend-scoped replay (multi-grid Slice 1c): only rows queued against THIS context's
     // backend are replayed; other backends' rows stay queued for their own context.
     FilterRowsToReplayBackendKey(pending, deps_.CacheBackendKey(), "TickOfflineFieldEdits");
@@ -807,7 +812,7 @@ void OfflineQueueService::TickOfflineFieldEdits() {
     }
 
     IOfflineQueueDeps& depsRef = deps_;
-    deps_.LaunchBackgroundTask([this, &depsRef, pending, cache, reader, mutations]() {
+    deps_.LaunchBackgroundTask([this, &depsRef, pending, cache, reader, mutations, capturedGeneration]() {
         FieldEditReplayTally tally;
         for (const auto& row : pending) {
             if (row.HasMergeConflict) {
@@ -817,7 +822,13 @@ void OfflineQueueService::TickOfflineFieldEdits() {
         }
 
         if (tally.Successes > 0) {
-            depsRef.RefreshLocalData();
+            if (depsRef.BackendGeneration() == capturedGeneration) {
+                depsRef.RefreshLocalData();
+            } else {
+                LOG_INFO("OfflineQueueService::TickOfflineFieldEdits skipped RefreshLocalData — backend "
+                         "generation moved mid-replay (issue #1081); replayed rows stay cached under their "
+                         "own backend key.");
+            }
         }
         if (tally.Successes > 0 || tally.Failures > 0 || tally.Archived > 0 || tally.CacheOpFailures > 0) {
             LOG_INFO("OfflineQueueService: offline field edit replay finished successes=%d failures=%d archived=%d "
@@ -1202,7 +1213,8 @@ bool OfflineQueueService::RunCreateCacheMutation(const char* action, std::int64_
 
 void OfflineQueueService::ReplayOneCreate(const PendingCreate& pc, LocalCacheManager* cache,
                                           ITrackerIssueMutations* mutations, const std::vector<TrackerField>& catalog,
-                                          IOfflineQueueDeps& depsRef, CreateReplayTally& tally) {
+                                          const std::string& backendKey, IOfflineQueueDeps& depsRef,
+                                          CreateReplayTally& tally) {
     const int kMaxReplayAttempts = OfflineCreateQueue::kMaxReplayAttempts;
     const auto archivePending = [&](const std::string& reason, const std::string& terminalError) -> bool {
         return RunCreateCacheMutation(
@@ -1249,10 +1261,10 @@ void OfflineQueueService::ReplayOneCreate(const PendingCreate& pc, LocalCacheMan
     const RequiredFieldSet required =
         depsRef.GetRequiredFieldSet(draft.ProjectKey, draft.IssueTypeId, draft.IssueTypeName);
     tally.RanCreate = true;
-    // The deps backend-key getter hands back a mutex-guarded copy — safe from this replay
-    // background task; it scopes only the ticket-cache seeding (queue rows are Slice 1c).
-    IssueCreateResult result =
-        IssueCreatePipeline::Run(*mutations, cache, depsRef.CacheBackendKey(), draft, required, catalog);
+    // `backendKey` is the key CAPTURED at work-capture time (issue #1081) — the key the rows
+    // were queued + filtered against. A write-time deps re-read here raced a mid-replay
+    // backend swap and seeded the old backend's row under the new backend's namespace.
+    IssueCreateResult result = IssueCreatePipeline::Run(*mutations, cache, backendKey, draft, required, catalog);
     if (result.Ok) {
         if (RunCreateCacheMutation(
                 "delete_pending_create", pc.Id, [&]() { cache->DeletePendingCreate(pc.Id); }, tally)) {
@@ -1337,9 +1349,16 @@ void OfflineQueueService::TickOfflineCreates() {
         offlineReplayInFlight_ = false;
         return;
     }
+    // Capture key + generation TOGETHER at work-capture time (issue #1081): the captured key
+    // is passed through ReplayOneCreate into IssueCreatePipeline::Run so a successful create
+    // seeds the cache under the backend the rows were QUEUED against — a write-time
+    // CacheBackendKey() re-read after a mid-replay swap landed Jira rows in the GitHub
+    // namespace (proven TOCTOU). The generation gates the post-replay RefreshLocalData.
+    const std::string capturedBackendKey = deps_.CacheBackendKey();
+    const std::uint64_t capturedGeneration = deps_.BackendGeneration();
     // Backend-scoped replay (multi-grid Slice 1c): only rows queued against THIS context's
     // backend are replayed; other backends' rows stay queued for their own context.
-    FilterRowsToReplayBackendKey(pending, deps_.CacheBackendKey(), "TickOfflineCreates");
+    FilterRowsToReplayBackendKey(pending, capturedBackendKey, "TickOfflineCreates");
     if (pending.empty()) {
         std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
         offlineReplayInFlight_ = false;
@@ -1353,30 +1372,38 @@ void OfflineQueueService::TickOfflineCreates() {
     LocalCacheManager* cache = deps_.Cache();
 
     IOfflineQueueDeps& depsRef = deps_;
-    deps_.LaunchBackgroundTask([this, &depsRef, pending, mutations2, cache, catalogCopy]() {
-        CreateReplayTally tally;
-        for (const auto& pc : pending) {
-            ReplayOneCreate(pc, cache, mutations2.get(), *catalogCopy, depsRef, tally);
-        }
-        if (tally.Successes > 0) {
-            depsRef.RefreshLocalData();
-        }
-        if (tally.Successes > 0 || tally.Failures > 0 || tally.Archived > 0 || tally.CacheOpFailures > 0) {
-            LOG_INFO("OfflineQueueService: offline replay finished successes=%d failures=%d archived=%d "
-                     "cache_op_failures=%d",
-                     tally.Successes, tally.Failures, tally.Archived, tally.CacheOpFailures);
-        }
-        std::chrono::seconds delay{5};
-        if (!tally.RanCreate && !pending.empty()) {
-            delay = std::chrono::seconds(300);
-        } else if (tally.Failures > 0 && tally.Successes == 0) {
-            delay = std::chrono::seconds(30);
-        }
-        const auto nextAt = std::chrono::steady_clock::now() + delay;
-        {
-            std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
-            nextOfflineReplayAt_ = nextAt;
-            offlineReplayInFlight_ = false;
-        }
-    });
+    deps_.LaunchBackgroundTask(
+        [this, &depsRef, pending, mutations2, cache, catalogCopy, capturedBackendKey, capturedGeneration]() {
+            CreateReplayTally tally;
+            for (const auto& pc : pending) {
+                ReplayOneCreate(pc, cache, mutations2.get(), *catalogCopy, capturedBackendKey, depsRef, tally);
+            }
+            if (tally.Successes > 0) {
+                if (depsRef.BackendGeneration() == capturedGeneration) {
+                    depsRef.RefreshLocalData();
+                } else {
+                    LOG_INFO("OfflineQueueService::TickOfflineCreates skipped RefreshLocalData — backend "
+                             "generation moved mid-replay (issue #1081); created rows stay cached under "
+                             "backend key '%s'.",
+                             capturedBackendKey.c_str());
+                }
+            }
+            if (tally.Successes > 0 || tally.Failures > 0 || tally.Archived > 0 || tally.CacheOpFailures > 0) {
+                LOG_INFO("OfflineQueueService: offline replay finished successes=%d failures=%d archived=%d "
+                         "cache_op_failures=%d",
+                         tally.Successes, tally.Failures, tally.Archived, tally.CacheOpFailures);
+            }
+            std::chrono::seconds delay{5};
+            if (!tally.RanCreate && !pending.empty()) {
+                delay = std::chrono::seconds(300);
+            } else if (tally.Failures > 0 && tally.Successes == 0) {
+                delay = std::chrono::seconds(30);
+            }
+            const auto nextAt = std::chrono::steady_clock::now() + delay;
+            {
+                std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
+                nextOfflineReplayAt_ = nextAt;
+                offlineReplayInFlight_ = false;
+            }
+        });
 }

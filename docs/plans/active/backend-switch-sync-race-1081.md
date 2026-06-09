@@ -51,8 +51,15 @@ All added steady-state work is O(1): the generation token is a relaxed-cost `std
 
 ## Implementation log
 
-- (post-fill)
+- Fixes 1–4 implemented exactly per the §Fixes plan; all §Files-to-modify rows touched, plus one extra row (below) for a lint-cap decomposition.
+- `EnsurePaneLiveSyncStarted` crossed the `function-too-long` cap (127 L > 120) after the capture-then-check + storm-damping additions → main-thread completion body extracted to private `AppController::applyPaneSyncKickOnMainThread_` (declared in `AppController.h`); behaviour unchanged, lint gates green afterwards.
+- `cmake --build --preset ninja-iter-msvc` → PASS (full rebuild after fresh configure; MSVC env via `scripts/dev/with-msvc-env.sh`).
+- `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop` → all gates PASS; WARNs only (soft-tier func-size on pre-existing `ReplayOneCreate` growth to 104 L, comment-ratio on doc-comment-heavy headers, one pre-existing dup calibration WARN).
+- New doctest TU `tests/Core/BackendSwitchRace1081.test.cpp` (6 TEST_CASEs covering verification items 1–5; item 2 has an explicit control case) built + run via the `ninja-test-msvc` rig.
 
 ## Deviations
 
-- (post-fill)
+- **`initialSyncKicked` re-arm on stale-kick drop** (Fix 3, `applyPaneSyncKickOnMainThread_`): when the generation check drops a kick, the one-shot latch is reset to `false` — without this the pane dead-latches unsynced forever (the latch was set at kick time but no sync ever applied). Not in the original spec text; necessary consequence of dropping the kick.
+- **Fixes 3-partial/4 tested via extracted pure helpers** (`PaneSyncKickPolicy.h`: `ShouldKickInitialSync` / `PaneSyncKickStillCurrent`) because `AppController` has no unit-test rig — explicitly permitted by the spec (BackgroundWorkerReap.h precedent). The stale-cfg no-reswap behaviour is the `PaneSyncKickStillCurrent == false` branch dropping `SyncPaneWithBackend`.
+- **Test 2 asserts via the fake's `RefreshLocalDataCalls` counter** as the proxy for "ActiveTickets/snapshot/revision unchanged": in production `RefreshLocalData` is the only thing that replaces ActiveTickets + republishes + bumps the revision on this path, so not calling it is equivalent.
+- **`ITicketSyncDeps` intentionally NOT given `BackendGeneration()`**: `TicketSyncService` internal drains are already serialized vs the swap (worker joined first; drains UI-thread) — per spec Fix 3 note.

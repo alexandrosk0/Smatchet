@@ -557,6 +557,11 @@ class AppController {
     void ApplyIssueFetchPack(TrackerIssueFetchPack pack);
 
     void RefreshLocalData();
+    /// Generation-checked variant (issue #1081) for WORKER callers: pass the
+    /// GridLiveContext::backendGeneration_ value captured at work-capture time; the wholesale
+    /// ActiveTickets replace is skipped (under activeTicketsMutex_) when the backend was
+    /// swapped/retired since capture. UI-thread callers use the unchecked overload above.
+    void RefreshLocalData(std::uint64_t capturedBackendGeneration);
     /** Reload ActiveTickets from cache and kick per-issue-type editmeta warmup (same tail as SyncWithBackend). */
     void RefreshLocalDataAndWarmIssueTypeMeta();
 
@@ -972,6 +977,10 @@ class AppController {
     /// (design addendum § 6.2).
     GridLiveContext& focusedContext() { return *focusedContextPtr_.load(); }
     const GridLiveContext& focusedContext() const { return *focusedContextPtr_.load(); }
+    /// Shared body of the two RefreshLocalData overloads (issue #1081): null = unchecked
+    /// UI-thread refresh; non-null = drop the replace (under activeTicketsMutex_) when the
+    /// focused context's backendGeneration_ no longer matches the captured value.
+    void RefreshLocalDataCheckedImpl_(const std::uint64_t* capturedBackendGeneration);
     /// Re-resolve focusedContextPtr_ from focusedPaneId_ (default-context fallback).
     void refreshFocusedContextPtr_();
     /// Atomic: workers (MCP / Lua / replay) read focusedContext() while the UI thread
@@ -1037,6 +1046,12 @@ class AppController {
     void TickAllContexts();
 
   private:
+    /// EnsurePaneLiveSyncStarted's main-thread completion: capture-then-check the backend
+    /// generation (issue #1081 — stale kick dropped + latch re-armed), then kick the live
+    /// fetch and seed the cleared ActiveTickets from the durable cache snapshot. UI thread.
+    void applyPaneSyncKickOnMainThread_(const std::string& paneId, TrackerConfig cfgCopy, const ViewsStore& views,
+                                        const std::string& viewId, std::uint64_t capturedGeneration,
+                                        std::vector<CachedTicket> seedTickets);
     /// TickAllContexts phase 2 — retire non-default contexts hidden longer than
     /// kHiddenContextGraceMs whose sync is idle (backend → ADR-0012 graveyard).
     void retireExpiredHiddenContexts_(std::chrono::steady_clock::time_point now);

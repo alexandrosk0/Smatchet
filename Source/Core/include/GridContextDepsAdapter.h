@@ -23,6 +23,7 @@
 #include "ITicketSyncDeps.h"
 
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -61,6 +62,8 @@ class GridContextDepsAdapter : public IOfflineQueueDeps, public ITicketSyncDeps 
     // like RequestDeferredLiveTrackerBackendSuccessNotify above. Forwards to the context's
     // mutex-guarded key (multi-grid Slice 1b).
     std::string CacheBackendKey() const override;
+    /// Capture-then-check token (issue #1081) — the context's backendGeneration_ atomic.
+    std::uint64_t BackendGeneration() const override;
 
     // ---- ITicketSyncDeps --------------------------------------------------------------
     ITrackerIssueReader* Backend() override;

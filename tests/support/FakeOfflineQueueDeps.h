@@ -20,6 +20,7 @@
 #include "TrackerFieldSchema.h"
 
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -52,6 +53,9 @@ class FakeOfflineQueueDeps : public IOfflineQueueDeps {
 
     /// Cache namespace handed to ticket-cache reads/writes during replay (multi-grid Slice 1b).
     std::string CacheBackendKeyImpl{"Jira"};
+    /// Capture-then-check token (issue #1081). Tests bump this mid-replay (via a deferred
+    /// `BackgroundTaskRunner`) to model a backend swap between work-capture and apply.
+    std::uint64_t BackendGenerationImpl = 0;
 
     LocalCacheManager* Cache() override { return CacheImpl.get(); }
     /// Latched strong role handles (debt 2026-06-07): swap-during-replay tests reset
@@ -59,6 +63,7 @@ class FakeOfflineQueueDeps : public IOfflineQueueDeps {
     std::shared_ptr<ITrackerIssueReader> ReaderShared() const override { return BackendImpl; }
     std::shared_ptr<ITrackerIssueMutations> MutationsShared() const override { return BackendImpl; }
     std::string CacheBackendKey() const override { return CacheBackendKeyImpl; }
+    std::uint64_t BackendGeneration() const override { return BackendGenerationImpl; }
     const std::vector<TrackerField>& AvailableFields() const override { return Fields; }
     RequiredFieldSet GetRequiredFieldSet(const std::string& /*projectKey*/, const std::string& /*issueTypeId*/,
                                          const std::string& /*issueTypeName*/) const override {

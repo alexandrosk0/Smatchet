@@ -51,12 +51,28 @@ bool ErrorTextContainsHttpStatus(const std::string& errorText, int statusCode) {
 
 } // namespace
 
-void AppController::RefreshLocalData() {
+void AppController::RefreshLocalData() { RefreshLocalDataCheckedImpl_(nullptr); }
+
+void AppController::RefreshLocalData(std::uint64_t capturedBackendGeneration) {
+    RefreshLocalDataCheckedImpl_(&capturedBackendGeneration);
+}
+
+void AppController::RefreshLocalDataCheckedImpl_(const std::uint64_t* capturedBackendGeneration) {
     if (Cache) {
         GridLiveContext& ctx = focusedContext();
         auto latestTickets = Cache->GetAllTickets(ctx.CacheBackendKeyCopy());
         {
             std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
+            // Capture-then-check (issue #1081): a worker caller latched the backend
+            // generation at work-capture time; if the backend was swapped/retired since,
+            // this wholesale replace would push the OLD backend's rows into the NEW
+            // backend's just-cleared grid. Re-checked under activeTicketsMutex_ so the
+            // decision is ordered against the swap path's locked clear+publish.
+            if (capturedBackendGeneration != nullptr && ctx.backendGeneration_.load() != *capturedBackendGeneration) {
+                LOG_INFO("AppController::RefreshLocalData skipped — backend generation moved since capture "
+                         "(issue #1081).");
+                return;
+            }
             ctx.ActiveTickets = std::move(latestTickets);
             ctx.activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ctx.ActiveTickets);
         }
@@ -82,8 +98,20 @@ void AppController::RefreshLocalDataAndWarmIssueTypeMeta() {
 
 void AppController::UpdateTicket(const CachedTicket& ticket) {
     if (Cache) {
-        Cache->SaveTicket(focusedContext().CacheBackendKeyCopy(), ticket);
-        RefreshLocalData(); // Push changes back to ActiveTickets vector
+        // Latch key + generation TOGETHER (issue #1081): reading the key here and re-reading
+        // it inside RefreshLocalData raced a backend swap — the save landed under the OLD key
+        // while the refresh read the NEW key (proven TOCTOU: a Jira row contaminating the
+        // GitHub namespace). The generation re-load detects a swap between the two latch
+        // loads; on mismatch the write is dropped entirely (capture-then-check).
+        GridLiveContext& ctx = focusedContext();
+        const std::uint64_t capturedGeneration = ctx.backendGeneration_.load();
+        const std::string capturedKey = ctx.CacheBackendKeyCopy();
+        if (ctx.backendGeneration_.load() != capturedGeneration) {
+            LOG_INFO("AppController::UpdateTicket skipped — backend swapped during key latch (issue #1081).");
+            return;
+        }
+        Cache->SaveTicket(capturedKey, ticket);
+        RefreshLocalData(capturedGeneration); // Push changes back to ActiveTickets vector
     }
 }
 

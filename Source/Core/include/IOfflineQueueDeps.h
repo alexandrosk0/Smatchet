@@ -15,6 +15,7 @@
 // so unit tests can exercise OfflineQueueService without constructing an AppController.
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -51,6 +52,14 @@ class IOfflineQueueDeps {
     /// callable from the replay background task. Shared (same override) with `ITicketSyncDeps`.
     /// Queue-row namespacing itself is Slice 1c — this getter only scopes the ticket tables.
     virtual std::string CacheBackendKey() const = 0;
+
+    /// Backend-generation token (issue #1081): bumped on every live backend swap and on
+    /// pane-context retirement (see GridLiveContext::backendGeneration_). Replay ticks capture
+    /// the value at work-capture time (alongside `CacheBackendKey`) and drop stale applies —
+    /// e.g. the post-replay `RefreshLocalData` — when the generation moved mid-flight, so a
+    /// completed replay against the OLD backend never wholesale-replaces the NEW backend's
+    /// ActiveTickets. Callable from worker threads (atomic load).
+    virtual std::uint64_t BackendGeneration() const = 0;
 
     /// Catalog of tracker fields used by `TickOfflineCreates` to build `IssueCreatePipeline`
     /// input. Returned by const-ref so the caller can snapshot via `std::make_shared<...>`
