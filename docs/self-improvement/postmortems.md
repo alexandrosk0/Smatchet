@@ -27,6 +27,19 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-09 · PR #1074, PR #1075 · `cr-out-of-band` ×2 (batch tail) + a configure-time gate that FATAL'd all CI
+### What escaped
+Two things, neither of which shipped *broken* to develop, but both owe the ledger:
+1. **`cr-out-of-band` ×2** — #1074/#1075 are the tail of the same close-gate-gaps burst as the 13-PR batch directly below; CodeRabbit's org-credit/rate-limit was still exhausted, so both merged with the label and no `cr-disposition:` trail. Same class + root cause as that batch.
+2. **#1074's new MSVC toolset guard FATAL'd every Windows CI required check** (Coverage / Windows+MSVC / Windows-light / Perf-fast / Packaging). The guard read `build.msvc_toolset_pin` (`14.38`, a **local-dev** convention) and `FATAL_ERROR`'d when the compiler minor differed — but CI runners use their own consistent (non-14.38) toolset. This did **not** escape: the merge-gate correctly **blocked** #1074 until it was fixed (`NOT DEFINED ENV{CI}` → guard is local-only). The "gate I added needed a gate" irony.
+### Root cause
+(1) The `pr-burst-guard` (infra P1, filed for the batch below) is still open — a >10-PR burst by one author always blows CR's hourly quota; nothing throttles it. (2) A **gate that encodes a local-dev assumption (the pinned toolset) was applied unconditionally**, so it fired in the one environment (CI) where the assumption is false. The local-only intent lived in the comment, not the condition.
+### Preventing gate
+- For the `cr-out-of-band` tail: no NEW gate — same as the batch below (`pr-burst-guard` throttle + `cr-disposition` trail, both already filed). Override legitimate (CR billing-unavailable; content reviewed by the orchestrator + specialist agents per-PR).
+- For the toolset-guard-broke-CI class: **rule — a configure-time / build gate that encodes a *local-dev* convention (a pinned toolset, a machine path, a `$HOME` assumption) MUST be scoped to local (`NOT DEFINED ENV{CI}`), or it breaks every CI runner.** Codified in the new infra self-improvement entry + the guard now carries the env-gate. Cheap future check: a reviewer/lint nudge on a new `message(FATAL_ERROR` in `CMakeLists.txt` that references a `project.config.json` *local* knob without an env-scope guard.
+### Filed as
+`docs/self-improvement/categories/infra.md` (local-dev gates must be CI-scoped; subagent build-dir reconfigure hazard).
+
 ## 2026-06-09 · PR #1046, PR #1049, PR #1052, PR #1053, PR #1056, PR #1057, PR #1058, PR #1059, PR #1060, PR #1061, PR #1062, PR #1064, PR #1072 · `postmortem-owed` batch (13 PRs) — `cr-out-of-band` ×13 + phantom red-checks
 
 ### What escaped
