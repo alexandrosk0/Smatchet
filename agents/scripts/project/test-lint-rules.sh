@@ -440,6 +440,64 @@ compute_glfw_violations() {
 # ---------------------------------------------------------------------------
 [ "${SMATCHET_LINT_BYPASS:-0}" = "1" ] && { echo "[test-lint-rules] BYPASS"; exit 0; }
 
+# --- interface-doc WARN map (Gap B / Slice 2) — symbol-pinned, NOT coarse header-touched. ---
+# Each entry: "<changed-header-regex>|||<leaf-doc>". The rule WARNs only when a `Type::method`
+# token *embedded in the leaf doc* also appears in a changed header's diff hunk AND the doc was
+# NOT touched — i.e. the doc pins a contract the interface just changed without the doc following.
+# A coarse "header changed without doc changed" heuristic was rejected after a noise spike
+# (2026-06-08): ~every Tracker Result<>-migration commit would fire (the leaf doc embeds essentially
+# one signature). Symbol-pinning fires ~only on genuine drift (the ITrackerIssueMutations::UpdateField
+# slip class). NO C++ signature/param parsing. KEEP this list curated + IN SYNC with AGENTS.md.
+INTERFACE_DOC_MAP=(
+    'Source/Core/include/(ITracker[A-Za-z]*|Tracker/[A-Za-z]*Client)\.h|||Source/Core/src/Tracker/AGENTS.md'
+)
+
+# interface_doc_emit <doc> <doc_changed:0|1> <pins_newline> <header_hunk_text>
+# Pure decision core (no git) — shared by the diff gate and --selftest. WARNs (stderr, never
+# changes exit code) for each doc-pinned `Type::method` whose <method> appears on an added/removed
+# line of the changed interface header(s), unless the doc itself was changed in the same diff.
+interface_doc_emit() {
+    local doc="$1" doc_changed="$2" pins="$3" hunk="$4"
+    [ "$doc_changed" = "1" ] && return 0
+    [ -n "$pins" ] || return 0
+    local pin method
+    while IFS= read -r pin; do
+        [ -n "$pin" ] || continue
+        method="${pin##*::}"
+        if printf '%s\n' "$hunk" | grep -qE "\\b${method}\\b"; then
+            echo "[interface-doc] WARN: ${doc} documents \`${pin}\` but the interface diff changed \`${method}\` without touching ${doc} — confirm the documented contract still matches (advisory; not blocking; suppress by updating the doc or removing the stale symbol ref)." >&2
+        fi
+    done <<< "$pins"
+}
+
+# interface_doc_warn <base-ref> — git wrapper: resolve merge-base, for each map entry collect the
+# changed headers + the doc's pinned `Type::method` tokens + the header diff hunk, then delegate to
+# interface_doc_emit. WARN-only (calibration phase, mirrors the dup gate); never touches exit code.
+interface_doc_warn() {
+    local base="$1"
+    local mb; mb="$(git merge-base "$base" HEAD 2>/dev/null || echo "$base")"
+    local changed; changed="$(git diff --name-only "$mb" 2>/dev/null || true)"
+    [ -n "$changed" ] || return 0
+    local entry hdr_re doc chdrs doc_changed pins hunk
+    for entry in "${INTERFACE_DOC_MAP[@]}"; do
+        hdr_re="${entry%%|||*}"; doc="${entry##*|||}"
+        chdrs="$(printf '%s\n' "$changed" | grep -E "^${hdr_re}$" || true)"
+        [ -n "$chdrs" ] || continue
+        doc_changed=0; printf '%s\n' "$changed" | grep -qxF "$doc" && doc_changed=1
+        [ "$doc_changed" = "1" ] && continue
+        [ -f "$doc" ] || continue
+        # `Type::method` tokens the doc pins (dedup). No backtick/param requirement — a bare
+        # qualified-id is the signal; the method-in-hunk check is what scopes it to real drift.
+        pins="$(grep -oE '[A-Za-z_][A-Za-z0-9_]*::[A-Za-z_][A-Za-z0-9_]*' "$doc" | sort -u || true)"
+        [ -n "$pins" ] || continue
+        # Added/removed lines of just the changed interface headers (word-quote $chdrs intentionally
+        # unquoted so multiple paths expand as separate pathspecs).
+        # shellcheck disable=SC2086
+        hunk="$(git diff "$mb" -- $chdrs 2>/dev/null | grep -E '^[+-]' || true)"
+        interface_doc_emit "$doc" "$doc_changed" "$pins" "$hunk"
+    done
+}
+
 MODE="diff"; ARG=""; REFRESH=0
 # --refresh is a modifier on --catalog; detect it independently of the
 # subcommand branch (keeps the subcommand parse value-free).
@@ -493,6 +551,19 @@ case "$MODE" in
     if ! grep -qF "duplication" AGENTS.md; then echo "SELFTEST FAIL: 'duplication' rule missing from AGENTS.md" >&2; miss=1; fi
     # Assert the no-glfw-in-core-headers rule-id is documented in AGENTS.md (absolute-0 gate).
     if ! grep -qF "no-glfw-in-core-headers" AGENTS.md; then echo "SELFTEST FAIL: 'no-glfw-in-core-headers' rule missing from AGENTS.md" >&2; miss=1; fi
+    # --- interface-doc WARN (Gap B / Slice 2) — assert the rule WARNs on real drift, stays quiet
+    # otherwise, and is documented. This exercises a FAILURE case (the pinned symbol changed without
+    # a doc touch), satisfying both Slice 2's selftest contract and Slice 3's "assert-a-failure" rule.
+    if ! grep -qF "interface-doc" AGENTS.md; then echo "SELFTEST FAIL: 'interface-doc' rule missing from AGENTS.md" >&2; miss=1; fi
+    _idoc_pins=$'ITrackerIssueMutations::UpdateField'
+    _idoc_hit=$'-    TrackerError UpdateField(const std::string& issueId, const TrackerField& field);\n+    Result<nlohmann::json, TrackerError> UpdateField(const std::string& issueId);'
+    _idoc_miss=$'+    void SomeUnrelatedThing();'
+    if [ -z "$(interface_doc_emit "Source/Core/src/Tracker/AGENTS.md" 0 "$_idoc_pins" "$_idoc_hit" 2>&1 1>/dev/null)" ]; then
+        echo "SELFTEST FAIL: interface-doc did not WARN when a doc-pinned symbol changed without a doc touch" >&2; miss=1; fi
+    if [ -n "$(interface_doc_emit "Source/Core/src/Tracker/AGENTS.md" 1 "$_idoc_pins" "$_idoc_hit" 2>&1 1>/dev/null)" ]; then
+        echo "SELFTEST FAIL: interface-doc WARNed despite the leaf doc being touched in the same diff" >&2; miss=1; fi
+    if [ -n "$(interface_doc_emit "Source/Core/src/Tracker/AGENTS.md" 0 "$_idoc_pins" "$_idoc_miss" 2>&1 1>/dev/null)" ]; then
+        echo "SELFTEST FAIL: interface-doc WARNed when the pinned symbol was absent from the header hunk" >&2; miss=1; fi
     st_py="$(resolve_python || true)"
     if [ -n "$st_py" ]; then
         if ! "$st_py" "$REPO_ROOT/agents/scripts/core/function_size_audit.py" --selftest; then miss=1; fi
@@ -756,6 +827,13 @@ case "$MODE" in
         "$cr_py" "$dup_aud" --diff "$BASE" || \
             echo "test-lint-rules: WARN: dup_audit.py --diff exited non-zero (advisory; not failing the gate)" >&2
     fi
+
+    # --- interface-doc WARN (Gap B / Slice 2; ADVISORY — never changes exit code) ---
+    # Symbol-pinned: WARNs when a leaf-doc-embedded `Type::method` token appears in a changed
+    # interface header's diff hunk without the doc being touched (the stale-contract-in-leaf-doc
+    # class — e.g. the ITrackerIssueMutations::UpdateField signature slip). Pure-bash, no python,
+    # no signature parsing; stderr-only, $rc untouched. See INTERFACE_DOC_MAP for the curated map.
+    interface_doc_warn "$BASE"
 
     # --- agent-prompt / AGENTS.md size rule (delta-gated; reduce-agent-prompt-bloat Slice 0) ---
     # New agent prompts (agents/core, agents/project) over 250 lines — or AGENTS.md over 150, or an
