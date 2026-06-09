@@ -45,6 +45,7 @@ STEPS=(
   "test-plan-naming|bash $CORE/test-plan-naming.sh"
   "test-portable-purity|bash $CORE/test-portable-purity.sh"
   "test-config-globs|bash $CORE/test-config-globs.sh --selftest && bash $CORE/test-config-globs.sh --check"
+  "test-gate-selftests|bash $CORE/test-gate-selftests.sh --selftest && bash $CORE/test-gate-selftests.sh --check"
   "test-agent-discovery-fixture|bash $CORE/test-agent-discovery-fixture.sh"
   "test-agent-build-facts|bash $CORE/test-agent-build-facts.sh"
   "test-markdown-links|bash $CORE/test-markdown-links.sh"

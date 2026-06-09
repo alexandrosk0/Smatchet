@@ -63,6 +63,7 @@ selftest() {
     local tmp rc=0
     tmp="$(mktemp -d)"
     # Unprovisioned tree → non-zero.
+    # selftest: asserts-failure
     if check_tree "$tmp" 1 >/dev/null 2>&1; then
         echo "selftest FAIL: unprovisioned tree should return non-zero" >&2
         rc=1

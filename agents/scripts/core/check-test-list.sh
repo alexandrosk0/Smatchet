@@ -44,6 +44,7 @@ if [ "$MODE" = "selftest" ]; then
     : > "$tmp/Core/Unlisted.test.cpp"
     printf 'add_executable(SmatchetTests\n  test_main.cpp\n  Core/Listed.test.cpp\n)\n' > "$tmp/CMakeLists.txt"
     out="$(unreferenced "$tmp/Core" "$tmp/CMakeLists.txt")"
+    # selftest: asserts-failure — a known-unlisted test must be flagged (gate's detection path).
     printf '%s\n' "$out" | grep -q '^Unlisted.test.cpp$' || { echo "FAIL: Unlisted.test.cpp not flagged"; fail=1; }
     if printf '%s\n' "$out" | grep -q '^Listed.test.cpp$'; then echo "FAIL: Listed.test.cpp wrongly flagged"; fail=1; fi
     [ "$fail" = 0 ] && { echo "check-test-list --selftest: PASS"; exit 0; } || { echo "check-test-list --selftest: FAIL"; exit 1; }

@@ -210,6 +210,7 @@ FOLLOWUP_TODAY="2026-06-05"; TODAY="2026-06-05"
 st "date past → FIRE"        FIRE      "$(_eval_date 2026-01-01)"
 st "date today → FIRE"       FIRE      "$(_eval_date 2026-06-05)"
 st "date future → SKIP"      SKIP      "$(_eval_date 2027-01-01)"
+# selftest: asserts-failure — malformed/bad-input triggers must classify as MALFORMED (detection path).
 st "date malformed → MAL"    MALFORMED "$(_eval_date 2026-6-5)"
 st "plan-shipped real → FIRE" FIRE     "$(_eval_plan_shipped gate-escape-postmortem)"
 st "plan-shipped absent → SKIP" SKIP   "$(_eval_plan_shipped no-such-plan-xyz)"

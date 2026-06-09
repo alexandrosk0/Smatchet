@@ -494,6 +494,7 @@ def run_selftest():
     # sub-threshold run is not.
     big = "void f(){ " + " ".join("int v%d = g(%d) + h(%d);" % (i, i, i) for i in range(40)) + " }"
     streams = {"A.cpp": normalized_stream(big), "B.cpp": normalized_stream(big)}
+    # selftest: asserts-failure — a known clone across two files must be detected (the gate's flag path).
     if not find_clones(streams):
         print("SELFTEST FAIL: identical large block across two files not detected", file=sys.stderr)
         miss = 1

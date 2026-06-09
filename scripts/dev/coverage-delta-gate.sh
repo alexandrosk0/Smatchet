@@ -312,6 +312,7 @@ diff --git a/scripts/dev/test-lua-mirror-smoke.sh b/scripts/dev/test-lua-mirror-
 EOF
 
     # ---- FALLTHROUGH cases (must NOT exempt — real runtime surface) ----
+    # selftest: asserts-failure — real runtime-surface diffs must NOT be exempted (the gate's block path).
 
     # New function with branches.
     _expect FALLTHROUGH "new function w/ branches" <<'EOF'

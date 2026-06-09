@@ -43,6 +43,12 @@ on:
       - 'agents/scripts/core/test-agent-discovery-fixture.sh'
       - 'agents/scripts/project/test-subsystem-docs.sh'
       - 'agents/scripts/core/agent_size_audit.py'
+      # test-gate-selftests scans these dirs for --selftest-exposing scripts, so
+      # any added/changed gate must re-trigger the convention-check.
+      - 'agents/scripts/core/test-gate-selftests.sh'
+      - 'agents/scripts/core/**'
+      - 'agents/scripts/project/**'
+      - 'scripts/dev/**'
       - 'CONTEXT-MAP.md'
       - 'Source/Core/src/**/AGENTS.md'
       - 'Source/Core/src/**/CONTEXT.md'
@@ -292,6 +298,12 @@ jobs:
         run: |
           bash agents/scripts/core/test-config-globs.sh --selftest
           bash agents/scripts/core/test-config-globs.sh --check
+
+      - name: test-gate-selftests — every --selftest-exposing gate asserts a failure case
+        if: steps.detect.outputs.docs == 'true'
+        run: |
+          bash agents/scripts/core/test-gate-selftests.sh --selftest
+          bash agents/scripts/core/test-gate-selftests.sh --check
 
       - name: test-markdown-links — no dangling [label](href) targets
         if: steps.detect.outputs.docs == 'true'

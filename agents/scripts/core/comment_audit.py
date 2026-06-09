@@ -377,6 +377,7 @@ def run_selftest():
         "// drops cpr from the public include graph (about a hundred translation units)",
     ]
     fails = 0
+    # selftest: asserts-failure — known commented-out-code fixtures must classify as flag-commented-code.
     for s in flag:
         b = classify_comment(s.strip(), s)
         if b != "flag-commented-code":

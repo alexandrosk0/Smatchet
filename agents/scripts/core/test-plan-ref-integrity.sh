@@ -63,6 +63,7 @@ if [ "${1:-}" = "--selftest" ]; then
   check "docs/plans/in-active.md"          0   # tier-less, lives in active   -> resolves
   check "docs/plans/in-shipped.md"         0   # tier-less, lives in shipped  -> resolves
   check "docs/plans/in-deferred.md"        0   # tier-less, lives in deferred -> resolves
+  # selftest: asserts-failure — an absent plan ref must be detected as dangling (want=1, the failure path).
   check "docs/plans/nonexistent-xyz.md"    1   # tier-less, nowhere           -> dangling
   check "docs/plans/active/nope.md"        1   # tier-ful, absent             -> dangling
   if [ "$fail" = "0" ]; then echo "test-plan-ref-integrity --selftest: PASS (5/5)"; exit 0; fi
