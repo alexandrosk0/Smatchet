@@ -59,6 +59,29 @@ has_entry() {
     grep -qE "^#+ .*PR #[0-9].*[,[:space:]]#$1([^0-9]|$)" "$LEDGER"
 }
 
+# Both the `Test-delta gate` (coverage-delta-gate.sh) and the `cr-out-of-band` override
+# are Core-cpp-scoped: the delta gate PASSES any diff with zero `Source/Core/src/*.cpp`
+# files (PROD_CHANGES==0 → exit 0), and cr-out-of-band only waives the (advisory)
+# CodeRabbit review. So when a flagged PR's SOLE trigger(s) are those two AND it touches
+# no Core cpp, the "escape" is a false positive — a transient non-terminal check state
+# captured at snapshot time, or an advisory CR waiver on a docs/prose diff. Drop it (same
+# spirit as the revert-subject false-positive fix). Genuine Core-cpp escapes still flag.
+core_scoped_only_trigger() {
+    case "$1" in
+        "override: cr-out-of-band") return 0 ;;
+        "red-check: Test-delta gate") return 0 ;;
+        "red-check: Test-delta gate; override: cr-out-of-band") return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# True when the merged PR changed at least one Source/Core/src/*.cpp file (the only
+# surface the Core-scoped gates above act on). Only the rare flagged PR pays this query.
+pr_touches_core_cpp() {
+    gh pr view "$1" --repo "$REPO" --json files --jq '.files[].path' 2>/dev/null \
+        | grep -qE '^Source/Core/src/.*\.cpp$'
+}
+
 # --- Lossless merge-time snapshot ledger (PRIMARY source for trigger 1+2) -----
 # docs/self-improvement/merge-snapshots.jsonl is the committed, append-only
 # gate-verdict ledger written by every merge actor at the decision instant
@@ -142,6 +165,10 @@ while IFS=$'\t' read -r num mergecommit labels redchecks; do
                 esac
             done
         fi
+    fi
+    # De-noise: Core-cpp-scoped trigger(s) on a PR that touched no Core cpp = false escape.
+    if [ -n "$trigger" ] && core_scoped_only_trigger "$trigger" && ! pr_touches_core_cpp "$num"; then
+        continue
     fi
     [ -n "$trigger" ] && owed+=("PR #$num — $trigger")
 done < <(gh pr list --repo "$REPO" --base develop --state merged --limit "$FETCH_N" \
