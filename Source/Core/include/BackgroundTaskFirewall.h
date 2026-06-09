@@ -20,12 +20,20 @@ enum class BackgroundTaskOutcome { Completed, StdException, UnknownException };
 
 /// Run `task` behind an exception firewall. Never lets an exception propagate (which would
 /// std::terminate the worker thread's process). On a std::exception, `outWhat` receives
-/// `ex.what()`; otherwise it is left untouched.
+/// `ex.what()` (best-effort); otherwise it is left untouched.
 template <typename TaskFn> BackgroundTaskOutcome RunBackgroundTaskFirewalled(TaskFn&& task, std::string& outWhat) {
     try {
         std::forward<TaskFn>(task)();
     } catch (const std::exception& ex) {
-        outWhat = ex.what();
+        // Best-effort what() capture: the string assignment itself can throw
+        // (std::bad_alloc under memory pressure) and would escape this catch,
+        // defeating the firewall — swallow it and report with an empty what.
+        try {
+            const char* msg = ex.what();
+            outWhat = (msg != nullptr) ? msg : "";
+        } catch (...) { // catch-all-ok: worker-thread firewall — must not propagate to std::terminate
+            outWhat.clear();
+        }
         return BackgroundTaskOutcome::StdException;
     } catch (...) { // catch-all-ok: worker-thread firewall — must not propagate to std::terminate
         return BackgroundTaskOutcome::UnknownException;

@@ -14,6 +14,7 @@
 #include <atomic>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 TEST_CASE("RunBackgroundTaskFirewalled runs a clean task to completion") {
     bool ran = false;
@@ -42,12 +43,17 @@ TEST_CASE("RunBackgroundTaskFirewalled contains a non-std exception") {
 TEST_CASE("done-flag stored after a throwing firewalled task still publishes") {
     // Worker-lambda-shaped: in AppController the done-flag store sits AFTER the firewalled
     // run and must execute even when the task throws — the reaper joins only done workers,
-    // so a skipped store would leak the thread until shutdown.
+    // so a skipped store would leak the thread until shutdown. Exercised cross-thread like
+    // the real pool: the worker runs firewall + release-store, the test thread joins and
+    // acquire-loads (CR finding on PR #1080 — the same-thread version was tautological).
     std::atomic<bool> done(false);
+    smatchet::BackgroundTaskOutcome outcome = smatchet::BackgroundTaskOutcome::Completed;
     std::string what;
-    const smatchet::BackgroundTaskOutcome outcome =
-        smatchet::RunBackgroundTaskFirewalled([]() { throw std::runtime_error("mid-task failure"); }, what);
-    done.store(true, std::memory_order_release);
+    std::thread worker([&]() {
+        outcome = smatchet::RunBackgroundTaskFirewalled([]() { throw std::runtime_error("mid-task failure"); }, what);
+        done.store(true, std::memory_order_release);
+    });
+    worker.join();
     CHECK(outcome == smatchet::BackgroundTaskOutcome::StdException);
     CHECK(done.load(std::memory_order_acquire));
 }
