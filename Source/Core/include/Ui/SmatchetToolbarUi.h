@@ -75,6 +75,11 @@ class SmatchetToolbarUi {
     std::vector<ToolbarButton> trackerAppendCache_;
     std::string trackerAppendCacheKey_;     // backend key the cache was loaded for ("" = none)
     bool trackerAppendCacheLoaded_ = false; // false forces a reload on the next RenderBar
+    // #611 site #7: the disk read for the append cache is loaded OFF the UI thread. While a load
+    // is in flight the bar renders the previous/empty append for the frame(s) until it lands; a
+    // rapid backend re-switch supersedes an older in-flight load (last-key-wins via the key check).
+    bool trackerAppendLoadInFlight_ = false;
+    std::string trackerAppendLoadInFlightKey_;
 };
 
 #endif // SMATCHET_UI_TOOLBAR_UI_H
