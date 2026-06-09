@@ -38,11 +38,16 @@ std::string DescriptionText(const UiDrawSession& d) {
     return std::string(d.bugReportDescBuf.data());
 }
 
+#ifndef SMATCHET_EMBEDDED_IN_UNREAL
+// Only used by the screenshot-attach path below, which is itself
+// #ifndef SMATCHET_EMBEDDED_IN_UNREAL — guard the def too, else the DX12
+// target compiles it out of every call site and trips -Wunused-function -Werror.
 std::string PendingShotStamp() {
     const auto now = std::chrono::steady_clock::now().time_since_epoch();
     const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
     return std::to_string(ms);
 }
+#endif
 
 // Launch the worker submit for the given screenshot path (may be empty).
 void LaunchSubmit(AppController& app, UiDrawSession& d, const std::string& shotPath) {
