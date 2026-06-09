@@ -119,10 +119,11 @@ class OfflineQueueService {
     /// Replace the queued payload with a user-resolved version and clear the conflict flag.
     /// The edit will be retried on the next TickOfflineFieldEdits pass. `kind` (text|scalar|
     /// unverified, ADR-0016) selects how the resolution is applied: `text` reconverts
-    /// `resolvedValue` Markdown→ADF/HTML via `richKind` into the payload key; `scalar` writes
-    /// `resolvedValue` into the payload key verbatim (no conversion); `unverified` ("Force Mine")
-    /// ignores `resolvedValue`, replays the existing queued payload unchanged, and only clears
-    /// the conflict state + bases.
+    /// `resolvedValue` Markdown→ADF/HTML via `richKind` into the payload key; `scalar` rebuilds
+    /// the payload via the production `BuildFieldPayload` builder so a structured field keeps its
+    /// `{"id":...}` / array shape (a bare display string dead-letters with HTTP 400 — #854; string
+    /// fields come back bare, verbatim write is the no-schema fallback); `unverified` ("Force
+    /// Mine") replays the queued payload unchanged and only clears the conflict state + bases.
     void ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedValue, const std::string& richKind,
                                   const std::string& kind = std::string("text"));
 
@@ -201,6 +202,11 @@ class OfflineQueueService {
     FieldEditConflictOutcome EvaluateFieldEditConflict(const PendingFieldEditRecord& row, nlohmann::json& fieldsPayload,
                                                        LocalCacheManager* cache, ITrackerIssueReader* reader,
                                                        FieldEditReplayTally& tally);
+
+    /// Look up a tracker field by id in the live catalog (`deps_.AvailableFields()`). Returns null
+    /// when the field is unknown (legacy/retired field or empty catalog). Used by scalar
+    /// conflict-resolution (#854) to rebuild the structured payload via the production builder.
+    const TrackerField* FindCatalogField(const std::string& fieldId) const;
 
     /// Record a `kind:"unverified"` conflict (server value couldn't be read) and suspend the row.
     /// Context: `{kind:"unverified", mine, fieldId}`. Always returns Suspend.
