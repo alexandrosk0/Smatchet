@@ -106,6 +106,33 @@ class NullableMutationsDeps : public FakeOfflineQueueDeps {
     }
 };
 
+// Deps whose BuildFieldPayload mirrors the PRODUCTION shape for a STRUCTURED field:
+// `{ field.Id : { "id": <value> } }` — exactly what JiraClient::BuildFieldPayload emits
+// (`{ field.Id : BuildValue(...) }`, where BuildValue for a select/priority/status field
+// returns `{"id":...}`; see Source/Core/src/Tracker/JiraIssueMutation.cpp BuildFieldPayload +
+// TrackerFieldPayloadPure::BuildFieldOptionPayload). #854 regression fixture: proves the
+// scalar conflict-resolve path routes through this builder seam instead of clobbering the
+// queued object payload with a bare display string.
+class StructuredFieldBackend : public smatchet_tests::FakeTrackerClient {
+  public:
+    Result<nlohmann::json, TrackerError> BuildFieldPayload(const TrackerField& field,
+                                                           const std::vector<std::string>& values) override {
+        if (values.empty()) {
+            return Result<nlohmann::json, TrackerError>::Ok(nlohmann::json::object({{field.Id, nullptr}}));
+        }
+        // Structured single-select shape: `{ fieldId : { "id": value } }`.
+        nlohmann::json inner = nlohmann::json::object();
+        inner["id"] = values.front();
+        return Result<nlohmann::json, TrackerError>::Ok(nlohmann::json::object({{field.Id, std::move(inner)}}));
+    }
+};
+
+class StructuredFieldDeps : public FakeOfflineQueueDeps {
+  public:
+    std::shared_ptr<StructuredFieldBackend> Structured{std::make_shared<StructuredFieldBackend>()};
+    std::shared_ptr<ITrackerIssueMutations> MutationsShared() const override { return Structured; }
+};
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -758,4 +785,106 @@ TEST_CASE("OfflineQueueServiceRuntime: null Mutations early-return resets in-fli
     CHECK(svc.GetPendingFieldEdits().empty());
     CHECK(svc.GetDeadPendingFieldEdits().empty());
     CHECK(deps.BackendImpl->UpdateIssueFieldsCallCount() == 1u);
+}
+
+// ---------------------------------------------------------------------------
+// #854 (DATA-LOSS) — resolving a SCALAR conflict on a STRUCTURED field (priority/status/
+// select, whose queued payload is `{"priority":{"id":"3"}}`) must rebuild the payload via the
+// PRODUCTION builder (`mutations->BuildFieldPayload`), NOT clobber it with a bare display
+// string. The old code wrote `{"priority":"Low"}` verbatim → Jira HTTP 400 → retries →
+// dead-letter → the user's resolved offline edit silently lost. Here the structured-shape
+// backend returns `{ fieldId : { "id": value } }` (the JiraClient::BuildFieldPayload shape),
+// so the resolved payload must keep that object shape, not the flattened label.
+//
+// "Use Theirs"/"Save" direction — adopt the chosen value: the rebuilt payload is `{"id":...}`.
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: #854 scalar resolve on structured field rebuilds object payload (theirs)" *
+          doctest::test_suite("[high-risk]")) {
+    TestEnvGuard guard;
+    StructuredFieldDeps deps;
+    deps.Fields = {MakeField("priority", TrackerFieldFamily::SelectSingle)};
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    // Queued payload is already the structured object shape (live edit path output).
+    const std::string payload = nlohmann::json{{"priority", {{"id", "3"}}}}.dump();
+    const auto id = svc.QueueFieldEditOffline("PROJ-854", "priority", payload, err, std::string(), "Low", true);
+    REQUIRE(err.empty());
+    REQUIRE(id > 0);
+
+    // Resolve to "High" (the server's display label / "Use Theirs"). The service feeds the
+    // display label into the production builder, which yields `{"id":"High"}` — NOT a bare
+    // string.
+    svc.ResolveFieldEditConflict(id, "High", std::string(), "scalar");
+
+    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+    const auto row = svc.GetPendingFieldEdits().front();
+    const nlohmann::json resolved = nlohmann::json::parse(row.FieldsPayloadJson);
+    REQUIRE(resolved.contains("priority"));
+    // The whole bug: the value must stay an OBJECT, not be flattened to a display string.
+    CHECK(resolved["priority"].is_object());
+    CHECK(resolved["priority"].value("id", std::string()) == "High");
+    CHECK_FALSE(resolved["priority"].is_string());
+}
+
+// ---------------------------------------------------------------------------
+// #854 — "Use Mine" direction (keep the user's queued value): the resolved display label is the
+// user's own value, so rebuilding it through the same production builder reproduces the SAME
+// structured object the queue already held — it survives as an object, never flattened. (The UI
+// passes a display string with kind:"scalar" for all three scalar buttons, so the service treats
+// every direction identically by re-running the builder; "Use Mine" re-deriving the same shape is
+// the correctness guarantee.)
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: #854 scalar resolve on structured field keeps object payload (mine)" *
+          doctest::test_suite("[high-risk]")) {
+    TestEnvGuard guard;
+    StructuredFieldDeps deps;
+    deps.Fields = {MakeField("priority", TrackerFieldFamily::SelectSingle)};
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    const std::string payload = nlohmann::json{{"priority", {{"id", "3"}}}}.dump();
+    const auto id = svc.QueueFieldEditOffline("PROJ-855", "priority", payload, err, std::string(), "Low", true);
+    REQUIRE(err.empty());
+    REQUIRE(id > 0);
+
+    // "Use Mine" passes the user's own display label ("Low").
+    svc.ResolveFieldEditConflict(id, "Low", std::string(), "scalar");
+
+    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+    const auto row = svc.GetPendingFieldEdits().front();
+    const nlohmann::json resolved = nlohmann::json::parse(row.FieldsPayloadJson);
+    REQUIRE(resolved.contains("priority"));
+    CHECK(resolved["priority"].is_object()); // object shape preserved, NOT "Low"
+    CHECK(resolved["priority"].value("id", std::string()) == "Low");
+}
+
+// ---------------------------------------------------------------------------
+// #854 — no-regression guard: a genuinely STRING-valued field (summary / free text) still
+// resolves to a BARE STRING. The production builder for a string field returns the bare string
+// under the field key, so the rebuilt payload is `{"summary":"<value>"}` — matching the old
+// behaviour for the only case the pre-#854 test covered. Uses the default FakeOfflineQueueDeps
+// whose BuildFieldPayload returns `{"values":[...]}`; what matters is that resolve does NOT
+// special-case string fields away from the builder seam. We assert the value is not an object.
+// ---------------------------------------------------------------------------
+TEST_CASE("OfflineQueueServiceRuntime: #854 scalar resolve on string field stays a bare string (no regression)") {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    // No catalog field for "summary" → degraded fallback writes the verbatim string, which is
+    // the correct shape for a genuinely string-valued field.
+    OfflineQueueService svc(deps);
+    std::string err;
+    const std::string payload = nlohmann::json{{"summary", "Old summary"}}.dump();
+    const auto id = svc.QueueFieldEditOffline("PROJ-856", "summary", payload, err, std::string(), "Old summary", true);
+    REQUIRE(err.empty());
+    REQUIRE(id > 0);
+
+    svc.ResolveFieldEditConflict(id, "New summary", std::string(), "scalar");
+
+    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+    const auto row = svc.GetPendingFieldEdits().front();
+    const nlohmann::json resolved = nlohmann::json::parse(row.FieldsPayloadJson);
+    REQUIRE(resolved.contains("summary"));
+    CHECK(resolved["summary"].is_string());
+    CHECK(resolved["summary"].get<std::string>() == "New summary");
 }
