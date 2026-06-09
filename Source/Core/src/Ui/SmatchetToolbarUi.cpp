@@ -120,16 +120,44 @@ void SmatchetToolbarUi::RefreshTrackerAppendCache(AppController& app) {
     if (trackerAppendCacheLoaded_ && key == trackerAppendCacheKey_) {
         return; // active backend unchanged — the cached append is still current
     }
-    trackerAppendCache_.clear();
-    if (!key.empty()) {
+    if (trackerAppendLoadInFlight_ && key == trackerAppendLoadInFlightKey_) {
+        return; // a load for this exact key is already running; wait for it to land
+    }
+    // #611 site #7: this runs every RenderBar frame; the persistent-views disk read used to happen
+    // here, ON the UI thread, on the first frame after a backend switch (Pillar-2 sub-100ms-but-
+    // real block). Move it to a worker: mark in-flight, load off-thread, apply on the UI thread.
+    trackerAppendLoadInFlightKey_ = key;
+    if (key.empty()) {
+        // No active backend → empty append; no disk read needed, settle synchronously.
+        trackerAppendCache_.clear();
+        trackerAppendCacheKey_ = key;
+        trackerAppendCacheLoaded_ = true;
+        trackerAppendLoadInFlight_ = false;
+        return;
+    }
+    trackerAppendLoadInFlight_ = true;
+    // Lifetime: SmatchetToolbarUi + AppController are app-lifetime; ~AppController joins all
+    // LaunchBackgroundTask workers before member teardown, and PostToMainThread no-ops after
+    // BeginShutdown() — so capturing `this`/`&app` is safe (same contract as the editor-Save path).
+    app.LaunchBackgroundTask([this, &app, key]() {
         const PersistentViewsFile disk = ConfigManager::LoadPersistentViewsFromDisk();
+        std::vector<ToolbarButton> append;
         const auto it = disk.Backends.find(key);
         if (it != disk.Backends.end()) {
-            trackerAppendCache_ = it->second.ToolbarAppend;
+            append = it->second.ToolbarAppend;
         }
-    }
-    trackerAppendCacheKey_ = key;
-    trackerAppendCacheLoaded_ = true;
+        app.mainThreadDispatcher.PostToMainThread([this, key, append]() {
+            // Apply only if this load is still the current one — a newer backend switch (or a forced
+            // reload that re-kicked under a different key) supersedes an older in-flight result.
+            if (trackerAppendLoadInFlightKey_ != key) {
+                return; // superseded — discard this stale snapshot
+            }
+            trackerAppendCache_ = append;
+            trackerAppendCacheKey_ = key;
+            trackerAppendCacheLoaded_ = true;
+            trackerAppendLoadInFlight_ = false;
+        });
+    });
 }
 
 void SmatchetToolbarUi::RenderBar(AppController& app, TrackerConfig& cfg) {
