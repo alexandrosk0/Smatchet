@@ -1156,14 +1156,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          APK="Source/Mobile/AndroidApp/app/build/outputs/apk/debug/app-debug.apk"
-          test -f "$APK" || { echo "::error::debug APK not produced at $APK"; exit 1; }
+          APK_DIR="Source/Mobile/AndroidApp/app/build/outputs/apk/debug"
+          # A single-ABI injected build (-Pandroid.injected.build.abi=arm64-v8a) names
+          # the output app-arm64-v8a-debug.apk, not app-debug.apk — glob so either the
+          # split-ABI or the universal naming satisfies the check.
+          APK="$(find "$APK_DIR" -maxdepth 1 -name '*.apk' -print -quit)"
+          test -n "$APK" || { echo "::error::no debug APK produced under $APK_DIR"; ls -lR "$APK_DIR" 2>/dev/null || true; exit 1; }
           ls -l "$APK"
 
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: smatchet-mobile-debug-apk-arm64-v8a
-          path: Source/Mobile/AndroidApp/app/build/outputs/apk/debug/app-debug.apk
+          path: Source/Mobile/AndroidApp/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
