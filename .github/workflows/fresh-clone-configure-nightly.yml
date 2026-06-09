@@ -1,0 +1,154 @@
+name: Fresh-clone configure nightly
+
+# Scheduled fresh-clone configure gate (close-gate-gaps plan § Slice 4, Gap D).
+#
+# The normal per-PR CI always runs against a WARM FetchContent cache
+# (actions/cache restores .fetchcontent-src), so a PR that ADDS or CHANGES a git
+# FetchContent_Declare can pass green while the very first cold `git clone` of
+# that dep would FAIL configure — the cpr-submodule class (#1031, fixed with
+# GIT_SUBMODULES "") only triggers on a fresh clone, which warm-cache CI never
+# re-exercises after the cache is seeded.
+#
+# This job forces a REAL fresh clone of every git dep by pointing
+# FETCHCONTENT_BASE_DIR at a brand-new empty temp dir under RUNNER_TEMP (so
+# CMake cannot reuse any pre-populated _deps) and runs the configure step only —
+# the failure class is a *configure* failure; a fresh clone + configure is what
+# reproduces #1031. No build/test needed.
+#
+# Scheduled (nightly) + workflow_dispatch only — NOT per-PR. The failure class
+# triggers only on the rare PR that adds/changes a git dep; paying a multi-minute
+# fresh clone on every PR is poor cost/value. A rare regression caught within
+# ~24 h is acceptable, with develop's post-merge CI as the backstop (grill Q3).
+# NO paths-triggered PR variant and NO merge_group trigger (this is not a
+# merge-queue gate).
+
+on:
+  schedule:
+    - cron: '0 5 * * *'    # 05:00 UTC daily (offset from sanitizer-nightly's 04:00)
+  workflow_dispatch: {}     # manual trigger for on-demand verification
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: fresh-clone-configure-nightly
+  cancel-in-progress: false
+
+env:
+  # Force JS actions onto Node 24 (Node 20 deprecated 2026-06-16). Mirrors the
+  # other workflows — covers actions/checkout, ilammy/msvc-dev-cmd, etc.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  fresh-clone-configure:
+    name: Fresh-clone configure (ninja-iter-msvc, cold FetchContent)
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - name: Checkout develop
+        uses: actions/checkout@v4
+        with:
+          ref: develop
+          persist-credentials: false
+
+      # Same MSVC toolchain the real per-PR configure uses (build-and-test.yml
+      # windows-msvc job). ninja-iter-msvc is an MSVC preset; no LLVM/clang-cl
+      # needed (that is only for the clang-asan sanitizer presets).
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # DELIBERATELY NO `actions/cache` for FetchContent here. The whole point of
+      # this job is a COLD cache: every git dep must clone from scratch. Caching
+      # .fetchcontent-src (as the per-PR jobs do) would defeat the gate.
+
+      - name: Create empty fresh FETCHCONTENT_BASE_DIR
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A brand-new empty dir under RUNNER_TEMP — guaranteed no pre-populated
+          # _deps, so CMake must `git clone` every git FetchContent_Declare
+          # (json, cpr, sqlitecpp, httplib, md4c, ghc_filesystem, glfw, sol2,
+          # imgui, whisper_cpp) from scratch. This reproduces the cold-CI /
+          # fresh-worktree configure-failure class (#1031).
+          fresh="${RUNNER_TEMP//\\//}/fc-fresh-$GITHUB_RUN_ID"
+          rm -rf "$fresh"
+          mkdir -p "$fresh"
+          echo "FRESH_FC_DIR=$fresh" >> "$GITHUB_ENV"
+          echo "Fresh FetchContent base dir: $fresh"
+          ls -la "$fresh"
+
+      # Configure ONLY — same preset (ninja-iter-msvc) and same feature flags as
+      # the per-PR windows-msvc configure (build-and-test.yml line ~233:
+      # `cmake --preset ninja-iter-msvc`, no feature overrides — so whisper_cpp
+      # IS fetched, faithfully exercising the heaviest git dep). The lone
+      # difference vs per-PR is -DFETCHCONTENT_BASE_DIR pointing at the fresh
+      # empty dir, forcing the cold clone. `2>&1 | tee` captures the full log so
+      # the assertion step can grep for the configure-done markers; pipefail
+      # propagates a non-zero cmake exit through tee.
+      - name: Configure ninja-iter-msvc (fresh clone, cold cache)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake --preset ninja-iter-msvc \
+            -DFETCHCONTENT_BASE_DIR="${FRESH_FC_DIR}" \
+            2>&1 | tee configure.log
+
+      # Assert success: even though `set -o pipefail` already fails the step on a
+      # non-zero cmake exit, also require the CMake configure-done markers in the
+      # log. A configure that errors late (e.g. a FetchContent populate failure)
+      # must NOT slip through as a silent green.
+      - name: Assert configure succeeded
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! grep -q -- '-- Configuring done' configure.log; then
+            echo "::error::'Configuring done' not found in configure log — fresh-clone configure failed"
+            exit 1
+          fi
+          if ! grep -q -- '-- Generating done' configure.log; then
+            echo "::error::'Generating done' not found in configure log — fresh-clone generate failed"
+            exit 1
+          fi
+          echo "Fresh-clone configure succeeded (Configuring done + Generating done present)"
+
+      - name: Surface configure tail in job summary on failure
+        if: failure()
+        shell: bash
+        run: |
+          echo "## Fresh-clone configure failure (ninja-iter-msvc, cold FetchContent)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f configure.log ]; then
+            tail -120 configure.log >> "$GITHUB_STEP_SUMMARY" || true
+          else
+            echo "(no configure.log produced)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update issue on failure
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          title="Fresh-clone configure nightly failed (cold FetchContent)"
+          # De-dup: reuse the single open issue if present.
+          existing=$(gh issue list --state open --label bug --search "$title in:title" \
+                       --json number --jq '.[0].number' 2>/dev/null || true)
+          body="The nightly fresh-clone (cold FetchContent) configure on \`develop\` failed.
+
+          Run: ${RUN_URL}
+
+          This is the Gap-D gate (close-gate-gaps § Slice 4): it forces a real
+          \`git clone\` of every FetchContent dep into an empty FETCHCONTENT_BASE_DIR
+          and asserts \`cmake --preset ninja-iter-msvc\` reaches 'Configuring done'.
+          A failure here means a fresh / cold-CI configure is broken (the #1031
+          cpr-submodule class) even though warm-cache per-PR CI is green. See the
+          job summary for the configure log tail."
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            gh issue comment "$existing" --body "Recurred: ${RUN_URL}" || true
+          else
+            gh issue create --title "$title" --label bug --body "$body" || true
+          fi
