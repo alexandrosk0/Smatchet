@@ -11,8 +11,7 @@
 /// filter autocomplete engines. These are pure string / prefix-match / field-catalog
 /// utilities with NO backend-specific grammar — the per-backend operator/keyword
 /// tables, value-context parsing, and Suggest() entry points stay in each engine.
-///
-/// This is shared *implementation*, not a shared *interface*: it never touches
+/// Shared *implementation*, not a shared *interface*: it never touches
 /// ITrackerBackend or its role interfaces (no backend-leak invariant violation).
 namespace tracker_query_suggest {
 
