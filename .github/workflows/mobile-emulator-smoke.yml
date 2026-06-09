@@ -1,0 +1,214 @@
+name: Mobile emulator smoke
+
+# WS5 item 18 (docs/plans/active/mobile-mvp-completion.md) — boot the debug APK on
+# an x86_64 Android emulator and assert the native shell reaches first-frame
+# readiness ("ImGui ready" in logcat). This is the only CI job that exercises the
+# real EGL/GLES3 surface + frame loop end-to-end on a (software-rendered) GPU; the
+# .so-link and assembleDebug jobs stop at link/package time.
+#
+# ADVISORY: the job name keeps the "Mobile — " prefix and is intentionally NOT on
+# the merge-gate poller allow-list, so a flaky emulator boot can never block merge.
+# It is path-filtered (heavy: builds x86_64 OpenSSL + APK + boots an AVD) so it only
+# runs when mobile/native/cmake surfaces change — unlike the seconds-fast
+# always-on Android security gate.
+
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - "Source/Mobile/**"
+      - "Source/Core/**"
+      - "CMakeLists.txt"
+      - "cmake/**"
+      - ".github/workflows/mobile-emulator-smoke.yml"
+      - ".github/scripts/mobile-emulator-smoke.sh"
+  push:
+    branches: [develop]
+    paths:
+      - "Source/Mobile/**"
+      - "Source/Core/**"
+      - "CMakeLists.txt"
+      - "cmake/**"
+      - ".github/workflows/mobile-emulator-smoke.yml"
+      - ".github/scripts/mobile-emulator-smoke.sh"
+
+concurrency:
+  group: mobile-emulator-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  mobile-emulator-smoke:
+    name: Mobile — Android emulator smoke (x86_64, boot APK + first frame, advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      # Keep these pins in lockstep with the mobile-android-ndk / -apk jobs in
+      # build-and-test.yml — same OpenSSL/NDK so the toolchain matches (the OpenSSL
+      # cache key is per-ABI, so x86_64 builds separately from arm64-v8a).
+      OPENSSL_VERSION: "3.5.6"
+      OPENSSL_SHA256: "deae7c80cba99c4b4f940ecadb3c3338b13cb77418409238e57d7f31f2a3b736"
+      NDK_VERSION: "26.3.11579264"
+      ANDROID_API: "24"
+      EMULATOR_API: "30"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Enable KVM (hardware-accelerated emulator)
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Set up JDK 17 (AGP 8.5 toolchain)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install OpenSSL build prereqs + ninja
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y make perl ninja-build
+
+      - name: Install + pin Android NDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          test -n "$SDK" || { echo "::error::ANDROID_SDK_ROOT/ANDROID_HOME unset on runner"; exit 1; }
+          SDKMANAGER="${SDK}/cmdline-tools/latest/bin/sdkmanager"
+          yes 2>/dev/null | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "ndk;${NDK_VERSION}" >/dev/null
+          NDK="${SDK}/ndk/${NDK_VERSION}"
+          test -d "$NDK" || { echo "::error::NDK ${NDK_VERSION} not found at $NDK"; exit 1; }
+          echo "ANDROID_NDK_ROOT=$NDK" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          echo "OPENSSL_BASE=${RUNNER_TEMP}/openssl-android" >> "$GITHUB_ENV"
+          echo "OPENSSL_PREFIX=${RUNNER_TEMP}/openssl-android/x86_64" >> "$GITHUB_ENV"
+
+      - name: Cache prebuilt OpenSSL (x86_64)
+        id: openssl-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/openssl-android/x86_64
+          key: openssl-${{ env.OPENSSL_VERSION }}-ndk-${{ env.NDK_VERSION }}-x86_64-api${{ env.ANDROID_API }}
+
+      - name: Build static OpenSSL for x86_64 (NDK clang) — on cache miss
+        if: steps.openssl-cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}"
+          curl -fsSL \
+            "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" \
+            -o openssl.tar.gz
+          echo "${OPENSSL_SHA256}  openssl.tar.gz" | sha256sum -c -
+          tar xzf openssl.tar.gz
+          cd "openssl-${OPENSSL_VERSION}"
+          export PATH="${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin:${PATH}"
+          # android-x86_64 target (the emulator ABI) — mirror the arm64 build's flags.
+          ./Configure android-x86_64 -D__ANDROID_API__="${ANDROID_API}" \
+            no-shared no-tests no-apps no-docs --libdir=lib --prefix="${OPENSSL_PREFIX}"
+          make -j"$(nproc)"
+          make install_sw
+
+      - name: Verify OpenSSL static libs present
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "${OPENSSL_PREFIX}/lib/libssl.a"               || { echo "::error::libssl.a missing"; exit 1; }
+          test -f "${OPENSSL_PREFIX}/lib/libcrypto.a"            || { echo "::error::libcrypto.a missing"; exit 1; }
+          test -f "${OPENSSL_PREFIX}/include/openssl/opensslv.h" || { echo "::error::opensslv.h missing"; exit 1; }
+
+      - name: Cache FetchContent _deps (emulator-x86_64)
+        uses: actions/cache@v4
+        with:
+          path: .fetchcontent-src
+          key: ${{ runner.os }}-fetchcontent-android-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Write local.properties (sdk.dir + cmake.dir ≥ 3.24)
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          CMAKE_BIN="$(command -v cmake)"
+          CMAKE_DIR="$(dirname "$(dirname "$CMAKE_BIN")")"
+          cmake --version | head -1
+          {
+            echo "sdk.dir=${SDK}"
+            echo "cmake.dir=${CMAKE_DIR}"
+          } > Source/Mobile/AndroidApp/local.properties
+          cat Source/Mobile/AndroidApp/local.properties
+
+      - name: Gradle assembleDebug (x86_64 only)
+        shell: bash
+        env:
+          SMATCHET_ANDROID_OPENSSL_BASE: ${{ env.OPENSSL_BASE }}
+        run: |
+          set -euo pipefail
+          cd Source/Mobile/AndroidApp
+          chmod +x ./gradlew
+          ./gradlew --no-daemon assembleDebug -Pandroid.injected.build.abi=x86_64
+
+      - name: Locate debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          readarray -t APKS < <(
+            find Source/Mobile/AndroidApp/app/build -type f \
+              \( -name 'app-debug.apk' -o -name 'app-*-debug.apk' \) | sort
+          )
+          APK="${APKS[0]:-}"
+          if [ -z "$APK" ]; then
+            echo "::error::no debug APK produced under Source/Mobile/AndroidApp/app/build"
+            exit 1
+          fi
+          ls -l "$APK"
+          echo "SMATCHET_APK_PATH=$(pwd)/$APK" >> "$GITHUB_ENV"
+
+      - name: Cache AVD snapshot
+        uses: actions/cache@v4
+        id: avd-cache
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: avd-${{ env.EMULATOR_API }}-x86_64
+
+      - name: Create AVD + snapshot (cache miss)
+        if: steps.avd-cache.outputs.cache-hit != 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ env.EMULATOR_API }}
+          arch: x86_64
+          target: google_apis
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot-load
+          disable-animations: true
+          script: echo "AVD primed"
+
+      - name: Boot emulator + install APK + assert first-frame marker
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          SMATCHET_APK_PATH: ${{ env.SMATCHET_APK_PATH }}
+        with:
+          api-level: ${{ env.EMULATOR_API }}
+          arch: x86_64
+          target: google_apis
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot-save
+          disable-animations: true
+          script: bash .github/scripts/mobile-emulator-smoke.sh

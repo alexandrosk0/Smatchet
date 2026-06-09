@@ -1188,6 +1188,31 @@ jobs:
           chmod +x ./gradlew
           ./gradlew --no-daemon assembleDebug -Pandroid.injected.build.abi=arm64-v8a
 
+      - name: Gradle testDebugUnitTest (Robolectric JVM, WS5 item 17)
+        shell: bash
+        env:
+          # testDebugUnitTest does NOT drive externalNativeBuild, but pass the same
+          # OpenSSL base so any incidental configure of the native path resolves exactly
+          # as assembleDebug did above (the heavy build is already cached/done here).
+          SMATCHET_ANDROID_OPENSSL_BASE: ${{ env.OPENSSL_BASE }}
+        run: |
+          set -euo pipefail
+          cd Source/Mobile/AndroidApp
+          # JVM/Robolectric harness for SmatchetActivity's IME/Unicode-queue bridge
+          # (docs/plans/active/mobile-mvp-completion.md WS5 item 17). Pure-Java; no device,
+          # no .so load. Robolectric pulls its android-all jar (sdk=34, pinned in
+          # robolectric.properties) from mavenCentral at test time.
+          ./gradlew --no-daemon testDebugUnitTest
+
+      - name: Upload JVM unit-test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smatchet-mobile-jvm-unit-test-report
+          path: Source/Mobile/AndroidApp/app/build/reports/tests/testDebugUnitTest
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Verify APK produced
         shell: bash
         run: |

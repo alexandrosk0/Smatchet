@@ -129,8 +129,15 @@ Per `AGENTS.md` § Verification automation. Per-PR buckets declared in each PR; 
 ## Implementation log
 *(populated post-ship — bullet per shipped commit: `<sha> · <one-line summary>`)*
 
+**WS5 — Test / CI enablement (one PR, items 17+18+19):**
+- `7689ccbe` · item 19 — OpenSSL fail-fast behavioral configure-probe (`tests/bats/android_openssl_failfast.bats` + ctest mirror over `tests/fixtures/android-openssl/probe.cmake`, `cmake -P` script mode; bats marker-text precision, ctest exit-code WILL_FAIL).
+- item 17 — JVM/Robolectric harness `SmatchetActivityImeTest.java` (7 tests: FIFO drain, astral codepoint, NUL-skip, in-capacity full delivery, over-capacity non-blocking cap, inset packing) driving private `enqueueText` via reflection + public `pollUnicodeChar`/`pollContentInsets`; `Robolectric.buildActivity(...).get()` skips `onCreate` (no .so load). `app/build.gradle` testOptions + junit/robolectric deps; `robolectric.properties` sdk=34. Wired into the `mobile-android-apk` CI job (`./gradlew testDebugUnitTest`, JVM env reuse). **#1070 hand-off:** flip the over-capacity expected count 256→300 when WS3 makes the queue lossless.
+- item 18 — `mobile-emulator-smoke.yml` (advisory, path-filtered): x86_64 OpenSSL + APK + `reactivecircus/android-emulator-runner@v2` (api-30, swiftshader), `mobile-emulator-smoke.sh` polls logcat for the real `ImGui ready` first-frame marker, asserts process alive. Gives WS3/WS4 a deterministic on-device verification path.
+
 ## Deviations from plan
 *(populated post-ship)*
+
+- **WS5 item 17 CI placement** — plan said "lands before PR-4"; the JVM test is *wired* (CI step present) ahead of WS3, but the Robolectric `testDebugUnitTest` + the emulator boot are **executed only in advisory CI** — no local JVM/Android SDK on the authoring host (validation-strategy decision: "ship + flag residue"). Local validation done: shellcheck (both scripts), YAML parse (both workflows), bats failfast 5/5, mobile-security gate. JVM/emulator execution is flagged in the final manual/CI-verification checklist.
 
 ## Verification (actual)
 *(populated post-ship)*
