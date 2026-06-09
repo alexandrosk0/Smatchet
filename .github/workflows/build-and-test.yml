@@ -1159,8 +1159,15 @@ jobs:
           # A single-ABI injected build (-Pandroid.injected.build.abi=arm64-v8a) is an
           # IDE-style deploy build: AGP redirects the APK to intermediates/apk/debug/
           # (app-debug.apk), NOT the usual outputs/apk/debug/. Search the whole app/build
-          # tree so either location — and either app-debug.apk or app-<abi>-debug.apk — wins.
-          APK="$(find Source/Mobile/AndroidApp/app/build -type f -name '*.apk' -print -quit)"
+          # tree, constrained to the canonical debug-APK names (app-debug.apk universal or
+          # app-<abi>-debug.apk split), and sort so selection is deterministic if a future
+          # ABI split ever produces more than one. readarray + process-substitution keeps
+          # this pipefail-safe (a `find | sort | head` pipe would SIGPIPE under pipefail).
+          readarray -t APKS < <(
+            find Source/Mobile/AndroidApp/app/build -type f \
+              \( -name 'app-debug.apk' -o -name 'app-*-debug.apk' \) | sort
+          )
+          APK="${APKS[0]:-}"
           if [ -z "$APK" ]; then
             echo "::error::no debug APK produced under Source/Mobile/AndroidApp/app/build"
             find Source/Mobile/AndroidApp/app/build -type d -name apk -exec ls -lR {} + 2>/dev/null || true
