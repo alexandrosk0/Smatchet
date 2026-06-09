@@ -184,6 +184,12 @@ class SmatchetUI {
     // opens and closes its own scope internally or runs entirely outside any scope.
     // Pre-existing perf-scope seams are reused verbatim, so no new perf markers appear.
     void drawInitConfigOnce(AppController& app, UiDrawSession& d);
+    // Resolves cfg.UiMode -> d.effectiveUiMode once per frame at the top of Draw.
+    // Manual Desktop/Mobile pin directly; Auto applies width hysteresis on
+    // io.DisplaySize.x (enter Mobile <= 720 px, exit Desktop >= 860 px, hold the
+    // previous frame's decision in the dead band). No fork yet in slice 2 — only
+    // the resolved field + a temp overlay; the Draw() mobile fork lands in slice 3.
+    void drawResolveUiMode(UiDrawSession& d);
     void drawApplyAppearanceSettings(UiDrawSession& d);
     void drawPerFrameTicksAndHandlers(AppController& app, UiDrawSession& d);
     void drawPreWindowOverlays(AppController& app, UiDrawSession& d);

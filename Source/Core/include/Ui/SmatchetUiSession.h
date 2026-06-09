@@ -141,6 +141,19 @@ struct UiDrawSession {
     bool cfgInitialized = false;
     TrackerConfig cfg;
 
+    // ---- Dual-UI mode (dual-ui-mode-desktop-mobile plan) ----
+    // Resolved once per frame at the top of SmatchetUI::Draw via drawResolveUiMode.
+    // `effectiveUiMode` is the single source of truth AND the hysteresis carry: in
+    // Auto mode it survives across frames so the 720/860 dead band holds the last
+    // decision instead of flapping. mobilePage/mobileDrawerOpen are the mobile
+    // shell's per-session view state; the two *Seeded flags reset on the
+    // Mobile->Desktop edge so re-entering Mobile re-applies the saved/seeded layout.
+    EffectiveUiMode effectiveUiMode = EffectiveUiMode::Desktop;
+    MobilePage mobilePage = MobilePage::Grid;
+    bool mobileDrawerOpen = false;
+    bool mobilePageSeeded = false;
+    bool mobileDockSeeded = false;
+
     /// Merge-conflict resolution modal for offline field edits. See RICH_TEXT_EDITING_V2_PLAN.md PR-F.
     bool showConflictResolveModal = false;
     std::int64_t conflictResolveDbId = 0; ///< DB id of the pending_field_edit with the conflict.

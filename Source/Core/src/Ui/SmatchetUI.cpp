@@ -62,6 +62,13 @@
 
 UiDrawSession g_ui;
 static SmatchetPerfUi g_perfUi;
+
+// Auto-mode width hysteresis (dual-ui-mode-desktop-mobile plan). Enter Mobile at or
+// below the max-enter width; exit to Desktop at or above the min-exit width; hold the
+// previous decision inside the dead band so a near-breakpoint resize never flaps.
+// Relocates to SmatchetMobileShellUi.cpp's anon namespace in Slice 3.
+static constexpr float kMobileEnterMaxWidthPx = 720.0f;
+static constexpr float kMobileExitMinWidthPx = 860.0f;
 static bool g_openFilePathsHandlerInstalled = false;
 
 // Forward decls for helpers shared with SmatchetUI_Layout.cpp / SmatchetUI_MainMenu.cpp.
@@ -262,6 +269,7 @@ StartFieldCatalogFetchAsync(AppController& app, const TrackerConfig& fetchCfg, c
 void SmatchetUI::Draw(AppController& app) {
     UiDrawSession& d = g_ui;
     drawInitConfigOnce(app, d);
+    drawResolveUiMode(d);
     drawApplyAppearanceSettings(d);
     drawPerFrameTicksAndHandlers(app, d);
     // Deferred view-create/-delete latches (Pillar 3 crash fix — see
@@ -283,7 +291,52 @@ void SmatchetUI::Draw(AppController& app) {
     DrainAppUpdateCheck(d);
     drawSecondaryWindows(app, d);
     drawDockDebugOverlay(d);
+
+    // [temp-debug] Slice-2 effective-mode + width readout. Removed in Slice 3 when the
+    // real mobile fork lands. Verifies the Auto-mode 720/860 hysteresis by resizing.
+    {
+        const ::ImGuiIO& io = ::ImGui::GetIO();
+        ::ImGui::SetNextWindowBgAlpha(0.65f);
+        ::ImGui::SetNextWindowPos(::ImVec2(8.0f, 8.0f), ImGuiCond_Always);
+        if (::ImGui::Begin("##temp-debug-uimode", nullptr,
+                           ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav |
+                               ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_AlwaysAutoResize |
+                               ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings)) {
+            ::ImGui::Text("[temp-debug] uiMode cfg=%s eff=%s w=%.0f", uiModeToString(d.cfg.UiMode),
+                          d.effectiveUiMode == EffectiveUiMode::Mobile ? "Mobile" : "Desktop",
+                          io.DisplaySize.x);
+        }
+        ::ImGui::End();
+    }
+
     drawEndOfFramePersistence(d);
+}
+
+// Resolves cfg.UiMode -> d.effectiveUiMode once per frame. Manual Desktop/Mobile pin
+// directly; Auto applies width hysteresis on io.DisplaySize.x: enter Mobile at <= 720 px,
+// exit to Desktop at >= 860 px, and hold the previous frame's decision inside the dead
+// band so a window hovering near the breakpoint never flaps. d.effectiveUiMode is both
+// the output AND the cross-frame carry — it is seeded to Desktop in UiDrawSession.
+void SmatchetUI::drawResolveUiMode(UiDrawSession& d) {
+    switch (d.cfg.UiMode) {
+        case UiMode::Desktop:
+            d.effectiveUiMode = EffectiveUiMode::Desktop;
+            return;
+        case UiMode::Mobile:
+            d.effectiveUiMode = EffectiveUiMode::Mobile;
+            return;
+        case UiMode::Auto:
+        default:
+            break;
+    }
+
+    const float width = ::ImGui::GetIO().DisplaySize.x;
+    if (width <= kMobileEnterMaxWidthPx) {
+        d.effectiveUiMode = EffectiveUiMode::Mobile;
+    } else if (width >= kMobileExitMinWidthPx) {
+        d.effectiveUiMode = EffectiveUiMode::Desktop;
+    }
+    // else: dead band (720 < w < 860) — hold d.effectiveUiMode from the prior frame.
 }
 
 // One-time config load + layout-schema migration. Latches `cfgInitialized`; subsequent
