@@ -2,6 +2,7 @@
 
 #include "Diagnostics/CrashSink.h"
 
+#include <atomic>
 #include <csignal>
 #include <cstdlib>
 #include <exception>
@@ -22,10 +23,20 @@ namespace {
 // is already written by the time we get here, so a failed/hung dump never costs
 // us the crash detection. `exPtrs` may be null (signal path) — MiniDumpWriteDump
 // still captures the faulting thread's state.
+// True once a dump carrying an exception stream (exPtrs != null) has been written. A later
+// exception-less dump (terminate / signal path, exPtrs == null) must NOT clobber it: the
+// frame-loop SEH filter writes the richest dump first (faulting instruction + context), and
+// the std::exit() it triggers used to run a terminate that overwrote it with a stream-less
+// one — destroying the only diagnostic the next-launch reporter has. First-rich-dump wins.
+std::atomic<bool> g_exceptionDumpWritten{false};
+
 void WriteMiniDump(EXCEPTION_POINTERS* exPtrs) noexcept {
     const char* path = diagnostics::CrashSinkPendingDumpPath();
     if (path == nullptr || path[0] == '\0') {
         return;
+    }
+    if (exPtrs == nullptr && g_exceptionDumpWritten.load(std::memory_order_acquire)) {
+        return; // preserve the earlier exception-bearing dump
     }
     HANDLE file = CreateFileA(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) {
@@ -43,6 +54,9 @@ void WriteMiniDump(EXCEPTION_POINTERS* exPtrs) noexcept {
                       static_cast<MINIDUMP_TYPE>(MiniDumpWithIndirectlyReferencedMemory | MiniDumpScanMemory), meiPtr,
                       nullptr, nullptr);
     CloseHandle(file);
+    if (exPtrs != nullptr) {
+        g_exceptionDumpWritten.store(true, std::memory_order_release);
+    }
 }
 
 LONG WINAPI TopLevelExceptionFilter(EXCEPTION_POINTERS* exPtrs) {
