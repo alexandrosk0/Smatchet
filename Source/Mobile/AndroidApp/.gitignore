@@ -1,0 +1,13 @@
+# Gradle / Android build artifacts (the wrapper jar + scripts ARE committed — CI runs ./gradlew)
+.gradle/
+build/
+app/build/
+app/.cxx/
+.cxx/
+
+# Machine-local SDK path — never commit (sdk.dir differs per machine; ANDROID_HOME env is preferred)
+local.properties
+
+# IDE
+*.iml
+.idea/

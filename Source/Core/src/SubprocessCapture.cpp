@@ -466,18 +466,22 @@ void PosixChildExec(const CaptureOptions& opts, int* pipeOutFds, int* pipeErrFds
         // Best-effort manual purge: walk environ and unset every name we
         // can read. Less robust than clearenv() but the runner runs
         // Windows-first today; this path is only exercised under tests.
-        extern char** environ;
-        while (environ && environ[0]) {
-            const char* eq = std::strchr(environ[0], '=');
+        // Use ::environ from <unistd.h> rather than a block-scope `extern
+        // char** environ;`: under C++14 [basic.link]/6 a block-scope extern
+        // inside this anonymous namespace ignores the global declaration and
+        // mints a new internal-linkage entity, which then links-fails on
+        // Bionic (host glibc takes the clearenv() #if side, hiding it).
+        while (::environ && ::environ[0]) {
+            const char* eq = std::strchr(::environ[0], '=');
             if (!eq) {
                 break;
             }
-            // environ[0] is char*, eq is const char* — the two-iterator
+            // ::environ[0] is char*, eq is const char* — the two-iterator
             // std::string(first, last) ctor needs matching pointer types, which
             // Bionic's libc++ rejects (host glibc takes the clearenv() #if side and
             // never compiles this #else, so the mismatch only surfaces on Android).
             // The (ptr, length) ctor is unambiguous on every stdlib.
-            std::string name(environ[0], static_cast<size_t>(eq - environ[0]));
+            std::string name(::environ[0], static_cast<size_t>(eq - ::environ[0]));
             unsetenv(name.c_str());
         }
 #endif

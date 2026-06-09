@@ -1,0 +1,6 @@
+// Smatchet Android — root Gradle build script.
+// The :app module invokes the repo-root CMakeLists.txt via externalNativeBuild(cmake)
+// to produce libSmatchetMobile.so, then packages it with SmatchetActivity into an APK.
+plugins {
+    id 'com.android.application' version '8.5.2' apply false
+}

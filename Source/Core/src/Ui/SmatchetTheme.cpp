@@ -1,5 +1,7 @@
 #include "SmatchetTheme.h"
 
+#include "SmatchetThemeDensity.h"
+
 #include <atomic>
 
 namespace {
@@ -10,6 +12,17 @@ namespace {
 // any future worker-thread read sees a consistent value; today the only
 // writer + readers are UI-thread so the relaxed memory order is fine.
 std::atomic<std::uint64_t> g_themeRevision{0};
+
+// Host-injected UI density scale (mobile host-injection seam #13). Set once by
+// SmatchetTheme::ApplyUiDensityScale at boot (e.g. AConfiguration density / 160).
+// Stored so every subsequent ApplyStyle — which resets `style = ImGuiStyle{}` and
+// rebuilds from baseline — can re-assert it (see ReapplyHostDensityScale); without
+// this a theme-drift rebuild (SmatchetUI::drawApplyAppearanceSettings fires ApplyStyle
+// on frame 1 post-Load) silently wipes the boot density. Defaults to 1.0 (desktop:
+// no scaling, seam inert). UI-thread-only (set at boot before the first frame, read in
+// ApplyStyle on the UI thread), so a plain float suffices — unlike g_themeRevision,
+// which is read cross-thread and therefore atomic.
+float g_hostDensityScale = 1.0f;
 
 // Active theme's C++ syntax-highlight palette. Filled by every ApplyXxx() so CppSyntaxHighlight
 // (and any future code presenter) can recolor in the next ImGui frame after a theme switch.
@@ -37,6 +50,15 @@ SmatchetThemeAiColors gAiColors = {
 
 void SetSyntaxColors(const SmatchetThemeSyntaxColors& s) { gSyntaxColors = s; }
 void SetAiColors(const SmatchetThemeAiColors& a) { gAiColors = a; }
+
+// Re-apply the host-injected UI density scale on top of a freshly rebuilt style.
+// ApplyStyle resets `style = ImGuiStyle{}` every call, so this re-asserts the boot
+// density the host set via ApplyUiDensityScale. Desktop leaves the scale at 1.0 → no-op.
+void ReapplyHostDensityScale(ImGuiStyle& style) {
+    if (SmatchetTheme::ShouldApplyDensityScale(g_hostDensityScale)) {
+        style.ScaleAllSizes(g_hostDensityScale);
+    }
+}
 
 // Shared rounding / padding constants applied to every palette. Keeping these in a single helper
 // guarantees the shell geometry stays consistent regardless of which palette the user selects;
@@ -743,6 +765,7 @@ void SmatchetTheme::ApplyStyle(ThemeId theme) {
     // silently overwriting the defaults.
     if (theme == ThemeId::ImGuiDefaultDark) {
         ApplyImGuiDefaultDark(style, style.Colors);
+        ReapplyHostDensityScale(style);
         return;
     }
 
@@ -779,6 +802,11 @@ void SmatchetTheme::ApplyStyle(ThemeId theme) {
         break;
     }
 
+    // Re-assert the host density scale on the freshly rebuilt style. Mobile seam
+    // number 13, a no-op on desktop where the scale stays 1.0. Must run before the
+    // revision bump so consumers that snapshot the counter see the fully scaled style.
+    ReapplyHostDensityScale(style);
+
     // Bump the theme-revision counter so consumers (CodeColorView's tokenize
     // cache, future per-theme caches) know to invalidate. Increment AFTER the
     // per-theme write completes so a parallel reader doesn't see a half-baked
@@ -792,6 +820,8 @@ void SmatchetTheme::ApplyUiDensityScale(float densityScale) {
     if (!(densityScale > 0.0f)) {
         return;
     }
+    // Store so every later ApplyStyle (which rebuilds the style from baseline) can re-assert it.
+    g_hostDensityScale = densityScale;
     ImGui::GetStyle().ScaleAllSizes(densityScale);
 }
 
