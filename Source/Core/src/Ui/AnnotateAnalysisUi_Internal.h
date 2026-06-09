@@ -30,6 +30,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 class AppController;
@@ -120,6 +121,12 @@ struct AnnotateAnalysisUi::AnnotateState {
     std::string clHoverCl;
     std::shared_future<P4ChangelistDetails> clHoverFut;
     std::vector<std::shared_future<P4ChangelistDetails>> detachedClHoverFuts;
+
+    /// Pillar 2 — finding #761: resolving the first-submitted CL for a calendar day runs a
+    /// slow server-wide `p4 changes -r -m 1 -s submitted //...@start,end` scan. Off-thread it
+    /// (mirror DrawClTooltipAsync): launch on confirm, poll every frame, apply on the UI thread.
+    std::shared_future<std::pair<std::string, std::string>> beforeClFut; // {changelist, error}
+    bool beforeClResolving = false;
 
     std::string assignTitle;
     std::string assignAccountId;
