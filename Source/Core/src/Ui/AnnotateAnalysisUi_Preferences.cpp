@@ -206,10 +206,13 @@ void DrawAnnotateCacheAndColors() {
     }
 
     if (ImGui::CollapsingHeader("Colors")) {
-        auto colorRow = [&cfg](const char* label, float* c) {
+        auto colorRow = [](const char* label, float* c) {
             ImGui::ColorEdit4(label, c, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_NoInputs);
             if (ImGui::IsItemDeactivatedAfterEdit()) {
-                ConfigManager::SaveAnnotateAnalysis(cfg);
+                // Off-thread the write like every sibling persist in this file (#565): the
+                // synchronous ConfigManager::SaveAnnotateAnalysis was the lone UI-thread blocker
+                // here. PersistAnnotateCfg routes through the coalescing ConfigSaveWorker.
+                PersistAnnotateCfg("edit_color");
             }
         };
         colorRow("Status info", cfg.UiColors.StatusInfo);
