@@ -9,6 +9,11 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-06-09 · orchestrator (close-gate-gaps) · [process] · P3 — serial multi-slice migrations should REUSE one worktree across slices, not `worktree.ps1 new` per slice (`serial-migration-worktree-reuse`)
+  Resolution: **applied (close-gate-gaps Slice 7)** — added a "Serial multi-slice plan in ONE session — reuse ONE worktree across slices" note to `docs/agent-rules/process-rules.md` § Concurrent interactive sessions, clarifying that the "one worktree per session" rule targets CONCURRENT sessions (sibling rug-pull), not a fresh worktree per slice in one serial session. Reusing the worktree keeps `build/` warm (incremental rebuilds, no FetchContent re-fetch). The underlying cold-configure pain it cited (cpr submodule) is independently fixed by #1031 + gated by the Slice-4 fresh-clone CI.
+  Status: applied
+  Last-reviewed: 2026-06-09
+
 - 2026-06-08 · orchestrator (tracker-result-migration) · [infra] · P2 — cpr (and 8 sibling) `FetchContent_Declare` missing `GIT_SUBMODULES ""` → every fresh-worktree / CI-cold-cache configure failed on the unconditional `git submodule update` (`git-sh-setup: file not found` under vcvars)
   Resolution: **applied by PR #1031** (merged 2026-06-08, build-doctor) — added `GIT_SUBMODULES ""` to all 9 git-based declares missing it (cpr/sqlitecpp/sol2/httplib/md4c/ghc_filesystem/glfw/whisper_cpp/imgui; `json` already had it → all 10 covered). Root cause was sharper than a `.gitmodules`-gated heuristic: FetchContent runs `git submodule update` UNCONDITIONALLY and crashes on `git-sh-setup` PATH resolution before any `.gitmodules` check, so the fix generalizes to every git declare on a cold cache. Verified by a forced fresh-clone into a temp `FETCHCONTENT_BASE_DIR` (zero submodule errors) + dual-target link + lint. Supersedes the workaround-only notes (configure-via-PowerShell / point `FETCHCONTENT_BASE_DIR` at the main tree) in the 2026-06-07 P2 "CMake fresh-configure" infra entry.
   Status: applied
