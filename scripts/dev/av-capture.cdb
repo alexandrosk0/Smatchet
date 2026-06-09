@@ -1,0 +1,14 @@
+$$ cdb first-chance access-violation capture for Smatchet.
+$$ Breaks BEFORE the app's frame-loop SEH filter swallows the AV, so you get the PRIMARY
+$$ faulting stack (the real use-after-free / null deref), not the std::exit->terminate tail.
+$$
+$$ Usage (run cdb from the build dir so the app resolves Scripts/):
+$$   cdb -y "<build-dir>;srv*C:\Tools\symcache*https://msdl.microsoft.com/download/symbols" \
+$$       -cf scripts\dev\av-capture.cdb <path-to>\Smatchet.exe
+$$ Then reproduce; on the first AV it prints the faulting + all-thread stacks, writes a full
+$$ dump, and quits. Get cdb by extracting it from the WinDbg msixbundle (https://aka.ms/windbg/download).
+.lines -e
+.symopt+0x10
+.echo SMATCHET_CDB_ARMED
+sxe -c ".echo ===SMATCHET_AV_HIT===; .exr -1; .echo ---FAULTING-THREAD---; kP 120; .echo ---ALL-THREADS---; ~*kb 40; .dump /ma ${env:LOCALAPPDATA}\CrashDumps\smatchet_av_firstchance.dmp; .echo ===SMATCHET_AV_CAPTURED===; q" av
+g
