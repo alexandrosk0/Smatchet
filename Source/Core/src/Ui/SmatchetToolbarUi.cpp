@@ -15,6 +15,7 @@
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 #include "Config/ConfigManager.h"
+#include "ConfigSaveWorker.h"
 #include "ITrackerConnectivity.h"
 #include "IconsFontAwesome6.h"
 #include "Logger.h"
@@ -223,7 +224,7 @@ void SmatchetToolbarUi::RenderBar(AppController& app, TrackerConfig& cfg) {
             }
             if (ImGui::MenuItem("Hide Toolbar")) {
                 cfg.Toolbar.Visible = false;
-                ConfigManager::Save(cfg);
+                smatchet::config_save::EnqueueTrackerConfig(cfg);
             }
             ImGui::EndPopup();
         }
@@ -247,22 +248,22 @@ void SmatchetToolbarUi::RenderButtonContextMenu(TrackerConfig& cfg, int src) {
     ImGui::Separator();
     if (ImGui::MenuItem("Move Left", nullptr, false, src > 0)) {
         std::swap(buttons[src], buttons[src - 1]);
-        ConfigManager::Save(cfg);
+        smatchet::config_save::EnqueueTrackerConfig(cfg);
     }
     if (ImGui::MenuItem("Move Right", nullptr, false, src < count - 1)) {
         std::swap(buttons[src], buttons[src + 1]);
-        ConfigManager::Save(cfg);
+        smatchet::config_save::EnqueueTrackerConfig(cfg);
     }
     if (ImGui::MenuItem("Insert Separator")) {
         ToolbarButton sep;
         sep.Kind = ToolbarButtonKind::Separator;
         buttons.insert(buttons.begin() + src + 1, sep); // after the clicked button
-        ConfigManager::Save(cfg);
+        smatchet::config_save::EnqueueTrackerConfig(cfg);
     }
     ImGui::Separator();
     if (ImGui::MenuItem("Delete")) {
         buttons.erase(buttons.begin() + src);
-        ConfigManager::Save(cfg);
+        smatchet::config_save::EnqueueTrackerConfig(cfg);
     }
 }
 
@@ -286,6 +287,9 @@ void SmatchetToolbarUi::SyncEditorOpenRequest(AppController& app, TrackerConfig&
         editTrackerType_ = be->Connectivity().GetTrackerType();
         editTrackerKey_ = ConfigManager::NormalizeViewsBackendKey(editTrackerType_);
         editHasTracker_ = true;
+        // Pillar-2: intentionally synchronous — rare one-shot on explicit editor-open; sub-100ms single-file read,
+        // async would force a loading state into a modal that opens fully populated. Guard warn here is acceptable
+        // residue.
         const PersistentViewsFile disk = ConfigManager::LoadPersistentViewsFromDisk();
         const auto it = disk.Backends.find(editTrackerKey_);
         if (it != disk.Backends.end()) {
@@ -530,7 +534,7 @@ void SmatchetToolbarUi::DrawEditorFieldEditor(EditorCtx& ctx) {
     ImGui::EndChild();
 }
 
-void SmatchetToolbarUi::DrawEditorFooter(EditorCtx& ctx, TrackerConfig& cfg) {
+void SmatchetToolbarUi::DrawEditorFooter(AppController& app, EditorCtx& ctx, TrackerConfig& cfg) {
     // Footer. "Show toolbar" is a global-only setting (per-tracker visibility deferred), so in
     // Tracker scope a hint anchors the line instead.
     if (ctx.trackerScope) {
@@ -541,15 +545,25 @@ void SmatchetToolbarUi::DrawEditorFooter(EditorCtx& ctx, TrackerConfig& cfg) {
     ImGui::SameLine(ImGui::GetWindowWidth() - 200.0f);
     if (ImGui::Button("Save", ImVec2(90.0f, 0.0f))) {
         if (ctx.trackerScope && editHasTracker_) {
-            // Load-modify-save the views file so only this backend's append list changes,
-            // preserving its Views/ActiveViewId and every other backend bucket.
-            PersistentViewsFile disk = ConfigManager::LoadPersistentViewsFromDisk();
-            disk.Backends[editTrackerKey_].ToolbarAppend = trackerEditBuf_;
-            ConfigManager::SavePersistentViewsToDisk(disk);
-            trackerAppendCacheLoaded_ = false; // force RenderBar to reload the active append
+            // Pillar-2: offload the load-modify-save off the UI thread. The load + save stay
+            // co-located on one task so they remain ordered (no intra-pair read-after-write
+            // hazard) and only this backend's append list changes — its Views/ActiveViewId and
+            // every other backend bucket are preserved. Capture the key + a BY-VALUE copy of the
+            // edit buffer so no UI state is aliased across the worker thread. `&app`/`this` are
+            // app-lifetime: ~AppController joins all LaunchBackgroundTask threads before member
+            // destruction, and PostToMainThread no-ops after BeginShutdown(), so the
+            // cache-invalidation hop is safe to drop on exit.
+            const std::string trackerKey = editTrackerKey_;
+            const std::vector<ToolbarButton> trackerAppend = trackerEditBuf_;
+            app.LaunchBackgroundTask([&app, this, trackerKey, trackerAppend]() {
+                PersistentViewsFile disk = ConfigManager::LoadPersistentViewsFromDisk();
+                disk.Backends[trackerKey].ToolbarAppend = trackerAppend;
+                ConfigManager::SavePersistentViewsToDisk(disk);
+                app.mainThreadDispatcher.PostToMainThread([this]() { trackerAppendCacheLoaded_ = false; });
+            });
         } else {
             cfg.Toolbar = editBuf_;
-            ConfigManager::Save(cfg);
+            smatchet::config_save::EnqueueTrackerConfig(cfg);
         }
         ImGui::CloseCurrentPopup();
     }
@@ -573,6 +587,6 @@ void SmatchetToolbarUi::RenderEditor(AppController& app, TrackerConfig& cfg) {
     DrawEditorButtonList(ctx);
     ImGui::SameLine();
     DrawEditorFieldEditor(ctx);
-    DrawEditorFooter(ctx, cfg);
+    DrawEditorFooter(app, ctx, cfg);
     ImGui::EndPopup();
 }

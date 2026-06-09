@@ -19,6 +19,7 @@
 #include <future>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace AnnotateInternal;
@@ -186,17 +187,42 @@ void DrawCallstackProcessControls(AnnotateDrawCtx& ctx) {
                                                             228.f)) {
         ParsedJiraDateTime parsed;
         if (TryParseJiraDateTime(State().beforeDateIso, parsed)) {
-            std::string cl;
-            std::string err;
-            if (P4FirstSubmittedChangelistOnCalendarDay(State().annotateCfg, parsed.Year, parsed.Month, parsed.Day, cl,
-                                                        err)) {
-                std::snprintf(State().atClBuf, sizeof(State().atClBuf), "%s", cl.c_str());
-                State().lastUiStatus = "Before changelist set to first submitted CL on that day: " + cl;
-            } else {
-                State().lastUiStatus = err.empty() ? "Could not resolve changelist for that date." : err;
-            }
+            // Pillar 2 — finding #761: the resolve does a slow server-wide `p4 changes` scan; run it
+            // off the UI thread (mirror DrawClTooltipAsync) and apply the result when ready. Snapshot
+            // the config into a local — never alias UI state across threads.
+            const AnnotateAnalysisConfig cfgCopy = State().annotateCfg;
+            const int y = parsed.Year;
+            const int mo = parsed.Month;
+            const int d = parsed.Day;
+            State().beforeClResolving = true;
+            State().lastUiStatus = "Resolving first submitted changelist for that day...";
+            State().beforeClFut = std::async(std::launch::async, [cfgCopy, y, mo, d]() {
+                                      std::string cl;
+                                      std::string err;
+                                      // Encode failure as an empty changelist so the UI-thread apply
+                                      // branches exactly as the old synchronous code did on `false`.
+                                      if (!P4FirstSubmittedChangelistOnCalendarDay(cfgCopy, y, mo, d, cl, err)) {
+                                          cl.clear();
+                                      }
+                                      return std::make_pair(cl, err);
+                                  }).share();
         } else {
             State().lastUiStatus = "Invalid date from picker.";
+        }
+    }
+
+    // Poll the off-thread day→CL resolve (finding #761) and apply on the UI thread once ready.
+    if (State().beforeClResolving && State().beforeClFut.valid() &&
+        State().beforeClFut.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        State().beforeClResolving = false;
+        const std::pair<std::string, std::string> res = State().beforeClFut.get();
+        const std::string& cl = res.first;
+        const std::string& err = res.second;
+        if (!cl.empty()) {
+            std::snprintf(State().atClBuf, sizeof(State().atClBuf), "%s", cl.c_str());
+            State().lastUiStatus = "Before changelist set to first submitted CL on that day: " + cl;
+        } else {
+            State().lastUiStatus = err.empty() ? "Could not resolve changelist for that date." : err;
         }
     }
 
