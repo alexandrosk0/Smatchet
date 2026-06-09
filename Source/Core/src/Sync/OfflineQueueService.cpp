@@ -823,7 +823,10 @@ void OfflineQueueService::TickOfflineFieldEdits() {
 
         if (tally.Successes > 0) {
             if (depsRef.BackendGeneration() == capturedGeneration) {
-                depsRef.RefreshLocalData();
+                // Pre-check above is only a cheap skip of the full-table cache read; the
+                // checked overload re-checks the generation under activeTicketsMutex_
+                // immediately before the swap-in (TOCTOU close, PR #1104 review HIGH).
+                depsRef.RefreshLocalData(capturedGeneration);
             } else {
                 LOG_INFO("OfflineQueueService::TickOfflineFieldEdits skipped RefreshLocalData — backend "
                          "generation moved mid-replay (issue #1081); replayed rows stay cached under their "
@@ -1380,7 +1383,10 @@ void OfflineQueueService::TickOfflineCreates() {
             }
             if (tally.Successes > 0) {
                 if (depsRef.BackendGeneration() == capturedGeneration) {
-                    depsRef.RefreshLocalData();
+                    // Pre-check above is only a cheap skip of the full-table cache read; the
+                    // checked overload re-checks the generation under activeTicketsMutex_
+                    // immediately before the swap-in (TOCTOU close, PR #1104 review HIGH).
+                    depsRef.RefreshLocalData(capturedGeneration);
                 } else {
                     LOG_INFO("OfflineQueueService::TickOfflineCreates skipped RefreshLocalData — backend "
                              "generation moved mid-replay (issue #1081); created rows stay cached under "

@@ -132,6 +132,40 @@ TEST_CASE("issue #1081 control: offline field-edit replay still refreshes when t
     captured(); // generation unchanged → normal refresh
 
     CHECK(deps.RefreshLocalDataCalls == 1);
+    // And the refresh went through the CHECKED overload — the captured generation must reach
+    // the apply-time under-lock re-check, not just the worker-side pre-check (PR #1104 HIGH).
+    CHECK(deps.CheckedRefreshLocalDataCalls == 1);
+}
+
+TEST_CASE("issue #1081: post-replay refresh is dropped when the generation moves MID-refresh "
+          "(after the worker pre-check, before the locked swap-in)" *
+          doctest::test_suite("[high-risk]")) {
+    TestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    deps.BackendImpl->EnqueueUpdateIssueFieldsSuccess();
+
+    std::function<void()> captured;
+    deps.BackgroundTaskRunner = [&captured](std::function<void()> t) { captured = std::move(t); };
+    // The swap lands INSIDE the refresh window: the worker-side pre-check passes (generation
+    // still 0), then the backend swaps during the full-table cache read — modelled by bumping
+    // the generation from the checked overload's entry hook, before its apply-time re-check.
+    // Pre-fix the service called the UNCHECKED RefreshLocalData() here, so this window
+    // wholesale-replaced the NEW backend's ActiveTickets with OLD-key rows (TOCTOU re-open).
+    deps.OnCheckedRefreshLocalData = [&deps]() { deps.BackendGenerationImpl = 1; };
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    REQUIRE(svc.QueueFieldEditOffline("PROJ-1", "summary", "{\"summary\":\"v\"}", err, std::string()) > 0);
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+    REQUIRE(captured);
+
+    captured(); // generation 0 at the pre-check → proceeds into the checked refresh
+
+    CHECK(deps.BackendImpl->UpdateIssueFieldsCallCount() == 1u); // the replay itself completed
+    CHECK(deps.CheckedRefreshLocalDataCalls == 1);               // checked overload was used
+    CHECK(deps.CheckedRefreshLocalDataDrops == 1);               // apply-time re-check dropped it
+    CHECK(deps.RefreshLocalDataCalls == 0);                      // no wholesale replace applied
 }
 
 TEST_CASE("issue #1081: offline create replay writes under the CAPTURED key after a mid-replay key switch" *

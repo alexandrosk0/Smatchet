@@ -67,6 +67,12 @@ void GridContextDepsAdapter::LaunchBackgroundTask(std::function<void()> task) {
 
 void GridContextDepsAdapter::RefreshLocalData() { app_.RefreshLocalData(); }
 
+// Friend access: the checked impl is private on purpose — every checked caller must name the
+// context it latched the generation from, and this adapter's ctx_ is exactly that context.
+void GridContextDepsAdapter::RefreshLocalData(std::uint64_t capturedBackendGeneration) {
+    app_.RefreshLocalDataCheckedImpl_(ctx_, &capturedBackendGeneration);
+}
+
 void GridContextDepsAdapter::RequestDeferredLiveTrackerBackendSuccessNotify() {
     app_.requestDeferredLiveTrackerBackendSuccessNotify_();
 }

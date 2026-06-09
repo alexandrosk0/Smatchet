@@ -557,11 +557,12 @@ class AppController {
     void ApplyIssueFetchPack(TrackerIssueFetchPack pack);
 
     void RefreshLocalData();
-    /// Generation-checked variant (issue #1081) for WORKER callers: pass the
-    /// GridLiveContext::backendGeneration_ value captured at work-capture time; the wholesale
-    /// ActiveTickets replace is skipped (under activeTicketsMutex_) when the backend was
-    /// swapped/retired since capture. UI-thread callers use the unchecked overload above.
-    void RefreshLocalData(std::uint64_t capturedBackendGeneration);
+    // Generation-checked refreshes (issue #1081) go through RefreshLocalDataCheckedImpl_,
+    // private on purpose: every checked caller must pass the GridLiveContext it latched the
+    // generation from (UpdateTicket inline; replay workers via the friend
+    // GridContextDepsAdapter). A ctx-less public overload re-resolved focusedContext() at
+    // apply time — per-context generation counters can be equal-by-coincidence across panes,
+    // passing the gate while focus moved (PR #1104 review MEDIUM-1).
     /** Reload ActiveTickets from cache and kick per-issue-type editmeta warmup (same tail as SyncWithBackend). */
     void RefreshLocalDataAndWarmIssueTypeMeta();
 
@@ -977,10 +978,14 @@ class AppController {
     /// (design addendum § 6.2).
     GridLiveContext& focusedContext() { return *focusedContextPtr_.load(); }
     const GridLiveContext& focusedContext() const { return *focusedContextPtr_.load(); }
-    /// Shared body of the two RefreshLocalData overloads (issue #1081): null = unchecked
-    /// UI-thread refresh; non-null = drop the replace (under activeTicketsMutex_) when the
-    /// focused context's backendGeneration_ no longer matches the captured value.
-    void RefreshLocalDataCheckedImpl_(const std::uint64_t* capturedBackendGeneration);
+    /// Shared body of the RefreshLocalData paths (issue #1081): null = unchecked UI-thread
+    /// refresh; non-null = drop the replace (under ctx.activeTicketsMutex_) when ctx's
+    /// backendGeneration_ no longer matches the captured value. `ctx` MUST be the context the
+    /// generation was captured from (PR #1104 review MEDIUM-1) — callers latch it once and do
+    /// capture + check + apply on the SAME context. Worker-safe: a reference latched before
+    /// retirement stays valid via the retiredContexts_ husk graveyard (until ~AppController).
+    /// The full-table cache read runs OUTSIDE the mutex; only the re-check + swap-in lock it.
+    void RefreshLocalDataCheckedImpl_(GridLiveContext& ctx, const std::uint64_t* capturedBackendGeneration);
     /// Re-resolve focusedContextPtr_ from focusedPaneId_ (default-context fallback).
     void refreshFocusedContextPtr_();
     /// Atomic: workers (MCP / Lua / replay) read focusedContext() while the UI thread

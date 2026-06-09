@@ -42,7 +42,18 @@ class FakeOfflineQueueDeps : public IOfflineQueueDeps {
     /// Test-controlled required-field set. Returned verbatim by `GetRequiredFieldSet`.
     RequiredFieldSet Required;
     /// Counts of side-effects so tests can assert "RefreshLocalData ran exactly N times".
+    /// RefreshLocalDataCalls counts APPLIED refreshes (unchecked calls + checked calls whose
+    /// generation matched at apply time — mirroring production, where the checked overload's
+    /// under-lock re-check drops the replace on mismatch).
     int RefreshLocalDataCalls = 0;
+    /// Checked-overload bookkeeping (issue #1081 / PR #1104 review HIGH): how many checked
+    /// refreshes arrived, and how many were dropped by the apply-time generation re-check.
+    int CheckedRefreshLocalDataCalls = 0;
+    int CheckedRefreshLocalDataDrops = 0;
+    /// Invoked at the top of the checked RefreshLocalData, BEFORE its generation re-check —
+    /// models a backend swap landing inside the refresh window (after the worker-side
+    /// pre-check, during the full-table cache read, before the under-lock swap-in).
+    std::function<void()> OnCheckedRefreshLocalData;
     int DeferredLiveNotifyCalls = 0;
     /// How `LaunchBackgroundTask` should run the task. Default: run inline on the caller.
     /// Tests that want to defer (e.g. to inject a fault between steps) override this.
@@ -75,6 +86,19 @@ class FakeOfflineQueueDeps : public IOfflineQueueDeps {
         }
     }
     void RefreshLocalData() override { ++RefreshLocalDataCalls; }
+    void RefreshLocalData(std::uint64_t capturedBackendGeneration) override {
+        ++CheckedRefreshLocalDataCalls;
+        if (OnCheckedRefreshLocalData) {
+            OnCheckedRefreshLocalData();
+        }
+        // Production semantics: re-check the captured generation at apply time (under
+        // activeTicketsMutex_ there) and drop the wholesale replace on mismatch.
+        if (capturedBackendGeneration == BackendGenerationImpl) {
+            ++RefreshLocalDataCalls;
+        } else {
+            ++CheckedRefreshLocalDataDrops;
+        }
+    }
     void RequestDeferredLiveTrackerBackendSuccessNotify() override { ++DeferredLiveNotifyCalls; }
 };
 

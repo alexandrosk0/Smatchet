@@ -589,6 +589,9 @@ void AppController::applyPaneSyncKickOnMainThread_(const std::string& paneId, Tr
                  paneId.c_str());
         if (ctxIt != gridContexts_.end()) {
             ctxIt->second->initialSyncKicked = false;
+            // Cleared WITH the latch (GridLiveContext.h discipline): a stale lastSyncedJql
+            // would otherwise suppress the JQL-drift re-kick after the fresh kick lands.
+            ctxIt->second->lastSyncedJql.clear();
         }
         return;
     }
