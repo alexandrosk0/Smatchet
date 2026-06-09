@@ -69,26 +69,34 @@ function(smatchet_prepare_cpr)
         set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY BOTH CACHE STRING "Android: find OpenSSL outside the NDK sysroot" FORCE)
         set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE BOTH CACHE STRING "Android: find OpenSSL outside the NDK sysroot" FORCE)
 
-        # CA trust. A stock Android device exposes no CA bundle to the NDK-built libcurl, and
-        # libcurl (unlike the curl CLI) never reads the CURL_CA_BUNDLE *env* var — only the
-        # compile-time CURL_CA_BUNDLE define (its default CAINFO) or an explicit CURLOPT_CAINFO.
-        # The load-bearing var is CURL_CA_BUNDLE:
-        #   * CURL_CA_BUNDLE — baked default CAINFO = the exact private-dir path android_main.cpp
-        #     extracts the APK-bundled Mozilla cacert.pem to at boot. The path is deterministic
-        #     for the pinned applicationId on the primary user (user 0):
-        #     /data/user/0/<applicationId>/files/cacert.pem. An explicit cafile is consulted by
-        #     OpenSSL at verify time regardless of any CApath, so this alone arms TLS (proven
-        #     live: read HTTP 200 + write PUT HTTP 204 against real Jira).
+        # CA trust (WS2 / Issue #1068). A stock Android device exposes no CA bundle to the
+        # NDK-built libcurl, and libcurl (unlike the curl CLI) never reads the CURL_CA_BUNDLE
+        # *env* var — only the compile-time CURL_CA_BUNDLE define (its default CAINFO) or an
+        # explicit CURLOPT_CAINFO.
+        #
+        # PRIMARY trust anchor is now the RUNTIME seam, NOT these compile-time defines:
+        # android_main.cpp extracts the APK-bundled Mozilla cacert.pem to the app private dir at
+        # boot and feeds the actual path into Core via TrackerHttpPure::SetCaBundlePath; every
+        # tracker verb then sets an explicit CURLOPT_CAINFO from it (TrackerHttpUtils::
+        # MakeTrackerSslOptions). That path is resolved at runtime — it does not assume a fixed
+        # applicationId or user id, so it is correct on user 0, secondary users, and work profiles.
+        #
+        # The defines below are DEMOTED to a documented defense-in-depth fallback (kept, not
+        # removed, to avoid a fail-closed regression should the runtime seam ever be skipped):
+        #   * CURL_CA_BUNDLE — baked default CAINFO at the deterministic primary-user path. Only
+        #     consulted if no explicit CURLOPT_CAINFO is set; the runtime seam normally sets one,
+        #     so this is the backstop. (TLS proven live earlier: read HTTP 200 + write PUT HTTP 204
+        #     against real Jira.)
         #   * CURL_CA_PATH=none — we FORCE it to disable curl's autodetected
         #     /system/etc/security/cacerts default CApath, but this does NOT survive: cpr's own
         #     CMakeLists.txt re-sets CURL_CA_PATH back to the system store AFTER this block runs
-        #     (it is included via add_subdirectory below). Harmless — the baked CAINFO above is an
+        #     (it is included via add_subdirectory below). Harmless — the runtime CAINFO is an
         #     explicit cafile and takes precedence, so the stale system CApath is never consulted.
         #     Left in for documentation + in case cpr's ordering changes upstream.
         # CURL_CA_FALLBACK stays on so OpenSSL's SSL_CERT_FILE env (also set by the host shell)
-        # is honored as a secondary net if the baked CAINFO is ever unset.
-        set(CURL_CA_BUNDLE "/data/user/0/com.smatchet.mobile/files/cacert.pem" CACHE STRING "Android: baked default CAINFO; host shell extracts the APK cacert.pem here at boot" FORCE)
-        set(CURL_CA_PATH "none" CACHE STRING "Android: attempt to disable the autodetected system CApath (cpr re-sets this; baked CAINFO wins anyway)" FORCE)
+        # is honored as a secondary net if both the runtime CAINFO and the baked default are unset.
+        set(CURL_CA_BUNDLE "/data/user/0/com.smatchet.mobile/files/cacert.pem" CACHE STRING "Android: defense-in-depth fallback CAINFO; runtime TrackerHttpPure seam is primary" FORCE)
+        set(CURL_CA_PATH "none" CACHE STRING "Android: attempt to disable the autodetected system CApath (cpr re-sets this; explicit CAINFO wins anyway)" FORCE)
         set(CURL_CA_FALLBACK ON CACHE BOOL "Android: also honor OpenSSL SSL_CERT_FILE as a secondary CA net" FORCE)
 
         # Gradle multi-ABI convenience. CI / the arm64 preset pin OPENSSL_ROOT_DIR (+ the

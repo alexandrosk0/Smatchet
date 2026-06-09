@@ -231,6 +231,9 @@ add_executable(SmatchetTests
     Core/P4DescribeCacheE2E.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/P4Annotate.cpp"
     Core/TrackerLabelsPure.test.cpp
+    # WS2 / Issue #1068 — runtime TLS-trust seam (ResolveSslConfig + process-global CA-path
+    # holder). Pure + cpr-free; links Source/Core/src/Tracker/TrackerHttpPure.cpp below.
+    Core/TrackerHttpSslPure.test.cpp
     Core/TrackerDateTimePure.test.cpp
     Core/TicketFieldEditorLongTextPure.test.cpp
     Core/TicketFieldEditorOptionFilterPure.test.cpp
@@ -463,6 +466,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetTheme.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/TicketSyncService.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpUtils.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/NetworkUsageTracker.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/OfflineQueueService.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/Views.cpp"

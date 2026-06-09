@@ -3,6 +3,7 @@
 #include "Logger.h"
 #include "NetworkUsageTracker.h"
 #include "StringUtil.h"
+#include "TrackerHttpPure.h"
 
 #include <cstdint>
 #include <iomanip>
@@ -109,6 +110,21 @@ std::string BuildTrackerBasicAuthHeader(const TrackerConfig& cfg) {
     return "Basic " + Base64Encode(cfg.Email + ":" + cfg.ApiToken);
 }
 
+// TLS trust seam (WS2 / Issue #1068). Reads the process-global CA-bundle path (set by the
+// host at boot via TrackerHttpPure::SetCaBundlePath — empty on desktop) and turns it into
+// cpr SSL options applied to every tracker verb. Empty path -> default-constructed
+// SslOptions: peer/host verification stays ON (cpr defaults) and CURLOPT_CAINFO is left
+// untouched, so libcurl uses its compile-time / system-store default (desktop behaviour
+// unchanged). Non-empty -> an explicit CURLOPT_CAINFO cafile (the Android private-dir
+// cacert.pem). This seam never disables verification.
+cpr::SslOptions MakeTrackerSslOptions() {
+    const TrackerHttpPure::SslConfig ssl = TrackerHttpPure::ResolveSslConfig(TrackerHttpPure::GetCaBundlePath());
+    if (!ssl.attach) {
+        return cpr::SslOptions{};
+    }
+    return cpr::Ssl(cpr::ssl::CaInfo{std::string(ssl.caInfoPath)});
+}
+
 cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, const cpr::Header& headers) {
     return TrackerGetLogged(clientName, url, headers, kTrackerConnectTimeoutMs, kTrackerOverallTimeoutMs);
 }
@@ -118,7 +134,7 @@ cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, c
     cpr::Redirect redirect(true, true);
     cpr::Response response =
         cpr::Get(cpr::Url{url}, headers, params, redirect, cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
-                 cpr::Timeout{kTrackerOverallTimeoutMs});
+                 cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, NetworkUsageTracker::kEstimatedGetUploadBytes,
                                            response);
     LogTrackerHttpResult(clientName, "GET", url, response);
@@ -134,7 +150,8 @@ cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, c
     // is 32-bit. Cast explicitly; HTTP timeouts in ms always fit int32 (<= ~24.8 days).
     cpr::Response response = cpr::Get(cpr::Url{url}, headers, redirect,
                                       cpr::ConnectTimeout{static_cast<std::int32_t>(connectTimeoutMs)},
-                                      cpr::Timeout{static_cast<std::int32_t>(overallTimeoutMs)});
+                                      cpr::Timeout{static_cast<std::int32_t>(overallTimeoutMs)},
+                                      MakeTrackerSslOptions());
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, NetworkUsageTracker::kEstimatedGetUploadBytes,
                                            response);
     LogTrackerHttpResult(clientName, "GET", url, response);
@@ -146,7 +163,7 @@ cpr::Response TrackerPostLogged(const char* clientName, const std::string& url, 
     cpr::Redirect redirect(true, true);
     cpr::Response response =
         cpr::Post(cpr::Url{url}, headers, cpr::Body{body}, redirect, cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
-                  cpr::Timeout{kTrackerOverallTimeoutMs});
+                  cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, static_cast<std::uint64_t>(body.size()), response);
     LogTrackerHttpResult(clientName, "POST", url, response);
     return response;
@@ -157,7 +174,7 @@ cpr::Response TrackerPutLogged(const char* clientName, const std::string& url, c
     cpr::Redirect redirect(true, true);
     cpr::Response response =
         cpr::Put(cpr::Url{url}, headers, cpr::Body{body}, redirect, cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
-                 cpr::Timeout{kTrackerOverallTimeoutMs});
+                 cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, static_cast<std::uint64_t>(body.size()), response);
     LogTrackerHttpResult(clientName, "PUT", url, response);
     return response;
@@ -245,7 +262,7 @@ cpr::Response TrackerPatchLogged(const char* clientName, const std::string& url,
     cpr::Redirect redirect(true, true);
     cpr::Response response =
         cpr::Patch(cpr::Url{url}, headers, cpr::Body{body}, redirect, cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
-                   cpr::Timeout{kTrackerOverallTimeoutMs});
+                   cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, static_cast<std::uint64_t>(body.size()), response);
     LogTrackerHttpResult(clientName, "PATCH", url, response);
     return response;
