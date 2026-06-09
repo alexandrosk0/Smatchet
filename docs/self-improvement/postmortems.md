@@ -27,6 +27,42 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-09 · PR #1083 · `tests-out-of-band` — Test-delta gate RED on a dual-target compile-guard
+### What escaped
+The **Test-delta gate** (`scripts/dev/coverage-delta-gate.sh`) tripped RED on
+#1083 and was waved through with `tests-out-of-band`. The product-code change
+that triggered it was a single `#ifndef SMATCHET_EMBEDDED_IN_UNREAL` guard
+wrapped around the **existing** `PendingShotStamp()` definition in
+`SmatchetBugReportUi.cpp` — the function is byte-identical on the desktop test
+target; the guard only stops it compiling on the DX12 / Unreal target (where
+every call site is `#ifdef`'d out), silencing `-Wunused-function -Werror`. No
+new runtime surface exists for the desktop test binary to assert, so the
+coverage-keyed gate can never be satisfied and always trips RED.
+### Root cause
+**Not a new gate hole — a recurrence of an already-diagnosed, already-filed,
+still-unapplied one.** The `test-delta-test-light-exemption` class was diagnosed
+in the 2026-06-06 postmortem and filed to `infra.md`, but the carve-out classifier
+was never implemented, so every legitimately-untestable correctness diff keeps
+paying the `tests-out-of-band` + postmortem tax. #1083 is the ≥10th instance
+across ≥4 unrelated work-streams. Additionally, the existing classifier spec
+enumerated `static_assert`-only / logging-only / comment-only / CMake-only but
+did **not** name the **preprocessor-guard-only** sub-case (a diff that only
+adds/moves `#if`/`#ifdef`/`#ifndef`/`#else`/`#endif` around otherwise-unchanged
+code) — exactly the #1083 shape — so even once built, the planned classifier
+would have missed it.
+### Preventing gate
+**Escalate + extend the already-filed gate, not a new one.** The recurrence is an
+*application* gap, not a *diagnosis* gap — a second duplicate entry would add
+noise, not coverage. So: (1) escalated `test-delta-test-light-exemption` P2→P1
+in `infra.md` (recurrence ≥10 PRs, still unapplied → the override+postmortem tax
+now dominates); (2) extended its no-new-runtime-surface classifier spec to add
+the **preprocessor-guard-only** sub-case, with a matching bats fixture called
+out in the Concrete-next-action; (3) referenced #1016/#1021/#1083 as recurrence
+evidence so `postmortem-owed.sh` dedupes them against the one open entry.
+### Filed as
+`docs/self-improvement/categories/infra.md` — `test-delta-test-light-exemption`
+(escalated P2→P1, preprocessor-guard-only sub-case added, recurrence PRs logged).
+
 ## 2026-06-09 · PR #1074, PR #1075 · `cr-out-of-band` ×2 (batch tail) + a configure-time gate that FATAL'd all CI
 ### What escaped
 Two things, neither of which shipped *broken* to develop, but both owe the ledger:
