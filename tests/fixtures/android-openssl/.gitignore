@@ -1,0 +1,4 @@
+# Issue #1068 fail-fast probe fixtures. The top-level .gitignore ignores *.a
+# (build artifacts); these libssl.a / libcrypto.a stubs are EXISTS-only markers
+# (content irrelevant) that the probe checks for, so re-include them here.
+!*.a
