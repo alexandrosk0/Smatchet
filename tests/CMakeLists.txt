@@ -713,18 +713,21 @@ target_compile_definitions(SmatchetTests PRIVATE
 
 add_test(NAME smatchet_tests COMMAND SmatchetTests)
 
-# Glob-vs-list guard (build-quality-velocity-hardening #5): the SmatchetTests
-# source list above is hand-maintained — a new tests/Core/*.test.cpp that is
-# never added is silently uncompiled, so its assertions never run yet CI stays
-# green (false green). Assert at configure time that every Core/*.test.cpp on
-# disk is referenced somewhere in THIS file. Text-match (not the SOURCES
-# property) so conditionally-gated tests (the Whisper / agent-debug blocks) still
-# count. Mirrored by agents/scripts/core/check-test-list.sh (--check/--selftest).
-file(GLOB _smatchet_core_test_files RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/Core"
-     "${CMAKE_CURRENT_SOURCE_DIR}/Core/*.test.cpp")
+# Glob-vs-list guard (build-quality-velocity-hardening #5 + close-gate-gaps Slice 5):
+# the SmatchetTests source list above is hand-maintained — a new *.test.cpp that is
+# never added is silently uncompiled, so its assertions never run yet CI stays green
+# (false green). Assert at configure time that every test on disk under Core/ AND
+# Plugins/ is referenced somewhere in THIS file. Text-match the full tests/-relative
+# path (not the SOURCES property) so conditionally-gated tests (the Whisper /
+# agent-debug blocks) still count. Slice 5 widened the Core-only original to Plugins/
+# (Mcp + LuaConsole carry the same false-green risk). Mirrored by
+# agents/scripts/core/check-test-list.sh (--check/--selftest).
+file(GLOB _smatchet_unit_test_files RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+     "${CMAKE_CURRENT_SOURCE_DIR}/Core/*.test.cpp"
+     "${CMAKE_CURRENT_SOURCE_DIR}/Plugins/*/*.test.cpp")
 file(READ "${CMAKE_CURRENT_LIST_FILE}" _smatchet_tests_cml_text)
 set(_smatchet_unlisted_tests "")
-foreach(_tf IN LISTS _smatchet_core_test_files)
+foreach(_tf IN LISTS _smatchet_unit_test_files)
     string(FIND "${_smatchet_tests_cml_text}" "${_tf}" _tf_pos)
     if(_tf_pos EQUAL -1)
         list(APPEND _smatchet_unlisted_tests "${_tf}")
@@ -733,8 +736,8 @@ endforeach()
 if(_smatchet_unlisted_tests)
     string(REPLACE ";" "\n  " _smatchet_unlisted_pretty "${_smatchet_unlisted_tests}")
     message(FATAL_ERROR
-        "tests/CMakeLists.txt: these tests/Core/*.test.cpp exist on disk but are referenced "
-        "nowhere in this file — they would be silently uncompiled (false green):\n  "
+        "tests/CMakeLists.txt: these tests/{Core,Plugins}/**/*.test.cpp exist on disk but are "
+        "referenced nowhere in this file — they would be silently uncompiled (false green):\n  "
         "${_smatchet_unlisted_pretty}\n"
         "Add each to add_executable(SmatchetTests ...) (or the appropriate conditional block).")
 endif()
