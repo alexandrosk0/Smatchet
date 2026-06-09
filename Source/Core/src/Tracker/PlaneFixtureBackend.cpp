@@ -114,15 +114,13 @@ std::vector<CachedTicket> PlaneFixtureBackend::FetchIssues(bool* outFullSyncComp
     return tickets_;
 }
 
-bool PlaneFixtureBackend::FetchIssuesForKeys(const TrackerConfig& /*cfg*/, const std::vector<std::string>& issueKeys,
-                                             const ViewsStore& /*views*/, std::vector<CachedTicket>& outTickets,
-                                             std::string& outError) {
-    outTickets.clear();
+Result<std::vector<CachedTicket>, TrackerError>
+PlaneFixtureBackend::FetchIssuesForKeys(const TrackerConfig& /*cfg*/, const std::vector<std::string>& issueKeys,
+                                        const ViewsStore& /*views*/) {
     if (!loadError_.empty()) {
-        outError = loadError_;
-        return false;
+        return Result<std::vector<CachedTicket>, TrackerError>::Err(TrackerErrorInvalidRequest(loadError_));
     }
-    outError.clear();
+    std::vector<CachedTicket> outTickets;
     for (const auto& key : issueKeys) {
         for (const auto& t : tickets_) {
             if (t.id == key) {
@@ -131,19 +129,16 @@ bool PlaneFixtureBackend::FetchIssuesForKeys(const TrackerConfig& /*cfg*/, const
             }
         }
     }
-    return true;
+    return Result<std::vector<CachedTicket>, TrackerError>::Ok(std::move(outTickets));
 }
 
-bool PlaneFixtureBackend::UpdateIssueFields(const std::string& /*issueId*/, const nlohmann::json& /*fields*/,
-                                            std::string& outError) {
-    outError = "PlaneFixtureBackend is read-only";
-    return false;
+TrackerError PlaneFixtureBackend::UpdateIssueFields(const std::string& /*issueId*/, const nlohmann::json& /*fields*/) {
+    return TrackerErrorInvalidRequest("PlaneFixtureBackend is read-only");
 }
 
-bool PlaneFixtureBackend::UpdateField(const std::string& /*issueId*/, const TrackerField& /*field*/,
-                                      const std::vector<std::string>& /*values*/, std::string& outError) {
-    outError = "PlaneFixtureBackend is read-only";
-    return false;
+TrackerError PlaneFixtureBackend::UpdateField(const std::string& /*issueId*/, const TrackerField& /*field*/,
+                                              const std::vector<std::string>& /*values*/) {
+    return TrackerErrorInvalidRequest("PlaneFixtureBackend is read-only");
 }
 
 Result<nlohmann::json, TrackerError>

@@ -12,6 +12,8 @@
 #include "../support/FakeTrackerClient.h"
 #include "../support/SqliteMemFixture.h"
 
+#include "ConfigManager.h"
+#include "ITrackerCollaboration.h"
 #include "IssueCreatePipeline.h"
 #include "IssueDraft.h"
 #include "LocalCacheManager.h"
@@ -398,5 +400,202 @@ TEST_CASE("BuildCreatePayload returns Ok json on success and InvalidRequest Err 
         REQUIRE_FALSE(static_cast<bool>(r));
         CHECK(r.error().Kind == TrackerErrorKind::InvalidRequest);
         CHECK(r.error().Detail == "Project key is empty.");
+    }
+}
+
+// Slice 4 of the tracker Result<T> migration flipped the ITrackerIssueMutations void-payload
+// writes from `bool(..., std::string& outError)` to a bare `TrackerError` return (no payload —
+// ok-ness is carried by TrackerError::IsOk()). These cases pin the migrated shape directly:
+// success returns an Ok TrackerError (empty Detail); a scripted failure returns a non-Ok
+// TrackerError whose Detail is the verbatim scripted message — the contract the AppController
+// wrappers + OfflineQueueService + IssueCreatePipeline translate back to their string surfaces
+// (where ErrorTextContainsHttpStatus / IsTrackerTransportErrorText parse it verbatim).
+TEST_CASE("UpdateIssueFields returns Ok TrackerError on success and a detail-carrying Err on failure") {
+    FakeTrackerClient client;
+
+    SUBCASE("success is an Ok TrackerError with empty detail") {
+        client.EnqueueUpdateIssueFieldsSuccess();
+        const TrackerError e = client.UpdateIssueFields("PROJ-1", nlohmann::json{{"summary", "x"}});
+        CHECK(e.IsOk());
+        CHECK(e.Detail.empty());
+    }
+
+    SUBCASE("failure carries the verbatim scripted detail") {
+        client.EnqueueUpdateIssueFieldsFailure("HTTP 422: Unprocessable Entity");
+        const TrackerError e = client.UpdateIssueFields("PROJ-1", nlohmann::json{{"summary", "x"}});
+        CHECK_FALSE(e.IsOk());
+        CHECK(e.Detail == "HTTP 422: Unprocessable Entity");
+    }
+}
+
+TEST_CASE("UpdateField returns Ok TrackerError on success and a detail-carrying Err on failure") {
+    FakeTrackerClient client;
+
+    SUBCASE("success is an Ok TrackerError") {
+        client.SetDefaultUpdateFieldResult(true);
+        const TrackerError e = client.UpdateField("PROJ-1", MakeField("summary"), {"x"});
+        CHECK(e.IsOk());
+    }
+
+    SUBCASE("failure carries the verbatim scripted detail") {
+        client.SetDefaultUpdateFieldResult(false, "field rejected");
+        const TrackerError e = client.UpdateField("PROJ-1", MakeField("summary"), {"x"});
+        CHECK_FALSE(e.IsOk());
+        CHECK(e.Detail == "field rejected");
+    }
+}
+
+TEST_CASE("AddIssueToSprint returns Ok TrackerError on success and a detail-carrying Err on failure") {
+    FakeTrackerClient client;
+
+    SUBCASE("success is an Ok TrackerError") {
+        client.EnqueueAddIssueToSprintSuccess();
+        const TrackerError e = client.AddIssueToSprint("PROJ-1", "101");
+        CHECK(e.IsOk());
+    }
+
+    SUBCASE("failure carries the verbatim scripted detail") {
+        client.EnqueueAddIssueToSprintFailure("sprint not found");
+        const TrackerError e = client.AddIssueToSprint("PROJ-1", "101");
+        CHECK_FALSE(e.IsOk());
+        CHECK(e.Detail == "sprint not found");
+    }
+}
+
+// Slice 5 of the tracker Result<T> migration flipped the two payload-returning Mutations virtuals:
+// CreateIssue (bool/string-out → Result<std::string, TrackerError>, Ok = new issue key) and
+// AttachFilesToIssue (bool + outFailures-out → Result<vector<pair>, TrackerError>, where the Ok
+// payload is the per-file failures list — partial success is NOT an error, plan landmine L3; Err
+// is reserved for a hard failure that aborts the whole attach). These cases pin both shapes.
+TEST_CASE("CreateIssue returns Ok key on success and an InvalidRequest Err on failure") {
+    FakeTrackerClient client;
+
+    SUBCASE("ok carries the new issue key") {
+        client.EnqueueCreateIssueSuccess("PROJ-77");
+        auto r = client.CreateIssue(nlohmann::json{{"summary", "x"}});
+        REQUIRE(static_cast<bool>(r));
+        CHECK(r.value() == "PROJ-77");
+    }
+
+    SUBCASE("err carries the verbatim detail under InvalidRequest") {
+        client.EnqueueCreateIssueFailure("HTTP 400: bad fields");
+        auto r = client.CreateIssue(nlohmann::json{{"summary", "x"}});
+        REQUIRE_FALSE(static_cast<bool>(r));
+        CHECK(r.error().Kind == TrackerErrorKind::InvalidRequest);
+        CHECK(r.error().Detail == "HTTP 400: bad fields");
+    }
+}
+
+TEST_CASE("AttachFilesToIssue: per-file failures are an Ok payload (L3), hard failure is an Err") {
+    FakeTrackerClient client;
+
+    SUBCASE("full success is Ok with an empty failures list") {
+        client.SetAttachFilesResult(true);
+        auto r = client.AttachFilesToIssue("PROJ-1", {"/tmp/a.png"});
+        REQUIRE(static_cast<bool>(r));
+        CHECK(r.value().empty());
+    }
+
+    SUBCASE("partial success is Ok carrying the per-file failures (NOT an Err)") {
+        client.SetAttachFilesResult(true, {{"/tmp/b.png", "HTTP 413: too large"}});
+        auto r = client.AttachFilesToIssue("PROJ-1", {"/tmp/b.png"});
+        REQUIRE(static_cast<bool>(r));
+        REQUIRE(r.value().size() == 1);
+        CHECK(r.value()[0].first == "/tmp/b.png");
+        CHECK(r.value()[0].second == "HTTP 413: too large");
+    }
+
+    SUBCASE("a hard failure is an Err carrying the detail") {
+        client.SetAttachFilesResult(false, {}, "Issue key is empty.");
+        auto r = client.AttachFilesToIssue("", {"/tmp/c.png"});
+        REQUIRE_FALSE(static_cast<bool>(r));
+        CHECK(r.error().Kind == TrackerErrorKind::InvalidRequest);
+        CHECK(r.error().Detail == "Issue key is empty.");
+    }
+}
+
+// Slice 6 of the tracker Result<T> migration flipped the Reader virtual FetchIssuesForKeys off
+// bool(..., vector<CachedTicket>& out, std::string& outError) to Result<vector<CachedTicket>,
+// TrackerError> (Ok = the fetched tickets). These cases pin the migrated shape via the fake's
+// unchanged SetFetchIssuesForKeysResult scripting API (the callers — AppController prefetch +
+// OfflineQueueService conflict re-fetch — translate the Result back to their bool/string surfaces,
+// preserving the .Detail text their IsTrackerTransportErrorText checks read).
+TEST_CASE("FetchIssuesForKeys returns Ok tickets on success and a detail-carrying Err on failure") {
+    FakeTrackerClient client;
+    ViewsStore views;
+
+    SUBCASE("ok carries the scripted tickets") {
+        CachedTicket t;
+        t.id = "PROJ-7";
+        client.SetFetchIssuesForKeysResult(true, {t});
+        auto r = client.FetchIssuesForKeys(TrackerConfig{}, {"PROJ-7"}, views);
+        REQUIRE(static_cast<bool>(r));
+        REQUIRE(r.value().size() == 1);
+        CHECK(r.value()[0].id == "PROJ-7");
+    }
+
+    SUBCASE("failure carries the verbatim scripted detail (transport text preserved)") {
+        client.SetFetchIssuesForKeysResult(false, {}, "Operation timed out after 30000 ms");
+        auto r = client.FetchIssuesForKeys(TrackerConfig{}, {"PROJ-7"}, views);
+        REQUIRE_FALSE(static_cast<bool>(r));
+        CHECK(r.error().Detail == "Operation timed out after 30000 ms");
+    }
+}
+
+// Slice 7 of the tracker Result<T> migration flipped the ITrackerCollaboration virtuals: the reads
+// (FetchIssueWatchers / FetchIssueVotes / SearchUsersByQuery / FetchUserGroupNames / FetchIssueComments)
+// to Result<payload, TrackerError>, and the writes (AddIssueWatcher / AddIssueCommentPlain / AddWorklog /
+// AddIssueCommentAnnotateContext) to a bare TrackerError. FetchIssueVotes' four out-params (voters +
+// int* + bool* + bool*) collapsed into the TrackerIssueVotes Ok payload. These cases pin both the new
+// interface defaults (unsupported → Err) and the migrated value shapes via a minimal stub override.
+namespace {
+class StubCollaboration : public ITrackerCollaboration {
+  public:
+    // Override two methods to pin the Ok shapes; leave the rest as interface defaults (→ Err).
+    Result<TrackerIssueVotes, TrackerError> FetchIssueVotes(const TrackerConfig& /*cfg*/,
+                                                            const std::string& /*issueKey*/) override {
+        TrackerIssueVotes v;
+        v.VoteCount = 3;
+        v.HasVoted = true;
+        v.VotersArrayInResponse = true;
+        TrackerUser u;
+        u.AccountId = "acc-1";
+        v.Voters.push_back(u);
+        return Result<TrackerIssueVotes, TrackerError>::Ok(std::move(v));
+    }
+    TrackerError AddIssueWatcher(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/) override {
+        return TrackerError::Ok();
+    }
+};
+} // namespace
+
+TEST_CASE("ITrackerCollaboration migrated shapes: Result reads, bare-TrackerError writes, votes struct") {
+    StubCollaboration collab;
+
+    SUBCASE("an overridden read returns its payload as the Ok value (votes struct collapses 4 out-params)") {
+        auto r = collab.FetchIssueVotes(TrackerConfig{}, "PROJ-1");
+        REQUIRE(static_cast<bool>(r));
+        CHECK(r.value().VoteCount == 3);
+        CHECK(r.value().HasVoted);
+        CHECK(r.value().VotersArrayInResponse);
+        REQUIRE(r.value().Voters.size() == 1);
+        CHECK(r.value().Voters[0].AccountId == "acc-1");
+    }
+
+    SUBCASE("an overridden write returns an Ok TrackerError") {
+        const TrackerError e = collab.AddIssueWatcher(TrackerConfig{}, "PROJ-1");
+        CHECK(e.IsOk());
+    }
+
+    SUBCASE("a non-overridden read default is an InvalidRequest Err (Result<vector<string>>)") {
+        auto r = collab.FetchUserGroupNames(TrackerConfig{}, "acc-1");
+        REQUIRE_FALSE(static_cast<bool>(r));
+        CHECK(r.error().Kind == TrackerErrorKind::InvalidRequest);
+    }
+
+    SUBCASE("a non-overridden write default is an InvalidRequest Err (bare TrackerError)") {
+        const TrackerError e = collab.AddWorklog(TrackerConfig{}, "PROJ-1", "1h", "", "", "", "");
+        CHECK_FALSE(e.IsOk());
+        CHECK(e.Kind == TrackerErrorKind::InvalidRequest);
     }
 }

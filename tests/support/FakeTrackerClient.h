@@ -130,34 +130,32 @@ class FakeTrackerClient : public ITrackerBackend,
         return fetchTickets_;
     }
 
-    bool FetchIssuesForKeys(const TrackerConfig& /*cfg*/, const std::vector<std::string>& issueKeys,
-                            const ViewsStore& /*views*/, std::vector<CachedTicket>& outTickets,
-                            std::string& outError) override {
+    Result<std::vector<CachedTicket>, TrackerError> FetchIssuesForKeys(const TrackerConfig& /*cfg*/,
+                                                                       const std::vector<std::string>& issueKeys,
+                                                                       const ViewsStore& /*views*/) override {
         ++fetchIssuesForKeysCalls_;
         fetchIssuesForKeysLastKeys_ = issueKeys;
         if (!fetchIssuesForKeysOk_) {
-            outError = fetchIssuesForKeysError_;
-            return false;
+            return Result<std::vector<CachedTicket>, TrackerError>::Err(
+                TrackerErrorInvalidRequest(fetchIssuesForKeysError_));
         }
-        outTickets = fetchIssuesForKeysTickets_;
-        return true;
+        return Result<std::vector<CachedTicket>, TrackerError>::Ok(fetchIssuesForKeysTickets_);
     }
 
-    bool UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields, std::string& outError) override {
+    TrackerError UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) override {
         UpdateIssueFieldsCall call;
         call.IssueId = issueId;
         call.Fields = fields;
         updateIssueFieldsCalls_.push_back(std::move(call));
         const ScriptedReply reply = NextOrDefault(updateIssueFieldsQueue_, defaultUpdateIssueFields_);
         if (!reply.Ok) {
-            outError = reply.Error;
-            return false;
+            return TrackerErrorInvalidRequest(reply.Error);
         }
-        return true;
+        return TrackerError::Ok();
     }
 
-    bool UpdateField(const std::string& issueId, const TrackerField& field, const std::vector<std::string>& values,
-                     std::string& outError) override {
+    TrackerError UpdateField(const std::string& issueId, const TrackerField& field,
+                             const std::vector<std::string>& values) override {
         UpdateFieldCall call;
         call.IssueId = issueId;
         call.FieldId = field.Id;
@@ -165,10 +163,9 @@ class FakeTrackerClient : public ITrackerBackend,
         updateFieldCalls_.push_back(std::move(call));
         const ScriptedReply reply = NextOrDefault(updateFieldQueue_, defaultUpdateField_);
         if (!reply.Ok) {
-            outError = reply.Error;
-            return false;
+            return TrackerErrorInvalidRequest(reply.Error);
         }
-        return true;
+        return TrackerError::Ok();
     }
 
     Result<nlohmann::json, TrackerError> BuildFieldPayload(const TrackerField& /*field*/,
@@ -207,44 +204,40 @@ class FakeTrackerClient : public ITrackerBackend,
         return value;
     }
 
-    std::string CreateIssue(const nlohmann::json& fields, std::string& outError) override {
+    Result<std::string, TrackerError> CreateIssue(const nlohmann::json& fields) override {
         CreateIssueCall call;
         call.Fields = fields;
         createIssueCalls_.push_back(std::move(call));
         const ScriptedReply reply = NextOrDefault(createIssueQueue_, defaultCreateIssue_);
         if (!reply.Ok) {
-            outError = reply.Error;
-            return std::string();
+            return Result<std::string, TrackerError>::Err(TrackerErrorInvalidRequest(reply.Error));
         }
-        return reply.IssueKey;
+        return Result<std::string, TrackerError>::Ok(reply.IssueKey);
     }
 
-    bool AttachFilesToIssue(const std::string& issueKey, const std::vector<std::string>& absolutePaths,
-                            std::vector<std::pair<std::string, std::string>>& outFailures,
-                            std::string& outError) override {
+    Result<std::vector<std::pair<std::string, std::string>>, TrackerError>
+    AttachFilesToIssue(const std::string& issueKey, const std::vector<std::string>& absolutePaths) override {
         AttachFilesCall call;
         call.IssueKey = issueKey;
         call.Paths = absolutePaths;
         attachFilesCalls_.push_back(std::move(call));
         if (!attachFilesOk_) {
-            outError = attachFilesError_;
-            return false;
+            return Result<std::vector<std::pair<std::string, std::string>>, TrackerError>::Err(
+                TrackerErrorInvalidRequest(attachFilesError_));
         }
-        outFailures = attachFilesFailures_;
-        return true;
+        return Result<std::vector<std::pair<std::string, std::string>>, TrackerError>::Ok(attachFilesFailures_);
     }
 
-    bool AddIssueToSprint(const std::string& issueKey, const std::string& sprintId, std::string& outError) override {
+    TrackerError AddIssueToSprint(const std::string& issueKey, const std::string& sprintId) override {
         AddIssueToSprintCall call;
         call.IssueKey = issueKey;
         call.SprintId = sprintId;
         addIssueToSprintCalls_.push_back(std::move(call));
         const ScriptedReply reply = NextOrDefault(addIssueToSprintQueue_, defaultAddIssueToSprint_);
         if (!reply.Ok) {
-            outError = reply.Error;
-            return false;
+            return TrackerErrorInvalidRequest(reply.Error);
         }
-        return true;
+        return TrackerError::Ok();
     }
 
     // --- Scripting helpers (call recording) --------------------------------------------------

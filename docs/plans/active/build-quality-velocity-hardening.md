@@ -80,7 +80,7 @@ Throughput (protect speed without weakening checks):
 - **[#7]** tighten the comment-noise gate (the #1 build-green-CI-red cause) + wire `pre-ship.sh`'s format-then-gate order into the Stop hook.
 - **[#9/#18]** de-dup the coverage / perf cold-rebuilds (redundant whole rebuilds — the higher win).
 - **[#29]** split the serial windows-msvc 2-preset configure — **LOW** (~100s/run).
-- **[#21]** project-local `Optional<T>` / `Result` for the 122 `outError` + 19 `Try*` patterns.
+- **[#21]** project-local `Optional<T>` / `Result` for the 122 `outError` + 19 `Try*` patterns. **#21b (tracker backend `ITrackerBackend` virtual-interface layer) — SHIPPED 2026-06-08** via [`tracker-result-migration.md`](docs/plans/tracker-result-migration.md) Slices 1–7 (PRs #1020/#1022/#1023/#1029/#1030/#1033/#1035): all `ITracker*` sub-interface `bool + outError` virtuals → `Result<T, TrackerError>` / bare `TrackerError`, zero behaviour change. **Remaining #21:** the `AppController` public-API flip (that plan's scoped-but-unexecuted Slices 8–9) + the non-tracker `outError` sites (Whisper / P4 / config / texture cache).
 - **[#22]** SHA-pin remaining deps + a CI smoke for the load-bearing Lua mirror.
 - **[#25]** a CI step exercising the `SmatchetPackageUnrealLibs_DX12` packaging graph.
 - **[#31/#32]** extract cpr-free `*Pure` Tracker logic for unit tests; fix the flaky-test env gate + add a quarantine tag.

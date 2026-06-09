@@ -248,18 +248,17 @@ TrackerIssueFetchSummary GitHubClient::FetchIssuesStreamed(const BatchCallback& 
     return summary;
 }
 
-bool GitHubClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
-                                      const ViewsStore& /*views*/, std::vector<CachedTicket>& outTickets,
-                                      std::string& outError) {
+Result<std::vector<CachedTicket>, TrackerError>
+GitHubClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
+                                 const ViewsStore& /*views*/) {
     // PR4 — single-issue GET loop per key. Credentials resolve from the live cfg
     // (issue #979); owner/repo aren't consulted because the canonical owner/repo
     // is already embedded in each key (`owner/repo#N`).
     const smatchet::github::GitHubRequestAuth auth = ResolveAuth(&cfg);
     if (auth.Pat.empty()) {
-        outError = kPatMissingError;
-        return false;
+        return Result<std::vector<CachedTicket>, TrackerError>::Err(TrackerErrorAuth(kPatMissingError));
     }
-    return smatchet::github::FetchIssuesForKeysViaRestApi(auth.BaseUrl, auth.Pat, issueKeys, outTickets, outError);
+    return smatchet::github::FetchIssuesForKeysViaRestApi(auth.BaseUrl, auth.Pat, issueKeys);
 }
 
 Result<TrackerFieldCatalogResult, TrackerError> GitHubClient::FetchFieldCatalog(const TrackerConfig& /*cfg*/,
@@ -403,37 +402,34 @@ std::string GitHubClient::BuildBrowseUrl(const TrackerConfig& cfg, const std::st
 // github-commit-tracker-rows — shared read-only message for commit-key mutations.
 static const char* const kCommitReadOnlyError = "GitHub commit rows are immutable history and cannot be edited";
 
-bool GitHubClient::UpdateIssueFields(const std::string& issueId, const nlohmann::json& /*fields*/,
-                                     std::string& outError) {
+TrackerError GitHubClient::UpdateIssueFields(const std::string& issueId, const nlohmann::json& /*fields*/) {
     smatchet::github::ParsedCommitKey ck;
     if (smatchet::github::ParseGitHubCommitKey(issueId, ck)) {
-        outError = kCommitReadOnlyError;
-        return false;
+        return TrackerErrorInvalidRequest(kCommitReadOnlyError);
     }
+    std::string outError;
     StubError(outError, "UpdateIssueFields");
-    return false;
+    return TrackerErrorInvalidRequest(outError);
 }
 
-bool GitHubClient::UpdateField(const std::string& issueId, const TrackerField& field,
-                               const std::vector<std::string>& values, std::string& outError) {
+TrackerError GitHubClient::UpdateField(const std::string& issueId, const TrackerField& field,
+                                       const std::vector<std::string>& values) {
     // github-commit-tracker-rows — reject commit keys before issue-key parsing;
     // the defensive last line behind editmeta's all-false map.
     smatchet::github::ParsedCommitKey commitKey;
     if (smatchet::github::ParseGitHubCommitKey(issueId, commitKey)) {
-        outError = kCommitReadOnlyError;
-        return false;
+        return TrackerErrorInvalidRequest(kCommitReadOnlyError);
     }
     smatchet::github::ParsedIssueKey parsed;
     if (!smatchet::github::ParseGitHubIssueKey(issueId, parsed)) {
-        outError = "GitHubClient::UpdateField: invalid issueId shape (expected owner/repo#N): " + issueId;
-        return false;
+        return TrackerErrorInvalidRequest("GitHubClient::UpdateField: invalid issueId shape (expected owner/repo#N): " +
+                                          issueId);
     }
     // No cfg parameter on this interface — resolve from the settled on-disk config
     // (issue #979; same per-request pattern JiraIssueMutation uses).
     const smatchet::github::GitHubRequestAuth auth = ResolveAuth(nullptr);
     if (auth.Pat.empty()) {
-        outError = kPatMissingError;
-        return false;
+        return TrackerErrorAuth(kPatMissingError);
     }
     // Label-field set-replace: real impl pre-fetches current labels, computes
     // diff via LabelEditDiffPure, then issues POST/DELETE per element. Stub
@@ -444,8 +440,9 @@ bool GitHubClient::UpdateField(const std::string& issueId, const TrackerField& f
         LOG_INFO("GitHubClient::UpdateField labels stub: %s toAdd=%zu toRemove=%zu", issueId.c_str(), diff.ToAdd.size(),
                  diff.ToRemove.size());
     }
+    std::string outError;
     StubError(outError, "UpdateField");
-    return false;
+    return TrackerErrorInvalidRequest(outError);
 }
 
 Result<nlohmann::json, TrackerError> GitHubClient::BuildFieldPayload(const TrackerField& field,
@@ -496,8 +493,8 @@ std::string GitHubClient::ResolveDisplayValue(const std::string& fieldId, const 
     return value;
 }
 
-std::string GitHubClient::CreateIssue(const nlohmann::json& fields, std::string& outError) {
-    outError.clear();
+Result<std::string, TrackerError> GitHubClient::CreateIssue(const nlohmann::json& fields) {
+    std::string outError;
     const std::string auditOp = BackendAuditTrail::MakeOperationId("issue-create");
     BackendAuditTrail::AppendBegin("issue_create", "github_client", std::string(), auditOp,
                                    nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
@@ -508,12 +505,12 @@ std::string GitHubClient::CreateIssue(const nlohmann::json& fields, std::string&
     if (auth.Pat.empty()) {
         outError = kPatMissingError;
         BackendAuditTrail::AppendResult("issue_create", "github_client", std::string(), auditOp, false, outError);
-        return "";
+        return Result<std::string, TrackerError>::Err(TrackerErrorAuth(outError));
     }
     if (!fields.is_object() || !fields.contains("__target")) {
         outError = "GitHubClient::CreateIssue: payload missing __target (call BuildCreatePayload first)";
         BackendAuditTrail::AppendResult("issue_create", "github_client", std::string(), auditOp, false, outError);
-        return "";
+        return Result<std::string, TrackerError>::Err(TrackerErrorInvalidRequest(outError));
     }
 
     // Extract + strip the out-of-band target before POSTing the body.
@@ -525,7 +522,7 @@ std::string GitHubClient::CreateIssue(const nlohmann::json& fields, std::string&
     if (owner.empty() || repo.empty()) {
         outError = "GitHubClient::CreateIssue: __target missing owner/repo";
         BackendAuditTrail::AppendResult("issue_create", "github_client", std::string(), auditOp, false, outError);
-        return "";
+        return Result<std::string, TrackerError>::Err(TrackerErrorInvalidRequest(outError));
     }
 
     const std::string url = auth.BaseUrl + "/repos/" + owner + "/" + repo + "/issues";
@@ -535,7 +532,13 @@ std::string GitHubClient::CreateIssue(const nlohmann::json& fields, std::string&
         outError = smatchet::github::ExtractGitHubErrorMessage(static_cast<int>(resp.status_code), resp.text);
         LOG_ERROR("GitHubClient::CreateIssue: HTTP %ld — %s", resp.status_code, outError.c_str());
         BackendAuditTrail::AppendResult("issue_create", "github_client", std::string(), auditOp, false, outError);
-        return "";
+        // 2xx-but-not-200/201 reaches this failure branch; guard before FromHttpStatus (FIX-1 / Slice-2).
+        if (resp.status_code >= 200 && resp.status_code < 300) {
+            return Result<std::string, TrackerError>::Err(
+                TrackerErrorUnknown(outError, static_cast<int>(resp.status_code)));
+        }
+        return Result<std::string, TrackerError>::Err(
+            TrackerErrorFromHttpStatus(static_cast<int>(resp.status_code), outError));
     }
 
     try {
@@ -545,17 +548,17 @@ std::string GitHubClient::CreateIssue(const nlohmann::json& fields, std::string&
             outError = "GitHubClient::CreateIssue: response missing issue 'number'";
             LOG_ERROR("GitHubClient::CreateIssue: %s", outError.c_str());
             BackendAuditTrail::AppendResult("issue_create", "github_client", std::string(), auditOp, false, outError);
-            return "";
+            return Result<std::string, TrackerError>::Err(TrackerErrorParse(outError));
         }
         const std::string key = smatchet::github::FormatGitHubIssueKey(owner, repo, number);
         LOG_INFO("GitHubClient: created GitHub issue %s.", key.c_str());
         BackendAuditTrail::AppendResult("issue_create", "github_client", key, auditOp, true, std::string());
-        return key;
+        return Result<std::string, TrackerError>::Ok(key);
     } catch (const std::exception& ex) {
         outError = std::string("GitHubClient::CreateIssue: failed to parse response: ") + ex.what();
         LOG_ERROR("GitHubClient::CreateIssue: %s", outError.c_str());
         BackendAuditTrail::AppendResult("issue_create", "github_client", std::string(), auditOp, false, outError);
-        return "";
+        return Result<std::string, TrackerError>::Err(TrackerErrorParse(outError));
     }
 }
 

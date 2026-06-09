@@ -86,6 +86,7 @@ Full per-outcome semantics + halt-prompt return-code table + env knobs + REST co
 | `function-too-branchy` | all first-party C++ | **30** decision points |
 | `agent-too-long` (`agent_size_audit.py`) | agent prompts / `AGENTS.md` | **250** / **150** lines |
 | `duplication` | all first-party C++ | copy-paste clone (WARN-first calibration) |
+| `interface-doc` (WARN) | `ITracker*.h`/`Tracker/*Client.h` ↔ `Tracker/AGENTS.md` | advisory: a doc-pinned `Type::method` changed in the header without a doc touch (symbol-pinned, not coarse — noise-spike-rejected) |
 | `narrowing-conversions` | strict zone (Windows post-merge job) | clang-tidy |
 
 **Strict zones** (any violation fails): `Source/Core/src/Tracker/`, `Source/Core/src/Sync/`, `Source/Core/src/Persistence/`, `Source/Core/src/Config/`, `Source/Core/src/Commands/`, `Source/Plugins/Mcp/` (+ matching `Source/Core/include/`). **Light** (ungated): `Source/Core/src/Ui/`, `Source/Standalone/`. **Exempt**: `ThirdParty/`, `build/`.

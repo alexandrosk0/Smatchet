@@ -95,3 +95,56 @@ teardown() {
     [ "$status" -eq 0 ]
     echo "$output" | grep -q "FULLY SUPERSEDED"
 }
+
+@test "dotted nested-path workflow survivor appears (MSYS rev:path mangling regression)" {
+    # Regression for the Git-for-Windows/MSYS bug where the existence guard ran
+    # `git cat-file -e "<ref>:<path>"`: MSYS rewrote the colon arg (':' -> ';',
+    # '/' -> '\'), so the guard errored (fatal=128) and the old `|| continue`
+    # SILENTLY dropped a fully-alive survivor file from the digest.
+    #
+    # Two conditions are BOTH required to trip the MSYS path-list heuristic, so
+    # the test must reproduce both or it proves nothing:
+    #   (1) the <path> after the colon is a dotted nested path (".github/...");
+    #   (2) the <ref> BEFORE the colon contains a slash. A bare "HEAD" does NOT
+    #       mangle ("HEAD" isn't path-like), so we force a slash-bearing review
+    #       ref via `--against refs/heads/<branch>` — the production shape
+    #       (`origin/develop:.github/...`). Pre-fix under MSYS this digest omits
+    #       the file; the post-fix ls-tree guard keeps it. On Linux the bug never
+    #       manifests, so the assertion holds either way.
+    mkdir -p .github/workflows
+    printf 'name: tsan\njobs:\n  build:\n    runs-on: ubuntu-latest\n' > .github/workflows/tsan.yml
+    git add .github/workflows/tsan.yml && git commit -qm "A: add workflow"
+    A="$(git rev-parse HEAD)"
+    echo "unrelated" > other.txt          # B touches a different file; workflow survives intact
+    git add other.txt && git commit -qm "B: unrelated file"
+    REF="refs/heads/$(git rev-parse --abbrev-ref HEAD)"   # slash-bearing — needed to trip the bug
+
+    run bash "$SCRIPT" --against "$REF" "$A"
+    [ "$status" -eq 0 ]
+    # The alive workflow MUST appear — it was silently dropped before the fix.
+    echo "$output" | grep -q ".github/workflows/tsan.yml"
+    echo "$output" | grep -q "runs-on: ubuntu-latest"
+    ! echo "$output" | grep -q "FULLY SUPERSEDED"
+}
+
+@test "parser temp path survives MSYS conversion being disabled (native python handoff)" {
+    # Complementary to the colon-mangling guard above. Operators sometimes export
+    # MSYS_NO_PATHCONV / MSYS2_ARG_CONV_EXCL globally (e.g. to keep <rev>:<path>
+    # git args intact). With conversion OFF, the POSIX mktemp parser path
+    # (/tmp/tmp.XXXX.py) reaches a NATIVE Windows python verbatim and is
+    # mis-resolved as C:\tmp\.. — the script must cygpath-normalise it before the
+    # handoff. No-op on Linux/macOS (vars unused, cygpath absent), so the
+    # assertions hold either way.
+    export MSYS_NO_PATHCONV=1
+    export MSYS2_ARG_CONV_EXCL='*'
+    printf 'survive1\nsurvive2\n' > m.txt
+    git add m.txt && git commit -qm "A: two lines"
+    A="$(git rev-parse HEAD)"
+    echo "elsewhere" > n.txt && git add n.txt && git commit -qm "B: unrelated file"
+
+    run bash "$SCRIPT" "$A"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep -q "survive1"
+    echo "$output" | grep -q "survive2"
+    echo "$output" | grep -q "2/2 introduced line(s) still alive"
+}

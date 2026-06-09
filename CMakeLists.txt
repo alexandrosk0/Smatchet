@@ -347,7 +347,17 @@ smatchet_prepare_cpr()
 # supply chain) — same content the floating tag points to today, zero behaviour
 # change. 1.9.2 is a lightweight tag (points straight at the commit); resolved
 # via: git ls-remote https://github.com/libcpr/cpr.git 1.9.2
-FetchContent_Declare(cpr GIT_REPOSITORY https://github.com/libcpr/cpr.git GIT_TAG f88fd7737de3e640c61703eb57a0fa0ce00c60cd)  # cpr 1.9.2
+# GIT_SUBMODULES "" — same fresh-worktree/CI-cold-cache failure mode as json
+# (above): FetchContent runs `git submodule update --init` unconditionally after
+# the clone, and that bare `git submodule` wrapper resolves `git-sh-setup` via a
+# vcvars64-sourced PATH that drops Git's libexec/git-core, dying with
+# "git-sh-setup: file not found" → "Failed to update submodules in: .../cpr-src"
+# → "Build step for cpr failed: 1". cpr 1.9.2 carries no submodules we link (it
+# FetchContents its own deps; submodules are test-data/CI only), so declaring no
+# submodules sidesteps the doomed wrapper call entirely. See
+# docs/guides/offline-builds.md § Troubleshooting + agents/core/build-doctor.md.
+FetchContent_Declare(cpr GIT_REPOSITORY https://github.com/libcpr/cpr.git GIT_TAG f88fd7737de3e640c61703eb57a0fa0ce00c60cd  # cpr 1.9.2
+    GIT_SUBMODULES "")
 FetchContent_GetProperties(cpr)
 if(NOT cpr_POPULATED)
     FetchContent_Populate(cpr)
@@ -374,7 +384,14 @@ smatchet_prepare_sqlitecpp()
 # builds / supply chain) — same content the floating tag points to today, zero
 # behaviour change. 3.3.1 is an annotated tag; resolved to its underlying commit
 # via: git ls-remote https://github.com/SRombauts/SQLiteCpp.git 'refs/tags/3.3.1^{}'
-FetchContent_Declare(sqlitecpp GIT_REPOSITORY https://github.com/SRombauts/SQLiteCpp.git GIT_TAG fe6086c12679d8744c02fa03e83e75feca2413d8)  # SQLiteCpp 3.3.1
+# GIT_SUBMODULES "" — SQLiteCpp vendors googletest as a `.gitmodules` submodule
+# (test-only; we build with tests off). Two reasons to skip it: it spares a
+# googletest clone we never link, AND it avoids the same fresh-worktree/CI
+# cold-cache failure as json/cpr above — FetchContent's unconditional
+# `git submodule update --init` dies on `git-sh-setup: file not found` under the
+# vcvars64-stripped PATH ("Failed to update submodules in: .../sqlitecpp-src").
+FetchContent_Declare(sqlitecpp GIT_REPOSITORY https://github.com/SRombauts/SQLiteCpp.git GIT_TAG fe6086c12679d8744c02fa03e83e75feca2413d8  # SQLiteCpp 3.3.1
+    GIT_SUBMODULES "")
 FetchContent_GetProperties(sqlitecpp)
 if(NOT sqlitecpp_POPULATED)
     FetchContent_Populate(sqlitecpp)
@@ -397,7 +414,16 @@ smatchet_prepare_httplib()
 # builds / supply chain) — same content the floating tag points to today, zero
 # behaviour change. Lightweight tag; resolved via:
 # git ls-remote https://github.com/yhirose/cpp-httplib.git refs/tags/v0.14.1
-FetchContent_Declare(httplib GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git GIT_TAG a609330e4c6374f741d3b369269f7848255e1954)  # cpp-httplib v0.14.1
+# GIT_SUBMODULES "" — cpp-httplib has no submodules we link, but FetchContent's
+# generated gitclone script runs `git submodule update --recursive --init`
+# UNCONDITIONALLY (it does not pre-check `.gitmodules`). On a fresh worktree/CI
+# cold cache that bare `git submodule` wrapper resolves `git-sh-setup` via a
+# vcvars64-sourced PATH that drops Git's libexec/git-core and dies with
+# "git-sh-setup: file not found" → "Failed to update submodules". Empirically
+# confirmed: httplib fails the fresh fetch with NO `.gitmodules` present. Skip
+# the step. Same fix as json/cpr/sqlitecpp/sol2 above.
+FetchContent_Declare(httplib GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git GIT_TAG a609330e4c6374f741d3b369269f7848255e1954  # cpp-httplib v0.14.1
+    GIT_SUBMODULES "")
 FetchContent_MakeAvailable(httplib)
 
 
@@ -412,6 +438,11 @@ FetchContent_Declare(md4c
     # Lightweight tag; resolved via:
     # git ls-remote https://github.com/mity/md4c.git refs/tags/release-0.5.2
     GIT_TAG 729e6b8b320caa96328968ab27d7db2235e4fb47  # md4c release-0.5.2
+    # GIT_SUBMODULES "" — md4c has no submodules we link, but FetchContent runs
+    # `git submodule update --recursive --init` unconditionally; on a fresh
+    # worktree/CI cold cache that wrapper dies on "git-sh-setup: file not found"
+    # under the vcvars64-stripped PATH. Skip it. Same fix as json/cpr/httplib.
+    GIT_SUBMODULES ""
 )
 FetchContent_GetProperties(md4c)
 if(NOT md4c_POPULATED)
@@ -435,6 +466,12 @@ FetchContent_Declare(ghc_filesystem
     # Lightweight tag; resolved via:
     # git ls-remote https://github.com/gulrak/filesystem.git refs/tags/v1.5.14
     GIT_TAG 8a2edd6d92ed820521d42c94d179462bf06b5ed3  # ghc::filesystem v1.5.14
+    # GIT_SUBMODULES "" — ghc::filesystem has no submodules we link, but
+    # FetchContent runs `git submodule update --recursive --init` unconditionally;
+    # on a fresh worktree/CI cold cache that wrapper dies on "git-sh-setup: file
+    # not found" under the vcvars64-stripped PATH. Skip it. Same fix as
+    # json/cpr/httplib.
+    GIT_SUBMODULES ""
 )
 
 # FIX: CMake <3.10 compatibility removal warning
@@ -493,7 +530,12 @@ if(NOT ANDROID AND NOT IOS)
     # behaviour change. 3.3.8 is an annotated tag; resolved to its underlying commit
     # (NOT the tag-object SHA, which would re-fetch) via:
     # git ls-remote https://github.com/glfw/glfw.git 'refs/tags/3.3.8^{}'
-    FetchContent_Declare(glfw GIT_REPOSITORY https://github.com/glfw/glfw.git GIT_TAG 7482de6071d21db77a7236155da44c172a7f6c9e)  # glfw 3.3.8
+    # GIT_SUBMODULES "" — glfw has no submodules we link, but FetchContent runs
+    # `git submodule update --recursive --init` unconditionally; on a fresh
+    # worktree/CI cold cache that wrapper dies on "git-sh-setup: file not found"
+    # under the vcvars64-stripped PATH. Skip it. Same fix as json/cpr/httplib.
+    FetchContent_Declare(glfw GIT_REPOSITORY https://github.com/glfw/glfw.git GIT_TAG 7482de6071d21db77a7236155da44c172a7f6c9e  # glfw 3.3.8
+        GIT_SUBMODULES "")
     FetchContent_MakeAvailable(glfw)
 endif()
 
@@ -624,7 +666,13 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
     # to today, zero behaviour change. v2.20.6 is an annotated tag; resolved to
     # its underlying commit via:
     #   git ls-remote https://github.com/ThePhD/sol2.git 'refs/tags/v2.20.6^{}'
-    FetchContent_Declare(sol2 GIT_REPOSITORY https://github.com/ThePhD/sol2.git GIT_TAG 902ceaf8a1d53ea1b70cf9f3f0302da87f5a7f8c)  # sol2 v2.20.6
+    # GIT_SUBMODULES "" — sol2 vendors Catch as a `.gitmodules` submodule
+    # (test-only; never linked here). Skips the Catch clone AND avoids the same
+    # fresh-worktree/CI cold-cache failure as json/cpr/sqlitecpp above:
+    # FetchContent's unconditional `git submodule update --init` dies on
+    # `git-sh-setup: file not found` under the vcvars64-stripped PATH.
+    FetchContent_Declare(sol2 GIT_REPOSITORY https://github.com/ThePhD/sol2.git GIT_TAG 902ceaf8a1d53ea1b70cf9f3f0302da87f5a7f8c  # sol2 v2.20.6
+        GIT_SUBMODULES "")
 
     FetchContent_GetProperties(sol2)
     if(NOT sol2_POPULATED)
@@ -775,7 +823,13 @@ if(SMATCHET_WITH_WHISPER AND SMATCHET_WHISPER_LOCAL_BACKEND)
     # git ls-remote https://github.com/ggerganov/whisper.cpp.git refs/tags/v1.7.4
     FetchContent_Declare(whisper_cpp
         GIT_REPOSITORY https://github.com/ggerganov/whisper.cpp.git
-        GIT_TAG 8a9ad7844d6e2a10cddf4b92de4089d7ac2b14a9)  # whisper.cpp v1.7.4
+        GIT_TAG 8a9ad7844d6e2a10cddf4b92de4089d7ac2b14a9  # whisper.cpp v1.7.4
+        # GIT_SUBMODULES "" — whisper.cpp bundles ggml in-tree (no submodule we
+        # link); FetchContent's unconditional `git submodule update --init`
+        # otherwise dies on "git-sh-setup: file not found" under the
+        # vcvars64-stripped PATH on a fresh worktree/CI cold cache. Same fix as
+        # json/cpr/httplib.
+        GIT_SUBMODULES "")
     FetchContent_MakeAvailable(whisper_cpp)
 endif()
 
@@ -786,6 +840,12 @@ FetchContent_Declare(imgui
         # Pinned to a specific commit on the docking branch (reproducible builds / supply chain).
         # v1.92.7-docking-39-g329c5a6b3
         GIT_TAG 329c5a6b3be75ebf54506d3ae94b836ffcf19fa0
+        # GIT_SUBMODULES "" — Dear ImGui has no submodules we link, but
+        # FetchContent runs `git submodule update --recursive --init`
+        # unconditionally; on a fresh worktree/CI cold cache that wrapper dies on
+        # "git-sh-setup: file not found" under the vcvars64-stripped PATH. Skip
+        # it. Same fix as json/cpr/httplib.
+        GIT_SUBMODULES ""
 )
 
 FetchContent_GetProperties(imgui)

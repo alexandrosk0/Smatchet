@@ -33,6 +33,8 @@ Idempotent. Run it after every clone and any time the canonical templates change
 
 Edits to `agents/core/architect.md` are visible to Claude Code immediately. Adding a new file under `agents/` exposes it without re-running the setup script.
 
+> **Windows hardlink-fallback caveat.** "Visible immediately" holds only when the adapter is a directory junction or symlinks (Unix, or Windows with Dev Mode on). When the script falls back to **per-file hardlinks** (Windows, Dev Mode off — see [Windows specifics](#windows-specifics)), the `.claude/` copy shares the canonical file's *inode*, not its path. Editing the canonical via a tool that **rewrites the file** (`Edit`/`Write` replace the inode rather than patching in place) silently breaks the hardlink: `.claude/agents/<name>.md` keeps the OLD content, so the harness spawns the agent with the stale model/effort/prompt — invisibly, until the next setup run. After editing any `agents/{core,project}/*.md` on such a machine, **re-run `bash agents/scripts/core/setup-harness.sh claude-code`** before relying on that agent in a spawn. (`test-agent-contract` validates the canonical file only and passes regardless — it does not catch adapter staleness; tracked as the `agent-adapter-drift` gate-gap in `docs/self-improvement/categories/tooling.md`.)
+
 ## Why copies for templates
 
 `settings.json` carries hook wiring. Some devs add project-local permissions or extra hooks. If `settings.json` were a link, those edits would silently leak back into the tracked template via `git add`. Copies isolate per-machine tweaks.

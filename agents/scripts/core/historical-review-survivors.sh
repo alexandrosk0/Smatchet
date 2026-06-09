@@ -23,6 +23,20 @@
 # Read-only. No git mutations.
 set -euo pipefail
 
+# Git-for-Windows / MSYS arg-mangling note. MSYS rewrites any argument that
+# looks like a POSIX path-list — notably the "<rev>:<path>" form — turning ':'
+# into ';' and '/' into '\', so e.g. `git cat-file -e "origin/develop:.github/
+# workflows/x.yml"` reached git as the bogus object name "origin\develop;
+# .github\workflows\x.yml" (fatal=128) and the existence guard SILENTLY dropped
+# live survivor files under .github/ etc. The fix is STRUCTURAL — the existence
+# guard below uses `git ls-tree <ref> -- <path>` (separate args, no colon) so
+# nothing trips the heuristic. The parser temp file (an MSYS "/tmp/…py" path) is
+# handed to native python.exe as a cygpath-normalised Windows path (see PARSER_PY
+# below), so it resolves whether or not MSYS path-conversion is on — an operator
+# may safely export MSYS2_ARG_CONV_EXCL / MSYS_NO_PATHCONV globally without breaking
+# the python handoff. (Before that hardening, a global export fed python.exe a raw
+# "/tmp/…" it read as "C:\tmp\…" and could not open.)
+
 # Resolve a working Python (Windows ships `python`; bare `python3` may hit the
 # Microsoft Store alias stub). Prefer an explicit $PYTHON, then python3/python/py.
 PY=""
@@ -135,6 +149,19 @@ TMP_BODY="$(mktemp)"
 PARSER="$(mktemp --suffix=.py 2>/dev/null || mktemp)"
 trap 'rm -f "$TMP_BODY" "$PARSER"' EXIT
 
+# Path to hand the Python interpreter. On Git-for-Windows, mktemp emits a POSIX
+# path (/tmp/tmp.XXXX.py) but $PY is usually a NATIVE Windows python, which reads
+# /tmp/.. as the drive-relative C:\tmp\.. — a different, nonexistent location. MSYS
+# auto-converts the arg only while path-conversion is ON; an operator who globally
+# exports MSYS_NO_PATHCONV / MSYS2_ARG_CONV_EXCL (e.g. to keep <rev>:<path> git args
+# intact) disables it and breaks the handoff. cygpath -w gives a path both MSYS and
+# native python resolve identically regardless of conversion state; absent (Linux/
+# macOS) it's a plain no-op. $PARSER itself stays POSIX so the trap's rm still finds it.
+PARSER_PY="$PARSER"
+if command -v cygpath >/dev/null 2>&1; then
+    PARSER_PY="$(cygpath -w "$PARSER")"
+fi
+
 # Porcelain parser lives in its own file so the blame stream (stdin via pipe) is
 # NOT shadowed by a heredoc — `python - <<EOF` would make the heredoc, not the
 # pipe, become stdin. argv: <target-sha> <context> <path>; reads blame on stdin.
@@ -191,15 +218,27 @@ total_alive=0
 files_with_survivors=0
 
 for f in "${FILES[@]}"; do
-    # Skip files that no longer exist at the review ref (deleted/renamed = "touched").
-    git cat-file -e "$REVIEW_REF:$f" 2>/dev/null || continue
+    # Existence guard against the review ref. Use `ls-tree` (separate <ref> and
+    # `-- <path>` args, no colon) NOT `cat-file -e "<ref>:<path>"`: the colon
+    # form trips MSYS arg-mangling (see top-of-file note) AND can't tell
+    # "absent" from "errored" by exit code — both are fatal=128. ls-tree avoids
+    # the colon and gives a clean three-way so a future mangling-class bug
+    # surfaces LOUDLY instead of silently dropping a live file:
+    #   nonzero rc      -> the check itself errored: warn, do NOT skip
+    #   rc 0 + empty    -> genuinely absent at the ref (deleted/renamed): skip
+    #   rc 0 + nonempty -> present at the ref: review it
+    if ! present="$(git ls-tree --name-only "$REVIEW_REF" -- "$f" 2>/dev/null)"; then
+        echo "historical-review-survivors: WARNING — existence check for '$f' at '$REVIEW_REF' errored; NOT skipping it (possible path-mangling regression — review '$f' manually)." >&2
+    elif [ -z "$present" ]; then
+        continue
+    fi
 
     # Net lines this commit added to this file (for the supersede ratio).
     added="$(git log -1 --format= --numstat "$SHA" -- "$f" | awk 'NF>=3 && $1!="-"{s+=$1} END{print s+0}')"
     total_introduced=$((total_introduced + added))
 
     # Surviving lines: blame the review ref, keep lines still attributed to $SHA.
-    surv="$(git blame --line-porcelain "$REVIEW_REF" -- "$f" 2>/dev/null | $PY "$PARSER" "$SHA" "$CONTEXT" "$f" "$REVIEW_REF")"
+    surv="$(git blame --line-porcelain "$REVIEW_REF" -- "$f" 2>/dev/null | $PY "$PARSER_PY" "$SHA" "$CONTEXT" "$f" "$REVIEW_REF")"
 
     [ -z "$surv" ] && continue
     alive="$(printf '%s\n' "$surv" | sed -n 's/^__ALIVE__ //p')"

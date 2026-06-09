@@ -5,6 +5,7 @@
 // behind the declarations in `ConfigManager_Internal.h`.
 
 #include "ConfigManager.h"
+#include "UiThreadAffinity.h"
 #include "ConfigManager_Internal.h"
 
 #include "Logger.h"
@@ -236,6 +237,9 @@ std::string ConfigManager::NormalizeViewsBackendKey(const std::string& trackerTy
 }
 
 PersistentViewsFile ConfigManager::LoadPersistentViewsFromDisk() {
+    // Pillar-2 gate (close-gate-gaps Slice 1a): blocking (lock + ScopedFileLock + sync ifstream
+    // + JSON parse) — must not run on the UI render thread (#611). Warn-only for now.
+    UiThreadAffinity::WarnIfOnUiThread("ConfigManager::LoadPersistentViewsFromDisk");
     PersistentViewsFile disk;
     disk.Version = 2;
     const std::string viewsPath = GetViewsPath();
