@@ -1028,7 +1028,20 @@ void AppController::LaunchBackgroundTask(std::function<void()> task) {
     auto done = std::make_shared<std::atomic<bool>>(false);
     std::thread worker([this, task = std::move(task), done]() mutable {
         if (!shuttingDown_.load()) {
-            task();
+            // An exception escaping a worker thread function calls std::terminate
+            // (the UI-thread SEH guard does NOT cover worker threads) — a single
+            // throw in any background task (e.g. a backend-switch race in the
+            // sync worker, a JSON-parse failure on an unexpected API body) takes
+            // the whole app down. Contain it: log + abandon the one task, app
+            // stays up (Pillar-3 never-crash / graceful degradation).
+            try {
+                task();
+            } catch (const std::exception& ex) {
+                LOG_ERROR("AppController: background task threw std::exception: %s — task abandoned, app continues.",
+                          ex.what());
+            } catch (...) { // catch-all-ok: worker-thread firewall — must not propagate to std::terminate
+                LOG_ERROR("AppController: background task threw a non-std exception — task abandoned, app continues.");
+            }
         }
         // Mark complete LAST so the pool's reap (which joins only done workers) sees a thread
         // that's past task() — join() then returns essentially immediately.
