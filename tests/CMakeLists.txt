@@ -105,6 +105,10 @@ add_executable(SmatchetTests
     # snapshot-time p99Ms row field (Pillar-1 p99 ceiling). Header-only
     # (Source/Core/include/Ui/PerfSampleRing.h); no production .cpp to link.
     Core/PerfSampleRing.test.cpp
+    # Worker-thread exception firewall (issue #1081 / PR #1080) — pure containment helper
+    # behind AppController::LaunchBackgroundTask (Pillar-3 never-crash). Header-only
+    # (Source/Core/include/BackgroundTaskFirewall.h); no production .cpp to link.
+    Core/BackgroundTaskFirewall.test.cpp
     Core/BackgroundWorkerReap.test.cpp
     Core/JqlProjectScope.test.cpp
     # Per-project Jira component dropdowns (PR #672) — pure coverage of issue-key-prefix
