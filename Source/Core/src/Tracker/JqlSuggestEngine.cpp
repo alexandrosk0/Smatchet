@@ -2,6 +2,7 @@
 
 #include "AppController.h"
 #include "StringUtil.h"
+#include "Tracker/TrackerQuerySuggestCommon.h"
 #include "TrackerFieldSchema.h"
 
 #include <algorithm>
@@ -12,153 +13,20 @@
 
 namespace {
 
-static bool IsJqlIdChar(unsigned char ch) { return std::isalnum(ch) != 0 || ch == '_' || ch == '.' || ch == '-'; }
-
-static bool JqlValueNeedsQuotes(const std::string& s) {
-    if (s.empty()) {
-        return true;
-    }
-    return std::any_of(s.begin(), s.end(),
-                       [](char ch) { return !IsJqlIdChar(static_cast<unsigned char>(ch)) || ch == '"' || ch == '\\'; });
-}
-
-static std::string JqlQuotedValue(const std::string& s) {
-    std::string out;
-    out.reserve(s.size() + 4);
-    out.push_back('"');
-    for (unsigned char c : s) {
-        if (c == '"' || c == '\\') {
-            out.push_back('\\');
-        }
-        out.push_back(static_cast<char>(c));
-    }
-    out.push_back('"');
-    return out;
-}
-
-static std::string JqlInsertForValueToken(const std::string& raw) {
-    if (JqlValueNeedsQuotes(raw)) {
-        return JqlQuotedValue(raw);
-    }
-    return raw;
-}
-
-static void JqlScanStringStateToCursor(const char* buf, int bufLen, int cursor, bool& outInString,
-                                       int& outStringOpenIndex) {
-    outInString = false;
-    outStringOpenIndex = -1;
-    const int lim = (std::min)(bufLen, cursor);
-    for (int j = 0; j < lim; ++j) {
-        const unsigned char ch = static_cast<unsigned char>(buf[j]);
-        if (ch == '\\' && outInString && j + 1 < lim) {
-            ++j;
-            continue;
-        }
-        if (ch == '"') {
-            if (!outInString) {
-                outStringOpenIndex = j;
-                outInString = true;
-            } else {
-                outInString = false;
-                outStringOpenIndex = -1;
-            }
-        }
-    }
-}
-
-static bool AsciiEqualsIgnoreCaseToLowered(const std::string& value, const std::string& alreadyLowered) {
-    if (value.size() != alreadyLowered.size()) {
-        return false;
-    }
-    for (size_t i = 0; i < value.size(); ++i) {
-        if (static_cast<char>(std::tolower(static_cast<unsigned char>(value[i]))) != alreadyLowered[i]) {
-            return false;
-        }
-    }
-    return true;
-}
-
-static const TrackerField* FindTrackerFieldForJqlToken(const AppController& app, const std::string& token) {
-    if (token.empty()) {
-        return nullptr;
-    }
-    const std::string key = ToLowerAsciiCopy(token);
-    const auto& fields = app.GetAvailableFields();
-    auto idIt = std::find_if(fields.begin(), fields.end(),
-                             [&](const auto& f) { return AsciiEqualsIgnoreCaseToLowered(f.Id, key); });
-    if (idIt != fields.end()) {
-        return &(*idIt);
-    }
-    auto nameIt = std::find_if(fields.begin(), fields.end(), [&](const auto& f) {
-        return !f.Name.empty() && AsciiEqualsIgnoreCaseToLowered(f.Name, key);
-    });
-    if (nameIt != fields.end()) {
-        return &(*nameIt);
-    }
-    return nullptr;
-}
-
-static void AddSuggestionUnique(std::vector<QuerySuggestion>& out, std::unordered_set<std::string>& seenInserts,
-                                std::string label, std::string insert) {
-    if (insert.empty()) {
-        return;
-    }
-    if (!seenInserts.insert(insert).second) {
-        return;
-    }
-    if (label.empty()) {
-        label = insert;
-    }
-    out.push_back(QuerySuggestion{std::move(label), std::move(insert)});
-}
-
-static bool AsciiStartsWithIgnoreCase(const std::string& value, const std::string& prefixLower) {
-    if (prefixLower.empty()) {
-        return true;
-    }
-    const std::string v = ToLowerAsciiCopy(value);
-    return v.size() >= prefixLower.size() && v.compare(0, prefixLower.size(), prefixLower) == 0;
-}
-
-static void AppendJqlTerms(const std::string& prefix, const char* const* terms, int termCount,
-                           std::vector<QuerySuggestion>& out, std::unordered_set<std::string>& seen) {
-    const std::string pre = ToLowerAsciiCopy(prefix);
-    for (int i = 0; i < termCount; ++i) {
-        const std::string ins(terms[i]);
-        if (AsciiStartsWithIgnoreCase(ins, pre)) {
-            AddSuggestionUnique(out, seen, ins, ins);
-        }
-    }
-}
-
-static void AppendFieldCatalogSuggestions(const AppController& app, const std::string& prefix,
-                                          std::vector<QuerySuggestion>& out, std::unordered_set<std::string>& seen) {
-    const std::string pre = ToLowerAsciiCopy(prefix);
-    for (const auto& f : app.GetAvailableFields()) {
-        if (f.Id.empty()) {
-            continue;
-        }
-        if (AsciiStartsWithIgnoreCase(f.Id, pre)) {
-            std::string label = f.Name.empty() ? f.Id : (f.Name + " (" + f.Id + ")");
-            AddSuggestionUnique(out, seen, std::move(label), f.Id);
-        }
-        if (!f.Name.empty() && f.Name != f.Id) {
-            if (AsciiStartsWithIgnoreCase(f.Name, pre)) {
-                std::string label = f.Name + " (" + f.Id + ")";
-                AddSuggestionUnique(out, seen, label, f.Id);
-            }
-        }
-    }
-}
-
-static bool IsJqlUserField(const TrackerField& field) {
-    return field.IsUserType || field.Family == TrackerFieldFamily::UserSingle ||
-           field.Family == TrackerFieldFamily::UserMulti;
-}
-
-static bool IsJqlDateField(const TrackerField& field) {
-    return field.Family == TrackerFieldFamily::Date || field.Family == TrackerFieldFamily::DateTime;
-}
+// clang-format off
+// SMATCHET_DEVIATION(rule=duplication; reason=shared-helper using-block, extraction artefact; owner=tracker-backend; revisit=2026-12-31)
+// clang-format on
+using tracker_query_suggest::AddSuggestionUnique;
+using tracker_query_suggest::AppendFieldCatalog;
+using tracker_query_suggest::AppendTerms;
+using tracker_query_suggest::AsciiEqualsIgnoreCaseToLowered;
+using tracker_query_suggest::AsciiStartsWithIgnoreCase;
+using tracker_query_suggest::FindTrackerField;
+using tracker_query_suggest::InsertForValueToken;
+using tracker_query_suggest::IsQueryDateField;
+using tracker_query_suggest::IsQueryIdChar;
+using tracker_query_suggest::IsQueryUserField;
+using tracker_query_suggest::ScanStringStateToCursor;
 
 static bool IsJqlVersionField(const TrackerField& field) {
     return field.Type == "version" || field.ItemsType == "version";
@@ -209,10 +77,10 @@ static const JqlFunctionSpec kJqlFunctions[] = {
 
 static unsigned JqlFieldFamilyMask(const TrackerField& field) {
     unsigned mask = 0;
-    if (IsJqlUserField(field)) {
+    if (IsQueryUserField(field)) {
         mask |= JqlFnMask::User;
     }
-    if (IsJqlDateField(field)) {
+    if (IsQueryDateField(field)) {
         mask |= JqlFnMask::Date;
     }
     if (IsJqlVersionField(field)) {
@@ -313,10 +181,15 @@ static void AppendJqlUserCatalogSuggestions(const AppController& app, const std:
     }
 }
 
+// Near-twin of Plane's AppendValueSuggestions, kept per-engine on purpose: Jira labels user options
+// " (display name)", Plane " (display)" — folding would collapse a genuine backend-local label divergence. The clone
+// only surfaced after the cluster-A helper-name unification removed the cosmetic-identifier difference the gate keyed
+// on.
 static void AppendValueSuggestions(const TrackerField& field, const std::string& prefix,
                                    std::vector<QuerySuggestion>& out, std::unordered_set<std::string>& seen) {
+    // SMATCHET_DEVIATION(rule=duplication; reason=per-engine near-twin; owner=tracker-backend; revisit=2026-12-31)
     const std::string pre = ToLowerAsciiCopy(prefix);
-    const bool isUserField = IsJqlUserField(field);
+    const bool isUserField = IsQueryUserField(field);
     auto matchesPrefix = [&](const std::string& raw, const std::string& label) {
         return AsciiStartsWithIgnoreCase(raw, pre) || AsciiStartsWithIgnoreCase(label, pre);
     };
@@ -327,7 +200,7 @@ static void AppendValueSuggestions(const TrackerField& field, const std::string&
         if (!matchesPrefix(raw, displayLabel)) {
             return;
         }
-        const std::string insert = JqlInsertForValueToken(raw);
+        const std::string insert = InsertForValueToken(raw);
         std::string label = displayLabel.empty() ? raw : displayLabel;
         if (label != insert && !insert.empty() && insert.front() == '"') {
             label = label + " -> " + insert;
@@ -340,12 +213,11 @@ static void AppendValueSuggestions(const TrackerField& field, const std::string&
             const std::string display = opt.Value.empty() ? opt.SecondaryValue : opt.Value;
             const std::string accountId = opt.Id;
             if (!accountId.empty() && matchesPrefix(accountId, display)) {
-                AddSuggestionUnique(out, seen, display.empty() ? accountId : display,
-                                    JqlInsertForValueToken(accountId));
+                AddSuggestionUnique(out, seen, display.empty() ? accountId : display, InsertForValueToken(accountId));
             }
             if (!display.empty() && display != accountId && matchesPrefix(display, display)) {
-                AddSuggestionUnique(out, seen, display + " (display name) -> " + JqlInsertForValueToken(display),
-                                    JqlInsertForValueToken(display));
+                AddSuggestionUnique(out, seen, display + " (display name) -> " + InsertForValueToken(display),
+                                    InsertForValueToken(display));
             }
             continue;
         }
@@ -415,7 +287,7 @@ static std::vector<JqlToken> TokenizeJqlPrefix(const char* buf, int end) {
             continue;
         }
         int j = i;
-        while (j < end && IsJqlIdChar(static_cast<unsigned char>(buf[j]))) {
+        while (j < end && IsQueryIdChar(static_cast<unsigned char>(buf[j]))) {
             ++j;
         }
         if (j == i) {
@@ -458,7 +330,7 @@ static const TrackerField* FindValueFieldForJqlContext(const std::vector<JqlToke
             --fieldIndex;
         }
         if (fieldIndex >= 0) {
-            return FindTrackerFieldForJqlToken(app, tokens[static_cast<size_t>(fieldIndex)].Text);
+            return FindTrackerField(app.GetAvailableFields(), tokens[static_cast<size_t>(fieldIndex)].Text);
         }
     }
     return nullptr;
@@ -526,7 +398,7 @@ static JqlSuggestMode DetermineJqlSuggestMode(const std::vector<JqlToken>& token
     if (TokenEquals(last, "IN") || TokenIsJqlOperator(last)) {
         return TokenEquals(last, "IS") ? JqlSuggestMode::IsOperand : JqlSuggestMode::Value;
     }
-    if (FindTrackerFieldForJqlToken(app, last.Text) != nullptr && !last.Quoted) {
+    if (FindTrackerField(app.GetAvailableFields(), last.Text) != nullptr && !last.Quoted) {
         return JqlSuggestMode::Operator;
     }
     return JqlSuggestMode::Logical;
@@ -547,7 +419,7 @@ void ResolveJqlReplaceRange(const char* buf, int bufLen, int cursor, int selStar
     }
     bool inString = false;
     int stringOpen = -1;
-    JqlScanStringStateToCursor(buf, bufLen, cursor, inString, stringOpen);
+    ScanStringStateToCursor(buf, bufLen, cursor, inString, stringOpen);
     if (inString && stringOpen >= 0 && cursor > stringOpen + 1) {
         replaceStart = stringOpen + 1;
         replaceEnd = cursor;
@@ -556,10 +428,10 @@ void ResolveJqlReplaceRange(const char* buf, int bufLen, int cursor, int selStar
     }
     int L = cursor;
     int R = cursor;
-    while (L > 0 && IsJqlIdChar(static_cast<unsigned char>(buf[L - 1]))) {
+    while (L > 0 && IsQueryIdChar(static_cast<unsigned char>(buf[L - 1]))) {
         --L;
     }
-    while (R < bufLen && IsJqlIdChar(static_cast<unsigned char>(buf[R]))) {
+    while (R < bufLen && IsQueryIdChar(static_cast<unsigned char>(buf[R]))) {
         ++R;
     }
     replaceStart = L;
@@ -580,10 +452,10 @@ void AppendJqlValueModeSuggestions(const AppController& app, const std::string& 
     // The async live-user search (driven via metaOut->UserValueToken below) still runs
     // and merges results when the prefix is long enough — this just makes the offline
     // catalog list available immediately without any network round-trip.
-    if (valueField != nullptr && IsJqlUserField(*valueField)) {
+    if (valueField != nullptr && IsQueryUserField(*valueField)) {
         AppendJqlUserCatalogSuggestions(app, prefix, out.Items, seen);
     }
-    if (metaOut != nullptr && valueField != nullptr && IsJqlUserField(*valueField)) {
+    if (metaOut != nullptr && valueField != nullptr && IsQueryUserField(*valueField)) {
         metaOut->UserValueToken = true;
         metaOut->UserSearchPrefix = prefix;
     }
@@ -596,34 +468,33 @@ void AppendJqlSuggestionsForMode(JqlSuggestMode mode, const AppController& app, 
     if (mode == JqlSuggestMode::Field || mode == JqlSuggestMode::OrderField) {
         if (mode == JqlSuggestMode::Field) {
             static const char* kClausePrefixes[] = {"NOT"};
-            AppendJqlTerms(prefix, kClausePrefixes,
-                           static_cast<int>(sizeof(kClausePrefixes) / sizeof(kClausePrefixes[0])), out.Items, seen);
+            AppendTerms(prefix, kClausePrefixes, static_cast<int>(sizeof(kClausePrefixes) / sizeof(kClausePrefixes[0])),
+                        out.Items, seen);
         }
-        AppendFieldCatalogSuggestions(app, prefix, out.Items, seen);
+        AppendFieldCatalog(app.GetAvailableFields(), prefix, out.Items, seen);
     } else if (mode == JqlSuggestMode::Operator) {
         static const char* kOperators[] = {"=", "!=", "IN", "NOT IN", "IS",  "IS NOT", "~",      "!~",
                                            ">", ">=", "<",  "<=",     "WAS", "WAS IN", "CHANGED"};
-        AppendJqlTerms(prefix, kOperators, static_cast<int>(sizeof(kOperators) / sizeof(kOperators[0])), out.Items,
-                       seen);
+        AppendTerms(prefix, kOperators, static_cast<int>(sizeof(kOperators) / sizeof(kOperators[0])), out.Items, seen);
     } else if (mode == JqlSuggestMode::Value) {
         AppendJqlValueModeSuggestions(app, prefix, valueField, out, seen, metaOut);
     } else if (mode == JqlSuggestMode::IsOperand) {
         static const char* kIsOperands[] = {"EMPTY", "NULL"};
-        AppendJqlTerms(prefix, kIsOperands, static_cast<int>(sizeof(kIsOperands) / sizeof(kIsOperands[0])), out.Items,
-                       seen);
+        AppendTerms(prefix, kIsOperands, static_cast<int>(sizeof(kIsOperands) / sizeof(kIsOperands[0])), out.Items,
+                    seen);
     } else if (mode == JqlSuggestMode::Logical) {
         if (!prefix.empty()) {
             static const char* kLogical[] = {"AND", "OR", "ORDER BY"};
-            AppendJqlTerms(prefix, kLogical, static_cast<int>(sizeof(kLogical) / sizeof(kLogical[0])), out.Items, seen);
+            AppendTerms(prefix, kLogical, static_cast<int>(sizeof(kLogical) / sizeof(kLogical[0])), out.Items, seen);
         }
     } else if (mode == JqlSuggestMode::OrderByKeyword) {
         static const char* kOrderByTail[] = {"BY"};
-        AppendJqlTerms(prefix, kOrderByTail, static_cast<int>(sizeof(kOrderByTail) / sizeof(kOrderByTail[0])),
-                       out.Items, seen);
+        AppendTerms(prefix, kOrderByTail, static_cast<int>(sizeof(kOrderByTail) / sizeof(kOrderByTail[0])), out.Items,
+                    seen);
     } else if (mode == JqlSuggestMode::SortDirection) {
         static const char* kSortDirections[] = {"ASC", "DESC"};
-        AppendJqlTerms(prefix, kSortDirections, static_cast<int>(sizeof(kSortDirections) / sizeof(kSortDirections[0])),
-                       out.Items, seen);
+        AppendTerms(prefix, kSortDirections, static_cast<int>(sizeof(kSortDirections) / sizeof(kSortDirections[0])),
+                    out.Items, seen);
     }
 }
 

@@ -119,6 +119,12 @@ add_executable(SmatchetTests
     Core/TrackerFieldValueParser.test.cpp
     Core/TrackerFieldValueParser.extended.test.cpp
     Core/TrackerFieldValueUtils.test.cpp
+    # dedup-tracker-query-and-ai-client-clones cluster A — backend-agnostic query-suggest
+    # helpers extracted from JqlSuggestEngine.cpp + PlaneQuerySuggestEngine.cpp. The reparam
+    # to const std::vector<TrackerField>& (away from AppController) makes the field-catalog
+    # helpers bucket-A-testable; the TU pulls only StringUtil (header-inline) + TrackerFieldSchema.
+    Core/TrackerQuerySuggestCommon.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerQuerySuggestCommon.cpp"
     # Fix C of jira-components-multiselect (PR #672) — scoped catalog save→load round-trip
     # asserting `components.AllowedValueOptions` survive under the project-scoped cache key
     # (and that the unscoped key never sees them). FieldCatalogCache.cpp depends only on

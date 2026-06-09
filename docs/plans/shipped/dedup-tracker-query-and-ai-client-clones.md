@@ -2,7 +2,7 @@
 
 > **Slug**: `dedup-tracker-query-and-ai-client-clones` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — the machine-readable lifecycle marker. Values: `active` (driving in-flight work) · `shipped` (post-ship sections populated + all cited PRs merged — this file belongs in `docs/plans/shipped/`) · `blocked` / `deferred` (paused — one-line why). **Flip to `shipped` in the SAME post-ship PR that fills § Implementation log AND `git mv`s this file active → shipped** (see § Archive). `agents/scripts/core/plan-archival-owed.sh` nags at SessionStart if any `active/` plan is marked `shipped` but never moved.
+> **Status**: `shipped` — clusters A + D shipped; B + C deferred-with-rationale (see § Deviations + the `debt.md` follow-up). The machine-readable lifecycle marker. Values: `active` (driving in-flight work) · `shipped` (post-ship sections populated + all cited PRs merged — this file belongs in `docs/plans/shipped/`) · `blocked` / `deferred` (paused — one-line why). **Flip to `shipped` in the SAME post-ship PR that fills § Implementation log AND `git mv`s this file active → shipped** (see § Archive). `agents/scripts/core/plan-archival-owed.sh` nags at SessionStart if any `active/` plan is marked `shipped` but never moved.
 >
 > **Usage**: copy this template to `docs/plans/active/<slug>.md` as the first step of any new plan. Fill every section. Sections that genuinely don't apply get `N/A — <one-line reason>`, not deletion — the headings drive the "did you consider this?" forcing function for every author + reviewer agent.
 >
@@ -128,20 +128,20 @@ Per `AGENTS.md` § Verification automation — zero manual steps. Buckets:
 - **Tracker backend base-class extraction (cluster D product code)** — explicitly never; would violate the no-backend-leak invariant.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+- **Cluster A** · extracted `Source/Core/include/Tracker/TrackerQuerySuggestCommon.h` + `src/Tracker/TrackerQuerySuggestCommon.cpp` (13 backend-agnostic query-suggest helpers in `namespace tracker_query_suggest`; canonical names confirmed by a line-by-line diff of both engines' top blocks). The two field-catalog helpers (`FindTrackerField`, `AppendFieldCatalog`) **reparameterized `const AppController&` → `const std::vector<TrackerField>&`** (the sole prior `AppController` use was `GetAvailableFields()`) — decouples them from the god-object and makes them bucket-A-testable. `JqlSuggestEngine.cpp` + `PlaneQuerySuggestEngine.cpp` delete their local blocks, `#include` + `using`-import the canonical names, and pass `app.GetAvailableFields()` to the catalog helpers (**−336 net lines**, pure behaviour-preserving extraction). New `tests/Core/TrackerQuerySuggestCommon.test.cpp` (12 cases / 66 assertions, bucket-A) + its entry in `tests/CMakeLists.txt`. Routed to `tracker-backend`.
+- **Cluster D** · `SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry…)` on the flagged override-decl spans of `Tracker/{JiraClient,PlaneClient,GitHubClient}.h` (Jira ×4 / Plane ×4 / GitHub ×3) — all 10 product-client-header clone pairs now suppressed; no `dup_audit.py` logic change (the gate-side skip-region remains the calibration follow-up).
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+- **Cluster B deferred — NOT shipped (cost/value call, orchestrator + user 2026-06-09).** The plan bundled A+B+D in one PR; B (the `AnthropicClient`↔`OpenAiClient` SSE-skeleton extraction into `AiSseStream`) was dropped because it is a 492-token clone in **user-facing AI-chat streaming error handling** (cancel / transport-error / HTTP-redaction) — a botched extraction risks breaking streaming for *zero* behaviour change, the worst regression-risk-to-DRY-value ratio in the plan, against grandfathered WARN-only clones that have caused no incident. B's premises were triple-checked as still valid (both clients still carry the byte-identical skeleton; `pendingFinishReason` still Anthropic-contained inside `DispatchAnthropicEvent`; Ollama still `AiNdjsonParser`-out-of-scope), so B stays a clean future follow-up if the AI-client code is touched for other reasons.
+- **Cluster C deferred — as originally planned** (intentional no-ImGui-isolation Lua-json copy; `LuaJsonConvert`-leaf-or-exempt is its own judgment).
+- **2 new dup residuals exempted (extraction fallout, not anticipated).** Unifying the helper names removed the cosmetic-identifier difference the gate keyed on, so the now-identical `using`-block and the name-identical `AppendValueSuggestions` near-twin surfaced as fresh clones. Both `SMATCHET_DEVIATION`-exempted: the `using`-block is an unavoidable share artefact, and `AppendValueSuggestions` carries a genuine `(display name)` (Jira) vs `(display)` (Plane) divergence the plan kept per-engine — extracting it would collapse a real difference (Pillar-3 hazard). Gate is WARN-only so neither blocks.
+- **`IsQueryDateField` shared though Plane had no date helper** — trivial pure family predicate, no grammar; kept on the canonical name.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+- **Cluster A**: new bucket-A suite **12 cases / 66 assertions PASS**; dual-target build (`SmatchetStandalone` + `SmatchetCore_DX12`) **clean**; pure extraction (−336 net lines, no logic change) — behaviour-preserving.
+- **Cluster D + the 2 residuals**: `python agents/scripts/core/dup_audit.py --diff origin/develop` → **0 `[dup] WARN`** (cluster-A helper clones gone; all client-header override symmetry + the 2 extraction residuals suppressed).
+- Strict-zone delta-lint **clean**; `clang-format` applied. `tests-out-of-band` N/A (A ships with its test); `cr-out-of-band` (CodeRabbit org-credit/rate-limit).
+- **Not done (deferred, see Deviations)**: cluster B, cluster C.
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/dedup-tracker-query-and-ai-client-clones.md docs/plans/shipped/` (the tier-less ref form `docs/plans/dedup-tracker-query-and-ai-client-clones.md` keeps citations move-proof),*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*No ref-sweep — references use the tier-less form `docs/plans/<slug>.md` (the gates resolve it against any tier; PR #890), so the move can't break them. Write new plan references tier-less.*
-
-*(Delete this `## Archive` block as part of step 2 — once moved to `shipped/`, the file is reference material and the checklist has served its purpose.)*
+## Archive
+Shipped + archived 2026-06-09: clusters A (TrackerQuerySuggestCommon extraction) + D (client-header dup exemptions) landed; B (AiSseStream) + C (LuaJsonConvert) deferred-with-rationale (§ Deviations) and tracked in `docs/self-improvement/categories/debt.md`.
