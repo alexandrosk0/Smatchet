@@ -53,24 +53,43 @@ function(smatchet_apply_sanitizers tgt)
                 -D_DISABLE_STRING_ANNOTATION
                 -D_DISABLE_VECTOR_ANNOTATION)
             if(_clang_cl)
-                # clang-cl needs the ASAN dynamic runtime linked explicitly.
+                # clang-cl needs the ASAN dynamic runtime linked explicitly. The
+                # runtime lives at <clang-install>/lib/clang/<major>/lib/windows.
+                # Resolve <major> from the *actual* resolved compiler instead of a
+                # hardcoded version list: under vcvars64, bare `clang-cl` may resolve
+                # to the VS-bundled LLVM (e.g. 19) rather than standalone LLVM
+                # (e.g. 22), and a fixed list silently misses it (find fails -> the
+                # asan libs are never linked -> unresolved __asan_* at link time).
                 cmake_path(GET CMAKE_CXX_COMPILER PARENT_PATH _clang_bin)
+                cmake_path(GET _clang_bin PARENT_PATH _clang_root)
+                set(_clang_lib_root "${_clang_root}/lib/clang")
+                set(_asan_hints "")
+                string(REGEX MATCH "^[0-9]+" _clang_major "${CMAKE_CXX_COMPILER_VERSION}")
+                if(_clang_major)
+                    list(APPEND _asan_hints "${_clang_lib_root}/${_clang_major}/lib/windows")
+                endif()
+                # Fallback: enumerate every versioned runtime dir this exact toolchain
+                # ships (an LLVM install carries only its own major version dir), so
+                # any present/future clang version resolves without a code change.
+                file(GLOB _asan_glob "${_clang_lib_root}/*/lib/windows")
+                if(_asan_glob)
+                    list(APPEND _asan_hints ${_asan_glob})
+                endif()
                 find_library(_clang_asan_lib
                     NAMES clang_rt.asan_dynamic-x86_64
-                    HINTS "${_clang_bin}/../lib/clang/22/lib/windows"
-                          "${_clang_bin}/../lib/clang/21/lib/windows"
-                          "${_clang_bin}/../lib/clang/20/lib/windows"
+                    HINTS ${_asan_hints}
                     NO_DEFAULT_PATH)
                 find_library(_clang_asan_thunk
                     NAMES clang_rt.asan_dynamic_runtime_thunk-x86_64
-                    HINTS "${_clang_bin}/../lib/clang/22/lib/windows"
-                          "${_clang_bin}/../lib/clang/21/lib/windows"
-                          "${_clang_bin}/../lib/clang/20/lib/windows"
+                    HINTS ${_asan_hints}
                     NO_DEFAULT_PATH)
                 if(_clang_asan_lib AND _clang_asan_thunk)
                     list(APPEND _link "${_clang_asan_lib}" "${_clang_asan_thunk}")
                 else()
-                    message(WARNING "clang-cl ASAN: could not find clang_rt.asan_dynamic libs; link may fail.")
+                    message(WARNING
+                        "clang-cl ASAN: could not find clang_rt.asan_dynamic libs under "
+                        "${_clang_lib_root}/*/lib/windows (compiler ${CMAKE_CXX_COMPILER}, "
+                        "version ${CMAKE_CXX_COMPILER_VERSION}); link may fail.")
                 endif()
             endif()
         else()

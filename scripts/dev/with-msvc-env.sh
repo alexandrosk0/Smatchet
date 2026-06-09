@@ -169,6 +169,16 @@ while IFS='=' read -r key val; do
     esac
 done < <(powershell.exe -NoProfile -Command "$PS_CMD" 2>/dev/null | tr -d '\r')
 
+# vcvars64 prepends the VS-bundled LLVM (older clang) to PATH. The ninja-clang-*
+# presets call bare `clang-cl`, which would then resolve to that older VS clang
+# instead of the standalone LLVM that CI pins (both workflows echo LLVM\bin onto
+# the path after msvc-dev-cmd). Mirror CI: put standalone LLVM first. Guarded —
+# no-op if absent; harmless for MSVC presets (cl/link.exe aren't in LLVM\bin).
+_llvm_bin="/c/Program Files/LLVM/bin"
+if [ -x "$_llvm_bin/clang-cl.exe" ]; then
+    export PATH="$_llvm_bin:$PATH"
+fi
+
 # Verify cl.exe is reachable — gives a clear diagnostic when the import
 # silently failed (e.g. vcvars64 wrote to a different shell context).
 if ! command -v cl >/dev/null 2>&1; then
