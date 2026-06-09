@@ -228,6 +228,24 @@ set_fixture() {
     rm -f "$f"
 }
 
+@test "non-required Android security gate FAILURE blocks (mobile WS1 #1067/#1068)" {
+    # "Android security gate" joined the meant-to-block allow-list (mobile-mvp-
+    # completion WS1). The advisory mobile jobs do NOT catch the manifest-
+    # allowBackup or OpenSSL-fail-fast regressions, so this gate is routed onto
+    # the blocking path: a red "Android security gate" must block even though it
+    # is not a branch-protection-required context. Required check kept green so
+    # the security gate is the sole failure.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS","isRequired":true},{"__typename":"CheckRun","name":"Android security gate (manifest + TLS fail-fast)","status":"COMPLETED","conclusion":"FAILURE","isRequired":false}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"1 fail"* ]]
+    rm -f "$f"
+}
+
 @test "CI pending IN_PROGRESS → return 1" {
     set_fixture "$FIXTURES_DIR/merge_gates_ci_pending.json"
     run poll_merge_gates org repo 1

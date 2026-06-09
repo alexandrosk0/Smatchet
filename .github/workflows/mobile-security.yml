@@ -1,0 +1,61 @@
+name: Mobile security
+
+# Android security guardrails gate (WS1 of the mobile-mvp-completion plan,
+# Issues #1067 + #1068). Two file-content regressions that the ADVISORY mobile CI
+# jobs (Mobile — POSIX core / Android NDK / Android APK) do NOT catch:
+#
+#   #1067  AndroidManifest.xml must keep android:allowBackup="false" (the private
+#          files dir holds the extracted CA bundle + future Keystore creds).
+#   #1068  cmake/SmatchetThirdParty.cmake must FATAL_ERROR (not WARNING+fallback)
+#          on an incomplete per-ABI static OpenSSL — a silent fallback ships a
+#          TLS-broken APK.
+#
+# The job NAME is deliberately distinctive ("Android security gate …", not the
+# "Mobile — …" advisory prefix) and is added to the merge-gate poller allow-list
+# regex (agents/scripts/core/merge-gates.sh: "…|Android security gate"). It is
+# therefore a NON-required-but-BLOCKING check: a green develop can no longer ship
+# either regression (the advisory-only mobile jobs let #1021/#1064 through).
+#
+# NOT path-filtered: seconds-fast (bash + a checkout, no compile), and keeping it
+# present on every PR means the poller always has a real terminal status to read
+# rather than an absent check.
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [develop]
+  # Merge-queue readiness (mirrors shell-lint.yml): the gate is meant-to-block, so
+  # it must report a real terminal status on the synthetic merge_group ref too,
+  # else a future merge queue would deadlock waiting on it. The gate only does a
+  # working-tree content check (git rev-parse --show-toplevel), no PR scope, so it
+  # runs + reports directly on the queued ref.
+  merge_group:
+
+concurrency:
+  group: mobile-security-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Force JS actions onto Node 24 (Node 20 deprecated 2026-06-16).
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  android-security-gate:
+    name: Android security gate (manifest + TLS fail-fast)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # The gate only reads tracked files + git rev-parse --show-toplevel; no
+          # history needed, and no later step uses the token.
+          persist-credentials: false
+
+      - name: Gate self-proof (--selftest — planted regressions are caught, clean fixtures pass)
+        run: bash agents/scripts/project/test-mobile-security.sh --selftest
+
+      - name: Android security guardrails (--check — manifest allowBackup=false + OpenSSL fail-fast)
+        run: bash agents/scripts/project/test-mobile-security.sh --check
