@@ -25,12 +25,19 @@ PLAN_BASE="${SMATCHET_PLAN_BASE:-docs/plans}"
 #   stale structure refs: README.md, _plan-locks.md (real file is _plan-locks.generated.md)
 ALLOW_RE='/(example|foo|bar|baz|agentic-coding-handoff|agentic-flow-implementation|agentic-triage-flow|visual-regression-bootstrap|README|_plan-locks)\.md$'
 
-# Collect every referenced plan path across tracked files. Two forms resolve:
+# Collect every referenced plan path across tracked AND untracked files. Two
+# forms resolve:
 #   * tier-ful   docs/plans/(active|shipped|deferred)/<slug>.md  — exact path.
 #   * tier-LESS  docs/plans/<slug>.md  — the move-proof form: resolves against
 #     ANY tier, so archiving a plan (git mv active->shipped) never breaks the
 #     reference and needs no ref-sweep. Prefer this form in NEW references.
-mapfile -t refs < <(git grep -hoE 'docs/plans/((active|shipped|deferred)/)?[A-Za-z0-9._-]+\.md' \
+#
+# --untracked is load-bearing (close-gate-gaps Slice 8a): a brand-new
+# uncommitted plan (docs/plans/active/<slug>.md not yet `git add`ed) is invisible
+# to a tracked-only `git grep`, so its dangling refs false-passed pre-push then
+# failed CI on the same content once committed. `--untracked` scans tracked +
+# untracked-but-not-ignored files (it honours .gitignore), matching CI scope.
+mapfile -t refs < <(git grep -hoE --untracked 'docs/plans/((active|shipped|deferred)/)?[A-Za-z0-9._-]+\.md' \
                       -- ':!.understand-anything/' ':!agents/scripts/core/test-plan-ref-integrity.sh' \
                       2>/dev/null | sort -u)
 
@@ -66,14 +73,146 @@ if [ "${1:-}" = "--selftest" ]; then
   # selftest: asserts-failure — an absent plan ref must be detected as dangling (want=1, the failure path).
   check "docs/plans/nonexistent-xyz.md"    1   # tier-less, nowhere           -> dangling
   check "docs/plans/active/nope.md"        1   # tier-ful, absent             -> dangling
-  if [ "$fail" = "0" ]; then echo "test-plan-ref-integrity --selftest: PASS (5/5)"; exit 0; fi
+
+  # ---- end-to-end fixtures (Slice 8b carve-out + 8a untracked scope) --------
+  # The Archive self-ref carve-out + untracked scoping both hinge on `git grep
+  # --untracked` over a real worktree, so they need a throwaway git repo, not
+  # just a resolves() unit-check. Build one, run the WHOLE script inside it
+  # (it re-roots via `git rev-parse --show-toplevel`), and assert exit codes.
+  self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  # The script under test is copied to its OWN canonical path inside each
+  # fixture — that path is the one the script self-excludes from `git grep`, so
+  # the example `docs/plans/...` literals in its own body (incl. these fixtures)
+  # don't pollute the fixture's ref set.
+  SUT_REL="agents/scripts/core/test-plan-ref-integrity.sh"
+  scaffold_fixture() {  # common skeleton (run from inside the repo); caller adds files + runs.
+    git init -q && git config user.email t@t && git config user.name t
+    mkdir -p docs/plans/active docs/plans/shipped docs/plans/deferred "$(dirname "$SUT_REL")"
+    cp "$self" "$SUT_REL"
+  }
+
+  # Fixture A — a plan whose § Archive holds its OWN git-mv self-move. The
+  # docs/plans/shipped/<base>.md inside it must NOT be flagged (carve-out).
+  repoA="$(mktemp -d)"
+  (
+    cd "$repoA" || exit 99
+    scaffold_fixture
+    cat > docs/plans/active/my-feature.md <<'PLAN'
+# Plan — my feature
+## Archive
+1. flip Status to shipped,
+2. git mv docs/plans/active/my-feature.md docs/plans/shipped/my-feature.md
+PLAN
+    git add -A
+    bash "$SUT_REL"
+  ) >/dev/null 2>&1
+  gotA=$?; rm -rf "$repoA"
+  # The self-ref is the ONLY shipped/my-feature.md occurrence -> suppressed -> PASS(0).
+  [ "$gotA" = "0" ] || { echo "FAIL: Archive self-ref wrongly flagged (exit $gotA, want 0)"; fail=1; }
+
+  # Fixture B — a GENUINE dangling shipped/ ref in a NON-Archive context (a real
+  # cross-link to a plan that doesn't exist). Must still FAIL(1).
+  # selftest: asserts-failure — a real dangling shipped/ ref must be detected.
+  repoB="$(mktemp -d)"
+  (
+    cd "$repoB" || exit 99
+    scaffold_fixture
+    printf 'see docs/plans/shipped/ghost-plan.md for details\n' > docs/plans/active/other.md
+    git add -A
+    bash "$SUT_REL"
+  ) >/dev/null 2>&1
+  gotB=$?; rm -rf "$repoB"
+  [ "$gotB" = "1" ] || { echo "FAIL: genuine dangling shipped/ ref NOT flagged (exit $gotB, want 1)"; fail=1; }
+
+  # Fixture B2 — the carve-out must NOT mask a dangling shipped/ ref that merely
+  # SHARES a basename with an active plan but appears OUTSIDE that plan's Archive
+  # git-mv line (a real cross-link). Must still FAIL(1).
+  # selftest: asserts-failure — a non-Archive shipped/ self-name ref must be detected.
+  repoB2="$(mktemp -d)"
+  (
+    cd "$repoB2" || exit 99
+    scaffold_fixture
+    : > docs/plans/active/dup-name.md
+    printf 'cross-link: docs/plans/shipped/dup-name.md\n' > docs/plans/active/elsewhere.md
+    git add -A
+    bash "$SUT_REL"
+  ) >/dev/null 2>&1
+  gotB2=$?; rm -rf "$repoB2"
+  [ "$gotB2" = "1" ] || { echo "FAIL: non-Archive shipped/ self-name ref NOT flagged (exit $gotB2, want 1)"; fail=1; }
+
+  # Fixture C — an UNTRACKED plan with a dangling tier-less ref must still FAIL
+  # (8a: --untracked scope). The plan file is created but never `git add`ed.
+  # selftest: asserts-failure — an untracked plan's dangling ref must be detected.
+  repoC="$(mktemp -d)"
+  (
+    cd "$repoC" || exit 99
+    scaffold_fixture
+    git add -A && git commit -qm init
+    # Untracked, never added:
+    printf 'depends on docs/plans/ghost-untracked-xyz.md\n' > docs/plans/active/new.md
+    bash "$SUT_REL"
+  ) >/dev/null 2>&1
+  gotC=$?; rm -rf "$repoC"
+  [ "$gotC" = "1" ] || { echo "FAIL: untracked plan's dangling ref NOT flagged (exit $gotC, want 1)"; fail=1; }
+
+  if [ "$fail" = "0" ]; then echo "test-plan-ref-integrity --selftest: PASS (5 unit + 4 e2e)"; exit 0; fi
   echo "test-plan-ref-integrity --selftest: FAIL"; exit 1
 fi
+
+# is_archive_self_ref <ref> — true iff <ref> is a plan's OWN post-move shipped
+# path appearing ONLY inside its own § Archive `git mv` step, never as a real
+# cross-link (close-gate-gaps Slice 8b). The plan-template's Archive step 2 is
+#   git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md
+# and an author who expands `<slug>` to the literal basename manufactures a
+# `docs/plans/shipped/<base>.md` reference that's dangling until the move
+# happens — a self-reference, not a genuine missing cross-link. Suppress it,
+# but ONLY when: (a) the ref is docs/plans/shipped/<base>.md, (b) the source
+# plan docs/plans/active/<base>.md exists, and (c) EVERY occurrence of the ref
+# in the tree is on an Archive `git mv ... shipped/<base>.md` line inside that
+# active plan. Any occurrence elsewhere (or not on a git-mv line) -> NOT
+# suppressed, so a real dangling shipped/ ref still FAILS. Fail-closed.
+is_archive_self_ref() {
+  local r="$1" base base_re src occ
+  case "$r" in
+    docs/plans/shipped/*.md) base="${r#docs/plans/shipped/}" ;;
+    *) return 1 ;;
+  esac
+  src="docs/plans/active/$base"
+  # Regex-escape the basename for the git-mv line match (it contains a literal
+  # dot before `.md`, and a kebab slug could carry other ERE metacharacters).
+  base_re="$(printf '%s' "$base" | sed -e 's/[][\\.^$*+?(){}|]/\\&/g')"
+  [ -f "$src" ] || return 1                     # no owning active plan -> not a self-ref
+  # Every occurrence (tracked + untracked, with file:line) of this exact ref.
+  # Positive `.` pathspec makes the :(exclude) magic tolerant of an absent path
+  # (a bare :! that matches nothing is a fatal pathspec error — which would make
+  # the carve-out silently never fire). Mirrors the main scan's excludes.
+  occ="$(git grep -nF --untracked -- "$r" . \
+           ':(exclude).understand-anything/' \
+           ':(exclude)agents/scripts/core/test-plan-ref-integrity.sh' \
+           2>/dev/null)" || return 1
+  [ -n "$occ" ] || return 1
+  # Reject unless every occurrence is in the owning active plan on an Archive
+  # `git mv ... <r>` line. A single stray occurrence anywhere else fails closed.
+  local line
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    case "$line" in
+      "$src":*) : ;;                            # right file
+      *) return 1 ;;                            # occurs in another file -> real ref
+    esac
+    # The matching text on that line must be the Archive git-mv self-move.
+    printf '%s\n' "$line" | grep -qE "git mv[[:space:]]+docs/plans/active/${base_re}[[:space:]]+docs/plans/shipped/${base_re}" || return 1
+  done <<EOF
+$occ
+EOF
+  return 0
+}
 
 missing=()
 for r in "${refs[@]}"; do
   resolves "$r" && continue
   printf '%s\n' "$r" | grep -qE "$ALLOW_RE" && continue   # known pre-existing — skip
+  is_archive_self_ref "$r" && continue                    # plan's own Archive self-move — not a real ref
   missing+=("$r")
 done
 
