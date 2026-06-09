@@ -127,9 +127,9 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`close-gate-gaps`](shipped/close-gate-gaps.md) | 2026-06-08 | Plan — Close the prevention-gate gaps (historical-review recurrence-proofing) |
 | [`codex-harness-parity`](shipped/codex-harness-parity.md) | 2026-06-08 | Plan - Codex harness parity |
 | [`codex-native-parity`](shipped/codex-native-parity.md) | 2026-06-08 | Plan - Codex native parity |
+| [`dedup-tracker-query-and-ai-client-clones`](shipped/dedup-tracker-query-and-ai-client-clones.md) | 2026-06-08 | Plan — De-duplicate tracker query-suggest + AI-client SSE clones |
 | [`mobile-app-jql-mvp`](shipped/mobile-app-jql-mvp.md) | 2026-06-08 | Plan — Mobile app (Android-first) — Jira JQL → editable-column ticket list |
 | [`p4-git-connector-github-mirror`](shipped/p4-git-connector-github-mirror.md) | 2026-06-08 | Plan — GitHub → p4d one-way mirror via Helix4Git Git Connector (WSL2) |
-| [`dedup-tracker-query-and-ai-client-clones`](shipped/dedup-tracker-query-and-ai-client-clones.md) | — | Plan — De-duplicate tracker query-suggest + AI-client SSE clones |
 <!-- END auto-plan-index -->
 
 ### Notes
