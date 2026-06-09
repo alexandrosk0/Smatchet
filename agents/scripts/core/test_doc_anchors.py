@@ -96,7 +96,7 @@ def collect_anchors() -> list[str]:
             continue
         for m in heading_re.finditer(text):
             heading = m.group(1).strip()
-            # Strip trailing comment tokens like `<!-- vexp v1.2.28 -->`.
+            # Strip trailing comment tokens like `<!-- tier: portable -->`.
             heading = re.sub(r"\s*<!--.*?-->\s*$", "", heading).strip()
             if heading:
                 anchors.add(heading)

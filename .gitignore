@@ -58,7 +58,6 @@ smatchet_views.json
 smatchet_backend_audit.jsonl
 smatchet_field_catalog_cache.json
 
-.vexp/
 .worktrees/
 
 # Harness adapters — local-only, regenerate via `bash agents/scripts/core/setup-harness.sh <name>`.
@@ -119,8 +118,7 @@ assets/fonts/*.ttf
 # Unreal p4d + remote Mainbot p4d) where global env vars would collide.
 .p4config
 
-# vexp auto-generates this; per AGENTS.md § vexp, the canonical block lives
-# in .claude/CLAUDE.md — Copilot variant is not committed.
+# Copilot-instructions variant is generated per-harness, not committed.
 .github/copilot-instructions.md
 
 # Per-subsystem Claude Code shims: setup-harness.sh generates a one-line

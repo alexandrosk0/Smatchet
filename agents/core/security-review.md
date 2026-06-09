@@ -34,7 +34,7 @@ Read-only security reviewer for Smatchet. Adversarial mindset — assume the att
 1. **Scope** (same as `code-review`): `git diff origin/develop...HEAD` by default, or PR number, or file.
 
 2. **Semantic search first** (per AGENTS.md):
-   - Call your harness's semantic codebase search with a debug-style preset (in Claude Code: `run_pipeline({ task: "security review <summary>", preset: "debug" })`) — debug preset includes impact analysis + test files, both of which matter for tainted-data tracing.
+   - Call your harness's semantic codebase search with a debug-style preset — it pulls in impact analysis + test files, both of which matter for tainted-data tracing.
    - Trace every external input back to its source via the impact graph. The graph shows which functions call the changed code — that's your taint propagation.
    - Use file-skeleton views for supporting files (70–90% savings). Use semantic search again for "who calls X" / "where is Y validated" — don't grep the codebase manually.
    - Fall back to text-search / file-read only if no semantic search is available.

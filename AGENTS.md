@@ -121,7 +121,7 @@ Pink-clear UI gap detection + the exe-staleness check → [`docs/agent-rules/deb
 
 ## Semantic codebase search — use it first
 
-Use **semantic codebase search first** for any "where is X / what calls Y / what does this touch" question (faster + more accurate than `grep` over a multi-MLOC tree); prefer **compact file-skeletons** for files you inspect but don't edit (70–90% token savings); fall back to text-search only when no semantic search is available or its index is degraded. Claude Code: `mcp__vexp__run_pipeline` + `mcp__vexp__get_skeleton`; other harnesses substitute equivalents (§ Harness adapter). vexp mentions are concrete examples — the capability is what matters.
+Use **semantic codebase search first** for any "where is X / what calls Y / what does this touch" question (faster + more accurate than `grep` over a multi-MLOC tree); prefer **targeted reads / compact skeletons** for files you inspect but don't edit. Claude Code: the Sourcetrail code-graph index (`python tools/sourcetrail/st_query.py callers|callees|def|refs <sym>`, see [`tools/sourcetrail/README.md`](tools/sourcetrail/README.md)) for exact call-graph / definition facts, `Grep`/`Glob` for literal sweeps; other harnesses substitute equivalents (§ Harness adapter). These are concrete examples — the capability ("nav by meaning + exact call-graph before raw text-search") is what matters.
 
 ## Agent file locations
 
@@ -154,7 +154,3 @@ Output-token compressor (~75% cut, technical content preserved byte-for-byte). I
 ## Semantic-search exceptions
 
 Use **text-search** (not semantic) for **exhaustive literal/symbol inventories** (graph-ranked results aren't exhaustive — run once in the orchestrator, pass `<file>:<line>:<role>` matches inline to agents) and **mechanical renames / cleanup checks** (every occurrence must be found). Semantic search stays primary for **impact / ownership / surrounding-logic** understanding (the default path).
-
-## vexp — Claude-Code-only
-
-The vexp MCP-tool guidance block is Claude-Code-specific and lives in `.claude/CLAUDE.md` — **not** mirrored here so Codex / Cursor / Aider (which read `AGENTS.md` directly) don't carry guidance they can't use (they fall back to text-search per § Harness adapter). vexp auto-regenerates the block into `AGENTS.md` on install; `agents/scripts/core/vexp-strip-agents-md.sh` (SessionStart hook) idempotently strips it until upstream targets `.claude/CLAUDE.md` only.

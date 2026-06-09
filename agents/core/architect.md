@@ -29,7 +29,7 @@ Read-only architecture specialist. Output is a design doc; the orchestrator impl
 
 Project rules + semantic-search policy in `AGENTS.md`. Don't restate them.
 
-**Pre-flight — vexp skeleton fallback**: `mcp__vexp__get_skeleton` returns "no skeleton data" for some indexed files (race with reindex, partial parse, or rotation). When that happens, fall back to `Read` immediately rather than retrying — do not block the validation pass. Optionally call `mcp__vexp__index_status` once at the start of a long read-only run; degraded index → fall back to `Read` + `Grep` for the whole run.
+**Pre-flight — skeleton fallback**: if your harness's file-skeleton view returns no data for an indexed file (reindex race, partial parse, rotation), fall back to `Read` immediately rather than retrying — do not block the validation pass. If the code-search / code-graph index is degraded, fall back to `Read` + `Grep` for the whole read-only run.
 
 **Every response, in this order:**
 

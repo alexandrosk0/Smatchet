@@ -43,13 +43,13 @@ Applied entries are archived immediately to [`self-improvement/categories/applie
 - **process** — workflow friction; orchestrator-packet discipline; shortcuts an
   agent finds itself doing manually that should be encoded in its prompt;
   context an agent had to discover that should be pre-loaded.
-- **tooling** — missing CLI / lint / vexp invocation / harness automation gap.
+- **tooling** — missing CLI / lint / semantic-search / harness automation gap.
 - **infra** — build system / CI / scaffolding / new-subagent candidates.
 - **test** — test coverage gap, fixture, bucket-E wiring.
 - **security** — exploitable surface; secret leakage; sandbox escape; defense-in-depth.
 
 `external-blockers.md` carries entries that can only be resolved outside this
-repo (vexp tool, GitHub repo settings).
+repo (GitHub repo settings, upstream tool sources).
 
 ## Priority
 

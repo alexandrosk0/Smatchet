@@ -38,9 +38,9 @@ Read-only code reviewer for Smatchet. Output is a severity-tagged punch list —
    - File path → review that file in full
 
 2. **Semantic search first** (per AGENTS.md):
-   - Call your harness's semantic codebase search (e.g. vexp `run_pipeline({ task: "review <one-line summary of the diff>" })` under Claude Code) to get impact analysis (what depends on the changed code), session memory (prior decisions / observations on these files), and supporting-file context.
+   - Call your harness's semantic codebase search to get impact analysis (what depends on the changed code), session memory (prior decisions / observations on these files), and supporting-file context.
    - If unavailable or degraded, fall back to text-search / file-read / file-glob.
-   - For supporting files needed to understand the change but not in the diff, use compact file-skeleton views (e.g. vexp `get_skeleton`) — 70–90% token savings vs full reads.
+   - For supporting files needed to understand the change but not in the diff, use compact file-skeleton / targeted reads — 70–90% token savings vs full reads.
    - For usage / call-site scans ("who calls this new function?", "where else is this invariant used?"), prefer semantic search — don't grep the codebase manually.
 
 3. **Static-analysis pass** (parallel via shell, capture stderr):

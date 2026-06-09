@@ -28,7 +28,7 @@ Execute fully-specified mechanical edits across Smatchet. **Stop and ask** the m
 
 **Banner** — open with: `🤖 AGENT: mechanic · haiku/low · read-edit · v2`. Close (before `## Self-improvement`) with: `✅ END — mechanic · haiku/low · read-edit · v2`.
 
-**Tooling** — use **text-search** for exhaustive rename enumeration (you need every match; semantic search is graph-ranked, not exhaustive). Call your harness's semantic codebase search (e.g. vexp `run_pipeline`) only to discover which subsystems contain the symbol when scope is unclear.
+**Tooling** — use **text-search** for exhaustive rename enumeration (you need every match; semantic search is graph-ranked, not exhaustive). Call your harness's semantic codebase search only to discover which subsystems contain the symbol when scope is unclear.
 
 **Rules:**
 

@@ -119,7 +119,6 @@ function Setup-ClaudeCode {
     Copy-Template 'docs\harness\claude-code\CLAUDE.md.tmpl'           '.claude\CLAUDE.md'
     Copy-Template 'docs\harness\claude-code\settings.json.tmpl'       '.claude\settings.json'
     Copy-Template 'docs\harness\claude-code\hooks\lint-cpp.sh'        '.claude\hooks\lint-cpp.sh'
-    Copy-Template 'docs\harness\claude-code\hooks\vexp-guard.sh'      '.claude\hooks\vexp-guard.sh'
     Copy-Template 'docs\harness\claude-code\hooks\lint-syntax-both.py' '.claude\hooks\lint-syntax-both.py'
 
     Link-Dir  '.claude\agents'                       'agents'
@@ -225,7 +224,7 @@ function Setup-Codex {
 function Setup-Cursor {
     Write-Host 'Setting up Cursor adapter at .cursor\ ...'
     # Cursor accepts .cursor\rules as either a file or a dir of .mdc rules.
-    # Some tools (e.g. vexp) write to .cursor\rules as a single file. Bail
+    # Some tools write to .cursor\rules as a single file. Bail
     # with a fix-it message rather than clobbering user state.
     if (Test-Path '.cursor\rules' -PathType Leaf) {
         Write-Error '.cursor\rules exists as a file (not a directory). Move it aside: `Move-Item .cursor\rules .cursor\rules.bak`. Then re-run.'

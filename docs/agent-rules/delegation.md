@@ -69,7 +69,7 @@ A per-session orchestrator scratchpad lives at `.session-context.md` at the repo
 
 Rules:
 
-- **Subagents do not Read or Edit `.session-context.md` themselves.** The orchestrator reads it once per turn and passes relevant context inline to each subagent's prompt. This avoids races when subagents run in parallel and avoids duplicating the vexp `run_pipeline`-first rule.
+- **Subagents do not Read or Edit `.session-context.md` themselves.** The orchestrator reads it once per turn and passes relevant context inline to each subagent's prompt. This avoids races when subagents run in parallel and avoids duplicating the semantic-search-first rule.
 - **Subagents emit `## Session context append`** in their report when there are session-durable facts worth surfacing — repro state, file:line evidence, decisions locked, open questions. Hook captures + appends; agent never writes the file.
 - **Append-only.** Hook never edits prior entries.
 - **Cross-session archive.** The SessionStart hook moves any non-trivial prior scratchpad to `.session-context.archive/` before truncating. Archives are gitignored, never auto-pruned (cheap on disk), and surfaced on demand by the `scratchpad-recall` skill — see [`agents/_shared/skills/scratchpad-recall/SKILL.md`](../../agents/_shared/skills/scratchpad-recall/SKILL.md). Use it when the user references "last session", "yesterday's run", "what did <agent> find earlier", or any cross-session continuity question.
@@ -270,7 +270,7 @@ If step 3's commit missed new files (symptom: PR diff is smaller than expected),
 
 ## Skeleton-first
 
-**Hard rule.** For files you're **inspecting** (understanding shape, finding the right symbol, scoping a change) use `get_skeleton` (or the harness equivalent — see § Harness adapter). For files you're **editing** use `Read`. Reading a full file for context-only inspection wastes ~70–90% of input tokens.
+**Hard rule.** For files you're **inspecting** (understanding shape, finding the right symbol, scoping a change) use a compact skeleton view or targeted read (your harness's file-skeleton capability — see § Harness adapter). For files you're **editing** use `Read`. Reading a full file for context-only inspection wastes ~70–90% of input tokens.
 
 The split:
 

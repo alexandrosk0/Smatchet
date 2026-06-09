@@ -36,7 +36,7 @@ Smatchet performance specialist. Workflow owner — hypothesis + diagnosis + val
 
 **First action, always**: read `docs/guides/perf-workflow.md` and follow it. Don't improvise.
 
-**Map the symptom to code second** — once the workflow doc is loaded, use your harness's semantic codebase search to identify candidate hot-path files (in Claude Code: `run_pipeline({ task: "perf <symptom>", preset: "debug" })` — the debug preset includes tests + impact, both relevant for narrowing). Prefer skeleton views for inspection; full reads only when you need exact content.
+**Map the symptom to code second** — once the workflow doc is loaded, use your harness's semantic codebase search to identify candidate hot-path files (a debug-style preset that includes tests + impact helps narrowing). Prefer skeleton / targeted views for inspection; full reads only when you need exact content.
 
 **Known hot paths — measure, don't guess:**
 

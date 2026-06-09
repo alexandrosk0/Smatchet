@@ -59,7 +59,7 @@ Pi pays zero (direct import).
 
 - `agents/_shared/token-tracking/agent-token-log.py` — the proven harness-agnostic shared-core layout (invoked by Claude + Codex + Cursor); model for `agents/_shared/session-guard/`.
 - #913 hooks (`docs/harness/claude-code/hooks/guard-head-drift.sh` et al.) — registry entry format + thresholds (1800s liveness, 604800s sweep) + decision rules ported verbatim into `guard.mjs`.
-- `docs/harness/claude-code/hooks/vexp-guard.sh` — the exact PreToolUse deny-JSON shape (reused for Claude + Codex, which share it).
+- `docs/harness/claude-code/hooks/guard-head-drift.sh` — the exact PreToolUse deny-JSON shape (reused for Claude + Codex, which share it).
 - `setup_pi()` in `agents/scripts/core/setup-harness.sh` — existing extension-copy flow (the subagent extension) as the model for deploying our Pi extension.
 - `scripts/dev/worktree.ps1` `Invoke-Native` + git-bash resolution — reused for the registry-path change.
 

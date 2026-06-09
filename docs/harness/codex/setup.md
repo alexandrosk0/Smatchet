@@ -63,7 +63,7 @@ These parts are covered after setup:
 These Claude Code features are still payload-dependent and intentionally not
 wired in Codex yet:
 
-- `PreToolUse` gates such as the vexp raw-search guard and HEAD-drift edit guard.
+- `PreToolUse` gates such as the HEAD-drift edit guard.
 - `PostToolUse` edit lint drains and Bash PR autoregistration.
 - `SubagentStop` token telemetry.
 

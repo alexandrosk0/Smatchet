@@ -74,7 +74,7 @@ For pink-clear UI gap detection and exe staleness checks, follow AGENTS.md § De
 
 ## Search Order
 
-1. Use your harness's semantic codebase search first (in Claude Code: vexp `run_pipeline` with `preset: "debug"` — the debug preset includes tests + impact + memory, all relevant here).
+1. Use your harness's semantic codebase search first (a debug-style preset that pulls in tests + impact + memory is ideal — all relevant to a behavioural bug).
 2. Prefer file skeletons over full reads for broad context.
 3. Use text search after semantic search narrows the suspected area.
 4. Read full files only when you need exact control flow, lifetimes, ownership, or call-site details.
