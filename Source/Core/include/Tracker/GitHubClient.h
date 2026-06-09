@@ -24,6 +24,8 @@
 // cfg-less mutation paths — JiraClient's pattern) so a PAT entered or rotated
 // in Preferences takes effect without recreating the client (issue #979).
 
+// SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent backend
+// clients; owner=tracker-backend; revisit=2026-12-31)
 class GitHubClient : public ITrackerBackend,
                      public ITrackerIssueReader,
                      public ITrackerConnectivity,
@@ -53,6 +55,8 @@ class GitHubClient : public ITrackerBackend,
     TrackerIssueFetchSummary FetchIssuesStreamed(const BatchCallback& onBatch, const CancelCallback& shouldCancel,
                                                  const TrackerConfig* configOverride = nullptr,
                                                  const ViewsStore* viewsOverride = nullptr) override;
+    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent
+    // backend clients; owner=tracker-backend; revisit=2026-12-31)
     Result<std::vector<CachedTicket>, TrackerError> FetchIssuesForKeys(const TrackerConfig& cfg,
                                                                        const std::vector<std::string>& issueKeys,
                                                                        const ViewsStore& views) override;
@@ -62,6 +66,8 @@ class GitHubClient : public ITrackerBackend,
     TrackerError UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) override;
     TrackerError UpdateField(const std::string& issueId, const TrackerField& field,
                              const std::vector<std::string>& values) override;
+    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent
+    // backend clients; owner=tracker-backend; revisit=2026-12-31)
     Result<nlohmann::json, TrackerError> BuildFieldPayload(const TrackerField& field,
                                                            const std::vector<std::string>& values) override;
     Result<nlohmann::json, TrackerError> BuildCreatePayload(const IssueDraft& draft,

@@ -2,6 +2,7 @@
 
 #include "AppController.h"
 #include "StringUtil.h"
+#include "Tracker/TrackerQuerySuggestCommon.h"
 #include "TrackerFieldSchema.h"
 
 #include <algorithm>
@@ -12,155 +13,28 @@
 
 namespace {
 
-static bool IsPlaneIdChar(unsigned char ch) { return std::isalnum(ch) != 0 || ch == '_' || ch == '.' || ch == '-'; }
+// clang-format off
+// SMATCHET_DEVIATION(rule=duplication; reason=shared-helper using-block, extraction artefact; owner=tracker-backend; revisit=2026-12-31)
+// clang-format on
+using tracker_query_suggest::AddSuggestionUnique;
+using tracker_query_suggest::AppendFieldCatalog;
+using tracker_query_suggest::AppendTerms;
+using tracker_query_suggest::AsciiStartsWithIgnoreCase;
+using tracker_query_suggest::FindTrackerField;
+using tracker_query_suggest::InsertForValueToken;
+using tracker_query_suggest::IsQueryIdChar;
+using tracker_query_suggest::IsQueryUserField;
+using tracker_query_suggest::ScanStringStateToCursor;
 
-static bool ValueNeedsQuotes(const std::string& s) {
-    if (s.empty()) {
-        return true;
-    }
-    return std::any_of(s.begin(), s.end(), [](char ch) {
-        return !IsPlaneIdChar(static_cast<unsigned char>(ch)) || ch == '"' || ch == '\\';
-    });
-}
-
-static std::string QuotedValue(const std::string& s) {
-    std::string out;
-    out.reserve(s.size() + 4);
-    out.push_back('"');
-    for (unsigned char c : s) {
-        if (c == '"' || c == '\\') {
-            out.push_back('\\');
-        }
-        out.push_back(static_cast<char>(c));
-    }
-    out.push_back('"');
-    return out;
-}
-
-static std::string InsertForValueToken(const std::string& raw) {
-    if (ValueNeedsQuotes(raw)) {
-        return QuotedValue(raw);
-    }
-    return raw;
-}
-
-static void ScanStringStateToCursor(const char* buf, int bufLen, int cursor, bool& outInString, int& outStringOpenIndex) {
-    outInString = false;
-    outStringOpenIndex = -1;
-    const int lim = (std::min)(bufLen, cursor);
-    for (int j = 0; j < lim; ++j) {
-        const unsigned char ch = static_cast<unsigned char>(buf[j]);
-        if (ch == '\\' && outInString && j + 1 < lim) {
-            ++j;
-            continue;
-        }
-        if (ch == '"') {
-            if (!outInString) {
-                outStringOpenIndex = j;
-                outInString = true;
-            } else {
-                outInString = false;
-                outStringOpenIndex = -1;
-            }
-        }
-    }
-}
-
-static bool AsciiEqualsIgnoreCaseToLowered(const std::string& value, const std::string& alreadyLowered) {
-    if (value.size() != alreadyLowered.size()) {
-        return false;
-    }
-    for (size_t i = 0; i < value.size(); ++i) {
-        if (static_cast<char>(std::tolower(static_cast<unsigned char>(value[i]))) != alreadyLowered[i]) {
-            return false;
-        }
-    }
-    return true;
-}
-
-static const TrackerField* FindFieldToken(const AppController& app, const std::string& token) {
-    if (token.empty()) {
-        return nullptr;
-    }
-    const std::string key = ToLowerAsciiCopy(token);
-    const auto& fields = app.GetAvailableFields();
-    auto idIt = std::find_if(fields.begin(), fields.end(), [&](const auto& f) {
-        return AsciiEqualsIgnoreCaseToLowered(f.Id, key);
-    });
-    if (idIt != fields.end()) {
-        return &(*idIt);
-    }
-    auto nameIt = std::find_if(fields.begin(), fields.end(), [&](const auto& f) {
-        return !f.Name.empty() && AsciiEqualsIgnoreCaseToLowered(f.Name, key);
-    });
-    if (nameIt != fields.end()) {
-        return &(*nameIt);
-    }
-    return nullptr;
-}
-
-static void AddUnique(std::vector<QuerySuggestion>& out, std::unordered_set<std::string>& seen, std::string label,
-                      std::string insert) {
-    if (insert.empty()) {
-        return;
-    }
-    if (!seen.insert(insert).second) {
-        return;
-    }
-    if (label.empty()) {
-        label = insert;
-    }
-    out.push_back(QuerySuggestion{std::move(label), std::move(insert)});
-}
-
-static bool AsciiStartsWithIgnoreCase(const std::string& value, const std::string& prefixLower) {
-    if (prefixLower.empty()) {
-        return true;
-    }
-    const std::string v = ToLowerAsciiCopy(value);
-    return v.size() >= prefixLower.size() && v.compare(0, prefixLower.size(), prefixLower) == 0;
-}
-
-static void AppendTerms(const std::string& prefix, const char* const* terms, int termCount, std::vector<QuerySuggestion>& out,
-                        std::unordered_set<std::string>& seen) {
+// Near-twin of Jira's AppendValueSuggestions, kept per-engine on purpose: Jira labels user options
+// " (display name)", Plane " (display)" — folding would collapse a genuine backend-local label divergence. The clone
+// only surfaced after the cluster-A helper-name unification removed the cosmetic-identifier difference the gate keyed
+// on.
+static void AppendValueSuggestions(const TrackerField& field, const std::string& prefix,
+                                   std::vector<QuerySuggestion>& out, std::unordered_set<std::string>& seen) {
+    // SMATCHET_DEVIATION(rule=duplication; reason=per-engine near-twin; owner=tracker-backend; revisit=2026-12-31)
     const std::string pre = ToLowerAsciiCopy(prefix);
-    for (int i = 0; i < termCount; ++i) {
-        const std::string ins(terms[i]);
-        if (AsciiStartsWithIgnoreCase(ins, pre)) {
-            AddUnique(out, seen, ins, ins);
-        }
-    }
-}
-
-static void AppendFieldCatalog(const AppController& app, const std::string& prefix, std::vector<QuerySuggestion>& out,
-                               std::unordered_set<std::string>& seen) {
-    const std::string pre = ToLowerAsciiCopy(prefix);
-    for (const auto& f : app.GetAvailableFields()) {
-        if (f.Id.empty()) {
-            continue;
-        }
-        if (AsciiStartsWithIgnoreCase(f.Id, pre)) {
-            std::string label = f.Name.empty() ? f.Id : (f.Name + " (" + f.Id + ")");
-            AddUnique(out, seen, std::move(label), f.Id);
-        }
-        if (!f.Name.empty() && f.Name != f.Id) {
-            if (AsciiStartsWithIgnoreCase(f.Name, pre)) {
-                std::string label = f.Name + " (" + f.Id + ")";
-                AddUnique(out, seen, label, f.Id);
-            }
-        }
-    }
-}
-
-static bool IsUserField(const TrackerField& field) {
-    return field.IsUserType || field.Family == TrackerFieldFamily::UserSingle ||
-           field.Family == TrackerFieldFamily::UserMulti;
-}
-
-static void AppendValueSuggestions(const TrackerField& field, const std::string& prefix, std::vector<QuerySuggestion>& out,
-                                   std::unordered_set<std::string>& seen) {
-    const std::string pre = ToLowerAsciiCopy(prefix);
-    const bool isUserField = IsUserField(field);
+    const bool isUserField = IsQueryUserField(field);
     auto matchesPrefix = [&](const std::string& raw, const std::string& label) {
         return AsciiStartsWithIgnoreCase(raw, pre) || AsciiStartsWithIgnoreCase(label, pre);
     };
@@ -176,7 +50,7 @@ static void AppendValueSuggestions(const TrackerField& field, const std::string&
         if (label != insert && !insert.empty() && insert.front() == '"') {
             label = label + " -> " + insert;
         }
-        AddUnique(out, seen, std::move(label), insert);
+        AddSuggestionUnique(out, seen, std::move(label), insert);
     };
 
     for (const auto& opt : field.AllowedValueOptions) {
@@ -184,10 +58,11 @@ static void AppendValueSuggestions(const TrackerField& field, const std::string&
             const std::string display = opt.Value.empty() ? opt.SecondaryValue : opt.Value;
             const std::string accountId = opt.Id;
             if (!accountId.empty() && matchesPrefix(accountId, display)) {
-                AddUnique(out, seen, display.empty() ? accountId : display, InsertForValueToken(accountId));
+                AddSuggestionUnique(out, seen, display.empty() ? accountId : display, InsertForValueToken(accountId));
             }
             if (!display.empty() && display != accountId && matchesPrefix(display, display)) {
-                AddUnique(out, seen, display + " (display) -> " + InsertForValueToken(display), InsertForValueToken(display));
+                AddSuggestionUnique(out, seen, display + " (display) -> " + InsertForValueToken(display),
+                                    InsertForValueToken(display));
             }
             continue;
         }
@@ -226,18 +101,18 @@ static bool ParsePlaneValueContext(const char* buf, int /*bufLen*/, int replaceS
     }
     int endField = p;
     int startField = endField;
-    while (startField > 0 && IsPlaneIdChar(static_cast<unsigned char>(buf[startField - 1]))) {
+    while (startField > 0 && IsQueryIdChar(static_cast<unsigned char>(buf[startField - 1]))) {
         --startField;
     }
     const std::string fieldTok(buf + startField, buf + endField + 1);
-    *outField = FindFieldToken(app, fieldTok);
+    *outField = FindTrackerField(app.GetAvailableFields(), fieldTok);
     return *outField != nullptr;
 }
 
 } // namespace
 
-void BuildPlaneQuerySuggestions(const char* buf, int bufLen, int cursor, int selStart, int selEnd, const AppController& app,
-                                QuerySuggestBuild& out, QuerySuggestMeta* metaOut) {
+void BuildPlaneQuerySuggestions(const char* buf, int bufLen, int cursor, int selStart, int selEnd,
+                                const AppController& app, QuerySuggestBuild& out, QuerySuggestMeta* metaOut) {
     if (metaOut != nullptr) {
         metaOut->UserValueToken = false;
         metaOut->UserSearchPrefix.clear();
@@ -274,10 +149,10 @@ void BuildPlaneQuerySuggestions(const char* buf, int bufLen, int cursor, int sel
         } else {
             int L = cursor;
             int R = cursor;
-            while (L > 0 && IsPlaneIdChar(static_cast<unsigned char>(buf[L - 1]))) {
+            while (L > 0 && IsQueryIdChar(static_cast<unsigned char>(buf[L - 1]))) {
                 --L;
             }
-            while (R < bufLen && IsPlaneIdChar(static_cast<unsigned char>(buf[R]))) {
+            while (R < bufLen && IsQueryIdChar(static_cast<unsigned char>(buf[R]))) {
                 ++R;
             }
             replaceStart = L;
@@ -291,11 +166,10 @@ void BuildPlaneQuerySuggestions(const char* buf, int bufLen, int cursor, int sel
 
     const TrackerField* valueField = nullptr;
     if (ParsePlaneValueContext(buf, bufLen, replaceStart, app, &valueField)) {
-        if (valueField != nullptr &&
-            (!valueField->AllowedValueOptions.empty() || !valueField->AllowedValues.empty())) {
+        if (valueField != nullptr && (!valueField->AllowedValueOptions.empty() || !valueField->AllowedValues.empty())) {
             AppendValueSuggestions(*valueField, prefix, out.Items, seen);
         }
-        if (metaOut != nullptr && valueField != nullptr && IsUserField(*valueField)) {
+        if (metaOut != nullptr && valueField != nullptr && IsQueryUserField(*valueField)) {
             metaOut->UserValueToken = true;
             metaOut->UserSearchPrefix = prefix;
         }
@@ -304,7 +178,7 @@ void BuildPlaneQuerySuggestions(const char* buf, int bufLen, int cursor, int sel
             static const char* kLogical[] = {"AND", "OR"};
             AppendTerms(prefix, kLogical, static_cast<int>(sizeof(kLogical) / sizeof(kLogical[0])), out.Items, seen);
         }
-        AppendFieldCatalog(app, prefix, out.Items, seen);
+        AppendFieldCatalog(app.GetAvailableFields(), prefix, out.Items, seen);
     }
 
     auto labelLessAscii = [](const QuerySuggestion& a, const QuerySuggestion& b) {
