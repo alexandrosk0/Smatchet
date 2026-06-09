@@ -26,6 +26,107 @@ add_compile_definitions(
 )
 
 # ==============================================================================
+# MSVC toolset-consistency guard (configure-time, early — runs right after the
+# compiler is known so it fires before any heavy configure work or compile).
+#
+# The repo pins the MSVC toolset (build.msvc_toolset_pin in project.config.json)
+# and both build wrappers (scripts/dev/with-msvc-env.sh / with-msvc.ps1) pass it
+# to vcvars64 as -vcvars_ver=<pin>, so a clean configure THROUGH a wrapper picks
+# a cl.exe whose minor version matches the STL headers it sees → consistent.
+#
+# The failure this guards: if a build dir is configured WITHOUT the wrapper (or
+# with `-latest`, or a leaked env where a newer side-by-side toolset's cl.exe is
+# on PATH), CMake bakes that newer cl into CMakeCache.txt's CMAKE_CXX_COMPILER.
+# Thereafter, even building THROUGH the wrapper (which sets INCLUDE to the pinned
+# toolset's headers) compiles the CACHED newer cl against the OLDER STL headers
+# → thousands of cryptic errors deep in <chrono>/<xtimec.h> (e.g. "'__int64'
+# should be preceded by ';'", "'_LIKELY' undeclared", STL1001), on files
+# unrelated to whatever is being changed. This converts that 5000-error cascade
+# into one obvious line, at configure time, before any compile.
+#
+# Mapping: MSVC compiler-version 19.NN ↔ VC toolset 14.NN (compiler-minor ==
+# toolset-minor). We compare the MINOR component — that's what actually diverges
+# and breaks (.38 STL headers vs a .50 cl). MSVC-only; never fires for
+# Clang/GCC/AppleClang (Linux/clang presets, Unreal, clang-cl, etc.).
+#
+# Fail-open on "can't determine the pin" (missing/unreadable key → skip the
+# guard, don't break config-less or non-MSVC builds); fail-closed on "pin known
+# AND minor mismatch". Override: -DSMATCHET_ALLOW_TOOLSET_MISMATCH=ON downgrades
+# the FATAL to a WARNING for someone who deliberately wants a different toolset.
+# ==============================================================================
+option(SMATCHET_ALLOW_TOOLSET_MISMATCH
+    "Downgrade the MSVC toolset-consistency guard from FATAL_ERROR to WARNING (deliberate off-pin toolset)"
+    OFF)
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+    # Read the pinned toolset minor straight out of project.config.json (single
+    # source of truth — same scalar the bash/PowerShell wrappers grep). Matches
+    # the wrapper's regex style: "msvc_toolset_pin": "<major>.<minor>".
+    set(_smatchet_pin_minor "")
+    set(_smatchet_pin_full "")
+    set(_smatchet_cfg "${CMAKE_CURRENT_SOURCE_DIR}/project.config.json")
+    if(EXISTS "${_smatchet_cfg}")
+        file(READ "${_smatchet_cfg}" _smatchet_cfg_contents)
+        # Capture the pinned "<major>.<minor>" value. CMake regex has no \d /
+        # non-greedy; [0-9]+ on each component is sufficient and robust.
+        if(_smatchet_cfg_contents MATCHES
+                "\"msvc_toolset_pin\"[ \t]*:[ \t]*\"([0-9]+)\\.([0-9]+)\"")
+            set(_smatchet_pin_full "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}")
+            set(_smatchet_pin_minor "${CMAKE_MATCH_2}")
+        endif()
+    endif()
+
+    # Detected compiler minor: CMAKE_CXX_COMPILER_VERSION is like "19.38.33135".
+    # Take the SECOND dotted component (the minor) — that maps 1:1 to the toolset
+    # minor (19.38 cl ↔ 14.38 toolset). Robust to a 2- or 3-component version.
+    set(_smatchet_cc_minor "")
+    if(CMAKE_CXX_COMPILER_VERSION MATCHES "^[0-9]+\\.([0-9]+)")
+        set(_smatchet_cc_minor "${CMAKE_MATCH_1}")
+    endif()
+
+    # Fail-open: only enforce when BOTH the pin minor and the detected minor are
+    # known. A missing pin (config-less consumer / key removed) or an
+    # unparseable compiler version skips the guard rather than breaking configure.
+    if(_smatchet_pin_minor STREQUAL "" OR _smatchet_cc_minor STREQUAL "")
+        # Skip silently — can't determine consistency, so don't block.
+    elseif(NOT _smatchet_cc_minor STREQUAL _smatchet_pin_minor)
+        set(_smatchet_toolset_msg
+            "MSVC toolset mismatch in this build directory.\n"
+            "  Detected compiler: ${CMAKE_CXX_COMPILER_VERSION} (VC toolset 14.${_smatchet_cc_minor})\n"
+            "  Expected pin:      ${_smatchet_pin_full} (build.msvc_toolset_pin in project.config.json)\n"
+            "  Compiler path:     ${CMAKE_CXX_COMPILER}\n"
+            "\n"
+            "This build dir was configured with the wrong MSVC toolset. Building it now\n"
+            "(even through a wrapper that pins INCLUDE to 14.${_smatchet_pin_minor}) compiles the cached\n"
+            "14.${_smatchet_cc_minor} cl.exe against 14.${_smatchet_pin_minor} STL headers -> thousands of cryptic errors\n"
+            "deep in <chrono>/<xtimec.h> (STL1001, \"'__int64' should be preceded by ';'\").\n"
+            "\n"
+            "Fix: wipe this build dir and reconfigure THROUGH the wrapper, which pins\n"
+            "-vcvars_ver from project.config.json:\n"
+            "  rm -rf \"${CMAKE_BINARY_DIR}\"\n"
+            "  scripts/dev/with-msvc-env.sh cmake --preset <preset>\n"
+            "(PowerShell: scripts/dev/with-msvc.ps1 cmake --preset <preset>)\n"
+            "\n"
+            "Or, if you deliberately want toolset 14.${_smatchet_cc_minor}: set build.msvc_toolset_pin to\n"
+            "match, or pass -DSMATCHET_ALLOW_TOOLSET_MISMATCH=ON to downgrade this to a warning.")
+        if(SMATCHET_ALLOW_TOOLSET_MISMATCH)
+            message(WARNING ${_smatchet_toolset_msg})
+        else()
+            message(FATAL_ERROR ${_smatchet_toolset_msg})
+        endif()
+    else()
+        message(STATUS "MSVC toolset 14.${_smatchet_cc_minor} matches pin ${_smatchet_pin_full} (project.config.json)")
+    endif()
+
+    unset(_smatchet_pin_minor)
+    unset(_smatchet_pin_full)
+    unset(_smatchet_cc_minor)
+    unset(_smatchet_cfg)
+    unset(_smatchet_cfg_contents)
+    unset(_smatchet_toolset_msg)
+endif()
+
+# ==============================================================================
 # Iteration-speed knobs — all auto-detected and gracefully degrade. A fresh
 # clone with `cmake --preset ninja-publish-msvc && cmake --build --preset ninja-publish-msvc`
 # still works whether or not ccache / lld are installed.
