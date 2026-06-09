@@ -46,14 +46,29 @@ import os, re, subprocess, sys
 
 archive_dir, index_file, begin, end, mode = sys.argv[1:6]
 
-def git_first_date(path):
+def _git_first_date_at(git_path):
     try:
-        git_path = path.replace(os.sep, "/")
         out = subprocess.run(["git", "log", "--follow", "--format=%ad", "--date=short", "--", git_path],
                              capture_output=True, text=True, check=False).stdout.strip().splitlines()
-        return out[-1] if out else "—"
+        return out[-1] if out else ""
     except Exception:
-        return "—"
+        return ""
+
+def git_first_date(path):
+    git_path = path.replace(os.sep, "/")
+    d = _git_first_date_at(git_path)
+    if not d:
+        # A freshly `git mv`'d plan (active/ -> shipped/) has NO committed history at the
+        # NEW path while the rename is only STAGED, so `git log --follow <new-path>` is
+        # empty and the row gets a blank "—" date — which CI then re-fixes to the real
+        # first-add date, drifting the committed index (the #1061 / #1092 archive
+        # date-drift, twice). Fall back to the SIBLING tier: the rename source still
+        # carries the history. Covers active<->shipped in both directions.
+        if "/plans/shipped/" in git_path:
+            d = _git_first_date_at(git_path.replace("/plans/shipped/", "/plans/active/"))
+        elif "/plans/active/" in git_path:
+            d = _git_first_date_at(git_path.replace("/plans/active/", "/plans/shipped/"))
+    return d or "—"
 
 def summary_for(path):
     h1 = ""
