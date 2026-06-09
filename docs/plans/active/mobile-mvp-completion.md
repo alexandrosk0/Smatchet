@@ -62,7 +62,7 @@ Grouped by workstream. Anchors verified against `origin/develop` 2026-06-09.
 19. OpenSSL fail-fast `ctest`/`bats` configure-probe (asserts non-zero exit when OpenSSL absent for an ABI).
 
 **WS6 — Phase-1 / next (PR-8+, plan-gated):**
-20. Author `docs/plans/active/mobile-app-fuller-integration.md` + reconcile epic #1018.
+20. Author the `mobile-app-fuller-integration` plan (lands in `docs/plans/active/`) + reconcile epic #1018.
 21. Credential settings UI + Android Keystore secure token storage (**real ship-to-user gate**) — `security-review`.
 22. SQLite offline cache for tickets — `offline-sync`.
 23. Touch cell editors + mobile interaction model — `grid-engine`.
