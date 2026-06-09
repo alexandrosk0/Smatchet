@@ -1,0 +1,171 @@
+# Plan — Desktop / Mobile switchable UI modes
+
+> **Slug**: `dual-ui-mode-desktop-mobile` (matches this file's basename without `.md`).
+>
+> **Status**: `active` — the machine-readable lifecycle marker. Values: `active` (driving in-flight work) · `shipped` (post-ship sections populated + all cited PRs merged — this file belongs in `docs/plans/shipped/`) · `blocked` / `deferred` (paused — one-line why). **Flip to `shipped` in the SAME post-ship PR that fills § Implementation log AND `git mv`s this file active → shipped** (see § Archive). `agents/scripts/core/plan-archival-owed.sh` nags at SessionStart if any `active/` plan is marked `shipped` but never moved.
+>
+> **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
+
+## Context
+
+Smatchet's UI today is a single **desktop-docking** paradigm: the host creates `ImGui::DockSpaceOverViewport` and `SmatchetUI::Draw()` ([`SmatchetUI.cpp:262`](../../../Source/Core/src/Ui/SmatchetUI.cpp)) fills fixed dock slots (grid centre, views column, bottom panel, secondary sidebar). There is **no layout-mode concept**. The user wants two switchable modes — **Desktop** (current) and **Mobile** (Chrome-mobile style: single full-width vertical column, top app bar, bottom navigation, slide-in drawer, touch-scaled hit targets) — selectable in all three render targets (standalone GLFW/GL, Unreal DX12, Android).
+
+After this lands: a user can switch Desktop ↔ Mobile (or leave it on width-driven `Auto`) on standalone, DX12, and Android; the mobile shell renders a fixed top-bar / bottom-nav / drawer with a small persisted content dockspace, and on Android it runs + edits live tickets on-device.
+
+**Decisions locked with the user** (originating request — plan-mode session, approved 2026-06-09):
+1. **Mode trigger = Auto-by-width + manual override** — a tri-state persisted setting `Desktop / Mobile / Auto`; `Auto` flips on viewport width with hysteresis (Chrome-like), manual values pin the mode.
+2. **Full mobile shell** (not a minimal restack).
+3. **Android in this effort (verify-on-device)** — the mode-switch + shell land in `Source/Core` first (fully testable on standalone + DX12 with the mouse: a tap == a click). The Android host shell + data path are **already shipped** ([`docs/plans/mobile-app-jql-mvp.md`](../mobile-app-jql-mvp.md), status `shipped`, Slices 0–4: EGL/`ANativeWindow` host, touch→`ImGuiIO`, soft-keyboard IME, surface-lost/recreate, `JqlQuery`→`FetchIssuesStreamed`→grid→cell-edit PUT). This effort's Android work is therefore to **verify the shipped host renders the new Core mobile shell** and that `Auto` width-resolution picks Mobile on a phone framebuffer — **not** to build the host. That plan stays single-sourced; this one cross-references, never duplicates.
+4. **Fixed chrome, dock content only** — top app bar + bottom nav + drawer are fixed, non-dockable chrome. ONLY the middle page-content band is a small **persisted dockspace**, saved to a **separate `imgui_mobile.ini`** independent of the desktop `imgui.ini`. The one touch-friendly adjustment inside the dockspace is a draggable split ratio.
+
+**Central architectural bet:** the host layer never learns about mobile mode. All three hosts keep creating their empty *viewport* dockspace unchanged. Mobile draws a single fullscreen `NoDocking | NoSavedSettings | NoTitleBar | …` shell window on top of that empty viewport dockspace, fully occluding it; the shell's three chrome bands are non-dockable. **Inside** the shell's middle band sits a *second*, local `ImGui::DockSpace` (distinct id) that hosts the page content and **is** persisted — to its own `imgui_mobile.ini`. Net: host untouched, desktop dock state preserved byte-for-byte, mobile gets its own small splittable+persisted content layout.
+
+## Approach
+
+Add a tri-state persisted `UiMode {Desktop, Mobile, Auto}` (default `Auto`) plus the resolved `EffectiveUiMode {Desktop, Mobile}` computed once per frame at the top of `SmatchetUI::Draw()` via a new `drawResolveUiMode(d)` — width hysteresis on `io.DisplaySize.x` (enter Mobile ≤ 720 px, exit Desktop ≥ 860 px, hold previous frame in the dead band). When the effective mode is Mobile, `Draw()` forks: `drawMobileShell(d)` + `drawGlobalOverlays(d)`, then `return` — skipping all desktop chrome + docked windows. The host is never told; the fullscreen `NoDocking | NoSavedSettings` shell occludes the empty viewport dockspace so the desktop `imgui.ini` is never touched in mobile.
+
+The mobile shell is three fixed vertical bands (top app bar, flex page-content, bottom nav) + an overlay drawer. The middle band hosts a *local* `ImGui::DockSpace("MobileContentDock")` whose state round-trips manually to `imgui_mobile.ini` (intercept `io.WantSaveIniSettings` → `SaveIniSettingsToMemory` → write → clear) so the single per-context `io.IniFilename` is never hot-swapped. Page bodies are the **existing** desktop draw helpers, reused via a single defaulted `bool embedded = false` param that skips their top-level `Begin/End`/dock/focus chrome — zero desktop regression, zero new page UI invented.
+
+Non-obvious trade-off: the separate-ini-via-interception approach (vs hot-swapping `io.IniFilename`) is chosen because a host-level ini swap would touch 3 host files across 2 targets + the Unreal boundary and hit the suspected no-re-parent caveat; the in-shell `DockBuilder` load-or-seed + `WantSaveIniSettings` interception keeps the entire mobile-persistence concern inside one new TU.
+
+## Files to modify
+
+Grouped by subsystem. (Greps run: `SmatchetUiModeIds`, `SmatchetMobileShellUi`, `GetMobileImGuiSettingsPath`, `drawResolveUiMode`, `drawGlobalOverlays` — none exist today; all are new.)
+
+**Config / state (strict zone — `Source/Core/src/Config/`):**
+1. `Source/Core/include/Ui/SmatchetUiModeIds.h` — **NEW**, enum-only header (mirrors the no-ImGui *structure* of `SmatchetThemeIds.h`): `UiMode` / `EffectiveUiMode` / `MobilePage` / `MobileTouchDensity` + inline string converters (`uiModeToString`/`FromString`, `mobilePage…`, `mobileTouchDensity…`) + `mobileTouchDensityScale(d)` → the `ScaleAllSizes`/font factor (Compact ≈ 1.3, Comfortable ≈ 1.6, tunable). NB `SmatchetThemeIds.h` is **converter-free** — the inline converters here are a new local choice so callers don't reach into `ConfigManager`.
+2. [`Source/Core/include/Config/ConfigManager.h`](../../../Source/Core/include/Config/ConfigManager.h) — include the new header; persisted (near `Theme` ~`:428`, **not** above the transient-marker island at ~`:409-411`): `UiMode UiMode = UiMode::Auto`, `std::vector<std::string> MobileNavPages = {"grid","views","log","settings","ai"}`, `std::string MobileHomePage = "grid"`, `MobileTouchDensity MobileTouchDensity = MobileTouchDensity::Comfortable`; declare `GetMobileImGuiSettingsPath()`.
+3. [`Source/Core/src/Config/ConfigManager.cpp`](../../../Source/Core/src/Config/ConfigManager.cpp) — save/load `j["uiMode"]` / `j["mobileNav"]` / `j["mobileHome"]` / `j["mobileDensity"]` via switch-case parallel to `theme` (`SaveEnumFields` ~`:338-361` / load ~`:928-943`); call `SanitizeMobileNav(cfg)` on load. Strict zone — mind narrowing casts. All keys are brand-new optional with defaults → **no** `LayoutSchemaVersion` bump.
+4. [`Source/Core/src/Config/ConfigManager_PathUtils.cpp`](../../../Source/Core/src/Config/ConfigManager_PathUtils.cpp) — implement `GetMobileImGuiSettingsPath()` beside `GetImGuiSettingsPath()` (~`:653-658`; desktop = sibling of `imgui.ini`; Android = under host-injected `filesDir`).
+
+**Transient state + UI header (`Source/Core/include/Ui/`):**
+5. [`Source/Core/include/Ui/SmatchetUiSession.h`](../../../Source/Core/include/Ui/SmatchetUiSession.h) — transient per-frame: `EffectiveUiMode effectiveUiMode` (single source of truth, survives across frames for hysteresis), `MobilePage mobilePage = Grid`, `bool mobileDrawerOpen = false`, `bool mobilePageSeeded = false`, `bool mobileDockSeeded = false` (both reset on the Mobile→Desktop edge so re-entry re-applies the saved/seeded layout).
+6. [`Source/Core/include/Ui/SmatchetUI.h`](../../../Source/Core/include/Ui/SmatchetUI.h) — declare `drawResolveUiMode`, the 5 mobile helpers, `drawGlobalOverlays`; members `lastAppliedUiMode_` + `lastAppliedMobileDensity_`; add `embedded = false` to the 5 reused helper decls.
+
+**Mobile shell + fork (`Source/Core/src/Ui/` — light zone, but UX-pillar-rich):**
+7. [`Source/Core/src/Ui/SmatchetUI.cpp`](../../../Source/Core/src/Ui/SmatchetUI.cpp) — `Draw()` fork (after `drawResolveUiMode` + `drawApplyAppearanceSettings`); extend `drawApplyAppearanceSettings` (`:332`) with the mode + density dirty keys + the gated `ScaleAllSizes`/font-reload; extract `drawGlobalOverlays` (toasts + `DrawAppUpdateModal`) out of `drawSecondaryWindowsTail` (~`:829`).
+8. `Source/Core/src/Ui/SmatchetMobileShellUi.cpp` — **NEW** — `drawResolveUiMode` + the 5 mobile shell methods (`drawMobileTopAppBar`, `drawMobilePageContent`, `drawMobileBottomNav` iterating `cfg.MobileNavPages`, `drawMobileDrawer`, `drawMobileShell`) + the content `DockSpace` + DockBuilder load-or-seed + `WantSaveIniSettings`→`imgui_mobile.ini` interception + breakpoint consts (`kMobileEnterMaxWidthPx = 720.f`, `kMobileExitMinWidthPx = 860.f` in the anon namespace).
+9. [`SmatchetActiveProjectGridUi.cpp`](../../../Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp), [`SmatchetViewsDashboardUi.cpp`](../../../Source/Core/src/Ui/SmatchetViewsDashboardUi.cpp), [`SmatchetUtilityWindowsUi.cpp`](../../../Source/Core/src/Ui/SmatchetUtilityWindowsUi.cpp), [`SmatchetPreferencesUi.cpp`](../../../Source/Core/src/Ui/SmatchetPreferencesUi.cpp) — add the `embedded` early-skip of window chrome (skip `prepareTopLevelWindow` + `Begin/End` + dock/focus chrome; render the body into the caller's child).
+10. [`SmatchetPreferencesUi.cpp`](../../../Source/Core/src/Ui/SmatchetPreferencesUi.cpp) — 3-way UI-mode selector **+ new Mobile group**: nav order/visibility (▲/▼ + per-page checkboxes), home-page dropdown, Compact↔Comfortable density radio. (No paired `.h` — this file has `.cpp` only; the embed-skip lands around the `prepareTopLevelWindow` + `Begin` at ~`:159-160`.)
+
+**Deliberate NO-CHANGE (audit, don't edit):**
+11. Desktop/DX12 hosts — `SmatchetImGuiHost.cpp`, `main.cpp`, `StandaloneAppBootstrap.cpp` — **NO CHANGE** (mobile ini handled in-shell, not via `io.IniFilename`; the central bet).
+
+**Android (slices 10–11 — host + data path ALREADY shipped in `mobile-app-jql-mvp.md`; verify-only, do NOT re-enumerate or rebuild):**
+12. `Source/Mobile/Android/` (**EXISTS** — shipped Slices 0–4: `android_main.cpp`, `SmatchetAndroidEgl.{cpp,h}`, `SmatchetAndroidImeBridge.{cpp,h}`, `SmatchetAndroidPlatform.{cpp,h}`; EGL/`ANativeWindow` host, surface-lost/recreate, touch→`ImGuiIO`, soft-keyboard IME, host-injected font bytes, `filesDir` config-path, DPI `DisplayFramebufferScale`). Slice 10 **audits** it — confirm the Core mobile shell renders through this host and `GetMobileImGuiSettingsPath()` resolves under the injected `filesDir`. Any gap (e.g. a seam the new mobile-ini path needs) is a small wiring delta, not a host build. Core must still **not** include `android/` NDK headers — the injection seams are the boundary.
+13. Android data path (**EXISTS** — shipped Slice 4): `TrackerConfig.JqlQuery`→`JiraClient::FetchIssuesStreamed` on the `TicketSyncService` worker→`CachedTicket`→`TicketGridColumnsBuilder`→grid→cell-edit PUT (`SmatchetGridFieldEditPipeline`) is live (HTTP PUT 204). Slice 11 **verifies** it drives the mobile shell's grid page — no new wiring expected.
+
+C++14 hard (no `string_view`/`optional`/structured bindings/`if constexpr`); new draw functions ≤ 200 lines (ImGui-draw cap) via the section-helper pattern; RAII / `LOG_*` only.
+
+## Existing utilities reused
+
+- `TrackerConfig::Theme` (`ThemeId`) string-serialization switch-case — `ConfigManager` save `SaveEnumFields` ~`:338-361` / load ~`:928-943`. Mirror this exact switch-case for `UiMode` / `MobileTouchDensity` (the `SmatchetThemeIds.h` header is enum-only — no converters to reuse).
+- `SmatchetUI::drawApplyAppearanceSettings` — [`SmatchetUI.cpp:332`](../../../Source/Core/src/Ui/SmatchetUI.cpp) — the per-frame `lastApplied*_` dirty-gate; add the mode + density keys to it.
+- `UiDrawSession` (`g_ui`) transient bool bag (`SmatchetUiSession.h`) + the `cfg.ZenMode` frame-read flag pattern — add the transient mode/page/drawer state here.
+- `ViewToggleCommands::RegisterToggle` / `ToggleFlag` — `ViewToggleCommands.cpp` — one registration → CLI/Palette/MCP/Lua/Scenarios. **Bool-only**, so the `ui.mode` command (slice 9) is a small variant reading `args["mode"]`, not a direct `RegisterToggle`.
+- Page bodies (reused via `embedded`): `drawActiveProjectWindow` (`SmatchetActiveProjectGridUi.cpp`), `drawViewsDashboardWindow` / `drawViewsSidebar` (`SmatchetViewsDashboardUi.cpp`), `drawLogWindow` (`SmatchetUtilityWindowsUi.cpp`), `drawPreferencesWindow` (`SmatchetPreferencesUi.cpp` ~`:159-160`), `drawAiAssistantPanel` (decl `SmatchetUI.h`).
+- `SmatchetRequestFontReload(name, px)` + `SmatchetCheckAndApplyFontReload()` (host frame boundary) — the touch-density font reload reuses this; no new atlas path.
+- `GetImGuiSettingsPath()` (`ConfigManager_PathUtils.cpp:653-658`) — `GetMobileImGuiSettingsPath()` is its sibling.
+- `DockBuilderRemoveNode`/`AddNode`/`SplitNode`/`DockWindow`/`Finish` — `imgui_internal.h:3748-3761`. **First DockBuilder use in the repo** — `SmatchetUI_Layout.cpp:191/224` uses `SetNextWindowDockID` + `SetWindowPos/Size` (window repair, not node-tree seeding), so there is no in-repo precedent to copy; the imgui_internal API is the reference.
+
+## UX Pillar callouts
+
+- **Pillar 1 (perf, 144 Hz / 6.94 ms steady-state)**: steady-state mobile frames do zero extra style/atlas work — `drawResolveUiMode` is a width compare + the appearance dirty-gate only fires `ScaleAllSizes`/font-reload on a mode/density flip (gated by `lastAppliedUiMode_`/`lastAppliedMobileDensity_`). The per-frame `WantSaveIniSettings` interception writes the ini only when ImGui sets the flag (≈ on layout change), not every frame. Embedded page bodies are the same draw code as desktop. No new per-frame allocation or sync I/O.
+- **Pillar 2 (UI-thread never blocks > 100 ms without visible cue)**: no new sync I/O reachable from `ImGui::*`. `GetMobileImGuiSettingsPath()` file read/write is a small local ini round-trip on the layout-change edge (same class + size as the existing desktop `imgui.ini` write the host already does per frame when dirty) — not a new > 100 ms stall. Android Slice 11 data fetch (`FetchIssuesStreamed`) runs on the `TicketSyncService` worker, never the UI thread (single-sourced in `mobile-app-jql-mvp.md`).
+- **Pillar 3 (never crash)**: `SanitizeMobileNav` guards a corrupt/hand-edited `mobileNav` (drop-unknown / dedup / empty→default / force-home / ≥ 1-visible). Single-pane focus resolves to the visible pane via this-frame `IsWindowFocused` (PR #962 race class), and all `ViewState`-resize mutations still route through the top-of-`Draw` `applyPendingViewCreate`/`applyPendingViewDelete` latches (the mobile path runs after them). RAII throughout; no raw `new`/`delete`.
+- **Pillar 4 (accessibility — keyboard nav / font scaling / WCAG AA)**: touch-density scaling (`ScaleAllSizes` + larger font) directly serves font-scaling/hit-target accessibility; it's a deliberate enlargement, not a regression. Keyboard nav across the fixed chrome is not specially handled (mobile is touch-first) — backlogged with the project-wide Pillar-4 work, no new regression vs desktop.
+
+## Perf-review-system gates (mandatory when diff touches `Source/Core/`; else `N/A — <reason>`)
+
+Per [`docs/plans/shipped/pillar-1-2-perf-review-system.md`](../shipped/pillar-1-2-perf-review-system.md). Diff touches `Source/Core/` → all gates in scope.
+
+1. **PR-fast CI** — most-directly-exercised scenarios per `agents/core/perf-gatekeeper.md` § Curated diff → scenario map: the per-frame `Draw()` fork + `drawApplyAppearanceSettings` change → **`idle`** (per-frame infrastructure, universally reachable); the embedded-grid page → **`priority-grid-scroll`** + **`cell-edit-burst`** (`SmatchetActiveProjectGridUi.cpp` / `SmatchetGrid*`). All three are already in `scripts/dev/perf-pr-fast-set.json` — no new scenario needed.
+2. **Pillar 2 static scanner** — no new sync-I/O reachable from `ImGui::*` (the mobile-ini round-trip mirrors the existing desktop `imgui.ini` write path; the shipped Android fetch is already worker-thread). No `/* PILLAR2_WORKER_ONLY */` annotation required by Core slices 1–9; the shipped `FetchIssuesStreamed` worker path is already annotated.
+3. **Dispatcher drain** — does **not** touch `MainThreadDispatcher::Drain()`.
+4. **Visible-cue bucket-E harness** — adds **no** new sync-stall code path > 100 ms (the ini round-trip is sub-ms local I/O equivalent to today's desktop save).
+5. **Marker inventory** — **no** new `SMATCHET_UI_PERF_SCOPE` markers planned (the existing `Draw`-level scope already covers the fork). If a per-slice profiling pass adds a `perf_temp:` marker it is stripped before merge; a permanent marker would regen `docs/perf/MARKER_INVENTORY.md` in the same PR.
+
+**Pre-push local check**: run `docs/guides/perf-workflow.md` § Gate-check vs baseline (Step 7) against `idle` + `priority-grid-scroll` + `cell-edit-burst` before opening the Core PR (slices 1–9).
+
+**Override**: `perf-out-of-band` PR label per `AGENTS.md` § Merge gates — not anticipated (no intentional regression).
+
+## Risks / non-goals
+
+- **Viewport-dockspace leak** — any desktop window submitted in mobile would dock into the empty viewport dockspace and write `imgui.ini`. Mitigation: the `return` after `drawMobileShell` must precede every desktop submit; audit `drawGlobalOverlays` submits nothing dockable. (Mobile content windows dock into the separate `MobileContentDock` id, not the viewport dockspace — distinct on purpose.)
+- **Font/style thrash on flip** — gated strictly to the mode-flip arm; the hysteresis dead band (720–860) prevents rapid re-flips. One atlas rebuild per band crossing is accepted.
+- **Single-pane focus semantics** (PR #962) — resolve to the visible pane only via this-frame `IsWindowFocused`; never a stale previous-frame flag.
+- **Auto-flip seeding on frame 1** — deterministic direct width compare (no band) on the first frame; the dead band applies frame 2+.
+- **DX12 vs GL parity** — the font-reload path differs (DX12 recreates device objects); a flip is tested on both targets (slice 9 parity pass).
+- **Nav-config corruption** — `SanitizeMobileNav` on load (drop-unknown / dedup / empty→full-default / force-home-in-list / ≥ 1-visible) + the runtime active-page-hidden fallback keep the nav valid against a hand-edited/future-renamed `mobileNav`.
+- **Density-flip thrash** — a density change forces one atlas rebuild; gated like the mode flip (only on `lastAppliedMobileDensity_` drift). A Compact↔Comfortable toggle is a deliberate, infrequent action.
+- **Mobile-ini contamination / no-re-parent caveat** — the single per-context `io.IniFilename` means a naive mid-session swap would write mobile dock rows into desktop `imgui.ini`. A second *suspected* hazard — a runtime `LoadIniSettingsFromMemory` not re-parenting already-created windows — is **unconfirmed**; either way the `DockBuilder` pass is authoritative (re-homes windows regardless). Mitigation: never swap `io.IniFilename`; intercept `WantSaveIniSettings`→`imgui_mobile.ini`; run the DockBuilder load-or-seed on the Desktop→Mobile edge. Verify the load-vs-seed behaviour empirically + the desktop ini byte-identical across a round-trip (slice 5).
+- **Android surface-lost / recreate** (slice 10, verify) — the shipped host already recreates ImGui device objects on EGL surface-lost/resume (same class as DX12 device-object recreation); slice 10 verifies the **mobile shell** survives a background→foreground cycle (the shell adds no new device-object owner). IME focus + soft-keyboard insets are the touchiest part — the shipped custom Kotlin Activity handles this.
+
+**Non-goals**: iOS (Phase 2); gesture/multi-touch/swipe (single-tap click model carries over); freeform dockable/draggable/floating *chrome* in mobile (app bar / nav / drawer stay fixed — the persisted dockspace is scoped to the **content** band only); drag-reorder of bottom-nav pages (▲/▼ buttons first; drag via the `TrackerGridFieldDisplay` column pattern is a later upgrade); Keystore-backed Android token storage (the shipped Slice 4 uses interim plaintext + warning; wiring it to the Keystore is follow-up, untouched here).
+
+## Verification
+
+Per `AGENTS.md` § Verification automation — zero manual steps where physically possible; named deferred-automation for any residue.
+
+- **Bucket A (pure-logic ctest, `test-rig`)**: `SanitizeMobileNav` — unknown-id drop, dedup, empty→default, force-home-in-list, ≥ 1-visible; plus `uiModeFromString`/`mobilePageFromString`/`mobileTouchDensityFromString` round-trip + unknown-string fallback. Deterministic config logic → unit-tested.
+- **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msvc`)**: set `cfg.UiMode = Mobile`, assert the fullscreen shell window exists + each `MobileNavPages` page renders into `MobileContentDock`; resize the headless viewport across 720/860 with `cfg.UiMode = Auto` and assert the Auto breakpoint + no flap in the dead band; a screenshot-diff of desktop vs mobile.
+- **Bash-driver scenario / screenshot / sanitizer**: a CLI/scenario probe of the `ui.mode` command (`desktop|mobile|auto` + `cycle`); a sanitizer build over a mode round-trip (Pillar 3). Toggle Mobile→Desktop→Mobile and assert `imgui.ini` is **byte-identical** before/after (proves the `WantSaveIniSettings` interception); delete `imgui_mobile.ini` and assert the next mobile entry seeds the default split (proves the DockBuilder load-or-seed).
+- **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target, MSVC + Clang); `scripts/dev/test-all.sh` once after each slice. The `android-ndk-arm64` preset (`SmatchetMobile` .so configure+link) is **already green** (shipped infra); slices 10–11 keep it green while the mobile shell renders through the shipped host.
+- **Doc validation (blocks plan-doc PRs — keep this bullet)**: the canonical `scripts/dev/test-docs.sh` suite green (it enumerates the doc-validation steps — anchors / agent-contract / plan-index / ref-integrity / portable-purity / md_lint; defer to the script, don't hardcode the sub-step list here). A red doc-validation job blocks merge even though non-required. **This plan-doc PR is pure-docs — it is gated solely on this bullet.**
+- **Plan stress-test — `grill-with-docs` (keep this bullet)**: stress-test this plan against the domain model (ImGui dockspace/ini semantics, the dual-target host boundary, the `mobile-app-jql-mvp.md` Slice 3/4 single-sourcing) + sharpen terms before finalising; record the outcome in § Deviations.
+- **Android on-device (slices 10–11, verify the shipped host)**: deploy the shipped `SmatchetMobile` .so with the new Core mobile shell; confirm the shell renders at phone width (`Auto`→Mobile, no platform branch), touch drives bottom nav + drawer + split ratio, the soft keyboard + IME edit a cell, background→foreground recovers the EGL surface without a crash; the already-live `JqlQuery`→`FetchIssuesStreamed` data path populates the grid + a cell edit issues the PUT under the mobile shell. Cross-check `mobile-app-jql-mvp.md` Slice 3/4 verification — do not duplicate.
+- **Visual-validation exception**: this touches `Smatchet*Ui*.cpp` + style scaling; if Bucket-C/E coverage can't fully assert the visual result, the orchestrator pauses with the launched exe for user verification before merge (`AGENTS.md` § Autonomous ship-loop default, exception 5).
+- **Manual residue**: the on-device Android touch/IME/surface-lost checks (slices 10–11) are not yet headless-automatable — name the deferred-automation action plan (Bucket-E-on-emulator harness) + add a `docs/self-improvement/categories/tooling.md` entry when those verification slices run. No silent residue.
+
+## Out of scope (flagged, not designed)
+
+**Deferral residue-sweep (keep this note)** — per `AGENTS.md` § Process rules § Scope-reduction edits: before finalising, grep `**/CONTEXT*.md`, `docs/adr/`, `agents/*.md`, and `docs/self-improvement/categories/` for stray references to anything deferred here, and revise or delete them. `mobile-app-jql-mvp.md` is **already `shipped`** (Slices 0–4) — this plan does **not** deliver its slices and must not claim to; no status edit is owed there (avoid the deferred-symbol drift the plan-doc rules call out).
+
+- **iOS** — Phase 2; no-action this effort.
+- **Gesture / multi-touch / swipe** — single-tap click model carries over; follow-up if needed.
+- **Freeform dockable/draggable/floating chrome in mobile** — app bar / bottom nav / drawer stay fixed (Chrome-mobile has no draggable chrome); the persisted dockspace is content-band-only. No follow-up planned.
+- **Drag-reorder of bottom-nav pages** — ▲/▼ buttons ship first; drag-reorder via the `TrackerGridFieldDisplay` column pattern is a possible later upgrade.
+- **Keystore-backed Android token storage** — the shipped Slice 4 already uses an interim plaintext token + on-screen warning; wiring it to the Android Keystore (secret-callback seam) remains follow-up, untouched by this effort.
+
+## Implementation slices
+
+Two PR-batches (one PR per logical *feature*, slices batched per `AGENTS.md` § PR batching): a **Core mode/shell** feature (slices 1–9) and an **Android on-device** feature (slices 10–11). Split along that seam — Android wakes the same Core shell on a real framebuffer with no Core rework. Split a batch along a file seam if its diff would exceed the per-PR file ceiling.
+
+1. **Enum header + config plumbing + prefs selector** — compiles, persists, no behaviour change. Verify config round-trip.
+2. **`drawResolveUiMode` + transient state** + a temporary `[temp-debug]` overlay printing effective mode (no fork yet). Verify hysteresis by resizing standalone across 720/860.
+3. **Mobile fork + bare shell** (app bar + bottom nav + empty page). Verify the host viewport dockspace is fully occluded and `imgui.ini` stays clean across flips.
+4. **`embedded` refactor** of the 5 helpers — desktop-only first (prove zero regression), then wire each into `drawMobilePageContent` (single-panel fill).
+5. **Content dockspace + persistence** — host the local `MobileContentDock`; Grid page seeds grid + secondary vertical split; DockBuilder load-or-seed on the Desktop→Mobile edge (re-parent caveat); `imgui_mobile.ini` via `GetMobileImGuiSettingsPath()` + `WantSaveIniSettings` interception. Verify split-ratio persists across restart + desktop `imgui.ini` byte-identical across a round-trip.
+6. **Drawer** reusing `drawViewsSidebar`.
+7. **Nav customization + density preset + Mobile prefs group** — persist `MobileNavPages`/`MobileHomePage`/`MobileTouchDensity` + `SanitizeMobileNav`; bottom nav reads the ordered list; Preferences Mobile group (reorder/show-hide, home dropdown, density radio). Verify reorder/hide/home/density round-trip + the ≥ 1-visible guard.
+8. **Touch scaling** (`ScaleAllSizes` + flip-gated font reload, density-driven) — most thrash-prone, tuned once the shell is visible.
+9. **DX12 parity pass**; then the optional `ui.mode` command slice. — *ends Core PR batch.*
+10. **Android host verify** (the shipped `mobile-app-jql-mvp.md` Slice 3 host): deploy the existing EGL/`ANativeWindow` host with the new Core mobile shell; confirm it renders on-device, `Auto` picks Mobile on a phone framebuffer with no platform branch, and `GetMobileImGuiSettingsPath()` resolves under the injected `filesDir`. Fix any small wiring gap the mobile-ini path needs (not a host rebuild).
+11. **Android data-path verify** (the shipped `mobile-app-jql-mvp.md` Slice 4 path): confirm the live `JqlQuery`→`FetchIssuesStreamed`→grid→cell-edit-PUT data path drives the mobile shell's grid page (edits live tickets on-device). No new wiring expected. — *ends Android PR batch.*
+
+## Implementation log
+*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+## Deviations from plan
+*(populated post-ship per `AGENTS.md` § Plan revision after implementation — what changed, removed, or deferred relative to the original plan, with one-line rationale per item; record the `grill-with-docs` outcome here.)*
+
+## Verification (actual)
+*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+
+## Archive (post-ship — DO IN THIS PR, never a follow-up)
+*The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
+1. *flip the § Status header to `shipped`,*
+2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
+   > **Keep the literal `<slug>` placeholder in this committed step — do NOT
+   > expand it to this plan's real filename.** Writing the actual basename here
+   > manufactures a `docs/plans/shipped/<name>.md` path that points at a file
+   > still living in `active/` (the move hasn't happened yet), which
+   > `test-plan-ref-integrity.sh` reports as a dangling self-reference. The gate
+   > carves out the *placeholder* form on the Archive `git mv` line; the
+   > expanded form defeats that carve-out. Run the literal command with your
+   > slug substituted at the shell — never bake the expansion into the file.
+3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+
+*No ref-sweep — references use the tier-less form `docs/plans/<slug>.md` (the gates resolve it against any tier; PR #890), so the move can't break them. Write new plan references tier-less.*
+
+*(Delete this `## Archive` block as part of step 2 — once moved to `shipped/`, the file is reference material and the checklist has served its purpose.)*
