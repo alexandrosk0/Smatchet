@@ -11,6 +11,7 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
+import android.view.WindowInsetsController;
 import android.view.inputmethod.BaseInputConnection;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
@@ -30,10 +31,12 @@ import java.util.concurrent.LinkedBlockingQueue;
  */
 public class SmatchetActivity extends NativeActivity {
 
-    // Unicode code points produced by IME key events, drained by the native
-    // frame loop one per call. Bounded but generous; offer() drops on overflow
-    // rather than blocking the UI thread.
-    private final LinkedBlockingQueue<Integer> unicodeQueue = new LinkedBlockingQueue<>(256);
+    // Unicode code points produced by IME key events + committed text, drained by the native frame
+    // loop one per call. Unbounded (item 9 / #1070): a clipboard paste is enqueued whole on the UI
+    // thread, and a 256-cap silently dropped the tail of a long paste. offer() on an unbounded queue
+    // never blocks the UI thread (Pillar 2), and the producers (key events + commitText) are
+    // human-bounded — there is no runaway source that could grow it without limit.
+    private final LinkedBlockingQueue<Integer> unicodeQueue = new LinkedBlockingQueue<>();
 
     // Cached safe-area insets in surface pixels (status bar / nav bar / display cutout). The native
     // render loop reads these via pollContentInsets() so the menu bar + dockspace stay out from
@@ -145,7 +148,15 @@ public class SmatchetActivity extends NativeActivity {
                 | (long) (insetBottom & 0xFFFF);
     }
 
-    /** Called from native code (JNI) to raise the soft keyboard. */
+    /**
+     * Called from native code (JNI) to raise the soft keyboard. The native bridge calls this on the
+     * WantTextInput rising edge AND on a re-tap of a focused field (item 11 / #1055), so it must
+     * reliably re-raise after a Back/swipe dismiss. InputMethodManager.showSoftInput with flag 0 is
+     * used on all releases: flag 0 is un-forced (SHOW_FORCED is retired — it forced the IME up even
+     * when the system meant it hidden and left it stuck open), and unlike WindowInsetsController.show
+     * it re-establishes the served-view connection, so the re-tap re-raise works even when the view
+     * already holds focus (a no-op requestFocus that WindowInsetsController.show would not recover).
+     */
     @SuppressWarnings("unused")
     public void showSoftInput() {
         runOnUiThread(new Runnable() {
@@ -156,23 +167,35 @@ public class SmatchetActivity extends NativeActivity {
                 InputMethodManager imm =
                         (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
                 if (imm != null) {
-                    imm.showSoftInput(view, InputMethodManager.SHOW_FORCED);
+                    imm.showSoftInput(view, 0);
                 }
             }
         });
     }
 
-    /** Called from native code (JNI) to dismiss the soft keyboard. */
+    /**
+     * Called from native code (JNI) to dismiss the soft keyboard on the WantTextInput falling edge
+     * (focus left a text widget). A user-initiated dismiss (Back / swipe-down) is handled by the IME
+     * itself and never routes here; the keyboard then simply stays down because the native bridge has
+     * no steady-state re-raise (item 10 / #1054) — it waits for a fresh re-tap (item 11).
+     */
     @SuppressWarnings("unused")
     public void hideSoftInput() {
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
                 View view = imeView != null ? imeView : getWindow().getDecorView();
-                InputMethodManager imm =
-                        (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
-                if (imm != null) {
-                    imm.hideSoftInputFromWindow(view.getWindowToken(), 0);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    WindowInsetsController controller = view.getWindowInsetsController();
+                    if (controller != null) {
+                        controller.hide(WindowInsets.Type.ime());
+                    }
+                } else {
+                    InputMethodManager imm =
+                            (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+                    if (imm != null) {
+                        imm.hideSoftInputFromWindow(view.getWindowToken(), 0);
+                    }
                 }
             }
         });
