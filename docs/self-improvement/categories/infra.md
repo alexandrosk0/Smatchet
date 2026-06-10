@@ -246,3 +246,9 @@
   Concrete next action: add a present-assertion for allow-listed non-required checks — an "expected-present" list (the allow-list names the poller is willing to BLOCK on) cross-checked against the head rollup; if an allow-listed check is configured to run on `pull_request: [develop]` (resolve via the workflow `on:` triggers) but is absent from the head's rollup, treat as block (fail-closed), not pass. Shares the name→workflow resolution map the P1 "required-context ⇄ unconditional-workflow parity" backlog item already needs. Alternatively, promote the gate to a GitHub-required context once it has proven stable (then existing `$reqAbsent` covers it). Est ~1-1.5 h. Non-blocking: the self-disable is diff-visible and no occurrence has happened.
   Status: open
   Last-reviewed: 2026-06-09
+
+- 2026-06-10 · orchestrator · [infra] · P3 — perf-full.yml still gates on a single unconfirmed median (same flake class confirm-on-exceed fixed in perf-pr-fast)
+  Details: gate-fp-hardening added confirm-on-exceed to `.github/workflows/perf-pr-fast.yml` (a scenario whose first 3x-median exceeds policy gets ONE more independent 3x-median sample; only both-exceed fails — kills the job-wide noisy-neighbor false-positive class observed on PR #1112: cell-edit-burst `SmatchetUI::Draw` p99 medians 10.9 → 15.661 ms across days with no code change, against a 15.0 ceiling). `perf-full.yml:177-181` keeps the old single-median gate, so the nightly full suite retains the flake class. Deliberately out of the gate-fp-hardening PR's scope (perf-full is non-PR-blocking; flake cost is a red nightly, not a blocked merge).
+  Concrete next action: port the confirm-on-exceed block from perf-pr-fast.yml's scenario loop into perf-full.yml's (same shape: rc==1 → 3 confirm runs → perf-median → re-compare; confirm-plumbing failures via note_run_failure + run_failure_count, no table/tally double-count). ~30 min, mechanical.
+  Status: open
+  Last-reviewed: 2026-06-10

@@ -112,6 +112,17 @@ def classify_comment(stripped, raw_line):
             return "protect"
     if any(s in raw_line for s in PROTECT_SUBSTR):
         return "protect"
+    # A BARE doc-block opener on its own line (`/**` / `/*!` — standard Javadoc/Doxygen
+    # style) is the start of a doc comment, not a decorative divider, but DECORATIVE_RE
+    # would otherwise eat it (`/*` + only-punctuation matches the second `*`). Exactly-two
+    # stars only: `/***`+ remains a banner. (PR #1112 false positive: ISyncCache.h:10.)
+    if stripped in ("/**", "/*!"):
+        return "judge-apidoc"
+    # Same shape, plain variant: a bare `/*` opener is a legal block-comment start (its body
+    # follows on later lines) — never a strippable divider. Zero first-party occurrences
+    # today; closed pre-emptively alongside the `/**` fix so the class can't recur.
+    if stripped == "/*":
+        return "judge-rationale"
     if BLANK_COMMENT_RE.match(raw_line):
         return "cut-blank"
     if DECORATIVE_RE.match(raw_line):
