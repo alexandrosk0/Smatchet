@@ -239,8 +239,11 @@ class SmatchetUI {
     // (drawer sidebar + the confirm modals), so neither rebuilds the closure set. Defined
     // in SmatchetViewsDashboardUi.cpp where ViewsDashboardDrawCtx is fully visible; the
     // reference members bind to app/d/the ViewState store, all of which outlive the frame.
-    ViewsDashboardDrawCtx buildMobileViewsCtx(AppController& app, UiDrawSession& d,
-                                              const ViewDefinition* activeView);
+    // sidebarWidth is caller-supplied: the drawer path passes its live content-region
+    // width, the modal-only path passes 0 (it may run outside a live window, so
+    // GetContentRegionAvail must not be queried there; the modals ignore the width).
+    ViewsDashboardDrawCtx buildMobileViewsCtx(AppController& app, UiDrawSession& d, const ViewDefinition* activeView,
+                                              float sidebarWidth);
     // Renders the Views discard/delete-confirm modals at mobile-shell level every frame.
     // Must live OUTSIDE the drawer-open branch: the drawer's drawViewsSidebar latches the
     // confirm flags and closes the drawer on a dirty switch (#1117), so the consuming
