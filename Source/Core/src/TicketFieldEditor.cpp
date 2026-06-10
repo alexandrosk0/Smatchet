@@ -19,6 +19,7 @@
 #include "TicketFieldEditorLongTextPure.h"
 #include "TicketFieldEditorDescriptionPure.h"
 #include "TicketFieldEditorOptionFilterPure.h"
+#include "TicketFieldEditorCommitPolicyPure.h"
 #include "TextEditor.h"
 #include "Logger.h"
 #include "JiraClient.h"
@@ -58,6 +59,17 @@
 namespace {
 
 using namespace TrackerFieldValueUtils;
+using TicketFieldEditorCommitPolicyPure::ShouldCommitInlineFieldEdit;
+
+// Compile-time: is this the mobile/touch build? On mobile an inline field edit commits only on
+// explicit submit (Enter / IME "Done"); focus-loss cancels with no PUT (WS4 item 16 stray-PUT fix,
+// see TicketFieldEditorCommitPolicyPure.h). The NDK toolchain auto-defines __ANDROID__; Source/Core
+// has no other mobile gate today.
+#if defined(__ANDROID__)
+constexpr bool kMobileInlineEditBuild = true;
+#else
+constexpr bool kMobileInlineEditBuild = false;
+#endif
 
 std::string GetCurrentJiraDateTimeString() {
     auto now = std::chrono::system_clock::now();
@@ -221,7 +233,8 @@ void DrawDurationSuggestionsPopup(char* buf, size_t bufSize, bool* outManuallyEd
 
 bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSize, ImGuiInputTextFlags flags = 0,
                                       ImGuiInputTextCallback callback = nullptr, void* callbackUserData = nullptr,
-                                      bool* outManuallyEdited = nullptr, bool forceOpenPopup = false) {
+                                      bool* outManuallyEdited = nullptr, bool forceOpenPopup = false,
+                                      bool* outExplicitSubmit = nullptr) {
     bool submitted = false;
     ImGui::PushID(label);
 
@@ -311,6 +324,11 @@ bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSi
     storage->SetInt(lastActiveIdKey, static_cast<int>(lastActiveId));
 
     ImGui::PopID();
+    // Report the explicit-Enter submit separately from the combined return so callers can
+    // distinguish a true submit from a focus-loss deactivation (mobile commit policy, WS4 item 16).
+    if (outExplicitSubmit) {
+        *outExplicitSubmit = submitted;
+    }
     return submitted || finalDeactivated;
 }
 
@@ -381,7 +399,8 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
                           std::vector<PendingFieldEdit>& pendingEdits) {
     const bool editJustStarted = state.EditJustStarted;
     const bool isDuration = IsTimeDurationField(field.Id);
-    bool submitted = false;
+    bool explicitSubmit = false;
+    bool deactivatedAfterEdit = false;
 
     if (isDuration) {
         ImGui::SetNextItemWidth(-FLT_MIN);
@@ -389,23 +408,30 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
             ImGui::SetKeyboardFocusHere();
         }
         EditCbUser cbUser{&state};
-        submitted = DrawDurationFieldWithSuggestions(
+        const bool committedOrDeactivated = DrawDurationFieldWithSuggestions(
             "##textedit_duration", state.EditBuffer, sizeof(state.EditBuffer), ImGuiInputTextFlags_CallbackAlways,
-            InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&cbUser), nullptr, editJustStarted);
+            InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&cbUser), nullptr, editJustStarted,
+            &explicitSubmit);
+        // The duration widget folds explicit-Enter and its internal focus-loss (finalDeactivated)
+        // into one return and reports the Enter separately via outExplicitSubmit; the residual is
+        // the deactivation. The widget's last sub-item is the popup/button, so a top-level
+        // IsItemDeactivatedAfterEdit() here would not refer to the duration field — derive it.
+        deactivatedAfterEdit = committedOrDeactivated && !explicitSubmit;
     } else {
         ImGui::SetNextItemWidth(-FLT_MIN);
         if (editJustStarted) {
             ImGui::SetKeyboardFocusHere();
         }
         EditCbUser cbUser{&state};
-        submitted = ImGui::InputText("##textedit", state.EditBuffer, sizeof(state.EditBuffer),
-                                     ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackAlways,
-                                     InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&cbUser));
+        explicitSubmit = ImGui::InputText("##textedit", state.EditBuffer, sizeof(state.EditBuffer),
+                                          ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackAlways,
+                                          InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&cbUser));
+        deactivatedAfterEdit = !editJustStarted && ImGui::IsItemDeactivatedAfterEdit();
     }
 
     if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
         state.ClearEditing();
-    } else if (submitted || (!editJustStarted && ImGui::IsItemDeactivatedAfterEdit())) {
+    } else if (ShouldCommitInlineFieldEdit(explicitSubmit, deactivatedAfterEdit, kMobileInlineEditBuild)) {
         QueueEdit(ticket.id, field, {state.EditBuffer}, pendingEdits, ticket.GetFieldValue(field.Id));
         state.ClearEditing();
     } else if (editJustStarted) {
