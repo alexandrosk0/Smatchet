@@ -146,6 +146,8 @@ Two PR-batches (one PR per logical *feature*, slices batched per `AGENTS.md` § 
 ## Implementation log
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
 
+- `ff73a452` · Slice 4 — `embedded` refactor: 5 page-body helpers gain `bool embedded=false` gating only their dock-window chrome; `drawMobilePageContent` dispatches on `d.mobilePage` to each helper with `embedded=true` (single-panel fill); Grid page reproduces the focused-pane setup `drawGridPaneWindows` does on desktop.
+
 ## Deviations from plan
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — what changed, removed, or deferred relative to the original plan, with one-line rationale per item; record the `grill-with-docs` outcome here.)*
 
@@ -154,6 +156,8 @@ Two PR-batches (one PR per logical *feature*, slices batched per `AGENTS.md` § 
 
 ## Verification (actual)
 *(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+
+- **Slice 4** — `SmatchetStandalone` (`ninja-ui-test-msvc`) + `SmatchetCore_DX12` (`ninja-iter-msvc`) both build clean (dual-target parity). Bucket-E FuncSize **11/11 passed** (zero desktop regression — the `embedded` default param leaves every desktop call-site byte-identical). `test-lint-rules.sh --diff origin/develop` **PASS** (no new strict-zone / comment-noise / oversized-function violations; remaining dup + comment-ratio are WARN-only calibration). On-device mobile-page render of the wired bodies is **not-run** — deferred to slices 10–11 (Android on-device verify).
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
