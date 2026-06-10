@@ -276,7 +276,6 @@ void SmatchetUI::drawMobileBottomNav(AppController& app, UiDrawSession& d) {
 // that closes on outside-click + a left panel listing the nav pages. Real drawer content
 // (account, theme, mode toggle) lands later.
 void SmatchetUI::drawMobileDrawer(AppController& app, UiDrawSession& d) {
-    (void)app;
     if (!d.mobileDrawerOpen) {
         return;
     }
@@ -310,7 +309,7 @@ void SmatchetUI::drawMobileDrawer(AppController& app, UiDrawSession& d) {
         ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNavFocus;
     if (::ImGui::Begin("##MobileDrawerPanel", nullptr, kPanelFlags)) {
-        ::ImGui::TextDisabled("Menu");
+        ::ImGui::TextDisabled("Pages");
         ::ImGui::Separator();
         for (const std::string& id : d.cfg.MobileNavPages) {
             if (::ImGui::Selectable(navPageLabel(id))) {
@@ -318,6 +317,12 @@ void SmatchetUI::drawMobileDrawer(AppController& app, UiDrawSession& d) {
                 d.mobileDrawerOpen = false;
             }
         }
+        ::ImGui::Spacing();
+        ::ImGui::TextDisabled("Views");
+        ::ImGui::Separator();
+        // Slice 6 — reuse the desktop Views sidebar (search / activate / rename /
+        // duplicate / delete) inside the drawer; picking a view closes the drawer.
+        drawMobileDrawerViews(app, d);
     }
     ::ImGui::End();
 }

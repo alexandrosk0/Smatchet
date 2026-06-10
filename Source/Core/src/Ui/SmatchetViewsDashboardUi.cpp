@@ -203,6 +203,48 @@ void SmatchetUI::drawViewsSidebar(ViewsDashboardDrawCtx& ctx) {
     ImGui::EndChild();
 }
 
+// Slice 6 — the mobile drawer's saved-views section. Rebuilds the same ctx +
+// action closures drawViewsDashboardWindow does and reuses drawViewsSidebar
+// verbatim, so the drawer's view list, search, rename/duplicate/delete menu,
+// and active marker all match the desktop Views sidebar. requestActivate is
+// wrapped to also close the drawer once a view is picked. Sidebar width fills
+// the drawer panel's content region.
+void SmatchetUI::drawMobileDrawerViews(AppController& app, UiDrawSession& d) {
+    ViewState.EnsureLoaded(d.cfg);
+    const ViewsStore& store = ViewState.GetStoreMutable();
+    const ViewDefinition* activeView = ViewState.GetActiveView();
+    if (!activeView) {
+        ImGui::TextDisabled("No views available.");
+        return;
+    }
+    if (d.editingViewId != activeView->Id) {
+        LoadBuffersFromView(d, *activeView);
+    } else if (activeView->ColumnOrder != d.lastSyncedColumnOrder) {
+        LoadBuffersFromView(d, *activeView);
+    }
+
+    auto applyAndSync = [this, &app, &d, activeView]() { viewsApplyAndSync(app, d, activeView); };
+    auto discardChanges = [this, &d]() { viewsDiscardChanges(d); };
+    auto activateView = [this, &app, &d](const std::string& id) { viewsActivateView(app, d, id); };
+    auto requestActivate = [this, &app, &d, activeView](const std::string& id) {
+        viewsRequestActivate(app, d, activeView, id);
+        d.mobileDrawerOpen = false;
+    };
+    auto createNewView = [this, &d, activeView]() { viewsCreateNewView(d, activeView); };
+
+    ViewsDashboardDrawCtx ctx{app,
+                              d,
+                              store,
+                              activeView,
+                              ImGui::GetContentRegionAvail().x,
+                              applyAndSync,
+                              discardChanges,
+                              createNewView,
+                              requestActivate,
+                              activateView};
+    drawViewsSidebar(ctx);
+}
+
 void SmatchetUI::drawViewsEditorHeader(ViewsDashboardDrawCtx& ctx) {
     UiDrawSession& d = ctx.d;
     const ViewsStore& store = ctx.store;

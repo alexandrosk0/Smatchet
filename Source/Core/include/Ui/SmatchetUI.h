@@ -214,6 +214,11 @@ class SmatchetUI {
     void drawMobileGridDetail(AppController& app, UiDrawSession& d, GridPane* focused);
     void drawMobileEnsureIniAttached(UiDrawSession& d);
     void drawMobileRestoreDesktopIni(UiDrawSession& d);
+    // Slice 6 — the mobile drawer's saved-views section. Defined in
+    // SmatchetViewsDashboardUi.cpp so it can rebuild the file-local
+    // ViewsDashboardDrawCtx + activate closures and reuse drawViewsSidebar
+    // verbatim; selecting a view closes the drawer.
+    void drawMobileDrawerViews(AppController& app, UiDrawSession& d);
     // Mode-independent floating overlays (toasts + app-update modal). Extracted from
     // drawSecondaryWindowsTail so both the desktop and mobile Draw paths render them.
     void drawGlobalOverlays(AppController& app, UiDrawSession& d);
