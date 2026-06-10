@@ -23,6 +23,7 @@
 #include "ITicketSyncDeps.h"
 
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -56,11 +57,20 @@ class GridContextDepsAdapter : public IOfflineQueueDeps, public ITicketSyncDeps 
                                          const std::string& issueTypeName) const override;
     void LaunchBackgroundTask(std::function<void()> task) override;
     void RefreshLocalData() override;
+    /// Generation-checked variant (issue #1081): forwards THIS adapter's latched ctx_ into
+    /// AppController's checked refresh impl so capture + re-check + apply all happen on the
+    /// SAME context (a focused-context re-resolve at apply time could compare another pane's
+    /// independent generation counter — equal-by-coincidence passes the gate). Safe to call
+    /// from replay workers: retired contexts park as defer-free husks in
+    /// AppController::retiredContexts_ until ~AppController, so ctx_ never dangles.
+    void RefreshLocalData(std::uint64_t capturedBackendGeneration) override;
     void RequestDeferredLiveTrackerBackendSuccessNotify() override;
     // Declared in BOTH interfaces (same signature) — this single override satisfies both,
     // like RequestDeferredLiveTrackerBackendSuccessNotify above. Forwards to the context's
     // mutex-guarded key (multi-grid Slice 1b).
     std::string CacheBackendKey() const override;
+    /// Capture-then-check token (issue #1081) — the context's backendGeneration_ atomic.
+    std::uint64_t BackendGeneration() const override;
 
     // ---- ITicketSyncDeps --------------------------------------------------------------
     ITrackerIssueReader* Backend() override;

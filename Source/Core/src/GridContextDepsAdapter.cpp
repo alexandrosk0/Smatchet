@@ -10,6 +10,7 @@
 #include "LocalCacheManager.h"
 
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -66,12 +67,20 @@ void GridContextDepsAdapter::LaunchBackgroundTask(std::function<void()> task) {
 
 void GridContextDepsAdapter::RefreshLocalData() { app_.RefreshLocalData(); }
 
+// Friend access: the checked impl is private on purpose — every checked caller must name the
+// context it latched the generation from, and this adapter's ctx_ is exactly that context.
+void GridContextDepsAdapter::RefreshLocalData(std::uint64_t capturedBackendGeneration) {
+    app_.RefreshLocalDataCheckedImpl_(ctx_, &capturedBackendGeneration);
+}
+
 void GridContextDepsAdapter::RequestDeferredLiveTrackerBackendSuccessNotify() {
     app_.requestDeferredLiveTrackerBackendSuccessNotify_();
 }
 
 // Declared in both IOfflineQueueDeps and ITicketSyncDeps; this single override satisfies both.
 std::string GridContextDepsAdapter::CacheBackendKey() const { return ctx_.CacheBackendKeyCopy(); }
+
+std::uint64_t GridContextDepsAdapter::BackendGeneration() const { return ctx_.backendGeneration_.load(); }
 
 // ---- ITicketSyncDeps ------------------------------------------------------------------
 
@@ -89,6 +98,10 @@ void GridContextDepsAdapter::SetBackend(std::unique_ptr<ITrackerBackend> backend
     // until shutdown. See ADR 0012.
     std::shared_ptr<ITrackerBackend> incoming(std::move(backend));
     std::shared_ptr<ITrackerBackend> old = std::atomic_exchange(&ctx_.Backend, incoming);
+    // Invalidate in-flight work captured against the OLD backend (issue #1081): workers
+    // capture backendGeneration_ at work-capture time and drop their apply on mismatch
+    // (capture-then-check — see GridLiveContext.h).
+    ctx_.backendGeneration_.fetch_add(1);
     app_.RetireBackend(std::move(old));
 }
 
@@ -119,6 +132,11 @@ void GridContextDepsAdapter::OnStreamingSyncSessionFinished(bool fetchOk) {
         // MEDIUM-1). UI thread — same single-thread discipline as the latch.
         ctx_.initialSyncKicked = false;
         ctx_.lastSyncedJql.clear();
+        // Storm damping (issue #1081): the re-arm above + the per-frame kick site retried a
+        // fast-failing backend at FRAME RATE. Open a 30 s retry window instead — the kick
+        // site bails while now < syncRetryAfter (PaneSyncKickPolicy.h; mirrors the
+        // projectComponentsRetryAfter_ backoff). UI thread — same discipline as the latch.
+        ctx_.syncRetryAfter = std::chrono::steady_clock::now() + std::chrono::seconds(30);
     }
 }
 
@@ -127,6 +145,13 @@ std::mutex& GridContextDepsAdapter::ActiveTicketsMutex() { return ctx_.activeTic
 std::vector<CachedTicket>& GridContextDepsAdapter::ActiveTickets() { return ctx_.ActiveTickets; }
 
 void GridContextDepsAdapter::SetActiveTicketsPublished(std::shared_ptr<const std::vector<CachedTicket>> snap) {
+    // CONTRACT (issue #1081): the caller MUST hold ctx_.activeTicketsMutex_ —
+    // activeTicketsPublished_ is guarded by it (GridLiveContext.h). An unguarded publish
+    // races worker-thread writers and locked readers on the shared_ptr control block
+    // (C++14 UB → std::terminate). Enforced by the publish-under-lock doctest case
+    // (BackendSwitchRace1081.test.cpp); std::mutex has no portable same-thread "is held
+    // by me" probe, so a runtime assert here would itself be UB — keep new call sites
+    // inside an ActiveTicketsMutex() lock scope.
     ctx_.activeTicketsPublished_ = std::move(snap);
 }
 

@@ -83,6 +83,8 @@
 
 #include "OfflineQueueService.h"
 
+#include "PaneSyncKickPolicy.h"
+
 #include "TicketSyncService.h"
 
 #include "TrackerHttpUtils.h"
@@ -503,12 +505,25 @@ GridLiveContext* AppController::EnsurePaneContextLive(const std::string& paneId,
 void AppController::EnsurePaneLiveSyncStarted(const std::string& paneId, const TrackerConfig& paneCfg,
                                               const std::string& viewId) {
     std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.find(paneId);
-    if (it == gridContexts_.end() || it->second->initialSyncKicked) {
+    if (it == gridContexts_.end()) {
+        return;
+    }
+    // Storm damping (issue #1081): a fast-failing backend re-armed initialSyncKicked every
+    // failed session, and this per-frame kick site re-launched a full sync at frame rate.
+    // The deps session-end hook opens a 30 s retry window (syncRetryAfter) — bail inside it.
+    if (!smatchet::ShouldKickInitialSync(std::chrono::steady_clock::now(), it->second->initialSyncKicked,
+                                         it->second->syncRetryAfter)) {
         return;
     }
     it->second->initialSyncKicked = true;
+    // Capture-then-check token (issue #1081): the kick's main-thread post applies against
+    // whatever context state exists at COMPLETION time — a backend swap or context
+    // retirement while the worker ran makes the queued pre-switch cfgCopy poison: its
+    // SyncPaneWithBackend would swap the backend BACK (stale-cfg flip-flop) and the seed
+    // would push old-backend rows into the new backend's grid.
+    const std::uint64_t capturedGeneration = it->second->backendGeneration_.load();
     TrackerConfig cfgCopy = paneCfg;
-    LaunchBackgroundTask([this, paneId, cfgCopy, viewId]() mutable {
+    LaunchBackgroundTask([this, paneId, cfgCopy, viewId, capturedGeneration]() mutable {
         /* PILLAR2_WORKER_ONLY */ // est-latency: 5ms — smatchet_views.json bucket + cached-ticket seed off the UI
                                   // thread
         ViewsStore views = ConfigManager::LoadViewsOrBootstrap(cfgCopy);
@@ -548,55 +563,81 @@ void AppController::EnsurePaneLiveSyncStarted(const std::string& paneId, const T
                 }
             }
         }
-        mainThreadDispatcher.PostToMainThread([this, paneId, cfgCopy, views, viewId,
-                                               seedTickets = std::move(seedTickets)]() mutable {
-            // UI thread: the context may have been retired while the load ran — find() guards.
-            std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator ctxIt = gridContexts_.find(paneId);
-            if (ctxIt != gridContexts_.end()) {
-                // Record the JQL this kick syncs (UI thread only — same discipline as
-                // initialSyncKicked). The focus-switch path compares it against the adopted
-                // view's saved JQL to detect drift (view edited after the context synced) and
-                // re-kick instead of adopting stale rows (review MEDIUM-2). Cleared (with the
-                // latch) by the session-end deps hook when the sync fails (review MEDIUM-1).
-                ctxIt->second->lastSyncedJql = cfgCopy.JqlQuery;
-                // Publish the pane's OWN resolved view (multi-grid Slice 4 cold-start hole):
-                // `views` was loaded from the pane's backend bucket, so its matching entry is
-                // the pane's real view even when the focused ViewState bucket can't see it. The
-                // grid builds this cross-backend pane's columns from it instead of falling back
-                // to the focused view's column set on a cold start (no session capture yet).
-                if (!viewId.empty()) {
-                    for (size_t i = 0; i < views.Views.size(); ++i) {
-                        if (views.Views[i].Id == viewId) {
-                            ctxIt->second->resolvedOwnView = std::make_shared<const ViewDefinition>(views.Views[i]);
-                            break;
-                        }
-                    }
-                }
-            }
-            // Kick the live fetch FIRST: for a fresh context SyncPaneWithBackend →
-            // SwapBackendIfTrackerChanged creates the backend (backendSwapped) and CLEARS
-            // ActiveTickets. Seeding before this would be wiped — so seed AFTER the swap.
-            SyncPaneWithBackend(paneId, &cfgCopy, &views);
-            // Seed the just-cleared ActiveTickets with the durable cache rows so the grid shows
-            // the last snapshot immediately; the streaming fetch then UPSERTS by id (no double
-            // count — DrainPendingStreamingBatches updates-or-pushes per id) and the empty-fetch
-            // guard never wipes these rows before a real refresh confirms. Only seed an empty
-            // ActiveTickets (a fresh / re-shown husk) so we never clobber rows already applied.
-            if (!seedTickets.empty()) {
-                std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator seedIt = gridContexts_.find(paneId);
-                if (seedIt != gridContexts_.end()) {
-                    GridLiveContext& ctx = *seedIt->second;
-                    std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
-                    if (ctx.ActiveTickets.empty()) {
-                        ctx.ActiveTickets = std::move(seedTickets);
-                        ctx.activeTicketsPublished_ =
-                            std::make_shared<const std::vector<CachedTicket>>(ctx.ActiveTickets);
-                        ctx.ActiveTicketsRevision.fetch_add(1);
-                    }
-                }
-            }
-        });
+        mainThreadDispatcher.PostToMainThread(
+            [this, paneId, cfgCopy, views, viewId, capturedGeneration, seedTickets = std::move(seedTickets)]() mutable {
+                applyPaneSyncKickOnMainThread_(paneId, std::move(cfgCopy), views, viewId, capturedGeneration,
+                                               std::move(seedTickets));
+            });
     });
+}
+
+void AppController::applyPaneSyncKickOnMainThread_(const std::string& paneId, TrackerConfig cfgCopy,
+                                                   const ViewsStore& views, const std::string& viewId,
+                                                   std::uint64_t capturedGeneration,
+                                                   std::vector<CachedTicket> seedTickets) {
+    // UI thread: the context may have been retired while the load ran — find() guards.
+    std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator ctxIt = gridContexts_.find(paneId);
+    // Capture-then-check (issue #1081): drop BOTH the sync kick and the cache seed
+    // when the context is gone or its backend generation moved since kick — applying
+    // the stale cfgCopy would swap the backend BACK (flip-flop) and seed the old
+    // backend's rows into the new backend's grid. Re-arm the one-shot latch so the
+    // pane re-kicks with FRESH state next frame instead of dead-latching unsynced.
+    if (!smatchet::PaneSyncKickStillCurrent(ctxIt != gridContexts_.end(), capturedGeneration,
+                                            ctxIt != gridContexts_.end() ? ctxIt->second->backendGeneration_.load()
+                                                                         : 0)) {
+        LOG_INFO("AppController::EnsurePaneLiveSyncStarted pane='%s' kick discarded — backend "
+                 "generation moved (or context retired) mid-kick (issue #1081); latch re-armed.",
+                 paneId.c_str());
+        if (ctxIt != gridContexts_.end()) {
+            ctxIt->second->initialSyncKicked = false;
+            // Cleared WITH the latch (GridLiveContext.h discipline): a stale lastSyncedJql
+            // would otherwise suppress the JQL-drift re-kick after the fresh kick lands.
+            ctxIt->second->lastSyncedJql.clear();
+        }
+        return;
+    }
+    if (ctxIt != gridContexts_.end()) {
+        // Record the JQL this kick syncs (UI thread only — same discipline as
+        // initialSyncKicked). The focus-switch path compares it against the adopted
+        // view's saved JQL to detect drift (view edited after the context synced) and
+        // re-kick instead of adopting stale rows (review MEDIUM-2). Cleared (with the
+        // latch) by the session-end deps hook when the sync fails (review MEDIUM-1).
+        ctxIt->second->lastSyncedJql = cfgCopy.JqlQuery;
+        // Publish the pane's OWN resolved view (multi-grid Slice 4 cold-start hole):
+        // `views` was loaded from the pane's backend bucket, so its matching entry is
+        // the pane's real view even when the focused ViewState bucket can't see it. The
+        // grid builds this cross-backend pane's columns from it instead of falling back
+        // to the focused view's column set on a cold start (no session capture yet).
+        if (!viewId.empty()) {
+            for (size_t i = 0; i < views.Views.size(); ++i) {
+                if (views.Views[i].Id == viewId) {
+                    ctxIt->second->resolvedOwnView = std::make_shared<const ViewDefinition>(views.Views[i]);
+                    break;
+                }
+            }
+        }
+    }
+    // Kick the live fetch FIRST: for a fresh context SyncPaneWithBackend →
+    // SwapBackendIfTrackerChanged creates the backend (backendSwapped) and CLEARS
+    // ActiveTickets. Seeding before this would be wiped — so seed AFTER the swap.
+    SyncPaneWithBackend(paneId, &cfgCopy, &views);
+    // Seed the just-cleared ActiveTickets with the durable cache rows so the grid shows
+    // the last snapshot immediately; the streaming fetch then UPSERTS by id (no double
+    // count — DrainPendingStreamingBatches updates-or-pushes per id) and the empty-fetch
+    // guard never wipes these rows before a real refresh confirms. Only seed an empty
+    // ActiveTickets (a fresh / re-shown husk) so we never clobber rows already applied.
+    if (!seedTickets.empty()) {
+        std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator seedIt = gridContexts_.find(paneId);
+        if (seedIt != gridContexts_.end()) {
+            GridLiveContext& ctx = *seedIt->second;
+            std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
+            if (ctx.ActiveTickets.empty()) {
+                ctx.ActiveTickets = std::move(seedTickets);
+                ctx.activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ctx.ActiveTickets);
+                ctx.ActiveTicketsRevision.fetch_add(1);
+            }
+        }
+    }
 }
 
 bool AppController::IsPaneSyncLive(const std::string& paneId) const {
@@ -756,6 +797,10 @@ void AppController::retireExpiredHiddenContexts_(std::chrono::steady_clock::time
         }
         LOG_INFO("AppController: retiring hidden GridLiveContext for pane '%s'", it->first.c_str());
         ctx.ticketSync_.reset(); // idle — worker join returns immediately
+        // Invalidate in-flight work captured against this context (issue #1081): the husk
+        // outlives retirement (graveyard below), so a worker holding a latched pointer must
+        // see the generation move and drop its apply (capture-then-check).
+        ctx.backendGeneration_.fetch_add(1);
         std::shared_ptr<ITrackerBackend> oldBackend =
             std::atomic_exchange(&ctx.Backend, std::shared_ptr<ITrackerBackend>());
         if (oldBackend) {

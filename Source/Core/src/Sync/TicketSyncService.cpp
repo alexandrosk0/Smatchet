@@ -525,10 +525,16 @@ void TicketSyncService::SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy
     // back later re-populates ActiveTickets via the cache hydrate path.
     if (backendSwapped) {
         {
+            // Clear + publish under ONE ActiveTicketsMutex scope (issue #1081). Publishing
+            // outside the lock raced worker-thread writers (offline-replay RefreshLocalData,
+            // UpdateTicket) and locked readers (GetActiveTicketsSnapshot) on the shared_ptr
+            // control block — C++14 UB, the primary std::terminate candidate of the crash.
+            // Contract: GridLiveContext.h — activeTicketsPublished_ is guarded by
+            // activeTicketsMutex_.
             std::lock_guard<std::mutex> lk(deps_.ActiveTicketsMutex());
             deps_.ActiveTickets().clear();
+            deps_.SetActiveTicketsPublished(std::make_shared<const std::vector<CachedTicket>>());
         }
-        deps_.SetActiveTicketsPublished(std::make_shared<const std::vector<CachedTicket>>());
         deps_.BumpActiveTicketsRevision();
         // Invariant (see file-level comment ~L108): every ActiveTickets-mutating path
         // flips the Lua-window-bump flag so downstream Lua-side window state stays

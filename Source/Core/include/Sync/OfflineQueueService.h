@@ -270,9 +270,11 @@ class OfflineQueueService {
 
     /// Replay a single queued offline create: attempt-cap gate, payload parse, the create
     /// pipeline run, and the success / retry / archive bookkeeping. Runs off the UI thread.
+    /// `backendKey` is the cache namespace CAPTURED at work-capture time (issue #1081) — the
+    /// key the rows were queued + filtered against, never a write-time deps re-read.
     void ReplayOneCreate(const PendingCreate& pc, LocalCacheManager* cache, ITrackerIssueMutations* mutations,
-                         const std::vector<TrackerField>& catalog, IOfflineQueueDeps& depsRef,
-                         CreateReplayTally& tally);
+                         const std::vector<TrackerField>& catalog, const std::string& backendKey,
+                         IOfflineQueueDeps& depsRef, CreateReplayTally& tally);
 
     // --- RunLegacyProjectSweep per-row helper ---------------------------------------------
     /// Running counters for one legacy-project sweep pass.

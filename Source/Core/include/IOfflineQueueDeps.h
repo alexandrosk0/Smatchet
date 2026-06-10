@@ -15,6 +15,7 @@
 // so unit tests can exercise OfflineQueueService without constructing an AppController.
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -52,6 +53,14 @@ class IOfflineQueueDeps {
     /// Queue-row namespacing itself is Slice 1c — this getter only scopes the ticket tables.
     virtual std::string CacheBackendKey() const = 0;
 
+    /// Backend-generation token (issue #1081): bumped on every live backend swap and on
+    /// pane-context retirement (see GridLiveContext::backendGeneration_). Replay ticks capture
+    /// the value at work-capture time (alongside `CacheBackendKey`) and drop stale applies —
+    /// e.g. the post-replay `RefreshLocalData` — when the generation moved mid-flight, so a
+    /// completed replay against the OLD backend never wholesale-replaces the NEW backend's
+    /// ActiveTickets. Callable from worker threads (atomic load).
+    virtual std::uint64_t BackendGeneration() const = 0;
+
     /// Catalog of tracker fields used by `TickOfflineCreates` to build `IssueCreatePipeline`
     /// input. Returned by const-ref so the caller can snapshot via `std::make_shared<...>`
     /// before spawning the background worker.
@@ -70,6 +79,16 @@ class IOfflineQueueDeps {
     /// Reload `ActiveTickets` from the cache. Called from the replay tick after a successful
     /// create replay so the UI sees the new ticket.
     virtual void RefreshLocalData() = 0;
+
+    /// Generation-checked variant (issue #1081) for the post-replay refresh: the implementer
+    /// re-checks `capturedBackendGeneration` against this deps object's OWN context under
+    /// `activeTicketsMutex_` immediately before the wholesale ActiveTickets replace, and drops
+    /// the replace on mismatch. Closes the TOCTOU left open by a worker-side
+    /// `BackendGeneration()` pre-check alone — the slow full-table cache read sits between
+    /// that pre-check and the locked replace, and a swap landing mid-read would otherwise
+    /// wholesale-replace the NEW backend's ActiveTickets with OLD-key rows. The pre-check
+    /// stays useful as a cheap skip of the cache read; this overload is the authoritative gate.
+    virtual void RefreshLocalData(std::uint64_t capturedBackendGeneration) = 0;
 
     /// Set the "post a `Live tracker backend OK` toast on the next UI frame" latch. Called
     /// after every successful replay so the user sees connectivity recovery without polling.

@@ -226,6 +226,12 @@ add_executable(SmatchetTests
     # leaks across keys. Real-thread/TSan concurrency is gated to Slice 5. Links the production
     # LCM + OfflineQueueService TUs already pulled in below.
     Core/OfflineQueueTwoBackendReplay.test.cpp
+    # Issue #1081 — backend switch racing in-flight sync workers: publish-under-lock contract
+    # (SwapBackendIfTrackerChanged), capture-then-check backend-generation token (offline
+    # replay RefreshLocalData drop + create-replay key latch), and the pure
+    # PaneSyncKickPolicy.h decision helpers (sync-storm damping + stale-kick drop). Links the
+    # TicketSyncService + OfflineQueueService TUs already pulled in below.
+    Core/BackendSwitchRace1081.test.cpp
     # AI chat Claude-Desktop-parity Phase 3 — SQLite-backed chat-history CRUD
     # against the same LCM SQLite path. Production target globs LCM.cpp, so the
     # test rig only needs the test TU itself (no separate cpp link).

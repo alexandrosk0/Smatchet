@@ -20,6 +20,7 @@
 #include "TrackerFieldSchema.h"
 
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -41,7 +42,18 @@ class FakeOfflineQueueDeps : public IOfflineQueueDeps {
     /// Test-controlled required-field set. Returned verbatim by `GetRequiredFieldSet`.
     RequiredFieldSet Required;
     /// Counts of side-effects so tests can assert "RefreshLocalData ran exactly N times".
+    /// RefreshLocalDataCalls counts APPLIED refreshes (unchecked calls + checked calls whose
+    /// generation matched at apply time — mirroring production, where the checked overload's
+    /// under-lock re-check drops the replace on mismatch).
     int RefreshLocalDataCalls = 0;
+    /// Checked-overload bookkeeping (issue #1081 / PR #1104 review HIGH): how many checked
+    /// refreshes arrived, and how many were dropped by the apply-time generation re-check.
+    int CheckedRefreshLocalDataCalls = 0;
+    int CheckedRefreshLocalDataDrops = 0;
+    /// Invoked at the top of the checked RefreshLocalData, BEFORE its generation re-check —
+    /// models a backend swap landing inside the refresh window (after the worker-side
+    /// pre-check, during the full-table cache read, before the under-lock swap-in).
+    std::function<void()> OnCheckedRefreshLocalData;
     int DeferredLiveNotifyCalls = 0;
     /// How `LaunchBackgroundTask` should run the task. Default: run inline on the caller.
     /// Tests that want to defer (e.g. to inject a fault between steps) override this.
@@ -52,6 +64,9 @@ class FakeOfflineQueueDeps : public IOfflineQueueDeps {
 
     /// Cache namespace handed to ticket-cache reads/writes during replay (multi-grid Slice 1b).
     std::string CacheBackendKeyImpl{"Jira"};
+    /// Capture-then-check token (issue #1081). Tests bump this mid-replay (via a deferred
+    /// `BackgroundTaskRunner`) to model a backend swap between work-capture and apply.
+    std::uint64_t BackendGenerationImpl = 0;
 
     LocalCacheManager* Cache() override { return CacheImpl.get(); }
     /// Latched strong role handles (debt 2026-06-07): swap-during-replay tests reset
@@ -59,6 +74,7 @@ class FakeOfflineQueueDeps : public IOfflineQueueDeps {
     std::shared_ptr<ITrackerIssueReader> ReaderShared() const override { return BackendImpl; }
     std::shared_ptr<ITrackerIssueMutations> MutationsShared() const override { return BackendImpl; }
     std::string CacheBackendKey() const override { return CacheBackendKeyImpl; }
+    std::uint64_t BackendGeneration() const override { return BackendGenerationImpl; }
     const std::vector<TrackerField>& AvailableFields() const override { return Fields; }
     RequiredFieldSet GetRequiredFieldSet(const std::string& /*projectKey*/, const std::string& /*issueTypeId*/,
                                          const std::string& /*issueTypeName*/) const override {
@@ -70,6 +86,19 @@ class FakeOfflineQueueDeps : public IOfflineQueueDeps {
         }
     }
     void RefreshLocalData() override { ++RefreshLocalDataCalls; }
+    void RefreshLocalData(std::uint64_t capturedBackendGeneration) override {
+        ++CheckedRefreshLocalDataCalls;
+        if (OnCheckedRefreshLocalData) {
+            OnCheckedRefreshLocalData();
+        }
+        // Production semantics: re-check the captured generation at apply time (under
+        // activeTicketsMutex_ there) and drop the wholesale replace on mismatch.
+        if (capturedBackendGeneration == BackendGenerationImpl) {
+            ++RefreshLocalDataCalls;
+        } else {
+            ++CheckedRefreshLocalDataDrops;
+        }
+    }
     void RequestDeferredLiveTrackerBackendSuccessNotify() override { ++DeferredLiveNotifyCalls; }
 };
 
