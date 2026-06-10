@@ -217,6 +217,15 @@ class SmatchetUI {
     // helpers toggle io.IniFilename so mobile dock geometry persists to a separate
     // imgui_mobile.ini while the desktop imgui.ini stays untouched during mobile.
     void drawMobileGridDockWindows(AppController& app, UiDrawSession& d, unsigned int gridDockId);
+    // Shared focused-pane setup for the mobile grid (slice 5/10): the desktop
+    // drawGridPaneWindows loop is skipped in mobile mode, so both the single-fill
+    // Grid page and the dockspace Tickets window reproduce its per-frame focus setup.
+    // ensure*FocusedMobileGridPane loads panes + resolves the focused pane (fallback
+    // to front), returns null only when there are no panes; drawEmbeddedFocusedGrid
+    // marks focus, points AppController's focused-context delegators at it, syncs the
+    // active view, and draws the embedded grid body against it.
+    GridPane* ensureFocusedMobileGridPane(UiDrawSession& d);
+    void drawEmbeddedFocusedGrid(AppController& app, UiDrawSession& d, GridPane& focused);
     void seedMobileGridDock(unsigned int gridDockId);
     void drawMobileGridDetail(AppController& app, UiDrawSession& d, GridPane* focused);
     void drawMobileEnsureIniAttached(UiDrawSession& d);

@@ -388,20 +388,23 @@ void SmatchetUI::drawApplyAppearanceSettings(UiDrawSession& d) {
     // Touch-scaling dirty gate (dual-ui-mode slice 8): enlarge every size / spacing / rounding
     // metric to finger size when the effective mode is Mobile. ScaleAllSizes is multiplicative
     // (non-idempotent) so this must fire ONCE per flip — on a mode change, or a density change
-    // while already in Mobile — never every frame. The clean-rebuild path: stash the target scale
-    // via ApplyUiDensityScale (the mobile host seam #13), then ApplyStyle rebuilds the style from
-    // baseline and re-asserts that scale via ReapplyHostDensityScale (so scaling never compounds).
-    // Desktop holds scale 1.0 → ApplyStyle's ShouldApplyDensityScale(1.0) is false (inert), and the
-    // desktop density spacing is re-pushed so the flip back to Desktop is pixel-identical.
+    // while already in Mobile — never every frame. The clean-rebuild path: ApplyStyle rebuilds the
+    // style from baseline and re-asserts the HOST density base via ReapplyHostDensityScale, then the
+    // mobile touch scale is COMPOSED on top via ApplyTouchScale — a pure live-style multiply that
+    // never writes g_hostDensityScale. So the net Mobile scale is host*touch and the host base
+    // survives untouched (Android ~2.6 / Windows-HiDPI 1.6 stay intact — the Auto logical-width
+    // divisor + mobile band heights read HostDensityScale()). Desktop's touchScale is 1.0 (inert),
+    // and the user's desktop density spacing is re-pushed so the flip back to Desktop is identical.
     const bool mobileNow = (d.effectiveUiMode == EffectiveUiMode::Mobile);
     const bool densityChangedInMobile = mobileNow && (d.cfg.MobileTouchDensity != lastAppliedMobileDensity_);
     if (d.effectiveUiMode != lastAppliedEffectiveUiMode_ || densityChangedInMobile) {
-        const float touchScale = mobileNow ? mobileTouchDensityScale(d.cfg.MobileTouchDensity) : 1.0f;
-        SmatchetTheme::ApplyUiDensityScale(touchScale);
         SmatchetTheme::ApplyStyle(d.cfg.Theme);
         lastAppliedTheme_ = d.cfg.Theme;
-        if (!mobileNow) {
-            // Mobile uses the scaled common-style spacing; Desktop restores the user's density.
+        if (mobileNow) {
+            // Compose touch enlargement on top of the host base ApplyStyle just re-asserted.
+            SmatchetTheme::ApplyTouchScale(mobileTouchDensityScale(d.cfg.MobileTouchDensity));
+        } else {
+            // Desktop restores the user's density spacing onto the (host-base) rebuilt style.
             smatchet::ui_density::ApplyDensityToImGuiStyle(d.cfg.Density);
         }
         lastAppliedEffectiveUiMode_ = d.effectiveUiMode;

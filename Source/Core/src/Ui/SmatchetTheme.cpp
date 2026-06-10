@@ -845,6 +845,17 @@ void SmatchetTheme::ReassertHostDensityScale(float newScale) {
     }
 }
 
+void SmatchetTheme::ApplyTouchScale(float scale) {
+    // Pure live-style multiply layered on top of the host density base — deliberately does NOT
+    // touch g_hostDensityScale (that global is host-owned; the Auto logical-width divisor + mobile
+    // band heights read it). Net live scale after a preceding ApplyStyle is host*scale. The == 1.0
+    // / non-positive cases are inert (ShouldApplyDensityScale), so a Desktop flip-back is a plain
+    // ApplyStyle rebuild that lands back on the untouched host base.
+    if (ShouldApplyDensityScale(scale)) {
+        ImGui::GetStyle().ScaleAllSizes(scale);
+    }
+}
+
 const SmatchetThemeSyntaxColors& SmatchetTheme::GetSyntaxColors() { return gSyntaxColors; }
 
 const SmatchetThemeAiColors& SmatchetTheme::GetActiveAiColors() { return gAiColors; }

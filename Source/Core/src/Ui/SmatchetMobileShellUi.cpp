@@ -176,6 +176,37 @@ void SmatchetUI::drawMobileTopAppBar(AppController& app, UiDrawSession& d) {
     ::ImGui::Text("Smatchet \xe2\x80\x94 %s", mobileNavPageLabel(mobilePageToString(d.mobilePage)));
 }
 
+// Resolve the focused grid pane for the mobile paths (slice 5/10). The desktop
+// drawGridPaneWindows loop is skipped in mobile mode, so ensure panes are loaded and
+// pick the focused pane (fallback to the front pane, persisting its id). Returns null
+// only when there are no panes at all.
+GridPane* SmatchetUI::ensureFocusedMobileGridPane(UiDrawSession& d) {
+    SmatchetGridPaneWindows::EnsurePanesLoaded(d);
+    GridPane* focused = FindGridPaneById(d.gridPanes, d.focusedPaneId);
+    if (focused == nullptr && !d.gridPanes.empty()) {
+        focused = &d.gridPanes.front();
+        d.focusedPaneId = focused->id;
+    }
+    return focused;
+}
+
+// Mark the resolved pane focused, point AppController's focused-context delegators at it,
+// kick its active-view sync, and draw the embedded grid body against it (the shared grid
+// helpers — header/cells/new-issue — route through activePaneForDraw). Mirrors the desktop
+// drawGridPaneWindows per-frame setup; shared by the single-fill Grid page + the dockspace
+// Tickets window so the setup lives in exactly one place.
+void SmatchetUI::drawEmbeddedFocusedGrid(AppController& app, UiDrawSession& d, GridPane& focused) {
+    for (GridPane& p : d.gridPanes) {
+        p.focused = (p.id == focused.id);
+    }
+    app.SetFocusedPane(focused.id);
+    syncFocusedPaneWithActiveView(app, d, focused, false);
+    const TrackerConnectivityBannerForUi trackerBanner = app.GetTrackerConnectivityBannerForUi(nullptr);
+    d.activePaneForDraw = &focused;
+    drawActiveProjectWindow(app, d, focused, trackerBanner, /*embedded=*/true);
+    d.activePaneForDraw = nullptr;
+}
+
 // Page content (slice 4): single-panel fill. Each page draws one desktop helper with
 // embedded=true, which suppresses that helper's dock-window chrome (Begin/End/focus/
 // open-gate/persist) so its body fills the mobile page child. The desktop draw paths are
@@ -183,27 +214,11 @@ void SmatchetUI::drawMobileTopAppBar(AppController& app, UiDrawSession& d) {
 void SmatchetUI::drawMobilePageContent(AppController& app, UiDrawSession& d) {
     switch (d.mobilePage) {
     case MobilePage::Grid: {
-        // The desktop drawGridPaneWindows loop is skipped in mobile mode, so reproduce
-        // its essential per-frame focused-pane setup before the embedded body draw:
-        // ensure panes are loaded, mark the focused pane, point AppController's
-        // focused-context delegators at it, kick its active-view sync, and route the
-        // shared grid helpers (header/cells/new-issue) to it via activePaneForDraw.
-        SmatchetGridPaneWindows::EnsurePanesLoaded(d);
-        GridPane* focused = FindGridPaneById(d.gridPanes, d.focusedPaneId);
-        if (focused == nullptr && !d.gridPanes.empty()) {
-            focused = &d.gridPanes.front();
-            d.focusedPaneId = focused->id;
-        }
+        // Single-panel fill: resolve the focused pane (shared with the dockspace path)
+        // then draw the embedded grid body against it.
+        GridPane* focused = ensureFocusedMobileGridPane(d);
         if (focused != nullptr) {
-            for (GridPane& p : d.gridPanes) {
-                p.focused = (p.id == focused->id);
-            }
-            app.SetFocusedPane(focused->id);
-            syncFocusedPaneWithActiveView(app, d, *focused, false);
-            const TrackerConnectivityBannerForUi trackerBanner = app.GetTrackerConnectivityBannerForUi(nullptr);
-            d.activePaneForDraw = focused;
-            drawActiveProjectWindow(app, d, *focused, trackerBanner, /*embedded=*/true);
-            d.activePaneForDraw = nullptr;
+            drawEmbeddedFocusedGrid(app, d, *focused);
         }
         break;
     }
@@ -331,25 +346,12 @@ void SmatchetUI::drawMobileGridDockWindows(AppController& app, UiDrawSession& d,
         d.mobileDockNeedsSeed = false;
     }
 
-    SmatchetGridPaneWindows::EnsurePanesLoaded(d);
-    GridPane* focused = FindGridPaneById(d.gridPanes, d.focusedPaneId);
-    if (focused == nullptr && !d.gridPanes.empty()) {
-        focused = &d.gridPanes.front();
-        d.focusedPaneId = focused->id;
-    }
+    GridPane* focused = ensureFocusedMobileGridPane(d);
 
     const ImGuiWindowFlags kDockWinFlags = ImGuiWindowFlags_NoCollapse;
     if (::ImGui::Begin("Tickets###MobileGridList", nullptr, kDockWinFlags)) {
         if (focused != nullptr) {
-            for (GridPane& p : d.gridPanes) {
-                p.focused = (p.id == focused->id);
-            }
-            app.SetFocusedPane(focused->id);
-            syncFocusedPaneWithActiveView(app, d, *focused, false);
-            const TrackerConnectivityBannerForUi trackerBanner = app.GetTrackerConnectivityBannerForUi(nullptr);
-            d.activePaneForDraw = focused;
-            drawActiveProjectWindow(app, d, *focused, trackerBanner, /*embedded=*/true);
-            d.activePaneForDraw = nullptr;
+            drawEmbeddedFocusedGrid(app, d, *focused);
         } else {
             ::ImGui::TextDisabled("No grid pane.");
         }
