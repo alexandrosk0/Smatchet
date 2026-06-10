@@ -102,6 +102,7 @@ Touches `Source/Core/` → gates apply, but the change is behavior-neutral (inte
 - **Non-goal — integration test lane / second CTest target:** the rejected alternative (new `SmatchetIntegrationTests` executable). Reaffirmed after review finding C1: `SmatchetTests` keeps target-wide SQLiteCpp linkage; this plan's claim is include/construction purity, not link purity.
 - **Non-goal — link-level SQLite removal from `SmatchetTests`:** impossible while the impl tests + contract suite real-half exist in the single target; explicitly not claimed.
 - **Non-goal — full LCM API on the interface:** only service-consumed methods; AppController/chat/migration keep the concrete class.
+- **Non-goal — role-sliced interfaces à la `ITrackerBackend` (grill Q2):** rejected. The Tracker role-split earns its keep because capabilities there are genuinely optional (a backend returns `nullptr` for a role it doesn't support; callers degrade). The sync cache has zero capability variance — both impls (real + fake) implement all 28 methods, always — so slicing buys header count, not expressiveness. Revisit only if a consumer needs a compile-enforced subset (e.g. the pipeline's 2-method `TryGetTicket`/`SaveTicket` footprint); cheap later refactor.
 - **Non-goal — making `LocalCacheManager*.test.cpp` pure:** those test SQLite itself and stay SQLite-backed by design.
 
 ## Verification
