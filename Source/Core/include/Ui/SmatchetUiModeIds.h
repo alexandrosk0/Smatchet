@@ -24,6 +24,26 @@ enum class MobilePage : std::uint8_t { Grid = 0, Views = 1, Log = 2, Settings = 
 // Touch hit-target density preset → ScaleAllSizes / font multiplier.
 enum class MobileTouchDensity : std::uint8_t { Compact = 0, Comfortable = 1 };
 
+// Auto-mode width hysteresis. Enter Mobile at or below the max-enter width; exit to Desktop at or
+// above the min-exit width; hold the previous decision inside the dead band so a near-breakpoint
+// resize never flaps. Compared against a DPI-independent *logical* width (physical px / density),
+// so a high-DPI phone with a large pixel count still reads as narrow.
+constexpr float kMobileEnterMaxWidthPx = 720.0f;
+constexpr float kMobileExitMinWidthPx = 860.0f;
+
+// Resolve the Auto UI-mode to a concrete EffectiveUiMode from a logical viewport width, carrying the
+// previous frame's decision through the dead band (hysteresis). Pure — the caller computes the
+// logical width (raw io.DisplaySize.x divided by the host density scale) and passes the prior mode.
+inline EffectiveUiMode resolveAutoEffectiveUiMode(float logicalWidthPx, EffectiveUiMode prev) {
+    if (logicalWidthPx <= kMobileEnterMaxWidthPx) {
+        return EffectiveUiMode::Mobile;
+    }
+    if (logicalWidthPx >= kMobileExitMinWidthPx) {
+        return EffectiveUiMode::Desktop;
+    }
+    return prev; // dead band (720 < w < 860) — hold the prior frame's decision.
+}
+
 // --- Inline string converters (round-trip through ConfigManager JSON keys). ---
 
 inline const char* uiModeToString(UiMode m) {

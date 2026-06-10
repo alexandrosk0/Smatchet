@@ -13,6 +13,7 @@
 #include "GridPane.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetUiModeIds.h"
+#include "Ui/SmatchetTheme.h"
 #include "Ui/SmatchetGridPaneWindows.h"
 #include "Ui/SmatchetFieldRender.h"
 #include "Logger.h"
@@ -30,11 +31,8 @@
 
 namespace {
 
-// Auto-mode width hysteresis (relocated from SmatchetUI.cpp in slice 3). Enter Mobile at
-// or below the max-enter width; exit to Desktop at or above the min-exit width; hold the
-// previous decision inside the dead band so a near-breakpoint resize never flaps.
-constexpr float kMobileEnterMaxWidthPx = 720.0f;
-constexpr float kMobileExitMinWidthPx = 860.0f;
+// Auto-mode width-hysteresis consts + resolveAutoEffectiveUiMode now live in SmatchetUiModeIds.h
+// (pure + unit-tested); drawResolveUiMode below feeds them a DPI-independent logical width.
 
 // Base band heights (device-independent px), scaled by the touch-density factor so a
 // Comfortable shell gets larger hit targets than a Compact one.
@@ -44,10 +42,14 @@ constexpr float kBottomNavBaseHeightPx = 48.0f;
 } // namespace
 
 // Resolves cfg.UiMode -> d.effectiveUiMode once per frame. Manual Desktop/Mobile pin
-// directly; Auto applies width hysteresis on io.DisplaySize.x: enter Mobile at <= 720 px,
-// exit to Desktop at >= 860 px, and hold the previous frame's decision inside the dead
-// band so a window hovering near the breakpoint never flaps. d.effectiveUiMode is both
-// the output AND the cross-frame carry — it is seeded to Desktop in UiDrawSession.
+// directly; Auto applies width hysteresis on a DPI-independent LOGICAL width: enter Mobile
+// at <= 720, exit to Desktop at >= 860, holding the prior frame inside the dead band so a
+// window hovering near the breakpoint never flaps. The logical width is the raw
+// io.DisplaySize.x (physical surface pixels on the Android EGL host) divided by the host
+// density scale — without this divide a high-DPI phone's large pixel count (e.g. 1080 px at
+// 2.6x) reads as a wide desktop and Auto never resolves Mobile. Desktop's density is 1.0, so
+// logical == physical there and the behaviour is unchanged. d.effectiveUiMode is both the
+// output AND the cross-frame carry — it is seeded to Desktop in UiDrawSession.
 void SmatchetUI::drawResolveUiMode(UiDrawSession& d) {
     switch (d.cfg.UiMode) {
     case UiMode::Desktop:
@@ -61,13 +63,9 @@ void SmatchetUI::drawResolveUiMode(UiDrawSession& d) {
         break;
     }
 
-    const float width = ::ImGui::GetIO().DisplaySize.x;
-    if (width <= kMobileEnterMaxWidthPx) {
-        d.effectiveUiMode = EffectiveUiMode::Mobile;
-    } else if (width >= kMobileExitMinWidthPx) {
-        d.effectiveUiMode = EffectiveUiMode::Desktop;
-    }
-    // else: dead band (720 < w < 860) — hold d.effectiveUiMode from the prior frame.
+    const float density = SmatchetTheme::HostDensityScale();
+    const float logicalWidth = ::ImGui::GetIO().DisplaySize.x / (density > 0.0f ? density : 1.0f);
+    d.effectiveUiMode = resolveAutoEffectiveUiMode(logicalWidth, d.effectiveUiMode);
 }
 
 // Fullscreen mobile shell: occludes the host viewport dockspace with one borderless
@@ -85,18 +83,30 @@ void SmatchetUI::drawMobileShell(AppController& app, UiDrawSession& d) {
     drawMobileEnsureIniAttached(d);
 
     const float scale = mobileTouchDensityScale(d.cfg.MobileTouchDensity);
-    const float appBarH = kAppBarBaseHeightPx * scale;
-    const float navH = kBottomNavBaseHeightPx * scale;
+    // The base band heights are calibrated in desktop logical px. On a HiDPI host the style
+    // (FramePadding) and font atlas are already scaled by the host density via ScaleAllSizes, so
+    // the bands must carry the same density factor or they collapse shorter than the buttons they
+    // host — a 40px bar under a 67px glyph clips its own content to an invisible sliver. Desktop
+    // density is 1.0, so this is a no-op there (same recovery as the Auto-resolve logical-width divide).
+    const float density = SmatchetTheme::HostDensityScale();
+    const float densityFactor = density > 0.0f ? density : 1.0f;
+    const float appBarH = kAppBarBaseHeightPx * scale * densityFactor;
+    const float navH = kBottomNavBaseHeightPx * scale * densityFactor;
 
     const ::ImGuiViewport* vp = ::ImGui::GetMainViewport();
     ::ImGui::SetNextWindowPos(vp->WorkPos);
     ::ImGui::SetNextWindowSize(vp->WorkSize);
     ::ImGui::SetNextWindowViewport(vp->ID);
 
+    // Deliberately NO NoBringToFrontOnFocus: that flag pins a window to ImGui's back layer,
+    // the same layer as the host DockSpaceOverViewport window. The host's empty central dock
+    // node fills that layer with the dark ImGuiCol_DockingEmptyBg, which then paints OVER the
+    // shell and renders it invisible (blank dark screen). The shell must occlude the host
+    // viewport, so it stays in the normal (front) layer. NoNavFocus is kept (keyboard-nav only).
     const ImGuiWindowFlags kShellFlags =
         ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus |
-        ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNavFocus |
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
 
     ::ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ::ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);

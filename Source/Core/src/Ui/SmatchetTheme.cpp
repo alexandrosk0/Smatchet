@@ -825,6 +825,8 @@ void SmatchetTheme::ApplyUiDensityScale(float densityScale) {
     ImGui::GetStyle().ScaleAllSizes(densityScale);
 }
 
+float SmatchetTheme::HostDensityScale() { return g_hostDensityScale; }
+
 void SmatchetTheme::ReassertHostDensityScale(float newScale) {
     // Guard non-positive / NaN — `!(x > 0)` rejects NaN too. Leave the current style untouched.
     if (!(newScale > 0.0f)) {

@@ -74,6 +74,13 @@ void ApplyUiDensityScale(float densityScale);
  *  desktop never calls it (scale stays 1.0). */
 void ReassertHostDensityScale(float newScale);
 
+/** The host-injected UI density scale last set via ApplyUiDensityScale / ReassertHostDensityScale
+ *  (1.0 on desktop where the seam is inert; e.g. ~2.6 on a 420-dpi phone). The Auto UI-mode
+ *  breakpoint divides the raw `io.DisplaySize.x` (physical surface pixels on the Android EGL host)
+ *  by this to recover a DPI-independent logical width — without it a high-DPI phone's large pixel
+ *  count reads as a wide desktop and Auto never resolves Mobile. UI-thread-only read. */
+float HostDensityScale();
+
 /** Active theme's C++ syntax-highlight palette. Updated by ApplyStyle. */
 const SmatchetThemeSyntaxColors& GetSyntaxColors();
 

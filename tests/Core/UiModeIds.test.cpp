@@ -55,6 +55,23 @@ TEST_CASE("mobileNavPageLabel maps known ids and echoes unknown ids verbatim") {
     CHECK(std::string(mobileNavPageLabel("custom")) == "custom");
 }
 
+TEST_CASE("resolveAutoEffectiveUiMode — width thresholds + hysteresis dead band") {
+    // Below the enter width -> Mobile regardless of the prior decision. A 420-dpi phone
+    // (1080 physical px / 2.625 density ~= 411 logical px) lands here; the pre-fix code
+    // compared the raw 1080 px and wrongly stayed Desktop.
+    CHECK(resolveAutoEffectiveUiMode(411.0f, EffectiveUiMode::Desktop) == EffectiveUiMode::Mobile);
+    CHECK(resolveAutoEffectiveUiMode(720.0f, EffectiveUiMode::Desktop) == EffectiveUiMode::Mobile);
+
+    // At/above the exit width -> Desktop regardless of the prior decision.
+    CHECK(resolveAutoEffectiveUiMode(860.0f, EffectiveUiMode::Mobile) == EffectiveUiMode::Desktop);
+    CHECK(resolveAutoEffectiveUiMode(1920.0f, EffectiveUiMode::Mobile) == EffectiveUiMode::Desktop);
+
+    // Dead band (720 < w < 860) holds the prior frame's decision so a near-breakpoint
+    // resize never flaps.
+    CHECK(resolveAutoEffectiveUiMode(800.0f, EffectiveUiMode::Mobile) == EffectiveUiMode::Mobile);
+    CHECK(resolveAutoEffectiveUiMode(800.0f, EffectiveUiMode::Desktop) == EffectiveUiMode::Desktop);
+}
+
 TEST_CASE("mobileTouchDensity <-> string + scale factors") {
     CHECK(std::string(mobileTouchDensityToString(MobileTouchDensity::Compact)) == "compact");
     CHECK(std::string(mobileTouchDensityToString(MobileTouchDensity::Comfortable)) == "comfortable");
