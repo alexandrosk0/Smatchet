@@ -36,7 +36,7 @@ fi
 # only when the plugin is compiled in; on the OFF build the command list
 # excludes it and Dispatch returns NotFound. We use the cheap commands.list
 # query so this works without the scenario.
-PROBE_OUTPUT=$(SMATCHET_TEST_PORT="$TEST_PORT" "$EXE" cmd commands.list --spawn 2>&1 || true)
+PROBE_OUTPUT=$(SMATCHET_TEST_PORT="$TEST_PORT" "$EXE" cmd commands.list --spawn 2>/dev/null || true)
 if ! grep -q '"whisper.status"' <<<"$PROBE_OUTPUT"; then
     echo "[whisper-roundtrip] SKIP: whisper.status not registered in this exe (SMATCHET_WITH_WHISPER=OFF)."
     exit 0
@@ -45,11 +45,22 @@ fi
 echo "[whisper-roundtrip] Running whisper-dictation-roundtrip scenario via $EXE ..."
 # scenario.run is marked Destructive in the registry (it can mutate persistent
 # UI state for some scenarios), so the CLI envelope demands an explicit --yes.
-RESULT=$(SMATCHET_TEST_PORT="$TEST_PORT" "$EXE" cmd scenario.run --name=whisper-dictation-roundtrip --yes --spawn 2>&1 || true)
+# Keep stderr OUT of RESULT: the JSON envelope is a single ~8KB stdout line
+# (beyond the pipe's atomic-write size), so with 2>&1 the spawn helper's
+# "[spawn] ..." stderr lines interleave MID-LINE into the JSON and the
+# per-line json.loads parse below fails. Capture stderr to a side file and
+# replay it for the log after the envelope.
+SPAWN_ERR=$(mktemp)
+trap 'rm -f "$SPAWN_ERR"' EXIT
+RESULT=$(SMATCHET_TEST_PORT="$TEST_PORT" "$EXE" cmd scenario.run --name=whisper-dictation-roundtrip --yes --spawn 2>"$SPAWN_ERR" || true)
 
 # Pretty-print for the test log. The result envelope is the last JSON object
 # in stdout; we accept either pretty or one-line shape.
 echo "$RESULT" | tail -200
+if [ -s "$SPAWN_ERR" ]; then
+    echo "[whisper-roundtrip] --- spawn stderr ---"
+    tail -50 "$SPAWN_ERR"
+fi
 
 # Extract `data.passed` using a portable POSIX-ish path: prefer python's json
 # parser when available, fall back to a grep that matches the literal
