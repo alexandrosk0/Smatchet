@@ -22,7 +22,7 @@ namespace {
 
 // PR1: the only contract subject is the real cache. PR2 adds `FakeCacheMaker`.
 struct RealCacheMaker {
-    static std::unique_ptr<ISyncCache> Make() { return std::unique_ptr<ISyncCache>(new LocalCacheManager(":memory:")); }
+    static std::unique_ptr<ISyncCache> Make() { return std::make_unique<LocalCacheManager>(":memory:"); }
 };
 
 CachedTicket MakeTicket(const std::string& id, const std::string& summary) {

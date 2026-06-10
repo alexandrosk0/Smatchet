@@ -1086,7 +1086,7 @@ bool OfflineQueueService::ApplyOrRecordMergeResult(const PendingFieldEditRecord&
 void OfflineQueueService::ReplayOneFieldEdit(const PendingFieldEditRecord& row, ISyncCache* cache,
                                              ITrackerIssueReader* reader, ITrackerIssueMutations* mutations,
                                              IOfflineQueueDeps& depsRef, FieldEditReplayTally& tally) {
-    const int kMaxReplayAttempts = OfflineFieldEditQueue::kMaxReplayAttempts;
+    const int kMaxReplayAttempts = OfflineQueueReplayPolicy::kMaxReplayAttempts;
     if (OfflineQueueReplayPolicy::ShouldArchive(row.Attempts)) {
         char detailBuf[384];
         std::snprintf(detailBuf, sizeof(detailBuf),
@@ -1217,7 +1217,7 @@ bool OfflineQueueService::RunCreateCacheMutation(const char* action, std::int64_
 void OfflineQueueService::ReplayOneCreate(const PendingCreate& pc, ISyncCache* cache, ITrackerIssueMutations* mutations,
                                           const std::vector<TrackerField>& catalog, const std::string& backendKey,
                                           IOfflineQueueDeps& depsRef, CreateReplayTally& tally) {
-    const int kMaxReplayAttempts = OfflineCreateQueue::kMaxReplayAttempts;
+    const int kMaxReplayAttempts = OfflineQueueReplayPolicy::kMaxReplayAttempts;
     const auto archivePending = [&](const std::string& reason, const std::string& terminalError) -> bool {
         return RunCreateCacheMutation(
             "archive_pending_create", pc.Id, [&]() { cache->ArchivePendingCreate(pc.Id, reason, terminalError); },
