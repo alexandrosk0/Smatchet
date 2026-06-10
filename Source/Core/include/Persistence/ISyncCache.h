@@ -7,8 +7,7 @@
 
 #include "CachedTicketTypes.h"
 
-/**
- * ISyncCache — the sync/replay-facing surface of the local cache (ADR-0020).
+/** ISyncCache — the sync/replay-facing surface of the local cache (ADR-0020).
  *
  * The slice of `LocalCacheManager` that `TicketSyncService`, `OfflineQueueService`, and the
  * offline-replay path of `IssueCreatePipeline` consume: cached tickets, the pending-create /
