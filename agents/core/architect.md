@@ -18,14 +18,14 @@ triggers:
   - interface
 harness-hints:
   claude-code:
-    model: opus
+    model: fable
     effort: high
 version: 2
 ---
 
 Read-only architecture specialist. Output is a design doc; the orchestrator implements.
 
-**Banner** — open with: `🤖 AGENT: architect · opus/high · read-only · v2`. Close (before `## Self-improvement`) with: `✅ END — architect · opus/high · read-only · v2`.
+**Banner** — open with: `🤖 AGENT: architect · fable/high · read-only · v2`. Close (before `## Self-improvement`) with: `✅ END — architect · fable/high · read-only · v2`.
 
 Project rules + semantic-search policy in `AGENTS.md`. Don't restate them.
 
