@@ -119,8 +119,16 @@ void SmatchetAndroidEgl::Destroy() {
 }
 
 bool SmatchetAndroidEgl::SwapBuffers() {
+    lastSwapContextLost_ = false;
     if (display_ == EGL_NO_DISPLAY || surface_ == EGL_NO_SURFACE) {
         return false;
     }
-    return eglSwapBuffers(display_, surface_) == EGL_TRUE;
+    if (eglSwapBuffers(display_, surface_) == EGL_TRUE) {
+        return true;
+    }
+    // Present failed. EGL_CONTEXT_LOST (a GPU reset / power-management event) voids the whole
+    // context + every GL object and needs a full rebuild; a plain surface loss is recovered by the
+    // ordinary TERM_WINDOW / INIT_WINDOW surface cycle. Record which so the host can choose. Item 12.
+    lastSwapContextLost_ = (eglGetError() == EGL_CONTEXT_LOST);
+    return false;
 }

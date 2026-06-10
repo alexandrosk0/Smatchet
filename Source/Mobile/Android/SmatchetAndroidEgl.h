@@ -34,8 +34,15 @@ public:
     // Tear down surface + context + display. Idempotent.
     void Destroy();
 
-    // Present the back buffer. Returns false on EGL error (e.g. surface lost).
+    // Present the back buffer. Returns false on EGL error (e.g. surface lost). After a false
+    // return, LastSwapLostContext() reports whether the cause was EGL_CONTEXT_LOST.
     bool SwapBuffers();
+
+    // True iff the most recent SwapBuffers() failed with EGL_CONTEXT_LOST — a GPU reset / power
+    // event that voids the EGLContext and every GL object it owned. The host must rebuild the
+    // context + surface and re-init the GL backend (a benign transient surface error does not set
+    // this). Cleared at the start of each SwapBuffers(). Item 12 (#1071).
+    bool LastSwapLostContext() const { return lastSwapContextLost_; }
 
     bool HasContext() const { return context_ != EGL_NO_CONTEXT; }
     bool HasSurface() const { return surface_ != EGL_NO_SURFACE; }
@@ -49,4 +56,5 @@ private:
     EGLSurface surface_;
     int width_;
     int height_;
+    bool lastSwapContextLost_ = false; // set by SwapBuffers() on an EGL_CONTEXT_LOST present failure
 };
