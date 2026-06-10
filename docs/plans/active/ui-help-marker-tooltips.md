@@ -185,5 +185,5 @@ All four slices shipped together on one branch (`feat/help-marker`, commit `917f
 ## Out of scope
 
 - Rewriting log/CLI/MCP strings (this task is UI-only; AGENTS.md `LOG_*` rule untouched).
-- Adding accessibility cues (Pillar 4 backlogged). **Known regression**: keyboard-only users lose direct access to the long-form text — currently visible inline, now mouse-hover-only. File a `docs/self-improvement/categories/ux.md` entry alongside the slices.
+- Adding accessibility cues (Pillar 4 backlogged). **Known regression**: keyboard-only users lose direct access to the long-form text — currently visible inline, now mouse-hover-only. Coverage gap filed in `docs/self-improvement/categories/test.md`; the regression itself is elevated to a GitHub Issue per issue-triage.md at ship time (no `ux` category exists).
 - Refactoring strings inside Lua scripts or MCP tool descriptions.
