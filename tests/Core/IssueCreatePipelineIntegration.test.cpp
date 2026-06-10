@@ -1,7 +1,8 @@
 // IssueCreatePipeline end-to-end integration tests.
 //
-// Pairs a scripted `FakeTrackerClient` with a `:memory:` `LocalCacheManager` so each test runs
-// the full IssueCreatePipeline::Run flow without touching network or disk. Covers:
+// Pairs a scripted `FakeTrackerClient` with the in-memory `FakeSyncCache` (ADR-0020 /
+// ilocalcache-seam PR2 — contract-suite-verified against the real cache) so each test runs
+// the full IssueCreatePipeline::Run flow without touching network, disk, OR SQLite. Covers:
 //   * Create path — POST succeeds, cache row seeded.
 //   * Update path — PUT succeeds, cache row merged via MergeDraftIntoCachedTicketForUpdate.
 //   * Failure mapping — BuildCreatePayload error, CreateIssue error, UpdateIssueFields error.
@@ -10,13 +11,13 @@
 //   * Attachment-failure pass-through.
 
 #include "../support/FakeTrackerClient.h"
-#include "../support/SqliteMemFixture.h"
+#include "../support/FakeSyncCache.h"
 
 #include "ConfigManager.h"
 #include "ITrackerCollaboration.h"
 #include "IssueCreatePipeline.h"
 #include "IssueDraft.h"
-#include "LocalCacheManager.h"
+#include "ISyncCache.h"
 #include "TrackerFieldSchema.h"
 
 #include <doctest/doctest.h>
@@ -24,10 +25,21 @@
 #include <string>
 #include <vector>
 
+using smatchet_tests::FakeSyncCache;
 using smatchet_tests::FakeTrackerClient;
-using smatchet_tests::SqliteMemFixture;
 
 namespace {
+
+// Drop-in replacement for the retired SqliteMemFixture usage here: same Get()/Ref() surface,
+// backed by the contract-suite-verified in-memory fake instead of :memory: SQLite.
+class FakeCacheFixture {
+  public:
+    ISyncCache* Get() { return &cache_; }
+    ISyncCache& Ref() { return cache_; }
+
+  private:
+    FakeSyncCache cache_;
+};
 
 TrackerField MakeField(const std::string& id, TrackerFieldFamily family = TrackerFieldFamily::Text) {
     TrackerField f;
@@ -70,7 +82,7 @@ TEST_CASE("IssueCreatePipeline: Run create path posts payload, seeds cache, retu
     client.SetBuildCreatePayloadResult(true, nlohmann::json{{"fields", {{"summary", "Test summary"}}}});
     client.EnqueueCreateIssueSuccess("PROJ-42");
 
-    SqliteMemFixture fix;
+    FakeCacheFixture fix;
     const auto draft = MakeBasicCreateDraft();
     auto result = IssueCreatePipeline::Run(client, fix.Get(), "Jira", draft, EmptyRequired(), BasicCatalog());
 
@@ -103,7 +115,7 @@ TEST_CASE("IssueCreatePipeline: Run create path with null cache still returns Ok
 TEST_CASE("IssueCreatePipeline: Run reports missing required field ids and does not call CreateIssue" *
           doctest::test_suite("[high-risk]")) {
     FakeTrackerClient client;
-    SqliteMemFixture fix;
+    FakeCacheFixture fix;
 
     IssueDraft draft;
     draft.ProjectKey = ""; // missing project
@@ -131,7 +143,7 @@ TEST_CASE("IssueCreatePipeline: Run propagates CreateIssue failure as result.Err
     client.SetBuildCreatePayloadResult(true, nlohmann::json::object());
     client.EnqueueCreateIssueFailure("HTTP 500: server unavailable");
 
-    SqliteMemFixture fix;
+    FakeCacheFixture fix;
     auto result =
         IssueCreatePipeline::Run(client, fix.Get(), "Jira", MakeBasicCreateDraft(), EmptyRequired(), BasicCatalog());
     CHECK_FALSE(result.Ok);
@@ -146,7 +158,7 @@ TEST_CASE("IssueCreatePipeline: Run propagates BuildCreatePayload failure as res
     FakeTrackerClient client;
     client.SetBuildCreatePayloadResult(false, nlohmann::json::object(), "Unknown field 'foo'");
 
-    SqliteMemFixture fix;
+    FakeCacheFixture fix;
     auto result =
         IssueCreatePipeline::Run(client, fix.Get(), "Jira", MakeBasicCreateDraft(), EmptyRequired(), BasicCatalog());
     CHECK_FALSE(result.Ok);
@@ -158,7 +170,7 @@ TEST_CASE("IssueCreatePipeline: Run dispatches to update path when ExistingIssue
     FakeTrackerClient client;
     client.SetBuildUpdatePayloadResult(true, nlohmann::json{{"summary", "Updated"}});
 
-    SqliteMemFixture fix;
+    FakeCacheFixture fix;
     // Seed cache with existing ticket
     CachedTicket existing;
     existing.id = "PROJ-99";
@@ -191,7 +203,7 @@ TEST_CASE("IssueCreatePipeline: Update path propagates UpdateIssueFields failure
     client.SetBuildUpdatePayloadResult(true, nlohmann::json{{"summary", "Updated"}});
     client.EnqueueUpdateIssueFieldsFailure("HTTP 500: cannot reach issue server");
 
-    SqliteMemFixture fix;
+    FakeCacheFixture fix;
     CachedTicket existing;
     existing.id = "PROJ-50";
     existing.fieldValues["summary"] = "Original";
@@ -219,7 +231,7 @@ TEST_CASE("IssueCreatePipeline: Update path with empty fields payload skips PUT 
     FakeTrackerClient client;
     client.SetBuildUpdatePayloadResult(true, nlohmann::json::object());
 
-    SqliteMemFixture fix;
+    FakeCacheFixture fix;
     CachedTicket existing;
     existing.id = "PROJ-101";
     existing.fieldValues["summary"] = "Same";
@@ -240,7 +252,7 @@ TEST_CASE("IssueCreatePipeline: Create path with attachment failures returns Ok 
     client.EnqueueCreateIssueSuccess("PROJ-7");
     client.SetAttachFilesResult(true, {{"/path/a.png", "io error"}, {"/path/b.txt", "denied"}});
 
-    SqliteMemFixture fix;
+    FakeCacheFixture fix;
     IssueDraft draft = MakeBasicCreateDraft();
     StagedAttachment a;
     a.AbsPath = "/path/a.png";
@@ -267,7 +279,7 @@ TEST_CASE("IssueCreatePipeline: create path applies status post-step and merges 
     client.EnqueueCreateIssueSuccess("PROJ-50");
     client.EnqueueUpdateIssueFieldsSuccess();
 
-    SqliteMemFixture fix;
+    FakeCacheFixture fix;
     IssueDraft draft = MakeBasicCreateDraft();
     draft.FieldValues["status"] = "Done";
 
@@ -293,7 +305,7 @@ TEST_CASE("IssueCreatePipeline: create path adds issue to each resolved sprint s
     std::vector<TrackerField> catalog = BasicCatalog();
     catalog.push_back(MakeField("sprint", TrackerFieldFamily::Sprint));
 
-    SqliteMemFixture fix;
+    FakeCacheFixture fix;
     IssueDraft draft = MakeBasicCreateDraft();
     draft.FieldValues["sprint"] = "101, 202";
 
@@ -315,7 +327,7 @@ TEST_CASE("IssueCreatePipeline: duplicate sprint ids are de-duplicated to a sing
     std::vector<TrackerField> catalog = BasicCatalog();
     catalog.push_back(MakeField("sprint", TrackerFieldFamily::Sprint));
 
-    SqliteMemFixture fix;
+    FakeCacheFixture fix;
     IssueDraft draft = MakeBasicCreateDraft();
     draft.FieldValues["sprint"] = "303, 303";
 
@@ -331,7 +343,7 @@ TEST_CASE("IssueCreatePipeline: Run dispatches to update via legacy FieldValues[
     FakeTrackerClient client;
     client.SetBuildUpdatePayloadResult(true, nlohmann::json{{"summary", "X"}});
 
-    SqliteMemFixture fix;
+    FakeCacheFixture fix;
     IssueDraft draft;
     draft.FieldValues["key"] = "PROJ-300";
     draft.FieldValues["summary"] = "X";
@@ -348,7 +360,7 @@ TEST_CASE("IssueCreatePipeline: empty ExistingIssueKey falls through to create e
     client.SetBuildCreatePayloadResult(true, nlohmann::json::object());
     client.EnqueueCreateIssueSuccess("PROJ-999");
 
-    SqliteMemFixture fix;
+    FakeCacheFixture fix;
     IssueDraft draft = MakeBasicCreateDraft();
     draft.FieldValues["key"] = "   "; // whitespace-only should not look like an existing key
 

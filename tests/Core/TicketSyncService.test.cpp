@@ -11,7 +11,7 @@
 //     coalescing.
 //   * Re-entrancy + concurrent-read smoke — repeated apply / tick from a single thread.
 //
-// Per-case isolation: every TEST_CASE constructs its own FakeTicketSyncDeps + :memory: cache +
+// Per-case isolation: every TEST_CASE constructs its own FakeTicketSyncDeps + FakeSyncCache +
 // fresh TicketSyncService. No statics, no shared world state, no order dependencies.
 
 #include "../support/FakeTicketSyncDeps.h"
@@ -21,7 +21,6 @@
 #include "AppController.h" // for TrackerIssueFetchPack
 #include "CachedTicketTypes.h"
 #include "ITicketSyncDeps.h"
-#include "LocalCacheManager.h"
 #include "TicketSyncService.h"
 
 #include <doctest/doctest.h>

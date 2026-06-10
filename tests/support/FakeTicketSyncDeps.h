@@ -2,7 +2,8 @@
 #define SMATCHET_TESTS_FAKE_TICKET_SYNC_DEPS_H
 
 // FakeTicketSyncDeps — header-only in-memory implementation of `ITicketSyncDeps` for the
-// doctest rig. Backs the cache with `LocalCacheManager(":memory:")` and the tracker backend
+// doctest rig. Backs the cache with the in-memory `FakeSyncCache` (ADR-0020 — SQLite-free,
+// contract-suite-verified against the real LocalCacheManager) and the tracker backend
 // with a `FakeTrackerClient`; the connectivity-banner / ActiveTickets / Lua-bump state lives
 // in plain members tests can read directly.
 //
@@ -15,7 +16,8 @@
 #include "ITicketSyncDeps.h"
 #include "ITrackerBackendFactory.h"
 #include "ITrackerConnectivity.h"
-#include "LocalCacheManager.h"
+#include "FakeSyncCache.h"
+#include "ISyncCache.h"
 
 #include <chrono>
 #include <memory>
@@ -39,7 +41,7 @@ class FakeTrackerBackendFactory : public ITrackerBackendFactory {
 
 class FakeTicketSyncDeps : public ITicketSyncDeps {
   public:
-    std::unique_ptr<LocalCacheManager> CacheImpl{std::make_unique<LocalCacheManager>(":memory:")};
+    std::unique_ptr<FakeSyncCache> CacheImpl{std::make_unique<FakeSyncCache>()};
     std::unique_ptr<ITrackerBackend> BackendImpl{std::unique_ptr<ITrackerBackend>(new FakeTrackerClient())};
     std::unique_ptr<ITrackerBackendFactory> Factory{
         std::unique_ptr<ITrackerBackendFactory>(new FakeTrackerBackendFactory())};
@@ -67,12 +69,12 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
     int WarmIssueTypeEditMetaCalls = 0;
     int NotifyLuaCalls = 0;
     bool PendingLuaWindowBumpImpl = false;
-    /// Cache namespace handed to every LocalCacheManager ticket call (multi-grid Slice 1b).
+    /// Cache namespace handed to every sync-cache ticket call (multi-grid Slice 1b).
     /// Default matches the Jira FakeTrackerClient so SwapBackendIfTrackerChanged's re-stamp
     /// (NormalizeViewsBackendKey) is a no-op for single-backend tests.
     std::string CacheBackendKeyImpl{"Jira"};
 
-    LocalCacheManager* Cache() override { return CacheImpl.get(); }
+    ISyncCache* Cache() override { return CacheImpl.get(); }
     ITrackerIssueReader* Backend() override { return BackendImpl ? &BackendImpl->Reader() : nullptr; }
     ITrackerConnectivity* BackendConnectivity() override {
         return BackendImpl ? &BackendImpl->Connectivity() : nullptr;

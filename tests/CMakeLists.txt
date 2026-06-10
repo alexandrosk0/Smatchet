@@ -238,10 +238,13 @@ add_executable(SmatchetTests
     # PaneSyncKickPolicy.h decision helpers (sync-storm damping + stale-kick drop). Links the
     # TicketSyncService + OfflineQueueService TUs already pulled in below.
     Core/BackendSwitchRace1081.test.cpp
-    # ISyncCache contract (ADR-0020): dual-impl spec for the cache seam. PR1 = real
-    # LocalCacheManager(":memory:") half only; PR2 appends the FakeSyncCache type. SQLite-backed
-    # by design (real half) — named-exempt from the construction/direct-include purity gate.
+    # ISyncCache contract (ADR-0020): dual-impl spec for the cache seam — identical assertions
+    # against the real LocalCacheManager(":memory:") AND FakeSyncCache (the fake-fidelity gate).
+    # SQLite-backed by design (real half) — named-exempt from the purity guard below.
     Core/SyncCacheContract.test.cpp
+    # The ONE retained service-vs-real-SQLite case (ADR-0020 grill Q3 option 3): per-service-path
+    # backstop for fake divergence. SQLite-by-design — named-exempt from the purity guard below.
+    Core/OfflineQueueServiceRealCacheSmoke.test.cpp
     # AI chat Claude-Desktop-parity Phase 3 — SQLite-backed chat-history CRUD
     # against the same LCM SQLite path. Production target globs LCM.cpp, so the
     # test rig only needs the test TU itself (no separate cpp link).
@@ -688,8 +691,9 @@ target_include_directories(SmatchetTests PRIVATE
 )
 
 # SmatchetTheme links ImGuiLib for ImGui::GetStyle() / CreateContext().
-# SQLiteCpp is linked at runtime as of Phase 3 — LocalCacheManager.cpp + IssueCreatePipeline.cpp
-# pull SQLite/Statement objects directly. md4c is linked at runtime so MarkdownConvert.cpp
+# SQLiteCpp is linked at runtime as of Phase 3 — LocalCacheManager.cpp pulls SQLite/Statement
+# objects directly (IssueCreatePipeline.cpp is SQLite-free since the ADR-0020 ISyncCache seam —
+# it reaches the cache only through the interface). md4c is linked at runtime so MarkdownConvert.cpp
 # (transitively used by TrackerFieldPayload) resolves.
 target_link_libraries(SmatchetTests PRIVATE
     doctest::doctest
@@ -776,6 +780,50 @@ if(_smatchet_unlisted_tests)
         "${_smatchet_unlisted_pretty}\n"
         "Add each to add_executable(SmatchetTests ...) (or the appropriate conditional block).")
 endif()
+
+# Sync-cache purity guard (ADR-0020 / ilocalcache-seam PR2): the service-test TUs + the shared
+# deps fakes must stay SQLite-free at the CONSTRUCTION + DIRECT-INCLUDE level — they run on
+# FakeSyncCache (contract-suite-verified). Transitive `<SQLiteCpp/...>` via the service headers'
+# AppController.h include is the known, accepted residual (ADR-0020; debt.md tracks closing it).
+# SQLite-by-design TUs (the contract suite's real half, the RealCacheSmoke backstop, the LCM
+# impl/migration TUs) are deliberately NOT in this set. NOTE: the regex sees comments too —
+# don't spell the construct `LocalCacheManager(` in a comment inside the set (reword instead;
+# keeps the guard a simple, dependable text match).
+set(_smatchet_pure_sync_test_files
+    Core/BackendSwitchRace1081.test.cpp
+    Core/OfflineQueueServiceRuntime.test.cpp
+    Core/OfflineQueueTwoBackendReplay.test.cpp
+    Core/OfflineQueueBackendSwap.test.cpp
+    Core/OfflineQueueBackendKey.test.cpp
+    Core/TicketSyncService.test.cpp
+    Core/TrackerBackendFactoryConfig.test.cpp
+    Core/IssueCreatePipelineIntegration.test.cpp
+    support/FakeOfflineQueueDeps.h
+    support/FakeTicketSyncDeps.h
+    support/FakeSyncCache.h)
+foreach(_pf IN LISTS _smatchet_pure_sync_test_files)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/${_pf}" _pf_text)
+    # Re-configure when a guarded file changes — file(READ) alone registers no dependency, so a
+    # violation introduced after the last configure would pass local incremental builds.
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${_pf}")
+    # [>({] covers the construction forms actually in use: make_unique<LocalCacheManager>(...),
+    # unnamed brace-init LocalCacheManager{...}, and temporaries LocalCacheManager(...). A NAMED
+    # stack variable (`LocalCacheManager mgr(...)`) is not cheaply text-matchable — the
+    # direct-include rule below is the backstop for that form. (Review HIGH: the original
+    # `[ \t]*\(` pattern matched NONE of the real construction forms — vacuous.)
+    if(_pf_text MATCHES "LocalCacheManager[ \t]*[>({]")
+        message(FATAL_ERROR
+            "tests/${_pf}: constructs LocalCacheManager — this TU is in the SQLite-free service-test "
+            "set (ADR-0020 sync-cache purity). Use FakeSyncCache, or move the case to an impl TU "
+            "(LocalCacheManager*.test.cpp / LocalCacheTicketsV2Migration.test.cpp).")
+    endif()
+    if(_pf_text MATCHES "#include[ \t]*\"[^\"]*(LocalCacheManager|SqliteMemFixture)\\.h\"")
+        message(FATAL_ERROR
+            "tests/${_pf}: direct-includes LocalCacheManager.h/SqliteMemFixture.h — this TU is in "
+            "the SQLite-free service-test set (ADR-0020 sync-cache purity). Reach the cache through "
+            "ISyncCache/FakeSyncCache.h instead.")
+    endif()
+endforeach()
 
 # ---------------------------------------------------------------------------
 # Issue #1068 Android OpenSSL fail-fast — behavioral configure-probe (WS5 item 19,

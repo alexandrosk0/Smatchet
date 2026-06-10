@@ -133,6 +133,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`backend-switch-sync-race-1081`](shipped/backend-switch-sync-race-1081.md) | 2026-06-09 | Fix #1081 backend-switch (Jira→GitHub) `std::terminate` — publish-under-lock, `backendGeneration_` token gating stale-worker writes + replay-refresh TOCTOU re-check, captured-key replay latch, and `PaneSyncKickPolicy` sync-storm damping. |
 | [`dual-ui-mode-desktop-mobile`](shipped/dual-ui-mode-desktop-mobile.md) | 2026-06-09 | Plan — Desktop / Mobile switchable UI modes |
 | [`mobile-mvp-completion`](shipped/mobile-mvp-completion.md) | 2026-06-09 | Plan — Mobile (Android) Phase-0 MVP completion |
+| [`ilocalcache-seam`](shipped/ilocalcache-seam.md) | 2026-06-10 | ISyncCache seam (ADR-0020) — 28-method sync-cache interface decouples OfflineQueueService/TicketSyncService/IssueCreatePipeline from SQLite; service tests run on a contract-suite-verified FakeSyncCache with a configure-time purity guard; PR1 #1112 (seam) + PR2 (test purity). |
 <!-- END auto-plan-index -->
 
 ### Notes
