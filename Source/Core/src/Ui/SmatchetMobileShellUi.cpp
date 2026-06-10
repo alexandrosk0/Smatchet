@@ -1,5 +1,4 @@
 // Mobile UI shell (dual-ui-mode-desktop-mobile plan, slice 3).
-//
 // Central architectural bet (see the plan): the host layer never learns about mobile
 // mode. Every host keeps creating its empty viewport dockspace; the mobile shell is a
 // single fullscreen NoDocking / NoTitleBar / NoSavedSettings window drawn on top, which
@@ -11,8 +10,10 @@
 #include "SmatchetUI.h"
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "GridPane.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetUiModeIds.h"
+#include "Ui/SmatchetGridPaneWindows.h"
 #include "Logger.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -67,15 +68,15 @@ const char* navPageLabel(const std::string& id) {
 // the output AND the cross-frame carry — it is seeded to Desktop in UiDrawSession.
 void SmatchetUI::drawResolveUiMode(UiDrawSession& d) {
     switch (d.cfg.UiMode) {
-        case UiMode::Desktop:
-            d.effectiveUiMode = EffectiveUiMode::Desktop;
-            return;
-        case UiMode::Mobile:
-            d.effectiveUiMode = EffectiveUiMode::Mobile;
-            return;
-        case UiMode::Auto:
-        default:
-            break;
+    case UiMode::Desktop:
+        d.effectiveUiMode = EffectiveUiMode::Desktop;
+        return;
+    case UiMode::Mobile:
+        d.effectiveUiMode = EffectiveUiMode::Mobile;
+        return;
+    case UiMode::Auto:
+    default:
+        break;
     }
 
     const float width = ::ImGui::GetIO().DisplaySize.x;
@@ -107,10 +108,9 @@ void SmatchetUI::drawMobileShell(AppController& app, UiDrawSession& d) {
     ::ImGui::SetNextWindowViewport(vp->ID);
 
     const ImGuiWindowFlags kShellFlags =
-        ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
-        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |
-        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+        ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus |
+        ImGuiWindowFlags_NoNavFocus | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
 
     ::ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ::ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
@@ -122,20 +122,17 @@ void SmatchetUI::drawMobileShell(AppController& app, UiDrawSession& d) {
         const float totalH = ::ImGui::GetContentRegionAvail().y;
         const float contentH = totalH - appBarH - navH;
 
-        if (::ImGui::BeginChild("##MobileAppBar", ::ImVec2(0.0f, appBarH), false,
-                                ImGuiWindowFlags_NoScrollbar)) {
+        if (::ImGui::BeginChild("##MobileAppBar", ::ImVec2(0.0f, appBarH), false, ImGuiWindowFlags_NoScrollbar)) {
             drawMobileTopAppBar(app, d);
         }
         ::ImGui::EndChild();
 
-        if (::ImGui::BeginChild("##MobilePage", ::ImVec2(0.0f, contentH > 0.0f ? contentH : 0.0f),
-                                false)) {
+        if (::ImGui::BeginChild("##MobilePage", ::ImVec2(0.0f, contentH > 0.0f ? contentH : 0.0f), false)) {
             drawMobilePageContent(app, d);
         }
         ::ImGui::EndChild();
 
-        if (::ImGui::BeginChild("##MobileNav", ::ImVec2(0.0f, navH), false,
-                                ImGuiWindowFlags_NoScrollbar)) {
+        if (::ImGui::BeginChild("##MobileNav", ::ImVec2(0.0f, navH), false, ImGuiWindowFlags_NoScrollbar)) {
             drawMobileBottomNav(app, d);
         }
         ::ImGui::EndChild();
@@ -157,11 +154,55 @@ void SmatchetUI::drawMobileTopAppBar(AppController& app, UiDrawSession& d) {
     ::ImGui::Text("Smatchet \xe2\x80\x94 %s", navPageLabel(mobilePageToString(d.mobilePage)));
 }
 
-// Page content. Slice 3 placeholder — real page bodies (reusing desktop draw helpers via
-// an `embedded` param) land slice 4+.
+// Page content (slice 4): single-panel fill. Each page draws one desktop helper with
+// embedded=true, which suppresses that helper's dock-window chrome (Begin/End/focus/
+// open-gate/persist) so its body fills the mobile page child. The desktop draw paths are
+// untouched (embedded defaults to false at every desktop call-site).
 void SmatchetUI::drawMobilePageContent(AppController& app, UiDrawSession& d) {
-    (void)app;
-    ::ImGui::TextDisabled("%s page \xe2\x80\x94 coming soon", navPageLabel(mobilePageToString(d.mobilePage)));
+    switch (d.mobilePage) {
+    case MobilePage::Grid: {
+        // The desktop drawGridPaneWindows loop is skipped in mobile mode, so reproduce
+        // its essential per-frame focused-pane setup before the embedded body draw:
+        // ensure panes are loaded, mark the focused pane, point AppController's
+        // focused-context delegators at it, kick its active-view sync, and route the
+        // shared grid helpers (header/cells/new-issue) to it via activePaneForDraw.
+        SmatchetGridPaneWindows::EnsurePanesLoaded(d);
+        GridPane* focused = FindGridPaneById(d.gridPanes, d.focusedPaneId);
+        if (focused == nullptr && !d.gridPanes.empty()) {
+            focused = &d.gridPanes.front();
+            d.focusedPaneId = focused->id;
+        }
+        if (focused != nullptr) {
+            for (GridPane& p : d.gridPanes) {
+                p.focused = (p.id == focused->id);
+            }
+            app.SetFocusedPane(focused->id);
+            syncFocusedPaneWithActiveView(app, d, *focused, false);
+            const TrackerConnectivityBannerForUi trackerBanner = app.GetTrackerConnectivityBannerForUi(nullptr);
+            d.activePaneForDraw = focused;
+            drawActiveProjectWindow(app, d, *focused, trackerBanner, /*embedded=*/true);
+            d.activePaneForDraw = nullptr;
+        }
+        break;
+    }
+    case MobilePage::Views:
+        drawViewsDashboardWindow(app, d, /*embedded=*/true);
+        break;
+    case MobilePage::Log:
+        drawLogWindow(d, /*embedded=*/true);
+        break;
+    case MobilePage::Settings:
+        drawPreferencesWindow(app, d, /*embedded=*/true);
+        break;
+    case MobilePage::Ai:
+#if defined(SMATCHET_WITH_AI)
+        drawAiAssistantPanel(app, d, /*embedded=*/true);
+#else
+        (void)app;
+        ::ImGui::TextDisabled("AI assistant is not built in this configuration.");
+#endif
+        break;
+    }
 }
 
 // Bottom nav: one equal-width button per configured page; the active page is highlighted.
@@ -214,10 +255,10 @@ void SmatchetUI::drawMobileDrawer(AppController& app, UiDrawSession& d) {
     ::ImGui::SetNextWindowSize(vp->WorkSize);
     ::ImGui::SetNextWindowViewport(vp->ID);
     ::ImGui::SetNextWindowBgAlpha(0.45f);
-    const ImGuiWindowFlags kScrimFlags =
-        ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
-        ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+    const ImGuiWindowFlags kScrimFlags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar |
+                                         ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                                         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
+                                         ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
     ::ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ::ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     if (::ImGui::Begin("##MobileDrawerScrim", nullptr, kScrimFlags)) {
@@ -233,9 +274,8 @@ void SmatchetUI::drawMobileDrawer(AppController& app, UiDrawSession& d) {
     ::ImGui::SetNextWindowSize(::ImVec2(drawerW, vp->WorkSize.y));
     ::ImGui::SetNextWindowViewport(vp->ID);
     const ImGuiWindowFlags kPanelFlags =
-        ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
-        ImGuiWindowFlags_NoNavFocus;
+        ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNavFocus;
     if (::ImGui::Begin("##MobileDrawerPanel", nullptr, kPanelFlags)) {
         ::ImGui::TextDisabled("Menu");
         ::ImGui::Separator();

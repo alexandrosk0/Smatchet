@@ -547,14 +547,19 @@ void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) 
     app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
 }
 
-void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
-    if (!d.showPreferences) {
-        resetPreferencesWindowState(d);
-        return;
-    }
+void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, bool embedded) {
+    // embedded (dual-ui slice 4): mobile Settings page draws the body directly into the page
+    // child; skip the show-gate + beginPreferencesWindow/End chrome. Desktop path below is
+    // byte-identical to the pre-slice-4 flow.
+    if (!embedded) {
+        if (!d.showPreferences) {
+            resetPreferencesWindowState(d);
+            return;
+        }
 
-    if (!beginPreferencesWindow(d)) {
-        return;
+        if (!beginPreferencesWindow(d)) {
+            return;
+        }
     }
 
     loadPreferencesBuffers(d);
@@ -589,5 +594,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d) {
         onPreferencesSaveAndSync(app, d);
     }
 
-    ImGui::End();
+    if (!embedded) {
+        ImGui::End();
+    }
 }

@@ -240,9 +240,16 @@ class SmatchetUI {
     /// Right-anchored Smatchet Assistant side panel. Delegates to the free function in
     /// `SmatchetAiAssistantUi.cpp` after `drawAuditWindow` runs; early-returns inside
     /// the free function when `d.assistantPanelOpen` is false.
-    void drawAiAssistantPanel(AppController& app, UiDrawSession& d);
+    // embedded=true (dual-ui slice 4): mobile page-body fill — skip the panel's own
+    // window chrome (Begin/End + the assistantPanelOpen gate + dock/focus mechanics) and
+    // draw the body directly into the caller's region. Default false = the desktop dock
+    // window, byte-identical to the pre-slice-4 path.
+    void drawAiAssistantPanel(AppController& app, UiDrawSession& d, bool embedded = false);
 #endif
-    void drawPreferencesWindow(AppController& app, UiDrawSession& d);
+    // embedded=true (dual-ui slice 4): mobile Settings page-body fill — skip the show-gate +
+    // beginPreferencesWindow/End chrome, draw the tab bar + Save&Sync directly. Default false
+    // = desktop dock window, byte-identical to the pre-slice-4 path.
+    void drawPreferencesWindow(AppController& app, UiDrawSession& d, bool embedded = false);
     // Section helpers for drawPreferencesWindow (full-function-size-compliance Phase 5,
     // PR E11). The orchestrator owns the positional Begin/EndTabBar/End frame; each helper
     // runs inside that frame and never splits a positional-ImGui pair across the call
@@ -266,7 +273,10 @@ class SmatchetUI {
         SmatchetPreferencesUiTemplateFlags templateFlags;
     };
     PreferencesWindowState preferencesState_;
-    void drawViewsDashboardWindow(AppController& app, UiDrawSession& d);
+    // embedded=true (dual-ui slice 4): mobile Views page-body fill — skip the show-gate +
+    // window chrome (prepareTopLevelWindow/Begin/End/focus), draw the sidebar|editor body
+    // directly. Default false = desktop dock window, byte-identical to the pre-slice-4 path.
+    void drawViewsDashboardWindow(AppController& app, UiDrawSession& d, bool embedded = false);
     // Section helpers for drawViewsDashboardWindow (function-size decomposition). Each owns its
     // own positional-ImGui Begin/End pairs in full — no pair is split across the orchestrator/
     // helper boundary. The per-tab helpers each own their BeginTabItem/EndTabItem (EndTabItem
@@ -318,8 +328,12 @@ class SmatchetUI {
     // Re-entrant per-pane grid window (Slice 2): renders ONE GridPane, using the
     // pane's own snapshot + sort/filter caches. Called once per visible pane per frame.
     // The connectivity banner is resolved ONCE per frame by the host and passed in.
+    // embedded=true (dual-ui slice 4): mobile Tickets page-body fill — skip the pane window
+    // chrome (prepareTopLevelWindow/Begin/End/focus + the pane-strip "+" button), draw the
+    // grid body directly into the caller's region. Default false = desktop dock window,
+    // byte-identical to the pre-slice-4 path. Single-panel mobile passes the focused pane.
     void drawActiveProjectWindow(AppController& app, UiDrawSession& d, GridPane& pane,
-                                 const TrackerConnectivityBannerForUi& trackerBanner);
+                                 const TrackerConnectivityBannerForUi& trackerBanner, bool embedded = false);
     // Pane-view resolution helpers (Slice 2). resolvePaneView falls back to the active
     // view when the pane's view is absent from the loaded bucket — self-repairing
     // pane.viewId ONLY when the pane belongs to the focused backend's bucket (a
@@ -393,7 +407,10 @@ class SmatchetUI {
     void drawAttachmentListPane(AttachmentPreviewDrawCtx& ctx);
     void drawAttachmentDetailsPane(AttachmentPreviewDrawCtx& ctx);
     static void drawAuditWindow(AppController& app, UiDrawSession& d);
-    static void drawLogWindow(UiDrawSession& d);
+    // embedded=true (dual-ui slice 4): mobile Log page-body fill — skip the prepareTopLevel/
+    // Begin/End chrome, draw the toolbar + scroll region directly. Default false = desktop
+    // dock window, byte-identical to the pre-slice-4 path.
+    static void drawLogWindow(UiDrawSession& d, bool embedded = false);
     static void drawBulkImportWindow(AppController& app, UiDrawSession& d);
     static void drawBulkExportWindow(AppController& app, UiDrawSession& d);
     static void prepareTopLevelWindow(UiDrawSession& d, const char* layoutKey, float defaultW, float defaultH,

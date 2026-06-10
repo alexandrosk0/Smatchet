@@ -768,20 +768,25 @@ void SmatchetUI::drawViewsModals(ViewsDashboardDrawCtx& ctx) {
     }
 }
 
-void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) {
-    if (!d.showViewsDashboard) {
+void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d, bool embedded) {
+    // embedded (dual-ui slice 4): mobile Views page draws the body directly into the page
+    // child; skip the show-gate + dock-window chrome. Desktop path is byte-identical below.
+    if (!embedded && !d.showViewsDashboard) {
         return;
     }
-    const bool bFocusViews = d.requestViewsDashboardFocus;
-    prepareTopLevelWindow(d, "views", 880.0f, 600.0f, bFocusViews);
-    const std::string backendName = ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
-    std::string viewsWinTitle = SmatchetLocalization::Format("window.views_backend", "Views - %s", backendName.c_str());
-    viewsWinTitle += "###SmatchetViewsDashboard";
-    ImGui::Begin(viewsWinTitle.c_str(), &d.showViewsDashboard);
-    repairTopLevelWindow(d, "views", 520.0f, 320.0f);
-    if (bFocusViews) {
-        ImGui::SetWindowFocus();
-        d.requestViewsDashboardFocus = false;
+    if (!embedded) {
+        const bool bFocusViews = d.requestViewsDashboardFocus;
+        prepareTopLevelWindow(d, "views", 880.0f, 600.0f, bFocusViews);
+        const std::string backendName = ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
+        std::string viewsWinTitle =
+            SmatchetLocalization::Format("window.views_backend", "Views - %s", backendName.c_str());
+        viewsWinTitle += "###SmatchetViewsDashboard";
+        ImGui::Begin(viewsWinTitle.c_str(), &d.showViewsDashboard);
+        repairTopLevelWindow(d, "views", 520.0f, 320.0f);
+        if (bFocusViews) {
+            ImGui::SetWindowFocus();
+            d.requestViewsDashboardFocus = false;
+        }
     }
 
     ViewState.EnsureLoaded(d.cfg);
@@ -804,7 +809,9 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
 
     if (!activeView) {
         ImGui::TextDisabled("No views available.");
-        ImGui::End();
+        if (!embedded) {
+            ImGui::End();
+        }
         return;
     }
 
@@ -863,7 +870,9 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d) 
 
     drawViewsModals(ctx);
 
-    ImGui::End();
+    if (!embedded) {
+        ImGui::End();
+    }
 }
 
 // Tracker connectivity banner (error / warning strip above the editor). Split out of

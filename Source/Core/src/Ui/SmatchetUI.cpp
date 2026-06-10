@@ -978,12 +978,12 @@ void SmatchetUI::drawEndOfFramePersistence(UiDrawSession& d) {
 }
 
 #if defined(SMATCHET_WITH_AI)
-void SmatchetUI::drawAiAssistantPanel(AppController& app, UiDrawSession& d) {
+void SmatchetUI::drawAiAssistantPanel(AppController& app, UiDrawSession& d, bool embedded) {
     // Free function lives in SmatchetAiAssistantUi.cpp; this member exists to keep
     // SmatchetUI.h's private-method contract uniform with the other window drawers.
     // Phase C: forward the active view definition so the panel's auto-context builder
-    // can populate the ActiveView block.
-    SmatchetDrawAiAssistantPanel(app, d, ViewState.GetActiveView());
+    // can populate the ActiveView block. embedded forwards the mobile page-body mode.
+    SmatchetDrawAiAssistantPanel(app, d, ViewState.GetActiveView(), embedded);
 }
 #endif
 
