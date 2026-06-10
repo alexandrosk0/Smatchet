@@ -46,7 +46,7 @@ std::string MineValueToMarkdown(const nlohmann::json& myVal);
 } // namespace OfflineFieldEditMergeDetail
 
 class IOfflineQueueDeps;
-class LocalCacheManager;
+class ISyncCache;
 class ITrackerIssueReader;
 class ITrackerIssueMutations;
 namespace TextMerge {
@@ -200,7 +200,7 @@ class OfflineQueueService {
     /// compare) based on which base the row captured, performing the single server re-fetch and
     /// applying the decision-(c) fetch-failure routing uniformly for both kinds.
     FieldEditConflictOutcome EvaluateFieldEditConflict(const PendingFieldEditRecord& row, nlohmann::json& fieldsPayload,
-                                                       LocalCacheManager* cache, ITrackerIssueReader* reader,
+                                                       ISyncCache* cache, ITrackerIssueReader* reader,
                                                        FieldEditReplayTally& tally);
 
     /// Look up a tracker field by id in the live catalog (`deps_.AvailableFields()`). Returns null
@@ -211,15 +211,15 @@ class OfflineQueueService {
     /// Record a `kind:"unverified"` conflict (server value couldn't be read) and suspend the row.
     /// Context: `{kind:"unverified", mine, fieldId}`. Always returns Suspend.
     FieldEditConflictOutcome RecordUnverifiedFieldEditConflict(const PendingFieldEditRecord& row,
-                                                               const nlohmann::json& fieldsPayload,
-                                                               LocalCacheManager* cache, FieldEditReplayTally& tally);
+                                                               const nlohmann::json& fieldsPayload, ISyncCache* cache,
+                                                               FieldEditReplayTally& tally);
 
     /// Scalar 2-way conflict gate: compare the captured display base against the re-fetched
     /// display value via `ServerMovedFromBase`. On divergence records a `kind:"scalar"` conflict
     /// and returns Suspend; otherwise Proceed.
     FieldEditConflictOutcome ResolveFieldEditScalarConflict(const PendingFieldEditRecord& row,
                                                             const nlohmann::json& fieldsPayload,
-                                                            const CachedTicket& fresh, LocalCacheManager* cache,
+                                                            const CachedTicket& fresh, ISyncCache* cache,
                                                             FieldEditReplayTally& tally);
 
     /// 3-way merge gate: merge the captured rich base against the re-fetched server document.
@@ -227,7 +227,7 @@ class OfflineQueueService {
     /// recorded, Proceed otherwise.
     FieldEditConflictOutcome ResolveFieldEditThreeWayMerge(const PendingFieldEditRecord& row,
                                                            nlohmann::json& fieldsPayload, const CachedTicket& fresh,
-                                                           LocalCacheManager* cache, FieldEditReplayTally& tally);
+                                                           ISyncCache* cache, FieldEditReplayTally& tally);
 
     /// Apply a computed 3-way merge result: on a clean merge, rewrite `fieldsPayload[payloadKey]`
     /// to the merged ADF/HTML; on conflict, record the conflict context to the cache and return
@@ -235,17 +235,17 @@ class OfflineQueueService {
     bool ApplyOrRecordMergeResult(const PendingFieldEditRecord& row, nlohmann::json& fieldsPayload,
                                   const std::string& payloadKey, bool isAdf, const TextMerge::MergeResult& merged,
                                   const std::string& baseMd, const std::string& mineMd, const std::string& theirsMd,
-                                  LocalCacheManager* cache, FieldEditReplayTally& tally);
+                                  ISyncCache* cache, FieldEditReplayTally& tally);
 
     /// Replay a single queued field edit: attempt-cap gate, payload parse, 3-way merge, the
     /// tracker mutation, and the success / transport-retry / rejection / archive bookkeeping.
-    void ReplayOneFieldEdit(const PendingFieldEditRecord& row, LocalCacheManager* cache, ITrackerIssueReader* reader,
+    void ReplayOneFieldEdit(const PendingFieldEditRecord& row, ISyncCache* cache, ITrackerIssueReader* reader,
                             ITrackerIssueMutations* mutations, IOfflineQueueDeps& depsRef, FieldEditReplayTally& tally);
 
     /// Handle a failed `UpdateIssueFields` for a replayed field edit: transport errors bump the
     /// attempt count (archiving at the cap), non-transport errors archive as `replay_rejected`.
-    void HandleFieldEditUpdateFailure(const PendingFieldEditRecord& row, LocalCacheManager* cache,
-                                      const std::string& err, FieldEditReplayTally& tally);
+    void HandleFieldEditUpdateFailure(const PendingFieldEditRecord& row, ISyncCache* cache, const std::string& err,
+                                      FieldEditReplayTally& tally);
 
     // --- TickOfflineCreates replay helpers ------------------------------------------------
     // TickOfflineCreates dispatches a background task whose body is a thin loop over a per-row
@@ -272,7 +272,7 @@ class OfflineQueueService {
     /// pipeline run, and the success / retry / archive bookkeeping. Runs off the UI thread.
     /// `backendKey` is the cache namespace CAPTURED at work-capture time (issue #1081) — the
     /// key the rows were queued + filtered against, never a write-time deps re-read.
-    void ReplayOneCreate(const PendingCreate& pc, LocalCacheManager* cache, ITrackerIssueMutations* mutations,
+    void ReplayOneCreate(const PendingCreate& pc, ISyncCache* cache, ITrackerIssueMutations* mutations,
                          const std::vector<TrackerField>& catalog, const std::string& backendKey,
                          IOfflineQueueDeps& depsRef, CreateReplayTally& tally);
 

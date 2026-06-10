@@ -1,0 +1,153 @@
+# Plan — ISyncCache seam for pure-logic service tests
+
+> **Slug**: `ilocalcache-seam` (matches this file's basename without `.md`).
+>
+> **Status**: `active`
+>
+> **Usage**: copy this template to `docs/plans/active/<slug>.md` as the first step of any new plan. Fill every section.
+>
+> **Mandatory rules cross-link**: see `AGENTS.md` § Project rules.
+
+## Context
+
+The `tests/Core` doctest rig is documented as **pure-logic only** (`.coderabbit.yaml` `tests/**` instruction; `test-rig` agent), but ~8 TUs drive real SQLite because `OfflineQueueService` and `TicketSyncService` take a **concrete `LocalCacheManager*`** — there is no cache interface to inject a fake, so the only way to exercise the services is with a real (`:memory:`) cache. This drift surfaced on PR #1104 as a CodeRabbit "compliance break" finding; the immediate fix (PR #1107 / commit `7041d1bd`) was to carve `:memory:` SQLite into the `.coderabbit.yaml` rule and file this follow-up (`docs/self-improvement/categories/tooling.md`, 2026-06-09, P2).
+
+This plan extracts an `ISyncCache` interface so the **service** tests become genuinely pure-logic (inject an in-memory fake, no SQLiteCpp link), while the cache *implementation* tests deliberately stay SQLite-backed (they validate the real SQLite class). **After this lands**: the offline-queue / ticket-sync service test surface is SQLite-free and the doctest rig's "no SQLite" rule is true for everything except the handful of TUs that exist to test SQLite itself.
+
+Originating: PR #1104 / #1107 closeout; backlog `tooling.md` 2026-06-09 (P2).
+
+**Decision record:** [`docs/adr/0020-sync-cache-seam-include-not-link-purity.md`](../../adr/0020-sync-cache-seam-include-not-link-purity.md) captures the *why* — the seam, the include-not-link purity stance, and the rejected alternatives (integration lane / role-split / link purity).
+
+**Naming note (grill resolution):** the interface is **`ISyncCache`** — the sync/replay-facing surface of the local cache. The backlog entry's working name "ILocalCache" overclaimed: the local cache (`LocalCacheManager`) also holds AI chat messages + schema migration, which stay concrete-only and off this interface. The plan slug `ilocalcache-seam` is retained as the immutable identifier. Term recorded in `Source/Core/src/Persistence/CONTEXT.md`.
+
+## Approach
+
+Introduce a narrow `ISyncCache` pure-virtual interface in `Source/Core/include/Persistence/` carrying **exactly the 28 methods the seam consumers call** (pinned in § Interface method inventory below — 27 from the two services + `TryGetTicket` from `IssueCreatePipeline`, which receives the seam cache via `OfflineQueueService.cpp:1270`; NOT the full `LocalCacheManager` API — chat, migration, schema, and AppController-direct ticket ops stay off the interface and keep calling the concrete class). `LocalCacheManager` gains `: public ISyncCache` and marks those methods `override`; its constructor and SQLite-specific surface are unchanged, so every existing concrete caller (AppController, the impl tests) is unaffected. The retype propagates along the call chain: the two service-deps seams (`IOfflineQueueDeps::Cache()`, `ITicketSyncDeps::Cache()`), the production `GridContextDepsAdapter::Cache()`, **`IssueCreatePipeline::Run`'s `cache` param**, and `OfflineQueueService`'s 8 private helper params + 2 locals — all `LocalCacheManager*` → `ISyncCache*`. Behavior-neutral since `LocalCacheManager` IS-A `ISyncCache` (concrete callers like `AppController_IssueCreateOffline.cpp` upcast implicitly).
+
+A header-only `tests/support/FakeSyncCache.h` implements `ISyncCache` over `std::unordered_map` / `std::vector`, replacing `LocalCacheManager(":memory:")` inside `FakeOfflineQueueDeps` / `FakeTicketSyncDeps` (+ `SqliteMemFixture` usage in `IssueCreatePipelineIntegration.test.cpp`). The **central risk** is fake-vs-real semantic drift (some methods — `ResolveFieldEditConflict`, `ArchivePendingCreate` dead-lettering, backend-key namespacing — carry non-trivial logic). The non-obvious trade-off that shaped the design: rather than trust a hand-written fake, a **shared contract-test suite** runs the same assertions against *both* `FakeSyncCache` and a real `:memory: LocalCacheManager`, so the fake can't silently diverge from the production contract.
+
+**What "pure" means here (deliverable, precisely — revised after review finding CRITICAL-1):** `SmatchetTests` is ONE executable with target-wide linkage (`tests/CMakeLists.txt:684-696`) — SQLiteCpp cannot leave the link line while the impl tests + the contract suite's real half exist, and `TicketSyncService.cpp` is ImGui-coupled (Toast). *Transitive*-include purity is ALSO out of reach in this plan: both service headers `#include "AppController.h"` (`OfflineQueueService.h:32`, `TicketSyncService.h:20`) for nested return types (`AppController::DeadLetterRestoreSummary` etc., `TrackerIssueFetchPack`), and `AppController.h:41` includes `LocalCacheManager.h` → `<SQLiteCpp/...>` (non-removable — the `std::unique_ptr<LocalCacheManager> Cache` member at `AppController.h:926` needs the full definition). So every fake-user TU still transitively reaches SQLiteCpp via `service header → AppController.h → LocalCacheManager.h`. The enforceable claim is therefore **construction purity + DIRECT-include purity**: no service-test TU or shared fake *constructs* `LocalCacheManager` or *directly* includes `LocalCacheManager.h` / `SqliteMemFixture.h` / `OfflineQueueTestEnv.h`. Gated by a grep check (§ Verification), not by a second CTest target (rejected non-goal). Full transitive purity is a follow-up: hoist `DeadLetterRestoreSummary`/`DeadLetterDeleteSummary` + the TicketSync pack types out of `AppController.h` so the service headers drop their `AppController.h` include — tracked in `docs/self-improvement/categories/debt.md` (the 2026-05-28 AppController god-object entry, item 1 — relocate the structs to `Source/Core/include/Sync/OfflineQueueTypes.h`).
+
+## Interface method inventory (locked — the complete `ISyncCache` surface, 28)
+
+All non-const, signatures per `Source/Core/include/Persistence/LocalCacheManager.h`:
+
+- *Tickets (TicketSyncService, 5)*: `SaveTicket(const std::string&, const CachedTicket&)` · `SaveTickets(const std::string&, const std::vector<CachedTicket>&)` · `DeleteTicket(const std::string&, const std::string&)` · `GetAllTickets(const std::string&) → std::vector<CachedTicket>` · `GetAllTicketIds(const std::string&) → std::vector<std::string>`
+- *Pending creates (OfflineQueueService, 10)*: `EnqueuePendingCreate(const std::string&, const std::string&) → std::int64_t` · `LoadPendingCreates() → std::vector<PendingCreate>` · `UpdatePendingCreate(std::int64_t, int, const std::string&)` · `DeletePendingCreate(std::int64_t)` · `ArchivePendingCreate(std::int64_t, const std::string&, const std::string&)` · `UpdatePendingCreatePayload(std::int64_t, const std::string&)` · `LoadDeadPendingCreates() → std::vector<DeadPendingCreate>` · `GetDeadPendingCreateCount() → size_t` · `RestoreDeadPendingCreate(std::int64_t) → bool` · `DeleteDeadPendingCreate(std::int64_t)`
+- *Pending field-edits (OfflineQueueService, 10)*: `EnqueuePendingFieldEdit(const std::string&, const std::string&, const std::string&, const std::string&, const std::string& = "", const std::string& = "", bool = false) → std::int64_t` · `LoadPendingFieldEdits() → std::vector<PendingFieldEditRecord>` · `UpdatePendingFieldEdit(std::int64_t, int, const std::string&)` · `DeletePendingFieldEdit(std::int64_t)` · `MarkFieldEditConflict(std::int64_t, const std::string&)` · `ResolveFieldEditConflict(std::int64_t, const std::string&)` · `ArchivePendingFieldEdit(std::int64_t, const std::string&, const std::string&)` · `LoadDeadPendingFieldEdits() → std::vector<DeadPendingFieldEdit>` · `RestoreDeadPendingFieldEdit(std::int64_t) → bool` · `DeleteDeadPendingFieldEdit(std::int64_t)`
+- *Meta flags (OfflineQueueService, 2)*: `HasCacheMetaFlag(const std::string&) → bool` · `SetCacheMetaFlag(const std::string&)`
+- *Via IssueCreatePipeline (1)*: `TryGetTicket(const std::string&, const std::string&, CachedTicket&) → bool` (also called 16× by `TicketSyncService.test.cpp` through `CacheImpl`).
+
+**C++14 hazard (record now, enforce at review):** `EnqueuePendingFieldEdit` carries default arguments — defaults on virtuals bind statically, so DIVERGENT defaults silently fork the API. Resolution: keep **identical** defaults on all three declarations (`ISyncCache`, `LocalCacheManager` override, `FakeSyncCache` override) with a review pin that they must match. (Default-free overrides were considered and rejected: the short-arity callers are *concrete-typed* — `LocalCacheManager.test.cpp` ~7 five-arg sites, `OfflineQueueBackendKey.test.cpp:239` four-arg via `CacheImpl` — so stripping defaults breaks them; the sole seam-side production call, `OfflineQueueService.cpp:527`, passes all 7 args explicitly and is indifferent.) All POD return/param types live in the SQLite-free `CachedTicketTypes.h` (all five: `CachedTicket`, `PendingCreate`, `PendingFieldEditRecord`, `DeadPendingCreate`, `DeadPendingFieldEdit`) — `ISyncCache.h` includes exactly that one header.
+
+## Slicing — two PRs (grill Q5; gate-safe split)
+
+~24 files across three strict zones + test infra is too heavy for one CodeRabbit pass and risks the per-PR file ceiling. Split so **each PR carries its own test delta** (a seam-only PR1 with no test change would turn the Test-delta gate RED → `tests-out-of-band` → a self-inflicted gate escape; this split avoids that):
+
+- **PR1 — production seam + interface (behavior-neutral).** New `ISyncCache.h`; `LocalCacheManager : public ISyncCache`; all consumer retypes (deps getters #5–6, adapter #11, `IssueCreatePipeline` #10, `OfflineQueueService.{h,cpp}` helpers #7–8, `TicketSyncService` include #9, #12); the include swaps #6/#9; `SyncCacheContract.test.cpp` **with only the real-`:memory:`-LCM instantiation**; ADR-0020 (Docs row #0). All existing tests stay green — the fakes' `LocalCacheManager* Cache()` becomes a legal **covariant-return override** of the retyped `ISyncCache* Cache()` base (both fake headers include `LocalCacheManager.h`, and row #4 makes LCM derive from `ISyncCache` in THIS same PR — so #4 must ship with the deps retypes), so the fakes are untouched. No test/service calls an off-interface method through `Cache()`, verified. The new contract test is the paired delta → Test-delta gate GREEN, no out-of-band label. Files: rows #1, #4–12, #3 (real half only).
+- **PR2 — test purity (the actual goal).** `FakeSyncCache.h` (#2); add the fake instantiation to the contract `TEST_CASE_TEMPLATE` (#3); `OfflineQueueServiceRealCacheSmoke.test.cpp` (#3b); repoint the fakes + the 8 service TUs (#13–16); the include/construction purity gate + its named exemptions (§ Verification); docs #17–18. Self-contained test delta.
+
+Both PRs accumulate on one branch per the feature-batching rule only if the combined diff stays under the ceiling; otherwise ship PR1, merge, then PR2 off updated develop. The plan doc archives with PR2 (the slice that completes the feature).
+
+## Files to modify
+
+**New (interface + fake):**
+1. `Source/Core/include/Persistence/ISyncCache.h` — NEW pure-virtual interface; the 28 inventory methods; includes **only** `CachedTicketTypes.h` (verified sufficient — all five PODs live there, no SQLiteCpp). Virtual dtor; `= 0` on every method; `EnqueuePendingFieldEdit` defaults identical to the concrete impls (see hazard above).
+2. `tests/support/FakeSyncCache.h` — NEW header-only in-memory `ISyncCache`; per-instance maps so each test starts empty; replicates the behavioral contract (dead-letter archive + the `RestoreDeadPending*` transactional scrub/attempts-reset, conflict-resolution outcome, backend-key namespacing, `TryGetTicket`, **and the SQL ordering/set semantics** — see #3) the services + pipeline depend on.
+3. `tests/Core/SyncCacheContract.test.cpp` — NEW contract suite: `TEST_CASE_TEMPLATE` (doctest v2.4.11, C++14-clean) over per-impl maker/fixture wrapper types (the two impls construct differently: `FakeSyncCache{}` vs `LocalCacheManager(":memory:")` — the real half needs **no `TestEnvGuard`**: LCM is `ConfigManager`-free, grill-verified). **Authoring order = the fidelity gate (grill Q3, option 2):** write this suite FIRST against the real LCM (passes by definition — it's the spec; lands in **PR1**), then in **PR2** build `FakeSyncCache` and add it as the second `TEST_CASE_TEMPLATE` type until the identical assertions are green against the fake. Every one of the 28 methods gets ≥1 behavioral assertion run against both impls; the fake is implemented to the suite, not hand-guessed. This TU transitively includes SQLiteCpp by design (real half). **Ordering contract pinned here (storage pre-flight, grill):** `LoadPendingCreates`/`LoadPendingFieldEdits` return FIFO by enqueue id (`ORDER BY id ASC`, `LocalCacheManager.cpp:561,913`); dead-letter loads return newest-first (`ORDER BY archived_at DESC, dead_id DESC`, `:695,1076`); `GetAllTickets` order is **unspecified** — the real method (`LocalCacheManager.cpp:376-431`) has NO `ORDER BY` (the `ORDER BY t.id` at `:445` is in the off-interface `ForEachTicket`); rows arrive in PK-index order as a planner artifact, not a contract, so the suite asserts **set-equality**, not sequence (MAJOR-2 fix; no consumer depends on order — `TicketSyncService.cpp:102` diffs by set, `BackendSwitchRace1081.test.cpp:195-196` checks size/empty only); meta flags are idempotent set-membership (`INSERT OR REPLACE`, `:619`); pending writes carry a **per-row backend key** captured at enqueue and returned by the global `Load*` (the #1081 latch — `EnqueuePendingCreate(backendKey, …)` at `:540`); `RestoreDeadPending{Create,FieldEdit}` apply a transactional scrub (fresh-create payload reset + attempts-reset, latest-row `ORDER BY dead_id DESC LIMIT 1` at `:808,1107`) — the most intricate surface logic, pinned explicitly (service calls it at `OfflineQueueService.cpp:379,416`).
+3b. `tests/Core/OfflineQueueServiceRealCacheSmoke.test.cpp` — NEW (grill Q3, option 3): ONE service-level case driving `OfflineQueueService` against a real `:memory:` `LocalCacheManager` (via `OfflineQueueTestEnv`), as the integration backstop that catches fake-divergence the per-method contract suite missed. This is the single service TU that stays SQLite-backed by design — **named-exempt** from the purity gate (see § Verification).
+
+**Production seam (strict zones: `Sync`, `Persistence`, `Tracker` + matching includes — retype chokepoint is `OfflineQueueService.{h,cpp}` + `IssueCreatePipeline.{h,cpp}`, not just the seam getters):**
+4. `Source/Core/include/Persistence/LocalCacheManager.h:31` — add `: public ISyncCache`; `override` the 28 inventory methods (signatures unchanged; `EnqueuePendingFieldEdit` keeps its defaults, identical to the interface's); include `ISyncCache.h`.
+5. `Source/Core/include/IOfflineQueueDeps.h:27,37` — fwd-decl `class ISyncCache;` (was `LocalCacheManager`); `Cache()` returns `ISyncCache*`; reword the line-35 "Local SQLite cache" doc-comment backend-neutral.
+6. `Source/Core/include/ITicketSyncDeps.h:25,50` — retype; **swap** the `LocalCacheManager.h` include (line 25, present today for `CachedTicket`) for `CachedTicketTypes.h` — this include swap is load-bearing for include-purity, not cosmetic.
+7. `Source/Core/include/Sync/OfflineQueueService.h:49,203,215,222,230,238,242,247,275` — fwd-decl swap + retype the **8 private helper params** from `LocalCacheManager*` to `ISyncCache*`.
+8. `Source/Core/src/Sync/OfflineQueueService.cpp:797,877,941,977,1021,1058,1086,1161,1217,1375` — matching helper-definition retypes + 2 concrete-typed locals; include swap to `ISyncCache.h`. (Line 1270 passes the seam cache into `IssueCreatePipeline::Run` — compiles only after #10.)
+9. `Source/Core/include/Sync/TicketSyncService.h:21` — **swap** the `LocalCacheManager.h` include (today: "For CachedTicket inside StreamingSyncState") for `CachedTicketTypes.h` — required for direct-include purity. (NOTE: the `#include "AppController.h"` at `TicketSyncService.h:20` / `OfflineQueueService.h:32` stays — it's the deferred transitive-SQLite residual per CRITICAL-1, tracked in `debt.md`; not removed here.)
+10. `Source/Core/include/Tracker/IssueCreatePipeline.h:13,61` + `Source/Core/src/Tracker/IssueCreatePipeline.cpp:7,255,312` — fwd-decl/include swap + retype BOTH `cache` params: the `Run` definition (`.cpp:312`) AND the file-internal helper `RunUpdateExisting` (`.cpp:255`, called from `Run` at 326). The cache *calls* (`TryGetTicket` :297, `SaveTicket` :302,368) need no edit — both on the interface. Other `Run` callers stay source-compatible: `AppController_IssueCreateOffline.cpp:119,153` pass concrete LCM (implicit upcast), `BugReportService.cpp:543` (`Source/Core/src/Diagnostics/`) passes nullptr.
+11. `Source/Core/include/GridContextDepsAdapter.h:49` + `Source/Core/src/GridContextDepsAdapter.cpp:25` — production `Cache()` returns `ISyncCache*` (returns `app_.Cache.get()`, the app-owned `std::unique_ptr<LocalCacheManager>` at `AppController.h:926` — upcast-clean).
+12. `Source/Core/src/Sync/TicketSyncService.cpp` — include verification only (no signature changes; its 5 ticket calls + null-checks go through the deps seam).
+
+**Tests repointed to the fake (the 7 `FakeOfflineQueueDeps`/`FakeTicketSyncDeps`-using TUs + the pipeline TU):**
+13. `tests/support/FakeOfflineQueueDeps.h` — `CacheImpl` becomes `FakeSyncCache` (was `LocalCacheManager(":memory:")`); `Cache()` returns `ISyncCache*`.
+14. `tests/support/FakeTicketSyncDeps.h` — same.
+15. `tests/Core/IssueCreatePipelineIntegration.test.cpp` — rewrite off `SqliteMemFixture::Get()` (returns concrete LCM*) onto `FakeSyncCache` (~15 call sites; needs `TryGetTicket` on the fake).
+16. `tests/CMakeLists.txt` — no link-group move exists (target-wide linkage); instead: register the two new TUs (`SyncCacheContract.test.cpp`, `OfflineQueueServiceRealCacheSmoke.test.cpp`); ensure the repoint set — `BackendSwitchRace1081`, `OfflineQueueServiceRuntime`, `OfflineQueueTwoBackendReplay`, `OfflineQueueBackendSwap`, `OfflineQueueBackendKey`, `TicketSyncService`, **`TrackerBackendFactoryConfig`** (uses `FakeTicketSyncDeps` — easy to miss), `IssueCreatePipelineIntegration` — has no lingering `LocalCacheManager` construction; keep `LocalCacheManager*.test.cpp` / `LocalCacheTicketsV2Migration.test.cpp` / contract suite SQLite-backed. (`OfflineFieldEditMerge.test.cpp` is already pure — no action.) Also fix two stale comments: the imprecise `tests/CMakeLists.txt:681-682` note claiming `IssueCreatePipeline.cpp` "pulls SQLite/Statement directly" (it's transitive via the LCM include), and `OfflineQueueServiceRuntime.test.cpp:2`'s header comment stating the TU is backed by `LocalCacheManager(":memory:")` (stale after the PR2 repoint to `FakeSyncCache`).
+
+**Docs:**
+0. `docs/adr/0020-sync-cache-seam-include-not-link-purity.md` — NEW (ships in **PR1**); the decision record. Already drafted at grill time.
+17. `.coderabbit.yaml:113-127` — the carve-out text asserts "no `ISyncCache` seam to fake", which this plan makes false — re-tighten: service tests are pure; `:memory:` SQLite remains legitimate ONLY for the LCM impl TUs + migration + the contract suite's real half.
+18. `docs/self-improvement/categories/tooling.md:506` — mark the 2026-06-09 `.coderabbit.yaml`-drift entry resolved (link this plan).
+
+## Existing utilities reused
+
+- `CachedTicket` / `PendingCreate` / `PendingFieldEditRecord` / `DeadPendingCreate` / `DeadPendingFieldEdit` PODs — `Source/Core/include/CachedTicketTypes.h:13-136` (verified SQLite-free — includes only `<cstdint>/<string>/<unordered_map>`; the precedent for this exact decoupling). The interface signatures reuse these verbatim.
+- `GridContextDepsAdapter::Cache()` — `Source/Core/src/GridContextDepsAdapter.cpp:25` (decl `GridContextDepsAdapter.h:49`) — the single production seam getter; only its return type changes.
+- `OfflineQueueTestEnv.h` `TestEnvGuard` — `tests/support/OfflineQueueTestEnv.h` — retained only for the real-LCM contract instantiation + impl tests; service tests no longer need its temp-dir/config setup once on the fake.
+- doctest `TEST_CASE_TEMPLATE` — pinned doctest v2.4.11 (`tests/CMakeLists.txt:8-11`), C++14-clean — for the dual-impl contract suite (#3).
+
+## UX Pillar callouts
+
+- **Pillar 1 (perf, 144 Hz / 6.94 ms steady-state)**: no impact — adds one virtual-call indirection on cache access; all cache calls are already off the UI thread (replay/sync workers). Negligible, not in any render path.
+- **Pillar 2 (UI-thread never blocks > 100 ms)**: no impact — no new sync I/O; the seam is a pure retype of existing off-thread calls.
+- **Pillar 3 (never crash)**: virtual dtor on `ISyncCache` mandatory (interface deletion safety); fake uses RAII containers; net reduction in test reliance on real DB lifecycle.
+- **Pillar 4 (accessibility)**: N/A — no UI surface.
+
+## Perf-review-system gates (mandatory when diff touches `Source/Core/`; else `N/A`)
+
+Touches `Source/Core/` → gates apply, but the change is behavior-neutral (interface retype, no algorithm change):
+
+1. **PR-fast CI** — scenario most exercising the path: the offline-replay / ticket-sync scenarios. No perf delta expected (one vtable indirection on already-off-thread calls). Run the named scenario per § Verification pre-push.
+2. **Pillar 2 static scanner** — no new `ImGui::*`-reachable sync I/O. N/A.
+3. **Dispatcher drain** — does not touch `MainThreadDispatcher::Drain()`. N/A.
+4. **Visible-cue bucket-E harness** — no new >100 ms sync path. N/A.
+5. **Marker inventory** — adds no `SMATCHET_UI_PERF_SCOPE` markers. N/A.
+
+**Override**: not anticipated; if the vtable indirection shows a measurable regression, `perf-out-of-band` + baseline bump.
+
+## Risks / non-goals
+
+- **RISK — fake-vs-real semantic drift (central):** a hand-written `FakeSyncCache` could diverge from `LocalCacheManager`'s real semantics, so the "pure" tests would validate the fake, not production. **Mitigation = two gates, not a prose promise (grill Q3):** (1) per-method — the contract suite (#3) is authored against the real LCM first and the fake is built to pass it, so all 28 methods have dual-impl behavioral assertions; (2) per-service-path — one real-`:memory:` service smoke (#3b) exercises `OfflineQueueService` end-to-end against the true substrate, catching divergence the per-method suite missed. "Trust the fake" is thereby reduced to "trust two CI gates."
+- **RISK — interface surface creep / mis-scope:** mitigated — the surface is **pinned** in § Interface method inventory (verified call-site-by-call-site against `LocalCacheManager.h`, including the `IssueCreatePipeline` indirection a naive `Cache()->` grep misses); compiler enforces completeness via `override`.
+- **RISK — default-args-on-virtual (C++14 static binding):** divergent defaults across `ISyncCache` / `LocalCacheManager` / `FakeSyncCache` would silently fork the API by call-site static type. **Mitigation:** identical defaults on all three declarations (concrete-typed test callers rely on them — see hazard note); review pin that they match; the contract suite exercises the defaulted arity through both impls.
+- **RISK — strict-zone churn (now `Sync` + `Persistence` + `Tracker`):** any violation fails CI. **Mitigation:** changes are mechanical retypes + `override` tags; no logic edits; dual-target build + full lint gate before push.
+- **RISK — `CachedTicket` include graph:** `ITicketSyncDeps.h:25` AND `TicketSyncService.h:21` pull `LocalCacheManager.h` for `CachedTicket`. **Mitigation:** both swaps to `CachedTicketTypes.h` are explicit file rows (#6, #9); the direct-include purity gate catches a missed one. **Known residual (CRITICAL-1, accepted):** the service headers ALSO `#include "AppController.h"` (`OfflineQueueService.h:32`, `TicketSyncService.h:20`) → `AppController.h:41` → `LocalCacheManager.h` → SQLiteCpp, so TUs stay *transitively* SQLite-coupled. This is why the gate is direct-include, not transitive; closing it (hoist the nested summary/pack types out of `AppController.h`) is the `debt.md` follow-up, not this plan.
+- **Non-goal — integration test lane / second CTest target:** the rejected alternative (new `SmatchetIntegrationTests` executable). Reaffirmed after review finding C1: `SmatchetTests` keeps target-wide SQLiteCpp linkage; this plan's claim is include/construction purity, not link purity.
+- **Non-goal — link-level SQLite removal from `SmatchetTests`:** impossible while the impl tests + contract suite real-half exist in the single target; explicitly not claimed.
+- **Non-goal — full LCM API on the interface:** only service-consumed methods; AppController/chat/migration keep the concrete class.
+- **Non-goal — role-sliced interfaces à la `ITrackerBackend` (grill Q2):** rejected. The Tracker role-split earns its keep because capabilities there are genuinely optional (a backend returns `nullptr` for a role it doesn't support; callers degrade). The sync cache has zero capability variance — both impls (real + fake) implement all 28 methods, always — so slicing buys header count, not expressiveness. Revisit only if a consumer needs a compile-enforced subset (e.g. the pipeline's 2-method `TryGetTicket`/`SaveTicket` footprint); cheap later refactor.
+- **Non-goal — making `LocalCacheManager*.test.cpp` pure:** those test SQLite itself and stay SQLite-backed by design.
+
+## Verification
+
+- **Bucket A (pure-logic ctest, `test-rig`)**: the 8 repointed TUs (the 7 fake-users incl. `TrackerBackendFactoryConfig` + `IssueCreatePipelineIntegration`) build + pass on `FakeSyncCache`. New `SyncCacheContract.test.cpp` passes against **both** `FakeSyncCache` and real `:memory:` LCM (per-method fidelity gate); `OfflineQueueServiceRealCacheSmoke.test.cpp` passes against real LCM (per-service-path backstop). Full rig green (the #1104 baseline was 1524/1524).
+- **Construction + direct-include purity gate (the deliverable's enforcement — replaces the unprovable "no SQLiteCpp link"; transitive purity deferred per CRITICAL-1)**: a grep check, **scoped to a fixed file set** = {the 8 repointed TUs} ∪ {`tests/support/Fake{OfflineQueue,TicketSync}Deps.h`, `tests/support/FakeSyncCache.h`}, asserting (a) none *constructs* `LocalCacheManager(` and (b) none *directly* `#include`s `LocalCacheManager.h` / `SqliteMemFixture.h` / `OfflineQueueTestEnv.h`. (Transitive `<SQLiteCpp/...>` via `AppController.h` is the known, deferred residual — NOT checked here; the debt entry tracks closing it.) Wire it as a small bash check alongside the existing source-list guard in `tests/CMakeLists.txt` / `scripts/dev` so regression is CI-caught, not convention. **Named exemptions (grill Q3 + by-design SQLite TUs):** `SyncCacheContract.test.cpp` (real half), `OfflineQueueServiceRealCacheSmoke.test.cpp` (the retained service backstop), the impl TUs (`LocalCacheManager*.test.cpp`, `LocalCacheTicketsV2Migration.test.cpp`), and the retained support fixtures (`SqliteMemFixture.h`, `OfflineQueueTestEnv.h`) all legitimately construct `LocalCacheManager` — they're outside the scoped set / on the allow-list; everything in the repoint set must be clean.
+- **Bucket E (ImGui Test Engine)**: N/A — no UI change.
+- **#1081 regression-coverage preservation (grill Q4, verified)**: moving `BackendSwitchRace1081.test.cpp` onto `FakeSyncCache` does NOT weaken the just-shipped crash-fix. Its race assertions are cache-impl-agnostic — modeled on fake-deps hooks/counters (`BackendGenerationImpl`, `OnCheckedRefreshLocalData`, synchronous `BackgroundTaskRunner`, `PublishCallsUnderLock` cross-thread try_lock, `RefreshLocalDataCalls`), none dependent on real SQLite timing. The sole load-bearing real-cache semantic is the captured-key replay (`BackendSwitchRace1081.test.cpp:192,195,196`: pending-create consumed + `GetAllTickets("Jira")==1` / `GetAllTickets("GitHub")` empty), which is double-pinned by the contract suite (#3 key-namespacing) + the real-cache smoke (#3b). Net: same coverage.
+- **Bucket D (bash-driver scenario / sanitizer)**: run the offline-replay + backend-swap scenarios under the ASan/UBSan presets to confirm the retype introduced no lifetime regression (the #1081 race path runs through this seam).
+- **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target — `ISyncCache.h` must compile clean under DX12; no GLFW/GL leakage).
+- **Doc validation (blocks plan-doc PRs)**: `scripts/dev/test-docs.sh` green.
+- **Plan stress-test — `grill-with-docs`**: stress-test this plan against the domain model (esp. the LCM contract surface + ADR-0012 backend-ownership) before finalising; record the outcome. **Not yet run — do before implementation.**
+- **Manual residue**: none anticipated; if the contract suite can't cover a behavior the services rely on, file a `tooling.md` entry naming the gap.
+
+## Out of scope (flagged, not designed)
+
+**Deferral residue-sweep (keep this note)** — before finalising, grep `**/CONTEXT*.md`, `docs/adr/`, `agents/*.md`, `docs/self-improvement/categories/` for stray refs to the deferred "integration lane" / "ILocalCache" (the backlog entry's original term for this interface, renamed `ISyncCache` at grill — grep BOTH) follow-up and revise/delete (the `tooling.md` 2026-06-09 entry is the known one).
+
+- **`ITrackerBackend`-style shared ownership for the cache** — out of scope; the cache is single-owned by AppController. No-action.
+- **Async/threaded cache interface** — the interface mirrors today's synchronous (off-thread-called) API; no async redesign. Follow-up only if a future need appears.
+- **Migrating chat / schema-migration tests off SQLite** — they test SQLite behavior; intentionally unchanged.
+
+## Implementation log
+*(populated post-ship)*
+
+## Deviations from plan
+*(populated post-ship)*
+
+## Verification (actual)
+*(populated post-ship)*
+
+## Archive (post-ship — DO IN THIS PR, never a follow-up)
+1. *flip the § Status header to `shipped`,*
+2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
+3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
