@@ -653,7 +653,14 @@ void OnConfigChanged(android_app* app, AndroidHostState& s) {
     }
     SmatchetApplyImGuiDefaultFontWithExtendedGlyphs(io); // rebuild the CPU atlas at the new size
     ImGui_ImplOpenGL3_DestroyDeviceObjects();            // drop the stale font texture + shaders
-    ImGui_ImplOpenGL3_CreateDeviceObjects();             // re-upload at the new atlas size
+    if (!ImGui_ImplOpenGL3_CreateDeviceObjects()) {      // re-upload at the new atlas size
+        // GL re-upload failed: keep s.densityScale and the theme scale on the OLD value so a later
+        // CONFIG_CHANGED (or the backend's lazy per-frame device-object creation, which retries when
+        // FontTexture==0) can recover, rather than asserting a scale whose font texture never landed.
+        SLOGE("CONFIG_CHANGED CreateDeviceObjects failed (density %.2f) — keeping old scale %.2f for retry",
+              newScale, s.densityScale);
+        return;
+    }
     SmatchetTheme::ReassertHostDensityScale(newScale);   // relative re-scale — no compounding
     s.densityScale = newScale;
 
@@ -787,7 +794,11 @@ void android_main(android_app* app) {
         }
         if (IsRenderable(state)) {
             RenderOneFrame(app, state);
-        } else if (state.hasSurface && !state.coreBooted && !state.bootPanelDrawn) {
+        } else if (state.hasSurface && !state.coreBooted && !state.bootPanelDrawn &&
+                   state.hasFocus && !state.paused) {
+            // item 13: mirror IsRenderable's focus/pause gate so the boot panel never draws/swaps a
+            // frame while backgrounded or unfocused (Pillar 1/2). On resume WantImmediatePoll returns
+            // !bootPanelDrawn == true, spins the loop back here, and the panel paints then.
             DrawBootErrorPanel(state); // Core boot failed → raw-GL error panel (item 7)
             state.bootPanelDrawn = true;
         }
