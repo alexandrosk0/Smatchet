@@ -4,13 +4,9 @@
 // tooltip carries the long-form explanation that used to live inline in the
 // panel. Pairs with a shortened visible label — the full original text moves
 // into the tooltip, keeping panels compact without losing information.
-//
 // Caller is responsible for placement (ImGui::SameLine() before the marker).
 // The tooltip fires inside ImGui::BeginDisabled blocks too
-// (ImGuiHoveredFlags_AllowWhenDisabled) so help stays reachable on disabled
-// controls. If a future caller places the marker inside BeginTable, the
-// hover region auto-clips to the cell — push ImGuiHoveredFlags_AllowOverlap
-// upstream if that ever bites.
+// (ImGuiHoveredFlags_AllowWhenDisabled) so help stays reachable there.
 namespace SmatchetHelpMarker {
 
 // Localized variant: tooltip body resolved via SmatchetLocalization::T(key, fallback).

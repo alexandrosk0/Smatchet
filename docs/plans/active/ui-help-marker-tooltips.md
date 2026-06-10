@@ -154,6 +154,32 @@ Localization: new `<panel>.<field>.{short,help}` keys appear inline at the `T(ke
 - **`scripts/dev/test-all.sh`** — once at end of each slice (per process-rules: at most one full run per slice).
 - **`BeginDisabled` regression check** — explicitly hover the (?) inside the Assistant custom-endpoint disabled group (Slice 0 demo) and confirm the tooltip fires. This is the canonical test of the `AllowWhenDisabled` flag.
 
+## Implementation log
+
+All four slices shipped together on one branch (`feat/help-marker`, commit `917f45d9`) per the PR-batching rule (one PR per logical feature) — the per-slice "pause for tone thumbs-up" was waived by the user's "go autonomously until ready for visual approval".
+
+- **Slice 0** — `SmatchetHelpMarker.{h,cpp}` + Assistant custom-endpoint demo (dynamic `std::string` path, inside `BeginDisabled`). Glyph fallback checks `SmatchetAreFaIconsLoaded()` per call.
+- **Slice 1a** — Assistant remaining sites (reasoning_effort / agents.md tooltips) + Whisper PTT.
+- **Slice 1b** — Local (DB recreate intro, storage-mode paragraphs, typography/language/vsync/wheel/date tooltips), Tracker (read-only, inherit-token trio, GitHub repo), Integrations (MCP bind/token/lua), Templates (long-text modal, duration suggestions).
+- **Slice 2** — Annotate window (4 sites) + Annotate config blurb, Perf CPU/Network intros, Offline-queue unknown-conflict pane, AI-assistant per-turn effort, Bug-report screenshot redaction, update banner.
+- **Localization** — ~90 `{key, en, fr}` entries (`<panel>.<field>.{short,help}`). `.short` English columns byte-match callsite literals (localized-ImGui source lookup); `.help` bodies resolve by key. Drift check (29 `.short` entries grep-verified against `Source/Core/src/Ui/`) passed pre- and post-clang-format.
+
+## Deviations
+
+- **Annotate TUs unlocalized** — `AnnotateAnalysisUi.cpp` + `AnnotateAnalysisUi_Window.cpp` lack the `#define ImGui SmatchetLocalizedImGui` TU pattern; markers there use plain literals via `RenderText`, no fr entries. Localizing those TUs is out of scope.
+- **Button-action tooltips left unchanged** (Annotate: Ask AI / Show Table / Show Raw Text / Cancel) — already hover-only with zero visible footprint; adding markers to a right-aligned button row risks layout churn for no vertical-space win.
+- **`SmatchetGridHeaderUi.cpp` skipped** — MCP chip texts are already tooltips and ≤12 words; below threshold.
+- **Update banner shortened without marker** — only the word "standalone" dropped; remaining text ≤8 words, nothing left for a tooltip.
+- **Consent/destructive/security texts kept visible verbatim** — endpoint-consent risk line, DB delete confirm modal + recreate button tooltip, Android plaintext-token warning. Informed-consent text must not hide behind a hover.
+- **FA TTF configure-gate workaround** — `CMakeLists.txt` POST_BUILD copy of `fa-solid-900.ttf` is gated on configure-time `EXISTS`; the TTF was absent at configure so the copy never registered. Manually copied next to the exe + into `assets/fonts/` so any future reconfigure registers it.
+
+## Verification (results)
+
+- Bucket A: `test-lint-rules.sh --diff origin/develop` all PASS (3 dup WARNs = pre-existing include-block clone pattern, calibration phase; comment-ratio WARN on the 20-line helper header). Dual-target build (`ninja-iter-msvc`, SmatchetStandalone + SmatchetCore_DX12) exit 0.
+- Localization drift check: 29 `.short` entries byte-match UI callsite literals — clean.
+- Bucket C / visual-validation exception: standalone launched for user verdict (markers in Preferences tabs, Annotate, Perf, Offline conflict, Bug report, AI assistant; `AllowWhenDisabled` hover inside the Assistant disabled block; fr-FR spot check).
+- Bucket E: deferred — there is no `ux` backlog category (closed set per `AGENT_SELF_IMPROVEMENT.md`), so the coverage gap is filed in `docs/self-improvement/categories/test.md` (P2: bucket-E hover coverage + AllowWhenDisabled contract), and the keyboard-only reachability regression (user-observable, Pillar 4) is to be elevated to a GitHub Issue at ship time per issue-triage.md.
+
 ## Out of scope
 
 - Rewriting log/CLI/MCP strings (this task is UI-only; AGENTS.md `LOG_*` rule untouched).
