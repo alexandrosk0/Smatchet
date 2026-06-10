@@ -52,7 +52,8 @@ std::vector<std::string> SortedIds(const std::vector<CachedTicket>& v) {
 } // namespace
 
 // --- Tickets: backend-key namespacing + GetAllTickets set-equality + Try/Delete round-trip ---
-TEST_CASE_TEMPLATE("ISyncCache: ticket storage is backend-key namespaced; GetAllTickets is a set", M, RealCacheMaker, FakeCacheMaker) {
+TEST_CASE_TEMPLATE("ISyncCache: ticket storage is backend-key namespaced; GetAllTickets is a set", M, RealCacheMaker,
+                   FakeCacheMaker) {
     auto c = M::Make();
     c->SaveTicket("Jira", MakeTicket("PROJ-1", "a"));
     c->SaveTickets("Jira", {MakeTicket("PROJ-2", "b"), MakeTicket("PROJ-3", "c")});
@@ -194,8 +195,8 @@ TEST_CASE_TEMPLATE("ISyncCache: cache-meta flags are idempotent set-membership",
 }
 
 // --- Archive field mapping + fresh-create restore scrub (PR2) -------------------------------
-TEST_CASE_TEMPLATE("ISyncCache: archive maps terminal fields; restore scrubs a fresh-create payload", M,
-                   RealCacheMaker, FakeCacheMaker) {
+TEST_CASE_TEMPLATE("ISyncCache: archive maps terminal fields; restore scrubs a fresh-create payload", M, RealCacheMaker,
+                   FakeCacheMaker) {
     auto c = M::Make();
     // last_error: terminalError wins when non-empty, else the row's own LastError survives.
     const std::int64_t a = c->EnqueuePendingCreate("Jira", "not-json");
@@ -227,8 +228,8 @@ TEST_CASE_TEMPLATE("ISyncCache: archive maps terminal fields; restore scrubs a f
 
 // --- Dead-letter key + merge-bases round-trip (moved up from OfflineQueueBackendKey.test.cpp
 // in PR2 — now pinned against BOTH impls) ---------------------------------------------------
-TEST_CASE_TEMPLATE("ISyncCache: dead-letter rows carry the key; restore re-queues under the original key with bases",
-                   M, RealCacheMaker, FakeCacheMaker) {
+TEST_CASE_TEMPLATE("ISyncCache: dead-letter rows carry the key; restore re-queues under the original key with bases", M,
+                   RealCacheMaker, FakeCacheMaker) {
     auto c = M::Make();
     const std::int64_t createId = c->EnqueuePendingCreate("Plane", "{\"k\":1}");
     c->ArchivePendingCreate(createId, "max_attempts", "terminal");
@@ -247,6 +248,13 @@ TEST_CASE_TEMPLATE("ISyncCache: dead-letter rows carry the key; restore re-queue
     std::vector<DeadPendingFieldEdit> deadEdits = c->LoadDeadPendingFieldEdits();
     REQUIRE(deadEdits.size() == 1u);
     CHECK(deadEdits.front().BackendKey == "GitHub");
+    // Discard path: a second archived edit removed permanently via DeleteDeadPendingFieldEdit.
+    const std::int64_t editId2 = c->EnqueuePendingFieldEdit("GitHub", "OWN/REPO#8", "title", "{}");
+    c->ArchivePendingFieldEdit(editId2, "cap", "err");
+    REQUIRE(c->LoadDeadPendingFieldEdits().size() == 2u);
+    c->DeleteDeadPendingFieldEdit(c->LoadDeadPendingFieldEdits().front().DeadId); // newest = editId2's
+    REQUIRE(c->LoadDeadPendingFieldEdits().size() == 1u);
+
     REQUIRE(c->RestoreDeadPendingFieldEdit(editId));
     CHECK(c->LoadDeadPendingFieldEdits().empty());
     std::vector<PendingFieldEditRecord> activeEdits = c->LoadPendingFieldEdits();
@@ -261,8 +269,8 @@ TEST_CASE_TEMPLATE("ISyncCache: dead-letter rows carry the key; restore re-queue
 }
 
 // --- Resolve clears BOTH bases (production UPDATE column list; HasOriginalValue untouched) --
-TEST_CASE_TEMPLATE("ISyncCache: ResolveFieldEditConflict clears flag, context, and both bases", M,
-                   RealCacheMaker, FakeCacheMaker) {
+TEST_CASE_TEMPLATE("ISyncCache: ResolveFieldEditConflict clears flag, context, and both bases", M, RealCacheMaker,
+                   FakeCacheMaker) {
     auto c = M::Make();
     const std::int64_t e = c->EnqueuePendingFieldEdit("Jira", "PROJ-1", "summary", "{}", "rich", "scalar", true);
     c->MarkFieldEditConflict(e, "{\"kind\":\"scalar\"}");

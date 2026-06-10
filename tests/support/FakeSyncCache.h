@@ -173,7 +173,8 @@ class FakeSyncCache : public ISyncCache {
         int idx = -1;
         for (int i = static_cast<int>(deadCreates_.size()) - 1; i >= 0; --i) {
             if (deadCreates_[static_cast<size_t>(i)].OriginalId == originalPendingId) {
-                if (idx < 0 || deadCreates_[static_cast<size_t>(i)].DeadId > deadCreates_[static_cast<size_t>(idx)].DeadId) {
+                if (idx < 0 ||
+                    deadCreates_[static_cast<size_t>(i)].DeadId > deadCreates_[static_cast<size_t>(idx)].DeadId) {
                     idx = i;
                 }
             }
@@ -310,7 +311,8 @@ class FakeSyncCache : public ISyncCache {
         int idx = -1;
         for (int i = static_cast<int>(deadEdits_.size()) - 1; i >= 0; --i) {
             if (deadEdits_[static_cast<size_t>(i)].OriginalId == originalPendingId) {
-                if (idx < 0 || deadEdits_[static_cast<size_t>(i)].DeadId > deadEdits_[static_cast<size_t>(idx)].DeadId) {
+                if (idx < 0 ||
+                    deadEdits_[static_cast<size_t>(i)].DeadId > deadEdits_[static_cast<size_t>(idx)].DeadId) {
                     idx = i;
                 }
             }

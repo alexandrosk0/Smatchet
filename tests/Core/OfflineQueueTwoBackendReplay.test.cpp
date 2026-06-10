@@ -50,9 +50,7 @@ namespace {
 // manager and carries this context's backend key + its own `FakeTrackerClient` backend.
 class SharedCacheDeps : public FakeOfflineQueueDeps {
   public:
-    SharedCacheDeps(ISyncCache* shared, std::string key) : shared_(shared) {
-        CacheBackendKeyImpl = std::move(key);
-    }
+    SharedCacheDeps(ISyncCache* shared, std::string key) : shared_(shared) { CacheBackendKeyImpl = std::move(key); }
     ISyncCache* Cache() override { return shared_; }
 
   private:

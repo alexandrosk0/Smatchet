@@ -304,7 +304,6 @@ TEST_CASE("tickets_v2 namespacing: same numeric id under two backend keys stays 
     CHECK(ghCount == 0);
 }
 
-
 // ============================================================================
 // Pending-queue backend_key migrations — moved here from OfflineQueueBackendKey.test.cpp
 // (ilocalcache-seam PR2): these are LocalCacheManager IMPL tests (file-backed DB, raw legacy

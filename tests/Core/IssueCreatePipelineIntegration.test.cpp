@@ -25,8 +25,8 @@
 #include <string>
 #include <vector>
 
-using smatchet_tests::FakeTrackerClient;
 using smatchet_tests::FakeSyncCache;
+using smatchet_tests::FakeTrackerClient;
 
 namespace {
 
@@ -40,7 +40,6 @@ class FakeCacheFixture {
   private:
     FakeSyncCache cache_;
 };
-
 
 TrackerField MakeField(const std::string& id, TrackerFieldFamily family = TrackerFieldFamily::Text) {
     TrackerField f;

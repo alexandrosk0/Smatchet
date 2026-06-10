@@ -33,6 +33,8 @@ namespace {
 /// everything else (backend, catalog, background-task runner) stays the in-memory fake.
 class RealCacheOfflineQueueDeps : public FakeOfflineQueueDeps {
   public:
+    // NOTE: the base's `CacheImpl` (FakeSyncCache) still exists but is ORPHANED here — never
+    // read `deps.CacheImpl` in this TU (it would silently target the fake, not the real cache).
     ISyncCache* Cache() override { return &real_; }
     LocalCacheManager& RealCache() { return real_; }
 

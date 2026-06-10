@@ -16,7 +16,7 @@
 //      ("Create('Jira') never called after a GitHub switch") is exactly the
 //      PaneSyncKickStillCurrent==false branch dropping SyncPaneWithBackend.
 //
-// Per-case isolation: every TEST_CASE owns its fixtures (:memory: cache, fresh service).
+// Per-case isolation: every TEST_CASE owns its fixtures (in-memory FakeSyncCache, fresh service).
 
 #include "../support/FakeOfflineQueueDeps.h"
 #include "../support/FakeTicketSyncDeps.h"

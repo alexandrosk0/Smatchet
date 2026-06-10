@@ -799,7 +799,15 @@ set(_smatchet_pure_sync_test_files
     support/FakeSyncCache.h)
 foreach(_pf IN LISTS _smatchet_pure_sync_test_files)
     file(READ "${CMAKE_CURRENT_SOURCE_DIR}/${_pf}" _pf_text)
-    if(_pf_text MATCHES "LocalCacheManager[ \t]*\\(")
+    # Re-configure when a guarded file changes — file(READ) alone registers no dependency, so a
+    # violation introduced after the last configure would pass local incremental builds.
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${_pf}")
+    # [>({] covers the construction forms actually in use: make_unique<LocalCacheManager>(...),
+    # unnamed brace-init LocalCacheManager{...}, and temporaries LocalCacheManager(...). A NAMED
+    # stack variable (`LocalCacheManager mgr(...)`) is not cheaply text-matchable — the
+    # direct-include rule below is the backstop for that form. (Review HIGH: the original
+    # `[ \t]*\(` pattern matched NONE of the real construction forms — vacuous.)
+    if(_pf_text MATCHES "LocalCacheManager[ \t]*[>({]")
         message(FATAL_ERROR
             "tests/${_pf}: constructs LocalCacheManager — this TU is in the SQLite-free service-test "
             "set (ADR-0020 sync-cache purity). Use FakeSyncCache, or move the case to an impl TU "

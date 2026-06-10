@@ -30,7 +30,6 @@ using smatchet_tests::TestEnvGuard;
 
 namespace {
 
-
 IssueDraft MakeDraft(const std::string& summary) {
     IssueDraft d;
     d.ProjectKey = "PROJ";
@@ -50,7 +49,6 @@ void PrimeCreateHappy(FakeOfflineQueueDeps& deps) {
 }
 
 } // namespace
-
 
 TEST_CASE("queue backend_key replay matching: context A's tick replays only A-rows; B-rows stay queued" *
           doctest::test_suite("[high-risk]")) {
@@ -113,7 +111,6 @@ TEST_CASE("queue backend_key replay matching: field-edit tick is backend-scoped 
     CHECK(remaining.front().Attempts == 0);
     CHECK(svc.GetDeadPendingFieldEdits().empty());
 }
-
 
 TEST_CASE("dead-letter restore via the SERVICE preserves the original backend key when the focused key differs "
           "(CR-951-1) and re-queues restored creates as fresh creates" *
