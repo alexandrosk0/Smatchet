@@ -202,6 +202,18 @@ class SmatchetUI {
     void drawMobilePageContent(AppController& app, UiDrawSession& d);
     void drawMobileBottomNav(AppController& app, UiDrawSession& d);
     void drawMobileDrawer(AppController& app, UiDrawSession& d);
+    // Slice 5 — content dockspace + persistence. The Grid page hosts a local
+    // MobileContentDock split (list over issue-detail); other pages stay single-fill.
+    // The dock-windows helper submits the two dockable grid windows after the shell
+    // window ends, the seed helper builds the one-shot vertical split, and the detail
+    // helper renders the read-only field list for the active ticket. The two ini
+    // helpers toggle io.IniFilename so mobile dock geometry persists to a separate
+    // imgui_mobile.ini while the desktop imgui.ini stays untouched during mobile.
+    void drawMobileGridDockWindows(AppController& app, UiDrawSession& d, unsigned int gridDockId);
+    void seedMobileGridDock(unsigned int gridDockId);
+    void drawMobileGridDetail(AppController& app, UiDrawSession& d, GridPane* focused);
+    void drawMobileEnsureIniAttached(UiDrawSession& d);
+    void drawMobileRestoreDesktopIni(UiDrawSession& d);
     // Mode-independent floating overlays (toasts + app-update modal). Extracted from
     // drawSecondaryWindowsTail so both the desktop and mobile Draw paths render them.
     void drawGlobalOverlays(AppController& app, UiDrawSession& d);

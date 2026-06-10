@@ -152,7 +152,17 @@ struct UiDrawSession {
     MobilePage mobilePage = MobilePage::Grid;
     bool mobileDrawerOpen = false;
     bool mobilePageSeeded = false;
+    // mobileDockSeeded doubles as the "mobile ini session active" latch: set true on the
+    // Desktop->Mobile edge when the shell detaches io.IniFilename (so ImGui stops auto-saving
+    // the desktop imgui.ini) and routes WantSaveIniSettings to imgui_mobile.ini; cleared on the
+    // Mobile->Desktop edge after the desktop ini is re-attached + reloaded. See slice 5.
     bool mobileDockSeeded = false;
+    // True between mobile entry and the first MobileContentDock submit when no imgui_mobile.ini
+    // existed — triggers the one-shot DockBuilder seed (grid list / detail vertical split).
+    bool mobileDockNeedsSeed = false;
+    // Host-owned desktop imgui.ini path pointer captured on the Desktop->Mobile edge so the exact
+    // pointer is restored to io.IniFilename on the way back (re-attaches ImGui's desktop auto-save).
+    const char* savedDesktopIniFilename = nullptr;
 
     /// Merge-conflict resolution modal for offline field edits. See RICH_TEXT_EDITING_V2_PLAN.md PR-F.
     bool showConflictResolveModal = false;

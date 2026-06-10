@@ -14,6 +14,7 @@
 #include "SmatchetUiSession.h"
 #include "SmatchetUiModeIds.h"
 #include "Ui/SmatchetGridPaneWindows.h"
+#include "Ui/SmatchetFieldRender.h"
 #include "Logger.h"
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -21,6 +22,8 @@
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace
 // (matches SmatchetUI.cpp). Positional-layout primitives use the ::ImGui:: real API.
 #define ImGui SmatchetLocalizedImGui
+
+#include <ghc/filesystem.hpp>
 
 #include <string>
 #include <vector>
@@ -98,6 +101,10 @@ void SmatchetUI::drawMobileShell(AppController& app, UiDrawSession& d) {
         d.mobilePageSeeded = true;
     }
 
+    // Desktop->Mobile edge (slice 5): detach io.IniFilename + load imgui_mobile.ini so the
+    // mobile content-dock layout persists separately and the desktop imgui.ini is untouched.
+    drawMobileEnsureIniAttached(d);
+
     const float scale = mobileTouchDensityScale(d.cfg.MobileTouchDensity);
     const float appBarH = kAppBarBaseHeightPx * scale;
     const float navH = kBottomNavBaseHeightPx * scale;
@@ -118,6 +125,11 @@ void SmatchetUI::drawMobileShell(AppController& app, UiDrawSession& d) {
     const bool open = ::ImGui::Begin("##MobileShell", nullptr, kShellFlags);
     ::ImGui::PopStyleVar(3);
 
+    // The Grid page hosts a local DockSpace (list / detail split); other pages stay a single
+    // fill child. The dockspace id is captured here and its windows submitted AFTER the shell
+    // window closes (docked windows are top-level — the imgui_demo dockspace-host pattern).
+    const bool gridPage = (d.mobilePage == MobilePage::Grid);
+    unsigned int gridDockId = 0;
     if (open) {
         const float totalH = ::ImGui::GetContentRegionAvail().y;
         const float contentH = totalH - appBarH - navH;
@@ -127,10 +139,16 @@ void SmatchetUI::drawMobileShell(AppController& app, UiDrawSession& d) {
         }
         ::ImGui::EndChild();
 
-        if (::ImGui::BeginChild("##MobilePage", ::ImVec2(0.0f, contentH > 0.0f ? contentH : 0.0f), false)) {
-            drawMobilePageContent(app, d);
+        const float pageH = contentH > 0.0f ? contentH : 0.0f;
+        if (gridPage) {
+            gridDockId = ::ImGui::GetID("MobileContentDock");
+            ::ImGui::DockSpace(gridDockId, ::ImVec2(0.0f, pageH), ImGuiDockNodeFlags_None);
+        } else {
+            if (::ImGui::BeginChild("##MobilePage", ::ImVec2(0.0f, pageH), false)) {
+                drawMobilePageContent(app, d);
+            }
+            ::ImGui::EndChild();
         }
-        ::ImGui::EndChild();
 
         if (::ImGui::BeginChild("##MobileNav", ::ImVec2(0.0f, navH), false, ImGuiWindowFlags_NoScrollbar)) {
             drawMobileBottomNav(app, d);
@@ -139,8 +157,23 @@ void SmatchetUI::drawMobileShell(AppController& app, UiDrawSession& d) {
     }
     ::ImGui::End();
 
+    // Grid dock windows are top-level (submitted after the shell window) so they dock into
+    // MobileContentDock rather than nesting inside the shell.
+    if (gridPage && gridDockId != 0) {
+        drawMobileGridDockWindows(app, d, gridDockId);
+    }
+
     // Drawer is an overlay drawn after (above) the shell window.
     drawMobileDrawer(app, d);
+
+    // Persist mobile dock geometry: with io.IniFilename detached, ImGui raises
+    // WantSaveIniSettings on a dirty layout instead of auto-writing imgui.ini — route it to
+    // imgui_mobile.ini. Local sub-ms write, mirrors the desktop imgui.ini save path (Pillar 2).
+    ::ImGuiIO& io = ::ImGui::GetIO();
+    if (io.WantSaveIniSettings) {
+        ::ImGui::SaveIniSettingsToDisk(ConfigManager::GetMobileImGuiSettingsPath().c_str());
+        io.WantSaveIniSettings = false;
+    }
 }
 
 // Top app bar: hamburger toggles the drawer; the active page name is the title.
@@ -287,6 +320,174 @@ void SmatchetUI::drawMobileDrawer(AppController& app, UiDrawSession& d) {
         }
     }
     ::ImGui::End();
+}
+
+// Grid page dock windows (slice 5): the ticket list (reuses the embedded desktop grid body)
+// and the read-only issue-detail pane, docked top/bottom inside MobileContentDock. Submitted
+// as top-level windows after the shell closes. The focused-pane setup mirrors the desktop
+// drawGridPaneWindows loop (skipped in mobile) so the embedded grid renders against the
+// focused pane's live context.
+void SmatchetUI::drawMobileGridDockWindows(AppController& app, UiDrawSession& d, unsigned int gridDockId) {
+    if (d.mobileDockNeedsSeed) {
+        seedMobileGridDock(gridDockId);
+        d.mobileDockNeedsSeed = false;
+    }
+
+    SmatchetGridPaneWindows::EnsurePanesLoaded(d);
+    GridPane* focused = FindGridPaneById(d.gridPanes, d.focusedPaneId);
+    if (focused == nullptr && !d.gridPanes.empty()) {
+        focused = &d.gridPanes.front();
+        d.focusedPaneId = focused->id;
+    }
+
+    const ImGuiWindowFlags kDockWinFlags = ImGuiWindowFlags_NoCollapse;
+    if (::ImGui::Begin("Tickets###MobileGridList", nullptr, kDockWinFlags)) {
+        if (focused != nullptr) {
+            for (GridPane& p : d.gridPanes) {
+                p.focused = (p.id == focused->id);
+            }
+            app.SetFocusedPane(focused->id);
+            syncFocusedPaneWithActiveView(app, d, *focused, false);
+            const TrackerConnectivityBannerForUi trackerBanner = app.GetTrackerConnectivityBannerForUi(nullptr);
+            d.activePaneForDraw = focused;
+            drawActiveProjectWindow(app, d, *focused, trackerBanner, /*embedded=*/true);
+            d.activePaneForDraw = nullptr;
+        } else {
+            ::ImGui::TextDisabled("No grid pane.");
+        }
+    }
+    ::ImGui::End();
+
+    if (::ImGui::Begin("Details###MobileGridDetail", nullptr, kDockWinFlags)) {
+        drawMobileGridDetail(app, d, focused);
+    }
+    ::ImGui::End();
+}
+
+// One-shot DockBuilder seed: split MobileContentDock vertically, list on top (~60%), the
+// issue-detail pane on the bottom (~40%). Runs only when no imgui_mobile.ini existed on mobile
+// entry; afterwards the saved layout (incl. a user-dragged split ratio) wins.
+void SmatchetUI::seedMobileGridDock(unsigned int gridDockId) {
+    const ::ImGuiViewport* vp = ::ImGui::GetMainViewport();
+    ::ImGui::DockBuilderRemoveNode(gridDockId);
+    ::ImGui::DockBuilderAddNode(gridDockId, ImGuiDockNodeFlags_DockSpace);
+    ::ImGui::DockBuilderSetNodeSize(gridDockId, vp->WorkSize);
+    ImGuiID bottomNode = 0;
+    ImGuiID topNode = 0;
+    ::ImGui::DockBuilderSplitNode(gridDockId, ImGuiDir_Down, 0.40f, &bottomNode, &topNode);
+    ::ImGui::DockBuilderDockWindow("Tickets###MobileGridList", topNode);
+    ::ImGui::DockBuilderDockWindow("Details###MobileGridDetail", bottomNode);
+    ::ImGui::DockBuilderFinish(gridDockId);
+}
+
+// Read-only issue-detail pane: the active ticket's id + each visible column's label/value,
+// reusing the same date-display + clipped-text renderers as the grid cells. No editing here
+// (cells stay editable in the list); this is a compact master/detail preview for small screens.
+void SmatchetUI::drawMobileGridDetail(AppController& app, UiDrawSession& d, GridPane* focused) {
+    if (focused == nullptr) {
+        ::ImGui::TextDisabled("No grid pane.");
+        return;
+    }
+    GridPane& pane = *focused;
+    const std::string& activeId = pane.gridState.ActiveIssueId;
+    if (activeId.empty()) {
+        ::ImGui::TextDisabled("Select a ticket to see its details.");
+        return;
+    }
+    const auto ticketsSnap = pane.ticketsSnapshot;
+    if (!ticketsSnap) {
+        ::ImGui::TextDisabled("No tickets loaded.");
+        return;
+    }
+    const std::vector<CachedTicket>& tickets = *ticketsSnap;
+    const CachedTicket* active = nullptr;
+    for (const CachedTicket& t : tickets) {
+        if (t.id == activeId) {
+            active = &t;
+            break;
+        }
+    }
+    if (active == nullptr) {
+        ::ImGui::TextDisabled("Selected ticket is not in the current view.");
+        return;
+    }
+
+    ViewDefinition* activeView = resolvePaneView(d, pane);
+    const TrackerFieldCatalogIndex& catalogIndex = *gridFrameCtx_.catalogIndex;
+    std::shared_ptr<const ViewDefinition> paneOwnResolvedView =
+        pane.focused ? nullptr : app.GetPaneResolvedView(pane.id);
+    const std::vector<TicketGridColumn>& columns =
+        resolvePaneColumns(pane, catalogIndex, activeView, paneOwnResolvedView.get());
+
+    ::ImGui::TextUnformatted(active->id.c_str());
+    ::ImGui::Separator();
+    for (const TicketGridColumn& column : columns) {
+        if (column.ColumnKind == TicketGridColumn::Kind::Id) {
+            continue;
+        }
+        const std::string value = active->GetFieldValue(column.FieldId);
+        const TrackerField* fieldMeta = catalogIndex.Find(column.FieldId);
+        const std::string display = DisplayValueForTrackerDateField(
+            column.FieldId, fieldMeta, value, d.cfg.DateFormatOption, d.cfg.DateCompactRelativeThresholdDays);
+        const bool isDescriptionField =
+            !column.FieldId.empty() && (column.FieldId.find("description") != std::string::npos ||
+                                        column.FieldId.find("Description") != std::string::npos);
+        const std::string* tip = (column.IsDateLike || isDescriptionField) ? &value : nullptr;
+        ::ImGui::TextDisabled("%s", column.Label.c_str());
+        RenderClippedFieldText(display, ::ImGui::GetContentRegionAvail().x, d.cfg.EnableFieldOverflowTooltips, false,
+                               tip, isDescriptionField, &column.FieldId);
+        ::ImGui::Spacing();
+    }
+}
+
+// Desktop->Mobile ini edge. Captures the host's desktop imgui.ini pointer, detaches it (so
+// ImGui stops auto-saving desktop dock nodes), drops the in-memory desktop layout, and loads
+// imgui_mobile.ini if present. Absent file -> arm the DockBuilder seed. Idempotent: re-runs are
+// no-ops while mobileDockSeeded stays true.
+void SmatchetUI::drawMobileEnsureIniAttached(UiDrawSession& d) {
+    if (d.mobileDockSeeded) {
+        return;
+    }
+    ::ImGuiIO& io = ::ImGui::GetIO();
+    d.savedDesktopIniFilename = io.IniFilename;
+    io.IniFilename = nullptr;
+    ::ImGui::ClearIniSettings();
+    const std::string mobileIni = ConfigManager::GetMobileImGuiSettingsPath();
+    bool loaded = false;
+    {
+        std::error_code ec;
+        if (ghc::filesystem::exists(mobileIni, ec) && !ec) {
+            ::ImGui::LoadIniSettingsFromDisk(mobileIni.c_str());
+            loaded = true;
+        }
+    }
+    d.mobileDockNeedsSeed = !loaded;
+    d.mobileDockSeeded = true;
+    io.WantSaveIniSettings = false;
+    LOG_DEBUG("Mobile shell: attached imgui_mobile.ini (loaded=%d, willSeed=%d)", loaded ? 1 : 0, loaded ? 0 : 1);
+}
+
+// Mobile->Desktop ini edge (called from the desktop Draw path). Flushes mobile geometry one
+// last time, drops the mobile layout, re-attaches the captured desktop imgui.ini pointer, and
+// reloads it so desktop windows come back exactly as saved (the byte-identical round-trip:
+// nothing in the mobile session ever writes imgui.ini). Resets the seed latches per the plan.
+void SmatchetUI::drawMobileRestoreDesktopIni(UiDrawSession& d) {
+    if (!d.mobileDockSeeded) {
+        return;
+    }
+    ::ImGui::SaveIniSettingsToDisk(ConfigManager::GetMobileImGuiSettingsPath().c_str());
+    ::ImGui::ClearIniSettings();
+    ::ImGuiIO& io = ::ImGui::GetIO();
+    io.IniFilename = d.savedDesktopIniFilename;
+    d.savedDesktopIniFilename = nullptr;
+    if (io.IniFilename != nullptr) {
+        ::ImGui::LoadIniSettingsFromDisk(io.IniFilename);
+    }
+    io.WantSaveIniSettings = false;
+    d.mobileDockSeeded = false;
+    d.mobileDockNeedsSeed = false;
+    d.mobilePageSeeded = false;
+    LOG_DEBUG("Mobile shell: restored desktop imgui.ini");
 }
 
 #undef ImGui

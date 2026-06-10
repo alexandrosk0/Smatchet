@@ -294,6 +294,11 @@ void SmatchetUI::Draw(AppController& app) {
         return;
     }
 
+    // Mobile->Desktop edge (slice 5): if the previous frame ran the mobile shell it
+    // detached io.IniFilename and routed saves to imgui_mobile.ini; re-attach the desktop
+    // ini + reload it before any desktop window submits so dock geometry comes back.
+    drawMobileRestoreDesktopIni(d);
+
     drawChromeAndModeToggles(app, d);
     handleViewKeyboardShortcuts(d);
     DrainAppUpdateCheck(d);
