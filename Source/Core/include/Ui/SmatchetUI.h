@@ -145,6 +145,13 @@ class SmatchetUI {
     // a cfg.Theme change and re-apply once per dirty event (not every frame).
     ThemeId lastAppliedTheme_ = ThemeId::SmatchetDark;
     TrackerConfig::UiDensity lastAppliedDensity_ = TrackerConfig::UiDensity::Normal;
+    // Touch-scaling dirty gate (dual-ui-mode slice 8): the effective mode + mobile
+    // density last fed to SmatchetTheme::ApplyUiDensityScale + io.FontGlobalScale.
+    // A flip into/out of Mobile (or a density change while in Mobile) rebuilds the
+    // style at the new touch scale; desktop holds scale 1.0. Seeded Desktop/Comfortable
+    // so the first frame in Desktop is a no-op and the first Mobile flip is detected.
+    EffectiveUiMode lastAppliedEffectiveUiMode_ = EffectiveUiMode::Desktop;
+    MobileTouchDensity lastAppliedMobileDensity_ = MobileTouchDensity::Comfortable;
     RecentViewLru recentViews_;
 
     void drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSession& d);

@@ -355,7 +355,15 @@ void SmatchetUI::drawInitConfigOnce(AppController& app, UiDrawSession& d) {
 // touch ImGui style when the corresponding cfg value drifts from the last applied value.
 void SmatchetUI::drawApplyAppearanceSettings(UiDrawSession& d) {
     // Zoom: per-frame FontGlobalScale from cfg.FontSizePt. Cheap, instant, no atlas rebuild.
-    ::ImGui::GetIO().FontGlobalScale = static_cast<float>(d.cfg.FontSizePt) / 16.0f;
+    // In Mobile the touch-density preset multiplies the base zoom so glyphs reach finger size
+    // (dual-ui-mode slice 8); this is idempotent so it runs every frame and auto-reverts on the
+    // flip back to Desktop. The matching size/spacing scale (ScaleAllSizes, non-idempotent) is
+    // applied once per flip in the dirty gate below.
+    float fontScale = static_cast<float>(d.cfg.FontSizePt) / 16.0f;
+    if (d.effectiveUiMode == EffectiveUiMode::Mobile) {
+        fontScale *= mobileTouchDensityScale(d.cfg.MobileTouchDensity);
+    }
+    ::ImGui::GetIO().FontGlobalScale = fontScale;
 
     // Apply density padding — only re-apply when the setting changes.
     if (d.cfg.Density != lastAppliedDensity_) {
@@ -375,6 +383,29 @@ void SmatchetUI::drawApplyAppearanceSettings(UiDrawSession& d) {
         SmatchetTheme::ApplyStyle(d.cfg.Theme);
         lastAppliedTheme_ = d.cfg.Theme;
         smatchet::ui_density::ApplyDensityToImGuiStyle(d.cfg.Density);
+    }
+
+    // Touch-scaling dirty gate (dual-ui-mode slice 8): enlarge every size / spacing / rounding
+    // metric to finger size when the effective mode is Mobile. ScaleAllSizes is multiplicative
+    // (non-idempotent) so this must fire ONCE per flip — on a mode change, or a density change
+    // while already in Mobile — never every frame. The clean-rebuild path: stash the target scale
+    // via ApplyUiDensityScale (the mobile host seam #13), then ApplyStyle rebuilds the style from
+    // baseline and re-asserts that scale via ReapplyHostDensityScale (so scaling never compounds).
+    // Desktop holds scale 1.0 → ApplyStyle's ShouldApplyDensityScale(1.0) is false (inert), and the
+    // desktop density spacing is re-pushed so the flip back to Desktop is pixel-identical.
+    const bool mobileNow = (d.effectiveUiMode == EffectiveUiMode::Mobile);
+    const bool densityChangedInMobile = mobileNow && (d.cfg.MobileTouchDensity != lastAppliedMobileDensity_);
+    if (d.effectiveUiMode != lastAppliedEffectiveUiMode_ || densityChangedInMobile) {
+        const float touchScale = mobileNow ? mobileTouchDensityScale(d.cfg.MobileTouchDensity) : 1.0f;
+        SmatchetTheme::ApplyUiDensityScale(touchScale);
+        SmatchetTheme::ApplyStyle(d.cfg.Theme);
+        lastAppliedTheme_ = d.cfg.Theme;
+        if (!mobileNow) {
+            // Mobile uses the scaled common-style spacing; Desktop restores the user's density.
+            smatchet::ui_density::ApplyDensityToImGuiStyle(d.cfg.Density);
+        }
+        lastAppliedEffectiveUiMode_ = d.effectiveUiMode;
+        lastAppliedMobileDensity_ = d.cfg.MobileTouchDensity;
     }
 }
 
