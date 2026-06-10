@@ -11,34 +11,18 @@
 
 // Persisted UI-mode preference. Auto resolves to a concrete EffectiveUiMode per
 // frame by viewport width (hysteresis); Desktop/Mobile pin the mode.
-enum class UiMode : std::uint8_t {
-    Desktop = 0,
-    Mobile = 1,
-    Auto = 2
-};
+enum class UiMode : std::uint8_t { Desktop = 0, Mobile = 1, Auto = 2 };
 
 // Per-frame resolved mode (Auto collapsed to a concrete value). Never persisted —
 // computed at the top of SmatchetUI::Draw and held across frames for hysteresis.
-enum class EffectiveUiMode : std::uint8_t {
-    Desktop = 0,
-    Mobile = 1
-};
+enum class EffectiveUiMode : std::uint8_t { Desktop = 0, Mobile = 1 };
 
 // Mobile shell page identity (bottom-nav selection + home page). The string ids
 // match the default MobileNavPages list ("grid","views","log","settings","ai").
-enum class MobilePage : std::uint8_t {
-    Grid = 0,
-    Views = 1,
-    Log = 2,
-    Settings = 3,
-    Ai = 4
-};
+enum class MobilePage : std::uint8_t { Grid = 0, Views = 1, Log = 2, Settings = 3, Ai = 4 };
 
 // Touch hit-target density preset → ScaleAllSizes / font multiplier.
-enum class MobileTouchDensity : std::uint8_t {
-    Compact = 0,
-    Comfortable = 1
-};
+enum class MobileTouchDensity : std::uint8_t { Compact = 0, Comfortable = 1 };
 
 // --- Inline string converters (round-trip through ConfigManager JSON keys). ---
 
@@ -94,6 +78,28 @@ inline MobilePage mobilePageFromString(const std::string& s) {
         return MobilePage::Ai;
     }
     return MobilePage::Grid;
+}
+
+// Human-facing label for a mobile page id (bottom-nav button, drawer row,
+// Preferences nav editor). Distinct from mobilePageToString, which yields the
+// persisted id. Unknown ids fall back to the raw id.
+inline const char* mobileNavPageLabel(const std::string& id) {
+    if (id == "grid") {
+        return "Tickets";
+    }
+    if (id == "views") {
+        return "Views";
+    }
+    if (id == "log") {
+        return "Log";
+    }
+    if (id == "settings") {
+        return "Settings";
+    }
+    if (id == "ai") {
+        return "AI";
+    }
+    return id.c_str();
 }
 
 inline const char* mobileTouchDensityToString(MobileTouchDensity d) {

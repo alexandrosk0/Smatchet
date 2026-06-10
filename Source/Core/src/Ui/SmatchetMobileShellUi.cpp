@@ -41,27 +41,6 @@ constexpr float kMobileExitMinWidthPx = 860.0f;
 constexpr float kAppBarBaseHeightPx = 40.0f;
 constexpr float kBottomNavBaseHeightPx = 48.0f;
 
-// Human label for a bottom-nav page id. Slice 3 placeholders; localization keys land with
-// the real page bodies (slice 4+).
-const char* navPageLabel(const std::string& id) {
-    if (id == "grid") {
-        return "Tickets";
-    }
-    if (id == "views") {
-        return "Views";
-    }
-    if (id == "log") {
-        return "Log";
-    }
-    if (id == "settings") {
-        return "Settings";
-    }
-    if (id == "ai") {
-        return "AI";
-    }
-    return id.c_str();
-}
-
 } // namespace
 
 // Resolves cfg.UiMode -> d.effectiveUiMode once per frame. Manual Desktop/Mobile pin
@@ -184,7 +163,7 @@ void SmatchetUI::drawMobileTopAppBar(AppController& app, UiDrawSession& d) {
         d.mobileDrawerOpen = !d.mobileDrawerOpen;
     }
     ::ImGui::SameLine();
-    ::ImGui::Text("Smatchet \xe2\x80\x94 %s", navPageLabel(mobilePageToString(d.mobilePage)));
+    ::ImGui::Text("Smatchet \xe2\x80\x94 %s", mobileNavPageLabel(mobilePageToString(d.mobilePage)));
 }
 
 // Page content (slice 4): single-panel fill. Each page draws one desktop helper with
@@ -261,7 +240,7 @@ void SmatchetUI::drawMobileBottomNav(AppController& app, UiDrawSession& d) {
             ::ImGui::PushStyleColor(ImGuiCol_Button, ::ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
         }
         ::ImGui::PushID(i);
-        if (::ImGui::Button(navPageLabel(pages[static_cast<std::size_t>(i)]), ::ImVec2(btnW, btnH))) {
+        if (::ImGui::Button(mobileNavPageLabel(pages[static_cast<std::size_t>(i)]), ::ImVec2(btnW, btnH))) {
             d.mobilePage = page;
             d.mobileDrawerOpen = false;
         }
@@ -311,8 +290,12 @@ void SmatchetUI::drawMobileDrawer(AppController& app, UiDrawSession& d) {
     if (::ImGui::Begin("##MobileDrawerPanel", nullptr, kPanelFlags)) {
         ::ImGui::TextDisabled("Pages");
         ::ImGui::Separator();
-        for (const std::string& id : d.cfg.MobileNavPages) {
-            if (::ImGui::Selectable(navPageLabel(id))) {
+        // Full 5-page universe (not just the visible MobileNavPages subset) so a
+        // page hidden from the bottom nav stays reachable from the drawer.
+        static const char* const kAllPageIds[] = {"grid", "views", "log", "settings", "ai"};
+        for (const char* id : kAllPageIds) {
+            const bool selected = (mobilePageFromString(id) == d.mobilePage);
+            if (::ImGui::Selectable(mobileNavPageLabel(id), selected)) {
                 d.mobilePage = mobilePageFromString(id);
                 d.mobileDrawerOpen = false;
             }
