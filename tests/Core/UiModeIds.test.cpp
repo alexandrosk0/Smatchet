@@ -3,6 +3,7 @@
 #include "Ui/SmatchetUiModeIds.h"
 
 #include <string>
+#include <vector>
 
 // Pure inline string/scale converters for the UI layout-mode + mobile-shell
 // enums introduced by the dual-ui-mode batch (UiMode / MobilePage /
@@ -53,6 +54,30 @@ TEST_CASE("mobileNavPageLabel maps known ids and echoes unknown ids verbatim") {
     CHECK(std::string(mobileNavPageLabel("ai")) == "AI");
     // Unknown id → raw id passthrough (custom nav pages).
     CHECK(std::string(mobileNavPageLabel("custom")) == "custom");
+}
+
+TEST_CASE("mobileNavPageLabel returns owning storage — labels survive past the call") {
+    // #1118 lifetime contract: mobileNavPageLabel returns std::string by value, not
+    // const char*. The Preferences home-page combo collects the labels into a vector
+    // and reads them after the call; a const char* return would have handed back
+    // id.c_str() for the echo branch — a pointer into the (now-destroyed) caller
+    // argument. By value, the stored labels stay valid. This test mirrors that
+    // collect-then-read pattern and would dangle (UB) under the old signature.
+    std::vector<std::string> nav;
+    nav.push_back("grid");
+    nav.push_back("views");
+    nav.push_back("custom-board"); // exercises the echo branch — the dangling case
+
+    std::vector<std::string> labels;
+    for (const std::string& id : nav) {
+        labels.push_back(mobileNavPageLabel(id));
+    }
+    // nav (the source of the echoed id) is still alive here, but the labels own
+    // their own storage regardless — the echo branch copied, it did not alias.
+    CHECK(labels.size() == 3);
+    CHECK(labels[0] == "Tickets");
+    CHECK(labels[1] == "Views");
+    CHECK(labels[2] == "custom-board");
 }
 
 TEST_CASE("resolveAutoEffectiveUiMode — width thresholds + hysteresis dead band") {

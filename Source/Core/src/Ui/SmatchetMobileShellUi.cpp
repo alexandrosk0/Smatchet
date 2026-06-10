@@ -155,6 +155,12 @@ void SmatchetUI::drawMobileShell(AppController& app, UiDrawSession& d) {
     // Drawer is an overlay drawn after (above) the shell window.
     drawMobileDrawer(app, d);
 
+    // Views confirm modals at shell level — must run every frame, not inside the drawer body:
+    // a dirty view-switch latches the discard-confirm flag AND closes the drawer (#1117), so a
+    // drawer-nested modal would never render and the switch would latch unresolvably. Submitted
+    // after the drawer so the popup overlays on top; same-frame consume of the just-set flag.
+    drawMobileViewsModals(app, d);
+
     // Persist mobile dock geometry: with io.IniFilename detached, ImGui raises
     // WantSaveIniSettings on a dirty layout instead of auto-writing imgui.ini — route it to
     // imgui_mobile.ini. Local sub-ms write, mirrors the desktop imgui.ini save path (Pillar 2).
@@ -173,7 +179,7 @@ void SmatchetUI::drawMobileTopAppBar(AppController& app, UiDrawSession& d) {
         d.mobileDrawerOpen = !d.mobileDrawerOpen;
     }
     ::ImGui::SameLine();
-    ::ImGui::Text("Smatchet \xe2\x80\x94 %s", mobileNavPageLabel(mobilePageToString(d.mobilePage)));
+    ::ImGui::Text("Smatchet \xe2\x80\x94 %s", mobileNavPageLabel(mobilePageToString(d.mobilePage)).c_str());
 }
 
 // Resolve the focused grid pane for the mobile paths (slice 5/10). The desktop
@@ -265,7 +271,8 @@ void SmatchetUI::drawMobileBottomNav(AppController& app, UiDrawSession& d) {
             ::ImGui::PushStyleColor(ImGuiCol_Button, ::ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
         }
         ::ImGui::PushID(i);
-        if (::ImGui::Button(mobileNavPageLabel(pages[static_cast<std::size_t>(i)]), ::ImVec2(btnW, btnH))) {
+        if (::ImGui::Button(mobileNavPageLabel(pages[static_cast<std::size_t>(i)]).c_str(),
+                            ::ImVec2(btnW, btnH))) {
             d.mobilePage = page;
             d.mobileDrawerOpen = false;
         }
@@ -320,7 +327,7 @@ void SmatchetUI::drawMobileDrawer(AppController& app, UiDrawSession& d) {
         static const char* const kAllPageIds[] = {"grid", "views", "log", "settings", "ai"};
         for (const char* id : kAllPageIds) {
             const bool selected = (mobilePageFromString(id) == d.mobilePage);
-            if (::ImGui::Selectable(mobileNavPageLabel(id), selected)) {
+            if (::ImGui::Selectable(mobileNavPageLabel(id).c_str(), selected)) {
                 d.mobilePage = mobilePageFromString(id);
                 d.mobileDrawerOpen = false;
             }

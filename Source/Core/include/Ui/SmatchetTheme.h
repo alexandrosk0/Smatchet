@@ -77,8 +77,8 @@ void ReassertHostDensityScale(float newScale);
 /** Compose a transient UI scale (e.g. the mobile touch-density enlargement) ON TOP of the
  *  host density base WITHOUT touching the stored host density scale. Unlike ApplyUiDensityScale
  *  (which OWNS g_hostDensityScale and is the host-injection seam), this is a pure multiply of the
- *  live style. The caller invokes it AFTER ApplyStyle — which rebuilds from baseline and re-asserts
- *  the host base via ReapplyHostDensityScale — so the net live scale is host*scale, while
+ *  live style. The caller invokes it AFTER ApplyStyle — which rebuilds from baseline and internally
+ *  re-asserts the stored host base — so the net live scale is host*scale, while
  *  HostDensityScale() keeps returning the true host base (the Auto-mode logical-width divisor +
  *  mobile band heights depend on that). Reverting is just the next ApplyStyle rebuild (it drops
  *  back to the host base); never call with 1/scale. No-op on scale <= 0 / NaN / == 1.0. */

@@ -235,6 +235,21 @@ class SmatchetUI {
     // ViewsDashboardDrawCtx + activate closures and reuse drawViewsSidebar
     // verbatim; selecting a view closes the drawer.
     void drawMobileDrawerViews(AppController& app, UiDrawSession& d);
+    // Builds the per-frame ViewsDashboardDrawCtx shared by the two mobile Views paths
+    // (drawer sidebar + the confirm modals), so neither rebuilds the closure set. Defined
+    // in SmatchetViewsDashboardUi.cpp where ViewsDashboardDrawCtx is fully visible; the
+    // reference members bind to app/d/the ViewState store, all of which outlive the frame.
+    // sidebarWidth is caller-supplied: the drawer path passes its live content-region
+    // width, the modal-only path passes 0 (it may run outside a live window, so
+    // GetContentRegionAvail must not be queried there; the modals ignore the width).
+    ViewsDashboardDrawCtx buildMobileViewsCtx(AppController& app, UiDrawSession& d, const ViewDefinition* activeView,
+                                              float sidebarWidth);
+    // Renders the Views discard/delete-confirm modals at mobile-shell level every frame.
+    // Must live OUTSIDE the drawer-open branch: the drawer's drawViewsSidebar latches the
+    // confirm flags and closes the drawer on a dirty switch (#1117), so the consuming
+    // modals would never render if they were nested in the drawer. Mirrors the desktop
+    // drawViewsModals call site in drawViewsDashboardWindow.
+    void drawMobileViewsModals(AppController& app, UiDrawSession& d);
     // Mode-independent floating overlays (toasts + app-update modal). Extracted from
     // drawSecondaryWindowsTail so both the desktop and mobile Draw paths render them.
     void drawGlobalOverlays(AppController& app, UiDrawSession& d);
