@@ -1,0 +1,23 @@
+# Service-cache decoupled via `ISyncCache`; test purity enforced at include/construction level, not link level
+
+**Status:** accepted (2026-06-10)
+
+**Plan:** [`docs/plans/ilocalcache-seam.md`](../plans/ilocalcache-seam.md) (tier-less ref) · **Relates to:** ADR-0018 (multi-grid pane contexts), the #1081 backend-switch race fix (PR #1104), the `.coderabbit.yaml` `tests/**` carve-out (PR #1107).
+
+`OfflineQueueService`, `TicketSyncService`, and `IssueCreatePipeline` took a concrete `LocalCacheManager*` (the SQLite-backed local cache), so their unit tests could only run against a real `:memory:` database — making ~8 `tests/Core` TUs SQLite-backed in a doctest rig documented as pure-logic. We extract a narrow **`ISyncCache`** interface (the 28 sync/replay-facing methods — tickets, pending queues, dead letters, meta flags; *not* the whole cache, which also holds AI chat + schema migration) that `LocalCacheManager` implements, and inject an in-memory `FakeSyncCache` into those tests. The service-facing surface is now decoupled from the SQLite implementation.
+
+The non-obvious part — and the reason this is an ADR rather than a routine DI refactor — is **what "test purity" we commit to**. We deliberately do **not** make `SmatchetTests` SQLite-free at the *link* level, and a future reader will see the apparent half-measure (a cache-seam interface, yet `SQLiteCpp` still on the link line) and wonder why. The decision: purity is enforced at the **include/construction** level (no service-test TU *constructs* `LocalCacheManager` or *transitively includes* `<SQLiteCpp/...>`), verified by a grep/preprocessor gate with a small named-exemption allow-list — not at the link level.
+
+## Considered options
+
+- **Status quo (`.coderabbit.yaml` carve-out only, PR #1107)** — *Rejected as the end state.* It silenced the false-positive but left the services concrete-coupled and the "pure-logic rig" claim untrue. Kept as the interim.
+- **A second CTest target (`SmatchetIntegrationTests`) for the SQLite tests** — *Rejected.* `SmatchetTests` has one hand-maintained source list with target-wide `SQLiteCpp` linkage; the LCM *implementation* tests, the contract suite's real half, and one retained service smoke must keep real SQLite, so SQLiteCpp can never leave that target anyway. A second executable adds CI surface without making the existing target pure.
+- **Link-level purity for the moved TUs** — *Rejected as impossible in one target*, and `TicketSyncService.cpp` is ImGui-coupled (Toast) besides. Claiming it would be a lie the build can't enforce.
+- **Role-sliced interfaces à la `ITrackerBackend`** — *Rejected.* The Tracker role-split exists because capabilities there are genuinely optional (a backend returns `nullptr` for an unsupported role). The sync cache has zero capability variance — both impls implement all 28 methods, always — so slicing buys header count, not expressiveness.
+
+## Consequences
+
+- **Fake fidelity is gated, not trusted.** A hand-written fake of non-trivial logic (conflict resolution, dead-letter archival, per-row backend-key capture — the #1081 latch) risks diverging from production. Two gates bound this: a dual-impl contract suite (`SyncCacheContract.test.cpp`) authored against the real LCM first and run against both impls (per-method), plus one retained real-`:memory:` service smoke (`OfflineQueueServiceRealCacheSmoke.test.cpp`, per-service-path). The fake is built *to* the contract suite, not hand-guessed.
+- **A named-exemption allow-list now exists** in the include/construction purity gate (the contract suite's real half, the service smoke, and the LCM impl/migration TUs legitimately construct `LocalCacheManager`). It must be maintained as the SQLite-by-design set; everything else in the service-test set stays clean.
+- **`EnqueuePendingFieldEdit` defaults must stay identical** across `ISyncCache` / `LocalCacheManager` / `FakeSyncCache` (default args on virtuals bind statically; concrete-typed callers rely on them).
+- The interface is the **sync cache**, a strict subset of the **local cache** — an interface to the whole store is intentionally not implied (see `Source/Core/src/Persistence/CONTEXT.md`).

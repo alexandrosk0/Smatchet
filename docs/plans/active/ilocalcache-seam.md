@@ -16,6 +16,8 @@ This plan extracts an `ISyncCache` interface so the **service** tests become gen
 
 Originating: PR #1104 / #1107 closeout; backlog `tooling.md` 2026-06-09 (P2).
 
+**Decision record:** [`docs/adr/0020-sync-cache-seam-include-not-link-purity.md`](../../adr/0020-sync-cache-seam-include-not-link-purity.md) captures the *why* — the seam, the include-not-link purity stance, and the rejected alternatives (integration lane / role-split / link purity).
+
 **Naming note (grill resolution):** the interface is **`ISyncCache`** — the sync/replay-facing surface of the local cache. The backlog entry's working name "ILocalCache" overclaimed: the local cache (`LocalCacheManager`) also holds AI chat messages + schema migration, which stay concrete-only and off this interface. The plan slug `ilocalcache-seam` is retained as the immutable identifier. Term recorded in `Source/Core/src/Persistence/CONTEXT.md`.
 
 ## Approach
@@ -42,7 +44,7 @@ All non-const, signatures per `Source/Core/include/Persistence/LocalCacheManager
 
 ~24 files across three strict zones + test infra is too heavy for one CodeRabbit pass and risks the per-PR file ceiling. Split so **each PR carries its own test delta** (a seam-only PR1 with no test change would turn the Test-delta gate RED → `tests-out-of-band` → a self-inflicted gate escape; this split avoids that):
 
-- **PR1 — production seam + interface (behavior-neutral).** New `ISyncCache.h`; `LocalCacheManager : public ISyncCache`; all consumer retypes (deps getters #5–6, adapter #11, `IssueCreatePipeline` #10, `OfflineQueueService.{h,cpp}` helpers #7–8, `TicketSyncService` include #9, #12); the include swaps #6/#9; `SyncCacheContract.test.cpp` **with only the real-`:memory:`-LCM instantiation**. All existing tests stay green — the fakes still hold `LocalCacheManager` and return it where `ISyncCache*` is expected (implicit upcast), untouched. The new contract test is the paired delta → Test-delta gate GREEN, no out-of-band label. Files: rows #1, #4–12, #3 (real half only).
+- **PR1 — production seam + interface (behavior-neutral).** New `ISyncCache.h`; `LocalCacheManager : public ISyncCache`; all consumer retypes (deps getters #5–6, adapter #11, `IssueCreatePipeline` #10, `OfflineQueueService.{h,cpp}` helpers #7–8, `TicketSyncService` include #9, #12); the include swaps #6/#9; `SyncCacheContract.test.cpp` **with only the real-`:memory:`-LCM instantiation**; ADR-0020 (Docs row #0). All existing tests stay green — the fakes still hold `LocalCacheManager` and return it where `ISyncCache*` is expected (implicit upcast), untouched. The new contract test is the paired delta → Test-delta gate GREEN, no out-of-band label. Files: rows #1, #4–12, #3 (real half only).
 - **PR2 — test purity (the actual goal).** `FakeSyncCache.h` (#2); add the fake instantiation to the contract `TEST_CASE_TEMPLATE` (#3); `OfflineQueueServiceRealCacheSmoke.test.cpp` (#3b); repoint the fakes + the 8 service TUs (#13–16); the include/construction purity gate + its named exemptions (§ Verification); docs #17–18. Self-contained test delta.
 
 Both PRs accumulate on one branch per the feature-batching rule only if the combined diff stays under the ceiling; otherwise ship PR1, merge, then PR2 off updated develop. The plan doc archives with PR2 (the slice that completes the feature).
@@ -73,6 +75,7 @@ Both PRs accumulate on one branch per the feature-batching rule only if the comb
 16. `tests/CMakeLists.txt` — no link-group move exists (target-wide linkage); instead: register the two new TUs (`SyncCacheContract.test.cpp`, `OfflineQueueServiceRealCacheSmoke.test.cpp`); ensure the repoint set — `BackendSwitchRace1081`, `OfflineQueueServiceRuntime`, `OfflineQueueTwoBackendReplay`, `OfflineQueueBackendSwap`, `OfflineQueueBackendKey`, `TicketSyncService`, **`TrackerBackendFactoryConfig`** (uses `FakeTicketSyncDeps` — easy to miss), `IssueCreatePipelineIntegration` — has no lingering `LocalCacheManager` construction; keep `LocalCacheManager*.test.cpp` / `LocalCacheTicketsV2Migration.test.cpp` / contract suite SQLite-backed. (`OfflineFieldEditMerge.test.cpp` is already pure — no action.) Also fix the pre-existing imprecise comment near `tests/CMakeLists.txt:680` claiming `IssueCreatePipeline.cpp` "pulls SQLite/Statement directly" — it's transitive via the LCM include, and goes away entirely after row #10's include swap.
 
 **Docs:**
+0. `docs/adr/0020-sync-cache-seam-include-not-link-purity.md` — NEW (ships in **PR1**); the decision record. Already drafted at grill time.
 17. `.coderabbit.yaml:113-127` — the carve-out text asserts "no `ISyncCache` seam to fake", which this plan makes false — re-tighten: service tests are pure; `:memory:` SQLite remains legitimate ONLY for the LCM impl TUs + migration + the contract suite's real half.
 18. `docs/self-improvement/categories/tooling.md:506` — mark the 2026-06-09 `.coderabbit.yaml`-drift entry resolved (link this plan).
 
