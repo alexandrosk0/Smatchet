@@ -120,6 +120,10 @@ case "${1:-}" in
     --ack-review=*)
         ack_review=1
         base_ref="${1#--ack-review=}"
+        if [ -z "$base_ref" ]; then
+            echo "pre-ship: --ack-review= requires a non-empty base ref (or use bare --ack-review for origin/develop)" >&2
+            exit 2
+        fi
         ;;
     "") ;;
     *) base_ref="$1" ;;
