@@ -765,3 +765,77 @@ if(_smatchet_unlisted_tests)
         "${_smatchet_unlisted_pretty}\n"
         "Add each to add_executable(SmatchetTests ...) (or the appropriate conditional block).")
 endif()
+
+# ---------------------------------------------------------------------------
+# Issue #1068 Android OpenSSL fail-fast — behavioral configure-probe (WS5 item 19,
+# docs/plans/active/mobile-mvp-completion.md). Drives the REAL per-ABI static-OpenSSL
+# resolve block (cmake/SmatchetThirdParty.cmake smatchet_prepare_cpr) in `cmake -P`
+# script mode against committed fixture trees under fixtures/android-openssl/ — no
+# NDK, compiler, or cpr fetch needed. These are pure-CMake tests (no SmatchetTests
+# link dep) so they run even when the C++ suite is gated off, and the Windows
+# test/Coverage CI job exercises them via ctest.
+#
+# Division of labour: the static text gate (agents/scripts/project/test-mobile-security.sh,
+# CI "Android security gate") proves the marker sentence is bound to a
+# message(FATAL_ERROR); THIS probe proves the EXISTS-triple guard LOGIC actually
+# fails the configure (catches an AND->OR / wrong-filename regression that keeps the
+# text). tests/bats/android_openssl_failfast.bats mirrors these cases locally and
+# adds whitespace-normalized marker-text assertions (cmake wraps FATAL_ERROR text, so
+# ctest gates on the deterministic EXIT CODE here, not a wrap-fragile output regex).
+set(_ossl_probe "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/android-openssl/probe.cmake")
+set(_ossl_thirdparty "${CMAKE_SOURCE_DIR}/cmake/SmatchetThirdParty.cmake")
+set(_ossl_fix "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/android-openssl")
+
+# Complete per-ABI tree (libssl.a + libcrypto.a + opensslv.h) resolves: exit 0 + PROBE_OK.
+add_test(NAME android_openssl_failfast_complete
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSMATCHET_THIRDPARTY_CMAKE=${_ossl_thirdparty}"
+        "-DSMATCHET_ANDROID_OPENSSL_BASE=${_ossl_fix}/complete"
+        -DANDROID_ABI=arm64-v8a -P "${_ossl_probe}")
+set_tests_properties(android_openssl_failfast_complete PROPERTIES
+    PASS_REGULAR_EXPRESSION "PROBE_OK")
+
+# Missing libcrypto.a -> the EXISTS-triple guard fails the configure (nonzero exit).
+add_test(NAME android_openssl_failfast_missing_crypto
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSMATCHET_THIRDPARTY_CMAKE=${_ossl_thirdparty}"
+        "-DSMATCHET_ANDROID_OPENSSL_BASE=${_ossl_fix}/missing-crypto"
+        -DANDROID_ABI=arm64-v8a -P "${_ossl_probe}")
+# Validate the SPECIFIC #1068 fail-fast, not just a nonzero exit: PASS only when the
+# OpenSSL-pinning FATAL_ERROR text appears (whitespace-tolerant — CMake word-wraps the
+# message), and FAIL hard if the PROBE_OK success marker ever shows. PASS_REGULAR_EXPRESSION
+# ignores the exit code, so it supersedes (and must replace, not pair with) WILL_FAIL.
+set_tests_properties(android_openssl_failfast_missing_crypto PROPERTIES
+    PASS_REGULAR_EXPRESSION "Android[ \t\r\n]+requires[ \t\r\n]+a[ \t\r\n]+pinned[ \t\r\n]+static[ \t\r\n]+OpenSSL"
+    FAIL_REGULAR_EXPRESSION "PROBE_OK")
+
+# Missing public headers -> fail the configure (nonzero exit).
+add_test(NAME android_openssl_failfast_missing_header
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSMATCHET_THIRDPARTY_CMAKE=${_ossl_thirdparty}"
+        "-DSMATCHET_ANDROID_OPENSSL_BASE=${_ossl_fix}/missing-header"
+        -DANDROID_ABI=arm64-v8a -P "${_ossl_probe}")
+set_tests_properties(android_openssl_failfast_missing_header PROPERTIES
+    PASS_REGULAR_EXPRESSION "Android[ \t\r\n]+requires[ \t\r\n]+a[ \t\r\n]+pinned[ \t\r\n]+static[ \t\r\n]+OpenSSL"
+    FAIL_REGULAR_EXPRESSION "PROBE_OK")
+
+# Complete base but an unbuilt ABI (Gradle drives both ABIs from one base) -> fail.
+add_test(NAME android_openssl_failfast_missing_abi
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSMATCHET_THIRDPARTY_CMAKE=${_ossl_thirdparty}"
+        "-DSMATCHET_ANDROID_OPENSSL_BASE=${_ossl_fix}/complete"
+        -DANDROID_ABI=mips -P "${_ossl_probe}")
+set_tests_properties(android_openssl_failfast_missing_abi PROPERTIES
+    PASS_REGULAR_EXPRESSION "Android[ \t\r\n]+requires[ \t\r\n]+a[ \t\r\n]+pinned[ \t\r\n]+static[ \t\r\n]+OpenSSL"
+    FAIL_REGULAR_EXPRESSION "PROBE_OK")
+
+# No base supplied -> block is skipped (not fatal): exit 0 + PROBE_OK. The probe
+# falls back to ENV{SMATCHET_ANDROID_OPENSSL_BASE} when the CMake var is unset and CI
+# exports that var for the real Android build, so pin it empty for a true no-base case.
+add_test(NAME android_openssl_failfast_no_base
+    COMMAND "${CMAKE_COMMAND}"
+        "-DSMATCHET_THIRDPARTY_CMAKE=${_ossl_thirdparty}"
+        -DANDROID_ABI=arm64-v8a -P "${_ossl_probe}")
+set_tests_properties(android_openssl_failfast_no_base PROPERTIES
+    PASS_REGULAR_EXPRESSION "PROBE_OK"
+    ENVIRONMENT "SMATCHET_ANDROID_OPENSSL_BASE=")

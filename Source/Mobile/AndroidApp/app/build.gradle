@@ -71,4 +71,24 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+
+    testOptions {
+        // JVM unit tests (WS5 item 17): Robolectric needs the merged Android
+        // resources + manifest on the test classpath; returnDefaultValues keeps any
+        // un-shadowed android.jar stub from throwing "not mocked" — the harness
+        // exercises the pure Unicode-queue/codepoint logic, not the framework.
+        unitTests {
+            includeAndroidResources = true
+            returnDefaultValues = true
+        }
+    }
+}
+
+dependencies {
+    // WS5 item 17 — JVM/Robolectric harness for SmatchetActivity's IME/Unicode-queue
+    // bridge (docs/plans/active/mobile-mvp-completion.md). Test-only: nothing ships in
+    // the APK. Robolectric supplies the Android runtime so the NativeActivity subclass
+    // can be instantiated on the JVM (a bare `new` hits the android.jar "Stub!").
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.robolectric:robolectric:4.12.2'
 }

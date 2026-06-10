@@ -1,0 +1,1 @@
+Issue #1068 probe fixture (missing-header variant): include/openssl/opensslv.h deliberately absent.
