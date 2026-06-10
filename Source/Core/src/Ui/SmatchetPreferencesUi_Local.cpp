@@ -448,9 +448,9 @@ void DrawAppearanceMobileSection(UiDrawSession& d) {
 
     for (int i = 0; i < static_cast<int>(nav.size()); ++i) {
         ImGui::PushID(i);
-        // Explicit hide action — a button, not a checkbox seeded to a constant: a visible
-        // page only ever has one meaningful action here (remove it from the ordered list);
-        // re-adding a hidden page is the separate unchecked-rows loop below.
+        // Explicit hide action — a button, not a checkbox seeded to a constant. A visible
+        // page only ever has one meaningful action here: drop it from the ordered nav list.
+        // Re-adding a hidden page is handled by the separate unchecked-rows loop below.
         if (ImGui::SmallButton("Hide")) {
             nav.erase(nav.begin() + i);
             ConfigManager::SanitizeMobileNav(d.cfg);

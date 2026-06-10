@@ -375,29 +375,25 @@ void SmatchetUI::drawApplyAppearanceSettings(UiDrawSession& d) {
     // ImGui collapses empty dock nodes automatically — no per-frame bit-manipulation needed.
     // (HiddenTabBar fights the layout on resize; removed in favour of the natural empty-node path.)
 
-    // Re-apply the style palette only when cfg.Theme drifts from what is live in ImGui::GetStyle().
-    // SmatchetImGuiHost seeds SmatchetDark before cfg is loaded; the first frame after Load() catches
-    // any user-saved value through this check. ApplyStyle's ApplyCommonStyle rewrites ItemSpacing /
-    // FramePadding to Normal-density defaults; re-push density so Compact / Comfortable survive.
-    if (d.cfg.Theme != lastAppliedTheme_) {
-        SmatchetTheme::ApplyStyle(d.cfg.Theme);
-        lastAppliedTheme_ = d.cfg.Theme;
-        smatchet::ui_density::ApplyDensityToImGuiStyle(d.cfg.Density);
-    }
-
-    // Touch-scaling dirty gate (dual-ui-mode slice 8): enlarge every size / spacing / rounding
-    // metric to finger size when the effective mode is Mobile. ScaleAllSizes is multiplicative
-    // (non-idempotent) so this must fire ONCE per flip — on a mode change, or a density change
-    // while already in Mobile — never every frame. The clean-rebuild path: ApplyStyle rebuilds the
-    // style from baseline and re-asserts the HOST density base via ReapplyHostDensityScale, then the
-    // mobile touch scale is COMPOSED on top via ApplyTouchScale — a pure live-style multiply that
-    // never writes g_hostDensityScale. So the net Mobile scale is host*touch and the host base
-    // survives untouched (Android ~2.6 / Windows-HiDPI 1.6 stay intact — the Auto logical-width
-    // divisor + mobile band heights read HostDensityScale()). Desktop's touchScale is 1.0 (inert),
-    // and the user's desktop density spacing is re-pushed so the flip back to Desktop is identical.
+    // Style-rebuild dirty gate (theme + dual-ui-mode slice 8 touch scaling, unified). ApplyStyle is
+    // the one path that rewrites the whole style from baseline (ApplyCommonStyle resets ItemSpacing /
+    // FramePadding to Normal-density and ReapplyHostDensityScale re-asserts the HOST density base), so
+    // EVERY trigger that needs a rebuild must run through this single gate and then re-establish the
+    // FULL layered scale stack — otherwise one trigger (e.g. a theme change while already in Mobile)
+    // rebuilds to host base and silently drops the touch enlargement another trigger had composed.
+    // Triggers: cfg.Theme drift (host seeds SmatchetDark pre-cfg; first frame after Load catches the
+    // saved value), an effective-mode flip, or a MobileTouchDensity change while already in Mobile.
+    // ScaleAllSizes is multiplicative (non-idempotent), so this must fire ONCE per change, never every
+    // frame. After the rebuild: in Mobile, COMPOSE the touch scale via ApplyTouchScale — a pure
+    // live-style multiply that never writes g_hostDensityScale, so net Mobile scale is host*touch and
+    // the host base survives untouched (Android ~2.6 / Windows-HiDPI 1.6 stay intact — the Auto
+    // logical-width divisor + mobile band heights read HostDensityScale()); in Desktop, re-push the
+    // user's density spacing (touchScale would be 1.0 / inert anyway) so the flip back is identical.
     const bool mobileNow = (d.effectiveUiMode == EffectiveUiMode::Mobile);
+    const bool themeChanged = (d.cfg.Theme != lastAppliedTheme_);
+    const bool modeChanged = (d.effectiveUiMode != lastAppliedEffectiveUiMode_);
     const bool densityChangedInMobile = mobileNow && (d.cfg.MobileTouchDensity != lastAppliedMobileDensity_);
-    if (d.effectiveUiMode != lastAppliedEffectiveUiMode_ || densityChangedInMobile) {
+    if (themeChanged || modeChanged || densityChangedInMobile) {
         SmatchetTheme::ApplyStyle(d.cfg.Theme);
         lastAppliedTheme_ = d.cfg.Theme;
         if (mobileNow) {
