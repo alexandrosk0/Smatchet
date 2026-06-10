@@ -4,7 +4,7 @@
 #include <string>
 
 // Pure, cpr-free TLS-trust seam for the tracker HTTP layer (WS2 of
-// docs/plans/active/mobile-mvp-completion.md, Issue #1068). The Android host shell
+// docs/plans/mobile-mvp-completion.md, Issue #1068). The Android host shell
 // resolves the CA-bundle path via JNI at boot and feeds it into Core before the first
 // HTTPS request, without pulling cpr into the host TU. This header carries the path
 // holder plus resolution logic with std::string only; the cpr-side attachment (the

@@ -1211,7 +1211,7 @@ jobs:
           set -euo pipefail
           cd Source/Mobile/AndroidApp
           # JVM/Robolectric harness for SmatchetActivity's IME/Unicode-queue bridge
-          # (docs/plans/active/mobile-mvp-completion.md WS5 item 17). Pure-Java; no device,
+          # (docs/plans/mobile-mvp-completion.md WS5 item 17). Pure-Java; no device,
           # no .so load. Robolectric pulls its android-all jar (sdk=34, pinned in
           # robolectric.properties) from mavenCentral at test time.
           ./gradlew --no-daemon testDebugUnitTest

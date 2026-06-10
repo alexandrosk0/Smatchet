@@ -10,7 +10,7 @@
 # proving the EXISTS-triple guard LOGIC actually fails the configure — not just
 # that the marker text is present.
 #
-# Plan: docs/plans/active/mobile-mvp-completion.md (WS5 item 19).
+# Plan: docs/plans/mobile-mvp-completion.md (WS5 item 19).
 #
 # Exit codes (test-author convention):
 #   0 — every bats test passed

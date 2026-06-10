@@ -12,7 +12,7 @@ import java.lang.reflect.Method;
 
 /**
  * JVM/Robolectric harness for SmatchetActivity's IME / Unicode-queue bridge
- * (WS5 item 17, docs/plans/active/mobile-mvp-completion.md) — the Java half of the
+ * (WS5 item 17, docs/plans/mobile-mvp-completion.md) — the Java half of the
  * paste path the native frame loop drains via {@code pollUnicodeChar()}.
  *
  * <p>Scope: the {@code unicodeQueue} + code-point logic only. The tests drive the

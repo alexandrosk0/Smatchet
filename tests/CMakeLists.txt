@@ -769,7 +769,7 @@ endif()
 
 # ---------------------------------------------------------------------------
 # Issue #1068 Android OpenSSL fail-fast — behavioral configure-probe (WS5 item 19,
-# docs/plans/active/mobile-mvp-completion.md). Drives the REAL per-ABI static-OpenSSL
+# docs/plans/mobile-mvp-completion.md). Drives the REAL per-ABI static-OpenSSL
 # resolve block (cmake/SmatchetThirdParty.cmake smatchet_prepare_cpr) in `cmake -P`
 # script mode against committed fixture trees under fixtures/android-openssl/ — no
 # NDK, compiler, or cpr fetch needed. These are pure-CMake tests (no SmatchetTests
