@@ -127,3 +127,6 @@ assets/fonts/*.ttf
 # AGENTS.md). The committed tree stays AGENTS.md-only; the shim is local adapter
 # output. See AGENTS.md § Subsystem guides + CONTEXT-MAP.md § Harness discovery.
 Source/Core/src/**/CLAUDE.md
+
+# pre-ship.sh code-review gate marker (local, HEAD/diff-pinned ack)
+.review-ack

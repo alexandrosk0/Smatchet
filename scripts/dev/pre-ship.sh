@@ -29,26 +29,101 @@
 #   0 — formatting applied (if any) and the delta lint gate passed.
 #   1 — the delta lint gate reported a failure (fix before pushing).
 #   2 — usage error, or a required tool (git / clang-format) is unavailable.
+#
+# selftest: asserts-failure
 set -euo pipefail
 
 usage() {
     cat <<'USAGE'
 pre-ship.sh — format changed C++ then run the CI delta lint gate locally.
 
-  bash scripts/dev/pre-ship.sh [<base-ref>]   default base: origin/develop
+  bash scripts/dev/pre-ship.sh [<base-ref>]              default base: origin/develop
+  bash scripts/dev/pre-ship.sh --ack-review [<base-ref>] record a code-review ack for the diff
   bash scripts/dev/pre-ship.sh --help
 
 Runs, over first-party C++ changed vs <base-ref>:
   1. clang-format -i
   2. agents/scripts/project/test-lint-rules.sh --diff <base-ref>
+  3. markdown lint + test-list consistency + doc-validation suite
+  4. code-review gate — a SUBSTANTIVE C++ diff (strict-zone touch or
+     >= REVIEW_LINE_THRESHOLD changed lines, default 60) must have a current review
+     ack. Run the code-review skill/agent, then `--ack-review` to record it; any later
+     edit re-arms the gate. Bypass: SMATCHET_SKIP_REVIEW_GATE=1 (logged).
 USAGE
 }
 
+# --selftest: prove the review gate BLOCKS (asserts at least one failure case), acks,
+# re-arms on edit, and bypasses — in a throwaway git repo, with the lint stages skipped
+# (SMATCHET_PRESHIP_GATE_ONLY=1 exercises ONLY the review gate; the lint stages have
+# their own gates/selftests). Auto-enrolled by agents/scripts/core/test-gate-selftests.sh.
+run_selftest() {
+    local script_path tmp
+    script_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+    tmp="$(mktemp -d)"
+    # shellcheck disable=SC2064  # expand $tmp now
+    trap "rm -rf '$tmp'" RETURN
+    (
+        set -e
+        cd "$tmp"
+        git init -q -b base .
+        git config user.email selftest@local
+        git config user.name selftest
+        printf '{"lint":{"zones":{"strict":["Source/Core/src/Sync/"]}}}\n' > project.config.json
+        mkdir -p Source/Core/src/Sync
+        echo "// base" > Source/Core/src/Sync/SelfTest.cpp
+        git add -A && git commit -qm base
+        git checkout -qb feature
+        printf '// edit\nint self_test_fn() { return 1; }\n' >> Source/Core/src/Sync/SelfTest.cpp
+        git commit -aqm edit
+    )
+    # 1. Substantive (strict-zone) diff, no ack -> MUST FAIL (the asserted failure case).
+    if (cd "$tmp" && SMATCHET_PRESHIP_GATE_ONLY=1 bash "$script_path" base >/dev/null 2>&1); then
+        echo "pre-ship --selftest: FAIL — review gate passed a strict-zone diff with NO ack" >&2
+        return 1
+    fi
+    # 2. Ack -> MUST PASS.
+    if ! (cd "$tmp" && SMATCHET_PRESHIP_GATE_ONLY=1 bash "$script_path" --ack-review base >/dev/null 2>&1 &&
+        SMATCHET_PRESHIP_GATE_ONLY=1 bash "$script_path" base >/dev/null 2>&1); then
+        echo "pre-ship --selftest: FAIL — gate still blocks after --ack-review" >&2
+        return 1
+    fi
+    # 3. Edit after ack -> fingerprint stale -> MUST FAIL again (re-arm).
+    (cd "$tmp" && echo "// post-ack edit" >> Source/Core/src/Sync/SelfTest.cpp)
+    if (cd "$tmp" && SMATCHET_PRESHIP_GATE_ONLY=1 bash "$script_path" base >/dev/null 2>&1); then
+        echo "pre-ship --selftest: FAIL — gate did not re-arm after a post-ack edit" >&2
+        return 1
+    fi
+    # 4. Documented bypass -> MUST PASS (and is the operator's emergency escape).
+    if ! (cd "$tmp" && SMATCHET_PRESHIP_GATE_ONLY=1 SMATCHET_SKIP_REVIEW_GATE=1 bash "$script_path" base >/dev/null 2>&1); then
+        echo "pre-ship --selftest: FAIL — SMATCHET_SKIP_REVIEW_GATE=1 bypass broken" >&2
+        return 1
+    fi
+    echo "pre-ship --selftest: PASS — gate blocks unacked substantive diffs, acks, re-arms on edit, bypass works."
+    return 0
+}
+
 base_ref="origin/develop"
+ack_review=0
 case "${1:-}" in
     --help | -h)
         usage
         exit 0
+        ;;
+    --selftest)
+        run_selftest
+        exit $?
+        ;;
+    --ack-review)
+        ack_review=1
+        [ -n "${2:-}" ] && base_ref="$2"
+        ;;
+    --ack-review=*)
+        ack_review=1
+        base_ref="${1#--ack-review=}"
+        if [ -z "$base_ref" ]; then
+            echo "pre-ship: --ack-review= requires a non-empty base ref (or use bare --ack-review for origin/develop)" >&2
+            exit 2
+        fi
         ;;
     "") ;;
     *) base_ref="$1" ;;
@@ -60,10 +135,39 @@ repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 }
 cd "$repo_root"
 
-if ! command -v clang-format >/dev/null 2>&1; then
-    echo "pre-ship: clang-format not found on PATH" >&2
-    exit 2
-fi
+# --- Code-review gate helpers (process self-improvement 2026-06-10) -------------------
+# A substantive C++ diff must be code-reviewed before push. We cannot verify an LLM/human
+# review actually ran, but we CAN pin an explicit acknowledgement to the EXACT diff content:
+# `--ack-review` records a fingerprint of the changed first-party C++ vs <base-ref>; the gate
+# then fails unless the current fingerprint still matches. Any later edit changes the
+# fingerprint, invalidating the ack and forcing a conscious re-review of what will be pushed.
+review_marker="$repo_root/.review-ack"
+# The C++ trees whose diff content the fingerprint covers (mirrors the format-target globs).
+review_cpp_globs=(
+    'Source/Core/*.cpp' 'Source/Core/*.h'
+    'Source/Plugins/*.cpp' 'Source/Plugins/*.h'
+    'Source/Standalone/*.cpp' 'Source/Standalone/*.h'
+    'tests/*.cpp' 'tests/*.h'
+)
+review_fingerprint() {
+    # Committed-on-branch diff + working-tree diff, restricted to first-party C++. Hashing the
+    # diff (not just file list) means any content change — incl. a clang-format reflow — re-arms.
+    {
+        git diff "$base_ref"...HEAD -- "${review_cpp_globs[@]}" 2>/dev/null || true
+        git diff HEAD -- "${review_cpp_globs[@]}" 2>/dev/null || true
+    } | sha256sum | cut -d' ' -f1
+}
+
+# SMATCHET_PRESHIP_GATE_ONLY=1 (selftest hook): skip the lint stages and run ONLY the
+# code-review gate. Never set this in normal use — the lint stages are the point.
+gate_only="${SMATCHET_PRESHIP_GATE_ONLY:-0}"
+
+if [ "$gate_only" != "1" ]; then
+
+    if ! command -v clang-format >/dev/null 2>&1; then
+        echo "pre-ship: clang-format not found on PATH" >&2
+        exit 2
+    fi
 
 # Untracked files are INVISIBLE to every git-diff- and git-grep-based gate below
 # (`git diff <base>` skips them; `git grep` scans tracked only). Running pre-ship
@@ -148,5 +252,82 @@ if ! bash scripts/dev/test-docs.sh; then
     exit 1
 fi
 
-echo "pre-ship: PASS — formatted + delta lint gate + markdown lint + test-list + doc suite clean. Safe to push."
+fi # end of the lint stages skipped under SMATCHET_PRESHIP_GATE_ONLY=1
+
+# --- Code-review gate -----------------------------------------------------------------
+# Closes the "pushed a substantive diff without a code review" oversight (build+lint green
+# != reviewed; a correctness review catches what no static gate can — dead interface
+# surface, cross-PR build hazards, behaviour drift). A diff is SUBSTANTIVE when it touches a
+# strict zone (project.config.json `lint.zones.strict`) or changes >= REVIEW_LINE_THRESHOLD
+# first-party C++ lines. Substantive ⇒ a fingerprint-pinned review ack is required.
+review_threshold="${REVIEW_LINE_THRESHOLD:-60}"
+review_changed_cpp=()
+mapfile -t review_changed_cpp < <(
+    git diff --name-only --diff-filter=d "$base_ref"...HEAD -- "${review_cpp_globs[@]}" 2>/dev/null
+    git diff --name-only --diff-filter=d -- "${review_cpp_globs[@]}" 2>/dev/null
+)
+review_strict_hit=""
+if [ "${#review_changed_cpp[@]}" -gt 0 ]; then
+    # tr -d '\r': native Windows python3 prints CRLF; an un-stripped \r in the zone string
+    # silently defeats the `case "$f" in "$z"*` prefix match (caught by --selftest).
+    review_strict_zones=()
+    if command -v python3 >/dev/null 2>&1; then
+        mapfile -t review_strict_zones < <(
+            python3 -c "import json;print('\n'.join(json.load(open('project.config.json'))['lint']['zones']['strict']))" \
+                2>/dev/null | tr -d '\r' || true
+        )
+    else
+        echo "pre-ship: WARN — python3 unavailable; strict-zone detection skipped (the line threshold still applies)." >&2
+    fi
+    for f in "${review_changed_cpp[@]}"; do
+        [ -n "$f" ] || continue
+        for z in "${review_strict_zones[@]:-}"; do
+            [ -n "$z" ] || continue
+            case "$f" in "$z"*) review_strict_hit="$f" ;; esac
+        done
+    done
+fi
+review_lines=$(
+    {
+        git diff --numstat "$base_ref"...HEAD -- "${review_cpp_globs[@]}" 2>/dev/null || true
+        git diff --numstat -- "${review_cpp_globs[@]}" 2>/dev/null || true
+    } | awk '{a+=($1=="-"?0:$1); d+=($2=="-"?0:$2)} END {print a+d+0}'
+)
+review_substantive=0
+if [ -n "$review_strict_hit" ] || [ "${review_lines:-0}" -ge "$review_threshold" ]; then
+    review_substantive=1
+fi
+
+if [ "$ack_review" -eq 1 ]; then
+    review_fingerprint > "$review_marker"
+    echo "pre-ship: review ACK recorded for the current diff vs $base_ref (.review-ack)."
+    echo "pre-ship: PASS (ack) — gates clean + review acknowledged. Safe to push."
+    exit 0
+fi
+
+if [ "${SMATCHET_SKIP_REVIEW_GATE:-0}" = "1" ]; then
+    echo "pre-ship: WARN — code-review gate bypassed (SMATCHET_SKIP_REVIEW_GATE=1)."
+elif [ "$review_substantive" -eq 1 ]; then
+    have_fp=""
+    [ -f "$review_marker" ] && have_fp="$(cat "$review_marker" 2>/dev/null || true)"
+    want_fp="$(review_fingerprint)"
+    if [ "$have_fp" != "$want_fp" ]; then
+        reason="${review_strict_hit:+strict-zone touch ($review_strict_hit)}"
+        reason="${reason:-$review_lines changed C++ lines >= $review_threshold}"
+        cat >&2 <<EOF
+pre-ship: FAIL — substantive C++ diff ($reason) requires a code review before push.
+  No current review ack found (.review-ack ${have_fp:+is stale}${have_fp:-missing}).
+  1) ensure the change is committed / final,
+  2) run the code-review skill or agent on the diff vs $base_ref,
+  3) record it:  bash scripts/dev/pre-ship.sh --ack-review${base_ref:+ $base_ref}
+  (Trivial/emergency bypass: SMATCHET_SKIP_REVIEW_GATE=1 — logged, discouraged.)
+EOF
+        exit 1
+    fi
+    echo "pre-ship: code-review ack current for this diff (.review-ack matches)."
+else
+    echo "pre-ship: code-review gate N/A — diff is not substantive ($review_lines C++ lines, no strict-zone touch)."
+fi
+
+echo "pre-ship: PASS — formatted + delta lint gate + markdown lint + test-list + doc suite + review gate clean. Safe to push."
 exit 0
