@@ -27,6 +27,86 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-10 · PR #1110, #1095, #1096 · `cr-out-of-band` ×2 + `tests-out-of-band` — three overrides surfaced together by the postmortem-owed nudge
+
+### What escaped
+Three PRs merged to `develop` carrying an override label that dismissed a
+non-required block. None shipped a defect; the SessionStart `postmortem-owed.sh`
+nudge surfaced all three together. They are **three distinct classes** —
+disposition differs per PR:
+
+- **#1110** (mobile WS6 close-out, pure-docs) — `cr-out-of-band` dismissed a
+  `CR finding gate` block raised by **two CodeRabbit false positives**: (F1)
+  flagged the tier-less plan-ref `docs/plans/mobile-mvp-completion.md` as
+  "missing `shipped/`", and (F2) claimed `docs/plans/INDEX.md` was out of sync
+  ("gate RED"). Both refuted by deterministic ground truth on the head
+  (`3cde8676`): `test-plan-ref-integrity.sh` exit 0 ("all 126 referenced plan
+  paths resolve" — the tier-less `docs/plans/<slug>.md` form resolves against any
+  tier, the intentional **move-proof** convention), and `test-plan-index.sh
+  --check` exit 0 ("index up to date") with live CI "Doc anchors + agent
+  contract" = success. CR re-flags this convention on every plan-archive PR
+  because nothing teaches it the rule.
+- **#1095** (ADR-0019 + a shipped-plan archive, pure-docs) — `cr-out-of-band`
+  dismissed a CR **review-skipped** block whose cause was CodeRabbit's own
+  **"Review limit reached" rate limit**, *not* a finding (CR never reviewed the
+  diff). The override was correct, but it was a **manual** step on a pure-docs PR
+  that CR could not have meaningfully reviewed anyway. (The `Test-delta gate`
+  showing `cancelled` on this head is a CI concurrency-group artifact of a
+  superseded run on a pure-docs diff — **not** a real escape; do not chase it.)
+- **#1096** (off-thread the toolbar per-tracker append disk read) —
+  `tests-out-of-band` dismissed a **genuinely RED** `Test-delta gate` on a
+  **behaviour-preserving** off-thread perf refactor (logic moved to a worker, no
+  semantic change, existing suite stayed green). This is the **same class
+  already postmortem'd** twice: `2026-06-08 · #1021/#1016` and `2026-06-09 ·
+  #1083`. No new gate — covered below by reference.
+
+### Root cause
+Blameless, per class:
+- **#1110 (CR convention-blindness).** `.coderabbit.yaml` has no `path_instructions`
+  entry for `docs/plans/**`, so CodeRabbit has no way to learn the repo's
+  tier-less move-proof plan-ref convention or that `INDEX.md` is gate-synced by
+  `doc-validation.yml`. It therefore re-derives both as defects every time a plan
+  archives `active/` → `shipped/`, forcing a manual `cr-out-of-band` each time.
+- **#1095 (no auto-downgrade for CR-can't-review on low-risk diffs).** A CR
+  `review-skipped` caused by an upstream **rate limit** is an infra condition, not
+  a signal about the diff. On a **pure-docs** PR (`is-pure-docs-diff.sh` true)
+  there is nothing for CR to find, yet the gate still hard-blocks until a human
+  hand-applies `cr-out-of-band` — a recurring manual override for a deterministically
+  safe case.
+- **#1096 (Test-delta has no behaviour-preserving-refactor exemption).** Same
+  root cause as the two prior entries: `coverage-delta-gate.sh` `_classify_diff`
+  has no exemption for `Source/Core/src/*.cpp` changes that **cannot** carry a
+  desktop test delta by construction (behaviour-preserving refactor / cross-compile-only
+  arm). Third recurrence — raises the priority signal on that already-filed residue.
+
+### Preventing gate
+- **#1110 → new (tooling P2): `.coderabbit.yaml` `path_instructions` for `docs/plans/**`.**
+  Teach CodeRabbit the tier-less move-proof plan-ref convention (a `docs/plans/<slug>.md`
+  reference with no `active/`|`shipped/`|`deferred/` segment is valid by design and
+  must not be flagged as "missing a tier") and that `docs/plans/INDEX.md` is
+  auto-synced by CI's "Auto-sync plan INDEX" job (don't assert it RED from a stale
+  pipeline view). Stops the recurring false positives at the source so no future
+  plan-archive PR needs `cr-out-of-band`.
+- **#1095 → new (tooling P2): auto-downgrade CR `review-skipped`→WARN when cause is
+  a rate limit AND the diff is pure-docs.** In the CR gate (`merge-gates.sh` CR
+  condition), when CodeRabbit's review state is `review-skipped` with a
+  rate-limit cause **and** `agents/scripts/core/is-pure-docs-diff.sh` returns true,
+  treat it as WARN (the existing `cr-out-of-band` semantics) automatically — no
+  manual label. Scoped to **pure-docs only** on purpose: CR's review stays a hard
+  signal on any code diff.
+- **#1096 → none new — already covered.** The behaviour-preserving / cross-compile-only
+  Test-delta exemption is filed as `coverage-gate-platform-else-arm-exemption`
+  (the `2026-06-08 · #1021/#1016` entry) with a behaviour-preserving-refactor P3
+  residue; the `2026-06-09 · #1083` entry is a second recurrence. This is the
+  **third** — the residue should graduate from P3 to P2 (signal raised in the
+  filed entry).
+
+### Filed as
+- [`tooling.md`](categories/tooling.md) — `coderabbit-plan-ref-convention-path-instruction` (P2, #1110)
+- [`tooling.md`](categories/tooling.md) — `cr-review-skipped-pure-docs-auto-downgrade` (P2, #1095)
+- #1096 → no new file; priority-raise note appended to the existing
+  `coverage-gate-platform-else-arm-exemption` residue line.
+
 ## 2026-06-09 · PR #1083 · `tests-out-of-band` — Test-delta gate RED on a dual-target compile-guard
 ### What escaped
 The **Test-delta gate** (`scripts/dev/coverage-delta-gate.sh`) tripped RED on
