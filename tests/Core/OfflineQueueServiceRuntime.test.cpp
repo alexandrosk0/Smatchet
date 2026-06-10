@@ -1,5 +1,6 @@
 // OfflineQueueService runtime tests — drive the service through `IOfflineQueueDeps` against
-// a `FakeOfflineQueueDeps` + `FakeTrackerClient` + `LocalCacheManager(":memory:")`. Every
+// a `FakeOfflineQueueDeps` + `FakeTrackerClient` + the in-memory `FakeSyncCache` (ADR-0020 —
+// contract-suite-verified against the real cache; no SQLite). Every
 // case constructs a fresh fixture stack so queue / cache / mock state never leaks across
 // `TEST_CASE`s. Each test owns a `TestEnvGuard` that redirects the audit writer + the
 // ConfigManager user-data dir into a private temp dir, and writes a minimal config file
@@ -17,7 +18,6 @@
 #include "BackendAuditTrail.h"
 #include "ConfigManager.h"
 #include "IssueDraft.h"
-#include "LocalCacheManager.h"
 #include "OfflineQueueReplayPolicy.h"
 #include "OfflineQueueService.h"
 #include "TrackerHttpUtils.h"

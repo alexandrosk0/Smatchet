@@ -2,7 +2,8 @@
 #define SMATCHET_TESTS_FAKE_OFFLINE_QUEUE_DEPS_H
 
 // FakeOfflineQueueDeps — header-only in-memory implementation of `IOfflineQueueDeps` for the
-// doctest rig. Backs the cache with `LocalCacheManager(":memory:")` and the tracker backend
+// doctest rig. Backs the cache with the in-memory `FakeSyncCache` (ADR-0020 — SQLite-free,
+// contract-suite-verified against the real LocalCacheManager) and the tracker backend
 // with a `FakeTrackerClient`; the deferred-notify latch and refresh-data hook are simple
 // counters / callbacks. `LaunchBackgroundTask` runs the task synchronously on the caller —
 // tests that need async behaviour can override this by swapping `BackgroundTaskRunner`.
@@ -16,7 +17,8 @@
 #include "ITrackerIssueMutations.h"
 #include "ITrackerIssueReader.h"
 #include "IssueDraft.h"
-#include "LocalCacheManager.h"
+#include "FakeSyncCache.h"
+#include "ISyncCache.h"
 #include "TrackerFieldSchema.h"
 
 #include <atomic>
@@ -31,8 +33,8 @@ namespace smatchet_tests {
 
 class FakeOfflineQueueDeps : public IOfflineQueueDeps {
   public:
-    /// In-memory SQLite cache. Owned by the fixture so each test starts with an empty queue.
-    std::unique_ptr<LocalCacheManager> CacheImpl{std::make_unique<LocalCacheManager>(":memory:")};
+    /// In-memory sync cache (no SQLite). Owned by the fixture so each test starts with an empty queue.
+    std::unique_ptr<FakeSyncCache> CacheImpl{std::make_unique<FakeSyncCache>()};
     /// In-memory tracker backend. Tests script `CreateIssue` / `UpdateIssueFields` responses
     /// before running the service-under-test.
     std::shared_ptr<FakeTrackerClient> BackendImpl{std::make_shared<FakeTrackerClient>()};
@@ -68,7 +70,7 @@ class FakeOfflineQueueDeps : public IOfflineQueueDeps {
     /// `BackgroundTaskRunner`) to model a backend swap between work-capture and apply.
     std::uint64_t BackendGenerationImpl = 0;
 
-    LocalCacheManager* Cache() override { return CacheImpl.get(); }
+    ISyncCache* Cache() override { return CacheImpl.get(); }
     /// Latched strong role handles (debt 2026-06-07): swap-during-replay tests reset
     /// `BackendImpl` mid-replay — the handle a worker captured must keep the old fake alive.
     std::shared_ptr<ITrackerIssueReader> ReaderShared() const override { return BackendImpl; }

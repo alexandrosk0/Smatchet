@@ -21,7 +21,6 @@
 #include "AppController.h" // for TrackerIssueFetchPack
 #include "CachedTicketTypes.h"
 #include "ITicketSyncDeps.h"
-#include "LocalCacheManager.h"
 #include "TicketSyncService.h"
 
 #include <doctest/doctest.h>

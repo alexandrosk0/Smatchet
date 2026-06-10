@@ -25,7 +25,6 @@
 
 #include "ConfigManager.h"
 #include "IssueDraft.h"
-#include "LocalCacheManager.h"
 #include "OfflineQueueService.h"
 #include "PaneSyncKickPolicy.h"
 #include "TicketSyncService.h"

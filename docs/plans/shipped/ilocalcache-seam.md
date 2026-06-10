@@ -1,8 +1,9 @@
+<!-- index-summary: ISyncCache seam (ADR-0020) — 28-method sync-cache interface decouples OfflineQueueService/TicketSyncService/IssueCreatePipeline from SQLite; service tests run on a contract-suite-verified FakeSyncCache with a configure-time purity guard; PR1 #1112 (seam) + PR2 (test purity). -->
 # Plan — ISyncCache seam for pure-logic service tests
 
 > **Slug**: `ilocalcache-seam` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `shipped`
 >
 > **Usage**: copy this template to `docs/plans/active/<slug>.md` as the first step of any new plan. Fill every section.
 >
@@ -139,15 +140,20 @@ Touches `Source/Core/` → gates apply, but the change is behavior-neutral (inte
 - **Migrating chat / schema-migration tests off SQLite** — they test SQLite behavior; intentionally unchanged.
 
 ## Implementation log
-*(populated post-ship)*
+
+- PR #1112 (merged `b34237ef`) — PR1: `ISyncCache.h` (28 methods) + `LocalCacheManager : public ISyncCache`; seam retype across `IOfflineQueueDeps`/`ITicketSyncDeps`/`GridContextDepsAdapter`/`OfflineQueueService.{h,cpp}`/`IssueCreatePipeline.{h,cpp}`; `CachedTicketTypes.h` include swaps; `SyncCacheContract.test.cpp` (real-LCM half, 5 cases/54 assertions); + the latent doctest `GIT_SUBMODULES ""` fresh-worktree configure fix. Review fixes in-flight: `kMaxReplayAttempts` via `OfflineQueueReplayPolicy` directly (pre-empted this PR's break), `make_unique` in the contract maker, bare-`/**` comment style (which exposed a comment-audit gate bug, fixed in #1115).
+- PR2 (this PR) — `tests/support/FakeSyncCache.h` (thread-safe in-memory `ISyncCache`; shares `IssueDraftHelpers::ScrubFreshCreatePayload` with production); both deps fakes repointed (`CacheImpl` → `FakeSyncCache`, `Cache()` → `ISyncCache*`); 8 service TUs repointed; `OfflineQueueBackendKey` impl/migration cases relocated (2 file-backed migration cases + helpers → `LocalCacheTicketsV2Migration.test.cpp`; the cache-level dead-letter round-trip promoted into the contract suite); contract suite extended to 8 dual-impl cases (`FakeCacheMaker` + archive-field/scrub + key/bases round-trip + resolve-clears-bases); `OfflineQueueServiceRealCacheSmoke.test.cpp` (the one retained real-SQLite service backstop); configure-time purity guard in `tests/CMakeLists.txt`; `.coderabbit.yaml` re-tightened; `tooling.md` entry applied.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **Purity-gate ban list narrowed**: `OfflineQueueTestEnv.h` is NOT banned from the pure set — it is config-env only (temp dir + `read_only_mode=false`; constructs no cache), and the pure service TUs legitimately need `TestEnvGuard`. Banned: `LocalCacheManager.h` + `SqliteMemFixture.h` (the actual SQLite conduits).
+- **`OfflineQueueBackendKey.test.cpp` was not purely a service TU** (missed by plan + both reviews): it contained 2 file-backed schema-migration cases (off-interface `RunOneTimePendingQueueBackendKeyStamp` + raw legacy writer) and an LCM-level dead-letter case. Resolution: migration cases moved to the migration impl TU; the dead-letter case promoted into the dual-impl contract suite (strictly stronger than its original single-impl form).
+- **Purity gate implemented as a configure-time CMake check** (beside the existing glob-vs-list guard) rather than a separate bash script — runs in every CI configure with no new workflow wiring. Limitation (documented in the guard): the text match sees comments, so the construct must not be spelled in comments inside the scoped set; proven fail-closed by catching its own first false positive at configure time.
+- **`FakeSyncCache` carries the identical `EnqueuePendingFieldEdit` defaults** — the rev3/N1 identical-defaults-on-all-three resolution, confirmed empirically: the 4-arg concrete-typed call in `OfflineQueueBackendKey.test.cpp` failed to compile until the defaults were added.
 
 ## Verification (actual)
-*(populated post-ship)*
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+- Full `ninja-test-msvc` rig: **1552 cases / 15,165 assertions, 0 failed** — includes the 8 dual-impl contract cases (16 instantiations: real `:memory:` LCM + `FakeSyncCache` byte-identical assertions), all repointed service TUs on the fake (incl. `BackendSwitchRace1081` 7/7 — #1081 regression coverage preserved per grill Q4), the relocated migration cases, and the real-cache smoke.
+- Purity guard: green on the final tree; fail-closed verified live (its first run FATAL'd on a comment spelling the construct — reworded + limitation documented).
+- PR1 baseline (from #1112): dual-target `SmatchetStandalone` + `SmatchetCore_DX12` clean; full CI green at merge.
+- Doc-validation suite + delta lint: run via pre-ship before push (see PR checks).

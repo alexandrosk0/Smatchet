@@ -3,7 +3,8 @@
 // live backends queuing at once").
 //
 // Topology under test (the realistic multi-grid shape): ONE shared queue DB
-// (`LocalCacheManager`) holds rows for every backend, namespaced by `backend_key` (Slice 1c);
+// (production: `LocalCacheManager`; here the contract-suite-verified `FakeSyncCache` — ADR-0020)
+// holds rows for every backend, namespaced by `backend_key` (Slice 1c);
 // each `GridLiveContext` owns its OWN `OfflineQueueService` over a per-context deps adapter
 // that carries that context's backend key + backend handle (Slice 3). These tests put a "Jira"
 // pane and a "GitHub" pane over the same cache and prove the strict-equality replay filter
@@ -11,7 +12,7 @@
 // replay — the core multi-grid isolation invariant: each backend replays ONLY its own rows,
 // never the other's, under any interleaving.
 //
-// Concurrency model: the two services share a SINGLE `LocalCacheManager` (one SQLite
+// Concurrency model: the two services share a SINGLE sync cache (production: one SQLite
 // connection). A genuine two-thread replay would drive that one connection from two threads
 // with no connection-level serialisation — a configuration that is itself racy, so a
 // real-thread test could not legitimately assert "clean". We therefore model logical
@@ -26,7 +27,6 @@
 #include "../support/OfflineQueueTestEnv.h"
 
 #include "IssueDraft.h"
-#include "LocalCacheManager.h"
 #include "OfflineQueueService.h"
 
 #include <nlohmann/json.hpp>
@@ -50,13 +50,13 @@ namespace {
 // manager and carries this context's backend key + its own `FakeTrackerClient` backend.
 class SharedCacheDeps : public FakeOfflineQueueDeps {
   public:
-    SharedCacheDeps(LocalCacheManager* shared, std::string key) : shared_(shared) {
+    SharedCacheDeps(ISyncCache* shared, std::string key) : shared_(shared) {
         CacheBackendKeyImpl = std::move(key);
     }
-    LocalCacheManager* Cache() override { return shared_; }
+    ISyncCache* Cache() override { return shared_; }
 
   private:
-    LocalCacheManager* shared_;
+    ISyncCache* shared_;
 };
 
 IssueDraft MakeDraft(const std::string& summary) {
@@ -87,7 +87,7 @@ TEST_CASE("two-backend interleaved offline replay: each backend replays ONLY its
           "the other backend's rows stay queued untouched (multi-grid Slice 4 isolation)" *
           doctest::test_suite("[high-risk]")) {
     TestEnvGuard guard;
-    LocalCacheManager sharedCache(":memory:"); // ONE queue DB shared by both panes
+    smatchet_tests::FakeSyncCache sharedCache; // ONE shared queue store for both panes
 
     SharedCacheDeps jira(&sharedCache, "Jira");
     SharedCacheDeps github(&sharedCache, "GitHub");
@@ -201,7 +201,7 @@ TEST_CASE("two-backend dead-letter coexistence: dead rows under both keys restor
           "restoring one never disturbs the other (multi-grid Slice 4)" *
           doctest::test_suite("[high-risk]")) {
     TestEnvGuard guard;
-    LocalCacheManager sharedCache(":memory:");
+    smatchet_tests::FakeSyncCache sharedCache;
 
     SharedCacheDeps jira(&sharedCache, "Jira");
     SharedCacheDeps github(&sharedCache, "GitHub");
@@ -267,7 +267,7 @@ TEST_CASE("two-backend swap-mid-replay: a deferred Jira replay completes ONLY ag
           "Jira backend is swapped; GitHub rows + the GitHub backend are never touched (multi-grid Slice 4)" *
           doctest::test_suite("[high-risk]")) {
     TestEnvGuard guard;
-    LocalCacheManager sharedCache(":memory:");
+    smatchet_tests::FakeSyncCache sharedCache;
 
     SharedCacheDeps jira(&sharedCache, "Jira");
     SharedCacheDeps github(&sharedCache, "GitHub");

@@ -19,7 +19,6 @@
 #include "../support/OfflineQueueTestEnv.h"
 
 #include "IssueDraft.h"
-#include "LocalCacheManager.h"
 #include "OfflineQueueService.h"
 
 #include <doctest/doctest.h>
