@@ -28,10 +28,11 @@ import java.lang.reflect.Method;
  * {@code dispatchKeyEvent} (its {@code super} call needs a real window) and the
  * native 64-char/frame drain in SmatchetAndroidImeBridge.cpp.
  *
- * <p>#1070 HAND-OFF: {@code enqueueOverCapacityIsNonBlocking} pins the CURRENT
- * bounded(256) drop behavior. When WS3 #1070 makes the queue lossless, flip its
- * expected count from 256 to 300 — that turns this into the full-delivery proof the
- * plan's §Verification calls for.
+ * <p>#1070 DONE (landed on develop via #1105): the unicodeQueue is now an UNBOUNDED
+ * {@code LinkedBlockingQueue}, so a large paste is delivered in full and {@code offer()}
+ * still never blocks the UI thread (unbounded offer returns immediately — the ANR guard).
+ * {@code enqueueLargePasteIsNonBlockingAndLossless} is the full-delivery proof the plan's
+ * §Verification calls for.
  */
 @RunWith(RobolectricTestRunner.class)
 public class SmatchetActivityImeTest {
@@ -94,8 +95,8 @@ public class SmatchetActivityImeTest {
 
     @Test
     public void enqueueWithinCapacityDeliversAllInOrder() throws Exception {
-        // 200 < the current 256 bound: every char survives, in order. Pins the
-        // lossless in-capacity contract that #1070's un-truncated paste must keep.
+        // A 200-char paste: every char survives, in order. Pins the lossless,
+        // order-preserving FIFO contract (#1070) for a mid-size paste.
         SmatchetActivity a = newActivity();
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < 200; i++) {
@@ -109,11 +110,12 @@ public class SmatchetActivityImeTest {
     }
 
     @Test
-    public void enqueueOverCapacityIsNonBlockingAndCapsAtBound() throws Exception {
-        // CURRENT behavior: a bounded(256) LinkedBlockingQueue drained via offer(), so a
-        // >256 paste is lossy — but offer() NEVER blocks the UI thread (the ANR guard
-        // #1070 must preserve). This test completing at all proves non-blocking; the
-        // count proves the present cap. See the #1070 HAND-OFF note in the class doc.
+    public void enqueueLargePasteIsNonBlockingAndLossless() throws Exception {
+        // #1070 (landed via #1105): the unicodeQueue is an UNBOUNDED LinkedBlockingQueue
+        // fed via offer(), so a large paste is delivered in FULL while offer() still never
+        // blocks the UI thread (unbounded offer() returns immediately — the ANR guard the
+        // pre-#1070 bounded queue provided by dropping). This test completing at all proves
+        // non-blocking; draining all 300 proves lossless.
         SmatchetActivity a = newActivity();
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < 300; i++) {
@@ -124,7 +126,7 @@ public class SmatchetActivityImeTest {
         while (a.pollUnicodeChar() != 0) {
             drained++;
         }
-        assertEquals(256, drained);
+        assertEquals(300, drained);
     }
 
     @Test
