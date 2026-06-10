@@ -17,13 +17,13 @@ This file is the **registry** (what exists where) and the **harness-discovery in
 |---|---|---|---|
 | Tracker | `Source/Core/src/Tracker/AGENTS.md` | `Source/Core/src/Tracker/CONTEXT.md` | `Source/Core/src/Tracker/README.md` |
 | Commands | `Source/Core/src/Commands/AGENTS.md` | — | — |
-| Persistence | `Source/Core/src/Persistence/AGENTS.md` | — | — |
+| Persistence | `Source/Core/src/Persistence/AGENTS.md` | `Source/Core/src/Persistence/CONTEXT.md` | — |
 | Sync | `Source/Core/src/Sync/AGENTS.md` | — | — |
 | Ui | `Source/Core/src/Ui/AGENTS.md` | — | — |
 
 **System-wide glossary** (cross-cutting, not subsystem-scoped): [`docs/CONTEXT.md`](docs/CONTEXT.md). Term overlap with `Tracker/CONTEXT.md` (e.g. `TrackerIssueKey`, `UpdateField` set-replace) is intentional — `docs/CONTEXT.md` is the living index hub; the leaf is the subsystem-local view.
 
-A `—` cell means **intentionally absent** (no scoped rule / no grill yet), not missing. `Tracker/` is the full exemplar; the other four carry rules only (glossary + orientation deferred to per-subsystem follow-up grills).
+A `—` cell means **intentionally absent** (no scoped rule / no grill yet), not missing. `Tracker/` is the full exemplar; `Persistence/` gained its glossary in the `ilocalcache-seam` grill; the rest carry rules only (glossary + orientation deferred to per-subsystem follow-up grills).
 
 ## Harness discovery
 
