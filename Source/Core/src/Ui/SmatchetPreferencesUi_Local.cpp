@@ -471,7 +471,7 @@ void DrawAppearanceMobileSection(UiDrawSession& d) {
             MarkPrefsDirty(d);
         }
         ImGui::SameLine();
-        ImGui::TextUnformatted(mobileNavPageLabel(nav[static_cast<std::size_t>(i)]));
+        ImGui::TextUnformatted(mobileNavPageLabel(nav[static_cast<std::size_t>(i)]).c_str());
         ImGui::PopID();
     }
 
@@ -494,22 +494,31 @@ void DrawAppearanceMobileSection(UiDrawSession& d) {
             MarkPrefsDirty(d);
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("%s (hidden)", mobileNavPageLabel(id));
+        ImGui::TextDisabled("%s (hidden)", mobileNavPageLabel(id).c_str());
         ImGui::PopID();
     }
 
     // Home page combo (from the visible pages).
     ImGui::Spacing();
     int homeIdx = 0;
-    std::vector<const char*> homeLabels;
+    std::vector<std::string> homeLabels;
     for (int i = 0; i < static_cast<int>(nav.size()); ++i) {
         homeLabels.push_back(mobileNavPageLabel(nav[static_cast<std::size_t>(i)]));
         if (nav[static_cast<std::size_t>(i)] == d.cfg.MobileHomePage) {
             homeIdx = i;
         }
     }
-    if (!homeLabels.empty() &&
-        ImGui::Combo("Home page", &homeIdx, homeLabels.data(), static_cast<int>(homeLabels.size()))) {
+    // ImGui::Combo wants a const char* array; build it after homeLabels is fully
+    // populated so the std::string storage no longer reallocates (the pointers
+    // stay valid for the Combo call).
+    std::vector<const char*> homeLabelPtrs;
+    homeLabelPtrs.reserve(homeLabels.size());
+    for (const std::string& label : homeLabels) {
+        homeLabelPtrs.push_back(label.c_str());
+    }
+    if (!homeLabelPtrs.empty() &&
+        ImGui::Combo("Home page", &homeIdx, homeLabelPtrs.data(),
+                     static_cast<int>(homeLabelPtrs.size()))) {
         if (homeIdx >= 0 && homeIdx < static_cast<int>(nav.size())) {
             d.cfg.MobileHomePage = nav[static_cast<std::size_t>(homeIdx)];
             ConfigManager::SanitizeMobileNav(d.cfg);

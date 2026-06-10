@@ -209,9 +209,32 @@ void SmatchetUI::drawViewsSidebar(ViewsDashboardDrawCtx& ctx) {
 // and active marker all match the desktop Views sidebar. requestActivate is
 // wrapped to also close the drawer once a view is picked. Sidebar width fills
 // the drawer panel's content region.
+ViewsDashboardDrawCtx SmatchetUI::buildMobileViewsCtx(AppController& app, UiDrawSession& d,
+                                                      const ViewDefinition* activeView) {
+    const ViewsStore& store = ViewState.GetStoreMutable();
+    auto applyAndSync = [this, &app, &d, activeView]() { viewsApplyAndSync(app, d, activeView); };
+    auto discardChanges = [this, &d]() { viewsDiscardChanges(d); };
+    auto activateView = [this, &app, &d](const std::string& id) { viewsActivateView(app, d, id); };
+    auto requestActivate = [this, &app, &d, activeView](const std::string& id) {
+        viewsRequestActivate(app, d, activeView, id);
+        d.mobileDrawerOpen = false;
+    };
+    auto createNewView = [this, &d, activeView]() { viewsCreateNewView(d, activeView); };
+
+    return ViewsDashboardDrawCtx{app,
+                                 d,
+                                 store,
+                                 activeView,
+                                 ImGui::GetContentRegionAvail().x,
+                                 applyAndSync,
+                                 discardChanges,
+                                 createNewView,
+                                 requestActivate,
+                                 activateView};
+}
+
 void SmatchetUI::drawMobileDrawerViews(AppController& app, UiDrawSession& d) {
     ViewState.EnsureLoaded(d.cfg);
-    const ViewsStore& store = ViewState.GetStoreMutable();
     const ViewDefinition* activeView = ViewState.GetActiveView();
     if (!activeView) {
         ImGui::TextDisabled("No views available.");
@@ -223,26 +246,22 @@ void SmatchetUI::drawMobileDrawerViews(AppController& app, UiDrawSession& d) {
         LoadBuffersFromView(d, *activeView);
     }
 
-    auto applyAndSync = [this, &app, &d, activeView]() { viewsApplyAndSync(app, d, activeView); };
-    auto discardChanges = [this, &d]() { viewsDiscardChanges(d); };
-    auto activateView = [this, &app, &d](const std::string& id) { viewsActivateView(app, d, id); };
-    auto requestActivate = [this, &app, &d, activeView](const std::string& id) {
-        viewsRequestActivate(app, d, activeView, id);
-        d.mobileDrawerOpen = false;
-    };
-    auto createNewView = [this, &d, activeView]() { viewsCreateNewView(d, activeView); };
-
-    ViewsDashboardDrawCtx ctx{app,
-                              d,
-                              store,
-                              activeView,
-                              ImGui::GetContentRegionAvail().x,
-                              applyAndSync,
-                              discardChanges,
-                              createNewView,
-                              requestActivate,
-                              activateView};
+    ViewsDashboardDrawCtx ctx = buildMobileViewsCtx(app, d, activeView);
     drawViewsSidebar(ctx);
+}
+
+void SmatchetUI::drawMobileViewsModals(AppController& app, UiDrawSession& d) {
+    // #1117: render the discard/delete-confirm popups regardless of drawer state. The drawer's
+    // requestActivate latches viewsShowDiscardConfirm + closes the drawer on a dirty switch, so
+    // the modal must be driven from the always-rendered shell, not the drawer body. ContentRegion
+    // is queried inside buildMobileViewsCtx for sidebarWidth, which the modals ignore.
+    ViewState.EnsureLoaded(d.cfg);
+    const ViewDefinition* activeView = ViewState.GetActiveView();
+    if (!activeView) {
+        return;
+    }
+    ViewsDashboardDrawCtx ctx = buildMobileViewsCtx(app, d, activeView);
+    drawViewsModals(ctx);
 }
 
 void SmatchetUI::drawViewsEditorHeader(ViewsDashboardDrawCtx& ctx) {

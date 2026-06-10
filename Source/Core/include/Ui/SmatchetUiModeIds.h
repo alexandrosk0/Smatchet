@@ -102,8 +102,16 @@ inline MobilePage mobilePageFromString(const std::string& s) {
 
 // Human-facing label for a mobile page id (bottom-nav button, drawer row,
 // Preferences nav editor). Distinct from mobilePageToString, which yields the
-// persisted id. Unknown ids fall back to the raw id.
-inline const char* mobileNavPageLabel(const std::string& id) {
+// persisted id. Returns by value (std::string) rather than const char*: the
+// fallback echoes the raw `id` for an unrecognised (custom) page, and a
+// const char* return would force that branch to hand back `id.c_str()` — a
+// pointer into the caller's argument that dangles the moment the caller stores
+// it past the call (the home-page combo collects labels into a vector). By
+// value, every branch owns its storage. The known ids are exhaustive vs
+// mobilePageToString and SanitizeMobileNav drops unknowns, so the echo branch
+// is unreachable for sanitized input today, but it stays correct (and safe) if
+// a future custom-page id ever reaches here.
+inline std::string mobileNavPageLabel(const std::string& id) {
     if (id == "grid") {
         return "Tickets";
     }
@@ -119,7 +127,7 @@ inline const char* mobileNavPageLabel(const std::string& id) {
     if (id == "ai") {
         return "AI";
     }
-    return id.c_str();
+    return id;
 }
 
 inline const char* mobileTouchDensityToString(MobileTouchDensity d) {
