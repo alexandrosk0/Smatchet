@@ -791,7 +791,13 @@ add_test(NAME android_openssl_failfast_missing_crypto
         "-DSMATCHET_THIRDPARTY_CMAKE=${_ossl_thirdparty}"
         "-DSMATCHET_ANDROID_OPENSSL_BASE=${_ossl_fix}/missing-crypto"
         -DANDROID_ABI=arm64-v8a -P "${_ossl_probe}")
-set_tests_properties(android_openssl_failfast_missing_crypto PROPERTIES WILL_FAIL TRUE)
+# Validate the SPECIFIC #1068 fail-fast, not just a nonzero exit: PASS only when the
+# OpenSSL-pinning FATAL_ERROR text appears (whitespace-tolerant — CMake word-wraps the
+# message), and FAIL hard if the PROBE_OK success marker ever shows. PASS_REGULAR_EXPRESSION
+# ignores the exit code, so it supersedes (and must replace, not pair with) WILL_FAIL.
+set_tests_properties(android_openssl_failfast_missing_crypto PROPERTIES
+    PASS_REGULAR_EXPRESSION "Android[ \t\r\n]+requires[ \t\r\n]+a[ \t\r\n]+pinned[ \t\r\n]+static[ \t\r\n]+OpenSSL"
+    FAIL_REGULAR_EXPRESSION "PROBE_OK")
 
 # Missing public headers -> fail the configure (nonzero exit).
 add_test(NAME android_openssl_failfast_missing_header
@@ -799,7 +805,9 @@ add_test(NAME android_openssl_failfast_missing_header
         "-DSMATCHET_THIRDPARTY_CMAKE=${_ossl_thirdparty}"
         "-DSMATCHET_ANDROID_OPENSSL_BASE=${_ossl_fix}/missing-header"
         -DANDROID_ABI=arm64-v8a -P "${_ossl_probe}")
-set_tests_properties(android_openssl_failfast_missing_header PROPERTIES WILL_FAIL TRUE)
+set_tests_properties(android_openssl_failfast_missing_header PROPERTIES
+    PASS_REGULAR_EXPRESSION "Android[ \t\r\n]+requires[ \t\r\n]+a[ \t\r\n]+pinned[ \t\r\n]+static[ \t\r\n]+OpenSSL"
+    FAIL_REGULAR_EXPRESSION "PROBE_OK")
 
 # Complete base but an unbuilt ABI (Gradle drives both ABIs from one base) -> fail.
 add_test(NAME android_openssl_failfast_missing_abi
@@ -807,7 +815,9 @@ add_test(NAME android_openssl_failfast_missing_abi
         "-DSMATCHET_THIRDPARTY_CMAKE=${_ossl_thirdparty}"
         "-DSMATCHET_ANDROID_OPENSSL_BASE=${_ossl_fix}/complete"
         -DANDROID_ABI=mips -P "${_ossl_probe}")
-set_tests_properties(android_openssl_failfast_missing_abi PROPERTIES WILL_FAIL TRUE)
+set_tests_properties(android_openssl_failfast_missing_abi PROPERTIES
+    PASS_REGULAR_EXPRESSION "Android[ \t\r\n]+requires[ \t\r\n]+a[ \t\r\n]+pinned[ \t\r\n]+static[ \t\r\n]+OpenSSL"
+    FAIL_REGULAR_EXPRESSION "PROBE_OK")
 
 # No base supplied -> block is skipped (not fatal): exit 0 + PROBE_OK. The probe
 # falls back to ENV{SMATCHET_ANDROID_OPENSSL_BASE} when the CMake var is unset and CI
