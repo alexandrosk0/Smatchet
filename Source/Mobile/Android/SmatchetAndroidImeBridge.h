@@ -26,8 +26,13 @@ public:
     // Detach + drop the global ref. Idempotent.
     void Shutdown();
 
-    // Show / hide the soft keyboard when io.WantTextInput changes (rising edge → show, falling
-    // edge → hide). No JNI call on frames where the flag is unchanged.
+    // Drive the soft keyboard from io.WantTextInput + io.MouseDown[0]. Raises on the rising edge of
+    // WantTextInput (focus gained) OR on a fresh pointer tap-edge while a text widget wants input.
+    // There is deliberately NO steady-state re-raise: a Back/swipe dismiss leaves the field focused
+    // but the keyboard stays down (item 10) until the user taps the field again (item 11).
+    // NativeActivity routes touches to the native input queue, so the re-tap is observable here
+    // (ImGui io.MouseDown) but NOT in Activity.dispatchTouchEvent — which is why the re-raise lives
+    // native-side. Hides on the falling edge. No JNI call on a steady frame where nothing changed.
     void ShowKeyboardIfNeeded(ImGuiIO& io);
 
     // Drain the activity's Unicode queue into io.AddInputCharacter. Cheap when empty (one JNI
@@ -49,6 +54,10 @@ private:
     jmethodID pollUnicodeChar_ = nullptr;
     jmethodID pollContentInsets_ = nullptr;
     bool lastWantTextInput_ = false;
+    // Previous frame's io.MouseDown[0], for rising-edge (tap) detection. ShowKeyboardIfNeeded runs
+    // before ImGui::NewFrame, so io.MouseDown reflects the prior frame — a one-frame lag that is
+    // imperceptible and consistent with the WantTextInput read.
+    bool lastPointerDown_ = false;
     bool ready_ = false;
 };
 

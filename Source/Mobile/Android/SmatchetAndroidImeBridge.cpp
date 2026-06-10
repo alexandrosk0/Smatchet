@@ -87,16 +87,35 @@ void SmatchetAndroidImeBridge::ShowKeyboardIfNeeded(ImGuiIO& io) {
         return;
     }
     const bool want = io.WantTextInput;
-    if (want == lastWantTextInput_) {
-        return;
-    }
-    lastWantTextInput_ = want;
+    // A fresh pointer press this frame. imgui_impl_android feeds touches into MouseDown[0], and ImGui
+    // guarantees a press is visible for at least one frame even when press+release land together — so
+    // a quick tap is never missed. Read before NewFrame, so this is the prior frame's state (matches
+    // the WantTextInput read above); the one-frame lag is imperceptible.
+    const bool pointerDown = io.MouseDown[0];
+    const bool tapEdge = pointerDown && !lastPointerDown_;
+    lastPointerDown_ = pointerDown;
 
     JNIEnv* env = AcquireEnv();
     if (env == nullptr) {
         return;
     }
-    env->CallVoidMethod(activity_, want ? showSoftInput_ : hideSoftInput_);
+
+    if (want) {
+        // Raise on the rising edge of WantTextInput (a widget just took text focus) OR on a fresh tap
+        // while a text widget wants input. ImGui keeps WantTextInput true after a Back/swipe dismiss,
+        // so it never falls — only a new tap signals "bring the keyboard back" (item 11 / #1055).
+        // There is deliberately NO steady-state re-raise: that is item 10 (#1054) — a dismiss leaves
+        // the field focused but the keyboard stays down until the user taps the field again. Because
+        // the tap that deactivates a field also drops WantTextInput in the same frame, a tap on a
+        // non-text widget hits `want == false` here and cannot spuriously re-raise.
+        if (!lastWantTextInput_ || tapEdge) {
+            env->CallVoidMethod(activity_, showSoftInput_);
+        }
+    } else if (lastWantTextInput_) {
+        // Falling edge: focus left a text widget → hide.
+        env->CallVoidMethod(activity_, hideSoftInput_);
+    }
+    lastWantTextInput_ = want;
 }
 
 void SmatchetAndroidImeBridge::PollUnicodeChars(ImGuiIO& io) {
@@ -107,9 +126,13 @@ void SmatchetAndroidImeBridge::PollUnicodeChars(ImGuiIO& io) {
     if (env == nullptr) {
         return;
     }
-    // pollUnicodeChar returns 0 when the queue is empty (the sentinel). Bound the drain so a
-    // misbehaving producer can never stall the frame.
-    for (int guard = 0; guard < 64; ++guard) {
+    // pollUnicodeChar returns 0 when the queue is empty (the sentinel). item 9 (#1070): drain the
+    // WHOLE queue each frame so a long clipboard paste arrives intact in one go — the old 64/frame
+    // cap silently truncated big pastes. The guard is now just a runaway backstop (a far larger
+    // paste than any real one) so a misbehaving producer still can't loop forever and stall the
+    // frame (Pillar 2). The queue is bounded UI-side, so this normally exits on the empty sentinel.
+    const int kDrainBackstop = 65536;
+    for (int guard = 0; guard < kDrainBackstop; ++guard) {
         const jint codepoint = env->CallIntMethod(activity_, pollUnicodeChar_);
         if (codepoint <= 0) {
             break;

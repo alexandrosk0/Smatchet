@@ -34,7 +34,9 @@
 
 #include <GLES3/gl3.h>
 
+#include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -47,6 +49,210 @@ namespace {
 // SmatchetTheme::ApplyUiDensityScale.
 const float kBaseFontPx = 16.0f;
 
+// ── Raw-GLES boot/error panel (WS3 item 7 / Issue #1053 — Quality Pillar 2 visible cue) ──────────
+// When Source/Core fails to boot, coreBooted stays false and ImGui is never initialised, so the
+// normal RenderOneFrame path cannot draw anything — the screen would otherwise stay black with no
+// hint of what happened. This panel renders WITHOUT ImGui (a solid fill plus a 5x7 bitmap message
+// drawn as GLES3 quads), so a boot failure shows a readable cue instead. The failure detail lands
+// in logcat (tag Smatchet) and the app's smatchet.log; the on-screen message points there.
+
+// 5x7 uppercase glyph: 7 rows top-first, low 5 bits per row (bit4 = leftmost column). Only the
+// letters used by the two fixed panel strings are defined; any other char renders as a blank cell.
+struct PanelGlyph {
+    char ch;
+    unsigned char rows[7];
+};
+
+const PanelGlyph kPanelFont[] = {
+    {'A', {0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001}},
+    {'C', {0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110}},
+    {'D', {0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110}},
+    {'E', {0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111}},
+    {'F', {0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000}},
+    {'G', {0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01111}},
+    {'H', {0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001}},
+    {'I', {0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b11111}},
+    {'K', {0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001}},
+    {'L', {0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111}},
+    {'O', {0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110}},
+    {'P', {0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000}},
+    {'R', {0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001}},
+    {'S', {0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110}},
+    {'T', {0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100}},
+    {'U', {0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110}},
+};
+
+// Glyph rows for `ch`, or nullptr if undefined (e.g. space) — undefined cells draw nothing.
+const unsigned char* PanelGlyphRows(char ch) {
+    for (const PanelGlyph& g : kPanelFont) {
+        if (g.ch == ch) {
+            return g.rows;
+        }
+    }
+    return nullptr;
+}
+
+// Append two NDC triangles (6 verts, x/y interleaved) for an axis-aligned quad whose top-left is
+// (x, y) and which extends +w right / -h down.
+void AppendPanelQuad(std::vector<float>& v, float x, float y, float w, float h) {
+    const float x1 = x + w;
+    const float y1 = y - h;
+    const float q[12] = {x, y, x1, y, x1, y1, x, y, x1, y1, x, y1};
+    v.insert(v.end(), q, q + 12);
+}
+
+// Append the lit-pixel quads for one centred text line. `topY` = NDC y of the line's top edge;
+// `pxX`/`pxY` = NDC size of one glyph pixel; glyph cells are 6 px wide (5 + 1 spacing).
+void AppendPanelLine(std::vector<float>& v, const char* s, float topY, float pxX, float pxY) {
+    if (s == nullptr || s[0] == '\0') {
+        return;
+    }
+    const size_t len = std::strlen(s);
+    const float lineW = static_cast<float>(len * 6 - 1) * pxX;
+    const float startX = -lineW * 0.5f;
+    for (size_t k = 0; k < len; ++k) {
+        const unsigned char* rows = PanelGlyphRows(s[k]);
+        if (rows == nullptr) {
+            continue;
+        }
+        const float gx = startX + static_cast<float>(k * 6) * pxX;
+        for (int r = 0; r < 7; ++r) {
+            for (int c = 0; c < 5; ++c) {
+                if ((rows[r] >> (4 - c)) & 1) {
+                    AppendPanelQuad(v, gx + static_cast<float>(c) * pxX, topY - static_cast<float>(r) * pxY, pxX, pxY);
+                }
+            }
+        }
+    }
+}
+
+// Owns the GLES3 program + dynamic VBO used to paint the boot/error panel. Init is lazy (first
+// Draw) so nothing GL happens unless Core actually fails. GL objects live on the EGLContext, so a
+// surface recreate (TERM/INIT_WINDOW) keeps them; Destroy() runs at teardown for hygiene.
+class BootPanelGl {
+public:
+    void Draw(int w, int h, const char* line1, const char* line2);
+    void Destroy();
+
+private:
+    bool EnsureProgram();
+
+    GLuint program_ = 0;
+    GLuint vbo_ = 0;
+    GLint colorLoc_ = -1;
+    bool programFailed_ = false;
+};
+
+GLuint CompilePanelShader(GLenum type, const char* src) {
+    const GLuint sh = glCreateShader(type);
+    glShaderSource(sh, 1, &src, nullptr);
+    glCompileShader(sh);
+    GLint ok = GL_FALSE;
+    glGetShaderiv(sh, GL_COMPILE_STATUS, &ok);
+    if (ok != GL_TRUE) {
+        char log[256] = {0};
+        glGetShaderInfoLog(sh, sizeof(log) - 1, nullptr, log);
+        SLOGE("BootPanel shader compile failed: %s", log);
+        glDeleteShader(sh);
+        return 0;
+    }
+    return sh;
+}
+
+bool BootPanelGl::EnsureProgram() {
+    if (program_ != 0) {
+        return true;
+    }
+    if (programFailed_) {
+        return false;
+    }
+    const char* kVtx = "#version 300 es\n"
+                       "layout(location=0) in vec2 aPos;\n"
+                       "void main(){ gl_Position = vec4(aPos, 0.0, 1.0); }\n";
+    const char* kFrag = "#version 300 es\n"
+                        "precision mediump float;\n"
+                        "uniform vec4 uColor;\n"
+                        "out vec4 fragColor;\n"
+                        "void main(){ fragColor = uColor; }\n";
+    const GLuint vs = CompilePanelShader(GL_VERTEX_SHADER, kVtx);
+    const GLuint fs = CompilePanelShader(GL_FRAGMENT_SHADER, kFrag);
+    if (vs == 0 || fs == 0) {
+        programFailed_ = true; // solid fill alone is still a cue; never retry-spin on a bad driver
+        return false;
+    }
+    program_ = glCreateProgram();
+    glAttachShader(program_, vs);
+    glAttachShader(program_, fs);
+    glLinkProgram(program_);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    GLint linked = GL_FALSE;
+    glGetProgramiv(program_, GL_LINK_STATUS, &linked);
+    if (linked != GL_TRUE) {
+        SLOGE("BootPanel program link failed");
+        glDeleteProgram(program_);
+        program_ = 0;
+        programFailed_ = true;
+        return false;
+    }
+    colorLoc_ = glGetUniformLocation(program_, "uColor");
+    return true;
+}
+
+void BootPanelGl::Draw(int w, int h, const char* line1, const char* line2) {
+    glViewport(0, 0, w, h);
+    glDisable(GL_DEPTH_TEST);
+    glClearColor(0.18f, 0.02f, 0.02f, 1.0f); // dark maroon = "something went wrong"
+    glClear(GL_COLOR_BUFFER_BIT);
+    if (!EnsureProgram() || w <= 0 || h <= 0) {
+        return; // solid maroon fill is itself a visible cue when text can't render
+    }
+    const size_t len1 = (line1 != nullptr) ? std::strlen(line1) : 0;
+    const size_t len2 = (line2 != nullptr) ? std::strlen(line2) : 0;
+    const size_t longest = len1 > len2 ? len1 : len2;
+    if (longest == 0) {
+        return;
+    }
+    // Size one glyph pixel so the longest line spans ~75% of the surface width; square the pixel in
+    // device space by scaling the y extent by the aspect ratio.
+    const float pxX = 1.5f / static_cast<float>(longest * 6 - 1);
+    const float pxY = pxX * (static_cast<float>(w) / static_cast<float>(h));
+    const float blockH = 17.0f * pxY; // line1 (7) + gap (3) + line2 (7)
+    const float topY = blockH * 0.5f;
+    std::vector<float> verts;
+    AppendPanelLine(verts, line1, topY, pxX, pxY);
+    AppendPanelLine(verts, line2, topY - 10.0f * pxY, pxX, pxY);
+    if (verts.empty()) {
+        return;
+    }
+    glUseProgram(program_);
+    if (colorLoc_ >= 0) {
+        glUniform4f(colorLoc_, 0.95f, 0.95f, 0.95f, 1.0f);
+    }
+    if (vbo_ == 0) {
+        glGenBuffers(1, &vbo_);
+    }
+    glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+    glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(verts.size() * sizeof(float)), verts.data(), GL_DYNAMIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), reinterpret_cast<const void*>(0));
+    glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(verts.size() / 2));
+    glDisableVertexAttribArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glUseProgram(0);
+}
+
+void BootPanelGl::Destroy() {
+    if (vbo_ != 0) {
+        glDeleteBuffers(1, &vbo_);
+        vbo_ = 0;
+    }
+    if (program_ != 0) {
+        glDeleteProgram(program_);
+        program_ = 0;
+    }
+}
+
 struct AndroidHostState {
     SmatchetAndroidEgl egl;
     smatchet::mobile::SmatchetAndroidImeBridge ime;
@@ -58,7 +264,10 @@ struct AndroidHostState {
     float densityScale = 1.0f;
     bool coreBooted = false;
     bool imguiReady = false;
+    bool imeReady = false; // item 8 (#1069): IME bridge init succeeded — false ⇒ degraded cue
     bool hasSurface = false;
+    bool bootPanelDrawn = false; // item 7: raw-GL boot/error panel painted once on the live surface
+    BootPanelGl bootPanel;       // item 7: raw-GLES boot/error renderer (used only when Core fails)
 };
 
 std::string NormalizeDir(const char* raw) {
@@ -218,7 +427,13 @@ void InitImGuiFirstTime(android_app* app, AndroidHostState& s) {
 
     ImGui_ImplAndroid_Init(app->window);
     ImGui_ImplOpenGL3_Init("#version 300 es");
-    s.ime.Init(app->activity->vm, app->activity->clazz);
+    // item 8 (#1069): capture IME-bridge init. On failure the UI must still come up (do NOT gate
+    // imguiReady) — only the soft keyboard + clipboard paste are lost; hardware keys still work.
+    // RenderOneFrame paints a degraded-mode cue while imeReady is false.
+    s.imeReady = s.ime.Init(app->activity->vm, app->activity->clazz);
+    if (!s.imeReady) {
+        SLOGE("IME bridge init failed — soft keyboard + paste unavailable; hardware keys still work");
+    }
     g_insetBridge = &s.ime;
     ImGui::GetPlatformIO().Platform_GetWindowWorkAreaInsets = &PollWorkAreaInsets;
     s.imguiReady = true;
@@ -249,6 +464,21 @@ void RenderOneFrame(AndroidHostState& s) {
     ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_None);
     s.mainWindow->Draw(*s.app);
     s.pluginHost->OnDraw(*s.app);
+
+    // item 8 (#1069): degraded-mode cue when the IME bridge failed to init — a small, non-interactive
+    // overlay so the user knows the soft keyboard is unavailable rather than silently dead-typing.
+    if (!s.imeReady) {
+        const ImGuiViewport* vp = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + 8.0f, vp->WorkPos.y + 8.0f));
+        ImGui::SetNextWindowBgAlpha(0.75f);
+        const ImGuiWindowFlags cueFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                                          ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+                                          ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs;
+        if (ImGui::Begin("##ime_degraded", nullptr, cueFlags)) {
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f), "Soft keyboard unavailable - hardware keys only");
+        }
+        ImGui::End();
+    }
     ImGui::Render();
 
     glViewport(0, 0, s.egl.Width(), s.egl.Height());
@@ -276,10 +506,17 @@ void TeardownAll(AndroidHostState& s) {
     if (s.imguiReady) {
         ImGui::DestroyContext();
     }
+    // Free the boot-panel GL objects only while the context is still current (a surface is bound);
+    // otherwise egl.Destroy() below tears down the whole context and frees them anyway.
+    if (s.egl.HasSurface()) {
+        s.bootPanel.Destroy();
+    }
     s.egl.Destroy();
     s.imguiReady = false;
+    s.imeReady = false;
     s.coreBooted = false;
     s.hasSurface = false;
+    s.bootPanelDrawn = false;
     SLOG("Teardown complete");
 }
 
@@ -287,19 +524,27 @@ void OnAppCmd(android_app* app, int32_t cmd) {
     AndroidHostState& s = *static_cast<AndroidHostState*>(app->userData);
     switch (cmd) {
     case APP_CMD_INIT_WINDOW:
-        if (app->window == nullptr || !s.coreBooted) {
+        if (app->window == nullptr) {
             break;
         }
-        if (!s.imguiReady) {
-            if (s.egl.CreateContext() && s.egl.CreateSurface(app->window)) {
-                InitImGuiFirstTime(app, s);
-                s.hasSurface = s.imguiReady;
-            }
-        } else if (s.egl.CreateSurface(app->window)) {
-            // Context (+ GL objects + ImGui ctx) survived TERM_WINDOW; only re-point the
-            // android backend at the fresh ANativeWindow so NewFrame reads the right size.
-            ImGui_ImplAndroid_Init(app->window);
+        // item 7 (#1053): bring up the EGL context + surface even when Core failed to boot, so the
+        // raw-GL boot/error panel can render. ImGui is initialised only once Core is up; on a
+        // boot failure hasSurface still flips true and the main loop paints the panel instead.
+        if (!s.egl.HasContext()) {
+            s.egl.CreateContext();
+        }
+        if (s.egl.HasContext() && s.egl.CreateSurface(app->window)) {
             s.hasSurface = true;
+            s.bootPanelDrawn = false; // repaint the panel once on a freshly (re)created surface
+            if (s.coreBooted) {
+                if (!s.imguiReady) {
+                    InitImGuiFirstTime(app, s);
+                } else {
+                    // Context (+ GL objects + ImGui ctx) survived TERM_WINDOW; only re-point the
+                    // android backend at the fresh ANativeWindow so NewFrame reads the right size.
+                    ImGui_ImplAndroid_Init(app->window);
+                }
+            }
         }
         break;
     case APP_CMD_TERM_WINDOW:
@@ -319,6 +564,27 @@ int32_t OnInputEvent(android_app* app, AInputEvent* event) {
     return ImGui_ImplAndroid_HandleInputEvent(event);
 }
 
+// item 7: paint the raw-GL boot/error panel once and present it. Called from the main loop only
+// when the surface is live but Core failed to boot (so ImGui is never available).
+void DrawBootErrorPanel(AndroidHostState& s) {
+    s.bootPanel.Draw(s.egl.Width(), s.egl.Height(), "STARTUP FAILED", "CHECK LOGCAT");
+    s.egl.SwapBuffers();
+}
+
+// Whether the next ALooper_pollOnce should be non-blocking (timeout 0). Re-evaluated on EVERY poll
+// (an INIT_WINDOW processed mid-drain flips hasSurface, and the next poll must switch to 0 so the
+// loop exits and renders). A booted ImGui UI animates continuously → always spin; a boot-failed app
+// needs exactly one panel draw, then blocks on -1 so it consumes no CPU.
+bool WantImmediatePoll(const AndroidHostState& s) {
+    if (!s.hasSurface) {
+        return false;
+    }
+    if (s.coreBooted && s.imguiReady) {
+        return true;
+    }
+    return !s.bootPanelDrawn;
+}
+
 } // namespace
 
 void android_main(android_app* app) {
@@ -332,13 +598,12 @@ void android_main(android_app* app) {
     while (true) {
         int events = 0;
         android_poll_source* source = nullptr;
-        // Spin non-blocking while a surface is live (render every loop); block when
-        // backgrounded so an idle app consumes no CPU until the next lifecycle event.
-        // The timeout MUST be re-evaluated on every poll: an INIT_WINDOW processed inside
-        // this drain flips hasSurface true, and the very next poll has to switch to the
-        // non-blocking (0) timeout so the loop exits and renders instead of blocking on -1.
-        while (ALooper_pollOnce(state.hasSurface ? 0 : -1, nullptr, &events,
-                               reinterpret_cast<void**>(&source)) >= 0) {
+        // Block when there's no per-frame work pending, spin (timeout 0) when there is. The predicate
+        // is re-evaluated on every poll (it's in the loop condition): an INIT_WINDOW processed inside
+        // this drain flips hasSurface true, and the next poll must switch to 0 so the loop exits and
+        // renders. A boot-failed app draws its panel once then blocks — no CPU spin (Pillar 1).
+        while (ALooper_pollOnce(WantImmediatePoll(state) ? 0 : -1, nullptr, &events,
+                                reinterpret_cast<void**>(&source)) >= 0) {
             if (source != nullptr) {
                 source->process(app, source);
             }
@@ -348,7 +613,12 @@ void android_main(android_app* app) {
             }
         }
         if (state.hasSurface) {
-            RenderOneFrame(state);
+            if (state.coreBooted && state.imguiReady) {
+                RenderOneFrame(state);
+            } else if (!state.bootPanelDrawn) {
+                DrawBootErrorPanel(state); // Core boot failed → raw-GL error panel (item 7)
+                state.bootPanelDrawn = true;
+            }
         }
     }
 }
