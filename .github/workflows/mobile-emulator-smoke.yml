@@ -1,6 +1,6 @@
 name: Mobile emulator smoke
 
-# WS5 item 18 (docs/plans/active/mobile-mvp-completion.md) — boot the debug APK on
+# WS5 item 18 (docs/plans/mobile-mvp-completion.md) — boot the debug APK on
 # an x86_64 Android emulator and assert the native shell reaches first-frame
 # readiness ("ImGui ready" in logcat). This is the only CI job that exercises the
 # real EGL/GLES3 surface + frame loop end-to-end on a (software-rendered) GPU; the

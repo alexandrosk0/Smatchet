@@ -131,6 +131,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`mobile-app-jql-mvp`](shipped/mobile-app-jql-mvp.md) | 2026-06-08 | Plan — Mobile app (Android-first) — Jira JQL → editable-column ticket list |
 | [`p4-git-connector-github-mirror`](shipped/p4-git-connector-github-mirror.md) | 2026-06-08 | Plan — GitHub → p4d one-way mirror via Helix4Git Git Connector (WSL2) |
 | [`backend-switch-sync-race-1081`](shipped/backend-switch-sync-race-1081.md) | 2026-06-09 | Fix #1081 backend-switch (Jira→GitHub) `std::terminate` — publish-under-lock, `backendGeneration_` token gating stale-worker writes + replay-refresh TOCTOU re-check, captured-key replay latch, and `PaneSyncKickPolicy` sync-storm damping. |
+| [`mobile-mvp-completion`](shipped/mobile-mvp-completion.md) | 2026-06-09 | Plan — Mobile (Android) Phase-0 MVP completion |
 <!-- END auto-plan-index -->
 
 ### Notes

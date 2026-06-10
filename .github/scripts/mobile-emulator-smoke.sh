@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # mobile-emulator-smoke.sh — WS5 item 18 boot smoke for the Android debug APK.
-# (docs/plans/active/mobile-mvp-completion.md.)
+# (docs/plans/mobile-mvp-completion.md.)
 #
 # Runs INSIDE reactivecircus/android-emulator-runner (the emulator is already
 # booted, adb is on PATH, and the repo is checked out). It installs the debug
