@@ -439,6 +439,33 @@ const TranslationEntry kEntries[] = {
      u8"Désactivé par défaut. Une fois activé, les clients MCP peuvent exécuter des extraits "
      u8"Lua ou Scripts/*.lua via l'outil intégré run_lua."},
 
+    // Preferences footer — per-tab save-semantics line + (?) full explanation.
+    {"prefs.footer.tracker.short", "Save & Sync writes this tab to disk and refreshes the tracker connection.",
+     u8"Enregistrer & synchroniser écrit cet onglet sur le disque et actualise la connexion au "
+     u8"tracker."},
+    {"prefs.footer.integrations.short",
+     "MCP settings save when changed. Runtime status: Automation -> Agent Bridge (MCP)...",
+     u8"Les réglages MCP s'enregistrent dès modification. État d'exécution : Automation -> Agent "
+     u8"Bridge (MCP)..."},
+    {"prefs.footer.autosave.short", "Settings on this tab save automatically when changed.",
+     u8"Les réglages de cet onglet s'enregistrent automatiquement dès modification."},
+    {"prefs.footer.immediate.short", "Options on this tab apply and save immediately.",
+     u8"Les options de cet onglet s'appliquent et s'enregistrent immédiatement."},
+    {"prefs.footer.annotate.short", "This tab has its own Save settings and Reload settings buttons.",
+     u8"Cet onglet possède ses propres boutons Save settings et Reload settings."},
+    {"prefs.footer.save_sync.help",
+     "Save & Sync writes the Tracker tab (and optional Integrations tab when enabled in this build) to "
+     "disk and refreshes the tracker connection. Assistant, Whisper, Local data, Appearance, and template "
+     "settings save automatically when changed. MCP runtime status: Automation -> Agent Bridge (MCP)... "
+     "Log level and verbose logging: Inspect -> Runtime Log. The Annotate Analysis tab has its own Save "
+     "settings and Reload settings buttons.",
+     u8"Enregistrer & synchroniser écrit l'onglet Tracker (et l'onglet Integrations si activé dans "
+     u8"cette version) sur le disque et actualise la connexion au tracker. Les réglages Assistant, "
+     u8"Whisper, Données locales, Apparence et modèles s'enregistrent automatiquement dès "
+     u8"modification. État d'exécution MCP : Automation -> Agent Bridge (MCP)... Niveau de "
+     u8"journalisation et journaux détaillés : Inspect -> Runtime Log. L'onglet Annotate Analysis "
+     u8"possède ses propres boutons Save settings et Reload settings."},
+
     // Templates tab — shortened tooltips + (?) help bodies.
     {"prefs.templates.longtext_preview.short", "Long-text editor opens in preview mode.",
      u8"L'éditeur de texte long s'ouvre en mode aperçu."},

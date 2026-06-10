@@ -675,6 +675,7 @@ void DrawAssistantPreferencesTab(AppController& app, UiDrawSession& d) {
     SeedAssistantBuffers(s_bufs, d);
 
     if (ImGui::BeginTabItem("Assistant")) {
+        d.preferencesActiveTab = PreferencesActiveTab::Assistant;
         // Validator runs against the live cfg (auto-saved on every field edit)
         // so the user gets live feedback for the text they're typing.
         const smatchet::ai::PrefsValidation validation = smatchet::ai::ValidateAiPrefs(d.cfg);

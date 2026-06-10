@@ -247,6 +247,7 @@ void DrawLocalDataStorageSection(AppController& app) {
 // function-size decomposition; behaviour-identical.
 void DrawLocalDataTab(SmatchetUI& ui, AppController& app, UiDrawSession& d) {
     if (ImGui::BeginTabItem("Local data")) {
+        d.preferencesActiveTab = PreferencesActiveTab::LocalData;
         DrawLocalDataRecreateDbSection(ui, app, d);
         DrawLocalDataStorageSection(app);
         ImGui::EndTabItem();
@@ -552,6 +553,7 @@ void DrawAppearanceMobileSection(UiDrawSession& d) {
 // function-size decomposition; behaviour-identical.
 void DrawAppearanceTab(AppController& app, UiDrawSession& d) {
     if (ImGui::BeginTabItem("Appearance")) {
+        d.preferencesActiveTab = PreferencesActiveTab::Appearance;
         DrawAppearanceTypographySection(d);
         DrawAppearanceGridTextSection(d);
         DrawAppearanceDateSection(d);

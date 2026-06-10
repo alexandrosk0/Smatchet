@@ -390,6 +390,7 @@ void SmatchetUI::drawPreferencesTrackerTab(UiDrawSession& d) {
     if (!ImGui::BeginTabItem("Tracker")) {
         return;
     }
+    d.preferencesActiveTab = PreferencesActiveTab::Tracker;
     const int currentItem = DrawTrackerBackendSelection(d);
     DrawTrackerBackendConfig(d, currentItem);
     DrawTrackerRecentProjects(d, currentItem);
@@ -408,6 +409,7 @@ void SmatchetUI::drawPreferencesIntegrationsTab(AppController& app, UiDrawSessio
     if (!ImGui::BeginTabItem("Integrations")) {
         return;
     }
+    d.preferencesActiveTab = PreferencesActiveTab::Integrations;
     ImGui::TextUnformatted("MCP (Model Context Protocol)");
     ImGui::Separator();
     ImGui::Spacing();
@@ -608,12 +610,41 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
 
     ImGui::Spacing();
     ImGui::Separator();
-    ImGui::TextWrapped(
+    // Per-tab save-semantics line: only the info relevant to the active tab; the
+    // (?) marker carries the full cross-tab explanation.
+    const char* footerKey = "prefs.footer.tracker.short";
+    const char* footerFallback = "Save & Sync writes this tab to disk and refreshes the tracker connection.";
+    switch (d.preferencesActiveTab) {
+    case PreferencesActiveTab::Tracker:
+        break;
+    case PreferencesActiveTab::Integrations:
+        footerKey = "prefs.footer.integrations.short";
+        footerFallback = "MCP settings save when changed. Runtime status: Automation -> Agent Bridge (MCP)...";
+        break;
+    case PreferencesActiveTab::Assistant:
+    case PreferencesActiveTab::Whisper:
+    case PreferencesActiveTab::Templates:
+        footerKey = "prefs.footer.autosave.short";
+        footerFallback = "Settings on this tab save automatically when changed.";
+        break;
+    case PreferencesActiveTab::LocalData:
+    case PreferencesActiveTab::Appearance:
+        footerKey = "prefs.footer.immediate.short";
+        footerFallback = "Options on this tab apply and save immediately.";
+        break;
+    case PreferencesActiveTab::Annotate:
+        footerKey = "prefs.footer.annotate.short";
+        footerFallback = "This tab has its own Save settings and Reload settings buttons.";
+        break;
+    }
+    ImGui::TextWrapped("%s", SmatchetLocalization::T(footerKey, footerFallback));
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render(
+        "prefs.footer.save_sync.help",
         "Save & Sync writes the Tracker tab (and optional Integrations tab when enabled in this build) to "
-        "disk and refreshes the tracker connection. MCP runtime status: Automation -> Agent Bridge (MCP).... "
-        "Appearance options save immediately when changed. Log level and verbose logging: Inspect -> Runtime Log. The "
-        "Annotate "
-        "Analysis tab has its own Save "
+        "disk and refreshes the tracker connection. Assistant, Whisper, Local data, Appearance, and template "
+        "settings save automatically when changed. MCP runtime status: Automation -> Agent Bridge (MCP)... "
+        "Log level and verbose logging: Inspect -> Runtime Log. The Annotate Analysis tab has its own Save "
         "settings and Reload settings buttons.");
     ImGui::Spacing();
     if (ImGui::Button("Save & Sync", ImVec2(140.0f, 0.0f))) {

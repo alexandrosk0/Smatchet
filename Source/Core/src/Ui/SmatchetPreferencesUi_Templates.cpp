@@ -30,6 +30,7 @@ namespace {
 
 void DrawGridSubTab(UiDrawSession& d) {
     if (ImGui::BeginTabItem("Grid")) {
+        d.preferencesActiveTab = PreferencesActiveTab::Templates;
         ImGui::TextUnformatted("Editing");
         ImGui::Separator();
         ImGui::Spacing();
@@ -429,6 +430,7 @@ void DrawAnnotateCommentsSubTab(UiDrawSession& d, SmatchetPreferencesUiTemplateF
 
 void DrawFieldsInputsSubTab(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
     if (ImGui::BeginTabItem("Fields Inputs")) {
+        d.preferencesActiveTab = PreferencesActiveTab::Templates;
         if (ImGui::BeginTabBar("FieldsInputsSubTabBar")) {
             DrawTimeEstimatesSubTab(flags);
             DrawWorkLogTemplatesSubTab(flags);
@@ -447,6 +449,7 @@ void DrawTemplatePreferencesTabs(SmatchetUI& ui, AppController& app, UiDrawSessi
     DrawGridSubTab(d);
     DrawFieldsInputsSubTab(d, flags);
     if (ImGui::BeginTabItem("Annotate")) {
+        d.preferencesActiveTab = PreferencesActiveTab::Annotate;
         ui.DrawAnnotatePreferencesTabForwarded(app);
         ImGui::EndTabItem();
     }

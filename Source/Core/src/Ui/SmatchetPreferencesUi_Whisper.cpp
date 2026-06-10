@@ -852,6 +852,7 @@ void DrawWhisperPreferencesTab(AppController& app, UiDrawSession& d) {
     // to show progress on this tab.
     static WhisperPrefsTabState s_state;
     if (ImGui::BeginTabItem(SmatchetLocalization::T("whisper.preferences.tabTitle", "Whisper"))) {
+        d.preferencesActiveTab = PreferencesActiveTab::Whisper;
         ImGui::TextUnformatted("Push-to-talk dictation: hold the hotkey, speak, release.");
         ImGui::SameLine();
         SmatchetHelpMarker::Render("prefs.whisper.ptt.help",

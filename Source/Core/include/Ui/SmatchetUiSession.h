@@ -131,6 +131,21 @@ struct AuditDisplayCachePayload {
 
 enum class CellWriteState { Saving, Success, Error };
 
+/// Which top-level Preferences tab is selected this frame. Recorded by each
+/// tab's BeginTabItem-true branch so the shared footer under the tab bar can
+/// show only the save-semantics line relevant to the active tab. Nested
+/// sub-tabs (Fields Inputs children) map to their top-level parent.
+enum class PreferencesActiveTab : std::uint8_t {
+    Tracker = 0,
+    Integrations,
+    Assistant,
+    Whisper,
+    LocalData,
+    Appearance,
+    Templates,
+    Annotate,
+};
+
 struct CellWriteFeedback {
     CellWriteState State = CellWriteState::Saving;
     std::string Message;
@@ -176,6 +191,9 @@ struct UiDrawSession {
     char paletteInlineBuf[256] = {};
 
     bool showPreferences = false;
+    /// Active Preferences tab this frame (footer save-semantics line). Persists
+    /// across frames; defaults to the first tab.
+    PreferencesActiveTab preferencesActiveTab = PreferencesActiveTab::Tracker;
     /// One-frame focus latch for the Preferences window. Set true by the menu-bar
     /// item; the window consumer calls `ImGui::SetWindowFocus()` and clears it.
     /// Drives the always-reveal-on-menu-click contract (AGENTS.md).
