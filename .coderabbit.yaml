@@ -111,13 +111,20 @@ reviews:
         cost ~50–60× the C++ equivalent — flag per-frame sol2 bindings.
     - path: 'tests/**/*.{cpp,h,hpp}'
       instructions: |
-        Pure-logic doctest rig only (`SMATCHET_BUILD_TESTS`,
-        `ninja-test-msvc` preset). No UI / HTTP / SQLite / ImGui / cpr
+        Doctest rig (`SMATCHET_BUILD_TESTS`, `ninja-test-msvc` preset). No
+        UI / HTTP / ImGui / cpr / `p4` subprocess / on-disk-or-networked I/O
         surfaces — those route to bucket-E (ImGui Test Engine) or stay
-        deferred. Scoped to C++ test sources: `tests/bats/**` are shell /
-        python integration suites for tooling (merge-watcher, merge-gates,
-        lock primitives) that legitimately invoke scripts, so the pure-logic
-        rule does not apply to them.
+        deferred. EXCEPTION — in-memory SQLite is an ESTABLISHED, supported
+        fixture in this rig (≈8 `tests/Core/*.test.cpp` TUs already use it):
+        `LocalCacheManager(":memory:")` driven via
+        `tests/support/{SqliteMemFixture,OfflineQueueTestEnv}.h`. The
+        Sync/Persistence services take a concrete `LocalCacheManager*` with no
+        `ILocalCache` seam to fake, so `:memory:` SQLite IS the
+        pure-logic-equivalent cache here — do NOT flag `:memory:` SQLite usage
+        (only on-disk / networked DB access). Scoped to C++ test sources:
+        `tests/bats/**` are shell / python integration suites for tooling
+        (merge-watcher, merge-gates, lock primitives) that legitimately invoke
+        scripts, so the rule does not apply to them.
     - path: '{CMakeLists.txt,cmake/**,CMakePresets.json,Source/Core/CMakeLists.txt,Source/Plugins/**/CMakeLists.txt,Source/UnrealPlugins/**/CMakeLists.txt}'
       instructions: |
         `*_DX12` targets are `EXCLUDE_FROM_ALL` (Unreal only) — do NOT
