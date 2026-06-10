@@ -163,6 +163,7 @@ All four slices shipped together on one branch (`feat/help-marker`, commit `917f
 - **Slice 1b** — Local (DB recreate intro, storage-mode paragraphs, typography/language/vsync/wheel/date tooltips), Tracker (read-only, inherit-token trio, GitHub repo), Integrations (MCP bind/token/lua), Templates (long-text modal, duration suggestions).
 - **Slice 2** — Annotate window (4 sites) + Annotate config blurb, Perf CPU/Network intros, Offline-queue unknown-conflict pane, AI-assistant per-turn effort, Bug-report screenshot redaction, update banner.
 - **Localization** — ~90 `{key, en, fr}` entries (`<panel>.<field>.{short,help}`). `.short` English columns byte-match callsite literals (localized-ImGui source lookup); `.help` bodies resolve by key. Drift check (29 `.short` entries grep-verified against `Source/Core/src/Ui/`) passed pre- and post-clang-format.
+- **Follow-up (visual round 1, commit `3bc0d1c4`)** — tab-aware Preferences footer per user feedback. New `PreferencesActiveTab` enum + `UiDrawSession::preferencesActiveTab` (`SmatchetUiSession.h`); 9 `BeginTabItem`-true set-points across 5 Preferences TUs (nested Fields Inputs sub-tabs map to parent); footer switch in `drawPreferencesWindow` shows one of 5 per-tab save-semantics lines (`prefs.footer.*.short`) + shared `(?)` carrying the full cross-tab paragraph (`prefs.footer.save_sync.help`). 6 new `{key, en, fr}` entries. Works in both desktop and embedded (mobile Settings) footer paths.
 
 ## Deviations
 
@@ -178,6 +179,7 @@ All four slices shipped together on one branch (`feat/help-marker`, commit `917f
 - Bucket A: `test-lint-rules.sh --diff origin/develop` all PASS (3 dup WARNs = pre-existing include-block clone pattern, calibration phase; comment-ratio WARN on the 20-line helper header). Dual-target build (`ninja-iter-msvc`, SmatchetStandalone + SmatchetCore_DX12) exit 0.
 - Localization drift check: 29 `.short` entries byte-match UI callsite literals — clean.
 - Bucket C / visual-validation exception: standalone launched for user verdict (markers in Preferences tabs, Annotate, Perf, Offline conflict, Bug report, AI assistant; `AllowWhenDisabled` hover inside the Assistant disabled block; fr-FR spot check).
+- `test-all.sh`: bats/agent-infra failures attributed to background-sandbox `/tmp` blocking (foreground spot-checks 14/14); `test-doctor.sh` 3/3 under `with-msvc-env.sh` (plain-shell FAIL = no `cl.exe` on PATH, environmental); whisper autosend/roundtrip script FAILs reproduce identically on develop — pre-existing local stdout/stderr-interleave parse bug in the scripts (scenario envelopes show `passed:true`), filed as a spawn-task, not branch-caused.
 - Bucket E: deferred — there is no `ux` backlog category (closed set per `AGENT_SELF_IMPROVEMENT.md`), so the coverage gap is filed in `docs/self-improvement/categories/test.md` (P2: bucket-E hover coverage + AllowWhenDisabled contract), and the keyboard-only reachability regression (user-observable, Pillar 4) is to be elevated to a GitHub Issue at ship time per issue-triage.md.
 
 ## Out of scope
