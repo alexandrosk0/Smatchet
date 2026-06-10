@@ -26,7 +26,7 @@ The role that builds create/update payloads and performs issue create, field upd
 The role that handles comments, watchers, votes, worklogs, and user search. Nullable — a backend that returns `nullptr` here (e.g. `PlaneClient` today) supports none of these; callers hide the features (UI gates on the null-check), never crash.
 
 **ITrackerActivity**:
-The role that produces a user's tracker activity feed and group membership (`TrackerActivityEntry` rows, group rosters). Nullable, separate from **ITrackerCollaboration** so a backend can support activity without claiming comments/watchers/votes ([ADR-0019](../../../../docs/adr/0021-itracker-activity-sixth-role.md); lands with the User Info Window plan).
+The role that produces a user's tracker activity feed and group membership (`TrackerActivityEntry` rows, group rosters). Nullable, separate from **ITrackerCollaboration** so a backend can support activity without claiming comments/watchers/votes ([ADR-0021](../../../../docs/adr/0021-itracker-activity-sixth-role.md); lands with the User Info Window plan).
 
 **Role interface**:
 One of the six capability-sliced interfaces (`ITrackerIssueReader`, `ITrackerConnectivity`, `ITrackerFieldCatalog`, `ITrackerIssueMutations`, `ITrackerCollaboration`, `ITrackerActivity`) that `ITrackerBackend` aggregates; the last four are nullable — a backend returns `nullptr` for a capability it doesn't support.
