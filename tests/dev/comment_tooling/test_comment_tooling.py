@@ -109,6 +109,15 @@ cases = [
     ("/* PILLAR2_WORKER_ONLY */", "protect"),
     ("} // namespace Foo", "protect"),
     ("/// returns the count", "judge-apidoc"),
+    # PR #1112 regression: a BARE Javadoc/Doxygen doc-block opener on its own line is a doc
+    # comment, NOT a decorative divider (DECORATIVE_RE would otherwise eat the second '*').
+    ("/**", "judge-apidoc"),
+    ("  /**", "judge-apidoc"),
+    ("/*!", "judge-apidoc"),
+    ("/*", "judge-rationale"),
+    # Exactly-two-stars only: three-plus stars / star runs remain decorative banners.
+    ("/***", "cut-decorative"),
+    ("/****************/", "cut-decorative"),
     ("// foo(bar);", "flag-commented-code"),
     ("// This is a sentence explaining the non-obvious reason.", "judge-rationale"),
 ]

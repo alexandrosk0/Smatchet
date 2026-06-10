@@ -317,15 +317,70 @@ jobs:
               echo "### \`$scen\` — baseline captured (first run)" >> /tmp/perf-summary.md
               echo "" >> /tmp/perf-summary.md
             else
-              python scripts/dev/perf-compare.py "$baseline" "$result" --markdown-only >> /tmp/perf-report.md
-              # Compact verdict twin for the PR comment (no per-scope table).
-              python scripts/dev/perf-compare.py "$baseline" "$result" --summary-only >> /tmp/perf-summary.md
-              # Re-run the comparison WITHOUT --markdown-only/--summary-only to
-              # get the exit code used for gating.
+              # Gate FIRST (exit code), report AFTER — so the confirm-on-exceed
+              # retry below can swap in the confirm sample before the tables are
+              # written (one table per scenario, always the gated sample).
               python scripts/dev/perf-compare.py "$baseline" "$result" > /dev/null 2>&1
               rc=$?
-              if [ "$rc" -ne 0 ]; then
-                regression_count=$((regression_count + 1))
+              confirm_plumbing=0
+              # Confirm-on-exceed (gate-fp-hardening 2026-06-10): a median-of-3
+              # on the 2-core shared runner still swings JOB-wide — observed
+              # cell-edit-burst SmatchetUI::Draw p99 medians 10.9 -> 15.661 ms
+              # across days with no code change (PR #1112), against a 15.0
+              # ceiling calibrated from ~10.9 medians. One noisy job must not
+              # fail the PR: take ONE more full 3x-median sample and gate on
+              # that. A real regression fails both samples (false-positive
+              # probability squared); a noisy-neighbor episode clears.
+              # Trigger ONLY on rc=1 (regression) — rc=2 is malformed input,
+              # which a re-run can't fix; it falls through and counts.
+              if [ "$rc" -eq 1 ]; then
+                echo "::warning::$scen exceeded policy on the first median — taking a confirm sample (3 more runs)."
+                confirm_runs=()
+                for i in 1 2 3; do
+                  r=$(bash scripts/dev/perf-run.sh "$scen" 2>&1 | tail -1)
+                  if [ ! -f "$r" ]; then
+                    echo "FAIL: confirm scenario.run #$i did not produce $r" >&2
+                    run_failure_count=$((run_failure_count + 1))
+                    note_run_failure "$scen" "confirm scenario.run produced no snapshot"
+                    confirm_plumbing=1
+                    break
+                  fi
+                  confirm_runs+=("$r")
+                done
+                if [ "$confirm_plumbing" = "0" ]; then
+                  confirm_result=$(python scripts/dev/perf-median.py "${confirm_runs[@]}" | tail -1)
+                  if [ -f "$confirm_result" ]; then
+                    python scripts/dev/perf-compare.py "$baseline" "$confirm_result" > /dev/null 2>&1
+                    rc2=$?
+                    # Report the confirm sample either way — it is the gated one.
+                    result="$confirm_result"
+                    if [ "$rc2" -eq 0 ]; then
+                      echo "::notice::$scen confirm sample within policy — first exceed was runner noise (gated on the confirm median)."
+                      rc=0
+                    else
+                      echo "::warning::$scen exceeded policy on BOTH independent medians — confirmed regression."
+                      rc=$rc2
+                    fi
+                  else
+                    echo "FAIL: perf-median selected no usable confirm snapshot for $scen" >&2
+                    run_failure_count=$((run_failure_count + 1))
+                    note_run_failure "$scen" "perf-median selected no usable confirm snapshot"
+                    confirm_plumbing=1
+                  fi
+                fi
+              fi
+              # One report entry per scenario: a confirm-plumbing failure already
+              # wrote its ❌ note via note_run_failure (and hard-fails via
+              # run_failure_count, which no label can downgrade) — skip the table
+              # AND the regression tally for it so the scenario is neither
+              # double-reported nor double-counted.
+              if [ "$confirm_plumbing" = "0" ]; then
+                python scripts/dev/perf-compare.py "$baseline" "$result" --markdown-only >> /tmp/perf-report.md
+                # Compact verdict twin for the PR comment (no per-scope table).
+                python scripts/dev/perf-compare.py "$baseline" "$result" --summary-only >> /tmp/perf-summary.md
+                if [ "$rc" -ne 0 ]; then
+                  regression_count=$((regression_count + 1))
+                fi
               fi
             fi
             echo "::endgroup::"
