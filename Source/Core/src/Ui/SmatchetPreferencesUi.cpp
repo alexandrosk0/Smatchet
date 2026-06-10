@@ -33,6 +33,7 @@
 #include "TrackerFieldValueUtils.h"
 #include "SmatchetImGuiFonts.h"
 #include "FieldCatalogCache.h"
+#include "SmatchetHelpMarker.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetToast.h"
 
@@ -216,9 +217,12 @@ int DrawTrackerBackendSelection(UiDrawSession& d) {
     if (ImGui::Checkbox("Read-only mode", &d.cfg.ReadOnlyMode)) {
         MarkPrefsDirty(d);
     }
-    ImGui::SetItemTooltip("Disables tracker-changing actions such as field edits, issue creation, comments, "
-                          "worklogs, and offline "
-                          "write replay. Enabled by default on first launch before setup.");
+    ImGui::SetItemTooltip("Disables all tracker-changing actions.");
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("prefs.tracker.read_only.help",
+                               "Disables tracker-changing actions such as field edits, issue creation, "
+                               "comments, worklogs, and offline write replay. Enabled by default on first "
+                               "launch before setup.");
     ImGui::Spacing();
 
     const char* items[] = {"Jira", "Plane", "GitHub"};
@@ -272,8 +276,12 @@ void DrawTrackerBackendConfig(UiDrawSession& d, int currentItem) {
         ImGui::Spacing();
         ImGui::InputText("New issue: inherit fields from last row (Jira)", d.newIssueInheritFieldsBuf,
                          sizeof(d.newIssueInheritFieldsBuf));
-        ImGui::SetItemTooltip("Comma-separated Jira field ids copied from the last grid row when you click + New issue "
-                              "(e.g. description, priority, assignee, labels, components).");
+        ImGui::SetItemTooltip("Comma-separated Jira field ids.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.tracker.inherit_jira.help",
+                                   "Comma-separated Jira field ids copied from the last grid row when you "
+                                   "click + New issue (e.g. description, priority, assignee, labels, "
+                                   "components).");
     } else if (currentItem == 1) {
         ImGui::TextUnformatted("Plane Configuration (plane.so)");
         ImGui::InputText("URL", d.planeUrlBuf, sizeof(d.planeUrlBuf), ImGuiInputTextFlags_CharsNoBlank);
@@ -285,9 +293,11 @@ void DrawTrackerBackendConfig(UiDrawSession& d, int currentItem) {
         ImGui::Spacing();
         ImGui::InputText("New issue: inherit fields from last row (Plane)", d.newIssueInheritFieldsPlaneBuf,
                          sizeof(d.newIssueInheritFieldsPlaneBuf));
-        ImGui::SetItemTooltip(
-            "Comma-separated Plane field ids copied from the last grid row when you click + New issue "
-            "(e.g. description, priority, assignee, labels).");
+        ImGui::SetItemTooltip("Comma-separated Plane field ids.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.tracker.inherit_plane.help",
+                                   "Comma-separated Plane field ids copied from the last grid row when you "
+                                   "click + New issue (e.g. description, priority, assignee, labels).");
     } else {
         // GitHub-as-tracker — PR3 of docs/plans/shipped/github-tracker-backend.md.
         ImGui::TextUnformatted("GitHub Configuration (github.com or Enterprise)");
@@ -298,14 +308,20 @@ void DrawTrackerBackendConfig(UiDrawSession& d, int currentItem) {
         ImGui::InputText("Owner", d.githubOwnerBuf, sizeof(d.githubOwnerBuf), ImGuiInputTextFlags_CharsNoBlank);
         ImGui::SetItemTooltip("GitHub user or organization, e.g. \"alexandrosk0\".");
         ImGui::InputText("Repo", d.githubRepoBuf, sizeof(d.githubRepoBuf), ImGuiInputTextFlags_CharsNoBlank);
-        ImGui::SetItemTooltip("Repository name, e.g. \"Smatchet\". Combined with Owner: fetches issues from "
-                              "github.com/<owner>/<repo>. Leave both empty for cross-repo /search/issues (PR4).");
+        ImGui::SetItemTooltip("Repository name, e.g. \"Smatchet\".");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.tracker.github_repo.help",
+                                   "Repository name, e.g. \"Smatchet\". Combined with Owner: fetches issues "
+                                   "from github.com/<owner>/<repo>. Leave both empty for cross-repo "
+                                   "/search/issues.");
         ImGui::Spacing();
         ImGui::InputText("New issue: inherit fields from last row (GitHub)", d.newIssueInheritFieldsGitHubBuf,
                          sizeof(d.newIssueInheritFieldsGitHubBuf));
-        ImGui::SetItemTooltip(
-            "Comma-separated GitHub field ids copied from the last grid row when you click + New issue "
-            "(e.g. body, labels, assignees, milestone).");
+        ImGui::SetItemTooltip("Comma-separated GitHub field ids.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.tracker.inherit_github.help",
+                                   "Comma-separated GitHub field ids copied from the last grid row when you "
+                                   "click + New issue (e.g. body, labels, assignees, milestone).");
     }
     ImGui::Spacing();
 }
@@ -377,11 +393,13 @@ void SmatchetUI::drawPreferencesTrackerTab(UiDrawSession& d) {
     const int currentItem = DrawTrackerBackendSelection(d);
     DrawTrackerBackendConfig(d, currentItem);
     DrawTrackerRecentProjects(d, currentItem);
-    ImGui::TextWrapped("Query/JQL and column fields are configured in the Views dashboard.");
     if (ImGui::Button("Open Views Dashboard")) {
         d.showViewsDashboard = true;
         d.requestViewsDashboardFocus = true;
     }
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("prefs.tracker.views_note.help",
+                               "Query/JQL and column fields are configured in the Views dashboard.");
     ImGui::EndTabItem();
 }
 
@@ -402,17 +420,25 @@ void SmatchetUI::drawPreferencesIntegrationsTab(AppController& app, UiDrawSessio
         d.mcpPort = 65535;
     }
     ImGui::Checkbox("Bind on all interfaces (LAN)", &d.mcpAllowRemote);
-    ImGui::SetItemTooltip(
-        "When off, MCP listens on localhost only (127.0.0.1). When on, it binds 0.0.0.0 — reachable on your "
-        "network. Set an auth token below if you enable this.");
+    ImGui::SetItemTooltip("Off: localhost only. On: binds 0.0.0.0.");
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("prefs.integrations.mcp_bind.help",
+                               "When off, MCP listens on localhost only (127.0.0.1). When on, it binds "
+                               "0.0.0.0 — reachable on your network. Set an auth token below if you enable "
+                               "this.");
     ImGui::InputText("MCP auth token (optional)", d.mcpAuthTokenBuf, sizeof(d.mcpAuthTokenBuf),
                      ImGuiInputTextFlags_Password);
-    ImGui::SetItemTooltip("If set, clients must send header X-Smatchet-Token with this value. If empty and "
-                          "bind is localhost-only, "
-                          "only loopback clients may connect.");
+    ImGui::SetItemTooltip("Clients must send the X-Smatchet-Token header.");
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("prefs.integrations.mcp_token.help",
+                               "If set, clients must send header X-Smatchet-Token with this value. If empty "
+                               "and bind is localhost-only, only loopback clients may connect.");
     ImGui::Checkbox("Allow MCP run_lua tool (dangerous)", &d.mcpAllowLuaExecution);
-    ImGui::SetItemTooltip("Off by default. When enabled, MCP clients can execute Lua snippets or Scripts/*.lua "
-                          "via the built-in run_lua tool.");
+    ImGui::SetItemTooltip("Lets MCP clients execute Lua. Off by default.");
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("prefs.integrations.mcp_lua.help",
+                               "Off by default. When enabled, MCP clients can execute Lua snippets or "
+                               "Scripts/*.lua via the built-in run_lua tool.");
     {
         const std::string tokenBufStr(d.mcpAuthTokenBuf);
         const bool dirty = (d.mcpEnabled != d.cfg.McpEnabled) || (d.mcpPort != d.cfg.McpPort) ||

@@ -9,6 +9,7 @@
 #include "ConfigManager.h"
 #include "Logger.h"
 #include "P4Annotate.h"
+#include "SmatchetHelpMarker.h"
 #include "TrackerDateTimeFieldEditor.h"
 #include "TrackerFieldSchema.h"
 
@@ -157,18 +158,22 @@ void DrawCallstackViewToggle(AnnotateDrawCtx& ctx, bool streamlinedHide) {
 void DrawCallstackProcessControls(AnnotateDrawCtx& ctx) {
     const AnnotateUiThemeColors& theme = ctx.Theme;
     ImGui::Spacing();
-    ImGui::TextDisabled("Max frames, ignore list, P4 tools, and Jira callstack source: Settings → Preferences → "
-                        "Annotate.");
+    ImGui::TextDisabled("Annotate options: Settings → Preferences → Annotate.");
+    ImGui::SameLine();
+    SmatchetHelpMarker::RenderText("Max frames, ignore list, P4 tools, and Jira callstack source are configured "
+                                   "under Settings → Preferences → Annotate.");
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Before changelist");
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-        ImGui::SetTooltip("Optional: run annotate as of this Perforce changelist (each path is passed as "
-                          "`depot/path@CL`).\n\n"
-                          "Digits only; leave empty for the current head on each path.\n\n"
-                          "The date control on the right resolves a calendar day to the first submitted changelist on "
-                          "that day (using `p4 changes -r -m 1 -s submitted` on a server-wide `//...@start,end` range) "
-                          "and copies the result into this field.");
+        ImGui::SetTooltip("Optional: run annotate as of this Perforce changelist.");
     }
+    ImGui::SameLine();
+    SmatchetHelpMarker::RenderText(
+        "Optional: run annotate as of this Perforce changelist (each path is passed as `depot/path@CL`).\n\n"
+        "Digits only; leave empty for the current head on each path.\n\n"
+        "The date control on the right resolves a calendar day to the first submitted changelist on "
+        "that day (using `p4 changes -r -m 1 -s submitted` on a server-wide `//...@start,end` range) "
+        "and copies the result into this field.");
     ImGui::SameLine();
     ImGui::SetNextItemWidth(100.f);
     ImGui::InputText("##before_cl_optional", State().atClBuf, sizeof(State().atClBuf));
@@ -179,9 +184,12 @@ void DrawCallstackProcessControls(AnnotateDrawCtx& ctx) {
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("or day");
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-        ImGui::SetTooltip("Pick a calendar day, then confirm in the calendar popup. The first submitted changelist "
-                          "on that day (server date window) is written into the field on the left.");
+        ImGui::SetTooltip("Resolve a calendar day to its first submitted changelist.");
     }
+    ImGui::SameLine();
+    SmatchetHelpMarker::RenderText(
+        "Pick a calendar day, then confirm in the calendar popup. The first submitted changelist "
+        "on that day (server date window) is written into the field on the left.");
     ImGui::SameLine();
     if (TrackerDateTimeFieldEditor::RenderGenericDatePicker("##annotate_before_day", State().beforeDateIso, false,
                                                             228.f)) {
@@ -491,8 +499,10 @@ void DrawAnnotateCallstackTab(AnnotateDrawCtx& ctx) {
     DrawCallstackViewToggle(ctx, streamlinedHide);
 
     if (!State().showRaw && ctx.NRow > 0) {
-        ImGui::TextDisabled(
-            "Table: left-click the # column to open that frame in an Entry tab; right-click # for a menu "
+        ImGui::TextDisabled("Table: # column opens an Entry tab.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::RenderText(
+            "Left-click the # column to open that frame in an Entry tab; right-click # for a menu "
             "(Copy as TSV).");
     }
 

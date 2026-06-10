@@ -216,6 +216,301 @@ const TranslationEntry kEntries[] = {
     {"prefs.id", "ID:", u8"ID :"},
     {"prefs.body", "Body:", u8"Corps :"},
 
+    // Assistant custom-endpoint consent modal (short visible line + (?) help body).
+    {"prefs.assistant.endpoint_consent.short",
+     "A custom endpoint can receive your %s API key - possibly in cleartext. Enable only if you trust it.",
+     u8"Un point d'accès personnalisé peut recevoir votre clé d'API %s — parfois en clair. "
+     u8"N'activez que si vous lui faites confiance."},
+    {"prefs.assistant.endpoint_consent.help",
+     "By default Smatchet sends your %s API key only to %s over HTTPS. Enabling custom "
+     "endpoints lets a proxy / gateway host (Azure OpenAI, LiteLLM, openrouter) receive "
+     "that key, and permits plain http:// to non-loopback hosts - sending the key in "
+     "cleartext. Enable only if you trust the endpoint you configure.",
+     u8"Par défaut, Smatchet n'envoie votre clé d'API %s qu'à %s via HTTPS. Autoriser un point "
+     u8"d'accès personnalisé permet à un hôte proxy / passerelle (Azure OpenAI, LiteLLM, "
+     u8"openrouter) de recevoir cette clé, et autorise le http:// en clair vers des hôtes non "
+     u8"locaux — la clé transite alors en clair. N'activez que si vous faites confiance au point "
+     u8"d'accès configuré."},
+
+    // Assistant tab — shortened tooltips + (?) help bodies.
+    {"prefs.assistant.reasoning_effort.short", "OpenAI `reasoning_effort` request parameter.",
+     u8"Paramètre de requête OpenAI « reasoning_effort »."},
+    {"prefs.assistant.reasoning_effort.help",
+     "OpenAI `reasoning_effort` body parameter for o-series / reasoning-tuned "
+     "models. LM Studio + LocalAI pass it through to local reasoning models "
+     "(Qwen3, gemma-3, etc.). Providers that don't understand the parameter "
+     "ignore it.",
+     u8"Paramètre de corps OpenAI « reasoning_effort » pour les modèles de raisonnement "
+     u8"(série o). LM Studio + LocalAI le transmettent aux modèles locaux (Qwen3, gemma-3, "
+     u8"etc.). Les fournisseurs qui ne le comprennent pas l'ignorent."},
+    {"prefs.assistant.agents_md.help",
+     "Layered system prompt injected into every Assistant turn. Global layer "
+     "defaults to %LOCALAPPDATA%/Smatchet/agents.md when blank. Each layer "
+     "capped at 64 KB.",
+     u8"Invite système en couches injectée à chaque tour de l'Assistant. La couche globale "
+     u8"vaut %LOCALAPPDATA%/Smatchet/agents.md si vide. Chaque couche est limitée à 64 Ko."},
+    {"prefs.assistant.agents_md_global.short", "Override the global agents.md location.",
+     u8"Remplace l'emplacement global d'agents.md."},
+    {"prefs.assistant.agents_md_global.help",
+     "Default %LOCALAPPDATA%/Smatchet/agents.md when blank. Override to point "
+     "at a checked-in shared file.",
+     u8"Par défaut %LOCALAPPDATA%/Smatchet/agents.md si vide. Remplacez pour pointer vers un "
+     u8"fichier partagé versionné."},
+    {"prefs.assistant.agents_md_project.short", "Explicit project-layer path.",
+     u8"Chemin explicite de la couche projet."},
+    {"prefs.assistant.agents_md_project.help",
+     "When set, this exact path is used as the project layer. Leave blank to "
+     "disable the project layer entirely unless Auto-discover is enabled below.",
+     u8"Si renseigné, ce chemin exact sert de couche projet. Laissez vide pour désactiver la "
+     u8"couche projet, sauf si la découverte automatique est activée ci-dessous."},
+    {"prefs.assistant.agents_md_autodiscover.short", "Walk up from cwd looking for agents.md.",
+     u8"Remonte depuis le répertoire courant à la recherche d'agents.md."},
+    {"prefs.assistant.agents_md_autodiscover.help",
+     "OFF (default): only the Global file + explicit Project path are used. ON: "
+     "walks up the cwd chain looking for agents.md / AGENTS.md.",
+     u8"OFF (défaut) : seuls le fichier global et le chemin projet explicite sont utilisés. "
+     u8"ON : remonte la chaîne de répertoires à la recherche d'agents.md / AGENTS.md."},
+
+    // Whisper tab — shortened PTT intro + (?) help body.
+    {"prefs.whisper.ptt.short", "Push-to-talk dictation: hold the hotkey, speak, release.",
+     u8"Dictée en appui-pour-parler : maintenez le raccourci, parlez, relâchez."},
+    {"prefs.whisper.ptt.help",
+     "Push-to-talk dictation. Hold the configured hotkey, speak, release. "
+     "Transcription runs locally when a Whisper model is on disk; falls back "
+     "to OpenAI Whisper API when no model is present (cloud mode requires an "
+     "API key).",
+     u8"Dictée en appui-pour-parler. Maintenez le raccourci configuré, parlez, relâchez. La "
+     u8"transcription s'exécute localement quand un modèle Whisper est sur disque ; bascule "
+     u8"vers l'API OpenAI Whisper sinon (le mode cloud exige une clé d'API)."},
+
+    // Local-data tab — shortened intro/storage text + (?) help bodies.
+    {"prefs.local_data.recreate_intro.short", "Local SQLite cache: tickets, offline queues, pending edits.",
+     u8"Cache SQLite local : tickets, files hors-ligne, modifications en attente."},
+    {"prefs.local_data.recreate_intro.help",
+     "Stored tickets, offline create queues, and pending field edits live in a "
+     "local SQLite file. Recreating it clears that data only; tracker credentials "
+     "and views are not removed. A full issue refresh runs afterward.",
+     u8"Les tickets stockés, les files de création hors-ligne et les modifications de champs en "
+     u8"attente vivent dans un fichier SQLite local. Le recréer n'efface que ces données ; les "
+     u8"identifiants du tracker et les vues sont conservés. Un rafraîchissement complet des "
+     u8"tickets s'exécute ensuite."},
+    {"prefs.local_data.storage_unreal.help",
+     "Plugin default: writable files (config / views / SQLite cache / ImGui "
+     "layout) live in <UnrealProject>/Saved next to the runtime cache. Switch to "
+     "Shared when the project dir is read-only (source-controlled, network share, "
+     "sandboxed runner) and Smatchet should instead use your OS user-data folder. "
+     "Change takes effect on next launch.",
+     u8"Défaut plugin : les fichiers inscriptibles (config / vues / cache SQLite / disposition "
+     u8"ImGui) vivent dans <ProjetUnreal>/Saved à côté du cache d'exécution. Passez à Partagé "
+     u8"quand le dossier projet est en lecture seule (géré en version, partage réseau, exécuteur "
+     u8"sandboxé) et que Smatchet doit utiliser le dossier utilisateur de l'OS. Prend effet au "
+     u8"prochain lancement."},
+    {"prefs.local_data.storage_standalone.help",
+     "Standalone default: writable files live in your OS user-data folder, shared "
+     "across exes / installs. Switch to Portable to keep all writable files next "
+     "to the executable instead — useful when running from a thumb drive or "
+     "testing parallel builds. Change takes effect on next launch.",
+     u8"Défaut autonome : les fichiers inscriptibles vivent dans le dossier utilisateur de "
+     u8"l'OS, partagé entre exécutables / installations. Passez à Portable pour garder tous les "
+     u8"fichiers inscriptibles à côté de l'exécutable — utile depuis une clé USB ou pour tester "
+     u8"des builds parallèles. Prend effet au prochain lancement."},
+
+    // Appearance tab — shortened tooltips + (?) help bodies.
+    {"prefs.appearance.font.short", "Application-wide font; applies instantly.",
+     u8"Police de toute l'application ; appliquée instantanément."},
+    {"prefs.appearance.font.help",
+     "Select the typography for the entire application. Rebuilds and reloads the "
+     "font atlas instantly.",
+     u8"Choisit la typographie de toute l'application. Reconstruit et recharge l'atlas de "
+     u8"polices instantanément."},
+    {"prefs.appearance.language.short", "UI language; applies immediately.",
+     u8"Langue de l'interface ; appliquée immédiatement."},
+    {"prefs.appearance.language.help",
+     "Select the UI language. App-owned UI text changes immediately; tracker data "
+     "is shown as-is.",
+     u8"Choisit la langue de l'interface. Le texte de l'application change immédiatement ; les "
+     u8"données du tracker sont affichées telles quelles."},
+    {"prefs.appearance.overflow_tooltips.short", "Hover truncated cells to read the full text.",
+     u8"Survolez les cellules tronquées pour lire le texte complet."},
+    {"prefs.appearance.overflow_tooltips.help",
+     "When a value is truncated to fit the cell, or spans multiple lines, hover "
+     "to read the full text in a tooltip.",
+     u8"Quand une valeur est tronquée pour tenir dans la cellule, ou s'étend sur plusieurs "
+     u8"lignes, survolez pour lire le texte complet dans une infobulle."},
+    {"prefs.appearance.wheel_swallow.short", "Wheel ticks swallowed at the grid edge.",
+     u8"Crans de molette absorbés au bord de la grille."},
+    {"prefs.appearance.wheel_swallow.help",
+     "At top/bottom of the ticket grid, vertical wheel starts horizontal "
+     "scrolling after this many wheel ticks. 0 routes immediately.",
+     u8"En haut/bas de la grille de tickets, la molette verticale déclenche le défilement "
+     u8"horizontal après ce nombre de crans. 0 bascule immédiatement."},
+    {"prefs.appearance.date_format.short", "How date values render across the UI.",
+     u8"Rendu des dates dans toute l'interface."},
+    {"prefs.appearance.date_format.help",
+     "Select the how date and datetime values are rendered in the grids and UI "
+     "panels.",
+     u8"Choisit comment les valeurs de date et d'heure sont rendues dans les grilles et les "
+     u8"panneaux de l'interface."},
+    {"prefs.appearance.date_threshold.short", "Days before compact dates switch to absolute.",
+     u8"Jours avant le passage des dates compactes en absolu."},
+    {"prefs.appearance.date_threshold.help",
+     "Threshold in days where the compact view transitions from relative "
+     "(e.g. -3d) to short absolute (e.g. May 07 '26).",
+     u8"Seuil en jours où la vue compacte passe du relatif (ex. -3j) à l'absolu court "
+     u8"(ex. 07 mai 26)."},
+    {"prefs.appearance.vsync.short", "Sync rendering with the monitor refresh rate.",
+     u8"Synchronise le rendu avec le taux de rafraîchissement de l'écran."},
+    {"prefs.appearance.vsync.help",
+     "Synchronize rendering with the monitor refresh rate. Disabling uncaps the "
+     "frame rate (higher CPU/GPU usage).",
+     u8"Synchronise le rendu avec le taux de rafraîchissement de l'écran. Désactiver libère la "
+     u8"cadence d'images (usage CPU/GPU plus élevé)."},
+
+    // Tracker tab — shortened tooltips + (?) help bodies.
+    {"prefs.tracker.read_only.short", "Disables all tracker-changing actions.",
+     u8"Désactive toute action modifiant le tracker."},
+    {"prefs.tracker.read_only.help",
+     "Disables tracker-changing actions such as field edits, issue creation, "
+     "comments, worklogs, and offline write replay. Enabled by default on first "
+     "launch before setup.",
+     u8"Désactive les actions modifiant le tracker : édition de champs, création de tickets, "
+     u8"commentaires, temps passés et rejeu des écritures hors-ligne. Activé par défaut au "
+     u8"premier lancement, avant la configuration."},
+    {"prefs.tracker.inherit_jira.short", "Comma-separated Jira field ids.",
+     u8"Identifiants de champs Jira séparés par des virgules."},
+    {"prefs.tracker.inherit_jira.help",
+     "Comma-separated Jira field ids copied from the last grid row when you "
+     "click + New issue (e.g. description, priority, assignee, labels, "
+     "components).",
+     u8"Identifiants de champs Jira séparés par des virgules, copiés depuis la dernière ligne "
+     u8"de la grille au clic sur + Nouveau ticket (ex. description, priority, assignee, labels, "
+     u8"components)."},
+    {"prefs.tracker.inherit_plane.short", "Comma-separated Plane field ids.",
+     u8"Identifiants de champs Plane séparés par des virgules."},
+    {"prefs.tracker.inherit_plane.help",
+     "Comma-separated Plane field ids copied from the last grid row when you "
+     "click + New issue (e.g. description, priority, assignee, labels).",
+     u8"Identifiants de champs Plane séparés par des virgules, copiés depuis la dernière ligne "
+     u8"de la grille au clic sur + Nouveau ticket (ex. description, priority, assignee, "
+     u8"labels)."},
+    {"prefs.tracker.inherit_github.short", "Comma-separated GitHub field ids.",
+     u8"Identifiants de champs GitHub séparés par des virgules."},
+    {"prefs.tracker.inherit_github.help",
+     "Comma-separated GitHub field ids copied from the last grid row when you "
+     "click + New issue (e.g. body, labels, assignees, milestone).",
+     u8"Identifiants de champs GitHub séparés par des virgules, copiés depuis la dernière "
+     u8"ligne de la grille au clic sur + Nouveau ticket (ex. body, labels, assignees, "
+     u8"milestone)."},
+    {"prefs.tracker.github_repo.short", "Repository name, e.g. \"Smatchet\".", u8"Nom du dépôt, ex. « Smatchet »."},
+    {"prefs.tracker.github_repo.help",
+     "Repository name, e.g. \"Smatchet\". Combined with Owner: fetches issues "
+     "from github.com/<owner>/<repo>. Leave both empty for cross-repo "
+     "/search/issues.",
+     u8"Nom du dépôt, ex. « Smatchet ». Combiné avec Propriétaire : récupère les tickets de "
+     u8"github.com/<owner>/<repo>. Laissez les deux vides pour la recherche multi-dépôts "
+     u8"/search/issues."},
+    {"prefs.tracker.views_note.help", "Query/JQL and column fields are configured in the Views dashboard.",
+     u8"La requête/JQL et les champs de colonnes se configurent dans le tableau de bord des "
+     u8"vues."},
+
+    // Integrations tab — shortened MCP tooltips + (?) help bodies.
+    {"prefs.integrations.mcp_bind.short", "Off: localhost only. On: binds 0.0.0.0.",
+     u8"Off : localhost uniquement. On : écoute sur 0.0.0.0."},
+    {"prefs.integrations.mcp_bind.help",
+     "When off, MCP listens on localhost only (127.0.0.1). When on, it binds "
+     "0.0.0.0 — reachable on your network. Set an auth token below if you enable "
+     "this.",
+     u8"Désactivé, MCP n'écoute que sur localhost (127.0.0.1). Activé, il écoute sur 0.0.0.0 — "
+     u8"joignable sur votre réseau. Définissez un jeton d'authentification ci-dessous si vous "
+     u8"l'activez."},
+    {"prefs.integrations.mcp_token.short", "Clients must send the X-Smatchet-Token header.",
+     u8"Les clients doivent envoyer l'en-tête X-Smatchet-Token."},
+    {"prefs.integrations.mcp_token.help",
+     "If set, clients must send header X-Smatchet-Token with this value. If empty "
+     "and bind is localhost-only, only loopback clients may connect.",
+     u8"Si défini, les clients doivent envoyer l'en-tête X-Smatchet-Token avec cette valeur. "
+     u8"Si vide et que l'écoute est limitée à localhost, seuls les clients en boucle locale "
+     u8"peuvent se connecter."},
+    {"prefs.integrations.mcp_lua.short", "Lets MCP clients execute Lua. Off by default.",
+     u8"Permet aux clients MCP d'exécuter du Lua. Désactivé par défaut."},
+    {"prefs.integrations.mcp_lua.help",
+     "Off by default. When enabled, MCP clients can execute Lua snippets or "
+     "Scripts/*.lua via the built-in run_lua tool.",
+     u8"Désactivé par défaut. Une fois activé, les clients MCP peuvent exécuter des extraits "
+     u8"Lua ou Scripts/*.lua via l'outil intégré run_lua."},
+
+    // Templates tab — shortened tooltips + (?) help bodies.
+    {"prefs.templates.longtext_preview.short", "Long-text editor opens in preview mode.",
+     u8"L'éditeur de texte long s'ouvre en mode aperçu."},
+    {"prefs.templates.longtext_preview.help",
+     "When on, the long-text edit modal (description, callstack, custom "
+     "textarea fields) opens showing the rendered preview. When off (default) "
+     "it opens in edit mode. Ctrl+P cycles Edit/Split/Preview either way.",
+     u8"Activé, la fenêtre d'édition de texte long (description, callstack, champs textarea "
+     u8"personnalisés) s'ouvre sur l'aperçu rendu. Désactivé (défaut), elle s'ouvre en mode "
+     u8"édition. Ctrl+P alterne Édition/Partagé/Aperçu dans les deux cas."},
+    {"prefs.templates.duration_suggestions.short", "Default options for time-estimate dropdowns.",
+     u8"Options par défaut des menus d'estimation de temps."},
+    {"prefs.templates.duration_suggestions.help",
+     "Customize the default options displayed in the dropdown menus for "
+     "Original Estimate, Remaining Estimate, and Time Spent fields.",
+     u8"Personnalise les options par défaut affichées dans les menus déroulants des champs "
+     u8"Estimation initiale, Estimation restante et Temps passé."},
+
+    // Perf panel — shortened tab intros + (?) help bodies.
+    {"perf.cpu.intro.short", "Wall time per scoped UI path (smoothed).",
+     u8"Temps réel par chemin UI instrumenté (lissé)."},
+    {"perf.cpu.intro.help",
+     "Wall time per scoped UI path; nested scopes overlap (not additive). "
+     "Values use heavy time-based smoothing (~few second response) and 2 decimal places. "
+     "Row order for Last (ms) uses 0.1 ms buckets so nearby scopes do not swap every frame.",
+     u8"Temps réel par chemin UI instrumenté ; les portées imbriquées se recouvrent (non "
+     u8"additives). Les valeurs utilisent un fort lissage temporel (réponse de quelques "
+     u8"secondes) et 2 décimales. L'ordre des lignes pour Last (ms) utilise des paliers de "
+     u8"0,1 ms pour éviter que des portées proches permutent à chaque image."},
+    {"perf.network.intro.short", "HTTP traffic from this session of Smatchet.",
+     u8"Trafic HTTP de cette session de Smatchet."},
+    {"perf.network.intro.help",
+     "Downloaded = response bodies; uploaded = request bodies for POST/PUT, or ~%llu B per "
+     "Jira GET (estimate).",
+     u8"Téléchargé = corps des réponses ; envoyé = corps des requêtes POST/PUT, ou ~%llu o par "
+     u8"GET Jira (estimation)."},
+
+    // Offline-queue unknown-conflict pane — shortened body + (?) help.
+    {"offline.conflict_unknown.corrupt.short", "Conflict details could not be read.",
+     u8"Les détails du conflit n'ont pas pu être lus."},
+    {"offline.conflict_unknown.action.short", "Close keeps the edit queued; Discard drops it.",
+     u8"Fermer garde la modification en file ; Abandonner la supprime."},
+    {"offline.conflict_unknown.help",
+     "This offline edit's conflict details could not be read (corrupt or stale data). "
+     "To avoid overwriting either version with empty content, this conflict can't be "
+     "resolved automatically. Close to leave the edit queued, or discard it to drop the "
+     "queued change.",
+     u8"Les détails du conflit de cette modification hors-ligne n'ont pas pu être lus (données "
+     u8"corrompues ou périmées). Pour éviter d'écraser l'une ou l'autre version avec un contenu "
+     u8"vide, ce conflit ne peut pas être résolu automatiquement. Fermez pour laisser la "
+     u8"modification en file, ou abandonnez-la pour supprimer le changement en attente."},
+
+    // AI assistant per-turn effort — shortened tooltip + (?) help.
+    {"ai.turn_effort.short", "Per-turn OpenAI `reasoning_effort` override.",
+     u8"Surcharge `reasoning_effort` OpenAI pour ce tour."},
+    {"ai.turn_effort.help",
+     "Per-turn reasoning effort. Applied as the OpenAI `reasoning_effort` parameter; "
+     "providers that don't understand the param ignore it.",
+     u8"Effort de raisonnement pour ce tour. Appliqué comme paramètre OpenAI "
+     u8"`reasoning_effort` ; les fournisseurs qui ne le comprennent pas l'ignorent."},
+
+    // Bug-report screenshot redaction — (?) help body.
+    {"bugreport.screenshot_redaction.help",
+     "The screenshot is captured with all text rendered as blocks (██) — sharp, "
+     "layout-preserving, no readable text. Icons + colour stay intact.",
+     u8"La capture d'écran est prise avec tout le texte rendu en blocs (██) — nette, mise en "
+     u8"page préservée, aucun texte lisible. Icônes et couleurs restent intactes."},
+
+    // Update banner — shortened one-liner (no marker; only "standalone" dropped).
+    {"update.banner.short", "A newer Smatchet release is available on GitHub.",
+     u8"Une version plus récente de Smatchet est disponible sur GitHub."},
+
     {"views.active_view", "Active View", u8"Vue active"},
     {"views.view_name", "View Name", u8"Nom de la vue"},
     {"views.apply_sync", "Apply View & Sync", u8"Appliquer la vue et synchroniser"},

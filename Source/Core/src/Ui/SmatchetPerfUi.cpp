@@ -2,6 +2,8 @@
 
 #include "NetworkUsageTracker.h"
 #include "SmatchetDockNodeIds.h"
+#include "SmatchetHelpMarker.h"
+#include "SmatchetLocalization.h"
 #include "UiPerfMonitor.h"
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -256,9 +258,13 @@ void SmatchetPerfUi::DrawWindow(bool* pOpen, bool wantFocus) {
 // compliance.
 void SmatchetPerfUi::drawCpuTab(double dtSec) {
     if (ImGui::BeginTabItem("CPU")) {
-        ImGui::TextUnformatted("Wall time per scoped UI path; nested scopes overlap (not additive). "
-                               "Values use heavy time-based smoothing (~few second response) and 2 decimal places. "
-                               "Row order for Last (ms) uses 0.1 ms buckets so nearby scopes do not swap every frame.");
+        ImGui::TextUnformatted("Wall time per scoped UI path (smoothed).");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render(
+            "perf.cpu.intro.help",
+            "Wall time per scoped UI path; nested scopes overlap (not additive). "
+            "Values use heavy time-based smoothing (~few second response) and 2 decimal places. "
+            "Row order for Last (ms) uses 0.1 ms buckets so nearby scopes do not swap every frame.");
         ImGui::Separator();
         std::vector<UiPerfRow> rows;
         buildSmoothedCpuRows(UiPerfMonitor::Instance().GetLastFrameRows(), rows, dtSec);
@@ -321,9 +327,13 @@ void SmatchetPerfUi::drawCpuTab(double dtSec) {
 void SmatchetPerfUi::drawNetworkTab() {
     if (ImGui::BeginTabItem("Network")) {
         const NetworkUsageSnapshot snap = NetworkUsageTracker::Instance().GetSnapshot();
-        ImGui::TextWrapped("HTTP traffic from this session of Smatchet. Downloaded = response bodies; "
-                           "uploaded = request bodies for POST/PUT, or ~%llu B per Jira GET (estimate).",
-                           static_cast<unsigned long long>(NetworkUsageTracker::kEstimatedGetUploadBytes));
+        ImGui::TextUnformatted("HTTP traffic from this session of Smatchet.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::RenderText(SmatchetLocalization::Format(
+            "perf.network.intro.help",
+            "Downloaded = response bodies; uploaded = request bodies for POST/PUT, or ~%llu B per Jira GET "
+            "(estimate).",
+            static_cast<unsigned long long>(NetworkUsageTracker::kEstimatedGetUploadBytes)));
         ImGui::Separator();
         ImGui::TextUnformatted("Jira API");
         ImGui::BulletText("Requests: %llu", static_cast<unsigned long long>(snap.trackerRequests));

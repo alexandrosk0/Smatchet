@@ -7,6 +7,7 @@
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "Diagnostics/BugReportService.h"
+#include "SmatchetHelpMarker.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
 
@@ -323,10 +324,10 @@ void SmatchetBugReportUi_Draw(AppController& app, UiDrawSession& d) {
     if (ImGui::Checkbox("Attach screenshot (text redacted)", &d.bugReportInclScreenshot)) {
         d.bugReportPreviewDirty = true;
     }
-    if (d.bugReportInclScreenshot && ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("The screenshot is captured with all text rendered as blocks (██) —\n"
-                          "sharp, layout-preserving, no readable text. Icons + colour stay intact.");
-    }
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("bugreport.screenshot_redaction.help",
+                               "The screenshot is captured with all text rendered as blocks (██) — sharp, "
+                               "layout-preserving, no readable text. Icons + colour stay intact.");
 #endif
 
     DrawEgressPreview(app, d);

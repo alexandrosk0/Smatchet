@@ -11,6 +11,7 @@
 #include "SmatchetUI.h"
 #include "AppController.h"
 #include "Logger.h"
+#include "SmatchetHelpMarker.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
@@ -39,9 +40,12 @@ void DrawGridSubTab(UiDrawSession& d) {
         if (ImGui::Checkbox("Open long-text editor in preview mode", &d.cfg.DefaultLongTextEditorPreview)) {
             MarkPrefsDirty(d);
         }
-        ImGui::SetItemTooltip("When on, the long-text edit modal (description, callstack, custom textarea fields) "
-                              "opens showing the rendered preview. When off (default) it opens in edit mode. "
-                              "Ctrl+P cycles Edit/Split/Preview either way.");
+        ImGui::SetItemTooltip("Long-text editor opens in preview mode.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.templates.longtext_preview.help",
+                                   "When on, the long-text edit modal (description, callstack, custom "
+                                   "textarea fields) opens showing the rendered preview. When off (default) "
+                                   "it opens in edit mode. Ctrl+P cycles Edit/Split/Preview either way.");
         ImGui::EndTabItem();
     }
 }
@@ -51,8 +55,11 @@ void DrawTimeEstimatesSubTab(SmatchetPreferencesUiTemplateFlags& flags) {
         ImGui::TextUnformatted("Duration Suggestions");
         ImGui::Separator();
         ImGui::Spacing();
-        ImGui::TextDisabled("Customize the default options displayed in the dropdown menus for Original "
-                            "Estimate, Remaining Estimate, and Time Spent fields.");
+        ImGui::TextDisabled("Default options for time-estimate dropdowns.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.templates.duration_suggestions.help",
+                                   "Customize the default options displayed in the dropdown menus for "
+                                   "Original Estimate, Remaining Estimate, and Time Spent fields.");
         ImGui::Spacing();
 
         static std::vector<std::string> s_suggestionsList;
