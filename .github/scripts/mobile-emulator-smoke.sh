@@ -32,7 +32,10 @@ until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1"
 done
 
 echo "==> installing $APK"
-adb install -r -g "$APK"
+# -t: debug APKs are stamped android:testOnly="true" by AGP, and adb rejects a
+# testOnly package without it (INSTALL_FAILED_TEST_ONLY). Benign for a debug
+# build; -t is the standard accept flag.
+adb install -r -g -t "$APK"
 
 echo "==> clearing logcat + launching $ACT"
 adb logcat -c

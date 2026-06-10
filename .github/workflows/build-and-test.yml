@@ -409,6 +409,12 @@ jobs:
       # download entirely. docs/plans/ci-build-time-reduction.md Phase 2.
       - name: Cache Mesa software-GL DLLs
         uses: actions/cache@v4
+        # The Mesa DLL cache is a pure speed optimization — the install step below
+        # re-downloads on a miss. A transient cache-service error must NOT red the
+        # whole screenshot-diff job (it once cascaded into skipped Mesa-install +
+        # skipped diff and blocked an unrelated PR's merge). continue-on-error keeps
+        # a cache hiccup non-fatal; the diff step itself stays the real signal.
+        continue-on-error: true
         with:
           path: mesa-cache
           key: mesa-dlls-24.2.5-v2
@@ -516,6 +522,12 @@ jobs:
       # key as bucket-C so the two jobs share one cached dll across the repo.
       - name: Cache Mesa software-GL DLLs
         uses: actions/cache@v4
+        # The Mesa DLL cache is a pure speed optimization — the install step below
+        # re-downloads on a miss. A transient cache-service error must NOT red the
+        # whole screenshot-diff job (it once cascaded into skipped Mesa-install +
+        # skipped diff and blocked an unrelated PR's merge). continue-on-error keeps
+        # a cache hiccup non-fatal; the diff step itself stays the real signal.
+        continue-on-error: true
         with:
           path: mesa-cache
           key: mesa-dlls-24.2.5-v2
