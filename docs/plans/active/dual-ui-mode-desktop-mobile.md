@@ -149,6 +149,9 @@ Two PR-batches (one PR per logical *feature*, slices batched per `AGENTS.md` § 
 ## Deviations from plan
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — what changed, removed, or deferred relative to the original plan, with one-line rationale per item; record the `grill-with-docs` outcome here.)*
 
+- **Slice 3 — mobile Draw fork skips `DrainAppUpdateCheck`** (`SmatchetUI.cpp` Draw mobile branch): the in-app self-update check is desktop-only and the mobile target (Android) never self-updates, so the fork returns before it. Intentional, no backlog item.
+- **Slice 3 — Bucket-E ui-test harness pins a desktop framebuffer** (`StandaloneAppBootstrap.cpp` `Initialize`, under `SMATCHET_BUILD_UI_TESTS`): the ephemeral spawn child renders a hidden window that fell to the 320 px floor, which `UiMode::Auto` resolved to Mobile and occluded all desktop chrome — regressing every pre-mobile ui-test (FuncSize 11→3). Clamp `initialWindowW/H` to ≥1280×800 under the test define so `Auto` resolves Desktop (the mode the existing tests were written against); mobile-shell tests opt back in by pinning `cfg.UiMode = UiMode::Mobile` (ignores width). Restores FuncSize 11/11.
+
 ## Verification (actual)
 *(populated post-ship — what was actually tested + result, passed / failed / not-run)*
 

@@ -190,6 +190,21 @@ class SmatchetUI {
     // previous frame's decision in the dead band). No fork yet in slice 2 — only
     // the resolved field + a temp overlay; the Draw() mobile fork lands in slice 3.
     void drawResolveUiMode(UiDrawSession& d);
+    // ---- Mobile shell (dual-ui-mode-desktop-mobile plan, slice 3+) ----
+    // When drawResolveUiMode yields EffectiveUiMode::Mobile, Draw() forks to
+    // drawMobileShell instead of the desktop chrome + docked windows. The shell is a
+    // single fullscreen NoDocking/NoTitleBar/NoSavedSettings window that fully occludes
+    // the host's empty viewport dockspace; its three fixed bands are the top app bar, the
+    // flex page-content region, and the bottom nav, with an overlay drawer. The host layer
+    // never learns about mobile mode — see the plan's "central architectural bet".
+    void drawMobileShell(AppController& app, UiDrawSession& d);
+    void drawMobileTopAppBar(AppController& app, UiDrawSession& d);
+    void drawMobilePageContent(AppController& app, UiDrawSession& d);
+    void drawMobileBottomNav(AppController& app, UiDrawSession& d);
+    void drawMobileDrawer(AppController& app, UiDrawSession& d);
+    // Mode-independent floating overlays (toasts + app-update modal). Extracted from
+    // drawSecondaryWindowsTail so both the desktop and mobile Draw paths render them.
+    void drawGlobalOverlays(AppController& app, UiDrawSession& d);
     void drawApplyAppearanceSettings(UiDrawSession& d);
     void drawPerFrameTicksAndHandlers(AppController& app, UiDrawSession& d);
     void drawPreWindowOverlays(AppController& app, UiDrawSession& d);

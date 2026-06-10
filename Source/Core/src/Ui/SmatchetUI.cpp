@@ -63,12 +63,6 @@
 UiDrawSession g_ui;
 static SmatchetPerfUi g_perfUi;
 
-// Auto-mode width hysteresis (dual-ui-mode-desktop-mobile plan). Enter Mobile at or
-// below the max-enter width; exit to Desktop at or above the min-exit width; hold the
-// previous decision inside the dead band so a near-breakpoint resize never flaps.
-// Relocates to SmatchetMobileShellUi.cpp's anon namespace in Slice 3.
-static constexpr float kMobileEnterMaxWidthPx = 720.0f;
-static constexpr float kMobileExitMinWidthPx = 860.0f;
 static bool g_openFilePathsHandlerInstalled = false;
 
 // Forward decls for helpers shared with SmatchetUI_Layout.cpp / SmatchetUI_MainMenu.cpp.
@@ -285,59 +279,31 @@ void SmatchetUI::Draw(AppController& app) {
     drawPreWindowOverlays(app, d);
 
     SMATCHET_UI_PERF_SCOPE("SmatchetUI::Draw");
+    // Per-frame view/connectivity state (incl. the MainThreadDispatcher drain that runs
+    // worker-thread callbacks) must execute in BOTH modes — so it stays ahead of the fork.
     drawViewStateAndConnectivity(app, d);
+
+    // Mobile fork (dual-ui-mode-desktop-mobile plan, slice 3). The host viewport dockspace
+    // is already created by the host layer; the mobile shell is a fullscreen window drawn
+    // on top of it. Skip the entire desktop chrome + docked-window path; global overlays
+    // (toasts + update modal) and end-of-frame persistence still run.
+    if (d.effectiveUiMode == EffectiveUiMode::Mobile) {
+        drawMobileShell(app, d);
+        drawGlobalOverlays(app, d);
+        drawEndOfFramePersistence(d);
+        return;
+    }
+
     drawChromeAndModeToggles(app, d);
     handleViewKeyboardShortcuts(d);
     DrainAppUpdateCheck(d);
     drawSecondaryWindows(app, d);
     drawDockDebugOverlay(d);
-
-    // [temp-debug] Slice-2 effective-mode + width readout. Removed in Slice 3 when the
-    // real mobile fork lands. Verifies the Auto-mode 720/860 hysteresis by resizing.
-    {
-        const ::ImGuiIO& io = ::ImGui::GetIO();
-        ::ImGui::SetNextWindowBgAlpha(0.65f);
-        ::ImGui::SetNextWindowPos(::ImVec2(8.0f, 8.0f), ImGuiCond_Always);
-        if (::ImGui::Begin("##temp-debug-uimode", nullptr,
-                           ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoNav |
-                               ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_AlwaysAutoResize |
-                               ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoSavedSettings)) {
-            ::ImGui::Text("[temp-debug] uiMode cfg=%s eff=%s w=%.0f", uiModeToString(d.cfg.UiMode),
-                          d.effectiveUiMode == EffectiveUiMode::Mobile ? "Mobile" : "Desktop",
-                          io.DisplaySize.x);
-        }
-        ::ImGui::End();
-    }
-
     drawEndOfFramePersistence(d);
 }
 
-// Resolves cfg.UiMode -> d.effectiveUiMode once per frame. Manual Desktop/Mobile pin
-// directly; Auto applies width hysteresis on io.DisplaySize.x: enter Mobile at <= 720 px,
-// exit to Desktop at >= 860 px, and hold the previous frame's decision inside the dead
-// band so a window hovering near the breakpoint never flaps. d.effectiveUiMode is both
-// the output AND the cross-frame carry — it is seeded to Desktop in UiDrawSession.
-void SmatchetUI::drawResolveUiMode(UiDrawSession& d) {
-    switch (d.cfg.UiMode) {
-        case UiMode::Desktop:
-            d.effectiveUiMode = EffectiveUiMode::Desktop;
-            return;
-        case UiMode::Mobile:
-            d.effectiveUiMode = EffectiveUiMode::Mobile;
-            return;
-        case UiMode::Auto:
-        default:
-            break;
-    }
-
-    const float width = ::ImGui::GetIO().DisplaySize.x;
-    if (width <= kMobileEnterMaxWidthPx) {
-        d.effectiveUiMode = EffectiveUiMode::Mobile;
-    } else if (width >= kMobileExitMinWidthPx) {
-        d.effectiveUiMode = EffectiveUiMode::Desktop;
-    }
-    // else: dead band (720 < w < 860) — hold d.effectiveUiMode from the prior frame.
-}
+// drawResolveUiMode + the mobile shell methods + the Auto-mode width-hysteresis consts
+// live in SmatchetMobileShellUi.cpp (dual-ui-mode-desktop-mobile plan, slice 3).
 
 // One-time config load + layout-schema migration. Latches `cfgInitialized`; subsequent
 // frames early-out.
@@ -877,14 +843,21 @@ void SmatchetUI::drawSecondaryWindows(AppController& app, UiDrawSession& d) {
     drawSecondaryWindowsTail(app, d);
 }
 
-// Tail half of drawSecondaryWindows: toasts, update modal, audit, AI assistant, watchers/votes
-// list windows, MCP server, log window, FPS overlay. Split out for function-size compliance.
-void SmatchetUI::drawSecondaryWindowsTail(AppController& app, UiDrawSession& d) {
+// Mode-independent floating overlays — toasts + the app-update modal. Drawn by BOTH the
+// desktop path (head of drawSecondaryWindowsTail) and the mobile fork, so neither mode
+// loses transient notifications or the update prompt. Each owns its own ImGui scope.
+void SmatchetUI::drawGlobalOverlays(AppController& app, UiDrawSession& d) {
     {
         SMATCHET_UI_PERF_SCOPE("SmatchetToastManager::Render");
         SmatchetToastManager::Instance().Render();
     }
     DrawAppUpdateModal(app, d);
+}
+
+// Tail half of drawSecondaryWindows: toasts, update modal, audit, AI assistant, watchers/votes
+// list windows, MCP server, log window, FPS overlay. Split out for function-size compliance.
+void SmatchetUI::drawSecondaryWindowsTail(AppController& app, UiDrawSession& d) {
+    drawGlobalOverlays(app, d);
     {
         SMATCHET_UI_PERF_SCOPE("drawAuditWindow");
         drawAuditWindow(app, d);
