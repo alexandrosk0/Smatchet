@@ -34,6 +34,7 @@
 
 #include <GLES3/gl3.h>
 
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -48,6 +49,19 @@ namespace {
 // finger-readable on high-dpi panels. Widget metrics are scaled separately via
 // SmatchetTheme::ApplyUiDensityScale.
 const float kBaseFontPx = 16.0f;
+
+// item 14: process-death save-state blob handed to native_app_glue on APP_CMD_SAVE_STATE and read
+// back on the next cold start. Layout (imgui.ini) + config already write through to the private dir
+// — and SAVE_STATE force-flushes the ini below — so this blob only carries a sanity sentinel + a
+// resume counter (proves the save/restore round-trip and is visible in logcat). Future fields append
+// behind a version bump; a magic/version mismatch is rejected as a fresh start.
+const uint32_t kSavedStateMagic = 0x534D4348u; // 'SMCH'
+const uint32_t kSavedStateVersion = 1u;
+struct SmatchetSavedState {
+    uint32_t magic;
+    uint32_t version;
+    uint32_t resumeCount;
+};
 
 // ── Raw-GLES boot/error panel (WS3 item 7 / Issue #1053 — Quality Pillar 2 visible cue) ──────────
 // When Source/Core fails to boot, coreBooted stays false and ImGui is never initialised, so the
@@ -133,6 +147,16 @@ class BootPanelGl {
 public:
     void Draw(int w, int h, const char* line1, const char* line2);
     void Destroy();
+
+    // item 12: drop the GL handles WITHOUT glDelete — used after EGL_CONTEXT_LOST, where the old
+    // context (and every object it owned) is already gone, so the names are stale and must not be
+    // deleted against the freshly created context. Re-arms lazy program creation on the next Draw.
+    void Invalidate() {
+        program_ = 0;
+        vbo_ = 0;
+        colorLoc_ = -1;
+        programFailed_ = false;
+    }
 
 private:
     bool EnsureProgram();
@@ -267,6 +291,9 @@ struct AndroidHostState {
     bool imeReady = false; // item 8 (#1069): IME bridge init succeeded — false ⇒ degraded cue
     bool hasSurface = false;
     bool bootPanelDrawn = false; // item 7: raw-GL boot/error panel painted once on the live surface
+    bool hasFocus = true;        // item 13: APP_CMD_GAINED_FOCUS/LOST_FOCUS — false ⇒ pause render
+    bool paused = false;         // item 13: APP_CMD_PAUSE/RESUME — true ⇒ backgrounded, pause render
+    uint32_t resumeCount = 0;    // item 14: bumped on each restore from a process-death save-state
     BootPanelGl bootPanel;       // item 7: raw-GLES boot/error renderer (used only when Core fails)
 };
 
@@ -440,7 +467,46 @@ void InitImGuiFirstTime(android_app* app, AndroidHostState& s) {
     SLOG("ImGui ready (density=%.2f font=%.1fpx)", s.densityScale, fontPx);
 }
 
-void RenderOneFrame(AndroidHostState& s) {
+// item 12 (#1071): full GL-layer rebuild after an EGL_CONTEXT_LOST present failure. A GPU reset /
+// power-management event voids the EGLContext and every GL object it owned (ImGui's font texture +
+// shaders, the boot-panel program/VBO), so we shut the GL backend (its glDelete calls are harmless
+// no-ops on the lost context), drop the boot-panel's GL names WITHOUT glDelete (they're stale), tear
+// down EGL, then recreate the context, bind a fresh surface to the live window, and re-init both
+// ImGui backends. ImGui's CPU-side context (layout + font atlas bytes) survives — the OpenGL3
+// backend rebuilds its device objects lazily on the next NewFrame. Returns true once a usable surface
+// is back. If no live window / surface can be obtained (a TERM_WINDOW raced in, or a driver-side
+// create failure), ImGui is fully torn down + imguiReady cleared so the next APP_CMD_INIT_WINDOW does
+// a clean InitImGuiFirstTime rather than a half re-init.
+bool RecreateAfterContextLoss(android_app* app, AndroidHostState& s) {
+    SLOGE("EGL_CONTEXT_LOST on present — rebuilding GL context + surface (item 12)");
+    const bool hadImgui = s.imguiReady;
+    if (hadImgui) {
+        ImGui_ImplOpenGL3_Shutdown();
+    }
+    s.bootPanel.Invalidate();
+    s.hasSurface = false;
+    s.egl.Destroy();
+
+    if (app->window != nullptr && s.egl.CreateContext() && s.egl.CreateSurface(app->window)) {
+        ImGui_ImplOpenGL3_Init("#version 300 es");
+        ImGui_ImplAndroid_Init(app->window);
+        s.hasSurface = true;
+        SLOG("EGL context + surface rebuilt after loss (%dx%d)", s.egl.Width(), s.egl.Height());
+        return true;
+    }
+
+    SLOGE("EGL_CONTEXT_LOST recovery deferred — no usable window/surface yet; full ImGui teardown");
+    if (hadImgui) {
+        s.ime.Shutdown();
+        ImGui_ImplAndroid_Shutdown();
+        ImGui::DestroyContext();
+    }
+    s.imguiReady = false;
+    s.imeReady = false;
+    return false;
+}
+
+void RenderOneFrame(android_app* app, AndroidHostState& s) {
     if (!s.hasSurface || !s.imguiReady || !s.coreBooted) {
         return;
     }
@@ -486,7 +552,11 @@ void RenderOneFrame(AndroidHostState& s) {
     glClearColor(bg.x * bg.w, bg.y * bg.w, bg.z * bg.w, bg.w);
     glClear(GL_COLOR_BUFFER_BIT);
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-    s.egl.SwapBuffers();
+    // item 12: a present failure caused by EGL_CONTEXT_LOST needs a full GL-layer rebuild; a benign
+    // surface loss is recovered by the ordinary TERM_WINDOW / INIT_WINDOW cycle and is ignored here.
+    if (!s.egl.SwapBuffers() && s.egl.LastSwapLostContext()) {
+        RecreateAfterContextLoss(app, s);
+    }
 }
 
 void TeardownAll(AndroidHostState& s) {
@@ -520,6 +590,81 @@ void TeardownAll(AndroidHostState& s) {
     SLOG("Teardown complete");
 }
 
+// item 14: APP_CMD_SAVE_STATE — the system may kill a backgrounded process at any time. Layout
+// (imgui.ini) + config already write through to the private dir, but ImGui only flushes the ini on
+// its ~5 s timer, so force a flush now or recent docking/layout edits are lost on a background-kill.
+// The native_app_glue savedState blob then carries a versioned sentinel + resume counter (round-trip
+// proof, visible in logcat); we malloc it and glue frees it (free_saved_state), matching the
+// native-activity sample contract — do NOT free a previous blob here or it double-frees.
+void PersistSavedState(android_app* app, AndroidHostState& s) {
+    if (s.imguiReady) {
+        ImGuiIO& io = ImGui::GetIO();
+        if (io.IniFilename != nullptr) {
+            ImGui::SaveIniSettingsToDisk(io.IniFilename);
+        }
+    }
+    SmatchetSavedState* blob = static_cast<SmatchetSavedState*>(std::malloc(sizeof(SmatchetSavedState)));
+    if (blob == nullptr) {
+        SLOGE("SAVE_STATE: malloc failed; process-death restore will start fresh");
+        return;
+    }
+    blob->magic = kSavedStateMagic;
+    blob->version = kSavedStateVersion;
+    blob->resumeCount = s.resumeCount;
+    app->savedState = blob;
+    app->savedStateSize = sizeof(SmatchetSavedState);
+    SLOG("SAVE_STATE persisted (resumeCount=%u, ini flushed)", s.resumeCount);
+}
+
+// item 14: cold-start restore. native_app_glue hands back the bytes PersistSavedState wrote in
+// app->savedState (null on a clean launch). Layout + config restore from disk automatically; this
+// only validates the sentinel and bumps the resume counter so the round-trip is observable in logcat.
+void RestoreSavedState(android_app* app, AndroidHostState& s) {
+    if (app->savedState == nullptr || app->savedStateSize < sizeof(SmatchetSavedState)) {
+        return;
+    }
+    const SmatchetSavedState* blob = static_cast<const SmatchetSavedState*>(app->savedState);
+    if (blob->magic != kSavedStateMagic || blob->version != kSavedStateVersion) {
+        SLOGE("savedState magic/version mismatch (0x%x/%u) — starting fresh", blob->magic, blob->version);
+        return;
+    }
+    s.resumeCount = blob->resumeCount + 1u;
+    SLOG("Restored from process-death save-state (resumeCount now %u)", s.resumeCount);
+}
+
+// item 15: APP_CMD_CONFIG_CHANGED — display density can move at runtime (fold/unfold, external
+// display, accessibility font scale). Re-resolve it; if it changed, rebuild the font atlas at the new
+// pixel size and re-assert the host density scale WITHOUT compounding (ReassertHostDensityScale, not
+// a second ApplyUiDensityScale which would stack scales). The atlas rebuild must stay under the
+// Pillar-2 100 ms UI-block budget — timed and logged so a regression is visible.
+void OnConfigChanged(android_app* app, AndroidHostState& s) {
+    if (!s.imguiReady) {
+        return;
+    }
+    const float newScale = smatchet::mobile::ResolveDensityScale(app->config);
+    if (!(newScale > 0.0f) || newScale == s.densityScale) {
+        return;
+    }
+    const std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+    ImGuiIO& io = ImGui::GetIO();
+    const float fontPx = kBaseFontPx * newScale;
+    if (!s.fontBlob.empty()) {
+        SmatchetSetInjectedFontBytes(s.fontBlob.data(), static_cast<int>(s.fontBlob.size()), fontPx);
+    }
+    SmatchetApplyImGuiDefaultFontWithExtendedGlyphs(io); // rebuild the CPU atlas at the new size
+    ImGui_ImplOpenGL3_DestroyDeviceObjects();            // drop the stale font texture + shaders
+    ImGui_ImplOpenGL3_CreateDeviceObjects();             // re-upload at the new atlas size
+    SmatchetTheme::ReassertHostDensityScale(newScale);   // relative re-scale — no compounding
+    s.densityScale = newScale;
+
+    const std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
+    const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    SLOG("CONFIG_CHANGED density %.2f font=%.1fpx atlas-rebuild %.1fms", newScale, fontPx, ms);
+    if (ms > 100.0) {
+        SLOGE("CONFIG_CHANGED atlas rebuild %.1fms exceeded the 100ms UI-block budget (Pillar 2)", ms);
+    }
+}
+
 void OnAppCmd(android_app* app, int32_t cmd) {
     AndroidHostState& s = *static_cast<AndroidHostState*>(app->userData);
     switch (cmd) {
@@ -551,6 +696,24 @@ void OnAppCmd(android_app* app, int32_t cmd) {
         s.hasSurface = false;
         s.egl.DestroySurface(); // keep context + GL objects + ImGui ctx alive
         break;
+    case APP_CMD_GAINED_FOCUS:
+        s.hasFocus = true; // item 13: resume the render/swap loop
+        break;
+    case APP_CMD_LOST_FOCUS:
+        s.hasFocus = false; // item 13: pause render — don't draw into a non-focused surface
+        break;
+    case APP_CMD_RESUME:
+        s.paused = false; // item 13: foregrounded again
+        break;
+    case APP_CMD_PAUSE:
+        s.paused = true; // item 13: backgrounded — stop the render/swap loop (Pillar 1: no idle GPU)
+        break;
+    case APP_CMD_SAVE_STATE:
+        PersistSavedState(app, s); // item 14: a process-death may follow — flush ini + persist sentinel
+        break;
+    case APP_CMD_CONFIG_CHANGED:
+        OnConfigChanged(app, s); // item 15: runtime density change — rebuild atlas + re-assert scale
+        break;
     default:
         break;
     }
@@ -576,13 +739,22 @@ void DrawBootErrorPanel(AndroidHostState& s) {
 // loop exits and renders). A booted ImGui UI animates continuously → always spin; a boot-failed app
 // needs exactly one panel draw, then blocks on -1 so it consumes no CPU.
 bool WantImmediatePoll(const AndroidHostState& s) {
-    if (!s.hasSurface) {
+    // item 13: a paused / unfocused app must block on pollOnce(-1) so a backgrounded process consumes
+    // no CPU (Pillar 1) — never spin (timeout 0) while we're not rendering.
+    if (!s.hasSurface || s.paused || !s.hasFocus) {
         return false;
     }
     if (s.coreBooted && s.imguiReady) {
         return true;
     }
     return !s.bootPanelDrawn;
+}
+
+// item 13: a frame may render only when the surface is live, Core + ImGui are up, and the app is
+// foregrounded + focused. Gating render on focus/foreground keeps a backgrounded app off the CPU/GPU
+// (Pillar 1) and avoids drawing into a surface the system is tearing down.
+bool IsRenderable(const AndroidHostState& s) {
+    return s.hasSurface && s.coreBooted && s.imguiReady && s.hasFocus && !s.paused;
 }
 
 } // namespace
@@ -594,6 +766,7 @@ void android_main(android_app* app) {
     app->onInputEvent = OnInputEvent;
 
     BootCoreOnce(app, state);
+    RestoreSavedState(app, state); // item 14: cold-start process-death restore (no-op on clean launch)
 
     while (true) {
         int events = 0;
@@ -612,13 +785,11 @@ void android_main(android_app* app) {
                 return;
             }
         }
-        if (state.hasSurface) {
-            if (state.coreBooted && state.imguiReady) {
-                RenderOneFrame(state);
-            } else if (!state.bootPanelDrawn) {
-                DrawBootErrorPanel(state); // Core boot failed → raw-GL error panel (item 7)
-                state.bootPanelDrawn = true;
-            }
+        if (IsRenderable(state)) {
+            RenderOneFrame(app, state);
+        } else if (state.hasSurface && !state.coreBooted && !state.bootPanelDrawn) {
+            DrawBootErrorPanel(state); // Core boot failed → raw-GL error panel (item 7)
+            state.bootPanelDrawn = true;
         }
     }
 }

@@ -825,6 +825,23 @@ void SmatchetTheme::ApplyUiDensityScale(float densityScale) {
     ImGui::GetStyle().ScaleAllSizes(densityScale);
 }
 
+void SmatchetTheme::ReassertHostDensityScale(float newScale) {
+    // Guard non-positive / NaN — `!(x > 0)` rejects NaN too. Leave the current style untouched.
+    if (!(newScale > 0.0f)) {
+        return;
+    }
+    const float old = g_hostDensityScale;
+    // Update the stored scale FIRST so any later ApplyStyle (theme switch) rebuilds the style from
+    // baseline at the new scale via ReapplyHostDensityScale.
+    g_hostDensityScale = newScale;
+    // Transform the LIVE style by only the relative factor. ScaleAllSizes is multiplicative, and the
+    // current style already carries `old`, so multiplying by newScale/old lands it on newScale
+    // without re-stacking `old`. Skip when there is nothing to change (first call or no movement).
+    if (old > 0.0f && old != newScale) {
+        ImGui::GetStyle().ScaleAllSizes(newScale / old);
+    }
+}
+
 const SmatchetThemeSyntaxColors& SmatchetTheme::GetSyntaxColors() { return gSyntaxColors; }
 
 const SmatchetThemeAiColors& SmatchetTheme::GetActiveAiColors() { return gAiColors; }

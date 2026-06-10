@@ -65,6 +65,15 @@ void ApplyStyle(ThemeId theme);
  *  calls it (scale stays 1.0), so the seam is inert and fully desktop-compilable. */
 void ApplyUiDensityScale(float densityScale);
 
+/** Re-assert the host density scale to `newScale` WITHOUT compounding. ApplyUiDensityScale
+ *  multiplies the *current* style, so calling it a second time after a runtime DPI change would
+ *  stack the old and new scales. This instead applies only the relative factor (newScale / old)
+ *  to the live style and updates the stored host scale so later ApplyStyle rebuilds re-assert the
+ *  new value. Mobile seam: the Android host calls it on APP_CMD_CONFIG_CHANGED when the display
+ *  density moves (item 15 / #1071-adjacent). No-op on `newScale` <= 0 / NaN or when unchanged;
+ *  desktop never calls it (scale stays 1.0). */
+void ReassertHostDensityScale(float newScale);
+
 /** Active theme's C++ syntax-highlight palette. Updated by ApplyStyle. */
 const SmatchetThemeSyntaxColors& GetSyntaxColors();
 
