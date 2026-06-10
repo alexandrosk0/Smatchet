@@ -352,14 +352,21 @@ jobs:
                   if [ -f "$confirm_result" ]; then
                     python scripts/dev/perf-compare.py "$baseline" "$confirm_result" > /dev/null 2>&1
                     rc2=$?
-                    # Report the confirm sample either way — it is the gated one.
-                    result="$confirm_result"
                     if [ "$rc2" -eq 0 ]; then
                       echo "::notice::$scen confirm sample within policy — first exceed was runner noise (gated on the confirm median)."
+                      result="$confirm_result" # report the gated (confirm) sample
                       rc=0
-                    else
+                    elif [ "$rc2" -eq 1 ]; then
                       echo "::warning::$scen exceeded policy on BOTH independent medians — confirmed regression."
-                      rc=$rc2
+                      result="$confirm_result" # report the gated (confirm) sample
+                      rc=1
+                    else
+                      # rc2==2: malformed confirm snapshot — plumbing, not a
+                      # regression (CR #1115). First sample stays the report.
+                      echo "FAIL: confirm compare reported malformed input for $scen (rc=$rc2)" >&2
+                      run_failure_count=$((run_failure_count + 1))
+                      note_run_failure "$scen" "confirm compare reported malformed input"
+                      confirm_plumbing=1
                     fi
                   else
                     echo "FAIL: perf-median selected no usable confirm snapshot for $scen" >&2
