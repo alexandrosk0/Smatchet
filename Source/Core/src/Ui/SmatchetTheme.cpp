@@ -825,6 +825,8 @@ void SmatchetTheme::ApplyUiDensityScale(float densityScale) {
     ImGui::GetStyle().ScaleAllSizes(densityScale);
 }
 
+float SmatchetTheme::HostDensityScale() { return g_hostDensityScale; }
+
 void SmatchetTheme::ReassertHostDensityScale(float newScale) {
     // Guard non-positive / NaN — `!(x > 0)` rejects NaN too. Leave the current style untouched.
     if (!(newScale > 0.0f)) {
@@ -840,6 +842,17 @@ void SmatchetTheme::ReassertHostDensityScale(float newScale) {
     // move (skip first call / no movement / non-positive old) — pure + unit-tested.
     if (ShouldRescaleHostDensity(old, newScale)) {
         ImGui::GetStyle().ScaleAllSizes(newScale / old);
+    }
+}
+
+void SmatchetTheme::ApplyTouchScale(float scale) {
+    // Pure live-style multiply layered on top of the host density base — deliberately does NOT
+    // touch g_hostDensityScale (that global is host-owned; the Auto logical-width divisor + mobile
+    // band heights read it). Net live scale after a preceding ApplyStyle is host*scale. The == 1.0
+    // / non-positive cases are inert (ShouldApplyDensityScale), so a Desktop flip-back is a plain
+    // ApplyStyle rebuild that lands back on the untouched host base.
+    if (ShouldApplyDensityScale(scale)) {
+        ImGui::GetStyle().ScaleAllSizes(scale);
     }
 }
 

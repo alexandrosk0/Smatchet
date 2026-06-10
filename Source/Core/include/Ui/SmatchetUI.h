@@ -145,6 +145,13 @@ class SmatchetUI {
     // a cfg.Theme change and re-apply once per dirty event (not every frame).
     ThemeId lastAppliedTheme_ = ThemeId::SmatchetDark;
     TrackerConfig::UiDensity lastAppliedDensity_ = TrackerConfig::UiDensity::Normal;
+    // Touch-scaling dirty gate (dual-ui-mode slice 8): the effective mode + mobile
+    // density last fed to SmatchetTheme::ApplyUiDensityScale + io.FontGlobalScale.
+    // A flip into/out of Mobile (or a density change while in Mobile) rebuilds the
+    // style at the new touch scale; desktop holds scale 1.0. Seeded Desktop/Comfortable
+    // so the first frame in Desktop is a no-op and the first Mobile flip is detected.
+    EffectiveUiMode lastAppliedEffectiveUiMode_ = EffectiveUiMode::Desktop;
+    MobileTouchDensity lastAppliedMobileDensity_ = MobileTouchDensity::Comfortable;
     RecentViewLru recentViews_;
 
     void drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSession& d);
@@ -184,6 +191,53 @@ class SmatchetUI {
     // opens and closes its own scope internally or runs entirely outside any scope.
     // Pre-existing perf-scope seams are reused verbatim, so no new perf markers appear.
     void drawInitConfigOnce(AppController& app, UiDrawSession& d);
+    // Resolves cfg.UiMode -> d.effectiveUiMode once per frame at the top of Draw.
+    // Manual Desktop/Mobile pin directly; Auto applies width hysteresis on
+    // io.DisplaySize.x (enter Mobile <= 720 px, exit Desktop >= 860 px, hold the
+    // previous frame's decision in the dead band). No fork yet in slice 2 — only
+    // the resolved field + a temp overlay; the Draw() mobile fork lands in slice 3.
+    void drawResolveUiMode(UiDrawSession& d);
+    // ---- Mobile shell (dual-ui-mode-desktop-mobile plan, slice 3+) ----
+    // When drawResolveUiMode yields EffectiveUiMode::Mobile, Draw() forks to
+    // drawMobileShell instead of the desktop chrome + docked windows. The shell is a
+    // single fullscreen NoDocking/NoTitleBar/NoSavedSettings window that fully occludes
+    // the host's empty viewport dockspace; its three fixed bands are the top app bar, the
+    // flex page-content region, and the bottom nav, with an overlay drawer. The host layer
+    // never learns about mobile mode — see the plan's "central architectural bet".
+    void drawMobileShell(AppController& app, UiDrawSession& d);
+    void drawMobileTopAppBar(AppController& app, UiDrawSession& d);
+    void drawMobilePageContent(AppController& app, UiDrawSession& d);
+    void drawMobileBottomNav(AppController& app, UiDrawSession& d);
+    void drawMobileDrawer(AppController& app, UiDrawSession& d);
+    // Slice 5 — content dockspace + persistence. The Grid page hosts a local
+    // MobileContentDock split (list over issue-detail); other pages stay single-fill.
+    // The dock-windows helper submits the two dockable grid windows after the shell
+    // window ends, the seed helper builds the one-shot vertical split, and the detail
+    // helper renders the read-only field list for the active ticket. The two ini
+    // helpers toggle io.IniFilename so mobile dock geometry persists to a separate
+    // imgui_mobile.ini while the desktop imgui.ini stays untouched during mobile.
+    void drawMobileGridDockWindows(AppController& app, UiDrawSession& d, unsigned int gridDockId);
+    // Shared focused-pane setup for the mobile grid (slice 5/10): the desktop
+    // drawGridPaneWindows loop is skipped in mobile mode, so both the single-fill
+    // Grid page and the dockspace Tickets window reproduce its per-frame focus setup.
+    // ensure*FocusedMobileGridPane loads panes + resolves the focused pane (fallback
+    // to front), returns null only when there are no panes; drawEmbeddedFocusedGrid
+    // marks focus, points AppController's focused-context delegators at it, syncs the
+    // active view, and draws the embedded grid body against it.
+    GridPane* ensureFocusedMobileGridPane(UiDrawSession& d);
+    void drawEmbeddedFocusedGrid(AppController& app, UiDrawSession& d, GridPane& focused);
+    void seedMobileGridDock(unsigned int gridDockId);
+    void drawMobileGridDetail(AppController& app, UiDrawSession& d, GridPane* focused);
+    void drawMobileEnsureIniAttached(UiDrawSession& d);
+    void drawMobileRestoreDesktopIni(UiDrawSession& d);
+    // Slice 6 — the mobile drawer's saved-views section. Defined in
+    // SmatchetViewsDashboardUi.cpp so it can rebuild the file-local
+    // ViewsDashboardDrawCtx + activate closures and reuse drawViewsSidebar
+    // verbatim; selecting a view closes the drawer.
+    void drawMobileDrawerViews(AppController& app, UiDrawSession& d);
+    // Mode-independent floating overlays (toasts + app-update modal). Extracted from
+    // drawSecondaryWindowsTail so both the desktop and mobile Draw paths render them.
+    void drawGlobalOverlays(AppController& app, UiDrawSession& d);
     void drawApplyAppearanceSettings(UiDrawSession& d);
     void drawPerFrameTicksAndHandlers(AppController& app, UiDrawSession& d);
     void drawPreWindowOverlays(AppController& app, UiDrawSession& d);
@@ -219,9 +273,16 @@ class SmatchetUI {
     /// Right-anchored Smatchet Assistant side panel. Delegates to the free function in
     /// `SmatchetAiAssistantUi.cpp` after `drawAuditWindow` runs; early-returns inside
     /// the free function when `d.assistantPanelOpen` is false.
-    void drawAiAssistantPanel(AppController& app, UiDrawSession& d);
+    // embedded=true (dual-ui slice 4): mobile page-body fill — skip the panel's own
+    // window chrome (Begin/End + the assistantPanelOpen gate + dock/focus mechanics) and
+    // draw the body directly into the caller's region. Default false = the desktop dock
+    // window, byte-identical to the pre-slice-4 path.
+    void drawAiAssistantPanel(AppController& app, UiDrawSession& d, bool embedded = false);
 #endif
-    void drawPreferencesWindow(AppController& app, UiDrawSession& d);
+    // embedded=true (dual-ui slice 4): mobile Settings page-body fill — skip the show-gate +
+    // beginPreferencesWindow/End chrome, draw the tab bar + Save&Sync directly. Default false
+    // = desktop dock window, byte-identical to the pre-slice-4 path.
+    void drawPreferencesWindow(AppController& app, UiDrawSession& d, bool embedded = false);
     // Section helpers for drawPreferencesWindow (full-function-size-compliance Phase 5,
     // PR E11). The orchestrator owns the positional Begin/EndTabBar/End frame; each helper
     // runs inside that frame and never splits a positional-ImGui pair across the call
@@ -245,7 +306,10 @@ class SmatchetUI {
         SmatchetPreferencesUiTemplateFlags templateFlags;
     };
     PreferencesWindowState preferencesState_;
-    void drawViewsDashboardWindow(AppController& app, UiDrawSession& d);
+    // embedded=true (dual-ui slice 4): mobile Views page-body fill — skip the show-gate +
+    // window chrome (prepareTopLevelWindow/Begin/End/focus), draw the sidebar|editor body
+    // directly. Default false = desktop dock window, byte-identical to the pre-slice-4 path.
+    void drawViewsDashboardWindow(AppController& app, UiDrawSession& d, bool embedded = false);
     // Section helpers for drawViewsDashboardWindow (function-size decomposition). Each owns its
     // own positional-ImGui Begin/End pairs in full — no pair is split across the orchestrator/
     // helper boundary. The per-tab helpers each own their BeginTabItem/EndTabItem (EndTabItem
@@ -297,8 +361,12 @@ class SmatchetUI {
     // Re-entrant per-pane grid window (Slice 2): renders ONE GridPane, using the
     // pane's own snapshot + sort/filter caches. Called once per visible pane per frame.
     // The connectivity banner is resolved ONCE per frame by the host and passed in.
+    // embedded=true (dual-ui slice 4): mobile Tickets page-body fill — skip the pane window
+    // chrome (prepareTopLevelWindow/Begin/End/focus + the pane-strip "+" button), draw the
+    // grid body directly into the caller's region. Default false = desktop dock window,
+    // byte-identical to the pre-slice-4 path. Single-panel mobile passes the focused pane.
     void drawActiveProjectWindow(AppController& app, UiDrawSession& d, GridPane& pane,
-                                 const TrackerConnectivityBannerForUi& trackerBanner);
+                                 const TrackerConnectivityBannerForUi& trackerBanner, bool embedded = false);
     // Pane-view resolution helpers (Slice 2). resolvePaneView falls back to the active
     // view when the pane's view is absent from the loaded bucket — self-repairing
     // pane.viewId ONLY when the pane belongs to the focused backend's bucket (a
@@ -372,7 +440,10 @@ class SmatchetUI {
     void drawAttachmentListPane(AttachmentPreviewDrawCtx& ctx);
     void drawAttachmentDetailsPane(AttachmentPreviewDrawCtx& ctx);
     static void drawAuditWindow(AppController& app, UiDrawSession& d);
-    static void drawLogWindow(UiDrawSession& d);
+    // embedded=true (dual-ui slice 4): mobile Log page-body fill — skip the prepareTopLevel/
+    // Begin/End chrome, draw the toolbar + scroll region directly. Default false = desktop
+    // dock window, byte-identical to the pre-slice-4 path.
+    static void drawLogWindow(UiDrawSession& d, bool embedded = false);
     static void drawBulkImportWindow(AppController& app, UiDrawSession& d);
     static void drawBulkExportWindow(AppController& app, UiDrawSession& d);
     static void prepareTopLevelWindow(UiDrawSession& d, const char* layoutKey, float defaultW, float defaultH,

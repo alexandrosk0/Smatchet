@@ -23,6 +23,7 @@
 #include "AiTypes.h"
 #include "SmatchetDefaults.h"
 #include "SmatchetThemeIds.h"
+#include "SmatchetUiModeIds.h"
 #include "ToolbarConfig.h"
 
 struct CommentTemplate {
@@ -426,6 +427,19 @@ struct TrackerConfig {
     // with the string from disk, so a config with `"theme": "smatchet_dark"` round-trips
     // through to ThemeId::SmatchetDark unchanged.
     ThemeId Theme = ThemeId::ImGuiDefaultDark;
+    // --- UI layout mode (Desktop / Mobile / Auto) + mobile-shell preferences. ---
+    // Persisted via j["uiMode"] / j["mobileNav"] / j["mobileHome"] / j["mobileDensity"].
+    // All brand-new optional keys with defaults → no LayoutSchemaVersion bump.
+    // Auto (default) resolves to Desktop/Mobile by viewport width with hysteresis.
+    UiMode UiMode = UiMode::Auto;
+    // Ordered, possibly-filtered bottom-nav page list. SanitizeMobileNav guards a
+    // corrupt/hand-edited value on load (drop-unknown / dedup / empty→default /
+    // force-home-in-list / >=1-visible).
+    std::vector<std::string> MobileNavPages = {"grid", "views", "log", "settings", "ai"};
+    // Page shown first when the mobile shell opens; forced present in MobileNavPages.
+    std::string MobileHomePage = "grid";
+    // Touch hit-target density preset (drives ScaleAllSizes + font multiplier).
+    MobileTouchDensity MobileTouchDensity = MobileTouchDensity::Comfortable;
     // UI localization preference (normalized to en-US or fr-FR).
     std::string UiLanguage = "en-US";
     // Standalone updater preferences.
@@ -671,6 +685,15 @@ class ConfigManager {
     static std::string GetConfigPath();
     static std::string GetViewsPath();
     static std::string GetImGuiSettingsPath();
+    /// Sibling of GetImGuiSettingsPath() for the mobile content-dockspace layout
+    /// (imgui_mobile.ini). Kept separate so the desktop imgui.ini is never touched
+    /// in mobile mode (the shell intercepts WantSaveIniSettings → this path).
+    static std::string GetMobileImGuiSettingsPath();
+    /// Repair a corrupt/hand-edited mobile-nav config in place: drop unknown page
+    /// ids, dedup (keep first), empty→full default, force MobileHomePage known +
+    /// present in the list, guarantee >=1 visible page. Called on load + after the
+    /// Preferences Mobile-group edits. Pure logic — unit-tested (Bucket A).
+    static void SanitizeMobileNav(TrackerConfig& cfg);
 
     static const char* GetDefaultImGuiDockLayoutIni();
     static bool WriteDefaultImGuiSettingsFile();

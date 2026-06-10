@@ -74,6 +74,23 @@ void ApplyUiDensityScale(float densityScale);
  *  desktop never calls it (scale stays 1.0). */
 void ReassertHostDensityScale(float newScale);
 
+/** Compose a transient UI scale (e.g. the mobile touch-density enlargement) ON TOP of the
+ *  host density base WITHOUT touching the stored host density scale. Unlike ApplyUiDensityScale
+ *  (which OWNS g_hostDensityScale and is the host-injection seam), this is a pure multiply of the
+ *  live style. The caller invokes it AFTER ApplyStyle — which rebuilds from baseline and re-asserts
+ *  the host base via ReapplyHostDensityScale — so the net live scale is host*scale, while
+ *  HostDensityScale() keeps returning the true host base (the Auto-mode logical-width divisor +
+ *  mobile band heights depend on that). Reverting is just the next ApplyStyle rebuild (it drops
+ *  back to the host base); never call with 1/scale. No-op on scale <= 0 / NaN / == 1.0. */
+void ApplyTouchScale(float scale);
+
+/** The host-injected UI density scale last set via ApplyUiDensityScale / ReassertHostDensityScale
+ *  (1.0 on desktop where the seam is inert; e.g. ~2.6 on a 420-dpi phone). The Auto UI-mode
+ *  breakpoint divides the raw `io.DisplaySize.x` (physical surface pixels on the Android EGL host)
+ *  by this to recover a DPI-independent logical width — without it a high-DPI phone's large pixel
+ *  count reads as a wide desktop and Auto never resolves Mobile. UI-thread-only read. */
+float HostDensityScale();
+
 /** Active theme's C++ syntax-highlight palette. Updated by ApplyStyle. */
 const SmatchetThemeSyntaxColors& GetSyntaxColors();
 

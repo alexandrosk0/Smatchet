@@ -13,5 +13,10 @@ struct ViewDefinition;
 /// `activeView` is the currently-active `ViewDefinition*` from `SmatchetUI::ViewState`
 /// (may be null). Phase C uses it to populate the ActiveView auto-context block; the
 /// pointer is read-only and only valid for the duration of the call.
-void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const ViewDefinition* activeView);
+/// embedded=true (dual-ui slice 4): mobile AI page-body fill — skip the window chrome
+/// (Begin/End + the `assistantPanelOpen` gate + dock/focus mechanics + open-state persist)
+/// and draw the header/history/input body directly into the caller's region. Default false
+/// = the desktop dock window, byte-identical to the pre-slice-4 path.
+void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const ViewDefinition* activeView,
+                                  bool embedded = false);
 #endif

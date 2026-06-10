@@ -329,48 +329,54 @@ struct ActiveProjectDrawCtx {
 // focused-context delegators); session-level mutation paths (view edits, new-issue
 // draft, modals, toasts) stay gated on pane.focused.
 void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, GridPane& pane,
-                                         const TrackerConnectivityBannerForUi& TrackerBanner) {
+                                         const TrackerConnectivityBannerForUi& TrackerBanner, bool embedded) {
     const bool wantFocus = pane.focused && d.requestActiveProjectFocus;
-    prepareTopLevelWindow(d, "active", 900.0f, 620.0f, wantFocus);
-    // The bootstrap pane keeps the legacy window name so existing imgui.ini dock
-    // geometry and the default-layout ini keep applying; extra panes carry their
-    // title with a stable ###GridPane:<id> settings id (cached — no per-frame build).
-    if (pane.cachedWindowName.empty() || pane.cachedWindowNameTitle != pane.title) {
-        pane.cachedWindowNameTitle = pane.title;
-        pane.cachedWindowName =
-            (pane.id == "main") ? std::string("Smatchet - Active Project") : pane.title + "###GridPane:" + pane.id;
-    }
-    // Close button only when another pane remains (min-1-pane invariant; the host
-    // applies the actual close after the pane loop).
-    bool* paneOpen = (d.gridPanes.size() > 1) ? &pane.open : nullptr;
-    ImGuiWindowFlags paneFlags = ImGuiWindowFlags_NoCollapse;
-    if (pane.id == "main") {
-        paneFlags |= ImGuiWindowFlags_NoTitleBar;
-    }
-    if (!ImGui::Begin(pane.cachedWindowName.c_str(), paneOpen, paneFlags)) {
-        ImGui::End();
-        return;
-    }
-    repairTopLevelWindow(d, "active", 420.0f, 300.0f);
-    if (wantFocus) {
-        ImGui::SetWindowFocus();
-        d.requestActiveProjectFocus = false;
-    }
-    // Report window focus to the pane host (consumed after the pane loop). Focus is
-    // what flips which pane drives the single Slice-2 live context.
-    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
-        d.paneWindowFocusedThisFrame = pane.id;
-    }
-    // Pane strip: "+" opens a new pane window duplicating this one (Slice 2 — same
-    // (backend, view); cross-backend panes arrive with Slice 3's concurrent contexts).
-    // The host applies the request after the loop; close rides the window's tab X.
-    if (ImGui::SmallButton("+##PaneAdd")) {
-        d.paneAddRequestSourceId = pane.id;
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s", SmatchetLocalization::T("pane.add.tooltip",
-                                                        "New grid pane (duplicates this pane; dock it as a tab or "
-                                                        "drag its tab to an edge for a side-by-side split)"));
+    // embedded (dual-ui slice 4): the mobile Grid page draws the focused pane's body
+    // directly into the page child; skip the dock-window chrome (prepareTopLevelWindow/
+    // Begin/End/focus-report) and the multi-pane "+" strip (mobile is single-pane). The
+    // desktop path below is byte-identical to the pre-slice-4 flow.
+    if (!embedded) {
+        prepareTopLevelWindow(d, "active", 900.0f, 620.0f, wantFocus);
+        // The bootstrap pane keeps the legacy window name so existing imgui.ini dock
+        // geometry and the default-layout ini keep applying; extra panes carry their
+        // title with a stable ###GridPane:<id> settings id (cached — no per-frame build).
+        if (pane.cachedWindowName.empty() || pane.cachedWindowNameTitle != pane.title) {
+            pane.cachedWindowNameTitle = pane.title;
+            pane.cachedWindowName =
+                (pane.id == "main") ? std::string("Smatchet - Active Project") : pane.title + "###GridPane:" + pane.id;
+        }
+        // Close button only when another pane remains (min-1-pane invariant; the host
+        // applies the actual close after the pane loop).
+        bool* paneOpen = (d.gridPanes.size() > 1) ? &pane.open : nullptr;
+        ImGuiWindowFlags paneFlags = ImGuiWindowFlags_NoCollapse;
+        if (pane.id == "main") {
+            paneFlags |= ImGuiWindowFlags_NoTitleBar;
+        }
+        if (!ImGui::Begin(pane.cachedWindowName.c_str(), paneOpen, paneFlags)) {
+            ImGui::End();
+            return;
+        }
+        repairTopLevelWindow(d, "active", 420.0f, 300.0f);
+        if (wantFocus) {
+            ImGui::SetWindowFocus();
+            d.requestActiveProjectFocus = false;
+        }
+        // Report window focus to the pane host (consumed after the pane loop). Focus is
+        // what flips which pane drives the single Slice-2 live context.
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+            d.paneWindowFocusedThisFrame = pane.id;
+        }
+        // Pane strip: "+" opens a new pane window duplicating this one (Slice 2 — same
+        // (backend, view); cross-backend panes arrive with Slice 3's concurrent contexts).
+        // The host applies the request after the loop; close rides the window's tab X.
+        if (ImGui::SmallButton("+##PaneAdd")) {
+            d.paneAddRequestSourceId = pane.id;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", SmatchetLocalization::T("pane.add.tooltip",
+                                                            "New grid pane (duplicates this pane; dock it as a tab or "
+                                                            "drag its tab to an edge for a side-by-side split)"));
+        }
     }
     // Banner resolved once per frame by the pane-window host and passed in.
     if (pane.focused) {
@@ -485,7 +491,9 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
     if (pane.focused) {
         MaybeToastGridBannerFromSession(d);
     }
-    ImGui::End();
+    if (!embedded) {
+        ImGui::End();
+    }
 }
 
 // Resolve the pane's view inside the (focused-backend) views bucket. A SAME-backend

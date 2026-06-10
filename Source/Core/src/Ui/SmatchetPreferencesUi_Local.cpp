@@ -40,6 +40,8 @@
 
 #include <cstring>
 #include <string>
+#include <utility>
+#include <vector>
 
 #if !defined(SMATCHET_EMBEDDED_IN_UNREAL)
 namespace {
@@ -395,6 +397,128 @@ void DrawAppearanceUpdatesSection(AppController& app, UiDrawSession& d) {
     ImGui::TextDisabled("GitHub release repo: %s", d.cfg.UpdateGithubRepo.c_str());
 }
 
+// Layout-mode section of the Appearance tab: Desktop / Mobile / Auto selector.
+// Auto resolves by viewport width per frame; Desktop/Mobile pin the mode. Saves
+// immediately via MarkPrefsDirty like the sibling Appearance toggles. The combo
+// index maps 1:1 onto the UiMode enum order (Desktop=0/Mobile=1/Auto=2).
+void DrawAppearanceUiModeSection(UiDrawSession& d) {
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Layout mode");
+    ImGui::Separator();
+    const char* modes[] = {"Desktop", "Mobile", "Auto (by width)"};
+    int currentMode = static_cast<int>(d.cfg.UiMode);
+    if (ImGui::Combo("UI mode", &currentMode, modes, IM_ARRAYSIZE(modes))) {
+        if (currentMode >= 0 && currentMode <= 2) {
+            d.cfg.UiMode = static_cast<UiMode>(currentMode);
+            MarkPrefsDirty(d);
+        }
+    }
+    ImGui::SetItemTooltip("Desktop = docking workspace. Mobile = single-column shell with top bar + bottom nav. "
+                          "Auto switches by window width.");
+}
+
+// Mobile-shell customization (Appearance tab): touch density, bottom-nav page
+// order + show/hide, and the home page. Only meaningful in Mobile/Auto, but shown
+// always so the layout is configurable from a desktop session. Every mutation
+// re-runs ConfigManager::SanitizeMobileNav (drop-unknown / dedup / >=1-visible /
+// home-present guards) then MarkPrefsDirty for the debounced save.
+void DrawAppearanceMobileSection(UiDrawSession& d) {
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Mobile layout");
+    ImGui::Separator();
+
+    // Touch density radio.
+    int density = static_cast<int>(d.cfg.MobileTouchDensity);
+    bool densityChanged = false;
+    densityChanged |= ImGui::RadioButton("Compact", &density, static_cast<int>(MobileTouchDensity::Compact));
+    ImGui::SameLine();
+    densityChanged |= ImGui::RadioButton("Comfortable", &density, static_cast<int>(MobileTouchDensity::Comfortable));
+    if (densityChanged) {
+        d.cfg.MobileTouchDensity = static_cast<MobileTouchDensity>(density);
+        MarkPrefsDirty(d);
+    }
+    ImGui::SetItemTooltip("Comfortable enlarges hit targets and fonts; Compact trades reach for density.");
+
+    // Bottom-nav editor: visible pages first (ordered, with up/down + hide), then
+    // the remaining hidden pages as unchecked rows to re-add.
+    ImGui::Spacing();
+    ImGui::TextDisabled("Bottom navigation");
+    static const char* const kAllPageIds[] = {"grid", "views", "log", "settings", "ai"};
+    std::vector<std::string>& nav = d.cfg.MobileNavPages;
+
+    for (int i = 0; i < static_cast<int>(nav.size()); ++i) {
+        ImGui::PushID(i);
+        // Explicit hide action — a button, not a checkbox seeded to a constant. A visible
+        // page only ever has one meaningful action here: drop it from the ordered nav list.
+        // Re-adding a hidden page is handled by the separate unchecked-rows loop below.
+        if (ImGui::SmallButton("Hide")) {
+            nav.erase(nav.begin() + i);
+            ConfigManager::SanitizeMobileNav(d.cfg);
+            MarkPrefsDirty(d);
+            ImGui::PopID();
+            break;
+        }
+        ImGui::SameLine();
+        if (ImGui::ArrowButton("##up", ImGuiDir_Up) && i > 0) {
+            std::swap(nav[static_cast<std::size_t>(i)], nav[static_cast<std::size_t>(i - 1)]);
+            ConfigManager::SanitizeMobileNav(d.cfg);
+            MarkPrefsDirty(d);
+        }
+        ImGui::SameLine();
+        if (ImGui::ArrowButton("##down", ImGuiDir_Down) && i + 1 < static_cast<int>(nav.size())) {
+            std::swap(nav[static_cast<std::size_t>(i)], nav[static_cast<std::size_t>(i + 1)]);
+            ConfigManager::SanitizeMobileNav(d.cfg);
+            MarkPrefsDirty(d);
+        }
+        ImGui::SameLine();
+        ImGui::TextUnformatted(mobileNavPageLabel(nav[static_cast<std::size_t>(i)]));
+        ImGui::PopID();
+    }
+
+    for (const char* id : kAllPageIds) {
+        bool present = false;
+        for (const std::string& cur : nav) {
+            if (cur == id) {
+                present = true;
+                break;
+            }
+        }
+        if (present) {
+            continue;
+        }
+        ImGui::PushID(id);
+        bool visible = false;
+        if (ImGui::Checkbox("##vis", &visible)) {
+            nav.push_back(id);
+            ConfigManager::SanitizeMobileNav(d.cfg);
+            MarkPrefsDirty(d);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s (hidden)", mobileNavPageLabel(id));
+        ImGui::PopID();
+    }
+
+    // Home page combo (from the visible pages).
+    ImGui::Spacing();
+    int homeIdx = 0;
+    std::vector<const char*> homeLabels;
+    for (int i = 0; i < static_cast<int>(nav.size()); ++i) {
+        homeLabels.push_back(mobileNavPageLabel(nav[static_cast<std::size_t>(i)]));
+        if (nav[static_cast<std::size_t>(i)] == d.cfg.MobileHomePage) {
+            homeIdx = i;
+        }
+    }
+    if (!homeLabels.empty() &&
+        ImGui::Combo("Home page", &homeIdx, homeLabels.data(), static_cast<int>(homeLabels.size()))) {
+        if (homeIdx >= 0 && homeIdx < static_cast<int>(nav.size())) {
+            d.cfg.MobileHomePage = nav[static_cast<std::size_t>(homeIdx)];
+            ConfigManager::SanitizeMobileNav(d.cfg);
+            MarkPrefsDirty(d);
+        }
+    }
+    ImGui::SetItemTooltip("The page shown first when the mobile shell opens.");
+}
+
 // "Appearance" tab body — owns its own tab-item begin/end pair (the end runs only when
 // the begin returned true). Split out of DrawLocalAndAppearancePreferencesTabs during the
 // function-size decomposition; behaviour-identical.
@@ -404,6 +528,8 @@ void DrawAppearanceTab(AppController& app, UiDrawSession& d) {
         DrawAppearanceGridTextSection(d);
         DrawAppearanceDateSection(d);
         DrawAppearanceDisplaySection(d);
+        DrawAppearanceUiModeSection(d);
+        DrawAppearanceMobileSection(d);
         DrawAppearanceUpdatesSection(app, d);
         ImGui::EndTabItem();
     }

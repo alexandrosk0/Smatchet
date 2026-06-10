@@ -62,6 +62,7 @@
 
 UiDrawSession g_ui;
 static SmatchetPerfUi g_perfUi;
+
 static bool g_openFilePathsHandlerInstalled = false;
 
 // Forward decls for helpers shared with SmatchetUI_Layout.cpp / SmatchetUI_MainMenu.cpp.
@@ -262,6 +263,7 @@ StartFieldCatalogFetchAsync(AppController& app, const TrackerConfig& fetchCfg, c
 void SmatchetUI::Draw(AppController& app) {
     UiDrawSession& d = g_ui;
     drawInitConfigOnce(app, d);
+    drawResolveUiMode(d);
     drawApplyAppearanceSettings(d);
     drawPerFrameTicksAndHandlers(app, d);
     // Deferred view-create/-delete latches (Pillar 3 crash fix — see
@@ -277,7 +279,26 @@ void SmatchetUI::Draw(AppController& app) {
     drawPreWindowOverlays(app, d);
 
     SMATCHET_UI_PERF_SCOPE("SmatchetUI::Draw");
+    // Per-frame view/connectivity state (incl. the MainThreadDispatcher drain that runs
+    // worker-thread callbacks) must execute in BOTH modes — so it stays ahead of the fork.
     drawViewStateAndConnectivity(app, d);
+
+    // Mobile fork (dual-ui-mode-desktop-mobile plan, slice 3). The host viewport dockspace
+    // is already created by the host layer; the mobile shell is a fullscreen window drawn
+    // on top of it. Skip the entire desktop chrome + docked-window path; global overlays
+    // (toasts + update modal) and end-of-frame persistence still run.
+    if (d.effectiveUiMode == EffectiveUiMode::Mobile) {
+        drawMobileShell(app, d);
+        drawGlobalOverlays(app, d);
+        drawEndOfFramePersistence(d);
+        return;
+    }
+
+    // Mobile->Desktop edge (slice 5): if the previous frame ran the mobile shell it
+    // detached io.IniFilename and routed saves to imgui_mobile.ini; re-attach the desktop
+    // ini + reload it before any desktop window submits so dock geometry comes back.
+    drawMobileRestoreDesktopIni(d);
+
     drawChromeAndModeToggles(app, d);
     handleViewKeyboardShortcuts(d);
     DrainAppUpdateCheck(d);
@@ -285,6 +306,9 @@ void SmatchetUI::Draw(AppController& app) {
     drawDockDebugOverlay(d);
     drawEndOfFramePersistence(d);
 }
+
+// drawResolveUiMode + the mobile shell methods + the Auto-mode width-hysteresis consts
+// live in SmatchetMobileShellUi.cpp (dual-ui-mode-desktop-mobile plan, slice 3).
 
 // One-time config load + layout-schema migration. Latches `cfgInitialized`; subsequent
 // frames early-out.
@@ -331,7 +355,15 @@ void SmatchetUI::drawInitConfigOnce(AppController& app, UiDrawSession& d) {
 // touch ImGui style when the corresponding cfg value drifts from the last applied value.
 void SmatchetUI::drawApplyAppearanceSettings(UiDrawSession& d) {
     // Zoom: per-frame FontGlobalScale from cfg.FontSizePt. Cheap, instant, no atlas rebuild.
-    ::ImGui::GetIO().FontGlobalScale = static_cast<float>(d.cfg.FontSizePt) / 16.0f;
+    // In Mobile the touch-density preset multiplies the base zoom so glyphs reach finger size
+    // (dual-ui-mode slice 8); this is idempotent so it runs every frame and auto-reverts on the
+    // flip back to Desktop. The matching size/spacing scale (ScaleAllSizes, non-idempotent) is
+    // applied once per flip in the dirty gate below.
+    float fontScale = static_cast<float>(d.cfg.FontSizePt) / 16.0f;
+    if (d.effectiveUiMode == EffectiveUiMode::Mobile) {
+        fontScale *= mobileTouchDensityScale(d.cfg.MobileTouchDensity);
+    }
+    ::ImGui::GetIO().FontGlobalScale = fontScale;
 
     // Apply density padding — only re-apply when the setting changes.
     if (d.cfg.Density != lastAppliedDensity_) {
@@ -343,14 +375,36 @@ void SmatchetUI::drawApplyAppearanceSettings(UiDrawSession& d) {
     // ImGui collapses empty dock nodes automatically — no per-frame bit-manipulation needed.
     // (HiddenTabBar fights the layout on resize; removed in favour of the natural empty-node path.)
 
-    // Re-apply the style palette only when cfg.Theme drifts from what is live in ImGui::GetStyle().
-    // SmatchetImGuiHost seeds SmatchetDark before cfg is loaded; the first frame after Load() catches
-    // any user-saved value through this check. ApplyStyle's ApplyCommonStyle rewrites ItemSpacing /
-    // FramePadding to Normal-density defaults; re-push density so Compact / Comfortable survive.
-    if (d.cfg.Theme != lastAppliedTheme_) {
+    // Style-rebuild dirty gate (theme + dual-ui-mode slice 8 touch scaling, unified). ApplyStyle is
+    // the one path that rewrites the whole style from baseline (ApplyCommonStyle resets ItemSpacing /
+    // FramePadding to Normal-density and ReapplyHostDensityScale re-asserts the HOST density base), so
+    // EVERY trigger that needs a rebuild must run through this single gate and then re-establish the
+    // FULL layered scale stack — otherwise one trigger (e.g. a theme change while already in Mobile)
+    // rebuilds to host base and silently drops the touch enlargement another trigger had composed.
+    // Triggers: cfg.Theme drift (host seeds SmatchetDark pre-cfg; first frame after Load catches the
+    // saved value), an effective-mode flip, or a MobileTouchDensity change while already in Mobile.
+    // ScaleAllSizes is multiplicative (non-idempotent), so this must fire ONCE per change, never every
+    // frame. After the rebuild: in Mobile, COMPOSE the touch scale via ApplyTouchScale — a pure
+    // live-style multiply that never writes g_hostDensityScale, so net Mobile scale is host*touch and
+    // the host base survives untouched (Android ~2.6 / Windows-HiDPI 1.6 stay intact — the Auto
+    // logical-width divisor + mobile band heights read HostDensityScale()); in Desktop, re-push the
+    // user's density spacing (touchScale would be 1.0 / inert anyway) so the flip back is identical.
+    const bool mobileNow = (d.effectiveUiMode == EffectiveUiMode::Mobile);
+    const bool themeChanged = (d.cfg.Theme != lastAppliedTheme_);
+    const bool modeChanged = (d.effectiveUiMode != lastAppliedEffectiveUiMode_);
+    const bool densityChangedInMobile = mobileNow && (d.cfg.MobileTouchDensity != lastAppliedMobileDensity_);
+    if (themeChanged || modeChanged || densityChangedInMobile) {
         SmatchetTheme::ApplyStyle(d.cfg.Theme);
         lastAppliedTheme_ = d.cfg.Theme;
-        smatchet::ui_density::ApplyDensityToImGuiStyle(d.cfg.Density);
+        if (mobileNow) {
+            // Compose touch enlargement on top of the host base ApplyStyle just re-asserted.
+            SmatchetTheme::ApplyTouchScale(mobileTouchDensityScale(d.cfg.MobileTouchDensity));
+        } else {
+            // Desktop restores the user's density spacing onto the (host-base) rebuilt style.
+            smatchet::ui_density::ApplyDensityToImGuiStyle(d.cfg.Density);
+        }
+        lastAppliedEffectiveUiMode_ = d.effectiveUiMode;
+        lastAppliedMobileDensity_ = d.cfg.MobileTouchDensity;
     }
 }
 
@@ -824,14 +878,21 @@ void SmatchetUI::drawSecondaryWindows(AppController& app, UiDrawSession& d) {
     drawSecondaryWindowsTail(app, d);
 }
 
-// Tail half of drawSecondaryWindows: toasts, update modal, audit, AI assistant, watchers/votes
-// list windows, MCP server, log window, FPS overlay. Split out for function-size compliance.
-void SmatchetUI::drawSecondaryWindowsTail(AppController& app, UiDrawSession& d) {
+// Mode-independent floating overlays — toasts + the app-update modal. Drawn by BOTH the
+// desktop path (head of drawSecondaryWindowsTail) and the mobile fork, so neither mode
+// loses transient notifications or the update prompt. Each owns its own ImGui scope.
+void SmatchetUI::drawGlobalOverlays(AppController& app, UiDrawSession& d) {
     {
         SMATCHET_UI_PERF_SCOPE("SmatchetToastManager::Render");
         SmatchetToastManager::Instance().Render();
     }
     DrawAppUpdateModal(app, d);
+}
+
+// Tail half of drawSecondaryWindows: toasts, update modal, audit, AI assistant, watchers/votes
+// list windows, MCP server, log window, FPS overlay. Split out for function-size compliance.
+void SmatchetUI::drawSecondaryWindowsTail(AppController& app, UiDrawSession& d) {
+    drawGlobalOverlays(app, d);
     {
         SMATCHET_UI_PERF_SCOPE("drawAuditWindow");
         drawAuditWindow(app, d);
@@ -952,12 +1013,12 @@ void SmatchetUI::drawEndOfFramePersistence(UiDrawSession& d) {
 }
 
 #if defined(SMATCHET_WITH_AI)
-void SmatchetUI::drawAiAssistantPanel(AppController& app, UiDrawSession& d) {
+void SmatchetUI::drawAiAssistantPanel(AppController& app, UiDrawSession& d, bool embedded) {
     // Free function lives in SmatchetAiAssistantUi.cpp; this member exists to keep
     // SmatchetUI.h's private-method contract uniform with the other window drawers.
     // Phase C: forward the active view definition so the panel's auto-context builder
-    // can populate the ActiveView block.
-    SmatchetDrawAiAssistantPanel(app, d, ViewState.GetActiveView());
+    // can populate the ActiveView block. embedded forwards the mobile page-body mode.
+    SmatchetDrawAiAssistantPanel(app, d, ViewState.GetActiveView(), embedded);
 }
 #endif
 

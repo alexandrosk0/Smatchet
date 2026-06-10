@@ -1260,54 +1260,62 @@ void ApplyAssistantDocking(UiDrawSession& d, bool& needsReDock) {
 
 } // namespace
 
-void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const ViewDefinition* activeView) {
+void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const ViewDefinition* activeView,
+                                  bool embedded) {
     HydrateFromConfigOnce(app, d);
-    if (!d.assistantPanelOpen) {
-        // Drop the chat-input registration with the dictation router so the
-        // panel-closed state never receives transcribed text. The wrapper-level
-        // hook would unregister on blur anyway, but the panel-level explicit
-        // call is the belt to the wrapper's suspenders.
-        g_dictationRouter.UnregisterInputText(s_inputCharBuf.data());
-        // Persist a closed state at most once per close event (idempotent if already false).
-        PersistOpenStateImmediate(d);
-        return;
+    // In embedded mode (dual-ui slice 4) the mobile AI page draws this body straight into the
+    // mobile page child, so the open-state gate and the surrounding dock-window chrome are both
+    // bypassed. The desktop path below stays unchanged from the pre-slice-4 flow.
+    if (!embedded) {
+        if (!d.assistantPanelOpen) {
+            // Drop the chat-input registration with the dictation router so the
+            // panel-closed state never receives transcribed text. The wrapper-level
+            // hook would unregister on blur anyway, but the panel-level explicit
+            // call is the belt to the wrapper's suspenders.
+            g_dictationRouter.UnregisterInputText(s_inputCharBuf.data());
+            // Persist a closed state at most once per close event (idempotent if already false).
+            PersistOpenStateImmediate(d);
+            return;
+        }
     }
     RegisterAssistantDictationInput();
 
-    static bool s_assistantNeedsReDock = false;
-    ApplyAssistantDocking(d, s_assistantNeedsReDock);
+    if (!embedded) {
+        static bool s_assistantNeedsReDock = false;
+        ApplyAssistantDocking(d, s_assistantNeedsReDock);
 
-    if (d.requestAssistantFocus) {
-        ImGui::SetNextWindowFocus();
-    }
-
-    // The panel is now a dockable, resizable window — drop the floating-only flags
-    // (NoDocking / NoSavedSettings / NoTitleBar / NoMove / NoResize). NoCollapse is
-    // kept because dock-tab collapse fights the open/close persistence contract.
-    const ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoCollapse;
-
-    if (!ImGui::Begin("Smatchet Assistant", &d.assistantPanelOpen, kFlags)) {
-        ImGui::End();
         if (d.requestAssistantFocus) {
+            ImGui::SetNextWindowFocus();
+        }
+
+        // The panel is now a dockable, resizable window — drop the floating-only flags
+        // (NoDocking / NoSavedSettings / NoTitleBar / NoMove / NoResize). NoCollapse is
+        // kept because dock-tab collapse fights the open/close persistence contract.
+        const ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoCollapse;
+
+        if (!ImGui::Begin("Smatchet Assistant", &d.assistantPanelOpen, kFlags)) {
+            ImGui::End();
+            if (d.requestAssistantFocus) {
+                d.requestAssistantFocus = false;
+            }
+            // Panel is hidden — collapsed, or its docked tab is inactive. Intentionally do
+            // NOT unregister the dictation buffer here — local-model
+            // transcription can take multiple seconds, during which the user
+            // may have flipped to another dock tab. Unregistering here would
+            // leave the post-back with no target and silently drop the
+            // transcribed text. The buffer stays alive (static storage); the
+            // registration is dropped only when the panel actually closes
+            // (`!d.assistantPanelOpen`) at the top of this function.
+            PersistOpenStateImmediate(d);
+            return;
+        }
+        if (d.requestAssistantFocus) {
+            ImGui::SetWindowFocus();
             d.requestAssistantFocus = false;
         }
-        // Panel is hidden — collapsed, or its docked tab is inactive. Intentionally do
-        // NOT unregister the dictation buffer here — local-model
-        // transcription can take multiple seconds, during which the user
-        // may have flipped to another dock tab. Unregistering here would
-        // leave the post-back with no target and silently drop the
-        // transcribed text. The buffer stays alive (static storage); the
-        // registration is dropped only when the panel actually closes
-        // (`!d.assistantPanelOpen`) at the top of this function.
-        PersistOpenStateImmediate(d);
-        return;
-    }
-    if (d.requestAssistantFocus) {
-        ImGui::SetWindowFocus();
-        d.requestAssistantFocus = false;
-    }
-    if (!ImGui::IsWindowDocked() && !ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
-        s_assistantNeedsReDock = true;
+        if (!ImGui::IsWindowDocked() && !ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
+            s_assistantNeedsReDock = true;
+        }
     }
 
     DrawAssistantHeaderRow(app, d);
@@ -1329,11 +1337,13 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
 
     DrawCopyToastStrip(d, toastRowH);
 
-    ImGui::End();
+    if (!embedded) {
+        ImGui::End();
 
-    // Persist toggle changes (close X click, View-menu toggle externally) on the same
-    // tick so the open/closed state survives an app crash mid-frame.
-    PersistOpenStateImmediate(d);
+        // Persist toggle changes (close X click, View-menu toggle externally) on the same
+        // tick so the open/closed state survives an app crash mid-frame.
+        PersistOpenStateImmediate(d);
+    }
 }
 
 #endif // SMATCHET_WITH_AI

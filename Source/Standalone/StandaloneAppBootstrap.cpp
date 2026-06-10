@@ -464,8 +464,18 @@ bool Initialize(BootstrapContext& ctx, int argc, char** argv, HeadlessCliMode /*
     SetupRuntimePaths(!ConfigManager::GetUserDataDirectory().empty());
 
     const TrackerConfig windowStateCfg = ConfigManager::Load();
-    const int initialWindowW = std::max(320, windowStateCfg.WindowWidth);
-    const int initialWindowH = std::max(240, windowStateCfg.WindowHeight);
+    int initialWindowW = std::max(320, windowStateCfg.WindowWidth);
+    int initialWindowH = std::max(240, windowStateCfg.WindowHeight);
+#if defined(SMATCHET_BUILD_UI_TESTS)
+    // Bucket-E spawns this GUI hidden with an empty user-data dir, so the window falls to
+    // the 320 px floor above. UiMode::Auto (the default) resolves that narrow width to
+    // Mobile, which draws the mobile shell and occludes all desktop chrome — every ui-test
+    // asserting a desktop window then fails. Pin a deterministic desktop framebuffer so
+    // Auto resolves Desktop (the mode every pre-mobile ui-test was written against).
+    // Mobile-shell tests opt back in by pinning cfg.UiMode = UiMode::Mobile (ignores width).
+    initialWindowW = std::max(initialWindowW, 1280);
+    initialWindowH = std::max(initialWindowH, 800);
+#endif
 
     ConfigureGlfwWindowHints(ctx);
 
