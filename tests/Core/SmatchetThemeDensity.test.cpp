@@ -13,6 +13,7 @@
 #include <cmath> // std::nanf
 
 using SmatchetTheme::ShouldApplyDensityScale;
+using SmatchetTheme::ShouldRescaleHostDensity;
 
 TEST_CASE("ShouldApplyDensityScale: identity 1.0 is a no-op (desktop default)") {
     // Desktop never calls ApplyUiDensityScale, so g_hostDensityScale stays 1.0 and the
@@ -42,4 +43,45 @@ TEST_CASE("ShouldApplyDensityScale: real positive density changes apply") {
     CHECK(ShouldApplyDensityScale(1.5f));
     // A value just off identity still applies (no epsilon dead-band by design).
     CHECK(ShouldApplyDensityScale(1.0001f));
+}
+
+// --- ShouldRescaleHostDensity: relative live-style re-assert (#1071 item 15) ---
+//
+// Gates ReassertHostDensityScale's ScaleAllSizes(newScale/oldScale) — the RELATIVE
+// transform applied when the host re-asserts a density (e.g. Android CONFIG_CHANGED
+// lands a new DPI bucket) onto a live style already carrying oldScale. Distinct from
+// the absolute ShouldApplyDensityScale above: this one cancels the previously stored
+// scale rather than comparing against identity.
+
+TEST_CASE("ShouldRescaleHostDensity: real DPI-bucket change applies the relative factor") {
+    // The headline case: 420dpi (2.62) -> 560dpi (3.50) on a fold/unfold. Both positive,
+    // different, so multiply the live style by 3.50/2.62.
+    CHECK(ShouldRescaleHostDensity(2.62f, 3.50f));
+    // And the reverse (unfold -> fold) shrinks it.
+    CHECK(ShouldRescaleHostDensity(3.50f, 2.62f));
+}
+
+TEST_CASE("ShouldRescaleHostDensity: no movement is a no-op") {
+    // Re-assert at the same scale (CONFIG_CHANGED with no DPI delta) — factor would be
+    // 1.0; skip the identity multiply.
+    CHECK_FALSE(ShouldRescaleHostDensity(2.62f, 2.62f));
+    CHECK_FALSE(ShouldRescaleHostDensity(1.0f, 1.0f));
+}
+
+TEST_CASE("ShouldRescaleHostDensity: non-positive old has no live factor to cancel") {
+    // Without a prior positive scale baked into the style there is nothing to divide by;
+    // dividing by 0 / a negative would be undefined / style-inverting. The first ever
+    // assert (old defaulted, never positively applied) takes the no-op path here and the
+    // absolute apply elsewhere.
+    CHECK_FALSE(ShouldRescaleHostDensity(0.0f, 2.0f));
+    CHECK_FALSE(ShouldRescaleHostDensity(-1.0f, 2.0f));
+}
+
+TEST_CASE("ShouldRescaleHostDensity: non-positive / NaN new is rejected (self-contained guard)") {
+    // ReassertHostDensityScale's own !(newScale>0) guard returns before this in production,
+    // but the predicate restates the guard so it is safe in isolation and NaN-safe.
+    CHECK_FALSE(ShouldRescaleHostDensity(2.0f, 0.0f));
+    CHECK_FALSE(ShouldRescaleHostDensity(2.0f, -1.0f));
+    CHECK_FALSE(ShouldRescaleHostDensity(2.0f, std::nanf("")));
+    CHECK_FALSE(ShouldRescaleHostDensity(std::nanf(""), 2.0f));
 }

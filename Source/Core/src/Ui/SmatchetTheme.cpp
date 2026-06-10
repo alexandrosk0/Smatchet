@@ -836,8 +836,9 @@ void SmatchetTheme::ReassertHostDensityScale(float newScale) {
     g_hostDensityScale = newScale;
     // Transform the LIVE style by only the relative factor. ScaleAllSizes is multiplicative, and the
     // current style already carries `old`, so multiplying by newScale/old lands it on newScale
-    // without re-stacking `old`. Skip when there is nothing to change (first call or no movement).
-    if (old > 0.0f && old != newScale) {
+    // without re-stacking `old`. ShouldRescaleHostDensity gates this to a meaningful, well-defined
+    // move (skip first call / no movement / non-positive old) — pure + unit-tested.
+    if (ShouldRescaleHostDensity(old, newScale)) {
         ImGui::GetStyle().ScaleAllSizes(newScale / old);
     }
 }
