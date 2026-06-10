@@ -4,7 +4,7 @@
 #include "IssueCreatePipelineHelpers.h"
 #include "TrackerFieldPayload.h"
 
-#include "LocalCacheManager.h"
+#include "ISyncCache.h"
 #include "Logger.h"
 #include "StringUtil.h"
 
@@ -252,7 +252,7 @@ CachedTicket SeedCachedTicketFromDraft(const IssueDraft& draft, const std::vecto
     return t;
 }
 
-IssueCreateResult RunUpdateExisting(ITrackerIssueMutations& client, LocalCacheManager* cache,
+IssueCreateResult RunUpdateExisting(ITrackerIssueMutations& client, ISyncCache* cache,
                                     const std::string& cacheBackendKey, const IssueDraft& draft,
                                     const std::vector<TrackerField>& catalog) {
     IssueCreateResult result;
@@ -309,7 +309,7 @@ IssueCreateResult RunUpdateExisting(ITrackerIssueMutations& client, LocalCacheMa
     return result;
 }
 
-IssueCreateResult Run(ITrackerIssueMutations& client, LocalCacheManager* cache, const std::string& cacheBackendKey,
+IssueCreateResult Run(ITrackerIssueMutations& client, ISyncCache* cache, const std::string& cacheBackendKey,
                       const IssueDraft& draft, const RequiredFieldSet& required,
                       const std::vector<TrackerField>& catalog) {
     IssueCreateResult result;

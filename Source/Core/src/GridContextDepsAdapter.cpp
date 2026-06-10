@@ -22,7 +22,7 @@ GridContextDepsAdapter::GridContextDepsAdapter(AppController& app, GridLiveConte
 
 // ---- IOfflineQueueDeps (and shared with ITicketSyncDeps) ------------------------------
 
-LocalCacheManager* GridContextDepsAdapter::Cache() { return app_.Cache.get(); }
+ISyncCache* GridContextDepsAdapter::Cache() { return app_.Cache.get(); }
 
 // Backend reads go through std::atomic_load so the shared_ptr-instance read can't race the
 // live swap (atomic_store/atomic_exchange in SetBackend). The ALIASING shared_ptr keeps the

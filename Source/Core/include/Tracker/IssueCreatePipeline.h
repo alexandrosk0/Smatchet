@@ -10,7 +10,7 @@
 #include <vector>
 
 class ITrackerIssueMutations;
-class LocalCacheManager;
+class ISyncCache;
 
 /**
  * Outcome of a single IssueCreatePipeline::Run call.
@@ -58,7 +58,7 @@ CachedTicket SeedCachedTicketFromDraft(const IssueDraft& draft, const std::vecto
  * Attachment failures do NOT flip `Ok` to false when the issue was created - they are
  * reported in `AttachmentFailures` so callers can choose to retry or warn.
  */
-IssueCreateResult Run(ITrackerIssueMutations& client, LocalCacheManager* cache, const std::string& cacheBackendKey,
+IssueCreateResult Run(ITrackerIssueMutations& client, ISyncCache* cache, const std::string& cacheBackendKey,
                       const IssueDraft& draft, const RequiredFieldSet& required,
                       const std::vector<TrackerField>& catalog);
 

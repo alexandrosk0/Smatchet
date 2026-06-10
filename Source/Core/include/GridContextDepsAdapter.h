@@ -33,7 +33,7 @@
 #include "ITrackerBackend.h"
 
 class AppController;
-class LocalCacheManager;
+class ISyncCache;
 class ITrackerConnectivity;
 class ITrackerIssueMutations;
 class ITrackerIssueReader;
@@ -46,7 +46,7 @@ class GridContextDepsAdapter : public IOfflineQueueDeps, public ITicketSyncDeps 
     GridContextDepsAdapter(AppController& app, GridLiveContext& ctx);
 
     // ---- IOfflineQueueDeps ------------------------------------------------------------
-    LocalCacheManager* Cache() override;
+    ISyncCache* Cache() override;
     /// Latched role handles (aliasing shared_ptr onto the atomic_load'ed backend) — replay
     /// workers capture these so a live backend swap / Slice-3 context retirement can never
     /// dangle the subobject pointers (debt 2026-06-07).

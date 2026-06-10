@@ -24,7 +24,7 @@
 #include "IssueDraft.h"         // for RequiredFieldSet
 #include "TrackerFieldSchema.h" // for TrackerField
 
-class LocalCacheManager;
+class ISyncCache;
 class ITrackerIssueReader;
 class ITrackerIssueMutations;
 
@@ -32,9 +32,10 @@ class IOfflineQueueDeps {
   public:
     virtual ~IOfflineQueueDeps() = default;
 
-    /// Local SQLite cache. May be null before `Initialize` has wired the cache, or after
+    /// Sync/replay-facing local-cache surface (ADR-0020 — `LocalCacheManager` in production,
+    /// `FakeSyncCache` in tests). May be null before `Initialize` has wired the cache, or after
     /// `RecreateLocalCacheDatabase` has torn it down. Callers must null-check.
-    virtual LocalCacheManager* Cache() = 0;
+    virtual ISyncCache* Cache() = 0;
 
     /// LATCHED narrow read accessor — a strong handle that keeps the owning backend alive
     /// (production: aliasing shared_ptr onto the atomically-latched backend) so replay

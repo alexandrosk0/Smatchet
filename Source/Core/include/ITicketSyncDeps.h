@@ -22,8 +22,9 @@
 #include <string>
 #include <vector>
 
-#include "LocalCacheManager.h" // for CachedTicket (in vector & shared_ptr returns)
+#include "CachedTicketTypes.h" // for CachedTicket (in vector & shared_ptr returns)
 
+class ISyncCache;
 class ITrackerBackend;
 class ITrackerIssueReader;
 class ITrackerConnectivity;
@@ -47,7 +48,7 @@ class ITicketSyncDeps {
     virtual ~ITicketSyncDeps() = default;
 
     // ---- Cache + backend handles ------------------------------------------------------
-    virtual LocalCacheManager* Cache() = 0;
+    virtual ISyncCache* Cache() = 0;
     virtual ITrackerIssueReader* Backend() = 0;
     /// Narrow connectivity view of the same backend — used for tracker-type detection during
     /// backend-swap logic. Returns null when no backend is active.

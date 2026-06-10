@@ -7,7 +7,9 @@ include(FetchContent)
 # git ls-remote https://github.com/doctest/doctest.git refs/tags/v2.4.11
 FetchContent_Declare(doctest
     GIT_REPOSITORY https://github.com/doctest/doctest.git
-    GIT_TAG ae7a13539fb71f270b87eb2e874fbac80bc8dda2)  # doctest v2.4.11
+    GIT_TAG ae7a13539fb71f270b87eb2e874fbac80bc8dda2  # doctest v2.4.11
+    GIT_SUBMODULES "")  # #1031: skip `git submodule update` (doctest has none) so a fresh
+                        # worktree configure under bash+vcvars doesn't die in git-sh-setup.
 FetchContent_MakeAvailable(doctest)
 
 # ============================================================================
@@ -232,6 +234,10 @@ add_executable(SmatchetTests
     # PaneSyncKickPolicy.h decision helpers (sync-storm damping + stale-kick drop). Links the
     # TicketSyncService + OfflineQueueService TUs already pulled in below.
     Core/BackendSwitchRace1081.test.cpp
+    # ISyncCache contract (ADR-0020): dual-impl spec for the cache seam. PR1 = real
+    # LocalCacheManager(":memory:") half only; PR2 appends the FakeSyncCache type. SQLite-backed
+    # by design (real half) — named-exempt from the construction/direct-include purity gate.
+    Core/SyncCacheContract.test.cpp
     # AI chat Claude-Desktop-parity Phase 3 — SQLite-backed chat-history CRUD
     # against the same LCM SQLite path. Production target globs LCM.cpp, so the
     # test rig only needs the test TU itself (no separate cpp link).

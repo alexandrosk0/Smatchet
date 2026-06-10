@@ -4,7 +4,7 @@
 #include "ConfigManager.h"
 #include "ITicketSyncDeps.h"
 #include "ITrackerBackendFactory.h"
-#include "LocalCacheManager.h"
+#include "ISyncCache.h"
 #include "Logger.h"
 #include "SmatchetToast.h"
 #include "StringUtil.h"

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "CachedTicketTypes.h"
+#include "ISyncCache.h"
 #include "OfflineQueueReplayPolicy.h"
 
 #if defined(SMATCHET_WITH_AI)
@@ -28,7 +29,7 @@ namespace OfflineFieldEditQueue {
 constexpr int kMaxReplayAttempts = OfflineQueueReplayPolicy::kMaxReplayAttempts;
 }
 
-class LocalCacheManager {
+class LocalCacheManager : public ISyncCache {
   public:
     explicit LocalCacheManager(const std::string& dbPath);
 
@@ -36,19 +37,20 @@ class LocalCacheManager {
     // owning backend — multi-grid Slice 1b, ADR-0018 decision 4). All ticket methods read/write
     // the `tickets_v2` table family whose PK is (backend_key, id); the legacy v1 tables are
     // retained on disk unused (Persistence additive-only invariant — no DROP/RENAME).
-    void SaveTicket(const std::string& backendKey, const CachedTicket& ticket);
+    void SaveTicket(const std::string& backendKey, const CachedTicket& ticket) override;
     /** Persist a batch of tickets in a SINGLE transaction (vs one per ticket). Used by the
      *  streaming-sync apply loop to coalesce up to 20 per-frame commits into one. See
      *  docs/plans/shipped/memory-budget-and-lifetime-hardening.md § Phase 3(a). */
-    void SaveTickets(const std::string& backendKey, const std::vector<CachedTicket>& tickets);
+    void SaveTickets(const std::string& backendKey, const std::vector<CachedTicket>& tickets) override;
     /** @return false if `ticketId` is not present under `backendKey` in `tickets_v2`. */
-    bool TryGetTicket(const std::string& backendKey, const std::string& ticketId, CachedTicket& out);
-    void DeleteTicket(const std::string& backendKey, const std::string& ticketId);
-    std::vector<CachedTicket> GetAllTickets(const std::string& backendKey);
+    bool TryGetTicket(const std::string& backendKey, const std::string& ticketId, CachedTicket& out) override;
+    void DeleteTicket(const std::string& backendKey, const std::string& ticketId) override;
+    std::vector<CachedTicket> GetAllTickets(const std::string& backendKey) override;
     /** Streaming overload — calls `fn` once per fully-populated ticket instead of materialising the
-     *  entire result set. Avoids the O(N) in-memory join for bulk-sync paths (§4.3). */
+     *  entire result set. Avoids the O(N) in-memory join for bulk-sync paths (§4.3). Off-interface
+     *  (not on ISyncCache — no seam consumer uses it). */
     void ForEachTicket(const std::string& backendKey, const std::function<void(CachedTicket&&)>& fn);
-    std::vector<std::string> GetAllTicketIds(const std::string& backendKey);
+    std::vector<std::string> GetAllTicketIds(const std::string& backendKey) override;
 
     /** One-time copy migration of the legacy un-namespaced ticket tables (`tickets`,
      * `ticket_field_values`, `ticket_field_rich_values`) into the `*_v2` family, stamping
@@ -66,13 +68,14 @@ class LocalCacheManager {
     // TEXT NOT NULL DEFAULT ''`; legacy rows are backfilled once by
     // `RunOneTimePendingQueueBackendKeyStamp`.
     /** @return generated row id. */
-    std::int64_t EnqueuePendingCreate(const std::string& backendKey, const std::string& payload);
-    std::vector<PendingCreate> LoadPendingCreates();
-    void UpdatePendingCreate(std::int64_t id, int attempts, const std::string& lastError);
-    void DeletePendingCreate(std::int64_t id);
-    void ArchivePendingCreate(std::int64_t id, const std::string& terminalReason, const std::string& terminalError);
+    std::int64_t EnqueuePendingCreate(const std::string& backendKey, const std::string& payload) override;
+    std::vector<PendingCreate> LoadPendingCreates() override;
+    void UpdatePendingCreate(std::int64_t id, int attempts, const std::string& lastError) override;
+    void DeletePendingCreate(std::int64_t id) override;
+    void ArchivePendingCreate(std::int64_t id, const std::string& terminalReason,
+                              const std::string& terminalError) override;
     /** PR 5 legacy-project sweep: replace the stored `payload` JSON for an active pending row. */
-    void UpdatePendingCreatePayload(std::int64_t id, const std::string& payload);
+    void UpdatePendingCreatePayload(std::int64_t id, const std::string& payload) override;
 
     /** One-time stamp migration for the pending-queue `backend_key` columns (multi-grid
      * Slice 1c): `UPDATE ... SET backend_key = backendKey WHERE backend_key = ''` across
@@ -83,10 +86,10 @@ class LocalCacheManager {
     size_t RunOneTimePendingQueueBackendKeyStamp(const std::string& backendKey);
 
     /** Generic `cache_meta` flag helpers used by one-shot migration sweeps. */
-    bool HasCacheMetaFlag(const std::string& key);
-    void SetCacheMetaFlag(const std::string& key);
-    std::vector<DeadPendingCreate> LoadDeadPendingCreates();
-    size_t GetDeadPendingCreateCount();
+    bool HasCacheMetaFlag(const std::string& key) override;
+    void SetCacheMetaFlag(const std::string& key) override;
+    std::vector<DeadPendingCreate> LoadDeadPendingCreates() override;
+    size_t GetDeadPendingCreateCount() override;
 
     /**
      * One-time: delete legacy `pending_creates` rows already at retry cap (pre dead-letter).
@@ -101,31 +104,32 @@ class LocalCacheManager {
      * payload INSIDE the single restore transaction, so a restored row can never replay as
      * an update of a stale key; an unparseable payload restores verbatim (the replay tick
      * terminally dead-letters real garbage). */
-    bool RestoreDeadPendingCreate(std::int64_t originalPendingId);
+    bool RestoreDeadPendingCreate(std::int64_t originalPendingId) override;
 
     /** Restore latest dead-letter field-edit row for this original pending id back to the
      * active queue (attempts=0), preserving `backend_key` and both merge bases. Mirrors
      * `RestoreDeadPendingCreate`. */
-    bool RestoreDeadPendingFieldEdit(std::int64_t originalPendingId);
+    bool RestoreDeadPendingFieldEdit(std::int64_t originalPendingId) override;
 
     /** Permanently remove a dead-letter row (user discard). */
-    void DeleteDeadPendingCreate(std::int64_t deadId);
+    void DeleteDeadPendingCreate(std::int64_t deadId) override;
 
     std::int64_t EnqueuePendingFieldEdit(const std::string& backendKey, const std::string& issueKey,
                                          const std::string& fieldId, const std::string& fieldsPayloadJson,
                                          const std::string& originalRichValue = std::string(),
                                          const std::string& originalValue = std::string(),
-                                         bool hasOriginalValue = false);
-    std::vector<PendingFieldEditRecord> LoadPendingFieldEdits();
-    void UpdatePendingFieldEdit(std::int64_t id, int attempts, const std::string& lastError);
-    void DeletePendingFieldEdit(std::int64_t id);
+                                         bool hasOriginalValue = false) override;
+    std::vector<PendingFieldEditRecord> LoadPendingFieldEdits() override;
+    void UpdatePendingFieldEdit(std::int64_t id, int attempts, const std::string& lastError) override;
+    void DeletePendingFieldEdit(std::int64_t id) override;
     /// Mark a pending field edit as having a 3-way merge conflict; stores the context JSON for the UI.
-    void MarkFieldEditConflict(std::int64_t id, const std::string& contextJson);
+    void MarkFieldEditConflict(std::int64_t id, const std::string& contextJson) override;
     /// Clear the conflict flag and replace the payload with the user-resolved version.
-    void ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedPayloadJson);
-    void ArchivePendingFieldEdit(std::int64_t id, const std::string& terminalReason, const std::string& terminalError);
-    std::vector<DeadPendingFieldEdit> LoadDeadPendingFieldEdits();
-    void DeleteDeadPendingFieldEdit(std::int64_t deadId);
+    void ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedPayloadJson) override;
+    void ArchivePendingFieldEdit(std::int64_t id, const std::string& terminalReason,
+                                 const std::string& terminalError) override;
+    std::vector<DeadPendingFieldEdit> LoadDeadPendingFieldEdits() override;
+    void DeleteDeadPendingFieldEdit(std::int64_t deadId) override;
 
 #if defined(SMATCHET_WITH_AI)
     // ---------------- AI chat persistence (Phase 3 of ai-chat-claude-desktop-parity) ----------------

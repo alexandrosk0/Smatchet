@@ -9,7 +9,7 @@
 #include "IssueDraft.h"
 #include "ITrackerIssueMutations.h"
 #include "ITrackerIssueReader.h"
-#include "LocalCacheManager.h"
+#include "ISyncCache.h"
 #include "Logger.h"
 #include "MarkdownConvert.h"
 #include "OfflineFieldConflictPolicy.h"
@@ -794,7 +794,7 @@ void OfflineQueueService::TickOfflineFieldEdits() {
         return;
     }
 
-    LocalCacheManager* cache = deps_.Cache();
+    ISyncCache* cache = deps_.Cache();
     // LATCHED strong role handles (debt 2026-06-07): the shared_ptrs are captured into the
     // background task below, so a live backend swap (or pane-context retirement, multi-grid
     // Slice 3) mid-replay cannot dangle the subobject pointers — the replay completes
@@ -874,7 +874,7 @@ bool OfflineQueueService::RunFieldEditCacheMutation(const char* action, std::int
 
 OfflineQueueService::FieldEditConflictOutcome
 OfflineQueueService::EvaluateFieldEditConflict(const PendingFieldEditRecord& row, nlohmann::json& fieldsPayload,
-                                               LocalCacheManager* cache, ITrackerIssueReader* reader,
+                                               ISyncCache* cache, ITrackerIssueReader* reader,
                                                FieldEditReplayTally& tally) {
     // Decide which base this row captured: rich (3-way text merge) vs scalar (2-way display
     // compare). A row with neither base keeps last-write-wins (documented residue, ADR-0016).
@@ -938,7 +938,7 @@ OfflineQueueService::EvaluateFieldEditConflict(const PendingFieldEditRecord& row
 
 OfflineQueueService::FieldEditConflictOutcome
 OfflineQueueService::RecordUnverifiedFieldEditConflict(const PendingFieldEditRecord& row,
-                                                       const nlohmann::json& fieldsPayload, LocalCacheManager* cache,
+                                                       const nlohmann::json& fieldsPayload, ISyncCache* cache,
                                                        FieldEditReplayTally& tally) {
     // Best-effort "mine" display for the modal: the payload value under the field key, stringified.
     std::string mine;
@@ -974,7 +974,7 @@ OfflineQueueService::RecordUnverifiedFieldEditConflict(const PendingFieldEditRec
 OfflineQueueService::FieldEditConflictOutcome
 OfflineQueueService::ResolveFieldEditScalarConflict(const PendingFieldEditRecord& row,
                                                     const nlohmann::json& fieldsPayload, const CachedTicket& fresh,
-                                                    LocalCacheManager* cache, FieldEditReplayTally& tally) {
+                                                    ISyncCache* cache, FieldEditReplayTally& tally) {
     const std::string& fid = row.FieldId;
     const std::string theirs = fresh.GetFieldValue(fid);
     // Presence-aware: a captured BLANK base is a real reference, so blank→non-blank is a move.
@@ -1018,7 +1018,7 @@ OfflineQueueService::ResolveFieldEditScalarConflict(const PendingFieldEditRecord
 
 OfflineQueueService::FieldEditConflictOutcome
 OfflineQueueService::ResolveFieldEditThreeWayMerge(const PendingFieldEditRecord& row, nlohmann::json& fieldsPayload,
-                                                   const CachedTicket& fresh, LocalCacheManager* cache,
+                                                   const CachedTicket& fresh, ISyncCache* cache,
                                                    FieldEditReplayTally& tally) {
     const std::string& fid = row.FieldId;
     std::string payloadKey = fid;
@@ -1055,7 +1055,7 @@ bool OfflineQueueService::ApplyOrRecordMergeResult(const PendingFieldEditRecord&
                                                    const std::string& payloadKey, bool isAdf,
                                                    const TextMerge::MergeResult& merged, const std::string& baseMd,
                                                    const std::string& mineMd, const std::string& theirsMd,
-                                                   LocalCacheManager* cache, FieldEditReplayTally& tally) {
+                                                   ISyncCache* cache, FieldEditReplayTally& tally) {
     if (merged.IsClean) {
         if (isAdf) {
             fieldsPayload[payloadKey] = MarkdownConvert::MarkdownToAdf(merged.Text);
@@ -1083,7 +1083,7 @@ bool OfflineQueueService::ApplyOrRecordMergeResult(const PendingFieldEditRecord&
     return true;
 }
 
-void OfflineQueueService::ReplayOneFieldEdit(const PendingFieldEditRecord& row, LocalCacheManager* cache,
+void OfflineQueueService::ReplayOneFieldEdit(const PendingFieldEditRecord& row, ISyncCache* cache,
                                              ITrackerIssueReader* reader, ITrackerIssueMutations* mutations,
                                              IOfflineQueueDeps& depsRef, FieldEditReplayTally& tally) {
     const int kMaxReplayAttempts = OfflineFieldEditQueue::kMaxReplayAttempts;
@@ -1158,7 +1158,7 @@ void OfflineQueueService::ReplayOneFieldEdit(const PendingFieldEditRecord& row, 
     }
 }
 
-void OfflineQueueService::HandleFieldEditUpdateFailure(const PendingFieldEditRecord& row, LocalCacheManager* cache,
+void OfflineQueueService::HandleFieldEditUpdateFailure(const PendingFieldEditRecord& row, ISyncCache* cache,
                                                        const std::string& err, FieldEditReplayTally& tally) {
     if (IsTrackerTransportErrorText(err)) {
         const int nextAttempts = row.Attempts + 1;
@@ -1214,10 +1214,9 @@ bool OfflineQueueService::RunCreateCacheMutation(const char* action, std::int64_
     }
 }
 
-void OfflineQueueService::ReplayOneCreate(const PendingCreate& pc, LocalCacheManager* cache,
-                                          ITrackerIssueMutations* mutations, const std::vector<TrackerField>& catalog,
-                                          const std::string& backendKey, IOfflineQueueDeps& depsRef,
-                                          CreateReplayTally& tally) {
+void OfflineQueueService::ReplayOneCreate(const PendingCreate& pc, ISyncCache* cache, ITrackerIssueMutations* mutations,
+                                          const std::vector<TrackerField>& catalog, const std::string& backendKey,
+                                          IOfflineQueueDeps& depsRef, CreateReplayTally& tally) {
     const int kMaxReplayAttempts = OfflineCreateQueue::kMaxReplayAttempts;
     const auto archivePending = [&](const std::string& reason, const std::string& terminalError) -> bool {
         return RunCreateCacheMutation(
@@ -1372,7 +1371,7 @@ void OfflineQueueService::TickOfflineCreates() {
     // LATCHED strong mutation handle (debt 2026-06-07): captured into the background task so
     // a live backend swap / pane-context retirement mid-replay cannot dangle it.
     std::shared_ptr<ITrackerIssueMutations> mutations2 = deps_.MutationsShared();
-    LocalCacheManager* cache = deps_.Cache();
+    ISyncCache* cache = deps_.Cache();
 
     IOfflineQueueDeps& depsRef = deps_;
     deps_.LaunchBackgroundTask(
