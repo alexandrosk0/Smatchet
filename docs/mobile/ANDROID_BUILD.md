@@ -1,8 +1,6 @@
 # Building the Smatchet Android App (`SmatchetMobile` `.so` → APK)
 
 > First-time, bare-machine build guide for the Android target. Every version, path, flag, and command below is concrete and copy-pasteable. Where a value is machine-specific, a **Reference machine (known-good)** callout shows the exact example from a confirmed working build; the surrounding prose states the general requirement.
->
-> **Repo state caveat (read first):** at the time of writing, the entire Android tree (`Source/Mobile/`) and its Gradle project are on the **`feat/mobile-phase0-slice3b`** branch and are **not yet merged to `develop`** — in fact `Source/Mobile/` is still *untracked* in the working branch (it lands with the Slice-3b PR). To build, check out that branch (see [§3.1](#31-clone-the-repo--check-out-the-branch)). Once it merges this caveat is obsolete.
 
 ---
 
@@ -33,7 +31,7 @@ Smatchet is built from one shared, engine-agnostic `Source/Core` against **three
 
 > The single biggest first-time trap is the **CMake version conflict** (the SDK ships only CMake 3.22.1, the repo needs ≥ 3.24). It is solved in two coordinated places — see [§3.5](#35-install-external-cmake--324) and [§7](#7-troubleshooting). Read that before your first build.
 
-**Terminology:** `<repo>` below means your local checkout root (the directory containing the top-level `CMakeLists.txt`). On the reference machine that is `C:/Dev/trees/mobile-phase0-slice3` (a worktree); a fresh clone is whatever you pass to `git clone` ([§3.1](#31-clone-the-repo--check-out-the-branch)).
+**Terminology:** `<repo>` below means your local checkout root (the directory containing the top-level `CMakeLists.txt`). On the reference machine that is `C:/Dev/trees/mobile-phase0-slice3` (a worktree); a fresh clone is whatever you pass to `git clone` ([§3.1](#31-clone-the-repo)).
 
 ---
 
@@ -67,7 +65,7 @@ Smatchet is built from one shared, engine-agnostic `Source/Core` against **three
 > - **External CMake:** `C:/Program Files/CMake` (**CMake 4.3.0-rc3** — satisfies `≥ 3.24`).
 > - **Ninja:** installed separately via `winget install Ninja-build.Ninja`, resolved on `PATH` (**not** co-located with CMake).
 > - **make:** `mingw32-make` (from a WinLibs / CLion MinGW install on `PATH`); `perl` from Git for Windows (with the repo's [`scripts/mobile/openssl/perl-shim/`](../../scripts/mobile/openssl/perl-shim/) on `PERL5LIB` — **no MSYS2**).
-> - **OpenSSL:** static, per-ABI, at `C:/Android/openssl-android/{x86_64,arm64-v8a}` (on this machine only `x86_64` is built so far).
+> - **OpenSSL:** static, per-ABI, at `C:/Android/openssl-android/{x86_64,arm64-v8a}`. This example machine has `x86_64` built; CI builds `arm64-v8a` (the `mobile-android-ndk` / `-apk` jobs) and `x86_64` (the emulator-smoke job), and a release APK needs **both** ABIs.
 
 ---
 
@@ -105,17 +103,14 @@ Notes:
 - `SMATCHET_ANDROID_OPENSSL_BASE` is consumed by `app/build.gradle`, which appends `-DSMATCHET_ANDROID_OPENSSL_BASE=<base>` to the CMake arguments. `smatchet_prepare_cpr()` then derives `<base>/${ANDROID_ABI}` when `OPENSSL_ROOT_DIR` is unset. You can equivalently pass it as a Gradle property: `-PsmatchetOpensslBase=<base>`.
 - Run builds from a shell that carries the **full** Windows environment (**Git Bash** or a normal terminal). An MSYS2 `-lc` login shell strips `USERPROFILE`/`LOCALAPPDATA` and breaks ccache ([TRAP 3](#7-troubleshooting)).
 
-### 3.1 Clone the repo / check out the branch
+### 3.1 Clone the repo
 
-The Android tree is on **`feat/mobile-phase0-slice3b`** (not yet on `develop`):
+The Android tree (`Source/Mobile/` + the Gradle project) is on `develop`:
 
 ```bash
 git clone https://github.com/alexandrosk0/Smatchet.git <repo>
 cd <repo>
-git checkout feat/mobile-phase0-slice3b
 ```
-
-> If you are using an existing checkout where `Source/Mobile/` is present but untracked (the pre-merge worktree case), you already have the files — just confirm you are on `feat/mobile-phase0-slice3b`. Once the Slice-3b PR merges, `develop` will carry the tree and this branch step goes away.
 
 ### 3.2 Install JDK 17
 
@@ -477,9 +472,13 @@ Build with the arm64 ABI present (full both-ABI build, or `-Pandroid.injected.bu
 
 The `android-ndk-arm64` preset: generator Ninja, `binaryDir build/android-ndk-arm64`, toolchain `$env{ANDROID_NDK_ROOT}/build/cmake/android.toolchain.cmake`, `CMAKE_BUILD_TYPE=RelWithDebInfo`, `ANDROID_ABI=arm64-v8a`, `ANDROID_PLATFORM=android-24`, `SMATCHET_WITH_LUA_AUTOMATION=OFF`, `SMATCHET_WARNINGS_AS_ERRORS=OFF` (plus the inherited `_smatchet-light-features` `MCP/AI/WHISPER=OFF`). The TLS cache vars (`CPR_FORCE_OPENSSL_BACKEND`, `CMAKE_FIND_ROOT_PATH_MODE_*`) live only in `smatchet_prepare_cpr()`, not in the preset (kept DRY).
 
-### Planned
+### Mobile CI jobs (shipped)
 
-A full **Gradle APK assembly** CI job is **planned** but not yet present — today's `mobile-android-ndk` job validates only configure + link of the `arm64-v8a` `.so`, not APK packaging.
+Three jobs now cover the Android target — all **advisory** (none in `develop`'s required-check set, none on the merge-gate meant-to-block allow-list, so a flaky emulator can never block a merge):
+
+- **`mobile-android-ndk`** — configure + link of the `arm64-v8a` `SmatchetMobile` `.so` (validates Slice-1 TLS backend); stops at link.
+- **`mobile-android-apk`** — `./gradlew assembleDebug -Pandroid.injected.build.abi=arm64-v8a`; packages the release-ABI APK (`needs: mobile-android-ndk`, restores its OpenSSL/_deps cache).
+- **`mobile-emulator-smoke`** (`mobile-emulator-smoke.yml`) — `assembleDebug` for `x86_64`, boots an x86_64 emulator (`reactivecircus/android-emulator-runner`), installs the APK, and asserts the native shell reaches its first-frame marker (`.github/scripts/mobile-emulator-smoke.sh`) — the only job that runs the app, not just builds it.
 
 ---
 
@@ -546,5 +545,3 @@ Just enough to navigate the Android host shell (`Source/Mobile/Android/`); not a
 |---|---|
 | `gradle/wrapper/gradle-wrapper.jar`, `gradlew`, `gradlew.bat`, `gradle-wrapper.properties` (CI runs `./gradlew`) | `local.properties` (`sdk.dir` differs per machine; `ANDROID_HOME` env preferred) |
 | All `*.gradle`, manifest, Java/native sources | `.gradle/`, `build/`, `app/build/`, `app/.cxx/`, `.cxx/`, `*.iml`, `.idea/` |
-
-> **Pre-merge note:** until the Slice-3b PR lands on `develop`, the entire `Source/Mobile/` tree above is *untracked* — `git add Source/Mobile/` is part of the Slice-3b commit. After merge it is normal tracked source.

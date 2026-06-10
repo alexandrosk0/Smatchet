@@ -1,0 +1,129 @@
+# Mobile app — fuller integration (Phase 1)
+
+> **Slug**: `mobile-app-fuller-integration`
+> **Status**: `active`
+> <!-- index-summary: Phase-1 Android app: Keystore-encrypted token, offline-cache replay on device, touch cell editors + explicit-commit interaction model, attachments, multi-backend, a11y research. -->
+
+## Context
+
+Phase 0 (epic [#1018](https://github.com/alexandrosk0/Smatchet/issues/1018)) shipped a runnable Android build of Smatchet: triple-target build infra, EGL/GLES host, soft-keyboard IME bridge, density-aware theme, live JQL fetch + single-field inline edit with a **mobile explicit-commit** policy, and an emulator boot+first-frame smoke CI job. The Phase-0 close-out is [`mobile-app-jql-mvp.md`](../shipped/mobile-app-jql-mvp.md) (the JQL-MVP) + [`mobile-mvp-completion.md`](../shipped/mobile-mvp-completion.md) (WS1–WS6).
+
+Phase 1 turns that MVP into a *fuller* mobile client — the seven slices the Phase-0 §Phase-1-skeleton deferred. Three of them carry deferred [#1018](https://github.com/alexandrosk0/Smatchet/issues/1018) items: **item 21** (secure token storage — Phase-0 ships the token in *plaintext* on Android), **item 22** (offline cache replay on device), **item 23** (the explicit long-press / commit-button affordance PR-6 deferred — Phase-0 only commit-gates the single-line text editor).
+
+This is a Phase-1 *roadmap* plan, not a single-PR execution plan. Each slice (P1.0–P1.6) ships as its own PR, batched per the AGENTS.md one-PR-per-feature rule, routed to its owning specialist. Anchors below are file:line on `origin/develop` at Phase-0 close (commit `d8ea206c`); re-verify before each slice's execution plan.
+
+## Approach
+
+### P1.0 — Android Keystore secure token *(owner: security-review · [#1018](https://github.com/alexandrosk0/Smatchet/issues/1018) item 21 · ship-to-user gate)*
+
+**Today (verified at `d8ea206c`).** `ProtectSecretForConfig()` / `UnprotectSecretFromConfig()` in [`ConfigManager_PathUtils.cpp`](../../../Source/Core/src/Config/ConfigManager_PathUtils.cpp) use Win32 DPAPI (`CryptProtectData`/`CryptUnprotectData`, lines 285/303) with a plaintext passthrough on non-Win32 (lines 332/333). **But on Android those helpers are never reached for the token**: `WriteSecretFields()` and `LoadSecretFields()` (`ConfigManager.cpp`) are split by `#if defined(_WIN32)` — only the Win32 arm calls `Protect*`/`Unprotect*` (`ConfigManager.cpp:411` / `:787`, writing/reading `token_enc`). The **non-Win32 `#else` arm writes the token as raw plaintext**: `WriteSecretFields` erases `token_enc` and sets `j["token"] = config.ApiToken` (`ConfigManager.cpp:465`/`:473`); `LoadSecretFields` reads `cfg.ApiToken = j.value("token", …)` (`ConfigManager.cpp:838`). So on Android the token persists in **plaintext under the `token` key** today, and `token_enc` is explicitly erased. The amber warning at `SmatchetPreferencesUi.cpp:257` (under the `#if !defined(_WIN32)` guard at line 251) is therefore accurate.
+
+**Approach.** Add an **encrypt/decrypt callback-pair host-injection seam** — same shape as the data-dir override (`ConfigManager::SetPlatformSharedUserDataDirectoryOverride`, decl `Source/Core/include/Config/ConfigManager.h:654`, def `ConfigManager_PathUtils.cpp:415`) and the font-bytes seam (`SmatchetSetInjectedFontBytes`, `SmatchetImGuiFonts.h:19`). Core gains `ConfigManager::SetSecretCryptoOverride(encryptFn, decryptFn)`. **Critically, wiring the crypto pair into `ProtectSecretForConfig` alone is a no-op on Android** — that helper is unreached on non-Win32 (verified above). The seam must **rewire the `#else` arms of `WriteSecretFields` (`ConfigManager.cpp:464–488`) and `LoadSecretFields` (`:837–849`)**: when an override is set, route `ApiToken` (at minimum) through the injected pair and emit/read `token_enc` instead of the plaintext `token` key; when no override is set, keep today's plaintext fallback (desktop-Linux dev builds unaffected). Note the load path's wrapper `UnprotectSecretFieldFromConfig` (`ConfigManager.cpp:787`) is itself **Win32-only** (no `#else` def — it sits inside the `#if _WIN32` block of `ConfigManager_PathUtils.cpp:324–330`), so the rewired `#else` load arm must either call the base `UnprotectSecretFromConfig` directly or gain an `#else` passthrough definition (else it won't link on Android). The Android host injects a JNI bridge to **Android Keystore** (hardware-backed AES-GCM via `KeyStore`/`Cipher`, key alias `smatchet.token.v1`) from `BootCoreOnce()` in `android_main.cpp` (alongside the data-dir override injected at line 319; the font/density injections at lines 450/453 live in `InitImGuiFirstTime()`, a separate function — inject the crypto pair in `BootCoreOnce()` before the first config load). When the override is present, flip the `SmatchetPreferencesUi.cpp:257` warning to "encrypted via the Android Keystore".
+
+**Migration / scrub (mandatory).** A Phase-0 install already wrote the token in plaintext under the `token` key. On first run after P1.0 lands, the `#else` load path must read any legacy plaintext `token`, re-persist it encrypted (`token_enc`), and **erase the plaintext key from disk** — mirroring the Win32 `SecretMigrationFlags` pattern (the Win32 arm sets `migrate.*` at `ConfigManager.cpp:810`/`:815` etc.; the `#else` arm currently sets none). Without this, the residual plaintext token survives on any upgraded device.
+
+**Why a callback pair, not `#ifdef __ANDROID__` crypto in Core**: keeps JNI/Keystore out of `Source/Core/` (dual-target purity — Core must compile for DX12/Unreal with no Android headers), mirrors the established host-injection pattern, and keeps the seam unit-testable on desktop with a stub crypto pair.
+
+### P1.1 — Offline cache replay on device *(owner: offline-sync · [#1018](https://github.com/alexandrosk0/Smatchet/issues/1018) item 22)*
+
+**Today (verified).** The SQLite cache is **already active on Android** — `LocalCacheManager` (`LocalCacheManager.h:31`; ctor `LocalCacheManager.cpp:130` creates `tickets_v2` / `pending_creates` / `pending_field_edits`) is opened *unconditionally* at `AppController.cpp:1656` with the resolved `dbPath`; the Phase-0 #14 dataDir prefix routes `cfg.DbPath` to filesDir (`android_main.cpp:369–371`). The DB opens and caches on device today. No platform `#if` gates cache init.
+
+**What Phase-1 adds.** The replay/sync *drive*. `OfflineQueueService::TickOfflineCreates()` (`OfflineQueueService.h:138`) / `TickOfflineFieldEdits()` (h:142) and `TicketSyncService::SyncWithBackend()` (`TicketSyncService.h:53`) are owned by AppController (`AppController.cpp:1697` `offlineQueue_`, `:1703` per-context `ticketSync_`) via `GridContextDepsAdapter` (`GridContextDepsAdapter.h:44`). Phase-1: (a) confirm/wire those ticks into the **Android frame loop** (desktop drives them off a timer/frame hook — the mobile run-loop must call the same ticks); (b) **network-reachability** transition on Android (offline→online flips replay on); (c) **dead-letter** surface for replay failures; (d) **on-device proof** of pending-create / pending-field-edit replay after an offline edit, with `BackendAuditTrail` (`AppendBegin/Result/Event`, `BackendAuditTrail.h:27–32`) entries. The replay tick must run off the UI thread or inside the frame budget (Pillar 2).
+
+### P1.2 — Multiple saved views + touch switcher *(owner: grid-engine / command-system)*
+
+ViewDefinition storage is already per-backend (desktop multi-view works). Phase-1 adds a **touch view-switcher** chrome (tab strip / bottom-sheet) and ensures save/rename/delete-view commands are reachable without a desktop menu bar. Mostly UI chrome over an existing model.
+
+### P1.3 — Touch cell editors + mobile interaction model *(owner: grid-engine · [#1018](https://github.com/alexandrosk0/Smatchet/issues/1018) item 23 — the PR-6-deferred explicit-commit affordance)*
+
+**Today (verified at `d8ea206c`; re-verify per anchor before execution).** The grid (`Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp`) assumes desktop input: hover-reveal (370, 1270), double-click-to-open (`IsMouseDoubleClicked(0)`, 1166), selection-rect hit (1294–1295, 1527), keyboard shortcuts Ctrl+C/Esc/Shift+Space (1534/1537/1543). The cell-render flow crosses **out of** the grid file into the field-editor TU: cell loop → `TicketFieldEditor::RenderFieldCell` (call site grid:1252; def in `Source/Core/src/TicketFieldEditor.cpp`) → `DispatchEditorByPlan` (decl `TicketFieldEditor.h:33`, call `TicketFieldEditor.cpp:1351`, def `:1359`) → per-RenderPlan editor; edits open via `state.StartEditingField()` (call sites `TicketFieldEditor.cpp:543` + `TrackerDateTimeFieldEditor.cpp:422`; decl `SpreadsheetState.h:97`), gated by the `singleClickToEdit` parameter each editor takes from `d.cfg.SingleClickToEditGridCells` (grid:1255). PR-6 added `kMobileInlineEditBuild` (`TicketFieldEditor.cpp:68–72`) + `ShouldCommitInlineFieldEdit` (`Source/Core/include/TicketFieldEditorCommitPolicyPure.h:17`, call site `TicketFieldEditor.cpp:434`) — but **only inside `RenderTextInlineEdit` (398–440)**, the single-line `InputText` editor whose `IsItemDeactivatedAfterEdit` focus-loss signal the policy gates.
+
+**The other four editors do *not* commit on focus-loss / click-away** (verified): MultiSelect (commit `TicketFieldEditor.cpp:843`) and Cascading (`:887`) commit via `QueueEdit` on an explicit in-combo `Selectable` click — the popup auto-disarms with no PUT on tap-away; Labels commits via explicit Add/select in `DrawLabelsComboBody` (`Source/Core/src/Tracker/TrackerLabelsEditor.cpp:177`); DateTime is a `BeginPopupModal` with explicit Apply/Clear/Cancel + Escape (`Source/Core/src/Tracker/TrackerDateTimeFieldEditor.cpp:449–461`). None produce the `deactivatedAfterEdit` signal `ShouldCommitInlineFieldEdit` is shaped for, so PR-6's stray-PUT-on-focus-loss bug **does not exist** for these four.
+
+**Approach.** (a) **Not** "route the four through `ShouldCommitInlineFieldEdit`" (a no-op/misfit — they have no focus-loss commit). The real mobile risk is **touch dismissal / tap-away semantics** of the non-modal `BeginCombo` popups (`TicketFieldEditor.cpp:843`/`:887`, `TrackerLabelsEditor.cpp:176`) and **modal sizing/fit** for the DateTime `BeginPopupModal` on a phone screen — design the touch Save/Cancel affordance around the existing **arm-then-popup** model so a tap-away discards with no PUT (the same broad "no implicit commit on mobile" contract PR-6 set for text). (b) Add the **deferred long-press-to-open + explicit Save/Cancel affordance** ([#1018](https://github.com/alexandrosk0/Smatchet/issues/1018) item 23): single-tap opens a full-width touch popup, **Save** commits (PUT), **Cancel / Back / tap-away discards with no PUT**. (c) Touch has no double-click — for cell edit-open this mostly means **defaulting `SingleClickToEditGridCells` on for the mobile build** (the plumbing already exists at grid:1255); reserve new code for the genuinely-deferred double-click-open at grid:1166. (d) Hook a **long-press detector** into the Android input path — `OnInputEvent` (`android_main.cpp:729`) → `ImGui_ImplAndroid_HandleInputEvent`, measuring hold duration on the `io.MouseDown[0]` rising edge the IME bridge already reads (`SmatchetAndroidImeBridge.cpp:94`). **Spike first**: long-press-vs-tap popup model (one slice's worth of interaction-model risk).
+
+### P1.4 — Attachments via stb_image *(owner: tracker-backend / ui-host)*
+
+**Premise corrected (verified at `d8ea206c`).** The image decode is **already cross-platform** — `SmatchetImageTextureCache.cpp` decodes with `stbi_load_from_memory` (`DecodeWithStb`, line 141, no `_WIN32` guard) and uploads via ImGui's renderer-agnostic `ImTextureData` / `RegisterUserTexture` path (`CreateTextureFromRgba`, lines 70–99), which works on GLES3. `AppController_Attachments.cpp` is the network *downloader* (the auth-header consumer at line 133), **not** the decoder. So "mobile has no decoder" is false — P1.4 is largely already done in Core. The only Win32-gated piece is the *optional* bitmap thumbnail behind `SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS` (`SmatchetAttachmentPreviewUi.cpp:112`). **Re-scoped slice**: verify the existing `SmatchetImageTextureCache.cpp` path renders an attachment thumbnail on a real Android device; only if the optional bitmap thumbnail is in scope, port the `SmatchetAttachmentPreviewUi.cpp:112` Win32-gated piece. No new dependency, likely no new decode code.
+
+### P1.5 — Multi-backend (Plane / GitHub) *(owner: tracker-backend)*
+
+`ITrackerBackend` already abstracts Jira vs Plane; mobile inherits multi-backend for free once the **backend-selection UI is touch-ready** (depends on P1.3's touch chrome). Mostly a verification + touch-UI slice, little new backend code.
+
+### P1.6 — Accessibility *(research-only · Pillar 4 backlogged)*
+
+Research slice: Android **TalkBack** / screen-reader exposure for an immediate-mode ImGui surface (the hard part — IMGUI has no native a11y tree), font scaling (the `ApplyUiDensityScale` seam, `SmatchetTheme.h:66`, already exists), WCAG AA contrast audit of the mobile palette. Output = a findings doc + a Pillar-4 backlog entry, not shipped code.
+
+## Files to modify *(per slice — indicative, hardened at each slice's execution plan)*
+
+| # | Slice | Primary files |
+|---|---|---|
+| P1.0 | Keystore | `Source/Core/src/Config/ConfigManager.cpp` (rewire the `#else` arms of `WriteSecretFields`/`LoadSecretFields` + the plaintext-`token` migration scrub), `Source/Core/src/Config/ConfigManager_PathUtils.cpp` (+ `Source/Core/include/Config/ConfigManager.h` — the `SetSecretCryptoOverride` decl + an `#else` `UnprotectSecretFieldFromConfig` passthrough if the load arm uses the wrapper), `Source/Core/src/Ui/SmatchetPreferencesUi.cpp:251–257`, `Source/Mobile/Android/android_main.cpp` (+ a new JNI Keystore bridge TU), `Source/Mobile/Android/app/.../*.java` (Keystore) |
+| P1.1 | Offline replay | `Source/Mobile/Android/android_main.cpp` (frame-loop tick), `Source/Core/src/Sync/OfflineQueueService.*`, `TicketSyncService.*`, a dead-letter UI surface |
+| P1.2 | Saved views | `Source/Core/src/Ui/Smatchet*Ui*.cpp` (touch switcher), `Source/Core/src/Commands/ViewCommands.cpp` |
+| P1.3 | Touch editors | `Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp`, `Source/Core/src/TicketFieldEditor.cpp`, `Source/Core/src/Tracker/TrackerLabelsEditor.cpp`, `Source/Core/src/Tracker/TrackerDateTimeFieldEditor.cpp`, `Source/Core/include/TicketFieldEditorCommitPolicyPure.h`, `Source/Mobile/Android/android_main.cpp` (long-press), `SmatchetAndroidImeBridge.cpp` |
+| P1.4 | Attachments | verify-on-device of `Source/Core/src/Persistence/SmatchetImageTextureCache.cpp` (existing cross-platform stb_image path); `Source/Core/src/Ui/SmatchetAttachmentPreviewUi.cpp:112` only if the optional `SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS` thumbnail is in scope |
+| P1.5 | Multi-backend | touch backend-selection UI (depends P1.3) |
+| P1.6 | a11y | research doc + Pillar-4 backlog entry only |
+
+## Existing utilities reused
+
+- **Host-injection seam pattern** (P1.0): `SetPlatformSharedUserDataDirectoryOverride` / `SmatchetSetInjectedFontBytes` / `ApplyUiDensityScale` — the established Core-exposes-setter / host-injects-impl seam.
+- **Commit-policy seam** (P1.3): `ShouldCommitInlineFieldEdit` + `kMobileInlineEditBuild` (PR-6) — extend, don't reinvent.
+- **Cache + queue + sync services** (P1.1): `LocalCacheManager`, `OfflineQueueService`, `TicketSyncService`, `BackendAuditTrail`, `GridContextDepsAdapter` — already wired and active on device.
+- **stb_image attachment decode** (P1.4): already wired cross-platform in `SmatchetImageTextureCache.cpp` (`DecodeWithStb` + `RegisterUserTexture`) — verify on device, don't re-add.
+- **`ITrackerBackend`** (P1.5): existing Jira/Plane abstraction.
+
+## UX Pillar callouts
+
+- **Pillar 1 (perf ≤6.94 ms / p99 ≤10 ms)**: grid scroll with touch cell editors active (P1.3); on real hardware, not just emulator.
+- **Pillar 2 (no UI freeze >100 ms)**: JNI Keystore encrypt/decrypt (P1.0) on save/load only, never steady-state; SQLite replay tick (P1.1) off-UI-thread or budgeted; network-reachability check non-blocking.
+- **Pillar 3 (never crash)**: JNI-exception safety on the Keystore bridge; SQLite error → graceful degrade (cache miss, not crash); EGL ctx-loss already handled (Phase-0 item 12). RAII over the JNI local refs.
+- **Pillar 4 (a11y)**: the explicit subject of P1.6 (research, backlogged).
+- **Pillar 5 (DRY)**: P1.0/P1.3 explicitly extend existing seams; the duplication gate must stay green.
+
+## Perf-review-system gates
+
+*(Mandatory — Phase-1 touches `Source/Core/`: the Keystore crypto seam, the sync-replay tick, and the grid/field-editor touch path.)*
+
+Per [`docs/guides/perf-workflow.md`](../../guides/perf-workflow.md), each Source/Core-touching slice runs the affected `scripts/dev/perf-run.sh` scenarios and compares against baselines before merge:
+
+- **P1.0 Keystore**: no steady-state scenario (crypto fires only on config save/load) — assert *absence* of per-frame cost; one save/load latency check (<100 ms, Pillar 2).
+- **P1.1 Replay tick**: the sync/replay scenario must show the tick off the UI-thread frame budget (Pillar 2) — instrument with a `perf_temp:` scope on the tick, assert the UI-thread frame stays ≤6.94 ms while replay runs.
+- **P1.3 Touch editors**: grid-scroll + cell-edit-open scenarios — Pillar-1 steady-state ≤6.94 ms, popup-open Pillar-2 <100 ms. Baseline = current grid-scroll scenario.
+- Each slice's execution plan carries its own filled Perf-gate section; `perf-gatekeeper` runs the diff→scenario subset at PR time.
+
+## Risks / non-goals
+
+- **P1.0 is a ship-to-user security gate** — plaintext token on Android must not reach a public release. security-review sign-off is mandatory; the seam must fail *closed* (if the injected crypto pair throws, refuse to persist the token rather than silently writing plaintext).
+- **P1.3 is the highest-risk slice** — touch interaction model is a redesign, not a port; the long-press spike gates the rest. Risk of regressing desktop input — the `kMobileInlineEditBuild` gate must keep desktop paths byte-identical.
+- **Non-goal**: iOS. Phase-1 is Android-only; the host-injection seams are designed so an iOS host *could* inject Keychain crypto later, but no iOS target ships here.
+- **Non-goal**: real-time collaborative editing / push notifications.
+- **Sequencing**: P1.5 depends on P1.3 (touch backend-selection UI); P1.2 and P1.4 are independent; P1.0 and P1.1 are independent and can ship first.
+
+## Verification
+
+- **P1.0**: unit-test the crypto seam on desktop with a stub pair (round-trip encrypt→decrypt, and that the rewired `#else` arms emit `token_enc` / read it back when an override is set); on-device — token persists across app restart, survives `adb backup` exclusion (Phase-0 `allowBackup=false`, #1067), and is *not* readable as plaintext in the on-device config file. **Migration**: an upgraded install (one that ran a Phase-0 plaintext build) no longer contains the plaintext `token` key on disk after the first post-P1.0 launch. security-review of the JNI bridge.
+- **P1.1**: on-device — go offline (airplane mode), edit a field, confirm `pending_field_edits` row written; go online, confirm replay PUT fires and the row clears; force a replay failure, confirm dead-letter surface. Emulator for the airplane-mode toggle; **live PUT against a real ticket requires explicit confirmation** (external-service mutation).
+- **P1.3**: emulator UI-test (ImGui Test Engine bucket-E if feasible) for the explicit-commit policy across all five RenderPlan editors; on-device long-press / Save / Cancel / Back / tap-away matrix — **discard paths must issue no PUT** (the PR-6 stray-PUT proof, extended to the four non-text editors). EMULATOR-only input injection (pin `-s emulator-5554`); never coordinate-inject the physical device.
+- **Cross-cutting**: real-hardware Pillar-1 ≤6.94 ms steady-state; emulator boot+first-frame smoke (Phase-0 CI) stays green.
+- Automation residue (no Android-emulator UI-interaction CI harness beyond boot-smoke yet) is tracked in [`docs/self-improvement/categories/tooling.md`](../../self-improvement/categories/tooling.md); each slice closes as much residue as feasible per `test-author`.
+
+**Plan stress-test — `grill-with-docs` (3-lens adversarial workflow, verdict `revise` → applied).** Anchors fact-checked against code at `d8ea206c`. Two **CRITICAL** caught + fixed: (1) P1.0's seam as first drafted was a **no-op on Android** — `Protect*`/`Unprotect*` are reached only on the `#if _WIN32` arm; the non-Win32 `#else` arm of `WriteSecretFields`/`LoadSecretFields` writes/reads the token in plaintext under the `token` key, so the seam must rewire *those* arms (verified `ConfigManager.cpp:465/473/838`); (2) no scrub of the pre-existing Phase-0 plaintext token → added a mandatory migration step. **Majors fixed**: P1.3's "route the four editors through `ShouldCommitInlineFieldEdit`" was a misfit (combo/modal editors commit on explicit `Selectable`/Apply, not focus-loss — no stray-PUT bug to fix there) → re-scoped to touch-dismissal of the arm-then-popup model; P1.4's "mobile has no decoder" was **false** (decode is already cross-platform via `SmatchetImageTextureCache.cpp:141` stb_image + renderer-agnostic `ImTextureData`) → re-scoped to verify-on-device. **Minors fixed**: `UnprotectSecretFieldFromConfig` wrapper is Win32-only (link risk); font/density inject in `InitImGuiFirstTime()` not `BootCoreOnce()`; `BackendAuditTrail.h` range widened to `:27–32`; P1.3 anchor + path drift corrected (`RenderFieldCell` grid:1252, `DispatchEditorByPlan`/`StartEditingField` live in `TicketFieldEditor.cpp`, editor dirs `src/`+`src/Tracker/`, header `include/`).
+
+## Out of scope
+
+- iOS / desktop-mobile responsive reflow beyond the existing density scale.
+- Phase-2 ideas: push notifications, offline attachment caching, biometric unlock of the Keystore key, widget/home-screen surfaces.
+
+## Implementation log
+
+_(per-slice; appended as each PR ships)_
+
+## Deviations from plan
+
+_(per-slice)_
+
+## Verification (actual)
+
+_(per-slice)_
