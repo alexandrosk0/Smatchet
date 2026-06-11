@@ -5,7 +5,8 @@
 
 #include "PlaneActivityFeed.h"
 
-#include <cstdint>
+#include "PlaneJsonFieldPure.h"
+
 #include <string>
 #include <vector>
 
@@ -13,23 +14,7 @@ namespace PlaneActivityFeed {
 
 namespace {
 
-// Local copy of the production JsonFieldToString helper (defined in PlaneClient.cpp
-// inside the smatchet::plane_detail namespace). Replicated here to keep this TU
-// free of the production internal header (which pulls cpr via PlaneClient_Internal.h).
-std::string JsonFieldToString(const nlohmann::json& obj, const char* key) {
-    if (!obj.is_object() || !obj.contains(key) || obj[key].is_null())
-        return std::string();
-    const auto& v = obj[key];
-    if (v.is_string())
-        return v.get<std::string>();
-    if (v.is_number_integer())
-        return std::to_string(v.get<std::int64_t>());
-    if (v.is_number_float())
-        return std::to_string(v.get<double>());
-    if (v.is_boolean())
-        return v.get<bool>() ? std::string("true") : std::string("false");
-    return v.dump();
-}
+using smatchet::plane_pure::JsonFieldToString;
 
 /// Day-window keep rule: leading-10-char compare; short/missing timestamps kept
 /// unconditionally; an empty bound is open on that side.

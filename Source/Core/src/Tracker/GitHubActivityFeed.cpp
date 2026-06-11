@@ -140,8 +140,11 @@ Result<std::vector<std::string>, TrackerError> GitHubClient::FetchUserGroupNames
         const int kMaxTeamChecks = 50; // one membership probe per team — sanity bound
         int checked = 0;
         for (const auto& team : teams) {
-            if (!team.is_object() || checked >= kMaxTeamChecks) {
+            if (checked >= kMaxTeamChecks) {
                 break;
+            }
+            if (!team.is_object()) {
+                continue; // skip malformed element — later teams may still be valid
             }
             ++checked;
             const std::string slug =

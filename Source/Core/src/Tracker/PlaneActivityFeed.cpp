@@ -10,6 +10,7 @@
 #include <cpr/cpr.h>
 
 #include <algorithm>
+#include <atomic>
 #include <string>
 #include <vector>
 
@@ -25,6 +26,65 @@ cpr::Header ToCprHeader(const std::unordered_map<std::string, std::string>& head
         out[kv.first] = kv.second;
     }
     return out;
+}
+
+/// Display key for a discovered work item: "PROJ-123" when the project identifier
+/// and sequence are known, "#123" with sequence only, the raw UUID otherwise.
+std::string IssueKeyForWorkItem(const nlohmann::json& item, const std::string& projectIdentifier,
+                                const std::string& issueId) {
+    const std::string sequence = smatchet::plane_detail::JsonFieldToString(item, "sequence_id");
+    if (!projectIdentifier.empty() && !sequence.empty()) {
+        return projectIdentifier + "-" + sequence;
+    }
+    if (!sequence.empty()) {
+        return "#" + sequence;
+    }
+    return issueId;
+}
+
+/// Paginated per-issue /activities/ scan appending the actor's in-window entries.
+/// Degrades per-issue (LOG_WARN + stop this issue) so one bad issue doesn't void
+/// the whole window.
+void ScanIssueActivities(const std::string& listBase, const std::string& issueId, const cpr::Header& headers,
+                         const std::string& accountId, const std::string& dayFrom, const std::string& dayTo,
+                         const std::string& issueKey, const std::string& issueSummary, const std::string& issueUrl,
+                         const std::atomic<bool>& cancel, std::vector<TrackerActivityEntry>& outEntries) {
+    const int kMaxActivityPages = 5; // per-issue activity pagination bound
+    std::string activityCursor;
+    for (int activityPage = 1; activityPage <= kMaxActivityPages; ++activityPage) {
+        if (cancel.load()) {
+            return;
+        }
+        cpr::Parameters activityParams{{"per_page", "100"}};
+        if (!activityCursor.empty()) {
+            activityParams.Add({"cursor", activityCursor});
+        }
+        auto activityResp =
+            TrackerGetLogged("PlaneClient", listBase + issueId + "/activities/", headers, activityParams);
+        if (activityResp.status_code != 200) {
+            LOG_WARN("PlaneClient: activities fetch failed: HTTP %ld issue=%s",
+                     static_cast<long>(activityResp.status_code), TruncateForLog(issueKey, 40).c_str());
+            return;
+        }
+        nlohmann::json activityPayload;
+        try {
+            activityPayload = nlohmann::json::parse(activityResp.text);
+        } catch (const std::exception& ex) {
+            LOG_WARN("PlaneClient: activities parse error issue=%s: %s", TruncateForLog(issueKey, 40).c_str(),
+                     ex.what());
+            return;
+        }
+        std::vector<TrackerActivityEntry> entries =
+            PlaneActivityFeed::EntriesFromActivitiesJson(activityPayload.value("results", nlohmann::json::array()),
+                                                         accountId, dayFrom, dayTo, issueKey, issueSummary, issueUrl);
+        for (auto& entry : entries) {
+            outEntries.push_back(std::move(entry));
+        }
+        activityCursor = smatchet::plane::NextPaginationCursor(activityPayload);
+        if (activityCursor.empty()) {
+            return;
+        }
+    }
 }
 
 } // namespace
@@ -72,7 +132,6 @@ PlaneClient::FetchUserActivity(const TrackerConfig& cfg, const std::string& acco
     // Discovery: scan the project's work items (newest pages first is not guaranteed,
     // so the updated_at skip rule bounds the per-issue activity fetches instead).
     const int kMaxDiscoveryPages = 10; // 1000 issues — bounded scan, not a full sync
-    const int kMaxActivityPages = 5;   // per-issue activity pagination bound
     std::string cursor;
     std::string outError;
     for (int page = 1; page <= kMaxDiscoveryPages; ++page) {
@@ -117,55 +176,11 @@ PlaneClient::FetchUserActivity(const TrackerConfig& cfg, const std::string& acco
                     progress.Current.fetch_add(1);
                     continue;
                 }
-                const std::string sequence = JsonFieldToString(item, "sequence_id");
-                std::string issueKey;
-                if (!projectIdentifier.empty() && !sequence.empty()) {
-                    issueKey = projectIdentifier + "-" + sequence;
-                } else if (!sequence.empty()) {
-                    issueKey = "#" + sequence;
-                } else {
-                    issueKey = issueId;
-                }
+                const std::string issueKey = IssueKeyForWorkItem(item, projectIdentifier, issueId);
                 const std::string issueSummary = JsonFieldToString(item, "name");
                 const std::string issueUrl = BuildBrowseUrl(cfg, issueKey);
-
-                std::string activityCursor;
-                for (int activityPage = 1; activityPage <= kMaxActivityPages; ++activityPage) {
-                    if (activityCancel_.load()) {
-                        break;
-                    }
-                    cpr::Parameters activityParams{{"per_page", "100"}};
-                    if (!activityCursor.empty()) {
-                        activityParams.Add({"cursor", activityCursor});
-                    }
-                    auto activityResp =
-                        TrackerGetLogged("PlaneClient", listBase + issueId + "/activities/", headers, activityParams);
-                    if (activityResp.status_code != 200) {
-                        // Per-issue degradation: log and move on so one bad issue
-                        // doesn't void the whole window.
-                        LOG_WARN("PlaneClient: activities fetch failed: HTTP %ld issue=%s",
-                                 static_cast<long>(activityResp.status_code), TruncateForLog(issueKey, 40).c_str());
-                        break;
-                    }
-                    nlohmann::json activityPayload;
-                    try {
-                        activityPayload = nlohmann::json::parse(activityResp.text);
-                    } catch (const std::exception& ex) {
-                        LOG_WARN("PlaneClient: activities parse error issue=%s: %s",
-                                 TruncateForLog(issueKey, 40).c_str(), ex.what());
-                        break;
-                    }
-                    std::vector<TrackerActivityEntry> entries = PlaneActivityFeed::EntriesFromActivitiesJson(
-                        activityPayload.value("results", nlohmann::json::array()), accountId, dayFrom, dayTo, issueKey,
-                        issueSummary, issueUrl);
-                    for (auto& entry : entries) {
-                        outEntries.push_back(std::move(entry));
-                    }
-                    activityCursor = smatchet::plane::NextPaginationCursor(activityPayload);
-                    if (activityCursor.empty()) {
-                        break;
-                    }
-                }
+                ScanIssueActivities(listBase, issueId, headers, accountId, dayFrom, dayTo, issueKey, issueSummary,
+                                    issueUrl, activityCancel_, outEntries);
                 progress.Current.fetch_add(1);
             }
         }

@@ -4,9 +4,10 @@
 
 #include "PlaneIssueMappingPure.h"
 
+#include "PlaneJsonFieldPure.h"
+
 #include <algorithm>
 #include <cctype>
-#include <cstdint>
 #include <string>
 
 namespace smatchet {
@@ -14,23 +15,7 @@ namespace plane {
 
 namespace {
 
-// Local copy of the production JsonFieldToString helper (defined in PlaneClient.cpp
-// inside the smatchet::plane_detail namespace). Replicated here to keep this TU
-// free of the production internal header (which pulls cpr via PlaneClient_Internal.h).
-std::string JsonFieldToString(const nlohmann::json& obj, const char* key) {
-    if (!obj.is_object() || !obj.contains(key) || obj[key].is_null())
-        return std::string();
-    const auto& v = obj[key];
-    if (v.is_string())
-        return v.get<std::string>();
-    if (v.is_number_integer())
-        return std::to_string(v.get<std::int64_t>());
-    if (v.is_number_float())
-        return std::to_string(v.get<double>());
-    if (v.is_boolean())
-        return v.get<bool>() ? std::string("true") : std::string("false");
-    return v.dump();
-}
+using smatchet::plane_pure::JsonFieldToString;
 
 void TrimAsciiWs(std::string& s) {
     while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front())) != 0) {
