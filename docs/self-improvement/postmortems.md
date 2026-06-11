@@ -27,6 +27,77 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-11 · PR #1130 · merged past a RED "Coverage" check (non-poller merge path — #923 recurrence)
+
+> Surfaced by the improved `postmortem-owed.sh` (this session's
+> `feat/postmortem-owed-cleanup`): PR #1130 ("fix(mobile): guard ImGui 1.92
+> dynamic-texture orphans on Android", merge `5fc21b34`) merged at 03:34:54 UTC
+> while `Coverage (windows-2022 + OpenCppCoverage)` was terminal **FAILURE** (run
+> completed 03:21:42, ~13 min before merge). No override label.
+
+### What escaped
+The meant-to-block **Coverage** check. Since #923 (2026-06-06) `Coverage` is on
+the curated non-required-but-blocking allow-list in `merge-gates.sh`
+(`Coverage|Sanitizer|Bucket-|Perf PR-fast|Android security gate`), so the
+**poller** blocks a red Coverage. #1130 reached `develop` past a red Coverage
+anyway — i.e. via a merge path that did NOT consult the poller.
+
+### Root cause
+#923's chosen remedy was **option (B)** — the poller-side allow-list — and its
+**option (A)** (make `Coverage` a GitHub *required* context) was deferred. The
+allow-list therefore binds **only poller-mediated merges** (the orchestrator's
+`handle_pass` / the merge-watcher's `merge-gates.sh` poll). `Coverage` is still
+**non-required** in `branch_protection.required_contexts`, so every GitHub-native
+merge path that gates on *required* contexts only — `gh pr merge --auto` (GitHub
+auto-merge gates required-only), an admin / direct `gh api …/merge`, or the merge
+button — sails past a red non-required Coverage. #1130 took one of those paths.
+The #923 fix closed the watcher-poller hole but left the non-poller paths exposed;
+this is the same class recurring through the very gap option (A) was meant to close.
+(Detection worked as designed — the post-merge detector flagged it; that is how
+this entry exists.)
+
+### Preventing gate
+Take #923 **option (A)** — promote `Coverage (windows-2022 + OpenCppCoverage)` to
+`project.config.json` `branch_protection.required_contexts` + `setup-branch-protection.sh`,
+paired with a `coverage-skip.yml` companion (Pattern B) so docs-only / path-filtered
+PRs don't deadlock on a never-run Coverage. A *required* Coverage binds **all**
+merge paths (`--auto`, button, REST), not just the poller — closing the non-poller
+hole. (Branch-protection change → maintainer approval.) Belt-and-suspenders: keep
+the now-improved `postmortem-owed.sh` allow-list detection as the post-merge backstop.
+
+### Filed as
+[`docs/self-improvement/categories/tooling.md`](categories/tooling.md) (2026-06-11, P2 — promote Coverage to a required context + coverage-skip companion; #923 option A, the deferred half).
+
+## 2026-06-11 · PR-less direct push `90cfd5d6`, `578d21ea` · docs(backlog) commits to develop bypassing PR/CI/CR
+
+> Surfaced by the improved `postmortem-owed.sh` trigger 4 (direct-push detection,
+> this session). Two `docs(backlog)` commits reached `develop` with no PR
+> (`commits/{sha}/pulls == 0`): `578d21ea` (2026-06-04, "merge-gates poller scores
+> absent required-check as pass") and `90cfd5d6` (2026-06-05, "file 2 more
+> reduce-agent-prompt-bloat session learnings").
+
+### What escaped
+The **PR-only / branch-protection gate** for `develop` — no PR, no CI, no
+CodeRabbit. Content was benign (backlog docs), but the gate was bypassed via the
+repo owner's admin credentials (which branch protection does not stop).
+
+### Root cause
+Identical to the 2026-06-05 `a678741f` escape (same class): branch-state drift /
+convenience direct-push to `develop`. The **preventing gate for this class was
+already filed** on 2026-06-05 (the `pre-push` develop-guard hook, `tooling.md`)
+but has **not yet been implemented** (still `Status: open`), so the class kept
+recurring. Both commits predate this detection (2026-06-04/05) but were invisible
+until trigger 4 existed — not a new escape *path*, just newly *seen* ones.
+
+### Preventing gate
+The already-filed **`pre-push` hook rejecting a `develop`/`main` same-named push
+unless `SMATCHET_ALLOW_DEVELOP_PUSH=1`** (a local hard stop admin creds can't
+silently bypass) — `tooling.md` 2026-06-05, P2. Recurrence (≥3 instances now:
+`a678741f`, `578d21ea`, `90cfd5d6`) → **bump to P1**. No second system.
+
+### Filed as
+[`docs/self-improvement/categories/tooling.md`](categories/tooling.md) — recurrence note + P2→P1 bump on the existing `pre-push develop-guard hook` entry (2026-06-05).
+
 ## 2026-06-10 · PR #1124 · `tests-out-of-band` — override legitimate, but a self-declared "elevate to GitHub Issue at ship" never elevated
 
 ### What escaped
