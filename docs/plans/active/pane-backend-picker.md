@@ -2,7 +2,7 @@
 
 > **Slug**: `pane-backend-picker` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — design draft, not yet implementation-approved. Flip to `shipped` in the SAME post-ship PR that fills § Implementation log AND `git mv`s active → shipped (see § Archive).
+> **Status**: `active` — in progress. Slice 1 shipped (PR #1156). Slices 2–3 pending. Flip to `shipped` in the SAME post-ship PR that completes the final slice AND `git mv`s active → shipped (see § Archive).
 >
 > **Usage**: every section filled; non-applicable sections carry `N/A — <reason>`, never deleted.
 >
