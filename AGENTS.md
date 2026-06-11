@@ -6,18 +6,11 @@ This is the canonical entry-point doc for any agentic harness (Claude Code, Code
 
 ## Operating principles
 
-A skimmable map over the rules below (the operating *model*; the Quality Pillars are the quality *targets*). **Navigation only — no rule detail lives here; if a line accretes detail, move it to its linked section.**
-
-1. **Autonomous by default** — run the ship-loop end-to-end in one turn; pause only on the defined exceptions. (§ Autonomous ship-loop default)
-2. **Gate, don't trust** — every invariant is code-enforced (merge-gates, delta-lint, selftests), never a prose promise. (§ Merge gates, § Project rules § Tiered enforcement)
-3. **Delegate to specialists** — the orchestrator routes to `agents/`; semantic-search before text-search. (§ Delegation, § Semantic codebase search — use it first)
-4. **Plan before ship** — non-trivial work gets a plan-doc + `grill-with-docs` stress-test. (§ Process rules § Plan-doc family)
-5. **Self-tighten** — every delegated agent ends with `## Self-improvement`; friction becomes prompt patches. (§ Self-improvement loop)
+Skimmable map (operating *model*; the Quality Pillars are the quality *targets*). **Navigation only — no rule detail here; if a line accretes detail, move it to its linked section.** **1** Autonomous by default (§ Autonomous ship-loop default) · **2** Gate, don't trust (§ Merge gates) · **3** Delegate to specialists (§ Delegation) · **4** Plan before ship (§ Process rules) · **5** Self-tighten (§ Self-improvement loop).
 
 ## Quality Pillars
 
 Five north-star invariants:
-
 - **UX Pillars** 1-4 (user-facing; 1-3 enforceable / auto-fail PRs, 4 aspirational-backlogged) + **Engineering Pillar 5 — DRY** (WARN-first calibration, [ADR-0015](docs/adr/0015-dry-quality-pillar-duplication-gate.md)):
 
 | # | Group | Pillar | Hard invariant | Primary owner |
