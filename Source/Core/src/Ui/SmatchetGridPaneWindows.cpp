@@ -97,8 +97,11 @@ bool ApplyPaneAddAndCloseRequests(UiDrawSession& d) {
     // Pure core (SmatchetGridPaneWindows_detail.cpp — bucket-A covered); the wrapper
     // only forwards the focus-reassignment report into the session latch the host
     // consumes next frame as a real focus switch (review HIGH-2).
+    // viewBuckets: empty in Slice 1 (all write sites set only sourceId; Slice 2 threads
+    // the real ViewState.Disk.Backends here for cross-backend view resolution).
+    const std::unordered_map<std::string, ViewWorkspaceState> emptyBuckets;
     const detail::PaneRequestApplyOutcome outcome =
-        detail::ApplyPaneAddAndCloseRequestsCore(d.gridPanes, d.focusedPaneId, d.paneAddRequestSourceId);
+        detail::ApplyPaneAddAndCloseRequestsCore(d.gridPanes, d.focusedPaneId, d.paneAddRequest, emptyBuckets);
     if (outcome.FocusReassigned) {
         d.gridPaneFocusReassigned = true;
     }

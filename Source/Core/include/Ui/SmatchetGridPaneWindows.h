@@ -13,9 +13,11 @@
 // still routes the FOCUSED pane's view/backend swap through the existing sync
 // chokepoint (focused-context delegators, ADR-0018).
 
+#include "ConfigManager.h"
 #include "GridPane.h"
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 struct UiDrawSession;
@@ -65,11 +67,23 @@ struct PaneRequestApplyOutcome {
     bool FocusReassigned = false; ///< focusedPaneId moved by the host (not by window focus).
 };
 
+/// Resolve the view id for a new pane on `backendKey`. Resolution order:
+/// requestedViewId (if valid in the bucket) → backend ActiveViewId → first view
+/// in bucket → empty string (caller falls back to steady-state view resolve).
+/// Pure — takes already-loaded buckets; no disk I/O or ConfigManager calls.
+std::string ResolveNewPaneView(const std::string& backendKey, const std::string& requestedViewId,
+                               const std::unordered_map<std::string, ViewWorkspaceState>& viewBuckets);
+
 /// The body of ApplyPaneAddAndCloseRequests on bare data: close sweep (min-1
 /// invariant, survivor keeps ITS OWN identity — the focus hand-over is reported,
-/// never resolved here) + the "+" duplicate request (consumes addRequestSourceId).
+/// never resolved here) + the "+" duplicate request (consumes addRequest.sourceId).
+/// viewBuckets is used to resolve the new pane's view when targetBackendKey is
+/// non-empty (cross-backend create); pass an empty map when targetBackendKey is
+/// always empty (Slice 1 write sites; Slice 2 threads the real buckets through).
 PaneRequestApplyOutcome ApplyPaneAddAndCloseRequestsCore(std::vector<GridPane>& panes, std::string& focusedPaneId,
-                                                         std::string& addRequestSourceId);
+                                                         PaneAddRequest& addRequest,
+                                                         const std::unordered_map<std::string, ViewWorkspaceState>&
+                                                             viewBuckets);
 
 /// True when a dangling pane.viewId may be self-repaired to the active view: only
 /// when the pane belongs to the currently-loaded (focused) backend bucket. A

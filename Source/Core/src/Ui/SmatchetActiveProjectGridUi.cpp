@@ -370,7 +370,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
         // (backend, view); cross-backend panes arrive with Slice 3's concurrent contexts).
         // The host applies the request after the loop; close rides the window's tab X.
         if (ImGui::SmallButton("+##PaneAdd")) {
-            d.paneAddRequestSourceId = pane.id;
+            d.paneAddRequest.sourceId = pane.id;
         }
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("%s", SmatchetLocalization::T("pane.add.tooltip",

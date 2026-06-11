@@ -20,6 +20,7 @@
 #include <doctest/doctest.h>
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -40,12 +41,14 @@ TEST_CASE("Pane requests: closing the focused pane reassigns focus + reports it;
     panes.push_back(MakePane("main", "Jira", "jira_view_a"));
     panes.push_back(MakePane("pane-2", "Jira", "jira_view_b"));
     std::string focusedPaneId = "pane-2";
-    std::string addRequest;
+    PaneAddRequest addRequest;
+    const std::unordered_map<std::string, ViewWorkspaceState> emptyBuckets;
 
     panes[1].open = false; // tab X on the focused pane
 
     const auto outcome =
-        SmatchetGridPaneWindows::detail::ApplyPaneAddAndCloseRequestsCore(panes, focusedPaneId, addRequest);
+        SmatchetGridPaneWindows::detail::ApplyPaneAddAndCloseRequestsCore(panes, focusedPaneId, addRequest,
+                                                                          emptyBuckets);
 
     CHECK(outcome.Changed);
     CHECK(outcome.FocusReassigned); // HIGH-2: host must replay as a focus switch
@@ -62,12 +65,14 @@ TEST_CASE("Pane requests: closing a NON-focused pane does not report a focus rea
     panes.push_back(MakePane("main", "Jira", "jira_view_a"));
     panes.push_back(MakePane("pane-2", "Plane", "plane_view"));
     std::string focusedPaneId = "main";
-    std::string addRequest;
+    PaneAddRequest addRequest;
+    const std::unordered_map<std::string, ViewWorkspaceState> emptyBuckets;
 
     panes[1].open = false;
 
     const auto outcome =
-        SmatchetGridPaneWindows::detail::ApplyPaneAddAndCloseRequestsCore(panes, focusedPaneId, addRequest);
+        SmatchetGridPaneWindows::detail::ApplyPaneAddAndCloseRequestsCore(panes, focusedPaneId, addRequest,
+                                                                          emptyBuckets);
 
     CHECK(outcome.Changed);
     CHECK_FALSE(outcome.FocusReassigned);
@@ -79,12 +84,14 @@ TEST_CASE("Pane requests: min-1 invariant — last pane survives a close request
     std::vector<GridPane> panes;
     panes.push_back(MakePane("main", "Jira", "jira_view_a"));
     std::string focusedPaneId = "main";
-    std::string addRequest;
+    PaneAddRequest addRequest;
+    const std::unordered_map<std::string, ViewWorkspaceState> emptyBuckets;
 
     panes[0].open = false;
 
     const auto outcome =
-        SmatchetGridPaneWindows::detail::ApplyPaneAddAndCloseRequestsCore(panes, focusedPaneId, addRequest);
+        SmatchetGridPaneWindows::detail::ApplyPaneAddAndCloseRequestsCore(panes, focusedPaneId, addRequest,
+                                                                          emptyBuckets);
 
     CHECK_FALSE(outcome.Changed);
     CHECK_FALSE(outcome.FocusReassigned);
@@ -97,14 +104,17 @@ TEST_CASE("Pane requests: '+' duplicate consumes the request, focuses the new pa
     std::vector<GridPane> panes;
     panes.push_back(MakePane("main", "Jira", "jira_view_a"));
     std::string focusedPaneId = "main";
-    std::string addRequest = "main";
+    PaneAddRequest addRequest;
+    addRequest.sourceId = "main";
+    const std::unordered_map<std::string, ViewWorkspaceState> emptyBuckets;
 
     const auto outcome =
-        SmatchetGridPaneWindows::detail::ApplyPaneAddAndCloseRequestsCore(panes, focusedPaneId, addRequest);
+        SmatchetGridPaneWindows::detail::ApplyPaneAddAndCloseRequestsCore(panes, focusedPaneId, addRequest,
+                                                                          emptyBuckets);
 
     CHECK(outcome.Changed);
     CHECK(outcome.FocusReassigned);
-    CHECK(addRequest.empty()); // consume-once
+    CHECK(addRequest.sourceId.empty()); // consume-once
     REQUIRE(panes.size() == 2);
     CHECK(panes[1].id == "pane-2");
     CHECK(panes[1].viewId == "jira_view_a"); // dup shares the source's view

@@ -153,10 +153,10 @@ void RegisterPaneAddCommand(AppController& app, UiDrawSession& d, CommandRegistr
                 return CommandResult::Failure(ErrorCode::HandlerError, "No grid panes are loaded yet.");
             }
             // Duplicate-the-focused-pane request — identical to the pane window "+" button.
-            d.paneAddRequestSourceId = d.focusedPane().id;
+            d.paneAddRequest.sourceId = d.focusedPane().id;
             nlohmann::json out;
             out["requested"] = true;
-            out["sourceId"]  = d.paneAddRequestSourceId;
+            out["sourceId"]  = d.paneAddRequest.sourceId;
             if (acceptDirection) {
                 out["direction"] = args.value("direction", std::string());
             }
