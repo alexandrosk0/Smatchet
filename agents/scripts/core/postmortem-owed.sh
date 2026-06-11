@@ -6,10 +6,23 @@
 # via the postmortem's mandatory `### Preventing gate` field.
 #
 # Triggers (an escape lacking a postmortems.md entry referencing its PR):
-#   1. non-SUCCESS check on the merged head (PRIMARY) — a check (often a
-#      NON-required CI job) that was red yet merged. The most common escape.
-#   2. override label on the merged PR (project.config.json merge_gates.override_labels).
+#   1. non-SUCCESS check on the merged head (PRIMARY) — a BLOCKING-scope check
+#      whose LATEST run was a terminal FAILURE yet merged. The most common
+#      escape. "Blocking scope" + "latest-run terminal failure" follow
+#      merge-gates.sh's curation (see CURATION below — one deliberate divergence:
+#      CANCELLED is treated as a supersede here, not a failure) so a CANCELLED
+#      concurrency twin / advisory lane / in-progress check never reads as a red
+#      required check.
+#   2. override label on the merged PR (project.config.json
+#      merge_gates.override_labels) — but ONLY when the override was
+#      LOAD-BEARING (its gated check did not pass on its own). A moot override
+#      (gate green anyway) owes no postmortem.
 #   3. a `Revert` commit on develop (a post-merge undo).
+#   4. a PR-less direct push to develop — a commit with no `(#N)` subject suffix
+#      that no merged PR backs (`commits/{sha}/pulls == 0`). A direct push
+#      bypasses review AND every required CI check (the highest-trust escape) yet
+#      creates no PR + writes no snapshot, so triggers 1+2 are structurally blind
+#      to it.
 #   (overdue SMATCHET_DEVIATION is covered by the strict `deviation-overdue` lint.)
 #
 # Modes:
@@ -18,6 +31,21 @@
 #
 # Mirrors memory-drain-nudge.sh: deterministic check -> nudge, no investigation.
 # Advisory — never blocks. Exit 0 always (even without gh; degrades to a notice).
+#
+# Test seams (production leaves all unset → identical behaviour):
+#   POSTMORTEM_LEDGER             override the postmortems.md path (has_entry).
+#   POSTMORTEM_CONFIG_FILE        override project.config.json (override labels +
+#                                 required contexts).
+#   POSTMORTEM_REQUIRED_CONTEXTS  override the branch-protection required-context
+#                                 set (newline/comma separated). Set-but-EMPTY is
+#                                 honoured (inert required-by-name scope) so a
+#                                 fixture can opt in explicitly. Mirrors
+#                                 merge-gates.sh MERGE_GATES_REQUIRED_CONTEXTS.
+#   POSTMORTEM_OVERRIDE_LABELS    override the override-label set (space-separated)
+#                                 without sourcing project-config.sh (python-free).
+#   SNAPSHOT_LEDGER               override merge-snapshots.jsonl path.
+#   POSTMORTEM_DIRECTPUSH_SINCE   git-log window for trigger 4 (default 7 days).
+#   POSTMORTEM_DIRECTPUSH_MAX     cap on pulls-confirmation gh calls (default 40).
 
 set -euo pipefail
 cd "$(dirname "$0")/../../.."
@@ -30,8 +58,15 @@ case "${1:-}" in
 esac
 
 REPO="${REPO:-alexandrosk0/Smatchet}"
-LEDGER="docs/self-improvement/postmortems.md"
+LEDGER="${POSTMORTEM_LEDGER:-docs/self-improvement/postmortems.md}"
+CONFIG_FILE="${POSTMORTEM_CONFIG_FILE:-project.config.json}"
 SCAN_N="${POSTMORTEM_SCAN_N:-20}"
+
+# Curated blocking-scope allow-list — the meant-to-block constant from
+# merge-gates.sh (kept byte-identical so the two stay in lock-step; #923 fix).
+# A non-required failing context blocks (and therefore owes a postmortem when it
+# merged red) only if its name matches this regex AND is not "advisory".
+ALLOW_LIST_RE='Coverage|Sanitizer|Bucket-|Perf PR-fast|Android security gate'
 
 # gh is required; without it, degrade to a quiet notice (advisory tool).
 if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
@@ -39,24 +74,62 @@ if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
     exit 0
 fi
 
-# Override-label set (config-sourced).
-OVERRIDE_LABELS=""
-# shellcheck source=scripts/dev/project-config.sh
-if . scripts/dev/project-config.sh >/dev/null 2>&1; then
-    OVERRIDE_LABELS="${PC_OVERRIDE_LABELS:-}"
+# Override-label set (config-sourced). POSTMORTEM_OVERRIDE_LABELS overrides the
+# config read entirely (tests inject a fixed set, python-independent); production
+# leaves it unset and sources project-config.sh.
+if [ -n "${POSTMORTEM_OVERRIDE_LABELS+x}" ]; then
+    OVERRIDE_LABELS="$POSTMORTEM_OVERRIDE_LABELS"
+else
+    OVERRIDE_LABELS=""
+    # shellcheck source=scripts/dev/project-config.sh
+    if . scripts/dev/project-config.sh >/dev/null 2>&1; then
+        OVERRIDE_LABELS="${PC_OVERRIDE_LABELS:-}"
+    fi
+fi
+
+# Required-context ground-truth — branch_protection.required_contexts from
+# project.config.json (the authoritative set GitHub branch protection enforces,
+# same source merge-gates.sh uses). A failing context flags only if it is in
+# this set OR matches ALLOW_LIST_RE. Read UTF-8-safe via jq (the config carries
+# an em-dash in "Windows + MSVC (Smatchet light — …)" that python's cp1252
+# default open() would mojibake on Windows). jq is a soft dep here; absent →
+# empty set (required-by-name scope inert, allow-list scope still applies).
+# POSTMORTEM_REQUIRED_CONTEXTS overrides the file read entirely (even to "").
+REQ_CTX_JSON='[]'
+req_ctx_raw=""
+if [ -n "${POSTMORTEM_REQUIRED_CONTEXTS+x}" ]; then
+    req_ctx_raw="${POSTMORTEM_REQUIRED_CONTEXTS//,/$'\n'}"
+elif [ -f "$CONFIG_FILE" ] && command -v jq >/dev/null 2>&1; then
+    req_ctx_raw=$(jq -r '.branch_protection.required_contexts[]? // empty' "$CONFIG_FILE" 2>/dev/null) || req_ctx_raw=""
+fi
+if [ -n "$req_ctx_raw" ] && command -v jq >/dev/null 2>&1; then
+    REQ_CTX_JSON=$(printf '%s\n' "$req_ctx_raw" | jq -R . | jq -sc 'map(select(length>0))') || REQ_CTX_JSON='[]'
 fi
 
 # Already has a postmortem? (ledger references "PR #<n>")
 has_entry() {
     [ -f "$LEDGER" ] || return 1
     # Match either a "PR #N" reference or a "commit <sha>" reference, so the
-    # commit-only revert path (which passes a sha) dedupes too.
+    # commit-only revert/direct-push paths (which pass a sha) dedupe too.
     grep -qE "PR #$1([^0-9]|$)|commit $1([^0-9A-Fa-f]|$)" "$LEDGER" && return 0
     # Combined-PR postmortem: one blameless RCA can cover several PRs in a single
     # heading written `PR #A, #B, #C` — only the first carries the literal `PR #`
     # prefix; the rest are bare `, #N`. Match #N inside such a heading line (scoped
     # to `^#+ … PR #…` so a #N mention in prose body can't false-suppress a real owe).
     grep -qE "^#+ .*PR #[0-9].*[,[:space:]]#$1([^0-9]|$)" "$LEDGER"
+}
+
+# has_sha_entry <sha> — true when the ledger mentions this commit sha in ANY
+# form (the sha bounded by non-hex chars), not just the literal `commit <sha>`.
+# Existing direct-push / revert postmortems phrase the sha freely — `` `93c63d0f` ``,
+# "PR-less direct push 93c63d0f", "(`a678741f` —" — none of which match has_entry's
+# `commit <sha>` form. An 8-hex token in a postmortems ledger is a commit sha in
+# practice, so bounded-bare matching is the right dedup key for triggers 3+4 (the
+# backlog's "deduped by SHA"); the tiny false-dedup risk (an unrelated 8-hex token
+# in prose) is acceptable for an advisory nudge.
+has_sha_entry() {
+    [ -f "$LEDGER" ] || return 1
+    grep -qiE "(^|[^0-9A-Fa-f])$1([^0-9A-Fa-f]|\$)" "$LEDGER"
 }
 
 # Both the `Test-delta gate` (coverage-delta-gate.sh) and the `cr-out-of-band` override
@@ -80,6 +153,90 @@ core_scoped_only_trigger() {
 pr_touches_core_cpp() {
     gh pr view "$1" --repo "$REPO" --json files --jq '.files[].path' 2>/dev/null \
         | grep -qE '^Source/Core/src/.*\.cpp$'
+}
+
+# True when the merged PR added/modified at least one *.test.cpp (the test-delta
+# the `tests-out-of-band` override stands in for). Used by the moot-override check.
+pr_touches_test_files() {
+    gh pr view "$1" --repo "$REPO" --json files --jq '.files[].path' 2>/dev/null \
+        | grep -qE '\.test\.cpp$'
+}
+
+# Collapsed conclusion across EVERY rollup context whose name/context matches the
+# given (case-insensitive regex) needle, on the merged PR head: "SUCCESS" only when
+# all matching contexts' latest runs are SUCCESS, else the first non-SUCCESS
+# conclusion, or "" when none match. Dedupes to the latest run per context
+# (group_by name, max startedAt) like the trigger-1 curation, so a CANCELLED twin
+# can't mask a real SUCCESS; the "all must be SUCCESS" rule means a second
+# matching lane (e.g. a future "Coverage upload" beside "Coverage (…)") can't let
+# a moot-check pass on a partial green. jq required (degrades to "").
+gate_conclusion() {
+    command -v jq >/dev/null 2>&1 || { echo ""; return 0; }
+    # gh's `--jq` does NOT accept jq's `--arg`; pass the needle via the
+    # environment (`env.NEEDLE`) instead, which gh's bundled jq honours.
+    NEEDLE="$2" gh pr view "$1" --repo "$REPO" --json statusCheckRollup --jq '
+        [ .statusCheckRollup[]?
+          | { n: (.name // .context // ""),
+              s: (.startedAt // .completedAt // .createdAt // ""),
+              c: (.conclusion // .state // "") }
+          | select(.n | test(env.NEEDLE; "i")) ]
+        | group_by(.n) | map(sort_by(.s) | .[-1].c)
+        | if length == 0 then ""
+          elif all(.[]; . == "SUCCESS") then "SUCCESS"
+          else (map(select(. != "SUCCESS")) | .[0]) end
+    ' 2>/dev/null | tr -d '\r' || echo ""
+}
+
+# override_is_moot <pr> <label> — return 0 (moot, drop) when the override was
+# NON-load-bearing: its gated check passed on the head on its own, so the label
+# dismissed nothing. Return 1 (load-bearing → keep / owes a postmortem) otherwise.
+# Only a load-bearing override owes a postmortem (postmortems.md 2026-06-08 #991).
+# Note: gate_conclusion reads the (possibly post-merge re-run) live rollup, the
+# documented lossy fallback. This is why the moot-filter runs on the LIVE-fallback
+# path ONLY (see the trigger-1 loop) — never on a snapshot-derived trigger, where
+# re-judging against the lossy live rollup could drop a real load-bearing override.
+override_is_moot() {
+    local pr="$1" label="$2"
+    case "$label" in
+        tests-out-of-band)
+            # Moot iff Test-delta gate passed AND the diff actually carried a test
+            # delta (the entry's explicit two-part condition, #991).
+            [ "$(gate_conclusion "$pr" 'Test-delta gate')" = "SUCCESS" ] && pr_touches_test_files "$pr" ;;
+        perf-out-of-band)
+            [ "$(gate_conclusion "$pr" 'Perf PR-fast')" = "SUCCESS" ] ;;
+        coverage-out-of-band)
+            [ "$(gate_conclusion "$pr" 'Coverage')" = "SUCCESS" ] ;;
+        *)
+            # cr-out-of-band (advisory CR only — handled by core_scoped_only_trigger)
+            # and any unknown label: never treated as moot here.
+            return 1 ;;
+    esac
+}
+
+# filter_moot_overrides <pr> <trigger> — rebuild a `; `-joined trigger string
+# keeping every `red-check: …` part and only the LOAD-BEARING `override: …` parts.
+# Applied to the LIVE-fallback trigger only (the snapshot path is authoritative —
+# see the trigger-1 loop). Prints the filtered trigger (possibly empty).
+filter_moot_overrides() {
+    local pr="$1" trig="$2" out="" part
+    local IFS=';'
+    set -f   # disable globbing — `for part in $trig` must not glob-expand a part
+    for part in $trig; do
+        part="${part# }"; part="${part% }"
+        [ -z "$part" ] && continue
+        case "$part" in
+            "override: "*)
+                local lbl="${part#override: }"
+                if override_is_moot "$pr" "$lbl"; then
+                    continue   # moot — drop
+                fi
+                out="${out:+$out; }$part" ;;
+            *)
+                out="${out:+$out; }$part" ;;
+        esac
+    done
+    set +f
+    printf '%s' "$out"
 }
 
 # --- Lossless merge-time snapshot ledger (PRIMARY source for trigger 1+2) -----
@@ -122,41 +279,113 @@ has_snapshot() {
         "$SNAPSHOT_LEDGER" >/dev/null 2>&1
 }
 
-owed=()   # "PR #N — <trigger>"
+owed=()           # "PR #N — <trigger>"
+merged_commits="" # space-delimited set of mergeCommit oids seen this run (trigger 4 reuse)
 
 # --- Trigger 1 + 2: per merged PR (checks + labels), ONE batched gh call ------
 # `gh pr list --json statusCheckRollup` returns every PR's checks in a single
 # API call — fast enough for a SessionStart hook (no per-PR `gh pr view` loop).
 # Each row: number <TAB> mergeCommit-oid <TAB> space-joined-labels <TAB>
-# comma-joined-red-checks. The mergeCommit column lets us key the lossless
+# comma-joined-CURATED-red-checks. The mergeCommit column lets us key the lossless
 # snapshot-ledger lookup (snapshot_trigger) on pr+mergeCommit before falling
 # back to the (lossy) live labels/statusCheckRollup columns.
+#
+# CURATION (the red-checks column) follows merge-gates.sh's GATE_FILTER so the
+# escape detector and the merge gate agree on what "red" means. Two deliberate
+# divergences from merge-gates.sh, noted inline: (b) CANCELLED is a supersede
+# here (merge-gates counts it as failing); and there is NO required-context-ABSENT
+# detector — a required check that NEVER RAN produces no rollup row, so a
+# "merged with a required check absent" escape is invisible on this live path
+# (merge-gates' $reqAbsent catches it pre-merge; here it would only surface via a
+# recorded snapshot). That gap is pre-existing and left as a follow-up.
+#   (a) dedupe to the LATEST run per context (group_by name, max startedAt) — a
+#       CANCELLED concurrency twin beside a later SUCCESS for the SAME context is
+#       dropped (the dominant false positive: every perf/coverage workflow sets
+#       cancel-in-progress; the `…/merge` ref run cancels the PR-head run).
+#   (b) require a TERMINAL FAILURE — CheckRun COMPLETED with conclusion in
+#       FAILURE/TIMED_OUT/ACTION_REQUIRED/STARTUP_FAILURE, or StatusContext state
+#       FAILURE/ERROR. CANCELLED is EXCLUDED (a cancel is a supersede, never a
+#       failure verdict); IN_PROGRESS/QUEUED/PENDING never count.
+#   (c) require BLOCKING scope — the context is in branch_protection
+#       .required_contexts ($reqNames) OR its name matches the meant-to-block
+#       allow-list (ALLOW_LIST_RE) and is not "advisory". An advisory / non-
+#       allow-list lane can never block a merge, so its red owes no postmortem.
+# (postmortems.md 2026-06-09 PR #1046–#1072 over-report; #923 allow-list.)
+#
 # `gh pr list` has no mergedAt sort key, so over-fetch by its default
 # createdAt-desc order, then re-sort by mergedAt and keep the most-recently
 # MERGED SCAN_N. Without this, a long-lived branch created early but merged
 # late falls outside a createdAt-ordered window and its escape is never seen.
 FETCH_N="${POSTMORTEM_FETCH_N:-$((SCAN_N * 3))}"
-# shellcheck disable=SC2016  # $c is a jq variable, not a shell expansion
-JQ_ROWS='(sort_by(.mergedAt) | reverse | .[0:'"$SCAN_N"']) | .[] | [
+# shellcheck disable=SC2016  # $c/$reqNames are jq variables, not shell expansions
+JQ_ROWS='(sort_by(.mergedAt) | reverse | .[0:__SCAN_N__]) | .[] | [
     (.number|tostring),
     (.mergeCommit.oid // ""),
     ([.labels[].name] | join(" ")),
-    ([.statusCheckRollup[]? | ((.conclusion // .state)) as $c
-      | select($c != null and $c != "SUCCESS" and $c != "SKIPPED" and $c != "NEUTRAL")
-      | (.name // .context)] | unique | join(", "))
+    ( (__REQ_CTX__) as $reqNames
+      | [ ( (.statusCheckRollup // [])
+            | group_by(if .__typename == "CheckRun" then "C " + (.name // "")
+                       else "S " + (.context // "") end)
+            | map(sort_by(.startedAt // .completedAt // .createdAt // "") | .[-1])
+            | .[] )
+          | (if .__typename == "CheckRun" then (.name // "") else (.context // "") end) as $n
+          | select(
+              (
+                (.__typename == "CheckRun" and (.status // "") == "COMPLETED"
+                 and ((.conclusion // "") | IN("FAILURE","TIMED_OUT","ACTION_REQUIRED","STARTUP_FAILURE")))
+                or
+                (.__typename == "StatusContext" and ((.state // "") | IN("FAILURE","ERROR")))
+              )
+              and
+              (
+                ($reqNames | any(. == $n))
+                or
+                (($n | test("__ALLOW__"; "i")) and (($n | ascii_downcase | contains("advisory")) | not))
+              )
+            )
+          | $n
+        ] | unique | join(", ") )
   ] | @tsv'
-while IFS=$'\t' read -r num mergecommit labels redchecks; do
+JQ_ROWS="${JQ_ROWS//__SCAN_N__/$SCAN_N}"
+JQ_ROWS="${JQ_ROWS//__REQ_CTX__/$REQ_CTX_JSON}"
+JQ_ROWS="${JQ_ROWS//__ALLOW__/$ALLOW_LIST_RE}"
+while IFS= read -r row; do
+    [ -z "$row" ] && continue
+    # Split the 4-field @tsv row by tab MANUALLY (not `IFS=$'\t' read`): tab is
+    # IFS-whitespace, so `read` collapses consecutive tabs and DROPS empty middle
+    # fields — a row with empty labels but a real red-check ("num⇥mc⇥⇥check")
+    # would shift the check into `labels` and blank `redchecks`, silently missing
+    # the single most common escape (red required check, no override label).
+    # Parameter expansion preserves empty fields. @tsv always emits 4 fields.
+    num="${row%%$'\t'*}";        row="${row#*$'\t'}"
+    mergecommit="${row%%$'\t'*}"; row="${row#*$'\t'}"
+    labels="${row%%$'\t'*}";      redchecks="${row#*$'\t'}"
     [ -z "$num" ] && continue
+    [ -n "$mergecommit" ] && merged_commits="$merged_commits $mergecommit"
     has_entry "$num" && continue
     trigger=""
     # PRIMARY: lossless ledger first. If this pr+mergeCommit has a snapshot line,
     # the verdict at the merge instant is authoritative — derive the trigger from
     # it and do NOT consult the (lossy) live labels/statusCheckRollup columns.
     if [ -n "$mergecommit" ] && has_snapshot "$num" "$mergecommit"; then
+        # The snapshot is the lossless merge-instant authority — take its trigger
+        # verbatim and do NOT moot-filter it. The moot-filter consults the LOSSY
+        # live rollup, which can read SUCCESS for a check that was red at merge but
+        # healed on a post-merge re-run; re-judging a snapshotted override against
+        # that would silently DROP a real load-bearing override (false negative —
+        # the worse direction for an escape detector). Precise snapshot-path moot
+        # detection needs the downgraded check recorded IN the snapshot — the
+        # deferred `mandatory-merge-snapshot-on-override-merge` item; the watcher
+        # currently writes redChecks=[] for override merges, so the snapshot alone
+        # can't tell moot from load-bearing. Until then, a snapshotted override
+        # flags (err toward a spurious nudge, never a miss).
         trigger="$(snapshot_trigger "$num" "$mergecommit")"
     else
         # FALLBACK (documented degraded path): no ledger entry (un-instrumented /
-        # pre-ledger merge) → derive from the live query as before.
+        # pre-ledger merge) → derive from the live (curated) query, then drop moot
+        # (non-load-bearing) override parts (the live rollup is the same in-time
+        # source the label decision was made against, so moot-filtering here is
+        # self-consistent). Keeps red-checks + load-bearing overrides.
         [ -n "$redchecks" ] && trigger="red-check: ${redchecks}"
         if [ -n "$OVERRIDE_LABELS" ] && [ -n "$labels" ]; then
             for lbl in $OVERRIDE_LABELS; do
@@ -165,6 +394,7 @@ while IFS=$'\t' read -r num mergecommit labels redchecks; do
                 esac
             done
         fi
+        [ -n "$trigger" ] && trigger="$(filter_moot_overrides "$num" "$trigger")"
     fi
     # De-noise: Core-cpp-scoped trigger(s) on a PR that touched no Core cpp = false escape.
     if [ -n "$trigger" ] && core_scoped_only_trigger "$trigger" && ! pr_touches_core_cpp "$num"; then
@@ -172,7 +402,8 @@ while IFS=$'\t' read -r num mergecommit labels redchecks; do
     fi
     [ -n "$trigger" ] && owed+=("PR #$num — $trigger")
 done < <(gh pr list --repo "$REPO" --base develop --state merged --limit "$FETCH_N" \
-            --json number,labels,mergedAt,mergeCommit,statusCheckRollup --jq "$JQ_ROWS" 2>/dev/null || true)
+            --json number,labels,mergedAt,mergeCommit,statusCheckRollup --jq "$JQ_ROWS" 2>/dev/null \
+            | tr -d '\r' || true)
 
 # --- Trigger 3: Revert commits on develop ------------------------------------
 while IFS= read -r line; do
@@ -195,11 +426,55 @@ while IFS= read -r line; do
         has_entry "$prnum" && continue
         owed+=("PR #$prnum — revert: $sha")
     else
-        has_entry "$sha" && continue
+        has_sha_entry "$sha" && continue
         owed+=("commit $sha — revert (no PR ref)")
     fi
 done < <(git log origin/develop --grep='^Revert' --since='30 days ago' \
-            --format='%h %s' 2>/dev/null || true)
+            --format='%h %s' 2>/dev/null | tr -d '\r' || true)
+
+# --- Trigger 4: PR-less direct pushes to develop -----------------------------
+# A commit on develop with no `(#N)` subject suffix that no merged PR backs
+# (`commits/{sha}/pulls == 0`) is a direct push — it bypassed review AND every
+# required check, writing no PR + no snapshot, so triggers 1+2 never see it
+# (postmortems.md 2026-06-07 direct-push 93c63d0f). The `(#N)`-suffix test is a
+# cheap git-log prefilter; the per-sha pulls confirmation is what actually
+# distinguishes a direct push from a squash-merge with a non-standard subject
+# (NOTE: `commits/{sha}/pulls` is the GitHub associated-PR endpoint — strictly
+# more precise than the backlog's suggested `gh pr list --search <sha>`, which
+# false-matches any PR merely mentioning the sha). Window-bounded
+# (POSTMORTEM_DIRECTPUSH_SINCE, default 7 days) because this repo carries many
+# historical direct pushes; a 30-day scan would flood the nudge. A sha already in
+# the merged-PR set (trigger 1 fetch) skips the gh call (PR-backed by construction).
+DIRECTPUSH_SINCE="${POSTMORTEM_DIRECTPUSH_SINCE:-7 days ago}"
+DIRECTPUSH_MAX="${POSTMORTEM_DIRECTPUSH_MAX:-40}"
+dp_confirmed=0
+dp_seen=0
+while IFS=$'\t' read -r sha subject; do
+    [ -z "$sha" ] && continue
+    # Normal squash-merge subjects end with "(#N)" → not a direct push.
+    printf '%s' "$subject" | grep -qE '\(#[0-9]+\)' && continue
+    # Already flagged this run (e.g. a direct-pushed revert caught by trigger 3)?
+    case " ${owed[*]-} " in *" commit $sha "*) continue ;; esac
+    has_sha_entry "$sha" && continue
+    # Cheap path: sha is a known mergeCommit from the trigger-1 fetch → PR-backed.
+    # git log gives a SHORT %h; gh pr list gives the FULL 40-char oid — match by
+    # prefix (no trailing space in the glob) so the short sha matches the full oid.
+    case " $merged_commits " in *" $sha"*) continue ;; esac
+    dp_seen=$((dp_seen + 1))
+    if [ "$dp_seen" -gt "$DIRECTPUSH_MAX" ]; then
+        echo "postmortem-owed: trigger-4 suspect cap ($DIRECTPUSH_MAX) reached; older direct-push candidates not confirmed this run (raise POSTMORTEM_DIRECTPUSH_MAX or narrow POSTMORTEM_DIRECTPUSH_SINCE)." >&2
+        break
+    fi
+    # Confirm not PR-backed. On a gh error (count "?") flag conservatively — a
+    # no-(#N) develop commit is rare and a direct push is the highest-trust
+    # escape, so over-nudging a rare ambiguous case beats missing a real one.
+    cnt="$(gh api "repos/$REPO/commits/$sha/pulls" --jq 'length' 2>/dev/null || echo '?')"
+    if [ "$cnt" = "0" ] || [ "$cnt" = "?" ]; then
+        owed+=("commit $sha — direct push (no PR/CI/CR)")
+        dp_confirmed=$((dp_confirmed + 1))
+    fi
+done < <(git log origin/develop --no-merges --since="$DIRECTPUSH_SINCE" \
+            --format='%h%x09%s' 2>/dev/null | tr -d '\r' || true)
 
 # --- Emit --------------------------------------------------------------------
 if [ "${#owed[@]}" -eq 0 ]; then
