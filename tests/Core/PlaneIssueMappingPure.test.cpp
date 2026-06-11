@@ -13,6 +13,7 @@
 #include <vector>
 
 using smatchet::plane::BuildPlaneAuthHeaders;
+using smatchet::plane::ExtractKeyFromPlaneQuery;
 using smatchet::plane::MapPlaneWorkItemJsonToCachedTicket;
 using smatchet::plane::MapPlaneWorkItemsArrayToCachedTickets;
 using smatchet::plane::NextPaginationCursor;
@@ -406,4 +407,27 @@ TEST_CASE("WS2 edge — null entries inside the results array are skipped by the
     REQUIRE(tickets.size() == 1);
     CHECK(tickets[0].id == "SMT-17");
     CHECK(keyToId.count("SMT-17") == 1);
+}
+
+// user-info-window.md Slice 4 item 18b — `key` extraction from a Plane structured
+// query (the single-issue narrowing hook for the activity window's "open issue").
+
+TEST_CASE("ExtractKeyFromPlaneQuery — key member returned") {
+    CHECK(ExtractKeyFromPlaneQuery(R"({"key":"SMT-7"})") == "SMT-7");
+    CHECK(ExtractKeyFromPlaneQuery(R"({"project":"SMT","key":"SMT-7"})") == "SMT-7");
+}
+
+TEST_CASE("ExtractKeyFromPlaneQuery — project-only blob has no key clause") {
+    CHECK(ExtractKeyFromPlaneQuery(R"({"project":"SMT"})").empty());
+}
+
+TEST_CASE("ExtractKeyFromPlaneQuery — empty / malformed / non-object input → empty") {
+    CHECK(ExtractKeyFromPlaneQuery("").empty());
+    CHECK(ExtractKeyFromPlaneQuery("{not json").empty());
+    CHECK(ExtractKeyFromPlaneQuery(R"(["key"])").empty());
+}
+
+TEST_CASE("ExtractKeyFromPlaneQuery — non-string key member → empty") {
+    CHECK(ExtractKeyFromPlaneQuery(R"({"key":42})").empty());
+    CHECK(ExtractKeyFromPlaneQuery(R"({"key":null})").empty());
 }

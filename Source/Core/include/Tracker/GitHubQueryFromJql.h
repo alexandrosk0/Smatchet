@@ -48,6 +48,11 @@ struct JqlToGitHubResult {
     /// the REST `/repos/{o}/{r}/commits` path. Set for `type:commit` and
     /// `type:all`/`type:any`. Default false preserves issues-only behavior.
     bool IncludeCommits = false;
+    /// user-info-window item 18c — canonical `owner/repo#N` key when the JQL
+    /// carried a `key = "<owner>/<repo>#<N>"` clause. The fetch path post-filters
+    /// results to this single issue (GitHub search has no exact issue-key
+    /// qualifier). Empty when no key clause was present.
+    std::string KeyFilter;
 };
 
 /// Translate a Smatchet JQL view query to a GitHub /search/issues `q=` value.
@@ -70,6 +75,8 @@ struct JqlToGitHubResult {
 ///                                IncludeIssuesOrPullRequests=false; no query term)
 ///   type:all / type:any        → issues + PRs + commits (IncludePullRequests
 ///                                + IncludeCommits true; no is:pr/is:issue term)
+///   key = "owner/repo#N"       → result.KeyFilter (client-side post-filter;
+///                                non-parsing values drop with a warning)
 ///   ORDER BY <field> <dir>     → ignored with warning
 ///   AND / OR connectors        → AND becomes space (GitHub default);
 ///                                OR is unsupported and emits a warning

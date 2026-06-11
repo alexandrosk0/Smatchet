@@ -2,6 +2,7 @@
 #define SMATCHET_GITHUB_CLIENT_H
 
 #include "GitHubClientHelpers.h"
+#include "ITrackerActivity.h"
 #include "ITrackerBackend.h"
 #include "ITrackerCollaboration.h"
 #include "ITrackerConnectivity.h"
@@ -31,7 +32,8 @@ class GitHubClient : public ITrackerBackend,
                      public ITrackerConnectivity,
                      public ITrackerFieldCatalog,
                      public ITrackerIssueMutations,
-                     public ITrackerCollaboration {
+                     public ITrackerCollaboration,
+                     public ITrackerActivity {
   public:
     ITrackerIssueReader& Reader() override;
     ITrackerConnectivity& Connectivity() override;
@@ -85,6 +87,30 @@ class GitHubClient : public ITrackerBackend,
     Result<std::unordered_map<std::string, bool>, TrackerError>
     FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issueKeyOrId) override;
 
+    /**
+     * Repo issue-events scan (GitHubActivityFeed) — one entry per event authored by
+     * `accountId` inside the day window. Scope = cfg Owner/Repo, overridable by an
+     * `owner/repo`-shaped projectScope.
+     */
+    Result<std::vector<TrackerActivityEntry>, TrackerError>
+    FetchUserActivity(const TrackerConfig& cfg, const std::string& accountId, const std::string& dayFrom,
+                      const std::string& dayTo, const std::string& projectScope,
+                      TrackerActivityProgress& progress) override;
+
+    /**
+     * Org-team membership probes against cfg.GitHubOwner (best-effort: a PAT without
+     * read:org degrades to Ok-empty, never an error).
+     */
+    Result<std::vector<std::string>, TrackerError> FetchUserGroupNames(const TrackerConfig& cfg,
+                                                                       const std::string& accountId) override;
+
+    /** Members of an org team (matched case-insensitively on name or slug). */
+    Result<std::vector<TrackerUser>, TrackerError> FetchGroupMembers(const TrackerConfig& cfg,
+                                                                     const std::string& groupName) override;
+
+    /** Raise the cancel flag for any in-flight FetchUserActivity run. */
+    void ClearUserActivity() override;
+
   private:
     /// Issue #979 — resolve baseUrl + PAT for one request. `configOverride` non-null →
     /// the live cfg PAT is used unconditionally (empty = user cleared the credential;
@@ -100,6 +126,10 @@ class GitHubClient : public ITrackerBackend,
     std::string baseUrl_; // ctor snapshot fallback for the base URL only (issue #979)
     std::string pat_;     // ctor snapshot, log-visibility only; never used for requests (issue #979)
     mutable std::atomic<std::size_t> lastLoggedPatBytes_; // rotation-visibility log dedup (issue #979)
+
+    // Cancel flag for the in-flight FetchUserActivity run — checked inside the
+    // page loop, raised by ClearUserActivity from any thread.
+    std::atomic<bool> activityCancel_{false};
 };
 
 #endif // SMATCHET_GITHUB_CLIENT_H

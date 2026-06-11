@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ITrackerActivity.h"
 #include "ITrackerBackend.h"
 #include "ITrackerCollaboration.h"
 #include "ITrackerConnectivity.h"
@@ -7,6 +8,7 @@
 #include "ITrackerIssueMutations.h"
 #include "ITrackerIssueReader.h"
 #include "ConfigManager.h"
+#include <atomic>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -20,7 +22,8 @@ class PlaneClient : public ITrackerBackend,
                     public ITrackerConnectivity,
                     public ITrackerFieldCatalog,
                     public ITrackerIssueMutations,
-                    public ITrackerCollaboration {
+                    public ITrackerCollaboration,
+                    public ITrackerActivity {
   public:
     ITrackerIssueReader& Reader() override;
     ITrackerConnectivity& Connectivity() override;
@@ -94,6 +97,26 @@ class PlaneClient : public ITrackerBackend,
     /** Drop the cached project list so the next ListProjects() refetches. */
     void InvalidateListProjectsCache();
 
+    /**
+     * Project-scoped work-item scan + per-issue `/activities/` fetch (PlaneActivityFeed) —
+     * one entry per user-authored activity inside the day window.
+     */
+    Result<std::vector<TrackerActivityEntry>, TrackerError>
+    FetchUserActivity(const TrackerConfig& cfg, const std::string& accountId, const std::string& dayFrom,
+                      const std::string& dayTo, const std::string& projectScope,
+                      TrackerActivityProgress& progress) override;
+
+    /** Plane has no group concept — Ok-empty (supported, nothing to show). */
+    Result<std::vector<std::string>, TrackerError> FetchUserGroupNames(const TrackerConfig& cfg,
+                                                                       const std::string& accountId) override;
+
+    /** Plane has no group concept — Ok-empty. */
+    Result<std::vector<TrackerUser>, TrackerError> FetchGroupMembers(const TrackerConfig& cfg,
+                                                                     const std::string& groupName) override;
+
+    /** Raise the cancel flag for any in-flight FetchUserActivity run. */
+    void ClearUserActivity() override;
+
   private:
     // Per-instance project-list cache (5 min TTL). Mutated under planeCacheMutex_.
     std::vector<RemoteProject> cachedProjects_;
@@ -120,6 +143,10 @@ class PlaneClient : public ITrackerBackend,
 
     std::unordered_map<std::string, std::string> keyToId_;
     mutable std::recursive_mutex planeCacheMutex_;
+
+    // Cancel flag for the in-flight FetchUserActivity run (checked inside the discovery
+    // + per-issue activity loops; raised by ClearUserActivity from any thread).
+    std::atomic<bool> activityCancel_{false};
 
     static std::unordered_map<std::string, std::string> BuildPlaneHeaders(const TrackerConfig& cfg);
 };

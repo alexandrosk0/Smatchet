@@ -600,6 +600,15 @@ add_executable(SmatchetTests
     # TUs (JiraActivityFeed.cpp, P4AnnotateParse.cpp, ProjectResolver.cpp) are
     # already linked above.
     Core/JiraActivityFeed.test.cpp
+    # user-info-window.md Slice 4 — pure Plane/GitHub activity-feed cores. The
+    # *Pure.cpp TUs hold only the JSON -> TrackerActivityEntry mapping halves; the
+    # client halves (PlaneActivityFeed.cpp / GitHubActivityFeed.cpp) pull cpr +
+    # the full client TU sets and stay OUT of the rig. GitHubClientHelpers.cpp
+    # (FormatGitHubIssueKey) is already linked above.
+    Core/PlaneActivityFeed.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneActivityFeedPure.cpp"
+    Core/GitHubActivityFeed.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubActivityFeedPure.cpp"
 )
 
 # Whisper dictation router — link the production TU that matches the parent

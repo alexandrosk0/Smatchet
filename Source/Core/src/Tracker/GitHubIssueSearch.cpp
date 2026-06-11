@@ -9,6 +9,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <string>
 #include <utility>
@@ -385,6 +386,9 @@ struct GitHubFetchSetup {
     bool includePullRequests = false;
     bool includeCommits = false;
     bool includeIssuesOrPullRequests = false;
+    // Item 18c (user-info-window) — canonical `owner/repo#N` key from a JQL
+    // `key = ...` clause; the fetch post-filters rows to this single issue.
+    std::string keyFilter;
 };
 
 // Translate JQL once and build the GraphQL query + run flags. Warnings are
@@ -433,6 +437,7 @@ GitHubFetchSetup BuildGitHubFetchSetup(const std::string& owner, const std::stri
     setup.includePullRequests = plan.includePullRequests;
     setup.includeCommits = plan.includeCommits;
     setup.includeIssuesOrPullRequests = plan.includeIssuesOrPullRequests;
+    setup.keyFilter = translated.KeyFilter;
     return setup;
 }
 
@@ -470,11 +475,24 @@ FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat, const 
 
     std::vector<CachedTicket> results;
     bool emittedTerminal = false;
+    const std::string& keyFilter = setup.keyFilter;
     auto emit = [&](const std::vector<CachedTicket>& page, bool isLast) {
         if (!onPage) {
             return;
         }
-        onPage(page, isLast);
+        // Item 18c — a `key = owner/repo#N` clause narrows each streamed page to
+        // that single issue (the mapper writes the canonical key to ticket.id).
+        if (!keyFilter.empty()) {
+            std::vector<CachedTicket> kept;
+            for (const auto& t : page) {
+                if (t.id == keyFilter) {
+                    kept.push_back(t);
+                }
+            }
+            onPage(kept, isLast);
+        } else {
+            onPage(page, isLast);
+        }
         if (isLast) {
             emittedTerminal = true;
         }
@@ -492,6 +510,16 @@ FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat, const 
     bool issuesFullSync = true; // vacuously complete when the source isn't run
     bool commitsFullSync = true;
 
+    // Item 18c — the run functions accumulate unfiltered pages into the results
+    // vector, so the aggregate return value needs the same single-issue narrowing.
+    auto applyKeyFilter = [&]() {
+        if (!keyFilter.empty()) {
+            results.erase(std::remove_if(results.begin(), results.end(),
+                                         [&keyFilter](const CachedTicket& t) { return t.id != keyFilter; }),
+                          results.end());
+        }
+    };
+
     if (willRunIssues) {
         bool fatal = false;
         issuesFullSync =
@@ -502,6 +530,7 @@ FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat, const 
             if (outFullSyncCompleted) {
                 *outFullSyncCompleted = false;
             }
+            applyKeyFilter();
             return results;
         }
     }
@@ -514,6 +543,7 @@ FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat, const 
     // Safety net — if neither source emitted a terminal page (e.g. a
     // commits-only view downgraded to no sources), still close the stream.
     emitTerminalIfNeeded();
+    applyKeyFilter();
 
     if (outFullSyncCompleted) {
         // Never claim full sync when nothing ran (e.g. commits-only view with no
