@@ -32,7 +32,7 @@ Two independent slices, one PR each (one PR per logical feature).
 
 ## Existing utilities reused
 
-- `snapshot_trigger` / `has_snapshot` jq plumbing — `agents/scripts/core/postmortem-owed.sh:102-123` — extended, not replaced; ledger stays schema=1.
+- `snapshot_parts` (renamed from `snapshot_trigger`) / `has_snapshot` jq plumbing — `agents/scripts/core/postmortem-owed.sh:109-130` — extended + renamed for the TSV field-shift fix (emits red-checks/labels parts); ledger stays schema=1.
 - `core_scoped_only_trigger` + `pr_touches_core_cpp` de-noise — `postmortem-owed.sh:69-83` — unchanged, still applied to owes.
 - bats stub-`gh`/fixture conventions — `tests/bats/followup_due_nudge.bats:35-43` — same FAKEBIN-on-PATH pattern.
 - `scripts/dev/project-config.sh` `PC_OVERRIDE_LABELS` emission — config-sourced label set, unchanged.
