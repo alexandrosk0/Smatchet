@@ -2,7 +2,7 @@
 
 #include "P4AnnotateParse.h"
 #include "StringUtil.h"
-#include "Vcs/GitHubCommits.h"
+#include "Vcs/GitHubCommitsParse.h"
 #include "Vcs/VcsSubmission.h"
 
 #include <string>

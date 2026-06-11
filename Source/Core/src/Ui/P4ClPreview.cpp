@@ -43,6 +43,13 @@ void DrawClTooltipAsync(const std::string& cl, const AnnotateAnalysisConfig& cfg
         return;
     }
     if (S().HoverCl != cl) {
+        // Detach a still-pending previous fetch before overwriting: HoverFut comes from
+        // std::async, so destroying the last reference to an unready state blocks until the
+        // task finishes — a p4-describe-length stall on the UI thread (Pillar 2).
+        if (S().HoverFut.valid() &&
+            S().HoverFut.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+            S().DetachedHoverFuts.push_back(S().HoverFut);
+        }
         S().HoverCl = cl;
         AnnotateAnalysisConfig cfgCopy = cfg;
         S().HoverFut =

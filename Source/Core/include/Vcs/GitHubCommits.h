@@ -2,6 +2,7 @@
 #define SMATCHET_VCS_GITHUB_COMMITS_H
 
 #include "ConfigManager.h"
+#include "Vcs/GitHubCommitsParse.h"
 #include "Vcs/VcsSubmission.h"
 
 #include <string>
@@ -16,17 +17,9 @@
  */
 namespace Vcs {
 
-/**
- * Pure parse of one `GET /repos/{owner}/{repo}/commits` JSON array body into
- * submission rows (order preserved — GitHub returns newest-first). Per row:
- * Id = sha, Url = html_url, Timestamp = commit.author.date (ISO-8601, leading
- * 10 chars YYYY-MM-DD), Author = commit.author.name falling back to
- * author.login, FirstLine = first line of commit.message. Rows without a sha
- * and malformed entries are skipped; an invalid / non-array body yields an
- * empty vector. No network — bucket-A test surface
- * (tests/Core/VcsSubmission.test.cpp).
- */
-std::vector<VcsSubmission> ParseGitHubCommitListJson(const std::string& body);
+// ParseGitHubCommitListJson lives in Vcs/GitHubCommitsParse.h (re-exported via the
+// include above) — the pure parse is a separate TU so the doctest rig links it
+// without this file's cpr/HTTP fetch surface.
 
 /**
  * Fetch the user's recent commits across every `owner/repo` in
