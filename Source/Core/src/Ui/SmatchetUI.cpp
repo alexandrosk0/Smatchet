@@ -925,8 +925,11 @@ void SmatchetUI::userInfoAddToQuery(AppController& app, UiDrawSession& d, const 
         viewsActivateView(app, d, target->viewId, /*kickSync=*/false);
         active = ViewState.GetActiveView();
     }
-    if (!active) {
-        SmatchetToastManager::Instance().Push("User Info", "No active view to update.", ToastType::Warning);
+    if (!active || active->Id != target->viewId) {
+        // Activation fell back to a non-target view (or none) — never overwrite an
+        // unrelated view's query; bail with a warning instead.
+        SmatchetToastManager::Instance().Push("User Info", "Target view is unavailable; cannot update query.",
+                                              ToastType::Warning);
         return;
     }
     ViewDefinition updated = *active;
