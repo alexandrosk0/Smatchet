@@ -216,7 +216,7 @@ export SMATCHET_LOCK_BACKEND="${SMATCHET_LOCK_BACKEND-p4-counter}"
 2. **Smoke build** (`cmake --build --preset ninja-iter-msvc --target SmatchetStandalone`) — confirm compilable BEFORE shelf. Failure → fix → re-build, no shelf yet. Pass → continue.
 3. **Shelf for review** (`p4 shelve -c <pending-CL>`) — present shelf to user via `AskUserQuestion`. Rejected → iterate → re-shelve with `p4 shelve -f -c <pending-CL>`. Approved → continue.
 4. **Full tests** — `doctor.sh`, `ninja-test-msvc` + `ctest`, dual-target sentinels, `lint-flush.sh`, coverage-delta (Source/Core touch), doc-anchors / agent-contract (AGENTS.md / agents/** touch), `test-all.sh`, `ninja-ui-test-msvc` (visual touch), `perf-run.sh` + `perf-compare.py` (scenario-map hit). Failure → fix → re-test (no re-review). Pass → continue.
-5. **Promote to PR** — `p4 submit -c <approved-CL>` lands on `//smatchet/main`. Then `git add -A && git commit -m "<title>" && git push -u origin <branch> && gh pr create --draft`. Post-ship `AskUserQuestion` fires with option 3 pre-selected.
+5. **Promote to PR** — `p4 submit -c <approved-CL>` lands on `//smatchet/main`. Then build the git PR commit with the **plumbing-commit recipe** below (§ Promote-to-PR in a shared tree). Do **not** `git checkout -b` / `git add -A` / `git commit` in the canonical client tree: those mutate HEAD + the working tree, which (a) trips `guard-shared-tree.sh` under concurrent sessions and (b) the inevitable `checkout` back to `develop` reverts the just-submitted files on disk, diverging the working tree from the p4 depot head until the PR merges. Post-ship `AskUserQuestion` fires with option 3 pre-selected.
 
 ### Phase sequence — multi-slice loop (task stream, user-approved)
 
@@ -231,7 +231,7 @@ After all slices pass slice-boundary gates:
 - **Prepare main-stream review CL** — `bash agents/scripts/project/p4-task-stream-to-pr.sh <id> "<title>" --prepare-review-cl`. Integrates task stream → `//smatchet/main` into a pending CL, resolves auto-safe, shelves it, prints CL number on stdout.
 - **Code-review pass** — `code-review` agent dispatched ONCE (cumulative diff across all slices). Findings → fix inline → re-run end-gate → re-prepare review CL → re-dispatch code-review.
 - **Shelf-for-user-validation** — `AskUserQuestion`: "All slices done, tests green, code-review clean. Shelf <CL> ready — review in P4V and confirm." Feedback → fix in p4 → `p4 shelve -f -c <CL>` → re-present. Approved → continue.
-- **Promote** — `bash agents/scripts/project/p4-task-stream-to-pr.sh <id> "<title>" --promote-reviewed-cl <CL>`. Submits the approved CL to `//smatchet/main`, then creates git branch + commit + push + draft PR. Post-ship `AskUserQuestion` (option 3 pre-selected).
+- **Promote** — `bash agents/scripts/project/p4-task-stream-to-pr.sh <id> "<title>" --promote-reviewed-cl <CL>`. Submits the approved CL to `//smatchet/main`, then creates git branch + commit + push + draft PR. **In a shared canonical tree** the helper's git-publish step must use the § Promote-to-PR plumbing-commit recipe (not `git checkout -b` + `git commit`) for the same reason as the small-change loop — see the recipe's residual note. Post-ship `AskUserQuestion` (option 3 pre-selected).
 
 ### Stranded-CL recovery — `--prepare-review-cl` / `--promote-reviewed-cl`
 
@@ -259,6 +259,46 @@ The envelope from [`AGENTS.md`](../../AGENTS.md) § Trivial-visual-only change e
 3. On conflict surface: `p4 resolve -am` (auto-merge), then `p4 resolve` (manual), then fall back to user.
 
 The shelf step subsumes the Pillar-4 visual-validation pause — the user reviewing the shelf IS the visual sign-off.
+
+### Promote-to-PR in a shared tree — plumbing-commit recipe
+
+The canonical p4-mode promote step. The git ship-line needs a branch with the change, but the canonical client tree (`C:\Dev\Smatchet`) is the **shared integration tree** — usually with sibling sessions live in it. Two hard constraints collide there: `guard-shared-tree.sh` blocks any HEAD/working-tree-mutating git op (`checkout`/`switch`/`reset`/…) while a sibling is live, and the p4-mode invariant forbids `git worktree add` ([`ship-loops.md`](../agent-rules/ship-loops.md) § P4-gated ship-loop). So promote must publish a branch **without touching HEAD or the working tree**.
+
+After `p4 submit`, the on-disk files already hold the submitted content (p4 does not revert the workspace on submit) and git HEAD is still on `develop`. Build the PR commit in a throwaway index with git plumbing — no `checkout`/`add`/`commit`, so the guard never fires, no sibling is rug-pulled, and the working tree stays at the p4 depot head:
+
+```bash
+branch="agent/<id>/<kebab-slug>"   # or claude/<id>/<slug> — branch shape preserves AGENTS.md § Force-push carve-out
+title="<PR title>"
+base="origin/develop"
+
+# 1. Files the submitted CL changed (disk vs develop). git diff covers tracked
+#    edits/deletes; ls-files --others covers p4-added files git doesn't track yet.
+changed="$(git diff --name-only "$base" --; git ls-files --others --exclude-standard)"
+
+# 2. Assemble the PR commit in a temp index — never touches the real index/HEAD/worktree.
+tmp_index="$(mktemp)"; export GIT_INDEX_FILE="$tmp_index"
+git read-tree "$base"
+printf '%s\n' "$changed" | while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  if [ -e "$f" ]; then git update-index --add -- "$f"
+  else                 git update-index --remove -- "$f"; fi
+done
+tree="$(git write-tree)"
+commit="$(git commit-tree "$tree" -p "$base" -m "$title")"
+unset GIT_INDEX_FILE; rm -f "$tmp_index"
+
+# 3. Publish via refs only — `git branch` (not checkout) + push. Guard never fires.
+git branch "$branch" "$commit"
+git push -u origin "$branch"
+gh pr create --draft --base develop --head "$branch" --title "$title" \
+  --body "Promotes p4 submit CL <CL> (//smatchet/main). PR commit built via git plumbing; working tree stays at depot head."
+```
+
+Why not the override (`SMATCHET_ALLOW_SHARED_SWITCH=1`): it unblocks the guard but the `git checkout -b` it permits still flips the working tree, and the eventual `checkout develop` reverts the just-submitted files on disk under any sibling session — the exact rug-pull the guard exists to prevent. The plumbing recipe needs no override.
+
+Why the guard needs no p4-mode exemption: the recipe uses no op the guard watches for (`checkout`/`switch`/`pull`/`reset`/`merge`/`rebase`/`stash pop`), so the correct promote path passes the guard untouched. The guard's "Do feature work in a worktree" message only ever surfaces if a session ignores this recipe and runs a raw `git checkout -b` — treat that message, in p4-mode, as "use the plumbing recipe," not "add a worktree."
+
+**Residual** — `agents/scripts/project/p4-task-stream-to-pr.sh` still does a raw `git checkout -b` in its git-publish step (the multi-slice `--promote-reviewed-cl` path); it must be ported to this plumbing recipe to be shared-tree-safe. Tracked in `docs/self-improvement/categories/process.md` (PR #1125 / shelf CL 374 entry).
 
 ## Destructive p4 ops pre-flight
 
