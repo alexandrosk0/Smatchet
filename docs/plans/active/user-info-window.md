@@ -175,6 +175,8 @@ Per `AGENTS.md` § Verification automation — zero manual steps. Buckets:
 ## Implementation log
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
 
+- `319e93ea` · PR 1 (Slices 1+2) — P4 `changes -u` feed (`P4ChangeSummary`/`P4ChangesForUser` + `ParseChangesForUserOutput`), `P4ClPreview`/`P4vLaunch` helper extraction (Launch TU dissolved), 5 config keys, `Vcs::VcsSubmission` core (`P4UserFromEmail`/`FromP4Change`/`KeepOnOrAfterCutoff`/`MergeFeedsNewestFirst`), `Vcs/GitHubCommits` (`ParseGitHubCommitListJson` + `GitHubCommitsForUser`); 10 test cases / 62 assertions.
+
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
 
