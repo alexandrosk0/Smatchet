@@ -27,6 +27,57 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-11 · PR #1124 · `tests-out-of-band` — override legitimate, but a self-declared "elevate to GitHub Issue at ship" never elevated
+
+### What escaped
+PR #1124 (shorten long UI texts behind `(?)` help-marker tooltips) merged to
+`develop` carrying `tests-out-of-band`, which dismissed a **genuinely RED**
+`Test-delta gate`. Two things to separate:
+
+- **The override itself was legitimate.** #1124 added real UI logic (the
+  `SmatchetHelpMarker` widget + a tab-aware Preferences footer that records
+  `preferencesActiveTab`), so a RED Test-delta gate was *correct* — there is new
+  untested surface. But the only honest coverage home is bucket-E **hover/tooltip**
+  testing (ImGui Test Engine has no hover-surface tests today). The PR did the
+  right thing: it filed a detailed `test.md` P2 entry (2026-06-10) with a concrete
+  `test-author` next action (`ItemHover` on a marker inside the Assistant disabled
+  block, both `Render` paths, FA-atlas-absent fallback). Disposition trail present.
+- **The actual escape:** that same `test.md` entry also recorded a **UX Pillar 4
+  (Accessibility) regression** — the ~38 long-form explanations moved from
+  always-visible inline text to **mouse-hover-only**, so keyboard-only users lost
+  access entirely — and stated it "should be elevated to a GitHub Issue at ship
+  (user-observable, per `issue-triage.md`)". **That Issue was never filed.** A
+  user-observable regression that `issue-triage.md` makes a mandatory GitHub Issue
+  shipped with the intent-to-file recorded only in a backlog-row prose sentence no
+  gate reads. (Filed retroactively during this postmortem as **#1128**.)
+
+### Root cause
+Blameless, two layers:
+- **Test-delta has no honest "coverage-is-bucket-E-only" path.** A change whose
+  only test home is hover/tooltip surface (which the harness can't yet drive) can
+  only ship via `tests-out-of-band` + a backlog entry. That half worked as
+  designed — the backlog entry is the disposition trail.
+- **The self-elevation marker is unenforced (the real hole).** `issue-triage.md`
+  mandates a GitHub Issue for a user-observable regression, but nothing connects a
+  backlog/plan row that *declares its own intent to elevate* ("should be a GitHub
+  Issue at ship") to an actual Issue. The signal lived entirely in prose; the
+  ship-loop closeout never checked it, so the mandatory Issue was silently skipped.
+
+### Preventing gate
+- **New (process P2): `ship-time-issue-elevation-check`.** Extend the closeout
+  sweep (`issue-sweep.sh`) to grep a merged PR's added
+  `docs/self-improvement/categories/*` + `docs/plans/active/*` lines for an
+  "elevate to … GitHub Issue" / "should be a GitHub Issue" marker; if found and the
+  PR body carries no `Issue: #N` / `Fixes #N` to an open Issue, emit a closeout WARN
+  + `[issue-propose]` line. Plus a one-line convention in `issue-triage.md`: a
+  self-elevation marker owes either an Issue link in the PR body or a rewrite to
+  "deferred — no Issue (reason)". (The Test-delta-bucket-E-only half is **not** a
+  new gate — the existing backlog disposition is the correct mechanism.)
+- Remediation already applied: missing Issue filed as **#1128** (a11y, P2, area:ui).
+
+### Filed as
+- [`categories/process.md`](categories/process.md) — `ship-time-issue-elevation-check` (P2, 2026-06-10, #1124).
+
 ## 2026-06-10 · PR #1110, #1095, #1096 · `cr-out-of-band` ×2 + `tests-out-of-band` — three overrides surfaced together by the postmortem-owed nudge
 
 ### What escaped
