@@ -27,7 +27,7 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
-## 2026-06-11 · PR #1124 · `tests-out-of-band` — override legitimate, but a self-declared "elevate to GitHub Issue at ship" never elevated
+## 2026-06-10 · PR #1124 · `tests-out-of-band` — override legitimate, but a self-declared "elevate to GitHub Issue at ship" never elevated
 
 ### What escaped
 PR #1124 (shorten long UI texts behind `(?)` help-marker tooltips) merged to
