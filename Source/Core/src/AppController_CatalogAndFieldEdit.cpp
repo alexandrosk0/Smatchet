@@ -1857,3 +1857,107 @@ bool AppController::FetchUserGroupNames(const std::string& accountId, std::vecto
     }
     return ok;
 }
+
+bool AppController::PaneSupportsActivity(const std::string& paneId) const {
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
+        &paneContextOrFocused_(paneId)
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+    return backend && backend->Activity() != nullptr;
+}
+
+bool AppController::FetchPaneUserActivity(const std::string& paneId, const std::string& accountId,
+                                          const std::string& dayFrom, const std::string& dayTo,
+                                          const std::string& projectScope, TrackerActivityProgress& progress,
+                                          std::vector<TrackerActivityEntry>& outEntries, std::string& outError) const {
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
+        &paneContextOrFocused_(paneId)
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+    outEntries.clear();
+    outError.clear();
+    if (!backend) {
+        outError = "Tracker backend is not initialized.";
+        return false;
+    }
+    if (!backend->Activity()) {
+        outError = "Tracker backend does not support activity features.";
+        return false;
+    }
+    const TrackerConfig cfg = ConfigManager::Load();
+    auto activityResult =
+        backend->Activity()->FetchUserActivity(cfg, accountId, dayFrom, dayTo, projectScope, progress);
+    const bool ok = static_cast<bool>(activityResult);
+    if (ok) {
+        outEntries = std::move(activityResult.value());
+        requestDeferredLiveTrackerBackendSuccessNotify_();
+    } else {
+        outError = activityResult.error().Detail;
+        LOG_ERROR("AppController::FetchPaneUserActivity failed pane=%s account=%s err=%s", paneId.c_str(),
+                  TruncateForLog(accountId, 40).c_str(), outError.c_str());
+    }
+    return ok;
+}
+
+void AppController::ClearPaneUserActivity(const std::string& paneId) const {
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
+        &paneContextOrFocused_(paneId)
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+    if (backend && backend->Activity()) {
+        backend->Activity()->ClearUserActivity();
+    }
+}
+
+bool AppController::FetchPaneGroupMembers(const std::string& paneId, const std::string& groupName,
+                                          std::vector<TrackerUser>& outMembers, std::string& outError) {
+    outMembers.clear();
+    outError.clear();
+    std::shared_ptr<ITrackerBackend> backend;
+    {
+        // Scope the context reference: it must NOT be held across the blocking fetch below —
+        // a hidden-pane retirement mid-fetch would dangle it. The latched backend shared_ptr
+        // is the only thing carried across (ADR 0012).
+        GridLiveContext& ctx = paneContextOrFocused_(paneId);
+        {
+            std::lock_guard<std::mutex> lock(ctx.groupRoster.rosterMutex_);
+            std::unordered_map<std::string, std::vector<TrackerUser>>::const_iterator hit =
+                ctx.groupRoster.MembersByGroup.find(groupName);
+            if (hit != ctx.groupRoster.MembersByGroup.end()) {
+                outMembers = hit->second;
+                return true;
+            }
+        }
+        backend = std::atomic_load(&ctx.Backend);
+    }
+    if (!backend) {
+        outError = "Tracker backend is not initialized.";
+        return false;
+    }
+    if (!backend->Activity()) {
+        outError = "Tracker backend does not support activity features.";
+        return false;
+    }
+    const TrackerConfig cfg = ConfigManager::Load();
+    auto membersResult = backend->Activity()->FetchGroupMembers(cfg, groupName);
+    const bool ok = static_cast<bool>(membersResult);
+    if (ok) {
+        outMembers = std::move(membersResult.value());
+        requestDeferredLiveTrackerBackendSuccessNotify_();
+    } else {
+        outError = membersResult.error().Detail;
+        LOG_ERROR("AppController::FetchPaneGroupMembers failed pane=%s group=%s err=%s", paneId.c_str(),
+                  TruncateForLog(groupName, 40).c_str(), outError.c_str());
+    }
+    // Re-resolve for the write-back — the context may have been retired during the fetch.
+    // Exact-id only: caching a fallback pane's roster into the focused context would mix
+    // backends (the per-context invariant GridContextGroupRoster exists to keep).
+    std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.find(paneId);
+    if (it != gridContexts_.end()) {
+        std::lock_guard<std::mutex> lock(it->second->groupRoster.rosterMutex_);
+        if (ok) {
+            it->second->groupRoster.MembersByGroup[groupName] = outMembers;
+            it->second->groupRoster.LastGroupRosterError.clear();
+        } else {
+            it->second->groupRoster.LastGroupRosterError = outError;
+        }
+    }
+    return ok;
+}

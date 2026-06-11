@@ -546,14 +546,16 @@ add_executable(SmatchetTests
     # "components rendered as text" bug class was fixture-invisible. The test drives
     # a real JiraClient at an in-process httplib::Server (loopback, scripted JSON)
     # via tests/support/JiraCatalogHttpFixture.h. Instantiating JiraClient needs the
-    # full vtable, so all five Jira implementation TUs link here; their deps (cpr,
-    # TrackerHttpUtils, TrackerFieldCatalogPure, TrackerFieldPayload, OfflineQueue,
-    # BackendAuditTrail, ghc_filesystem) are already in the rig.
+    # full vtable, so all six Jira implementation TUs link here (JiraActivityFeed
+    # joined in user-info-window Slice 3 — it defines the ITrackerActivity virtuals);
+    # their deps (cpr, TrackerHttpUtils, TrackerFieldCatalogPure, TrackerFieldPayload,
+    # OfflineQueue, BackendAuditTrail, ghc_filesystem) are already in the rig.
     Core/TrackerCatalogBuild.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraIssueSearch.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraIssueMutation.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraUserAndMeta.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraActivityFeed.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldCatalog.cpp"
     # build-quality-velocity-hardening #32 — flaky-test quarantine mechanism self-test.
     # Demonstrates SMATCHET_QUARANTINED_TEST_CASE / SMATCHET_QT_CHECK env-flip behaviour.
@@ -592,6 +594,12 @@ add_executable(SmatchetTests
     Core/VcsSubmission.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Vcs/VcsSubmission.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Vcs/GitHubCommitsParse.cpp"
+    # user-info-window.md Slice 3 — pure activity-feed core: discovery-JQL build,
+    # 8h-workday estimate formatting, changelog-JSON -> TrackerActivityEntry mapping,
+    # and the CL / issue-key free-text scans behind "add to query". All production
+    # TUs (JiraActivityFeed.cpp, P4AnnotateParse.cpp, ProjectResolver.cpp) are
+    # already linked above.
+    Core/JiraActivityFeed.test.cpp
 )
 
 # Whisper dictation router — link the production TU that matches the parent
