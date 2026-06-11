@@ -101,3 +101,9 @@
   Concrete next action: lift to a shared internal header reachable from both TUs. Surfaced by retrospective code-review sweep on PR #144.
   Status: open
   Last-reviewed: 2026-05-17
+
+- 2026-06-11 · grid-engine · [debt] · P3 — `selectedFieldsBuf` is now write-only dead state after the #views-field-uncheck set-authority fix
+  Details: The Views editor's selected-field `char[1024] selectedFieldsBuf` (`Source/Core/include/Ui/SmatchetUiSession.h:427`) was demoted to a write-only debug snapshot when the authoritative `selectedFieldSet` landed (PR for issue #1143). Zero readers / renderers remain (the 6 former `ParseCsv(selectedFieldsBuf)` authority reads all migrated to the set); `SyncSelectedFieldsBuffer` still serializes into it on every toggle purely for debugger inspection + a truncation LOG_WARN tripwire. 1 KB/session + a serialize per mutation for no functional value (fable code-review MEDIUM).
+  Concrete next action: remove `selectedFieldsBuf` + `SyncSelectedFieldsBuffer` + its callers (the grid `CopyStringToBuffer` write at `SmatchetActiveProjectGridUi.cpp:789` too); drive everything off `selectedFieldSet`. ~30 min, mechanical. The TODO marker is in the header comment.
+  Status: open
+  Last-reviewed: 2026-06-11

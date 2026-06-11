@@ -440,6 +440,15 @@ struct UiDrawSession {
     std::future<JqlUserSearchResult> jqlAcpUserSearchFuture;
     uint64_t jqlAcpUserSearchInFlightId = 0;
 
+    // Authoritative selected-field id set for the Views editor (#views-field-uncheck).
+    // The toggle handlers / select-all / clear mutate THIS directly; it is seeded
+    // from view.Fields on view activate/create/discard. selectedFieldsBuf below is now
+    // write-only — a sorted-CSV snapshot kept only for debugger inspection (rendered
+    // nowhere, parsed back nowhere; its 1024-byte cap WAS the #views-field-uncheck bug:
+    // a >1023-byte selection truncated and auto-unchecked any field past the cutoff).
+    // Any code writing view.Fields from the editor selection must read this set.
+    // TODO(debt views-field-uncheck): remove selectedFieldsBuf + SyncSelectedFieldsBuffer.
+    std::unordered_set<std::string> selectedFieldSet;
     char selectedFieldsBuf[1024]{};
     char fieldSearchBuf[128]{};
     char auditSearchBuf[256]{};
