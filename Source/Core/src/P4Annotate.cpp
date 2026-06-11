@@ -315,6 +315,32 @@ bool P4FirstSubmittedChangelistOnCalendarDay(const AnnotateAnalysisConfig& cfg, 
     return true;
 }
 
+bool P4ChangesForUser(const AnnotateAnalysisConfig& cfg, const std::string& p4User, int maxN,
+                      std::vector<P4ChangeSummary>& outChanges, std::string& outError) {
+    outChanges.clear();
+    outError.clear();
+    if (p4User.empty()) {
+        outError = "empty p4 user";
+        return false;
+    }
+    const int capped = maxN > 0 ? maxN : 1;
+    const std::vector<std::string> args = {"changes", "-u", p4User, "-m", std::to_string(capped), "-s", "submitted"};
+    int code = 0;
+    std::string out;
+    std::string err;
+    if (!P4RunCommand(cfg, args, code, out, err)) {
+        outError = "failed to run p4";
+        return false;
+    }
+    if (code != 0) {
+        outError = FormatP4CommandError("p4 changes failed", code, err);
+        return false;
+    }
+    outChanges = P4AnnotateParse::ParseChangesForUserOutput(out);
+    LOG_DEBUG("P4ChangesForUser: user=%s max=%d parsed=%zu", p4User.c_str(), capped, outChanges.size());
+    return true;
+}
+
 P4ChangelistDescribeCache::P4ChangelistDescribeCache(int maxEntries) : maxEntries_(maxEntries > 0 ? maxEntries : 16) {}
 
 P4ChangelistDetails P4ChangelistDescribeCache::Get(const std::string& changelist) const {

@@ -3,6 +3,7 @@
 #include "CallstackParser.h"
 #include "Logger.h"
 #include "P4Annotate.h"
+#include "Ui/P4ClPreview.h"
 
 #include <chrono>
 #include <utility>
@@ -180,7 +181,7 @@ void EnsureDetailLoading(size_t idx, const AnnotateAnalysisConfig& cfg, const st
         p.Lines = P4AnnotateFile(cfg, path, atCl, p.Error);
         for (auto& ln : p.Lines) {
             if (!ln.Changelist.empty()) {
-                P4ChangelistDetails d = State().tooltipClCache.GetOrFetch(cfg, ln.Changelist);
+                P4ChangelistDetails d = P4ClPreview::Cache().GetOrFetch(cfg, ln.Changelist);
                 if (!d.Date.empty()) {
                     ln.Date = d.Date;
                 }
@@ -205,16 +206,7 @@ void PollDetails() {
             ++i;
         }
     }
-    for (size_t i = 0; i < State().detachedClHoverFuts.size();) {
-        if (!State().detachedClHoverFuts[i].valid() ||
-            State().detachedClHoverFuts[i].wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-            State().detachedClHoverFuts.erase(
-                State().detachedClHoverFuts.begin() +
-                static_cast<std::vector<std::shared_future<P4ChangelistDetails>>::difference_type>(i));
-        } else {
-            ++i;
-        }
-    }
+    P4ClPreview::ReapDetached();
 
     std::lock_guard<std::mutex> lk(State().displayMutex);
     for (size_t i = 0; i < State().detailFuts.size(); ++i) {

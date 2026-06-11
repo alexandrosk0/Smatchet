@@ -583,6 +583,14 @@ add_executable(SmatchetTests
     # TicketSyncService.cpp (needed by ~GridLiveContext) is already linked above.
     Core/GridLiveContext.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/GridLiveContext.cpp"
+    # user-info-window.md Slices 1+2 — pure VCS-feed core: p4 `changes -u` parse
+    # (ParseChangesForUserOutput; P4AnnotateParse.cpp already linked above),
+    # email→p4-user, p4-date normalisation, day-window cutoff, GitHub commit-list
+    # JSON parse, newest-first two-feed merge. GitHubCommits.cpp pulls cpr +
+    # TrackerHttpUtils + GitHubClientHelpers — all already in the rig.
+    Core/VcsSubmission.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Vcs/VcsSubmission.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Vcs/GitHubCommits.cpp"
 )
 
 # Whisper dictation router — link the production TU that matches the parent

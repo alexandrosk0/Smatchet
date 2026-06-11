@@ -12,6 +12,8 @@
 #include "SmatchetHelpMarker.h"
 #include "TrackerDateTimeFieldEditor.h"
 #include "TrackerFieldSchema.h"
+#include "Ui/P4ClPreview.h"
+#include "Ui/P4vLaunch.h"
 
 #include <algorithm>
 #include <chrono>
@@ -351,8 +353,8 @@ void DrawCallstackRowFnLocCells(AnnotateDrawCtx& ctx, const AnnotateRow& row) {
         const std::string shortLoc = shortPath + ":" + std::to_string(row.Parsed.LineNumber);
         PushAnnotateLinkTextOnly(theme);
         if (ImGui::SelectableRaw(shortLoc.c_str(), false, ImGuiSelectableFlags_AllowOverlap)) {
-            LaunchP4VcLike(State().annotateCfg, State().timeTpl, State().changeTpl, true, row.PathForP4,
-                           row.Parsed.LineNumber, row.Annotate.Changelist);
+            P4vLaunch::LaunchP4VcLike(State().annotateCfg, State().timeTpl, State().changeTpl, true, row.PathForP4,
+                                      row.Parsed.LineNumber, row.Annotate.Changelist);
         }
         PopAnnotateLinkTextOnly();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
@@ -427,12 +429,12 @@ void DrawCallstackRowClDateCells(AnnotateDrawCtx& ctx, const AnnotateRow& row, b
             } else if (row.Annotate.Changelist.empty()) {
                 ImGui::SetTooltip("No changelist on this row.");
             } else {
-                DrawClTooltipAsync(row.Annotate.Changelist, State().annotateCfg, theme);
+                P4ClPreview::DrawClTooltipAsync(row.Annotate.Changelist, State().annotateCfg, theme);
             }
         }
         if (ImGui::IsItemClicked() && !pending && !row.Annotate.Changelist.empty()) {
-            LaunchP4VcLike(State().annotateCfg, State().timeTpl, State().changeTpl, false, row.PathForP4,
-                           row.Parsed.LineNumber, row.Annotate.Changelist);
+            P4vLaunch::LaunchP4VcLike(State().annotateCfg, State().timeTpl, State().changeTpl, false, row.PathForP4,
+                                      row.Parsed.LineNumber, row.Annotate.Changelist);
         }
     }
 
@@ -608,12 +610,12 @@ void DrawEntryLineClCell(const EntryLineCtx& lc, const P4AnnotatedLine& ln) {
         PushAnnotateLinkTextOnly(theme);
         if (ImGui::SelectableRaw(ln.Changelist.c_str(), false, ImGuiSelectableFlags_AllowOverlap,
                                  ImVec2(clCellW, lc.HitH))) {
-            LaunchP4VcLike(State().annotateCfg, State().timeTpl, State().changeTpl, false, lc.Row.PathForP4,
-                           ln.SourceLine, ln.Changelist);
+            P4vLaunch::LaunchP4VcLike(State().annotateCfg, State().timeTpl, State().changeTpl, false, lc.Row.PathForP4,
+                                      ln.SourceLine, ln.Changelist);
         }
         PopAnnotateLinkTextOnly();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-            DrawClTooltipAsync(ln.Changelist, State().annotateCfg, theme);
+            P4ClPreview::DrawClTooltipAsync(ln.Changelist, State().annotateCfg, theme);
         }
     }
     AnnRowOpenCopyMenu();
