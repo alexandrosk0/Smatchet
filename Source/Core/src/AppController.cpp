@@ -640,6 +640,16 @@ void AppController::applyPaneSyncKickOnMainThread_(const std::string& paneId, Tr
     }
 }
 
+GridLiveContext& AppController::paneContextOrFocused_(const std::string& paneId) {
+    std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.find(paneId);
+    return (it == gridContexts_.end()) ? focusedContext() : *it->second;
+}
+
+const GridLiveContext& AppController::paneContextOrFocused_(const std::string& paneId) const {
+    std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.find(paneId);
+    return (it == gridContexts_.end()) ? focusedContext() : *it->second;
+}
+
 bool AppController::IsPaneSyncLive(const std::string& paneId) const {
     std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.find(paneId);
     return it != gridContexts_.end() && it->second->initialSyncKicked;

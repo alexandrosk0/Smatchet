@@ -27,6 +27,7 @@ class PlaneClient : public ITrackerBackend,
     ITrackerFieldCatalog* FieldCatalog() override;
     ITrackerIssueMutations* Mutations() override;
     ITrackerCollaboration* Collaboration() override;
+    ITrackerActivity* Activity() override;
     PlaneClient();
     ~PlaneClient() override;
     std::string GetTrackerType() const override { return "Plane"; }

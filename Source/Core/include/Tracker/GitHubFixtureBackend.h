@@ -45,6 +45,7 @@ class GitHubFixtureBackend : public ITrackerBackend,
     ITrackerFieldCatalog* FieldCatalog() override;
     ITrackerIssueMutations* Mutations() override;
     ITrackerCollaboration* Collaboration() override;
+    ITrackerActivity* Activity() override;
     /// `fixturePath` must point to a JSON file shaped like the GraphQL search
     /// response — top-level `nodes[]` array of Issue/PullRequest objects.
     /// `ownerHint` / `repoHint` are used when nodes don't carry

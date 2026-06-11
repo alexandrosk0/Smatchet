@@ -555,11 +555,11 @@ TEST_CASE("FetchIssuesForKeys returns Ok tickets on success and a detail-carryin
 }
 
 // Slice 7 of the tracker Result<T> migration flipped the ITrackerCollaboration virtuals: the reads
-// (FetchIssueWatchers / FetchIssueVotes / SearchUsersByQuery / FetchUserGroupNames / FetchIssueComments)
-// to Result<payload, TrackerError>, and the writes (AddIssueWatcher / AddIssueCommentPlain / AddWorklog /
-// AddIssueCommentAnnotateContext) to a bare TrackerError. FetchIssueVotes' four out-params (voters +
-// int* + bool* + bool*) collapsed into the TrackerIssueVotes Ok payload. These cases pin both the new
-// interface defaults (unsupported → Err) and the migrated value shapes via a minimal stub override.
+// (FetchIssueWatchers / FetchIssueVotes / SearchUsersByQuery / FetchIssueComments — FetchUserGroupNames
+// has since moved to ITrackerActivity) to Result<payload, TrackerError>, and the writes (AddIssueWatcher /
+// AddIssueCommentPlain / AddWorklog / AddIssueCommentAnnotateContext) to a bare TrackerError. FetchIssueVotes' four
+// out-params (voters + int* + bool* + bool*) collapsed into the TrackerIssueVotes Ok payload. These cases pin both the
+// new interface defaults (unsupported → Err) and the migrated value shapes via a minimal stub override.
 namespace {
 class StubCollaboration : public ITrackerCollaboration {
   public:
@@ -599,8 +599,8 @@ TEST_CASE("ITrackerCollaboration migrated shapes: Result reads, bare-TrackerErro
         CHECK(e.IsOk());
     }
 
-    SUBCASE("a non-overridden read default is an InvalidRequest Err (Result<vector<string>>)") {
-        auto r = collab.FetchUserGroupNames(TrackerConfig{}, "acc-1");
+    SUBCASE("a non-overridden read default is an InvalidRequest Err (Result<vector<TrackerUser>>)") {
+        auto r = collab.SearchUsersByQuery(TrackerConfig{}, "ali");
         REQUIRE_FALSE(static_cast<bool>(r));
         CHECK(r.error().Kind == TrackerErrorKind::InvalidRequest);
     }

@@ -86,10 +86,4 @@ class ITrackerCollaboration {
                                                         bool /*approximated*/, const std::string& /*codeSnippet*/) {
         return TrackerErrorInvalidRequest("AddIssueCommentAnnotateContext is not supported by this backend.");
     }
-
-    virtual Result<std::vector<std::string>, TrackerError> FetchUserGroupNames(const TrackerConfig& /*cfg*/,
-                                                                               const std::string& /*accountId*/) {
-        return Result<std::vector<std::string>, TrackerError>::Err(
-            TrackerErrorInvalidRequest("FetchUserGroupNames is not supported by this backend."));
-    }
 };

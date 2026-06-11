@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 
 class ITrackerConnectivity;
@@ -14,6 +15,16 @@ namespace smatchet {
  *  ("550e8400-e29b-...") and other digit-leading strings from being misclassified
  *  as keys. Pure; no I/O. */
 std::string ExtractIssueKeyPrefix(const std::string& id);
+
+/** First Jira-shaped issue key found in free text ("see PROJ-123 for details" -> "PROJ-123"
+ *  at [4, 12)). Tokenizes on word boundaries (a token is a maximal run of [A-Za-z0-9_-]) and
+ *  validates each token via ExtractIssueKeyPrefix — key validation stays single-source. */
+struct IssueKeyMatch {
+    std::string Key;        ///< "" when no key was found.
+    std::size_t Start = 0;  ///< byte offset of the key's first char in `text`.
+    std::size_t End = 0;    ///< one past the key's last char (Start == End when no match).
+};
+IssueKeyMatch FindFirstIssueKeyInText(const std::string& text);
 
 /** Resolve the project key for a new draft / bulk-import row.
  *

@@ -110,6 +110,8 @@ class GridContextDepsAdapter;
 class OfflineQueueService;
 class TicketSyncService;
 class LuaAutomationHost;
+struct TrackerActivityEntry;
+struct TrackerActivityProgress;
 
 namespace smatchet {
 namespace cmd {
@@ -922,6 +924,31 @@ class AppController {
     bool FetchUserGroupNames(const std::string& accountId, std::vector<std::string>& outGroupNames,
                              std::string& outError) const;
 
+    // --- Per-pane activity delegators (user-info-window Slice 3, plan item 15) ----------
+    // The User Info window opens FROM a grid pane: each delegator resolves THAT pane's
+    // backend (gridContexts_ lookup, falling back to the focused context for an unknown /
+    // retired pane id) and null-checks its Activity() role — the FetchUserGroupNames guard
+    // pattern, per-pane. The fetches block on HTTP — worker thread only (Pillar 2).
+
+    /// Whether `paneId`'s backend exposes the activity role (UI gates the window on this).
+    bool PaneSupportsActivity(const std::string& paneId) const;
+
+    /// Recent tracker activity for `accountId` via the pane's ITrackerActivity (see that
+    /// header for the dayFrom/dayTo/projectScope and `progress` contracts).
+    bool FetchPaneUserActivity(const std::string& paneId, const std::string& accountId, const std::string& dayFrom,
+                               const std::string& dayTo, const std::string& projectScope,
+                               TrackerActivityProgress& progress, std::vector<TrackerActivityEntry>& outEntries,
+                               std::string& outError) const;
+
+    /// Cancel the pane's in-flight FetchPaneUserActivity (safe from any thread; no-op
+    /// when the pane has no activity role).
+    void ClearPaneUserActivity(const std::string& paneId) const;
+
+    /// Group-member lookup through the pane context's lazy GridContextGroupRoster cache
+    /// (hit = no HTTP; miss = ITrackerActivity::FetchGroupMembers, then cached).
+    bool FetchPaneGroupMembers(const std::string& paneId, const std::string& groupName,
+                               std::vector<TrackerUser>& outMembers, std::string& outError);
+
   private:
     std::unique_ptr<LocalCacheManager> Cache;
     std::unique_ptr<ITrackerBackendFactory>
@@ -978,6 +1005,10 @@ class AppController {
     /// (design addendum § 6.2).
     GridLiveContext& focusedContext() { return *focusedContextPtr_.load(); }
     const GridLiveContext& focusedContext() const { return *focusedContextPtr_.load(); }
+    /// `paneId`'s live context, falling back to focusedContext() when the pane has none
+    /// (unknown id / retired mid-flight). Never null — the default context is permanent.
+    GridLiveContext& paneContextOrFocused_(const std::string& paneId);
+    const GridLiveContext& paneContextOrFocused_(const std::string& paneId) const;
     /// Shared body of the RefreshLocalData paths (issue #1081): null = unchecked UI-thread
     /// refresh; non-null = drop the replace (under ctx.activeTicketsMutex_) when ctx's
     /// backendGeneration_ no longer matches the captured value. `ctx` MUST be the context the

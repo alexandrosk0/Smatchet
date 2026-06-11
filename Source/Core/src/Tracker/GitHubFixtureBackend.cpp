@@ -34,6 +34,7 @@ ITrackerConnectivity& GitHubFixtureBackend::Connectivity() { return *this; }
 ITrackerFieldCatalog* GitHubFixtureBackend::FieldCatalog() { return nullptr; }
 ITrackerIssueMutations* GitHubFixtureBackend::Mutations() { return this; }
 ITrackerCollaboration* GitHubFixtureBackend::Collaboration() { return nullptr; }
+ITrackerActivity* GitHubFixtureBackend::Activity() { return nullptr; }
 
 GitHubFixtureBackend::GitHubFixtureBackend(const std::string& fixturePath, const std::string& ownerHint,
                                            const std::string& repoHint, bool includePullRequests)
