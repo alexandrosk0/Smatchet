@@ -147,6 +147,7 @@ mksnap() {
     [[ "$output" == *"PR #907"* ]]
     [[ "$output" != *"PR #908"* ]]
     PATH="$FAKEBIN:$PATH" FAKE_PR_ROWS="$rows" run bash "$SCRIPT" --list
+    [ "$status" -eq 0 ]
     [[ "$output" == *"postmortem owed: PR #907"* ]]
     [[ "$output" == *"defensive label (no postmortem owed): PR #908"* ]]
 }
