@@ -346,7 +346,6 @@ std::string P4UserForEmail(const AnnotateAnalysisConfig& cfg, const std::string&
     if (wanted.empty()) {
         return std::string();
     }
-    const std::string wantedLower = ToLowerAsciiCopy(wanted);
     int code = 0;
     std::string out;
     std::string err;
@@ -355,23 +354,13 @@ std::string P4UserForEmail(const AnnotateAnalysisConfig& cfg, const std::string&
         LOG_DEBUG("P4UserForEmail: p4 users failed code=%d (%s)", code, err.c_str());
         return std::string();
     }
-    const std::vector<std::string> lines = SplitLines(out);
-    for (size_t i = 0; i < lines.size(); ++i) {
-        const std::string& line = lines[i];
-        const size_t lt = line.find('<');
-        const size_t gt = line.find('>', lt == std::string::npos ? 0 : lt);
-        if (lt == std::string::npos || gt == std::string::npos || gt <= lt + 1) {
-            continue;
-        }
-        const std::string lineEmail = TrimCopy(line.substr(lt + 1, gt - lt - 1));
-        if (ToLowerAsciiCopy(lineEmail) == wantedLower) {
-            const std::string login = TrimCopy(line.substr(0, lt));
-            LOG_DEBUG("P4UserForEmail: matched email '%s' -> login '%s'", wanted.c_str(), login.c_str());
-            return login;
-        }
+    const std::string login = P4AnnotateParse::ParseP4UserLoginForEmail(out, wanted);
+    if (login.empty()) {
+        LOG_DEBUG("P4UserForEmail: no p4 user matched email '%s'", wanted.c_str());
+    } else {
+        LOG_DEBUG("P4UserForEmail: matched email '%s' -> login '%s'", wanted.c_str(), login.c_str());
     }
-    LOG_DEBUG("P4UserForEmail: no p4 user matched email '%s'", wanted.c_str());
-    return std::string();
+    return login;
 }
 
 P4ChangelistDescribeCache::P4ChangelistDescribeCache(int maxEntries) : maxEntries_(maxEntries > 0 ? maxEntries : 16) {}
