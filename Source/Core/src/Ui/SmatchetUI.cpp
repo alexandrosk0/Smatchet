@@ -22,6 +22,7 @@
 #include "UiPerfMonitor.h"
 #include "SmatchetPerfUi.h"
 #include "SmatchetPlanDocViewerUi.h"
+#include "SmatchetViewsDashboardUi_detail.h"
 #include "SmatchetBugReportUi.h"
 #include "ImGuiHotkey.h"
 #include "SmatchetUiSession.h"
@@ -843,6 +844,25 @@ void SmatchetUI::drawSecondaryWindows(AppController& app, UiDrawSession& d) {
         annotateAnalysisUi_.DrawWindow(app, &g_ui.showAnnotateAnalysis, g_ui.focusedPane().gridState.ActiveIssueId);
     }
     {
+        SMATCHET_UI_PERF_SCOPE("SmatchetUserInfoUi::DrawWindow");
+        // Bind once: the User Info popup TU stays decoupled from view plumbing.
+        if (!g_ui.onUserInfoAddToQuery) {
+            AppController* appPtr = &app;
+            g_ui.onUserInfoAddToQuery = [this, appPtr](const std::string& paneId, const std::string& issueKey) {
+                userInfoAddToQuery(*appPtr, g_ui, paneId, issueKey);
+            };
+        }
+        const bool wantUserInfoFocus = g_ui.requestUserInfoFocus;
+        if (g_ui.showUserInfo) {
+            prepareTopLevelWindow(g_ui, "user_info", 720.0f, 560.0f, wantUserInfoFocus);
+        }
+        // Always called (even hidden) so the close-edge cleanup + future drain run.
+        userInfoUi_.DrawWindow(app, g_ui, &g_ui.showUserInfo);
+        if (wantUserInfoFocus) {
+            g_ui.requestUserInfoFocus = false;
+        }
+    }
+    {
         SMATCHET_UI_PERF_SCOPE("drawPreferencesWindow");
         drawPreferencesWindow(app, d);
     }
@@ -876,6 +896,47 @@ void SmatchetUI::drawSecondaryWindows(AppController& app, UiDrawSession& d) {
         smatchet::DrawPlanDocViewer(d);
     }
     drawSecondaryWindowsTail(app, d);
+}
+
+// "Add to view query" from the User Info window's issue-key context menu: replace the
+// source pane's view query with a single-key lookup and re-sync. Falls back to the
+// focused pane when the source pane was closed since the window opened.
+void SmatchetUI::userInfoAddToQuery(AppController& app, UiDrawSession& d, const std::string& sourcePaneId,
+                                    const std::string& issueKey) {
+    if (issueKey.empty()) {
+        SmatchetToastManager::Instance().Push("User Info", "No issue key to add.", ToastType::Warning);
+        return;
+    }
+    GridPane* target = FindGridPaneById(d.gridPanes, sourcePaneId);
+    if (!target) {
+        target = FindGridPaneById(d.gridPanes, d.focusedPaneId);
+    }
+    if (!target) {
+        SmatchetToastManager::Instance().Push("User Info", "Source pane is gone; cannot update its view query.",
+                                              ToastType::Warning);
+        return;
+    }
+    // Per-backend key clause: Plane filter syntax vs Jira JQL.
+    const std::string query = (target->backendKey == "plane") ? ("key:" + issueKey) : ("key = \"" + issueKey + "\"");
+    const ViewDefinition* active = ViewState.GetActiveView();
+    if (!active || active->Id != target->viewId) {
+        // Adopt the pane's view identity without the network re-fetch — the
+        // UpdateActive + SyncWithCurrentView below kicks the sync with the new query.
+        viewsActivateView(app, d, target->viewId, /*kickSync=*/false);
+        active = ViewState.GetActiveView();
+    }
+    if (!active) {
+        SmatchetToastManager::Instance().Push("User Info", "No active view to update.", ToastType::Warning);
+        return;
+    }
+    ViewDefinition updated = *active;
+    updated.Jql = query;
+    if (ViewState.UpdateActive(updated)) {
+        d.cfg.JqlQuery = query;
+        SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlBuf, query);
+        SyncWithCurrentView(app, d, ViewState.GetStore(), true);
+        SmatchetToastManager::Instance().Push("User Info", "View query set to " + issueKey + ".", ToastType::Success);
+    }
 }
 
 // Mode-independent floating overlays — toasts + the app-update modal. Drawn by BOTH the

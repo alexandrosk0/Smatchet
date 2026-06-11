@@ -27,6 +27,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <future>
 #include <memory>
 #include <mutex>
@@ -219,6 +220,22 @@ struct UiDrawSession {
     /// One-frame focus latch for the Plan-doc viewer. See `requestPreferencesFocus`.
     bool requestPlanDocViewerFocus = false;
     bool requestAuditTrailFocus = false;
+    /// User Info window (SmatchetUserInfoUi). Opened from the grid right-click
+    /// menu on user-type cells; dock tab X / Escape clears this.
+    bool showUserInfo = false;
+    /// One-frame focus latch for the User Info window. See `requestPreferencesFocus`.
+    bool requestUserInfoFocus = false;
+    /// Staged open/retarget request (SmatchetUserInfoUi::Open writes these;
+    /// DrawWindow consumes them next frame via adoptPendingRequest).
+    bool userInfoRequestPending = false;
+    std::string userInfoSourcePaneId;
+    std::string userInfoDisplayName;
+    std::string userInfoEmail;
+    std::string userInfoAccountId;
+    /// Host-wired: "Add to view query" from the User Info window's issue-key
+    /// context menu (paneId, issueKey) — SmatchetUI binds this to
+    /// userInfoAddToQuery so the popup TU stays decoupled from view plumbing.
+    std::function<void(const std::string& paneId, const std::string& issueKey)> onUserInfoAddToQuery;
     /** When false, the Log window is hidden (dock tab X sets this; reopen from Settings). */
     bool showLogWindow = true;
     /// One-frame focus latch for the Log window. See `requestPreferencesFocus`.

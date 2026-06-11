@@ -448,7 +448,7 @@ struct TrackerConfig {
     std::string UpdateSkipVersion;
     std::string UpdateGithubRepo = "alexandrosk0/Smatchet";
 
-    // --- User Info window (docs/plans/active/user-info-window.md) ---
+    // --- User Info window (docs/plans/user-info-window.md) ---
     // Case-insensitive substring that marks a tracker user-group as "production"
     // (e.g. "prod"); empty disables the production-group highlight.
     std::string ProductionGroupKeyword;

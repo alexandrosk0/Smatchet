@@ -8,7 +8,7 @@
 
 /**
  * Source-tagged VCS submission rows for the User Info window's unified feed
- * (docs/plans/active/user-info-window.md, Slice 1). Pure logic — no I/O, no
+ * (docs/plans/user-info-window.md, Slice 1). Pure logic — no I/O, no
  * process spawn, no network. Test surface: tests/Core/VcsSubmission.test.cpp.
  */
 namespace Vcs {
