@@ -738,7 +738,10 @@ void SmatchetUI::drawActiveProjectUnsavedStrip(ActiveProjectDrawCtx& ctx) {
             ViewDefinition updated = *activeViewForGrid;
             updated.Name = d.viewNameBuf[0] ? std::string(d.viewNameBuf) : activeViewForGrid->Name;
             updated.Jql = d.viewJqlBuf[0] ? std::string(d.viewJqlBuf) : activeViewForGrid->Jql;
-            const std::vector<std::string> editedFields = SmatchetViewsDashboardUiDetail::ParseCsv(d.selectedFieldsBuf);
+            // Authoritative selection set, not the truncating buffer (#views-field-uncheck) — a
+            // large selection persists in full instead of being clipped on disk at the 1023-byte cap.
+            const std::vector<std::string> editedFields =
+                SmatchetViewsDashboardUiDetail::ToSortedVector(d.selectedFieldSet);
             if (!editedFields.empty()) {
                 updated.Fields = editedFields;
             }
@@ -776,7 +779,13 @@ void SmatchetUI::drawActiveProjectUnsavedStrip(ActiveProjectDrawCtx& ctx) {
             d.lastSyncedColumnOrder = restoreSource->ColumnOrder;
             SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewNameBuf, restoreSource->Name);
             SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlBuf, restoreSource->Jql);
-            const std::string fieldsCsv = SmatchetViewsDashboardUiDetail::JoinCsvLocal(restoreSource->Fields);
+            // Re-seed the authoritative field selection from the restored view. See
+            // views-field-uncheck — the buffer below is only a display mirror now.
+            d.selectedFieldSet.clear();
+            for (const auto& fieldId : restoreSource->Fields) {
+                d.selectedFieldSet.insert(fieldId);
+            }
+            const std::string fieldsCsv = SmatchetViewsDashboardUiDetail::SerializeSelectedFields(d.selectedFieldSet);
             SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.selectedFieldsBuf, fieldsCsv);
             d.viewsDirty = false;
             d.viewSortDirty = false;
@@ -841,7 +850,9 @@ void SmatchetUI::drawActiveProjectSaveAsNewModal(ActiveProjectDrawCtx& ctx) {
             if (!d.editingColumnOrder.empty()) {
                 created.ColumnOrder = d.editingColumnOrder;
             }
-            const std::vector<std::string> editedFields = SmatchetViewsDashboardUiDetail::ParseCsv(d.selectedFieldsBuf);
+            // Authoritative selection set, not the truncating buffer (#views-field-uncheck).
+            const std::vector<std::string> editedFields =
+                SmatchetViewsDashboardUiDetail::ToSortedVector(d.selectedFieldSet);
             if (!editedFields.empty()) {
                 created.Fields = editedFields;
             }

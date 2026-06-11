@@ -3,6 +3,7 @@
 #include "SmatchetViewsDashboardUi_detail.h"
 
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 // Bucket-A coverage for the pure (ImGui-free) helpers lifted out of
@@ -113,4 +114,69 @@ TEST_CASE("CategorizeAvailableFields — partition into visible/system/custom/ba
         CHECK(byName.custom.size() == 1);
         CHECK(byName.custom[0]->Id == "customfield_2");
     }
+}
+
+// ---------------------------------------------------------------------------
+// #views-field-uncheck — the selected-field set is now the source of truth. The
+// Views Fields tab could not add a field once the sorted-CSV of the selection
+// exceeded 1023 bytes: the set was re-derived every frame by PARSING a fixed
+// 1024-byte char buffer, and CopyStringToBuffer silently truncated mid-token,
+// so any field past the cutoff was dropped on the round-trip and auto-unchecked.
+// These cases pin the pure serialization seam that now backs the authoritative
+// set: a large selection must survive set -> serialize -> deserialize with NO
+// loss, and CopyStringToBuffer must REPORT truncation rather than swallow it.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("SerializeSelectedFields/DeserializeSelectedFields — 100-field selection round-trips losslessly") {
+    std::unordered_set<std::string> selected;
+    for (int i = 0; i < 100; ++i) {
+        selected.insert("customfield_" + std::to_string(10000 + i));
+    }
+    // Long-id field that sorts late — the exact casualty class of the bug
+    // (timeoriginalestimate landed past the 1023-byte cutoff under a full catalog).
+    selected.insert("timeoriginalestimate");
+
+    const std::string csv = SerializeSelectedFields(selected);
+    // The serialized form is comfortably past the old 1024-byte buffer cap.
+    CHECK(csv.size() > 1023);
+
+    const std::unordered_set<std::string> restored = DeserializeSelectedFields(csv);
+    CHECK(restored.size() == selected.size());
+    CHECK(restored == selected);
+    // The late-sorting field specifically survives (the consistent casualty).
+    CHECK(restored.count("timeoriginalestimate") == 1);
+}
+
+TEST_CASE("SerializeSelectedFields — canonical sorted order, deterministic CSV") {
+    std::unordered_set<std::string> selected = {"status", "assignee", "summary"};
+    CHECK(SerializeSelectedFields(selected) == "assignee, status, summary");
+
+    std::unordered_set<std::string> empty;
+    CHECK(SerializeSelectedFields(empty).empty());
+    CHECK(DeserializeSelectedFields("").empty());
+}
+
+TEST_CASE("CopyStringToBuffer — reports fit vs truncation (#views-field-uncheck loud-truncation guard)") {
+    char small[8] = {};
+    // Fits exactly at cap (N-1 == 7 bytes).
+    CHECK(CopyStringToBuffer(small, "1234567"));
+    CHECK(std::string(small) == "1234567");
+    // One byte over cap -> truncated, returns false, clipped to 7 bytes.
+    CHECK_FALSE(CopyStringToBuffer(small, "12345678"));
+    CHECK(std::string(small) == "1234567");
+
+    // A >1023-byte selection CSV truncates in the legacy 1024-byte buffer — the
+    // exact silent-drop the set-authority fix removes from the round-trip path.
+    char legacyBuf[1024] = {};
+    std::unordered_set<std::string> selected;
+    for (int i = 0; i < 100; ++i) {
+        selected.insert("customfield_" + std::to_string(10000 + i));
+    }
+    const std::string csv = SerializeSelectedFields(selected);
+    REQUIRE(csv.size() > 1023);
+    CHECK_FALSE(CopyStringToBuffer(legacyBuf, csv));
+    // Parsing the truncated buffer back loses fields — proving why the buffer can
+    // no longer be the authority (the set is).
+    const std::unordered_set<std::string> fromTruncated = DeserializeSelectedFields(legacyBuf);
+    CHECK(fromTruncated.size() < selected.size());
 }

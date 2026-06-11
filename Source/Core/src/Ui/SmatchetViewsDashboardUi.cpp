@@ -8,6 +8,7 @@
 #include "SmatchetToast.h"
 #include "StringUtil.h"
 #include "TrackerFieldSchema.h"
+#include "Logger.h"
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -37,6 +38,10 @@ enum ViewsEditorTab : int {
     Tab_Sort = 3,
 };
 
+// Refresh the display-only CSV mirror of the selection set. Forward-declared so
+// LoadBuffersFromView (above its definition) can seed the mirror after the set.
+void SyncSelectedFieldsBuffer(UiDrawSession& d, const std::unordered_set<std::string>& selectedFieldSet);
+
 // Load all edit buffers from a saved view. Resets dirty + autocomplete state.
 void LoadBuffersFromView(UiDrawSession& d, const ViewDefinition& view) {
     std::memset(d.fieldSearchBuf, 0, sizeof(d.fieldSearchBuf));
@@ -54,8 +59,14 @@ void LoadBuffersFromView(UiDrawSession& d, const ViewDefinition& view) {
     d.jqlWantsApplyFromEnter = false;
     SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewNameBuf, view.Name);
     SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlBuf, view.Jql);
-    const std::string selectedFieldsCsv = SmatchetViewsDashboardUiDetail::JoinCsvLocal(view.Fields);
-    SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.selectedFieldsBuf, selectedFieldsCsv);
+    // Seed the authoritative selection set straight from the saved view (#views-field-uncheck)
+    // — never via the truncating CSV buffer. The buffer is a display-only mirror, refreshed
+    // by SyncSelectedFieldsBuffer below for inspection but never parsed back into the set.
+    d.selectedFieldSet.clear();
+    for (const auto& fieldId : view.Fields) {
+        d.selectedFieldSet.insert(fieldId);
+    }
+    SyncSelectedFieldsBuffer(d, d.selectedFieldSet);
     d.editingColumnOrder = view.ColumnOrder;
     if (d.editingColumnOrder.empty()) {
         d.editingColumnOrder = {"id"};
@@ -76,7 +87,9 @@ ViewDefinition BuildUpdatedView(const ViewDefinition& base, const UiDrawSession&
     ViewDefinition updated = base;
     updated.Name = d.viewNameBuf;
     updated.Jql = d.viewJqlBuf;
-    updated.Fields = SmatchetViewsDashboardUiDetail::ParseCsv(d.selectedFieldsBuf);
+    // Read the authoritative set (#views-field-uncheck), not the truncating buffer, so a
+    // >1023-byte selection persists ALL fields on save instead of being clipped on disk.
+    updated.Fields = SmatchetViewsDashboardUiDetail::ToSortedVector(d.selectedFieldSet);
     updated.ColumnOrder = d.editingColumnOrder;
     return updated;
 }
@@ -84,9 +97,8 @@ ViewDefinition BuildUpdatedView(const ViewDefinition& base, const UiDrawSession&
 // Reconcile editing column-order list against currently-selected fields. Drops
 // entries for removed fields; appends entries for newly-checked fields.
 void ReconcileEditingColumnOrder(UiDrawSession& d) {
-    const std::vector<std::string> currentFields = SmatchetViewsDashboardUiDetail::ParseCsv(d.selectedFieldsBuf);
     std::unordered_set<std::string> validKeys = {"id"};
-    for (const auto& f : currentFields) {
+    for (const auto& f : d.selectedFieldSet) {
         validKeys.insert("field:" + f);
     }
     d.editingColumnOrder.erase(
@@ -101,9 +113,15 @@ void ReconcileEditingColumnOrder(UiDrawSession& d) {
 }
 
 void SyncSelectedFieldsBuffer(UiDrawSession& d, const std::unordered_set<std::string>& selectedFieldSet) {
-    const std::vector<std::string> sortedFields = SmatchetViewsDashboardUiDetail::ToSortedVector(selectedFieldSet);
-    const std::string csv = SmatchetViewsDashboardUiDetail::JoinCsvLocal(sortedFields);
-    SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.selectedFieldsBuf, csv);
+    const std::string csv = SmatchetViewsDashboardUiDetail::SerializeSelectedFields(selectedFieldSet);
+    // The buffer is now display-only — it is never parsed back into the authoritative set
+    // (#views-field-uncheck). A truncation here is therefore harmless to selection state, but
+    // still log it so a future regression that re-reads the buffer is not silent.
+    if (!SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.selectedFieldsBuf, csv)) {
+        LOG_WARN("Views selected-fields display buffer truncated (%zu bytes > %zu cap); selection set "
+                 "is authoritative so no fields are lost.",
+                 csv.size(), sizeof(d.selectedFieldsBuf) - 1);
+    }
 }
 
 } // namespace
@@ -484,11 +502,10 @@ void SmatchetUI::drawViewsFieldsTab(ViewsDashboardDrawCtx& ctx) {
             ImGui::TextDisabled("Loading available fields...");
         }
 
-        // Build catalog snapshot used by both panes.
-        std::unordered_set<std::string> selectedFieldSet;
-        for (const auto& fieldId : SmatchetViewsDashboardUiDetail::ParseCsv(d.selectedFieldsBuf)) {
-            selectedFieldSet.insert(fieldId);
-        }
+        // The authoritative selection set lives on the session (#views-field-uncheck): the toggle
+        // handlers, select-all and clear mutate it in place. It is seeded from view.Fields in
+        // LoadBuffersFromView, never re-derived from the truncating buffer per frame.
+        std::unordered_set<std::string>& selectedFieldSet = d.selectedFieldSet;
         const auto& availableFields = app.GetAvailableFields();
 
         // Single pane: the column-order list lives in the Columns tab.

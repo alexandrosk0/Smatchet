@@ -133,13 +133,18 @@ inline std::vector<std::string> ParseCsv(const std::string& csv) {
     return result;
 }
 
-template <size_t N> inline void CopyStringToBuffer(char (&dst)[N], const std::string& str) {
+/// Truncating copy into a fixed char buffer. Returns true when the source fit;
+/// false when it was clipped at N-1 bytes (mid-token loss). Callers that copy a
+/// CSV selection MUST treat a false return as data loss — the selected-field set
+/// is the source of truth (#views-field-uncheck), the buffer is display-only.
+template <size_t N> inline bool CopyStringToBuffer(char (&dst)[N], const std::string& str) {
     static_assert(N > 0, "CopyStringToBuffer requires a non-empty char array");
     std::memset(dst, 0, N);
     const size_t cap = N - 1;
     const size_t n = (std::min)(str.size(), cap);
     if (n > 0)
         std::memcpy(dst, str.data(), n);
+    return str.size() <= cap;
 }
 
 inline bool ContainsCaseInsensitive(const std::string& text, const std::string& needle) {
@@ -157,6 +162,25 @@ inline std::vector<std::string> ToSortedVector(const std::unordered_set<std::str
     std::vector<std::string> result(values.begin(), values.end());
     std::sort(result.begin(), result.end());
     return result;
+}
+
+/// Serialize a selected-field id set to the canonical sorted CSV form. Pure;
+/// the inverse of DeserializeSelectedFields. Round-trips losslessly regardless
+/// of count, so a large selection survives set -> CSV -> set with no drop
+/// (#views-field-uncheck — the fixed 1024-byte buffer truncation that this fix
+/// removes from the authority path). Bucket-A testable.
+inline std::string SerializeSelectedFields(const std::unordered_set<std::string>& selectedFieldSet) {
+    return JoinCsvLocal(ToSortedVector(selectedFieldSet));
+}
+
+/// Parse a CSV field list back into an id set. Pure; inverse of
+/// SerializeSelectedFields. Bucket-A testable.
+inline std::unordered_set<std::string> DeserializeSelectedFields(const std::string& csv) {
+    std::unordered_set<std::string> out;
+    for (const auto& id : ParseCsv(csv)) {
+        out.insert(id);
+    }
+    return out;
 }
 
 /// Consume-once apply of a deferred view-create latch onto the views store
