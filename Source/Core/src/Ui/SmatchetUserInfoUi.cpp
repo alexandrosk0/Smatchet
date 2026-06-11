@@ -144,7 +144,13 @@ void SmatchetUserInfoUi::launchVcsFetch(UiDrawSession& d) {
     vcsFuture_ = std::async(std::launch::async, [gen, maxN, cutoff, email, gitAuthor, annotateCfg, cfg]() {
         VcsPayload p;
         p.Gen = gen;
-        const std::string p4User = Vcs::P4UserFromEmail(email);
+        // Prefer the authoritative email->login map from `p4 users` (the p4 login often
+        // differs from the email local-part, e.g. "alexk" for "alexkonstantonis@gmail.com");
+        // fall back to the naive local-part strip when p4 has no matching user.
+        std::string p4User = P4UserForEmail(annotateCfg, email);
+        if (p4User.empty()) {
+            p4User = Vcs::P4UserFromEmail(email);
+        }
         if (p4User.empty()) {
             p.P4Error = "No Perforce user (email unknown).";
         } else {

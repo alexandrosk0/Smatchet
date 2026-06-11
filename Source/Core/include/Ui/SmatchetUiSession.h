@@ -378,6 +378,13 @@ struct UiDrawSession {
     char newIssueInheritFieldsBuf[512]{};
     char newIssueInheritFieldsPlaneBuf[512]{};
     char newIssueInheritFieldsGitHubBuf[512]{};
+    // User Info window / VCS commit feed (docs/plans/user-info-window.md). Edited in the
+    // Tracker tab; written immediately on change (MCP-style immediate-dirty, no Save button).
+    char gitCommitReposBuf[256]{};
+    char productionGroupKeywordBuf[128]{};
+    int userActivityDayWindow = 30;
+    int maxUserChanges = 50;
+    int vcsFeedLayoutIndex = 0; // 0=unified, 1=separate
     bool mcpEnabled = false;
     int mcpPort = SmatchetDefaults::Mcp::kDefaultPort;
     bool mcpAllowRemote = false;

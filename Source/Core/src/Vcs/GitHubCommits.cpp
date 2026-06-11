@@ -40,7 +40,18 @@ bool GitHubCommitsForUser(const TrackerConfig& cfg, const std::string& authorEma
         outError = "GitHub PAT not configured";
         return false;
     }
-    const std::vector<std::string> repos = SplitAndTrim(cfg.GitCommitRepos, ',');
+    std::vector<std::string> repos = SplitAndTrim(cfg.GitCommitRepos, ',');
+    if (repos.empty()) {
+        // No explicit git_commit_repos: reuse the GitHub tracker's own owner/repo
+        // so the commit feed works out of the box once the tracker is connected.
+        const std::string owner = TrimCopy(cfg.GitHubOwner);
+        const std::string repo = TrimCopy(cfg.GitHubRepo);
+        if (!owner.empty() && !repo.empty()) {
+            repos.push_back(owner + "/" + repo);
+            LOG_DEBUG("GitHubCommitsForUser: git_commit_repos empty, falling back to tracker repo '%s/%s'",
+                      owner.c_str(), repo.c_str());
+        }
+    }
     if (repos.empty()) {
         outError = "no git repos configured";
         return false;

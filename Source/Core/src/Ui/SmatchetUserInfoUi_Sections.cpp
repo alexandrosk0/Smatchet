@@ -67,10 +67,15 @@ void SmatchetUserInfoUi::drawVcsSection(AppController& app, UiDrawSession& d, bo
         drawVcsRows(app, d, vcs_.Unified, "vcs", narrow);
         return;
     }
-    ImGui::TextDisabled("Perforce");
-    drawVcsRows(app, d, vcs_.P4Rows, "p4", narrow);
-    ImGui::TextDisabled("Git");
-    drawVcsRows(app, d, vcs_.GitRows, "git", narrow);
+    // Separate layout: each VCS gets its own collapsible sub-header with a
+    // separator between them (requested UX — fold p4 or git independently).
+    if (ImGui::CollapsingHeader("Perforce", ImGuiTreeNodeFlags_DefaultOpen)) {
+        drawVcsRows(app, d, vcs_.P4Rows, "p4", narrow);
+    }
+    ImGui::Separator();
+    if (ImGui::CollapsingHeader("Git", ImGuiTreeNodeFlags_DefaultOpen)) {
+        drawVcsRows(app, d, vcs_.GitRows, "git", narrow);
+    }
 }
 
 void SmatchetUserInfoUi::drawVcsRows(AppController& app, UiDrawSession& d, const std::vector<Vcs::VcsSubmission>& rows,
