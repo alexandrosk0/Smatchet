@@ -22,6 +22,7 @@
 #include "AppController.h"
 #include "Logger.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetHelpMarker.h"
 #include "SmatchetLocalization.h"
 
 #include "imgui.h"
@@ -471,13 +472,22 @@ void RenderCustomEndpointConsent(UiDrawSession& d, AiProvider prov, bool& flag, 
     if (consentModalProvider == static_cast<int>(prov)) {
         ImGui::SetNextWindowSize(ImVec2(440.0f, 0.0f), ImGuiCond_Appearing);
         if (ImGui::BeginPopupModal("Allow custom AI endpoint?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextWrapped("By default Smatchet sends your %s API key only to %s over HTTPS.", providerLabel,
-                               canonicalHost);
-            ImGui::Spacing();
-            ImGui::TextWrapped("Enabling custom endpoints lets a proxy / gateway host (Azure OpenAI, "
-                               "LiteLLM, openrouter) receive that key, and permits plain http:// to "
-                               "non-loopback hosts - sending the key in cleartext. Enable only if you "
-                               "trust the endpoint you configure.");
+            // Consent modal: the cleartext-key risk must stay visible (informed
+            // consent); only the supporting detail moves into the (?) tooltip.
+            ImGui::TextWrapped("%s", SmatchetLocalization::Format(
+                                         "prefs.assistant.endpoint_consent.short",
+                                         "A custom endpoint can receive your %s API key - possibly in cleartext. "
+                                         "Enable only if you trust it.",
+                                         providerLabel));
+            ImGui::SameLine();
+            const std::string consentDetail = SmatchetLocalization::Format(
+                "prefs.assistant.endpoint_consent.help",
+                "By default Smatchet sends your %s API key only to %s over HTTPS. Enabling custom "
+                "endpoints lets a proxy / gateway host (Azure OpenAI, LiteLLM, openrouter) receive "
+                "that key, and permits plain http:// to non-loopback hosts - sending the key in "
+                "cleartext. Enable only if you trust the endpoint you configure.",
+                providerLabel, canonicalHost);
+            SmatchetHelpMarker::RenderText(consentDetail.c_str());
             ImGui::Separator();
             if (ImGui::Button("Enable custom endpoint")) {
                 flag = true;
@@ -589,10 +599,13 @@ void RenderReasoningEffort(UiDrawSession& d) {
         MarkPrefsDirty(d);
         ClearStaleTestResult(d);
     }
-    ImGui::SetItemTooltip("OpenAI `reasoning_effort` body parameter for o-series / reasoning-tuned "
-                          "models. LM Studio + LocalAI pass it through to local reasoning models "
-                          "(Qwen3, gemma-3, etc.). Providers that don't understand the parameter "
-                          "ignore it.");
+    ImGui::SetItemTooltip("OpenAI `reasoning_effort` request parameter.");
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("prefs.assistant.reasoning_effort.help",
+                               "OpenAI `reasoning_effort` body parameter for o-series / reasoning-tuned "
+                               "models. LM Studio + LocalAI pass it through to local reasoning models "
+                               "(Qwen3, gemma-3, etc.). Providers that don't understand the parameter "
+                               "ignore it.");
 }
 
 // agents.md harness (optional) — layered system-prompt path config. Each edit
@@ -603,8 +616,11 @@ void RenderAgentsMdHarness(AppController& app, UiDrawSession& d, AssistantPrefsB
     ImGui::Separator();
     ImGui::Spacing();
     ImGui::TextUnformatted("agents.md harness (optional)");
-    ImGui::TextWrapped("Layered system prompt injected into every Assistant turn. Global layer defaults to "
-                       "%%LOCALAPPDATA%%/Smatchet/agents.md when blank. Each layer capped at 64 KB.");
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("prefs.assistant.agents_md.help",
+                               "Layered system prompt injected into every Assistant turn. Global layer "
+                               "defaults to %LOCALAPPDATA%/Smatchet/agents.md when blank. Each layer "
+                               "capped at 64 KB.");
     ImGui::Spacing();
     if (ImGui::InputText("Global agents.md path", b.agentsMdGlobalBuf, sizeof(b.agentsMdGlobalBuf))) {
         d.cfg.AgentsMdGlobalPath = b.agentsMdGlobalBuf;
@@ -613,8 +629,11 @@ void RenderAgentsMdHarness(AppController& app, UiDrawSession& d, AssistantPrefsB
             app.GetAiAssistantController().InvalidateAgentsMdCache();
         }
     }
-    ImGui::SetItemTooltip("Default %LOCALAPPDATA%/Smatchet/agents.md when blank. Override to point at a "
-                          "checked-in shared file.");
+    ImGui::SetItemTooltip("Override the global agents.md location.");
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("prefs.assistant.agents_md_global.help",
+                               "Default %LOCALAPPDATA%/Smatchet/agents.md when blank. Override to point "
+                               "at a checked-in shared file.");
     if (ImGui::InputText("Project agents.md path (override)", b.projectAgentsMdBuf, sizeof(b.projectAgentsMdBuf))) {
         d.cfg.ProjectAgentsMdPath = b.projectAgentsMdBuf;
         MarkPrefsDirty(d);
@@ -622,8 +641,11 @@ void RenderAgentsMdHarness(AppController& app, UiDrawSession& d, AssistantPrefsB
             app.GetAiAssistantController().InvalidateAgentsMdCache();
         }
     }
-    ImGui::SetItemTooltip("When set, this exact path is used as the project layer. Leave blank to disable the "
-                          "project layer entirely unless Auto-discover is enabled below.");
+    ImGui::SetItemTooltip("Explicit project-layer path.");
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("prefs.assistant.agents_md_project.help",
+                               "When set, this exact path is used as the project layer. Leave blank to "
+                               "disable the project layer entirely unless Auto-discover is enabled below.");
     bool autoDiscover = d.cfg.AgentsMdAutoDiscoverProject;
     if (ImGui::Checkbox("Auto-discover project agents.md (walk up from cwd)", &autoDiscover)) {
         d.cfg.AgentsMdAutoDiscoverProject = autoDiscover;
@@ -632,8 +654,11 @@ void RenderAgentsMdHarness(AppController& app, UiDrawSession& d, AssistantPrefsB
             app.GetAiAssistantController().InvalidateAgentsMdCache();
         }
     }
-    ImGui::SetItemTooltip("OFF (default): only the Global file + explicit Project path are used. ON: walks up "
-                          "the cwd chain looking for agents.md / AGENTS.md.");
+    ImGui::SetItemTooltip("Walk up from cwd looking for agents.md.");
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("prefs.assistant.agents_md_autodiscover.help",
+                               "OFF (default): only the Global file + explicit Project path are used. ON: "
+                               "walks up the cwd chain looking for agents.md / AGENTS.md.");
 }
 
 } // namespace
@@ -650,6 +675,7 @@ void DrawAssistantPreferencesTab(AppController& app, UiDrawSession& d) {
     SeedAssistantBuffers(s_bufs, d);
 
     if (ImGui::BeginTabItem("Assistant")) {
+        d.preferencesActiveTab = PreferencesActiveTab::Assistant;
         // Validator runs against the live cfg (auto-saved on every field edit)
         // so the user gets live feedback for the text they're typing.
         const smatchet::ai::PrefsValidation validation = smatchet::ai::ValidateAiPrefs(d.cfg);

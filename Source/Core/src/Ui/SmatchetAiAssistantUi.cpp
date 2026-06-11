@@ -23,6 +23,7 @@
 #include "MemoryTelemetry.h"
 #include "SmatchetChatPersistWorker.h"
 #include "SmatchetDockNodeIds.h"
+#include "SmatchetHelpMarker.h"
 #include "SmatchetImGuiFonts.h"
 #include "SmatchetTheme.h"
 #include "SmatchetUiSession.h"
@@ -1198,8 +1199,11 @@ void DrawPerTurnModelEffortRow(UiDrawSession& d) {
     if (ImGui::Combo("##AiTurnEffort", &effortIdx, kEffortLabels, 4)) {
         d.assistantPerTurnEffort = kEffortIds[effortIdx];
     }
-    ImGui::SetItemTooltip("Per-turn reasoning effort. Applied as the OpenAI `reasoning_effort` parameter; "
-                          "providers that don't understand the param ignore it.");
+    ImGui::SetItemTooltip("Per-turn OpenAI `reasoning_effort` override.");
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("ai.turn_effort.help",
+                               "Per-turn reasoning effort. Applied as the OpenAI `reasoning_effort` parameter; "
+                               "providers that don't understand the param ignore it.");
 }
 
 // Phase 7 of ai-chat-claude-desktop-parity. Copy-toast strip — ghosted 1-line

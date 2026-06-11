@@ -6,6 +6,7 @@
 #include "MarkdownConvert.h"
 #include "MarkdownPreviewRender.h"
 #include "TrackerHttpUtils.h"
+#include "SmatchetHelpMarker.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetToast.h"
@@ -1299,10 +1300,15 @@ static void DrawConflictPaneUnknown(OfflineDrawCtx& octx) {
     UiDrawSession& d = octx.d;
     AppController& app = octx.app;
 
-    ImGui::TextDisabled("This offline edit's conflict details could not be read (corrupt or stale data).");
+    ImGui::TextDisabled("Conflict details could not be read.");
     ImGui::Spacing();
-    ImGui::TextWrapped("To avoid overwriting either version with empty content, this conflict can't be resolved "
-                       "automatically. Close to leave the edit queued, or discard it to drop the queued change.");
+    ImGui::TextUnformatted("Close keeps the edit queued; Discard drops it.");
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("offline.conflict_unknown.help",
+                               "This offline edit's conflict details could not be read (corrupt or stale data). "
+                               "To avoid overwriting either version with empty content, this conflict can't be "
+                               "resolved automatically. Close to leave the edit queued, or discard it to drop the "
+                               "queued change.");
     ImGui::Spacing();
 
     if (ImGui::Button("Discard my edit", ImVec2(150, 0))) {

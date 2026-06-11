@@ -166,7 +166,7 @@ static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
     }
 
     ImGui::Spacing();
-    ImGui::TextWrapped("A newer Smatchet standalone release is available on GitHub.");
+    ImGui::TextWrapped("A newer Smatchet release is available on GitHub.");
     if (!d.appUpdateInfo.ReleaseNotes.empty()) {
         ImGui::Spacing();
         ImGui::TextUnformatted("Release notes");

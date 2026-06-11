@@ -16,6 +16,7 @@
 #include "MainThreadDispatcher.h"
 #include "ModelCatalog.h"
 #include "ModelDownloader.h"
+#include "SmatchetHelpMarker.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetToast.h"
 #include "SmatchetWhisperSetupBanner.h"
@@ -851,9 +852,14 @@ void DrawWhisperPreferencesTab(AppController& app, UiDrawSession& d) {
     // to show progress on this tab.
     static WhisperPrefsTabState s_state;
     if (ImGui::BeginTabItem(SmatchetLocalization::T("whisper.preferences.tabTitle", "Whisper"))) {
-        ImGui::TextWrapped("Push-to-talk dictation. Hold the configured hotkey, speak, release. Transcription "
-                           "runs locally when a Whisper model is on disk; falls back to OpenAI Whisper API "
-                           "when no model is present (cloud mode requires an API key).");
+        d.preferencesActiveTab = PreferencesActiveTab::Whisper;
+        ImGui::TextUnformatted("Push-to-talk dictation: hold the hotkey, speak, release.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.whisper.ptt.help",
+                                   "Push-to-talk dictation. Hold the configured hotkey, speak, release. "
+                                   "Transcription runs locally when a Whisper model is on disk; falls back "
+                                   "to OpenAI Whisper API when no model is present (cloud mode requires an "
+                                   "API key).");
         ImGui::Spacing();
 
         DrawWhisperEnableAndMode(d);

@@ -27,6 +27,7 @@
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "Logger.h"
+#include "SmatchetHelpMarker.h"
 #include "SmatchetImGuiFonts.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetToast.h"
@@ -109,9 +110,12 @@ namespace {
 // "Recreate database..." button and its confirm modal. Extracted from DrawLocalDataTab during
 // the over-100-line decomposition; behaviour-identical (the modal stays whole with its opener).
 void DrawLocalDataRecreateDbSection(SmatchetUI& ui, AppController& app, UiDrawSession& d) {
-    ImGui::TextWrapped("Stored tickets, offline create queues, and pending field edits live in a local SQLite file. "
-                       "Recreating it clears that data only; tracker credentials and views are not removed. A full "
-                       "issue refresh runs afterward.");
+    ImGui::TextUnformatted("Local SQLite cache: tickets, offline queues, pending edits.");
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("prefs.local_data.recreate_intro.help",
+                               "Stored tickets, offline create queues, and pending field edits live in a "
+                               "local SQLite file. Recreating it clears that data only; tracker credentials "
+                               "and views are not removed. A full issue refresh runs afterward.");
     ImGui::Spacing();
     const std::string resolved = app.GetResolvedLocalCacheDbPath();
     if (!resolved.empty()) {
@@ -167,16 +171,20 @@ void DrawLocalDataStorageSection(AppController& app) {
     ImGui::Separator();
     ImGui::Spacing();
     ImGui::TextUnformatted("Settings storage location");
+    ImGui::SameLine();
 #if defined(SMATCHET_EMBEDDED_IN_UNREAL)
-    ImGui::TextWrapped("Plugin default: writable files (config / views / SQLite cache / ImGui layout) live in "
-                       "<UnrealProject>/Saved next to the runtime cache. Switch to Shared when the project dir "
-                       "is read-only (source-controlled, network share, sandboxed runner) and Smatchet should "
-                       "instead use your OS user-data folder. Change takes effect on next launch.");
+    SmatchetHelpMarker::Render("prefs.local_data.storage_unreal.help",
+                               "Plugin default: writable files (config / views / SQLite cache / ImGui "
+                               "layout) live in <UnrealProject>/Saved next to the runtime cache. Switch to "
+                               "Shared when the project dir is read-only (source-controlled, network share, "
+                               "sandboxed runner) and Smatchet should instead use your OS user-data folder. "
+                               "Change takes effect on next launch.");
 #else
-    ImGui::TextWrapped("Standalone default: writable files live in your OS user-data folder, shared across "
-                       "exes / installs. Switch to Portable to keep all writable files next to the executable "
-                       "instead — useful when running from a thumb drive or testing parallel builds. Change "
-                       "takes effect on next launch.");
+    SmatchetHelpMarker::Render("prefs.local_data.storage_standalone.help",
+                               "Standalone default: writable files live in your OS user-data folder, shared "
+                               "across exes / installs. Switch to Portable to keep all writable files next "
+                               "to the executable instead — useful when running from a thumb drive or "
+                               "testing parallel builds. Change takes effect on next launch.");
 #endif
     const std::string runtimeAssetDir = ConfigManager::GetRuntimeAssetDirectory();
 #if defined(SMATCHET_EMBEDDED_IN_UNREAL)
@@ -239,6 +247,7 @@ void DrawLocalDataStorageSection(AppController& app) {
 // function-size decomposition; behaviour-identical.
 void DrawLocalDataTab(SmatchetUI& ui, AppController& app, UiDrawSession& d) {
     if (ImGui::BeginTabItem("Local data")) {
+        d.preferencesActiveTab = PreferencesActiveTab::LocalData;
         DrawLocalDataRecreateDbSection(ui, app, d);
         DrawLocalDataStorageSection(app);
         ImGui::EndTabItem();
@@ -267,8 +276,11 @@ void DrawAppearanceTypographySection(UiDrawSession& d) {
         MarkPrefsDirty(d);
         SmatchetRequestFontReload(d.cfg.SelectedFontName, static_cast<float>(d.cfg.FontSizePt));
     }
-    ImGui::SetItemTooltip(
-        "Select the typography for the entire application. Rebuilds and reloads the font atlas instantly.");
+    ImGui::SetItemTooltip("Application-wide font; applies instantly.");
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("prefs.appearance.font.help",
+                               "Select the typography for the entire application. Rebuilds and reloads the "
+                               "font atlas instantly.");
 
     const auto& languages = SmatchetLocalization::AvailableLanguages();
     int currentLanguageIdx = 0;
@@ -287,8 +299,11 @@ void DrawAppearanceTypographySection(UiDrawSession& d) {
             SmatchetLocalization::SetLanguage(d.cfg.UiLanguage);
         }
     }
-    ImGui::SetItemTooltip(
-        "Select the UI language. App-owned UI text changes immediately; tracker data is shown as-is.");
+    ImGui::SetItemTooltip("UI language; applies immediately.");
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("prefs.appearance.language.help",
+                               "Select the UI language. App-owned UI text changes immediately; tracker data "
+                               "is shown as-is.");
 }
 
 // Grid-and-field-text section of the Appearance tab: overflow tooltips + wheel-swallow ticks.
@@ -300,9 +315,11 @@ void DrawAppearanceGridTextSection(UiDrawSession& d) {
     if (ImGui::Checkbox("Show tooltips when text overflows", &d.cfg.EnableFieldOverflowTooltips)) {
         MarkPrefsDirty(d);
     }
-    ImGui::SetItemTooltip(
-        "When a value is truncated to fit the cell, or spans multiple lines, hover to read the full text in a "
-        "tooltip.");
+    ImGui::SetItemTooltip("Hover truncated cells to read the full text.");
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("prefs.appearance.overflow_tooltips.help",
+                               "When a value is truncated to fit the cell, or spans multiple lines, hover "
+                               "to read the full text in a tooltip.");
     int gridWheelSwallowTicks = d.cfg.GridEndWheelSwallowsBeforeHorizontal;
     if (ImGui::InputInt("Wheel ticks before horizontal scroll", &gridWheelSwallowTicks)) {
         if (gridWheelSwallowTicks < 0) {
@@ -314,9 +331,11 @@ void DrawAppearanceGridTextSection(UiDrawSession& d) {
         d.cfg.GridEndWheelSwallowsBeforeHorizontal = gridWheelSwallowTicks;
         MarkPrefsDirty(d);
     }
-    ImGui::SetItemTooltip(
-        "At top/bottom of the ticket grid, vertical wheel starts horizontal scrolling after this many wheel "
-        "ticks. 0 routes immediately.");
+    ImGui::SetItemTooltip("Wheel ticks swallowed at the grid edge.");
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("prefs.appearance.wheel_swallow.help",
+                               "At top/bottom of the ticket grid, vertical wheel starts horizontal "
+                               "scrolling after this many wheel ticks. 0 routes immediately.");
 }
 
 // Date-formatting section of the Appearance tab: format-style combo + compact threshold slider.
@@ -334,7 +353,11 @@ void DrawAppearanceDateSection(UiDrawSession& d) {
         d.cfg.DateFormatOption = SmatchetPreferencesUiDetail::DateFormatIndexToOption(currentDateFormatIdx);
         MarkPrefsDirty(d);
     }
-    ImGui::SetItemTooltip("Select how date and datetime values are rendered in the grids and UI panels.");
+    ImGui::SetItemTooltip("How date values render across the UI.");
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("prefs.appearance.date_format.help",
+                               "Select how date and datetime values are rendered in the grids and UI "
+                               "panels.");
 
     if (currentDateFormatIdx == 0) {
         int threshold = d.cfg.DateCompactRelativeThresholdDays;
@@ -342,8 +365,11 @@ void DrawAppearanceDateSection(UiDrawSession& d) {
             d.cfg.DateCompactRelativeThresholdDays = threshold;
             MarkPrefsDirty(d);
         }
-        ImGui::SetItemTooltip("Threshold in days where the compact view transitions from relative (e.g. -3d) "
-                              "to short absolute (e.g. May 07 '26).");
+        ImGui::SetItemTooltip("Days before compact dates switch to absolute.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.appearance.date_threshold.help",
+                                   "Threshold in days where the compact view transitions from relative "
+                                   "(e.g. -3d) to short absolute (e.g. May 07 '26).");
     }
 }
 
@@ -358,8 +384,11 @@ void DrawAppearanceDisplaySection(UiDrawSession& d) {
         smatchet::vsync::SetEnabled(d.cfg.VsyncEnabled);
         MarkPrefsDirty(d);
     }
-    ImGui::SetItemTooltip("Synchronize rendering with the monitor refresh rate. "
-                          "Disabling uncaps the frame rate (higher CPU/GPU usage).");
+    ImGui::SetItemTooltip("Sync rendering with the monitor refresh rate.");
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("prefs.appearance.vsync.help",
+                               "Synchronize rendering with the monitor refresh rate. Disabling uncaps the "
+                               "frame rate (higher CPU/GPU usage).");
 }
 
 // Updates section of the Appearance tab: auto-check + prerelease toggles, manual check, skip-version.
@@ -533,6 +562,7 @@ void DrawAppearanceMobileSection(UiDrawSession& d) {
 // function-size decomposition; behaviour-identical.
 void DrawAppearanceTab(AppController& app, UiDrawSession& d) {
     if (ImGui::BeginTabItem("Appearance")) {
+        d.preferencesActiveTab = PreferencesActiveTab::Appearance;
         DrawAppearanceTypographySection(d);
         DrawAppearanceGridTextSection(d);
         DrawAppearanceDateSection(d);

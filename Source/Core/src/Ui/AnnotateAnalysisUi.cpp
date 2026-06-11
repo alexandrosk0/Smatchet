@@ -3,6 +3,7 @@
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "Logger.h"
+#include "SmatchetHelpMarker.h"
 #include "SpreadsheetState.h"
 #include "StringUtil.h"
 #include "TrackerFieldSchema.h"
@@ -73,8 +74,10 @@ void AnnotateAnalysisUi::DrawAnnotatePreferencesTab(const AppController& app) {
     MaybeAutoselectCallstackTrackerField(app);
     MaybeAutoselectLastFoundClTrackerField(app);
     MaybeAutoselectLastOccurrencesTrackerField(app);
-    ImGui::TextWrapped("Perforce paths, ignore list, and Jira callstack source used by Annotate (stored in "
-                       "smatchet_config.json).");
+    ImGui::TextUnformatted("Annotate configuration (stored in smatchet_config.json).");
+    ImGui::SameLine();
+    SmatchetHelpMarker::RenderText("Perforce paths, ignore list, and Jira callstack source used by Annotate "
+                                   "(stored in smatchet_config.json).");
     ImGui::Spacing();
     const AnnotateUiThemeColors& theme = State().annotateCfg.UiColors;
     DrawAnnotatePersistedOptionsForm(app, theme);
