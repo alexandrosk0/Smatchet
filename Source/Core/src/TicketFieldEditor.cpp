@@ -61,6 +61,7 @@ namespace {
 
 using namespace TrackerFieldValueUtils;
 using TicketFieldEditorCommitPolicyPure::ShouldCommitInlineFieldEdit;
+using TicketFieldEditorCommitPolicyPure::ShouldEndInlineEdit;
 
 // Compile-time: is this the mobile/touch build? On mobile an inline field edit commits only on
 // explicit submit (Enter / IME "Done"); focus-loss cancels with no PUT (WS4 item 16 stray-PUT fix,
@@ -210,8 +211,14 @@ bool ComputeDurationPopupShouldOpen(const char* buf, ImGuiID currentId, ImGuiID&
 // Render the duration-suggestions selectable popup (BeginPopup/EndPopup whole). On a pick,
 // copies the value into buf and arms the reposition/selected-from-popup flags.
 void DrawDurationSuggestionsPopup(char* buf, size_t bufSize, bool* outManuallyEdited, bool& needRepositionAndFocus,
-                                  bool& valueSelectedFromPopup) {
+                                  bool& valueSelectedFromPopup, bool requestClose) {
     if (ImGui::BeginPopup("duration_suggestions")) {
+        if (requestClose) {
+            // Type-to-edit fired: the user is editing the text directly, so close the suggestions.
+            ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+            return;
+        }
         std::vector<std::string> suggestions = LoadDurationSuggestions();
 
         for (size_t i = 0; i < suggestions.size(); ++i) {
@@ -279,6 +286,7 @@ bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSi
     // splice the queued printable chars straight into buf now (the focus request is for focus
     // only) and arm needRepositionAndFocus so the existing CallbackAlways caret-to-end machinery
     // places the cursor once the input activates.
+    bool typeToEditClosePopup = false;
     if (typeToEditFocus) {
         ImGuiIO& io = ImGui::GetIO();
         bool hasPrintableQueuedChar = false;
@@ -297,6 +305,7 @@ bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSi
                     *outManuallyEdited = true;
                 }
                 needRepositionAndFocus = true;
+                typeToEditClosePopup = true;       // user is typing into the field → close the suggestions dropdown
                 io.InputQueueCharacters.resize(0); // consumed — nothing else may double-insert them
             }
             ImGui::SetKeyboardFocusHere();
@@ -317,15 +326,26 @@ bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSi
             *outManuallyEdited = true;
         }
     }
-    deactivated = ImGui::IsItemDeactivatedAfterEdit();
-    if (!deactivated && ImGui::IsItemDeactivated() && valueSelectedFromPopup) {
-        deactivated = true;
+    // IsItemDeactivated (not ...AfterEdit): a focus-loss must END the edit session even when the
+    // value was not modified — otherwise opening an existing duration value and clicking a DIFFERENT
+    // cell without changing it leaves the editor stuck open (...AfterEdit fires only after a real
+    // edit). The popupIsOpen guard on finalDeactivated below keeps the popup-open frame (where the
+    // input deactivates as the popup takes focus) from being treated as an edit-end; the dirty check
+    // in the caller keeps an unchanged value from PUTing.
+    deactivated = ImGui::IsItemDeactivated();
+    if (deactivated && valueSelectedFromPopup) {
         valueSelectedFromPopup = false;
     }
     // Captured here so the queries refer to the InputText (the ▼ button redefines "last item"
     // below). Used by the popup-close refocus-vs-commit decision after the popup is drawn.
     const bool inputActiveNow = ImGui::IsItemActive();
     const bool inputHoveredNow = ImGui::IsItemHovered();
+    // IsItemHovered() reads false on the popup-close frame even when the mouse is over the input
+    // (the closing popup suppresses parent-window hover that frame), so the popup-close decision
+    // below additionally uses a GEOMETRIC mouse-over-rect test. Capture the input's rect now,
+    // before the ▼ button redefines "last item".
+    const ImVec2 inputRectMin = ImGui::GetItemRectMin();
+    const ImVec2 inputRectMax = ImGui::GetItemRectMax();
 
     ImGuiID currentId = ImGui::GetID("##duration_input");
 
@@ -344,7 +364,8 @@ bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSi
     bool popupIsOpen = ImGui::IsPopupOpen("duration_suggestions");
 
     // Suggestions popup
-    DrawDurationSuggestionsPopup(buf, bufSize, outManuallyEdited, needRepositionAndFocus, valueSelectedFromPopup);
+    DrawDurationSuggestionsPopup(buf, bufSize, outManuallyEdited, needRepositionAndFocus, valueSelectedFromPopup,
+                                 typeToEditClosePopup);
 
     bool popupJustClosed = popupWasOpen && !popupIsOpen;
 
@@ -358,11 +379,14 @@ bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSi
     // (empty buffer: keep editing — no spurious empty-value commit; existing value: caret into the
     // text), never a commit-deactivation. When the popup-close ate the click (input hovered but
     // not re-activated), arm the focus-return so the input regains keyboard focus next frame.
+    // Geometric mouse-over-input test — reliable on the popup-close frame where IsItemHovered() is
+    // suppressed by the closing popup. clip=false so the popup's clip rect can't hide the input.
+    const bool mouseOverInput = inputHoveredNow || ImGui::IsMouseHoveringRect(inputRectMin, inputRectMax, false);
     if (TicketFieldEditorDurationPopupPure::ShouldFinalizeOnPopupClose(popupJustClosed, needRepositionAndFocus,
-                                                                       inputActiveNow, inputHoveredNow)) {
+                                                                       inputActiveNow, mouseOverInput)) {
         finalDeactivated = true;
     } else if (TicketFieldEditorDurationPopupPure::ShouldRearmFocusOnPopupClose(popupJustClosed, needRepositionAndFocus,
-                                                                                inputHoveredNow, inputActiveNow)) {
+                                                                                mouseOverInput, inputActiveNow)) {
         needRepositionAndFocus = true;
     }
 
@@ -449,7 +473,7 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
     const bool editJustStarted = state.EditJustStarted;
     const bool isDuration = IsTimeDurationField(field.Id);
     bool explicitSubmit = false;
-    bool deactivatedAfterEdit = false;
+    bool deactivated = false;
 
     if (isDuration) {
         ImGui::SetNextItemWidth(-FLT_MIN);
@@ -463,9 +487,9 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
             &explicitSubmit, /*typeToEditFocus=*/true);
         // The duration widget folds explicit-Enter and its internal focus-loss (finalDeactivated)
         // into one return and reports the Enter separately via outExplicitSubmit; the residual is
-        // the deactivation. The widget's last sub-item is the popup/button, so a top-level
-        // IsItemDeactivatedAfterEdit() here would not refer to the duration field — derive it.
-        deactivatedAfterEdit = committedOrDeactivated && !explicitSubmit;
+        // the focus-loss. The widget's last sub-item is the popup/button, so a top-level
+        // IsItemDeactivated() here would not refer to the duration field — derive it.
+        deactivated = committedOrDeactivated && !explicitSubmit;
     } else {
         ImGui::SetNextItemWidth(-FLT_MIN);
         if (editJustStarted) {
@@ -475,14 +499,28 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
         explicitSubmit = ImGui::InputText("##textedit", state.EditBuffer, sizeof(state.EditBuffer),
                                           ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackAlways,
                                           InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&cbUser));
-        deactivatedAfterEdit = !editJustStarted && ImGui::IsItemDeactivatedAfterEdit();
+        // IsItemDeactivated (not ...AfterEdit): a focus-loss ENDS the edit session even when the
+        // value was not modified, so clicking another cell after merely refocusing closes the
+        // editor. The dirty check below ensures an unchanged value still never PUTs.
+        deactivated = !editJustStarted && ImGui::IsItemDeactivated();
     }
 
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+    const bool escapePressed = ImGui::IsKeyPressed(ImGuiKey_Escape);
+    const std::string originalValue = ticket.GetFieldValue(field.Id);
+    // Dirty check against the buffer's start content (state.EditInitialValue) — the value as loaded
+    // when the edit opened — NOT the live field value. They are the same today (both GetFieldValue),
+    // but a background grid refresh / sync can mutate the field's stored value mid-edit; comparing
+    // the buffer against the live value would then read an untouched edit as dirty and fire a
+    // spurious PUT. EditInitialValue is captured once at edit-start, so the dirty verdict reflects
+    // only what the USER typed, never an out-of-band store change.
+    const bool valueChanged = state.EditInitialValue != std::string(state.EditBuffer);
+    if (escapePressed) {
+        state.ClearEditing(); // cancel — never PUT
+    } else if (ShouldCommitInlineFieldEdit(explicitSubmit, deactivated, kMobileInlineEditBuild, valueChanged)) {
+        QueueEdit(ticket.id, field, {state.EditBuffer}, pendingEdits, originalValue);
         state.ClearEditing();
-    } else if (ShouldCommitInlineFieldEdit(explicitSubmit, deactivatedAfterEdit, kMobileInlineEditBuild)) {
-        QueueEdit(ticket.id, field, {state.EditBuffer}, pendingEdits, ticket.GetFieldValue(field.Id));
-        state.ClearEditing();
+    } else if (ShouldEndInlineEdit(escapePressed, explicitSubmit, deactivated)) {
+        state.ClearEditing(); // ended without a PUT (unchanged value, or mobile focus-loss)
     } else if (editJustStarted) {
         state.EditJustStarted = false;
     }
@@ -1218,6 +1256,19 @@ void RenderTimeTrackingModal(AppController& app, const CachedTicket& ticket) {
 }
 
 } // namespace
+
+#if defined(SMATCHET_BUILD_UI_TESTS)
+// Test-only external-linkage forwarder for the bucket-E inline-edit commit/cancel test
+// (tests/ui/duration_inline_edit_commit.test.cpp). RenderTextInlineEdit lives in the anonymous
+// namespace above (its helpers — QueueEdit, DrawDurationFieldWithSuggestions, the Should* policy
+// calls — are all anon-scoped), so the engine test cannot call it directly. Anon-namespace names
+// are still visible at file scope in the rest of this TU, so this file-scope forwarder can reach
+// it. Declared in TicketFieldEditor_detail.h; compiled only in the SMATCHET_BUILD_UI_TESTS build.
+void SmatchetTest_RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field, SpreadsheetState& state,
+                                       std::vector<PendingFieldEdit>& pendingEdits) {
+    RenderTextInlineEdit(ticket, field, state, pendingEdits);
+}
+#endif // SMATCHET_BUILD_UI_TESTS
 
 namespace {
 /// RAII helper that pushes ticket.id + field-id onto the ImGui ID stack at cell entry, popping on
