@@ -1,5 +1,5 @@
 // Extracted verbatim from AnnotateAnalysisUi_Launch.cpp (user-info-window Slice 1).
-// Logic, log lines and the annotate_allow_custom_commands gate are unchanged;
+// Logic, log lines and the annotate_allow_custom_commands gate are unchanged --
 // only the namespace moved (AnnotateInternal -> P4vLaunch).
 
 #include "Ui/P4vLaunch.h"
