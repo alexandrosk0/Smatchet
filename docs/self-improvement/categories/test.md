@@ -148,3 +148,9 @@
   Concrete next action: add `test-markdown-links` (diff-scoped) + `md_lint.py --all` to `scripts/dev/test-docs.sh` STEPS so the local mirror matches CI — or wire a `scripts/dev/pre-ship.sh --docs` mode that runs the whole `doc-validation.yml` step set in one command (see the sibling process entry). Touch only `scripts/dev/test-docs.sh` (+ optionally `scripts/dev/pre-ship.sh`).
   Status: open
   Last-reviewed: 2026-06-04
+
+- 2026-06-11 · code-review · [test] · P2 — no bucket-E coverage for the Views-editor field-selection lifecycle (the #views-field-uncheck bug class)
+  Details: The #1143 fix is pinned by a pure serialize round-trip test, but the lifecycle that CARRIED the bug — seed-on-activate, reseed-on-view-switch, toggle-a-field-in-a->1023-byte-catalog → switch view → switch back → checkbox still checked, and clear-all → Apply persists empty Fields — has no automated coverage (it needed a live interactive repro to find). A bucket-E ImGui Test Engine flow (or a scenario asserting `view.Fields` membership after a toggle+frame advance) would make this class auto-reproducible and guard the set-authority invariant.
+  Concrete next action: test-author wires a bucket-E case: open Views dashboard, mock a near-full field catalog, toggle a late-sorting field, advance frames, assert the checkbox + the persisted set retain it; plus a view-switch non-leak assertion.
+  Status: open
+  Last-reviewed: 2026-06-11
