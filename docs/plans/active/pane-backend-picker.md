@@ -148,17 +148,18 @@ Per `AGENTS.md` § Verification automation — zero manual steps where physicall
 ## Implementation log
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
 
-N/A — design draft, not yet implemented.
+- `ac40d9e0` · Slice 1 — PaneAddRequest struct + cross-backend core + bucket-A tests (12 new cases, all 1644 pass)
 
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
 
-N/A — design draft, not yet implemented.
+- **`ApplyPaneAddAndCloseRequests` wrapper passes `emptyBuckets` in Slice 1** — `Views::Disk` is private; plan assumed threading real buckets would be trivial. Slice 2 adds a getter to `Views` and threads `ViewState.Disk.Backends`. No functional regression: all existing write sites only set `sourceId` (same-backend path, unaffected by empty map).
 
 ## Verification (actual)
 *(populated post-ship — what was actually tested + result, passed / failed / not-run)*
 
-N/A — design draft, not yet implemented.
+- Slice 1: full `SmatchetTests` suite (1644 cases, 15533 assertions) — **PASSED**
+- Lint gate (`test-lint-rules.sh --diff origin/develop`) — all 6 checks **PASSED**
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
