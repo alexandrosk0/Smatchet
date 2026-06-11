@@ -2,7 +2,7 @@
 
 > **Slug**: `memory-inbox-fixes` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `shipped`
 
 ## Context
 
@@ -77,28 +77,22 @@ N/A — pure agentic-shell (bash + bats) and docs diff; no `Source/Core/` files 
 - **Salvage wave-5 re-run** — user decision post-ship (token cost); evidence preserved.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+- `c4896898` · wip(plan): memory-inbox-fixes — plan-doc committed up front.
+- `b69a7c2d` · slice A (PR #1139): `postmortem-owed.sh` owe-vs-soft split (snapshot + live-fallback paths), `POSTMORTEM_LEDGER` override, new 15-case `tests/bats/postmortem_owed.bats`, `merge-gates.md` § Override-label hygiene.
+- `6f573d68` · slice B (PR #1141): new `docs/agent-rules/workflow-fleets.md`, AGENTS.md on-demand rule-docs row, 2 P2 `categories/tooling.md` entries (`workflow-watchdog.sh`, fleet pre-flight).
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+- bats suite grew to 15 cases vs planned ~10 — added mixed-PR, nudge-vs-list parity, and snapshot-authoritative cases while writing.
+- **Unplanned fix**: the suite exposed a latent pre-existing TSV field-shift bug — tab is IFS *whitespace* to bash `read`, so an empty `labels` field shifted `redChecks` left and silently dropped real escapes on label-less red-check rows. Fixed at both read sites via `tr '\t' '\037'` + `IFS=$'\037'` (ASCII unit separator is non-whitespace → positional split survives empty fields).
+- Slice B branch work in the session worktree needed git plumbing (`branch` + `symbolic-ref` + `read-tree --reset -u`) — `guard-shared-tree.sh` false-denies `-C <worktree>`-targeted `checkout` (known issue, `historical-review-findings.md` #913).
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-   > **Keep the literal `<slug>` placeholder in this committed step — do NOT
-   > expand it to this plan's real filename.** Writing the actual basename here
-   > manufactures a `docs/plans/shipped/<name>.md` path that points at a file
-   > still living in `active/` (the move hasn't happened yet), which
-   > `test-plan-ref-integrity.sh` reports as a dangling self-reference. The gate
-   > carves out the *placeholder* form on the Archive `git mv` line; the
-   > expanded form defeats that carve-out. Run the literal command with your
-   > slug substituted at the shell — never bake the expansion into the file.
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+- `bats tests/bats/postmortem_owed.bats` — **15/15 pass** (slice A).
+- `agents/scripts/project/test-lint-rules.sh --diff origin/develop` — all PASS on both slices (shell-lint on the .sh edit; `agent-too-long` on the AGENTS.md row).
+- `scripts/dev/test-docs.sh` — **11/11 PASS** on both slices.
+- Live re-run of the fixed script: #1124/#1110 false positives gone; two **genuine** red-check owes surfaced (#1137 — Bucket-E/Sanitizer; #1130 — Coverage) and left to the existing nudge flow.
+- Build: not run — pure docs + agentic-shell diff (`is-pure-docs-diff` cadence rule), as planned.
 
-*No ref-sweep — references use the tier-less form `docs/plans/<slug>.md` (the gates resolve it against any tier; PR #890), so the move can't break them. Write new plan references tier-less.*
-
-*(Delete this `## Archive` block as part of step 2 — once moved to `shipped/`, the file is reference material and the checklist has served its purpose.)*

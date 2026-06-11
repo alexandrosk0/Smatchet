@@ -134,6 +134,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`dual-ui-mode-desktop-mobile`](shipped/dual-ui-mode-desktop-mobile.md) | 2026-06-09 | Plan — Desktop / Mobile switchable UI modes |
 | [`mobile-mvp-completion`](shipped/mobile-mvp-completion.md) | 2026-06-09 | Plan — Mobile (Android) Phase-0 MVP completion |
 | [`ilocalcache-seam`](shipped/ilocalcache-seam.md) | 2026-06-10 | ISyncCache seam (ADR-0020) — 28-method sync-cache interface decouples OfflineQueueService/TicketSyncService/IssueCreatePipeline from SQLite; service tests run on a contract-suite-verified FakeSyncCache with a configure-time purity guard; PR1 #1112 (seam) + PR2 (test purity). |
+| [`memory-inbox-fixes`](shipped/memory-inbox-fixes.md) | 2026-06-11 | Plan — Memory-inbox fixes: postmortem-owed false-positive + workflow-fleet rules |
 <!-- END auto-plan-index -->
 
 ### Notes
