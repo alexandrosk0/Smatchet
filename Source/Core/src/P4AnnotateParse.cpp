@@ -117,4 +117,38 @@ std::vector<P4ChangeSummary> ParseChangesForUserOutput(const std::string& stdout
     return changes;
 }
 
+P4ClScanMatch FindFirstChangelistInText(const std::string& text) {
+    P4ClScanMatch match;
+    const std::size_t kMinClDigits = 6;
+    std::size_t i = 0;
+    while (i < text.size()) {
+        const char c = text[i];
+        if (c < '0' || c > '9') {
+            ++i;
+            continue;
+        }
+        std::size_t end = i + 1;
+        while (end < text.size() && text[end] >= '0' && text[end] <= '9') {
+            ++end;
+        }
+        // Boundary rule from the header: a digit run glued to an identifier-ish prefix
+        // ([A-Za-z0-9_-]) is part of that token (issue-key tail, hash fragment), not a CL.
+        bool boundaryOk = true;
+        if (i > 0) {
+            const char prev = text[i - 1];
+            const bool prevTokenish = (prev >= 'A' && prev <= 'Z') || (prev >= 'a' && prev <= 'z') ||
+                                      (prev >= '0' && prev <= '9') || prev == '_' || prev == '-';
+            boundaryOk = !prevTokenish;
+        }
+        if (boundaryOk && end - i >= kMinClDigits) {
+            match.Cl = text.substr(i, end - i);
+            match.Start = i;
+            match.End = end;
+            return match;
+        }
+        i = end;
+    }
+    return match;
+}
+
 } // namespace P4AnnotateParse

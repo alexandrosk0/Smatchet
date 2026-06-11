@@ -17,6 +17,7 @@ ITrackerConnectivity& JiraClient::Connectivity() { return *this; }
 ITrackerFieldCatalog* JiraClient::FieldCatalog() { return this; }
 ITrackerIssueMutations* JiraClient::Mutations() { return this; }
 ITrackerCollaboration* JiraClient::Collaboration() { return this; }
+ITrackerActivity* JiraClient::Activity() { return this; }
 
 std::string JiraClient::ExtractProjectFromQuery(const std::string& query) const {
     return JqlProjectScope::ExtractSingleProject(query);

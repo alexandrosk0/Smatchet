@@ -70,6 +70,7 @@ ITrackerConnectivity& GitHubClient::Connectivity() { return *this; }
 ITrackerFieldCatalog* GitHubClient::FieldCatalog() { return this; }
 ITrackerIssueMutations* GitHubClient::Mutations() { return this; }
 ITrackerCollaboration* GitHubClient::Collaboration() { return nullptr; }
+ITrackerActivity* GitHubClient::Activity() { return nullptr; }
 
 GitHubClient::GitHubClient(const std::string& baseUrl, const std::string& pat)
     : baseUrl_(baseUrl.empty() ? std::string("https://api.github.com") : baseUrl), pat_(pat),

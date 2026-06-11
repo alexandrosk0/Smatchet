@@ -47,6 +47,7 @@ ITrackerConnectivity& PlaneFixtureBackend::Connectivity() { return *this; }
 ITrackerFieldCatalog* PlaneFixtureBackend::FieldCatalog() { return nullptr; }
 ITrackerIssueMutations* PlaneFixtureBackend::Mutations() { return this; }
 ITrackerCollaboration* PlaneFixtureBackend::Collaboration() { return nullptr; }
+ITrackerActivity* PlaneFixtureBackend::Activity() { return nullptr; }
 
 PlaneFixtureBackend::PlaneFixtureBackend(const std::string& fixturePath) : fixturePath_(fixturePath) {
     std::ifstream in(fixturePath);

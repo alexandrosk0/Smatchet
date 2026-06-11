@@ -17,6 +17,7 @@
 #include "FieldEditAuditSource.h"
 #include "ConfigManager.h"
 #include "FieldCatalogCache.h"
+#include "ITrackerActivity.h"
 #include "JiraClient.h"
 #include "ProjectResolver.h"
 #include "TrackerFieldPayload.h"
@@ -1836,12 +1837,12 @@ bool AppController::FetchUserGroupNames(const std::string& accountId, std::vecto
         outError = "Jira backend is not initialized.";
         return false;
     }
-    if (!backend->Collaboration()) {
-        outError = "Tracker backend does not support collaboration features.";
+    if (!backend->Activity()) {
+        outError = "Tracker backend does not support activity features.";
         return false;
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    auto groupsResult = backend->Collaboration()->FetchUserGroupNames(cfg, accountId);
+    auto groupsResult = backend->Activity()->FetchUserGroupNames(cfg, accountId);
     const bool ok = static_cast<bool>(groupsResult);
     if (ok) {
         outGroupNames = std::move(groupsResult.value());

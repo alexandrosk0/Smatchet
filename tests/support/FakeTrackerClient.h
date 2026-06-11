@@ -94,6 +94,7 @@ class FakeTrackerClient : public ITrackerBackend,
     ITrackerFieldCatalog* FieldCatalog() override { return nullptr; }
     ITrackerIssueMutations* Mutations() override { return this; }
     ITrackerCollaboration* Collaboration() override { return nullptr; }
+    ITrackerActivity* Activity() override { return nullptr; }
 
     // --- Capability interface surface --------------------------------------------------------
 

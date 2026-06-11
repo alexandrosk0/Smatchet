@@ -1,6 +1,7 @@
 #ifndef TRACKER_JIRA_CLIENT_H
 #define TRACKER_JIRA_CLIENT_H
 
+#include "ITrackerActivity.h"
 #include "ITrackerBackend.h"
 #include "ITrackerCollaboration.h"
 #include "ITrackerConnectivity.h"
@@ -12,6 +13,7 @@
 #include <cpr/cpr.h>
 #include <nlohmann/json.hpp>
 
+#include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -28,13 +30,15 @@ class JiraClient : public ITrackerBackend,
                    public ITrackerConnectivity,
                    public ITrackerFieldCatalog,
                    public ITrackerIssueMutations,
-                   public ITrackerCollaboration {
+                   public ITrackerCollaboration,
+                   public ITrackerActivity {
   public:
     ITrackerIssueReader& Reader() override;
     ITrackerConnectivity& Connectivity() override;
     ITrackerFieldCatalog* FieldCatalog() override;
     ITrackerIssueMutations* Mutations() override;
     ITrackerCollaboration* Collaboration() override;
+    ITrackerActivity* Activity() override;
     std::string GetTrackerType() const override { return "Jira"; }
     TrackerReachabilityProbeResult ProbeReachability(const TrackerConfig& cfg) override;
     // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent
@@ -147,9 +151,26 @@ class JiraClient : public ITrackerBackend,
 
     /**
      * Best-effort group names for a user (Cloud may return 403; then the Ok list is empty).
+     * ITrackerActivity override (relocated from ITrackerCollaboration — one home per capability).
      */
     Result<std::vector<std::string>, TrackerError> FetchUserGroupNames(const TrackerConfig& cfg,
                                                                        const std::string& accountId) override;
+
+    /** GET /rest/api/3/group/member (paged) — members of a named Jira group. */
+    Result<std::vector<TrackerUser>, TrackerError> FetchGroupMembers(const TrackerConfig& cfg,
+                                                                     const std::string& groupName) override;
+
+    /**
+     * JQL `assignee WAS / reporter WAS` discovery + changelog scan (JiraActivityFeed) —
+     * one entry per user-authored changelog item inside the day window.
+     */
+    Result<std::vector<TrackerActivityEntry>, TrackerError>
+    FetchUserActivity(const TrackerConfig& cfg, const std::string& accountId, const std::string& dayFrom,
+                      const std::string& dayTo, const std::string& projectScope,
+                      TrackerActivityProgress& progress) override;
+
+    /** Raise the cancel flag for any in-flight FetchUserActivity run. */
+    void ClearUserActivity() override;
 
     /** Move/add an issue to a sprint via Jira Agile API. */
     bool AddIssueToSprint(const TrackerConfig& cfg, const std::string& issueKey, const std::string& sprintId,
@@ -173,6 +194,10 @@ class JiraClient : public ITrackerBackend,
     std::vector<RemoteProject> cachedProjects_;
     std::int64_t cachedProjectsAtUnix_ = 0;
     std::mutex listProjectsMutex_;
+
+    // Cancel flag for the in-flight FetchUserActivity run (checked inside the changelog
+    // scan loop; raised by ClearUserActivity from any thread).
+    std::atomic<bool> activityCancel_{false};
 
     // UpdateIssueFields sub-paths — split to keep the public orchestrator within size caps.
     bool UpdateIssueFieldsViaTransition(const std::string& issueId, const nlohmann::json& statusValue,

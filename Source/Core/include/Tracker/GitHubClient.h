@@ -38,6 +38,7 @@ class GitHubClient : public ITrackerBackend,
     ITrackerFieldCatalog* FieldCatalog() override;
     ITrackerIssueMutations* Mutations() override;
     ITrackerCollaboration* Collaboration() override;
+    ITrackerActivity* Activity() override;
     GitHubClient(const std::string& baseUrl, const std::string& pat);
     ~GitHubClient() override = default;
 

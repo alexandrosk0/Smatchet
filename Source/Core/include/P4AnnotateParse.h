@@ -3,6 +3,7 @@
 
 #include "P4Annotate.h"
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -62,6 +63,19 @@ P4LineAnnotate ParseLatestChangeFromChangesOutput(const std::string& stdoutText,
  * truncated output). Order preserved (p4 emits newest first).
  */
 std::vector<P4ChangeSummary> ParseChangesForUserOutput(const std::string& stdoutText);
+
+/**
+ * First Perforce-changelist-looking number in free text: a maximal run of ASCII digits at
+ * least 6 long whose preceding char is not [A-Za-z0-9_-] (so the digit tail of an issue key
+ * like "PROJ-123456" is not misread as a CL). `Cl` is "" when nothing matched; offsets are
+ * byte positions with `End` one past the last digit (Start == End on no match). Pure; no I/O.
+ */
+struct P4ClScanMatch {
+    std::string Cl;
+    std::size_t Start = 0;
+    std::size_t End = 0;
+};
+P4ClScanMatch FindFirstChangelistInText(const std::string& text);
 
 } // namespace P4AnnotateParse
 

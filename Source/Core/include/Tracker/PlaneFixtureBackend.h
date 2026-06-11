@@ -45,6 +45,7 @@ class PlaneFixtureBackend : public ITrackerBackend,
     ITrackerFieldCatalog* FieldCatalog() override;
     ITrackerIssueMutations* Mutations() override;
     ITrackerCollaboration* Collaboration() override;
+    ITrackerActivity* Activity() override;
 
     explicit PlaneFixtureBackend(const std::string& fixturePath);
 

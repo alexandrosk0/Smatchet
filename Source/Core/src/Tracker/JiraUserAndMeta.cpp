@@ -372,6 +372,7 @@ Result<std::vector<TrackerUser>, TrackerError> JiraClient::SearchUsersByQuery(co
     return UsersResult::Ok(std::move(outUsers));
 }
 
+// ITrackerActivity override (relocated from ITrackerCollaboration — one home per capability).
 Result<std::vector<std::string>, TrackerError> JiraClient::FetchUserGroupNames(const TrackerConfig& cfg,
                                                                                const std::string& accountId) {
     using GroupsResult = Result<std::vector<std::string>, TrackerError>;
@@ -417,4 +418,67 @@ Result<std::vector<std::string>, TrackerError> JiraClient::FetchUserGroupNames(c
         return GroupsResult::Err(TrackerErrorParse(outError));
     }
     return GroupsResult::Ok(std::move(outGroupNames));
+}
+
+Result<std::vector<TrackerUser>, TrackerError> JiraClient::FetchGroupMembers(const TrackerConfig& cfg,
+                                                                             const std::string& groupName) {
+    using MembersResult = Result<std::vector<TrackerUser>, TrackerError>;
+    std::vector<TrackerUser> outMembers;
+    std::string outError;
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
+        return MembersResult::Err(TrackerErrorAuth(outError));
+    }
+    if (groupName.empty()) {
+        return MembersResult::Ok(std::move(outMembers));
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
+
+    // GET /rest/api/3/group/member — paginated (startAt/maxResults, isLast terminator).
+    const int kPageSize = 50;
+    const int kMaxPages = 20; // 1000 members — sanity bound for a UI roster
+    std::unordered_set<std::string> seen;
+    for (int page = 0; page < kMaxPages; ++page) {
+        const std::string url = base + "/rest/api/3/group/member?groupname=" + UrlEncode(groupName) +
+                                "&startAt=" + std::to_string(page * kPageSize) +
+                                "&maxResults=" + std::to_string(kPageSize);
+        auto resp = TrackerGetLogged("JiraClient", url, headers);
+        if (resp.status_code != 200) {
+            outError = "group/member failed: HTTP " + std::to_string(resp.status_code);
+            LOG_ERROR("JiraClient: %s group=%s", outError.c_str(), TruncateForLog(groupName, 80).c_str());
+            if (resp.status_code >= 200 && resp.status_code < 300) {
+                return MembersResult::Err(TrackerErrorUnknown(outError, resp.status_code));
+            }
+            return MembersResult::Err(TrackerErrorFromHttpStatus(resp.status_code, outError));
+        }
+
+        bool isLast = true;
+        try {
+            auto j = nlohmann::json::parse(resp.text);
+            const auto values = j.value("values", nlohmann::json::array());
+            if (values.is_array()) {
+                for (const auto& node : values) {
+                    if (!node.is_object()) {
+                        continue;
+                    }
+                    TrackerUser u;
+                    ParseTrackerUserObject(node, u);
+                    if (u.AccountId.empty() || !u.Active || !seen.insert(u.AccountId).second) {
+                        continue;
+                    }
+                    outMembers.push_back(std::move(u));
+                }
+            }
+            isLast = j.value("isLast", true);
+        } catch (const std::exception& ex) {
+            outError = std::string("group/member parse error: ") + ex.what();
+            LOG_ERROR("JiraClient: %s", outError.c_str());
+            return MembersResult::Err(TrackerErrorParse(outError));
+        }
+        if (isLast) {
+            break;
+        }
+    }
+    return MembersResult::Ok(std::move(outMembers));
 }

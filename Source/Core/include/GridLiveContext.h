@@ -53,6 +53,19 @@ struct GridContextFieldCatalog {
     mutable std::unordered_map<std::string, std::chrono::steady_clock::time_point> projectComponentsRetryAfter_;
 };
 
+/// Per-context lazy in-memory group roster (user-info-window Slice 3, plan item 15;
+/// "group roster" per Tracker CONTEXT.md — NOT "group catalog", which collides with the
+/// field catalog). Mutex-guarded like GridContextFieldCatalog and per-context for the same
+/// reason: rosters are backend-scoped, so two live different-backend panes must not share
+/// one copy. Filled lazily by the AppController group delegators; never persisted.
+struct GridContextGroupRoster {
+    /// Guards both members below.
+    mutable std::mutex rosterMutex_;
+    /// FetchGroupMembers results keyed by group name (active users, deduped by AccountId).
+    std::unordered_map<std::string, std::vector<TrackerUser>> MembersByGroup;
+    std::string LastGroupRosterError;
+};
+
 struct GridLiveContext {
     // Ctor/dtor are out-of-line (GridLiveContext.cpp) so the sync-service member only needs
     // a forward declaration here; pulling the full TicketSyncService header into
@@ -101,6 +114,9 @@ struct GridLiveContext {
 
     /// Per-context in-memory field catalog (multi-grid Slice 3 — see struct doc above).
     GridContextFieldCatalog fieldCatalog;
+
+    /// Per-context lazy group roster (user-info-window Slice 3 — see struct doc above).
+    GridContextGroupRoster groupRoster;
 
     // --- Visibility lifecycle (multi-grid Slice 3, plan item 17) -----------------------
     // UI-thread-only bookkeeping driven by AppController::NotifyPaneVisible /

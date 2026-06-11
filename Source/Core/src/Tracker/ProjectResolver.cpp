@@ -16,6 +16,11 @@ bool IsAsciiDigit(char c) {
 bool IsAsciiAlphaNum(char c) {
     return IsAsciiAlpha(c) || IsAsciiDigit(c);
 }
+// Token alphabet for FindFirstIssueKeyInText — the chars that can appear inside a
+// candidate "KEY-123" token. Everything else is a word boundary.
+bool IsIssueKeyTokenChar(char c) {
+    return IsAsciiAlphaNum(c) || c == '_' || c == '-';
+}
 } // namespace
 
 std::string ExtractIssueKeyPrefix(const std::string& id) {
@@ -46,6 +51,30 @@ std::string ExtractIssueKeyPrefix(const std::string& id) {
         }
     }
     return id.substr(0, dash);
+}
+
+IssueKeyMatch FindFirstIssueKeyInText(const std::string& text) {
+    IssueKeyMatch match;
+    std::size_t i = 0;
+    while (i < text.size()) {
+        if (!IsIssueKeyTokenChar(text[i])) {
+            ++i;
+            continue;
+        }
+        std::size_t end = i + 1;
+        while (end < text.size() && IsIssueKeyTokenChar(text[end])) {
+            ++end;
+        }
+        const std::string token = text.substr(i, end - i);
+        if (!ExtractIssueKeyPrefix(token).empty()) {
+            match.Key = token;
+            match.Start = i;
+            match.End = end;
+            return match;
+        }
+        i = end;
+    }
+    return match;
 }
 
 std::string ResolveProjectForDraft(const ITrackerConnectivity* client, const std::string& activeViewQuery,
