@@ -117,6 +117,28 @@ std::vector<P4ChangeSummary> ParseChangesForUserOutput(const std::string& stdout
     return changes;
 }
 
+std::string ParseP4UserLoginForEmail(const std::string& usersStdout, const std::string& email) {
+    const std::string wanted = TrimCopy(email);
+    if (wanted.empty()) {
+        return std::string();
+    }
+    const std::string wantedLower = ToLowerAsciiCopy(wanted);
+    const std::vector<std::string> lines = SplitLines(usersStdout);
+    for (size_t i = 0; i < lines.size(); ++i) {
+        const std::string& line = lines[i];
+        const size_t lt = line.find('<');
+        const size_t gt = lt == std::string::npos ? std::string::npos : line.find('>', lt);
+        if (lt == std::string::npos || gt == std::string::npos || gt <= lt + 1) {
+            continue;
+        }
+        const std::string lineEmail = TrimCopy(line.substr(lt + 1, gt - lt - 1));
+        if (ToLowerAsciiCopy(lineEmail) == wantedLower) {
+            return TrimCopy(line.substr(0, lt));
+        }
+    }
+    return std::string();
+}
+
 P4ClScanMatch FindFirstChangelistInText(const std::string& text) {
     P4ClScanMatch match;
     const std::size_t kMinClDigits = 6;

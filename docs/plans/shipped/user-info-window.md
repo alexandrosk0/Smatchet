@@ -2,7 +2,7 @@
 
 > **Slug**: `user-info-window` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — the machine-readable lifecycle marker. Values: `active` (driving in-flight work) · `shipped` (post-ship sections populated + all cited PRs merged — this file belongs in `docs/plans/shipped/`) · `blocked` / `deferred` (paused — one-line why). **Flip to `shipped` in the SAME post-ship PR that fills § Implementation log AND `git mv`s this file active → shipped** (see § Archive). `agents/scripts/core/plan-archival-owed.sh` nags at SessionStart if any `active/` plan is marked `shipped` but never moved.
+> **Status**: `shipped` — the machine-readable lifecycle marker. Values: `active` (driving in-flight work) · `shipped` (post-ship sections populated + all cited PRs merged — this file belongs in `docs/plans/shipped/`) · `blocked` / `deferred` (paused — one-line why). **Flip to `shipped` in the SAME post-ship PR that fills § Implementation log AND `git mv`s this file active → shipped** (see § Archive). `agents/scripts/core/plan-archival-owed.sh` nags at SessionStart if any `active/` plan is marked `shipped` but never moved.
 >
 > **Usage**: copy this template to `docs/plans/active/<slug>.md` as the first step of any new plan. Fill every section. Sections that genuinely don't apply get `N/A — <one-line reason>`, not deletion.
 >
@@ -175,20 +175,26 @@ Per `AGENTS.md` § Verification automation — zero manual steps. Buckets:
 ## Implementation log
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
 
-- `319e93ea` · PR 1 (Slices 1+2) — P4 `changes -u` feed (`P4ChangeSummary`/`P4ChangesForUser` + `ParseChangesForUserOutput`), `P4ClPreview`/`P4vLaunch` helper extraction (Launch TU dissolved), 5 config keys, `Vcs::VcsSubmission` core (`P4UserFromEmail`/`FromP4Change`/`KeepOnOrAfterCutoff`/`MergeFeedsNewestFirst`), `Vcs/GitHubCommits` (`ParseGitHubCommitListJson` + `GitHubCommitsForUser`); 10 test cases / 62 assertions.
+- `319e93ea` · PR 1 (Slices 1+2) — P4 `changes -u` feed (`P4ChangeSummary`/`P4ChangesForUser` + `ParseChangesForUserOutput`), `P4ClPreview`/`P4vLaunch` helper extraction (Launch TU dissolved), 5 config keys, `Vcs::VcsSubmission` core (`P4UserFromEmail`/`FromP4Change`/`KeepOnOrAfterCutoff`/`MergeFeedsNewestFirst`), `Vcs/GitHubCommits` (`ParseGitHubCommitListJson` + `GitHubCommitsForUser`); 10 test cases / 62 assertions. (PR #1137, squashed as `071f2473`)
+- `49932ed8` · PR 2 (Slice 3) — `ITrackerActivity` sixth nullable role (ADR-0021), group methods moved off `ITrackerCollaboration`, Jira changelog→`TrackerActivityEntry` adapter + project-scoped JQL activity search, `AppController` per-pane delegators (`PaneSupportsActivity`/`FetchPaneUserActivity`/`FetchUserGroupNames`/`FetchPaneGroupMembers`/`ClearPaneUserActivity`). (PR #1138)
+- `a7f43b69` · PR 3 (Slice 4) — Plane issue-history + GitHub repo-issue-events `ITrackerActivity` implementations, client-side key-clause post-filters, GitHub org-team groups / Plane groups-hidden. (PR #1142)
+- PR 4 (Slice 5, this PR) — `SmatchetUserInfoUi` dockable window (identity / unified+separate VCS feed / activity with day-filter + progress / groups with one-shot member rosters), `SmatchetLayoutBreakpoints.h` (`kNarrowLayoutWidthPx`), session request-latch + `onUserInfoAddToQuery` host wiring, `user_info` dock slot, grid right-click "User Info..." on user-type cells.
 
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
 
+- **`SmatchetUserInfoUi::Open` is static and routes through a session request-latch** (`d.userInfoRequestPending` + identity fields, consumed next frame by `adoptPendingRequest`) instead of the grid popup calling the instance directly — the popup TU (`SmatchetGridUiSupport.cpp`) has no `SmatchetUI` instance access; the latch keeps it decoupled.
+- **Add-to-query passes the parsed issue key, not the URL** (already flagged in § Risks as a deliberate spec deviation; confirmed in implementation — URL retained for the browser-open item only).
+- **`onUserInfoStatus` callback dropped** — status/error surfaces inline per section (`kSectionErrorColor` text) + toasts from the host-side `userInfoAddToQuery`; a separate status channel added no information.
+- **In-flight futures are never reassigned; retargets set relaunch flags** (`vcsRelaunch_`/`activityRelaunch_`/`groupsRelaunch_`) consumed in the poll helpers after drain — `std::future` destructor for a `std::async` task blocks, which would freeze the UI thread (Pillar 2).
+- **Minor signature trims vs blueprint**: `drawVcsRow` lost its `int index` param (PushID handled in `drawVcsRows`); `drawGroupsSection` lost `narrow` (groups render identically at both widths); `launchActivityFetch(app)` needs no session arg.
+
 ## Verification (actual)
 *(populated post-ship — what was actually tested + result, passed / failed / not-run)*
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/user-info-window.md docs/plans/shipped/` (move into the shipped tier),*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+- **Bucket A (ctest)**: 7/7 suites pass (incl. the 10 user-info-window test cases / 62 assertions from PR 1; Slice 3/4 adapter mappings covered in their PRs).
+- **Build gate**: dual-target `SmatchetStandalone` + `SmatchetCore_DX12` clean (MSVC ninja-iter) with both new TUs in each; `ninja-test-msvc` clean.
+- **Lint gates**: all PASS vs `origin/develop`; 4 `[dup]` WARNs are calibration-phase table-literal false matches (`SmatchetDockNodeIds.cpp` entry table vs `MarkdownConvert.cpp`), non-blocking.
+- **Bucket E + screenshot diffs (window open/close, Escape, ClearUserActivity, load-button disable, one-shot group fetch, `VcsFeedLayout` toggle persistence, ~400px narrow layout)**: **not-run** — deferred to the visual-validation pause + follow-up coverage entry per § Manual residue (tooling backlog entry filed with the pause).
+- **Visual validation**: pending user verdict at the Slice-5 pause (launched exe, desktop + ~400px widths, both VCS layouts).
 
-*No ref-sweep — references use the tier-less form `docs/plans/<slug>.md`, so the move can't break them.*
-
-*(Delete this `## Archive` block as part of step 2.)*

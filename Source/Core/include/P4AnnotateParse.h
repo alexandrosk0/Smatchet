@@ -65,6 +65,14 @@ P4LineAnnotate ParseLatestChangeFromChangesOutput(const std::string& stdoutText,
 std::vector<P4ChangeSummary> ParseChangesForUserOutput(const std::string& stdoutText);
 
 /**
+ * Resolve a Perforce login from `p4 users` stdout by matching the `<email>` column
+ * (case-insensitive, ASCII). Expected line shape: `login <email> (FullName) accessed
+ * YYYY/MM/DD`. Returns the login of the first line whose bracketed email equals
+ * `email` (both trimmed); "" if `email` is empty or no line matches. Pure; no I/O.
+ */
+std::string ParseP4UserLoginForEmail(const std::string& usersStdout, const std::string& email);
+
+/**
  * First Perforce-changelist-looking number in free text: a maximal run of ASCII digits at
  * least 6 long whose preceding char is not [A-Za-z0-9_-] (so the digit tail of an issue key
  * like "PROJ-123456" is not misread as a CL). `Cl` is "" when nothing matched; offsets are

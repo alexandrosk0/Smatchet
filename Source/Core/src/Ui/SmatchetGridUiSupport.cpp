@@ -7,6 +7,7 @@
 #include "ConfigManager.h"
 #include "SmatchetInputModifierBridge.h"
 #include "StringUtil.h"
+#include "Ui/SmatchetUserInfoUi.h"
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -113,6 +114,48 @@ static void DrawAnnotateFromCallstackMenuIfAny(AppController* app, UiDrawSession
     }
 }
 
+const TrackerUser* FindUserMatchingValue(AppController& app, const std::string& value) {
+    for (const auto& u : app.GetAvailableUsers()) {
+        if (u.DisplayName == value || u.AccountId == value || u.EmailAddress == value) {
+            return &u;
+        }
+    }
+    return nullptr;
+}
+
+// "User Info..." on user-type cells (assignee/reporter/...): opens the dockable
+// User Info window targeted at the cell's user (user-info-window.md, Slice 5).
+static void DrawUserInfoMenuItemIfUserField(AppController* app, UiDrawSession* ui, const std::string& fieldId,
+                                            const std::string& rawValue) {
+    if (!app || !ui || fieldId.empty() || rawValue.empty()) {
+        return;
+    }
+    const TrackerField* field = app->FindFieldById(fieldId);
+    if (!field || !field->IsUserType) {
+        return;
+    }
+    ImGui::Separator();
+    if (!ImGui::MenuItem("User Info...")) {
+        return;
+    }
+    std::string value = TrimCopy(rawValue);
+    const TrackerUser* match = FindUserMatchingValue(*app, value);
+    if (!match) {
+        // Multi-user cells render comma-joined — retry with the first entry.
+        const size_t comma = value.find(',');
+        if (comma != std::string::npos) {
+            value = TrimCopy(value.substr(0, comma));
+            match = FindUserMatchingValue(*app, value);
+        }
+    }
+    // No catalog match (offline / stale catalog): open with the raw cell text as
+    // best-effort identity — VCS feeds still work off the email/name strings.
+    const std::string displayName = match ? match->DisplayName : value;
+    const std::string email = match ? match->EmailAddress : std::string();
+    const std::string accountId = match ? match->AccountId : value;
+    SmatchetUserInfoUi::Open(*ui, ui->pane().id, displayName, email, accountId);
+}
+
 } // namespace
 
 /**
@@ -156,6 +199,7 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
             ImGui::SetClipboardText(rawValue.c_str());
         }
         DrawAnnotateFromCallstackMenuIfAny(app, ui, rowForAnnotateMenu, issueKey);
+        DrawUserInfoMenuItemIfUserField(app, ui, fieldId, rawValue);
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
         DrawLuaTicketActionMenuItems(app, ui, issueKey);
 #endif
@@ -175,6 +219,7 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
             ImGui::SetClipboardText(rawForCopy.c_str());
         }
         DrawAnnotateFromCallstackMenuIfAny(app, ui, rowForAnnotateMenu, issueKey);
+        DrawUserInfoMenuItemIfUserField(app, ui, fieldId, rawValue);
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
         DrawLuaTicketActionMenuItems(app, ui, issueKey);
 #endif

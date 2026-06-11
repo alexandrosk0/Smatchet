@@ -4,7 +4,7 @@ Date: 2026-06-10
 
 ## Status
 
-Accepted (plan-stage; lands with `docs/plans/active/user-info-window.md` slice 3)
+Accepted (plan-stage; lands with `docs/plans/user-info-window.md` slice 3)
 
 ## Decision
 
