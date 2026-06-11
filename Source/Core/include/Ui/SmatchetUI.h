@@ -7,6 +7,7 @@
 #include "SmatchetPreferencesUi_detail.h"
 #include "SmatchetThemeIds.h"
 #include "TicketGridModel.h"
+#include "Ui/SmatchetUserInfoUi.h"
 #include "Views.h"
 
 #include <algorithm>
@@ -138,6 +139,7 @@ class SmatchetUI {
   private:
     Views ViewState;
     AnnotateAnalysisUi annotateAnalysisUi_;
+    SmatchetUserInfoUi userInfoUi_;
     GridFrameContext gridFrameCtx_;
     smatchet::cmd::CommandPaletteUi commandPalette_;
     SmatchetToolbarUi toolbar_;
@@ -350,6 +352,10 @@ class SmatchetUI {
     /// nav history) WITHOUT the SyncWithCurrentView network re-fetch — used by the pane
     /// focus-switch path when the pane's own GridLiveContext already synced (Slice 3).
     void viewsActivateView(AppController& app, UiDrawSession& d, const std::string& id, bool kickSync = true);
+    /// "Add to view query" from the User Info window: replace the source pane's
+    /// view query with a single-key lookup (bound into d.onUserInfoAddToQuery).
+    void userInfoAddToQuery(AppController& app, UiDrawSession& d, const std::string& sourcePaneId,
+                            const std::string& issueKey);
     void viewsRequestActivate(AppController& app, UiDrawSession& d, const ViewDefinition* activeView,
                               const std::string& id);
     void viewsCreateNewView(UiDrawSession& d, const ViewDefinition* activeView);

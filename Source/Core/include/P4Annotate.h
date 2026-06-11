@@ -79,6 +79,16 @@ bool P4FirstSubmittedChangelistOnCalendarDay(const AnnotateAnalysisConfig& cfg, 
 bool P4ChangesForUser(const AnnotateAnalysisConfig& cfg, const std::string& p4User, int maxN,
                       std::vector<P4ChangeSummary>& outChanges, std::string& outError);
 
+/**
+ * Resolve a Perforce login from an email by matching the `<email>` column of
+ * `p4 users` (case-insensitive). The p4 login often differs from the email
+ * local-part (e.g. login "alexk" for "alexkonstantonis@gmail.com"), so the naive
+ * local-part strip in Vcs::P4UserFromEmail misses real changes. Returns the login
+ * on a match, or "" if the email is empty, p4 fails, or no user matches. Blocking
+ * (call off the UI thread).
+ */
+std::string P4UserForEmail(const AnnotateAnalysisConfig& cfg, const std::string& email);
+
 /** LRU-ish cache for `p4 describe -s` (bounded by maxEntries). Thread-safe. */
 class P4ChangelistDescribeCache {
   public:

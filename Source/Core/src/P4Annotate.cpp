@@ -341,6 +341,28 @@ bool P4ChangesForUser(const AnnotateAnalysisConfig& cfg, const std::string& p4Us
     return true;
 }
 
+std::string P4UserForEmail(const AnnotateAnalysisConfig& cfg, const std::string& email) {
+    const std::string wanted = TrimCopy(email);
+    if (wanted.empty()) {
+        return std::string();
+    }
+    int code = 0;
+    std::string out;
+    std::string err;
+    // `p4 users` prints "login <email> (FullName) accessed YYYY/MM/DD" per line.
+    if (!P4RunCommand(cfg, {"users"}, code, out, err) || code != 0) {
+        LOG_DEBUG("P4UserForEmail: p4 users failed code=%d (%s)", code, err.c_str());
+        return std::string();
+    }
+    const std::string login = P4AnnotateParse::ParseP4UserLoginForEmail(out, wanted);
+    if (login.empty()) {
+        LOG_DEBUG("P4UserForEmail: no p4 user matched email '%s'", wanted.c_str());
+    } else {
+        LOG_DEBUG("P4UserForEmail: matched email '%s' -> login '%s'", wanted.c_str(), login.c_str());
+    }
+    return login;
+}
+
 P4ChangelistDescribeCache::P4ChangelistDescribeCache(int maxEntries) : maxEntries_(maxEntries > 0 ? maxEntries : 16) {}
 
 P4ChangelistDetails P4ChangelistDescribeCache::Get(const std::string& changelist) const {

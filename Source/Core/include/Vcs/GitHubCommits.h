@@ -10,7 +10,7 @@
 
 /**
  * GitHub commits-by-user VCS source for the User Info window's feed
- * (docs/plans/active/user-info-window.md, Slice 2). VCS-section plumbing, NOT
+ * (docs/plans/user-info-window.md, Slice 2). VCS-section plumbing, NOT
  * the tracker backend — auth reuses the tracker config's GitHubPat/GitHubBaseUrl
  * (persisted regardless of active TrackerType), so the git section works under
  * Jira/Plane panes too.

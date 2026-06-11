@@ -194,6 +194,11 @@ void SmatchetUI::loadPreferencesBuffers(UiDrawSession& d) {
     CopyStringToBuffer(d.newIssueInheritFieldsBuf, JoinCsv(d.cfg.NewIssueInheritFieldIds));
     CopyStringToBuffer(d.newIssueInheritFieldsPlaneBuf, JoinCsv(d.cfg.NewIssueInheritFieldIdsPlane));
     CopyStringToBuffer(d.newIssueInheritFieldsGitHubBuf, JoinCsv(d.cfg.NewIssueInheritFieldIdsGitHub));
+    CopyStringToBuffer(d.gitCommitReposBuf, d.cfg.GitCommitRepos);
+    CopyStringToBuffer(d.productionGroupKeywordBuf, d.cfg.ProductionGroupKeyword);
+    d.userActivityDayWindow = d.cfg.UserActivityDayWindow;
+    d.maxUserChanges = d.cfg.MaxUserChanges;
+    d.vcsFeedLayoutIndex = (d.cfg.VcsFeedLayout == "separate") ? 1 : 0;
 #if defined(SMATCHET_WITH_MCP)
     d.mcpEnabled = d.cfg.McpEnabled;
     d.mcpPort = d.cfg.McpPort;
@@ -384,6 +389,57 @@ void DrawTrackerRecentProjects(UiDrawSession& d, int currentItem) {
     ImGui::Spacing();
 }
 
+// User Info window / VCS commit feed settings (docs/plans/user-info-window.md). Immediate-dirty
+// (MCP-style): clamp + compare-against-cfg, write all fields and mark prefs dirty when any changed —
+// no Save button. These keys were config-only (not on the config.set allowlist, hand-edited JSON)
+// until exposed here.
+void DrawUserInfoFeedSettings(UiDrawSession& d) {
+    ImGui::Separator();
+    ImGui::TextUnformatted("User Info & commit feed");
+    ImGui::InputText("Git commit repos", d.gitCommitReposBuf, sizeof(d.gitCommitReposBuf));
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("prefs.userinfo.git_commit_repos.help",
+                               "Comma-separated owner/repo list the GitHub commit feed queries in the User "
+                               "Info window (e.g. \"alexandrosk0/Smatchet\"). Leave empty to reuse the "
+                               "tracker's own Owner/Repo. Auth reuses the GitHub PAT.");
+    ImGui::InputText("Production group keyword", d.productionGroupKeywordBuf, sizeof(d.productionGroupKeywordBuf));
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("prefs.userinfo.production_group.help",
+                               "Case-insensitive substring marking a tracker user-group as \"production\" "
+                               "(e.g. \"prod\"). Empty disables the production-group highlight.");
+    ImGui::InputInt("Activity day window", &d.userActivityDayWindow);
+    if (d.userActivityDayWindow < 1) {
+        d.userActivityDayWindow = 1;
+    }
+    ImGui::SetItemTooltip("How many days back the activity feed reaches (>= 1).");
+    ImGui::InputInt("Max changes per source", &d.maxUserChanges);
+    if (d.maxUserChanges < 1) {
+        d.maxUserChanges = 1;
+    }
+    ImGui::SetItemTooltip("Max submitted changes fetched per VCS source (>= 1).");
+    const char* kLayouts[] = {"unified", "separate"};
+    ImGui::Combo("VCS feed layout", &d.vcsFeedLayoutIndex, kLayouts, IM_ARRAYSIZE(kLayouts));
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("prefs.userinfo.vcs_layout.help",
+                               "unified: commits from all sources merged newest-first. separate: one "
+                               "section per VCS source.");
+    const std::string reposBuf(d.gitCommitReposBuf);
+    const std::string prodBuf(d.productionGroupKeywordBuf);
+    const std::string layout = (d.vcsFeedLayoutIndex == 1) ? "separate" : "unified";
+    const bool dirty = reposBuf != d.cfg.GitCommitRepos || prodBuf != d.cfg.ProductionGroupKeyword ||
+                       d.userActivityDayWindow != d.cfg.UserActivityDayWindow ||
+                       d.maxUserChanges != d.cfg.MaxUserChanges || layout != d.cfg.VcsFeedLayout;
+    if (dirty) {
+        d.cfg.GitCommitRepos = reposBuf;
+        d.cfg.ProductionGroupKeyword = prodBuf;
+        d.cfg.UserActivityDayWindow = d.userActivityDayWindow;
+        d.cfg.MaxUserChanges = d.maxUserChanges;
+        d.cfg.VcsFeedLayout = layout;
+        MarkPrefsDirty(d);
+    }
+    ImGui::Spacing();
+}
+
 } // namespace
 
 void SmatchetUI::drawPreferencesTrackerTab(UiDrawSession& d) {
@@ -394,6 +450,7 @@ void SmatchetUI::drawPreferencesTrackerTab(UiDrawSession& d) {
     const int currentItem = DrawTrackerBackendSelection(d);
     DrawTrackerBackendConfig(d, currentItem);
     DrawTrackerRecentProjects(d, currentItem);
+    DrawUserInfoFeedSettings(d);
     if (ImGui::Button("Open Views Dashboard")) {
         d.showViewsDashboard = true;
         d.requestViewsDashboardFocus = true;

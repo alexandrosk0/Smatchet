@@ -7,8 +7,60 @@
 
 using P4AnnotateParse::ParseAnnotateTextLine;
 using P4AnnotateParse::ParseLatestChangeFromChangesOutput;
+using P4AnnotateParse::ParseP4UserLoginForEmail;
 using P4AnnotateParse::SplitLines;
 using P4AnnotateParse::StripP4UserDomain;
+
+namespace {
+// Representative `p4 users` blob — login <email> (FullName) accessed DATE per line.
+const char* const kUsersBlob = "alexk <alexkonstantonis@gmail.com> (Alexandros Konstantonis) accessed 2026/06/11\n"
+                               "alexk_laptop <dev@smatchet.dev> (Alex Laptop) accessed 2026/06/10\n"
+                               "gconn <gconn@localhost> (Graph Connector) accessed 2026/05/01\n"
+                               "git <git@Brick> (Git Bridge) accessed 2026/04/15\n";
+} // namespace
+
+TEST_CASE("ParseP4UserLoginForEmail: exact email match returns login") {
+    CHECK(ParseP4UserLoginForEmail(kUsersBlob, "alexkonstantonis@gmail.com") == "alexk");
+    CHECK(ParseP4UserLoginForEmail(kUsersBlob, "dev@smatchet.dev") == "alexk_laptop");
+    CHECK(ParseP4UserLoginForEmail(kUsersBlob, "git@Brick") == "git");
+}
+
+TEST_CASE("ParseP4UserLoginForEmail: email match is case-insensitive") {
+    CHECK(ParseP4UserLoginForEmail(kUsersBlob, "AlexKonstantonis@Gmail.COM") == "alexk");
+    CHECK(ParseP4UserLoginForEmail(kUsersBlob, "GIT@brick") == "git");
+}
+
+TEST_CASE("ParseP4UserLoginForEmail: email is trimmed before matching") {
+    CHECK(ParseP4UserLoginForEmail(kUsersBlob, "  alexkonstantonis@gmail.com  ") == "alexk");
+}
+
+TEST_CASE("ParseP4UserLoginForEmail: no matching email returns empty") {
+    CHECK(ParseP4UserLoginForEmail(kUsersBlob, "nobody@nowhere.test") == "");
+}
+
+TEST_CASE("ParseP4UserLoginForEmail: empty email returns empty") {
+    CHECK(ParseP4UserLoginForEmail(kUsersBlob, "") == "");
+    CHECK(ParseP4UserLoginForEmail(kUsersBlob, "   ") == "");
+}
+
+TEST_CASE("ParseP4UserLoginForEmail: empty stdout returns empty") {
+    CHECK(ParseP4UserLoginForEmail("", "alexkonstantonis@gmail.com") == "");
+}
+
+TEST_CASE("ParseP4UserLoginForEmail: first match wins on duplicate email") {
+    const std::string blob = "first <dup@x.io> (One) accessed 2026/01/01\n"
+                             "second <dup@x.io> (Two) accessed 2026/01/02\n";
+    CHECK(ParseP4UserLoginForEmail(blob, "dup@x.io") == "first");
+}
+
+TEST_CASE("ParseP4UserLoginForEmail: lines without angle-bracket email are skipped") {
+    const std::string blob = "garbage line no brackets\n"
+                             "broken <unclosed (Nope) accessed 2026/01/01\n"
+                             "empty <> (Empty) accessed 2026/01/01\n"
+                             "good <real@x.io> (Real) accessed 2026/01/02\n";
+    CHECK(ParseP4UserLoginForEmail(blob, "real@x.io") == "good");
+    CHECK(ParseP4UserLoginForEmail(blob, "") == "");
+}
 
 TEST_CASE("ParseAnnotateTextLine: 4 annotate-line shapes") {
     std::string cl;
