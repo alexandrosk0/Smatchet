@@ -111,7 +111,7 @@ When `SMATCHET_AGENT_VCS=p4`, the orchestrator follows a **P4-gated ship-loop** 
 
 - `git push` / `gh pr create` happen **once**, after shelf approval AND full test-pass.
 - Shelf-review gate fires **exactly once** per task. Test failures post-approval → fix → re-test without re-review. Re-review only on explicit user request.
-- **No `git worktree add`** while `SMATCHET_AGENT_VCS=p4` — subagent isolation uses `agents/scripts/project/p4-task-stream.sh` exclusively. First git write is the `git checkout -b` inside the promote step.
+- **No `git worktree add`** while `SMATCHET_AGENT_VCS=p4` — subagent isolation uses `agents/scripts/project/p4-task-stream.sh` exclusively. The first (and only) git write is the **plumbing-commit promote step** ([`AGENT_FLOWS.md`](../perforce/AGENT_FLOWS.md) § Promote-to-PR in a shared tree): build the PR commit in a temp index + `git branch` + push, touching neither HEAD nor the working tree. Do **not** `git checkout -b` in the shared canonical tree — it trips `guard-shared-tree.sh` under concurrent sessions, and the `checkout` back to `develop` reverts the just-submitted files on disk (diverges the working tree from the p4 depot head until merge). The `SMATCHET_ALLOW_SHARED_SWITCH=1` override unblocks the guard but keeps the working-tree flip-flop — the plumbing recipe needs no override.
 - **Smoke build precedes shelf** — user never sees a non-compiling change in P4V.
 - **`code-review` agent dispatched ONCE per task** at the end-gate / shelf step (cumulative diff). Not per slice.
 - Pure-docs slice skip still applies. Trivial-visual-only envelope still applies, with `p4 sync` + `p4 edit -t +l` substituting for `git stash` race-recovery.
