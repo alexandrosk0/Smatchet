@@ -72,6 +72,11 @@ std::unordered_map<std::string, std::string> BuildPlaneAuthHeaders(const std::st
 /// `next_cursor` (string) from a Plane list-endpoint payload.
 std::string NextPaginationCursor(const nlohmann::json& listPayload);
 
+/// Pull a `key` string member from a Plane structured-query JSON blob (mirror of
+/// the production `ExtractProjectFromPlaneQuery`). "" sentinel covers "no key
+/// member" and "malformed JSON" — callers treat empty as "no key clause".
+std::string ExtractKeyFromPlaneQuery(const std::string& planeQueryJson);
+
 } // namespace plane
 } // namespace smatchet
 

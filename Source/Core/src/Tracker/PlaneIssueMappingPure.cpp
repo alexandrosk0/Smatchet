@@ -229,5 +229,23 @@ std::string NextPaginationCursor(const nlohmann::json& listPayload) {
     return std::string();
 }
 
+std::string ExtractKeyFromPlaneQuery(const std::string& planeQueryJson) {
+    if (planeQueryJson.empty()) {
+        return std::string();
+    }
+    try {
+        const nlohmann::json j = nlohmann::json::parse(planeQueryJson);
+        if (j.is_object()) {
+            auto it = j.find("key");
+            if (it != j.end() && it->is_string()) {
+                return it->get<std::string>();
+            }
+        }
+    } catch (const std::exception&) {
+        return std::string();
+    }
+    return std::string();
+}
+
 } // namespace plane
 } // namespace smatchet

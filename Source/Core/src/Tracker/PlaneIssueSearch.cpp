@@ -407,6 +407,25 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(const BatchCallback& o
         return summary;
     }
 
+    // Plan user-info-window.md item 18b: a `key` member in the structured query narrows the
+    // stream to one issue (client-side post-filter — Plane's list endpoint has no key filter).
+    // Same match rule as FetchIssuesForKeys: UUID or visual key, exact.
+    const std::string keyFilter = smatchet::plane::ExtractKeyFromPlaneQuery(cfg.JqlQuery);
+    const BatchCallback filteredOnBatch =
+        !keyFilter.empty() && onBatch ? BatchCallback([&onBatch, keyFilter](std::vector<CachedTicket>&& batch) {
+            std::vector<CachedTicket> kept;
+            for (auto& t : batch) {
+                const std::string keyField = t.GetFieldValue("key");
+                if (t.id == keyFilter || (!keyField.empty() && keyField == keyFilter)) {
+                    kept.push_back(std::move(t));
+                }
+            }
+            if (!kept.empty()) {
+                onBatch(std::move(kept));
+            }
+        })
+                                      : onBatch;
+
     const std::string planeApi = NormalizeAndLogPlaneApiBase(cfg.PlaneUrl);
 
     const cpr::Header headers = ToCprHeader(BuildPlaneHeaders(cfg));
@@ -459,7 +478,7 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(const BatchCallback& o
         // Phases 4-6: drive the cursor-paginated work-items fetch/map/stream loop.
         PlanePageLoopResult loop =
             RunPlanePageLoop(planeApi, cfg.PlaneWorkspaceSlug, planeProjectId, tempProjectIdentifier, headers,
-                             userLookup, onBatch, shouldCancel, localKeyToId, summary);
+                             userLookup, filteredOnBatch, shouldCancel, localKeyToId, summary);
         if (loop.HardFailed) {
             return summary;
         }

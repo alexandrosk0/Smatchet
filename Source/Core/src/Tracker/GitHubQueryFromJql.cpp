@@ -1,5 +1,7 @@
 #include "GitHubQueryFromJql.h"
 
+#include "GitHubClientHelpers.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
@@ -369,6 +371,19 @@ void HandleFieldClause(const std::string& field, const std::string& op, const st
         HandleTypeClause(op, value, body, result);
     } else if (EqIgnoreCase(field, "text") || EqIgnoreCase(field, "summary") || EqIgnoreCase(field, "description")) {
         HandleTextClause(field, op, value, body, result.Warning);
+    } else if (EqIgnoreCase(field, "key") || EqIgnoreCase(field, "issuekey")) {
+        // Item 18c (user-info-window) — single-issue narrowing. GitHub search has
+        // no exact issue-key qualifier, so the canonical key is carried out-of-band
+        // in result.KeyFilter and the fetch path post-filters client-side.
+        ParsedIssueKey parsed;
+        if (op != "=") {
+            AppendWarning(result.Warning, "Unsupported operator '" + op + "' on key");
+        } else if (!ParseGitHubIssueKey(value, parsed)) {
+            AppendWarning(result.Warning,
+                          "key value '" + value + "' is not a canonical owner/repo#N GitHub issue key — dropped");
+        } else {
+            result.KeyFilter = FormatGitHubIssueKey(parsed.Owner, parsed.Repo, parsed.Number);
+        }
     } else {
         AppendWarning(result.Warning, std::string("Unsupported JQL field '") + field + "' dropped");
     }

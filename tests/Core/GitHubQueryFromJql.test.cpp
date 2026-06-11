@@ -386,3 +386,41 @@ TEST_CASE("TranslateJqlToGitHubSearch — ORDER BY after multiple clauses strips
     CHECK(Contains(r.Query, "is:open"));
     CHECK(Contains(r.Warning, "ORDER BY"));
 }
+
+// user-info-window.md Slice 4 item 18c — `key = "owner/repo#N"` carries the canonical
+// key out-of-band in KeyFilter (GitHub search has no exact issue-key qualifier).
+
+TEST_CASE("TranslateJqlToGitHubSearch — key clause populates KeyFilter, no query term") {
+    const auto r = TranslateJqlToGitHubSearch("key = \"alexandrosk0/Smatchet#42\"", "", "");
+    CHECK(r.Ok);
+    CHECK(r.KeyFilter == "alexandrosk0/Smatchet#42");
+    CHECK(r.Query.empty());
+    CHECK(r.Warning.empty());
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — issuekey alias also populates KeyFilter") {
+    const auto r = TranslateJqlToGitHubSearch("issuekey = \"o/r#7\"", "", "");
+    CHECK(r.Ok);
+    CHECK(r.KeyFilter == "o/r#7");
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — non-canonical key value drops with warning") {
+    const auto r = TranslateJqlToGitHubSearch("key = \"SMT-7\"", "", "");
+    CHECK(r.Ok);
+    CHECK(r.KeyFilter.empty());
+    CHECK(Contains(r.Warning, "not a canonical"));
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — unsupported operator on key drops with warning") {
+    const auto r = TranslateJqlToGitHubSearch("key != \"o/r#7\"", "", "");
+    CHECK(r.Ok);
+    CHECK(r.KeyFilter.empty());
+    CHECK(Contains(r.Warning, "Unsupported operator"));
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — key clause composes with other clauses") {
+    const auto r = TranslateJqlToGitHubSearch("key = \"o/r#7\" AND status = \"Open\"", "", "");
+    CHECK(r.Ok);
+    CHECK(r.KeyFilter == "o/r#7");
+    CHECK(r.Query == "is:open");
+}

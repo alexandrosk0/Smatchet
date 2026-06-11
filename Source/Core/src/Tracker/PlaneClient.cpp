@@ -147,7 +147,7 @@ ITrackerConnectivity& PlaneClient::Connectivity() { return *this; }
 ITrackerFieldCatalog* PlaneClient::FieldCatalog() { return this; }
 ITrackerIssueMutations* PlaneClient::Mutations() { return this; }
 ITrackerCollaboration* PlaneClient::Collaboration() { return nullptr; }
-ITrackerActivity* PlaneClient::Activity() { return nullptr; }
+ITrackerActivity* PlaneClient::Activity() { return this; }
 
 PlaneClient::PlaneClient() : planeProjectId_(""), planeProjectIdentifier_("") {}
 
