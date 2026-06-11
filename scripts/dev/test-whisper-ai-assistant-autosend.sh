@@ -44,16 +44,27 @@ fi
 
 # Same probe shape as test-whisper-roundtrip.sh — whisper.status is registered
 # only when the plugin is compiled in.
-PROBE_OUTPUT=$(SMATCHET_TEST_PORT="$TEST_PORT" "$EXE" cmd commands.list --spawn 2>&1 || true)
+PROBE_OUTPUT=$(SMATCHET_TEST_PORT="$TEST_PORT" "$EXE" cmd commands.list --spawn 2>/dev/null || true)
 if ! grep -q '"whisper.status"' <<<"$PROBE_OUTPUT"; then
     echo "[whisper-ai-assistant-autosend] SKIP: whisper.status not registered (SMATCHET_WITH_WHISPER=OFF)."
     exit 0
 fi
 
 echo "[whisper-ai-assistant-autosend] Running whisper-ai-assistant-autosend scenario via $EXE ..."
-RESULT=$(SMATCHET_TEST_PORT="$TEST_PORT" "$EXE" cmd scenario.run --name=whisper-ai-assistant-autosend --yes --spawn 2>&1 || true)
+# Keep stderr OUT of RESULT: the JSON envelope is a single ~8KB stdout line
+# (beyond the pipe's atomic-write size), so with 2>&1 the spawn helper's
+# "[spawn] ..." stderr lines interleave MID-LINE into the JSON and every
+# per-line json.loads in parse_field() fails. Capture stderr to a side file
+# and replay it for the log after the envelope.
+SPAWN_ERR=$(mktemp)
+trap 'rm -f "$SPAWN_ERR"' EXIT
+RESULT=$(SMATCHET_TEST_PORT="$TEST_PORT" "$EXE" cmd scenario.run --name=whisper-ai-assistant-autosend --yes --spawn 2>"$SPAWN_ERR" || true)
 
 echo "$RESULT" | tail -200
+if [ -s "$SPAWN_ERR" ]; then
+    echo "[whisper-ai-assistant-autosend] --- spawn stderr ---"
+    tail -50 "$SPAWN_ERR"
+fi
 
 # Extract every assertion field via python — fail fast if the envelope is
 # missing or any field is wrong.
