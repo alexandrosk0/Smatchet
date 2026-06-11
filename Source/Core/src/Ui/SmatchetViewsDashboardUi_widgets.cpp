@@ -46,7 +46,8 @@ void ApplyViewsActiveJqlFromBuffers(AppController& app, UiDrawSession& d, Views&
     ViewDefinition updated = activeView;
     updated.Name = d.viewNameBuf;
     updated.Jql = d.viewJqlBuf;
-    updated.Fields = SmatchetViewsDashboardUiDetail::ParseCsv(d.selectedFieldsBuf);
+    // Authoritative selection set, not the truncating buffer (#views-field-uncheck).
+    updated.Fields = SmatchetViewsDashboardUiDetail::ToSortedVector(d.selectedFieldSet);
     updated.ColumnOrder = d.editingColumnOrder;
     if (viewState.UpdateActive(updated)) {
         d.cfg.JqlQuery = updated.Jql;
