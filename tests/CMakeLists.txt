@@ -197,6 +197,11 @@ add_executable(SmatchetTests
     # (SmatchetThemeDensity.h, header-only inline) behind ReapplyHostDensityScale. No extra
     # .cpp link: header-only, and SmatchetTheme.cpp + include/Ui are already in the rig.
     Core/SmatchetThemeDensity.test.cpp
+    # Mobile #1122 dynamic-texture orphan guard — pure SmatchetDrawCmdTextureNeedsRebind
+    # predicate (SmatchetImGuiTextureGuard.h, header-only inline, ImGui-free). No extra .cpp
+    # link: the predicate is value-only; android_main.cpp pins the status constants to the
+    # real ImTextureStatus_* with static_assert.
+    Core/SmatchetImGuiTextureGuard.test.cpp
     Core/MarkdownPreviewLangTag.test.cpp
     Core/MarkdownConvertAdf.test.cpp
     Core/MarkdownConvert.test.cpp
