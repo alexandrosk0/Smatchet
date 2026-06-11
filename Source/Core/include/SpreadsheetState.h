@@ -74,6 +74,12 @@ struct SpreadsheetState {
     /** Set when grid cell text edit opens; ImGui may defer `EventActivated` until after `EditJustStarted` clears. */
     bool PendingGridInputTextDeselect = false;
     char EditBuffer[512] = "";
+    /** The buffer's content at edit-start — the dirty-check baseline for the inline editor. The
+     *  value AS LOADED into EditBuffer, captured once so the "did the user change it?" verdict is
+     *  stable: a background grid refresh / sync can mutate the field's live value mid-edit, and
+     *  comparing the buffer against that live value would read an untouched edit as dirty → spurious
+     *  PUT. Captured in CopyToEditBuffer, cleared in ClearEditing. */
+    std::string EditInitialValue;
     GridRectSelection RectSel;
 
     void SetActiveIssue(const std::string& id) { ActiveIssueId = id; }
@@ -83,6 +89,7 @@ struct SpreadsheetState {
         EditingColumn = -1;
         EditJustStarted = false;
         PendingGridInputTextDeselect = false;
+        EditInitialValue.clear();
     }
 
     void StartEditing(const std::string& id, int col, const std::string& val) {
@@ -133,6 +140,9 @@ struct SpreadsheetState {
     void CopyToEditBuffer(const std::string& val) {
         std::snprintf(EditBuffer, sizeof(EditBuffer), "%s", val.c_str());
         EditBuffer[sizeof(EditBuffer) - 1] = '\0';
+        // Baseline from the (possibly truncated) buffer content, so the dirty check stays exact even
+        // when val exceeds the buffer — the live buffer can only ever equal the truncated start.
+        EditInitialValue = EditBuffer;
     }
 };
 

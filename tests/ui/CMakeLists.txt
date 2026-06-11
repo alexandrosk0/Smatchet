@@ -39,6 +39,7 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/funcsize_main_ui_smoke.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/funcsize_grid_render.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/grid_pane_windows.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/duration_inline_edit_commit.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/mobile_views_confirm_modal.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/whisper_ai_assistant_autosend.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/sync_stall_visible_cue.test.cpp"
