@@ -4,6 +4,7 @@
 #include "Logger.h"
 #include "StringUtil.h"
 #include "TrackerFieldSchema.h"
+#include "Ui/P4ClPreview.h"
 
 #include <nlohmann/json.hpp>
 
@@ -267,12 +268,7 @@ void CloseAnnotateModal(bool* pOpen) {
         State().detailData.clear();
         State().detailScrolled.clear();
     }
-    State().clHoverCl.clear();
-    if (State().clHoverFut.valid() &&
-        State().clHoverFut.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
-        State().detachedClHoverFuts.push_back(State().clHoverFut);
-    }
-    State().clHoverFut = std::shared_future<P4ChangelistDetails>();
+    P4ClPreview::DetachInFlight();
     std::memset(State().callstackBuf, 0, sizeof(State().callstackBuf));
     State().beforeDateIso.clear();
     State().atClBuf[0] = '\0';
@@ -427,60 +423,6 @@ std::string BuildAnnotatedRowTsv(const P4AnnotatedLine& ln) {
     o << ln.SourceLine << '\t' << SanitizeTsvCell(ln.Changelist) << '\t' << SanitizeTsvCell(ln.User) << '\t'
       << SanitizeTsvCell(ln.Date) << '\t' << SanitizeTsvCell(ln.Code);
     return o.str();
-}
-
-void DrawClTooltipAsync(const std::string& cl, const AnnotateAnalysisConfig& cfg, const AnnotateUiThemeColors& theme) {
-    if (cl.empty()) {
-        return;
-    }
-    if (State().clHoverCl != cl) {
-        State().clHoverCl = cl;
-        AnnotateAnalysisConfig cfgCopy = cfg;
-        State().clHoverFut = std::async(std::launch::async, [cfgCopy, cl]() {
-                                 return State().tooltipClCache.GetOrFetch(cfgCopy, cl);
-                             }).share();
-    }
-    ImGui::BeginTooltip();
-    ImGui::TextDisabled("Left-click this changelist cell to open it in p4vc.");
-    ImGui::Separator();
-    const float wrapX = ImGui::GetCursorPosX() + 600.f;
-    ImGui::PushTextWrapPos(wrapX);
-    if (!State().clHoverFut.valid()) {
-        ImGui::TextUnformatted("Loading CL info...");
-    } else if (State().clHoverFut.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
-        ImGui::TextUnformatted("Loading CL info...");
-    } else {
-        try {
-            const P4ChangelistDetails d = State().clHoverFut.get();
-            if (!d.Error.empty()) {
-                ImGui::TextUnformatted(d.Error.c_str());
-            } else {
-                ImGui::PushStyleColor(ImGuiCol_Text, ThCol(theme.ClTooltipTitle));
-                ImGui::Text("CL %s", cl.c_str());
-                ImGui::PopStyleColor();
-                if (!d.Author.empty()) {
-                    ImGui::TextUnformatted(("by " + d.Author).c_str());
-                }
-                if (!d.Date.empty()) {
-                    ImGui::TextUnformatted(d.Date.c_str());
-                }
-                if (!d.Description.empty()) {
-                    ImGui::TextWrapped("%s", d.Description.c_str());
-                }
-                if (d.Author.empty() && d.Date.empty() && d.Description.empty()) {
-                    ImGui::TextUnformatted("(no describe details)");
-                }
-            }
-        } catch (const std::exception& ex) {
-            LOG_WARN("Annotate tooltip: changelist detail future exception: %s", ex.what());
-            ImGui::TextUnformatted("Loading CL info...");
-        } catch (...) {
-            LOG_WARN("Annotate tooltip: changelist detail future unknown exception");
-            ImGui::TextUnformatted("Loading CL info...");
-        }
-    }
-    ImGui::PopTextWrapPos();
-    ImGui::EndTooltip();
 }
 
 } // namespace AnnotateInternal

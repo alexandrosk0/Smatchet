@@ -2,8 +2,8 @@
 
 // Private implementation header for AnnotateAnalysisUi — shared by:
 //   AnnotateAnalysisUi.cpp, AnnotateAnalysisUi_Config.cpp, AnnotateAnalysisUi_Worker.cpp,
-//   AnnotateAnalysisUi_Launch.cpp, AnnotateAnalysisUi_Modals.cpp,
-//   AnnotateAnalysisUi_Preferences.cpp, AnnotateAnalysisUi_Window.cpp.
+//   AnnotateAnalysisUi_Modals.cpp, AnnotateAnalysisUi_Preferences.cpp,
+//   AnnotateAnalysisUi_Window.cpp.
 // Do NOT include this from any other translation unit; it pulls in the file-scope
 // `AnnotateRow`, `DetailPack`, `WorkerState` types and the full `AnnotateState`
 // definition, plus the `#define ImGui SmatchetLocalizedImGui` alias.
@@ -75,7 +75,6 @@ struct WorkerState {
 /// s_stateInstance set by the constructor/destructor.
 struct AnnotateAnalysisUi::AnnotateState {
     WorkerState worker;
-    P4ChangelistDescribeCache tooltipClCache{512};
 
     char callstackBuf[65536]{};
     std::vector<char> ignoreBuf = std::vector<char>(4096, '\0');
@@ -118,13 +117,10 @@ struct AnnotateAnalysisUi::AnnotateState {
     std::string lastUiStatus;
     int pendingSelectEntryIndex = -1;
 
-    std::string clHoverCl;
-    std::shared_future<P4ChangelistDetails> clHoverFut;
-    std::vector<std::shared_future<P4ChangelistDetails>> detachedClHoverFuts;
-
     /// Pillar 2 — finding #761: resolving the first-submitted CL for a calendar day runs a
     /// slow server-wide `p4 changes -r -m 1 -s submitted //...@start,end` scan. Off-thread it
-    /// (mirror DrawClTooltipAsync): launch on confirm, poll every frame, apply on the UI thread.
+    /// (mirror P4ClPreview::DrawClTooltipAsync): launch on confirm, poll every frame, apply on
+    /// the UI thread.
     std::shared_future<std::pair<std::string, std::string>> beforeClFut; // {changelist, error}
     bool beforeClResolving = false;
 
@@ -190,11 +186,6 @@ void RunAnnotateProcessFromBuffers();
 void EnsureDetailLoading(size_t idx, const AnnotateAnalysisConfig& cfg, const std::string& atCl);
 void PollDetails();
 
-// --- Launch helpers (AnnotateAnalysisUi_Launch.cpp) ---
-bool LaunchP4VcLike(const AnnotateAnalysisConfig& cfg, const std::string& timelapseTemplate,
-                    const std::string& changeTemplate, bool isTimelapse, const std::string& file, int line,
-                    const std::string& cl);
-
 // --- Modal / themed-button helpers (AnnotateAnalysisUi_Modals.cpp) ---
 ImVec4 ThCol(const float* c);
 ImVec4 AnnotateLinkText(const AnnotateUiThemeColors& theme);
@@ -207,7 +198,6 @@ bool ResolveP4UserForAssign(const AppController& app, const std::string& p4User,
 void CloseAnnotateModal(bool* pOpen);
 void OpenTrackerUserProfileForP4User(const AppController& app, const std::string& p4User);
 void PrepareAssignModal(const AppController& app, const AnnotateRow& row, const std::string& p4UserCell);
-void DrawClTooltipAsync(const std::string& cl, const AnnotateAnalysisConfig& cfg, const AnnotateUiThemeColors& theme);
 std::string NormalizeDateDisplay(const std::string& raw);
 std::string ShortenPathForDisplay(const std::string& path, float maxWidthPx);
 std::string BuildAiExport();

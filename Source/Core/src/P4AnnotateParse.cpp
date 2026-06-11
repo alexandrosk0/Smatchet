@@ -96,4 +96,25 @@ P4LineAnnotate ParseLatestChangeFromChangesOutput(const std::string& stdoutText,
     return b;
 }
 
+std::vector<P4ChangeSummary> ParseChangesForUserOutput(const std::string& stdoutText) {
+    std::vector<P4ChangeSummary> changes;
+    // Trailing quote optional: long descriptions can be truncated mid-quote by p4.
+    static const std::regex re(R"(^Change\s+(\d+)\s+on\s+(\S+)\s+by\s+(\S+)\s+'(.*?)'?\s*$)");
+    const std::vector<std::string> lines = SplitLines(stdoutText);
+    for (size_t i = 0; i < lines.size(); ++i) {
+        std::smatch m;
+        if (!std::regex_match(lines[i], m, re)) {
+            continue;
+        }
+        P4ChangeSummary c;
+        c.Changelist = m[1].str();
+        c.Date = m[2].str();
+        c.User = m[3].str();
+        StripP4UserDomain(c.User);
+        c.Description = m[4].str();
+        changes.push_back(std::move(c));
+    }
+    return changes;
+}
+
 } // namespace P4AnnotateParse

@@ -227,6 +227,9 @@ const FieldDesc<std::string> kStringFields[] = {
     {"selected_font_name", &TrackerConfig::SelectedFontName},
     {"update_skip_version", &TrackerConfig::UpdateSkipVersion},
     {"update_github_repo", &TrackerConfig::UpdateGithubRepo},
+    {"production_group_keyword", &TrackerConfig::ProductionGroupKeyword},
+    {"git_commit_repos", &TrackerConfig::GitCommitRepos},
+    {"vcs_feed_layout", &TrackerConfig::VcsFeedLayout},
 };
 
 const FieldDesc<bool> kBoolFields[] = {
@@ -283,6 +286,8 @@ const FieldDesc<int> kIntFields[] = {
     {"date_compact_relative_threshold_days", &TrackerConfig::DateCompactRelativeThresholdDays},
     {"import_max_concurrent", &TrackerConfig::ImportMaxConcurrent},
     {"grid_end_wheel_swallows_before_horizontal", &TrackerConfig::GridEndWheelSwallowsBeforeHorizontal},
+    {"user_activity_day_window", &TrackerConfig::UserActivityDayWindow},
+    {"max_user_changes", &TrackerConfig::MaxUserChanges},
 };
 
 // Floats persist as JSON doubles; read via `static_cast<float>(j.value(key, double(member)))`
@@ -936,6 +941,18 @@ void LoadEnumAndClampedFields(const nlohmann::json& j, TrackerConfig& cfg) {
         cfg.DateCompactRelativeThresholdDays = 1;
     if (cfg.DateCompactRelativeThresholdDays > 365)
         cfg.DateCompactRelativeThresholdDays = 365;
+
+    // User Info window — zero/negative would silently empty the activity feed / VCS lists.
+    if (cfg.UserActivityDayWindow < 1) {
+        cfg.UserActivityDayWindow = 1;
+    }
+    if (cfg.MaxUserChanges < 1) {
+        cfg.MaxUserChanges = 1;
+    }
+    // Unknown / hand-edited layout values degrade to the fresh-install default.
+    if (cfg.VcsFeedLayout != "unified" && cfg.VcsFeedLayout != "separate") {
+        cfg.VcsFeedLayout = "unified";
+    }
 
     cfg.LayoutSchemaVersion = j.value("layout_schema_version", 0);
     if (cfg.LayoutSchemaVersion < 0) {

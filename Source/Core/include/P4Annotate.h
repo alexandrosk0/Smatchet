@@ -36,6 +36,17 @@ struct P4ChangelistDetails {
     std::string Error;
 };
 
+/** One submitted changelist from `p4 changes -u <user>` (summary line, not full describe). */
+struct P4ChangeSummary {
+    std::string Changelist;
+    /** As printed by p4: YYYY/MM/DD. */
+    std::string Date;
+    /** Domain/client stripped (`alice@ws` -> `alice`). */
+    std::string User;
+    /** Truncated single-quote description from the changes line. */
+    std::string Description;
+};
+
 /**
  * Run `p4` with given arguments (executable from config). Uses process environment (P4PORT, etc.).
  * Returns false if spawn fails; stderr may contain p4 messages.
@@ -58,6 +69,15 @@ std::vector<P4AnnotatedLine> P4AnnotateFile(const AnnotateAnalysisConfig& cfg, c
  */
 bool P4FirstSubmittedChangelistOnCalendarDay(const AnnotateAnalysisConfig& cfg, int year, int month, int day,
                                              std::string& outChangelist, std::string& outError);
+
+/**
+ * Most recent submitted changelists by a user, newest first, via
+ * `p4 changes -u <user> -m <maxN> -s submitted`. Blocking (call off the UI thread).
+ * Returns false on spawn/exit failure with outError set; an empty result with true
+ * means the user has no visible submitted changes.
+ */
+bool P4ChangesForUser(const AnnotateAnalysisConfig& cfg, const std::string& p4User, int maxN,
+                      std::vector<P4ChangeSummary>& outChanges, std::string& outError);
 
 /** LRU-ish cache for `p4 describe -s` (bounded by maxEntries). Thread-safe. */
 class P4ChangelistDescribeCache {

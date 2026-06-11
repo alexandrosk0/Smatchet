@@ -1,6 +1,9 @@
-#include "AnnotateAnalysisUi_Internal.h"
+// Extracted verbatim from AnnotateAnalysisUi_Launch.cpp (user-info-window Slice 1).
+// Logic, log lines and the annotate_allow_custom_commands gate are unchanged --
+// only the namespace moved (AnnotateInternal -> P4vLaunch).
 
-#include "ConfigManager.h"
+#include "Ui/P4vLaunch.h"
+
 #include "Logger.h"
 #include "StringUtil.h"
 
@@ -14,7 +17,7 @@
 
 #include <string>
 
-namespace AnnotateInternal {
+namespace P4vLaunch {
 
 #ifdef _WIN32
 
@@ -201,4 +204,4 @@ bool LaunchP4VcLike(const AnnotateAnalysisConfig&, const std::string&, const std
 
 #endif
 
-} // namespace AnnotateInternal
+} // namespace P4vLaunch

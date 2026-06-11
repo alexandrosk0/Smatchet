@@ -447,6 +447,21 @@ struct TrackerConfig {
     bool UpdateIncludePrerelease = false;
     std::string UpdateSkipVersion;
     std::string UpdateGithubRepo = "alexandrosk0/Smatchet";
+
+    // --- User Info window (docs/plans/active/user-info-window.md) ---
+    // Case-insensitive substring that marks a tracker user-group as "production"
+    // (e.g. "prod"); empty disables the production-group highlight.
+    std::string ProductionGroupKeyword;
+    // How many days back the activity feed reaches. Clamped to >= 1 at load.
+    int UserActivityDayWindow = 30;
+    // Max submitted changes fetched per VCS source (p4 changes -m / GitHub per_page).
+    // Clamped to >= 1 at load.
+    int MaxUserChanges = 50;
+    // Comma-separated "owner/repo" list the GitHub commit feed queries; empty disables it.
+    std::string GitCommitRepos;
+    // VCS feed layout: "unified" (merged newest-first) or "separate" (per-source
+    // sections). Normalized to one of the two at load.
+    std::string VcsFeedLayout = "unified";
 };
 
 struct ViewSortSpec {

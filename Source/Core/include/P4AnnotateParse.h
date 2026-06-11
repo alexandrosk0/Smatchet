@@ -54,6 +54,15 @@ bool ParseAnnotateTextLine(const std::string& line, std::string& outCl, std::str
  */
 P4LineAnnotate ParseLatestChangeFromChangesOutput(const std::string& stdoutText, const std::string& stderrText);
 
+/**
+ * Parse multi-line `p4 changes -u <user>` stdout into per-change summaries. Expected line shape:
+ * `Change <N> on <YYYY/MM/DD> by <user@client> '<truncated desc>'`. Lines that do not match are
+ * skipped (p4 may interleave info lines). User has the `@client` suffix stripped; the description
+ * is the content between the outermost single quotes (may be empty; trailing quote optional on
+ * truncated output). Order preserved (p4 emits newest first).
+ */
+std::vector<P4ChangeSummary> ParseChangesForUserOutput(const std::string& stdoutText);
+
 } // namespace P4AnnotateParse
 
 #endif
