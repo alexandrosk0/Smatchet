@@ -20,6 +20,7 @@
 #include "TicketFieldEditorDescriptionPure.h"
 #include "TicketFieldEditorOptionFilterPure.h"
 #include "TicketFieldEditorCommitPolicyPure.h"
+#include "TicketFieldEditorDurationPopupPure.h"
 #include "TextEditor.h"
 #include "Logger.h"
 #include "JiraClient.h"
@@ -234,7 +235,7 @@ void DrawDurationSuggestionsPopup(char* buf, size_t bufSize, bool* outManuallyEd
 bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSize, ImGuiInputTextFlags flags = 0,
                                       ImGuiInputTextCallback callback = nullptr, void* callbackUserData = nullptr,
                                       bool* outManuallyEdited = nullptr, bool forceOpenPopup = false,
-                                      bool* outExplicitSubmit = nullptr) {
+                                      bool* outExplicitSubmit = nullptr, bool typeToEditFocus = false) {
     bool submitted = false;
     ImGui::PushID(label);
 
@@ -247,6 +248,8 @@ bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSi
     ImGuiID lastActiveId = static_cast<ImGuiID>(storage->GetInt(lastActiveIdKey, 0));
     ImGuiID selectedFromPopupKey = ImGui::GetID("##valueSelectedFromPopup");
     bool valueSelectedFromPopup = storage->GetInt(selectedFromPopupKey, 0) != 0;
+    ImGuiID popupOpenKey = ImGui::GetID("##popupWasOpen");
+    bool popupWasOpen = storage->GetInt(popupOpenKey, 0) != 0;
 
     float totalWidth = ImGui::GetContentRegionAvail().x;
     float inputWidth = totalWidth - 26.0f;
@@ -255,11 +258,49 @@ bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSi
     ImGui::SetNextItemWidth(inputWidth);
 
     if (forceOpenPopup) {
+        // New edit session for this cell: drop the per-cell flags a previous session may have left
+        // armed (e.g. Escape after a suggestion pick) so a stale focus-return or a spurious
+        // popupJustClosed cannot leak into this session's first frame.
+        needRepositionAndFocus = false;
+        valueSelectedFromPopup = false;
+        popupWasOpen = false;
         ImGui::OpenPopup("duration_suggestions");
     }
 
     if (needRepositionAndFocus) {
         ImGui::SetKeyboardFocusHere();
+    }
+
+    // Type-to-edit (estimate-edit-ux): when this editor is the grid's active edit target but the
+    // suggestions popup holds keyboard focus (popup focus clears the parent ActiveId), a printable
+    // keystroke would be dropped. SetKeyboardFocusHere() alone cannot save it: it is a nav-move
+    // applied NEXT frame, io.InputQueueCharacters is cleared at EndFrame, and on the activation
+    // frame the nav-requested activation makes InputText skip insertion and clear the queue. So
+    // splice the queued printable chars straight into buf now (the focus request is for focus
+    // only) and arm needRepositionAndFocus so the existing CallbackAlways caret-to-end machinery
+    // places the cursor once the input activates.
+    if (typeToEditFocus) {
+        ImGuiIO& io = ImGui::GetIO();
+        bool hasPrintableQueuedChar = false;
+        for (int i = 0; i < io.InputQueueCharacters.Size; ++i) {
+            if (TicketFieldEditorDurationPopupPure::IsPrintableTypedChar(
+                    static_cast<unsigned int>(io.InputQueueCharacters[i]))) {
+                hasPrintableQueuedChar = true;
+                break;
+            }
+        }
+        if (TicketFieldEditorDurationPopupPure::ShouldPullFocusForTypedChar(
+                ImGui::GetActiveID() != 0, needRepositionAndFocus, hasPrintableQueuedChar)) {
+            if (TicketFieldEditorDurationPopupPure::SpliceTypedCharsIntoBuf(
+                    io.InputQueueCharacters.Data, io.InputQueueCharacters.Size, buf, bufSize)) {
+                if (outManuallyEdited) {
+                    *outManuallyEdited = true;
+                }
+                needRepositionAndFocus = true;
+                io.InputQueueCharacters.resize(0); // consumed — nothing else may double-insert them
+            }
+            ImGui::SetKeyboardFocusHere();
+        }
     }
 
     DurationCallbackWrapperData wrapperData;
@@ -281,6 +322,10 @@ bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSi
         deactivated = true;
         valueSelectedFromPopup = false;
     }
+    // Captured here so the queries refer to the InputText (the ▼ button redefines "last item"
+    // below). Used by the popup-close refocus-vs-commit decision after the popup is drawn.
+    const bool inputActiveNow = ImGui::IsItemActive();
+    const bool inputHoveredNow = ImGui::IsItemHovered();
 
     ImGuiID currentId = ImGui::GetID("##duration_input");
 
@@ -301,10 +346,6 @@ bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSi
     // Suggestions popup
     DrawDurationSuggestionsPopup(buf, bufSize, outManuallyEdited, needRepositionAndFocus, valueSelectedFromPopup);
 
-    // Resolve per-widget state using ImGuiStorage
-    ImGuiID popupOpenKey = ImGui::GetID("##popupWasOpen");
-    bool popupWasOpen = storage->GetInt(popupOpenKey, 0) != 0;
-
     bool popupJustClosed = popupWasOpen && !popupIsOpen;
 
     bool finalDeactivated = false;
@@ -313,8 +354,16 @@ bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSi
             finalDeactivated = true;
         }
     }
-    if (popupJustClosed && !needRepositionAndFocus) {
+    // A popup-close caused by a click landing back on the input itself is a refocus-for-editing
+    // (empty buffer: keep editing — no spurious empty-value commit; existing value: caret into the
+    // text), never a commit-deactivation. When the popup-close ate the click (input hovered but
+    // not re-activated), arm the focus-return so the input regains keyboard focus next frame.
+    if (TicketFieldEditorDurationPopupPure::ShouldFinalizeOnPopupClose(popupJustClosed, needRepositionAndFocus,
+                                                                       inputActiveNow, inputHoveredNow)) {
         finalDeactivated = true;
+    } else if (TicketFieldEditorDurationPopupPure::ShouldRearmFocusOnPopupClose(popupJustClosed, needRepositionAndFocus,
+                                                                                inputHoveredNow, inputActiveNow)) {
+        needRepositionAndFocus = true;
     }
 
     storage->SetInt(popupOpenKey, popupIsOpen ? 1 : 0);
@@ -411,7 +460,7 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
         const bool committedOrDeactivated = DrawDurationFieldWithSuggestions(
             "##textedit_duration", state.EditBuffer, sizeof(state.EditBuffer), ImGuiInputTextFlags_CallbackAlways,
             InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&cbUser), nullptr, editJustStarted,
-            &explicitSubmit);
+            &explicitSubmit, /*typeToEditFocus=*/true);
         // The duration widget folds explicit-Enter and its internal focus-loss (finalDeactivated)
         // into one return and reports the Enter separately via outExplicitSubmit; the residual is
         // the deactivation. The widget's last sub-item is the popup/button, so a top-level
