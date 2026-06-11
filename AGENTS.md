@@ -100,6 +100,7 @@ Full per-outcome semantics + halt-prompt return-code table + env knobs + REST co
 | debugging (pink-clear · exe-staleness) | [`debug-techniques.md`](docs/agent-rules/debug-techniques.md) |
 | optimizing / FPS / lag / hitch | [`docs/guides/perf-workflow.md`](docs/guides/perf-workflow.md) |
 | golden artefact (`tests/golden/*`, snapshots) | [`golden-image-approval.md`](docs/agent-rules/golden-image-approval.md) |
+| authoring a multi-agent Workflow fan-out / background fleet (scoping · model pinning · concurrency · staging · checkpoints · salvage) | [`workflow-fleets.md`](docs/agent-rules/workflow-fleets.md) |
 
 **Subsystem guides**: when you touch `Source/Core/src/<ctx>/`, read its leaf `AGENTS.md` first — single source of truth, overrides any central summary. Registry: [`CONTEXT-MAP.md`](CONTEXT-MAP.md) (detail in [`cpp-rules.md`](docs/agent-rules/cpp-rules.md) § Subsystem guides).
 
