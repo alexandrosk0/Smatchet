@@ -8,6 +8,7 @@
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 #include "Commands/MainThreadDispatch.h"
+#include "Config/ConfigManager.h"
 #include "GridPane.h"
 #include "SmatchetGridPaneWindows.h"
 #include "SmatchetUiSession.h"
@@ -132,31 +133,60 @@ void RegisterPaneCycleCommand(AppController& app, UiDrawSession& d, CommandRegis
 /// pane.new / pane.duplicate / pane.split all duplicate the focused pane via the exact
 /// "+" mechanism (paneAddRequestSourceId latch) — the host applies the add next frame,
 /// so the command never mutates d.gridPanes mid-render. `summary`/`description` differ
-/// per verb; `acceptDirection` adds the advisory split-direction arg.
+/// per verb; `acceptDirection` adds the advisory split-direction arg;
+/// `acceptBackend` (pane.new only) adds `backend` + `view` params for cross-backend creation.
 void RegisterPaneAddCommand(AppController& app, UiDrawSession& d, CommandRegistry& reg,
                             const std::string& name, const std::string& summary,
-                            const std::string& description, bool acceptDirection) {
+                            const std::string& description, bool acceptDirection,
+                            bool acceptBackend = false) {
     Command c;
     c.Name = name; c.Category = "pane";
     c.Summary = summary;
     c.Description = description;
     c.Idempotent = false;
     if (acceptDirection) {
-        c.Params = {[]{ ParamSpec p; p.Name="direction"; p.Type=ParamType::String;
-                        p.Description="Advisory split hint (left/right/up/down) — recorded only; "
-                                      "native ImGui docking decides tab-vs-split geometry.";
-                        p.Enum = {"left", "right", "up", "down"}; return p; }()};
+        c.Params.push_back([]{ ParamSpec p; p.Name="direction"; p.Type=ParamType::String;
+                               p.Description="Advisory split hint (left/right/up/down) — recorded only; "
+                                             "native ImGui docking decides tab-vs-split geometry.";
+                               p.Enum = {"left", "right", "up", "down"}; return p; }());
     }
-    c.Handler = [&app, &d, acceptDirection](const nlohmann::json& args, const CommandContext&) {
-        return RunOnUiThreadAsCommandResult(app, [&d, args, acceptDirection]() {
+    if (acceptBackend) {
+        const std::vector<std::string>& keys = ConfigManager::KnownBackendKeys();
+        c.Params.push_back([&keys]{ ParamSpec p; p.Name="backend"; p.Type=ParamType::String;
+                                    p.Description="Backend to open the new pane on. Absent = duplicate "
+                                                  "the focused pane's backend (unchanged behaviour). "
+                                                  "Rejected if the backend has no credentials configured.";
+                                    p.Enum = keys; return p; }());
+        c.Params.push_back([]{ ParamSpec p; p.Name="view"; p.Type=ParamType::String;
+                               p.Description="View id to open in the new pane. Absent = the backend's "
+                                             "active/default view."; return p; }());
+    }
+    c.Handler = [&app, &d, acceptDirection, acceptBackend](const nlohmann::json& args, const CommandContext&) {
+        return RunOnUiThreadAsCommandResult(app, [&d, args, acceptDirection, acceptBackend]() {
             if (d.gridPanes.empty()) {
                 return CommandResult::Failure(ErrorCode::HandlerError, "No grid panes are loaded yet.");
             }
-            // Duplicate-the-focused-pane request — identical to the pane window "+" button.
             d.paneAddRequest.sourceId = d.focusedPane().id;
+            if (acceptBackend) {
+                d.paneAddRequest.targetBackendKey.clear();
+                d.paneAddRequest.targetViewId.clear();
+                const std::string backend = args.value("backend", std::string());
+                if (!backend.empty()) {
+                    if (!ConfigManager::BackendCredentialsPresent(d.cfg, backend)) {
+                        return CommandResult::Failure(ErrorCode::HandlerError,
+                            "Backend '" + backend + "' has no credentials configured.");
+                    }
+                    d.paneAddRequest.targetBackendKey = backend;
+                    d.paneAddRequest.targetViewId     = args.value("view", std::string());
+                }
+            }
             nlohmann::json out;
             out["requested"] = true;
             out["sourceId"]  = d.paneAddRequest.sourceId;
+            if (!d.paneAddRequest.targetBackendKey.empty()) {
+                out["targetBackend"] = d.paneAddRequest.targetBackendKey;
+                out["targetView"]    = d.paneAddRequest.targetViewId;
+            }
             if (acceptDirection) {
                 out["direction"] = args.value("direction", std::string());
             }
@@ -243,10 +273,13 @@ void RegisterPaneCommands(AppController& app, UiDrawSession& session) {
     RegisterPaneCycleCommand(app, session, reg, /*forward=*/true);
     RegisterPaneCycleCommand(app, session, reg, /*forward=*/false);
     RegisterPaneAddCommand(app, session, reg, "pane.new",
-                           "Open a new grid pane duplicating the focused pane.",
-                           "Duplicates the focused pane (same backend + view) via the pane "
-                           "window \"+\" mechanism. The host opens it next frame and focuses it.",
-                           /*acceptDirection=*/false);
+                           "Open a new grid pane (optionally on a chosen backend).",
+                           "Without backend param: duplicates the focused pane (same backend + view) via "
+                           "the pane window \"+\" mechanism. With backend param: opens a new pane on the "
+                           "named backend using its active/default view (or the view id if given). "
+                           "The backend must have credentials configured. The host opens the pane next "
+                           "frame and focuses it.",
+                           /*acceptDirection=*/false, /*acceptBackend=*/true);
     RegisterPaneAddCommand(app, session, reg, "pane.duplicate",
                            "Duplicate the focused grid pane.",
                            "Alias of pane.new: opens a copy of the focused pane (same backend + "

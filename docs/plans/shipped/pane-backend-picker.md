@@ -2,7 +2,7 @@
 
 > **Slug**: `pane-backend-picker` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — in progress. Slices 1–2 shipped (PR #1156). Slice 3 pending. Flip to `shipped` in the SAME post-ship PR that completes the final slice AND `git mv`s active → shipped (see § Archive).
+> **Status**: `shipped` — implementation complete. Slices 1–2 (PR #1156), Slice 3 (PR #1158).
 >
 > **Usage**: every section filled; non-applicable sections carry `N/A — <reason>`, never deleted.
 >
@@ -150,22 +150,21 @@ Per `AGENTS.md` § Verification automation — zero manual steps where physicall
 
 - `ac40d9e0` · Slice 1 — PaneAddRequest struct + cross-backend core + bucket-A tests (12 new cases, all 1644 pass)
 - `2cb05fe4` · Slice 2 — DrawNewPaneMenu (+▾ split-button, backend picker popup, view submenu); KnownBackendKeys(); BackendCredentialsPresent(); Views::GetDiskBackends(); ApplyPaneAddAndCloseRequests threads real viewBuckets
+- `99c7f6ad` · Slice 3 — pane.new backend/view params; BackendCredentialsPresent("Plane") requires PlaneWorkspaceSlug; Views.h self-contained; 2 new Plane cred tests
 
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
 
 - **`ApplyPaneAddAndCloseRequests` wrapper passes `emptyBuckets` in Slice 1** — `Views::Disk` is private; plan assumed threading real buckets would be trivial. Slice 2 adds a getter to `Views` and threads `ViewState.Disk.Backends`. No functional regression: all existing write sites only set `sourceId` (same-backend path, unaffected by empty map).
+- **`BackendCredentialsPresent("Plane")` required PlaneWorkspaceSlug** — plan did not call this out; CR review (PR #1156) flagged that all Plane REST URLs embed the workspace slug. Fixed in Slice 3 alongside the `pane.new` params so the credentials gate matches the actual runtime guard already in PlaneActivityFeed/PlaneIssueSearch.
 
 ## Verification (actual)
 *(populated post-ship — what was actually tested + result, passed / failed / not-run)*
 
 - Slice 1: full `SmatchetTests` suite (1644 cases, 15533 assertions) — **PASSED**
 - Slice 2: lint gate (`test-lint-rules.sh --diff origin/develop`) — all 6 checks **PASSED**; plan-ref-integrity **PASSED**; doc-anchors **PASSED**; visual validation — **LGTM** (user sign-off 2026-06-12)
+- Slice 3: `ninja-iter-msvc` dual-target build clean (PaneCommands.cpp + ConfigManager_Views.cpp compiled, no warnings); code-review agent — no Critical/High findings; CI gate via PR #1158
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/pane-backend-picker.md docs/plans/shipped/` (move into the shipped tier),*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+## Archive
 
-*No ref-sweep — references use the tier-less form `docs/plans/<slug>.md`. Write new plan references tier-less.*
+DONE — PR #1158. Moved active → shipped, index regenerated.
