@@ -121,6 +121,14 @@ const CfgKey* ConfigSetKeyTable() {
         {"trackerType", "tracker_type", "restart required"},
         {"planeUrl", "plane_url", "restart required to reconnect"},
         {"planeWorkspaceSlug", "plane_workspace_slug", "restart required to reconnect"},
+        // User Info window keys (PR #1145) — previously UI-only-settable; this closes the
+        // CLI/MCP/Lua parity gap. String + int fields read back through ConfigManager's
+        // kStringFields / kIntFields tables; values take effect on the next config load / sync.
+        {"gitCommitRepos", "git_commit_repos", "comma-separated owner/repo list; next sync"},
+        {"productionGroupKeyword", "production_group_keyword", "next sync"},
+        {"userActivityDayWindow", "user_activity_day_window", "integer; next sync"},
+        {"maxUserChanges", "max_user_changes", "integer; next sync"},
+        {"vcsFeedLayout", "vcs_feed_layout", "unified|separate; applies immediately"},
         {"mcpEnabled", "mcp_enabled", "MCP plugin restart required"},
         {"mcpPort", "mcp_port", "MCP plugin restart required"},
         {"mcpAllowRemote", "mcp_allow_remote", "MCP plugin restart required"},

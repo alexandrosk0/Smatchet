@@ -442,14 +442,11 @@ struct UiDrawSession {
 
     // Authoritative selected-field id set for the Views editor (#views-field-uncheck).
     // The toggle handlers / select-all / clear mutate THIS directly; it is seeded
-    // from view.Fields on view activate/create/discard. selectedFieldsBuf below is now
-    // write-only — a sorted-CSV snapshot kept only for debugger inspection (rendered
-    // nowhere, parsed back nowhere; its 1024-byte cap WAS the #views-field-uncheck bug:
-    // a >1023-byte selection truncated and auto-unchecked any field past the cutoff).
-    // Any code writing view.Fields from the editor selection must read this set.
-    // TODO(debt views-field-uncheck): remove selectedFieldsBuf + SyncSelectedFieldsBuffer.
+    // from view.Fields on view activate/create/discard. Any code writing view.Fields
+    // from the editor selection must read this set. (A former 1024-byte CSV mirror
+    // buffer — the original truncation source of #views-field-uncheck — was removed
+    // once the set became authoritative.)
     std::unordered_set<std::string> selectedFieldSet;
-    char selectedFieldsBuf[1024]{};
     char fieldSearchBuf[128]{};
     char auditSearchBuf[256]{};
     int auditActionFilter = 0; // 0 all, 1 creates, 2 updates/transitions, 3 comments, 4 attachments, 5 offline

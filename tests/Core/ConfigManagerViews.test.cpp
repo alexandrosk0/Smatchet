@@ -20,6 +20,8 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <fstream>
 #include <string>
@@ -66,6 +68,23 @@ TEST_CASE("ConfigManager::NormalizeViewsBackendKey maps tracker type case-insens
     // No whitespace trimming — characterizes existing behaviour: a padded type
     // misses the plane match and lands in the Jira bucket.
     CHECK(ConfigManager::NormalizeViewsBackendKey("plane ") == "Jira");
+}
+
+// Guard (debt: NormalizeViewsBackendKey catch-all defaults every unknown tracker to
+// Jira). Every KnownBackendKeys() entry MUST have an explicit case in
+// NormalizeViewsBackendKey — both its own key and its lowercased form normalize back
+// to itself. If a new backend is added to KnownBackendKeys() WITHOUT extending
+// NormalizeViewsBackendKey, its lowercased form falls to the default bucket (Jira),
+// which != itself, and this fails — catching the silent cross-backend
+// views/tickets_v2/queue namespace collision at test time, not in production.
+TEST_CASE("ConfigManager::NormalizeViewsBackendKey has an explicit case for every KnownBackendKeys() entry") {
+    for (const std::string& key : ConfigManager::KnownBackendKeys()) {
+        CHECK(ConfigManager::NormalizeViewsBackendKey(key) == key);
+        std::string lower = key;
+        std::transform(lower.begin(), lower.end(), lower.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        CHECK(ConfigManager::NormalizeViewsBackendKey(lower) == key);
+    }
 }
 
 TEST_CASE("ConfigManager::LoadViewsOrBootstrap seeds the Jira default field-set on a fresh install") {
