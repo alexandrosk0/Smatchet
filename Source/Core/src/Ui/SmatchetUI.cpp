@@ -233,10 +233,19 @@ static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
 }
 
 static std::future<FieldCatalogFetchResult>
-StartFieldCatalogFetchAsync(AppController& app, const TrackerConfig& fetchCfg, const std::string& projectKey) {
-    return std::async(std::launch::async, [&app, fetchCfg, projectKey]() {
+StartFieldCatalogFetchAsync(AppController& app, const TrackerConfig& fetchCfg, const std::string& activeViewJql) {
+    return std::async(std::launch::async, [&app, fetchCfg, activeViewJql]() {
         FieldCatalogFetchResult result;
         result.BackendKey = ConfigManager::NormalizeViewsBackendKey(fetchCfg.TrackerType);
+        std::string projectKey;
+        std::shared_ptr<ITrackerBackend> backend = app.BackendShared();
+        if (fetchCfg.TrackerType == "Plane" && backend != nullptr) {
+            projectKey = smatchet::ResolvePlaneOperationProject(&backend->Connectivity(), activeViewJql,
+                                                                fetchCfg.JqlQuery);
+        } else {
+            projectKey = smatchet::ResolveProjectForDraft(backend ? &backend->Connectivity() : nullptr, activeViewJql,
+                                                          std::string(), std::string());
+        }
         result.ProjectKey = projectKey;
         std::string error;
         TrackerFieldCatalogResult catalog;
@@ -1095,15 +1104,7 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
         d.fieldCatalogFetchStarted = true;
         const ViewDefinition* activeView = ViewState.GetActiveView();
         const std::string jql = activeView ? activeView->Jql : fetchCfg.JqlQuery;
-        std::shared_ptr<ITrackerBackend> backend = app.BackendShared();
-        std::string projectKey;
-        if (fetchCfg.TrackerType == "Plane" && backend != nullptr) {
-            projectKey = smatchet::ResolvePlaneOperationProject(&backend->Connectivity(), jql, fetchCfg.JqlQuery);
-        } else {
-            projectKey = smatchet::ResolveProjectForDraft(backend ? &backend->Connectivity() : nullptr, jql,
-                                                          std::string(), std::string());
-        }
-        d.fieldCatalogFuture = StartFieldCatalogFetchAsync(app, fetchCfg, projectKey);
+        d.fieldCatalogFuture = StartFieldCatalogFetchAsync(app, fetchCfg, jql);
     };
 
     if ((!d.fieldCatalogFetchStarted || d.triggerCatalogRefetch) && !d.fieldCatalogLoading) {

@@ -136,7 +136,7 @@ PlaneClient::BatchCallback WrapPlaneKeyFilterBatch(const std::string& keyFilter,
     if (keyFilter.empty() || !onBatch) {
         return onBatch;
     }
-    return PlaneClient::BatchCallback([&onBatch, keyFilter](std::vector<CachedTicket>&& batch) {
+    return PlaneClient::BatchCallback([onBatch, keyFilter](std::vector<CachedTicket>&& batch) {
         std::vector<CachedTicket> kept;
         for (auto& t : batch) {
             const std::string keyField = t.GetFieldValue("key");
