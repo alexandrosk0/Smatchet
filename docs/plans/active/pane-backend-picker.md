@@ -2,7 +2,7 @@
 
 > **Slug**: `pane-backend-picker` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — in progress. Slice 1 shipped (PR #1156). Slices 2–3 pending. Flip to `shipped` in the SAME post-ship PR that completes the final slice AND `git mv`s active → shipped (see § Archive).
+> **Status**: `active` — in progress. Slices 1–2 shipped (PR #1156). Slice 3 pending. Flip to `shipped` in the SAME post-ship PR that completes the final slice AND `git mv`s active → shipped (see § Archive).
 >
 > **Usage**: every section filled; non-applicable sections carry `N/A — <reason>`, never deleted.
 >
@@ -149,6 +149,7 @@ Per `AGENTS.md` § Verification automation — zero manual steps where physicall
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
 
 - `ac40d9e0` · Slice 1 — PaneAddRequest struct + cross-backend core + bucket-A tests (12 new cases, all 1644 pass)
+- `2cb05fe4` · Slice 2 — DrawNewPaneMenu (+▾ split-button, backend picker popup, view submenu); KnownBackendKeys(); BackendCredentialsPresent(); Views::GetDiskBackends(); ApplyPaneAddAndCloseRequests threads real viewBuckets
 
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
@@ -159,7 +160,7 @@ Per `AGENTS.md` § Verification automation — zero manual steps where physicall
 *(populated post-ship — what was actually tested + result, passed / failed / not-run)*
 
 - Slice 1: full `SmatchetTests` suite (1644 cases, 15533 assertions) — **PASSED**
-- Lint gate (`test-lint-rules.sh --diff origin/develop`) — all 6 checks **PASSED**
+- Slice 2: lint gate (`test-lint-rules.sh --diff origin/develop`) — all 6 checks **PASSED**; plan-ref-integrity **PASSED**; doc-anchors **PASSED**; visual validation pending user sign-off (Pillar 4 pause; see § Visual-validation pause)
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
