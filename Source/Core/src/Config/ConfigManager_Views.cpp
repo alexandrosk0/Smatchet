@@ -243,7 +243,7 @@ const std::vector<std::string>& ConfigManager::KnownBackendKeys() {
 
 bool ConfigManager::BackendCredentialsPresent(const TrackerConfig& cfg, const std::string& backendKey) {
     if (backendKey == "Plane") {
-        return !cfg.PlaneUrl.empty() && !cfg.PlaneApiKey.empty();
+        return !cfg.PlaneUrl.empty() && !cfg.PlaneApiKey.empty() && !cfg.PlaneWorkspaceSlug.empty();
     }
     if (backendKey == "GitHub") {
         return !cfg.GitHubPat.empty() && !cfg.GitHubOwner.empty() && !cfg.GitHubRepo.empty();

@@ -8,12 +8,14 @@
 //
 // Pure data-level tests — no ImGui, no UiDrawSession, no disk I/O.
 
+#include "Config/ConfigManager.h"
 #include "GridPane.h"
 #include "SmatchetGridPaneWindows.h"
 
 #include <doctest/doctest.h>
 
 #include <memory>
+#include <algorithm>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -209,4 +211,98 @@ TEST_CASE("ApplyPaneAddAndCloseRequestsCore: same targetBackendKey as source is 
     CHECK(panes.back().backendKey == "Jira");
     CHECK(panes.back().viewId == "v1");
     CHECK(panes.back().ticketsSnapshot.get() == snap.get());
+}
+
+// ---------------------------------------------------------------------------
+// Slice 3 — BackendCredentialsPresent + KnownBackendKeys (pane.new backend/view params)
+// ---------------------------------------------------------------------------
+
+
+namespace {
+
+TrackerConfig MakeCfg(const std::string& domain, const std::string& apiToken,
+                      const std::string& planeUrl, const std::string& planeApiKey,
+                      const std::string& planeWorkspaceSlug,
+                      const std::string& ghPat, const std::string& ghOwner,
+                      const std::string& ghRepo) {
+    TrackerConfig cfg;
+    cfg.Domain   = domain;   cfg.ApiToken   = apiToken;
+    cfg.PlaneUrl = planeUrl; cfg.PlaneApiKey = planeApiKey;
+    cfg.PlaneWorkspaceSlug = planeWorkspaceSlug;
+    cfg.GitHubPat = ghPat;   cfg.GitHubOwner = ghOwner; cfg.GitHubRepo = ghRepo;
+    return cfg;
+}
+
+} // namespace
+
+TEST_CASE("BackendCredentialsPresent: Jira — all fields present") {
+    const TrackerConfig cfg = MakeCfg("my.jira.net", "tok", "", "", "", "", "", "");
+    CHECK(ConfigManager::BackendCredentialsPresent(cfg, "Jira"));
+}
+
+TEST_CASE("BackendCredentialsPresent: Jira — domain empty → false") {
+    const TrackerConfig cfg = MakeCfg("", "tok", "", "", "", "", "", "");
+    CHECK_FALSE(ConfigManager::BackendCredentialsPresent(cfg, "Jira"));
+}
+
+TEST_CASE("BackendCredentialsPresent: Jira — apiToken empty → false") {
+    const TrackerConfig cfg = MakeCfg("my.jira.net", "", "", "", "", "", "", "");
+    CHECK_FALSE(ConfigManager::BackendCredentialsPresent(cfg, "Jira"));
+}
+
+TEST_CASE("BackendCredentialsPresent: Plane — all fields present") {
+    const TrackerConfig cfg = MakeCfg("", "", "https://plane.so", "plane_tok", "my-ws", "", "", "");
+    CHECK(ConfigManager::BackendCredentialsPresent(cfg, "Plane"));
+}
+
+TEST_CASE("BackendCredentialsPresent: Plane — url empty → false") {
+    const TrackerConfig cfg = MakeCfg("", "", "", "plane_tok", "my-ws", "", "", "");
+    CHECK_FALSE(ConfigManager::BackendCredentialsPresent(cfg, "Plane"));
+}
+
+TEST_CASE("BackendCredentialsPresent: Plane — apiKey empty → false") {
+    const TrackerConfig cfg = MakeCfg("", "", "https://plane.so", "", "my-ws", "", "", "");
+    CHECK_FALSE(ConfigManager::BackendCredentialsPresent(cfg, "Plane"));
+}
+
+TEST_CASE("BackendCredentialsPresent: Plane — workspace slug empty → false") {
+    const TrackerConfig cfg = MakeCfg("", "", "https://plane.so", "plane_tok", "", "", "", "");
+    CHECK_FALSE(ConfigManager::BackendCredentialsPresent(cfg, "Plane"));
+}
+
+TEST_CASE("BackendCredentialsPresent: GitHub — all fields present") {
+    const TrackerConfig cfg = MakeCfg("", "", "", "", "", "ghp_tok", "owner", "repo");
+    CHECK(ConfigManager::BackendCredentialsPresent(cfg, "GitHub"));
+}
+
+TEST_CASE("BackendCredentialsPresent: GitHub — pat empty → false") {
+    const TrackerConfig cfg = MakeCfg("", "", "", "", "", "", "owner", "repo");
+    CHECK_FALSE(ConfigManager::BackendCredentialsPresent(cfg, "GitHub"));
+}
+
+TEST_CASE("BackendCredentialsPresent: unknown key → false (Jira fallback check fails)") {
+    // Unknown backend key falls through to the Jira branch (non-empty domain+token check).
+    // With empty domain → false regardless.
+    const TrackerConfig cfg = MakeCfg("", "", "", "", "", "", "", "");
+    CHECK_FALSE(ConfigManager::BackendCredentialsPresent(cfg, "Linear"));
+}
+
+TEST_CASE("KnownBackendKeys: contains Jira, Plane, GitHub") {
+    const std::vector<std::string>& keys = ConfigManager::KnownBackendKeys();
+    const bool hasJira   = std::find(keys.begin(), keys.end(), "Jira")   != keys.end();
+    const bool hasPlane  = std::find(keys.begin(), keys.end(), "Plane")  != keys.end();
+    const bool hasGitHub = std::find(keys.begin(), keys.end(), "GitHub") != keys.end();
+    CHECK(hasJira);
+    CHECK(hasPlane);
+    CHECK(hasGitHub);
+}
+
+TEST_CASE("PaneAddRequest: backend + view fields round-trip") {
+    PaneAddRequest req;
+    req.sourceId          = "pane-1";
+    req.targetBackendKey  = "GitHub";
+    req.targetViewId      = "view-42";
+    CHECK(req.sourceId == "pane-1");
+    CHECK(req.targetBackendKey == "GitHub");
+    CHECK(req.targetViewId == "view-42");
 }
