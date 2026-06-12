@@ -257,7 +257,7 @@ delete view): approved 2026-06-07.
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
 1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/multi-grid-tabs.md docs/plans/shipped/` (move into the shipped tier),*
+2. *`git mv docs/plans/multi-grid-tabs.md docs/plans/shipped/` (move into the shipped tier),*
 3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
 
 *No ref-sweep — references use the tier-less form `docs/plans/<slug>.md`. Write new plan references tier-less.*

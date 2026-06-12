@@ -551,7 +551,7 @@ add_executable(SmatchetTests
     # of IssueTableSerializer. No cpr/AppController/ImGui dep — pure stdlib + nlohmann.
     Core/IssueTableSerializer.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueTableSerializer.cpp"
-    # Slice 0 WS2 of docs/plans/active/multi-grid-tabs.md — real catalog-BUILD
+    # Slice 0 WS2 of docs/plans/multi-grid-tabs.md — real catalog-BUILD
     # coverage closing the test.md P2 (2026-06-01): JiraFakeTrackerFixture injects a
     # pre-built catalog and bypasses FetchFieldCatalog assembly, so the PR #672
     # "components rendered as text" bug class was fixture-invisible. The test drives

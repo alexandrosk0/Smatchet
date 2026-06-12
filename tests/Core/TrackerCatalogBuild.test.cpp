@@ -1,4 +1,4 @@
-// Slice 0 WS2 of docs/plans/active/multi-grid-tabs.md — characterize the REAL
+// Slice 0 WS2 of docs/plans/multi-grid-tabs.md — characterize the REAL
 // Jira catalog-BUILD path (`JiraClient::FetchFieldCatalog` +
 // `MergeProjectComponentsFromEndpoint`) against scripted loopback HTTP, before
 // the multi-pane refactor touches anything near it. Closes the test.md P2

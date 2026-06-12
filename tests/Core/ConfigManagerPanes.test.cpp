@@ -1,5 +1,5 @@
 // smatchet_panes.json persistence + GridPane runtime isolation — Slice 2 of
-// docs/plans/active/multi-grid-tabs.md (plan items 7 + 13, ADR-0018).
+// docs/plans/multi-grid-tabs.md (plan items 7 + 13, ADR-0018).
 //
 // Covers:
 //   * GridPaneDescriptor serialize → restore round-trip (order + focused id kept).

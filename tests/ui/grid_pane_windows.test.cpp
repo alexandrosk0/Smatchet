@@ -1,5 +1,5 @@
 // grid_pane_windows.test.cpp — bucket-E smoke for multi-grid-tabs Slice 2
-// (docs/plans/active/multi-grid-tabs.md plan items 14-16, ADR-0018).
+// (docs/plans/multi-grid-tabs.md plan items 14-16, ADR-0018).
 //
 // Boot-open-assert coverage for the dockable grid-pane windows:
 //   1. new   — click the "+" pane button in the primary grid window; assert a

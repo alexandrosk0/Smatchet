@@ -1,5 +1,5 @@
 // GridLiveContext seam tests — multi-grid foundation Slice 1a
-// (docs/plans/active/multi-grid-tabs.md, ADR-0018).
+// (docs/plans/multi-grid-tabs.md, ADR-0018).
 //
 // Pins what 1a actually introduced: the per-pane GridLiveContext bundle that the
 // former AppController singleton members moved into. Covered here:

@@ -371,7 +371,7 @@ TEST_CASE("TicketSyncService back-to-back ApplyIssueFetchPack invocations stay c
 }
 
 // ---------------------------------------------------------------------------
-// Backend swap matrix — Slice 0 Workstream 1 of docs/plans/active/multi-grid-tabs.md
+// Backend swap matrix — Slice 0 Workstream 1 of docs/plans/multi-grid-tabs.md
 // (characterize-existing regression net). Pins SwapBackendIfTrackerChanged's
 // CURRENT single-active-backend semantics before the multi-pane refactor:
 // the swap happens synchronously inside SyncWithBackend -> StartStreamingSync
