@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-ui-grid-pane-windows.sh — bucket-E driver for multi-grid-tabs Slice 2
-# (docs/plans/active/multi-grid-tabs.md items 14-16): dockable grid-pane
+# (docs/plans/shipped/multi-grid-tabs.md items 14-16): dockable grid-pane
 # new / focus-follow / side-by-side split / close smoke in
 # tests/ui/grid_pane_windows.test.cpp.
 #

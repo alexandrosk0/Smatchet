@@ -121,6 +121,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`merge-snapshot-ledger`](shipped/merge-snapshot-ledger.md) | 2026-06-05 | Plan — Merge-time gate-snapshot ledger (lossless gate-escape detection) |
 | [`reduce-coderabbit-review-spend`](shipped/reduce-coderabbit-review-spend.md) | 2026-06-05 | Plan — Reduce CodeRabbit review spend |
 | [`triggered-followup-tracking`](shipped/triggered-followup-tracking.md) | 2026-06-05 | Plan — Triggered follow-up tracking (machine-checkable deferred follow-ups) |
+| [`multi-grid-tabs`](shipped/multi-grid-tabs.md) | 2026-06-06 | Plan — Multiple grid panes (dockable; same or different tracker backend, side-by-side) |
 | [`perf-gate-revival`](shipped/perf-gate-revival.md) | 2026-06-06 | Perf-gate revival (Pillar 1) — execution playbook |
 | [`shrink-over-100-line-functions`](shipped/shrink-over-100-line-functions.md) | 2026-06-06 | Decompose all 68 functions over the 100-line soft-warn tier (UI + non-UI) under 100 lines, ideally 40-80. Follow-up to decompose-top-20-monoliths (which cleared the hard cap). |
 | [`user-info-window`](shipped/user-info-window.md) | 2026-06-06 | Plan — User Info Window |

@@ -1,7 +1,7 @@
 #ifndef SMATCHET_TESTS_JIRA_CATALOG_HTTP_FIXTURE_H
 #define SMATCHET_TESTS_JIRA_CATALOG_HTTP_FIXTURE_H
 
-// Slice 0 WS2 of docs/plans/active/multi-grid-tabs.md — real catalog-BUILD fixture.
+// Slice 0 WS2 of docs/plans/multi-grid-tabs.md — real catalog-BUILD fixture.
 // Closes the test.md P2 (2026-06-01): `JiraFakeTrackerFixture` injects a pre-built
 // `TrackerFieldCatalogResult` and bypasses the live `FetchFieldCatalog` assembly, so
 // the whole enrichment + classification pipeline (the PR #672 "components rendered

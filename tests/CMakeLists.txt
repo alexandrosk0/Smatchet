@@ -45,10 +45,18 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerLabelsPure.cpp"
         Core/TrackerDateTimePure.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerDateTimePure.cpp"
+        # multi-grid-tabs.md Slice 5a — pure hidden-pane LRU eviction decision
+        # (header-only; no extra .cpp). No threads — proves the policy compiles +
+        # links cleanly under -fsanitize=thread end-to-end on the runner.
+        Core/GridPaneEvictionPolicy.test.cpp
         # --- LocalCacheManager: SQLite-backed ticket cache carrying std::mutex /
         #     std::atomic state — real ThreadSanitizer surface. ImGui-free closure:
         #     LocalCacheManager.cpp + IssueDraft.cpp + Logger.cpp (header deps only).
         Core/LocalCacheManager.test.cpp
+        # multi-grid-tabs.md Slice 5 TSan pass — concurrent GetAllTickets (seed-reader
+        # background task) + SaveTicket (UI-thread write) from two std::threads sharing
+        # one LocalCacheManager instance. LCM.cpp already linked above; no extra .cpp.
+        Core/LocalCacheConcurrentSeed.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueDraft.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Logger.cpp"
@@ -216,6 +224,9 @@ add_executable(SmatchetTests
     Core/CppSyntaxLex.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/CppSyntaxLex.cpp"
     Core/LocalCacheManager.test.cpp
+    # multi-grid-tabs.md Slice 5 TSan pass — concurrent seed-read (GetAllTickets) +
+    # write (SaveTicket) from two std::threads; also in SmatchetTsanTests for TSan.
+    Core/LocalCacheConcurrentSeed.test.cpp
     # Multi-grid Slice 1b (ADR-0018) — tickets_v2 backend-key namespacing: one-time copy
     # migration round-trip on a pre-migration fixture DB, idempotence via cache_meta flag,
     # and two-backend disjointness on a colliding numeric id. Links the production LCM TU
@@ -540,7 +551,7 @@ add_executable(SmatchetTests
     # of IssueTableSerializer. No cpr/AppController/ImGui dep — pure stdlib + nlohmann.
     Core/IssueTableSerializer.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueTableSerializer.cpp"
-    # Slice 0 WS2 of docs/plans/active/multi-grid-tabs.md — real catalog-BUILD
+    # Slice 0 WS2 of docs/plans/multi-grid-tabs.md — real catalog-BUILD
     # coverage closing the test.md P2 (2026-06-01): JiraFakeTrackerFixture injects a
     # pre-built catalog and bypasses FetchFieldCatalog assembly, so the PR #672
     # "components rendered as text" bug class was fixture-invisible. The test drives

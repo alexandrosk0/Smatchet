@@ -1,5 +1,5 @@
 // ConfigManager view-store seam tests — Slice 0 Workstream 1 of
-// docs/plans/active/multi-grid-tabs.md (characterize-existing regression net).
+// docs/plans/multi-grid-tabs.md (characterize-existing regression net).
 //
 // Pins the CURRENT single-grid view-persistence behaviour of
 // Source/Core/src/Config/ConfigManager_Views.cpp BEFORE the multi-pane refactor:
