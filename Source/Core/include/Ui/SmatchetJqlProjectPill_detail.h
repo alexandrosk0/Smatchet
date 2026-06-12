@@ -11,10 +11,11 @@
 namespace SmatchetJqlProjectPill {
 namespace detail {
 
-/** True iff a cached-project index entry should appear in the Jira project-pill popup for the
- *  given tracker domain. Rejects empty keys and non-Jira backends; an entry whose endpoint is set
- *  and differs from a non-empty domain is filtered out (empty endpoint / empty domain = wildcard). */
-bool EntryPassesPillFilter(const FieldCatalogCache::CachedProjectEntry& e, const std::string& domain);
+/** True iff a cached-project index entry should appear in the project-pill popup for the
+ *  given backend and endpoint. Rejects empty keys; an entry whose backend is set and differs
+ *  from a non-empty backendKind is filtered out; same for endpoint (empty = wildcard). */
+bool EntryPassesPillFilter(const FieldCatalogCache::CachedProjectEntry& e, const std::string& backendKind,
+                           const std::string& endpoint);
 
 } // namespace detail
 } // namespace SmatchetJqlProjectPill

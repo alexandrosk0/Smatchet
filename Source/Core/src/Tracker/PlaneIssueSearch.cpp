@@ -3,6 +3,7 @@
 #include "PlaneIssueMappingPure.h"
 
 #include "Logger.h"
+#include "ProjectResolver.h"
 #include "StringUtil.h"
 #include "TrackerHttpClient.h"
 #include "TrackerHttpUtils.h"
@@ -116,6 +117,37 @@ constexpr std::int64_t kPlaneListProjectsTtlSeconds = 300; // 5 minutes
 std::int64_t PlaneNowUnixSeconds() {
     return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
         .count();
+}
+
+std::string ActiveViewJqlFromStore(const ViewsStore* viewsOverride) {
+    if (viewsOverride == nullptr) {
+        return std::string();
+    }
+    for (const ViewDefinition& view : viewsOverride->Views) {
+        if (view.Id == viewsOverride->ActiveViewId) {
+            return view.Jql;
+        }
+    }
+    return std::string();
+}
+
+PlaneClient::BatchCallback WrapPlaneKeyFilterBatch(const std::string& keyFilter,
+                                                   const PlaneClient::BatchCallback& onBatch) {
+    if (keyFilter.empty() || !onBatch) {
+        return onBatch;
+    }
+    return PlaneClient::BatchCallback([onBatch, keyFilter](std::vector<CachedTicket>&& batch) {
+        std::vector<CachedTicket> kept;
+        for (auto& t : batch) {
+            const std::string keyField = t.GetFieldValue("key");
+            if (t.id == keyFilter || (!keyField.empty() && keyField == keyFilter)) {
+                kept.push_back(std::move(t));
+            }
+        }
+        if (!kept.empty()) {
+            onBatch(std::move(kept));
+        }
+    });
 }
 
 // Phase 1: validate Plane connection config + active-view project scope. Returns the
@@ -390,17 +422,14 @@ std::vector<CachedTicket> PlaneClient::FetchIssues(bool* outFullSyncCompleted, c
 TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(const BatchCallback& onBatch,
                                                           const CancelCallback& shouldCancel,
                                                           const TrackerConfig* configOverride,
-                                                          const ViewsStore* /*viewsOverride*/) {
+                                                          const ViewsStore* viewsOverride) {
 
     TrackerIssueFetchSummary summary;
 
     const TrackerConfig cfg = configOverride ? *configOverride : ConfigManager::Load();
 
-    // PR 6: legacy global cfg.PlaneProjectId removed. The active project is extracted from the
-    // active view's query (PR 5 sweep ensures legacy views carry their project in the saved
-    // query). Empty here ≡ "no project scope" — surfaces the same "configure" error as before.
-    // See docs/plans/shipped/remove-global-project-key.md §2.5 / §7 PR 6.
-    const std::string projectKey = ExtractProjectFromQuery(cfg.JqlQuery);
+    const std::string activeViewJql = ActiveViewJqlFromStore(viewsOverride);
+    const std::string projectKey = smatchet::ResolvePlaneOperationProject(this, activeViewJql, cfg.JqlQuery);
 
     summary.FetchError = ValidatePlaneFetchConfig(cfg, projectKey);
     if (!summary.FetchError.empty()) {
@@ -411,20 +440,7 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(const BatchCallback& o
     // stream to one issue (client-side post-filter — Plane's list endpoint has no key filter).
     // Same match rule as FetchIssuesForKeys: UUID or visual key, exact.
     const std::string keyFilter = smatchet::plane::ExtractKeyFromPlaneQuery(cfg.JqlQuery);
-    const BatchCallback filteredOnBatch =
-        !keyFilter.empty() && onBatch ? BatchCallback([&onBatch, keyFilter](std::vector<CachedTicket>&& batch) {
-            std::vector<CachedTicket> kept;
-            for (auto& t : batch) {
-                const std::string keyField = t.GetFieldValue("key");
-                if (t.id == keyFilter || (!keyField.empty() && keyField == keyFilter)) {
-                    kept.push_back(std::move(t));
-                }
-            }
-            if (!kept.empty()) {
-                onBatch(std::move(kept));
-            }
-        })
-                                      : onBatch;
+    const BatchCallback filteredOnBatch = WrapPlaneKeyFilterBatch(keyFilter, onBatch);
 
     const std::string planeApi = NormalizeAndLogPlaneApiBase(cfg.PlaneUrl);
 

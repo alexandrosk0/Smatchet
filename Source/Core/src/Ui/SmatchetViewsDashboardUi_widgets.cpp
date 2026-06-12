@@ -5,6 +5,7 @@
 #include "ConfigManager.h"
 #include "ITrackerBackend.h"
 #include "JqlProjectScope.h"
+#include "PlaneProjectScope.h"
 #include "FieldCatalogCache.h"
 #include "SmatchetAutocompleteUi.h"
 #include "SmatchetLocalization.h"
@@ -238,12 +239,15 @@ void TickDragDropAutoScroll() {
 }
 
 namespace {
-// PR 4b project pill (Jira only): a clickable label under the JQL bar whose popup clamps the
-// active view to a single project from the recently-used catalog cache. Plane uses a distinct
-// structured-query UX, so the pill is suppressed there. Owns its style-color and popup pairs.
+// PR 4b project pill: clickable label under the query bar whose popup clamps the active view to
+// a single project. Jira uses JQL `project = …`; Plane stores `project_id` in structured JSON.
 void DrawJqlProjectPill(AppController& app, UiDrawSession& d) {
     const std::string currentJql(d.viewJqlBuf);
     const ITrackerBackend* backend = app.GetTrackerBackend();
+    const bool isPlane = d.cfg.TrackerType == "Plane";
+    const std::string backendKind = isPlane ? std::string("Plane") : std::string("Jira");
+    const std::string endpoint =
+        isPlane ? (d.cfg.PlaneUrl + std::string("|") + d.cfg.PlaneWorkspaceSlug) : d.cfg.Domain;
     const std::string scopeProj = backend ? backend->Connectivity().ExtractProjectFromQuery(currentJql) : std::string();
     const bool single = !scopeProj.empty();
     const char* pillLabel = nullptr;
@@ -277,12 +281,14 @@ void DrawJqlProjectPill(AppController& app, UiDrawSession& d) {
         std::vector<FieldCatalogCache::CachedProjectEntry> cached = FieldCatalogCache::ListCachedProjects();
         int shown = 0;
         for (const auto& e : cached) {
-            if (!SmatchetJqlProjectPill::detail::EntryPassesPillFilter(e, d.cfg.Domain)) {
+            if (!SmatchetJqlProjectPill::detail::EntryPassesPillFilter(e, backendKind, endpoint)) {
                 continue;
             }
             ImGui::PushID(shown);
             if (ImGui::Selectable(e.projectKey.c_str(), e.projectKey == scopeProj)) {
-                const std::string newJql = JqlProjectScope::SetProjectClause(currentJql, e.projectKey);
+                const std::string newJql =
+                    isPlane ? PlaneProjectScope::SetProjectInQuery(currentJql, e.projectKey)
+                            : JqlProjectScope::SetProjectClause(currentJql, e.projectKey);
                 CopyStringToBuffer(d.viewJqlBuf, newJql);
                 d.viewsDirty = true;
                 ImGui::CloseCurrentPopup();
@@ -367,12 +373,8 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d) {
     }
     TrackerQueryAcp_FlushPendingReplace(d);
 
-    // PR 4b: project pill (Jira only). Renders inline beneath the JQL bar — clickable popup that
-    // lets the user clamp the active view to a single project from the recently-used cache.
-    // Plane: PR 4 Plane pill UX TBD — queries are structured JSON and warrant a distinct UX.
-    if (d.cfg.TrackerType != "Plane") {
-        DrawJqlProjectPill(app, d);
-    }
+    // PR 4b: project pill beneath the query bar — pick a single project scope for the active view.
+    DrawJqlProjectPill(app, d);
 }
 
 } // namespace SmatchetViewsDashboardUiDetail

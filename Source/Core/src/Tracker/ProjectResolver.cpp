@@ -1,6 +1,7 @@
 #include "ProjectResolver.h"
 
 #include "ITrackerConnectivity.h"
+#include "TrackerFieldSchema.h"
 
 namespace smatchet {
 
@@ -111,6 +112,24 @@ std::string ResolveProjectForDraftFromParent(const std::string& parentTicketId, 
         }
     }
     return ResolveProjectForDraft(client, activeViewQuery, std::string(), legacyFallback);
+}
+
+std::string ResolvePlaneOperationProject(ITrackerConnectivity* client, const std::string& viewQuery,
+                                         const std::string& cfgQuery) {
+    if (client == nullptr || client->GetTrackerType() != "Plane") {
+        return std::string();
+    }
+    std::string projectKey = client->ExtractProjectFromQuery(viewQuery);
+    if (projectKey.empty()) {
+        projectKey = client->ExtractProjectFromQuery(cfgQuery);
+    }
+    if (projectKey.empty()) {
+        const std::vector<RemoteProject> projects = client->ListProjects();
+        if (projects.size() == 1 && !projects.front().id.empty()) {
+            projectKey = projects.front().id;
+        }
+    }
+    return projectKey;
 }
 
 } // namespace smatchet

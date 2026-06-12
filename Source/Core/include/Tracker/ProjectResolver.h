@@ -56,4 +56,9 @@ std::string ResolveProjectForDraft(const ITrackerConnectivity* client, const std
 std::string ResolveProjectForDraftFromParent(const std::string& parentTicketId, const ITrackerConnectivity* client,
                                              const std::string& activeViewQuery, const std::string& legacyFallback);
 
+/** Plane-only operation scope: active-view query, then cfg query, then sole-project auto-pick.
+ *  Returns "" when the workspace has zero or multiple projects and no query carries project_id. */
+std::string ResolvePlaneOperationProject(ITrackerConnectivity* client, const std::string& viewQuery,
+                                         const std::string& cfgQuery);
+
 } // namespace smatchet

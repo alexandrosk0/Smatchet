@@ -16,29 +16,34 @@ FieldCatalogCache::CachedProjectEntry MakeEntry(const std::string& key, const st
 } // namespace
 
 TEST_CASE("EntryPassesPillFilter: an empty project key is always rejected") {
-    CHECK_FALSE(EntryPassesPillFilter(MakeEntry("", "Jira", "acme.atlassian.net"), "acme.atlassian.net"));
+    CHECK_FALSE(EntryPassesPillFilter(MakeEntry("", "Jira", "acme.atlassian.net"), "Jira", "acme.atlassian.net"));
 }
 
-TEST_CASE("EntryPassesPillFilter: a non-Jira backend is rejected") {
-    CHECK_FALSE(EntryPassesPillFilter(MakeEntry("PROJ", "Plane", ""), "acme.atlassian.net"));
+TEST_CASE("EntryPassesPillFilter: a mismatched backend is rejected") {
+    CHECK_FALSE(EntryPassesPillFilter(MakeEntry("PROJ", "Plane", ""), "Jira", "acme.atlassian.net"));
 }
 
 TEST_CASE("EntryPassesPillFilter: an empty backend is treated as a wildcard and passes") {
-    CHECK(EntryPassesPillFilter(MakeEntry("PROJ", "", ""), "acme.atlassian.net"));
+    CHECK(EntryPassesPillFilter(MakeEntry("PROJ", "", ""), "Jira", "acme.atlassian.net"));
 }
 
 TEST_CASE("EntryPassesPillFilter: a Jira entry with a matching endpoint passes") {
-    CHECK(EntryPassesPillFilter(MakeEntry("PROJ", "Jira", "acme.atlassian.net"), "acme.atlassian.net"));
+    CHECK(EntryPassesPillFilter(MakeEntry("PROJ", "Jira", "acme.atlassian.net"), "Jira", "acme.atlassian.net"));
 }
 
 TEST_CASE("EntryPassesPillFilter: a Jira entry with a mismatched endpoint is rejected") {
-    CHECK_FALSE(EntryPassesPillFilter(MakeEntry("PROJ", "Jira", "other.atlassian.net"), "acme.atlassian.net"));
+    CHECK_FALSE(EntryPassesPillFilter(MakeEntry("PROJ", "Jira", "other.atlassian.net"), "Jira", "acme.atlassian.net"));
 }
 
 TEST_CASE("EntryPassesPillFilter: an empty endpoint is a wildcard regardless of domain") {
-    CHECK(EntryPassesPillFilter(MakeEntry("PROJ", "Jira", ""), "acme.atlassian.net"));
+    CHECK(EntryPassesPillFilter(MakeEntry("PROJ", "Jira", ""), "Jira", "acme.atlassian.net"));
 }
 
-TEST_CASE("EntryPassesPillFilter: an empty domain disables the endpoint filter") {
-    CHECK(EntryPassesPillFilter(MakeEntry("PROJ", "Jira", "other.atlassian.net"), ""));
+TEST_CASE("EntryPassesPillFilter: an empty endpoint filter disables the endpoint filter") {
+    CHECK(EntryPassesPillFilter(MakeEntry("PROJ", "Jira", "other.atlassian.net"), "Jira", ""));
+}
+
+TEST_CASE("EntryPassesPillFilter: a Plane entry with a matching endpoint passes") {
+    CHECK(EntryPassesPillFilter(MakeEntry("uuid-1", "Plane", "https://api.plane.so|acme"), "Plane",
+                                "https://api.plane.so|acme"));
 }
