@@ -3,6 +3,7 @@
 #include "PlaneIssueMappingPure.h"
 
 #include "Logger.h"
+#include "ProjectResolver.h"
 #include "StringUtil.h"
 #include "TrackerHttpClient.h"
 #include "TrackerHttpUtils.h"
@@ -390,17 +391,23 @@ std::vector<CachedTicket> PlaneClient::FetchIssues(bool* outFullSyncCompleted, c
 TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(const BatchCallback& onBatch,
                                                           const CancelCallback& shouldCancel,
                                                           const TrackerConfig* configOverride,
-                                                          const ViewsStore* /*viewsOverride*/) {
+                                                          const ViewsStore* viewsOverride) {
 
     TrackerIssueFetchSummary summary;
 
     const TrackerConfig cfg = configOverride ? *configOverride : ConfigManager::Load();
 
-    // PR 6: legacy global cfg.PlaneProjectId removed. The active project is extracted from the
-    // active view's query (PR 5 sweep ensures legacy views carry their project in the saved
-    // query). Empty here ≡ "no project scope" — surfaces the same "configure" error as before.
-    // See docs/plans/shipped/remove-global-project-key.md §2.5 / §7 PR 6.
-    const std::string projectKey = ExtractProjectFromQuery(cfg.JqlQuery);
+    // PR 6: project scope comes from the active view query, cfg query, or sole-project auto-pick.
+    std::string activeViewJql;
+    if (viewsOverride != nullptr) {
+        for (const ViewDefinition& view : viewsOverride->Views) {
+            if (view.Id == viewsOverride->ActiveViewId) {
+                activeViewJql = view.Jql;
+                break;
+            }
+        }
+    }
+    const std::string projectKey = smatchet::ResolvePlaneOperationProject(this, activeViewJql, cfg.JqlQuery);
 
     summary.FetchError = ValidatePlaneFetchConfig(cfg, projectKey);
     if (!summary.FetchError.empty()) {

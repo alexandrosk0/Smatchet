@@ -1095,9 +1095,14 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
         d.fieldCatalogFetchStarted = true;
         const ViewDefinition* activeView = ViewState.GetActiveView();
         const std::string jql = activeView ? activeView->Jql : fetchCfg.JqlQuery;
-        const ITrackerBackend* pb = app.GetTrackerBackend();
-        const std::string projectKey =
-            smatchet::ResolveProjectForDraft(pb ? &pb->Connectivity() : nullptr, jql, std::string(), std::string());
+        std::shared_ptr<ITrackerBackend> backend = app.BackendShared();
+        std::string projectKey;
+        if (fetchCfg.TrackerType == "Plane" && backend != nullptr) {
+            projectKey = smatchet::ResolvePlaneOperationProject(&backend->Connectivity(), jql, fetchCfg.JqlQuery);
+        } else {
+            projectKey = smatchet::ResolveProjectForDraft(backend ? &backend->Connectivity() : nullptr, jql,
+                                                          std::string(), std::string());
+        }
         d.fieldCatalogFuture = StartFieldCatalogFetchAsync(app, fetchCfg, projectKey);
     };
 
