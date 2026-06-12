@@ -1340,7 +1340,7 @@ print('persisted:', reg.get('cr_none_grace_polls'), reg.get('cr_none_grace_head'
 "
     [ "$status" -eq 0 ]
     [[ "$output" == *"count: 1"* ]]
-    [[ "$output" == *"waiting out CR-NONE grace (1/5 cycles)"* ]]
+    [[ "$output" == *"waiting out CR-NONE grace [code] (1/5 cycles)"* ]]
     [[ "$output" == *"flipped: None"* ]]
     [[ "$output" == *"persisted: 1 aaaa1111"* ]]
 }
@@ -1440,6 +1440,120 @@ print('persisted:', reg.get('cr_none_grace_polls'))
     [[ "$output" == *"count: 0"* ]]
     [[ "$output" == *"reset (CR left NONE-grace-wait state)"* ]]
     [[ "$output" == *"persisted: 0"* ]]
+}
+
+# ---------- cr-none-grace: pure-docs fast window ----------
+
+@test "cr-none-grace pure-docs: threshold honors env + floors at 1 + ignores garbage" {
+    run python -c "
+import os, importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec); spec.loader.exec_module(mw)
+os.environ.pop('MERGE_WATCH_CR_NONE_GRACE_CYCLES_PURE_DOCS', None)
+assert mw._cr_none_grace_cycles_pure_docs() == 1
+os.environ['MERGE_WATCH_CR_NONE_GRACE_CYCLES_PURE_DOCS']='4'; assert mw._cr_none_grace_cycles_pure_docs()==4
+os.environ['MERGE_WATCH_CR_NONE_GRACE_CYCLES_PURE_DOCS']='0'; assert mw._cr_none_grace_cycles_pure_docs()==1
+os.environ['MERGE_WATCH_CR_NONE_GRACE_CYCLES_PURE_DOCS']='nan'; assert mw._cr_none_grace_cycles_pure_docs()==1
+print('ok')
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ok"* ]]
+}
+
+@test "cr-none-grace pure-docs: detector allow-list parity with is-pure-docs-diff.sh" {
+    # _PURE_DOCS_ALLOW must accept exactly the four classes is-pure-docs-diff.sh
+    # accepts (docs/, backlog/, agents/scripts/, any *.md) and reject the rest.
+    run python -c "
+import importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec); spec.loader.exec_module(mw)
+m = mw._PURE_DOCS_ALLOW.match
+for p in ['docs/x.md','backlog/2026/p1.md','agents/scripts/core/x.sh','README.md',
+          'Source/Core/src/Grid/AGENTS.md','CONTEXT-MAP.md']:
+    assert m(p), p
+for p in ['Source/Core/src/Foo.cpp','scripts/dev/build.sh','.github/workflows/ci.yml',
+          'docs.md.cpp','mydocs/x.txt']:
+    assert not m(p), p
+print('ok')
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ok"* ]]
+}
+
+@test "cr-none-grace pure-docs: _pr_diff_is_pure_docs all-docs True, mixed False, gh-down False" {
+    run python -c "
+import importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec); spec.loader.exec_module(mw)
+mw._gh_json = lambda args, cwd=None, timeout=30: {'files':[{'path':'docs/a.md'},{'path':'backlog/b.md'}]}
+assert mw._pr_diff_is_pure_docs(999, '/x') is True
+mw._gh_json = lambda args, cwd=None, timeout=30: {'files':[{'path':'docs/a.md'},{'path':'Source/Core/src/X.cpp'}]}
+assert mw._pr_diff_is_pure_docs(999, '/x') is False
+mw._gh_json = lambda args, cwd=None, timeout=30: {'files':[]}
+assert mw._pr_diff_is_pure_docs(999, '/x') is False
+def boom(args, cwd=None, timeout=30):
+    raise RuntimeError('gh down')
+mw._gh_json = boom
+assert mw._pr_diff_is_pure_docs(999, '/x') is False
+print('ok')
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ok"* ]]
+}
+
+@test "cr-none-grace pure-docs: at default threshold 1, first cycle forces the pass" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    run python -c "
+import os, importlib.util
+os.environ.pop('MERGE_WATCH_CR_NONE_GRACE_CYCLES_PURE_DOCS', None)
+os.environ['MERGE_WATCH_CR_NONE_GRACE_CYCLES']='10'
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec); spec.loader.exec_module(mw)
+mw._gh_json = lambda args, cwd=None, timeout=30: {'headRefOid':'docsheaddocsheaddocsheaddocsheaddocs0001'}
+mw._pr_diff_is_pure_docs = lambda pr, clone_path: True
+captured = {}
+def fake_poll(entry, extra_gates_env=None):
+    captured['env'] = extra_gates_env
+    return {'pr':999,'clone_path':entry['clone_path'],'last_state':'GATES_PASSED','last_status_line':'forced pass'}
+mw.poll_one = fake_poll
+entry = next(e for e in mw._CLI.read_registry() if int(e['pr'])==999)
+state = {'pr':999,'last_state':'BLOCKED','last_status_line':'CodeRabbit: NONE+status-SUCCESS-waiting-for-inline (poll 1/10)'}
+res = mw.maybe_pass_cr_none_grace(entry, state)
+print('flipped:', res.get('last_state'))
+print('env:', captured.get('env'))
+print('action:', res.get('cr_none_grace_action'))
+"
+    [ "$status" -eq 0 ]
+    # One cycle (count 1) reaches the pure-docs threshold of 1 -> forced pass,
+    # even though the code-diff window (10) would still be waiting.
+    [[ "$output" == *"flipped: GATES_PASSED"* ]]
+    [[ "$output" == *"env: {'MERGE_GATES_CR_GRACE_POLLS': '0'}"* ]]
+    [[ "$output" == *"CR-NONE grace elapsed [pure-docs] (1 cycles"* ]]
+}
+
+@test "cr-none-grace pure-docs: code diff still waits the full window (no early pass)" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    run python -c "
+import os, importlib.util
+os.environ['MERGE_WATCH_CR_NONE_GRACE_CYCLES']='10'
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec); spec.loader.exec_module(mw)
+mw._gh_json = lambda args, cwd=None, timeout=30: {'headRefOid':'codeheadcodeheadcodeheadcodeheadcode0001'}
+mw._pr_diff_is_pure_docs = lambda pr, clone_path: False
+def fake_poll(entry, extra_gates_env=None):
+    raise AssertionError('poll_one must NOT fire on cycle 1 of a 10-cycle code window')
+mw.poll_one = fake_poll
+entry = next(e for e in mw._CLI.read_registry() if int(e['pr'])==999)
+state = {'pr':999,'last_state':'BLOCKED','last_status_line':'CodeRabbit: NONE+pending (poll 1/10)'}
+res = mw.maybe_pass_cr_none_grace(entry, state)
+print('count:', res.get('cr_none_grace_polls'))
+print('action:', res.get('cr_none_grace_action'))
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"count: 1"* ]]
+    [[ "$output" == *"waiting out CR-NONE grace [code] (1/10 cycles)"* ]]
 }
 
 # ---------- watch-register-if-enabled.sh (ship-time opt-in auto-register) ----------
