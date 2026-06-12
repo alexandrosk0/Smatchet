@@ -131,11 +131,12 @@ std::string ActiveViewJqlFromStore(const ViewsStore* viewsOverride) {
     return std::string();
 }
 
-BatchCallback WrapPlaneKeyFilterBatch(const std::string& keyFilter, const BatchCallback& onBatch) {
+PlaneClient::BatchCallback WrapPlaneKeyFilterBatch(const std::string& keyFilter,
+                                                   const PlaneClient::BatchCallback& onBatch) {
     if (keyFilter.empty() || !onBatch) {
         return onBatch;
     }
-    return BatchCallback([&onBatch, keyFilter](std::vector<CachedTicket>&& batch) {
+    return PlaneClient::BatchCallback([&onBatch, keyFilter](std::vector<CachedTicket>&& batch) {
         std::vector<CachedTicket> kept;
         for (auto& t : batch) {
             const std::string keyField = t.GetFieldValue("key");
