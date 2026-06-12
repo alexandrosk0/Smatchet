@@ -34,6 +34,11 @@ name: Perf PR-fast
 on:
   pull_request:
     branches: [develop]
+    # labeled/unlabeled so applying `perf-out-of-band` AFTER a red run re-triggers
+    # the gate (paired with the LIVE label query in Gate decision below) — without
+    # these, the only way to honour a just-applied label was an empty commit to
+    # mint a fresh event (postmortems.md 2026-06-07 PR #966).
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 concurrency:
   group: perf-pr-fast-${{ github.ref }}
@@ -469,14 +474,20 @@ jobs:
           REGRESSION_COUNT: ${{ steps.perf.outputs.regression_count }}
           RUN_FAILURE_COUNT: ${{ steps.perf.outputs.run_failure_count }}
           MISSING_COUNT: ${{ steps.perf.outputs.missing_baseline_count }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -e
+          # Read the override label from the LIVE API, not the frozen
+          # github.event.pull_request.labels payload (which is snapshotted at the
+          # triggering event — applying `perf-out-of-band` after a red run + re-run
+          # replayed the stale payload -> override=false -> still red). Mirrors
+          # coverage-gate.yml's live `gh pr view` query. (postmortems.md 2026-06-07.)
           override="false"
-          for label in $(echo '${{ toJson(github.event.pull_request.labels) }}' | python -c "import json,sys; d=json.load(sys.stdin); print(' '.join(l['name'] for l in d))"); do
-            if [ "$label" = "perf-out-of-band" ]; then
-              override="true"
-            fi
-          done
+          labels="$(gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name' 2>/dev/null | tr '\n' ',' || echo "")"
+          if echo ",$labels," | grep -q ',perf-out-of-band,'; then
+            override="true"
+          fi
           if [ "$MISSING_COUNT" -gt 0 ]; then
             echo "::notice::First-run bootstrap captured $MISSING_COUNT baseline(s). Review the uploaded artefacts + open a bootstrap PR to commit them under docs/perf/baselines/."
           fi
