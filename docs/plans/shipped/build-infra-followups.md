@@ -2,7 +2,7 @@
 
 > **Slug**: `build-infra-followups` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `shipped`
 
 ## Context
 
@@ -100,15 +100,23 @@ N/A — the diff touches no `Source/Core/` path (tooling scripts, agent prompts,
 - cpp-lint advisory → blocking promotion (tooling:231 residual) — follow-up after empty-catch burndown.
 
 ## Implementation log
-*(populated post-ship)*
+
+- `2f7a8df8` · wip(plan): authored this plan doc.
+- `af8b0898` · feat(build-infra): the 6-item burndown — `cmake-local-gate-ci-scope` lint (`test-lint-rules.sh` scan-fn + `--scan-cmake-ci` mode + diff-gate block + `--selftest` + AGENTS.md contract-card row); 5 cases in `tests/bats/lint_rules.bats`; durable CI-scope rule in `build-doctor.md` + `cpp-rules.md`; no-reconfigure clause (`build.md` #5) + FetchContent recipe (`build.md` #6) + delegation-packet injection (`delegation.md`); 3 tooling + 3 infra backlog entries flipped to `applied`.
+- *(this commit)* · post-ship: filled these sections + archived active → shipped (#1168).
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **infra:16 home** — the no-reconfigure clause was single-sourced in `build.md` + the delegation packet (governing the 5 named agents at packet-build time) rather than copied into the 5 agent contracts, per the DRY pillar. The optional per-worktree configure-stamp (action 3) was deferred — tracked as the entry's residual.
+- **bats location** — the 5 cmake-ci-scope cases went into the existing `tests/bats/lint_rules.bats` (which already covers `test-lint-rules.sh`) rather than a new `cmake_ci_scope.bats`, avoiding a new wrapper + auto-enrolment (DRY).
+- **tooling items** — were code-shipped by #1166; this PR only flips their stale-open backlog entries to `applied` (no code change — verified #1166's diff).
 
 ## Verification (actual)
-*(populated post-ship)*
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+- Delta lint gate (`test-lint-rules.sh --diff origin/develop`): PASS — incl. `no un-CI-scoped local-knob CMake FATAL_ERROR`. ✅
+- `tests/bats/lint_rules.bats`: 33 tests, 0 failures (5 new cmake-ci cases green). ✅
+- `test-lint-rules.sh --selftest`: green (fire / CI-scoped-clean / deviation-clean + AGENTS.md-presence asserts-failure). ✅
+- `--scan-cmake-ci` on the real tree: clean (the toolset guard is CI-scoped). ✅
+- Doc-validation (`scripts/dev/test-docs.sh`): 13/13 PASS. ✅
+- Build gate: N/A — no C++ change (#1166 already shipped + verified the C++/CI pieces). Not-run (correct).
+- `grill-with-docs`: terminology checked against the backlog entries' own framing (the rule-id `cmake-local-gate-ci-scope` + the `subagent-build-reconfigure-hazard` / `worktree-FetchContent-cache` slugs are reused verbatim from the entries). No new domain terms introduced.
