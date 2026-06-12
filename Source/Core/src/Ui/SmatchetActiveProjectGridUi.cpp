@@ -839,14 +839,12 @@ void SmatchetUI::drawActiveProjectUnsavedStrip(ActiveProjectDrawCtx& ctx) {
             d.lastSyncedColumnOrder = restoreSource->ColumnOrder;
             SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewNameBuf, restoreSource->Name);
             SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlBuf, restoreSource->Jql);
-            // Re-seed the authoritative field selection from the restored view. See
-            // views-field-uncheck — the buffer below is only a display mirror now.
+            // Re-seed the authoritative field selection from the restored view
+            // (#views-field-uncheck).
             d.selectedFieldSet.clear();
             for (const auto& fieldId : restoreSource->Fields) {
                 d.selectedFieldSet.insert(fieldId);
             }
-            const std::string fieldsCsv = SmatchetViewsDashboardUiDetail::SerializeSelectedFields(d.selectedFieldSet);
-            SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.selectedFieldsBuf, fieldsCsv);
             d.viewsDirty = false;
             d.viewSortDirty = false;
             d.viewsHasOriginalSnapshot = false;

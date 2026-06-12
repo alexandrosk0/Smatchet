@@ -38,10 +38,6 @@ enum ViewsEditorTab : int {
     Tab_Sort = 3,
 };
 
-// Refresh the display-only CSV mirror of the selection set. Forward-declared so
-// LoadBuffersFromView (above its definition) can seed the mirror after the set.
-void SyncSelectedFieldsBuffer(UiDrawSession& d, const std::unordered_set<std::string>& selectedFieldSet);
-
 // Load all edit buffers from a saved view. Resets dirty + autocomplete state.
 void LoadBuffersFromView(UiDrawSession& d, const ViewDefinition& view) {
     std::memset(d.fieldSearchBuf, 0, sizeof(d.fieldSearchBuf));
@@ -59,14 +55,12 @@ void LoadBuffersFromView(UiDrawSession& d, const ViewDefinition& view) {
     d.jqlWantsApplyFromEnter = false;
     SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewNameBuf, view.Name);
     SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlBuf, view.Jql);
-    // Seed the authoritative selection set straight from the saved view (#views-field-uncheck)
-    // — never via the truncating CSV buffer. The buffer is a display-only mirror, refreshed
-    // by SyncSelectedFieldsBuffer below for inspection but never parsed back into the set.
+    // Seed the authoritative selection set straight from the saved view
+    // (#views-field-uncheck) — never via a truncating CSV buffer.
     d.selectedFieldSet.clear();
     for (const auto& fieldId : view.Fields) {
         d.selectedFieldSet.insert(fieldId);
     }
-    SyncSelectedFieldsBuffer(d, d.selectedFieldSet);
     d.editingColumnOrder = view.ColumnOrder;
     if (d.editingColumnOrder.empty()) {
         d.editingColumnOrder = {"id"};
@@ -109,18 +103,6 @@ void ReconcileEditingColumnOrder(UiDrawSession& d) {
         if (std::find(d.editingColumnOrder.begin(), d.editingColumnOrder.end(), key) == d.editingColumnOrder.end()) {
             d.editingColumnOrder.push_back(key);
         }
-    }
-}
-
-void SyncSelectedFieldsBuffer(UiDrawSession& d, const std::unordered_set<std::string>& selectedFieldSet) {
-    const std::string csv = SmatchetViewsDashboardUiDetail::SerializeSelectedFields(selectedFieldSet);
-    // The buffer is now display-only — it is never parsed back into the authoritative set
-    // (#views-field-uncheck). A truncation here is therefore harmless to selection state, but
-    // still log it so a future regression that re-reads the buffer is not silent.
-    if (!SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.selectedFieldsBuf, csv)) {
-        LOG_WARN("Views selected-fields display buffer truncated (%zu bytes > %zu cap); selection set "
-                 "is authoritative so no fields are lost.",
-                 csv.size(), sizeof(d.selectedFieldsBuf) - 1);
     }
 }
 
@@ -430,7 +412,6 @@ void DrawViewsFieldGroup(UiDrawSession& d, const char* groupName, const std::vec
             } else {
                 selectedFieldSet.erase(field->Id);
             }
-            SyncSelectedFieldsBuffer(d, selectedFieldSet);
             d.viewsDirty = true;
         }
         ImGui::SameLine();
@@ -480,7 +461,6 @@ void DrawViewsBasicFieldsGroup(UiDrawSession& d, const std::vector<const Tracker
             } else {
                 selectedFieldSet.erase(field->Id);
             }
-            SyncSelectedFieldsBuffer(d, selectedFieldSet);
             d.viewsDirty = true;
         }
         ImGui::SameLine();
@@ -539,7 +519,6 @@ void SmatchetUI::drawViewsFieldsTab(ViewsDashboardDrawCtx& ctx) {
                         selectedFieldSet.insert(field->Id);
                     }
                 }
-                SyncSelectedFieldsBuffer(d, selectedFieldSet);
                 d.viewsDirty = true;
             }
             ImGui::SameLine();
@@ -549,7 +528,6 @@ void SmatchetUI::drawViewsFieldsTab(ViewsDashboardDrawCtx& ctx) {
                         selectedFieldSet.erase(field->Id);
                     }
                 }
-                SyncSelectedFieldsBuffer(d, selectedFieldSet);
                 d.viewsDirty = true;
             }
 
