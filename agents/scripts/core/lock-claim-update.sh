@@ -85,8 +85,7 @@ if [ "${SMATCHET_LOCK_BYPASS_REPO_CHECK:-0}" != "1" ]; then
     # (project.name) instead of hardcoding "Smatchet", matching lock-claim.sh
     # and lock-release.sh. Fall back to "Smatchet" when config is unreadable,
     # so the guard is never weaker than before.
-    _repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-    _proj_cfg="${_repo_root:+$_repo_root/project.config.json}"
+    _proj_cfg="$(git rev-parse --show-toplevel 2>/dev/null)/project.config.json"
     _proj_name="$("$PYBIN" -c 'import json,sys;print(json.load(open(sys.argv[1], encoding="utf-8"))["project"]["name"])' "$_proj_cfg" 2>/dev/null || printf 'Smatchet')"
     _proj_lc="$(printf '%s' "$_proj_name" | tr '[:upper:]' '[:lower:]')"
     _url_lc="$(printf '%s' "$remote_url" | tr '[:upper:]' '[:lower:]')"

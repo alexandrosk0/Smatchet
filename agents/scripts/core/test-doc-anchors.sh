@@ -10,15 +10,16 @@ set -uo pipefail
 
 PY="${PYTHON:-}"
 if [ -n "$PY" ]; then
-    if ! "$PY" -c "" >/dev/null 2>&1; then
-        echo "test-doc-anchors: PYTHON='$PY' is not executable" >&2
+    if ! "$PY" -c 'import sys; sys.exit(0 if sys.version_info[0] >= 3 else 1)' >/dev/null 2>&1; then
+        echo "test-doc-anchors: PYTHON='$PY' is not an executable Python 3" >&2
         exit 2
     fi
 else
     for candidate in python python3 py; do
-        if command -v "$candidate" >/dev/null 2>&1 && \
-           "$candidate" -c 'import sys; sys.exit(0 if sys.version_info[0] >= 3 else 1)' 2>/dev/null; then
-            PY="$candidate"
+        _resolved="$(command -v "$candidate" 2>/dev/null)" || continue
+        [ -n "$_resolved" ] || continue
+        if "$_resolved" -c 'import sys; sys.exit(0 if sys.version_info[0] >= 3 else 1)' 2>/dev/null; then
+            PY="$_resolved"
             break
         fi
     done
