@@ -6,7 +6,9 @@
 
 #include "SmatchetGridPaneWindows.h"
 
+#include <algorithm>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace SmatchetGridPaneWindows {
@@ -53,8 +55,30 @@ std::string PrevPaneId(const std::vector<GridPane>& panes, const std::string& cu
 
 namespace detail {
 
+std::string ResolveNewPaneView(const std::string& backendKey, const std::string& requestedViewId,
+                               const std::unordered_map<std::string, ViewWorkspaceState>& viewBuckets) {
+    const auto it = viewBuckets.find(backendKey);
+    if (it == viewBuckets.end() || it->second.Views.empty()) {
+        return std::string();
+    }
+    const ViewWorkspaceState& ws = it->second;
+    if (!requestedViewId.empty()) {
+        const auto found = std::find_if(ws.Views.begin(), ws.Views.end(),
+                                        [&](const ViewDefinition& v) { return v.Id == requestedViewId; });
+        if (found != ws.Views.end()) {
+            return requestedViewId;
+        }
+    }
+    if (!ws.ActiveViewId.empty()) {
+        return ws.ActiveViewId;
+    }
+    return ws.Views.front().Id;
+}
+
 PaneRequestApplyOutcome ApplyPaneAddAndCloseRequestsCore(std::vector<GridPane>& panes, std::string& focusedPaneId,
-                                                         std::string& addRequestSourceId) {
+                                                         PaneAddRequest& addRequest,
+                                                         const std::unordered_map<std::string, ViewWorkspaceState>&
+                                                             viewBuckets) {
     PaneRequestApplyOutcome outcome;
 
     // Close sweep — windows whose tab X was clicked wrote pane.open = false.
@@ -78,24 +102,32 @@ PaneRequestApplyOutcome ApplyPaneAddAndCloseRequestsCore(std::vector<GridPane>& 
         }
     }
 
-    // "+" request — duplicate the source pane (same backend + view; the new pane
-    // shares the source's snapshot pointer, so opening costs no ticket copy).
-    if (!addRequestSourceId.empty()) {
-        const GridPane* src = FindGridPaneById(panes, addRequestSourceId);
+    // "+" request — create a new pane from the source. Same-backend: duplicates
+    // backend/view/snapshot (cheap shared_ptr copy). Cross-backend: sets the target
+    // backend + resolves a view; NO snapshot inherit (different data).
+    if (!addRequest.sourceId.empty()) {
+        const GridPane* src = FindGridPaneById(panes, addRequest.sourceId);
         if (src == nullptr) {
             src = &panes.front();
         }
         GridPane dup;
         dup.id = GenerateUniquePaneId(panes);
         dup.title = src->title;
-        dup.backendKey = src->backendKey;
-        dup.viewId = src->viewId;
-        dup.ticketsSnapshot = src->ticketsSnapshot;
-        dup.snapshotRevision = src->snapshotRevision;
+        const bool crossBackend = !addRequest.targetBackendKey.empty() &&
+                                  addRequest.targetBackendKey != src->backendKey;
+        if (crossBackend) {
+            dup.backendKey = addRequest.targetBackendKey;
+            dup.viewId = ResolveNewPaneView(addRequest.targetBackendKey, addRequest.targetViewId, viewBuckets);
+        } else {
+            dup.backendKey = src->backendKey;
+            dup.viewId = src->viewId;
+            dup.ticketsSnapshot = src->ticketsSnapshot;
+            dup.snapshotRevision = src->snapshotRevision;
+        }
         panes.push_back(dup); // invalidates `src` — done reading it above
         focusedPaneId = panes.back().id;
         outcome.FocusReassigned = true;
-        addRequestSourceId.clear();
+        addRequest = PaneAddRequest{};
         outcome.Changed = true;
     }
 

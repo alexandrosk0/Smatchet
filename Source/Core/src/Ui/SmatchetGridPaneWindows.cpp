@@ -93,12 +93,13 @@ void DrainPanesSaveIfDue(UiDrawSession& d) {
     }
 }
 
-bool ApplyPaneAddAndCloseRequests(UiDrawSession& d) {
+bool ApplyPaneAddAndCloseRequests(UiDrawSession& d,
+                                  const std::unordered_map<std::string, ViewWorkspaceState>& viewBuckets) {
     // Pure core (SmatchetGridPaneWindows_detail.cpp — bucket-A covered); the wrapper
     // only forwards the focus-reassignment report into the session latch the host
     // consumes next frame as a real focus switch (review HIGH-2).
     const detail::PaneRequestApplyOutcome outcome =
-        detail::ApplyPaneAddAndCloseRequestsCore(d.gridPanes, d.focusedPaneId, d.paneAddRequestSourceId);
+        detail::ApplyPaneAddAndCloseRequestsCore(d.gridPanes, d.focusedPaneId, d.paneAddRequest, viewBuckets);
     if (outcome.FocusReassigned) {
         d.gridPaneFocusReassigned = true;
     }
@@ -220,7 +221,7 @@ void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
         PumpGridFieldEdits(app, d, pumpTickets, readOnlyMode);
     }
 
-    if (SmatchetGridPaneWindows::ApplyPaneAddAndCloseRequests(d)) {
+    if (SmatchetGridPaneWindows::ApplyPaneAddAndCloseRequests(d, ViewState.GetDiskBackends())) {
         SmatchetGridPaneWindows::MarkPanesDirty(d);
     }
     SmatchetGridPaneWindows::DrainPanesSaveIfDue(d);

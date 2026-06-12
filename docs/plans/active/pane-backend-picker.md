@@ -2,7 +2,7 @@
 
 > **Slug**: `pane-backend-picker` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — design draft, not yet implementation-approved. Flip to `shipped` in the SAME post-ship PR that fills § Implementation log AND `git mv`s active → shipped (see § Archive).
+> **Status**: `active` — in progress. Slices 1–2 shipped (PR #1156). Slice 3 pending. Flip to `shipped` in the SAME post-ship PR that completes the final slice AND `git mv`s active → shipped (see § Archive).
 >
 > **Usage**: every section filled; non-applicable sections carry `N/A — <reason>`, never deleted.
 >
@@ -10,7 +10,7 @@
 
 ## Context
 
-[`multi-grid-tabs`](multi-grid-tabs.md) shipped the **engine** for side-by-side different-backend panes: each pane carries its own `(backendKey, viewId)`, owns a live `GridLiveContext` (its own `ITrackerBackend` + sync + ticket cache), and `tickets_v2` / offline-queue rows are `backend_key`-namespaced. The plan's stated motivation (line 13) was a user who "track[s] work across two projects, two query-views, or two trackers (e.g. a Jira board + a GitHub repo) [and] cannot see them at once."
+[`multi-grid-tabs`](../shipped/multi-grid-tabs.md) shipped the **engine** for side-by-side different-backend panes: each pane carries its own `(backendKey, viewId)`, owns a live `GridLiveContext` (its own `ITrackerBackend` + sync + ticket cache), and `tickets_v2` / offline-queue rows are `backend_key`-namespaced. The plan's stated motivation (line 13) was a user who "track[s] work across two projects, two query-views, or two trackers (e.g. a Jira board + a GitHub repo) [and] cannot see them at once."
 
 **The gap**: there is **no UI affordance to put a *different* backend into a new pane.** Every pane-creation path is a *duplicate-the-focused-pane* op — the `+` button, `pane.new`, `pane.duplicate`, `pane.split` all copy the source pane's `backendKey` + `viewId` ([`SmatchetGridPaneWindows_detail.cpp:88-95`](../../../Source/Core/src/Ui/SmatchetGridPaneWindows_detail.cpp:88); [`PaneCommands.cpp:155`](../../../Source/Core/src/Commands/PaneCommands.cpp:155)). The only way to *reach* a cross-backend pane today is implicit and non-obvious: focus a pane, open **Preferences**, switch the global tracker; the focused pane's steady-state then rewrites `pane.backendKey = NormalizeViewsBackendKey(cfg.TrackerType)` ([`SmatchetGridPaneWindows.cpp:312-314`](../../../Source/Core/src/Ui/SmatchetGridPaneWindows.cpp:312)). So the multi-tracker side-by-side *capability* was built but the *selection UX* was never designed — confirmed: no picker/chooser/backend-selector appears in `multi-grid-tabs.md`, its slice1-design addendum, or [ADR-0018](../../adr/0018-multi-grid-pane-contexts.md).
 
@@ -148,17 +148,19 @@ Per `AGENTS.md` § Verification automation — zero manual steps where physicall
 ## Implementation log
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
 
-N/A — design draft, not yet implemented.
+- `ac40d9e0` · Slice 1 — PaneAddRequest struct + cross-backend core + bucket-A tests (12 new cases, all 1644 pass)
+- `2cb05fe4` · Slice 2 — DrawNewPaneMenu (+▾ split-button, backend picker popup, view submenu); KnownBackendKeys(); BackendCredentialsPresent(); Views::GetDiskBackends(); ApplyPaneAddAndCloseRequests threads real viewBuckets
 
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
 
-N/A — design draft, not yet implemented.
+- **`ApplyPaneAddAndCloseRequests` wrapper passes `emptyBuckets` in Slice 1** — `Views::Disk` is private; plan assumed threading real buckets would be trivial. Slice 2 adds a getter to `Views` and threads `ViewState.Disk.Backends`. No functional regression: all existing write sites only set `sourceId` (same-backend path, unaffected by empty map).
 
 ## Verification (actual)
 *(populated post-ship — what was actually tested + result, passed / failed / not-run)*
 
-N/A — design draft, not yet implemented.
+- Slice 1: full `SmatchetTests` suite (1644 cases, 15533 assertions) — **PASSED**
+- Slice 2: lint gate (`test-lint-rules.sh --diff origin/develop`) — all 6 checks **PASSED**; plan-ref-integrity **PASSED**; doc-anchors **PASSED**; visual validation — **LGTM** (user sign-off 2026-06-12)
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*

@@ -591,6 +591,10 @@ add_executable(SmatchetTests
     # report, min-1 invariant, "+" duplicate, cross-backend view self-repair gate).
     # The _detail TU is ImGui-free (mirrors SmatchetGridHeaderUi_detail.cpp).
     Core/GridPaneRequests.test.cpp
+    # pane-backend-picker Slice 1 — PaneAddRequest struct + ApplyPaneAddAndCloseRequestsCore
+    # extended for cross-backend: ResolveNewPaneView resolution order + cross-backend
+    # branch (no snapshot inherit). The _detail TU is already linked above.
+    Core/PaneAddRequest.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetGridPaneWindows_detail.cpp"
     # multi-grid-tabs.md Slice 1a — per-pane GridLiveContext bundle: default state,
     # ADR-0012 Backend slot atomic store/load contract, active-ticket publish path.

@@ -25,6 +25,18 @@
 #include <string>
 #include <vector>
 
+/// Deferred pane-creation request (pane-backend-picker Slice 1, ADR-0018 extension).
+/// Latched by the "+" UI / pane commands and applied AFTER the pane loop by
+/// ApplyPaneAddAndCloseRequestsCore — never mid-frame. sourceId.empty() is the
+/// "no request" sentinel; targetBackendKey.empty() = duplicate the source pane's
+/// backend (today's behaviour, bytes-identical). targetViewId.empty() = resolve
+/// the backend's default / active view via ResolveNewPaneView.
+struct PaneAddRequest {
+    std::string sourceId;          ///< Focused pane to duplicate; empty = no request.
+    std::string targetBackendKey;  ///< Backend for the new pane; empty = same as source.
+    std::string targetViewId;      ///< View for the new pane; empty = backend default.
+};
+
 struct GridPane {
     // ---- Identity (persisted, ordered, in smatchet_panes.json) ----
     std::string id;         ///< Stable pane id ("main" for the bootstrap pane).
