@@ -47,6 +47,7 @@ STEPS=(
   "test-config-globs|bash $CORE/test-config-globs.sh --selftest && bash $CORE/test-config-globs.sh --check"
   "test-gate-selftests|bash $CORE/test-gate-selftests.sh --selftest && bash $CORE/test-gate-selftests.sh --check"
   "test-oob-label-impl|bash $CORE/test-oob-label-impl.sh --selftest && bash $CORE/test-oob-label-impl.sh"
+  "test-portable-agent-vexp|bash $CORE/test-portable-agent-vexp.sh --selftest && bash $CORE/test-portable-agent-vexp.sh"
   "test-agent-discovery-fixture|bash $CORE/test-agent-discovery-fixture.sh"
   "test-agent-build-facts|bash $CORE/test-agent-build-facts.sh"
   "test-markdown-links|bash $CORE/test-markdown-links.sh"

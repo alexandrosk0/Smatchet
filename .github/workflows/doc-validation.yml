@@ -311,6 +311,12 @@ jobs:
           bash agents/scripts/core/test-oob-label-impl.sh --selftest
           bash agents/scripts/core/test-oob-label-impl.sh
 
+      - name: test-portable-agent-vexp — no vexp literal re-injected into portable agent prompts
+        if: steps.detect.outputs.docs == 'true'
+        run: |
+          bash agents/scripts/core/test-portable-agent-vexp.sh --selftest
+          bash agents/scripts/core/test-portable-agent-vexp.sh
+
       - name: test-markdown-links — no dangling [label](href) targets
         if: steps.detect.outputs.docs == 'true'
         run: bash agents/scripts/core/test-markdown-links.sh

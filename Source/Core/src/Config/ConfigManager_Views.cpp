@@ -13,6 +13,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <exception>
 #include <fstream>
 #include <iterator>
@@ -227,11 +228,30 @@ std::string ConfigManager::NormalizeViewsBackendKey(const std::string& trackerTy
     t.resize(trackerType.size());
     std::transform(trackerType.begin(), trackerType.end(), t.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (t == "jira") {
+        return "Jira";
+    }
     if (t == "plane") {
         return "Plane";
     }
     if (t == "github") {
         return "GitHub";
+    }
+    // Unknown tracker type collapses into the default bucket — meaning it SHARES the
+    // default backend's views / tickets_v2 / pending-queue namespace, the exact
+    // cross-backend collision per-backend keying exists to prevent. Warn (for a
+    // non-empty type) so adding a new backend without extending this map is visible,
+    // not silent — wire each new backend into this map (and KnownBackendKeys() — the
+    // ConfigManagerViews test asserts the two agree) as part of its bring-up checklist.
+    // An empty type is a normal pre-config transient, so default it silently. Latch the
+    // warning: this normalizer is reached from per-frame render paths, so a corrupt /
+    // hand-edited unmapped TrackerType must not flood the log at frame rate. The atomic
+    // exchange keeps it race-free (called from the UI thread + sync workers).
+    static std::atomic<bool> warned{false};
+    if (!trackerType.empty() && !warned.exchange(true)) {
+        LOG_WARN("NormalizeViewsBackendKey: unmapped tracker type '%s' -> default bucket '%s'; "
+                 "extend the map or it shares '%s' storage.",
+                 trackerType.c_str(), SmatchetDefaults::kDefaultBackendType, SmatchetDefaults::kDefaultBackendType);
     }
     return SmatchetDefaults::kDefaultBackendType;
 }
