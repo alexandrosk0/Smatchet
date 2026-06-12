@@ -579,10 +579,10 @@ struct UiDrawSession {
     /// many frames (commits with 1-frame latency); a 1-frame nav bounce never reaches
     /// the two-frame threshold, so the rewrite never fires and focus settles.
     std::string lastPaneFocusReport;
-    /// Transient (one frame): the "+" button in a pane window requests a new pane
-    /// duplicating this source pane. Applied by the host AFTER the pane loop so the
-    /// gridPanes vector never mutates mid-iteration.
-    std::string paneAddRequestSourceId;
+    /// Transient (one frame): the "+" button / pane commands latch a pane-creation
+    /// request applied AFTER the pane loop (gridPanes never mutates mid-iteration).
+    /// sourceId.empty() = no request; see PaneAddRequest for field semantics.
+    PaneAddRequest paneAddRequest;
     /// Set by the pane-window host (RAII) to the pane currently being drawn so
     /// shared grid helpers (header toolbar, cell support, new-issue draft) reach
     /// the CURRENT pane through `pane()` without signature churn. Null outside

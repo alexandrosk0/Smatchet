@@ -15,6 +15,8 @@ class Views {
     const ViewsStore& GetStore() const { return Slice_; }
     ViewsStore& GetStoreMutable() { return Slice_; }
 
+    const std::unordered_map<std::string, ViewWorkspaceState>& GetDiskBackends() const { return Disk.Backends; }
+
     const ViewDefinition* GetActiveView() const;
     ViewDefinition* GetActiveViewMutable();
 

@@ -1,0 +1,212 @@
+// PaneAddRequest.test.cpp — bucket-A coverage of pane-backend-picker Slice 1:
+//   * PaneAddRequest sentinel (sourceId.empty() = no request).
+//   * Same-backend duplicate: backendKey/viewId/snapshot inherited from source.
+//   * Cross-backend create: targetBackendKey used, no snapshot inherit, viewId
+//     resolved via ResolveNewPaneView (requested → active → first → empty).
+//   * ResolveNewPaneView resolution order: requested-id-if-valid → ActiveViewId
+//     → first view → empty when bucket absent/empty.
+//
+// Pure data-level tests — no ImGui, no UiDrawSession, no disk I/O.
+
+#include "GridPane.h"
+#include "SmatchetGridPaneWindows.h"
+
+#include <doctest/doctest.h>
+
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+using SmatchetGridPaneWindows::detail::ApplyPaneAddAndCloseRequestsCore;
+using SmatchetGridPaneWindows::detail::ResolveNewPaneView;
+
+namespace {
+
+GridPane MakePane(const std::string& id, const std::string& backendKey, const std::string& viewId) {
+    GridPane p;
+    p.id = id;
+    p.backendKey = backendKey;
+    p.viewId = viewId;
+    return p;
+}
+
+ViewDefinition MakeView(const std::string& id) {
+    ViewDefinition v;
+    v.Id = id;
+    v.Name = id;
+    return v;
+}
+
+ViewWorkspaceState MakeBucket(const std::string& activeViewId,
+                               const std::vector<std::string>& viewIds) {
+    ViewWorkspaceState ws;
+    ws.ActiveViewId = activeViewId;
+    for (const auto& vid : viewIds) {
+        ws.Views.push_back(MakeView(vid));
+    }
+    return ws;
+}
+
+} // namespace
+
+// ---------------------------------------------------------------------------
+// ResolveNewPaneView
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ResolveNewPaneView: bucket absent → empty string") {
+    const std::unordered_map<std::string, ViewWorkspaceState> empty;
+    CHECK(ResolveNewPaneView("Jira", "", empty) == "");
+    CHECK(ResolveNewPaneView("Jira", "v1", empty) == "");
+}
+
+TEST_CASE("ResolveNewPaneView: empty bucket → empty string") {
+    std::unordered_map<std::string, ViewWorkspaceState> buckets;
+    buckets["Jira"] = ViewWorkspaceState{};
+    CHECK(ResolveNewPaneView("Jira", "v1", buckets) == "");
+}
+
+TEST_CASE("ResolveNewPaneView: requested id valid → returned") {
+    std::unordered_map<std::string, ViewWorkspaceState> buckets;
+    buckets["Jira"] = MakeBucket("v2", {"v1", "v2", "v3"});
+    CHECK(ResolveNewPaneView("Jira", "v3", buckets) == "v3");
+}
+
+TEST_CASE("ResolveNewPaneView: requested id invalid → falls back to ActiveViewId") {
+    std::unordered_map<std::string, ViewWorkspaceState> buckets;
+    buckets["Jira"] = MakeBucket("v2", {"v1", "v2"});
+    CHECK(ResolveNewPaneView("Jira", "no-such-view", buckets) == "v2");
+}
+
+TEST_CASE("ResolveNewPaneView: empty requested + empty ActiveViewId → first view") {
+    std::unordered_map<std::string, ViewWorkspaceState> buckets;
+    buckets["Plane"] = MakeBucket("", {"plane_default_view"});
+    CHECK(ResolveNewPaneView("Plane", "", buckets) == "plane_default_view");
+}
+
+TEST_CASE("ResolveNewPaneView: empty requested + ActiveViewId → ActiveViewId") {
+    std::unordered_map<std::string, ViewWorkspaceState> buckets;
+    buckets["GitHub"] = MakeBucket("github_default_view", {"github_default_view", "v2"});
+    CHECK(ResolveNewPaneView("GitHub", "", buckets) == "github_default_view");
+}
+
+// ---------------------------------------------------------------------------
+// ApplyPaneAddAndCloseRequestsCore — PaneAddRequest sentinel + same-backend
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ApplyPaneAddAndCloseRequestsCore: empty sourceId → no pane added") {
+    std::vector<GridPane> panes = {MakePane("main", "Jira", "v1")};
+    std::string focused = "main";
+    PaneAddRequest req;
+    const std::unordered_map<std::string, ViewWorkspaceState> empty;
+    const auto out = ApplyPaneAddAndCloseRequestsCore(panes, focused, req, empty);
+    CHECK(!out.Changed);
+    CHECK(!out.FocusReassigned);
+    CHECK(panes.size() == 1);
+}
+
+TEST_CASE("ApplyPaneAddAndCloseRequestsCore: same-backend duplicate inherits backend/view/snapshot") {
+    auto snap = std::make_shared<const std::vector<CachedTicket>>();
+    GridPane src = MakePane("main", "Jira", "v1");
+    src.ticketsSnapshot = snap;
+    src.snapshotRevision = 42;
+    std::vector<GridPane> panes = {src};
+    std::string focused = "main";
+    PaneAddRequest req;
+    req.sourceId = "main";
+    // targetBackendKey empty → same-backend duplicate
+    const std::unordered_map<std::string, ViewWorkspaceState> empty;
+    const auto out = ApplyPaneAddAndCloseRequestsCore(panes, focused, req, empty);
+    CHECK(out.Changed);
+    CHECK(out.FocusReassigned);
+    REQUIRE(panes.size() == 2);
+    const GridPane& dup = panes.back();
+    CHECK(dup.backendKey == "Jira");
+    CHECK(dup.viewId == "v1");
+    CHECK(dup.ticketsSnapshot.get() == snap.get()); // shared_ptr identity, not printed by doctest
+    CHECK(dup.snapshotRevision == 42);
+    CHECK(req.sourceId.empty()); // request consumed
+}
+
+// ---------------------------------------------------------------------------
+// ApplyPaneAddAndCloseRequestsCore — cross-backend create
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ApplyPaneAddAndCloseRequestsCore: cross-backend sets targetBackendKey, no snapshot inherit") {
+    auto snap = std::make_shared<const std::vector<CachedTicket>>();
+    GridPane src = MakePane("main", "Jira", "v1");
+    src.ticketsSnapshot = snap;
+    src.snapshotRevision = 7;
+    std::vector<GridPane> panes = {src};
+    std::string focused = "main";
+    PaneAddRequest req;
+    req.sourceId = "main";
+    req.targetBackendKey = "Plane";
+    req.targetViewId = "plane_default_view";
+
+    std::unordered_map<std::string, ViewWorkspaceState> buckets;
+    buckets["Plane"] = MakeBucket("plane_default_view", {"plane_default_view"});
+
+    const auto out = ApplyPaneAddAndCloseRequestsCore(panes, focused, req, buckets);
+    CHECK(out.Changed);
+    CHECK(out.FocusReassigned);
+    REQUIRE(panes.size() == 2);
+    const GridPane& dup = panes.back();
+    CHECK(dup.backendKey == "Plane");
+    CHECK(dup.viewId == "plane_default_view");
+    CHECK(dup.ticketsSnapshot.get() == nullptr); // cross-backend: no snapshot inherited
+    CHECK(dup.snapshotRevision == 0);
+}
+
+TEST_CASE("ApplyPaneAddAndCloseRequestsCore: cross-backend with empty targetViewId resolves default") {
+    std::vector<GridPane> panes = {MakePane("main", "Jira", "v1")};
+    std::string focused = "main";
+    PaneAddRequest req;
+    req.sourceId = "main";
+    req.targetBackendKey = "GitHub";
+    // targetViewId empty → ResolveNewPaneView picks active view
+
+    std::unordered_map<std::string, ViewWorkspaceState> buckets;
+    buckets["GitHub"] = MakeBucket("github_default_view", {"github_default_view"});
+
+    const auto out = ApplyPaneAddAndCloseRequestsCore(panes, focused, req, buckets);
+    REQUIRE(panes.size() == 2);
+    CHECK(panes.back().backendKey == "GitHub");
+    CHECK(panes.back().viewId == "github_default_view");
+}
+
+TEST_CASE("ApplyPaneAddAndCloseRequestsCore: cross-backend with empty bucket → empty viewId") {
+    std::vector<GridPane> panes = {MakePane("main", "Jira", "v1")};
+    std::string focused = "main";
+    PaneAddRequest req;
+    req.sourceId = "main";
+    req.targetBackendKey = "Plane";
+
+    const std::unordered_map<std::string, ViewWorkspaceState> empty;
+
+    const auto out = ApplyPaneAddAndCloseRequestsCore(panes, focused, req, empty);
+    REQUIRE(panes.size() == 2);
+    CHECK(panes.back().backendKey == "Plane");
+    CHECK(panes.back().viewId == ""); // bucket absent → steady-state resolves
+}
+
+TEST_CASE("ApplyPaneAddAndCloseRequestsCore: same targetBackendKey as source is NOT cross-backend") {
+    auto snap = std::make_shared<const std::vector<CachedTicket>>();
+    GridPane src = MakePane("main", "Jira", "v1");
+    src.ticketsSnapshot = snap;
+    src.snapshotRevision = 5;
+    std::vector<GridPane> panes = {src};
+    std::string focused = "main";
+    PaneAddRequest req;
+    req.sourceId = "main";
+    req.targetBackendKey = "Jira"; // same as source → NOT cross-backend
+    req.targetViewId = "v2";
+
+    const std::unordered_map<std::string, ViewWorkspaceState> empty;
+    ApplyPaneAddAndCloseRequestsCore(panes, focused, req, empty);
+    REQUIRE(panes.size() == 2);
+    // Same-backend branch: copies source viewId, not targetViewId
+    CHECK(panes.back().backendKey == "Jira");
+    CHECK(panes.back().viewId == "v1");
+    CHECK(panes.back().ticketsSnapshot.get() == snap.get());
+}
