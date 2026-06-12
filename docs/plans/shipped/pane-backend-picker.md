@@ -165,10 +165,6 @@ Per `AGENTS.md` § Verification automation — zero manual steps where physicall
 - Slice 2: lint gate (`test-lint-rules.sh --diff origin/develop`) — all 6 checks **PASSED**; plan-ref-integrity **PASSED**; doc-anchors **PASSED**; visual validation — **LGTM** (user sign-off 2026-06-12)
 - Slice 3: `ninja-iter-msvc` dual-target build clean (PaneCommands.cpp + ConfigManager_Views.cpp compiled, no warnings); code-review agent — no Critical/High findings; CI gate via PR #1158
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/pane-backend-picker.md docs/plans/shipped/` (move into the shipped tier),*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+## Archive
 
-*No ref-sweep — references use the tier-less form `docs/plans/<slug>.md`. Write new plan references tier-less.*
+DONE — PR #1158. Moved active → shipped, index regenerated.
