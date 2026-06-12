@@ -179,6 +179,26 @@ if [ -x "$_llvm_bin/clang-cl.exe" ]; then
     export PATH="$_llvm_bin:$PATH"
 fi
 
+# Restore Git's helper dir to PATH + export GIT_EXEC_PATH. vcvars64's `set` dump
+# (imported above) REPLACES the bash PATH with the Windows-shape vcvars PATH,
+# which drops Git-for-Windows' `libexec/git-core`. That dir holds `git-submodule`
+# and the `git-sh-setup` helper it sources. When FetchContent populates a
+# submodule-bearing dep (cpr's transitive curl, sol2's Catch, SQLiteCpp's
+# googletest, …), cmake spawns `cmd.exe → git submodule update --init`; with
+# git-core off PATH that wrapper dies "git-sh-setup: file not found" →
+# "Failed to update submodules" → the cold configure of a fresh worktree aborts.
+# (tooling.md P2: fresh worktrees cannot cold-configure ninja-ui-test-msvc.)
+# Prepending `git --exec-path` makes the helper resolvable AND exporting
+# GIT_EXEC_PATH covers any tool that reads the env var directly. Guarded — no-op
+# if git is absent (a build that needs git would already have failed the clone).
+if command -v git >/dev/null 2>&1; then
+    _git_exec_path="$(git --exec-path 2>/dev/null || true)"
+    if [ -n "$_git_exec_path" ] && [ -d "$_git_exec_path" ]; then
+        export GIT_EXEC_PATH="$_git_exec_path"
+        export PATH="$_git_exec_path:$PATH"
+    fi
+fi
+
 # Verify cl.exe is reachable — gives a clear diagnostic when the import
 # silently failed (e.g. vcvars64 wrote to a different shell context).
 if ! command -v cl >/dev/null 2>&1; then
