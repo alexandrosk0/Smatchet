@@ -74,6 +74,7 @@ Full per-outcome semantics + halt-prompt return-code table + env knobs + REST co
 | `no-printf-stderr`, `define-imgui` | strict zone | grep rules |
 | `no-raw-new`, `deviation-overdue`, `no-detach` | all first-party C++ | absolute (0; no grandfathering) |
 | `no-glfw-in-core-headers` | `Source/Core/include/**/*.{h,hpp}` | absolute (0; GLFW/glad/OpenGL include breaks the DX12 dual-target build) |
+| `cmake-local-gate-ci-scope` | `CMakeLists.txt` / `cmake/*.cmake` | absolute (0; a `message(FATAL_ERROR …)` keyed on a local knob `msvc_toolset_pin` without a `NOT DEFINED ENV{CI}` scope FATALs every fresh-configure CI runner — #1074) |
 | `comment-commented-out-code`, `comment-decorative-banner`, `comment-blank-run` | all first-party C++ | comment-regrowth |
 | `function-too-long` | all first-party C++ | **120** lines non-UI / **200** ImGui-draw (path under `Ui/` OR name starts `Draw`/`Render`) |
 | `function-too-branchy` | all first-party C++ | **30** decision points |

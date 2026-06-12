@@ -18,6 +18,9 @@
 #   no-detach              `.detach()` (use AppController::LaunchBackgroundTask; first-party-wide)
 #   no-glfw-in-core-headers  GLFW/glad/OpenGL #include in a Source/Core/include header
 #                          (DX12 target compiles them too; absolute-0, no grandfathering)
+#   cmake-local-gate-ci-scope  message(FATAL_ERROR ...) keyed on a LOCAL-dev project.config
+#                          knob (msvc_toolset_pin) without a NOT DEFINED ENV{CI} scope —
+#                          would FATAL every fresh-configure CI runner (absolute-0; #1074)
 #   narrowing-conversions  clang-tidy cppcoreguidelines-narrowing-conversions (strict TUs)
 #   define-imgui           `#define ImGui...` macro-alias trick
 #   deviation-overdue      SMATCHET_DEVIATION whose calendar revisit= has passed
@@ -464,6 +467,59 @@ compute_glfw_violations() {
     return 0
 }
 
+# cmake-local-gate-ci-scope — ABSOLUTE-0 over CMakeLists.txt / cmake/*.cmake.
+# A `message(FATAL_ERROR ...)` keyed on a LOCAL-dev project.config knob
+# (msvc_toolset_pin) must be scoped to non-CI (`NOT DEFINED ENV{CI}` /
+# `ENV{GITHUB_ACTIONS}`): CI runners configure FRESH every run and use their own
+# (consistent, often newer) toolset, so they can NEVER hit the stale-cache
+# cl-vs-headers class the toolset guard targets — applied unconditionally the
+# guard FATALs every runner whose toolset != the pin (incident #1074 red-walled
+# all 5 Windows CI required checks; the fix was `if(... AND NOT DEFINED ENV{CI})`).
+# The local-only intent lived in the COMMENT, not the CONDITION — this lint moves
+# it into the condition. The tree's one such guard is correctly CI-scoped today, so
+# any unguarded hit is a regression (no grandfathering — same model as no-glfw).
+# Cheap heuristic (not a CMake AST parse): for each `message(FATAL_ERROR` line, a
+# backward window of $CMAKE_CI_SCOPE_WINDOW lines that mentions a local knob but
+# carries no ENV{CI}/ENV{GITHUB_ACTIONS} token fires. A
+# `# SMATCHET_DEVIATION(rule=cmake-local-gate-ci-scope; ...)` within the window escapes.
+CMAKE_LOCAL_KNOBS_RE='msvc_toolset_pin'           # extend with | for new local knobs
+CMAKE_CI_SCOPE_WINDOW="${SMATCHET_CMAKE_CI_WINDOW:-80}"
+
+scan_cmake_ci_scope_file() {
+    # $1 = a CMakeLists.txt / *.cmake file. Emits `cmake-local-gate-ci-scope\t<f>:<line>`
+    # per un-CI-scoped local-knob FATAL_ERROR. CMake files are small — read fully.
+    local f="$1"
+    [ -f "$f" ] || return 0
+    local -a lines=()
+    local line
+    while IFS= read -r line || [ -n "$line" ]; do lines+=("$line"); done < "$f"
+    local n=${#lines[@]} i j start knob ci dev
+    for ((i = 0; i < n; i++)); do
+        case "${lines[$i]}" in *'message(FATAL_ERROR'*) ;; *) continue ;; esac
+        start=$(( i - CMAKE_CI_SCOPE_WINDOW )); [ "$start" -lt 0 ] && start=0
+        knob=0; ci=0; dev=0
+        for ((j = start; j <= i; j++)); do
+            case "${lines[$j]}" in *"$CMAKE_LOCAL_KNOBS_RE"*) knob=1 ;; esac
+            case "${lines[$j]}" in *'ENV{CI}'*|*'ENV{GITHUB_ACTIONS}'*) ci=1 ;; esac
+            case "${lines[$j]}" in *'SMATCHET_DEVIATION(rule=cmake-local-gate-ci-scope'*) dev=1 ;; esac
+        done
+        if [ "$knob" -eq 1 ] && [ "$ci" -eq 0 ] && [ "$dev" -eq 0 ]; then
+            printf 'cmake-local-gate-ci-scope\t%s:%s\n' "$f" "$((i + 1))"
+        fi
+    done
+}
+
+compute_cmake_ci_scope_violations() {
+    local files=() f
+    while IFS= read -r f; do files+=("$f"); done < <(
+        git ls-files 2>/dev/null \
+            | grep -E '(^|/)CMakeLists\.txt$|(^|/)cmake/.*\.cmake$' \
+            | grep -vE '(^|/)(ThirdParty|build)/' || true
+    )
+    [ "${#files[@]}" -gt 0 ] || return 0
+    for f in "${files[@]}"; do scan_cmake_ci_scope_file "$f"; done
+}
+
 # ---------------------------------------------------------------------------
 # Modes
 # ---------------------------------------------------------------------------
@@ -543,9 +599,10 @@ case "${1:-}" in
     --full)        MODE=full ;;
     --scan-wide)   MODE=scanwide ;;
     --scan-glfw)   MODE=scanglfw ;;
+    --scan-cmake-ci) MODE=scancmakeci ;;
     --selftest)    MODE=selftest ;;
     "")            MODE=diff ;;
-    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--agentsize-baseline|--dup-baseline|--scan-file[=]<f>|--full|--scan-wide|--scan-glfw|--selftest]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--agentsize-baseline|--dup-baseline|--scan-file[=]<f>|--full|--scan-wide|--scan-glfw|--scan-cmake-ci|--selftest]" >&2; exit 2 ;;
 esac
 
 case "$MODE" in
@@ -580,6 +637,21 @@ case "$MODE" in
     if ! grep -qF "duplication" AGENTS.md; then echo "SELFTEST FAIL: 'duplication' rule missing from AGENTS.md" >&2; miss=1; fi
     # Assert the no-glfw-in-core-headers rule-id is documented in AGENTS.md (absolute-0 gate).
     if ! grep -qF "no-glfw-in-core-headers" AGENTS.md; then echo "SELFTEST FAIL: 'no-glfw-in-core-headers' rule missing from AGENTS.md" >&2; miss=1; fi
+    # Assert the cmake-local-gate-ci-scope rule-id is documented in AGENTS.md (absolute-0 gate).
+    if ! grep -qF "cmake-local-gate-ci-scope" AGENTS.md; then echo "SELFTEST FAIL: 'cmake-local-gate-ci-scope' rule missing from AGENTS.md" >&2; miss=1; fi
+    # cmake-local-gate-ci-scope: asserts-failure — an unguarded knob-keyed FATAL_ERROR must fire;
+    # a CI-scoped one (NOT DEFINED ENV{CI}) must not; a SMATCHET_DEVIATION in the window must not.
+    _cmci_tmp="$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/cmci_selftest.$$")"
+    printf 'if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")\n  set(_p "msvc_toolset_pin")\n  if(NOT _p STREQUAL _cc)\n    message(FATAL_ERROR "toolset mismatch")\n  endif()\nendif()\n' > "$_cmci_tmp"
+    if [ -z "$(scan_cmake_ci_scope_file "$_cmci_tmp")" ]; then
+        echo "SELFTEST FAIL: cmake-local-gate-ci-scope did not fire on an unguarded knob-keyed FATAL_ERROR" >&2; miss=1; fi
+    printf 'if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND NOT DEFINED ENV{CI})\n  set(_p "msvc_toolset_pin")\n  if(NOT _p STREQUAL _cc)\n    message(FATAL_ERROR "toolset mismatch")\n  endif()\nendif()\n' > "$_cmci_tmp"
+    if [ -n "$(scan_cmake_ci_scope_file "$_cmci_tmp")" ]; then
+        echo "SELFTEST FAIL: cmake-local-gate-ci-scope fired on a CI-scoped knob-keyed FATAL_ERROR" >&2; miss=1; fi
+    printf 'if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")\n  set(_p "msvc_toolset_pin")\n  # SMATCHET_DEVIATION(rule=cmake-local-gate-ci-scope; reason=test; owner=x; revisit=2099-01-01)\n  message(FATAL_ERROR "toolset mismatch")\nendif()\n' > "$_cmci_tmp"
+    if [ -n "$(scan_cmake_ci_scope_file "$_cmci_tmp")" ]; then
+        echo "SELFTEST FAIL: cmake-local-gate-ci-scope fired despite an in-window SMATCHET_DEVIATION" >&2; miss=1; fi
+    rm -f "$_cmci_tmp" 2>/dev/null || true
     # --- interface-doc WARN (Gap B / Slice 2) — assert the rule WARNs on real drift, stays quiet
     # otherwise, and is documented. This exercises a FAILURE case (the pinned symbol changed without
     # a doc touch), satisfying both Slice 2's selftest contract and Slice 3's "assert-a-failure" rule.
@@ -621,6 +693,12 @@ case "$MODE" in
     # no-glfw-in-core-headers absolute-0 set over Source/Core/include headers (debug +
     # bats harness). `--root <dir>` (handled above) points this at an arbitrary tree.
     compute_glfw_violations
+    ;;
+
+  scancmakeci)
+    # cmake-local-gate-ci-scope absolute-0 set over CMakeLists.txt / cmake/*.cmake (debug +
+    # bats harness). `--root <dir>` (handled above) points this at an arbitrary tree.
+    compute_cmake_ci_scope_violations
     ;;
 
   catalog)
@@ -808,6 +886,25 @@ case "$MODE" in
         echo "  or add SMATCHET_DEVIATION(rule=no-glfw-in-core-headers; reason=...; owner=...; revisit=...) above the include."
     else
         echo "[test-lint-rules] PASS — no GLFW/glad/OpenGL include in Source/Core/include headers"
+    fi
+
+    # --- cmake-local-gate-ci-scope (CMakeLists.txt / cmake/*.cmake; ABSOLUTE-0) ---
+    # A message(FATAL_ERROR ...) keyed on a LOCAL-dev project.config knob (msvc_toolset_pin)
+    # without a NOT DEFINED ENV{CI} scope FATALs every fresh-configure CI runner (incident
+    # #1074 red-walled all 5 Windows required checks). The tree's one such guard is correctly
+    # CI-scoped today, so any unguarded hit is a regression (absolute-0, no grandfathering —
+    # same model as no-glfw). A `# SMATCHET_DEVIATION(rule=cmake-local-gate-ci-scope; ...)`
+    # within the guard window escapes.
+    cmci_out="$(compute_cmake_ci_scope_violations)"
+    if [ -n "$cmci_out" ]; then
+        rc=1
+        echo
+        echo "FAIL: message(FATAL_ERROR ...) keyed on a LOCAL-dev knob (msvc_toolset_pin) without a NOT DEFINED ENV{CI} scope (FATALs every fresh-configure CI runner; incident #1074):"
+        printf '%s\n' "$cmci_out" | sed 's/^/  /'
+        echo "  Scope the guard to local dev: 'if(... AND NOT DEFINED ENV{CI})' (CI configures fresh + can't hit the stale-cache class),"
+        echo "  or add '# SMATCHET_DEVIATION(rule=cmake-local-gate-ci-scope; reason=...; owner=...; revisit=...)' within the guard block."
+    else
+        echo "[test-lint-rules] PASS — no un-CI-scoped local-knob CMake FATAL_ERROR"
     fi
 
     # --- function-size rules (repo-wide, delta-gated, TIERED; decompose-top-20-monoliths Slice 0) ---

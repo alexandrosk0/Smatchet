@@ -119,6 +119,59 @@ setup() {
     [[ "$output" == *"no GLFW/glad/OpenGL include in Source/Core/include headers"* ]]
 }
 
+# ---------- cmake-local-gate-ci-scope (infra:10 #1074) ----------
+
+@test "--scan-cmake-ci FAILs on an unguarded knob-keyed FATAL_ERROR" {
+    tmp="$(mktemp -d)"
+    printf 'if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")\n  set(_p "msvc_toolset_pin")\n  if(NOT _p STREQUAL _cc)\n    message(FATAL_ERROR "toolset mismatch")\n  endif()\nendif()\n' \
+        > "$tmp/CMakeLists.txt"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-cmake-ci
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"cmake-local-gate-ci-scope"* ]]
+    [[ "$output" == *"CMakeLists.txt"* ]]
+    rm -rf "$tmp"
+}
+
+@test "--scan-cmake-ci ignores a CI-scoped (NOT DEFINED ENV{CI}) local-knob guard" {
+    tmp="$(mktemp -d)"
+    printf 'if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND NOT DEFINED ENV{CI})\n  set(_p "msvc_toolset_pin")\n  if(NOT _p STREQUAL _cc)\n    message(FATAL_ERROR "toolset mismatch")\n  endif()\nendif()\n' \
+        > "$tmp/CMakeLists.txt"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-cmake-ci
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-cmake-ci ignores a FATAL_ERROR with no local-knob in its window" {
+    tmp="$(mktemp -d)"
+    printf 'if(NOT LUA_FOUND)\n  message(FATAL_ERROR "Lua download failed")\nendif()\n' \
+        > "$tmp/CMakeLists.txt"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-cmake-ci
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-cmake-ci respects an in-window SMATCHET_DEVIATION" {
+    tmp="$(mktemp -d)"
+    printf 'if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")\n  set(_p "msvc_toolset_pin")\n  # SMATCHET_DEVIATION(rule=cmake-local-gate-ci-scope; reason=test; owner=x; revisit=2099-01-01)\n  message(FATAL_ERROR "toolset mismatch")\nendif()\n' \
+        > "$tmp/CMakeLists.txt"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-cmake-ci
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-cmake-ci is clean on the real tree (the toolset guard is CI-scoped)" {
+    run bash "$LINT" --scan-cmake-ci
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
 # ---------- SMATCHET_DEVIATION ----------
 
 @test "deviation-overdue fires when calendar revisit has passed" {
