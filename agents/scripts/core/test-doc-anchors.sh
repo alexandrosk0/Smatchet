@@ -8,7 +8,22 @@
 
 set -uo pipefail
 
-command -v python >/dev/null 2>&1 || { echo "python required" >&2; exit 2; }
+PY="${PYTHON:-}"
+if [ -n "$PY" ]; then
+    if ! "$PY" -c "" >/dev/null 2>&1; then
+        echo "test-doc-anchors: PYTHON='$PY' is not executable" >&2
+        exit 2
+    fi
+else
+    for candidate in python python3 py; do
+        if command -v "$candidate" >/dev/null 2>&1 && \
+           "$candidate" -c 'import sys; sys.exit(0 if sys.version_info[0] >= 3 else 1)' 2>/dev/null; then
+            PY="$candidate"
+            break
+        fi
+    done
+fi
+[ -n "$PY" ] || { echo "test-doc-anchors: python3 (or python) is required" >&2; exit 2; }
 
 cd "$(git rev-parse --show-toplevel)"
-exec python agents/scripts/core/test_doc_anchors.py "$@"
+exec "$PY" agents/scripts/core/test_doc_anchors.py "$@"

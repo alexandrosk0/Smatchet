@@ -81,9 +81,18 @@ remote="${LOCK_REMOTE:-origin}"
 remote_url=$(git config --get "remote.${remote}.url" || true)
 [ -n "$remote_url" ] || { echo "lock-claim-update: remote '$remote' not configured" >&2; exit 2; }
 if [ "${SMATCHET_LOCK_BYPASS_REPO_CHECK:-0}" != "1" ]; then
-    case "$remote_url" in
-        *[Ss]matchet*) : ;;
-        *) echo "lock-claim-update: remote URL does not look like a Smatchet repo" >&2; exit 2 ;;
+    # Portability: derive the expected repo identifier from project.config.json
+    # (project.name) instead of hardcoding "Smatchet", matching lock-claim.sh
+    # and lock-release.sh. Fall back to "Smatchet" when config is unreadable,
+    # so the guard is never weaker than before.
+    _repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    _proj_cfg="${_repo_root:+$_repo_root/project.config.json}"
+    _proj_name="$("$PYBIN" -c 'import json,sys;print(json.load(open(sys.argv[1], encoding="utf-8"))["project"]["name"])' "$_proj_cfg" 2>/dev/null || printf 'Smatchet')"
+    _proj_lc="$(printf '%s' "$_proj_name" | tr '[:upper:]' '[:lower:]')"
+    _url_lc="$(printf '%s' "$remote_url" | tr '[:upper:]' '[:lower:]')"
+    case "$_url_lc" in
+        *[/:]"$_proj_lc"*) : ;;
+        *) echo "lock-claim-update: remote URL '$remote_url' does not look like a $_proj_name repo (set SMATCHET_LOCK_BYPASS_REPO_CHECK=1 to override)" >&2; exit 2 ;;
     esac
 fi
 
