@@ -160,7 +160,7 @@ Per `AGENTS.md` § Verification automation — zero manual steps where physicall
 *(populated post-ship — what was actually tested + result, passed / failed / not-run)*
 
 - Slice 1: full `SmatchetTests` suite (1644 cases, 15533 assertions) — **PASSED**
-- Slice 2: lint gate (`test-lint-rules.sh --diff origin/develop`) — all 6 checks **PASSED**; plan-ref-integrity **PASSED**; doc-anchors **PASSED**; visual validation pending user sign-off (Pillar 4 pause; see § Visual-validation pause)
+- Slice 2: lint gate (`test-lint-rules.sh --diff origin/develop`) — all 6 checks **PASSED**; plan-ref-integrity **PASSED**; doc-anchors **PASSED**; visual validation — **LGTM** (user sign-off 2026-06-12)
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
