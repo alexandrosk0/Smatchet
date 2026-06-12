@@ -39,7 +39,7 @@ done
 # Sandbox.
 SANDBOX=$(mktemp -d)
 trap 'rm -rf "$SANDBOX"' EXIT
-BARE="$SANDBOX/bare.git"
+BARE="$SANDBOX/ExampleRepo.git"
 CLONE_A="$SANDBOX/clone-a"
 CLONE_B="$SANDBOX/clone-b"
 
@@ -84,10 +84,31 @@ run_in() {
     ( cd "$dir" && "$@" )
 }
 
-# ---- Case 1: claim succeeds for a new slug ----
-echo "case 1 — claim new slug"
+# ---- Case 0: lock-claim-update repo check derives project name from config ----
+echo "case 0 — lock-claim-update accepts project.config repo name"
 WS_A="$SANDBOX/ws-a.txt"
 write_set_for "$WS_A"
+cat >"$CLONE_A/project.config.json" <<'EOF'
+{"project":{"name":"ExampleRepo"}}
+EOF
+update_out=$(
+    run_in "$CLONE_A" \
+        env SMATCHET_LOCK_BYPASS_REPO_CHECK=0 \
+        bash "$SCRIPTS/lock-claim-update.sh" missing-slice "$WS_A" 2>&1
+)
+update_rc=$?
+if [ "$update_rc" -eq 1 ] && printf '%s' "$update_out" | grep -q 'does not exist'; then
+    if printf '%s' "$update_out" | grep -q 'does not look like'; then
+        fail "lock-claim-update rejected a remote matching project.config: $update_out"
+    else
+        pass "lock-claim-update passed repo check for ExampleRepo remote"
+    fi
+else
+    fail "lock-claim-update expected missing-ref rc=1 after repo check; rc=$update_rc output=$update_out"
+fi
+
+# ---- Case 1: claim succeeds for a new slug ----
+echo "case 1 — claim new slug"
 if run_in "$CLONE_A" \
     env AGENT_ID=agent-a LOCK_BRANCH=feat/example LOCK_PLAN=docs/plans/active/example.md \
     bash "$SCRIPTS/lock-claim.sh" example-slice "$WS_A" >/dev/null 2>&1
