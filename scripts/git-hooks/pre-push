@@ -1,29 +1,29 @@
 #!/bin/bash
-# pre-push: refuse a push when the current branch's GitHub PR is already
-# MERGED or CLOSED. Pushing to a merged-PR branch silently lands commits
-# the remote accepts but the closed PR will never pick up; CI doesn't fire,
-# the PR view stays frozen at the merge-time SHA, and the commits orphan.
+# pre-push: two independent local hard-stops.
 #
-# Backlog: docs/self-improvement/categories/process.md
-#   2026-05-18 · orchestrator · [process] · P2 — Pushing commits to a
-#   merged-PR branch silently orphans them
+# (A) DIRECT-PUSH-TO-PROTECTED-BRANCH — refuse a push whose destination ref is
+#     refs/heads/develop or refs/heads/main. Such a push bypasses the PR / CI /
+#     CodeRabbit / review gate entirely; owner admin creds bypass GitHub branch
+#     protection too, so this LOCAL hook is the only stop. The recurring trigger:
+#     the orchestrator is left on the develop branch by a merge-gate poller's
+#     `git checkout develop`, then a bare `git push` sends develop -> develop.
+#     Override: SMATCHET_ALLOW_DEVELOP_PUSH=1 (rare, sanctioned maintenance only).
+#     Backlog: docs/self-improvement/categories/tooling.md
+#       2026-06-05 · [tooling] · P1 — no local hard-stop on direct develop push
+#       (escalated P2->P1, >=3 instances: a678741f / 578d21ea / 90cfd5d6).
 #
-# Plan: docs/plans/shipped/process-backlog-tighten-1-2-3-9-11-12.md § Slice 3
+# (B) MERGED-PR-BRANCH — refuse a push when the current branch's GitHub PR is
+#     already MERGED or CLOSED (the commits would silently orphan: CI doesn't
+#     fire, the PR view stays frozen, the commits land on a ref nothing reads).
+#     Override: SMATCHET_ALLOW_MERGED_PR_PUSH=1 (rare, usually wrong; logged).
+#     Backlog: docs/self-improvement/categories/process.md 2026-05-18 · P2.
+#     Plan: docs/plans/shipped/process-backlog-tighten-1-2-3-9-11-12.md § Slice 3.
 #
 # Wired via: git config --local core.hooksPath scripts/git-hooks  (installed
 # by `bash agents/scripts/core/setup-harness.sh <harness>` when safe).
 #
-# Skips silently when:
-#   - branch is develop / main / detached HEAD
-#   - `gh` CLI is not on PATH (no auth, no API call possible)
-#   - `gh pr view` returns no PR for the branch
-#   - PR state is OPEN
-#
-# Refuses when:
-#   - PR state is MERGED / CLOSED
-#
-# Override: SMATCHET_ALLOW_MERGED_PR_PUSH=1 to push anyway (rare, usually
-# wrong; logged loudly).
+# (B) skips silently when: branch is develop / main / detached HEAD; `gh` not on
+# PATH; no PR for the branch; PR state OPEN. (A) ignores ref DELETES.
 
 set -euo pipefail
 
@@ -40,6 +40,46 @@ if [ -n "$repo_root" ] && [ -x "$repo_root/agents/scripts/project/p4-reconcile-c
         # Exit code 2 from p4-reconcile-check = drift detected + block mode.
         # The script already printed its own diagnostic; just propagate.
         exit 2
+    fi
+fi
+
+# (A) Direct-push-to-protected-branch hard-stop. Parse the pre-push ref updates
+# on stdin — each line is "<local_ref> <local_sha> <remote_ref> <remote_sha>".
+# A non-delete update whose REMOTE ref is develop/main is a direct push to a
+# protected branch (catches `git push`, `git push origin HEAD:develop`, and
+# `git push origin local:develop` alike — more robust than the current branch).
+zero_sha="0000000000000000000000000000000000000000"
+protected_push=""
+while read -r _local_ref local_sha remote_ref _remote_sha; do
+    [ -n "$remote_ref" ] || continue
+    [ "$local_sha" = "$zero_sha" ] && continue   # a branch DELETE — not a content push
+    case "$remote_ref" in
+        refs/heads/develop | refs/heads/main) protected_push="${remote_ref#refs/heads/}" ;;
+    esac
+done
+
+if [ -n "$protected_push" ]; then
+    cat >&2 <<EOF
+
+pre-push: REFUSING direct push to '$protected_push'.
+
+  A push that updates the '$protected_push' ref bypasses the PR / CI / CodeRabbit
+  / review gate (owner admin creds bypass GitHub branch protection too — this
+  local hook is the only stop). Almost always an accident: left on the
+  '$protected_push' branch by a merge-gate poller's 'git checkout', then a bare
+  'git push' sends '$protected_push' -> '$protected_push'.
+
+  Ship through a PR instead:
+    git checkout -b <slug> origin/develop
+    ... commit ...
+    git push -u origin <slug> && gh pr create
+
+  Override (sanctioned maintenance only): SMATCHET_ALLOW_DEVELOP_PUSH=1 git push ...
+EOF
+    if [ "${SMATCHET_ALLOW_DEVELOP_PUSH:-0}" = "1" ]; then
+        echo "pre-push: SMATCHET_ALLOW_DEVELOP_PUSH=1 set — proceeding with the '$protected_push' push." >&2
+    else
+        exit 1
     fi
 fi
 
