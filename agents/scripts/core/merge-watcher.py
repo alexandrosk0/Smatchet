@@ -33,6 +33,21 @@ Env knobs:
                                       drives merge-gates with MAX_POLLS=1 (its in-process
                                       grace window can never elapse). See
                                       `maybe_pass_cr_none_grace`.
+  MERGE_WATCH_CR_NONE_GRACE_CYCLES_PURE_DOCS
+                                    — same window, but used when the PR's diff is
+                                      pure-docs (per is-pure-docs-diff.sh's allow-list:
+                                      docs/, backlog/, agents/scripts/, any *.md).
+                                      Default 1 (floored at 1). On a pure-docs diff
+                                      CodeRabbit's "Review skipped" is its TERMINAL
+                                      verdict — no inline review will ever land — so
+                                      the full code-diff grace (10 cycles ≈ 10 min) is
+                                      pure dead wait. Shrinking it to ~1 cycle lets a
+                                      backlog/docs PR merge in ~1 poll once its required
+                                      checks (incl. the `CR finding gate` status check,
+                                      which still gates the squash) are green. Does NOT
+                                      bypass CR or branch protection — only collapses a
+                                      wait that exists for code diffs. See
+                                      `maybe_pass_cr_none_grace`.
 """
 
 from __future__ import annotations
@@ -43,6 +58,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import re
 import shutil
 import signal
 import subprocess
@@ -1216,6 +1232,66 @@ def _cr_none_grace_cycles() -> int:
         return 10
 
 
+def _cr_none_grace_cycles_pure_docs() -> int:
+    """CR-NONE grace window for a PURE-DOCS diff, measured in poll CYCLES.
+
+    Default 1 (vs 10 for a code diff) because CodeRabbit's review-skip on a
+    docs-only diff is TERMINAL — no inline review will ever land — so the
+    code-diff grace window is pure dead wait (the dominant latency for backlog
+    PRs: measured ~6 min on PR #976, all of it this grace). Override via
+    MERGE_WATCH_CR_NONE_GRACE_CYCLES_PURE_DOCS. Floored at 1 so a misconfigured
+    0 still settles one cycle (confirms the NONE-grace shape persists / gives a
+    truly-`pending` CR one cycle to start) before forcing the pass.
+
+    Safety: forcing the CR-review grace pass does NOT skip the squash's required
+    status checks — the `CR finding gate` context is in branch_protection and
+    merge-gates still refuses the merge until it (and every other required
+    context) reports green. This knob only collapses the watcher-side WAIT for
+    an inline review that, on a pure-docs diff, is never coming.
+    """
+    try:
+        return max(
+            1, int(os.environ.get("MERGE_WATCH_CR_NONE_GRACE_CYCLES_PURE_DOCS", "1"))
+        )
+    except ValueError:
+        return 1
+
+
+# Mirror of agents/scripts/core/is-pure-docs-diff.sh's allow-list (kept in sync
+# by tests/bats/merge_watcher.bats § pure-docs-allowlist-parity). A path is
+# docs-class if it is under docs/, backlog/, agents/scripts/, OR ends in .md
+# anywhere (markdown is never compiled → never needs a build/review).
+_PURE_DOCS_ALLOW = re.compile(r"^(docs/|backlog/|agents/scripts/|.*\.md$)")
+
+
+def _pr_diff_is_pure_docs(pr: int, clone_path: str) -> bool:
+    """True iff EVERY file in PR `pr`'s diff is docs-class (see `_PURE_DOCS_ALLOW`).
+
+    Queries GitHub for the changed-file list (`gh pr view --json files`) rather
+    than the local clone's working tree — the daemon's clone is not guaranteed
+    to be checked out to the PR head, so a local `git diff` would be wrong.
+
+    Fail-safe: ANY error (gh down, empty/unknown file list) returns False, which
+    routes the caller to the conservative full-length code-diff grace window.
+    Never raises. Monkeypatched in unit tests via `mw._pr_diff_is_pure_docs`.
+    """
+    try:
+        meta = _gh_json(
+            ["pr", "view", str(pr), "--json", "files"], cwd=clone_path
+        )
+    except (RuntimeError, subprocess.TimeoutExpired, OSError):
+        return False
+    if not isinstance(meta, dict):
+        return False
+    files = meta.get("files")
+    if not isinstance(files, list) or not files:
+        return False  # empty / malformed → fail-safe to the code-diff path
+    paths = [f.get("path", "") for f in files if isinstance(f, dict)]
+    if not paths or any(not p for p in paths):
+        return False
+    return all(_PURE_DOCS_ALLOW.match(p) for p in paths)
+
+
 def _bump_cr_none_grace(
     pr: int, clone_path: str, new_count: int, head_sha: str
 ) -> None:
@@ -1306,7 +1382,17 @@ def maybe_pass_cr_none_grace(
         return {
             "cr_none_grace_action": "HEAD fetch failed; not forcing CR grace this cycle"
         }
-    threshold = _cr_none_grace_cycles()
+    # Pure-docs PRs collapse the grace window: CR's "Review skipped" verdict is
+    # TERMINAL on a docs-only diff (no inline review will ever land), so waiting
+    # the full code-PR window just burns wall-clock. The required `CR finding
+    # gate` status check still gates the squash — this only shrinks the wait,
+    # it does NOT bypass CodeRabbit or branch protection.
+    if _pr_diff_is_pure_docs(pr, clone_path):
+        threshold = _cr_none_grace_cycles_pure_docs()
+        grace_kind = "pure-docs"
+    else:
+        threshold = _cr_none_grace_cycles()
+        grace_kind = "code"
     prior = int(entry.get("cr_none_grace_polls", 0))
     if entry.get("cr_none_grace_head", "") != head_sha:
         prior = 0  # new commit — CR may yet review it; restart the window
@@ -1317,7 +1403,8 @@ def maybe_pass_cr_none_grace(
             "cr_none_grace_polls": new_count,
             "cr_none_grace_head": head_sha,
             "cr_none_grace_action": (
-                f"waiting out CR-NONE grace ({new_count}/{threshold} cycles)"
+                f"waiting out CR-NONE grace [{grace_kind}] "
+                f"({new_count}/{threshold} cycles)"
             ),
         }
     # Grace elapsed across real cycles. Re-poll once with the in-process grace
@@ -1327,13 +1414,14 @@ def maybe_pass_cr_none_grace(
     forced["cr_none_grace_head"] = head_sha
     if forced.get("last_state") == "GATES_PASSED":
         forced["cr_none_grace_action"] = (
-            f"CR-NONE grace elapsed ({new_count} cycles on {head_sha[:8]}); "
-            "forced MERGE_GATES_CR_GRACE_POLLS=0 -> GATES_PASSED"
+            f"CR-NONE grace elapsed [{grace_kind}] ({new_count} cycles on "
+            f"{head_sha[:8]}); forced MERGE_GATES_CR_GRACE_POLLS=0 -> GATES_PASSED"
         )
     else:
         forced["cr_none_grace_action"] = (
-            f"CR-NONE grace elapsed ({new_count} cycles); forced grace=0 but gates "
-            f"still {forced.get('last_state')}: {forced.get('last_status_line', '')[:80]}"
+            f"CR-NONE grace elapsed [{grace_kind}] ({new_count} cycles); forced "
+            f"grace=0 but gates still {forced.get('last_state')}: "
+            f"{forced.get('last_status_line', '')[:80]}"
         )
     return forced
 
