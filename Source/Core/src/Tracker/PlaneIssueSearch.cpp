@@ -119,6 +119,36 @@ std::int64_t PlaneNowUnixSeconds() {
         .count();
 }
 
+std::string ActiveViewJqlFromStore(const ViewsStore* viewsOverride) {
+    if (viewsOverride == nullptr) {
+        return std::string();
+    }
+    for (const ViewDefinition& view : viewsOverride->Views) {
+        if (view.Id == viewsOverride->ActiveViewId) {
+            return view.Jql;
+        }
+    }
+    return std::string();
+}
+
+BatchCallback WrapPlaneKeyFilterBatch(const std::string& keyFilter, const BatchCallback& onBatch) {
+    if (keyFilter.empty() || !onBatch) {
+        return onBatch;
+    }
+    return BatchCallback([&onBatch, keyFilter](std::vector<CachedTicket>&& batch) {
+        std::vector<CachedTicket> kept;
+        for (auto& t : batch) {
+            const std::string keyField = t.GetFieldValue("key");
+            if (t.id == keyFilter || (!keyField.empty() && keyField == keyFilter)) {
+                kept.push_back(std::move(t));
+            }
+        }
+        if (!kept.empty()) {
+            onBatch(std::move(kept));
+        }
+    });
+}
+
 // Phase 1: validate Plane connection config + active-view project scope. Returns the
 // fetch-error string on failure (empty on success). Byte-for-byte mirror of the original
 // inline guards in FetchIssuesStreamed.
@@ -397,16 +427,7 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(const BatchCallback& o
 
     const TrackerConfig cfg = configOverride ? *configOverride : ConfigManager::Load();
 
-    // PR 6: project scope comes from the active view query, cfg query, or sole-project auto-pick.
-    std::string activeViewJql;
-    if (viewsOverride != nullptr) {
-        for (const ViewDefinition& view : viewsOverride->Views) {
-            if (view.Id == viewsOverride->ActiveViewId) {
-                activeViewJql = view.Jql;
-                break;
-            }
-        }
-    }
+    const std::string activeViewJql = ActiveViewJqlFromStore(viewsOverride);
     const std::string projectKey = smatchet::ResolvePlaneOperationProject(this, activeViewJql, cfg.JqlQuery);
 
     summary.FetchError = ValidatePlaneFetchConfig(cfg, projectKey);
@@ -418,20 +439,7 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(const BatchCallback& o
     // stream to one issue (client-side post-filter — Plane's list endpoint has no key filter).
     // Same match rule as FetchIssuesForKeys: UUID or visual key, exact.
     const std::string keyFilter = smatchet::plane::ExtractKeyFromPlaneQuery(cfg.JqlQuery);
-    const BatchCallback filteredOnBatch =
-        !keyFilter.empty() && onBatch ? BatchCallback([&onBatch, keyFilter](std::vector<CachedTicket>&& batch) {
-            std::vector<CachedTicket> kept;
-            for (auto& t : batch) {
-                const std::string keyField = t.GetFieldValue("key");
-                if (t.id == keyFilter || (!keyField.empty() && keyField == keyFilter)) {
-                    kept.push_back(std::move(t));
-                }
-            }
-            if (!kept.empty()) {
-                onBatch(std::move(kept));
-            }
-        })
-                                      : onBatch;
+    const BatchCallback filteredOnBatch = WrapPlaneKeyFilterBatch(keyFilter, onBatch);
 
     const std::string planeApi = NormalizeAndLogPlaneApiBase(cfg.PlaneUrl);
 
