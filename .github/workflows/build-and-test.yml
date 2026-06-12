@@ -1256,3 +1256,147 @@ jobs:
           path: ${{ env.SMATCHET_APK_PATH }}
           if-no-files-found: error
           retention-days: 14
+
+  cpp-lint-advisory:
+    name: C++ lint (catch-all + cppcheck, advisory)
+    # The C++ lint gate that previously ran ONLY as a local Claude-Code hook
+    # (tooling.md P2: "C++ lint runs only as local hooks, never in CI"). Two
+    # checks over the PR diff's first-party C++:
+    #   1. lint-catch-all.py — unmarked empty `catch(...){}` (Pillar-3 never-crash:
+    #      a silent catch-all swallows the failure with no log). BLOCKS on the
+    #      `[error]` tier (empty body); the `[warning]` tier (catch without LOG_)
+    #      is reported but never blocks. Mirrors the local hook's rc=2-on-error.
+    #   2. cppcheck — a curated, compile-DB-free pass over the same diff files
+    #      (warning/portability families). cppcheck carries the real static-analysis
+    #      weight here; clang-tidy stays cppcheck-primary per .clang-tidy (only 3
+    #      dead-code checks enabled) and is intentionally NOT run in this job.
+    #
+    # ADVISORY (continue-on-error: true) — NOT a required branch-protection check
+    # and NOT on the merge-gate poller's meant-to-block allow-list. The current
+    # tree carries pre-existing catch/cppcheck debt that would wedge develop if
+    # this blocked; keeping it advisory first surfaces findings without breaking
+    # the ship-line. Promote to blocking (drop continue-on-error) in a follow-up
+    # once the standing debt is burned down. Gates on `changes.code` so docs-only
+    # PRs skip it; diffs against origin/develop so only NEW C++ is scanned.
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install cppcheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y cppcheck
+          cppcheck --version
+
+      - name: Resolve diff range (first-party C++ only)
+        id: range
+        shell: bash
+        run: |
+          set -uo pipefail
+          # Mirror the `changes` job's range logic so the lint scans exactly the
+          # PR's (or push's) new C++. merge_group/push fall back to HEAD~1...HEAD.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}" 2>/dev/null || true
+            range="origin/${{ github.base_ref }}...HEAD"
+          else
+            before="${{ github.event.before }}"
+            if [ -z "$before" ] || [ "$before" = "0000000000000000000000000000000000000000" ]; then
+              range="HEAD~1...HEAD"
+            else
+              range="${before}...HEAD"
+            fi
+          fi
+          echo "range=${range}" >> "$GITHUB_OUTPUT"
+          # First-party C++ in the diff (added/modified; deletions excluded via
+          # --diff-filter=d). ThirdParty / build / _deps are out of scope.
+          files="$(git diff --name-only --diff-filter=d "$range" 2>/dev/null \
+            | grep -E '^Source/.*\.(cpp|h|hpp|cc|cxx|hh)$' \
+            | grep -vE '(ThirdParty|/_deps/)' || true)"
+          # Persist the newline list to a file (GITHUB_OUTPUT can't hold newlines cleanly).
+          printf '%s\n' "$files" | sed '/^$/d' > /tmp/cpp-lint-files.txt
+          echo "Diff range: ${range}"
+          echo "First-party C++ files in diff:"
+          sed 's/^/  /' /tmp/cpp-lint-files.txt || true
+          echo "count=$(wc -l < /tmp/cpp-lint-files.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
+
+      - name: lint-catch-all (block on [error]-tier empty catch)
+        if: ${{ steps.range.outputs.count != '0' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          script="docs/harness/claude-code/hooks/lint-catch-all.py"
+          test -f "$script" || { echo "::error::lint-catch-all.py not found at $script"; exit 1; }
+          out=""
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            [ -f "$f" ] || continue
+            # Per-file rc: 0 clean, 2 findings (stderr). Capture stderr; don't let
+            # rc=2 abort the loop (set +e around the call).
+            set +e
+            finding="$(python3 "$script" "$f" 2>&1)"
+            set -e 2>/dev/null || true
+            [ -n "$finding" ] && out="${out}${finding}"$'\n'
+          done < /tmp/cpp-lint-files.txt
+          if [ -n "${out//[$'\n']/}" ]; then
+            echo "lint-catch-all findings:"
+            printf '%s\n' "$out"
+          else
+            echo "lint-catch-all: clean (no catch(...) findings in diff)"
+          fi
+          # Block ONLY on the [error] tier (empty catch). [warning] (catch without
+          # LOG_) is surfaced above but never fails the job.
+          if printf '%s\n' "$out" | grep -q '\[error\]'; then
+            echo "::error::unmarked empty catch(...) block in diff — add LOG_ or // catch-all-ok: <reason>"
+            exit 1
+          fi
+
+      - name: cppcheck (curated, compile-DB-free) over diff
+        if: ${{ steps.range.outputs.count != '0' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          # Compile-DB-free pass: no configure/build needed — cppcheck parses the
+          # changed TUs directly. --enable subset mirrors the local run_cppcheck.py
+          # curation (warning/style/performance/portability minus the noisy
+          # missingInclude families that need full include paths cppcheck lacks here).
+          mapfile -t FILES < /tmp/cpp-lint-files.txt
+          if [ "${#FILES[@]}" -eq 0 ]; then
+            echo "cppcheck: no first-party C++ in diff; skipping"
+            exit 0
+          fi
+          # --error-exitcode=0 keeps this STEP from hard-failing on findings (the
+          # job is advisory via continue-on-error, but we also want the findings
+          # printed rather than swallowed). The job-level continue-on-error is the
+          # real advisory switch; flip --error-exitcode=2 + drop continue-on-error
+          # to promote to blocking later.
+          cppcheck \
+            --enable=warning,performance,portability \
+            --inline-suppr \
+            --suppress=missingIncludeSystem \
+            --suppress=missingInclude \
+            --suppress='*:*ThirdParty*' \
+            --suppress='*:*_deps*' \
+            --error-exitcode=0 \
+            --template='{file}:{line}: [{severity}] {id}: {message}' \
+            "${FILES[@]}" 2>&1 | tee /tmp/cppcheck-out.txt || true
+          if [ -s /tmp/cppcheck-out.txt ]; then
+            echo "cppcheck reported findings above (advisory — not blocking)."
+          else
+            echo "cppcheck: clean over diff."
+          fi
+
+      - name: No first-party C++ in diff
+        if: ${{ steps.range.outputs.count == '0' }}
+        run: echo "No first-party C++ changed in this diff — C++ lint advisory is a no-op."
