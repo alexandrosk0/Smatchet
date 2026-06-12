@@ -254,6 +254,15 @@ fi
 
 fi # end of the lint stages skipped under SMATCHET_PRESHIP_GATE_ONLY=1
 
+# --- PR-burst advisory ----------------------------------------------------------------
+# Non-blocking nudge: if the author already has >= threshold open PRs, opening
+# another risks exhausting CodeRabbit's hourly review quota (the whole burst then
+# merges with cr-out-of-band — lost review coverage). Advisory only; never fails
+# pre-ship. Skipped under the gate-only selftest.
+if [ "$gate_only" != "1" ] && [ -f "$repo_root/scripts/dev/pr-burst-guard.sh" ]; then
+    bash "$repo_root/scripts/dev/pr-burst-guard.sh" || true
+fi
+
 # --- Code-review gate -----------------------------------------------------------------
 # Closes the "pushed a substantive diff without a code review" oversight (build+lint green
 # != reviewed; a correctness review catches what no static gate can — dead interface

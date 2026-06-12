@@ -305,6 +305,12 @@ jobs:
           bash agents/scripts/core/test-gate-selftests.sh --selftest
           bash agents/scripts/core/test-gate-selftests.sh --check
 
+      - name: test-oob-label-impl — every documented *-out-of-band label has an impl
+        if: steps.detect.outputs.docs == 'true'
+        run: |
+          bash agents/scripts/core/test-oob-label-impl.sh --selftest
+          bash agents/scripts/core/test-oob-label-impl.sh
+
       - name: test-markdown-links — no dangling [label](href) targets
         if: steps.detect.outputs.docs == 'true'
         run: bash agents/scripts/core/test-markdown-links.sh
