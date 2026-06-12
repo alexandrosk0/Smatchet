@@ -717,6 +717,12 @@ class ConfigManager {
     /** Normalize config tracker string to a stable backend bucket key (`Jira` or `Plane`). */
     static std::string NormalizeViewsBackendKey(const std::string& trackerType);
 
+    /** Closed set of known backend keys (Jira, Plane, GitHub). Single source for picker + command enum. */
+    static const std::vector<std::string>& KnownBackendKeys();
+
+    /** True iff the minimum credentials for `backendKey` are non-empty in `cfg`. */
+    static bool BackendCredentialsPresent(const TrackerConfig& cfg, const std::string& backendKey);
+
     static PersistentViewsFile LoadPersistentViewsFromDisk();
     static void SavePersistentViewsToDisk(const PersistentViewsFile& disk);
     static void EnsureViewBucketBootstrapped(PersistentViewsFile& disk, const std::string& backendKey,

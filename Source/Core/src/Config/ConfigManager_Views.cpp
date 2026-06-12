@@ -236,6 +236,22 @@ std::string ConfigManager::NormalizeViewsBackendKey(const std::string& trackerTy
     return SmatchetDefaults::kDefaultBackendType;
 }
 
+const std::vector<std::string>& ConfigManager::KnownBackendKeys() {
+    static const std::vector<std::string> keys = {"Jira", "Plane", "GitHub"};
+    return keys;
+}
+
+bool ConfigManager::BackendCredentialsPresent(const TrackerConfig& cfg, const std::string& backendKey) {
+    if (backendKey == "Plane") {
+        return !cfg.PlaneUrl.empty() && !cfg.PlaneApiKey.empty();
+    }
+    if (backendKey == "GitHub") {
+        return !cfg.GitHubPat.empty() && !cfg.GitHubOwner.empty() && !cfg.GitHubRepo.empty();
+    }
+    // "Jira" and any future default backend: Domain + ApiToken required.
+    return !cfg.Domain.empty() && !cfg.ApiToken.empty();
+}
+
 PersistentViewsFile ConfigManager::LoadPersistentViewsFromDisk() {
     // Pillar-2 gate (close-gate-gaps Slice 1a): blocking (lock + ScopedFileLock + sync ifstream
     // + JSON parse) — must not run on the UI render thread (#611). Warn-only for now.

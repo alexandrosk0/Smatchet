@@ -55,7 +55,8 @@ std::string PrevPaneId(const std::vector<GridPane>& panes, const std::string& cu
 /// d.gridPaneFocusReassigned when it moved focusedPaneId (review HIGH-2: the host
 /// must replay the reassignment as a real focus switch next frame so the new
 /// focused pane's saved view gets activated).
-bool ApplyPaneAddAndCloseRequests(UiDrawSession& d);
+bool ApplyPaneAddAndCloseRequests(UiDrawSession& d,
+                                  const std::unordered_map<std::string, ViewWorkspaceState>& viewBuckets);
 
 // Pure, ImGui-free request-application core (SmatchetGridPaneWindows_detail.cpp)
 // so bucket-A tests cover the close/add/focus-reassignment invariants without a
