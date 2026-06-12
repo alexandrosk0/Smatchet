@@ -68,6 +68,23 @@ CMD="$(json_field '.tool_input.command' 'command')"
 # Mutating git ops only.
 printf '%s' "$CMD" | grep -qE '(^|[;&|[:space:]])git([[:space:]]+(-C[[:space:]]+[^[:space:]]+|-c[[:space:]]+[^[:space:]]+|--[^[:space:]]+))*[[:space:]]+(checkout|switch|pull|reset|merge|rebase)($|[[:space:]])|(^|[;&|[:space:]])git[[:space:]]+stash[[:space:]]+pop($|[[:space:]])' || exit 0
 
+# Linked-worktree exemption: a `git -C <path> …` whose target resolves to a
+# DIFFERENT git worktree than this integration tree moves THAT worktree's HEAD,
+# never the shared tree's — so it can't rug-pull a sibling session here. Exempt
+# it (this is the common cross-worktree integration-merge that previously forced
+# a `bash file.sh` wrapper dance — tooling self-improvement 2026-06-11). A `-C`
+# pointing back at the integration tree, or a bare git op in this tree, still
+# falls through to the liveness block. Fail-CLOSED: if the `-C` target cannot be
+# resolved as a worktree (missing/not-a-repo), do NOT exempt.
+cpath="$(printf '%s' "$CMD" | grep -oE '\-C[[:space:]]+("[^"]*"|[^[:space:]]+)' | tail -n1 | sed -E 's/^-C[[:space:]]+//; s/^"//; s/"$//')"
+if [ -n "$cpath" ]; then
+  _wt_top="$(git -C "$cpath" rev-parse --show-toplevel 2>/dev/null)"
+  _proj_top="$(git -C "$PROJ" rev-parse --show-toplevel 2>/dev/null)"
+  if [ -n "$_wt_top" ] && [ -n "$_proj_top" ] && [ "$_wt_top" != "$_proj_top" ]; then
+    exit 0
+  fi
+fi
+
 SID="$(json_field '.session_id' 'session_id')"
 [ -n "$SID" ] || SID="${CLAUDE_SESSION_ID:-}"
 

@@ -174,9 +174,63 @@ jobs:
                   --hardware-note "GitHub Actions windows-2022"
               echo "### $scen — bootstrap baseline captured" >> /tmp/perf-report.md
             else
-              python scripts/dev/perf-compare.py "$baseline" "$result" --markdown-only >> /tmp/perf-report.md
+              # Gate FIRST (exit code), report AFTER — so confirm-on-exceed can
+              # swap in the confirm sample before the markdown table is written
+              # (one table per scenario, always the gated sample).
               python scripts/dev/perf-compare.py "$baseline" "$result" > /dev/null 2>&1
               rc=$?
+              # Confirm-on-exceed (ported from perf-pr-fast.yml's scenario loop,
+              # gate-fp-hardening 2026-06-10): the 2-core shared runner swings
+              # JOB-wide, so a single exceed can be runner noise (cell-edit-burst
+              # SmatchetUI::Draw p99 10.9 -> 15.661 ms across days with no code
+              # change, PR #1112). Take 3 more independent runs, median them, and
+              # gate on THAT — a real regression fails both samples (false-positive
+              # probability squared); a noisy episode clears. Trigger ONLY on rc=1
+              # (regression); rc=2 is malformed input a re-run can't fix, so it
+              # falls through and counts. (perf-full is nightly / non-PR-blocking,
+              # so this only suppresses spurious perf-regression ISSUES.)
+              if [ "$rc" -eq 1 ]; then
+                echo "::warning::$scen exceeded policy on the first run — taking a confirm sample (3 more runs)."
+                confirm_plumbing=0
+                confirm_runs=()
+                for i in 1 2 3; do
+                  r=$(bash scripts/dev/perf-run.sh "$scen" 2>&1 | tail -1)
+                  if [ ! -f "$r" ]; then
+                    echo "FAIL: $scen confirm scenario.run #$i did not produce $r" >&2
+                    run_failure_count=$((run_failure_count + 1))
+                    confirm_plumbing=1
+                    break
+                  fi
+                  confirm_runs+=("$r")
+                done
+                if [ "$confirm_plumbing" = "0" ]; then
+                  confirm_result=$(python scripts/dev/perf-median.py "${confirm_runs[@]}" | tail -1)
+                  if [ -f "$confirm_result" ]; then
+                    python scripts/dev/perf-compare.py "$baseline" "$confirm_result" > /dev/null 2>&1
+                    rc2=$?
+                    if [ "$rc2" -eq 0 ]; then
+                      echo "::notice::$scen confirm sample within policy — first exceed was runner noise (gated on the confirm median)."
+                      result="$confirm_result"; rc=0
+                    elif [ "$rc2" -eq 1 ]; then
+                      echo "::warning::$scen exceeded policy on BOTH independent samples — confirmed regression."
+                      result="$confirm_result"; rc=1
+                    else
+                      echo "FAIL: $scen confirm compare reported malformed input (rc=$rc2)" >&2
+                      run_failure_count=$((run_failure_count + 1))
+                      confirm_plumbing=1
+                    fi
+                  else
+                    echo "FAIL: perf-median selected no usable confirm snapshot for $scen" >&2
+                    run_failure_count=$((run_failure_count + 1))
+                    confirm_plumbing=1
+                  fi
+                fi
+                # A confirm-plumbing failure is already tracked in run_failure_count;
+                # neutralise rc so it is not ALSO counted as a regression.
+                [ "$confirm_plumbing" = "1" ] && rc=0
+              fi
+              # Report AFTER gating, on the gated (possibly confirm) sample.
+              python scripts/dev/perf-compare.py "$baseline" "$result" --markdown-only >> /tmp/perf-report.md
               if [ "$rc" -ne 0 ]; then
                 regression_count=$((regression_count + 1))
               fi
