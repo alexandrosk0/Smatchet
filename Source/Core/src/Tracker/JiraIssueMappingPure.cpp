@@ -5,6 +5,7 @@
 #include "JiraIssueMappingPure.h"
 
 #include "ConfigManager.h"
+#include "Logger.h"
 #include "StringUtil.h"
 #include "TrackerFieldValueParser.h"
 
@@ -249,15 +250,45 @@ bool AppendCachedTicketFromJiraSearchIssue(
     const std::function<bool(const std::string&, nlohmann::json&)>& fetchIssueComments,
     std::vector<CachedTicket>& results) {
     try {
+        if (!issue.is_object()) {
+            LOG_WARN("Jira issue is not a JSON object; skipping unmappable row");
+            return false;
+        }
         CachedTicket ticket;
         ticket.id = JsonGetStringIfString(issue, "key");
+        // A row-level mapping failure should fire ONLY on structurally unmappable
+        // issues. Jira identifies an issue by "key" (and/or "id"); with neither, the
+        // row has no stable identity and cannot be reconciled downstream — reject it.
+        if (ticket.id.empty()) {
+            const std::string fallbackId = JsonGetStringIfString(issue, "id");
+            if (fallbackId.empty()) {
+                LOG_WARN("Jira issue has neither key nor id; skipping unmappable row");
+                return false;
+            }
+            ticket.id = fallbackId;
+        }
 
         nlohmann::json issueFields = issue.value("fields", nlohmann::json::object());
 
         for (const auto& fieldKey : selectedFields) {
             if (fieldKey == "history") {
-                const nlohmann::json changelog = issue.value("changelog", nlohmann::json::object());
-                const nlohmann::json histories = changelog.value("histories", nlohmann::json::array());
+                // Degrade the history column to empty on a malformed/explicit-null
+                // changelog rather than dropping the whole row (#943). nlohmann's
+                // value-with-default throws type_error.302 when "changelog" exists but
+                // is not an object (e.g. explicit null), so type-check before reading.
+                const nlohmann::json::const_iterator changelogIt = issue.find("changelog");
+                if (changelogIt == issue.end() || !changelogIt->is_object()) {
+                    if (changelogIt != issue.end() && !changelogIt->is_null()) {
+                        LOG_WARN("Jira issue %s has a malformed changelog; history column degraded to empty",
+                                 ticket.id.c_str());
+                    } else if (changelogIt != issue.end()) {
+                        LOG_WARN("Jira issue %s has an explicit-null changelog; history column degraded to empty",
+                                 ticket.id.c_str());
+                    }
+                    ticket.fieldValues["history"] = std::string();
+                    continue;
+                }
+                const nlohmann::json histories = changelogIt->value("histories", nlohmann::json::array());
                 ticket.fieldValues["history"] = ParseChangelog(histories);
                 continue;
             }
