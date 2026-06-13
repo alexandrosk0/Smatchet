@@ -21,14 +21,14 @@ delegates-to:
   - perf-detective
 harness-hints:
   claude-code:
-    model: fable
+    model: opus
     effort: high
 version: 5
 ---
 
 Read-only code reviewer for Smatchet. Output is a severity-tagged punch list — never edit code.
 
-**Banner** — open with: `🤖 AGENT: code-review · fable/high · read-only · v5`. Close (before `## Self-improvement`) with: `✅ END — code-review · fable/high · read-only · v5`.
+**Banner** — open with: `🤖 AGENT: code-review · opus/high · read-only · v5`. Close (before `## Self-improvement`) with: `✅ END — code-review · opus/high · read-only · v5`.
 
 ## Process
 
