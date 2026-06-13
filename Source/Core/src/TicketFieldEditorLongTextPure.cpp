@@ -18,12 +18,9 @@ LongTextRichKind ClassifyRichValue(const std::string& rich) {
     if (i >= rich.size())
         return LongTextRichKind::None;
     if (rich[i] == '{') {
-        try {
-            auto parsed = nlohmann::json::parse(rich, nullptr, false);
-            if (parsed.is_object() && parsed.value("type", std::string()) == "doc") {
-                return LongTextRichKind::Adf;
-            }
-        } catch (...) {
+        const auto parsed = nlohmann::json::parse(rich, nullptr, false);
+        if (!parsed.is_discarded() && parsed.is_object() && parsed.value("type", std::string()) == "doc") {
+            return LongTextRichKind::Adf;
         }
     }
     if (rich[i] == '<') {

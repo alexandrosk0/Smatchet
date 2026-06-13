@@ -238,7 +238,7 @@ StartFieldCatalogFetchAsync(AppController& app, const TrackerConfig& fetchCfg, c
     // runs (multi-grid Slice 3 — focus moves to a freshly spun-up pane before its sync swaps
     // a backend in). FetchFieldCatalog re-reads focusedContext() and would fail spuriously.
     const std::shared_ptr<ITrackerBackend> latchedBackend = app.BackendShared();
-    return std::async(std::launch::async, [&app, fetchCfg, activeViewJql, latchedBackend]() {
+    return std::async(std::launch::async, [fetchCfg, activeViewJql, latchedBackend]() {
         FieldCatalogFetchResult result;
         result.BackendKey = ConfigManager::NormalizeViewsBackendKey(fetchCfg.TrackerType);
         std::string projectKey;
@@ -574,6 +574,7 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
         std::string& lastViewsBackendKey = d.lastViewsBackendKey;
         if (!lastViewsBackendKey.empty() && lastViewsBackendKey != bk) {
             app.SetFieldCatalog({}, {}, {}, std::string());
+            app.SetAvailableUsers({});
             d.fieldCatalogWarning.clear();
             d.fieldCatalogFetchStarted = false;
             d.fieldCatalogLoading = false;
