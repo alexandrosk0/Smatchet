@@ -63,15 +63,22 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   1. List the next batch — `gh pr list --state merged --base develop --limit 900
      --json number --jq '[.[] | select(.number < 542) | .number] | sort |
      reverse | .[0:100]'` (lower the `< 542` bound as you progress).
-  2. Embed that array as the `const EMBEDDED = [...]` list in the sweep workflow
-     script (do NOT rely on `args` — the array does not marshal through the
-     `args` field; see the `historical-review-sweep-workflow-not-persisted-and-args-noop`
-     entry in `categories/tooling.md`). The session-temp script lives under
-     `<session>/workflows/scripts/historical-review-sweep-wf_*.js` and is **lost
-     when the session ends** — reconstruct from the skill + extractor + the prior
-     batch's structure, or persist it to `agents/_shared/workflows/` (backlogged).
-     Re-run via `Workflow({scriptPath})`; or, per PR, run
-     `historical-review-survivors.sh --pr <N>` and review the survivor digest.
+  2. Run the persisted workflow, passing the batch as `args`:
+     `Workflow({ name: 'historical-review-sweep', args: [<the numbers>] })`.
+     Pass a JSON array — but note this harness delivers `args` to the script as a
+     **string** even when you pass an array (probe: `argType:'string'`,
+     `parsedIsArray:true`), so the workflow `JSON.parse`s it internally. You don't
+     stringify it yourself; you just don't rely on it arriving pre-parsed.
+     The script is tracked at
+     [`agents/project/workflows/historical-review-sweep.js`](../../agents/project/workflows/historical-review-sweep.js)
+     — project-scoped (it embeds Smatchet paths, so it can't live in the
+     portable, purity-gated `agents/_shared/workflows/`). `setup-harness.sh` links
+     it into the gitignored `.claude/workflows/`, so it resolves by name across
+     sessions (run `bash agents/scripts/core/setup-harness.sh claude-code` once
+     after a fresh clone). **No per-batch script edit** — pass a different `args`
+     list each batch; an empty/unparseable list throws loudly, never a silent
+     no-op. Or, per PR, run `historical-review-survivors.sh --pr <N>` and review
+     the survivor digest manually.
   3. Append each batch's findings here (newest on top) + commit/push.
 - **Cost guide:** ~100–120 PRs/batch ≈ 5.7–7.0M output tokens, ~25–30 min wall-clock.
 - **Top still-alive findings to act on first** (logged, NOT fixed per the
