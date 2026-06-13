@@ -701,10 +701,16 @@ a live CI run (`run_failure_count=0`).
 ### Preventing gate
 A **launch-smoke hard step** in front of every advisory exe-running lane:
 a NON-`continue-on-error` step that runs the freshly-provisioned exe once
-(`Smatchet.exe cmd app.version --spawn --yes` or equivalent ≤ 10 s probe)
-after Mesa install and before the advisory bucket step. "The exe cannot even
-start" then fails the job hard regardless of how flaky the tests behind it
-are — separating *dead harness* (hard fail) from *flaky tests* (advisory).
+(`Smatchet.exe cmd app.version --spawn --yes`) after Mesa install and before
+the advisory bucket step. "The exe cannot even start" then fails the job hard
+regardless of how flaky the tests behind it are — separating *dead harness*
+(hard fail) from *flaky tests* (advisory). NOTE (corrected in PR #1180): the
+outer `timeout` MUST sit ABOVE the app's own `--spawn` ready window
+(`SMATCHET_SPAWN_READY_MS`, default 30 s — `--spawn` boots the full GUI app
++ MCP server, not a bare CLI). The first cut used `timeout 10`, which
+undercut the 30 s ready budget and red-walled bucket-C/E on a slow-but-healthy
+Mesa boot; the gate now pins `SMATCHET_SPAWN_READY_MS=30000` with a 45 s
+outer hang-guard.
 Plus, inside the advisory steps: treat `Passed: 0` with `Failed: > 0` as a
 hard exit (a lane that passes nothing is not flaky, it is broken).
 

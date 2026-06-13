@@ -459,20 +459,31 @@ jobs:
       # GREEN for 2 weeks because the thin opengl32.dll loader killed every exe
       # at process start and continue-on-error swallowed the total harness death
       # exactly like a flaky test. A read-only `app.version` (no network, no file
-      # mutation), `timeout`-bounded to 10 s, turns "exe can't start" into a LOUD
-      # job-red instead of a swallowed one. This step is shared verbatim with
-      # bucket-E (keep the two in sync).
+      # mutation) turns "exe can't start" into a LOUD job-red instead of a
+      # swallowed one. This step is shared verbatim with bucket-E (keep in sync).
+      #
+      # Timeout budget: `--spawn` launches the full GUI app as an ephemeral MCP
+      # instance and waits for its endpoint to become reachable. That ready window
+      # is the app's own SMATCHET_SPAWN_READY_MS (default 30 s — bumped from 15 s
+      # because AI-client init pushed cold-CI startup past the prior window;
+      # CliCommandRunner.cpp). Under Mesa software GL (llvmpipe) on a cold runner,
+      # boot is far slower than a warm native run, so a tight outer `timeout` must
+      # NOT undercut the app's own ready budget — a 10 s wrapper guillotined healthy
+      # boots and red-walled this lane (#1180). We pin the ready window explicitly
+      # and set the outer hang-guard a margin ABOVE it, so the failure mode is the
+      # app's own clean "did not become reachable" envelope, not a SIGTERM.
       - name: Launch-smoke — provisioned exe must boot (Mesa GL)
         shell: bash
         env:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
+          SMATCHET_SPAWN_READY_MS: "30000"
         run: |
           set -euo pipefail
           EXE=build/ninja-iter-msvc/Smatchet.exe
-          echo "launch-smoke: $EXE cmd app.version --spawn --yes (<=10s)"
-          if ! timeout 10 "$EXE" cmd app.version --spawn --yes; then
-            echo "::error::launch-smoke FAILED — $EXE could not start under Mesa GL within 10s." >&2
+          echo "launch-smoke: $EXE cmd app.version --spawn --yes (ready<=30s, hang-guard 45s)"
+          if ! timeout 45 "$EXE" cmd app.version --spawn --yes; then
+            echo "::error::launch-smoke FAILED — $EXE could not boot+become-reachable under Mesa GL within the spawn-ready window." >&2
             echo "  This is the dead-harness class (thin opengl32.dll loader / missing GL dep)," >&2
             echo "  NOT a flaky test. The advisory bucket lane below would green-wash it." >&2
             exit 1
@@ -617,20 +628,23 @@ jobs:
           done
 
       # Launch-smoke (NOT continue-on-error) — see the bucket-C copy for the full
-      # rationale (postmortems.md 2026-06-07 green-wash). The provisioned UI-test
-      # exe must boot once under Mesa GL before the advisory scenario runs;
-      # otherwise a dead harness green-washes. Kept in sync with bucket-C.
+      # rationale (postmortems.md 2026-06-07 green-wash + #1180 timeout-undercut).
+      # The provisioned UI-test exe must boot once under Mesa GL before the
+      # advisory scenario runs; otherwise a dead harness green-washes. The outer
+      # hang-guard sits a margin ABOVE the app's SMATCHET_SPAWN_READY_MS (30 s) so
+      # a slow-but-healthy Mesa boot isn't SIGTERM'd. Kept in sync with bucket-C.
       - name: Launch-smoke — provisioned exe must boot (Mesa GL)
         shell: bash
         env:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
+          SMATCHET_SPAWN_READY_MS: "30000"
         working-directory: build/ninja-ui-test-msvc
         run: |
           set -euo pipefail
-          echo "launch-smoke: ./Smatchet.exe cmd app.version --spawn --yes (<=10s)"
-          if ! timeout 10 ./Smatchet.exe cmd app.version --spawn --yes; then
-            echo "::error::launch-smoke FAILED — bucket-E Smatchet.exe could not start under Mesa GL within 10s (dead harness, not a flaky test)." >&2
+          echo "launch-smoke: ./Smatchet.exe cmd app.version --spawn --yes (ready<=30s, hang-guard 45s)"
+          if ! timeout 45 ./Smatchet.exe cmd app.version --spawn --yes; then
+            echo "::error::launch-smoke FAILED — bucket-E Smatchet.exe could not boot+become-reachable under Mesa GL within the spawn-ready window (dead harness, not a flaky test)." >&2
             exit 1
           fi
           echo "launch-smoke: OK — exe booted."
