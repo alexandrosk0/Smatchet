@@ -7,6 +7,215 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+<!-- ===========================================================================
+     2026-06-13 — deep security audit of all targets + configurations.
+     Full report: docs/security/SECURITY_AUDIT_2026-06-13.md
+     Two adversarially-verified fleets (11-lane deep-audit + 5-lane re-run).
+     Post-verify: 0 CRITICAL · 5 HIGH · ~14 MEDIUM · ~16 LOW · 7 INFO.
+     Severity-upgrade flags recorded inline on E2 (→P2), E5 (→P1, superseded
+     by the AgentsMdLoader entry below), E6 (re-confirmed HIGH).
+     =========================================================================== -->
+
+- 2026-06-13 · deep-audit-rerun · [security] · P1 — Server-supplied AccountId injected unescaped into JQL (JqlSuggestEngine)
+  Details: `Source/Core/src/Tracker/JqlSuggestEngine.cpp:139-140` `BuildJqlUserInsert` builds a quoted JQL literal from a tracker-supplied AccountId; the AccountId fallback path does no `"`/`\` escaping, so a malicious/compromised tracker response breaks out of the literal in the user-autocomplete query. Distinct from the issue-key path (E1 / `BuildKeyInJql` `JiraIssueSearch.cpp:199`, partly-confirmed LOW by the re-run). Confirmed HIGH, adversarially verified, NEW.
+  Concrete next action: reuse the E1 `JqlQuoteLiteral()` helper (escape `\`→`\\` then `"`→`\"`) at the AccountId insertion site, OR validate AccountId against its grammar before insertion. Unit-test both the key and AccountId paths. ~1 h.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit · [security] · P1 — Arbitrary config-specified file read prepended verbatim into outbound LLM system prompt (supersedes E5, raised P2→P1)
+  Details: Source/Core/src/AgentsMdLoader.cpp:28-58,122-153 reads a config-specified override path (≤64 KB) guarded only by fs::exists (ConfigManager.cpp:791-792), concatenated into the system prompt at AiAssistantController.cpp:408,418. No canonicalization/allowlist/root-containment. Verified: a local config write → off-host exfil of any readable file to the remote LLM provider. Same gap as E5 below, with sharper exfil framing + exact sink lines.
+  Concrete next action: Add a path-containment helper (canonicalize + reject symlinks/out-of-root absolute paths; pin the filename suffix to *agents.md) and treat override content as untrusted in prompt assembly. Effort M (~1 day + tests).
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit · [security] · P2 — Command registry executes destructive commands with no ctx.Source authorization
+  Details: Source/Core/src/Commands/CommandRegistry.cpp:298 gates only on (Destructive && !ConfirmedDestructive); no ctx.Source trust check, so MCP/Lua-sourced commands equal UI-sourced. Basis shared with MCP un-gated dispatch.
+  Concrete next action: Add a per-source trust enum; gate destructive/source-restricted commands and require out-of-band confirm for non-UI sources. Effort M.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit · [security] · P2 — MCP registry dispatch un-gated after Authorize
+  Details: Source/Plugins/Mcp/McpPlugin.cpp:426-445,625-642 — after loopback+token Authorize, dispatch reaches the full command registry with no per-command authorization (token possession == full reach).
+  Concrete next action: Apply a command allowlist/capability scope to the MCP surface; route destructive commands through the source-aware gate. Effort M.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit · [security] · P2 — MCP server performs no Host/Origin check (DNS-rebinding exposure)
+  Details: Source/Plugins/Mcp/McpPlugin.cpp:137-161 Authorize validates loopback+token but not Host/Origin; a rebound browser origin can reach the loopback port with only the token as barrier.
+  Concrete next action: Reject non-loopback Host and remote Origin headers; keep token as defense-in-depth. Effort S.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit · [security] · P2 — MCP attachment proxy fetches caller-supplied URLs (SSRF surface)
+  Details: Source/Plugins/Mcp/McpPlugin.cpp:275-352 fetches a caller URL; the mcp-lane coverage found it already HTTPS-only + host-allow-listed (tracker domain + api.media.atlassian.com) with redirects disabled, so this is a confirm-it-routes-through-the-shared-AiEndpointSanitize hardening rather than a live SSRF.
+  Concrete next action: Route the fetch through the shared sanitizer; deny private/link-local/metadata targets and non-http(s) schemes. Effort S-M.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit · [security] · P2 — P4vLaunch argument injection via QuoteWinArgWide trailing-backslash bug
+  Details: Source/Core/src/Ui/P4vLaunch.cpp:72-86,149,172,189-190 and P4Annotate.cpp:52-59 compose argv from changelist/file fields; QuoteWinArgWide mishandles trailing backslashes, allowing argument-boundary injection. Re-run confirmed MEDIUM and located the custom-command {file}/{cl} template path at P4vLaunch.cpp:172 (gated by AnnotateAllowCustomCommands).
+  Concrete next action: Fix backslash doubling per CommandLineToArgvW; prefer argv-array spawn. Effort S + unit test.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit · [security] · P2 — POSIX secret writes plaintext with no 0600 mode (re-run: HIGH at-rest exposure; raise to P1 when POSIX ships)
+  Details: Source/Core/src/Config/ConfigManager.cpp:473-496 and ConfigManager_PathUtils.cpp:719-761 write secrets as plaintext config with default umask; no chmod 0600. The re-run confirmed the underlying no-op ProtectSecretForConfig #else branch (ConfigManager_PathUtils.cpp:331-334) as HIGH plaintext-at-rest (token/plane_api_key/github_pat/mcp_auth_token/ai_*_api_key/whisper_api_key). Windows (DPAPI) unaffected; this is the non-Windows gap.
+  Concrete next action: chmod 0600 on create, verify mode on read; document the platform crypto gap. Effort S.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit · [security] · P2 — Android secret passthrough stores credentials in plaintext (re-run: HIGH at-rest exposure; raise to P1 when Android ships)
+  Details: Source/Core/src/Config/ConfigManager_PathUtils.cpp:331-334 passes secrets through with no Android Keystore encryption. Same no-op #else branch as the POSIX entry above; confirmed HIGH plaintext-at-rest by the re-run.
+  Concrete next action: Back Android secrets with the Keystore or mark the platform unsupported for secret storage. Effort M.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit · [security] · P2 — stb image decode dimension cap applied after allocation
+  Details: Source/Core/src/Persistence/SmatchetImageTextureCache.cpp:141,149 checks the max-dimension cap after stb allocation; oversized images allocate before rejection (memory-pressure DoS).
+  Concrete next action: Pre-validate via stbi_info before full decode. Effort S.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit · [security] · P2 — OfflineQueue serialized 'draft' string bypasses audit-trail redaction
+  Details: Source/Core/src/Sync/OfflineQueueService.cpp:356,362 serializes the draft to a JSON string before BackendAuditTrail.cpp:124-148 redaction runs, so RedactJson/LooksSensitiveKey never sees nested keys.
+  Concrete next action: Redact the draft object structurally pre-serialization or add a value-level pass. Effort S-M.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit · [security] · P2 — AI client redirect can forward Anthropic x-api-key cross-host
+  Details: AiAssistantController AI-client redirect config can retain the x-api-key header across a redirect to a different host (distinct from the tracker-scoped E2/H4 item).
+  Concrete next action: Strip auth headers on cross-origin redirect for all AI clients (cpr::Redirect header-stripping). Effort S.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit · [security] · P2 — Error/response bodies logged without key-name redaction
+  Details: A backend client error-logging site (distinct from E8, which is the SSE/NDJSON parse-fail 200 B site) emits response/error bodies without RedactJson, leaking reflected tokens to logs.
+  Concrete next action: Route all body logging through the redaction helper; cap length. Effort S.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit · [security] · P2 — Automation worker hook aggravates shutdown deadlock / UI-thread starvation
+  Details: The instruction-count worker hook interacts with shutdown so a long automation can hold the process from exiting (verifier raised LOW→MEDIUM). Re-run located it at AppController_LuaBindings.cpp:1257 (LUA_MASKCOUNT, 50000, only checks shuttingDown_) chaining to blocking JiraIssueMutation.cpp:206 — also a UI-thread block (Pillar 2) since the count-hook does not cover blocking C++ glue.
+  Concrete next action: Make the hook cooperatively cancellable; bound shutdown wait with timeout/forced-join; keep blocking glue off the UI thread. Effort M.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit · [security] · P3 — SSRF IP denylist parses dotted-quad literals only
+  Details: Source/Core/src/AiEndpointSanitize.cpp:68-96,146-152 ParseIpv4Literal matches only dotted-quad; alternate IP encodings skip the literal denylist (resolution-time block backstops; verifier MEDIUM→LOW).
+  Concrete next action: Normalize via inet_pton/getaddrinfo and apply the denylist to resolved addresses. Effort S.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit · [security] · P3 — SubprocessCapture inherits full parent environment
+  Details: Source/Core/src/Ui/SubprocessCapture.cpp:106-119,492 — children inherit the full env and a manipulable PATH.
+  Concrete next action: Pass a minimal explicit environment; resolve binaries by absolute path. Effort S-M.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit · [security] · P3 — P4 executable resolved via PATH (binary planting)
+  Details: Source/Core/src/Ui/P4vLaunch.cpp resolves p4/p4v via PATH search (verifier MEDIUM→LOW). Re-run also located the SearchPathW resolution at P4Annotate.cpp:49.
+  Concrete next action: Resolve the binary by absolute/verified install path before spawn. Effort S.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit · [security] · P3 — Crash-handler minidump may include sensitive process memory
+  Details: Source/Standalone/SmatchetCrashHandler.cpp:53-55 writes a minidump with flags that can capture broad process memory (in-memory secrets).
+  Concrete next action: Use MiniDumpNormal scope; scrub/avoid secret-bearing regions. Effort S.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit · [security] · P3 — Standalone main does not fully harden DLL search path
+  Details: Source/Standalone/main.cpp:1001 — incomplete DLL search-order hardening at startup.
+  Concrete next action: Call SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32) early. Effort S.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit · [security] · P3 — CLI spawn log written to predictable /tmp path (symlink race)
+  Details: Source/Core/src/Commands/CliCommandRunner.cpp:481-487,538 writes a spawn log to a predictable shared /tmp path without owner-only mode. Re-run confirmed the symlink race: no O_NOFOLLOW and a predictable pid+port name at :481.
+  Concrete next action: Use a per-user temp dir with O_EXCL + O_NOFOLLOW + 0600. Effort S.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit · [security] · P3 — MCP thread pool / SSE parking lacks connection bounds
+  Details: Source/Plugins/Mcp/McpPlugin.cpp:848-850,600-620 — no clear cap on concurrent parked SSE connections / pool threads.
+  Concrete next action: Bound concurrent connections and idle-park duration. Effort S.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit · [security] · P3 — Gradle wrapper jar/properties lack sha256 verification
+  Details: gradle/wrapper/gradle-wrapper.jar + .properties are not sha256-verified in CI.
+  Concrete next action: Enable SHA-pinned gradle wrapper-validation-action; pin the distribution checksum. Effort S.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit · [security] · P3 — Legacy AiBaseUrl grandfather path narrows SSRF guard
+  Details: AiEndpointSanitize legacy AiBaseUrl branch gets looser validation; cloud-metadata payloads still blocked (informational).
+  Concrete next action: Fold the legacy path through the shared sanitizer; retire the grandfather branch. Effort S.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit · [security] · P3 — Attachment proxy accepts URL userinfo component
+  Details: Source/Plugins/Mcp/McpPlugin.cpp:275-352 accepts user:pass@ userinfo (verifier LOW→INFO).
+  Concrete next action: Reject/strip userinfo before host validation. Effort S.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit · [security] · P3 — DPAPI secret encryption uses user-scope with no entropy
+  Details: Win32 CryptProtectData path uses user scope with no optional entropy; any same-user process can decrypt (same-user is in-scope for a single-user app — informational).
+  Concrete next action: Optionally add per-install entropy; document the model. Effort S.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+<!-- --- 5-lane re-run NEW findings (not in the deep-audit block above) --- -->
+
+- 2026-06-13 · deep-audit-rerun · [security] · P2 — ADF parser unbounded recursion on untrusted tracker JSON (Pillar 3 — Never Crash)
+  Details: `Source/Core/src/Tracker/TrackerFieldValueParser.cpp:290` (`CollectAdfText`) and `:309` (`ExtractAdfTextToStream`) recurse over server-supplied Atlassian Document Format nodes with no depth bound; deeply-nested ADF blows the stack → crash / DoS from a malicious or buggy server response. Confirmed MEDIUM, adversarially verified, NEW.
+  Concrete next action: add a recursion-depth cap (reject/clamp beyond ~64 levels) to both functions; convert to an explicit work-stack if needed. Unit-test with a deep-nest fixture. ~1 h.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit-rerun · [security] · P3 — Lua child coroutine lua_State does not inherit the instruction-count hook
+  Details: `Source/Core/src/AppController_LuaBindings.cpp:315,1257` — the LUA_MASKCOUNT hook is installed on the main lua_State; a `coroutine.create()`'d child State does not inherit it, so a tight loop inside a coroutine runs uncounted (sandbox timeout bypass). Partly-confirmed LOW (needs paste-and-run Lua; same-user boundary), NEW.
+  Concrete next action: re-install the count hook on each created coroutine State (sol2 coroutine hook), or refuse coroutine creation in the sandbox. ~1 h.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit-rerun · [security] · P3 — SQLite local ticket cache stored unencrypted
+  Details: `Source/Core/src/Persistence/LocalCacheManager.cpp:131` opens the local ticket cache DB with no encryption; cached ticket bodies/PII sit in cleartext in the per-user data dir. Confirmed LOW (same-user is in-scope; relevant if the file is synced/backed-up off-host). NEW.
+  Concrete next action: document the at-rest model; optionally gate cache-at-rest behind SQLCipher or a no-cache mode for sensitive deployments. ~S-M.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit-rerun · [security] · P3 — Whisper model download follows redirects with no host-pin and no size cap
+  Details: `Source/Plugins/Whisper/ModelDownloader.cpp:314` uses `cpr::Redirect(true,true)` with no host pin and no maximum response size on the ggml model fetch; a redirect to an attacker host serves an unverified blob (and there is no checksum gate on the model). Partly-confirmed LOW. NEW.
+  Concrete next action: pin the download host, add a size cap, and sha256-verify the model artifact (mirror the Lua TOFU pin / E3). ~S.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit-rerun · [security] · P3 — NormalizeBaseUrl accepts cleartext http:// tracker endpoints
+  Details: `Source/Core/src/Tracker/TrackerHttpUtils.cpp:85` `NormalizeBaseUrl` does not require `https://`, so a config (or first-run) `http://` tracker base sends credentials in cleartext and exposes the redirect-forwarding path (H4 / E2). Confirmed LOW. NEW.
+  Concrete next action: default-reject `http://` (allow only behind the same explicit insecure-http consent gate the AI endpoint sanitizer uses), or upgrade to `https`. ~S.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit-rerun · [security] · P3 — Logger file sink writes log lines without RedactLogLine
+  Details: `Source/Core/src/Logger.cpp:320` `FileSinkWorker` writes `e.message` verbatim to the on-disk log; `RedactLogLine` (applied on the crash/bug-report paths) is NOT applied at the file sink, so any `LOG_*` that ever carries a secret/PII reaches the log file unredacted. No current `LOG_*` call places a raw credential there, but body-logging at Trace would. Partly-confirmed LOW. NEW.
+  Concrete next action: route file-sink writes through `RedactLogLine` (or redact at emit for the body-logging paths). ~S.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit-rerun · [security] · P3 — CR/LF/ANSI log injection from server-controlled data
+  Details: `Source/Core/src/Privacy/TextRedaction.cpp:80` — redaction does not strip CR/LF/ANSI escapes, so server-controlled strings reaching a log line can forge log entries or inject terminal escapes. Confirmed LOW. NEW.
+  Concrete next action: strip/encode CR/LF and ANSI CSI sequences in the log-line redactor. ~S.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit-rerun · [security] · P3 — Redaction LongTokenRe 40-char threshold misses 36-char Plane UUID tokens
+  Details: `Source/Core/src/Privacy/TextRedaction.cpp:45` `LongTokenRe` redacts only >=40-char tokens, so a 36-char Plane API UUID (and similarly-sized secrets) is not redacted if it reaches a log. Confirmed LOW. NEW.
+  Concrete next action: add a UUID-shaped pattern (8-4-4-4-12) to the redactor, or lower the threshold with a git-hash guard. ~S.
+  Status: open
+  Last-reviewed: 2026-06-13
+
 - 2026-05-28 · deep-audit · [security] · P2 — JQL injection via unescaped issue keys in `JiraClient::FetchIssuesForKeys`
   Details: `Source/Core/src/Tracker/JiraIssueSearch.cpp:470-487` interpolates issue keys into double-quoted JQL literals with no escaping of `"` or `\` — single-key path builds `jql = "key = \"" + keys[offset] + "\"";` (:472) and the IN-list appends raw `'"' + keys[offset+i] + '"'` (:479-481). `UrlEncode` (`TrackerHttpUtils.cpp:44-59`) only percent-encodes for transport; the Jira server URL-decodes before JQL parsing, so an embedded `"` reaches the parser intact and breaks out of the quoted literal (e.g. `FOO" OR project=SECRET OR key="BAR`), widening the query beyond the intended key set (cross-project disclosure). Callers: `AppController.cpp:514`, `Source/Core/src/Sync/OfflineQueueService.cpp:714` (offline-queue restore). Keys are mostly server-issued today, so this is defense-in-depth / fragility rather than currently-exploitable. Verified from real code (deep-audit, adversarially confirmed).
   Concrete next action: add a `JqlQuoteLiteral()` helper in `TrackerHttpUtils` (escape `\` → `\\` then `"` → `\"`) OR validate keys against the `[A-Z][A-Z0-9]*-[0-9]+` grammar and skip non-matches before building the IN-list; unit-test it. Audit `PlaneIssueSearch` / GitHub equivalents the same way. ~1 h.
