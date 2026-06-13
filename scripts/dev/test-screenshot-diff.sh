@@ -20,11 +20,27 @@
 #   PYTHON                  python interpreter (default `python`)
 #   SCREENSHOT_TOLERANCE    per-channel L∞ tolerance (default 4)
 #   SCREENSHOT_DIFF_BIN     pre-built diff helper path; if unset the script g++-compiles one
+#   SMATCHET_GOLDEN_DIR     golden PNG dir (default tests/golden); override to isolate a test harness
+#   SMATCHET_LANE_STATUS_FILE  if set, write `status=<ok|broken|fail> passed=<n> failed=<n>` here
 #
 # Exit codes:
 #   0 — every scenario captured within tolerance (or bootstrap completed)
 #   1 — at least one diff exceeded tolerance / dimension mismatch / spawn failure
 #   2 — binary or build is missing
+#   3 — BROKEN LANE: Passed==0 && Failed>0 (every scenario failed — the whole
+#       harness is dead, e.g. the exe can't boot, NOT a per-scenario regression).
+#       Distinct from 1 so the CI lane-integrity step can tell "broken" from
+#       "some scenarios regressed" even though this job is continue-on-error.
+#       See infra.md 2026-06-07 P1 bucket-lane-launch-smoke + postmortems.md
+#       bucket-C/E green-wash (a dead harness ran Passed:0 Failed:3 GREEN for 2
+#       weeks because continue-on-error swallowed total harness death like a
+#       flaky test).
+#
+# Lane-status sentinel:
+#   When SMATCHET_LANE_STATUS_FILE is set, the final Passed/Failed verdict is
+#   written there as `status=<ok|broken|fail> passed=<n> failed=<n>` so a
+#   SEPARATE non-advisory CI step can assert lane integrity OUTSIDE this
+#   continue-on-error job (the only way a broken-lane signal escapes the mask).
 #
 # Usage:
 #   bash scripts/dev/test-screenshot-diff.sh                # diff mode (gate)
@@ -39,7 +55,10 @@ PY="${PYTHON:-python}"
 # Ephemeral port keeps parallel runs from colliding on the default.
 TEST_PORT="${SMATCHET_TEST_PORT:-$((40000 + RANDOM % 20000))}"
 TOL="${SCREENSHOT_TOLERANCE:-4}"
-GOLDEN_DIR="tests/golden"
+# Golden dir is overridable so a test harness can isolate goldens to a scratch
+# dir (the broken-lane bats must not clobber the committed tests/golden/ PNGs).
+# Unset in CI/dev — production behaviour (gate against committed goldens) holds.
+GOLDEN_DIR="${SMATCHET_GOLDEN_DIR:-tests/golden}"
 TMP_DIR="${TMPDIR:-/tmp}/smatchet-screenshot-diff-$$"
 mkdir -p "$TMP_DIR"
 # CI bucket-C job needs the captures to survive past script exit so upload-artifact
@@ -198,6 +217,28 @@ echo "============================="
 echo "Passed: $PASSED  Failed: $FAILED"
 echo "============================="
 
+# Broken-lane guard: a lane that passes NOTHING while failing something is a
+# dead harness, not a flaky regression — the bucket-C/E green-wash class. Emit a
+# distinct exit code (3) + a GitHub ::error:: annotation + the lane-status
+# sentinel so a non-advisory CI step can hard-fail OUTSIDE this
+# continue-on-error job. Order matters: check broken BEFORE the ordinary
+# Failed>0 path so the broken signal wins.
+LANE_STATUS="ok"
+if [ "$PASSED" -eq 0 ] && [ "$FAILED" -gt 0 ]; then
+    LANE_STATUS="broken"
+elif [ "$FAILED" -gt 0 ]; then
+    LANE_STATUS="fail"
+fi
+
+if [ -n "${SMATCHET_LANE_STATUS_FILE:-}" ]; then
+    printf 'status=%s passed=%s failed=%s\n' "$LANE_STATUS" "$PASSED" "$FAILED" \
+        > "$SMATCHET_LANE_STATUS_FILE"
+fi
+
+if [ "$LANE_STATUS" = "broken" ]; then
+    echo "::error::bucket-C lane BROKEN — Passed:0 Failed:$FAILED. Every scenario failed: the harness is dead (exe can't boot / no GL), NOT a per-scenario regression. See the launch-smoke step + infra.md bucket-lane-launch-smoke." >&2
+    exit 3
+fi
 if [ "$FAILED" -gt 0 ]; then
     exit 1
 fi

@@ -87,10 +87,17 @@ void SmatchetUserInfoUi::DrawWindow(AppController& app, UiDrawSession& d, bool* 
 
 void SmatchetUserInfoUi::adoptPendingRequest(AppController& app, UiDrawSession& d) {
     d.userInfoRequestPending = false;
+    appForShutdownCancel_ = &app;
     if (!paneId_.empty()) {
         // Cancel the previous target's in-flight activity scan before retargeting.
         app.ClearPaneUserActivity(paneId_);
     }
+    // WS-A: signal any abandoned workers from the previous target, then hand the
+    // new workers a fresh (un-cancelled) flag. Workers still holding the OLD token
+    // copy keep observing the cancelled flag and stop; the relaunched ones run
+    // against the new flag.
+    cancel_.Cancel();
+    cancel_.Reset();
     paneId_ = d.userInfoSourcePaneId;
     displayName_ = d.userInfoDisplayName;
     email_ = d.userInfoEmail;
@@ -141,9 +148,14 @@ void SmatchetUserInfoUi::launchVcsFetch(UiDrawSession& d) {
     const std::string gitAuthor = email_.empty() ? accountId_ : email_;
     const AnnotateAnalysisConfig annotateCfg = annotateCfg_;
     const TrackerConfig cfg = d.cfg;
-    vcsFuture_ = std::async(std::launch::async, [gen, maxN, cutoff, email, gitAuthor, annotateCfg, cfg]() {
+    const smatchet::ui::CancelToken cancel = cancel_;
+    vcsFuture_ = std::async(std::launch::async, [gen, maxN, cutoff, email, gitAuthor, annotateCfg, cfg, cancel]() {
         VcsPayload p;
         p.Gen = gen;
+        // WS-A cooperative cancel: bail before the p4 round-trip if already abandoned.
+        if (cancel.IsCancelled()) {
+            return p;
+        }
         // Prefer the authoritative email->login map from `p4 users` (the p4 login often
         // differs from the email local-part, e.g. "alexk" for "alexkonstantonis@gmail.com");
         // fall back to the naive local-part strip when p4 has no matching user.
@@ -166,6 +178,10 @@ void SmatchetUserInfoUi::launchVcsFetch(UiDrawSession& d) {
             } else {
                 p.P4Error = err.empty() ? "p4 changes failed." : err;
             }
+        }
+        // WS-A: skip the second (GitHub) round-trip when cancelled between IO chunks.
+        if (cancel.IsCancelled()) {
+            return p;
         }
         std::vector<Vcs::VcsSubmission> commits;
         std::string gitErr;
@@ -200,16 +216,26 @@ void SmatchetUserInfoUi::launchActivityFetch(AppController& app) {
     const std::string accountId = accountId_;
     AppController* appPtr = &app;
     TrackerActivityProgress* progress = &activityProgress_;
-    activityFuture_ = std::async(std::launch::async, [gen, dayFrom, dayTo, paneId, accountId, appPtr, progress]() {
-        ActivityPayload p;
-        p.Gen = gen;
-        std::string err;
-        if (!appPtr->FetchPaneUserActivity(paneId, accountId, dayFrom, dayTo, std::string(), *progress, p.Entries,
-                                           err)) {
-            p.Error = err.empty() ? "Activity fetch failed." : err;
-        }
-        return p;
-    });
+    const smatchet::ui::CancelToken cancel = cancel_;
+    activityFuture_ =
+        std::async(std::launch::async, [gen, dayFrom, dayTo, paneId, accountId, appPtr, progress, cancel]() {
+            ActivityPayload p;
+            p.Gen = gen;
+            // WS-A (Pillar-3): if cancel was signalled before the worker started, return
+            // WITHOUT dereferencing appPtr — the multi-second p4-annotate scan is the
+            // #1150 shutdown-stall case. A cancel that lands mid-scan is delivered through
+            // the backend's ClearUserActivity (signalled alongside this token by the
+            // destructor / closeCleanup), which unblocks FetchPaneUserActivity from inside.
+            if (cancel.IsCancelled()) {
+                return p;
+            }
+            std::string err;
+            if (!appPtr->FetchPaneUserActivity(paneId, accountId, dayFrom, dayTo, std::string(), *progress, p.Entries,
+                                               err)) {
+                p.Error = err.empty() ? "Activity fetch failed." : err;
+            }
+            return p;
+        });
 }
 
 void SmatchetUserInfoUi::launchGroupsFetch(AppController& app) {
@@ -220,9 +246,14 @@ void SmatchetUserInfoUi::launchGroupsFetch(AppController& app) {
     const int gen = generation_;
     const std::string accountId = accountId_;
     AppController* appPtr = &app;
-    groupsFuture_ = std::async(std::launch::async, [gen, accountId, appPtr]() {
+    const smatchet::ui::CancelToken cancel = cancel_;
+    groupsFuture_ = std::async(std::launch::async, [gen, accountId, appPtr, cancel]() {
         GroupsPayload p;
         p.Gen = gen;
+        // WS-A (Pillar-3): bail before dereferencing appPtr if cancelled.
+        if (cancel.IsCancelled()) {
+            return p;
+        }
         std::string err;
         if (!appPtr->FetchUserGroupNames(accountId, p.Names, err)) {
             p.Error = err.empty() ? "Group lookup failed." : err;
@@ -240,10 +271,15 @@ void SmatchetUserInfoUi::launchMembersFetch(AppController& app, const std::strin
     const int gen = generation_;
     const std::string paneId = paneId_;
     AppController* appPtr = &app;
-    membersFuture_ = std::async(std::launch::async, [gen, paneId, groupName, appPtr]() {
+    const smatchet::ui::CancelToken cancel = cancel_;
+    membersFuture_ = std::async(std::launch::async, [gen, paneId, groupName, appPtr, cancel]() {
         MembersPayload p;
         p.Gen = gen;
         p.GroupName = groupName;
+        // WS-A (Pillar-3): bail before dereferencing appPtr if cancelled.
+        if (cancel.IsCancelled()) {
+            return p;
+        }
         std::string err;
         if (!appPtr->FetchPaneGroupMembers(paneId, groupName, p.Members, err)) {
             p.Error = err.empty() ? "Member lookup failed." : err;
@@ -366,8 +402,29 @@ void SmatchetUserInfoUi::pollMembersFuture() {
 }
 
 void SmatchetUserInfoUi::closeCleanup(AppController& app) {
+    // WS-A: signal cooperative cancel so any in-flight worker stops at its next
+    // check; ClearPaneUserActivity additionally unblocks the in-progress p4 scan
+    // from inside FetchPaneUserActivity. The futures still drain (their destructors
+    // join) but near-instantly. Reset() hands the next open a fresh flag.
+    cancel_.Cancel();
     if (!paneId_.empty()) {
         app.ClearPaneUserActivity(paneId_);
     }
     P4ClPreview::DetachInFlight();
+    cancel_.Reset();
+}
+
+SmatchetUserInfoUi::~SmatchetUserInfoUi() {
+    // App-shutdown path: SmatchetUI (owner of this object) is destroyed before
+    // AppController, so appForShutdownCancel_ is still valid here. Signal cooperative
+    // cancel + the backend's in-scan IO cancel BEFORE the std::async future members
+    // destruct (their destructors block until the worker drains) — so the multi-second
+    // p4 activity scan returns promptly and teardown does not stall (#1150). The join
+    // itself is kept (the future destructors), preserving the no-UAF guarantee: a
+    // cancelled worker returns before touching appPtr again, and appPtr outlives this.
+    cancel_.Cancel();
+    if (appForShutdownCancel_ != nullptr && !paneId_.empty()) {
+        appForShutdownCancel_->ClearPaneUserActivity(paneId_);
+    }
+    // vcsFuture_/activityFuture_/groupsFuture_/membersFuture_ destruct here, joining fast.
 }

@@ -127,12 +127,14 @@
                 "_smatchet-msvc-base"
             ],
             "displayName": "Ninja Debug + MSVC AddressSanitizer (CI)",
-            "description": "ASAN via MSVC /fsanitize=address. Run from a VS Developer Command Prompt.",
+            "description": "ASAN via MSVC /fsanitize=address. Builds + sanitizes the SmatchetTests doctest rig by default (SMATCHET_BUILD_TESTS + SMATCHET_SANITIZE_TESTS) so the unit-test surface is genuinely instrumented under ASan. /RTC1 is stripped tree-wide by smatchet_strip_msvc_rtc_for_asan() (incompatible with /fsanitize=address). Run from a VS Developer Command Prompt.",
             "binaryDir": "${sourceDir}/build/ninja-msvc-asan",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "SMATCHET_SANITIZER": "asan",
+                "SMATCHET_BUILD_TESTS": "ON",
+                "SMATCHET_SANITIZE_TESTS": "ON",
                 "SMATCHET_AGENT_DEBUG": "ON"
             }
         },
@@ -398,7 +400,8 @@
             "configurePreset": "ninja-msvc-asan",
             "inheritConfigureEnvironment": true,
             "targets": [
-                "SmatchetStandalone"
+                "SmatchetStandalone",
+                "SmatchetTests"
             ]
         },
         {

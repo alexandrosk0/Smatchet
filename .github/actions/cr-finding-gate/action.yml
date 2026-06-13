@@ -66,10 +66,34 @@ runs:
         # merge-gates.sh (a repo without CR must not be blocked by this gate).
         # Probe at the PR head SHA (not the default branch) so a PR that
         # adds/removes .coderabbit.y*ml is evaluated against its own state.
+        #
+        # H12 (fail-closed): a confirmed HTTP 404 means the file is truly absent
+        # → cr_installed=false. ANY other non-zero exit (auth, network, 5xx,
+        # rate-limit) is a TRANSIENT failure, NOT proof of absence — collapsing
+        # it to cr_installed=false would post "CR not installed", exit 0, and
+        # wave the PR through with its CodeRabbit findings UN-REVIEWED. So treat
+        # every non-404 error as installed (fail closed) and let the poll loop /
+        # decide() block on unknown CR state. Mirrors merge-gates.sh:200-223.
+        probe_404() {
+          # Echoes "404" iff the gh api error body is a confirmed HTTP 404;
+          # echoes "ok" on success; echoes "err" on any other non-zero exit.
+          local path="$1" out rc=0
+          out=$(gh api "repos/${OWNER}/${REPO}/contents/${path}?ref=${SHA}" 2>&1 >/dev/null) || rc=$?
+          if [ "$rc" -eq 0 ]; then echo ok; return; fi
+          if printf '%s' "$out" | grep -q "HTTP 404"; then echo 404; else echo err; fi
+        }
         cr_installed=true
-        if ! gh api "repos/${OWNER}/${REPO}/contents/.coderabbit.yaml?ref=${SHA}" >/dev/null 2>&1 \
-           && ! gh api "repos/${OWNER}/${REPO}/contents/.coderabbit.yml?ref=${SHA}" >/dev/null 2>&1; then
-          cr_installed=false
+        yaml_probe=$(probe_404 .coderabbit.yaml)
+        if [ "$yaml_probe" = 404 ]; then
+          # .yaml confirmed absent; check .yml before concluding not-installed.
+          yml_probe=$(probe_404 .coderabbit.yml)
+          if [ "$yml_probe" = 404 ]; then
+            cr_installed=false   # both files confirmed 404 — truly absent
+          elif [ "$yml_probe" = err ]; then
+            echo "WARN: .coderabbit.yml probe failed with non-404 error; assuming CR installed (fail closed)" >&2
+          fi
+        elif [ "$yaml_probe" = err ]; then
+          echo "WARN: .coderabbit.yaml probe failed with non-404 error; assuming CR installed (fail closed)" >&2
         fi
         if [ "$cr_installed" = false ]; then
           post success "CodeRabbit not installed — gate not applicable"
@@ -102,7 +126,7 @@ runs:
         # GraphQL response directly (merge-gates.sh is jq-free only for the local
         # Windows dev env).
         decide() {
-          local resp n_reviews cr_ctx first_line n
+          local resp n_reviews cr_ctx body n
           # On a transient GraphQL failure, do NOT post error + exit — that would
           # bypass the poll loop and leave a false blocking status on a brief API
           # blip. Return non-terminal so the loop retries; persistent failure is
@@ -150,22 +174,32 @@ runs:
             esac
           fi
 
-          # First body line of the latest on-head CR review (may be empty).
-          first_line=$(printf '%s' "$resp" | jq -r '
+          # FULL body of the latest on-head CR review (may be empty). #524: the
+          # previous parse looked at only the FIRST body line, so a CR preamble
+          # line above the "Actionable comments posted: N" header hid it → the
+          # empty-n branch posted SUCCESS and waved findings through (fail open).
+          # Search the whole body instead.
+          body=$(printf '%s' "$resp" | jq -r '
             .data.repository.pullRequest as $pr
             | ($pr.headRefOid // "") as $oid
             | [ $pr.reviews.nodes[]
                 | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
                          and (.commit.oid // "") == $oid) ]
             | sort_by(.submittedAt) | last
-            | if . == null then "" else ((.body // "") | split("\n")[0]) end
-            ' 2>/dev/null) || first_line=""
-          first_line="${first_line//$'\r'/}"
+            | if . == null then "" else (.body // "") end
+            ' 2>/dev/null) || body=""
+          body="${body//$'\r'/}"
 
-          n=$(printf '%s' "$first_line" | grep -oiE 'Actionable comments posted:[[:space:]]*[0-9]+' \
+          n=$(printf '%s' "$body" | grep -oiE 'Actionable comments posted:[[:space:]]*[0-9]+' \
                 | grep -oE '[0-9]+' | head -1 || true)
           if [ -z "$n" ]; then
-            post success "CodeRabbit reviewed head; no actionable-findings header"; exit 0
+            # Fail closed: we ARE in the n_reviews>0 branch (a CR review node
+            # exists on this head) yet its body carries no actionable-count
+            # header. That is an unexpected/unsettled state, NOT proof of "0
+            # actionable" — do not post success. Return non-terminal so the poll
+            # loop retries; a persistently header-less review resolves to PENDING
+            # at window-exhaustion (a human/CR re-run settles it), never green.
+            return 1
           fi
           if [ "$n" -gt 0 ]; then
             post failure "CodeRabbit posted ${n} actionable finding(s) on current head"; exit 0

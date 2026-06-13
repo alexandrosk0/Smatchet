@@ -5,6 +5,24 @@
 #include <stdexcept>
 #include <string>
 
+// Wrong-state access (value() on disengaged / error() on ok) is a two-stage
+// Pillar-3 contract in SmatchetResult.h: assert() in DEBUG, then throw
+// std::logic_error in RELEASE (NDEBUG). doctest's CHECK_THROWS_AS can only
+// observe the *throw* — under a live assert() (Debug builds, e.g. the
+// ninja-msvc-asan preset which compiles -DCMAKE_BUILD_TYPE=Debug WITHOUT
+// NDEBUG) the assert's abort() fires FIRST and SIGABRTs the run before any
+// exception unwinds. This is correct designed behaviour, not an ASan finding —
+// so the throw-path death-tests are gated to NDEBUG builds (where every other
+// test preset runs: ninja-test-* / ninja-debug-* use RelWithDebInfo/Release →
+// /DNDEBUG). The #1017 copy-assignment death-tests below are NOT gated: they
+// throw from a user copy ctor (real exception, no assert), so they exercise the
+// UB-prone path genuinely under ASan in both Debug and Release.
+#ifdef NDEBUG
+#define SMATCHET_CHECK_WRONGSTATE_THROWS(expr, exc) CHECK_THROWS_AS(expr, exc)
+#else
+#define SMATCHET_CHECK_WRONGSTATE_THROWS(expr, exc) ((void)0) // assert() aborts in Debug
+#endif
+
 namespace {
 
 // Move-tracking probe — records whether it was moved-from so tests can assert
@@ -52,10 +70,10 @@ TEST_CASE("Optional: value() on an engaged Optional returns the stored value") {
 
 TEST_CASE("Optional: value() on an empty Optional throws std::logic_error") {
     Optional<int> empty;
-    CHECK_THROWS_AS(empty.value(), std::logic_error);
+    SMATCHET_CHECK_WRONGSTATE_THROWS(empty.value(), std::logic_error);
 
     const Optional<int> constEmpty;
-    CHECK_THROWS_AS(constEmpty.value(), std::logic_error);
+    SMATCHET_CHECK_WRONGSTATE_THROWS(constEmpty.value(), std::logic_error);
 }
 
 TEST_CASE("Optional: value_or returns value when engaged, fallback when empty") {
@@ -133,10 +151,10 @@ TEST_CASE("Result: Ok holds a value, Err holds an error") {
 
 TEST_CASE("Result: value() on error-state throws, error() on ok-state throws") {
     Result<int> ok = Result<int>::Ok(1);
-    CHECK_THROWS_AS(ok.error(), std::logic_error);
+    SMATCHET_CHECK_WRONGSTATE_THROWS(ok.error(), std::logic_error);
 
     Result<int> err = Result<int>::Err("nope");
-    CHECK_THROWS_AS(err.value(), std::logic_error);
+    SMATCHET_CHECK_WRONGSTATE_THROWS(err.value(), std::logic_error);
 }
 
 TEST_CASE("Result: value_or returns value on ok, fallback on error") {

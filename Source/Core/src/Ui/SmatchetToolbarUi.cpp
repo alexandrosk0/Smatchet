@@ -243,6 +243,22 @@ void SmatchetToolbarUi::RenderBar(AppController& app, TrackerConfig& cfg) {
             }
         }
 
+        // Pillar 2 (#611): visible in-progress cue while the per-tracker append reload runs on a
+        // worker (RefreshTrackerAppendCache → LoadPersistentViewsFromDisk off-thread). Without it
+        // the bar silently shows the previous/empty append for the frame(s) until the load lands —
+        // an invisible (sub-100ms-but-real) blocking gap pre-offload, now an invisible async gap.
+        // The cue is submitted on the same frame the in-flight flag is true (cue-before-stall
+        // ordering). The labelled-Button id is the bucket-E visible-cue test's findable anchor.
+        if (trackerAppendLoadInFlight_) {
+            ImGui::SameLine();
+            ImGui::BeginDisabled();
+            ImGui::SmallButton(ICON_FA_SPINNER "##tb-append-loading");
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Loading tracker toolbar buttons...");
+            }
+        }
+
         // Right-click empty bar area → bar-level context menu (NoOpenOverItems defers to the
         // per-button menu above when the cursor is over a button).
         if (ImGui::BeginPopupContextWindow("##ToolbarCtx",

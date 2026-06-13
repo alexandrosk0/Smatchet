@@ -1,0 +1,13 @@
+name: Templated
+on:
+  pull_request:
+    branches: [develop]
+jobs:
+  templated-job:
+    name: Templated Context (${{ matrix.os }})
+    strategy:
+      matrix:
+        os: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - run: true

@@ -426,6 +426,11 @@ include(FetchContent)
 include(cmake/SmatchetThirdParty.cmake)
 include(cmake/Sanitizers.cmake)
 
+# /RTC1-vs-/fsanitize=address fix (infra: asan-doctest-rig-not-instrumented).
+# Must run BEFORE any add_library/add_executable so the cleaned Debug flags reach
+# every target (incl. SmatchetTests). No-op unless real MSVC cl + SMATCHET_SANITIZER=asan.
+smatchet_strip_msvc_rtc_for_asan()
+
 option(SMATCHET_FETCHCONTENT_VERBOSE "Log each third-party dependency during configure" OFF)
 function(smatchet_fetch_status _msg)
     if(SMATCHET_FETCHCONTENT_VERBOSE)

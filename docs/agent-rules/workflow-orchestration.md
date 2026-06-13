@@ -84,9 +84,17 @@ which is gitignored — `.gitignore:63`). `setup-harness.sh` links each into
 `.claude/workflows/` so the Workflow tool can resolve it by name. To add one: drop
 the `.js` under `agents/_shared/workflows/`, re-run `bash agents/scripts/core/setup-harness.sh claude-code`.
 
-| Workflow | Shape | Use |
-|---|---|---|
-| `pre-merge-review` | parallel-barrier `code-review` + `security-review` → judge `agent()` (schema-forced) → one ranked deduped verdict | pre-merge review of a PR / local branch diff. `args = {pr: N}` / `{base: 'origin/develop'}` / no-arg = local diff vs `origin/develop` |
+**Portable vs project-scoped.** `agents/_shared/workflows/` is purity-gated
+(`test-portable-purity`) — a script there must embed **no** project literals
+(paths, subsystem names, repo-specific commands). A workflow that *must* name
+project internals lives in **`agents/project/workflows/`** instead (excluded
+from the purity scan); `setup-harness.sh` links that dir into the same
+`.claude/workflows/`, so both resolve identically by name.
+
+| Workflow | Home | Shape | Use |
+|---|---|---|---|
+| `pre-merge-review` | `_shared` | parallel-barrier `code-review` + `security-review` → judge `agent()` (schema-forced) → one ranked deduped verdict | pre-merge review of a PR / local branch diff. `args = {pr: N}` / `{base: 'origin/develop'}` / no-arg = local diff vs `origin/develop` |
+| `historical-review-sweep` | `project` | fan-out: one `code-review` agent per merged PR over its survivor digest (`historical-review-survivors.sh`) → severity-tagged findings, aggregated | historical code-review of a merged-PR batch. `args = [<PR numbers>]` (real JSON array, required). Pairs with the `historical-code-review` skill + ledger |
 
 The `.js` is the single source of truth; this doc references + excerpts it, never
 re-copies the body (no drift). Canonical excerpt of the judge-after-barrier shape:

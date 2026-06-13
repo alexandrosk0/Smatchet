@@ -155,3 +155,12 @@ setup() {
     [[ "$output" == *"scripts/mobile/"* ]]
     [[ "$output" == *"docs/harness/"*"/hooks/"* ]]
 }
+
+@test "default target set covers agents/scripts/core/lib (sourced libraries)" {
+    # ci-check-resolve.sh (the shared name->workflow resolution map) lives one
+    # level down in lib/; a regression reverting to the flat maxdepth-1 set would
+    # silently drop it from the required Shell-lint gate.
+    run bash "$LINT" --list-targets
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"agents/scripts/core/lib/"* ]]
+}

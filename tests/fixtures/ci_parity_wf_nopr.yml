@@ -1,0 +1,12 @@
+name: NoPR
+# Runs only on push — a REQUIRED context emitted here can never report on a
+# pull_request, so the parity gate must fail-closed (pr_triggered teeth).
+on:
+  push:
+    branches: [develop]
+jobs:
+  nopr-job:
+    name: NoPR Context
+    runs-on: ubuntu-latest
+    steps:
+      - run: true

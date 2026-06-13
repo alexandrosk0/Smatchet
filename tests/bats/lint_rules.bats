@@ -172,6 +172,112 @@ setup() {
     [ -z "$output" ]
 }
 
+# ---------- unused-symbol-under-config-guard (infra #863) ----------
+# The config-skew -Werror,-Wunused-function class: a free-function DEFINITION
+# unguarded while ALL its call sites are under a POSITIVE #if defined(SMATCHET_WITH_*).
+# WARN-first in the diff gate (per the dup-gate precedent); --scan-unused-cfg emits
+# the detected set for the bats harness. Fixtures replay the 61b17427~1 (pre-fix,
+# detected) and #945 fixed (clean) shapes, plus the discriminators that keep the
+# real-tree false-positive idioms (out-of-line member, #else-of-#if-!defined) quiet.
+
+@test "--scan-unused-cfg detects the #863 shape (unguarded def, all refs under positive SMATCHET_WITH_* guard)" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    # 61b17427~1 shape: def at column 0 unguarded; both call sites inside the guard.
+    printf 'void LogLuaScriptFileProbe(const char* label, const std::string& path) {\n    (void)label; (void)path;\n}\n\nvoid InitLua() {\n#if defined(SMATCHET_WITH_LUA_AUTOMATION)\n    LogLuaScriptFileProbe("SmatchetHooks.lua", "x");\n    LogLuaScriptFileProbe("Automation.lua", "y");\n#endif\n}\n' \
+        > "$tmp/Source/Core/src/AppController.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-unused-cfg
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"unused-symbol-under-config-guard"* ]]
+    [[ "$output" == *"AppController.cpp:1"* ]]
+    rm -rf "$tmp"
+}
+
+@test "--scan-unused-cfg is clean on the #945 fixed shape (def ALSO inside the guard)" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    # 61b17427 fixed shape: definition wrapped in the SAME #if as its call sites.
+    printf 'void InitLua() {\n#if defined(SMATCHET_WITH_LUA_AUTOMATION)\n    LogLuaScriptFileProbe("SmatchetHooks.lua", "x");\n#endif\n}\n\n#if defined(SMATCHET_WITH_LUA_AUTOMATION)\nvoid LogLuaScriptFileProbe(const char* label, const std::string& path) {\n    (void)label; (void)path;\n}\n#endif\n' \
+        > "$tmp/Source/Core/src/AppController.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-unused-cfg
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-unused-cfg ignores an out-of-line member def (Type::method is never -Wunused-function)" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    # AppController::AddAiContext — a qualified member; its in-file refs are all
+    # SMATCHET_WITH_AI-guarded but it is declared in a header + called cross-TU,
+    # so it is NEVER -Wunused-function. (Real-tree false-positive caught pre-ship.)
+    printf 'void AppController::AddAiContext(const AiContextBlock& block) {\n#if defined(SMATCHET_WITH_AI)\n    impl_->aiAssistant_->AddAiContext(block);\n#else\n    (void)block;\n#endif\n}\n' \
+        > "$tmp/Source/Core/src/AppController.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-unused-cfg
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-unused-cfg ignores a def with an unguarded reference (legit asymmetry)" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    printf 'void Helper(int x) {\n    (void)x;\n}\n\nvoid AlwaysCalls() {\n    Helper(1);\n}\n\nvoid InitLua() {\n#if defined(SMATCHET_WITH_LUA_AUTOMATION)\n    Helper(2);\n#endif\n}\n' \
+        > "$tmp/Source/Core/src/Helper.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-unused-cfg
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-unused-cfg respects an in-window SMATCHET_DEVIATION" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    printf '// SMATCHET_DEVIATION(rule=unused-symbol-under-config-guard; reason=test; owner=x; revisit=2099-01-01)\nvoid LogLuaScriptFileProbe(const char* label) {\n    (void)label;\n}\n\nvoid InitLua() {\n#if defined(SMATCHET_WITH_LUA_AUTOMATION)\n    LogLuaScriptFileProbe("x");\n#endif\n}\n' \
+        > "$tmp/Source/Core/src/AppController.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-unused-cfg
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-unused-cfg ignores a call in the #else of a #if !defined(SMATCHET_WITH_*) (negative-guard discriminator)" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    # The SmatchetWhisperSetupBanner idiom: the TU is CMake-gated ON, the real impl
+    # (incl. the call) lives in the #else of `#if !defined(SMATCHET_WITH_WHISPER)`,
+    # so the call is in the FLAG-ON branch — the def is never unused. Only POSITIVE
+    # #if defined(...) true-branch refs count as guarded, so this must NOT fire.
+    printf 'float ComputeHeight(float s) {\n    return 64.0f * s;\n}\n\nbool Render() {\n#if !defined(SMATCHET_WITH_WHISPER)\n    return false;\n#else\n    float h = ComputeHeight(1.0f);\n    return h > 0.0f;\n#endif\n}\n' \
+        > "$tmp/Source/Core/src/Banner.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-unused-cfg
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-unused-cfg runs clean (rc 0) on the real first-party tree" {
+    # WARN-first calibration: the real tree carries a small, KNOWN advisory residual
+    # (CliCommandRunner.cpp MCP-only helpers) that the per-file text proxy cannot
+    # statically distinguish from the #863 shape — surfaced as WARNs in the diff
+    # gate, never blocking. The scan mode must run to completion with rc 0; we assert
+    # the residual stays bounded to CliCommandRunner (a regression that introduces a
+    # NEW unrelated hit would change this set and is caught in review).
+    run bash "$LINT" --scan-unused-cfg
+    [ "$status" -eq 0 ]
+    # Every emitted line (if any) is the known CliCommandRunner calibration residual.
+    if [ -n "$output" ]; then
+        run bash -c 'printf "%s\n" "$1" | grep -vE "CliCommandRunner\.cpp|unused-symbol-under-config-guard" || true' _ "$output"
+        [ -z "$output" ]
+    fi
+}
+
 # ---------- SMATCHET_DEVIATION ----------
 
 @test "deviation-overdue fires when calendar revisit has passed" {

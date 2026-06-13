@@ -120,6 +120,19 @@ add_executable(SmatchetTests
     # (Source/Core/include/BackgroundTaskFirewall.h); no production .cpp to link.
     Core/BackgroundTaskFirewall.test.cpp
     Core/BackgroundWorkerReap.test.cpp
+    # WS-A cooperative future cancellation (#734/#1150) — pure coverage of the
+    # CancelToken shared atomic flag + CancellableFutureSet owner helper
+    # (signal-all-cancel, non-blocking abandon, teardown join). Header-only
+    # (Source/Core/include/Ui/CancelToken.h); no production .cpp to link.
+    Core/CancelToken.test.cpp
+    # WS-A bucket-E (#734): bulk-import futures-clear must not block the UI frame for
+    # the still-running create workers' duration. Header-only (CancelToken.h) re-creation
+    # of the BulkImportAbandonFutures(d) signal-then-abandon path against slow std::futures.
+    Core/BulkImportAbandonNonBlocking.test.cpp
+    # WS-A ASan #1150 repro (Pillar-3): the SmatchetUserInfoUi activity-worker UAF shape —
+    # a worker holding a raw controller pointer + cancel token, torn down mid-scan. Asserts
+    # UAF-clean + fast (signal-then-join) teardown. Header-only (CancelToken.h).
+    Core/UserInfoActivityCancelUaf.test.cpp
     Core/JqlProjectScope.test.cpp
     # Per-project Jira component dropdowns (PR #672) — pure coverage of issue-key-prefix
     # extraction, distinct-project collection, and per-project option-map lookup.
@@ -762,6 +775,27 @@ if(WIN32)
 endif()
 
 target_compile_features(SmatchetTests PRIVATE cxx_std_14)
+
+# Pillar-3 sanitizer coverage of the doctest rig (infra: asan-doctest-rig-not-instrumented).
+# The ninja-msvc-asan preset historically instrumented only the app targets
+# (SmatchetStandalone / SmatchetCore_DX12), so heap UAF inside a test TU compiled
+# UNINSTRUMENTED and could never trip ASan — every prior "ASan-clean" doctest claim
+# was vacuous. SMATCHET_SANITIZE_TESTS opts the doctest rig into ASan; the
+# ninja-msvc-asan preset now sets it ON by default (with SMATCHET_BUILD_TESTS=ON),
+# so the WS-A cancel repro (Core/UserInfoActivityCancelUaf.test.cpp) and the whole
+# rig run GENUINELY instrumented. The historical /RTC1-vs-/fsanitize=address SIGABRT
+# (exception-based death tests, e.g. SmatchetResult.test.cpp CHECK_THROWS_AS) is
+# resolved upstream: smatchet_strip_msvc_rtc_for_asan() (cmake/Sanitizers.cmake,
+# called from the root before any target) strips /RTC* tree-wide under MSVC ASan,
+# so the throw/unwind path no longer aborts. The knob stays a knob (default OFF
+# globally) so non-asan test presets are unaffected; the asan preset flips it on.
+# ImGuiLib stays uninstrumented (linked as-is); MSVC ASan tolerates the mixed link.
+# Manual run THROUGH the MSVC env (the clang_rt.asan_dynamic DLL must be on PATH):
+#   with-msvc-env.sh bash -c 'ASAN_OPTIONS=abort_on_error=1 ./...SmatchetTests.exe'
+option(SMATCHET_SANITIZE_TESTS "Apply SMATCHET_SANITIZER to the SmatchetTests doctest rig" OFF)
+if(SMATCHET_SANITIZE_TESTS)
+    smatchet_apply_sanitizers(SmatchetTests)
+endif()
 
 # Static-link the C++ + GCC runtime so ctest can run SmatchetTests.exe from any
 # directory (PATH-independent). Mirrors what SMATCHET_WINDOWS_FULLY_STATIC_RUNTIME

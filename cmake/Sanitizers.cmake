@@ -146,6 +146,48 @@ function(smatchet_apply_sanitizers tgt)
     endif()
 endfunction()
 
+# Strip MSVC /RTC* runtime-check flags from the global Debug flag variables when
+# an ASan build is active. /RTC1 (and /RTCs /RTCu /RTCc) are MUTUALLY EXCLUSIVE
+# with /fsanitize=address: the runtime-check stack-frame guards collide with
+# ASan's redzone/stack instrumentation, and on an exception-unwind path (e.g. a
+# doctest CHECK_THROWS_AS) the combination SIGABRTs at runtime — silently
+# halting the test run. CMake injects /RTC1 by default in CMAKE_CXX_FLAGS_DEBUG
+# (and _C_) for MSVC, so the ninja-msvc-asan preset (CMAKE_BUILD_TYPE=Debug)
+# inherits it unless we strip it here. The RelWithDebInfo ASan presets
+# (ninja-clang-asan, ninja-ui-test-asan-*) never carry /RTC* and are unaffected.
+#
+# Called from the root CMakeLists immediately after include(cmake/Sanitizers.cmake)
+# and BEFORE any target is defined, so the cleaned flags apply tree-wide. Scoped
+# to real MSVC cl (not clang-cl, which does not emit /RTC* defaults) and only when
+# SMATCHET_SANITIZER=asan. PARENT_SCOPE writes propagate to the including scope;
+# these are normal (non-cache) directory-scope variables that override the cache
+# default for the configure.
+function(smatchet_strip_msvc_rtc_for_asan)
+    if(NOT MSVC OR CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+        return()  # only real cl.exe injects /RTC* defaults
+    endif()
+    if(NOT DEFINED SMATCHET_SANITIZER OR NOT "${SMATCHET_SANITIZER}" STREQUAL "asan")
+        return()
+    endif()
+    set(_changed FALSE)
+    foreach(_var
+            CMAKE_CXX_FLAGS_DEBUG CMAKE_C_FLAGS_DEBUG
+            CMAKE_CXX_FLAGS_RELWITHDEBINFO CMAKE_C_FLAGS_RELWITHDEBINFO)
+        if(DEFINED ${_var} AND "${${_var}}" MATCHES "/RTC")
+            string(REGEX REPLACE "/RTC[1csu]+" "" _cleaned "${${_var}}")
+            string(REGEX REPLACE "  +" " " _cleaned "${_cleaned}")
+            string(STRIP "${_cleaned}" _cleaned)
+            set(${_var} "${_cleaned}" PARENT_SCOPE)
+            set(_changed TRUE)
+        endif()
+    endforeach()
+    if(_changed)
+        message(STATUS
+            "Sanitizers: stripped MSVC /RTC* from Debug/RelWithDebInfo flags "
+            "(incompatible with /fsanitize=address).")
+    endif()
+endfunction()
+
 # Fail configure (not link) when MinGW GCC cannot resolve sanitizer import
 # libraries. Avoids opaque ld: "cannot find -lasan" from toolchains that omit
 # the sanitizer runtime (common with IDE-bundled MinGW).

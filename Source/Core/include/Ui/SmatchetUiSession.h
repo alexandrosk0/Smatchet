@@ -4,6 +4,7 @@
 #include "ConfigManager.h"
 #include "GridPane.h"
 #include "SmatchetDefaults.h"
+#include "Ui/CancelToken.h"
 
 #include <nlohmann/json.hpp>
 #include "IssueCreatePipeline.h"
@@ -12,6 +13,7 @@
 #include "TrackerGridFieldDisplay.h"
 #include "NavigationHistory.h"
 #include "SpreadsheetState.h"
+#include "FieldCatalogCache.h"
 #include "TrackerFieldSchema.h"
 #include "QuerySuggestTypes.h"
 #include "SmatchetProjectPicker.h"
@@ -394,6 +396,23 @@ struct UiDrawSession {
     /** Integrations tab: brief "saved" line after MCP fields persist. */
     std::chrono::steady_clock::time_point mcpPrefsSavedHintUntil{};
 
+    /// Snapshot-on-open of `FieldCatalogCache::ListCachedProjects()` (Pillar 2 — #767/#892).
+    /// `ListCachedProjects()` does an ifstream + JSON parse + migrate + sort; calling it
+    /// every frame a popup/tab is open blocks the render thread on disk I/O. Instead the
+    /// open-edge of the JQL project-pill popup (#767) and the Preferences Tracker tab (#892)
+    /// each refresh this snapshot once, and the per-frame draw reads the cached vector.
+    /// `cachedProjectsSnapshotValid` gates the refresh: each surface tracks its own
+    /// open-edge latch (`projectPillPopupWasOpen` / `prefsTrackerTabWasOpen`) and refreshes
+    /// the shared snapshot on the closed→open transition. Stale data on reopen is accepted
+    /// (these are LRU project lists — a refresh-on-reopen is fine; see plan § Risks).
+    std::vector<FieldCatalogCache::CachedProjectEntry> cachedProjectsSnapshot;
+    bool cachedProjectsSnapshotValid = false;
+    /// Open-edge latch for the JQL project-pill popup (#767). False while the popup is closed;
+    /// the draw refreshes the snapshot on the frame it transitions to open.
+    bool projectPillPopupWasOpen = false;
+    /// Open-edge latch for the Preferences Tracker tab (#892). See `projectPillPopupWasOpen`.
+    bool prefsTrackerTabWasOpen = false;
+
     char viewNameBuf[128]{};
     char viewJqlBuf[512]{};
     /** Last cursor/selection from JQL InputText callback (for autocomplete). */
@@ -727,6 +746,14 @@ struct UiDrawSession {
     IssueTableSerializer::ImportResult bulkImportPreview;
     std::vector<std::string> bulkImportStatus;
     std::vector<std::future<IssueCreateResult>> bulkImportFutures;
+    // WS-A cooperative cancel: each in-flight create captures this token (passed to
+    // CreateIssueAsync); a `.clear()` (re-parse / re-run) signals it then moves the
+    // still-valid futures into the graveyard so the UI frame never blocks on a
+    // running create's destructor. The token is Reset() per fresh run.
+    smatchet::ui::CancelToken bulkImportCancel;
+    // Abandoned-but-still-running create futures, drained at app teardown
+    // (DrainUiDrawSessionFuturesBeforeAppTeardown) while AppController is alive.
+    std::vector<std::future<IssueCreateResult>> bulkImportFutureGraveyard;
     size_t bulkImportCompleted = 0;
     bool bulkImportRunning = false;
     std::string bulkImportError;
@@ -852,6 +879,20 @@ inline void MarkPrefsDirty(UiDrawSession& d) {
         d.prefsDirty = true;
         d.prefsSaveDueAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
     }
+}
+
+/// Snapshot-on-open helper for the cached-project lists (#767/#892). Re-reads
+/// `FieldCatalogCache::ListCachedProjects()` (disk I/O) ONCE on a surface's open-edge so the
+/// per-frame draw reads `d.cachedProjectsSnapshot` instead of hitting disk every frame.
+/// `wasOpenLatch` is the caller's per-surface closed→open edge tracker: pass the latch's
+/// previous value as `isOpenNow`'s complement so the refresh fires exactly on the transition.
+/// UI-thread-only.
+inline void RefreshCachedProjectsSnapshotOnOpen(UiDrawSession& d, bool isOpenNow, bool& wasOpenLatch) {
+    if (isOpenNow && !wasOpenLatch) {
+        d.cachedProjectsSnapshot = FieldCatalogCache::ListCachedProjects();
+        d.cachedProjectsSnapshotValid = true;
+    }
+    wasOpenLatch = isOpenNow;
 }
 
 extern UiDrawSession g_ui;

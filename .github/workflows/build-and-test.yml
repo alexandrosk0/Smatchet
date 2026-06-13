@@ -453,6 +453,43 @@ jobs:
             cp "mesa-cache/$d" "build/ninja-iter-msvc/$d"
           done
 
+      # Launch-smoke — the provisioned exe must boot once under the just-installed
+      # Mesa GL. Surfaces the bucket-C/E green-wash class (postmortems.md 2026-06-07:
+      # Passed:0 Failed:3 GREEN for 2 weeks because the thin opengl32.dll loader
+      # killed every exe at process start). A read-only `app.version` (no network,
+      # no file mutation) turns "exe can't start" into a VISIBLE failed step.
+      # Shared verbatim with bucket-E (keep in sync).
+      #
+      # ADVISORY (continue-on-error) — WARN-first calibration. When this shipped
+      # hard-blocking (#1180) it immediately fired: the exe still cannot boot under
+      # CI Mesa GL (it exits at ~26 s, NOT a timeout — the `timeout 45` hang-guard
+      # is not the issue; this is the genuine dead-harness / Mesa-boot condition the
+      # smoke is meant to catch, infra.md). Hard-blocking it red-walls bucket-C/E
+      # develop-wide on a PRE-EXISTING condition, so it ships VISIBLE-BUT-NON-BLOCKING
+      # (strictly better than the prior silent green-wash) until the Mesa exe-boot
+      # provisioning is fixed (infra.md `bucket-mesa-exe-boot`); graduate to
+      # hard-fail (drop continue-on-error) then. `--spawn` boots the full GUI+MCP;
+      # SMATCHET_SPAWN_READY_MS (30 s) is the app's ready window, the outer `timeout`
+      # is a hang-guard a margin above it.
+      - name: Launch-smoke — provisioned exe must boot (Mesa GL)
+        continue-on-error: true
+        shell: bash
+        env:
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          SMATCHET_SPAWN_READY_MS: "30000"
+        run: |
+          set -euo pipefail
+          EXE=build/ninja-iter-msvc/Smatchet.exe
+          echo "launch-smoke: $EXE cmd app.version --spawn --yes (ready<=30s, hang-guard 45s)"
+          if ! timeout 45 "$EXE" cmd app.version --spawn --yes; then
+            echo "::error::launch-smoke FAILED — $EXE could not boot+become-reachable under Mesa GL within the spawn-ready window." >&2
+            echo "  This is the dead-harness class (thin opengl32.dll loader / missing GL dep)," >&2
+            echo "  NOT a flaky test. The advisory bucket lane below would green-wash it." >&2
+            exit 1
+          fi
+          echo "launch-smoke: OK — exe booted."
+
       - name: Run bucket-C screenshot diff
         continue-on-error: true
         shell: bash
@@ -460,11 +497,45 @@ jobs:
           SMATCHET_EXE: build/ninja-iter-msvc/Smatchet.exe
           TMPDIR: ${{ github.workspace }}/build/tmp
           SMATCHET_KEEP_SCREENSHOT_CAPTURES: "1"
+          SMATCHET_LANE_STATUS_FILE: ${{ github.workspace }}/build/tmp/bucket-c-lane-status
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "${TMPDIR}"
           bash scripts/dev/test-screenshot-diff.sh
+
+      # Lane-integrity (NOT continue-on-error): assert the driver did not finish
+      # Passed==0 && Failed>0. The diff step stays advisory for genuine per-
+      # scenario REGRESSIONS, but "passed nothing" is a broken lane — this step
+      # reads the sentinel the driver wrote and hard-fails OUTSIDE the
+      # continue-on-error mask. A missing sentinel (driver never reached the
+      # summary — itself a dead-harness symptom) also fails closed.
+      - name: Lane-integrity — bucket-C did not pass-nothing
+        shell: bash
+        env:
+          SMATCHET_LANE_STATUS_FILE: ${{ github.workspace }}/build/tmp/bucket-c-lane-status
+        run: |
+          set -euo pipefail
+          if [ ! -f "$SMATCHET_LANE_STATUS_FILE" ]; then
+            echo "::error::lane-integrity — bucket-C wrote no lane-status sentinel; the driver never reached its summary (dead harness). Fail-closed." >&2
+            exit 1
+          fi
+          status="$(sed -n 's/^status=\([a-z]*\).*/\1/p' "$SMATCHET_LANE_STATUS_FILE")"
+          echo "bucket-C lane-status: $(cat "$SMATCHET_LANE_STATUS_FILE")"
+          # Fail-closed: only an explicit ok|fail|broken is a valid sentinel.
+          # Unknown/empty status means a corrupt or partial sentinel write
+          # (itself a dead-harness symptom) — treat it as a broken lane, not OK.
+          case "$status" in
+            ok|fail|broken) ;;
+            *)
+              echo "::error::lane-integrity — bucket-C wrote an invalid/empty status sentinel: '$status'. Fail-closed." >&2
+              exit 1
+              ;;
+          esac
+          if [ "$status" = "broken" ]; then
+            echo "::error::lane-integrity — bucket-C is BROKEN (Passed:0 Failed>0). Every scenario failed: dead harness, not a regression." >&2
+            exit 1
+          fi
 
       - name: Upload captured PNGs (for golden bootstrap)
         if: always()
@@ -566,14 +637,99 @@ jobs:
             cp "mesa-cache/$d" "build/ninja-ui-test-msvc/$d"
           done
 
-      - name: Run bucket-E ImGui Test Engine scenario
-        id: run-bucket-e
+      # Launch-smoke — ADVISORY (continue-on-error), WARN-first. See the bucket-C
+      # copy for the full rationale: the exe currently cannot boot under CI Mesa GL
+      # (exits ~26 s, a genuine dead-harness/Mesa-boot condition, NOT the timeout),
+      # so hard-blocking red-walls develop bucket-wide on a pre-existing condition.
+      # Ships visible-but-non-blocking (better than the prior silent green-wash)
+      # until the Mesa exe-boot provisioning is fixed (infra.md `bucket-mesa-exe-boot`);
+      # graduate to hard-fail then. Kept in sync with bucket-C.
+      - name: Launch-smoke — provisioned exe must boot (Mesa GL)
         continue-on-error: true
+        shell: bash
         env:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
+          SMATCHET_SPAWN_READY_MS: "30000"
         working-directory: build/ninja-ui-test-msvc
-        run: ./Smatchet.exe scenario.run --name=ui-test --yes
+        run: |
+          set -euo pipefail
+          echo "launch-smoke: ./Smatchet.exe cmd app.version --spawn --yes (ready<=30s, hang-guard 45s)"
+          if ! timeout 45 ./Smatchet.exe cmd app.version --spawn --yes; then
+            echo "::error::launch-smoke FAILED — bucket-E Smatchet.exe could not boot+become-reachable under Mesa GL within the spawn-ready window (dead harness, not a flaky test)." >&2
+            exit 1
+          fi
+          echo "launch-smoke: OK — exe booted."
+
+      - name: Run bucket-E ImGui Test Engine scenario
+        id: run-bucket-e
+        continue-on-error: true
+        shell: bash
+        env:
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          SMATCHET_LANE_STATUS_FILE: ${{ github.workspace }}/build/tmp/bucket-e-lane-status
+        working-directory: build/ninja-ui-test-msvc
+        run: |
+          set -uo pipefail
+          mkdir -p "$(dirname "$SMATCHET_LANE_STATUS_FILE")"
+          out="$(./Smatchet.exe scenario.run --name=ui-test --yes 2>&1)"; rc=$?
+          printf '%s\n' "$out"
+          # Parse the scenario JSON envelope's data.{passed,failed}. The advisory
+          # exit code itself is unreliable (a zero-pass run can still return 0),
+          # so the broken-lane signal comes from the counts, written to the
+          # sentinel the non-advisory lane-integrity step asserts on.
+          # Parse passed+failed together; a JSON-envelope MISS (no '{...}' in the
+          # output, or absent data.passed/data.failed) exits non-zero so we can
+          # tell a real "0 0" run apart from a parse miss. Defaulting to 0 here
+          # would let malformed driver output sail past the broken-lane guard
+          # (Passed==0 && Failed>0 never fires when both are 0-from-parse-miss).
+          parsed="$(printf '%s' "$out" | python -c "import sys,json,re; t=sys.stdin.read(); m=re.search(r'\{.*\}',t,re.S); d=(json.loads(m.group(0)).get('data',{}) if m else {}); sys.exit(2) if ('passed' not in d or 'failed' not in d) else print(d['passed'], d['failed'])" 2>/dev/null || true)"
+          if [ -z "$parsed" ]; then
+            # Parse miss / malformed output / absent results — fail-closed.
+            status=broken; passed=0; failed=1
+          else
+            # parsed is "<passed> <failed>" (single line); split on the space.
+            passed="${parsed%% *}"; failed="${parsed##* }"
+            status=ok
+            if [ "$passed" = "0" ] && [ "$failed" != "0" ]; then status=broken
+            elif [ "$failed" != "0" ]; then status=fail; fi
+          fi
+          printf 'status=%s passed=%s failed=%s\n' "$status" "$passed" "$failed" > "$SMATCHET_LANE_STATUS_FILE"
+          echo "bucket-E lane-status: $(cat "$SMATCHET_LANE_STATUS_FILE")"
+          # Stay advisory for the run itself (continue-on-error); the lane-
+          # integrity step below carries the real teeth for the broken case.
+          exit "$rc"
+
+      # Lane-integrity (NOT continue-on-error): bucket-E broken-lane teeth. Reads
+      # the sentinel the run step wrote; hard-fails on broken (Passed:0 Failed>0)
+      # or a missing sentinel (the run never produced counts — dead harness).
+      - name: Lane-integrity — bucket-E did not pass-nothing
+        shell: bash
+        env:
+          SMATCHET_LANE_STATUS_FILE: ${{ github.workspace }}/build/tmp/bucket-e-lane-status
+        run: |
+          set -euo pipefail
+          if [ ! -f "$SMATCHET_LANE_STATUS_FILE" ]; then
+            echo "::error::lane-integrity — bucket-E wrote no lane-status sentinel; the scenario produced no pass/fail counts (dead harness). Fail-closed." >&2
+            exit 1
+          fi
+          status="$(sed -n 's/^status=\([a-z]*\).*/\1/p' "$SMATCHET_LANE_STATUS_FILE")"
+          echo "bucket-E lane-status: $(cat "$SMATCHET_LANE_STATUS_FILE")"
+          # Fail-closed: only an explicit ok|fail|broken is a valid sentinel.
+          # Unknown/empty status means a corrupt or partial sentinel write
+          # (itself a dead-harness symptom) — treat it as a broken lane, not OK.
+          case "$status" in
+            ok|fail|broken) ;;
+            *)
+              echo "::error::lane-integrity — bucket-E wrote an invalid/empty status sentinel: '$status'. Fail-closed." >&2
+              exit 1
+              ;;
+          esac
+          if [ "$status" = "broken" ]; then
+            echo "::error::lane-integrity — bucket-E is BROKEN (Passed:0 Failed>0). Every UI test failed: dead harness, not a regression." >&2
+            exit 1
+          fi
 
       - name: Upload bucket-E exe on failure
         if: ${{ steps.run-bucket-e.outcome == 'failure' }}
@@ -782,15 +938,58 @@ assert ok, 'mobile-texture-guard scenario did not pass all 3 forced-fault sub-st
           restore-keys: |
             ${{ runner.os }}-fetchcontent-
 
+      # The ninja-msvc-asan preset now sets SMATCHET_BUILD_TESTS=ON +
+      # SMATCHET_SANITIZE_TESTS=ON by default, so the SmatchetTests doctest rig is
+      # built AND instrumented with /fsanitize=address (closing the Pillar-3
+      # blind-spot: infra asan-doctest-rig-not-instrumented). /RTC1 is stripped
+      # tree-wide by smatchet_strip_msvc_rtc_for_asan() (it is mutually exclusive
+      # with ASan and SIGABRTs the exception-unwind path otherwise).
       - name: Configure ninja-msvc-asan
         run: cmake --preset ninja-msvc-asan -DSMATCHET_WITH_WHISPER=OFF -DSMATCHET_WITH_LUA_AUTOMATION=OFF
 
       - name: Build (ASAN via MSVC)
         run: cmake --build --preset ninja-msvc-asan
 
+      # ctest runs the app-target ASan surface + the cmake-only android-openssl
+      # probes. abort_on_error=0 so a stray abort() (e.g. a live Debug assert())
+      # surfaces as a normal failure with a stack instead of an opaque SIGABRT.
       - name: Run ctest under ASAN
         working-directory: build/ninja-msvc-asan
+        env:
+          ASAN_OPTIONS: abort_on_error=0
         run: ctest --output-on-failure
+
+      # Sanitized doctest rig — the genuine ASan surface across the whole unit-test
+      # tree (~15k assertions). Two pre-existing cases are EXCLUDED (not ASan
+      # findings; tracked in docs/self-improvement/categories/{test,infra}.md):
+      #   * "CallstackParser::ParseCallstackText survives adversarial inputs" — the
+      #     INT_MAX-clamp subcase is a Debug-build std::stoi discrepancy (pure logic,
+      #     ASan-independent) and the ReDoS sentinel is a TIMING budget the ~2-3x ASan
+      #     slowdown blows. Both fail the assert, neither is a memory-safety finding.
+      # The rest of the rig running clean under ASan is the load-bearing gate here:
+      # a real heap-use-after-free / leak / overflow in any covered TU now reds this
+      # step (it could not before — the rig compiled uninstrumented).
+      - name: Run sanitized doctest rig (ASan, clean subset)
+        shell: bash
+        working-directory: build/ninja-msvc-asan
+        env:
+          ASAN_OPTIONS: abort_on_error=0
+        run: |
+          ./tests/SmatchetTests.exe \
+            --test-case-exclude="CallstackParser::ParseCallstackText survives adversarial inputs"
+
+      - name: Surface sanitized-rig ASan report
+        if: failure()
+        shell: bash
+        run: |
+          echo "## Sanitized doctest rig (MSVC ASan)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f build/ninja-msvc-asan/Testing/Temporary/LastTest.log ]; then
+            grep -A 30 'ERROR: AddressSanitizer' \
+              build/ninja-msvc-asan/Testing/Temporary/LastTest.log \
+              | head -80 >> "$GITHUB_STEP_SUMMARY" || true
+          fi
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Report sccache stats
         if: always()

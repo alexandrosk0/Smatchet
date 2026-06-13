@@ -43,10 +43,19 @@ src_dir = sys.argv[1]
 checked = 0   # tooltip blocks that contain MarkdownPreviewRender::Render
 violations = []
 
-for fname in sorted(os.listdir(src_dir)):
-    if not fname.endswith('.cpp'):
-        continue
-    fpath = os.path.join(src_dir, fname)
+# #430 (fail-closed): os.listdir(src_dir) saw only top-level *.cpp, so the real
+# markdown-tooltip sites under Ui/ and Commands/Scenarios/ were never scanned —
+# a new offending site there was silently skipped and the gate printed
+# "Failed: 0" / exited 0 despite claiming full-tree coverage. Walk the whole
+# tree so every *.cpp under src_dir is checked.
+cpp_paths = []
+for dirpath, _dirnames, filenames in os.walk(src_dir):
+    for fname in filenames:
+        if fname.endswith('.cpp'):
+            cpp_paths.append(os.path.join(dirpath, fname))
+
+for fpath in sorted(cpp_paths):
+    fname = os.path.relpath(fpath, src_dir)
     with open(fpath, encoding='utf-8', errors='replace') as f:
         lines = f.readlines()
 

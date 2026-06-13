@@ -11,10 +11,13 @@
 extern "C" void SmatchetRegisterViewsColumnsReorderTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterJiraDeterministicBackendTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterCallstackTooltipHoverTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterHelpMarkerKeyboardFocusTests(ImGuiTestEngine* engine);
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
 extern "C" void SmatchetRegisterMcpLuaFreshStateRaceTests(ImGuiTestEngine* engine);
 #endif
 extern "C" void SmatchetRegisterSyncStallVisibleCueTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterAnnotateBeforeClCueTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterToolbarAppendCacheCueTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterDescriptionTooltipMarkdownRenderTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterSpawnWarmupDeterministicGateTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAnnotatePrefsPersistFlowTests(ImGuiTestEngine* engine);
@@ -45,10 +48,13 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterViewsColumnsReorderTests(engine);
     SmatchetRegisterJiraDeterministicBackendTests(engine);
     SmatchetRegisterCallstackTooltipHoverTests(engine);
+    SmatchetRegisterHelpMarkerKeyboardFocusTests(engine);
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     SmatchetRegisterMcpLuaFreshStateRaceTests(engine);
 #endif
     SmatchetRegisterSyncStallVisibleCueTests(engine);
+    SmatchetRegisterAnnotateBeforeClCueTests(engine);
+    SmatchetRegisterToolbarAppendCacheCueTests(engine);
     SmatchetRegisterDescriptionTooltipMarkdownRenderTests(engine);
     SmatchetRegisterSpawnWarmupDeterministicGateTests(engine);
     SmatchetRegisterAnnotatePrefsPersistFlowTests(engine);

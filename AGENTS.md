@@ -75,6 +75,7 @@ Full per-outcome semantics + halt-prompt return-code table + env knobs + REST co
 | `no-raw-new`, `deviation-overdue`, `no-detach` | all first-party C++ | absolute (0; no grandfathering) |
 | `no-glfw-in-core-headers` | `Source/Core/include/**/*.{h,hpp}` | absolute (0; GLFW/glad/OpenGL include breaks the DX12 dual-target build) |
 | `cmake-local-gate-ci-scope` | `CMakeLists.txt` / `cmake/*.cmake` | absolute (0; a `message(FATAL_ERROR …)` keyed on a local knob `msvc_toolset_pin` without a `NOT DEFINED ENV{CI}` scope FATALs every fresh-configure CI runner — #1074) |
+| `unused-symbol-under-config-guard` (WARN) | changed first-party C++ `**/*.cpp` | advisory (calibration): a free-function def unguarded while ALL its refs are under a positive `#if defined(SMATCHET_WITH_*)` is dead in the feature-OFF build → Clang `-Werror,-Wunused-function` — the #863 config-skew escape (fixed by #945). WARN-first per the `duplication` precedent (per-file text proxy, not the compiler); nightly Lua-OFF sanitizer build is the authoritative backstop |
 | `comment-commented-out-code`, `comment-decorative-banner`, `comment-blank-run` | all first-party C++ | comment-regrowth |
 | `function-too-long` | all first-party C++ | **120** lines non-UI / **200** ImGui-draw (path under `Ui/` OR name starts `Draw`/`Render`) |
 | `function-too-branchy` | all first-party C++ | **30** decision points |

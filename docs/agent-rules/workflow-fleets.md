@@ -39,6 +39,13 @@ The runtime caps concurrency at min(16, cores−2), but the real ceiling is the 
 
 Before launching, measure every file an agent is told to Read. Anything over ~⅓ of the agent's context window (~65k tokens ≈ 260 KB of text for a 200K window) must be **pre-split or pre-distilled** — an oversized Read is an unrecoverable overflow crash mid-run (failure 3). Splitting is orchestrator work, not agent work: do it inline before the `Workflow` call.
 
+## Work-list — pass it via `args`, never hard-code it in the body
+
+A fan-out's per-item work-list (PR numbers, file paths, ticket ids) belongs in **`args`**, not a `const LIST = [...]` baked into the script. A baked list goes stale every run and forces a script edit per batch (the friction that motivated persisting [`historical-review-sweep`](workflow-orchestration.md)). Two rules make `args` reliable:
+
+- **`args` always reaches the script as a string — `JSON.parse` is mandatory, not optional.** Even when you pass a real JSON array (`args: [1180, 1181]`), this harness serialises it: inside the script `typeof args === 'string'`, `Array.isArray(args)` is `false`, and `args` is the literal text `"[1180, 1181]"`. Proven by a 0-agent probe: `{argType:'string', isArray:false, rawValue:'[1180, 1181, 1182]', parsedIsArray:true}`. So the body must `JSON.parse` before any `.map`/`.length`/`.slice`; skipping it gives the classic "0-agent 14 ms no-op that looks like success".
+- **Defensive parse + loud empty-guard in the script.** `parsed = typeof args === 'string' ? JSON.parse(args) : args`, then accept array · `{items:[…]}`, and **`throw`** on an empty resolved list with the correct invocation in the message — never `return` quietly, or a misrouted list reads as a clean success.
+
 ## In-workspace staging — everything a background agent touches lives in the repo
 
 Background agents hit permission walls on out-of-workspace paths (failure 4). Stage **all** fleet inputs and outputs under the repo workspace in a gitignored scratch dir — convention: `build/<fleet-slug>/` (e.g. `build/salvage/`). Never point an agent at `~/.claude/**` session dirs, `%TEMP%`, or any absolute path outside the worktree.

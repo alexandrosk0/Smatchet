@@ -20,6 +20,7 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/jira_deterministic_backend.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/views_columns_reorder.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/callstack_tooltip_hover.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/help_marker_keyboard_focus.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/mcp_lua_fresh_state_race.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_panel_dock_swap.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_enter_send.test.cpp"
@@ -43,6 +44,8 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/mobile_views_confirm_modal.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/whisper_ai_assistant_autosend.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/sync_stall_visible_cue.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/annotate_before_cl_cue.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/toolbar_append_cache_cue.test.cpp"
 )
 
 # Link the test source list into both Standalone (live runner) and the DX12
