@@ -45,13 +45,20 @@ done
 
 # Pure classifiers — the units the --selftest + bats exercise (no gh, no network).
 
-# classify_cr <latest-CR-review-state> <latest-CR-review-body> -> clear | actionable:N | pending
+# classify_cr <review_state> <review_body> <review_commit> <head_oid> -> clear | actionable:N | pending
 # Maps the latest CodeRabbit review to the merge-gate's CR verdict: APPROVED or
 # "Actionable comments posted: 0" => clear; CHANGES_REQUESTED or actionable>0 =>
 # actionable; no review / COMMENTED-without-a-count => pending (in-progress).
+# STALENESS GUARD: if the latest CR review is on a commit OTHER than the current
+# head (a fix-push CR hasn't re-reviewed yet), the count is stale — treat as
+# pending, NOT a live verdict. Without this the watch false-reports the pre-fix
+# count after every CR-fix push ("don't trust a CR count without reading the cited
+# commit" — AGENTS.md § Merge gates). review_commit/head_oid empty => skip the
+# guard (keeps the pure 2-arg selftest calls valid).
 classify_cr() {
-    local s="$1" b="$2" n
+    local s="$1" b="$2" rc="${3:-}" head="${4:-}" n
     [ -z "$s" ] && { printf 'pending'; return; }
+    [ -n "$rc" ] && [ -n "$head" ] && [ "$rc" != "$head" ] && { printf 'pending'; return; }
     [ "$s" = "APPROVED" ] && { printf 'clear'; return; }
     [ "$s" = "CHANGES_REQUESTED" ] && { printf 'actionable:?'; return; }
     n="$(printf '%s' "$b" | grep -oE 'Actionable comments posted: [0-9]+' | grep -oE '[0-9]+' | head -1)"
@@ -101,6 +108,10 @@ if [ "$SELFTEST" = 1 ]; then
     _t "cr N-actionable"        "actionable:2" "$(classify_cr COMMENTED 'Actionable comments posted: 2')"
     _t "cr changes-requested"   "actionable:?" "$(classify_cr CHANGES_REQUESTED '')"
     _t "cr no-review -> pending" "pending"     "$(classify_cr '' '')"
+    # staleness guard: a real actionable count on the CURRENT head fires; the SAME count on a
+    # stale (pre-fix-push) commit is suppressed to pending (don't false-report after a fix push).
+    _t "cr actionable on head"  "actionable:2" "$(classify_cr COMMENTED 'Actionable comments posted: 2' abc123 abc123)"
+    _t "cr actionable stale-commit -> pending" "pending" "$(classify_cr COMMENTED 'Actionable comments posted: 2' oldsha newsha)"
     if [ "$fail" = 0 ]; then echo "selftest: pr-status-watch classifier OK"; exit 0; else exit 1; fi
 fi
 
@@ -122,14 +133,16 @@ SEP=$'\037'
 # ci_pending EXCLUDES CodeRabbit-type checks (they gate via the review parse, not
 # the rollup) so "CI green" can be reached while the CR check is still pending.
 poll_pr() { # $1=pr
-    local pr="$1" j st failed ci_pending crstate crbody cr
-    j="$(gh pr view "$pr" --json state,statusCheckRollup,reviews 2>/dev/null)" || return 1
+    local pr="$1" j st failed ci_pending head crstate crbody crcommit cr
+    j="$(gh pr view "$pr" --json state,statusCheckRollup,reviews,headRefOid 2>/dev/null)" || return 1
     st="$(printf '%s' "$j" | jq -r '.state')"
     failed="$(printf '%s' "$j" | jq -r '[.statusCheckRollup[]? | select(.conclusion=="FAILURE" or .conclusion=="TIMED_OUT" or .conclusion=="STARTUP_FAILURE") | (.name // .context)] | join(", ")')"
     ci_pending="$(printf '%s' "$j" | jq -r '[.statusCheckRollup[]? | select(.status!="COMPLETED") | (.name // .context) | select(test("coderabbit|CR finding";"i") | not)] | length')"
+    head="$(printf '%s' "$j" | jq -r '.headRefOid // ""')"
     crstate="$(printf '%s' "$j" | jq -r '[.reviews[]? | select(.author.login | test("coderabbit";"i"))] | last | .state // ""')"
     crbody="$(printf '%s' "$j" | jq -r '[.reviews[]? | select(.author.login | test("coderabbit";"i"))] | last | .body // ""')"
-    cr="$(classify_cr "$crstate" "$crbody")"
+    crcommit="$(printf '%s' "$j" | jq -r '[.reviews[]? | select(.author.login | test("coderabbit";"i"))] | last | .commit.oid // ""')"
+    cr="$(classify_cr "$crstate" "$crbody" "$crcommit" "$head")"
     printf '%s%s%s%s%s%s%s' "$st" "$SEP" "$failed" "$SEP" "$ci_pending" "$SEP" "$cr"
 }
 

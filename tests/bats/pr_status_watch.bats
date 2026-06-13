@@ -63,11 +63,18 @@ STUB
     [[ "$output" == *"PR #7 all green + CR clear — awaiting watcher merge"* ]]
 }
 
-@test "--once flags CI-green-but-CodeRabbit-actionable (the blocked-on-review state)" {
-    _stub_gh '{"state":"OPEN","statusCheckRollup":[{"name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS"},{"name":"CodeRabbit","status":"IN_PROGRESS","conclusion":null}],"reviews":[{"author":{"login":"coderabbitai"},"state":"COMMENTED","body":"**Actionable comments posted: 2**"}]}'
+@test "--once flags CI-green-but-CodeRabbit-actionable when the review is on the current head" {
+    _stub_gh '{"state":"OPEN","headRefOid":"HEADSHA","statusCheckRollup":[{"name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS"},{"name":"CodeRabbit","status":"IN_PROGRESS","conclusion":null}],"reviews":[{"author":{"login":"coderabbitai"},"state":"COMMENTED","commit":{"oid":"HEADSHA"},"body":"**Actionable comments posted: 2**"}]}'
     run env PATH="$STUBDIR:$PATH" bash "$SCRIPT" --once 11
     [ "$status" -eq 0 ]
     [[ "$output" == *"PR #11 CI green but CodeRabbit has 2 actionable finding(s) — blocked on review"* ]]
+}
+
+@test "--once SUPPRESSES a stale CR count when the review is on a pre-fix-push commit" {
+    _stub_gh '{"state":"OPEN","headRefOid":"NEWSHA","statusCheckRollup":[{"name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS"},{"name":"CodeRabbit","status":"IN_PROGRESS","conclusion":null}],"reviews":[{"author":{"login":"coderabbitai"},"state":"COMMENTED","commit":{"oid":"OLDSHA"},"body":"**Actionable comments posted: 2**"}]}'
+    run env PATH="$STUBDIR:$PATH" bash "$SCRIPT" --once 13
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"PR #13"* ]]
 }
 
 @test "--once stays silent when CI green but CR review not yet posted" {
