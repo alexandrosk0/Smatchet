@@ -16,7 +16,7 @@ The fix is **centralized in `SmatchetHelpMarker.cpp`** — the ~38 call sites ne
 
 Make the marker a **focusable item that shows its tooltip on focus as well as hover**: render the glyph as a nav-participating item (smallest change: keep the visual but make it focusable — e.g. an invisible/`Selectable`-style hit item, or set the item flags so `ImGuiNavMoveFlags`/tab-focus reaches it), then show the tooltip when **`ImGui::IsItemHovered() || ImGui::IsItemFocused()`**. On focus, render the same tooltip (ImGui tooltips can be driven from focus, not just hover). This restores parity: Tab to the marker → tooltip appears.
 
-Trade-off named: adding ~38 markers to the tab-order increases keyboard-nav stops. Mitigate by making them reachable but low-priority in the nav order (or only focusable when nav is active), so mouse users see no change and keyboard users get a predictable path. Final UX detail (always-in-taborder vs nav-only) is the grill target.
+**Decided (grilled 2026-06-13): nav-only focusable** — markers become reachable only when keyboard-nav is active; the mouse-only tab-order is unchanged, so mouse users see no new tab stops while keyboard users get a predictable path to every help-marker. (Rejected: always-in-tab-order, which would add ~38 stops for everyone.)
 
 ## Files to modify
 

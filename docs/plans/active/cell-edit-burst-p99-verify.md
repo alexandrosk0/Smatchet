@@ -12,6 +12,8 @@ Crucially this **may not be a product bug**: ci-windows-latest is a 2-core share
 
 ## Approach
 
+**Decided (grilled 2026-06-13): PARK behind the CI ceiling now.** No real-GPU box / self-hosted runner is available today, so Phase 1 stays deferred — the CI-only 15.0 ms ceiling holds, and we do NOT optimize what is likely a 2-core-Mesa-software-GL artifact. The durable fix is the self-hosted real-GPU perf runner (Out-of-scope below); this plan stays parked until that exists or a real-HW datapoint arrives. The phases below are the protocol for *when* that datapoint is obtainable.
+
 **Phase 1 — measure on real hardware (the blocking unknown; cannot be done in CI or this agent environment — needs a real GPU box).** Run the `cell-edit-burst` scenario via `scripts/dev/perf-run.sh` on a real-GPU machine (native GL, not Mesa), median-of-3, and read `SmatchetUI::Draw` p99Ms. Compare against the 6.94 ms steady-state target and the 10.0 ms p99 floor. This is a **measurement protocol** the user (or a real-HW runner) executes — the plan documents exactly which command + how to read the result.
 
 **Phase 2 — branch on the datapoint:**
