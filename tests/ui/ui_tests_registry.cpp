@@ -11,6 +11,7 @@
 extern "C" void SmatchetRegisterViewsColumnsReorderTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterJiraDeterministicBackendTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterCallstackTooltipHoverTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterHelpMarkerKeyboardFocusTests(ImGuiTestEngine* engine);
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
 extern "C" void SmatchetRegisterMcpLuaFreshStateRaceTests(ImGuiTestEngine* engine);
 #endif
@@ -45,6 +46,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterViewsColumnsReorderTests(engine);
     SmatchetRegisterJiraDeterministicBackendTests(engine);
     SmatchetRegisterCallstackTooltipHoverTests(engine);
+    SmatchetRegisterHelpMarkerKeyboardFocusTests(engine);
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     SmatchetRegisterMcpLuaFreshStateRaceTests(engine);
 #endif
