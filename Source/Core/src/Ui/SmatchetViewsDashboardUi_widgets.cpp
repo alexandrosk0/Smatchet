@@ -277,8 +277,12 @@ void DrawJqlProjectPill(AppController& app, UiDrawSession& d) {
                                     single ? "Active view is scoped to a single project. Click to switch project."
                                            : "Active view spans multiple projects. Click to pick a single project."));
     }
+    // Pillar 2 (#767): snapshot the cached-project list on the popup open-edge instead of
+    // re-reading disk every frame the popup is open. The popup's live open-state drives the
+    // helper, which refreshes the shared UiDrawSession snapshot only on the closed→open edge.
+    RefreshCachedProjectsSnapshotOnOpen(d, ImGui::IsPopupOpen("##ProjectPillPopup"), d.projectPillPopupWasOpen);
     if (ImGui::BeginPopup("##ProjectPillPopup")) {
-        std::vector<FieldCatalogCache::CachedProjectEntry> cached = FieldCatalogCache::ListCachedProjects();
+        const std::vector<FieldCatalogCache::CachedProjectEntry>& cached = d.cachedProjectsSnapshot;
         int shown = 0;
         for (const auto& e : cached) {
             if (!SmatchetJqlProjectPill::detail::EntryPassesPillFilter(e, backendKind, endpoint)) {
@@ -286,9 +290,8 @@ void DrawJqlProjectPill(AppController& app, UiDrawSession& d) {
             }
             ImGui::PushID(shown);
             if (ImGui::Selectable(e.projectKey.c_str(), e.projectKey == scopeProj)) {
-                const std::string newJql =
-                    isPlane ? PlaneProjectScope::SetProjectInQuery(currentJql, e.projectKey)
-                            : JqlProjectScope::SetProjectClause(currentJql, e.projectKey);
+                const std::string newJql = isPlane ? PlaneProjectScope::SetProjectInQuery(currentJql, e.projectKey)
+                                                   : JqlProjectScope::SetProjectClause(currentJql, e.projectKey);
                 CopyStringToBuffer(d.viewJqlBuf, newJql);
                 d.viewsDirty = true;
                 ImGui::CloseCurrentPopup();
