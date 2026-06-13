@@ -84,14 +84,14 @@ PY
 # parity_check_one "<name>" — resolve + assert. Echoes a status line; returns
 # 0 OK / 1 violation / 2 infra error.
 parity_check_one() {
-    local name="$1" rec status wf job paths self templated rc
+    local name="$1" rec status wf job pr paths self templated rc
     rec="$(ci_resolve_check "$name")"; rc=$?
     if [ "$rc" -eq 2 ]; then
         echo "  INFRA  '$name' — resolver infra error" >&2
         return 2
     fi
-    # rec is TAB-separated: status wf job has_pr_paths_filter self_gated templated
-    IFS=$'\t' read -r status wf job paths self templated <<EOF
+    # rec is TAB-separated: status wf job pr_triggered has_pr_paths_filter self_gated templated
+    IFS=$'\t' read -r status wf job pr paths self templated <<EOF
 $rec
 EOF
     if [ "$status" != "RESOLVED" ]; then
@@ -99,6 +99,15 @@ EOF
         echo "         A required context that no workflow emits can never report -> the PR" >&2
         echo "         deadlocks BLOCKED forever. Fix the name in project.config.json §" >&2
         echo "         branch_protection.required_contexts, or rename/restore the emitting job." >&2
+        return 1
+    fi
+    # A required context emitted by a workflow that does NOT run on pull_request
+    # can never report on a PR -> the same BLOCKED-forever deadlock. Fail-closed.
+    if [ "$pr" != "true" ]; then
+        echo "  FAIL   '$name' — emitted by $wf job '$job' whose workflow does not run on" >&2
+        echo "         pull_request. A required context not produced on PRs holds every PR" >&2
+        echo "         BLOCKED forever (#880/#881/#882 class). Add 'pull_request:' to the" >&2
+        echo "         emitting workflow's on: triggers (branches: [develop])." >&2
         return 1
     fi
     if [ "$paths" = "true" ] && [ "$self" != "true" ]; then
@@ -178,6 +187,20 @@ jobs:
     steps:
       - run: true
 YML
+    # Not PR-triggered: runs only on push — a required context here can never
+    # report on a PR, so it MUST fail (the new pr_triggered teeth).
+    cat > "$tmp/wf/nopr.yml" <<'YML'
+name: NoPR
+on:
+  push:
+    branches: [develop]
+jobs:
+  nopr-job:
+    name: NoPR Context
+    runs-on: ubuntu-latest
+    steps:
+      - run: true
+YML
     # Self-gated path-filtered: the marker makes it parity-OK despite the filter.
     cat > "$tmp/wf/selfgated.yml" <<'YML'
 name: SelfGated
@@ -207,6 +230,11 @@ YML
         echo "SELFTEST FAIL: unresolvable required context was NOT flagged" >&2
         rc=1
     fi
+    # A required context whose workflow is NOT pr-triggered MUST be caught.
+    if parity_check_one "NoPR Context" >/dev/null 2>&1; then
+        echo "SELFTEST FAIL: non-pr-triggered required context was NOT flagged" >&2
+        rc=1
+    fi
     # A clean context MUST pass.
     if ! parity_check_one "Clean Context" >/dev/null 2>&1; then
         echo "SELFTEST FAIL: clean unconditional context was wrongly flagged" >&2
@@ -220,7 +248,7 @@ YML
 
     unset CI_WORKFLOWS_DIR
     if [ "$rc" -eq 0 ]; then
-        echo "test-required-context-parity --selftest: PASS (fire on path-filtered + unresolvable; clean on unconditional + self-gated)"
+        echo "test-required-context-parity --selftest: PASS (fire on path-filtered + unresolvable + non-pr-triggered; clean on unconditional + self-gated)"
     fi
     return "$rc"
 }

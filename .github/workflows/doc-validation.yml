@@ -246,6 +246,18 @@ jobs:
             echo "docs=false" >> "$GITHUB_OUTPUT"
             echo "no doc-relevant changes — doc validation no-ops (required check reported green)."
           fi
+          # Separate signal for ANY workflow-file edit. The required-context
+          # parity gate guards against a path-filter / non-pr-triggered deadlock
+          # introduced by a workflow change — exactly the workflow-only PR that
+          # the docs detector above excludes (generic .github/workflows/*.yml is
+          # NOT doc-relevant). Gating the parity step on docs alone would self-
+          # gate it out of the very case it exists to catch (CR #1180).
+          if printf '%s\n' "$changed" | grep -qE '^\.github/workflows/.*\.ya?ml$'; then
+            echo "workflows=true" >> "$GITHUB_OUTPUT"
+            echo "workflow-file changes detected — required-context parity gate will run."
+          else
+            echo "workflows=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: test-doc-anchors — every AGENTS.md § <section> resolves
         if: steps.detect.outputs.docs == 'true'
@@ -302,7 +314,7 @@ jobs:
           bash agents/scripts/core/test-config-globs.sh --check
 
       - name: test-required-context-parity — every required context emits unconditionally
-        if: steps.detect.outputs.docs == 'true'
+        if: steps.detect.outputs.docs == 'true' || steps.detect.outputs.workflows == 'true'
         run: |
           python -m pip install --quiet pyyaml
           bash agents/scripts/core/test-required-context-parity.sh --selftest

@@ -522,6 +522,16 @@ jobs:
           fi
           status="$(sed -n 's/^status=\([a-z]*\).*/\1/p' "$SMATCHET_LANE_STATUS_FILE")"
           echo "bucket-C lane-status: $(cat "$SMATCHET_LANE_STATUS_FILE")"
+          # Fail-closed: only an explicit ok|fail|broken is a valid sentinel.
+          # Unknown/empty status means a corrupt or partial sentinel write
+          # (itself a dead-harness symptom) — treat it as a broken lane, not OK.
+          case "$status" in
+            ok|fail|broken) ;;
+            *)
+              echo "::error::lane-integrity — bucket-C wrote an invalid/empty status sentinel: '$status'. Fail-closed." >&2
+              exit 1
+              ;;
+          esac
           if [ "$status" = "broken" ]; then
             echo "::error::lane-integrity — bucket-C is BROKEN (Passed:0 Failed>0). Every scenario failed: dead harness, not a regression." >&2
             exit 1
@@ -667,11 +677,22 @@ jobs:
           # exit code itself is unreliable (a zero-pass run can still return 0),
           # so the broken-lane signal comes from the counts, written to the
           # sentinel the non-advisory lane-integrity step asserts on.
-          passed="$(printf '%s' "$out" | python -c "import sys,json,re; t=sys.stdin.read(); m=re.search(r'\{.*\}',t,re.S); d=json.loads(m.group(0)) if m else {}; print(d.get('data',{}).get('passed',0))" 2>/dev/null || echo 0)"
-          failed="$(printf '%s' "$out" | python -c "import sys,json,re; t=sys.stdin.read(); m=re.search(r'\{.*\}',t,re.S); d=json.loads(m.group(0)) if m else {}; print(d.get('data',{}).get('failed',0))" 2>/dev/null || echo 0)"
-          status=ok
-          if [ "$passed" = "0" ] && [ "$failed" != "0" ]; then status=broken
-          elif [ "$failed" != "0" ]; then status=fail; fi
+          # Parse passed+failed together; a JSON-envelope MISS (no '{...}' in the
+          # output, or absent data.passed/data.failed) exits non-zero so we can
+          # tell a real "0 0" run apart from a parse miss. Defaulting to 0 here
+          # would let malformed driver output sail past the broken-lane guard
+          # (Passed==0 && Failed>0 never fires when both are 0-from-parse-miss).
+          parsed="$(printf '%s' "$out" | python -c "import sys,json,re; t=sys.stdin.read(); m=re.search(r'\{.*\}',t,re.S); d=(json.loads(m.group(0)).get('data',{}) if m else {}); sys.exit(2) if ('passed' not in d or 'failed' not in d) else print(d['passed'], d['failed'])" 2>/dev/null || true)"
+          if [ -z "$parsed" ]; then
+            # Parse miss / malformed output / absent results — fail-closed.
+            status=broken; passed=0; failed=1
+          else
+            # parsed is "<passed> <failed>" (single line); split on the space.
+            passed="${parsed%% *}"; failed="${parsed##* }"
+            status=ok
+            if [ "$passed" = "0" ] && [ "$failed" != "0" ]; then status=broken
+            elif [ "$failed" != "0" ]; then status=fail; fi
+          fi
           printf 'status=%s passed=%s failed=%s\n' "$status" "$passed" "$failed" > "$SMATCHET_LANE_STATUS_FILE"
           echo "bucket-E lane-status: $(cat "$SMATCHET_LANE_STATUS_FILE")"
           # Stay advisory for the run itself (continue-on-error); the lane-
@@ -693,6 +714,16 @@ jobs:
           fi
           status="$(sed -n 's/^status=\([a-z]*\).*/\1/p' "$SMATCHET_LANE_STATUS_FILE")"
           echo "bucket-E lane-status: $(cat "$SMATCHET_LANE_STATUS_FILE")"
+          # Fail-closed: only an explicit ok|fail|broken is a valid sentinel.
+          # Unknown/empty status means a corrupt or partial sentinel write
+          # (itself a dead-harness symptom) — treat it as a broken lane, not OK.
+          case "$status" in
+            ok|fail|broken) ;;
+            *)
+              echo "::error::lane-integrity — bucket-E wrote an invalid/empty status sentinel: '$status'. Fail-closed." >&2
+              exit 1
+              ;;
+          esac
           if [ "$status" = "broken" ]; then
             echo "::error::lane-integrity — bucket-E is BROKEN (Passed:0 Failed>0). Every UI test failed: dead harness, not a regression." >&2
             exit 1

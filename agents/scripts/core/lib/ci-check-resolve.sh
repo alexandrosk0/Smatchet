@@ -37,7 +37,7 @@
 # API (source this file, then call):
 #   ci_resolve_check "<check name>"
 #       Emits one TAB-separated record to stdout and returns 0 on resolve:
-#         <status>\t<workflow_file>\t<job_id>\t<has_pr_paths_filter>\t<self_gated>\t<templated>
+#         <status>\t<workflow_file>\t<job_id>\t<pr_triggered>\t<has_pr_paths_filter>\t<self_gated>\t<templated>
 #       <status> is RESOLVED or UNRESOLVABLE. On UNRESOLVABLE the remaining
 #       fields are "-" and the return code is 1 (fail-closed: an unresolvable
 #       required context is itself the deadlock risk).
@@ -169,12 +169,13 @@ for path in sorted(glob.glob(os.path.join(wf_dir, "*.yml")) +
 
 def emit(status, rec, templated):
     if rec is None:
-        sys.stdout.write("UNRESOLVABLE\t-\t-\t-\t-\t-\n")
+        sys.stdout.write("UNRESOLVABLE\t-\t-\t-\t-\t-\t-\n")
         return
-    sys.stdout.write("%s\t%s\t%s\t%s\t%s\t%s\n" % (
+    sys.stdout.write("%s\t%s\t%s\t%s\t%s\t%s\t%s\n" % (
         status,
         rec["workflow_file"],
         rec["job_id"],
+        "true" if rec["pr_triggered"] else "false",
         "true" if rec["has_pr_paths_filter"] else "false",
         "true" if rec["self_gated"] else "false",
         "true" if templated else "false",

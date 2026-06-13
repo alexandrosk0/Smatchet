@@ -18,6 +18,15 @@ setup() {
     export REPO_ROOT
     export GATE="$REPO_ROOT/agents/scripts/core/test-required-context-parity.sh"
     export FIXTURES_DIR="$REPO_ROOT/tests/fixtures"
+    # The resolver's embedded Python hard-requires PyYAML (file header line 13).
+    # Without it ci_resolve_check exits 2 (infra error), which would mis-fire the
+    # status assertions below (they expect 0/1). Skip cleanly when no interpreter
+    # on PATH can `import yaml`, rather than silently mis-passing.
+    if ! python3 -c "import yaml" >/dev/null 2>&1 \
+        && ! python -c "import yaml" >/dev/null 2>&1 \
+        && ! py -c "import yaml" >/dev/null 2>&1; then
+        skip "PyYAML not installed on any python interpreter (pip install pyyaml)"
+    fi
     # A scratch workflows dir the resolver points at via CI_WORKFLOWS_DIR.
     WF_DIR="$(mktemp -d)"
     export WF_DIR
@@ -25,7 +34,7 @@ setup() {
 }
 
 teardown() {
-    rm -rf "$WF_DIR"
+    [ -n "${WF_DIR:-}" ] && rm -rf "$WF_DIR"
 }
 
 # Run the gate's --check against the synthetic config + workflow fixtures.
@@ -64,6 +73,12 @@ run_gate_check() {
     [[ "$output" == *"self-gated"* ]]
 }
 
+@test "non-pr-triggered: a required context whose workflow runs only on push FAILS" {
+    run run_gate_check ci_parity_config_nopr.json
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"does not run on"* ]]
+}
+
 @test "templated: a matrix-leg required context resolves by literal prefix" {
     run run_gate_check ci_parity_config_templated.json
     [ "$status" -eq 0 ]
@@ -80,8 +95,9 @@ run_gate_check() {
 @test "resolver: ci_resolve_check resolves a clean job and reports no paths filter" {
     run bash -c "source '$REPO_ROOT/agents/scripts/core/lib/ci-check-resolve.sh'; CI_WORKFLOWS_DIR='$WF_DIR' ci_resolve_check 'Clean Context'"
     [ "$status" -eq 0 ]
-    # status \t wf \t job \t has_pr_paths_filter \t self_gated \t templated
-    [[ "$output" == "RESOLVED"*"false"* ]]
+    # status \t wf \t job \t pr_triggered \t has_pr_paths_filter \t self_gated \t templated
+    # A clean fixture is pr_triggered=true with has_pr_paths_filter=false.
+    [[ "$output" == "RESOLVED"*$'\t'"true"*$'\t'"false"* ]]
 }
 
 @test "resolver: ci_resolve_check fail-closes (rc1) on an unknown name" {
