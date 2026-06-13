@@ -94,9 +94,8 @@ WS-B (one site per row; each its own commit, batchable):
 
 ## Out of scope (flagged, not designed)
 
-**Deferral residue-sweep (keep this note)** — before finalising, grep `**/CONTEXT*.md`, `docs/adr/`, `agents/*.md`, `docs/self-improvement/categories/` for stray refs to anything deferred here.
+**Deferral residue-sweep (performed 2026-06-13; re-run before merge if the plan changes)** — grepped `**/CONTEXT*.md`, `docs/adr/`, `agents/*.md`, `docs/self-improvement/categories/` for stray refs to anything deferred here. The only stray was an in-doc one: a stale "cooperative cancellation deferred" line that survived the grill pivot — now removed, since cooperative cancellation is **in WS-A scope** (Approach + Resolved decision #1). No external stray refs.
 
-- Cooperative worker cancellation (stop-token) — follow-up if shutdown latency must improve.
 - A general Pillar-2 static-scanner expansion to catch future-destructor blocks (not just sync I/O) — possible tooling follow-up.
 
 ## Implementation log
