@@ -27,6 +27,70 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-13 · Issue #863 · config-skew sanitizer-nightly break (`-Werror,-Wunused-function`) reached `develop`
+
+> Filed retroactively (the product fix already landed in `61b17427` / PR #945). The
+> escaped class — not the specific symbol — is what this gate closes. GitHub Issue #863
+> ("Sanitizer nightly failed (ASan+UBSan)"); CI runs `26997373785` / `27053572861` /
+> `27083859902` (2026-06-05 → 06-07, three consecutive red nights); green again
+> `27118115403` (06-08) onward.
+
+### What escaped
+The **PR-time CI gate** (the 5 required Windows MSVC checks). A regression that made
+`Source/Core/src/AppController.cpp` fail to **compile** in the Lua-OFF config
+(`-Werror,-Wunused-function` on the free function `LogLuaScriptFileProbe`) sailed through
+every PR check green and was only caught post-merge by the **nightly Clang ASan+UBSan**
+job — which builds the Lua-OFF config the PR jobs never compile. The sanitizer gate did
+its job (it red-flagged the break) but **too late** (post-merge, on `develop`, for three
+nights). Note also: the nightly auto-Issue (#863) mislabelled a **compile** failure as a
+"runtime AddressSanitizer / UBSan report" — the binary never linked.
+
+### Root cause (blameless)
+`LogLuaScriptFileProbe(const char*, const std::string&)` had its **two call sites**
+wrapped in `#if defined(SMATCHET_WITH_LUA_AUTOMATION)` but its **definition** left
+unguarded at file scope. With Lua OFF the definition has zero callers; Clang at `/WX`
+promotes `-Wunused-function` to a hard error and the TU never compiles. **Config skew**:
+PR-time CI compiles only Lua-ON / MSVC configs, and MSVC `/W4` does not warn on an unused
+internal-linkage free function the way Clang `-Wall` does — so no PR-gated job ever
+exercised the Lua-OFF `-Werror` path that breaks. The asymmetry (def unguarded, refs
+guarded) is invisible to every gate that ran pre-merge.
+
+### Preventing gate
+**New PR-time lint `unused-symbol-under-config-guard`** in
+`agents/scripts/project/test-lint-rules.sh` (contract-card row in `AGENTS.md` §
+Enforcement contract-card). It flags a column-0 free-function **definition** that sits
+unguarded while **every** in-file reference is inside the TRUE branch of a **positive**
+`#if defined(SMATCHET_WITH_*)` guard — exactly the dead-in-the-feature-OFF-build shape
+that trips `-Werror,-Wunused-function`. A pure-bash preprocessor-depth heuristic (no
+compiler / AST), modelled on the existing `cmake-local-gate-ci-scope` /
+`no-glfw-in-core-headers` lints. `--selftest` + `tests/bats/lint_rules.bats` replay the
+`61b17427~1` pre-fix shape (detected on line 293) and the #945 fixed shape (clean); a
+regression-replay against the pre-fix `AppController.cpp` confirms it would have flagged
+#863.
+
+**Shipped WARN-first (advisory; calibration phase, same path as the DRY `duplication`
+gate), scoped to the files CHANGED in the diff — NOT absolute-0.** This is a deliberate,
+documented down-scope from the plan's preferred absolute-0: a clean-tree scan during
+implementation surfaced benign idioms the per-file text proxy cannot statically separate
+from the #863 shape — an out-of-line member def (`Type::method`, excluded via the `::`
+discriminator), a real impl in the `#else` of a `#if !defined(SMATCHET_WITH_*)` (excluded
+via the positive-guard discriminator), and a helper called only in a `SMATCHET_WITH_MCP`
+path inside a TU that is itself MCP-gated (`CliCommandRunner.cpp` — irreducible from text;
+3 residual advisory hits). Shipping absolute-0 over those would have **red-walled
+develop** — the exact failure the plan's § Verification flagged as CRITICAL ("do NOT ship
+a false-positive-prone gate"). WARN-first surfaces the #863 shape at PR time (the signal
+the gate exists for) without that risk; the nightly Lua-OFF sanitizer build stays the
+authoritative backstop, and the rule graduates to blocking once the FP rate is calibrated
+low. A full `SMATCHET_WITH_*` permutation compile matrix was rejected as too costly for
+prerelease (revisit if a second config-skew escape lands). `// SMATCHET_DEVIATION(rule=
+unused-symbol-under-config-guard; …)` above the def suppresses.
+
+### Filed as
+[`docs/self-improvement/categories/infra.md`](categories/infra.md) — "`unused-symbol-under-config-guard`
+PR-time lint (config-skew `-Werror` escape, #863)". Plus a separate one-line `infra.md`
+backlog entry for the nightly auto-Issue mislabelling compile failures as runtime
+sanitizer findings (not implemented this PR).
+
 ## 2026-06-11 · PR #1130 · merged past a RED "Coverage" check (non-poller merge path — #923 recurrence)
 
 > Surfaced by the improved `postmortem-owed.sh` (this session's
