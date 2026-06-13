@@ -335,8 +335,10 @@ void HandleIsClause(const std::string& op, const std::string& value, std::string
             result.IncludePullRequests = true;
         }
     } else {
-        AppendWarning(result.Warning, std::string("Unknown 'is:' qualifier '") + value +
-                                          "' — ignored (use 'pr', 'issue', 'open', or 'closed')");
+        AppendWarning(result.Warning,
+                      std::string("Unknown 'is:' qualifier '") + value +
+                          "' — ignored (use 'pr', 'issue', 'open', 'closed', 'merged', 'unmerged', 'draft', "
+                          "'public', or 'private')");
     }
 }
 

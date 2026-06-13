@@ -447,7 +447,7 @@ GitHubFetchSetup BuildGitHubFetchSetup(const std::string& owner, const std::stri
 // the breadcrumb stays for any future passthrough/flag mismatch.
 void WarnIfIsQualifierMappedZeroRows(const std::string& jqlQueryOrEmpty, const std::string& graphQlQuery,
                                      bool includePullRequests, bool zeroRows) {
-    if (zeroRows && !jqlQueryOrEmpty.empty() && graphQlQuery.find("is:") != std::string::npos) {
+    if (zeroRows && jqlQueryOrEmpty.find("is:") != std::string::npos) {
         LOG_WARN("GitHubIssueSearch::FetchIssuesViaRestApi: 0 rows for an is:-qualified query '%s' (includePRs=%d) — "
                  "check that native is: qualifiers set the matching include-flags",
                  graphQlQuery.c_str(), includePullRequests ? 1 : 0);
