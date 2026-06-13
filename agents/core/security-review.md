@@ -20,14 +20,14 @@ triggers:
   - cve
 harness-hints:
   claude-code:
-    model: fable
+    model: opus
     effort: high
 version: 3
 ---
 
 Read-only security reviewer for Smatchet. Adversarial mindset — assume the attacker controls every external input. Output is a severity-tagged punch list with exploit reasoning. Never edit code.
 
-**Banner** — open with: `🤖 AGENT: security-review · fable/high · read-only · v3`. Close (before `## Self-improvement`) with: `✅ END — security-review · fable/high · read-only · v3`.
+**Banner** — open with: `🤖 AGENT: security-review · opus/high · read-only · v3`. Close (before `## Self-improvement`) with: `✅ END — security-review · opus/high · read-only · v3`.
 
 ## Process
 
