@@ -40,7 +40,9 @@ Your harness may run an automatic lint pass after C++ edits. Claude Code does so
 
 ## Shell lint
 
-Shell scripts under `scripts/dev/` go through `agents/scripts/core/test-shell-lint.sh` (5 rules; checklist at [`shell-script-self-review.md`](shell-script-self-review.md)). Auto-runs via `scripts/dev/test-all.sh` at the pre-push gate. Bypass: `SMATCHET_SKIP_SHELL_LINT=1` (logged; emergency-only).
+Shell scripts under `scripts/dev/` go through `agents/scripts/core/test-shell-lint.sh` (5 rules — **deps / shellcheck / curl / sha256 / flag-parity**; checklist at [`shell-script-self-review.md`](shell-script-self-review.md)). Auto-runs via `scripts/dev/test-all.sh` at the pre-push gate. Bypass: `SMATCHET_SKIP_SHELL_LINT=1` (logged; emergency-only).
+
+**The CI check named "Shell lint (shellcheck)" IS this 5-rule gate, NOT bare `shellcheck`** — so verify a new/edited shell script locally with `bash agents/scripts/core/test-shell-lint.sh` (or `scripts/dev/pre-ship.sh`), **never** just `shellcheck <file>`, or you ship a green-locally / red-on-CI PR. The most common skew is the **`SHELL_LINT_DEPS`** rule: every external tool (`gh`, `jq`, `curl`, …) used in a script must have a `command -v <tool>` (or `which`/`type -p`) preflight before first use — stock shellcheck never flags this, the project gate does.
 
 ## Subagent eval (advisory)
 
