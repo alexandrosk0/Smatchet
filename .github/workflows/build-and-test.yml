@@ -583,6 +583,163 @@ jobs:
           path: build/ninja-ui-test-msvc/Smatchet.exe
           if-no-files-found: ignore
 
+  mobile-texture-guard-smoke:
+    name: Mobile texture-guard smoke (Mesa headless GL)
+    # Issue #1133 — advisory headless gate for the #1122 dynamic-texture crash class.
+    # Builds the standalone exe with SMATCHET_ENABLE_TEXTURE_FAULT_INJECTION=ON (via the
+    # ninja-ui-test-msvc preset) and drives the `mobile-texture-guard` scenario under
+    # Mesa software GL: it forces the three #1122 fault states (atlas-grow orphan,
+    # EGL-context-loss re-arm, rearm-disabled negative control) and asserts no SIGABRT +
+    # a rendered frame after each + the shared GuardImGuiDynamicTextures recovery log.
+    # Advisory (continue-on-error) because it is a new exe-running Mesa-software-GL lane
+    # (same risk class as bucket-C/E), BUT it carries a NON-advisory launch-smoke first so
+    # it can never green-wash a dead harness (the bucket-lane-launch-smoke discipline).
+    #
+    # SEQUENCING NOTE (#1133): this lane is only honest once the in-flight CI gate-hardening
+    # PR's `bucket-lane-launch-smoke` lands (non-continue-on-error launch step + the driver's
+    # `Passed==0 && Failed>0` hard-exit). The launch-smoke step below is the SAME mechanism;
+    # the two compose once both merge. We do NOT block on it — ship; it composes on merge.
+    needs: windows-msvc
+    runs-on: windows-2022
+    timeout-minutes: 30
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Setup sccache (object cache)
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Cache sccache objects (texture-guard)
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}\.sccache
+          key: ${{ runner.os }}-sccache-ui-test-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-sccache-ui-test-
+
+      - name: Cache FetchContent _deps (ui-test preset)
+        uses: actions/cache@v4
+        with:
+          path: .fetchcontent-src
+          key: ${{ runner.os }}-fetchcontent-ui-test-msvc-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Configure ninja-ui-test-msvc (texture-fault-injection ON)
+        run: cmake --preset ninja-ui-test-msvc
+
+      - name: Build SmatchetStandalone (texture-fault-injection on)
+        run: cmake --build --preset ninja-ui-test-msvc --target SmatchetStandalone
+
+      - name: Report sccache stats
+        if: always()
+        run: sccache --show-stats
+
+      # Cache the extracted Mesa software-GL DLLs — same key + block as bucket-C/E so
+      # all three jobs share one cached DLL set across the repo. (Shared snippet: if it
+      # drifts here vs bucket-C/E, extract to a composite action — tracked in test.md.)
+      - name: Cache Mesa software-GL DLLs
+        uses: actions/cache@v4
+        # A transient cache-service error must NOT red this job (continue-on-error);
+        # the install step below re-downloads on a miss. Same rationale as bucket-C/E.
+        continue-on-error: true
+        with:
+          path: mesa-cache
+          key: mesa-dlls-24.2.5-v2
+
+      - name: Install Mesa software OpenGL ICD (opengl32sw.dll)
+        shell: bash
+        env:
+          MESA_VERSION: "24.2.5"
+        run: |
+          set -euo pipefail
+          # Mesa >= 22 splits the GL driver: opengl32.dll is only a thin loader that
+          # hard-requires libgallium_wgl.dll (the actual ~53 MB driver) + libglapi.dll
+          # beside it. Copying opengl32.dll alone makes EVERY exe in the target dir die
+          # at process start (STATUS_DLL_NOT_FOUND, silent). See bucket-C/E for the
+          # full incident lineage (perf-gate-revival step-3, 2026-06-06).
+          need_fetch=0
+          for d in opengl32.dll libgallium_wgl.dll libglapi.dll; do
+            if [ ! -f "mesa-cache/$d" ]; then need_fetch=1; fi
+          done
+          if [ "$need_fetch" = "1" ]; then
+            mkdir -p mesa-tmp mesa-cache
+            cd mesa-tmp
+            curl -fL -o mesa.7z "https://github.com/pal1000/mesa-dist-win/releases/download/${MESA_VERSION}/mesa3d-${MESA_VERSION}-release-msvc.7z"
+            7z x mesa.7z -o./extracted >/dev/null 2>&1 || true
+            for d in opengl32.dll libgallium_wgl.dll libglapi.dll; do
+              if [ -f "extracted/x64/$d" ]; then cp "extracted/x64/$d" "../mesa-cache/$d"; fi
+            done
+            cd ..
+            rm -rf mesa-tmp
+          fi
+          # Strict copy — a missing DLL here must fail LOUDLY, not reproduce the
+          # silent-loader-death class this block exists to prevent.
+          for d in opengl32.dll libgallium_wgl.dll libglapi.dll; do
+            cp "mesa-cache/$d" "build/ninja-ui-test-msvc/$d"
+          done
+
+      # NON-advisory launch-smoke: prove the freshly built Mesa-GL exe can actually
+      # start and serve a command before trusting the advisory scenario below. Without
+      # this, a silently-dead harness (broken Mesa DLLs, exe crash-at-launch) would make
+      # the continue-on-error scenario step pass vacuously — the 2-week false-green class.
+      # NO continue-on-error: a launch failure here REDS the job.
+      - name: Launch-smoke (exe starts + serves app.version <=10s)
+        shell: bash
+        timeout-minutes: 2
+        env:
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        working-directory: build/ninja-ui-test-msvc
+        run: |
+          set -euo pipefail
+          ./Smatchet.exe cmd app.version --spawn --yes
+
+      - name: Run mobile-texture-guard scenario (advisory)
+        id: run-texture-guard
+        continue-on-error: true
+        shell: bash
+        timeout-minutes: 5
+        env:
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        working-directory: build/ninja-ui-test-msvc
+        run: |
+          set -euo pipefail
+          # --spawn launches a hidden ephemeral instance, runs the scenario in its live
+          # render loop, waits for the result JSON, quits the child, and emits the result
+          # envelope to stdout. (The bare in-process form does NOT auto-terminate.) A SIGABRT
+          # in the forced-fault render path kills the child -> --spawn times out -> nonzero.
+          out="$(./Smatchet.exe scenario.run --name=mobile-texture-guard --frames=8 --spawn --yes 2>&1)"
+          echo "$out"
+          # Honest pass/fail: the scenario's OnFinish JSON carries passed/failed/ok. A dead
+          # harness (no faults logged) reports passed:0 -> hard-fail (the bucket-lane guard).
+          # `python` parses the envelope's data.ok; the launch-smoke above already proved the
+          # exe starts, so a parse failure here is a real scenario regression, not a dead exe.
+          echo "$out" | python -c "import sys,json,re
+raw=sys.stdin.read()
+m=re.search(r'\{.*\}', raw, re.S)
+assert m, 'no JSON envelope in scenario output'
+env=json.loads(m.group(0))
+data=env.get('data', env)
+passed=data.get('passed', 0); failed=data.get('failed', 0); ok=data.get('ok', False)
+print('[texture-guard] passed=%s failed=%s ok=%s' % (passed, failed, ok))
+assert not (passed == 0 and failed > 0), 'dead-harness: passed==0 && failed>0'
+assert ok, 'mobile-texture-guard scenario did not pass all 3 forced-fault sub-steps'"
+
+      - name: Upload texture-guard exe on failure
+        if: ${{ steps.run-texture-guard.outcome == 'failure' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-texture-guard-exe-${{ github.run_id }}
+          path: build/ninja-ui-test-msvc/Smatchet.exe
+          if-no-files-found: ignore
+
   sanitizer-asan:
     name: Sanitizer (ASAN via MSVC)
     # Core-delta gate (docs/plans/ci-build-time-reduction.md Q5): run

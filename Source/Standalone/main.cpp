@@ -107,6 +107,7 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 #include "Commands/Scenarios/IScenario.h"
 #include "PluginHost.h"
 #include "SmatchetUI.h"
+#include "Ui/SmatchetImGuiTextureGuardRuntime.h"
 
 #ifndef GL_SHADING_LANGUAGE_VERSION
 #define GL_SHADING_LANGUAGE_VERSION 0x8B8C
@@ -791,7 +792,9 @@ static bool RenderOneFrame(GLFWwindow* window, SmatchetUI& mainWindow, AppContro
     glClearColor(bg.x * bg.w, bg.y * bg.w, bg.z * bg.w, bg.w);
     glClear(GL_COLOR_BUFFER_BIT);
     (void)clear_color;
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    ImDrawData* drawData = ImGui::GetDrawData();
+    smatchet::ui::GuardImGuiDynamicTextures(drawData); // [P0 #1122] shared dynamic-texture guard
+    ImGui_ImplOpenGL3_RenderDrawData(drawData);
 
     glfwSwapBuffers(window);
 
