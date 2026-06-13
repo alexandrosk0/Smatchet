@@ -173,6 +173,12 @@ set_fixture() {
     run poll_merge_gates org repo 1
     [ "$status" -eq 0 ]
     [[ "$output" == *"GATES_PASSED"* ]]
+    # Clean (no-override) pass: GATE_SNAPSHOT carries nothing to bypass, so the
+    # merge actor writes redChecks=[] and postmortem-owed never double-flags a
+    # clean merge (mandatory-merge-snapshot-on-override-merge).
+    [[ "$output" == *"GATE_SNAPSHOT cr_override=0 downgraded="* ]]
+    # No CI check name and no cr_override=1 leaked into the line.
+    [[ "$output" != *"GATE_SNAPSHOT cr_override=1"* ]]
 }
 
 @test "CI conclusion FAILURE → return 1" {
@@ -781,6 +787,9 @@ set_fixture() {
     [[ "$output" == *"GATES_PASSED"* ]]
     [[ "$output" == *"1 warn-downgraded"* ]]
     [[ "$output" == *"tests-out-of-band"* || "$output" == *"WARN: out-of-band"* ]]
+    # GATE_SNAPSHOT names the bypassed CI check so the merge actor records it in
+    # the snapshot ledger (mandatory-merge-snapshot-on-override-merge).
+    [[ "$output" == *"GATE_SNAPSHOT cr_override=0 downgraded=Test-delta gate"* ]]
 }
 
 @test "perf-out-of-band label downgrades Perf PR-fast FAILURE → WARN, gates pass" {
@@ -789,6 +798,8 @@ set_fixture() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"GATES_PASSED"* ]]
     [[ "$output" == *"1 warn-downgraded"* ]]
+    # GATE_SNAPSHOT names the bypassed Perf check (cr_override=0, no CR waiver).
+    [[ "$output" == *"GATE_SNAPSHOT cr_override=0 downgraded=Perf PR-fast"* ]]
 }
 
 @test "out-of-band label does NOT silence unrelated failing checks" {
@@ -839,6 +850,10 @@ set_fixture() {
     [[ "$output" == *"GATES_PASSED"* ]]
     [[ "$output" == *"cr-out-of-band label downgraded CR block"* ]]
     [[ "$output" == *"CHANGES_REQUESTED"* ]]
+    # GATE_SNAPSHOT marks the CR gate as load-bearingly bypassed (cr_override=1)
+    # so the merge actor records "CodeRabbit" in the snapshot's redChecks
+    # (mandatory-merge-snapshot-on-override-merge). No CI check downgraded here.
+    [[ "$output" == *"GATE_SNAPSHOT cr_override=1 downgraded="* ]]
     rm -f "$f"
 }
 
