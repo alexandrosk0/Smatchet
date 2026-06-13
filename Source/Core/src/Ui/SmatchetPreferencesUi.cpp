@@ -139,6 +139,9 @@ std::vector<std::string> ParseCsv(const std::string& csv) {
 void SmatchetUI::resetPreferencesWindowState(UiDrawSession& d) {
     d.preferencesBuffersLoaded = false;
     d.mcpPrefsSavedHintUntil = {};
+    // Pillar 2 (#892): drop the Tracker-tab open-edge latch so reopening the window re-snapshots
+    // the cached-project list once (instead of re-reading disk every frame the tab is visible).
+    d.prefsTrackerTabWasOpen = false;
     preferencesState_.templateFlags = SmatchetPreferencesUiTemplateFlags{};
 #if defined(SMATCHET_WITH_AI)
     // Cancel any in-flight Assistant Preferences probe so its posted callback
@@ -353,7 +356,9 @@ void DrawTrackerRecentProjects(UiDrawSession& d, int currentItem) {
         backendKind = "Jira";
         endpoint = std::string(d.domainBuf);
     }
-    std::vector<FieldCatalogCache::CachedProjectEntry> cached = FieldCatalogCache::ListCachedProjects();
+    // Pillar 2 (#892): read the open-edge snapshot (refreshed in drawPreferencesTrackerTab)
+    // instead of re-reading disk every frame. Copy so the per-backend filter below is local.
+    std::vector<FieldCatalogCache::CachedProjectEntry> cached = d.cachedProjectsSnapshot;
     // Filter to current backend + endpoint.
     cached.erase(std::remove_if(cached.begin(), cached.end(),
                                 [&](const FieldCatalogCache::CachedProjectEntry& e) {
@@ -447,6 +452,9 @@ void SmatchetUI::drawPreferencesTrackerTab(UiDrawSession& d) {
         return;
     }
     d.preferencesActiveTab = PreferencesActiveTab::Tracker;
+    // Pillar 2 (#892): snapshot ListCachedProjects() on the tab open-edge; the latch is reset
+    // in resetPreferencesWindowState when the window closes, so reopening re-snapshots once.
+    RefreshCachedProjectsSnapshotOnOpen(d, /*isOpenNow=*/true, d.prefsTrackerTabWasOpen);
     const int currentItem = DrawTrackerBackendSelection(d);
     DrawTrackerBackendConfig(d, currentItem);
     DrawTrackerRecentProjects(d, currentItem);

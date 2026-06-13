@@ -51,7 +51,7 @@ void DrawGridSubTab(UiDrawSession& d) {
     }
 }
 
-void DrawTimeEstimatesSubTab(SmatchetPreferencesUiTemplateFlags& flags) {
+void DrawTimeEstimatesSubTab(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
     if (ImGui::BeginTabItem("Time Estimates")) {
         ImGui::TextUnformatted("Duration Suggestions");
         ImGui::Separator();
@@ -63,9 +63,14 @@ void DrawTimeEstimatesSubTab(SmatchetPreferencesUiTemplateFlags& flags) {
                                    "Original Estimate, Remaining Estimate, and Time Spent fields.");
         ImGui::Spacing();
 
+        // Pillar 2 (#732): seed the working list from live cfg (no disk read) and persist each edit
+        // via MarkPrefsDirty's debounced save — never a synchronous per-click RMW+Save on the render
+        // thread. Matches the sibling comment-template sub-tabs, which write the cfg field then mark
+        // dirty. The runtime consumer (TicketFieldEditor) re-reads via ConfigManager once the
+        // debounced save lands.
         static std::vector<std::string> s_suggestionsList;
         if (!flags.suggestionsLoaded) {
-            s_suggestionsList = TrackerFieldValueUtils::LoadDurationSuggestions();
+            s_suggestionsList = d.cfg.DurationSuggestions;
             flags.suggestionsLoaded = true;
         }
 
@@ -83,7 +88,8 @@ void DrawTimeEstimatesSubTab(SmatchetPreferencesUiTemplateFlags& flags) {
             if (i > 0) {
                 if (ImGui::Button("▲")) {
                     std::swap(s_suggestionsList[i], s_suggestionsList[i - 1]);
-                    TrackerFieldValueUtils::SaveDurationSuggestions(s_suggestionsList);
+                    d.cfg.DurationSuggestions = s_suggestionsList;
+                    MarkPrefsDirty(d);
                 }
             } else {
                 ImGui::BeginDisabled();
@@ -95,7 +101,8 @@ void DrawTimeEstimatesSubTab(SmatchetPreferencesUiTemplateFlags& flags) {
             if (i < s_suggestionsList.size() - 1) {
                 if (ImGui::Button("▼")) {
                     std::swap(s_suggestionsList[i], s_suggestionsList[i + 1]);
-                    TrackerFieldValueUtils::SaveDurationSuggestions(s_suggestionsList);
+                    d.cfg.DurationSuggestions = s_suggestionsList;
+                    MarkPrefsDirty(d);
                 }
             } else {
                 ImGui::BeginDisabled();
@@ -107,7 +114,8 @@ void DrawTimeEstimatesSubTab(SmatchetPreferencesUiTemplateFlags& flags) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
             if (ImGui::Button("✖")) {
                 s_suggestionsList.erase(s_suggestionsList.begin() + i);
-                TrackerFieldValueUtils::SaveDurationSuggestions(s_suggestionsList);
+                d.cfg.DurationSuggestions = s_suggestionsList;
+                MarkPrefsDirty(d);
                 --i;
             }
             ImGui::PopStyleColor();
@@ -132,7 +140,8 @@ void DrawTimeEstimatesSubTab(SmatchetPreferencesUiTemplateFlags& flags) {
             if (!newVal.empty()) {
                 if (std::find(s_suggestionsList.begin(), s_suggestionsList.end(), newVal) == s_suggestionsList.end()) {
                     s_suggestionsList.push_back(newVal);
-                    TrackerFieldValueUtils::SaveDurationSuggestions(s_suggestionsList);
+                    d.cfg.DurationSuggestions = s_suggestionsList;
+                    MarkPrefsDirty(d);
                 }
                 s_prefNewSuggestionBuf[0] = '\0';
             }
@@ -143,7 +152,7 @@ void DrawTimeEstimatesSubTab(SmatchetPreferencesUiTemplateFlags& flags) {
     }
 }
 
-void DrawWorkLogTemplatesSubTab(SmatchetPreferencesUiTemplateFlags& flags) {
+void DrawWorkLogTemplatesSubTab(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
     if (ImGui::BeginTabItem("Work Log Templates")) {
         ImGui::TextUnformatted("Work Log Description Templates");
         ImGui::Separator();
@@ -152,9 +161,11 @@ void DrawWorkLogTemplatesSubTab(SmatchetPreferencesUiTemplateFlags& flags) {
                             "next to the Log Work description field.");
         ImGui::Spacing();
 
+        // Pillar 2 (#732): seed from live cfg + persist via debounced MarkPrefsDirty (see the
+        // duration sub-tab above) instead of a synchronous per-click ConfigManager RMW+Save.
         static std::vector<std::string> s_templatesList;
         if (!flags.templatesLoaded) {
-            s_templatesList = TrackerFieldValueUtils::LoadCommentTemplates();
+            s_templatesList = d.cfg.WorkLogCommentTemplates;
             flags.templatesLoaded = true;
         }
 
@@ -172,7 +183,8 @@ void DrawWorkLogTemplatesSubTab(SmatchetPreferencesUiTemplateFlags& flags) {
             if (i > 0) {
                 if (ImGui::Button("▲")) {
                     std::swap(s_templatesList[i], s_templatesList[i - 1]);
-                    TrackerFieldValueUtils::SaveCommentTemplates(s_templatesList);
+                    d.cfg.WorkLogCommentTemplates = s_templatesList;
+                    MarkPrefsDirty(d);
                 }
             } else {
                 ImGui::BeginDisabled();
@@ -184,7 +196,8 @@ void DrawWorkLogTemplatesSubTab(SmatchetPreferencesUiTemplateFlags& flags) {
             if (i < s_templatesList.size() - 1) {
                 if (ImGui::Button("▼")) {
                     std::swap(s_templatesList[i], s_templatesList[i + 1]);
-                    TrackerFieldValueUtils::SaveCommentTemplates(s_templatesList);
+                    d.cfg.WorkLogCommentTemplates = s_templatesList;
+                    MarkPrefsDirty(d);
                 }
             } else {
                 ImGui::BeginDisabled();
@@ -196,7 +209,8 @@ void DrawWorkLogTemplatesSubTab(SmatchetPreferencesUiTemplateFlags& flags) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
             if (ImGui::Button("✖")) {
                 s_templatesList.erase(s_templatesList.begin() + i);
-                TrackerFieldValueUtils::SaveCommentTemplates(s_templatesList);
+                d.cfg.WorkLogCommentTemplates = s_templatesList;
+                MarkPrefsDirty(d);
                 --i;
             }
             ImGui::PopStyleColor();
@@ -221,7 +235,8 @@ void DrawWorkLogTemplatesSubTab(SmatchetPreferencesUiTemplateFlags& flags) {
             if (!newVal.empty()) {
                 if (std::find(s_templatesList.begin(), s_templatesList.end(), newVal) == s_templatesList.end()) {
                     s_templatesList.push_back(newVal);
-                    TrackerFieldValueUtils::SaveCommentTemplates(s_templatesList);
+                    d.cfg.WorkLogCommentTemplates = s_templatesList;
+                    MarkPrefsDirty(d);
                 }
                 s_prefNewTemplateBuf[0] = '\0';
             }
@@ -432,8 +447,8 @@ void DrawFieldsInputsSubTab(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags
     if (ImGui::BeginTabItem("Fields Inputs")) {
         d.preferencesActiveTab = PreferencesActiveTab::Templates;
         if (ImGui::BeginTabBar("FieldsInputsSubTabBar")) {
-            DrawTimeEstimatesSubTab(flags);
-            DrawWorkLogTemplatesSubTab(flags);
+            DrawTimeEstimatesSubTab(d, flags);
+            DrawWorkLogTemplatesSubTab(d, flags);
             DrawQuickCommentsSubTab(d, flags);
             DrawAnnotateCommentsSubTab(d, flags);
             ImGui::EndTabBar();
