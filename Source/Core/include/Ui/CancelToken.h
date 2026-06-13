@@ -3,13 +3,11 @@
 
 // Cooperative cancellation primitive for UI-owned background workers
 // (docs/plans/active/ui-freeze-pillar2-blocking.md, WS-A).
-//
 // Pillar-2 (UI never freezes): destroying a `std::async` future whose worker is
 // still running blocks the UI thread until the worker drains — several seconds
 // for a p4-annotate activity scan (#1150) or a bulk-import run (#734). A worker
 // that polls a `CancelToken` at its IO/loop boundaries observes a signal and
 // returns promptly, so the eventual destructor-join is near-instant.
-//
 // Pillar-3 (never crash): cancellation is *cooperative*, not a forced abort —
 // the join is KEPT (signal then join). A worker that captured a raw `appPtr` /
 // `this` must check the token and return BEFORE dereferencing the captured
