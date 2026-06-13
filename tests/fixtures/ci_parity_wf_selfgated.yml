@@ -1,0 +1,13 @@
+name: SelfGated
+# ci-required-context: self-gated
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - '**/*.md'
+jobs:
+  selfgated-job:
+    name: SelfGated Context
+    runs-on: ubuntu-latest
+    steps:
+      - run: true
