@@ -76,6 +76,11 @@ fi
 [ "${#PRS[@]}" -gt 0 ] || { echo "usage: $0 [--once] [--interval N] [--selftest] <pr>..." >&2; exit 2; }
 case "$INTERVAL" in ''|*[!0-9]*) INTERVAL=90 ;; esac
 
+# External-tool preflight (SHELL_LINT_DEPS) — the polling path needs gh + jq. The
+# --selftest path above is pure (no externals) and exits before this.
+command -v gh >/dev/null 2>&1 || { echo "pr-status-watch: required tool 'gh' not on PATH" >&2; exit 2; }
+command -v jq >/dev/null 2>&1 || { echo "pr-status-watch: required tool 'jq' not on PATH" >&2; exit 2; }
+
 # Field separator for poll_pr's packed row. Must be NON-whitespace: read with a
 # whitespace IFS (tab/space) collapses consecutive delimiters, dropping an empty
 # middle field (a green PR has empty `failed`, which would shift `pending` into it
