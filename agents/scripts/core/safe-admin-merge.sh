@@ -100,8 +100,16 @@ read_required_contexts() {
 # evaluate_rollup <rollup-json> — the PURE core, fully testable with no `gh`.
 # Reads a `gh pr view --json statusCheckRollup,state,labels` object on stdin-arg
 # and the required-context list on $2 (newline-separated). Emits the list of
-# BLOCKING (gating + non-green) check names on stdout, one per line. Exit 0 iff
-# zero blockers (green); exit 1 iff one-or-more blockers.
+# BLOCKING check names on stdout, one per line — a name blocks when it is a
+# gating row that is non-green, OR a required context that is ABSENT from the
+# rollup entirely (a required check missing from the rollup must never be read
+# as green — that was a fail-open hole). The caller treats ANY emitted name as
+# a blocker.
+#
+# Exit status reflects evaluation SUCCESS, not the blocker count: exit 0 on a
+# successful evaluation (whether or not blockers were emitted); NON-ZERO only
+# when the evaluation itself failed (jq parse/runtime error on a malformed
+# rollup). The caller MUST fail closed — refuse the merge — on a non-zero exit.
 #
 # All decision logic lives in jq so a single program decides gating + greenness
 # identically to the merge-gates $failing sub-expression.
@@ -120,32 +128,43 @@ evaluate_rollup() {
         ([.labels[]?.name] // []) as $labels
         | ($labels | any(. == "tests-out-of-band")) as $testsOob
         | ($labels | any(. == "perf-out-of-band")) as $perfOob
-        | ((.statusCheckRollup) // [])
-        # Resolve each rollup row to a (name, green?) pair.
-        | map(
-            (if .__typename == "CheckRun" then (.name // "")
-             else (.context // "") end) as $name
-            | (if .__typename == "CheckRun"
-               then (.status == "COMPLETED"
-                     and ((.conclusion // "") | ascii_upcase | IN("SUCCESS","NEUTRAL","SKIPPED")))
-               else ((.state // "") | ascii_upcase | . == "SUCCESS") end) as $green
-            | {name: $name, green: $green}
-          )
-        # A row GATES iff required OR allow-listed-non-advisory. Bind the row to
+        # Resolve each rollup row to a (name, green?) pair; bind as $rows so the
+        # absent-required cross-check below can see which names are present.
+        | (((.statusCheckRollup) // [])
+            | map(
+                (if .__typename == "CheckRun" then (.name // "")
+                 else (.context // "") end) as $name
+                | (if .__typename == "CheckRun"
+                   then (.status == "COMPLETED"
+                         and ((.conclusion // "") | ascii_upcase | IN("SUCCESS","NEUTRAL","SKIPPED")))
+                   else ((.state // "") | ascii_upcase | . == "SUCCESS") end) as $green
+                | {name: $name, green: $green}
+              )) as $rows
+        | ([$rows[].name]) as $present
+        # Blockers among rows that EXIST: gating (required OR allow-listed-non-
+        # advisory) and non-green, after out-of-band downgrades. Bind the row to
         # $r so $req-iteration inside `any` does not shadow `.name`.
-        | map(. as $r
-              | $r + {gating:
-                (($req | any(. == $r.name))
-                 or (($r.name | test($allow; "i"))
-                     and (($r.name | ascii_downcase | contains("advisory")) | not)))})
-        # Apply out-of-band downgrades: a labelled check is no longer gating.
-        | map(. as $r
-              | $r + {gating:
-                ($r.gating
-                 and (($testsOob and $r.name == "Test-delta gate") | not)
-                 and (($perfOob and ($r.name | startswith("Perf PR-fast"))) | not))})
-        # A BLOCKER is a gating row that is not green.
-        | [.[] | select(.gating and (.green | not)) | .name]
+        | ([ $rows[]
+             | . as $r
+             | ($r + {gating:
+                 (($req | any(. == $r.name))
+                  or (($r.name | test($allow; "i"))
+                      and (($r.name | ascii_downcase | contains("advisory")) | not)))}) as $g
+             | ($g + {gating:
+                 ($g.gating
+                  and (($testsOob and $g.name == "Test-delta gate") | not)
+                  and (($perfOob and ($g.name | startswith("Perf PR-fast"))) | not))})
+             | select(.gating and (.green | not))
+             | .name ]) as $rowBlockers
+        # Absent-required cross-check (fail-closed): a required context missing
+        # from the rollup is a blocker, NOT a silent green — same out-of-band
+        # downgrades apply.
+        | ([ $req[]
+             | select(. as $rn | ($present | any(. == $rn)) | not)
+             | select(($testsOob and . == "Test-delta gate") | not)
+             | select(($perfOob and (. | startswith("Perf PR-fast"))) | not) ]) as $absentReq
+        | ($rowBlockers + $absentReq)
+        | unique
         | .[]
     '
 }
@@ -210,8 +229,30 @@ run_selftest() {
         fails=$((fails + 1))
     fi
 
+    # CASE 5 — a REQUIRED context ABSENT from the rollup blocks (fail-closed).
+    # "Windows + MSVC" is required but no row reports it -> must not read green.
+    local absent_rollup
+    absent_rollup='{"state":"OPEN","labels":[],"statusCheckRollup":[
+      {"__typename":"StatusContext","context":"Linux + Clang","state":"SUCCESS"}]}'
+    blockers=$(evaluate_rollup "$absent_rollup" "Windows + MSVC")
+    if printf '%s' "$blockers" | grep -q 'Windows + MSVC'; then
+        echo "selftest CASE5 PASS — absent required context blocks (no silent green)"
+    else
+        echo "selftest CASE5 FAIL — absent required 'Windows + MSVC' should block (got: '$blockers')" >&2
+        fails=$((fails + 1))
+    fi
+
+    # CASE 6 — a malformed rollup makes evaluate_rollup EXIT NON-ZERO so the
+    # caller fails closed (jq parse error must never read as zero-blockers-green).
+    if evaluate_rollup 'this is not json' "" >/dev/null 2>&1; then
+        echo "selftest CASE6 FAIL — malformed rollup should exit non-zero" >&2
+        fails=$((fails + 1))
+    else
+        echo "selftest CASE6 PASS — malformed rollup exits non-zero (caller fails closed)"
+    fi
+
     if [ "$fails" -eq 0 ]; then
-        echo "PASS — safe-admin-merge --selftest (4/4)"
+        echo "PASS — safe-admin-merge --selftest (6/6)"
         return 0
     fi
     echo "FAIL — safe-admin-merge --selftest ($fails failing case(s))" >&2
@@ -254,9 +295,14 @@ main() {
         exit 3
     fi
 
-    local req_list blockers
+    local req_list blockers eval_rc
     req_list=$(read_required_contexts)
     blockers=$(evaluate_rollup "$view_json" "$req_list")
+    eval_rc=$?
+    if [ "$eval_rc" -ne 0 ]; then
+        echo "safe-admin-merge: rollup evaluation failed (jq rc=$eval_rc, likely malformed statusCheckRollup) — refusing (fail-closed)." >&2
+        exit 2
+    fi
 
     if [ -n "$blockers" ]; then
         echo "REFUSED — PR #$pr has non-green gating check(s); NOT admin-merging:" >&2

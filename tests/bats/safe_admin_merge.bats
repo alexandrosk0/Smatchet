@@ -60,10 +60,10 @@ JSON
 
 # ----------------------------------------------------------------------------
 
-@test "--selftest passes (4/4) and dogfoods the gate" {
+@test "--selftest passes (6/6) and dogfoods the gate" {
     run bash "$SCRIPT" --selftest
     [ "$status" -eq 0 ]
-    [[ "$output" == *"PASS — safe-admin-merge --selftest (4/4)"* ]]
+    [[ "$output" == *"PASS — safe-admin-merge --selftest (6/6)"* ]]
 }
 
 @test "REFUSES on a RED allow-listed Bucket check (exit 1, no merge)" {
@@ -134,6 +134,27 @@ JSON
     run bash "$SCRIPT" 1180
     [ "$status" -eq 0 ]
     [ -f "$MERGE_SENTINEL" ]
+}
+
+@test "REFUSES when a required context is ABSENT from the rollup (exit 1, no merge)" {
+    # 'Test-delta gate' is required but no row reports it — a required check
+    # missing from the rollup must block, never read as a silent green.
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","labels":[],"statusCheckRollup":[
+      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"}]}'
+    run bash "$SCRIPT" 1180
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Test-delta gate"* ]]
+    [ ! -f "$MERGE_SENTINEL" ]
+}
+
+@test "FAILS CLOSED on a malformed rollup that breaks evaluation (exit 2, no merge)" {
+    # state parses OPEN but statusCheckRollup is not an array -> evaluate_rollup's
+    # jq errors; the call site must fail closed, never silently read zero-blockers.
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","labels":[],"statusCheckRollup":"broken"}'
+    run bash "$SCRIPT" 1180
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"fail-closed"* ]]
+    [ ! -f "$MERGE_SENTINEL" ]
 }
 
 @test "DRY-RUN prints the merge command but does NOT fire it" {
