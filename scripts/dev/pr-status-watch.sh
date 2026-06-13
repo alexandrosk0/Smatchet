@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # pr-status-watch.sh — emit one notify line per notable PR state-change
-# (RED / MERGED / CLOSED / green-but-stuck) for one or more PRs.
+# (RED / MERGED / CLOSED / CR-blocked / green-+-CR-clear) for one or more PRs.
 #
 # WHY: the smatchet-merge-watcher is a SEPARATE daemon process. When it merges a
 # PR — or parks a RED PR in BLOCKED/triage — it does NOT signal the Claude session
@@ -17,10 +17,12 @@
 #   bash scripts/dev/pr-status-watch.sh --selftest           # classifier fixtures (no gh)
 #
 # Emits (one line == one Monitor notification; each distinct line once):
-#   PR #N RED: <checks>                              a required/blocking check failed
-#   PR #N MERGED                                     the watcher (or anyone) merged it
+#   PR #N RED: <checks>                                 a required/blocking check failed
+#   PR #N MERGED                                        the watcher (or anyone) merged it
 #   PR #N CLOSED (not merged)
-#   PR #N all checks green — awaiting watcher merge  (surfaces a wedged/dead watcher)
+#   PR #N CI green but CodeRabbit has N actionable …    blocked on review (not a CI fail)
+#   PR #N all green + CR clear — awaiting watcher merge surfaces a wedged/dead watcher
+# (silent while CI checks or the CodeRabbit review are still in-flight.)
 #
 # Exit 0 when every PR is terminal (MERGED/CLOSED) or after one --once pass.
 # Exit 2 on usage error. A transient `gh` failure is non-fatal (keeps polling).
@@ -41,19 +43,39 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# Pure classifier — the unit the --selftest + bats exercise (no gh, no network).
-# Echoes the notify line for this PR's state, or nothing (silent / still pending).
-classify_pr_line() { # $1=pr $2=state $3=failed_csv $4=pending_count
-    local pr="$1" state="$2" failed="$3" pending="$4"
+# Pure classifiers — the units the --selftest + bats exercise (no gh, no network).
+
+# classify_cr <latest-CR-review-state> <latest-CR-review-body> -> clear | actionable:N | pending
+# Maps the latest CodeRabbit review to the merge-gate's CR verdict: APPROVED or
+# "Actionable comments posted: 0" => clear; CHANGES_REQUESTED or actionable>0 =>
+# actionable; no review / COMMENTED-without-a-count => pending (in-progress).
+classify_cr() {
+    local s="$1" b="$2" n
+    [ -z "$s" ] && { printf 'pending'; return; }
+    [ "$s" = "APPROVED" ] && { printf 'clear'; return; }
+    [ "$s" = "CHANGES_REQUESTED" ] && { printf 'actionable:?'; return; }
+    n="$(printf '%s' "$b" | grep -oE 'Actionable comments posted: [0-9]+' | grep -oE '[0-9]+' | head -1)"
+    [ -z "$n" ] && { printf 'pending'; return; }
+    if [ "$n" = "0" ]; then printf 'clear'; else printf 'actionable:%s' "$n"; fi
+}
+
+# classify_pr_line <pr> <state> <failed_csv> <ci_pending_count> <cr>
+# Echoes the notify line, or nothing (silent / still in-flight). Priority:
+# CI failure > CI still running (silent) > CI green + CR verdict.
+classify_pr_line() {
+    local pr="$1" state="$2" failed="$3" ci_pending="$4" cr="$5"
     case "$state" in
-        MERGED) printf 'PR #%s MERGED\n' "$pr" ;;
-        CLOSED) printf 'PR #%s CLOSED (not merged)\n' "$pr" ;;
-        OPEN)
-            if [ -n "$failed" ]; then
-                printf 'PR #%s RED: %s\n' "$pr" "$failed"
-            elif [ "$pending" = "0" ]; then
-                printf 'PR #%s all checks green — awaiting watcher merge\n' "$pr"
-            fi ;;
+        MERGED) printf 'PR #%s MERGED\n' "$pr"; return ;;
+        CLOSED) printf 'PR #%s CLOSED (not merged)\n' "$pr"; return ;;
+        OPEN)   ;;
+        *)      return ;;
+    esac
+    if [ -n "$failed" ]; then printf 'PR #%s RED: %s\n' "$pr" "$failed"; return; fi
+    if [ "${ci_pending:-0}" -gt 0 ] 2>/dev/null; then return; fi   # CI still running -> silent
+    case "$cr" in
+        actionable:*) printf 'PR #%s CI green but CodeRabbit has %s actionable finding(s) — blocked on review\n' "$pr" "${cr#actionable:}" ;;
+        clear)        printf 'PR #%s all green + CR clear — awaiting watcher merge\n' "$pr" ;;
+        *)            : ;;   # CR review still pending -> silent (in-progress, like CI)
     esac
 }
 
@@ -64,12 +86,21 @@ if [ "$SELFTEST" = 1 ]; then
         else printf 'NOT OK - %s (want [%s] got [%s])\n' "$1" "$2" "$3"; fail=1; fi
     }
     # selftest: asserts-failure — a failed check on an OPEN PR MUST emit RED (the whole point).
-    _t "red fires"             "PR #5 RED: Windows + MSVC" "$(classify_pr_line 5 OPEN 'Windows + MSVC' 2)"
-    _t "red beats pending"     "PR #5 RED: Coverage"       "$(classify_pr_line 5 OPEN 'Coverage' 3)"
-    _t "merged fires"          "PR #5 MERGED"              "$(classify_pr_line 5 MERGED '' 0)"
-    _t "closed fires"          "PR #5 CLOSED (not merged)" "$(classify_pr_line 5 CLOSED '' 0)"
-    _t "green-stuck fires"     "PR #5 all checks green — awaiting watcher merge" "$(classify_pr_line 5 OPEN '' 0)"
-    _t "open+pending is silent" ""                         "$(classify_pr_line 5 OPEN '' 3)"
+    _t "red fires"              "PR #5 RED: Windows + MSVC" "$(classify_pr_line 5 OPEN 'Windows + MSVC' 0 clear)"
+    _t "red beats CI-pending"   "PR #5 RED: Coverage"       "$(classify_pr_line 5 OPEN 'Coverage' 3 pending)"
+    _t "red beats CR-actionable" "PR #5 RED: X"             "$(classify_pr_line 5 OPEN 'X' 0 actionable:2)"
+    _t "merged fires"           "PR #5 MERGED"              "$(classify_pr_line 5 MERGED '' 0 clear)"
+    _t "closed fires"           "PR #5 CLOSED (not merged)" "$(classify_pr_line 5 CLOSED '' 0 clear)"
+    _t "green+CR-clear awaits"  "PR #5 all green + CR clear — awaiting watcher merge" "$(classify_pr_line 5 OPEN '' 0 clear)"
+    _t "green+CR-actionable"    "PR #5 CI green but CodeRabbit has 2 actionable finding(s) — blocked on review" "$(classify_pr_line 5 OPEN '' 0 actionable:2)"
+    _t "CI-pending is silent"   ""                          "$(classify_pr_line 5 OPEN '' 3 clear)"
+    _t "green+CR-pending silent" ""                         "$(classify_pr_line 5 OPEN '' 0 pending)"
+    # classify_cr verdict mapping
+    _t "cr approved -> clear"   "clear"        "$(classify_cr APPROVED '')"
+    _t "cr 0-actionable -> clear" "clear"      "$(classify_cr COMMENTED 'Actionable comments posted: 0')"
+    _t "cr N-actionable"        "actionable:2" "$(classify_cr COMMENTED 'Actionable comments posted: 2')"
+    _t "cr changes-requested"   "actionable:?" "$(classify_cr CHANGES_REQUESTED '')"
+    _t "cr no-review -> pending" "pending"     "$(classify_cr '' '')"
     if [ "$fail" = 0 ]; then echo "selftest: pr-status-watch classifier OK"; exit 0; else exit 1; fi
 fi
 
@@ -87,14 +118,19 @@ command -v jq >/dev/null 2>&1 || { echo "pr-status-watch: required tool 'jq' not
 # and mis-emit "RED: <count>"). US (0x1f) never appears in a GitHub check name.
 SEP=$'\037'
 
-# Poll one PR via gh; echo "state<SEP>failed_csv<SEP>pending" or return 1 on gh error.
+# Poll one PR via gh; echo "state<SEP>failed<SEP>ci_pending<SEP>cr" or return 1 on gh error.
+# ci_pending EXCLUDES CodeRabbit-type checks (they gate via the review parse, not
+# the rollup) so "CI green" can be reached while the CR check is still pending.
 poll_pr() { # $1=pr
-    local pr="$1" j st failed pending
-    j="$(gh pr view "$pr" --json state,statusCheckRollup 2>/dev/null)" || return 1
+    local pr="$1" j st failed ci_pending crstate crbody cr
+    j="$(gh pr view "$pr" --json state,statusCheckRollup,reviews 2>/dev/null)" || return 1
     st="$(printf '%s' "$j" | jq -r '.state')"
     failed="$(printf '%s' "$j" | jq -r '[.statusCheckRollup[]? | select(.conclusion=="FAILURE" or .conclusion=="TIMED_OUT" or .conclusion=="STARTUP_FAILURE") | (.name // .context)] | join(", ")')"
-    pending="$(printf '%s' "$j" | jq -r '[.statusCheckRollup[]? | select(.status!="COMPLETED")] | length')"
-    printf '%s%s%s%s%s' "$st" "$SEP" "$failed" "$SEP" "$pending"
+    ci_pending="$(printf '%s' "$j" | jq -r '[.statusCheckRollup[]? | select(.status!="COMPLETED") | (.name // .context) | select(test("coderabbit|CR finding";"i") | not)] | length')"
+    crstate="$(printf '%s' "$j" | jq -r '[.reviews[]? | select(.author.login | test("coderabbit";"i"))] | last | .state // ""')"
+    crbody="$(printf '%s' "$j" | jq -r '[.reviews[]? | select(.author.login | test("coderabbit";"i"))] | last | .body // ""')"
+    cr="$(classify_cr "$crstate" "$crbody")"
+    printf '%s%s%s%s%s%s%s' "$st" "$SEP" "$failed" "$SEP" "$ci_pending" "$SEP" "$cr"
 }
 
 declare -A seen
@@ -102,9 +138,9 @@ while true; do
     open=0
     for pr in "${PRS[@]}"; do
         row="$(poll_pr "$pr")" || { open=1; continue; }   # gh error -> assume in-flight, keep watching
-        IFS="$SEP" read -r st failed pending <<< "$row" || true
+        IFS="$SEP" read -r st failed ci_pending cr <<< "$row" || true
         [ "$st" = OPEN ] && open=1
-        line="$(classify_pr_line "$pr" "$st" "$failed" "$pending")"
+        line="$(classify_pr_line "$pr" "$st" "$failed" "$ci_pending" "$cr")"
         [ -n "$line" ] || continue
         key="$pr:$line"
         if [ -z "${seen[$key]:-}" ]; then echo "$line"; seen["$key"]=1; fi

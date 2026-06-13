@@ -56,11 +56,25 @@ STUB
     [[ "$output" == *"PR #42 MERGED"* ]]
 }
 
-@test "--once flags green-but-stuck (all complete, none failed, still OPEN)" {
-    _stub_gh '{"state":"OPEN","statusCheckRollup":[{"name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS"}]}'
+@test "--once flags green + CR clear (CI green, CR approved, still OPEN)" {
+    _stub_gh '{"state":"OPEN","statusCheckRollup":[{"name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS"}],"reviews":[{"author":{"login":"coderabbitai"},"state":"APPROVED","body":""}]}'
     run env PATH="$STUBDIR:$PATH" bash "$SCRIPT" --once 7
     [ "$status" -eq 0 ]
-    [[ "$output" == *"PR #7 all checks green — awaiting watcher merge"* ]]
+    [[ "$output" == *"PR #7 all green + CR clear — awaiting watcher merge"* ]]
+}
+
+@test "--once flags CI-green-but-CodeRabbit-actionable (the blocked-on-review state)" {
+    _stub_gh '{"state":"OPEN","statusCheckRollup":[{"name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS"},{"name":"CodeRabbit","status":"IN_PROGRESS","conclusion":null}],"reviews":[{"author":{"login":"coderabbitai"},"state":"COMMENTED","body":"**Actionable comments posted: 2**"}]}'
+    run env PATH="$STUBDIR:$PATH" bash "$SCRIPT" --once 11
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PR #11 CI green but CodeRabbit has 2 actionable finding(s) — blocked on review"* ]]
+}
+
+@test "--once stays silent when CI green but CR review not yet posted" {
+    _stub_gh '{"state":"OPEN","statusCheckRollup":[{"name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS"},{"name":"CodeRabbit","status":"IN_PROGRESS","conclusion":null}],"reviews":[]}'
+    run env PATH="$STUBDIR:$PATH" bash "$SCRIPT" --once 12
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"PR #12"* ]]
 }
 
 @test "--once stays silent while a check is still pending" {
