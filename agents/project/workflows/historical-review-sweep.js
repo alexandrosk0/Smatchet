@@ -33,15 +33,17 @@ export const meta = {
   name: 'historical-review-sweep',
   description: 'Historical code-review sweep of merged PRs — review only survivor lines still alive at origin/develop',
   phases: [
-    { title: 'Review', detail: 'one code-review agent per PR over its survivor digest' },
+    { title: 'Review', detail: 'one opus code-review agent per PR over its survivor digest', model: 'opus' },
   ],
 }
 
 // --- resolve the PR work-list from args (array | {prs:[]} | JSON-string) ---
+// Integer-filter so a stray non-number can never become a #NaN agent label.
 let parsed = args
 if (typeof parsed === 'string') { try { parsed = JSON.parse(parsed) } catch (e) { parsed = null } }
-const prs = Array.isArray(parsed) ? parsed.slice()
-          : (parsed && Array.isArray(parsed.prs)) ? parsed.prs.slice()
+if (parsed && !Array.isArray(parsed) && Array.isArray(parsed.prs)) parsed = parsed.prs
+const prs = Array.isArray(parsed)
+          ? parsed.map(Number).filter(n => Number.isInteger(n) && n > 0)
           : []
 if (!prs.length) {
   throw new Error(
@@ -98,7 +100,7 @@ function promptFor(pr) {
     `  • If the extractor errors (exit 2, e.g. no merge commit) -> return status:"error", summary:<the stderr line>, findings:[].`,
     `  • If the ONLY survivors are pure data/ledger rows with no reviewable logic (e.g. docs/self-improvement/merge-snapshots.jsonl appends, generated baselines) -> return status:"clean", findings:[].`,
     ``,
-    `STEP 3 — review ONLY the space-marked surviving lines. You MAY open any file at HEAD with Read for fuller context (surrounding code may have changed since the PR), but you must NEVER flag a line outside the surviving set — it is either someone else's code or already gone. Because already-fixed lines are excluded by construction, assume NOTHING here is "already known/fixed": a surviving line is live debt.`,
+    `STEP 3 — review ONLY the space-marked surviving lines. The digest already carries 3 context lines per hunk — PREFER it. Open a file at HEAD with Read ONLY when you genuinely need wider context, and then Read a WINDOW (offset/limit) around the cited HEAD line range — NEVER read a whole file (whole-file reads bloat the transcript and trigger compaction mid-sweep). You may open files for context, but you must NEVER flag a line outside the surviving set — it is either someone else's code or already gone. Because already-fixed lines are excluded by construction, assume NOTHING here is "already known/fixed": a surviving line is live debt.`,
     ``,
     `Apply the Smatchet code-review checklist (see AGENTS.md + docs/agent-rules/cpp-rules.md):`,
     `  • C++14 hard (no string_view/optional/variant/structured-bindings/if-constexpr); must compile MSVC + Clang.`,
@@ -120,7 +122,7 @@ function promptFor(pr) {
 }
 
 const results = await parallel(prs.map((pr) => () =>
-  agent(promptFor(pr), { label: `review:#${pr}`, phase: 'Review', schema: SCHEMA })
+  agent(promptFor(pr), { label: `review:#${pr}`, phase: 'Review', model: 'opus', schema: SCHEMA })
 ))
 
 const ok = results.filter(Boolean)
