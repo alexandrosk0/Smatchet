@@ -23,8 +23,14 @@ std::string RedactUrlForLog(const std::string& url) {
 
 void LogTrackerHttpResult(const char* clientName, const char* method, const std::string& url,
                           const cpr::Response& response) {
-    LOG_DEBUG("%s: %s %s -> HTTP %d (%zu bytes)", clientName, method, RedactUrlForLog(url).c_str(),
-              static_cast<int>(response.status_code), response.text.size());
+    const int status = static_cast<int>(response.status_code);
+    if (status >= 400) {
+        LOG_DEBUG("%s: %s %s -> HTTP %d (%zu bytes)", clientName, method, RedactUrlForLog(url).c_str(), status,
+                  response.text.size());
+    } else if (Logger::Instance().ShouldLog(LogLevel::Trace)) {
+        LOG_TRACE("%s: %s %s -> HTTP %d (%zu bytes)", clientName, method, RedactUrlForLog(url).c_str(), status,
+                  response.text.size());
+    }
     if (!Logger::Instance().GetLogTrackerHttpBodies()) {
         return;
     }

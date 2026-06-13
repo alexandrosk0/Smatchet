@@ -307,8 +307,7 @@ AppController::GetTrackerConnectivityBannerForUi(const std::string* sessionCatal
 
     if (!haveCw && !haveTw && haveSession) {
         out.Kind = TrackerConnectivityBannerForUi::Level::Warning;
-        out.Message = "Offline: ";
-        out.Message += TruncateTrackerBannerDetail(*sessionCatalogNote, 220);
+        out.Message = TruncateTrackerBannerDetail(*sessionCatalogNote, 220);
         return out;
     }
 

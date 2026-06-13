@@ -85,4 +85,18 @@ RoundTripPreview ComputeRoundTripPreview(LongTextRichKind kind, const std::strin
     return result;
 }
 
+std::string RichValueToTooltipMarkdown(const std::string& rich, const std::string& strippedFallback) {
+    if (rich.empty()) {
+        return strippedFallback;
+    }
+    std::vector<std::string> dropped;
+    bool rawMode = false;
+    const LongTextRichKind kind = ClassifyRichValue(rich);
+    std::string md = ComputeLongTextSeed(kind, rich, strippedFallback, dropped, rawMode);
+    if (rawMode || md.empty()) {
+        return strippedFallback;
+    }
+    return md;
+}
+
 } // namespace TicketFieldEditorLongTextPure

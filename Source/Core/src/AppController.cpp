@@ -482,6 +482,10 @@ GridLiveContext* AppController::EnsurePaneContextLive(const std::string& paneId,
             ctx->fieldCatalog.fieldCatalogEverLoaded_ = defaultCtx.fieldCatalog.fieldCatalogEverLoaded_;
             ctx->fieldCatalog.currentCatalogProjectKey_ = defaultCtx.fieldCatalog.currentCatalogProjectKey_;
             ctx->fieldCatalog.TrackerFieldCatalogRevision.fetch_add(1);
+            const std::shared_ptr<ITrackerBackend> defaultBackend = std::atomic_load(&defaultCtx.Backend);
+            if (defaultBackend) {
+                std::atomic_store(&ctx->Backend, defaultBackend);
+            }
         }
         paneAdapters_[paneId] = std::move(adapter);
         it = gridContexts_.emplace(paneId, std::move(ctx)).first;

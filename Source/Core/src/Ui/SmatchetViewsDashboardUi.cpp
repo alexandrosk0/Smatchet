@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <cstdio>
 #include <functional>
 #include <string>
 #include <unordered_set>
@@ -536,6 +537,8 @@ void SmatchetUI::drawViewsFieldsTab(ViewsDashboardDrawCtx& ctx) {
 
             if (availableFields.empty()) {
                 ImGui::TextDisabled("No field catalog loaded yet.");
+            } else if (d.fieldCatalogLoading) {
+                ImGui::TextDisabled("Refreshing field catalog...");
             } else if (visibleFields.empty()) {
                 ImGui::TextDisabled("No fields match current search.");
             } else {

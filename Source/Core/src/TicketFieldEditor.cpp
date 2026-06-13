@@ -538,19 +538,8 @@ void DrawTextCellTooltip(const CachedTicket& ticket, const TrackerField& field, 
     // markdown) which would join paragraphs into one line.
     std::string descMd;
     if (isDescriptionLike) {
-        const std::string richVal = ticket.GetFieldRichValue(field.Id);
-        if (!richVal.empty()) {
-            try {
-                descMd = MarkdownConvert::AdfToMarkdown(nlohmann::json::parse(richVal));
-            } catch (const std::exception& e) {
-                LOG_DEBUG("ADF tooltip convert failed for field '%s': %s", field.Id.c_str(), e.what());
-            } catch (...) {
-                LOG_DEBUG("ADF tooltip convert failed for field '%s': unknown error", field.Id.c_str());
-            }
-        }
-        if (descMd.empty()) {
-            descMd = currentValue;
-        }
+        descMd = TicketFieldEditorLongTextPure::RichValueToTooltipMarkdown(ticket.GetFieldRichValue(field.Id),
+                                                                           currentValue);
     }
     const std::string& tipSource =
         isDescriptionLike ? descMd : ((rawTip && !rawTip->empty()) ? *rawTip : valueForDisplay);
@@ -1385,20 +1374,9 @@ void RenderPlainTextCell(AppController& app, const CachedTicket& ticket, const T
         // Lazy: parse ADF → markdown only on actual hover, not per-cell per-frame.
         RenderClippedFieldText(display, availWidth, false, disabled, nullptr, false, &column.FieldId);
         if (tooltipsEnabled && ImGui::IsItemHovered()) {
-            const std::string richVal = ticket.GetFieldRichValue(column.FieldId);
-            std::string md;
-            if (!richVal.empty()) {
-                try {
-                    md = MarkdownConvert::AdfToMarkdown(nlohmann::json::parse(richVal));
-                } catch (const std::exception& e) {
-                    LOG_DEBUG("ADF tooltip convert failed for field '%s': %s", column.FieldId.c_str(), e.what());
-                } catch (...) {
-                    LOG_DEBUG("ADF tooltip convert failed for field '%s': unknown error", column.FieldId.c_str());
-                }
-            }
-            if (md.empty()) {
-                md = currentValue;
-            }
+            const std::string md =
+                TicketFieldEditorLongTextPure::RichValueToTooltipMarkdown(ticket.GetFieldRichValue(column.FieldId),
+                                                                          currentValue);
             if (!md.empty()) {
                 ImGui::BeginTooltip();
                 ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);

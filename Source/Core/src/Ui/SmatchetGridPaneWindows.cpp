@@ -125,6 +125,11 @@ struct ScopedActivePaneForDraw {
 
 void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
     SmatchetGridPaneWindows::EnsurePanesLoaded(d);
+    // Bootstrap/restored focus must land before the pane draw loop: catalog fetch,
+    // ticket snapshots, and EnsurePaneLiveSyncStarted all read focusedContext().
+    // Previously SetFocusedPane ran after the loop, so pane-2 could render while the
+    // live context was still kDefaultPaneId ("main") until manual refresh.
+    app.SetFocusedPane(d.focusedPaneId);
 
     // Once-per-frame services that lived in the single-grid window before Slice 2
     // (running them per pane would double background work).

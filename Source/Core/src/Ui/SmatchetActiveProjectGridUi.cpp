@@ -451,15 +451,21 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
     // retires after the grace window in TickAllContexts). EnsurePaneContextLive is an O(map
     // lookup) stamp per visible pane per frame — not per cell.
     app.EnsurePaneContextLive(pane.id, pane.backendKey);
+    TrackerConfig paneCfg = d.cfg;
+    if (!pane.backendKey.empty()) {
+        paneCfg.TrackerType = pane.backendKey;
+    }
     if (!pane.focused) {
         // Non-focused visible pane is LIVE too: kick its first sync against its own
         // (config, views) pair (one-shot per context generation; views-bucket load runs on
-        // a worker — Pillar 2). The focused pane syncs through the existing chokepoint.
-        TrackerConfig paneCfg = d.cfg;
-        if (!pane.backendKey.empty()) {
-            paneCfg.TrackerType = pane.backendKey;
-        }
+        // a worker — Pillar 2). The focused pane uses the same kick when not sync-live yet.
         app.EnsurePaneLiveSyncStarted(pane.id, paneCfg, pane.viewId);
+    } else if (!app.IsPaneSyncLive(pane.id)) {
+        app.EnsurePaneLiveSyncStarted(pane.id, paneCfg, pane.viewId);
+        if (!d.initialTicketSyncStarted) {
+            d.initialTicketSyncStarted = true;
+            d.appliedInitialView = true;
+        }
     }
 
     // Snapshot policy (Slice 3): the focused pane tracks the focused live context every

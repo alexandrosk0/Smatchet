@@ -622,6 +622,10 @@ void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) 
     ViewState.EnsureLoaded(d.cfg);
     const std::string newBackend = ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType);
     if (oldBackend != newBackend) {
+        app.SetFieldCatalog({}, {}, {}, std::string());
+        d.fieldCatalogWarning.clear();
+        d.fieldCatalogFetchStarted = false;
+        d.fieldCatalogLoading = false;
         d.lastViewsBackendKey = newBackend;
         const ViewDefinition* activeView = ViewState.GetActiveView();
         if (activeView) {

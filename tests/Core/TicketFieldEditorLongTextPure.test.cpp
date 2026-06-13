@@ -46,6 +46,17 @@ TEST_CASE("ClassifyRichValue: plain text falls through to None") {
     CHECK(ClassifyRichValue("1234567890") == LongTextRichKind::None);
 }
 
+TEST_CASE("RichValueToTooltipMarkdown: Plane HTML uses html converter not ADF parse") {
+    const std::string html = "<p>Hello <strong>world</strong></p>";
+    const std::string md = TicketFieldEditorLongTextPure::RichValueToTooltipMarkdown(html, "fallback");
+    CHECK(md.find("Hello") != std::string::npos);
+    CHECK(md != "fallback");
+}
+
+TEST_CASE("RichValueToTooltipMarkdown: empty rich uses stripped fallback") {
+    CHECK(TicketFieldEditorLongTextPure::RichValueToTooltipMarkdown("", "plain body") == "plain body");
+}
+
 TEST_CASE("ComputeLongTextSeed: None returns stripped fallback") {
     std::vector<std::string> dropped;
     bool rawMode = true;
