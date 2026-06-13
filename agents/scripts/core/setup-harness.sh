@@ -274,6 +274,16 @@ setup_claude_code() {
       link_file ".claude/workflows/$(basename "$wf")" "$wf"
     done
   fi
+  # Same, for PROJECT-scoped workflows under agents/project/workflows/ — those
+  # that embed project literals (paths, subsystem names) and so cannot live in
+  # the portable, purity-gated agents/_shared/workflows/. Both link into the
+  # same .claude/workflows/, so all resolve by name (Workflow({name: '<base>'})).
+  if [[ -d "agents/project/workflows" ]]; then
+    for wf in agents/project/workflows/*.js; do
+      [[ -e "$wf" ]] || continue
+      link_file ".claude/workflows/$(basename "$wf")" "$wf"
+    done
+  fi
 
   # Special case: token-tracking lives at a non-conforming path
   # (agents/_shared/token-tracking/, not agents/_shared/skills/token-tracking/).
