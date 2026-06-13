@@ -92,7 +92,8 @@ RequiredFieldSet AppController::GetRequiredFieldSet(const std::string& projectKe
     return result; // empty -> hard minimum only
 }
 
-std::future<IssueCreateResult> AppController::CreateIssueAsync(const IssueDraft& draft) {
+std::future<IssueCreateResult> AppController::CreateIssueAsync(const IssueDraft& draft,
+                                                               smatchet::ui::CancelToken cancel) {
     // Snapshot state the worker needs up front so we don't race with UI edits.
     auto catalogCopy = std::make_shared<std::vector<TrackerField>>(fieldCatalog().AvailableFields);
     const RequiredFieldSet required = GetRequiredFieldSet(draft.ProjectKey, draft.IssueTypeId, draft.IssueTypeName);
@@ -148,10 +149,23 @@ std::future<IssueCreateResult> AppController::CreateIssueAsync(const IssueDraft&
     // `backend` is captured to keep the latched backend (and thus `mutations`) alive for the
     // duration of the worker, per ADR 0012.
     LaunchBackgroundTask(
-        [this, promise, backend, mutations, cache, cacheBackendKey, draftCopy, catalogCopy, required]() {
+        [this, promise, backend, mutations, cache, cacheBackendKey, draftCopy, catalogCopy, required, cancel]() {
+            // Cooperative cancel (WS-A): if the owner abandoned this create (bulk-import
+            // `.clear()` / window-close / shutdown) before the worker started, return a
+            // benign cancelled result without the network round-trip — and crucially
+            // without dereferencing `this` for the post-create refresh/hydration below.
+            if (cancel.IsCancelled()) {
+                IssueCreateResult cancelled;
+                cancelled.Error = "Cancelled.";
+                promise->set_value(std::move(cancelled));
+                return;
+            }
             IssueCreateResult result =
                 IssueCreatePipeline::Run(*mutations, cache, cacheBackendKey, draftCopy, required, *catalogCopy);
-            if (result.Ok) {
+            // Re-check after the (long) create before the expensive refresh + hydration:
+            // a cancel that landed while the create was in flight skips touching `this`
+            // again, so a signalled shutdown drains fast (the result is still reported).
+            if (result.Ok && !cancel.IsCancelled()) {
                 RefreshLocalData();
                 requestDeferredLiveTrackerBackendSuccessNotify_();
                 // Same hydration as the grid after Create: fetch server-truth fields and merge into SQLite.

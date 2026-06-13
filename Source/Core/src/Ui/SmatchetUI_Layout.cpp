@@ -274,10 +274,20 @@ void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app) {
     DrainFutureJoinQuiet(d.newIssueCreateFuture);
     d.newIssueCreateInFlight = false;
 
+    // WS-A: signal cancel BEFORE the join so any still-running create short-circuits
+    // its remaining network/refresh work — the join then drains fast (signal → join).
+    // The captured AppController is still alive here (teardown ordering), preserving
+    // the no-UAF guarantee (Pillar-3).
+    d.bulkImportCancel.Cancel();
     for (auto& f : d.bulkImportFutures) {
         DrainFutureJoinQuiet(f);
     }
     d.bulkImportFutures.clear();
+    // Abandoned-but-still-running creates from earlier `.clear()` calls this session.
+    for (auto& f : d.bulkImportFutureGraveyard) {
+        DrainFutureJoinQuiet(f);
+    }
+    d.bulkImportFutureGraveyard.clear();
     d.bulkImportRunning = false;
 
     DrainAuditReloadFuture(d);

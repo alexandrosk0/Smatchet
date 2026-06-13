@@ -4,6 +4,7 @@
 #include "ConfigManager.h"
 #include "ITrackerActivity.h"
 #include "TrackerFieldSchema.h"
+#include "Ui/CancelToken.h"
 #include "Vcs/VcsSubmission.h"
 
 #include <future>
@@ -25,9 +26,23 @@ struct UiDrawSession;
  * mid-flight never mixes payloads. An in-flight future is never reassigned
  * (its destructor would block the UI thread) — retargets set a relaunch flag
  * that pollFutures consumes after the old worker drains.
+ *
+ * Cooperative cancel (WS-A, #1150): a destroyed std::async future blocks until
+ * its worker drains — several seconds for the p4-annotate activity scan at app
+ * shutdown. Each worker captures a shared CancelToken; the destructor signals
+ * it AND calls ClearPaneUserActivity (the backend's in-scan IO cancel) before
+ * the future members destruct, so the join is near-instant. The no-UAF
+ * guarantee (Pillar-3) is preserved: SmatchetUI (and thus this object) is
+ * destroyed before AppController, so the captured appPtr stays valid across
+ * that fast join, and a cancelled worker returns before touching it again.
  */
 class SmatchetUserInfoUi {
   public:
+    SmatchetUserInfoUi() = default;
+    /// Signals cooperative cancel + the backend in-scan IO cancel before the
+    /// std::async future members destruct, so app-shutdown teardown drains fast
+    /// instead of blocking on a multi-second p4 activity scan (#1150).
+    ~SmatchetUserInfoUi();
     /// Stage an open/retarget request on the session; DrawWindow consumes it
     /// next frame via adoptPendingRequest. Static so grid popup call sites
     /// don't need the SmatchetUI instance.
@@ -103,6 +118,15 @@ class SmatchetUserInfoUi {
     bool supportsActivity_ = false;
     /// Bumped on every retarget; stale worker payloads (older Gen) are dropped.
     int generation_ = 0;
+
+    // WS-A cooperative cancel: every worker (vcs/activity/groups/members) captures
+    // a copy and polls it at its IO boundary; the destructor / closeCleanup signals
+    // it so an abandoned worker stops before its (gen-dropped) payload would be
+    // adopted. Reset() per retarget so a relaunched worker runs against a fresh flag.
+    smatchet::ui::CancelToken cancel_;
+    /// Latched at fetch-launch for the destructor's backend IO-cancel
+    /// (ClearPaneUserActivity); AppController outlives this object so it stays valid.
+    AppController* appForShutdownCancel_ = nullptr;
 
     // In-flight futures + their UI-side flags.
     std::future<VcsPayload> vcsFuture_;

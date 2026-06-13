@@ -44,6 +44,7 @@ struct McpToolDefinition;
 #include "SmatchetMergeWatchNotifyServer.h"
 #include "IssueDraft.h"
 #include "IssueCreatePipeline.h"
+#include "Ui/CancelToken.h"
 // JiraClient.h was transitively supplying TrackerConfig and the tracker
 // role-interface types (connectivity probes, fetch summaries, and others) used by
 // AppController.h and its ~105 includers. Include their real homes directly here:
@@ -715,8 +716,15 @@ class AppController {
      * Fire-and-forget create. Seeds the cache with the new issue on success and
      * publishes a refreshed snapshot. Returns a future so bulk-import callers
      * can await per-row completions.
+     *
+     * `cancel` is a cooperative cancel handle (WS-A): when signalled before the
+     * worker reaches the create, the worker returns a benign cancelled result
+     * without running the network create or the expensive post-create refresh /
+     * hydration — so a bulk-import `.clear()` or app shutdown drains promptly.
+     * Defaulted so non-bulk callers (Lua) need not supply one.
      */
-    std::future<IssueCreateResult> CreateIssueAsync(const IssueDraft& draft);
+    std::future<IssueCreateResult> CreateIssueAsync(const IssueDraft& draft,
+                                                    smatchet::ui::CancelToken cancel = smatchet::ui::CancelToken());
 
     /**
      * Persist `draft` to SQLite and return the queued row id. Useful when the
