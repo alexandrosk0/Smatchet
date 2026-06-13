@@ -138,7 +138,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`ilocalcache-seam`](shipped/ilocalcache-seam.md) | 2026-06-10 | ISyncCache seam (ADR-0020) — 28-method sync-cache interface decouples OfflineQueueService/TicketSyncService/IssueCreatePipeline from SQLite; service tests run on a contract-suite-verified FakeSyncCache with a configure-time purity guard; PR1 #1112 (seam) + PR2 (test purity). |
 | [`pane-backend-picker`](shipped/pane-backend-picker.md) | 2026-06-11 | Plan — Per-pane backend picker (choose which tracker a new grid pane loads) |
 | [`build-infra-followups`](shipped/build-infra-followups.md) | 2026-06-12 | Plan — build-infra followups (6 backlog items) |
-| [`mobile-ci-smoke-gate`](shipped/mobile-ci-smoke-gate.md) | — | Plan — Mobile CI smoke gate for the #1122 texture-lifetime crash class |
+| [`mobile-ci-smoke-gate`](shipped/mobile-ci-smoke-gate.md) | 2026-06-13 | Plan — Mobile CI smoke gate for the #1122 texture-lifetime crash class |
 <!-- END auto-plan-index -->
 
 ### Notes
