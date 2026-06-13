@@ -648,6 +648,13 @@ poll_merge_gates() {
 
         local cr_pass=false
         local cr_state_print="$cr_state"
+        # Set true only when the cr-out-of-band label actually waives a real CR
+        # block below (state verdict or open CR threads) — i.e. the override was
+        # LOAD-BEARING. Distinct from mere label presence (has_cr_oob): a moot
+        # cr-out-of-band on an already-passing CR gate never sets this. Feeds the
+        # GATE_SNAPSHOT line so the override-merge ledger records the CR gate as
+        # genuinely bypassed (mandatory-merge-snapshot-on-override-merge).
+        local cr_overridden=false
         # Set true only by the NONE branch when CR posted a "review skipped — too
         # many files" comment. Hoisted here so it's always defined for the
         # cr-out-of-band downgrade + nudge-suppression checks below, regardless of
@@ -903,6 +910,7 @@ poll_merge_gates() {
             fi
             cr_pass=true
             cr_open_blocks=false
+            cr_overridden=true
         fi
 
         # mergeStateStatus guard (secondary P1 fix). GitHub's own mergeability
@@ -938,6 +946,24 @@ poll_merge_gates() {
             if [ "$gh_merge_state" != "CLEAN" ] && [ "$gh_merge_state" != "UNSTABLE" ] && [ "$gh_merge_state" != "UNKNOWN" ]; then
                 echo "INFO: merge-gates pass; GitHub mergeStateStatus=$gh_merge_state may be stale or branch-protection summary-only (MERGE_GATES_IGNORE_MERGESTATE override active). REST squash-merge contract still applies." >&2
             fi
+            # GATE_SNAPSHOT — emitted ONLY on the PASS path, naming the checks an
+            # override label actually bypassed at the decision instant so the
+            # merge actor can write a lossless merge-snapshot row
+            # (mandatory-merge-snapshot-on-override-merge; ADR-0017).
+            #   cr_override=1 iff cr-out-of-band waived a real CR block above.
+            #   downgraded=<rest of line> is the CI checks tests-/perf-out-of-band
+            #     turned FAIL→WARN (dg_names — the SAME $downgraded the GATE_FILTER
+            #     computed, no forked logic). It is jq `join(", ")` output so it
+            #     contains spaces+commas; it is therefore the LAST field and spans
+            #     the entire remainder of the line (the watcher reads everything
+            #     after "downgraded=" verbatim — no whitespace tokenisation).
+            # Both empty/0 on a clean (no-override) pass, so the snapshot writer
+            # leaves redChecks=[] and never double-flags a moot label. Distinct
+            # prefix like GATE_CARRY; the watcher parses it on the merged path only.
+            local cr_override_flag=0
+            [ "$cr_overridden" = true ] && cr_override_flag=1
+            printf 'GATE_SNAPSHOT cr_override=%s downgraded=%s\n' \
+                "$cr_override_flag" "${dg_names:-}"
             echo "GATES_PASSED"
             return 0
         fi

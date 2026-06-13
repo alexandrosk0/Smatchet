@@ -333,6 +333,45 @@ def _parse_gate_carry(stdout: str) -> dict[str, Any] | None:
     return None
 
 
+def _parse_gate_snapshot(stdout: str) -> dict[str, Any] | None:
+    """Parse the `GATE_SNAPSHOT cr_override=<0|1> downgraded=<csv>` line the poller
+    emits ONLY on the PASS path (mandatory-merge-snapshot-on-override-merge; ADR-0017).
+
+    Returns {downgraded: [check names], cr_override: bool} naming exactly what an
+    override label bypassed at the decision instant, so handle_pass() can record
+    those checks in the merge-snapshot ledger's redChecks (not the hardcoded []).
+    `downgraded=` is the LAST field and spans the rest of the line (the names are
+    jq `join(", ")` output — they contain spaces+commas — so everything after
+    "downgraded=" is the verbatim value, NOT whitespace-tokenised).
+
+    Returns None when no GATE_SNAPSHOT line is present (older merge-gates.sh, or a
+    non-PASS poll) so the caller falls back to the empty-redChecks path."""
+    for ln in stdout.splitlines():
+        if not ln.startswith("GATE_SNAPSHOT "):
+            continue
+        rest = ln[len("GATE_SNAPSHOT "):]
+        cr_override = False
+        downgraded_csv = ""
+        # cr_override is a single fixed-position token; downgraded= spans the
+        # remainder (may be empty, may contain spaces/commas). Split on the
+        # FIRST "downgraded=" so the value stays intact.
+        dg_idx = rest.find("downgraded=")
+        if dg_idx >= 0:
+            downgraded_csv = rest[dg_idx + len("downgraded="):].strip()
+            head = rest[:dg_idx]
+        else:
+            head = rest
+        for tok in head.split():
+            k, _, v = tok.partition("=")
+            if k == "cr_override":
+                cr_override = v.strip() == "1"
+        downgraded = [
+            seg.strip() for seg in downgraded_csv.split(",") if seg.strip()
+        ]
+        return {"downgraded": downgraded, "cr_override": cr_override}
+    return None
+
+
 def poll_one(
     entry: dict[str, Any], extra_gates_env: dict[str, str] | None = None
 ) -> dict[str, Any]:
@@ -501,6 +540,13 @@ def poll_one(
     nudge_carry = _parse_gate_carry(gates.stdout)
     if nudge_carry is not None:
         result["nudge_carry"] = nudge_carry
+    # GATE_SNAPSHOT — present only on the PASS path; names the checks an override
+    # label bypassed so handle_pass() records them in the merge-snapshot ledger
+    # (mandatory-merge-snapshot-on-override-merge). Absent → handle_pass falls
+    # back to redChecks=[] (the prior clean-merge behaviour).
+    gate_snapshot = _parse_gate_snapshot(gates.stdout)
+    if gate_snapshot is not None:
+        result["gate_snapshot"] = gate_snapshot
     return result
 
 
@@ -2012,15 +2058,27 @@ def _configured_override_labels() -> list[str]:
         return []
 
 
-def _append_merge_snapshot(owner: str, repo: str, pr: int, merge_sha: str) -> str:
+def _append_merge_snapshot(
+    owner: str,
+    repo: str,
+    pr: int,
+    merge_sha: str,
+    gate_snapshot: dict[str, Any] | None = None,
+) -> str:
     """Write a lossless merge-time gate-verdict snapshot to the committed JSONL
     ledger via merge-snapshot-append.sh (mergeActor='merge-watcher').
 
     Closes the scope gap: handle_pass() has neither the head SHA nor the
     override-labels at the write-site, so fetch them here (`gh pr view --json
     labels,headRefOid`), filter labels to the configured override set, and shell
-    out to the shared idempotent helper. redChecks is empty for the watcher path
-    (it only reaches here on GATES_PASSED → no red check at the decision instant).
+    out to the shared idempotent helper.
+
+    redChecks records what an override label actually BYPASSED at the decision
+    instant (mandatory-merge-snapshot-on-override-merge; ADR-0017): the CI checks
+    tests-/perf-out-of-band downgraded FAIL→WARN (from the PASS-path GATE_SNAPSHOT
+    line, via `gate_snapshot`), plus the literal "CodeRabbit" when cr-out-of-band
+    waived a real CR block. On a clean merge (no GATE_SNAPSHOT / no load-bearing
+    override) redChecks stays [] so postmortem-owed never double-flags a moot label.
 
     NEVER raises: a ledger-write failure must not abort the merge path. Returns a
     short status string for the extras dict (caller logs it; merge already done).
@@ -2046,6 +2104,19 @@ def _append_merge_snapshot(owner: str, repo: str, pr: int, merge_sha: str) -> st
         override_set = _configured_override_labels()
         override_present = [lbl for lbl in pr_labels if lbl in override_set]
         override_csv = ",".join(override_present)
+        # redChecks — the checks an override actually bypassed at the merge instant.
+        # The downgraded CI names come from the PASS-path GATE_SNAPSHOT line (the
+        # SAME set merge-gates.sh's $downgraded computed — no forked logic); a
+        # load-bearing cr-out-of-band adds the literal "CodeRabbit". Order-stable,
+        # de-duped. Empty unless an override was load-bearing → redChecks=[].
+        red_checks: list[str] = []
+        if gate_snapshot:
+            for name in gate_snapshot.get("downgraded", []) or []:
+                if name and name not in red_checks:
+                    red_checks.append(name)
+            if gate_snapshot.get("cr_override") and "CodeRabbit" not in red_checks:
+                red_checks.append("CodeRabbit")
+        red_csv = ",".join(red_checks)
         result = subprocess.run(
             [
                 BASH_BIN,
@@ -2054,7 +2125,7 @@ def _append_merge_snapshot(owner: str, repo: str, pr: int, merge_sha: str) -> st
                 merge_sha,
                 head_sha,
                 "GATES_PASSED",
-                "",  # redChecks — empty for the GATES_PASSED watcher path
+                red_csv,  # redChecks — checks an override bypassed (GATE_SNAPSHOT)
                 override_csv,
                 "merge-watcher",
             ],
@@ -2073,11 +2144,18 @@ def _append_merge_snapshot(owner: str, repo: str, pr: int, merge_sha: str) -> st
         return f"snapshot_append_skipped: {exc}"
 
 
-def handle_pass(entry: dict[str, Any]) -> dict[str, Any]:
+def handle_pass(
+    entry: dict[str, Any], gate_snapshot: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """PASS-branch handler — squash-merge + cascade to stacked children.
 
     Returns an additional state dict with `merge_action_*` fields appended.
     Removes the PR from the registry on successful merge.
+
+    `gate_snapshot` (from the PASS-path GATE_SNAPSHOT line) names the checks an
+    override label bypassed; threaded into the merge-snapshot ledger so an
+    override merge records what it bypassed in redChecks
+    (mandatory-merge-snapshot-on-override-merge). None → redChecks=[] (clean merge).
     """
     pr = int(entry["pr"])
     clone_path = entry["clone_path"]
@@ -2111,7 +2189,9 @@ def handle_pass(entry: dict[str, Any]) -> dict[str, Any]:
     extras["merged_branch"] = head_branch
     # 3b. Lossless gate-verdict snapshot to the committed ledger (best-effort;
     #     never aborts the merge path). See docs/adr/0017-merge-time-snapshot-ledger.md.
-    extras["merge_snapshot"] = _append_merge_snapshot(owner, repo, pr, merge_sha)
+    extras["merge_snapshot"] = _append_merge_snapshot(
+        owner, repo, pr, merge_sha, gate_snapshot=gate_snapshot
+    )
     # 4. Drop from registry.
     maybe_remove_from_registry(pr, clone_path)
     # 5. Cascade — find stacked children + trigger update-branch on each.
@@ -2178,9 +2258,16 @@ def daemon_loop(poll_interval: int) -> int:
                                     f"  PR#{state['pr']:<6} cr-none-grace: "
                                     f"{grace_extras['cr_none_grace_action']}"
                                 )
+                    # GATE_SNAPSHOT — the override-bypass record the PASS-path poll
+                    # emitted (which checks tests-/perf-out-of-band downgraded +
+                    # whether cr-out-of-band waived a CR block). pop() so it never
+                    # lands in state/<pr>.json; hand to handle_pass so the merge
+                    # snapshot records what the override bypassed (redChecks),
+                    # not the hardcoded [] (mandatory-merge-snapshot-on-override-merge).
+                    gate_snapshot = state.pop("gate_snapshot", None)
                     # Phase 2 — PASS-branch auto-merge + cascade.
                     if state.get("last_state") == "GATES_PASSED":
-                        extras = handle_pass(entry)
+                        extras = handle_pass(entry, gate_snapshot=gate_snapshot)
                         state.update(extras)
                         if extras.get("merge_action") == "merged":
                             print(

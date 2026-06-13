@@ -373,12 +373,14 @@ while IFS= read -r row; do
         # live rollup, which can read SUCCESS for a check that was red at merge but
         # healed on a post-merge re-run; re-judging a snapshotted override against
         # that would silently DROP a real load-bearing override (false negative —
-        # the worse direction for an escape detector). Precise snapshot-path moot
-        # detection needs the downgraded check recorded IN the snapshot — the
-        # deferred `mandatory-merge-snapshot-on-override-merge` item; the watcher
-        # currently writes redChecks=[] for override merges, so the snapshot alone
-        # can't tell moot from load-bearing. Until then, a snapshotted override
-        # flags (err toward a spurious nudge, never a miss).
+        # the worse direction for an escape detector). As of the watcher's
+        # GATE_SNAPSHOT capture (mandatory-merge-snapshot-on-override-merge,
+        # 2026-06-13), an override merge records the bypassed checks IN the snapshot
+        # (redChecks names them; a clean merge leaves redChecks=[]), so snapshot_trigger
+        # emits a "red-check: <names>" part only when the override was load-bearing —
+        # the snapshot self-distinguishes moot from load-bearing without consulting
+        # the lossy live rollup. The override-label part still flags regardless (a
+        # bypass owes a postmortem); the red-check part adds WHAT it bypassed.
         trigger="$(snapshot_trigger "$num" "$mergecommit")"
     else
         # FALLBACK (documented degraded path): no ledger entry (un-instrumented /
