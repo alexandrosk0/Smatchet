@@ -242,6 +242,12 @@ struct UiDrawSession {
     bool requestLogFocus = false;
     int layoutForceDefaultsFrames = 0;
     std::unordered_set<std::string> pendingReDockWindows;
+    /// Latch set when a layout reset is requested MID-FRAME (menu bar, command dispatch).
+    /// The heavy dock work (LoadIniSettingsFromMemory + force-redock) must run at
+    /// end-of-frame, never inline — a mid-frame LoadIni defers the node-tree rebuild to the
+    /// next NewFrame while the same-frame redock corrupts the stale tree (orphans 0x02/0x04/
+    /// 0x08). drawEndOfFramePersistence drains this via SmatchetUI_ApplyDeferredLayoutReset.
+    bool pendingLayoutReset = false;
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     /** Scripting window; dock tab close clears this; reopen from Automation -> Scripts & Actions.... */
