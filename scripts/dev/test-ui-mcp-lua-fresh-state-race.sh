@@ -96,6 +96,17 @@ if [ "$PASSED" = "?" ] || [ "$FAILED" = "?" ]; then
     exit 1
 fi
 
+# Zero-match guard (fail-closed): a renamed/dropped registration or a filter
+# typo makes ui_test.run match 0 tests and report passed=0 failed=0. Without
+# this a 0-test run exits green with ZERO coverage — the cross-thread lua_State
+# race could re-land undetected. A driver that runs 0 tests is broken, not
+# passing. Mirrors test-ui-duration-inline-edit.sh.
+if [ "$PASSED" = "0" ] && [ "$FAILED" = "0" ]; then
+    echo "FAIL: ui_test.run matched 0 tests for filter '$FILTER' — registration or filter problem." >&2
+    echo "Passed: 0  Failed: 1"
+    exit 1
+fi
+
 echo "Passed: $PASSED  Failed: $FAILED"
 if [ "$FAILED" != "0" ]; then
     exit 1
