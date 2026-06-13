@@ -17,7 +17,7 @@ Every rule below is a written-down diagnosis from the 2026-06-10/11 audit-fleet 
 
 ## Two fan-out mechanisms — know which one you're launching
 
-The rules below were written from **background-fleet** deaths, but Smatchet has **two** distinct fan-out mechanisms with different failure modes. Know which you're using before applying a rule:
+The rules below were written from **background-fleet** deaths, but this project has **two** distinct fan-out mechanisms with different failure modes. Know which you're using before applying a rule:
 
 | | Background fleet (bash) | In-process `Workflow` tool |
 |---|---|---|
