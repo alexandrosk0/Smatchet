@@ -776,21 +776,22 @@ endif()
 
 target_compile_features(SmatchetTests PRIVATE cxx_std_14)
 
-# WS-A #1150 Pillar-3 sanitizer coverage. The ninja-msvc-asan preset historically
-# instrumented only the app targets (SmatchetStandalone / SmatchetCore_DX12), so
-# heap UAF inside a test TU compiled UNINSTRUMENTED and could never trip ASan.
-# Opt the doctest rig in via a dedicated knob (default OFF) so the WS-A cancel repro
-# (Core/UserInfoActivityCancelUaf.test.cpp) can be run GENUINELY instrumented:
-#   cmake -B build/ninja-msvc-asan ... -DSMATCHET_SANITIZE_TESTS=ON
-# then run THROUGH the MSVC env (the clang_rt.asan_dynamic DLL must be on PATH):
-#   with-msvc-env.sh bash -c 'ASAN_OPTIONS=abort_on_error=1 ./...SmatchetTests.exe \
-#       --test-case="UserInfo activity worker*,BulkImportAbandonFutures*"'
-# It is NOT on by default because instrumenting the WHOLE rig surfaces a pre-existing
-# MSVC-ASan-vs-/RTC1 incompatibility: exception-based death tests (e.g.
-# SmatchetResult.test.cpp CHECK_THROWS_AS) SIGABRT under /fsanitize=address + /RTC1,
-# halting the run. Resolving that (drop /RTC1 under ASan, or gate the death tests)
-# is filed as a follow-up so the FULL rig can run sanitized in CI. ImGuiLib stays
-# uninstrumented (linked as-is); MSVC ASan tolerates the mixed link.
+# Pillar-3 sanitizer coverage of the doctest rig (infra: asan-doctest-rig-not-instrumented).
+# The ninja-msvc-asan preset historically instrumented only the app targets
+# (SmatchetStandalone / SmatchetCore_DX12), so heap UAF inside a test TU compiled
+# UNINSTRUMENTED and could never trip ASan — every prior "ASan-clean" doctest claim
+# was vacuous. SMATCHET_SANITIZE_TESTS opts the doctest rig into ASan; the
+# ninja-msvc-asan preset now sets it ON by default (with SMATCHET_BUILD_TESTS=ON),
+# so the WS-A cancel repro (Core/UserInfoActivityCancelUaf.test.cpp) and the whole
+# rig run GENUINELY instrumented. The historical /RTC1-vs-/fsanitize=address SIGABRT
+# (exception-based death tests, e.g. SmatchetResult.test.cpp CHECK_THROWS_AS) is
+# resolved upstream: smatchet_strip_msvc_rtc_for_asan() (cmake/Sanitizers.cmake,
+# called from the root before any target) strips /RTC* tree-wide under MSVC ASan,
+# so the throw/unwind path no longer aborts. The knob stays a knob (default OFF
+# globally) so non-asan test presets are unaffected; the asan preset flips it on.
+# ImGuiLib stays uninstrumented (linked as-is); MSVC ASan tolerates the mixed link.
+# Manual run THROUGH the MSVC env (the clang_rt.asan_dynamic DLL must be on PATH):
+#   with-msvc-env.sh bash -c 'ASAN_OPTIONS=abort_on_error=1 ./...SmatchetTests.exe'
 option(SMATCHET_SANITIZE_TESTS "Apply SMATCHET_SANITIZER to the SmatchetTests doctest rig" OFF)
 if(SMATCHET_SANITIZE_TESTS)
     smatchet_apply_sanitizers(SmatchetTests)
