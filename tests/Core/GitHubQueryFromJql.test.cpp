@@ -267,6 +267,71 @@ TEST_CASE("TranslateJqlToGitHubSearch — unknown type value warning lists commi
     CHECK(Contains(r.Warning, "any")); // CR #504 — accepted aliases listed
 }
 
+// #984 — native GitHub `is:` qualifier passthrough sets the matching include-flags.
+// Before the fix, raw `is:pr` returned PRs from GraphQL but the row-mapper dropped
+// every PR because IncludePullRequests stayed false (silent 0-row sync).
+
+TEST_CASE("TranslateJqlToGitHubSearch — raw is:pr sets IncludePullRequests + re-emits the qualifier (#984)") {
+    const auto r = TranslateJqlToGitHubSearch("is:pr", "", "");
+    CHECK(r.Ok);
+    CHECK(Contains(r.Query, "is:pr"));
+    CHECK(r.IncludePullRequests == true);
+    CHECK(r.IsPullRequestQuery == true);
+    CHECK(r.Warning.empty());
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — raw is:pr is:open keeps PRs and emits both qualifiers (#984)") {
+    const auto r = TranslateJqlToGitHubSearch("is:pr is:open", "", "");
+    CHECK(r.Ok);
+    CHECK(Contains(r.Query, "is:pr"));
+    CHECK(Contains(r.Query, "is:open"));
+    CHECK(r.IncludePullRequests == true);
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — IS:PR case-insensitive (#984)") {
+    const auto r = TranslateJqlToGitHubSearch("IS:PR", "", "");
+    CHECK(r.Ok);
+    CHECK(Contains(r.Query, "is:pr"));
+    CHECK(r.IncludePullRequests == true);
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — raw is:issue emits is:issue without IncludePullRequests (#984)") {
+    const auto r = TranslateJqlToGitHubSearch("is:issue", "", "");
+    CHECK(r.Ok);
+    CHECK(Contains(r.Query, "is:issue"));
+    CHECK(r.IncludePullRequests == false);
+    CHECK(r.IsPullRequestQuery == false);
+    CHECK(r.Warning.empty());
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — raw is:open / is:closed emit the qualifier, no PR flag (#984)") {
+    const auto open = TranslateJqlToGitHubSearch("is:open", "", "");
+    CHECK(open.Ok);
+    CHECK(Contains(open.Query, "is:open"));
+    CHECK(open.IncludePullRequests == false);
+
+    const auto closed = TranslateJqlToGitHubSearch("is:closed", "", "");
+    CHECK(closed.Ok);
+    CHECK(Contains(closed.Query, "is:closed"));
+    CHECK(closed.IncludePullRequests == false);
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — is:merged implies PRs (#984)") {
+    const auto r = TranslateJqlToGitHubSearch("is:merged", "", "");
+    CHECK(r.Ok);
+    CHECK(Contains(r.Query, "is:merged"));
+    CHECK(r.IncludePullRequests == true);
+}
+
+TEST_CASE("TranslateJqlToGitHubSearch — unknown is: qualifier warns, no flag (#984)") {
+    const auto r = TranslateJqlToGitHubSearch("is:bogus", "", "");
+    CHECK(r.Ok);
+    CHECK_FALSE(Contains(r.Query, "is:bogus"));
+    CHECK(r.IncludePullRequests == false);
+    CHECK(Contains(r.Warning, "is:"));
+    CHECK(Contains(r.Warning, "bogus"));
+}
+
 // PR A1 (full-function-size-compliance) — additional clause-dispatch coverage
 // locking byte-identical behaviour across the StripOrderByClause /
 // TranslateClauses / HandleFieldClause / HandleStatusClause / HandleTypeClause /

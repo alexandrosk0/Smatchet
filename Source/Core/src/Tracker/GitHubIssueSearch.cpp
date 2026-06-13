@@ -441,6 +441,19 @@ GitHubFetchSetup BuildGitHubFetchSetup(const std::string& owner, const std::stri
     return setup;
 }
 
+// #984 diagnosability — a user query carrying an `is:` qualifier that maps zero
+// rows is the silent-drop signature (e.g. `is:pr` returning PRs the mapper
+// discards). With the translator fix this should no longer fire for `is:pr`, but
+// the breadcrumb stays for any future passthrough/flag mismatch.
+void WarnIfIsQualifierMappedZeroRows(const std::string& jqlQueryOrEmpty, const std::string& graphQlQuery,
+                                     bool includePullRequests, bool zeroRows) {
+    if (zeroRows && jqlQueryOrEmpty.find("is:") != std::string::npos) {
+        LOG_WARN("GitHubIssueSearch::FetchIssuesViaRestApi: 0 rows for an is:-qualified query '%s' (includePRs=%d) — "
+                 "check that native is: qualifiers set the matching include-flags",
+                 graphQlQuery.c_str(), includePullRequests ? 1 : 0);
+    }
+}
+
 } // namespace
 
 std::vector<CachedTicket>
@@ -554,6 +567,7 @@ FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat, const 
     }
     LOG_INFO("GitHubIssueSearch::FetchIssuesViaRestApi: fetched %zu rows (issues=%d commits=%d includePRs=%d)",
              results.size(), willRunIssues ? 1 : 0, willRunCommits ? 1 : 0, setup.includePullRequests ? 1 : 0);
+    WarnIfIsQualifierMappedZeroRows(jqlQueryOrEmpty, setup.graphQlQuery, setup.includePullRequests, results.empty());
     return results;
 }
 

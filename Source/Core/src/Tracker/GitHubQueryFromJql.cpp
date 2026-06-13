@@ -305,6 +305,43 @@ void HandleTypeClause(const std::string& op, const std::string& value, std::stri
     }
 }
 
+// Native GitHub-search `is:` qualifier (#984). A raw `is:pr` / `is:issue` /
+// `is:open` / `is:closed` token is GitHub-native authoritative syntax: re-emit
+// the qualifier verbatim AND set the matching include-flags so the row-mapper
+// keeps the rows the GraphQL search returns. Without this, `is:pr` returns PRs
+// from GraphQL but the mapper drops them all (IncludePullRequests stayed false).
+void HandleIsClause(const std::string& op, const std::string& value, std::string& body, JqlToGitHubResult& result) {
+    if (op != "=") {
+        AppendWarning(result.Warning, "Unsupported operator '" + op + "' on is");
+        return;
+    }
+    const std::string lowerVal = ToLower(value);
+    if (lowerVal == "pr" || lowerVal == "pull-request" || lowerVal == "pullrequest") {
+        AppendQueryTerm(body, "is:pr");
+        result.IsPullRequestQuery = true;
+        result.IncludePullRequests = true;
+    } else if (lowerVal == "issue") {
+        AppendQueryTerm(body, "is:issue");
+    } else if (lowerVal == "open") {
+        AppendQueryTerm(body, "is:open");
+    } else if (lowerVal == "closed") {
+        AppendQueryTerm(body, "is:closed");
+    } else if (lowerVal == "merged" || lowerVal == "unmerged" || lowerVal == "draft" || lowerVal == "public" ||
+               lowerVal == "private") {
+        // Other GitHub-native is: qualifiers are PR/repo scoped — these imply PRs,
+        // so keep PR rows. Re-emit verbatim; GraphQL applies the actual filter.
+        AppendQueryTerm(body, std::string("is:") + lowerVal);
+        if (lowerVal == "merged" || lowerVal == "unmerged" || lowerVal == "draft") {
+            result.IncludePullRequests = true;
+        }
+    } else {
+        AppendWarning(result.Warning,
+                      std::string("Unknown 'is:' qualifier '") + value +
+                          "' — ignored (use 'pr', 'issue', 'open', 'closed', 'merged', 'unmerged', 'draft', "
+                          "'public', or 'private')");
+    }
+}
+
 // assignee = currentUser() → assignee:@me, assignee = "login" → assignee:login.
 // `!=` and other operators are unsupported (GitHub search has no assignee
 // negation qualifier).
@@ -369,6 +406,8 @@ void HandleFieldClause(const std::string& field, const std::string& op, const st
         HandleLabelsClause(op, value, body, result.Warning);
     } else if (EqIgnoreCase(field, "type")) {
         HandleTypeClause(op, value, body, result);
+    } else if (EqIgnoreCase(field, "is")) {
+        HandleIsClause(op, value, body, result);
     } else if (EqIgnoreCase(field, "text") || EqIgnoreCase(field, "summary") || EqIgnoreCase(field, "description")) {
         HandleTextClause(field, op, value, body, result.Warning);
     } else if (EqIgnoreCase(field, "key") || EqIgnoreCase(field, "issuekey")) {

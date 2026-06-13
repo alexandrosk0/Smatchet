@@ -446,9 +446,10 @@ TEST_CASE("WS2 edge — null duration-seconds field formats to empty (not '0h')"
     CHECK(GetField(results[0], "timespent").empty());
 }
 
-TEST_CASE("WS2 edge — missing issue key yields a ticket with an empty id (characterized)") {
-    // CHARACTERIZATION: the mapper does not reject keyless issues — it appends a
-    // ticket with id == "" and returns true. Downstream consumers must tolerate it.
+TEST_CASE("#943 — keyless AND idless issue is rejected as structurally unmappable") {
+    // FIXED (#943): an issue with neither "key" nor "id" has no stable identity and
+    // cannot be reconciled downstream — the mapper now rejects it (returns false,
+    // appends nothing) instead of silently producing an empty-id ticket.
     nlohmann::json issue;
     issue["fields"] = {{"summary", "No key"}};
 
@@ -456,17 +457,30 @@ TEST_CASE("WS2 edge — missing issue key yields a ticket with an empty id (char
     std::vector<CachedTicket> results;
     const bool ok = AppendCachedTicketFromJiraSearchIssue(issue, selected, NoCommentFetch(), results);
 
-    REQUIRE(ok);
-    REQUIRE(results.size() == 1);
-    CHECK(results[0].id.empty());
-    CHECK(GetField(results[0], "summary") == "No key");
+    CHECK_FALSE(ok);
+    CHECK(results.empty());
 }
 
-TEST_CASE("WS2 edge — explicit-null changelog with history selected fails the whole issue (characterized)") {
-    // CHARACTERIZATION: `issue.value("changelog", object())` returns the present
-    // null, and `.value()` on a null json throws — so ONE malformed issue drops
-    // the entire row (mapper returns false) instead of degrading the history
-    // column. Pinned, not endorsed.
+TEST_CASE("#943 — keyless issue with a numeric id falls back to id for the row identity") {
+    // An issue missing "key" but carrying "id" is still mappable: the id becomes the
+    // ticket identity rather than dropping the row.
+    nlohmann::json issue;
+    issue["id"] = "10042";
+    issue["fields"] = {{"summary", "Has id, no key"}};
+
+    const std::vector<std::string> selected = {"summary"};
+    std::vector<CachedTicket> results;
+    const bool ok = AppendCachedTicketFromJiraSearchIssue(issue, selected, NoCommentFetch(), results);
+
+    REQUIRE(ok);
+    REQUIRE(results.size() == 1);
+    CHECK(results[0].id == "10042");
+    CHECK(GetField(results[0], "summary") == "Has id, no key");
+}
+
+TEST_CASE("#943 — explicit-null changelog with history selected degrades the column, keeps the row") {
+    // FIXED (#943): an explicit-null `changelog` while history is selected no longer
+    // drops the whole row. The history column degrades to empty and the row maps.
     nlohmann::json fields;
     fields["summary"] = "Null changelog";
 
@@ -477,8 +491,49 @@ TEST_CASE("WS2 edge — explicit-null changelog with history selected fails the 
     std::vector<CachedTicket> results;
     const bool ok = AppendCachedTicketFromJiraSearchIssue(issue, selected, NoCommentFetch(), results);
 
-    CHECK_FALSE(ok);
-    CHECK(results.empty());
+    REQUIRE(ok);
+    REQUIRE(results.size() == 1);
+    CHECK(results[0].id == "SMAT-N5");
+    CHECK(GetField(results[0], "summary") == "Null changelog");
+    // history column present but degraded to empty.
+    CHECK(results[0].fieldValues.count("history") == 1);
+    CHECK(GetField(results[0], "history").empty());
+}
+
+TEST_CASE("#943 — non-object (non-null) changelog with history selected also degrades, keeps the row") {
+    // A changelog that exists but is the wrong type (e.g. a string) must not throw
+    // through .value() either — same degrade-not-drop contract.
+    nlohmann::json fields;
+    fields["summary"] = "Malformed changelog";
+
+    nlohmann::json issue = MakeIssue("SMAT-N5b", fields);
+    issue["changelog"] = "oops-not-an-object";
+
+    const std::vector<std::string> selected = {"summary", "history"};
+    std::vector<CachedTicket> results;
+    const bool ok = AppendCachedTicketFromJiraSearchIssue(issue, selected, NoCommentFetch(), results);
+
+    REQUIRE(ok);
+    REQUIRE(results.size() == 1);
+    CHECK(results[0].fieldValues.count("history") == 1);
+    CHECK(GetField(results[0], "history").empty());
+}
+
+TEST_CASE("#943 — missing changelog with history selected maps an empty history column") {
+    // No changelog key at all (the common case for a search without expand=changelog)
+    // maps history to empty without dropping the row.
+    nlohmann::json fields;
+    fields["summary"] = "No changelog key";
+
+    const nlohmann::json issue = MakeIssue("SMAT-N5c", fields);
+    const std::vector<std::string> selected = {"summary", "history"};
+    std::vector<CachedTicket> results;
+    const bool ok = AppendCachedTicketFromJiraSearchIssue(issue, selected, NoCommentFetch(), results);
+
+    REQUIRE(ok);
+    REQUIRE(results.size() == 1);
+    CHECK(results[0].fieldValues.count("history") == 1);
+    CHECK(GetField(results[0], "history").empty());
 }
 
 TEST_CASE("WS2 edge — array field of nulls collapses to empty string") {
