@@ -62,7 +62,7 @@ A "stalled" fleet has two very different causes with opposite remedies. Read the
 | Result files / transcript mtimes advancing, slowly | **Crawl** = TPM starvation | Reduce concurrency and/or pin a smaller model; do NOT kill — work is landing |
 | Newest transcript mtime static ≥ ~10 min, no new results | **Frozen** = permission prompt or agent death | Kill + enter the salvage runbook; waiting longer buys nothing |
 
-Poll: count of `build/<fleet-slug>/results/*` + newest agent-transcript mtime. (Automation backlogged: `workflow-watchdog.sh`, `categories/tooling.md`.)
+Poll: count of `build/<fleet-slug>/results/*` + newest agent-transcript mtime. Automated by [`workflow-watchdog.sh`](../../agents/scripts/core/workflow-watchdog.sh) (`<fleet-slug> [--nudge]`) — read-only; classifies crawl vs frozen per this table and emits a one-line verdict (or a SessionStart nudge, with `--nudge`, only when frozen). Two polls are needed to tell crawl from frozen (the first sets the baseline).
 
 ## Salvage runbook — when a fleet dies with transcripts intact
 
@@ -84,4 +84,4 @@ Before any `Workflow` fleet launch, confirm:
 - [ ] All inputs/outputs staged under `build/<fleet-slug>/` (§ In-workspace staging)
 - [ ] Each agent prompt includes the write-your-result-to-a-repo-file step (§ Checkpoint contract)
 
-(Mechanical validation of this checklist is backlogged as a fleet pre-flight script, `categories/tooling.md`.)
+Mechanical validation of this checklist runs via [`fleet-preflight.sh`](../../agents/scripts/core/fleet-preflight.sh) (`<workflow-script> [fleet-dir] [--strict]`) — static-analyses the Workflow script + staged inputs for the five checks above; advisory (WARN lines, exit 0) by default, `--strict` turns any WARN into a non-zero exit to gate a launch.
