@@ -53,17 +53,17 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
 
 ## Sweep status & remaining work (as of 2026-06-13)
 
-- **Swept:** **#439–#1174** (batches 1–8) — **~660 PRs reviewed** across 8 batches.
-  Batch 8 (#439–#541, 100 PRs) added 2026-06-13; Batch 7 (#1029–#1174, 122 PRs)
-  added the same day. Tooling: `agents/scripts/core/historical-review-survivors.sh`
-  + the `historical-code-review` skill (shipped PR #968); the persisted workflow
-  shipped PR #1182.
-- **Remaining (UNSWEPT):** merged PRs **#438 → #13** (~400). Not yet historically
+- **Swept:** **#331–#1174** (batches 1–9) — **~760 PRs reviewed** across 9 batches.
+  Batch 9 (#331–#438, 100 PRs) + Batch 8 (#439–#541, 100 PRs) added 2026-06-13;
+  Batch 7 (#1029–#1174, 122 PRs) added the same day. Tooling:
+  `agents/scripts/core/historical-review-survivors.sh` + the `historical-code-review`
+  skill (shipped PR #968); the persisted workflow shipped PR #1182.
+- **Remaining (UNSWEPT):** merged PRs **#330 → #13** (~300). Not yet historically
   reviewed.
 - **Resume instructions:**
   1. List the next batch — `gh pr list --state merged --base develop --limit 900
-     --json number --jq '[.[] | select(.number < 439) | .number] | sort |
-     reverse | .[0:100]'` (lower the `< 439` bound as you progress).
+     --json number --jq '[.[] | select(.number < 331) | .number] | sort |
+     reverse | .[0:100]'` (lower the `< 331` bound as you progress).
   2. Run the persisted workflow, passing the batch as `args`:
      `Workflow({ name: 'historical-review-sweep', args: [<the numbers>] })`.
      Pass a JSON array — but note this harness delivers `args` to the script as a
@@ -89,6 +89,24 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   false-passing). User-visible ones → GitHub Issues per ADR-0014 when actioned.
 
 <!-- Batches appended at the top. -->
+
+## Batch 9 — #331–#438 (100-PR sweep, 2026-06-13)
+
+Coverage: **100 reviewed — 7 with findings, 41 clean, 52 fully superseded.** Net: **0 CRITICAL, 1 HIGH, 0 MEDIUM, 7 LOW.** Survivor-filtered against origin/develop, so every finding is current — already-fixed code excluded by construction. (Reviewer model `code-review` opus/high, concurrency held to the Opus ≤6 guardrail — run-journal validated max overlap **exactly 6**; 100/100 agents returned, 0 died, 0 errored, all 100 model `claude-opus-4-8`; windowed-read held — max per-agent **91,423** tokens, 0 over 100k; ~20.1 min, 4.54M tokens.) **All 8 findings are `userVisible:false` (internal tooling / gates / docs / test-scaffolding) → NO GitHub Issues this pass; backlog only per ADR-0014 + the no-fix directive.** The lone HIGH (#430) is another **fail-open gate** — a non-recursive scan blind to the subdirectory sites it claims to cover — a recurrence of the Batch-8 fail-open-gate cluster (cross-filed P1 in [`categories/tooling.md`](categories/tooling.md)).
+
+### HIGH
+- **#430 (sha n/a) · `scripts/dev/test-tooltip-wrapwidth.sh:46`** — the gate scans only the **top level** of `Source/Core/src` via `os.listdir(src_dir)` (non-recursive, root `*.cpp` only), but its header contract claims "every BeginTooltip+MarkdownPreviewRender::Render block in Source/Core/src/" (full-tree). Real markdown-tooltip sites live in subdirs the scan never reaches (`Ui/SmatchetOfflineQueueUi.cpp`, `Ui/SmatchetAiAssistantUi.cpp`, `Ui/SmatchetPlanDocViewerUi.cpp`, `Ui/SmatchetFieldRender.cpp`, `Commands/Scenarios/…`). A new offending site under `Ui/` is silently skipped — `checked` never increments, the script prints "Passed: N  Failed: 0" and exits 0: a fail-open gate that cannot catch the regression it exists to prevent. Fix: walk recursively (`os.walk(src_dir)` over all `*.cpp`), keep the per-file tooltip-block parsing as-is.
+
+### LOW (7)
+- **#420 (87b78f34) · `tests/bats/merge_gates.bats:1592`** — broken doc cross-ref: comment cites `docs/evaluation/agentic-infrastructure-2026-05-23.md`, but the doc moved to `docs/reference/` (`docs/evaluation/` no longer exists). Fix: repoint to `docs/reference/agentic-infrastructure-2026-05-23.md` (lines 1630/1674 carry the same stale path outside this PR's survivor set — fix together).
+- **#420 (87b78f34) · `tests/bats/merge_gates.bats:1600`** — comment-vs-code drift: the comment describes the guarded mechanism as the defensive `|| echo -1`, but `merge-gates.sh` was refactored to parameter-expansion defaults (`ci_fail="${fields[6]:--1}"`, `cr_open="${fields[12]:--1}"`); the `|| echo -1` form no longer exists. Test assertions remain correct (both verify fail-closed blocking). Fix: reword the comment to the current `${fields[N]:--1}` default form.
+- **#415 (2b1119a5) · `docs/perforce/AGENT_FLOWS.md:196`** — stale line-pin: the comment pins "test-p4-dual-vcs.sh scenario 2 (line 149)" but at origin/develop line 149 is a mid-block comment; scenario 2's empty-string `SMATCHET_LOCK_BACKEND=""` contract is at line 153 (block spans 125-168). Fix: repoint to line 153, or drop the line number and reference "scenario 2" by name.
+- **#403 (eb0cde08) · `docs/perforce/RUNBOOK.md:86`** — checkpoint-recovery recipe replays journals via `Get-ChildItem … | Sort-Object Name` (lexicographic), so once rotation reaches double digits the order is wrong (`journal.10.gz` sorts before `journal.2.gz`) → out-of-sequence replay during disaster recovery. Bounded (non-canonical depot, rotation rarely double-digit) but the documented recipe is subtly incorrect. Fix: sort numerically by the rotation index (`Sort-Object { [int]($_.Name -replace '\D','') }`).
+- **#398 (sha n/a) · `tests/bats/merge_gates.bats:757`** — the secondary assertion `[[ … *"2/2"* || … *"1/2"* ]]` is too loose: the test exists to prove a CheckRun "build" and a StatusContext "build" are NOT deduped to one, but the OR-branch accepts `1/2` — exactly the deduped-to-one outcome it claims to reject. Primary asserts (`status -eq 1`, `1 fail`) still verify the FAILURE blocks merge, so not fully fail-open, but the count assertion can't distinguish the collision bug. Fix: drop the `|| *"1/2"*` branch, assert only `*"2/2"*`.
+- **#391 (a249cf5e) · `docs/CONTEXT.md:53`** — stale forward-reference: pins the scripts at `scripts/dev/p4-task-stream*.sh`, but they landed at `agents/scripts/project/p4-task-stream*.sh` (no `scripts/dev/` copy exists); lines 55/57 of the same section already use the correct path → internally inconsistent. Fix: update line 53 to `agents/scripts/project/p4-task-stream*.sh`, or drop the now-stale forward-reference note (PRs #380/#382 merged).
+- **#364 (sha n/a) · `tests/bats/merge_watcher.bats:341`** — loose disjunction: the "handle_pass on PR-already-merged → merge_failed" test asserts `merge_failed` OR `skipped`, but the stub makes `gh repo view` succeed and only `gh pr merge` fail, so only `merge_failed` can fire; the `|| skipped` weakens the guard — a regression that early-returns to `skipped` (never attempts the merge) would still pass green. Fix: drop the `|| skipped` alternative, assert only `merge_action: merge_failed`.
+
+**Fully superseded (52, no review surface):** #438, #437, #435, #425, #423, #422, #419, #416, #414, #413, #412, #408, #406, #402, #400, #399, #396, #395, #394, #392, #389, #388, #386, #385, #383, #382, #380, #379, #378, #376, #371, #370, #369, #367, #362, #359, #358, #356, #355, #354, #353, #351, #350, #349, #346, #345, #340, #339, #338, #336, #335, #333 — every introduced line was changed/removed by a later PR; excluded by construction.
 
 ## Batch 8 — #439–#541 (100-PR sweep, 2026-06-13)
 
