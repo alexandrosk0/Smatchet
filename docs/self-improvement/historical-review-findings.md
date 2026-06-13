@@ -53,16 +53,17 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
 
 ## Sweep status & remaining work (as of 2026-06-13)
 
-- **Swept:** **#542–#1174** (batches 1–7) **and #601–#542** (batch-6 older half) —
-  **~560 PRs reviewed** across 7 batches. Batch 7 (#1029–#1174, 122 PRs) added
-  2026-06-13. Tooling: `agents/scripts/core/historical-review-survivors.sh` + the
-  `historical-code-review` skill (shipped PR #968).
-- **Remaining (UNSWEPT):** merged PRs **#541 → #13** (~500). Not yet historically
+- **Swept:** **#331–#1174** (batches 1–9) — **~760 PRs reviewed** across 9 batches.
+  Batch 9 (#331–#438, 100 PRs) + Batch 8 (#439–#541, 100 PRs) added 2026-06-13;
+  Batch 7 (#1029–#1174, 122 PRs) added the same day. Tooling:
+  `agents/scripts/core/historical-review-survivors.sh` + the `historical-code-review`
+  skill (shipped PR #968); the persisted workflow shipped PR #1182.
+- **Remaining (UNSWEPT):** merged PRs **#330 → #13** (~300). Not yet historically
   reviewed.
 - **Resume instructions:**
   1. List the next batch — `gh pr list --state merged --base develop --limit 900
-     --json number --jq '[.[] | select(.number < 542) | .number] | sort |
-     reverse | .[0:100]'` (lower the `< 542` bound as you progress).
+     --json number --jq '[.[] | select(.number < 331) | .number] | sort |
+     reverse | .[0:100]'` (lower the `< 331` bound as you progress).
   2. Run the persisted workflow, passing the batch as `args`:
      `Workflow({ name: 'historical-review-sweep', args: [<the numbers>] })`.
      Pass a JSON array — but note this harness delivers `args` to the script as a
@@ -88,6 +89,55 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   false-passing). User-visible ones → GitHub Issues per ADR-0014 when actioned.
 
 <!-- Batches appended at the top. -->
+
+## Batch 9 — #331–#438 (100-PR sweep, 2026-06-13)
+
+Coverage: **100 reviewed — 7 with findings, 41 clean, 52 fully superseded.** Net: **0 CRITICAL, 1 HIGH, 0 MEDIUM, 7 LOW.** Survivor-filtered against origin/develop, so every finding is current — already-fixed code excluded by construction. (Reviewer model `code-review` opus/high, concurrency held to the Opus ≤6 guardrail — run-journal validated max overlap **exactly 6**; 100/100 agents returned, 0 died, 0 errored, all 100 model `claude-opus-4-8`; windowed-read held — max per-agent **91,423** tokens, 0 over 100k; ~20.1 min, 4.54M tokens.) **All 8 findings are `userVisible:false` (internal tooling / gates / docs / test-scaffolding) → NO GitHub Issues this pass; backlog only per ADR-0014 + the no-fix directive.** The lone HIGH (#430) is another **fail-open gate** — a non-recursive scan blind to the subdirectory sites it claims to cover — a recurrence of the Batch-8 fail-open-gate cluster (cross-filed P1 in [`categories/tooling.md`](categories/tooling.md)).
+
+### HIGH
+- **#430 (sha n/a) · `scripts/dev/test-tooltip-wrapwidth.sh:46`** — the gate scans only the **top level** of `Source/Core/src` via `os.listdir(src_dir)` (non-recursive, root `*.cpp` only), but its header contract claims "every BeginTooltip+MarkdownPreviewRender::Render block in Source/Core/src/" (full-tree). Real markdown-tooltip sites live in subdirs the scan never reaches (`Ui/SmatchetOfflineQueueUi.cpp`, `Ui/SmatchetAiAssistantUi.cpp`, `Ui/SmatchetPlanDocViewerUi.cpp`, `Ui/SmatchetFieldRender.cpp`, `Commands/Scenarios/…`). A new offending site under `Ui/` is silently skipped — `checked` never increments, the script prints "Passed: N  Failed: 0" and exits 0: a fail-open gate that cannot catch the regression it exists to prevent. Fix: walk recursively (`os.walk(src_dir)` over all `*.cpp`), keep the per-file tooltip-block parsing as-is.
+
+### LOW (7)
+- **#420 (87b78f34) · `tests/bats/merge_gates.bats:1592`** — broken doc cross-ref: comment cites `docs/evaluation/agentic-infrastructure-2026-05-23.md`, but the doc moved to `docs/reference/` (`docs/evaluation/` no longer exists). Fix: repoint to `docs/reference/agentic-infrastructure-2026-05-23.md` (lines 1630/1674 carry the same stale path outside this PR's survivor set — fix together).
+- **#420 (87b78f34) · `tests/bats/merge_gates.bats:1600`** — comment-vs-code drift: the comment describes the guarded mechanism as the defensive `|| echo -1`, but `merge-gates.sh` was refactored to parameter-expansion defaults (`ci_fail="${fields[6]:--1}"`, `cr_open="${fields[12]:--1}"`); the `|| echo -1` form no longer exists. Test assertions remain correct (both verify fail-closed blocking). Fix: reword the comment to the current `${fields[N]:--1}` default form.
+- **#415 (2b1119a5) · `docs/perforce/AGENT_FLOWS.md:196`** — stale line-pin: the comment pins "test-p4-dual-vcs.sh scenario 2 (line 149)" but at origin/develop line 149 is a mid-block comment; scenario 2's empty-string `SMATCHET_LOCK_BACKEND=""` contract is at line 153 (block spans 125-168). Fix: repoint to line 153, or drop the line number and reference "scenario 2" by name.
+- **#403 (eb0cde08) · `docs/perforce/RUNBOOK.md:86`** — checkpoint-recovery recipe replays journals via `Get-ChildItem … | Sort-Object Name` (lexicographic), so once rotation reaches double digits the order is wrong (`journal.10.gz` sorts before `journal.2.gz`) → out-of-sequence replay during disaster recovery. Bounded (non-canonical depot, rotation rarely double-digit) but the documented recipe is subtly incorrect. Fix: sort numerically by the rotation index (`Sort-Object { [int]($_.Name -replace '\D','') }`).
+- **#398 (sha n/a) · `tests/bats/merge_gates.bats:757`** — the secondary assertion `[[ … *"2/2"* || … *"1/2"* ]]` is too loose: the test exists to prove a CheckRun "build" and a StatusContext "build" are NOT deduped to one, but the OR-branch accepts `1/2` — exactly the deduped-to-one outcome it claims to reject. Primary asserts (`status -eq 1`, `1 fail`) still verify the FAILURE blocks merge, so not fully fail-open, but the count assertion can't distinguish the collision bug. Fix: drop the `|| *"1/2"*` branch, assert only `*"2/2"*`.
+- **#391 (a249cf5e) · `docs/CONTEXT.md:53`** — stale forward-reference: pins the scripts at `scripts/dev/p4-task-stream*.sh`, but they landed at `agents/scripts/project/p4-task-stream*.sh` (no `scripts/dev/` copy exists); lines 55/57 of the same section already use the correct path → internally inconsistent. Fix: update line 53 to `agents/scripts/project/p4-task-stream*.sh`, or drop the now-stale forward-reference note (PRs #380/#382 merged).
+- **#364 (sha n/a) · `tests/bats/merge_watcher.bats:341`** — loose disjunction: the "handle_pass on PR-already-merged → merge_failed" test asserts `merge_failed` OR `skipped`, but the stub makes `gh repo view` succeed and only `gh pr merge` fail, so only `merge_failed` can fire; the `|| skipped` weakens the guard — a regression that early-returns to `skipped` (never attempts the merge) would still pass green. Fix: drop the `|| skipped` alternative, assert only `merge_action: merge_failed`.
+
+**Fully superseded (52, no review surface):** #438, #437, #435, #425, #423, #422, #419, #416, #414, #413, #412, #408, #406, #402, #400, #399, #396, #395, #394, #392, #389, #388, #386, #385, #383, #382, #380, #379, #378, #376, #371, #370, #369, #367, #362, #359, #358, #356, #355, #354, #353, #351, #350, #349, #346, #345, #340, #339, #338, #336, #335, #333 — every introduced line was changed/removed by a later PR; excluded by construction.
+
+## Batch 8 — #439–#541 (100-PR sweep, 2026-06-13)
+
+Coverage: **100 reviewed — 12 with findings, 48 clean, 40 fully superseded.** Net: **0 CRITICAL, 6 HIGH, 6 MEDIUM, 7 LOW.** Survivor-filtered against origin/develop, so every finding is current — already-fixed code excluded by construction. (Reviewer model `code-review` opus/high, concurrency held to the Opus ≤6 guardrail cap; 100/100 agents returned, 0 died, 0 errored; ~17.8 min, 4.64M tokens.) **All 19 findings are `userVisible:false` (internal tooling / gates / docs / test-scaffolding) → NO GitHub Issues this pass; backlog only per ADR-0014 + the no-fix directive.** Dominant theme: a **fail-open gate cluster** (6 HIGH) where a probe/test driver returns green on a transient error or a zero-match filter — cross-filed as P1 in [`categories/tooling.md`](categories/tooling.md).
+
+### HIGH
+- **#519 (9aaba5c7) · `.github/actions/cr-finding-gate/action.yml:69`** — the CR-installed probe fails **OPEN** on transient API errors: it collapses every non-zero `gh` exit (genuine 404 *and* auth/network/500) to `cr_installed=false`, so the required gate posts "CR not installed", exits 0, and waves a PR through with its CodeRabbit findings un-reviewed. This is exactly the pre-H12 bug `merge-gates.sh` was hardened against (its lines 194-222 separate a real 404→absent from a transient failure). Fix: set `cr_installed=false` only on a confirmed HTTP 404; treat any non-404 as installed (fail safe / closed).
+- **#513 (ce58faf1) · `scripts/dev/test-ui-mcp-lua-fresh-state-race.sh:99`** — fail-open: the driver fails only when `FAILED != 0`; if the FreshState filter matches **zero** tests, `passed=0 failed=0` exits 0 green and the cross-thread `lua_State` race this guard exists to catch could re-land undetected. Fix: also fail when zero tests executed (`if [ "$PASSED" -lt 1 ]; then …; exit 1`).
+- **#452 (27419f5b) · `scripts/dev/test-ui-agent-proposal-store-sqlite.sh:65`** — fail-open: no `passed=0 && failed=0` guard between the run (L60) and the final green echo, so a zero-match AgentProposalStore filter passes with zero coverage. Sibling drivers guard this. Fix: add a zero-test guard before the final echo.
+- **#452 (27419f5b) · `scripts/dev/test-ui-ai-assistant-preferences.sh:65`** — same fail-open on the AiPrefsTab filter; a renamed/zero-match filter exits green. Fix: add the zero-test guard.
+- **#452 (27419f5b) · `scripts/dev/test-ui-description-tooltip-markdown-render.sh:65`** — same fail-open on the DescriptionTooltip filter (defensive cover for the be2b1d9 `wrapWidth` regression); zero matches → green, regression undetected. Fix: add the zero-test guard.
+- **#452 (27419f5b) · `scripts/dev/test-ui-spawn-warmup-deterministic-gate.sh:64`** — same fail-open on the SpawnWarmup filter (the infra.md P2-line-16 deterministic gate); zero matches → green. Fix: add the zero-test guard.
+
+### MEDIUM
+- **#524 (808fde79) · `.github/actions/cr-finding-gate/action.yml:167`** — the actionable-finding count is parsed only from the **first** body line (`split("\n")[0]`); a CR banner/walkthrough preamble before "Actionable comments posted: N" makes the header invisible → real findings missed, gate fails open. (`merge-gates.sh` keeps `cr_actionable=-1` on a parse-miss → fails closed — opposite direction.) Fix: scan the whole body for the header, or fail closed when the header is absent but `n_reviews > 0`.
+- **#518 (a0d2b97a) · `.github/workflows/pillar2-scan.yml:57`** — `git diff … 2>/dev/null … || true` silences all errors, so a failed fetch / unresolvable base / all-zero SHAs yields zero files and exits 0 "no first-party C++ changed" **without scanning** — a Pillar-2 escape. Fix: distinguish a git error from a genuinely empty diff (capture rc, `rev-parse --verify` the base, exit 1 on error).
+- **#509 (35fc99a8) · `docs/harness/claude-code/hooks/autoregister-pr.sh:28`** — the PR number is grepped as the first `pull/[0-9]+` across the **entire** payload then `head -1`, so `gh pr create --body "supersedes pull/123"` lets the body's number win → the **wrong** PR is registered with the merge-watcher → an unintended auto-merge target. Fix: parse only the created-URL (jq on `tool_response`), or take the **last** `pull/N`.
+- **#502 (1b9e607e) · `docs/CONTEXT.md:35`** — stale gated literal: the Pillar-1 row says "Perf PR-fast (windows-2022) **NOT** required on develop", but that promotion already shipped — it **is** required. Fix: update the row to "Required on develop".
+- **#498 (sha n/a) · `tests/bats/markdown_links.bats:49`** — the detection/exclusion bats cases re-run **handwritten Python copies** of the lint regex instead of invoking `$LINT`: the inline `LINK_RE` omits the title-suffix branch and the inline `is_active_md` hardcodes only the `docs/plans/shipped` exclusion vs the real lint's two. A real regression in the lint would still pass the test. Fix: drive every case through the real `$LINT`.
+- **#471 (5701646a) · `docs/harness/claude-code/hooks/lint-catch-all.py:59`** — the body-capture loop only appends when `j > body_start`, so a single-line `} catch (...) { return false; }` yields an empty body → misclassified as an empty catch (false CRITICAL) even though it has content. Fix: seed `body_text` with the post-`{` remainder of the opening line.
+
+### LOW (7)
+- **#502 (1b9e607e) · `docs/CONTEXT.md:37`** — count drift: claims "3 MSVC variants" but branch protection lists 2. Fix: change to 2.
+- **#502 (1b9e607e) · `docs/CONTEXT.md:35`** — scenario-count drift: "all 15 scenarios" but the canonical count is 14. Fix: reconcile to 14 (or "all registered scenarios").
+- **#471 (5701646a) · `docs/harness/claude-code/hooks/lint-catch-all.py:48`** — the brace scan is bounded to a 100-line window; a `catch` body extending beyond it is silently skipped (fail-open). Fix: scan to EOF, or emit a diagnostic on window-exhaustion.
+- **#471 (5701646a) · `docs/harness/claude-code/hooks/lint-catch-all.py:49`** — brace depth counts braces inside string literals / comments, so `LOG_ERROR("… }")` miscounts and can misclassify the catch. Fix: skip braces inside string literals and `//` comments.
+- **#447 (57081811) · `tests/support/FakePlaneFixture.h:88`** — raw `new FakeTrackerClient("Plane")`; `no-raw-new` is an absolute (0-grandfathering) rule. Fix: `std::make_unique<FakeTrackerClient>("Plane")`.
+- **#446 (sha n/a) · `tests/support/FakeGitHubFixture.h:84`** — raw `new FakeTrackerClient(...)`; test scaffolding, no leak, but the same `no-raw-new` style deviation. Fix: `make_unique`.
+- **#445 (4407adcd) · `tests/_debug/SmatchetAgentDebug.h:358`** — `SMATCHET_AGENT_DEBUG_FSYNC=true` only increments `fsync_count`; it does **not** fsync (no-op), yet is advertised as "semantically wired" → a latent footgun for anyone relying on it for durability testing. Fix: back it with an explicit fd + real fsync, or change the comment to "no-op (count only)".
+
+**Fully superseded (40, no review surface):** #536, #532, #529, #528, #521, #516, #515, #512, #508, #506, #504, #503, #501, #499, #496, #494, #493, #492, #491, #489, #483, #481, #480, #479, #474, #470, #469, #468, #467, #466, #465, #464, #463, #455, #453, #451, #450, #449, #448, #440 — every introduced line was changed/removed by a later PR; excluded by construction.
 
 ## Batch 7 — newer #1029–#1174 (122-PR sweep, 2026-06-13)
 
