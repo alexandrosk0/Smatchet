@@ -878,15 +878,15 @@ jobs:
           # `python` parses the envelope's data.ok; the launch-smoke above already proved the
           # exe starts, so a parse failure here is a real scenario regression, not a dead exe.
           echo "$out" | python -c "import sys,json,re
-raw=sys.stdin.read()
-m=re.search(r'\{.*\}', raw, re.S)
-assert m, 'no JSON envelope in scenario output'
-env=json.loads(m.group(0))
-data=env.get('data', env)
-passed=data.get('passed', 0); failed=data.get('failed', 0); ok=data.get('ok', False)
-print('[texture-guard] passed=%s failed=%s ok=%s' % (passed, failed, ok))
-assert not (passed == 0 and failed > 0), 'dead-harness: passed==0 && failed>0'
-assert ok, 'mobile-texture-guard scenario did not pass all 3 forced-fault sub-steps'"
+          raw=sys.stdin.read()
+          m=re.search(r'\{.*\}', raw, re.S)
+          assert m, 'no JSON envelope in scenario output'
+          env=json.loads(m.group(0))
+          data=env.get('data', env)
+          passed=data.get('passed', 0); failed=data.get('failed', 0); ok=data.get('ok', False)
+          print('[texture-guard] passed=%s failed=%s ok=%s' % (passed, failed, ok))
+          assert not (passed == 0 and failed > 0), 'dead-harness: passed==0 && failed>0'
+          assert ok, 'mobile-texture-guard scenario did not pass all 3 forced-fault sub-steps'"
 
       - name: Upload texture-guard exe on failure
         if: ${{ steps.run-texture-guard.outcome == 'failure' }}
