@@ -18,12 +18,9 @@ LongTextRichKind ClassifyRichValue(const std::string& rich) {
     if (i >= rich.size())
         return LongTextRichKind::None;
     if (rich[i] == '{') {
-        try {
-            auto parsed = nlohmann::json::parse(rich, nullptr, false);
-            if (parsed.is_object() && parsed.value("type", std::string()) == "doc") {
-                return LongTextRichKind::Adf;
-            }
-        } catch (...) {
+        const auto parsed = nlohmann::json::parse(rich, nullptr, false);
+        if (!parsed.is_discarded() && parsed.is_object() && parsed.value("type", std::string()) == "doc") {
+            return LongTextRichKind::Adf;
         }
     }
     if (rich[i] == '<') {
@@ -83,6 +80,20 @@ RoundTripPreview ComputeRoundTripPreview(LongTextRichKind kind, const std::strin
         result.Lossy = false;
     }
     return result;
+}
+
+std::string RichValueToTooltipMarkdown(const std::string& rich, const std::string& strippedFallback) {
+    if (rich.empty()) {
+        return strippedFallback;
+    }
+    std::vector<std::string> dropped;
+    bool rawMode = false;
+    const LongTextRichKind kind = ClassifyRichValue(rich);
+    std::string md = ComputeLongTextSeed(kind, rich, strippedFallback, dropped, rawMode);
+    if (rawMode || md.empty()) {
+        return strippedFallback;
+    }
+    return md;
 }
 
 } // namespace TicketFieldEditorLongTextPure

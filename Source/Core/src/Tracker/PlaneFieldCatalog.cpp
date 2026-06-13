@@ -25,6 +25,22 @@ using smatchet::plane_detail::TrimAsciiWs;
 
 namespace {
 
+std::string FormatPlaneCatalogResourceWarn(const char* resourceLabel, int statusCode) {
+    if (statusCode == 402) {
+        return std::string(resourceLabel) + ": not available on current Plane plan (upgrade required)";
+    }
+    if (statusCode == 403) {
+        return std::string(resourceLabel) + ": permission denied (HTTP 403)";
+    }
+    return std::string(resourceLabel) + ": HTTP " + std::to_string(statusCode);
+}
+
+bool IsPlanePlanGatedCatalogStatus(int statusCode) { return statusCode == 402; }
+
+bool IsPlanePlanGatedCatalogWarn(const std::string& warn) {
+    return warn.find("not available on current Plane plan") != std::string::npos;
+}
+
 /// Browser deep links use app.plane.so; strip accidental /api paths on cloud api host.
 std::string NormalizePlaneWebBase(std::string base) {
     TrimAsciiWs(base);
@@ -54,7 +70,7 @@ std::string NormalizePlaneWebBase(std::string base) {
 }
 
 void AppendPagedResults(const std::string& listUrl, const cpr::Header& headers, std::vector<nlohmann::json>& outRows,
-                        std::string* outWarn) {
+                        std::string* outWarn, const char* resourceLabel) {
     std::string cursor;
     for (int page = 0; page < 100; ++page) {
         cpr::Parameters params;
@@ -64,19 +80,21 @@ void AppendPagedResults(const std::string& listUrl, const cpr::Header& headers, 
         }
         auto response = TrackerGetLogged("PlaneClient", listUrl, headers, params);
         if (response.status_code != 200) {
-            if (outWarn && outWarn->size() < 400) {
-                if (!outWarn->empty())
-                    *outWarn += "; ";
-                *outWarn += "HTTP " + std::to_string(response.status_code) + " on " + listUrl.substr(0, 80);
+            if (outWarn && outWarn->empty()) {
+                if (resourceLabel != nullptr && resourceLabel[0] != '\0') {
+                    *outWarn = FormatPlaneCatalogResourceWarn(resourceLabel, static_cast<int>(response.status_code));
+                } else {
+                    *outWarn = "HTTP " + std::to_string(response.status_code);
+                }
             }
             return;
         }
         const nlohmann::json j = nlohmann::json::parse(StripUtf8BomCopy(response.text), nullptr, false);
         if (j.is_discarded()) {
-            if (outWarn && outWarn->size() < 400) {
-                if (!outWarn->empty())
-                    *outWarn += "; ";
-                *outWarn += "Invalid JSON from " + listUrl.substr(0, 80);
+            if (outWarn && outWarn->empty()) {
+                *outWarn = (resourceLabel != nullptr && resourceLabel[0] != '\0')
+                               ? std::string(resourceLabel) + ": invalid JSON response"
+                               : std::string("Invalid JSON response");
             }
             return;
         }
@@ -124,7 +142,7 @@ TrackerField FetchPlaneStatesField(const std::string& planeApi, const TrackerCon
         planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" + planeProjectId + "/states/";
     std::string stateWarn;
     std::vector<nlohmann::json> stateRows;
-    AppendPagedResults(statesUrl, headers, stateRows, &stateWarn);
+    AppendPagedResults(statesUrl, headers, stateRows, &stateWarn, "States");
     for (const auto& s : stateRows) {
         if (!s.is_object()) {
             continue;
@@ -154,7 +172,7 @@ TrackerField FetchPlaneCyclesField(const std::string& planeApi, const TrackerCon
         planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" + planeProjectId + "/cycles/";
     std::string cycleWarn;
     std::vector<nlohmann::json> cycleRows;
-    AppendPagedResults(cyclesUrl, headers, cycleRows, &cycleWarn);
+    AppendPagedResults(cyclesUrl, headers, cycleRows, &cycleWarn, "Cycles");
     for (const auto& c : cycleRows) {
         if (!c.is_object()) {
             continue;
@@ -180,7 +198,7 @@ void FetchPlaneMembers(const std::string& planeApi, const TrackerConfig& cfg, co
         planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" + planeProjectId + "/members/";
     std::vector<nlohmann::json> memberRows;
     std::string memberWarn;
-    AppendPagedResults(membersUrl, headers, memberRows, &memberWarn);
+    AppendPagedResults(membersUrl, headers, memberRows, &memberWarn, "Members");
     for (const auto& m : memberRows) {
         if (!m.is_object())
             continue;
@@ -241,7 +259,7 @@ TrackerField FetchPlaneLabelsField(const std::string& planeApi, const TrackerCon
         planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" + planeProjectId + "/labels/";
     std::string labelsWarn;
     std::vector<nlohmann::json> labelRows;
-    AppendPagedResults(labelsUrl, headers, labelRows, &labelsWarn);
+    AppendPagedResults(labelsUrl, headers, labelRows, &labelsWarn, "Labels");
 
     TrackerField labelsField = MakeCoreField("labels", "Labels", "array", TrackerFieldFamily::Labels, false);
     for (const auto& l : labelRows) {
@@ -269,15 +287,16 @@ void FetchPlaneCustomFields(const std::string& planeApi, const TrackerConfig& cf
         planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" + planeProjectId + "/work-item-types/";
     std::vector<nlohmann::json> typeRows;
     std::string typeWarn;
-    AppendPagedResults(typesUrl, headers, typeRows, &typeWarn);
+    AppendPagedResults(typesUrl, headers, typeRows, &typeWarn, "Custom fields");
 
-    if (typeRows.empty()) {
-        LOG_WARN("PlaneClient::FetchFieldCatalog: No work-item-types found for project %s. URL: %s. Error: %s",
-                 planeProjectId.c_str(), typesUrl.c_str(), typeWarn.c_str());
-        if (!typeWarn.empty())
-            warns.push_back("work-item-types: " + typeWarn);
+    const bool customFieldPlanGated = typeRows.empty() && !typeWarn.empty() && IsPlanePlanGatedCatalogWarn(typeWarn);
+    if (typeRows.empty() && !typeWarn.empty() && !customFieldPlanGated) {
+        warns.push_back(typeWarn);
+        LOG_WARN("PlaneClient::FetchFieldCatalog: No work-item-types for project %s. %s", planeProjectId.c_str(),
+                 typeWarn.c_str());
+    } else if (customFieldPlanGated) {
+        LOG_TRACE("PlaneClient::FetchFieldCatalog: custom fields plan-gated (HTTP 402); built-in catalog kept");
     }
-
     for (const auto& tentry : typeRows) {
         if (!tentry.is_object()) {
             continue;
@@ -297,8 +316,12 @@ void FetchPlaneCustomFields(const std::string& planeApi, const TrackerConfig& cf
                                      planeProjectId + "/work-item-types/" + typeId + "/work-item-properties/";
         auto pResp = TrackerGetLogged("PlaneClient", propsUrl, headers);
         if (pResp.status_code != 200) {
-            warns.push_back("work-item-properties HTTP " + std::to_string(pResp.status_code) + " for type " +
-                            typeId.substr(0, 8));
+            if (IsPlanePlanGatedCatalogStatus(static_cast<int>(pResp.status_code))) {
+                continue;
+            }
+            warns.push_back(FormatPlaneCatalogResourceWarn("Custom field properties",
+                                                           static_cast<int>(pResp.status_code)) +
+                            " for type " + typeId.substr(0, 8));
             continue;
         }
         const nlohmann::json pj = nlohmann::json::parse(StripUtf8BomCopy(pResp.text), nullptr, false);

@@ -234,11 +234,15 @@ static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
 
 static std::future<FieldCatalogFetchResult>
 StartFieldCatalogFetchAsync(AppController& app, const TrackerConfig& fetchCfg, const std::string& activeViewJql) {
-    return std::async(std::launch::async, [&app, fetchCfg, activeViewJql]() {
+    // Latch backend on the UI thread: focusedContext().Backend can become null while the worker
+    // runs (multi-grid Slice 3 — focus moves to a freshly spun-up pane before its sync swaps
+    // a backend in). FetchFieldCatalog re-reads focusedContext() and would fail spuriously.
+    const std::shared_ptr<ITrackerBackend> latchedBackend = app.BackendShared();
+    return std::async(std::launch::async, [fetchCfg, activeViewJql, latchedBackend]() {
         FieldCatalogFetchResult result;
         result.BackendKey = ConfigManager::NormalizeViewsBackendKey(fetchCfg.TrackerType);
         std::string projectKey;
-        std::shared_ptr<ITrackerBackend> backend = app.BackendShared();
+        const std::shared_ptr<ITrackerBackend> backend = latchedBackend;
         if (fetchCfg.TrackerType == "Plane" && backend != nullptr) {
             projectKey = smatchet::ResolvePlaneOperationProject(&backend->Connectivity(), activeViewJql,
                                                                 fetchCfg.JqlQuery);
@@ -249,13 +253,25 @@ StartFieldCatalogFetchAsync(AppController& app, const TrackerConfig& fetchCfg, c
         result.ProjectKey = projectKey;
         std::string error;
         TrackerFieldCatalogResult catalog;
-        // Pass active-view projectKey so Jira createmeta + /status enrichment populates
-        // priority/status AllowedValueOptions (otherwise grid renders those cells as text).
-        result.Ok = app.FetchFieldCatalog(fetchCfg, projectKey, catalog, error);
-        if (!result.Ok) {
+        if (!backend) {
+            error = "Tracker backend is not initialized.";
+            result.Ok = false;
             result.Error = error;
             return result;
         }
+        if (!backend->FieldCatalog()) {
+            error = "FetchFieldCatalog is not supported by this backend.";
+            result.Ok = false;
+            result.Error = error;
+            return result;
+        }
+        const auto catalogResult = backend->FieldCatalog()->FetchFieldCatalog(fetchCfg, projectKey);
+        result.Ok = static_cast<bool>(catalogResult);
+        if (!result.Ok) {
+            result.Error = catalogResult.error().Detail;
+            return result;
+        }
+        catalog = std::move(catalogResult.value());
         result.Fields = std::move(catalog.Fields);
         result.Components = std::move(catalog.Components);
         result.IssueTypeMeta = std::move(catalog.IssueTypeMeta);
@@ -557,6 +573,11 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
         // this fires on host focus switches as well.
         std::string& lastViewsBackendKey = d.lastViewsBackendKey;
         if (!lastViewsBackendKey.empty() && lastViewsBackendKey != bk) {
+            app.SetFieldCatalog({}, {}, {}, std::string());
+            app.SetAvailableUsers({});
+            d.fieldCatalogWarning.clear();
+            d.fieldCatalogFetchStarted = false;
+            d.fieldCatalogLoading = false;
             d.appliedInitialView = false;
             d.initialTicketSyncStarted = false;
             d.initialTicketSyncLoading = false;
@@ -1100,6 +1121,9 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
         if (d.fieldCatalogLoading) {
             return;
         }
+        if (!app.BackendShared()) {
+            return;
+        }
         d.fieldCatalogLoading = true;
         d.fieldCatalogFetchStarted = true;
         const ViewDefinition* activeView = ViewState.GetActiveView();
@@ -1133,9 +1157,10 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
                 // autocomplete can suggest assignees / reporters by display name.
                 app.SetAvailableUsers(std::move(result.Users));
                 d.fieldCatalogWarning = result.Warning;
-                if (!d.fieldCatalogWarning.empty()) {
-                    LOG_WARN("SmatchetUI: users fetch warning: %s", d.fieldCatalogWarning.c_str());
-                }
+            } else if (result.Error.find("Tracker backend is not initialized") != std::string::npos) {
+                d.fieldCatalogLoading = false;
+                d.fieldCatalogFetchStarted = false;
+                d.triggerCatalogRefetch = true;
             } else {
                 app.SetFieldCatalog(
                     {}, {}, result.Error.empty() ? std::string("Failed to fetch field catalog.") : result.Error);
@@ -1164,7 +1189,6 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
         if (!d.initialTicketSyncStarted) {
             ConfigManager::Save(d.cfg);
             app.ClearLastTrackerTicketSyncWarning();
-            d.initialTicketSyncStarted = true;
             // Initial refresh already covers a same-frame connectivity-recovery latch; skip the
             // follow-up resync on the next frame (would duplicate SyncWithBackend / toasts).
             d.connectivityRecoveryTicketResyncPending = false;
@@ -1175,14 +1199,23 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
             // Preferences backend switch) must not survive to swallow a later sync.
             d.suppressNextBackendSwitchInitialSync = false;
             d.suppressNextBackendSwitchInitialSyncKey.clear();
-            // suppressThisKick = pane focus switch onto a sync-live cross-backend context
-            // (Slice-3 follow-up): the backend-switch session reset above still refreshed
-            // catalog/editor state, but the focused pane's own GridLiveContext already
-            // fetched its tickets — a SyncWithBackend here would duplicate that fetch.
-            if (!suppressThisKick) {
-                app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
+            if (suppressThisKick) {
+                d.initialTicketSyncStarted = true;
+                d.appliedInitialView = true;
+            } else if (d.gridPanesLoaded && !d.gridPanes.empty()) {
+                const GridPane& focused = d.focusedPane();
+                if (!app.IsPaneSyncLive(focused.id)) {
+                    TrackerConfig paneCfg = d.cfg;
+                    if (!focused.backendKey.empty()) {
+                        paneCfg.TrackerType = focused.backendKey;
+                    }
+                    app.EnsurePaneLiveSyncStarted(focused.id, paneCfg, focused.viewId);
+                }
+                d.initialTicketSyncStarted = true;
+                d.appliedInitialView = true;
             }
-            d.appliedInitialView = true;
+            // else: panes not loaded yet — drawGridPaneWindows kicks the focused pane same
+            // frame (EnsurePanesLoaded + SetFocusedPane) and marks initialTicketSyncStarted.
         }
     }
 

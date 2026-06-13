@@ -63,6 +63,10 @@ struct RoundTripPreview {
 /// guard where mid-token input occasionally trips the converter.
 RoundTripPreview ComputeRoundTripPreview(LongTextRichKind kind, const std::string& markdown);
 
+/// Rich description payload (Jira ADF JSON or Plane HTML) → markdown for grid tooltips.
+/// Falls back to `strippedFallback` when empty, plain, or HTML outside the supported subset.
+std::string RichValueToTooltipMarkdown(const std::string& rich, const std::string& strippedFallback);
+
 } // namespace TicketFieldEditorLongTextPure
 
 #endif

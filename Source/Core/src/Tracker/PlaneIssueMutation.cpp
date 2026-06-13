@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cpr/cpr.h>
+#include <cstdio>
 #include <string>
 
 using smatchet::plane_detail::JsonFieldToString;
@@ -199,15 +200,26 @@ std::string PlaneClient::ResolveDisplayValue(const std::string& fieldId, const T
             return optIt->Value;
     }
     if (field->Id == "assignee" || field->IsUserType) {
+        if (value.empty()) {
+            return value;
+        }
         auto uIt =
             std::find_if(cachedUsers_.begin(), cachedUsers_.end(), [&](const auto& u) { return u.AccountId == value; });
         if (uIt != cachedUsers_.end())
             return uIt->DisplayName;
+        auto uNameIt = std::find_if(cachedUsers_.begin(), cachedUsers_.end(),
+                                    [&](const auto& u) { return u.DisplayName == value; });
+        if (uNameIt != cachedUsers_.end())
+            return uNameIt->DisplayName;
         // Fallback to searching AllowedValueOptions if not in cachedUsers_
         auto optIt = std::find_if(field->AllowedValueOptions.begin(), field->AllowedValueOptions.end(),
                                   [&](const auto& opt) { return opt.Id == value; });
         if (optIt != field->AllowedValueOptions.end())
             return optIt->Value;
+        auto optNameIt = std::find_if(field->AllowedValueOptions.begin(), field->AllowedValueOptions.end(),
+                                      [&](const auto& opt) { return opt.Value == value; });
+        if (optNameIt != field->AllowedValueOptions.end())
+            return optNameIt->Value;
         LOG_DEBUG("PlaneClient: Failed to resolve user UUID '%s' for field '%s' (cache size: %zu)", value.c_str(),
                   field->Id.c_str(), cachedUsers_.size());
     }
