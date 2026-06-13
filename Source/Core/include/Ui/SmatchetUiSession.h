@@ -4,6 +4,7 @@
 #include "ConfigManager.h"
 #include "GridPane.h"
 #include "SmatchetDefaults.h"
+#include "Ui/CancelToken.h"
 
 #include <nlohmann/json.hpp>
 #include "IssueCreatePipeline.h"
@@ -745,6 +746,14 @@ struct UiDrawSession {
     IssueTableSerializer::ImportResult bulkImportPreview;
     std::vector<std::string> bulkImportStatus;
     std::vector<std::future<IssueCreateResult>> bulkImportFutures;
+    // WS-A cooperative cancel: each in-flight create captures this token (passed to
+    // CreateIssueAsync); a `.clear()` (re-parse / re-run) signals it then moves the
+    // still-valid futures into the graveyard so the UI frame never blocks on a
+    // running create's destructor. The token is Reset() per fresh run.
+    smatchet::ui::CancelToken bulkImportCancel;
+    // Abandoned-but-still-running create futures, drained at app teardown
+    // (DrainUiDrawSessionFuturesBeforeAppTeardown) while AppController is alive.
+    std::vector<std::future<IssueCreateResult>> bulkImportFutureGraveyard;
     size_t bulkImportCompleted = 0;
     bool bulkImportRunning = false;
     std::string bulkImportError;

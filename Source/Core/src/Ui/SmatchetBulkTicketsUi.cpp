@@ -114,6 +114,27 @@ static bool BulkImportStatusIsTerminal(const std::string& status) {
     return true;
 }
 
+/**
+ * WS-A non-blocking clear of the per-row create futures. A create launched via
+ * CreateIssueAsync writes to a promise and keeps running in the background pool;
+ * destroying its future here does not join, but the abandoned worker would still
+ * run the full network create + post-create refresh. Signal cancel (so the worker
+ * short-circuits), then move any still-valid futures into the session graveyard
+ * (drained at app teardown) instead of destroying them inline — so the UI frame
+ * returns within budget (#734) even while a create is in flight. Resets the token
+ * for the next run and leaves `bulkImportFutures` empty.
+ */
+void BulkImportAbandonFutures(UiDrawSession& d) {
+    d.bulkImportCancel.Cancel();
+    for (auto& f : d.bulkImportFutures) {
+        if (f.valid()) {
+            d.bulkImportFutureGraveyard.push_back(std::move(f));
+        }
+    }
+    d.bulkImportFutures.clear();
+    d.bulkImportCancel.Reset();
+}
+
 /** Parse the source text into preview rows + reset per-row status/future tracking. */
 void BulkImportRunParse(AppController& app, UiDrawSession& d, const std::string& fallbackProject) {
     const std::string text(d.bulkImportTextBuf.data());
@@ -124,7 +145,7 @@ void BulkImportRunParse(AppController& app, UiDrawSession& d, const std::string&
     d.bulkImportError = d.bulkImportPreview.Error;
     d.bulkImportCompleted = 0;
     d.bulkImportRunning = false;
-    d.bulkImportFutures.clear();
+    BulkImportAbandonFutures(d);
     d.bulkImportFutures.resize(d.bulkImportPreview.Rows.size());
 }
 
@@ -191,7 +212,7 @@ void BulkImportSubmitPending(AppController& app, UiDrawSession& d, int maxConcur
             ++d.bulkImportCompleted;
             continue;
         }
-        d.bulkImportFutures[pick] = app.CreateIssueAsync(row.Draft);
+        d.bulkImportFutures[pick] = app.CreateIssueAsync(row.Draft, d.bulkImportCancel);
         d.bulkImportStatus[pick] = "submitting...";
         ++inFlight;
     }
@@ -239,7 +260,7 @@ void BulkImportResetOnClose(UiDrawSession& d) {
     d.bulkImportFormatSel = 0;
     d.bulkImportPreview = {};
     d.bulkImportStatus.clear();
-    d.bulkImportFutures.clear();
+    BulkImportAbandonFutures(d);
     d.bulkImportCompleted = 0;
     d.bulkImportRunning = false;
     d.bulkImportError.clear();
@@ -390,7 +411,7 @@ void DrawBulkImportRunControls(UiDrawSession& d, int maxConcurrent) {
         d.bulkImportRunning = true;
         d.bulkImportCompleted = 0;
         d.bulkImportStatus.assign(d.bulkImportPreview.Rows.size(), "queued");
-        d.bulkImportFutures.clear();
+        BulkImportAbandonFutures(d);
         d.bulkImportFutures.resize(d.bulkImportPreview.Rows.size());
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled)) {

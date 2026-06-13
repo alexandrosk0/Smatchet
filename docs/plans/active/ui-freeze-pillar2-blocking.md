@@ -99,13 +99,35 @@ WS-B (one site per row; each its own commit, batchable):
 - A general Pillar-2 static-scanner expansion to catch future-destructor blocks (not just sync I/O) — possible tooling follow-up.
 
 ## Implementation log
-*(populated post-ship)*
+
+**WS-A — cooperative future cancellation (shipped 2026-06-13).** WS-B (#1001 cluster) shipped separately as #1181; this entry covers WS-A only.
+
+- **`Source/Core/include/Ui/CancelToken.h`** (new, header-only) — `smatchet::ui::CancelToken` (copyable handle onto a shared `std::atomic<bool>`; `Cancel` / `IsCancelled` / `Reset`, fail-safe-to-cancelled on a null handle) + `smatchet::ui::CancellableFutureSet<T>` owner helper (`Token` / `Add` / `SignalCancelAll` / `AbandonInto` non-blocking / `JoinAll` teardown drain). Dual-target-safe (only `<atomic>/<future>/<memory>/<vector>`); no GLFW/GL.
+- **`SmatchetBulkTicketsUi.cpp`** (#734) — the three `bulkImportFutures.clear()` sites (parse / close / run) now call a new `BulkImportAbandonFutures(d)` = signal `d.bulkImportCancel.Cancel()` → move still-valid futures into `d.bulkImportFutureGraveyard` → `Reset()` the token. The per-row create passes `d.bulkImportCancel` to `CreateIssueAsync`.
+- **`AppController::CreateIssueAsync`** — gained a defaulted `smatchet::ui::CancelToken cancel` param (Lua caller unaffected); the worker checks `IsCancelled()` before the network create (returns a benign "Cancelled." result) and again before the post-create `RefreshLocalData` / hydration that dereferences `this`.
+- **`SmatchetUiSession.h`** — added `bulkImportCancel` (token) + `bulkImportFutureGraveyard` to `UiDrawSession`.
+- **`SmatchetUserInfoUi.{h,cpp}`** (#1150) — added `cancel_` (shared by the 4 std::async workers) + `appForShutdownCancel_`. Each worker captures a token copy and checks `IsCancelled()` at its IO boundary before dereferencing the captured raw `appPtr`. New `~SmatchetUserInfoUi()` signals `cancel_` + calls `ClearPaneUserActivity(paneId_)` (the backend's in-scan IO cancel — the multi-second p4 case) BEFORE the future members destruct, so the kept destructor-join is near-instant. `closeCleanup` / `adoptPendingRequest` signal+`Reset` the token.
+- **`SmatchetUI_Layout.cpp`** `DrainUiDrawSessionFuturesBeforeAppTeardown` — signals `d.bulkImportCancel.Cancel()` before the join and also drains `d.bulkImportFutureGraveyard` (abandoned-but-running creates from earlier `.clear()` calls).
+
+**Pillar-3 (no-UAF) reasoning confirmed:** in `BootstrapContext` (StandaloneAppBootstrap.h) `app` is declared before `mainWindow`, so `~SmatchetUI` (and thus `~SmatchetUserInfoUi`) runs BEFORE `AppController` is destroyed — the captured `appPtr` stays valid across the fast signal-then-join, and a cancelled worker returns before touching it again. The teardown join is KEPT (signal → join), never removed.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **Bulk-import keeps the indexed `std::vector<std::future>` rather than adopting `CancellableFutureSet` directly.** The bulk pump addresses futures by row index (`bulkImportFutures[idx]`), incompatible with the set's opaque membership; instead a sibling `CancelToken` + graveyard pair replicates the set's signal/abandon/drain semantics over the existing indexed vector. `CancellableFutureSet` is still the reusable seam (covered by bucket-A) and is the right fit for non-indexed owners.
+- **Bulk-import `CreateIssueAsync` does NOT have a blocking future destructor** (it is a `LaunchBackgroundTask` + promise, not a `std::async`), so the literal #734 "blocking `.clear()`" is a near-no-op on destruction — but the abandoned worker would still run the full network create + post-create refresh. The WS-A fix makes that worker short-circuit on cancel (skipping the network create AND the expensive refresh), which is the substantive Pillar-2 win the issue is about. The non-blocking-abandon shape is still applied per the plan.
+- **Test-infrastructure finding (filed):** the `ninja-msvc-asan` preset historically instrumented only the app targets, never the `SmatchetTests` doctest rig — a heap UAF in a test TU compiled uninstrumented and could not trip ASan. WS-A added an opt-in `SMATCHET_SANITIZE_TESTS` knob (default OFF) so the #1150 repro runs genuinely sanitized; full-rig ASan is blocked by a pre-existing `/RTC1`-vs-`/fsanitize=address` death-test SIGABRT, filed as a tooling follow-up.
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- **Bucket A (pure-logic ctest)** — `tests/Core/CancelToken.test.cpp`: 7 cases / 24 assertions, green (token share/idempotent/reset semantics; set add/abandon/join; cooperative early-out; shutdown-drain swallows worker exception). ASan-clean.
+- **Bucket E (#734)** — `tests/Core/BulkImportAbandonNonBlocking.test.cpp`: re-creates `BulkImportAbandonFutures(d)` against 4 futures each blocking 3000 ms; asserts the signal-then-abandon returns in `< 250 ms` (vs the ~3 s an inline join would cost). Green.
+- **Sanitizer (#1150, Pillar-3)** — `tests/Core/UserInfoActivityCancelUaf.test.cpp`: reconstructs the `launchActivityFetch` UAF shape (worker holds raw controller ptr + token, blocked mid-scan on a latch released by the IO-cancel hook; owner dtor signals cancel + releases latch before the future destructs; controller freed after the owner). Built with `-DSMATCHET_SANITIZE_TESTS=ON` and run under `ASAN_OPTIONS=abort_on_error=1`: UAF-clean, 20/20 stress iterations clean; a deliberate negative control (worker reads freed heap) trips `heap-use-after-free` (exit 99), proving the instrumentation is live.
+- **Dual-target build** — `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12 SmatchetTests`: all green (Smatchet.exe + SmatchetCore_DX12.lib + SmatchetTests.exe).
+- **Full functional suite** — `SmatchetTests.exe`: 1690 cases / 15660 assertions, 0 failed.
+- **Lint gate** — `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop`: PASS (only a pre-existing unchanged comment-ratio WARN on AppController.h).
+- **Manual residue**: full-stack bucket-E drive of `SmatchetUserInfoUi::DrawWindow` (real ImGui frame + mock blocking backend) and full-rig ASan in CI are deferred with concrete follow-up plans (see Deviations); the faithful doctest analogue covers the Pillar-3 ordering contract today.
+
+*(WS-B already shipped as #1181 — its log/verification lives on that PR.)*
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 1. *flip the § Status header to `shipped`,*
