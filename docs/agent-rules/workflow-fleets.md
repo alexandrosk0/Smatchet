@@ -15,6 +15,27 @@ Every rule below is a written-down diagnosis from the 2026-06-10/11 audit-fleet 
 | 5 | Runtime deletes the workflow run dir (journal + cached agent results) on kill — resume impossible | observed **twice** 2026-06-11 (audit fleet + wave-4: journal + 27 cached results destroyed) | § Checkpoint contract |
 | 6 | Auto-compact inside a subagent: broad scope balloons context, compaction burns minutes + tokens, UI shows a stall | survey fleet, 2 of 5 agents ~130k | § Per-agent scoping |
 
+## Two fan-out mechanisms — know which one you're launching
+
+The rules below were written from **background-fleet** deaths, but Smatchet has **two** distinct fan-out mechanisms with different failure modes. Know which you're using before applying a rule:
+
+| | Background fleet (bash) | In-process `Workflow` tool |
+|---|---|---|
+| Spawns | bash agents writing `build/<slug>/results/*` | `agent()` calls inside `parallel()` / `pipeline()` |
+| Durable output | result files on disk (the system of record) | each `agent()` return value + `resumeFromRunId` cache |
+| Concurrency ceiling | shared-account TPM (§ Concurrency) | runtime cap `min(16, cores−2)` live slots |
+| Kill cost | run-dir wiped, results survive on disk | run-dir wiped, **journal + cached results gone** unless agents also wrote to repo files |
+
+**Cross-applies to both**: § Per-agent scoping, § Model pinning, § Input-size pre-flight. A `Workflow` `agent()` launched from a 1M-context session inherits that model and starves the shared TPM exactly like a bash miner — pin `model: 'sonnet'` on every fan-out agent.
+
+**In-process-only rules** (the bash-fleet § Checkpoint contract / § In-workspace staging / § Salvage runbook do **not** map cleanly — a schema-returning `agent()` has no results file):
+
+- **Cap fan-out WIDTH at the slot count.** Items in one `parallel()`/`pipeline()` call run `min(16, cores−2)` at a time; the rest queue. A 16-wide fan-out on a 12-slot machine starts 12 and queues 4 — the queued tail shows as a "stall" in `/workflows` though nothing failed (this was the 2026-06-13 arch-analysis friction). Size the fan-out array to the slot count: merge clusters (≤12 readers, not 16) or stage in explicit waves.
+- **Prefer `pipeline()` over `parallel()` unless a stage truly needs all prior results.** `parallel()` is a barrier — the next phase waits on the slowest agent *plus the queued tail*. `pipeline()` streams each item through its stages independently, so an early map flows into the cross-cut stage while a later map is still running. Reach for the `parallel()` barrier only when a stage genuinely needs the whole prior set at once (dedup, early-exit-on-zero, "compare against the other findings").
+- **Durable output is the return value + resume, not a results file.** A killed `Workflow` loses its journal + cached `agent()` results; recover with `resumeFromRunId` (same-session, best-effort). For a long/expensive in-process fan-out whose loss would hurt, have each agent *also* write its deliverable to a repo file (borrow the bash-fleet § Checkpoint contract) so a kill can't zero it.
+
+`fleet-preflight.sh` check 6 WARNs when a script's largest fan-out array tops the local slot count.
+
 ## Per-agent scoping — finish under ~80k tokens
 
 A survey/reader agent that auto-compacts has already failed: compaction throws away most of what was paid for and looks like a stall in the UI. Scope every fan-out agent to finish **well under ~80k tokens**:
@@ -90,5 +111,6 @@ Before any `Workflow` fleet launch, confirm:
 - [ ] Every input file ≤ ⅓ context window (§ Input-size pre-flight)
 - [ ] All inputs/outputs staged under `build/<fleet-slug>/` (§ In-workspace staging)
 - [ ] Each agent prompt includes the write-your-result-to-a-repo-file step (§ Checkpoint contract)
+- [ ] **In-process `Workflow` tool**: fan-out width ≤ local slots `min(16,cores−2)`; `pipeline()` not `parallel()` unless a stage needs all prior results (§ Two fan-out mechanisms)
 
-Mechanical validation of this checklist runs via [`fleet-preflight.sh`](../../agents/scripts/core/fleet-preflight.sh) (`<workflow-script> [fleet-dir] [--strict]`) — static-analyses the Workflow script + staged inputs for the five checks above; advisory (WARN lines, exit 0) by default, `--strict` turns any WARN into a non-zero exit to gate a launch.
+Mechanical validation of this checklist runs via [`fleet-preflight.sh`](../../agents/scripts/core/fleet-preflight.sh) (`<workflow-script> [fleet-dir] [--strict]`) — static-analyses the Workflow script + staged inputs for the checks above (incl. the in-process fan-out-width vs slot-count check); advisory (WARN lines, exit 0) by default, `--strict` turns any WARN into a non-zero exit to gate a launch.
