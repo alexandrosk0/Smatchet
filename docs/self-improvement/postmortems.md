@@ -27,6 +27,20 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-13 · PR #1180 · admin-merged past RED Bucket-C + Bucket-E (allow-listed blocking checks)
+
+### What escaped
+PR #1180 (the bucket-lane gate-hardening PR) was squash-merged to `develop` at 18:53 via `gh pr merge --squash --admin` while its **Bucket-C screenshot diff** and **Bucket-E UI tests** checks were RED (the new launch-smoke step it added was failing on the Mesa exe-boot). Both `Bucket-*` checks are on the merge-gates "meant-to-block" allow-list (`merge-gates.sh`, #923 fix). `--admin` bypassed GitHub branch protection. Net: a gate the PR itself introduced shipped to develop while red, red-walling bucket-C/E develop-wide (remediated by #1187 making the launch-smoke advisory).
+
+### Root cause (blameless)
+The admin-merge had **no programmatic green-check gate**. The orchestrator ran a pre-merge re-confirm as an informational `echo` (`... | if 0-failures "all green" else "FAIL: …"`) and then ran `gh pr merge --admin` as a **separate unconditional statement** — the echo's "FAIL: Bucket-C, Bucket-E" output did not, and could not, stop the merge. The `cr-out-of-band` justification (CR findings verified-fixed in the diff) was sound and unrelated; the failure was that the bucket-C/E reds were **live, real, non-overridden** checks, and the "admin only when everything is actually green" carve-out was not *enforced* — it was asserted in prose and printed, not gated on an exit code. Bare `--admin` is a foot-gun: it bypasses the very rollup the poller checks.
+
+### Preventing gate
+A `safe-admin-merge` guard the orchestrator MUST use instead of bare `gh pr merge --admin`: it reads the head's `statusCheckRollup`, and **refuses (non-zero exit, no merge)** if ANY required-or-allow-listed check (`Bucket-*` / `Coverage` / `Sanitizer` / the required contexts) is non-green — only a genuinely stale-BLOCKED-green PR can be admin-merged. This makes "admin-merge past a real red" structurally impossible while preserving the legitimate stale-BLOCKED-green carve-out. Plus the discipline rule: **never gate a merge on an `echo`** — the green assertion must be an exit code (`if ! all_checks_green <pr>; then abort`), never advisory text in the same command as the merge.
+
+### Filed as
+`docs/self-improvement/categories/tooling.md` — `safe-admin-merge-guard` (the wrapper + the never-gate-on-echo rule).
+
 ## 2026-06-13 · Issue #863 · config-skew sanitizer-nightly break (`-Werror,-Wunused-function`) reached `develop`
 
 > Filed retroactively (the product fix already landed in `61b17427` / PR #945). The
