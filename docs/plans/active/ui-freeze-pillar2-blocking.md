@@ -24,19 +24,20 @@ Intended outcome: after this lands, no UI-thread frame blocks on future-drain or
 
 Two workstreams under one plan (shared Pillar-2 goal + the same accepted offload toolkit), shippable as **separate PRs** (different subsystems, no shared seam beyond the helper).
 
-**WS-A — non-blocking future ownership.** Introduce one reusable helper rather than hand-rolling per owner. Proposed: a process-scoped **`UiFutureGraveyard`** — owners `std::move` a finished-or-abandoned `future` into it instead of destroying it inline; a single background drainer (joined once at `AppController` teardown, mirroring `DrainUiDrawSessionFuturesBeforeAppTeardown`) waits on them off the UI thread. This makes the *clear* (#734) and *window close* (#1150 during-run) non-blocking, while preserving the no-UAF guarantee at process exit (the drainer is still joined before `AppController` dies). Workers that capture `appPtr` stay valid because teardown still joins. Open design question (grill target #1) below.
+**WS-A — cooperative future cancellation (decided 2026-06-13).** Each UI-owned worker takes a `stop_token`-style cancel flag (a shared `std::atomic<bool>` / a small `CancelToken` struct) and checks it at its await/loop/IO-chunk boundaries, returning promptly when set. The UI owner, on `.clear()` (#734) / window-close / shutdown (#1150), *signals cancel* then abandons the future without an inline blocking wait — the worker observes the flag and exits fast, so the eventual join (kept at `AppController` teardown, mirroring `DrainUiDrawSessionFuturesBeforeAppTeardown`) is near-instant. This fixes **both** the during-run block (#734) **and** the shutdown stall (#1150, several-second p4/network drain), at the accepted cost of touching every UI-worker body to add the cancel-check. The no-UAF guarantee (Pillar-3) is preserved: teardown still joins before `AppController` dies, and a cancelled worker that captured `appPtr` returns before touching it post-signal. A small `CancelToken` + an owner-side `CancellableFutureSet` helper (signal-all + non-blocking abandon + teardown join) is the reusable seam; per-worker bodies add one cooperative check.
 
-**WS-B — sync-I/O offload audit.** Apply the three already-accepted in-tree patterns site-by-site: `snapshot-on-open` into `UiDrawSession` (#767, #892 — the per-frame `ListCachedProjects()` reads), `MarkPrefsDirty` deferred-save (#732 — match the sibling tabs that already defer), `LaunchBackgroundTask`+`PostToMainThread` with a spinner cue (#761 p4 round-trip; #611 memo-miss `LoadPersistentViewsFromDisk`). No new pattern invented.
+**WS-B — sync-I/O offload audit.** Apply the three already-accepted in-tree patterns site-by-site: `snapshot-on-open` into `UiDrawSession` (#767, #892 — the per-frame `ListCachedProjects()` reads), `MarkPrefsDirty` deferred-save (#732 — match the sibling tabs that already defer), `LaunchBackgroundTask`+`PostToMainThread` with a spinner cue (#761 p4 round-trip; #611 memo-miss `LoadPersistentViewsFromDisk`). No new pattern invented. **Batched as 3 PRs by pattern** (decided): snapshot-on-open (#767/#892) · MarkPrefsDirty (#732) · LaunchBackgroundTask+cue (#761/#611).
 
-Trade-off named: WS-A's graveyard centralizes drain but still *blocks at shutdown* (acceptable — bounded, and #1150's slowness is the shutdown case; the win is non-blocking during normal operation). A fully cooperative cancellation (stop-token each worker polls) would also speed shutdown but requires touching every worker body — deferred unless grilling says shutdown latency must improve too.
+**Sequencing (decided): WS-A and WS-B ship in parallel** — independent files; WS-B does not consume the WS-A cancel helper.
 
 ## Files to modify
 
-WS-A:
-1. `Source/Core/include/Ui/UiFutureGraveyard.h` + `Source/Core/src/Ui/UiFutureGraveyard.cpp` — new helper (grep-confirmed absent: `rg -l UiFutureGraveyard Source/` → none).
-2. `Source/Core/src/Ui/SmatchetBulkTicketsUi.cpp:132/226/311` — move-into-graveyard instead of `.clear()`.
-3. `Source/Core/include/Ui/SmatchetUserInfoUi.h:108-111` + its `.cpp` — graveyard the 4 futures on window-close.
-4. `Source/Core/src/Ui/SmatchetUI_Layout.cpp:248` (`DrainUiDrawSessionFuturesBeforeAppTeardown`) — also drain the graveyard at teardown.
+WS-A (cooperative cancellation):
+1. `Source/Core/include/Ui/CancelToken.h` (+ `.cpp` if needed) — new `CancelToken` (shared atomic flag) + `CancellableFutureSet` owner helper (signal-all, non-blocking abandon, teardown join). Grep-confirm absent before naming.
+2. `Source/Core/src/Ui/SmatchetBulkTicketsUi.cpp:132/226/311` — signal-cancel + non-blocking abandon instead of blocking `.clear()`; the bulk-import worker body checks the token between rows.
+3. `Source/Core/include/Ui/SmatchetUserInfoUi.h:108-111` + its `.cpp` — give the 4 fetches a `CancelToken`; signal on window-close/shutdown; the vcs/activity/groups/members worker bodies check the token at their IO boundaries (esp. the p4-annotate activity scan — the #1150 multi-second case).
+4. `Source/Core/src/Ui/SmatchetUI_Layout.cpp:248` (`DrainUiDrawSessionFuturesBeforeAppTeardown`) — signal-all-cancel before the join so teardown drains fast.
+5. **Each touched worker body** — add the cooperative cancel-check at its await/loop/IO-chunk boundary (the accepted cost of this approach).
 
 WS-B (one site per row; each its own commit, batchable):
 5. `SmatchetViewsDashboardUi_widgets.cpp` (#767) + `SmatchetPreferencesUi.cpp` (#892) — snapshot `ListCachedProjects()` on popup/tab open into `UiDrawSession`.
@@ -69,10 +70,10 @@ WS-B (one site per row; each its own commit, batchable):
 
 ## Risks / non-goals
 
-- **Risk (Pillar-3, WS-A lifetime)**: a graveyard'd future whose worker captured `appPtr` must not outlive `AppController`. Mitigation: drainer joined in the existing teardown path *before* `AppController` dtor; sanitizer (ASan) bucket run on the WS-A PR. **This is the gate-the-design risk** — grill target #1.
+- **Risk (Pillar-3, WS-A lifetime — now LARGER surface)**: cooperative cancellation touches every UI-worker body, so the no-UAF guarantee must hold per worker — a cancelled worker must observe the flag and return *before* dereferencing captured `appPtr`/`this` again. Mitigation: the teardown join is kept (signal-all → join is fast, not removed); each touched worker gets an ASan-exercised cancel path; the WS-A PR runs the sanitizer bucket with the #1150 mid-fetch-shutdown repro. Higher-risk than the graveyard alternative (which the grill rejected in favour of also fixing shutdown) — review each worker's post-signal access carefully.
 - **Risk**: WS-B snapshot-on-open can show stale data if the underlying file changes while open. Accepted — these are cached-project / view lists; a refresh-on-reopen is fine (document it).
-- **Non-goal**: fully cooperative worker cancellation (stop-token) to speed *shutdown* latency — deferred (touches every worker body). Revisit if grilling says shutdown speed matters.
-- **Non-goal**: the inverse-asymmetry tracker findings (#943-related) — different subsystem, separate PR.
+- **Non-goal**: the inverse-asymmetry tracker findings (#943-related) — different subsystem, separate PR (already in flight as the #943/#984 fix PR).
+- (Cooperative cancellation is now IN scope per the grill — no longer deferred.)
 
 ## Verification
 
@@ -84,12 +85,12 @@ WS-B (one site per row; each its own commit, batchable):
 - **Plan stress-test — `grill-with-docs` (keep this bullet)**: grill the open design questions below with the user before WS-A implementation. Required — do not delete.
 - **Manual residue**: none expected; #1150's mid-fetch-shutdown repro is automatable via the sanitizer bucket above.
 
-## Open design questions (grill targets)
+## Resolved decisions (grilled 2026-06-13)
 
-1. **WS-A shape** — process-scoped `UiFutureGraveyard` (drainer joined at teardown; non-blocking during run, still blocks at shutdown) **vs** per-worker cooperative cancellation (stop-token; also speeds shutdown but touches every worker)? Recommendation: graveyard first (smaller, reusable), cancellation deferred.
-2. **#1150 priority** — is the *shutdown* stall worth fixing now (needs cancellation), or is making the *during-run* window-close non-blocking enough (graveyard alone leaves shutdown still bounded-blocking)?
-3. **WS-B batching** — one PR for all 5 sites, or split (snapshot-on-open pair / MarkPrefsDirty / LaunchBackgroundTask pair)?
-4. **Sequencing** — WS-A (the reusable helper) before WS-B, or independent/parallel?
+1. **WS-A shape** — **full cooperative cancellation now** (stop-token each worker polls), not the graveyard-only approach. Fixes the shutdown stall (#1150) as well as the during-run block (#734); accepted cost = touching every UI-worker body.
+2. **#1150 shutdown** — fix now (covered by the cancellation in WS-A).
+3. **WS-B batching** — split by pattern → 3 PRs (snapshot-on-open #767/#892 · MarkPrefsDirty #732 · LaunchBackgroundTask+cue #761/#611).
+4. **Sequencing** — WS-A and WS-B in parallel (independent).
 
 ## Out of scope (flagged, not designed)
 
