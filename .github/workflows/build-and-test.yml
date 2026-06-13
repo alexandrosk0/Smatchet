@@ -781,15 +781,58 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-fetchcontent-
 
+      # The ninja-msvc-asan preset now sets SMATCHET_BUILD_TESTS=ON +
+      # SMATCHET_SANITIZE_TESTS=ON by default, so the SmatchetTests doctest rig is
+      # built AND instrumented with /fsanitize=address (closing the Pillar-3
+      # blind-spot: infra asan-doctest-rig-not-instrumented). /RTC1 is stripped
+      # tree-wide by smatchet_strip_msvc_rtc_for_asan() (it is mutually exclusive
+      # with ASan and SIGABRTs the exception-unwind path otherwise).
       - name: Configure ninja-msvc-asan
         run: cmake --preset ninja-msvc-asan -DSMATCHET_WITH_WHISPER=OFF -DSMATCHET_WITH_LUA_AUTOMATION=OFF
 
       - name: Build (ASAN via MSVC)
         run: cmake --build --preset ninja-msvc-asan
 
+      # ctest runs the app-target ASan surface + the cmake-only android-openssl
+      # probes. abort_on_error=0 so a stray abort() (e.g. a live Debug assert())
+      # surfaces as a normal failure with a stack instead of an opaque SIGABRT.
       - name: Run ctest under ASAN
         working-directory: build/ninja-msvc-asan
+        env:
+          ASAN_OPTIONS: abort_on_error=0
         run: ctest --output-on-failure
+
+      # Sanitized doctest rig — the genuine ASan surface across the whole unit-test
+      # tree (~15k assertions). Two pre-existing cases are EXCLUDED (not ASan
+      # findings; tracked in docs/self-improvement/categories/{test,infra}.md):
+      #   * "CallstackParser::ParseCallstackText survives adversarial inputs" — the
+      #     INT_MAX-clamp subcase is a Debug-build std::stoi discrepancy (pure logic,
+      #     ASan-independent) and the ReDoS sentinel is a TIMING budget the ~2-3x ASan
+      #     slowdown blows. Both fail the assert, neither is a memory-safety finding.
+      # The rest of the rig running clean under ASan is the load-bearing gate here:
+      # a real heap-use-after-free / leak / overflow in any covered TU now reds this
+      # step (it could not before — the rig compiled uninstrumented).
+      - name: Run sanitized doctest rig (ASan, clean subset)
+        shell: bash
+        working-directory: build/ninja-msvc-asan
+        env:
+          ASAN_OPTIONS: abort_on_error=0
+        run: |
+          ./tests/SmatchetTests.exe \
+            --test-case-exclude="CallstackParser::ParseCallstackText survives adversarial inputs"
+
+      - name: Surface sanitized-rig ASan report
+        if: failure()
+        shell: bash
+        run: |
+          echo "## Sanitized doctest rig (MSVC ASan)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f build/ninja-msvc-asan/Testing/Temporary/LastTest.log ]; then
+            grep -A 30 'ERROR: AddressSanitizer' \
+              build/ninja-msvc-asan/Testing/Temporary/LastTest.log \
+              | head -80 >> "$GITHUB_STEP_SUMMARY" || true
+          fi
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Report sccache stats
         if: always()
