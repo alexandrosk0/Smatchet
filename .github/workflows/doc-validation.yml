@@ -38,6 +38,8 @@ on:
       - 'agents/scripts/core/test-plan-ref-integrity.sh'
       - 'agents/scripts/core/test-portable-purity.sh'
       - 'agents/scripts/core/test-config-globs.sh'
+      - 'agents/scripts/core/test-required-context-parity.sh'
+      - 'agents/scripts/core/lib/ci-check-resolve.sh'
       - 'agents/scripts/core/test-plan-naming.sh'
       - 'agents/scripts/core/test-markdown-links.sh'
       - 'agents/scripts/core/test-agent-discovery-fixture.sh'
@@ -298,6 +300,13 @@ jobs:
         run: |
           bash agents/scripts/core/test-config-globs.sh --selftest
           bash agents/scripts/core/test-config-globs.sh --check
+
+      - name: test-required-context-parity — every required context emits unconditionally
+        if: steps.detect.outputs.docs == 'true'
+        run: |
+          python -m pip install --quiet pyyaml
+          bash agents/scripts/core/test-required-context-parity.sh --selftest
+          bash agents/scripts/core/test-required-context-parity.sh --check
 
       - name: test-gate-selftests — every --selftest-exposing gate asserts a failure case
         if: steps.detect.outputs.docs == 'true'

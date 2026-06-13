@@ -1,0 +1,9 @@
+{
+  "branch_protection": {
+    "branch": "develop",
+    "required_contexts": [
+      "Templated Context (linux)"
+    ],
+    "strict": false
+  }
+}

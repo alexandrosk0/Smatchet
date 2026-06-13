@@ -1,0 +1,12 @@
+name: Filtered
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - '**/*.md'
+jobs:
+  filtered-job:
+    name: Filtered Context
+    runs-on: ubuntu-latest
+    steps:
+      - run: true

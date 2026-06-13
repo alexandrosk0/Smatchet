@@ -1,0 +1,9 @@
+{
+  "branch_protection": {
+    "branch": "develop",
+    "required_contexts": [
+      "Clean Context"
+    ],
+    "strict": false
+  }
+}

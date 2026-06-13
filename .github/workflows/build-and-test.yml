@@ -453,6 +453,32 @@ jobs:
             cp "mesa-cache/$d" "build/ninja-iter-msvc/$d"
           done
 
+      # Launch-smoke (NOT continue-on-error): the provisioned exe must boot once
+      # under the just-installed Mesa GL before the advisory diff runs. The
+      # bucket-C/E green-wash (postmortems.md 2026-06-07) ran Passed:0 Failed:3
+      # GREEN for 2 weeks because the thin opengl32.dll loader killed every exe
+      # at process start and continue-on-error swallowed the total harness death
+      # exactly like a flaky test. A read-only `app.version` (no network, no file
+      # mutation), `timeout`-bounded to 10 s, turns "exe can't start" into a LOUD
+      # job-red instead of a swallowed one. This step is shared verbatim with
+      # bucket-E (keep the two in sync).
+      - name: Launch-smoke — provisioned exe must boot (Mesa GL)
+        shell: bash
+        env:
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set -euo pipefail
+          EXE=build/ninja-iter-msvc/Smatchet.exe
+          echo "launch-smoke: $EXE cmd app.version --spawn --yes (<=10s)"
+          if ! timeout 10 "$EXE" cmd app.version --spawn --yes; then
+            echo "::error::launch-smoke FAILED — $EXE could not start under Mesa GL within 10s." >&2
+            echo "  This is the dead-harness class (thin opengl32.dll loader / missing GL dep)," >&2
+            echo "  NOT a flaky test. The advisory bucket lane below would green-wash it." >&2
+            exit 1
+          fi
+          echo "launch-smoke: OK — exe booted."
+
       - name: Run bucket-C screenshot diff
         continue-on-error: true
         shell: bash
@@ -460,11 +486,35 @@ jobs:
           SMATCHET_EXE: build/ninja-iter-msvc/Smatchet.exe
           TMPDIR: ${{ github.workspace }}/build/tmp
           SMATCHET_KEEP_SCREENSHOT_CAPTURES: "1"
+          SMATCHET_LANE_STATUS_FILE: ${{ github.workspace }}/build/tmp/bucket-c-lane-status
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "${TMPDIR}"
           bash scripts/dev/test-screenshot-diff.sh
+
+      # Lane-integrity (NOT continue-on-error): assert the driver did not finish
+      # Passed==0 && Failed>0. The diff step stays advisory for genuine per-
+      # scenario REGRESSIONS, but "passed nothing" is a broken lane — this step
+      # reads the sentinel the driver wrote and hard-fails OUTSIDE the
+      # continue-on-error mask. A missing sentinel (driver never reached the
+      # summary — itself a dead-harness symptom) also fails closed.
+      - name: Lane-integrity — bucket-C did not pass-nothing
+        shell: bash
+        env:
+          SMATCHET_LANE_STATUS_FILE: ${{ github.workspace }}/build/tmp/bucket-c-lane-status
+        run: |
+          set -euo pipefail
+          if [ ! -f "$SMATCHET_LANE_STATUS_FILE" ]; then
+            echo "::error::lane-integrity — bucket-C wrote no lane-status sentinel; the driver never reached its summary (dead harness). Fail-closed." >&2
+            exit 1
+          fi
+          status="$(sed -n 's/^status=\([a-z]*\).*/\1/p' "$SMATCHET_LANE_STATUS_FILE")"
+          echo "bucket-C lane-status: $(cat "$SMATCHET_LANE_STATUS_FILE")"
+          if [ "$status" = "broken" ]; then
+            echo "::error::lane-integrity — bucket-C is BROKEN (Passed:0 Failed>0). Every scenario failed: dead harness, not a regression." >&2
+            exit 1
+          fi
 
       - name: Upload captured PNGs (for golden bootstrap)
         if: always()
@@ -566,14 +616,73 @@ jobs:
             cp "mesa-cache/$d" "build/ninja-ui-test-msvc/$d"
           done
 
-      - name: Run bucket-E ImGui Test Engine scenario
-        id: run-bucket-e
-        continue-on-error: true
+      # Launch-smoke (NOT continue-on-error) — see the bucket-C copy for the full
+      # rationale (postmortems.md 2026-06-07 green-wash). The provisioned UI-test
+      # exe must boot once under Mesa GL before the advisory scenario runs;
+      # otherwise a dead harness green-washes. Kept in sync with bucket-C.
+      - name: Launch-smoke — provisioned exe must boot (Mesa GL)
+        shell: bash
         env:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         working-directory: build/ninja-ui-test-msvc
-        run: ./Smatchet.exe scenario.run --name=ui-test --yes
+        run: |
+          set -euo pipefail
+          echo "launch-smoke: ./Smatchet.exe cmd app.version --spawn --yes (<=10s)"
+          if ! timeout 10 ./Smatchet.exe cmd app.version --spawn --yes; then
+            echo "::error::launch-smoke FAILED — bucket-E Smatchet.exe could not start under Mesa GL within 10s (dead harness, not a flaky test)." >&2
+            exit 1
+          fi
+          echo "launch-smoke: OK — exe booted."
+
+      - name: Run bucket-E ImGui Test Engine scenario
+        id: run-bucket-e
+        continue-on-error: true
+        shell: bash
+        env:
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          SMATCHET_LANE_STATUS_FILE: ${{ github.workspace }}/build/tmp/bucket-e-lane-status
+        working-directory: build/ninja-ui-test-msvc
+        run: |
+          set -uo pipefail
+          mkdir -p "$(dirname "$SMATCHET_LANE_STATUS_FILE")"
+          out="$(./Smatchet.exe scenario.run --name=ui-test --yes 2>&1)"; rc=$?
+          printf '%s\n' "$out"
+          # Parse the scenario JSON envelope's data.{passed,failed}. The advisory
+          # exit code itself is unreliable (a zero-pass run can still return 0),
+          # so the broken-lane signal comes from the counts, written to the
+          # sentinel the non-advisory lane-integrity step asserts on.
+          passed="$(printf '%s' "$out" | python -c "import sys,json,re; t=sys.stdin.read(); m=re.search(r'\{.*\}',t,re.S); d=json.loads(m.group(0)) if m else {}; print(d.get('data',{}).get('passed',0))" 2>/dev/null || echo 0)"
+          failed="$(printf '%s' "$out" | python -c "import sys,json,re; t=sys.stdin.read(); m=re.search(r'\{.*\}',t,re.S); d=json.loads(m.group(0)) if m else {}; print(d.get('data',{}).get('failed',0))" 2>/dev/null || echo 0)"
+          status=ok
+          if [ "$passed" = "0" ] && [ "$failed" != "0" ]; then status=broken
+          elif [ "$failed" != "0" ]; then status=fail; fi
+          printf 'status=%s passed=%s failed=%s\n' "$status" "$passed" "$failed" > "$SMATCHET_LANE_STATUS_FILE"
+          echo "bucket-E lane-status: $(cat "$SMATCHET_LANE_STATUS_FILE")"
+          # Stay advisory for the run itself (continue-on-error); the lane-
+          # integrity step below carries the real teeth for the broken case.
+          exit "$rc"
+
+      # Lane-integrity (NOT continue-on-error): bucket-E broken-lane teeth. Reads
+      # the sentinel the run step wrote; hard-fails on broken (Passed:0 Failed>0)
+      # or a missing sentinel (the run never produced counts — dead harness).
+      - name: Lane-integrity — bucket-E did not pass-nothing
+        shell: bash
+        env:
+          SMATCHET_LANE_STATUS_FILE: ${{ github.workspace }}/build/tmp/bucket-e-lane-status
+        run: |
+          set -euo pipefail
+          if [ ! -f "$SMATCHET_LANE_STATUS_FILE" ]; then
+            echo "::error::lane-integrity — bucket-E wrote no lane-status sentinel; the scenario produced no pass/fail counts (dead harness). Fail-closed." >&2
+            exit 1
+          fi
+          status="$(sed -n 's/^status=\([a-z]*\).*/\1/p' "$SMATCHET_LANE_STATUS_FILE")"
+          echo "bucket-E lane-status: $(cat "$SMATCHET_LANE_STATUS_FILE")"
+          if [ "$status" = "broken" ]; then
+            echo "::error::lane-integrity — bucket-E is BROKEN (Passed:0 Failed>0). Every UI test failed: dead harness, not a regression." >&2
+            exit 1
+          fi
 
       - name: Upload bucket-E exe on failure
         if: ${{ steps.run-bucket-e.outcome == 'failure' }}
