@@ -136,10 +136,16 @@ one-glance summary.
 6. **Persistence corruption untested.** Cache/config open paths are happy-path;
    no truncated-DB, schema-from-future, or `SQLITE_BUSY` storm test.
    — **[UNBACKLOGGED]**.
-7. **6 UI test scripts silently skipped in worktree dev** ([`test-all.sh`](../../scripts/dev/test-all.sh)
+7. **3 UI test scripts silently skipped in worktree dev** ([`test-all.sh`](../../scripts/dev/test-all.sh)
    `WORKTREE_INCOMPATIBLE_RE`). AGENTS.md mandates one-worktree-per-session → they
    run **only** in CI on a main checkout, never in the default agent loop.
-   — **[tracked]** skip mechanism shipped (applied.md); the build root-cause was fixed by #1166 (2026-06-12), so the list is now a **re-audit candidate**.
+   — **[resolved 2026-06-14]** re-audited (testing-surface roadmap Slice H): the regex
+   was trimmed from 6 → 3 alternatives — `test-lint-hook-split`, `test-ui-callstack-tooltip`,
+   and `test-ui-ai-assistant` no longer exist as scripts. The 3 survivors
+   (`test-ui-views-columns-reorder`, `test-ui-funcsize-window-render-smoke`,
+   `test-ui-funcsize-grid-render`) are bucket-E UI drivers needing a built UI binary +
+   Mesa display; their skip guards real worktree baseline-drift and is **orthogonal** to
+   the #1166 `GIT_EXEC_PATH` cold-configure fix (so still justified — not removed by it).
 8. **Perf gate = fast subset.** Regression in a scenario not in the PR-fast set
    escapes to nightly `perf-full`. — **[tracked]** "8 of 15 scenarios don't emit rows[]", 7/15 baselined.
 
@@ -158,7 +164,7 @@ unbacklogged**, and the false-GREEN/mutation half of Gap 4 is unbacklogged.
 | 4 — test-delta ≠ assertion quality | auto-PASS classifier for no-runtime-surface diffs | [`infra.md`](../self-improvement/categories/infra.md):60-61 | open — **inverse direction**: tracks false-RED, not the false-GREEN/mutation-signal half (unbacklogged) |
 | 5 — agent fleet near-untested | subagent-eval harness graduation + trace flywheel | [`tooling.md`](../self-improvement/categories/tooling.md):505-507 + plan [`subagent-eval-agentic-coverage.md`](../plans/active/subagent-eval-agentic-coverage.md) | open — Phase 2 (flywheel) gated on Phase 0 judge calibration |
 | 6 — persistence corruption untested | — | — | **UNBACKLOGGED** (the only "corruption" entry, [`tooling.md`](../self-improvement/categories/tooling.md):567 NUL-byte-in-shell, is a different class) |
-| 7 — worktree-skip 6 | skip mechanism (`WORKTREE_INCOMPATIBLE_RE`) + the `GIT_EXEC_PATH` build fix | [`applied.md`](../self-improvement/categories/applied.md):342, [`tooling.md`](../self-improvement/categories/tooling.md):196, [`infra.md`](../self-improvement/categories/infra.md):229, [`test.md`](../self-improvement/categories/test.md):63 | mechanism shipped; build root-cause fixed by #1166 (2026-06-12) → **re-audit candidate** (the skips may no longer be needed) |
+| 7 — worktree-skip (6→3) | skip mechanism (`WORKTREE_INCOMPATIBLE_RE`) + the `GIT_EXEC_PATH` build fix | [`applied.md`](../self-improvement/categories/applied.md):342, [`tooling.md`](../self-improvement/categories/tooling.md):196, [`infra.md`](../self-improvement/categories/infra.md):229, [`test.md`](../self-improvement/categories/test.md):63 | **resolved 2026-06-14** (Slice H): regex trimmed 6→3 (3 dead scripts removed); 3 survivors justified + orthogonal to #1166 |
 | 8 — perf gate = fast subset | "8 of 15 candidate perf scenarios don't emit `rows[]`" | [`applied.md`](../self-improvement/categories/applied.md):265 (7/15 baselined) + [`tooling.md`](../self-improvement/categories/tooling.md) follow-up | open — 8 scenarios need a `rows[]` retrofit before they can gate |
 
 **Two unbacklogged items worth filing** (no current entry; candidate for a new
@@ -202,9 +208,9 @@ don't re-scope) or **[new]** (no entry — file before/with the work). Cross-ref
   of Gap 4 has no entry.
 - **DB-corruption corpus** test for cache/config open paths. **[new]** — Gap 6,
   unbacklogged.
-- Root-cause the **worktree-skip 6** so the default dev loop runs them. **[planned]**
-  — the build root-cause was fixed by #1166 (2026-06-12); this is now a re-audit of
-  whether the skip list is still needed (test.md:63, infra.md:229).
+- ~~Root-cause the **worktree-skip 6** so the default dev loop runs them.~~ **[done 2026-06-14,
+  Slice H]** — re-audited: regex trimmed 6→3 (3 scripts deleted); 3 survivors are
+  bucket-E UI drivers, their skip is justified + orthogonal to #1166 (test.md:63, infra.md:229).
 
 **P3 — fleet + perf**
 - Grow **agent-eval** beyond code-review (orchestrator routing, merge-gate decision,
