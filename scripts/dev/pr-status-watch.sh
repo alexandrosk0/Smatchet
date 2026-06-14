@@ -16,8 +16,18 @@
 #   bash scripts/dev/pr-status-watch.sh --interval 60 <pr>   # poll cadence (default 90s)
 #   bash scripts/dev/pr-status-watch.sh --selftest           # classifier fixtures (no gh)
 #
+# A RED line fires ONLY for a check that actually BLOCKS merge — mirroring the
+# merge-gates gating contract so the watch stops noise-flagging non-blocking reds
+# (the recurring "RED: Perf PR-fast" on an OOB-labelled PR, or "RED: <advisory>"
+# on a check that never gated). A failing check is BLOCKING iff it is gating
+# (REQUIRED ∈ branch_protection.required_contexts, OR allow-listed-non-advisory:
+# name ~ $MERGE_GATES_BLOCK_ALLOWLIST_RE single-sourced from merge-gates.sh and
+# not "advisory") AND not downgraded by a PR label (tests-out-of-band →
+# "Test-delta gate" · perf-out-of-band → "Perf PR-fast*"). A non-gating or
+# OOB-downgraded FAILURE is dropped from the RED line, not surfaced as noise.
+#
 # Emits (one line == one Monitor notification; each distinct line once):
-#   PR #N RED: <checks>                                 a required/blocking check failed
+#   PR #N RED: <checks>                                 a BLOCKING check failed
 #   PR #N MERGED                                        the watcher (or anyone) merged it
 #   PR #N CLOSED (not merged)
 #   PR #N CI green but CodeRabbit has N actionable …    blocked on review (not a CI fail)
@@ -27,6 +37,9 @@
 # Exit 0 when every PR is terminal (MERGED/CLOSED) or after one --once pass.
 # Exit 2 on usage error. A transient `gh` failure is non-fatal (keeps polling).
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 INTERVAL=90
 ONCE=0
@@ -123,6 +136,39 @@ case "$INTERVAL" in ''|*[!0-9]*) INTERVAL=90 ;; esac
 command -v gh >/dev/null 2>&1 || { echo "pr-status-watch: required tool 'gh' not on PATH" >&2; exit 2; }
 command -v jq >/dev/null 2>&1 || { echo "pr-status-watch: required tool 'jq' not on PATH" >&2; exit 2; }
 
+# Single-source the meant-to-block allow-list regex from merge-gates.sh (NOT a
+# duplicated literal — change it there and this watch follows). The source is
+# side-effect-free when sourced (its CLI entry-point is `$0`-guarded). Done in
+# the polling path only, AFTER the pure --selftest early-exit, so --selftest
+# stays dependency-free.
+# shellcheck source=agents/scripts/core/merge-gates.sh
+source "$REPO_ROOT/agents/scripts/core/merge-gates.sh"
+if [ -z "${MERGE_GATES_BLOCK_ALLOWLIST_RE:-}" ]; then
+    echo "pr-status-watch: merge-gates.sh did not export MERGE_GATES_BLOCK_ALLOWLIST_RE" >&2
+    exit 2
+fi
+
+# read_required_contexts — newline-separated branch-protection required context
+# names. Override via PR_STATUS_WATCH_REQUIRED_CONTEXTS (even ""), else read
+# project.config.json (UTF-8-safe, matches merge-gates.sh / safe-admin-merge.sh).
+read_required_contexts() {
+    if [ -n "${PR_STATUS_WATCH_REQUIRED_CONTEXTS+x}" ]; then
+        printf '%s\n' "${PR_STATUS_WATCH_REQUIRED_CONTEXTS//,/$'\n'}"
+        return 0
+    fi
+    local config_file="${PR_STATUS_WATCH_CONFIG_FILE:-$REPO_ROOT/project.config.json}"
+    if [ -f "$config_file" ]; then
+        jq -r '.branch_protection.required_contexts[]? // empty' "$config_file" 2>/dev/null || true
+    fi
+}
+
+# Resolve the required-context set once into a JSON array for poll_pr's jq.
+REQ_JSON='[]'
+_req_list="$(read_required_contexts)"
+if [ -n "$_req_list" ]; then
+    REQ_JSON="$(printf '%s\n' "$_req_list" | jq -R . | jq -sc 'map(select(length > 0))')" || REQ_JSON='[]'
+fi
+
 # Field separator for poll_pr's packed row. Must be NON-whitespace: read with a
 # whitespace IFS (tab/space) collapses consecutive delimiters, dropping an empty
 # middle field (a green PR has empty `failed`, which would shift `pending` into it
@@ -134,9 +180,28 @@ SEP=$'\037'
 # the rollup) so "CI green" can be reached while the CR check is still pending.
 poll_pr() { # $1=pr
     local pr="$1" j st failed ci_pending head crstate crbody crcommit cr
-    j="$(gh pr view "$pr" --json state,statusCheckRollup,reviews,headRefOid 2>/dev/null)" || return 1
+    j="$(gh pr view "$pr" --json state,statusCheckRollup,reviews,headRefOid,labels 2>/dev/null)" || return 1
     st="$(printf '%s' "$j" | jq -r '.state')"
-    failed="$(printf '%s' "$j" | jq -r '[.statusCheckRollup[]? | select(.conclusion=="FAILURE" or .conclusion=="TIMED_OUT" or .conclusion=="STARTUP_FAILURE") | (.name // .context)] | join(", ")')"
+    # failed = BLOCKING failures only — a FAILURE/TIMED_OUT/STARTUP_FAILURE row
+    # that is gating (required OR allow-listed-non-advisory) and not downgraded
+    # by a *-out-of-band PR label. Mirrors the merge-gates $failing contract so a
+    # non-gating / OOB-waived red is silent, not noise.
+    failed="$(printf '%s' "$j" | jq -r \
+        --argjson req "$REQ_JSON" \
+        --arg allow "$MERGE_GATES_BLOCK_ALLOWLIST_RE" '
+        ([.labels[]?.name] // []) as $labels
+        | ($labels | any(. == "tests-out-of-band")) as $oobTests
+        | ($labels | any(. == "perf-out-of-band")) as $oobPerf
+        | [ .statusCheckRollup[]?
+            | select(.conclusion=="FAILURE" or .conclusion=="TIMED_OUT" or .conclusion=="STARTUP_FAILURE")
+            | (.name // .context) as $name
+            | select(($req | any(. == $name))
+                     or (($name | test($allow; "i"))
+                         and (($name | ascii_downcase | contains("advisory")) | not)))
+            | select(($oobTests and $name == "Test-delta gate") | not)
+            | select(($oobPerf and ($name | startswith("Perf PR-fast"))) | not)
+            | $name ]
+        | join(", ")')"
     ci_pending="$(printf '%s' "$j" | jq -r '[.statusCheckRollup[]? | select(.status!="COMPLETED") | (.name // .context) | select(test("coderabbit|CR finding";"i") | not)] | length')"
     head="$(printf '%s' "$j" | jq -r '.headRefOid // ""')"
     crstate="$(printf '%s' "$j" | jq -r '[.reviews[]? | select(.author.login | test("coderabbit";"i"))] | last | .state // ""')"
