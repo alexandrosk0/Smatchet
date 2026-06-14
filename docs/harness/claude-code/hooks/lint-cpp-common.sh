@@ -94,13 +94,51 @@ lint_format_issues() {
         }'
 }
 
+# lint_changed_lines <abs_file>
+# Echoes the line numbers of <abs_file> that differ from the delta baseline
+# (default origin/develop), one per line — the added/modified side of each diff
+# hunk. Returns NON-ZERO only when the baseline can't be resolved (no git / no
+# origin/develop) so the caller fails OPEN; a resolvable baseline on an UNCHANGED
+# file returns 0 with EMPTY output (so every finding grandfathers).
+lint_changed_lines() {
+    local abs="$1" base="${LINT_DELTA_BASE:-origin/develop}" rel
+    command -v git >/dev/null 2>&1 || return 1
+    git -C "$LINT_NORM_PROJ" rev-parse --verify --quiet "$base" >/dev/null 2>&1 || return 1
+    rel="${abs#"$LINT_NORM_PROJ"/}"   # repo-relative pathspec for git
+    # -U0 → hunk ranges are exactly the changed lines. Each `@@ -a,b +c,d @@`
+    # adds lines c..c+d-1 (d defaults to 1 when the `,d` is omitted).
+    git -C "$LINT_NORM_PROJ" diff -U0 "$base" -- "$rel" 2>/dev/null \
+      | awk '/^@@/ {
+            h = $0; sub(/^@@ -[0-9,]+ \+/, "", h); sub(/ @@.*$/, "", h)
+            split(h, p, ","); start = p[1] + 0; cnt = (p[2] == "" ? 1 : p[2] + 0)
+            for (i = 0; i < cnt; i++) print start + i
+        }'
+}
+
+# lint_filter_delta <abs_file>   (findings on stdin)
+# Passes through only findings whose `:<line>:` is among <abs_file>'s changed-vs-
+# baseline lines — mirrors the merge-gate's grandfathering of pre-existing code
+# so the Stop-hook drain stops re-flagging untouched functions / a post-switch
+# working tree (categories/tooling.md: lint-cpp-drain delta-awareness). Fails
+# OPEN (everything through) when the baseline is unavailable, so a non-git
+# checkout keeps the old behaviour rather than dropping real new findings. A
+# line-less finding (no `:<n>:`) is always kept — it can't be delta-located.
+lint_filter_delta() {
+    local abs="$1" lines
+    if ! lines="$(lint_changed_lines "$abs")"; then cat; return 0; fi
+    awk -v L="$lines" '
+        BEGIN { n = split(L, a, "\n"); for (i = 1; i <= n; i++) if (a[i] != "") keep[a[i]] = 1 }
+        { if (match($0, /:[0-9]+:/)) { ln = substr($0, RSTART + 1, RLENGTH - 2); if (ln in keep) print }
+          else print }'
+}
+
 # lint_run_cppcheck <abs_file>
-# Echoes cppcheck findings (empty on clean). Skipped silently if the tool is
-# missing.
+# Echoes cppcheck findings (empty on clean), DELTA-FILTERED to the session's
+# changed lines. Skipped silently if the tool is missing.
 lint_run_cppcheck() {
     local abs="$1"
     command -v cppcheck >/dev/null 2>&1 || return 0
-    cppcheck \
+    { cppcheck \
         --enable=warning,style,performance,portability \
         --inconclusive \
         --inline-suppr \
@@ -111,7 +149,7 @@ lint_run_cppcheck() {
         --std=c++14 \
         --quiet \
         --template='cppcheck: {file}:{line}: [{severity}] {id}: {message}' \
-        "$abs" 2>&1 || true
+        "$abs" 2>&1 || true; } | lint_filter_delta "$abs"
 }
 
 # lint_run_clang_tidy <abs_file> <rel_path>
@@ -149,7 +187,9 @@ lint_run_clang_tidy() {
     # Filter clang-diagnostic-error (PCH mismatch / missing system headers when
     # the linting toolchain differs from the build toolchain). Real compile
     # errors are caught by cmake --build; the lint hook surfaces tidy checks only.
-    printf '%s' "$out" | grep -E '(warning|error):' | grep -v '\[clang-diagnostic-error\]' || true
+    # Delta-filter to the session's changed lines (same grandfathering as cppcheck).
+    printf '%s' "$out" | grep -E '(warning|error):' | grep -v '\[clang-diagnostic-error\]' \
+        | lint_filter_delta "$abs" || true
 }
 
 # lint_run_catch_all <abs_file>
