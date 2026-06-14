@@ -83,6 +83,7 @@ target_include_directories(SmatchetLuaTests PRIVATE
     "${CMAKE_SOURCE_DIR}/Source/Core/include/Persistence"
     "${CMAKE_SOURCE_DIR}/Source/Core/include/Config"
     "${CMAKE_SOURCE_DIR}/Source/Core/include/Ui"
+    "${CMAKE_SOURCE_DIR}/Source/Core/include/Privacy"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence"

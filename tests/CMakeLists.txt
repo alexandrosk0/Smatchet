@@ -72,6 +72,7 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/include/Persistence"
         "${CMAKE_SOURCE_DIR}/Source/Core/include/Config"
         "${CMAKE_SOURCE_DIR}/Source/Core/include/Ui"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Privacy"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker"
         "${CMAKE_SOURCE_DIR}/tests/support"
