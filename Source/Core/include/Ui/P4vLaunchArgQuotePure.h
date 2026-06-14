@@ -7,7 +7,6 @@
 // command-line buffer). Header-only + std::wstring->std::wstring so the
 // doctest rig can exercise the trailing-backslash + embedded-quote corner
 // cases without a Windows toolchain or a spawned process.
-//
 // Implements the canonical Microsoft argument-quoting algorithm
 // ("Everyone quotes command line arguments the wrong way", Daniel Colascione):
 //   * A run of N backslashes followed by a literal '"' must emit 2N+1
