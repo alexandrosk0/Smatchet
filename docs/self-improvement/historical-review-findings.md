@@ -53,19 +53,23 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
 
 ## Sweep status & remaining work (as of 2026-06-13)
 
-- **Swept:** **#117–#1174** (batches 1–10) — **~960 PRs reviewed** across 10 batches.
+- **Swept:** **#1–#1174** (batches 1–11) — **the entire merged-PR history reviewed.**
+  **SWEEP COMPLETE** — Batch 11 (#116–#1, 113 PRs, the final tail incl. the early
+  base-`main` PRs #1–#5) added 2026-06-13;
   Batch 10 (#117–#330, 200 PRs) added 2026-06-13;
   Batch 9 (#331–#438, 100 PRs) + Batch 8 (#439–#541, 100 PRs) added 2026-06-13;
   Batch 7 (#1029–#1174, 122 PRs) added the same day. Tooling:
   `agents/scripts/core/historical-review-survivors.sh` + the `historical-code-review`
   skill (shipped PR #968); the persisted workflow shipped PR #1182.
-- **Remaining (UNSWEPT):** merged PRs **#116 → #13** (~100). Not yet historically
-  reviewed. (#117 has no merge commit — open/closed-unmerged — and is not a develop
-  squash; skip it.)
-- **Resume instructions:**
-  1. List the next batch — `gh pr list --state merged --base develop --limit 900
-     --json number --jq '[.[] | select(.number < 117) | .number] | sort |
-     reverse | .[0:100]'` (lower the `< 117` bound as you progress).
+- **Remaining (UNSWEPT):** **none.** Every merged PR (#1 → #1174) has been
+  historically reviewed survivor-only against origin/develop. (#117 has no merge
+  commit — open/closed-unmerged, not a develop squash — and was correctly skipped;
+  #18/#72/#96 were never merged.) New PRs merged *after* #1174 are the only future
+  work: resume from the highest reviewed PR with the recipe below.
+- **Resume instructions (for PRs merged after #1174):**
+  1. List the new batch — `gh pr list --state merged --base develop --limit 900
+     --json number --jq '[.[] | select(.number > 1174) | .number] | sort |
+     reverse'` (raise the `> 1174` bound as the marker advances).
   2. Run the persisted workflow, passing the batch as `args`:
      `Workflow({ name: 'historical-review-sweep', args: [<the numbers>] })`.
      Pass a JSON array — but note this harness delivers `args` to the script as a
@@ -80,17 +84,40 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
      sessions (run `bash agents/scripts/core/setup-harness.sh claude-code` once
      after a fresh clone). **No per-batch script edit** — pass a different `args`
      list each batch; an empty/unparseable list throws loudly, never a silent
-     no-op. Or, per PR, run `historical-review-survivors.sh --pr <N>` and review
-     the survivor digest manually.
+     no-op. Hold concurrency to the Opus ≤6 guardrail (the runtime cap is
+     min(16,cores-2)=10 on a 12-core box, above ≤6 — use a hand-rolled 6-lane pool,
+     not bare `parallel()`). Or, per PR, run `historical-review-survivors.sh --pr <N>`
+     and review the survivor digest manually.
   3. Append each batch's findings here (newest on top) + commit/push.
-- **Cost guide:** ~100–120 PRs/batch ≈ 5.7–7.0M output tokens, ~25–30 min wall-clock.
+- **Cost guide:** ~100–120 PRs/batch ≈ 4.9–7.0M output tokens, ~25–55 min wall-clock
+  (Opus ≤6 pool; ~36 min for the 113-PR Batch 11, ~56 min for the 200-PR Batch 10).
 - **Top still-alive findings to act on first** (logged, NOT fixed per the
-  no-fix directive): #854 (offline edit data-loss), #670 (wrong Jira status
-  transition), #611/#761/#732/#892 (sync I/O on UI render thread → freeze),
-  #671 (orphaned subprocess), #834/#918 (blocking gates measuring wrong /
-  false-passing). User-visible ones → GitHub Issues per ADR-0014 when actioned.
+  no-fix directive): **#86 (required CI warning gate 100% blind under MSVC — the
+  single most severe item in the whole sweep; `test-build-warnings.sh` greps GCC
+  warning tags but CI builds MSVC, so it always passes)**, #854 (offline edit
+  data-loss), #670 (wrong Jira status transition), #611/#761/#732/#892 (sync I/O
+  on UI render thread → freeze), #671 (orphaned subprocess), #834/#918/#329/#80/#77
+  (blocking gates measuring wrong / false-passing). User-visible ones → GitHub
+  Issues per ADR-0014 when actioned.
 
 <!-- Batches appended at the top. -->
+
+## Batch 11 — #116–#1 (FINAL, 113-PR sweep, 2026-06-13)
+
+Coverage: **113 reviewed — 5 with findings, 16 clean, 92 fully superseded, 0 errored, 0 died.** Net: **1 CRITICAL, 2 HIGH, 0 MEDIUM, 4 LOW.** This is the **final** batch — the work-list ran from #116 all the way to **#1** (the repo's oldest merged PRs), including the early base-`main` PRs #1–#5; every one resolved as an ancestor of develop (main was folded into develop early), so **0 errored** and the sweep genuinely reaches the repo root. Survivor-filtered against origin/develop, so every finding is current — already-fixed code excluded by construction. (Reviewer model `code-review` opus/high, concurrency held to the Opus ≤6 guardrail via a hand-rolled 6-lane pool — run-journal validated max overlap **exactly 6**; 113/113 agents returned, 0 died, all 113 model `claude-opus-4-8`; windowed-read held — max per-agent **59,925** tokens, 0 over 100k; ~36.4 min, 4.88M tokens.) **All 7 findings are `userVisible:false` (internal CI gates / build scripts / docs / archived test-scaffolding) → NO GitHub Issues this pass; backlog only per ADR-0014 + the no-fix directive.** Dominant theme (one final time): the **fail-open gate cluster** — the CRITICAL (#86) is a NEW sub-shape (a required CI warning gate greps the *wrong toolchain's* warning format → always-empty match → always green under MSVC) and both HIGH (#80, #77) are the `passed=0&&failed=0`→exit-0 zero-run family. Cross-filed onto the OPEN P2 `fail-open-meta-gate-authoring-check` in [`categories/tooling.md`](categories/tooling.md).
+
+### CRITICAL
+- **#86 (b68bf09a) · `scripts/dev/test-build-warnings.sh:46`** — fail-open warning gate, blind to its own toolchain. The surviving warning grep matches only GCC's `warning: … [-Wunused-…]` tag form, but the default + CI preset is `ninja-iter-msvc` (MSVC), which emits unused-symbol warnings as numeric codes (`warning C4505/C4101/C4189/C4100`, no `[-Wunused-]` tag). So `OWNED_HITS` is always empty under MSVC → the gate always prints `Passed: 1  Failed: 0` and exits 0. `build-and-test.yml` builds `ninja-iter-msvc` then runs this script as a **required** bucket-A check (`SMATCHET_WARN_PRESET` is never set, so there is no GCC path to redeem the regex) — the gate is 100% blind to first-party unused-function/variable warnings on the only toolchain it runs under. The GCC regex was correct when #86 shipped under MinGW; a later commit flipped the default preset to MSVC without updating this surviving line. Fix: make the grep toolchain-aware — also match MSVC's codes, e.g. `grep -E 'warning:.*\[-Wunused-|warning C(4505|4101|4189|4100)'`, update the L43 comment, and add a negative test under the MSVC preset that confirms the gate catches a deliberately-unused symbol.
+
+### HIGH
+- **#80 (2e783d61) · `scripts/dev/test-theme-syntax-colors.sh:57`** — fail-open on a vanished suite. If `--test-case='SmatchetTheme*'` (L41) ever matches zero cases (suite renamed/removed/refactored out of the glob), doctest still prints `0 passed | 0 failed`, the L46 emptiness guard passes, `PASSED=0/FAILED=0`, and only `FAILED>0` is checked — so the script exits 0 (green) having run zero assertions. The wrapper exists to PROVE the per-theme syntax-palette round-trip; a disappeared suite must fail, not pass. Classic `passed=0&&failed=0` false-PASS. Fix: after parsing, assert at least one assertion ran — `if [ "$PASSED" -eq 0 ] && [ "$FAILED" -eq 0 ]; then echo 'ERROR: SmatchetTheme* matched zero assertions — suite missing?'; exit 1; fi` before the `FAILED>0` check.
+- **#77 (c104ddd7) · `scripts/dev/test-ui-views-columns-reorder.sh:68`** — fail-open on a zero-test run. If `passed=0` and `failed=0` (e.g. `UI_TEST_FILTER 'ColumnsReorder'` matches nothing after a test rename, or registration is silently dropped), neither value is `'?'`, the L63 guard passes through, `FAILED!="0"` is false, and control reaches `exit 0` — greenlighting a build in which the target test never ran. Fix: add a zero-tests guard before the exit-0 path — `if [ "$PASSED" = "0" ] && [ "$FAILED" = "0" ]; then echo 'FAIL: ui_test.run matched/ran 0 tests' >&2; exit 1; fi`.
+
+### LOW (4)
+- **#105 (302eb654) · `scripts/dev/archived/test-norton-theme.sh.archived:17`** — revival instructions cite `docs/backlog/BACKLOG_PLANS.md` § 2 as the tracking doc, but that file no longer exists at develop (no successor by that name). A human following the revive steps for this archived bucket-E test hits a dead doc ref. Dormant (archived file is DO-NOT-EXECUTE). Fix: repoint the `Tracked:` line to the live doc tracking the Norton Commander palette-lock revival (a `docs/plans/*` entry), or drop the dead ref.
+- **#105 (302eb654) · `tests/ui/archived/norton_commander_theme.test.cpp.archived:20`** — same stale cross-ref: the revival comment cites the removed `docs/backlog/BACKLOG_PLANS.md` § 2. Dormant (archived file is DO-NOT-COMPILE). Fix: repoint to the live tracking doc, or remove the ref.
+- **#77 (c104ddd7) · `scripts/dev/test-ui-views-columns-reorder.sh:27`** — dead code: the `extract()` helper (L27-34) is defined but never called — the actual JSON parsing uses the inline `python -c` snippets at L50-52. It also embeds a walrus-assignment list comprehension (`[v := v.get(k) … for k in …]`) that reuses the loop body's assignment target and would be fragile/erroneous if ever invoked. Fix: delete the unused `extract()` function (L27-34).
+- **#66 (5b740e92) · `CMakeLists.txt:761`** — the `FATAL_ERROR` message cites a broken doc path: `docs/design/applied/lua-recorded-cmd-list.md § Lua build mode`. That dir does not exist at HEAD; the doc actually lives at `docs/plans/shipped/lua-recorded-cmd-list.md` (which has the `§ Lua build mode` anchor). A contributor who trips this configure-time guard is sent to a dead path. Fix: update the path in the `FATAL_ERROR` string to `docs/plans/shipped/lua-recorded-cmd-list.md § Lua build mode`.
 
 ## Batch 10 — #117–#330 (200-PR sweep, 2026-06-13)
 
