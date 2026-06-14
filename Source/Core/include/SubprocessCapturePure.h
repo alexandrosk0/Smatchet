@@ -50,4 +50,23 @@ std::wstring BuildEnvBlockWindows(const std::vector<std::pair<std::string, std::
 /// totalTimeoutMs when totalTimeoutMs <= 0 (i.e. "no timeout").
 int64_t RemainingTimeoutMs(std::chrono::steady_clock::time_point start, int64_t totalTimeoutMs);
 
+/// True if `name` is a parent-environment variable that should NOT be
+/// handed to a spawned child (audit synthesis #15 — same-user is in the
+/// trust boundary, so this is a proportionate defense-in-depth scrub, not
+/// a full allow-list). The match is case-insensitive and substring-based
+/// on the well-known secret-bearing tokens (TOKEN, SECRET, PASSWORD, KEY,
+/// CREDENTIAL, the `_PAT` Personal-Access-Token suffix, AUTH, SESSION,
+/// COOKIE, PRIVATE). PATH / SYSTEMROOT / TEMP / locale / HOME / P4* / GIT*
+/// survive so p4, git and the file-pickers keep working. Deliberately a
+/// drop-sensitive scrub rather than an allow-list: an allow-list risks
+/// silently breaking a tool that relies on an unlisted variable.
+bool IsSensitiveEnvName(const std::string& name);
+
+/// Filter `parentEnv` (the inherited NAME=VALUE pairs the platform layer
+/// enumerated) down to the non-sensitive entries — every name for which
+/// IsSensitiveEnvName() is false. Order is preserved. Pure so the doctest
+/// rig can pin the policy without enumerating a real process environment.
+std::vector<std::pair<std::string, std::string>>
+ScrubSensitiveEnv(const std::vector<std::pair<std::string, std::string>>& parentEnv);
+
 } // namespace SubprocessCapturePure

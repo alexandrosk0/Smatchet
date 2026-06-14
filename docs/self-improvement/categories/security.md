@@ -177,14 +177,16 @@
 - 2026-06-13 · deep-audit · [security] · P3 — SubprocessCapture inherits full parent environment
   Details: Source/Core/src/Ui/SubprocessCapture.cpp:106-119,492 — children inherit the full env and a manipulable PATH.
   Concrete next action: Pass a minimal explicit environment; resolve binaries by absolute path. Effort S-M.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Resolution: 2026-06-14 (PR fix/subprocess-exec-hardening-wave4) — added CaptureOptions::scrubSensitiveEnv + pure SubprocessCapturePure::IsSensitiveEnvName / ScrubSensitiveEnv (drop-sensitive strategy, not a full allow-list: TOKEN/SECRET/PASSWORD/KEY/_PAT/AUTH/SESSION/COOKIE/PRIVATE/PASSPHRASE dropped; PATH/SYSTEMROOT/TEMP/locale/HOME/P4*/GIT* survive so p4+git+file-pickers keep working). Wired on in P4Annotate::P4RunCommand. argv0 already resolved to an absolute path via SearchPathW. Drop-sensitive chosen over allow-list to avoid silently breaking a tool that relies on an unlisted var. Unit tests cover the predicate + filter; end-to-end scrubbed spawn is process-bound (covered by the pure tests + compiled platform merge).
+  Status: resolved
+  Last-reviewed: 2026-06-14
 
 - 2026-06-13 · deep-audit · [security] · P3 — P4 executable resolved via PATH (binary planting)
   Details: Source/Core/src/Ui/P4vLaunch.cpp resolves p4/p4v via PATH search (verifier MEDIUM→LOW). Re-run also located the SearchPathW resolution at P4Annotate.cpp:49.
   Concrete next action: Resolve the binary by absolute/verified install path before spawn. Effort S.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Resolution: 2026-06-14 (PR fix/subprocess-exec-hardening-wave4) — both resolvers (SubprocessCapture::ResolveApplicationName, P4vLaunch::ResolveP4VcExecutableWide) ALREADY resolve a bare p4/p4vc name to its absolute SearchPathW result and hand CreateProcessW lpApplicationName / ShellExecuteW the absolute path (not a bare name the loader re-searches). Residual hardening: on a SearchPathW miss the code now LOG_WARNs that it is falling back to a PATH-based launch (binary-planting surface) instead of silently returning the bare name. Proportionate per the same-user threat model (no separate trust-store built).
+  Status: resolved
+  Last-reviewed: 2026-06-14
 
 - 2026-06-13 · deep-audit · [security] · P3 — Crash-handler minidump may include sensitive process memory
   Details: Source/Standalone/SmatchetCrashHandler.cpp:53-55 writes a minidump with flags that can capture broad process memory (in-memory secrets).
@@ -201,8 +203,9 @@
 - 2026-06-13 · deep-audit · [security] · P3 — CLI spawn log written to predictable /tmp path (symlink race)
   Details: Source/Core/src/Commands/CliCommandRunner.cpp:481-487,538 writes a spawn log to a predictable shared /tmp path without owner-only mode. Re-run confirmed the symlink race: no O_NOFOLLOW and a predictable pid+port name at :481.
   Concrete next action: Use a per-user temp dir with O_EXCL + O_NOFOLLOW + 0600. Effort S.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Resolution: 2026-06-14 (PR fix/subprocess-exec-hardening-wave4) — ComputeSpawnLogPath now appends 16 hex chars of std::random_device entropy (SpawnLogRandomToken) so the path is unpredictable, and the open is hardened against a pre-planted file/symlink: POSIX open() gains O_CREAT|O_EXCL|O_NOFOLLOW with mode 0600 (was O_TRUNC 0644); Windows CreateFileA uses CREATE_NEW (was CREATE_ALWAYS). O_NOFOLLOW guarded with a #ifndef fallback for the rare host lacking the macro.
+  Status: resolved
+  Last-reviewed: 2026-06-14
 
 - 2026-06-13 · deep-audit · [security] · P3 — MCP thread pool / SSE parking lacks connection bounds
   Details: Source/Plugins/Mcp/McpPlugin.cpp:848-850,600-620 — no clear cap on concurrent parked SSE connections / pool threads.

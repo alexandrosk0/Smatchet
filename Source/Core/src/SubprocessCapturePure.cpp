@@ -153,6 +153,42 @@ std::wstring BuildEnvBlockWindows(const std::vector<std::pair<std::string, std::
     return out;
 }
 
+bool IsSensitiveEnvName(const std::string& name) {
+    // Uppercase a copy for case-insensitive substring matching. Env names
+    // are conventionally ASCII; non-ASCII bytes pass through untouched and
+    // simply won't match a token.
+    std::string upper;
+    upper.reserve(name.size());
+    for (size_t i = 0; i < name.size(); ++i) {
+        char c = name[i];
+        if (c >= 'a' && c <= 'z') {
+            c = static_cast<char>(c - ('a' - 'A'));
+        }
+        upper.push_back(c);
+    }
+    static const char* const kTokens[] = {"TOKEN",  "SECRET",     "PASSWORD", "PASSWD", "APIKEY",     "API_KEY",
+                                           "KEY",    "CREDENTIAL", "_PAT",     "AUTH",   "SESSION",    "COOKIE",
+                                           "PRIVATE", "PASSPHRASE"};
+    for (size_t i = 0; i < sizeof(kTokens) / sizeof(kTokens[0]); ++i) {
+        if (upper.find(kTokens[i]) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::vector<std::pair<std::string, std::string>>
+ScrubSensitiveEnv(const std::vector<std::pair<std::string, std::string>>& parentEnv) {
+    std::vector<std::pair<std::string, std::string>> kept;
+    kept.reserve(parentEnv.size());
+    for (size_t i = 0; i < parentEnv.size(); ++i) {
+        if (!IsSensitiveEnvName(parentEnv[i].first)) {
+            kept.push_back(parentEnv[i]);
+        }
+    }
+    return kept;
+}
+
 int64_t RemainingTimeoutMs(std::chrono::steady_clock::time_point start, int64_t totalTimeoutMs) {
     if (totalTimeoutMs <= 0) {
         return totalTimeoutMs;
