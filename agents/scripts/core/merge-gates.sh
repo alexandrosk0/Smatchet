@@ -98,6 +98,19 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_QUERY_FILE="$SCRIPT_DIR/merge-gates.graphql"
 
+# ----------------------------------------------------------------------------
+# Meant-to-block allow-list — SINGLE SOURCE OF TRUTH.
+# A non-required RED check still BLOCKS a merge when its name matches this
+# regex AND is not explicitly "advisory" (see the $failing jq sub-expression
+# below, which splices __BLOCK_ALLOWLIST_RE__ from this constant). Closes the
+# #923 gate-escape (watcher auto-merged past a RED non-required "Coverage").
+# Other tooling that must apply the IDENTICAL allow-list (e.g.
+# safe-admin-merge.sh) sources this file and reads MERGE_GATES_BLOCK_ALLOWLIST_RE
+# rather than duplicating the regex — change it HERE and every consumer follows.
+#   Coverage / Sanitizer / Bucket-* / Perf PR-fast / Android security gate
+# (history: Perf PR-fast 2026-06-07; Android security gate 2026-06-09).
+MERGE_GATES_BLOCK_ALLOWLIST_RE="Coverage|Sanitizer|Bucket-|Perf PR-fast|Android security gate"
+
 # Source prompt shim so `ask_user_question` is callable from the caller's
 # integration flow. Lazy — only if available.
 if [ -f "$SCRIPT_DIR/merge-gates-prompt.sh" ]; then
@@ -371,7 +384,7 @@ poll_merge_gates() {
       # onto the blocking path here, NOT left advisory.
       ((.isRequired == true)
        or ((if .__typename == "CheckRun" then (.name // "") else (.context // "") end)
-           | (test("Coverage|Sanitizer|Bucket-|Perf PR-fast|Android security gate"; "i")
+           | (test("__BLOCK_ALLOWLIST_RE__"; "i")
               and (ascii_downcase | contains("advisory") | not)))))]) as $failing
 | ([$failing[] | select(
       ($tests and .__typename == "CheckRun" and .name == "Test-delta gate") or
@@ -459,6 +472,11 @@ poll_merge_gates() {
     # this is a full JSON array value — valid jq on its own (e.g. `[]` or
     # `["Test-delta gate","Windows + MSVC"]`).
     GATE_FILTER="${GATE_FILTER//__REQUIRED_CONTEXTS__/$req_ctx_json}"
+    # Splice the meant-to-block allow-list regex from the single-source constant
+    # (MERGE_GATES_BLOCK_ALLOWLIST_RE, defined at file top). Spliced into a jq
+    # `test("…"; "i")` string literal — the regex has no jq/double-quote-special
+    # chars, so a plain substitution is safe.
+    GATE_FILTER="${GATE_FILTER//__BLOCK_ALLOWLIST_RE__/$MERGE_GATES_BLOCK_ALLOWLIST_RE}"
 
     local p
     for ((p=0; p<MAX_POLLS; p++)); do
@@ -648,6 +666,13 @@ poll_merge_gates() {
 
         local cr_pass=false
         local cr_state_print="$cr_state"
+        # Set true only when the cr-out-of-band label actually waives a real CR
+        # block below (state verdict or open CR threads) — i.e. the override was
+        # LOAD-BEARING. Distinct from mere label presence (has_cr_oob): a moot
+        # cr-out-of-band on an already-passing CR gate never sets this. Feeds the
+        # GATE_SNAPSHOT line so the override-merge ledger records the CR gate as
+        # genuinely bypassed (mandatory-merge-snapshot-on-override-merge).
+        local cr_overridden=false
         # Set true only by the NONE branch when CR posted a "review skipped — too
         # many files" comment. Hoisted here so it's always defined for the
         # cr-out-of-band downgrade + nudge-suppression checks below, regardless of
@@ -903,6 +928,7 @@ poll_merge_gates() {
             fi
             cr_pass=true
             cr_open_blocks=false
+            cr_overridden=true
         fi
 
         # mergeStateStatus guard (secondary P1 fix). GitHub's own mergeability
@@ -938,6 +964,24 @@ poll_merge_gates() {
             if [ "$gh_merge_state" != "CLEAN" ] && [ "$gh_merge_state" != "UNSTABLE" ] && [ "$gh_merge_state" != "UNKNOWN" ]; then
                 echo "INFO: merge-gates pass; GitHub mergeStateStatus=$gh_merge_state may be stale or branch-protection summary-only (MERGE_GATES_IGNORE_MERGESTATE override active). REST squash-merge contract still applies." >&2
             fi
+            # GATE_SNAPSHOT — emitted ONLY on the PASS path, naming the checks an
+            # override label actually bypassed at the decision instant so the
+            # merge actor can write a lossless merge-snapshot row
+            # (mandatory-merge-snapshot-on-override-merge; ADR-0017).
+            #   cr_override=1 iff cr-out-of-band waived a real CR block above.
+            #   downgraded=<rest of line> is the CI checks tests-/perf-out-of-band
+            #     turned FAIL→WARN (dg_names — the SAME $downgraded the GATE_FILTER
+            #     computed, no forked logic). It is jq `join(", ")` output so it
+            #     contains spaces+commas; it is therefore the LAST field and spans
+            #     the entire remainder of the line (the watcher reads everything
+            #     after "downgraded=" verbatim — no whitespace tokenisation).
+            # Both empty/0 on a clean (no-override) pass, so the snapshot writer
+            # leaves redChecks=[] and never double-flags a moot label. Distinct
+            # prefix like GATE_CARRY; the watcher parses it on the merged path only.
+            local cr_override_flag=0
+            [ "$cr_overridden" = true ] && cr_override_flag=1
+            printf 'GATE_SNAPSHOT cr_override=%s downgraded=%s\n' \
+                "$cr_override_flag" "${dg_names:-}"
             echo "GATES_PASSED"
             return 0
         fi

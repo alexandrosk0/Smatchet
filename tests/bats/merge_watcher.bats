@@ -83,6 +83,117 @@ PY
     [[ "$output" == *"OK"* ]]
 }
 
+@test "_parse_gate_snapshot extracts downgraded names + cr_override; None when absent" {
+    run python - <<'PY'
+import importlib.util, os, sys
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+sys.path.insert(0, sd)
+spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+
+# CI downgrade names contain spaces + commas (jq join(", ")) — must survive intact.
+got = m._parse_gate_snapshot(
+    "Poll 1/1 — CI: ...\n"
+    "GATE_SNAPSHOT cr_override=0 downgraded=Test-delta gate, Perf PR-fast (ubuntu)\n"
+    "GATES_PASSED\n"
+)
+assert got == {"downgraded": ["Test-delta gate", "Perf PR-fast (ubuntu)"], "cr_override": False}, got
+
+# cr-out-of-band waived a CR block, no CI downgrade → empty downgraded, cr_override True.
+g2 = m._parse_gate_snapshot("GATE_SNAPSHOT cr_override=1 downgraded=")
+assert g2 == {"downgraded": [], "cr_override": True}, g2
+
+# Clean pass (label present but moot / nothing downgraded) → empty + False.
+g3 = m._parse_gate_snapshot("GATE_SNAPSHOT cr_override=0 downgraded=")
+assert g3 == {"downgraded": [], "cr_override": False}, g3
+
+# No GATE_SNAPSHOT line at all → None (caller falls back to redChecks=[]).
+assert m._parse_gate_snapshot("Poll 1/1 — CI: ...\nGATES_PASSED\n") is None
+print("OK")
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OK"* ]]
+}
+
+@test "handle_pass with override gate_snapshot writes merge-snapshot redChecks naming bypassed checks" {
+    # An override-label merge (tests-out-of-band + cr-out-of-band) must write a
+    # lossless ledger row whose redChecks names what the override bypassed
+    # (mandatory-merge-snapshot-on-override-merge). gate_snapshot carries the
+    # downgraded CI check + the cr_override flag; the row's overrideLabels carry
+    # the labels present on the PR.
+    LEDGER="$SMATCHET_TEST_TMP/merge-snapshots.jsonl"
+    # Monkeypatch the Python gh-seams directly (portable: no extensionless-stub
+    # exec, which Windows native python can't run). _append_merge_snapshot still
+    # shells out to the REAL merge-snapshot-append.sh writing to $LEDGER — that
+    # path (the unit under test) is exercised for real.
+    run python -c "
+import os
+os.environ['MERGE_SNAPSHOT_LEDGER'] = r'$LEDGER'
+import importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mw)
+# gh seams: owner/repo, merge (no-op), branch detect, stacked children none.
+mw._gh_owner_repo = lambda clone_path: ('o', 'r')
+mw.ensure_pr_ready_for_review = lambda o, r, pr: True
+mw.detect_merged_branch_name = lambda o, r, pr: 'feat/foo'
+mw.squash_merge_pr = lambda o, r, pr: 'abc123def456'
+mw.find_stacked_children = lambda o, r, b: []
+mw.maybe_remove_from_registry = lambda pr, cp: None
+# _append_merge_snapshot reads labels+headRefOid via _gh_json('pr view').
+mw._gh_json = lambda args, **kw: {'headRefOid': 'head789', 'labels': [
+    {'name': 'tests-out-of-band'}, {'name': 'cr-out-of-band'}, {'name': 'unrelated'}]}
+gs = {'downgraded': ['Test-delta gate'], 'cr_override': True}
+extras = mw.handle_pass({'pr': 999, 'clone_path': r'$REPO_ROOT'}, gate_snapshot=gs)
+print('merge_action:', extras.get('merge_action'))
+print('snapshot:', extras.get('merge_snapshot'))
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"merge_action: merged"* ]]
+    [[ "$output" == *"snapshot_appended"* ]]
+    # Exactly one ledger row, naming both bypassed checks + the override labels.
+    # `unrelated` is a non-override label and must NOT appear in overrideLabels.
+    [ -f "$LEDGER" ]
+    run jq -e '.pr == 999 and (.redChecks | index("Test-delta gate")) != null and (.redChecks | index("CodeRabbit")) != null and (.overrideLabels | index("tests-out-of-band")) != null and (.overrideLabels | index("cr-out-of-band")) != null and (.overrideLabels | index("unrelated")) == null' "$LEDGER"
+    [ "$status" -eq 0 ]
+    run bash -c "wc -l < '$LEDGER'"
+    [ "$output" -eq 1 ]
+}
+
+@test "handle_pass clean merge (no gate_snapshot) writes empty redChecks, single row, no double-write" {
+    # A clean (no-override) merge must still write a row but with redChecks=[]
+    # so postmortem-owed never spuriously flags it. Idempotency: handle_pass'd
+    # twice for the same pr+mergeCommit writes exactly one line.
+    LEDGER="$SMATCHET_TEST_TMP/merge-snapshots-clean.jsonl"
+    run python -c "
+import os
+os.environ['MERGE_SNAPSHOT_LEDGER'] = r'$LEDGER'
+import importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mw)
+mw._gh_owner_repo = lambda clone_path: ('o', 'r')
+mw.ensure_pr_ready_for_review = lambda o, r, pr: True
+mw.detect_merged_branch_name = lambda o, r, pr: 'feat/foo'
+mw.squash_merge_pr = lambda o, r, pr: 'clean99'
+mw.find_stacked_children = lambda o, r, b: []
+mw.maybe_remove_from_registry = lambda pr, cp: None
+# Clean merge: no override labels present.
+mw._gh_json = lambda args, **kw: {'headRefOid': 'head000', 'labels': []}
+e1 = mw.handle_pass({'pr': 999, 'clone_path': r'$REPO_ROOT'}, gate_snapshot=None)
+e2 = mw.handle_pass({'pr': 999, 'clone_path': r'$REPO_ROOT'}, gate_snapshot=None)
+print('s1:', e1.get('merge_snapshot'))
+print('s2:', e2.get('merge_snapshot'))
+"
+    [ "$status" -eq 0 ]
+    [ -f "$LEDGER" ]
+    run jq -e '.redChecks == [] and .overrideLabels == []' "$LEDGER"
+    [ "$status" -eq 0 ]
+    # Idempotent: two handle_pass calls, same pr+mergeCommit → one line only.
+    run bash -c "wc -l < '$LEDGER'"
+    [ "$output" -eq 1 ]
+}
+
 @test "_bump_nudge_state persists nudged_head/stale_head/stale_streak into the registry entry" {
     run watch_cli register 999
     [ "$status" -eq 0 ]

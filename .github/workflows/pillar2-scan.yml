@@ -52,9 +52,29 @@ jobs:
           else
             base="${{ github.event.before }}"
           fi
+          # #518 (fail-closed): the previous `git diff ... 2>/dev/null || true`
+          # collapsed a FAILED diff (unresolvable base ref — e.g. a fetch that
+          # silently failed, or an all-zero `before` on a first push) into an
+          # EMPTY file list, so the scan was SKIPPED and the gate posted
+          # "no first-party C++ changed — pass". A skipped Pillar-2 scan is a
+          # non-result, not a pass. Verify the base resolves to a real commit,
+          # and capture the diff's exit code: distinguish "diff ran, 0 matches"
+          # (legit pass) from "diff errored" (hard fail).
+          if ! git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
+            echo "Pillar 2 scanner: FAIL — base ref '$base' does not resolve to a commit" \
+                 "(fetch failure / shallow clone?). Refusing to skip the scan." >&2
+            exit 1
+          fi
+          diff_rc=0
+          diff_out=$(git diff --name-only "$base"...HEAD) || diff_rc=$?
+          if [ "$diff_rc" -ne 0 ]; then
+            echo "Pillar 2 scanner: FAIL — 'git diff $base...HEAD' exited $diff_rc." \
+                 "Refusing to skip the scan on a diff error." >&2
+            exit 1
+          fi
           # Array (not a space-joined string) so paths with spaces survive as
           # distinct args to pillar2-scan.sh.
-          mapfile -t files < <(git diff --name-only "$base"...HEAD 2>/dev/null \
+          mapfile -t files < <(printf '%s\n' "$diff_out" \
                   | grep -E '\.(cpp|h|hpp)$' \
                   | grep -E '^(Source/Core/|Source/Plugins/)' \
                   | grep -v '/ThirdParty/' || true)

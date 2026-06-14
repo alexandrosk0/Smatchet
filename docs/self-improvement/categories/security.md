@@ -16,6 +16,63 @@
      by the AgentsMdLoader entry below), E6 (re-confirmed HIGH).
      =========================================================================== -->
 
+<!-- ===========================================================================
+     2026-06-13 — deeper-audit playbook cross-reference (NOT yet confirmed).
+     Source: docs/security/DEEPER_AUDIT_PLAYBOOK.md (the 7-tier / 34-target
+     follow-up ladder, PR #1191) cross-referenced against this ledger via
+     Workflow wf_ccaf45b5-1bc. Of 34 targets: 17 already covered above, 4
+     partial, 13 untracked — the 7 finding-bearing rows below are the untracked
+     /partial slices that name a concrete code sink. These are CANDIDATES from a
+     static cross-reference, NOT adversarially-confirmed bugs (the playbook
+     states nothing in it is a confirmed finding). Each names its confirm-step
+     (TSan / UBSan / fuzz / review). The 8 audit-METHOD gaps (fuzz lanes, TSan
+     CI, CVE/OSV match, SBOM) are filed as one epic in tooling.md
+     (`deeper-audit-harness-buildout`), not here — this ledger tracks
+     vulnerabilities, not tooling.
+     =========================================================================== -->
+
+- 2026-06-13 · deep-audit-xref · [security] · P2 — Candidate MCP/UI cross-thread g_ui data race (playbook target 3)
+  Details: MCP dispatch runs off the UI thread — `Source/Plugins/Mcp/McpPlugin.cpp:434` -> `Source/Core/src/Commands/CommandRegistry.cpp:317` -> command handlers that touch UI-owned globals, e.g. `BuiltinCommands_BugReport.cpp:62-64` and `BuiltinCommands_Debug.cpp:292-294` read/write `g_ui` with no synchronization vs the render thread. The existing MCP rows above cover *authorization* (un-gated dispatch, no Host/Origin), NOT this thread-safety gap. Candidate only — needs a TSan run to confirm a real race vs a benign single-writer pattern.
+  Concrete next action: Build the MCP/AI TSan lane (see tooling `deeper-audit-harness-buildout`), drive an MCP command that reaches a g_ui handler concurrently with the render loop, confirm/deny the race; if real, marshal handler-side g_ui access onto the UI thread or guard it. Effort M.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit-xref · [security] · P2 — Candidate AiAssistant streaming cancel/submit race (playbook target 5)
+  Details: `Source/Core/src/AiAssistantController.cpp` mutates streaming state across the network callback and UI threads: `currentCancel_` set/cleared at `:212`/`:271`, the on-delta closure built at `:434` (`MakeOnDelta`), and a model-change path that clears g_ui state at `:346-348`. A submit/cancel/model-switch interleaving could use-after-clear or double-invoke the cancel token. The existing AiAssistantController row above is the *x-api-key-on-redirect* leak (a different bug). Candidate only — needs TSan + a scripted submit-then-immediately-cancel/switch scenario.
+  Concrete next action: Reproduce under the MCP/AI TSan lane with a cancel-during-stream and model-switch-during-stream scenario; if a race is confirmed, make the cancel token + streaming state ownership single-threaded (post to UI thread) or atomic. Effort M.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit-xref · [security] · P2 — Unreal console / Blueprint exec reaches full CommandRegistry without ctx.Source authz (playbook target 24, partial)
+  Details: `Source/UnrealPlugins/SmatchetImGuiPlugin/Source/SmatchetImGuiPlugin/Private/SmatchetImGuiConsoleCommands.cpp` exposes Smatchet commands to the Unreal console / Blueprint exec; `IsSafeConsoleCommandName` filters the command *name* but not arguments, and the dispatch reaches the same registry the `CommandRegistry.cpp:298` row notes has no `ctx.Source` trust gate. So an Unreal-embed console caller gets the same destructive reach as UI — the finding-bearing slice of the partial target-24 coverage (the existing CommandRegistry row tracks the gate, not this embed entry-point). Candidate — needs review of the actual argument-forwarding path + whether ship Unreal builds expose the console.
+  Concrete next action: Route the Unreal console/Blueprint entry-point through the per-source trust gate proposed in the `CommandRegistry.cpp:298` row (tag ctx.Source = UnrealConsole, deny destructive without out-of-band confirm). Effort M.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit-xref · [security] · P3 — Candidate FormatDateIfIso out-of-bounds read (playbook target 6, partial)
+  Details: `Source/Core/src/Tracker/TrackerFieldValueParser.cpp:352` `FormatDateIfIso` indexes `value[4]` / `value[7]` to sniff an ISO date separator with no length check on `value` first; a server-supplied field shorter than 8 chars is an OOB read. Finding-bearing slice of the partial target-6 coverage (the existing ADF-recursion row tracks only `:290`/`:309`, the unbounded-nesting parse, not this fixed-index read). Candidate — confirm under UBSan/ASan with a short field value.
+  Concrete next action: Length-check `value.size()` before the `[4]`/`[7]` index (or use `.at()` / a `>= 8` guard); add a UBSan-driven unit test with a 0-7 char value. Effort S.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit-xref · [security] · P3 — Plane issue-mapping parsers unhardened against malformed tracker JSON (playbook target 11)
+  Details: `Source/Core/include/Tracker/PlaneIssueMappingPure.h` (`:53`/`:60`/`:78`) + `Source/Core/src/Tracker/PlaneIssueMappingPure.cpp` map Plane API JSON into issue structs with no fuzz coverage; only the Jira ADF path has any hardening tracked. A malformed/hostile Plane response is an untested parse surface (type confusion, missing-key deref, deep nesting). Candidate — no confirmed defect, this is an untested-surface gap.
+  Concrete next action: Add a libFuzzer/AFL harness over the Plane mappers (part of `deeper-audit-harness-buildout`); fix any crash/over-read it finds. Effort S-M.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit-xref · [security] · P3 — GitHub GraphQL->REST issue-mapping parsers unhardened against malformed JSON (playbook target 12)
+  Details: `Source/Core/include/Tracker/GitHubIssueSearchMapping.h` (`:38`/`:81`/`:96`) + `Source/Core/src/Tracker/GitHubIssueSearchMapping.cpp` map GitHub search responses with no fuzz coverage, same untested-surface class as the Plane mappers above. Candidate — untested-surface gap, no confirmed defect.
+  Concrete next action: Add a fuzz harness over the GitHub mappers (part of `deeper-audit-harness-buildout`); fix any crash/over-read. Effort S-M.
+  Status: open
+  Last-reviewed: 2026-06-13
+
+- 2026-06-13 · deep-audit-xref · [security] · P3 — JSON->Lua decode sink lacks explicit depth/size bounds (playbook target 14)
+  Details: `Source/Core/src/AppController_LuaBindingsCore.cpp:64` `JsonToLuaImpl` (reached from `AppController_LuaBindings.cpp:763`) recursively converts arbitrary JSON into Lua tables with no explicit depth/size cap shown at the sink. Deeply-nested or huge JSON handed to a Lua binding is a potential stack-exhaustion / memory-amplification surface. The existing Lua rows above cover *different* sinks (ai.prompt rate-limit, count-hook). Candidate — review whether nlohmann's parse-depth limit already bounds this before it reaches the converter.
+  Concrete next action: Confirm where the JSON is parsed (nlohmann default max-depth) and whether the converter can be reached with attacker-controlled nesting; if unbounded, add an explicit depth + element-count cap in `JsonToLuaImpl`. Effort S-M.
+  Status: open
+  Last-reviewed: 2026-06-13
+
 - 2026-06-13 · deep-audit-rerun · [security] · P1 — Server-supplied AccountId injected unescaped into JQL (JqlSuggestEngine)
   Details: `Source/Core/src/Tracker/JqlSuggestEngine.cpp:139-140` `BuildJqlUserInsert` builds a quoted JQL literal from a tracker-supplied AccountId; the AccountId fallback path does no `"`/`\` escaping, so a malicious/compromised tracker response breaks out of the literal in the user-autocomplete query. Distinct from the issue-key path (E1 / `BuildKeyInJql` `JiraIssueSearch.cpp:199`, partly-confirmed LOW by the re-run). Confirmed HIGH, adversarially verified, NEW.
   Concrete next action: reuse the E1 `JqlQuoteLiteral()` helper (escape `\`→`\\` then `"`→`\"`) at the AccountId insertion site, OR validate AccountId against its grammar before insertion. Unit-test both the key and AccountId paths. ~1 h.
