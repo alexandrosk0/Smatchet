@@ -9,9 +9,10 @@
 #   3. out-of-workspace — no ~/.claude / %TEMP% / abs paths in the script
 #   4. checkpoint-step  — prompts must reference a build/ repo-file write
 #   5. concurrency      — reminder note when sibling sessions are live
+#   6. fanout-width     — parallel()/pipeline() width ≤ min(16,cores-2) slots
 #
 # Drives everything through the script's env seams (PREFLIGHT_WINDOW_TOKENS /
-# PREFLIGHT_ACTIVE_SESSIONS / PREFLIGHT_CONCURRENCY_CAP) and absolute fixture
+# PREFLIGHT_ACTIVE_SESSIONS / PREFLIGHT_CONCURRENCY_CAP / PREFLIGHT_SLOTS) and absolute fixture
 # paths (the script cd's to repo root, so relative fixture paths would not
 # resolve). No gh/git stubs needed — the script is pure static analysis.
 #
@@ -228,6 +229,75 @@ JS
     [ "$status" -eq 0 ]
     [[ "$output" == *"sibling session(s) live"* ]]
     [[ "$output" == *"≤ 5"* ]]
+}
+
+# ============================================================================
+# Check 6 — fan-out width vs slot count
+# ============================================================================
+
+@test "fan-out width over the slot count warns (pipeline, advisory exit 0)" {
+    f="$(fixture <<'JS'
+const CLUSTERS = [
+  {k: 'a', model: 'sonnet'},
+  {k: 'b', model: 'sonnet'},
+  {k: 'c', model: 'sonnet'},
+  {k: 'd', model: 'sonnet'},
+  {k: 'e', model: 'sonnet'},
+]
+await pipeline(CLUSTERS, c => agent(c.k, {model: 'sonnet'}))
+log('build/x/results')
+JS
+)"
+    export PREFLIGHT_SLOTS=2
+    run bash "$SCRIPT" "$f"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"fan-out width 5 > local slot count 2"* ]]
+}
+
+@test "fan-out width within the slot count emits a note, not a warning" {
+    f="$(fixture <<'JS'
+await parallel([
+  () => agent('one', {model: 'sonnet'}),
+  () => agent('two', {model: 'sonnet'}),
+])
+log('build/x/results')
+JS
+)"
+    export PREFLIGHT_SLOTS=12
+    run bash "$SCRIPT" "$f"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"fan-out width 2 ≤ 12 slot(s)"* ]]
+    [[ "$output" != *"fan-out width 2 >"* ]]
+}
+
+@test "a wide array with no parallel/pipeline does not trigger check 6" {
+    f="$(fixture <<'JS'
+const DATA = [1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
+const x = await agent('mine', {model: 'sonnet'})
+log('build/x/results')
+JS
+)"
+    export PREFLIGHT_SLOTS=2
+    run bash "$SCRIPT" "$f"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"fan-out width"* ]]
+}
+
+@test "--strict promotes an over-width fan-out to a non-zero exit" {
+    f="$(fixture <<'JS'
+const CLUSTERS = [
+  {k: 'a', model: 'sonnet'},
+  {k: 'b', model: 'sonnet'},
+  {k: 'c', model: 'sonnet'},
+]
+await pipeline(CLUSTERS, c => agent(c.k, {model: 'sonnet'}))
+log('build/x/results')
+JS
+)"
+    export PREFLIGHT_SLOTS=1
+    run bash "$SCRIPT" "$f" --strict
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"fan-out width 3 > local slot count 1"* ]]
 }
 
 # ============================================================================
