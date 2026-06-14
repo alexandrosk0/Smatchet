@@ -285,6 +285,12 @@ sol::table LuaCommandsInvokeGlue(sol::this_state L, const std::string& cmdName, 
     // in production (FakeLuaBindingHost returns nullptr -- test handlers ignore App).
     ctx.App = host->AppForCommandContext();
     ctx.Source = smatchet::cmd::CommandSource::Lua;
+    // Security audit 2026-06-13 #3: Lua is a non-UI automation source. Confirmation
+    // of a destructive command must be an EXPLICIT per-call signal from the script,
+    // never auto-set by this binding. Mirror MCP's `__confirm` arg convention; absent
+    // or non-true -> the registry returns ConfirmRequired.
+    ctx.ConfirmedDestructive = args.value("__confirm", false);
+    ctx.DryRun = args.value("__dry_run", false);
     smatchet::cmd::CommandResult cr = host->LuaCommands().Dispatch(cmdName, args, ctx);
     result["ok"] = cr.Ok;
     if (cr.Ok) {

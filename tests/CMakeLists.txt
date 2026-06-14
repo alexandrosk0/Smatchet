@@ -381,6 +381,11 @@ add_executable(SmatchetTests
     # .cpp source — the glue calls the helper, the helper is the testable unit.
     Core/AiLuaPromptRateLimit.test.cpp
     Core/CliArgCoercion.test.cpp
+    # Source-aware destructive guard (security audit 2026-06-13 #2/#3). Pure
+    # trust predicate RequiresExplicitConfirm + IsAutomationSource live inline in
+    # Source/Core/include/Commands/Command.h — no extra .cpp linked (the registry
+    # TU + handlers stay out of the cpr-free rig).
+    Core/CommandSourceTrust.test.cpp
     Core/DictationInsertionRouter.test.cpp
     Core/AiAssistantInputSeedDecision.test.cpp
     Core/AiAssistantSendButton.test.cpp
