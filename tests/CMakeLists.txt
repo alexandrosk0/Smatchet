@@ -584,6 +584,20 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/TicketSyncService.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpUtils.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpPure.cpp"
+    # Slice D of docs/plans/active/http-fault-injection.md — the retry+classify engine
+    # (TrackerHttpRequestWithRetry / ClassifyTrackerResponse). Wired live into the
+    # TrackerXxxLogged helper bodies in TrackerHttpUtils.cpp (D3), so the rig must link
+    # it or TrackerHttpUtils.cpp's now-live retry calls are unresolved symbols.
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpClient.cpp"
+    # Pure unit coverage of the retry+classify engine: ClassifyTrackerResponse status
+    # mapping, retry-recovers / exhaustion-count / POST-predicate-stops semantics via
+    # stateful requestFn lambdas (no socket). No extra production TU.
+    Core/TrackerHttpRetry.test.cpp
+    # Integration coverage of the live D3 wiring: drives TrackerGet/Post/PutLogged at a
+    # scripted httplib loopback (JiraCatalogHttpFixture) and asserts retry counts prove
+    # GET/PUT retry-on-5xx while POST is single-shot (Transport-only). Needs only
+    # TrackerHttpUtils.cpp + TrackerHttpClient.cpp + cpr + fixture (all already linked).
+    Core/TrackerHttpFaults.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/NetworkUsageTracker.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/OfflineQueueService.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/Views.cpp"
