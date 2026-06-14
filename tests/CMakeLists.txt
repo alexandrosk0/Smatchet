@@ -767,6 +767,9 @@ if(SMATCHET_WITH_WHISPER)
         Core/WavWriter.test.cpp
         # Phase C — local backend, downloader catalog, consent gate, mode router.
         Core/ModelCatalog.test.cpp
+        # Network-hardening (security audit LOW): host-pin + size-cap policy for the
+        # model-download redirect path. Pure decision; no cpr / no I/O.
+        Plugins/Whisper/ModelDownloadPolicy.test.cpp
         Core/WhisperConsentGate.test.cpp
         Core/WhisperModeRouter.test.cpp
         # Phase E — pure hotkey-descriptor parser.
@@ -779,6 +782,7 @@ if(SMATCHET_WITH_WHISPER)
         "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/WhisperApiClient.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/WavWriter.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/ModelCatalog.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/ModelDownloadPolicy.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/WhisperConsentGate.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/HotkeyParse.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/SilenceTrim.cpp"

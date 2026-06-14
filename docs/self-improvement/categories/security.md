@@ -265,7 +265,7 @@
 - 2026-06-13 · deep-audit · [security] · P3 — MCP thread pool / SSE parking lacks connection bounds
   Details: Source/Plugins/Mcp/McpPlugin.cpp:848-850,600-620 — no clear cap on concurrent parked SSE connections / pool threads.
   Concrete next action: Bound concurrent connections and idle-park duration. Effort S.
-  Status: open
+  Status: applied (2026-06-14, PR network-bounds-hardening-wave4) — the httplib worker pool was ALREADY bounded at 8 (#987, StartServerThread). The residual gap was unbounded *concurrent SSE streams*: each SSE stream parks ~2 workers in the heartbeat wait-loop, so ~4 SSE clients exhaust the size-8 pool and the next connection queues forever (the #987 comment itself flagged this). Fix: `McpPlugin::RegisterSseRoute` now reserves a slot via an `std::atomic<int> activeSseConnections` guarded by the pure `CanAcceptSseConnection(currentActive)` decision (cap `kMaxConcurrentSseConnections = 4`, McpJsonRpcPure.h), rejecting the over-cap connect with HTTP 503 + `Retry-After: 5` BEFORE streaming. The slot is released by a `std::shared_ptr<void>` custom-deleter (`sseGuard`) captured into the chunked-content provider, so the decrement fires exactly when httplib destroys the provider (stream close), with no leak on the early-return paths. Pure decision unit-tested (tests/Plugins/Mcp/McpHostOrigin.test.cpp).
   Last-reviewed: 2026-06-13
 
 - 2026-06-13 · deep-audit · [security] · P3 — Gradle wrapper jar/properties lack sha256 verification
@@ -316,14 +316,14 @@
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — Whisper model download follows redirects with no host-pin and no size cap
   Details: `Source/Plugins/Whisper/ModelDownloader.cpp:314` uses `cpr::Redirect(true,true)` with no host pin and no maximum response size on the ggml model fetch; a redirect to an attacker host serves an unverified blob (and there is no checksum gate on the model). Partly-confirmed LOW. NEW.
   Concrete next action: pin the download host, add a size cap, and sha256-verify the model artifact (mirror the Lua TOFU pin / E3). ~S.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Status: applied (2026-06-14, PR network-bounds-hardening-wave4) — SHA-256 verification already gates artefact identity (ModelCatalog, the audit's "no checksum gate" remark is a false positive — see Resolution). Added host-pin + size-cap: new pure helper `Source/Plugins/Whisper/ModelDownloadPolicy.{h,cpp}` (`IsAllowedModelUrl` = https + `*.huggingface.co`/`*.hf.co` exact-suffix allow-list; `ExceedsModelSizeCap`, ceiling 4 GiB > the 1.53 GB largest catalog model). `ModelDownloader::RunDownloadWorker` now (1) rejects a non-allow-listed/non-https initial URL before opening a socket, (2) caps redirect hops at 5 (`cpr::Redirect(5, true, false, POST_ALL)` — note redirects must stay ON: huggingface LFS 30x-bounces the `resolve/main` pointer to a CDN, so the H4 disable-follow approach is not applicable here), (3) aborts mid-stream via the WriteCallback when the running byte count crosses the cap, (4) re-checks the effective post-redirect host against the same allow-list. Pure decisions unit-tested (tests/Plugins/Whisper/ModelDownloadPolicy.test.cpp). cpr-bound redirect wiring itself is integration-only (untestable in the doctest rig).
+  Last-reviewed: 2026-06-14
 
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — NormalizeBaseUrl accepts cleartext http:// tracker endpoints
   Details: `Source/Core/src/Tracker/TrackerHttpUtils.cpp:85` `NormalizeBaseUrl` does not require `https://`, so a config (or first-run) `http://` tracker base sends credentials in cleartext and exposes the redirect-forwarding path (H4 / E2). Confirmed LOW. NEW.
   Concrete next action: default-reject `http://` (allow only behind the same explicit insecure-http consent gate the AI endpoint sanitizer uses), or upgrade to `https`. ~S.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Status: applied (2026-06-14, PR network-bounds-hardening-wave4) — `NormalizeBaseUrl` (TrackerHttpUtils.cpp) now upgrades a cleartext `http://` base to `https://` (with a LOG_WARN) when the host is NON-loopback, so the tracker Basic-auth header never travels in the clear to a public host; loopback `http://` (`localhost`/`127.0.0.0/8`/`::1`, local dev) is left untouched so a loopback dev config is not broken. Upgrade (not hard-reject) keeps the existing string-building contract of all 24 call sites intact. Decision extracted to the pure `TrackerHttpPure::ShouldUpgradeCleartextBase` + `IsLoopbackHost` (the latter requires a real `127.x` dotted-quad — `127.example.com` is correctly treated as a public host, a bug my own test caught). Unit-tested in tests/Core/TrackerHttpSslPure.test.cpp.
+  Last-reviewed: 2026-06-14
 
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — Logger file sink writes log lines without RedactLogLine
   Details: `Source/Core/src/Logger.cpp:320` `FileSinkWorker` writes `e.message` verbatim to the on-disk log; `RedactLogLine` (applied on the crash/bug-report paths) is NOT applied at the file sink, so any `LOG_*` that ever carries a secret/PII reaches the log file unredacted. No current `LOG_*` call places a raw credential there, but body-logging at Trace would. Partly-confirmed LOW. NEW.
