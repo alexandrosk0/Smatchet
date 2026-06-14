@@ -1,0 +1,122 @@
+// Pure-logic tests for the rebindable keybinding table: KeybindingsConfig::Defaults()
+// parity with the migrated hardcoded shortcut set, JSON round-trip, and the
+// malformed-binding skip / missing-field default behaviour of from_json.
+// docs/plans/active/keyboard-shortcuts-rebindable.md (PR1 foundation).
+
+#include <doctest/doctest.h>
+
+#include <nlohmann/json.hpp>
+
+#include "Config/KeybindingsConfig.h"
+
+#include <string>
+#include <vector>
+
+namespace {
+
+struct ExpectedBinding {
+    const char* hotkey;
+    const char* commandId;
+    const char* argsJson;
+};
+
+// Exact parity with KeybindingsConfig::Defaults() — order matters (first-seen wins
+// at dispatch). If a default shortcut is added/removed/retargeted, update this table
+// in the same change so the parity check stays a real guard, not a rubber stamp.
+const ExpectedBinding kExpectedDefaults[] = {
+    {"Ctrl+B", "view.sidebar.primary", "{\"action\":\"toggle\"}"},
+    {"Ctrl+Alt+B", "view.sidebar.secondary", "{\"action\":\"toggle\"}"},
+    {"Ctrl+J", "view.panel.bottom", "{\"action\":\"toggle\"}"},
+    {"Ctrl+Shift+A", "view.assistant", "{\"action\":\"show\"}"},
+    {"Ctrl+Shift+F", "view.toggle.performance", "{\"action\":\"show\"}"},
+    {"Ctrl+Shift+D", "view.toggle.plan_doc_viewer", "{\"action\":\"show\"}"},
+    {"Ctrl+Shift+I", "view.toggle.bulk_import", "{\"action\":\"show\"}"},
+    {"Ctrl+Shift+X", "view.toggle.bulk_export", "{\"action\":\"show\"}"},
+    {"Ctrl+Shift+K", "view.toggle.mcp_server", "{\"action\":\"show\"}"},
+    {"Ctrl+Shift+L", "view.toggle.scripts", "{\"action\":\"show\"}"},
+    {"Ctrl+,", "view.toggle.preferences", "{\"action\":\"show\"}"},
+    {"Ctrl+Alt+D", "app.dock_debug.toggle", "{}"},
+    {"F11", "app.fullscreen.toggle", "{}"},
+    {"Ctrl+Shift+P", "ui.command_palette", "{}"},
+    {"Ctrl+Shift+B", "app.bug_report.open", "{}"},
+};
+
+} // namespace
+
+TEST_CASE("KeybindingsConfig::Defaults() reproduces the migrated hardcoded set") {
+    const KeybindingsConfig c = KeybindingsConfig::Defaults();
+    const size_t expectedCount = sizeof(kExpectedDefaults) / sizeof(kExpectedDefaults[0]);
+    REQUIRE(c.Bindings.size() == expectedCount);
+    for (size_t i = 0; i < expectedCount; ++i) {
+        const Keybinding& b = c.Bindings[i];
+        const ExpectedBinding& e = kExpectedDefaults[i];
+        CHECK_MESSAGE(b.Hotkey == std::string(e.hotkey), e.hotkey);
+        CHECK_MESSAGE(b.CommandId == std::string(e.commandId), e.commandId);
+        CHECK_MESSAGE(b.ArgsJson == std::string(e.argsJson), e.hotkey);
+        CHECK(b.Enabled);
+    }
+}
+
+TEST_CASE("Keybinding to_json emits the four wire fields") {
+    Keybinding b;
+    b.CommandId = "view.toggle.performance";
+    b.Hotkey = "Ctrl+Shift+F";
+    b.ArgsJson = "{\"action\":\"show\"}";
+    b.Enabled = false;
+
+    const nlohmann::json j = b;
+    CHECK(j.at("command_id").get<std::string>() == "view.toggle.performance");
+    CHECK(j.at("hotkey").get<std::string>() == "Ctrl+Shift+F");
+    CHECK(j.at("args_json").get<std::string>() == "{\"action\":\"show\"}");
+    CHECK(j.at("enabled").get<bool>() == false);
+}
+
+TEST_CASE("Keybinding from_json fills defaults for missing fields") {
+    const nlohmann::json empty = nlohmann::json::object();
+    const Keybinding b = empty.get<Keybinding>();
+    CHECK(b.CommandId.empty());
+    CHECK(b.Hotkey.empty());
+    CHECK(b.ArgsJson == "{}"); // args_json default is an empty JSON object literal
+    CHECK(b.Enabled);          // enabled default is true
+}
+
+TEST_CASE("KeybindingsConfig survives a full JSON round-trip") {
+    const KeybindingsConfig original = KeybindingsConfig::Defaults();
+    const nlohmann::json j = original;
+    const KeybindingsConfig back = j.get<KeybindingsConfig>();
+
+    REQUIRE(back.Bindings.size() == original.Bindings.size());
+    for (size_t i = 0; i < original.Bindings.size(); ++i) {
+        CHECK(back.Bindings[i].CommandId == original.Bindings[i].CommandId);
+        CHECK(back.Bindings[i].Hotkey == original.Bindings[i].Hotkey);
+        CHECK(back.Bindings[i].ArgsJson == original.Bindings[i].ArgsJson);
+        CHECK(back.Bindings[i].Enabled == original.Bindings[i].Enabled);
+    }
+}
+
+TEST_CASE("KeybindingsConfig from_json skips malformed bindings, keeps the rest") {
+    // One well-formed object, one non-object entry, and one object whose command_id
+    // is the wrong JSON type (number, not string) — the latter throws inside
+    // j.value() and is caught + skipped. Only the well-formed binding survives.
+    const nlohmann::json j = {
+        {"bindings",
+         nlohmann::json::array({
+             {{"command_id", "view.toggle.performance"}, {"hotkey", "Ctrl+Shift+F"}, {"args_json", "{}"}, {"enabled", true}},
+             42,                          // non-object — skipped
+             {{"command_id", 5}},          // command_id wrong type — throws, skipped
+         })},
+    };
+    const KeybindingsConfig c = j.get<KeybindingsConfig>();
+    REQUIRE(c.Bindings.size() == 1);
+    CHECK(c.Bindings[0].CommandId == "view.toggle.performance");
+    CHECK(c.Bindings[0].Hotkey == "Ctrl+Shift+F");
+}
+
+TEST_CASE("KeybindingsConfig from_json yields an empty table when bindings is absent or not an array") {
+    const KeybindingsConfig none = nlohmann::json::object().get<KeybindingsConfig>();
+    CHECK(none.Bindings.empty());
+
+    const nlohmann::json notArray = {{"bindings", "nope"}};
+    const KeybindingsConfig bad = notArray.get<KeybindingsConfig>();
+    CHECK(bad.Bindings.empty());
+}

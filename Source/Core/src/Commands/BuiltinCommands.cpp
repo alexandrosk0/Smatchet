@@ -12,6 +12,7 @@
 
 #include "Commands/BuiltinCommands.h"
 
+#include "Commands/AppViewCommands.h"
 #include "Commands/CommandRegistry.h"
 #include "Commands/UiModeCommand.h"
 #include "Commands/ViewToggleCommands.h"
@@ -60,6 +61,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
     RegisterBugReportCommands(reg, app);
 
     RegisterViewToggleCommands(reg, app);
+    RegisterAppViewCommands(reg, app);
     RegisterUiModeCommand(reg, app);
 
     LOG_INFO("CommandRegistry: registered %zu built-in commands", reg.All().size());

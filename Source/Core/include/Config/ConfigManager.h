@@ -21,6 +21,7 @@
 #include <nlohmann/json_fwd.hpp>
 
 #include "AiTypes.h"
+#include "KeybindingsConfig.h"
 #include "SmatchetDefaults.h"
 #include "SmatchetThemeIds.h"
 #include "SmatchetUiModeIds.h"
@@ -218,6 +219,10 @@ struct TrackerConfig {
     // Customizable icon toolbar rendered below the main menu bar. Per-tracker append
     // lists live in ViewWorkspaceState::ToolbarAppend. See ToolbarConfig.h.
     ToolbarConfig Toolbar = ToolbarConfig::Default();
+
+    // Rebindable global keyboard shortcuts dispatched through the command registry.
+    // See KeybindingsConfig.h and docs/plans/active/keyboard-shortcuts-rebindable.md.
+    KeybindingsConfig Keybindings = KeybindingsConfig::Defaults();
 
     // Custom suggestions and templates saved in smatchet_config.json
     std::vector<std::string> DurationSuggestions = {"15m", "30m", "1h", "2h", "4h", "8h", "1d", "2d", "1w"};

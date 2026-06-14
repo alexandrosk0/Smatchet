@@ -7,6 +7,7 @@
 #include "SmatchetPreferencesUi_detail.h"
 #include "SmatchetThemeIds.h"
 #include "TicketGridModel.h"
+#include "Ui/ImGuiHotkey.h"
 #include "Ui/SmatchetUserInfoUi.h"
 #include "Views.h"
 
@@ -156,6 +157,18 @@ class SmatchetUI {
     MobileTouchDensity lastAppliedMobileDensity_ = MobileTouchDensity::Comfortable;
     RecentViewLru recentViews_;
 
+    // Parsed, ready-to-match form of cfg.Keybindings, built by rebuildKeybindingCache.
+    // Disabled / unparseable bindings are dropped at build time so the per-frame
+    // dispatch loop only walks valid entries. ArgsJson is kept as text and parsed at
+    // dispatch (cold path: only when a hotkey actually fires).
+    struct ParsedKeybinding {
+        smatchet::ui::ImGuiBugHotkey hk;
+        std::string commandId;
+        std::string argsJson;
+    };
+    std::vector<ParsedKeybinding> keybindingCache_;
+    bool keybindingCacheDirty_ = true;
+
     void drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSession& d);
     void drawMainMenuBar(AppController& app, UiDrawSession& d);
     // Per-menu section helpers for drawMainMenuBar (function-size-compliance, monoliths
@@ -260,9 +273,16 @@ class SmatchetUI {
     void drawPreWindowOverlays(AppController& app, UiDrawSession& d);
     void drawViewStateAndConnectivity(AppController& app, UiDrawSession& d);
     void drawChromeAndModeToggles(AppController& app, UiDrawSession& d);
-    void handleViewKeyboardShortcuts(UiDrawSession& d);
-    void handlePanelVisibilityShortcuts(UiDrawSession& d);
-    void handleViewRevealShortcuts(UiDrawSession& d);
+    // Rebindable keyboard-shortcut dispatch. Replaces the former hardcoded
+    // handleViewKeyboardShortcuts / handlePanelVisibilityShortcuts /
+    // handleViewRevealShortcuts: each frame dispatchKeybindings matches the parsed
+    // cfg.Keybindings table against the current ImGui input and routes a match through
+    // the command registry (the ui.command_palette pseudo-binding is handled inline so
+    // it can self-gate on BackendHasBeenReachable, matching the pre-migration palette
+    // toggle). The parse cache is rebuilt lazily when keybindingCacheDirty_ is set —
+    // once after config load (drawInitConfigOnce) and on any future editor save.
+    void dispatchKeybindings(AppController& app, UiDrawSession& d);
+    void rebuildKeybindingCache(UiDrawSession& d);
     void drawSecondaryWindows(AppController& app, UiDrawSession& d);
     // Tail half of drawSecondaryWindows (toasts onward) — split for function-size compliance.
     // Each contained window owns its own Begin/End scope; no scope crosses the boundary.
