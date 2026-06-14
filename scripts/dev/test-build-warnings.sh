@@ -18,34 +18,46 @@
 
 set -euo pipefail
 
-command -v cmake >/dev/null 2>&1 || { echo "cmake required" >&2; exit 2; }
-
 cd "$(dirname "$0")/../.."
 
 PRESET="${SMATCHET_WARN_PRESET:-ninja-iter-msvc}"
 BUILD_DIR="build/${PRESET}"
 LOG="${BUILD_DIR}/_warn-build.log"
 
-mkdir -p "$BUILD_DIR"
+# Test / re-scan seam: SMATCHET_WARN_LOG_OVERRIDE points the scan at an existing
+# build log and skips configure+build, so tests/bats/build_warnings_gate.bats can
+# exercise the toolchain-format matcher against fixture logs without a compiler.
+if [ -n "${SMATCHET_WARN_LOG_OVERRIDE:-}" ]; then
+    LOG="$SMATCHET_WARN_LOG_OVERRIDE"
+    [ -f "$LOG" ] || { echo "override log not found: ${LOG}" >&2; exit 2; }
+else
+    command -v cmake >/dev/null 2>&1 || { echo "cmake required" >&2; exit 2; }
+    mkdir -p "$BUILD_DIR"
 
-# Reconfigure only if the preset hasn't been configured yet.
-if [ ! -f "${BUILD_DIR}/build.ninja" ]; then
-    echo "Configuring preset ${PRESET}..."
-    cmake --preset "$PRESET" >/dev/null 2>&1 || { echo "cmake preset failed"; exit 2; }
+    # Reconfigure only if the preset hasn't been configured yet.
+    if [ ! -f "${BUILD_DIR}/build.ninja" ]; then
+        echo "Configuring preset ${PRESET}..."
+        cmake --preset "$PRESET" >/dev/null 2>&1 || { echo "cmake preset failed"; exit 2; }
+    fi
+
+    echo "Building preset ${PRESET}..."
+    cmake --build --preset "$PRESET" 2>&1 | tee "$LOG" >/dev/null || {
+        echo "build failed — see ${LOG}"
+        exit 2
+    }
 fi
 
-echo "Building preset ${PRESET}..."
-cmake --build --preset "$PRESET" 2>&1 | tee "$LOG" >/dev/null || {
-    echo "build failed — see ${LOG}"
-    exit 2
-}
-
-# Match GCC's "warning: ... [-Wunused-..]" tag form on Smatchet-owned paths only.
-# The leading "../../" prefix is how ninja prints sources relative to BUILD_DIR; on
-# MinGW the separator is "\" so the regex must accept both [\\/].
-OWNED_HITS=$(grep -E 'warning:.*\[-Wunused-' "$LOG" \
+# Match the unused-* warning family on Smatchet-owned paths only, across BOTH
+# toolchains this gate can build under. The default ninja-iter-msvc preset compiles
+# with cl.exe, whose diagnostics NEVER carry the GCC "[-Wunused-..]" tag — so matching
+# only that form left the gate permanently blind (always "Passed: 1") under MSVC:
+#   • MSVC cl.exe            → "warning C4101/C4189/C4505:" = unused var / unused-but-set / unused fn.
+#   • GCC / Clang / clang-cl → "warning: ... [-Wunused-..]" tag form.
+# FetchContent deps under _deps/ are upstream, excluded. Path separator may be "/"
+# (ninja) or "\" (MSVC), so the owned-path filter accepts both.
+OWNED_HITS=$(grep -E 'warning:.*\[-Wunused-|warning C(4101|4189|4505):' "$LOG" \
     | grep -vE '[\\/]_deps[\\/]' \
-    | grep -E '(Source/Standalone|Source/Core|Plugins)[\\/]' \
+    | grep -E '(Source[\\/]Standalone|Source[\\/]Core|Plugins)[\\/]' \
     || true)
 
 if [ -n "$OWNED_HITS" ]; then
