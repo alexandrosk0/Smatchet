@@ -637,6 +637,15 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneActivityFeedPure.cpp"
     Core/GitHubActivityFeed.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubActivityFeedPure.cpp"
+    # keyboard-shortcuts-rebindable PR1 — pure hotkey grammar (Parse/Stringify/
+    # FindShortcutConflict; MatchHotkey is ImGui-IO-bound and excluded -> bucket-E)
+    # + the rebindable keybinding table (Defaults() parity, JSON round-trip,
+    # malformed-skip). ImGuiHotkey.cpp links against the already-linked ImGuiLib;
+    # KeybindingsConfig.cpp pulls only nlohmann (already linked).
+    Core/ImGuiHotkey.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/ImGuiHotkey.cpp"
+    Core/KeybindingsConfig.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/KeybindingsConfig.cpp"
 )
 
 # Whisper dictation router — link the production TU that matches the parent

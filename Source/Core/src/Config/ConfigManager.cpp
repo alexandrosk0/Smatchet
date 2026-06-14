@@ -563,6 +563,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["mcp_export_fields"] = config.McpExportFields;
     j["quick_comment_templates"] = config.QuickCommentTemplates;
     j["toolbar"] = config.Toolbar;
+    j["keybindings"] = config.Keybindings;
     j["annotate_comment_templates"] = config.AnnotateCommentTemplates;
     j["duration_suggestions"] = config.DurationSuggestions;
     j["worklog_comment_templates"] = config.WorkLogCommentTemplates;
@@ -1077,6 +1078,16 @@ void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
         }
     } else {
         cfg.Toolbar = ToolbarConfig::Default();
+    }
+
+    if (j.contains("keybindings") && j["keybindings"].is_object()) {
+        try {
+            cfg.Keybindings = j["keybindings"].get<KeybindingsConfig>();
+        } catch (...) { // catch-all-ok: malformed keybindings block → defaults
+            cfg.Keybindings = KeybindingsConfig::Defaults();
+        }
+    } else {
+        cfg.Keybindings = KeybindingsConfig::Defaults();
     }
 
     if (j.contains("annotate_comment_templates") && j["annotate_comment_templates"].is_array()) {

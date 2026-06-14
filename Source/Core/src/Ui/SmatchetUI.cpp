@@ -326,7 +326,6 @@ void SmatchetUI::Draw(AppController& app) {
     drawMobileRestoreDesktopIni(d);
 
     drawChromeAndModeToggles(app, d);
-    handleViewKeyboardShortcuts(d);
     DrainAppUpdateCheck(d);
     drawSecondaryWindows(app, d);
     drawDockDebugOverlay(d);
@@ -370,6 +369,9 @@ void SmatchetUI::drawInitConfigOnce(AppController& app, UiDrawSession& d) {
     }
 
     g_ui.cfgInitialized = true;
+    // Config (incl. cfg.Keybindings) just loaded — force the shortcut parse cache to
+    // rebuild from it on the first dispatchKeybindings this frame.
+    keybindingCacheDirty_ = true;
     ApplyLoggingSettingsFromConfig(g_ui.cfg);
 
     if (!g_ui.cfg.SelectedFontName.empty() && g_ui.cfg.SelectedFontName != "Segoe UI") {
@@ -511,11 +513,19 @@ void SmatchetUI::drawPerFrameTicksAndHandlers(AppController& app, UiDrawSession&
 }
 
 // Pre-window overlays that must run before any sub-window draw so they intercept key
-// events first: the command palette, the bug-report hotkey + modal, and the scenario tick.
+// events first: the rebindable keyboard-shortcut dispatch, the command palette, the
+// bug-report modal, and the scenario tick.
 void SmatchetUI::drawPreWindowOverlays(AppController& app, UiDrawSession& d) {
-    // Unified Command System: palette (Ctrl+Shift+P) — must run before any
-    // sub-window draws so it can intercept key events first.
-    // Skip while the first-launch tracker gate is active so the palette can't bypass it.
+    // Rebindable keyboard shortcuts (replaces the former hardcoded handle*Shortcuts plus
+    // the inline dock-debug Ctrl+Alt+D, F11, palette-toggle, and bug-report polls). Runs
+    // first so a bound hotkey is dispatched before any sub-window can swallow the key
+    // event. ui.command_palette is special-cased inside dispatchKeybindings so it can
+    // self-gate on BackendHasBeenReachable.
+    dispatchKeybindings(app, d);
+
+    // Unified Command System: palette window render. The Ctrl+Shift+P open/close is
+    // dispatched above (ui.command_palette pseudo-binding); this block only renders the
+    // palette. Skip while the first-launch tracker gate is active so it can't bypass it.
     if (g_ui.cfg.BackendHasBeenReachable) {
         // Honour the bucket-C scenario request to open + pre-filter the palette
         // before its Draw runs this frame. Consume-once: the scenario sets the
@@ -531,19 +541,10 @@ void SmatchetUI::drawPreWindowOverlays(AppController& app, UiDrawSession& d) {
         commandPalette_.Draw(app);
     }
 
-    // "Log a Bug" hotkey + modal — polled OUTSIDE the BackendHasBeenReachable gate
-    // so bug reporting works even when the user's tracker is unreachable (the dev
-    // repo is independent of the active backend).
-    if (g_ui.cfg.BugReportHotkeyEnabled) {
-        smatchet::ui::ImGuiBugHotkey hk;
-        if (smatchet::ui::ParseImGuiHotkey(g_ui.cfg.BugReportHotkey, hk) &&
-            smatchet::ui::MatchHotkey(::ImGui::GetIO(), hk)) {
-            g_ui.showBugReport = true;
-            g_ui.bugReportOpenLatch = true;
-            // Opener owns the screenshot toggle — seed from config (the modal no longer does).
-            g_ui.bugReportInclScreenshot = g_ui.cfg.BugReportScreenshotDefault;
-        }
-    }
+    // "Log a Bug" modal. The opener hotkey is now a rebindable binding
+    // (app.bug_report.open, default Ctrl+Shift+B) dispatched in dispatchKeybindings above;
+    // this only renders the modal once showBugReport latches. Drawn unconditionally (the
+    // dev bug repo is independent of the active backend, so it works while disconnected).
     SmatchetBugReportUi_Draw(app, g_ui);
 
     // Scenario tick: drive the active scenario one frame and propagate scroll state
@@ -686,24 +687,15 @@ void SmatchetUI::drawChromeAndModeToggles(AppController& app, UiDrawSession& d) 
         smatchet::whisper::overlay::Render(app);
     }
 #endif
-    // Ctrl+Alt+D — toggle dock-node debug overlay.
-    {
-        const ImGuiIO& dbgIo = ::ImGui::GetIO();
-        if (dbgIo.KeyCtrl && dbgIo.KeyAlt && ::ImGui::IsKeyPressed(ImGuiKey_D, false)) {
-            d.showDockDebug = !d.showDockDebug;
-        }
-    }
+    // (Ctrl+Alt+D dock-debug toggle migrated to the rebindable app.dock_debug.toggle binding,
+    // dispatched in dispatchKeybindings.)
     // Status bar — must be drawn before dockspace/other windows (viewport side-bar reservation).
     if (d.cfg.ShowStatusBar && !d.cfg.ZenMode) {
         DrawStatusBar(app, d);
     }
 
-    // F11 — full screen toggle (standalone only).
-#ifndef SMATCHET_EMBEDDED_IN_UNREAL
-    if (::ImGui::IsKeyPressed(ImGuiKey_F11, false)) {
-        d.requestFullScreenToggle = true;
-    }
-#endif
+    // (F11 full-screen toggle migrated to the rebindable app.fullscreen.toggle binding
+    // — standalone-only command, dispatched in dispatchKeybindings.)
 
     // Zen Mode: Ctrl+M then Z chord (1 s timeout). Esc Esc to exit. Chord state lives in
     // drawBodyState_ (hoisted from the former function-local `static KeyChord s_zenChord`).
@@ -752,88 +744,81 @@ void SmatchetUI::drawChromeAndModeToggles(AppController& app, UiDrawSession& d) 
     }
 }
 
-// Keyboard shortcuts for panel-visibility toggles + always-reveal view-menu shortcuts.
-// Pure key-dispatch; no positional-ImGui pair. Split into two sub-helpers to stay under
-// the branch cap.
-void SmatchetUI::handleViewKeyboardShortcuts(UiDrawSession& d) {
-    handlePanelVisibilityShortcuts(d);
-    handleViewRevealShortcuts(d);
+// Rebuilds keybindingCache_ from cfg.Keybindings: parses each enabled binding's hotkey
+// string once, drops disabled / unparseable entries, and keeps ArgsJson as text (parsed
+// lazily at dispatch — only when a hotkey actually fires). Cleared + rebuilt whenever
+// keybindingCacheDirty_ is set: once after config load (drawInitConfigOnce) and on any
+// future editor save (PR2). Runs on the UI thread.
+void SmatchetUI::rebuildKeybindingCache(UiDrawSession& d) {
+    keybindingCache_.clear();
+    keybindingCache_.reserve(d.cfg.Keybindings.Bindings.size());
+    for (size_t i = 0; i < d.cfg.Keybindings.Bindings.size(); ++i) {
+        const Keybinding& b = d.cfg.Keybindings.Bindings[i];
+        if (!b.Enabled) {
+            continue;
+        }
+        smatchet::ui::ImGuiBugHotkey hk;
+        if (!smatchet::ui::ParseImGuiHotkey(b.Hotkey, hk)) {
+            LOG_WARN("Keybindings: skipping unparseable hotkey \"%s\" for command \"%s\".", b.Hotkey.c_str(),
+                     b.CommandId.c_str());
+            continue;
+        }
+        ParsedKeybinding pk;
+        pk.hk = hk;
+        pk.commandId = b.CommandId;
+        pk.argsJson = b.ArgsJson;
+        keybindingCache_.push_back(std::move(pk));
+    }
+    keybindingCacheDirty_ = false;
 }
 
-// Panel-visibility toggles (Ctrl+B primary side bar / Ctrl+Alt+B secondary side bar /
-// Ctrl+J bottom panel). Each persists immediately.
-void SmatchetUI::handlePanelVisibilityShortcuts(UiDrawSession& d) {
-    // ImGui::Shortcut available in docking branch; fall back to GetIO check if absent.
+// Per-frame rebindable keyboard-shortcut dispatch. Replaces the former hardcoded
+// handleViewKeyboardShortcuts / handlePanelVisibilityShortcuts / handleViewRevealShortcuts
+// plus the inline dock-debug (Ctrl+Alt+D), F11, palette-toggle (Ctrl+Shift+P), and
+// bug-report polls. Lazily rebuilds the parse cache, then matches each binding against the
+// current ImGui input and routes a match through the command registry. The
+// ui.command_palette pseudo-binding is handled inline so it can self-gate on
+// BackendHasBeenReachable and drive the palette open/close directly (the palette is a UI
+// widget, not a registry command). Runs on the UI thread, before any sub-window draws.
+void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
+    if (keybindingCacheDirty_) {
+        rebuildKeybindingCache(d);
+    }
     const ImGuiIO& io = ::ImGui::GetIO();
-    const bool ctrlDown = io.KeyCtrl;
-    const bool altDown = io.KeyAlt;
-    if (ctrlDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_B, false)) {
-        SetViewVisible(d.cfg, ViewSlot::PrimarySideBar, !d.cfg.ShowPrimarySideBar);
-        ConfigManager::Save(d.cfg);
+    for (size_t i = 0; i < keybindingCache_.size(); ++i) {
+        const ParsedKeybinding& pk = keybindingCache_[i];
+        if (!smatchet::ui::MatchHotkey(io, pk.hk)) {
+            continue;
+        }
+        // Pseudo-binding: the command palette is a UI widget, not a registry command.
+        // Toggle it directly, gated exactly like the pre-migration Ctrl+Shift+P path.
+        if (pk.commandId == "ui.command_palette") {
+            if (g_ui.cfg.BackendHasBeenReachable) {
+                if (commandPalette_.IsOpen()) {
+                    commandPalette_.Close();
+                } else {
+                    commandPalette_.Open();
+                }
+            }
+            continue;
+        }
+        nlohmann::json args = nlohmann::json::object();
+        if (!pk.argsJson.empty()) {
+            try {
+                args = nlohmann::json::parse(pk.argsJson);
+            } catch (const std::exception& e) {
+                LOG_WARN("Keybindings: bad args JSON for command \"%s\": %s", pk.commandId.c_str(), e.what());
+                args = nlohmann::json::object();
+            }
+        }
+        smatchet::cmd::CommandContext ctx;
+        ctx.App = &app;
+        ctx.Source = smatchet::cmd::CommandSource::Internal;
+        const smatchet::cmd::CommandResult r = app.Commands().Dispatch(pk.commandId, args, ctx);
+        if (!r.Ok) {
+            LOG_WARN("Keybindings: command \"%s\" failed: %s", pk.commandId.c_str(), r.Error.Message.c_str());
+        }
     }
-    if (ctrlDown && altDown && ::ImGui::IsKeyPressed(ImGuiKey_B, false)) {
-        SetViewVisible(d.cfg, ViewSlot::SecondarySideBar, !d.cfg.ShowSecondarySideBar);
-        ConfigManager::Save(d.cfg);
-    }
-    if (ctrlDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_J, false)) {
-        SetViewVisible(d.cfg, ViewSlot::BottomPanel, !d.cfg.ShowPanel);
-        ConfigManager::Save(d.cfg);
-    }
-}
-
-// View-menu global always-reveal shortcuts (Ctrl+Shift+{A,F,D,I,X,K,L} / Ctrl+,). Setting
-// show* = true + raising the focus latch every press lets the consumer's wantFocus-driven
-// SetNextWindowFocus-before-Begin activate the docked tab.
-void SmatchetUI::handleViewRevealShortcuts(UiDrawSession& d) {
-    const ImGuiIO& io = ::ImGui::GetIO();
-    const bool ctrlDown = io.KeyCtrl;
-    const bool altDown = io.KeyAlt;
-    const bool shiftDown = io.KeyShift;
-    const bool ctrlShiftOnly = ctrlDown && shiftDown && !altDown;
-#if defined(SMATCHET_WITH_AI)
-    // Ctrl+Shift+A always-reveals the Smatchet Assistant side panel. Persistence runs
-    // through the panel-draw path (PersistOpenStateImmediate). Always-reveal-on-shortcut
-    // contract (AGENTS.md): re-pressing while open must focus, not close. Closing happens
-    // via the X button only.
-    if (ctrlShiftOnly && ::ImGui::IsKeyPressed(ImGuiKey_A, false)) {
-        d.assistantPanelOpen = true;
-        d.requestAssistantFocus = true;
-    }
-#endif
-    if (ctrlShiftOnly && ::ImGui::IsKeyPressed(ImGuiKey_F, false)) {
-        d.showPerformance = true;
-        d.requestPerformanceFocus = true;
-    }
-    if (ctrlShiftOnly && ::ImGui::IsKeyPressed(ImGuiKey_D, false)) {
-        d.showPlanDocViewer = true;
-        d.requestPlanDocViewerFocus = true;
-    }
-    if (ctrlShiftOnly && ::ImGui::IsKeyPressed(ImGuiKey_I, false)) {
-        d.showBulkImport = true;
-        d.requestBulkImportFocus = true;
-    }
-    if (ctrlShiftOnly && ::ImGui::IsKeyPressed(ImGuiKey_X, false)) {
-        d.showBulkExport = true;
-        d.requestBulkExportFocus = true;
-    }
-    // Ctrl+, (no shift, no alt) — canonical IDE Preferences shortcut.
-    if (ctrlDown && !shiftDown && !altDown && ::ImGui::IsKeyPressed(ImGuiKey_Comma, false)) {
-        d.showPreferences = true;
-        d.requestPreferencesFocus = true;
-    }
-#if defined(SMATCHET_WITH_MCP)
-    if (ctrlShiftOnly && ::ImGui::IsKeyPressed(ImGuiKey_K, false)) {
-        d.showMcpServerWindow = true;
-        d.requestMcpServerFocus = true;
-    }
-#endif
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-    if (ctrlShiftOnly && ::ImGui::IsKeyPressed(ImGuiKey_L, false)) {
-        d.showLuaAutomationWindow = true;
-        d.requestLuaAutomationFocus = true;
-        d.requestScriptingEditorTabFocus = true;
-    }
-#endif
 }
 
 // All secondary windows + the legacy startup banner, drawn after the menu bar / toolbar.

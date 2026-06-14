@@ -199,14 +199,9 @@ void CommandPaletteUi::drawArgForm(AppController& app) {
 }
 
 void CommandPaletteUi::Draw(AppController& app) {
-    // Toggle on Ctrl+Shift+P.
-    const ImGuiIO& io = ImGui::GetIO();
-    if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_P, false)) {
-        if (open_)
-            Close();
-        else
-            Open();
-    }
+    // Open/close is driven by the rebindable ui.command_palette binding (default
+    // Ctrl+Shift+P), dispatched in SmatchetUI::dispatchKeybindings; this method only
+    // renders the palette window when open_ is set.
     if (!open_)
         return;
 
@@ -244,6 +239,7 @@ void CommandPaletteUi::Draw(AppController& app) {
 
     ImGui::Separator();
 
+    const ImGuiIO& io = ImGui::GetIO();
     handleListNavigation(app, io);
 
     drawCommandList(app, io);

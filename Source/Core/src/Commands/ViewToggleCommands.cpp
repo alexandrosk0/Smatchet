@@ -25,12 +25,31 @@ namespace cmd {
 
 namespace {
 
-CommandResult ToggleFlag(AppController& app, bool UiDrawSession::* flag, void (*onOpen)(UiDrawSession&)) {
-    return RunOnUiThreadAsCommandResult(app, [flag, onOpen]() {
+// `action`: "show" forces open, "hide" forces closed, anything else (default
+// "toggle") flips. `onOpen` fires on any open (matches the inline View-menu focus
+// side-effects). `focusLatch`, when set, is raised ONLY on action=="show" — so a
+// plain menu/palette toggle does not steal window focus, while an explicit reveal
+// shortcut (Ctrl+Shift+F etc.) does. This keeps the pre-migration behavior exact.
+CommandResult ToggleFlag(AppController& app, bool UiDrawSession::* flag, void (*onOpen)(UiDrawSession&),
+                         bool UiDrawSession::* focusLatch, const std::string& action) {
+    return RunOnUiThreadAsCommandResult(app, [flag, onOpen, focusLatch, action]() {
         bool& v = g_ui.*flag;
-        v = !v;
-        if (v && onOpen) {
-            onOpen(g_ui);
+        bool open;
+        if (action == "show") {
+            open = true;
+        } else if (action == "hide") {
+            open = false;
+        } else {
+            open = !v; // default "toggle"
+        }
+        v = open;
+        if (open) {
+            if (onOpen) {
+                onOpen(g_ui);
+            }
+            if (action == "show" && focusLatch) {
+                g_ui.*focusLatch = true;
+            }
         }
         nlohmann::json out;
         out["open"] = v;
@@ -39,7 +58,8 @@ CommandResult ToggleFlag(AppController& app, bool UiDrawSession::* flag, void (*
 }
 
 void RegisterToggle(CommandRegistry& reg, AppController& app, const char* name, const char* label,
-                    bool UiDrawSession::* flag, void (*onOpen)(UiDrawSession&)) {
+                    bool UiDrawSession::* flag, void (*onOpen)(UiDrawSession&),
+                    bool UiDrawSession::* focusLatch = nullptr) {
     Command c;
     c.Name = name;
     c.Category = "view";
@@ -47,8 +67,10 @@ void RegisterToggle(CommandRegistry& reg, AppController& app, const char* name, 
     c.Destructive = false;
     c.Idempotent = false; // toggling flips state each call
     c.AsyncSafe = true;
-    c.Handler = [&app, flag, onOpen](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
-        return ToggleFlag(app, flag, onOpen);
+    c.Handler = [&app, flag, onOpen, focusLatch](const nlohmann::json& args, const CommandContext& /*ctx*/) {
+        const std::string action =
+            args.is_object() ? args.value("action", std::string("toggle")) : std::string("toggle");
+        return ToggleFlag(app, flag, onOpen, focusLatch, action);
     };
     reg.Register(std::move(c));
 }
@@ -85,11 +107,16 @@ void RegisterViewToggleCommands(CommandRegistry& reg, AppController& app) {
     RegisterToggle(reg, app, "view.toggle.log", "Log", &UiDrawSession::showLogWindow, nullptr);
     RegisterToggle(reg, app, "view.toggle.backend_audit", "Backend Audit", &UiDrawSession::showAuditTrail,
                    &OnOpenAuditTrail);
-    RegisterToggle(reg, app, "view.toggle.performance", "Performance", &UiDrawSession::showPerformance, nullptr);
-    RegisterToggle(reg, app, "view.toggle.plan_doc_viewer", "Plan Docs", &UiDrawSession::showPlanDocViewer, nullptr);
-    RegisterToggle(reg, app, "view.toggle.bulk_import", "Bulk Import", &UiDrawSession::showBulkImport, nullptr);
-    RegisterToggle(reg, app, "view.toggle.bulk_export", "Bulk Export", &UiDrawSession::showBulkExport, nullptr);
-    RegisterToggle(reg, app, "view.toggle.preferences", "Preferences", &UiDrawSession::showPreferences, nullptr);
+    RegisterToggle(reg, app, "view.toggle.performance", "Performance", &UiDrawSession::showPerformance, nullptr,
+                   &UiDrawSession::requestPerformanceFocus);
+    RegisterToggle(reg, app, "view.toggle.plan_doc_viewer", "Plan Docs", &UiDrawSession::showPlanDocViewer, nullptr,
+                   &UiDrawSession::requestPlanDocViewerFocus);
+    RegisterToggle(reg, app, "view.toggle.bulk_import", "Bulk Import", &UiDrawSession::showBulkImport, nullptr,
+                   &UiDrawSession::requestBulkImportFocus);
+    RegisterToggle(reg, app, "view.toggle.bulk_export", "Bulk Export", &UiDrawSession::showBulkExport, nullptr,
+                   &UiDrawSession::requestBulkExportFocus);
+    RegisterToggle(reg, app, "view.toggle.preferences", "Preferences", &UiDrawSession::showPreferences, nullptr,
+                   &UiDrawSession::requestPreferencesFocus);
 #if defined(SMATCHET_WITH_MCP)
     RegisterToggle(reg, app, "view.toggle.mcp_server", "MCP Server", &UiDrawSession::showMcpServerWindow,
                    &OnOpenMcpServer);
