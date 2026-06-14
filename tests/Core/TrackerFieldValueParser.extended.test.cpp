@@ -449,6 +449,27 @@ TEST_CASE("ADF comment body with hostile deep nesting parses without stack overf
     CHECK(out.size() < 100000);
 }
 
+// The #1220 ADF cap bounded the WALKERS, but a deeply-nested value that is NOT a
+// recognised ADF/tracker shape falls through to a value.dump() fallback —
+// nlohmann's serializer::dump() recurses per level, so a hostile depth stack-
+// overflows (it crashed the ASAN doctest rig). SafeJsonDump must bound it: a
+// value past the cap returns a marker instead of recursing into the serializer.
+TEST_CASE("NormalizeTrackerFieldValue — deep non-ADF object hits a bounded safe-dump (no stack overflow) [high-risk]") {
+    // Build a deep plain-object chain in place (refs — no recursive copy-ctor at
+    // setup); kDeepAdfDepth (> the 256 cap) is shallow enough that nlohmann's own
+    // recursive ctor/dtor of the fixture is safe, but past the dump cap.
+    nlohmann::json deep = nlohmann::json::object();
+    nlohmann::json* cur = &deep;
+    for (int i = 0; i < kDeepAdfDepth; ++i) {
+        (*cur)["nested"] = nlohmann::json::object();
+        cur = &(*cur)["nested"];
+    }
+    (*cur)["leaf"] = "x";
+    const std::string out = NormalizeTrackerFieldValue(deep);  // would SIGSEGV pre-fix
+    CHECK(out.size() < 10000);                                 // bounded marker, not a 400-level dump
+    CHECK(out.find("depth cap") != std::string::npos);
+}
+
 TEST_CASE("ParseComments returns empty for non-array or empty input") {
     CHECK(ParseComments(nlohmann::json(nullptr)).empty());
     CHECK(ParseComments(nlohmann::json::object()).empty());
