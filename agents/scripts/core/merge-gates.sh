@@ -98,6 +98,19 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_QUERY_FILE="$SCRIPT_DIR/merge-gates.graphql"
 
+# ----------------------------------------------------------------------------
+# Meant-to-block allow-list — SINGLE SOURCE OF TRUTH.
+# A non-required RED check still BLOCKS a merge when its name matches this
+# regex AND is not explicitly "advisory" (see the $failing jq sub-expression
+# below, which splices __BLOCK_ALLOWLIST_RE__ from this constant). Closes the
+# #923 gate-escape (watcher auto-merged past a RED non-required "Coverage").
+# Other tooling that must apply the IDENTICAL allow-list (e.g.
+# safe-admin-merge.sh) sources this file and reads MERGE_GATES_BLOCK_ALLOWLIST_RE
+# rather than duplicating the regex — change it HERE and every consumer follows.
+#   Coverage / Sanitizer / Bucket-* / Perf PR-fast / Android security gate
+# (history: Perf PR-fast 2026-06-07; Android security gate 2026-06-09).
+MERGE_GATES_BLOCK_ALLOWLIST_RE="Coverage|Sanitizer|Bucket-|Perf PR-fast|Android security gate"
+
 # Source prompt shim so `ask_user_question` is callable from the caller's
 # integration flow. Lazy — only if available.
 if [ -f "$SCRIPT_DIR/merge-gates-prompt.sh" ]; then
@@ -371,7 +384,7 @@ poll_merge_gates() {
       # onto the blocking path here, NOT left advisory.
       ((.isRequired == true)
        or ((if .__typename == "CheckRun" then (.name // "") else (.context // "") end)
-           | (test("Coverage|Sanitizer|Bucket-|Perf PR-fast|Android security gate"; "i")
+           | (test("__BLOCK_ALLOWLIST_RE__"; "i")
               and (ascii_downcase | contains("advisory") | not)))))]) as $failing
 | ([$failing[] | select(
       ($tests and .__typename == "CheckRun" and .name == "Test-delta gate") or
@@ -459,6 +472,11 @@ poll_merge_gates() {
     # this is a full JSON array value — valid jq on its own (e.g. `[]` or
     # `["Test-delta gate","Windows + MSVC"]`).
     GATE_FILTER="${GATE_FILTER//__REQUIRED_CONTEXTS__/$req_ctx_json}"
+    # Splice the meant-to-block allow-list regex from the single-source constant
+    # (MERGE_GATES_BLOCK_ALLOWLIST_RE, defined at file top). Spliced into a jq
+    # `test("…"; "i")` string literal — the regex has no jq/double-quote-special
+    # chars, so a plain substitution is safe.
+    GATE_FILTER="${GATE_FILTER//__BLOCK_ALLOWLIST_RE__/$MERGE_GATES_BLOCK_ALLOWLIST_RE}"
 
     local p
     for ((p=0; p<MAX_POLLS; p++)); do
