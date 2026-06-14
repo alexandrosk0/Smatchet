@@ -1,6 +1,7 @@
 #include "JiraClient.h"
 
 #include "JiraIssueMappingPure.h"
+#include "Tracker/JqlEscape.h"
 #include "TrackerFieldValueParser.h"
 #include "TrackerHttpUtils.h"
 #include "JsonParseUtil.h"
@@ -197,8 +198,11 @@ std::string TrimJqlWhitespace(const std::string& raw) {
 // Build the JQL key clause for the requested keys: a single equality match for
 // one key, or an "in" list for several. Reads count keys from the given offset.
 std::string BuildKeyInJql(const std::vector<std::string>& keys, std::size_t offset, std::size_t count) {
+    // Issue keys come from the tracker server, so JQL-escape each through
+    // tracker_jql::QuoteLiteral before adding the surrounding quotes — a `"` or `\`
+    // in a key is escaped, never allowed to break out of the literal (security: E1).
     if (count == 1) {
-        return "key = \"" + keys[offset] + "\"";
+        return "key = \"" + tracker_jql::QuoteLiteral(keys[offset]) + "\"";
     }
     std::string jql = "key in (";
     for (std::size_t i = 0; i < count; ++i) {
@@ -206,7 +210,7 @@ std::string BuildKeyInJql(const std::vector<std::string>& keys, std::size_t offs
             jql += ',';
         }
         jql += '"';
-        jql += keys[offset + i];
+        jql += tracker_jql::QuoteLiteral(keys[offset + i]);
         jql += '"';
     }
     jql += ')';

@@ -3,6 +3,7 @@
 #include "JiraClient.h"
 #include "Logger.h"
 #include "StringUtil.h"
+#include "Tracker/JqlEscape.h"
 #include "TrackerHttpUtils.h"
 
 #include <algorithm>
@@ -14,18 +15,6 @@ namespace JiraActivityFeed {
 namespace {
 
 bool IsAsciiDigitChar(char c) { return c >= '0' && c <= '9'; }
-
-std::string EscapeJqlString(const std::string& s) {
-    std::string out;
-    out.reserve(s.size());
-    for (char c : s) {
-        if (c == '"' || c == '\\') {
-            out += '\\';
-        }
-        out += c;
-    }
-    return out;
-}
 
 /// Jira changelog estimate fields carry raw seconds in `from`/`to`.
 bool IsEstimateLikeField(const std::string& field) {
@@ -76,16 +65,16 @@ bool TimestampInWindow(const std::string& ts, const std::string& dayFrom, const 
 
 std::string BuildActivityDiscoveryJql(const std::string& accountId, const std::string& dayFrom,
                                       const std::string& dayTo, const std::string& projectScope) {
-    const std::string user = EscapeJqlString(accountId);
+    const std::string user = tracker_jql::QuoteLiteral(accountId);
     std::string jql = "(assignee WAS \"" + user + "\" OR reporter WAS \"" + user + "\")";
     if (!dayFrom.empty()) {
-        jql += " AND updated >= \"" + EscapeJqlString(dayFrom) + "\"";
+        jql += " AND updated >= \"" + tracker_jql::QuoteLiteral(dayFrom) + "\"";
     }
     if (!dayTo.empty()) {
-        jql += " AND updated <= \"" + EscapeJqlString(dayTo) + "\"";
+        jql += " AND updated <= \"" + tracker_jql::QuoteLiteral(dayTo) + "\"";
     }
     if (!projectScope.empty()) {
-        jql += " AND project = \"" + EscapeJqlString(projectScope) + "\"";
+        jql += " AND project = \"" + tracker_jql::QuoteLiteral(projectScope) + "\"";
     }
     jql += " ORDER BY updated DESC";
     return jql;
