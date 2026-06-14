@@ -49,6 +49,37 @@ STUB
     [[ "$output" == *"PR #999 RED: Windows + MSVC"* ]]
 }
 
+# --- blocking-awareness: only a check that actually GATES merge fires RED -------
+
+@test "--once does NOT RED a non-required non-allow-listed advisory failure (noise suppressed)" {
+    _stub_gh '{"state":"OPEN","labels":[],"statusCheckRollup":[{"name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS"},{"name":"C++ lint (catch-all + cppcheck, advisory)","status":"COMPLETED","conclusion":"FAILURE"}],"reviews":[{"author":{"login":"coderabbitai"},"state":"APPROVED","body":""}]}'
+    run env PATH="$STUBDIR:$PATH" PR_STATUS_WATCH_REQUIRED_CONTEXTS=$'Windows + MSVC\nTest-delta gate' bash "$SCRIPT" --once 21
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"RED"* ]]
+    [[ "$output" == *"PR #21 all green + CR clear"* ]]
+}
+
+@test "--once REDs an allow-listed non-advisory failure even when non-required (Bucket-)" {
+    _stub_gh '{"state":"OPEN","labels":[],"statusCheckRollup":[{"name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS"},{"name":"Bucket-C (ImGui Test Engine)","status":"COMPLETED","conclusion":"FAILURE"}]}'
+    run env PATH="$STUBDIR:$PATH" PR_STATUS_WATCH_REQUIRED_CONTEXTS=$'Windows + MSVC\nTest-delta gate' bash "$SCRIPT" --once 22
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PR #22 RED: Bucket-C (ImGui Test Engine)"* ]]
+}
+
+@test "--once does NOT RED a perf-out-of-band-downgraded Perf PR-fast failure" {
+    _stub_gh '{"state":"OPEN","labels":[{"name":"perf-out-of-band"}],"statusCheckRollup":[{"name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS"},{"name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"FAILURE"}],"reviews":[{"author":{"login":"coderabbitai"},"state":"APPROVED","body":""}]}'
+    run env PATH="$STUBDIR:$PATH" PR_STATUS_WATCH_REQUIRED_CONTEXTS=$'Windows + MSVC\nTest-delta gate' bash "$SCRIPT" --once 23
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"RED"* ]]
+}
+
+@test "--once does NOT RED a tests-out-of-band-downgraded Test-delta gate failure" {
+    _stub_gh '{"state":"OPEN","labels":[{"name":"tests-out-of-band"}],"statusCheckRollup":[{"name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS"},{"name":"Test-delta gate","status":"COMPLETED","conclusion":"FAILURE"}],"reviews":[{"author":{"login":"coderabbitai"},"state":"APPROVED","body":""}]}'
+    run env PATH="$STUBDIR:$PATH" PR_STATUS_WATCH_REQUIRED_CONTEXTS=$'Windows + MSVC\nTest-delta gate' bash "$SCRIPT" --once 24
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"RED"* ]]
+}
+
 @test "--once emits MERGED" {
     _stub_gh '{"state":"MERGED","statusCheckRollup":[]}'
     run env PATH="$STUBDIR:$PATH" bash "$SCRIPT" --once 42
