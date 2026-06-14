@@ -43,6 +43,20 @@ std::string SanitizeOfflineQueueDetail(std::string s) {
     return s;
 }
 
+// Build the AUDIT-TRAIL copy of a queued draft: parse the serialized payload back into a
+// structured JSON object and run it through the audit trail's key-name redactor while the
+// nested `fields` are still real JSON keys. A flat serialized string would slip the sensitive
+// nested keys past the redactor (security #10). RedactJson is idempotent, so AppendEvent's own
+// redaction pass leaves this already-redacted object unchanged. On the (not-expected) parse
+// failure we emit a placeholder rather than the raw string, so we never leak an unredacted draft.
+nlohmann::json MakeAuditDraft(const std::string& payload) {
+    nlohmann::json parsed = nlohmann::json::parse(payload, nullptr, false);
+    if (parsed.is_discarded()) {
+        return nlohmann::json{{"redaction_error", "draft payload not parseable for audit redaction"}};
+    }
+    return BackendAuditTrail::RedactJson(parsed);
+}
+
 std::string FormatOfflineQueueTerminalLine(const char* action, const char* stage, const char* reason,
                                            std::string detail) {
     detail = SanitizeOfflineQueueDetail(std::move(detail));
@@ -346,20 +360,24 @@ std::int64_t OfflineQueueService::QueueCreateOffline(const IssueDraft& draft) {
         return 0;
     }
     const std::string payload = IssueDraftHelpers::ToJson(draft);
+    // The live queue payload above is the FULL, unredacted draft — replay must reconstruct the
+    // real field values. The audit copy is a SEPARATE, structurally-redacted view of the same
+    // draft (security #10): `auditDraft` is the only form that touches the audit trail.
+    const nlohmann::json auditDraft = MakeAuditDraft(payload);
     try {
         // Stamp the enqueuing context's backend namespace (multi-grid Slice 1c) — replay
         // strictly matches this key, so a create queued under Jira never replays against Plane.
         const std::int64_t id = deps_.Cache()->EnqueuePendingCreate(deps_.CacheBackendKey(), payload);
         LOG_INFO("OfflineQueueService: queued offline create id=%lld", static_cast<long long>(id));
-        BackendAuditTrail::AppendResult(
-            "offline_queue_create", "ui", std::string(), std::to_string(id), true, std::string(),
-            nlohmann::json{{"pending_create_id", id}, {"draft", IssueDraftHelpers::ToJson(draft)}});
+        BackendAuditTrail::AppendResult("offline_queue_create", "ui", std::string(), std::to_string(id), true,
+                                        std::string(),
+                                        nlohmann::json{{"pending_create_id", id}, {"draft", auditDraft}});
         return id;
     } catch (const std::exception& ex) {
         LOG_ERROR("OfflineQueueService::QueueCreateOffline failed: %s", ex.what());
         BackendAuditTrail::AppendResult("offline_queue_create", "ui", std::string(),
                                         BackendAuditTrail::MakeOperationId("offline-queue"), false, ex.what(),
-                                        nlohmann::json{{"draft", IssueDraftHelpers::ToJson(draft)}});
+                                        nlohmann::json{{"draft", auditDraft}});
         return 0;
     }
 }

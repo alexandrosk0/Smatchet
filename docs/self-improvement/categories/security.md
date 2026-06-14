@@ -139,8 +139,9 @@
 - 2026-06-13 · deep-audit · [security] · P2 — OfflineQueue serialized 'draft' string bypasses audit-trail redaction
   Details: Source/Core/src/Sync/OfflineQueueService.cpp:356,362 serializes the draft to a JSON string before BackendAuditTrail.cpp:124-148 redaction runs, so RedactJson/LooksSensitiveKey never sees nested keys.
   Concrete next action: Redact the draft object structurally pre-serialization or add a value-level pass. Effort S-M.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Status: resolved
+  Last-reviewed: 2026-06-14
+  Resolution: 2026-06-14 — QueueCreateOffline builds the audit copy via MakeAuditDraft() (anon ns, OfflineQueueService.cpp): the serialized payload is parsed back into a structured nlohmann::json object and run through BackendAuditTrail::RedactJson BEFORE it reaches the audit trail, so nested `fields` sensitive-keyed values redact (idempotent with AppendEvent's own pass; unparseable payload -> placeholder, never the raw string). The enqueued/replayed payload stays the FULL unredacted draft (replay intact). Only call-sites :356/:362 serialize a draft into the trail (the replay-create audit sites carry ids/errors only). Regression guard: tests/Core/OfflineQueueDraftAuditRedaction.test.cpp.
 
 - 2026-06-13 · deep-audit · [security] · P2 — AI client redirect can forward Anthropic x-api-key cross-host
   Details: AiAssistantController AI-client redirect config can retain the x-api-key header across a redirect to a different host (distinct from the tracker-scoped E2/H4 item).
