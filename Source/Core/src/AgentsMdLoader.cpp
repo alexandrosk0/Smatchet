@@ -25,6 +25,49 @@ constexpr const char* kSentinelSuffix = "]\n";
 // rule — "lowercase preferred").
 const char* const kAgentsMdNames[] = {"agents.md", ".agents.md", "AGENTS.md"};
 
+// SECURITY (audit 2026-06-13 H1, P1): the AgentsMd override paths
+// (cfg.AgentsMdGlobalPath / cfg.ProjectAgentsMdPath) are config-controlled, and
+// their content is injected VERBATIM into every outbound LLM system prompt. A
+// config-write attacker repointing an override at any readable file (id_rsa,
+// cookies, known_hosts) would exfiltrate its first 64 KB off-host. Containment:
+// the path must resolve — symlinks + `..` fully canonicalized — to a real file
+// with a `.md` extension. fs::canonical resolves symlinks, so a `evil.md`
+// symlink pointing at a secret resolves to the secret's real (non-.md) name here
+// and is rejected; a direct repoint to a credential file (no `.md`) is rejected
+// by the same extension pin. `.md` (not the literal `agents.md`) is the pin
+// because the override contract legitimately allows any markdown instructions
+// file (the defaults + tests use global.md / proj.md / my-instructions.md, not
+// only agents.md) — an attacker cannot turn id_rsa into a `.md` without already
+// holding its content, so the `.md` pin closes the repoint vector without
+// breaking valid configs. Returns the canonical path on success.
+bool ContainAgentsMdPath(const std::string& path, fs::path& realOut) {
+    if (path.empty()) {
+        return false;
+    }
+    std::error_code ec;
+    const fs::path real = fs::canonical(fs::path(path), ec);
+    if (ec || real.empty()) {
+        // Missing / unresolvable — not an attack signal (a default path that was
+        // never created), so the caller treats this as a silent "no layer".
+        return false;
+    }
+    std::string name = real.filename().string();
+    for (char& c : name) {
+        if (c >= 'A' && c <= 'Z') {
+            c = static_cast<char>(c - 'A' + 'a');
+        }
+    }
+    const bool isMarkdown = name.size() >= 3 && name.compare(name.size() - 3, 3, ".md") == 0;
+    if (!isMarkdown) {
+        LOG_WARN("AgentsMdLoader: refusing AgentsMd path '%s' — resolves to '%s', not a .md "
+                 "file (containment guard, security audit H1).",
+                 path.c_str(), real.generic_string().c_str());
+        return false;
+    }
+    realOut = real;
+    return true;
+}
+
 bool ReadFileBytes(const std::string& path, std::string& out, std::size_t maxBytes, bool& outOversize) {
     outOversize = false;
     out.clear();
@@ -60,9 +103,16 @@ bool ReadFileBytes(const std::string& path, std::string& out, std::size_t maxByt
 } // namespace
 
 std::string LoadOneCapped(const std::string& path, std::size_t capBytes) {
+    // SECURITY (audit H1): contain the path BEFORE reading — refuse anything that
+    // does not canonicalize to a recognised agents.md file. Read the canonical
+    // (symlink-resolved) path so no symlink is re-traversed at open (TOCTOU).
+    fs::path real;
+    if (!ContainAgentsMdPath(path, real)) {
+        return std::string();
+    }
     std::string body;
     bool oversize = false;
-    if (!ReadFileBytes(path, body, capBytes, oversize)) {
+    if (!ReadFileBytes(real.generic_string(), body, capBytes, oversize)) {
         return std::string();
     }
     if (oversize) {

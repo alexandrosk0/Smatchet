@@ -104,6 +104,42 @@ TEST_CASE("AgentsMdLoader::LoadOneCapped — explicit cap honoured (mutation-san
     CHECK(!Contains(full, "[truncated"));
 }
 
+// SECURITY (audit 2026-06-13 H1, P1): a config-write attacker repointing an
+// AgentsMd override at a credential file (no `.md` extension) must NOT have its
+// bytes loaded — they would be injected verbatim into the outbound LLM prompt.
+TEST_CASE("AgentsMdLoader — refuses a non-.md override file (H1 exfil containment) [high-risk]") {
+    TempDir tmp;
+    const fs::path secret = tmp.path() / "id_rsa";   // a stand-in for any credential file
+    WriteFile(secret, "-----BEGIN OPENSSH PRIVATE KEY-----\nSECRETBYTES\n");
+    // Direct + via the layered entry point (the real prompt-assembly path).
+    CHECK(AgentsMdLoader::LoadOneCapped(secret.generic_string()).empty());
+    CHECK(AgentsMdLoader::LoadLayered(secret.generic_string(), std::string()).empty());
+    CHECK(AgentsMdLoader::LoadLayered(std::string(), secret.generic_string()).empty());
+    // A legitimately-named .md sibling still loads (the pin is .md, not agents.md).
+    const fs::path ok = tmp.path() / "my-instructions.md";
+    WriteFile(ok, "INSTRUCTIONS");
+    CHECK(AgentsMdLoader::LoadOneCapped(ok.generic_string()) == "INSTRUCTIONS");
+}
+
+// The .md-suffix pin alone is bypassable by a `evil.md` symlink → secret; the
+// canonicalize step closes it (resolves to the non-.md real name). Symlink
+// creation needs privilege on Windows, so skip the leg gracefully there.
+TEST_CASE("AgentsMdLoader — refuses a .md symlink resolving to a non-.md secret [high-risk]") {
+    TempDir tmp;
+    const fs::path secret = tmp.path() / "id_rsa";
+    WriteFile(secret, "PRIVATE-KEY-BYTES");
+    const fs::path link = tmp.path() / "evil.md";
+    std::error_code ec;
+    fs::create_symlink(secret, link, ec);
+    if (ec) {
+        MESSAGE("symlink unsupported here (no privilege) — skipping symlink-bypass leg");
+        return;
+    }
+    const std::string out = AgentsMdLoader::LoadOneCapped(link.generic_string());
+    CHECK(out.empty());
+    CHECK(out.find("PRIVATE-KEY-BYTES") == std::string::npos);
+}
+
 TEST_CASE("AgentsMdLoader::FindProjectAgentsMd — file at current dir found at depth 0") {
     TempDir tmp;
     const fs::path p = tmp.path() / "agents.md";
