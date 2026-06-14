@@ -307,6 +307,37 @@ void WarnAdfDepthCapped() {
     }
 }
 
+// Bounded depth probe: true iff `v` nests deeper than `cap`. The probe's own
+// recursion STOPS at `cap`, so it is bounded (ASAN-safe) even on a hostile
+// arbitrarily-deep value.
+bool JsonExceedsDepth(const nlohmann::json& v, int cap, int depth = 0) {
+    if (depth >= cap) {
+        return true;
+    }
+    if (v.is_object() || v.is_array()) {
+        for (const auto& el : v) {
+            if (JsonExceedsDepth(el, cap, depth + 1)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Serialize a SERVER-CONTROLLED value safely. nlohmann's serializer::dump
+// recurses once per nesting level, so a deeply-nested hostile field or comment
+// value overflows the stack — a Pillar 3 DoS, and the dump-path sibling of the ADF
+// walker cap. The #1220 fix capped the walkers, but these dump fallbacks still
+// recursed unbounded and crashed the ASan doctest rig. A value nested past the cap
+// is therefore NOT dumped: return a bounded marker rather than recurse the serializer.
+std::string SafeJsonDump(const nlohmann::json& v) {
+    if (JsonExceedsDepth(v, kMaxAdfRecursionDepth)) {
+        WarnAdfDepthCapped();
+        return std::string("[value nesting exceeded depth cap]");
+    }
+    return v.dump();
+}
+
 void CollectAdfText(const nlohmann::json& node, std::vector<std::string>& out, int depth = 0) {
     if (depth >= kMaxAdfRecursionDepth) {
         WarnAdfDepthCapped();
@@ -395,6 +426,24 @@ std::string ParseCommentAuthor(const nlohmann::json& commentNode) {
     return author;
 }
 
+std::string AdfBodyToPlainText(const nlohmann::json& body) {
+    if (body.is_string()) {
+        return body.get<std::string>();
+    }
+    if (body.is_object() && body.contains("content")) {
+        std::ostringstream textStream;
+        ExtractAdfTextToStream(body, textStream);
+        std::string text = TrimCopy(textStream.str());
+        if (text.empty()) {
+            std::vector<std::string> fallbackParts;
+            CollectAdfText(body, fallbackParts);
+            text = JoinStrings(fallbackParts, " ");
+        }
+        return text;
+    }
+    return std::string();
+}
+
 void SortTrackerUsersForDisplay(std::vector<TrackerUser>& users) {
     std::sort(users.begin(), users.end(), [](const TrackerUser& a, const TrackerUser& b) {
         const std::string& lhs = a.DisplayName.empty() ? a.AccountId : a.DisplayName;
@@ -472,23 +521,12 @@ std::string ParseComments(const nlohmann::json& commentsArray) {
         if (commentNode.contains("body")) {
             const auto& body = commentNode["body"];
             bodyNode = &body;
-            if (body.is_string()) {
-                commentText = body.get<std::string>();
-            } else if (body.is_object() && body.contains("content")) {
-                std::ostringstream textStream;
-                ExtractAdfTextToStream(body, textStream);
-                commentText = TrimCopy(textStream.str());
-                if (commentText.empty()) {
-                    std::vector<std::string> fallbackParts;
-                    CollectAdfText(body, fallbackParts);
-                    commentText = JoinStrings(fallbackParts, " ");
-                }
-            }
+            commentText = AdfBodyToPlainText(body);
         }
 
         if (commentText.empty()) {
             if (bodyNode != nullptr) {
-                std::string bodyPreview = bodyNode->dump();
+                std::string bodyPreview = SafeJsonDump(*bodyNode);
                 if (bodyPreview.size() > kMaxDebugPreviewChars) {
                     bodyPreview.resize(kMaxDebugPreviewChars);
                 }
@@ -564,7 +602,7 @@ std::string ChangelogScalarToString(const nlohmann::json& value) {
     if (value.is_boolean())
         return value.get<bool>() ? "true" : "false";
     if (value.is_object() || value.is_array())
-        return value.dump();
+        return SafeJsonDump(value);
     return std::string();
 }
 
@@ -937,7 +975,7 @@ std::string NormalizeTrackerObjectValue(const nlohmann::json& value) {
     if (JsonLooksLikeJiraTimetracking(value)) {
         return FormatTrackerTimetrackingDisplay(value);
     }
-    return value.dump();
+    return SafeJsonDump(value);
 }
 
 } // namespace
@@ -976,7 +1014,7 @@ std::string NormalizeTrackerFieldValue(const nlohmann::json& value) {
         }
         return JoinStrings(parts, ", ");
     }
-    return value.dump();
+    return SafeJsonDump(value);
 }
 std::string FormatWorkDurationFromSeconds(long long seconds) {
     if (seconds <= 0) {

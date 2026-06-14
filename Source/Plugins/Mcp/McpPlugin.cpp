@@ -36,6 +36,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <iterator>
+#include <memory>
 #include <mutex>
 
 namespace {
@@ -44,6 +45,7 @@ using ::smatchet::mcp::pure::Base64Encode;
 using ::smatchet::mcp::pure::BuildRunLuaSummary;
 using ::smatchet::mcp::pure::BuildRunLuaToolEntry;
 using ::smatchet::mcp::pure::BuildToolCallSummary;
+using ::smatchet::mcp::pure::CanAcceptSseConnection;
 using ::smatchet::mcp::pure::ConstantTimeStringEquals;
 using ::smatchet::mcp::pure::ExtractHostFromUrl;
 using ::smatchet::mcp::pure::ExtractJsonRpcErrorMessage;
@@ -77,6 +79,12 @@ struct McpPlugin::Impl {
     std::mutex shutdownMutex;
     std::condition_variable shutdownCv;
     std::atomic<bool> shuttingDown{false};
+    // Concurrent-SSE bound (security synthesis #20). Each accepted SSE stream parks a worker
+    // in the heartbeat wait-loop; the httplib pool is 8, so this caps how many of those
+    // workers SSE may hold (CanAcceptSseConnection) and rejects the rest with 503 instead of
+    // letting them silently queue forever and exhaust the pool. Incremented on admit,
+    // decremented when the chunked-content provider returns (stream closes).
+    std::atomic<int> activeSseConnections{0};
     httplib::Server svr;
     std::thread thread;
     bool routes_installed = false;
@@ -602,6 +610,26 @@ void McpPlugin::RegisterSseRoute() {
         if (!Authorize(req, res))
             return;
 
+        // Concurrent-SSE bound (security synthesis number 20). Reserve a slot BEFORE
+        // streaming so a local client cannot open unbounded SSE streams and exhaust the
+        // (size-8) httplib worker pool. Increment-then-check is race-free under concurrent
+        // connects: claim a slot, and `sseGuard`'s deleter releases it on every exit path
+        // (the over-cap 503 below, or when httplib destroys the content provider on close).
+        Impl* impl = impl_.get();
+        impl->activeSseConnections.fetch_add(1, std::memory_order_acq_rel);
+        std::shared_ptr<void> sseGuard(static_cast<void*>(nullptr), [impl](void*) {
+            impl->activeSseConnections.fetch_sub(1, std::memory_order_acq_rel);
+        });
+        // The pre-increment count = (current - 1); admit only if THAT was below the cap.
+        if (!CanAcceptSseConnection(impl->activeSseConnections.load(std::memory_order_acquire) - 1)) {
+            res.status = 503;
+            res.set_header("Retry-After", "5");
+            res.set_content("{\"error\":\"too many concurrent SSE connections\"}", "application/json");
+            LOG_WARN("MCP: rejected SSE connect — concurrent-connection cap reached (remote=%s)",
+                     req.remote_addr.c_str());
+            return; // sseGuard releases the reserved slot.
+        }
+
         // In a real implementation, we'd manage session IDs. For now, we use a single global
         // endpoint.
         res.set_header("Content-Type", "text/event-stream");
@@ -611,14 +639,9 @@ void McpPlugin::RegisterSseRoute() {
 
         std::string endpoint = "/mcp/messages";
         std::string event = "event: endpoint\ndata: " + endpoint + "\n\n";
-
-        // Capture impl_ by raw pointer: cpp-httplib's svr.stop() in OnStop()
-        // waits for in-flight handlers to return before destruction, so the
-        // Impl outlives every chunked-content callback invocation.
-        Impl* impl = impl_.get();
         res.set_chunked_content_provider(
             "text/event-stream",
-            [event, impl](size_t offset, httplib::DataSink& sink) {
+            [event, impl, sseGuard](size_t offset, httplib::DataSink& sink) {
                 if (offset == 0) {
                     // Initial endpoint event. `sink.write` returns false on client disconnect.
                     return sink.write(event.data(), event.size());

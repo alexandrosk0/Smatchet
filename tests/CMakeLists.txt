@@ -60,6 +60,9 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueDraft.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Logger.cpp"
+        # Logger.cpp now routes the file sink through RedactLogLine (audit
+        # 2026-06-13 LOW) — link the pure redactor so the closure resolves.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Privacy/TextRedaction.cpp"
     )
     target_include_directories(SmatchetTsanTests PRIVATE
         _helpers
@@ -69,6 +72,7 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/include/Persistence"
         "${CMAKE_SOURCE_DIR}/Source/Core/include/Config"
         "${CMAKE_SOURCE_DIR}/Source/Core/include/Ui"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Privacy"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker"
         "${CMAKE_SOURCE_DIR}/tests/support"
@@ -418,6 +422,9 @@ add_executable(SmatchetTests
     # log-a-bug-github Phase 2 — crash marker survival + next-launch consume.
     Core/CrashSink.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/CrashSink.cpp"
+    # SECURITY_AUDIT_2026-06-13 LOW — Logger file sink now redacts on the persist
+    # path (Logger.cpp + TextRedaction.cpp already linked into this rig below).
+    Core/LoggerFileSinkRedaction.test.cpp
     # PR5 of docs/design/github-tracker-backend.md — JQL → GitHub-search translator.
     Core/GitHubQueryFromJql.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubQueryFromJql.cpp"
@@ -437,6 +444,12 @@ add_executable(SmatchetTests
     # linked above), so no extra dep beyond the mapping TU itself.
     Core/GitHubCommentMappingPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubCommentMappingPure.cpp"
+    # issue-comments PR-B — pure Jira comment-node array → TrackerIssueComment
+    # mapping, split out of JiraIssueSearch.cpp (which pulls cpr). Reuses
+    # ParseCommentAuthor / AdfBodyToPlainText (TrackerFieldValueParser.cpp) +
+    # ParseIso8601ToUnixSec (GitHubClientHelpers.cpp) — both already linked above.
+    Core/JiraCommentMappingPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraCommentMappingPure.cpp"
     # issue-comments PR-C — pure JSON array → TrackerIssueComment mapping, split
     # out of PlaneClient.cpp (which pulls cpr). PlaneCommentMappingPure.cpp depends
     # on JsonGetStringIfString (TrackerFieldValueParser.cpp) + ParseIso8601ToUnixSec
@@ -768,6 +781,9 @@ if(SMATCHET_WITH_WHISPER)
         Core/WavWriter.test.cpp
         # Phase C — local backend, downloader catalog, consent gate, mode router.
         Core/ModelCatalog.test.cpp
+        # Network-hardening (security audit LOW): host-pin + size-cap policy for the
+        # model-download redirect path. Pure decision; no cpr / no I/O.
+        Plugins/Whisper/ModelDownloadPolicy.test.cpp
         Core/WhisperConsentGate.test.cpp
         Core/WhisperModeRouter.test.cpp
         # Phase E — pure hotkey-descriptor parser.
@@ -780,6 +796,7 @@ if(SMATCHET_WITH_WHISPER)
         "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/WhisperApiClient.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/WavWriter.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/ModelCatalog.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/ModelDownloadPolicy.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/WhisperConsentGate.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/HotkeyParse.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/SilenceTrim.cpp"
