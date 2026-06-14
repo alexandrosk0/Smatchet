@@ -145,13 +145,27 @@ Per `AGENTS.md` § Verification automation — zero manual steps.
 - **Importing/exporting a keybinding profile** — no-action for v1; the config already round-trips, so a future export is cheap.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation)*
+
+### PR1 — Foundation + migration ([#1207](https://github.com/alexandrosk0/Smatchet/pull/1207), behavior-neutral) — shipped to PR
+- `KeybindingsConfig` (`include/Config/KeybindingsConfig.h` + `src/Config/KeybindingsConfig.cpp`): per-binding `{command_id, hotkey, args_json, enabled}` record + `KeybindingsConfig::Defaults()` seeded with the 15 current shortcuts. Persisted under config key `keybindings`; from_json skips malformed entries, absent/non-array → `Defaults()`. Wired into `TrackerConfig` (`ConfigManager.h`) + Save/Load (`ConfigManager.cpp`, try/catch → `Defaults()` on malformed).
+- `ImGuiHotkey` (`include/Ui/ImGuiHotkey.h` + `src/Ui/ImGuiHotkey.cpp`): grammar extended with `super`/`win`/`cmd` modifier + `,` key; added `StringifyImGuiHotkey` (canonical `Ctrl+Shift+Alt+Super+<key>` order) + `FindShortcutConflict` (linear exact-combo scan) for the PR2 editor.
+- `SmatchetUI::dispatchKeybindings` + `rebuildKeybindingCache` (`SmatchetUI.h`/`.cpp`): replaces the three hardcoded `handle*Shortcuts` helpers **and** the inline `Ctrl+Alt+D` / `F11` / `Ctrl+Shift+P` / bug-report polls. Lazy parse-cache (rebuilt on config-load via `keybindingCacheDirty_`, and on future editor save), per-frame match, registry dispatch. `ui.command_palette` kept as an inline pseudo-binding self-gating on `BackendHasBeenReachable`.
+- `AppViewCommands` (`include/Commands/AppViewCommands.h` + `src/Commands/AppViewCommands.cpp`, registered in `BuiltinCommands.cpp`): registry handlers for primary/secondary side-bar, bottom panel, assistant reveal (`SMATCHET_WITH_AI`), `app.fullscreen.toggle` (`!SMATCHET_EMBEDDED_IN_UNREAL`), `app.dock_debug.toggle`, `app.bug_report.open`. The `view.toggle.*` reveals gained `action` + focus-latch params in `ViewToggleCommands.cpp`. `CommandPaletteUi.cpp` lost its inline self-toggle (now driven by the binding).
+- Tests: `tests/Core/ImGuiHotkey.test.cpp` + `tests/Core/KeybindingsConfig.test.cpp`, both wired into `tests/CMakeLists.txt` (source list + production-TU deps) so the configure-time glob-guard is satisfied.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **PR1**: one comment-noise lint fixup (commit `82d14d71`). The bug-report migration breadcrumb `// (app.bug_report.open, default Ctrl+Shift+B) dispatched ...` tripped the `comment-commented-out-code` heuristic (parenthesized dotted-id + comma reads as a call). Reworded to prose that keeps the command id grep-able without the call shape. Comment-only, no behavior change. No design deviations otherwise — PR1 shipped as planned.
+- DRY WARN (non-blocking, calibration phase per ADR-0015): `KeybindingsConfig.cpp:44 ↔ ToolbarConfig.cpp:62` (98-token clone) — parallel per-config to_json/from_json scaffolding; left as-is (WARN-first, not exempted).
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- **PR1** — local pre-merge gates, read from real output (not assumed):
+  - doctest rig (`ninja-test-msvc` → `SmatchetTests`): **1707 cases / 15976 assertions / 0 failed** (17 new cases across the two new test files).
+  - dual-target build (`ninja-iter-msvc`): `SmatchetStandalone` (`Smatchet.exe`) + `SmatchetCore_DX12.lib` both clean with warnings-as-errors ON.
+  - `test-lint-rules.sh --diff origin/develop`: all rules PASS (strict-zone, comment-noise, no-raw-new, oversized-function, agent-size); 2 DRY WARNs (non-blocking).
+  - Remote CI on [#1207](https://github.com/alexandrosk0/Smatchet/pull/1207): pending at hand-off (not auto-merged — awaiting user authorization).
+- **PR2**: not yet implemented.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *In the SAME PR that populates the three sections above —*
