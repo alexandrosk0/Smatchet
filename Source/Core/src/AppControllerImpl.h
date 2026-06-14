@@ -74,6 +74,32 @@ struct AppController::Impl {
     std::unordered_map<std::string, std::unordered_map<std::string, std::string>> fieldIconMapsByFieldId_;
     std::unordered_map<std::string, std::unordered_map<std::string, std::string>> fieldIconMapsByDisplayName_;
 
+    // ---- `ai.prompt` Lua-glue rate limiter (security audit H5 / E6) ----
+    // The instruction-count `lua_sethook` does NOT cover the outbound LLM HTTP
+    // call `ai.prompt` kicks off, so paste-and-run Lua could loop it to burn
+    // the API quota or stream ticket data off-host. This per-instance gate
+    // rejects re-entrant or <5 s-spaced calls (decision in
+    // AiLuaPromptRateLimit.h) and fires a one-time-per-session consent toast
+    // naming the provider host. UI-thread-driven (`ai.*` is UI-thread only —
+    // see the Phase E note in AppController_LuaBindings.cpp) but mutex-guarded
+    // anyway so a stray worker-thread call can't tear the state.
+    mutable std::mutex aiPromptGateMutex_;
+    std::chrono::steady_clock::time_point aiPromptLastCallAt_{};
+    bool aiPromptEverCalled_ = false;
+    bool aiPromptInFlight_ = false;
+    bool aiPromptConsentShown_ = false;
+
+    /// Gate the next `ai.prompt` turn. Returns true (and marks the turn
+    /// in-flight) when the call is allowed; returns false + sets `outError`
+    /// when rejected (re-entrant or spaced too close). Fires the one-time
+    /// consent toast on the first allowed call this session. Must be paired
+    /// with `EndLuaAiPromptTurn()` once the submit has been issued.
+    bool TryBeginLuaAiPromptTurn(std::string& outError);
+    /// Clear the in-flight flag once the `ai.prompt` submit has been issued
+    /// (Submit() hands off to the worker thread, so the C++ glue's synchronous
+    /// work is done — the 5 s spacing rule then guards the next call).
+    void EndLuaAiPromptTurn();
+
     // ---- ILuaBindingHost interface (sol-typed glue resolves Impl* through __smatchet_app /
     // __smatchet_app_ui). Sol-typed bodies live here; sol-free interface methods forward to
     // the AppController implementation via app_. (19c) ----

@@ -354,6 +354,10 @@ add_executable(SmatchetTests
     Core/AiAssistantSystemPrompt.test.cpp
     Core/AiPrefsValidator.test.cpp
     Core/AiEndpointSanitize.test.cpp
+    # Pure rate-limit decision for the ai.prompt Lua glue (security audit H5 /
+    # E6). Header-only (Source/Core/include/AiLuaPromptRateLimit.h); no extra
+    # .cpp source — the glue calls the helper, the helper is the testable unit.
+    Core/AiLuaPromptRateLimit.test.cpp
     Core/CliArgCoercion.test.cpp
     Core/DictationInsertionRouter.test.cpp
     Core/AiAssistantInputSeedDecision.test.cpp

@@ -6,9 +6,12 @@
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 
+#include "AiAssistantController.h"
+#include "AiLuaPromptRateLimit.h"
 #include "ConfigManager.h"
 #include "FieldEditAuditSource.h"
 #include "IssueTableSerializer.h"
+#include "SmatchetToast.h"
 
 #include <algorithm>
 #include <cctype>
@@ -615,6 +618,17 @@ void LuaAiPromptGlue(sol::this_state L, const std::string& prompt, sol::optional
     AppController::Impl* app = ResolveApp(L);
     if (!app)
         return;
+    // Rate-limit + consent gate (security audit H5 / E6). The instruction-count
+    // lua_sethook does NOT cover the outbound HTTP this kicks off, so reject a
+    // re-entrant or <5 s-spaced call BEFORE any context mutation / submit, and
+    // fire the one-time consent toast on the first accepted call. luaL_error
+    // raises a Lua error (caught by the protected call) rather than blocking the
+    // UI thread — no sleep/spin.
+    std::string gateError;
+    if (!app->TryBeginLuaAiPromptTurn(gateError)) {
+        luaL_error(L, "%s", gateError.c_str());
+        return;
+    }
     // Optional extra context blocks: appended to the controller's context vector
     // before Submit, matching the panel's "Send-with-context" path. Each element
     // is treated as an `AiContextBlock` table.
@@ -630,6 +644,12 @@ void LuaAiPromptGlue(sol::this_state L, const std::string& prompt, sol::optional
         }
     }
     app->app_.PromptAi(prompt);
+    // Submit() hands the turn to the AI worker thread; the synchronous glue work
+    // is done, so release the in-flight slot. The 5 s spacing rule (stamped at
+    // TryBegin) now guards the next call. Re-entrancy is still blocked for the
+    // duration of THIS call (a context-builder that re-entered ai.prompt would
+    // hit the in-flight reject above).
+    app->EndLuaAiPromptTurn();
 }
 
 // LuaCommandsInvokeGlue / LuaMcpRegisterToolGlue / LuaCreateIssueGlue /
@@ -716,6 +736,55 @@ void AppController::Impl::InitLuaUi(sol::state& state) {
     aiTbl.set_function("clear_context", &smatchet_lua_init_detail::LuaAiClearContextGlue);
     aiTbl.set_function("prompt", &smatchet_lua_init_detail::LuaAiPromptGlue);
     state["ai"] = aiTbl;
+}
+
+bool AppController::Impl::TryBeginLuaAiPromptTurn(std::string& outError) {
+    std::lock_guard<std::mutex> lk(aiPromptGateMutex_);
+    const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+    const std::int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+    const std::int64_t lastMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(aiPromptLastCallAt_.time_since_epoch()).count();
+
+    const smatchet::ai::AiPromptGateDecision decision =
+        smatchet::ai::DecideAiPromptGate(aiPromptInFlight_, aiPromptEverCalled_, lastMs, nowMs);
+    if (decision == smatchet::ai::AiPromptGateDecision::RejectReentrant) {
+        outError = "ai.prompt rejected: a previous prompt is still in flight (re-entrant call blocked)";
+        return false;
+    }
+    if (decision == smatchet::ai::AiPromptGateDecision::RejectTooSoon) {
+        outError = "ai.prompt rejected: rate limit — wait at least 5 s between prompts";
+        return false;
+    }
+
+    // Accepted — claim the in-flight slot + stamp the timestamp under the lock.
+    aiPromptInFlight_ = true;
+    aiPromptLastCallAt_ = now;
+    aiPromptEverCalled_ = true;
+
+    // One-time-per-session consent toast naming the outbound provider host, so a
+    // user who pasted-and-ran a script knows ai.prompt just reached off-host.
+    if (!aiPromptConsentShown_) {
+        aiPromptConsentShown_ = true;
+        std::string provider = "the configured AI provider";
+#if defined(SMATCHET_WITH_AI)
+        if (aiAssistant_) {
+            const std::string name = aiAssistant_->GetActiveProviderName();
+            if (!name.empty()) {
+                provider = name;
+            }
+        }
+#endif
+        SmatchetToastManager::Instance().Push(
+            "AI prompt from Lua", "A Lua script called ai.prompt — sending your AI context to " + provider + ".",
+            ToastType::Warning, 8000);
+        LOG_INFO("[LUA] ai.prompt invoked from Lua for the first time this session (provider=%s)", provider.c_str());
+    }
+    return true;
+}
+
+void AppController::Impl::EndLuaAiPromptTurn() {
+    std::lock_guard<std::mutex> lk(aiPromptGateMutex_);
+    aiPromptInFlight_ = false;
 }
 
 void AppController::Impl::LuaLogInfoBind(const std::string& msg) {
