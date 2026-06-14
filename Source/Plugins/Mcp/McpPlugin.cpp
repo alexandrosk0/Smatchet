@@ -49,6 +49,7 @@ using ::smatchet::mcp::pure::ExtractHostFromUrl;
 using ::smatchet::mcp::pure::ExtractJsonRpcErrorMessage;
 using ::smatchet::mcp::pure::IsAllowedAttachmentHost;
 using ::smatchet::mcp::pure::IsLoopbackAddress;
+using ::smatchet::mcp::pure::IsMcpHostOriginAllowed;
 using ::smatchet::mcp::pure::LooksLikeHttpUrl;
 using ::smatchet::mcp::pure::NormalizeDomain;
 using ::smatchet::mcp::pure::TruncateOneLine;
@@ -137,6 +138,24 @@ bool McpPlugin::NeedsRestart(const TrackerConfig& cfg) const {
 bool McpPlugin::Authorize(const httplib::Request& req, httplib::Response& res) {
     if (impl_->app != nullptr) {
         impl_->app->NotifyMcpClientHttpActivity();
+    }
+    // DNS-rebinding defence (security synthesis #4). When bound to loopback, the
+    // only legitimate callers are local MCP clients, which send a loopback-literal
+    // Host (`127.0.0.1:<port>` / `localhost`) and no (or a loopback) Origin. A
+    // malicious web page that rebinds DNS to 127.0.0.1 reaches this port with the
+    // attacker's hostname in Host and the attacker's Origin -- both rejected here,
+    // independent of the bearer token. Skipped when McpAllowRemote bound us to
+    // 0.0.0.0, where a non-loopback Host is the operator's explicit intent.
+    if (impl_->bind_host == SmatchetDefaults::Mcp::kBindLocalhost) {
+        std::string hoReason;
+        if (!IsMcpHostOriginAllowed(req.get_header_value("Host"), req.get_header_value("Origin"), hoReason)) {
+            res.status = 403;
+            res.set_content("MCP access denied: invalid Host/Origin.", "text/plain");
+            LOG_WARN("MCP: auth denied remote=%s status=403 reason=%s", req.remote_addr.c_str(), hoReason.c_str());
+            AppendMcpActivityLine(impl_->app, std::string("MCP: auth denied remote=") + req.remote_addr +
+                                                  " status=403 reason=" + hoReason);
+            return false;
+        }
     }
     if (impl_->auth_token.empty()) {
         if (!IsLoopbackAddress(req.remote_addr)) {

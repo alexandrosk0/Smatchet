@@ -529,6 +529,7 @@ add_executable(SmatchetTests
     Plugins/Mcp/McpEnvelope.test.cpp
     Plugins/Mcp/McpToolSchemas.test.cpp
     Plugins/Mcp/McpDispatch.test.cpp
+    Plugins/Mcp/McpHostOrigin.test.cpp
     Plugins/LuaConsole/LuaConsoleSelection.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Plugins/Mcp/McpJsonRpcPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/CallstackParser.cpp"
