@@ -1,7 +1,9 @@
 name: Coverage
 
-# Captures OpenCppCoverage line coverage on every PR touching Source/Core/ or
-# tests/. Uploads coverage.xml as a workflow artifact.
+# ci-required-context: self-gated
+#
+# Captures OpenCppCoverage line coverage on every PR. Uploads coverage.xml as a
+# workflow artifact.
 #
 # BLOCKING (graduated 2026-06-04 via docs/plans/shipped/coverage-threshold-graduation.md):
 # continue-on-error: false + --threshold 65. The number is the data-chosen
@@ -13,23 +15,36 @@ name: Coverage
 # Below-threshold PRs escape with the `coverage-out-of-band` label (parallel to
 # tests-out-of-band). The structural coverage-delta gate (coverage-gate.yml) is
 # independent and already hard-blocking.
+#
+# REQUIRED-CONTEXT SELF-GATE (coverage-required-context, tooling.md 2026-06-11;
+# preventing gate from postmortems.md 2026-06-11 PR #1130, #923 option A):
+# `Coverage (windows-2022 + OpenCppCoverage)` is promoted to a branch-protection
+# REQUIRED context (project.config.json § branch_protection.required_contexts) so
+# it binds ALL merge paths, not just the merge-gates poller's non-required-but-
+# blocking allow-list (the gap #1130 sailed through via `gh pr merge --auto`).
+# A REQUIRED context MUST report on EVERY PR or GitHub deadlocks any PR that
+# never produces it (#880/#881/#882 class) — and the merge-gates poller, which
+# reads required_contexts from project.config.json directly, blocks the moment
+# the context is absent. So the workflow's `pull_request` trigger carries NO
+# `paths:` filter (it runs on every PR), and the single `windows-coverage` job
+# SELF-GATES internally: a `Detect coverage-relevant changes` step decides
+# whether to run the real (40-min) coverage build or no-op green. On a docs-only
+# / shell-only PR every heavy step skips and the job completes green — the
+# required context is reported exactly once and NEVER fake-greens a real coverage
+# failure on a code PR (the detect predicate runs the full gate whenever any
+# coverage-relevant path changed). Mirrors doc-validation.yml's `Detect
+# doc-relevant changes` + coverage-gate.yml's merge-queue self-gate.
 
 on:
   pull_request:
     branches: [develop]
-    paths:
-      - 'Source/Core/**'
-      - 'Source/Plugins/**'
-      - 'tests/**'
-      - 'CMakeLists.txt'
-      - 'CMakePresets.json'
-      - '.github/workflows/coverage.yml'
-      - 'scripts/dev/coverage.sh'
-      # Markdown is never compiled — exclude the per-subsystem leaf docs now
-      # living under Source/Core/src/<ctx>/*.md (and any other .md) so a
-      # docs-only change doesn't spin up a coverage build. Negation must follow
-      # the positives (GitHub: later matching pattern wins).
-      - '!**/*.md'
+  # Merge-queue readiness (mirrors coverage-gate.yml / doc-validation.yml): when
+  # develop is behind a GitHub merge queue, required checks run on the synthetic
+  # `merge_group` ref; a required context that never reports there deadlocks the
+  # queue forever. The detect step below self-gates any non-pull_request event to
+  # `run=true` (the queued commit's coverage already passed at PR time, so the
+  # full gate re-runs green) so the required context reports on the queued merge.
+  merge_group:
 
 concurrency:
   group: coverage-${{ github.ref }}
@@ -54,13 +69,55 @@ jobs:
         with:
           fetch-depth: 0  # delta gate needs full history for merge-base
 
+      # Self-gate: this required check runs on EVERY PR (no workflow paths filter
+      # — see the `on:` header). For a PR that touches no coverage-relevant file
+      # the coverage build has nothing to measure, so every heavy step below
+      # skips and the job completes green — the `Coverage (windows-2022 +
+      # OpenCppCoverage)` required context is still reported (exactly once), which
+      # keeps GitHub (and the merge-gates poller) from deadlocking a docs-only /
+      # shell-only PR. The detect predicate is intentionally a SUPERSET of the
+      # retired `pull_request.paths` allow-list (more inclusive = fail-safe: worst
+      # case the coverage build runs when it strictly needn't and passes). It must
+      # NEVER fake-green: when any coverage-relevant path changed, run=true and the
+      # full --threshold 65 gate runs unchanged. Non-PR events (merge_group)
+      # always run=true so the required context reports on the queued merge.
+      - name: Detect coverage-relevant changes
+        id: detect
+        shell: bash
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "non-PR event — running full coverage gate."
+            exit 0
+          fi
+          git fetch --no-tags origin "$BASE_REF" 2>/dev/null || true
+          changed="$(git diff --name-only "origin/$BASE_REF...HEAD" 2>/dev/null || true)"
+          # Mirror the retired pull_request.paths allow-list (Source/Core,
+          # Source/Plugins, tests, the CMake build descriptors, this workflow, and
+          # the coverage script) MINUS markdown — a .md-only edit under those trees
+          # never affects compiled coverage. grep -E over the changed-file list.
+          if printf '%s\n' "$changed" \
+            | grep -vE '\.md$' \
+            | grep -qE '^(Source/Core/|Source/Plugins/|tests/|CMakeLists\.txt$|CMakePresets\.json$|\.github/workflows/coverage\.yml$|scripts/dev/coverage\.sh$)'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "coverage-relevant changes detected — running full coverage gate."
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "no coverage-relevant changes — coverage no-ops (required check reported green)."
+          fi
+
       - name: Setup MSVC dev environment
+        if: steps.detect.outputs.run == 'true'
         uses: ilammy/msvc-dev-cmd@v1
 
       - name: Setup sccache (object cache)
+        if: steps.detect.outputs.run == 'true'
         uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Cache sccache objects (coverage)
+        if: steps.detect.outputs.run == 'true'
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}\.sccache
@@ -69,12 +126,14 @@ jobs:
             ${{ runner.os }}-sccache-coverage-
 
       - name: Install OpenCppCoverage
+        if: steps.detect.outputs.run == 'true'
         shell: powershell
         run: |
           choco install opencppcoverage -y --no-progress
           echo "C:\Program Files\OpenCppCoverage" >> $env:GITHUB_PATH
 
       - name: Cache FetchContent _deps
+        if: steps.detect.outputs.run == 'true'
         uses: actions/cache@v4
         with:
           # FETCHCONTENT_BASE_DIR defaults to .fetchcontent-src (CMakeLists.txt:280).
@@ -91,20 +150,24 @@ jobs:
             ${{ runner.os }}-fetchcontent-
 
       - name: Configure ninja-test-msvc
+        if: steps.detect.outputs.run == 'true'
         run: cmake --preset ninja-test-msvc
 
       - name: Build SmatchetTests + SmatchetLuaTests
+        if: steps.detect.outputs.run == 'true'
         run: cmake --build --preset ninja-test-msvc
 
       - name: Run ctest (sanity — must pass before coverage capture)
+        if: steps.detect.outputs.run == 'true'
         working-directory: build/ninja-test-msvc
         run: ctest --output-on-failure
 
       - name: Report sccache stats
-        if: always()
+        if: always() && steps.detect.outputs.run == 'true'
         run: sccache --show-stats
 
       - name: Capture coverage (blocking; --threshold 65)
+        if: steps.detect.outputs.run == 'true'
         shell: bash
         env:
           # The label escape documented in this file's header was prose-only
@@ -124,7 +187,7 @@ jobs:
           fi
 
       - name: Upload coverage.xml artifact
-        if: always()
+        if: always() && steps.detect.outputs.run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: coverage-${{ github.event.pull_request.number }}-${{ github.run_id }}
