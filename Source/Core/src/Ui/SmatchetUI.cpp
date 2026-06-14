@@ -1076,7 +1076,13 @@ void SmatchetUI::drawDockDebugOverlay(UiDrawSession& d) {
 // End-of-frame coalesced persistence: debounced ViewState save, window-open prefs,
 // forced layout-defaults ini flush, and the debounced prefs ConfigManager::Save.
 void SmatchetUI::drawEndOfFramePersistence(UiDrawSession& d) {
-    (void)d;
+    // Drain a latched layout reset HERE, at end-of-frame. SmatchetUI_ResetLayoutToDefault is
+    // always invoked mid-frame (menu / command) and only sets the latch; applying the heavy
+    // dock work (LoadIniSettingsFromMemory + force-redock arming) inline corrupts the live tree.
+    // This is the proven-safe timing — the queued node rebuild lands on the next NewFrame and
+    // the force-redock pass then runs against a freshly-built tree. Runs before the
+    // layoutForceDefaultsFrames countdown below so the freshly-armed 8 frames take effect.
+    SmatchetUI_ApplyDeferredLayoutReset(d);
     // Skip the debounced auto-save while a view edit is pending an explicit Save —
     // widths / sort specs mutated under the unsaved-layout strip must not bleed
     // through to disk until the user commits.

@@ -2,6 +2,7 @@
 
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "ConfigSaveWorker.h"
 #include "Logger.h"
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetToast.h"
@@ -110,7 +111,16 @@ void SmatchetUI::prepareTopLevelWindow(UiDrawSession& d, const char* layoutKey, 
                                        bool requestFocus) {
     const ImGuiID slot = SmatchetDockNodeIds::DefaultDockSlotForLayoutKey(layoutKey);
     if (slot != 0) {
-        const bool needsForce = d.pendingReDockWindows.erase(layoutKey) > 0;
+        // Re-force the redock EVERY frame while the reset is settling (mirrors
+        // SmatchetMcpServerUi.cpp). The bare erase() consumes the arm once on the reset
+        // frame, but that frame the freshly LoadIni'd dock nodes are not yet marked
+        // LastFrameAlive (DockSpaceOverViewport already walked the OLD tree this frame), so
+        // BeginDocked's liveness guard (imgui.cpp ~21208) silently undocks the window. The
+        // node only becomes alive next frame; without a re-force the window stays floating,
+        // masked by repairTopLevelWindow's fallback-rect snap. erase()+repair's re-insert
+        // oscillation is not enough: a window whose Begin() returns false (collapsed / unselected
+        // bottom-panel tab) never runs repair, so its arm is never re-inserted after the consume.
+        const bool needsForce = d.pendingReDockWindows.erase(layoutKey) > 0 || d.layoutForceDefaultsFrames > 0;
         if (needsForce) {
             ImGui::SetNextWindowDockID(slot, ImGuiCond_Always);
         } else if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
@@ -167,39 +177,32 @@ void SmatchetUI::repairTopLevelWindow(UiDrawSession& d, const char* layoutKey, f
 }
 
 void SmatchetUI::resetWindowLayoutToDefault(UiDrawSession& d) {
-    d.showViewsDashboard = true;
-    d.requestActiveProjectFocus = false;
-    d.requestViewsDashboardFocus = false;
-    d.showPerformance = false;
-    d.showAnnotateAnalysis = false;
-    d.showBulkImport = false;
-    d.showBulkExport = false;
-    d.showAuditTrail = false;
-    d.showLogWindow = false;
-    d.pendingReDockWindows.clear();
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-    d.showLuaAutomationWindow = false;
-    d.requestLuaAutomationFocus = false;
-    d.requestScriptingEditorTabFocus = false;
-#endif
-#if defined(SMATCHET_WITH_MCP)
-    d.showMcpServerWindow = false;
-    d.requestMcpServerFocus = false;
-#endif
-    d.layoutForceDefaultsFrames = 8;
-    // Reset the on-disk ini so the next launch picks up the default dock layout.
-    // ImGui::LoadIniSettingsFromDisk() at runtime does NOT re-parent already-created
-    // windows: docking metadata gets replaced, but live windows lose their dock parents
-    // and float free. Skip the runtime reload and ask the user to restart.
-    ConfigManager::WriteDefaultImGuiSettingsFile();
-    SmatchetToastManager::Instance().Push("Layout reset", "Restart Smatchet for the default layout to take effect.",
-                                          ToastType::Info, 4000);
-    smatchet::ui_detail::PersistWindowOpenPreferences(d);
+    // Delegates to the free function (single source of truth). The reset body touches only
+    // `d` + globals, never `this`, so this member exists purely for callers holding a
+    // SmatchetUI*. Keep the two in lock-step by forwarding rather than copying.
+    SmatchetUI_ResetLayoutToDefault(d);
 }
 
 void SmatchetUI_ResetLayoutToDefault(UiDrawSession& d) {
-    // Replicates SmatchetUI::resetWindowLayoutToDefault for callers without a SmatchetUI*.
-    // Must be called on the UI thread (see MainThreadDispatch.h).
+    // Reset is always requested MID-FRAME — from the menu bar draw (SmatchetUI_MainMenu.cpp)
+    // or from a command handler draining on the UI thread (BuiltinCommands_Debug.cpp), both of
+    // which run before drawSecondaryWindows / drawEndOfFramePersistence in the frame. Doing the
+    // heavy dock work inline corrupts the LIVE dock tree: a mid-frame LoadIniSettingsFromMemory
+    // queues the node-tree rebuild for the NEXT NewFrame, but the same-frame force-redock then
+    // runs against the stale/half-loaded tree and orphans nodes 0x02/0x04/0x08 (empirically
+    // reproduced — Smatchet-31412.log). So only LATCH here; drawEndOfFramePersistence drains the
+    // latch via SmatchetUI_ApplyDeferredLayoutReset at end-of-frame, the timing that rebuilds the
+    // correct nested tree (Smatchet-50156.log). Keep this the single mid-frame entry point.
+    d.pendingLayoutReset = true;
+}
+
+void SmatchetUI_ApplyDeferredLayoutReset(UiDrawSession& d) {
+    if (!d.pendingLayoutReset) {
+        return;
+    }
+    d.pendingLayoutReset = false;
+
+    // Runs at end-of-frame (drawEndOfFramePersistence). Must be called on the UI thread.
     d.showViewsDashboard = true;
     d.requestActiveProjectFocus = false;
     d.requestViewsDashboardFocus = false;
@@ -209,7 +212,6 @@ void SmatchetUI_ResetLayoutToDefault(UiDrawSession& d) {
     d.showBulkExport = false;
     d.showAuditTrail = false;
     d.showLogWindow = false;
-    d.pendingReDockWindows.clear();
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     d.showLuaAutomationWindow = false;
     d.requestLuaAutomationFocus = false;
@@ -219,14 +221,53 @@ void SmatchetUI_ResetLayoutToDefault(UiDrawSession& d) {
     d.showMcpServerWindow = false;
     d.requestMcpServerFocus = false;
 #endif
-    d.layoutForceDefaultsFrames = 8;
-    // Reset the on-disk ini so the next launch picks up the default dock layout.
-    // ImGui::LoadIniSettingsFromDisk() at runtime does NOT re-parent already-created
-    // windows: docking metadata gets replaced, but live windows lose their dock parents
-    // and float free. Skip the runtime reload and ask the user to restart.
+
+    // Immediate-effect reset (no restart). Three coordinated steps:
+    //  1. Rebuild the dock-node tree LIVE from the canonical default. ImGui parses the
+    //     embedded default ini and recreates the fixed-ID nodes (0x02 central, 0x08 views,
+    //     0x0A bottom, …) with their default split geometry at the next NewFrame. We feed
+    //     the embedded string (single source of truth) rather than reading back the file we
+    //     are about to write, so there is no flush/read race.
+    //  2. Persist that same default to disk so the next launch loads it too.
+    ImGui::LoadIniSettingsFromMemory(ConfigManager::GetDefaultImGuiDockLayoutIni());
     ConfigManager::WriteDefaultImGuiSettingsFile();
-    SmatchetToastManager::Instance().Push("Layout reset", "Restart Smatchet for the default layout to take effect.",
-                                          ToastType::Info, 4000);
+
+    //  3. Force-re-parent already-created windows. LoadIniSettings rebuilds node metadata
+    //     but does NOT re-dock live windows — they keep their old DockId and float free.
+    //     Two triggers cooperate: the layoutForceDefaultsFrames countdown below makes
+    //     prepareTopLevelWindow() re-issue SetNextWindowDockID(slot, ImGuiCond_Always) EVERY
+    //     frame for ~8 frames (the durable path — it lands once the rebuilt nodes become
+    //     LastFrameAlive next frame, and covers windows whose Begin() returns false so their
+    //     repair pass never runs); the pendingReDockWindows arm below additionally re-docks
+    //     windows that are currently CLOSED, harmlessly waiting in the set until they next
+    //     open (possibly long after the 8-frame window expires) so they also land home.
+    d.pendingReDockWindows.clear();
+    const size_t keyCount = SmatchetDockNodeIds::DefaultDockLayoutKeyCount();
+    for (size_t i = 0; i < keyCount; ++i) {
+        d.pendingReDockWindows.insert(SmatchetDockNodeIds::DefaultDockLayoutKeyAt(i));
+    }
+
+    //  3b. The AI Assistant panel docks through its own ApplyAssistantDocking() path, NOT the
+    //      pendingReDockWindows list above. The default tree has no secondary side bar node
+    //      (0x10 is created only when the user swaps the panel right), so a reset returns the
+    //      panel to its default primary (left) side bar and arms a side-swap so the open panel
+    //      snaps home next frame (a closed panel docks correctly when it next opens). Persist
+    //      the side/visibility preferences so the next launch agrees with the reset layout.
+    //      `assistantPendingSideSwap` only exists when the assistant is compiled in.
+#if defined(SMATCHET_WITH_AI)
+    d.cfg.AssistantPanelOnSecondarySide = false;
+    d.cfg.ShowSecondarySideBar = false;
+    d.assistantPendingSideSwap = true;
+    smatchet::config_save::EnqueueTrackerConfig(d.cfg);
+#endif
+
+    // Keep ImGui auto-save ON: the live tree now equals the default, so the periodic save
+    // and the DestroyContext save both write the correct layout. Run the force-dock/repair
+    // pass for a few frames so any floating straggler snaps home and the settled default is
+    // saved by SmatchetUI.cpp's end-of-frame SaveIniSettingsToDisk when the counter hits 0.
+    d.layoutForceDefaultsFrames = 8;
+
+    SmatchetToastManager::Instance().Push("Layout reset", "Default layout restored.", ToastType::Info, 3000);
     smatchet::ui_detail::PersistWindowOpenPreferences(d);
 }
 
