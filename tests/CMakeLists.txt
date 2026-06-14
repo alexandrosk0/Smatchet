@@ -290,6 +290,11 @@ add_executable(SmatchetTests
     # test rig only needs the test TU itself (no separate cpp link).
     Core/LocalCacheManagerChat.test.cpp
     Core/BackendAuditTrail.test.cpp
+    # security #10 regression guard — the offline-queue create audit copy of the draft must be
+    # structurally redacted (RedactJson over the parsed payload) while the enqueued/replayed
+    # payload retains the real field values. Links IssueDraft.cpp + BackendAuditTrail.cpp (both
+    # already in the src list below); no extra .cpp link needed.
+    Core/OfflineQueueDraftAuditRedaction.test.cpp
     Core/IssueCreatePipelineIntegration.test.cpp
     Core/P4AnnotateParse.test.cpp
     # Slice 3 of autonomous-debugging-no-creds — runner-seam fake exercises
