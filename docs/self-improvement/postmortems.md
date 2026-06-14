@@ -27,6 +27,22 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-14 · PR #1183 · manually merged past a pending→RED Sanitizer (ASAN via MSVC) check — a known flaky timing test
+
+### What escaped
+PR #1183 (`feat(mobile): CI smoke gate for the #1122 texture-guard crash class`) was **manually** squash-merged to `develop` at 00:45 by the human authority while the **Sanitizer (ASAN via MSVC)** check was still PENDING; it completed FAILURE at 00:53 (8 min post-merge). `Sanitizer` is on the merge-gates "meant-to-block" allow-list (`merge-gates.sh`) but is **not** a GitHub-required context, so no GitHub-native merge path blocks on it. `cr-out-of-band` was on the PR — that label downgrades **CodeRabbit only**, never a CI Sanitizer red. The merge landed **37 min after** the `safe-admin-merge-guard` (#1193) reached develop.
+
+### Root cause (blameless)
+Two layers, neither a product defect:
+1. **The red was a false-red, not a memory-safety finding.** The "Sanitizer (ASAN via MSVC)" job's first step, **"Run ctest under ASAN"** (`build-and-test.yml:956`, `ctest --output-on-failure`, hard — not continue-on-error), ran the FULL `smatchet_tests` and failed on a known-flaky wall-clock assertion: `tests/Core/CallstackParser.test.cpp:304 CHECK(elapsedMs < 2000)` (a ReDoS sentinel — ASan's ~2-3× instrumentation slowdown blows the 2000 ms bound, measured ~3002 ms). No `AddressSanitizer: heap-*` marker anywhere in the log. This subcase was ALREADY known-flaky and `--test-case-exclude`'d — but only from the LATER **"Run sanitized doctest rig (ASan, clean subset)"** step (`:972`), NOT from the full `ctest --output-on-failure` at `:956` that actually produces the lane's red. The exclusion sits on the wrong step.
+2. **`safe-admin-merge-guard` is opt-in.** `safe-admin-merge.sh` refuses a merge past a non-green allow-listed check (pending counts as non-green) — but ONLY when the merge is routed through the script. A manual GitHub-UI merge / raw `gh pr merge --admin` / `gh pr merge --auto` (which waits on required contexts only) never invokes it. A human manual merge bypasses the guard structurally, independent of its allow-list logic.
+
+### Preventing gate
+The merge itself was a **legitimate human-authority override** of a known-flaky check (AI_POLICY.md — humans own quality + cost): no new merge-time gate is warranted for the human-manual path. Binding that path would require `enforce_admins=true` / promoting the lane to a required_context with a skip companion — the deferred #1130 option-A item, a branch-protection change needing explicit human authorization and deadlock-risky while the lane is flaky. The concrete preventing action targets the ROOT TRIGGER (the false-red that invited the override): **fix the flaky `CallstackParser.test.cpp:304` ReDoS-timing assertion (sanitizer-aware budget / non-sanitized lane) AND move its `--test-case-exclude` onto the load-bearing "Run ctest under ASAN" step (`:956`)** so the meant-to-block Sanitizer lane stops manufacturing false-reds that train override-by-reflex. Residual (accepted, not fixed here): the opt-in nature of `safe-admin-merge-guard` — binding all merge paths is the deferred #1130 option-A branch-protection change.
+
+### Filed as
+`docs/self-improvement/categories/test.md` — updated the existing `CallstackParser` ASan-timing entry (2026-06-13, `asan-doctest-rig` wrap-up): the `:304` exclusion does not cover the full-ctest meant-to-block lane (`:956`), which red on #1183; elevated P2 → P1 (now a confirmed gate-escape trigger, not a latent flake).
+
 ## 2026-06-13 · PR #1180 · admin-merged past RED Bucket-C + Bucket-E (allow-listed blocking checks)
 
 ### What escaped
