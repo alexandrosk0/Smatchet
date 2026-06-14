@@ -2,6 +2,7 @@
 
 #include "AppController.h"
 #include "StringUtil.h"
+#include "Tracker/JqlEscape.h"
 #include "Tracker/TrackerQuerySuggestCommon.h"
 #include "TrackerFieldSchema.h"
 
@@ -125,19 +126,17 @@ static bool IsNonSystemTrackerUser(const TrackerUser& user) {
     return user.AccountType != "app" && user.AccountType != "customer";
 }
 
-/// Build the JQL value-token for a user. Display names are quoted; if they contain a
-/// double-quote, fall back to the accountId form which JQL also accepts.
+/// Build the JQL value-token for a user. Prefer the display name (more readable in the
+/// query), else the accountId. Both originate from the tracker server, so both are
+/// JQL-escaped through tracker_jql::QuoteLiteral before the surrounding quotes are added —
+/// a `"` or `\` in either field is escaped, never allowed to break out of the literal
+/// (security: H3 + E1).
 static std::string BuildJqlUserInsert(const TrackerUser& user) {
-    if (!user.DisplayName.empty() && user.DisplayName.find('"') == std::string::npos) {
-        std::string out;
-        out.reserve(user.DisplayName.size() + 2);
-        out.push_back('"');
-        out.append(user.DisplayName);
-        out.push_back('"');
-        return out;
+    if (!user.DisplayName.empty()) {
+        return "\"" + tracker_jql::QuoteLiteral(user.DisplayName) + "\"";
     }
     if (!user.AccountId.empty()) {
-        return "\"" + user.AccountId + "\"";
+        return "\"" + tracker_jql::QuoteLiteral(user.AccountId) + "\"";
     }
     return user.DisplayName;
 }

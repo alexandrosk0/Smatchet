@@ -146,6 +146,11 @@ add_executable(SmatchetTests
     Core/TrackerFieldValueParser.test.cpp
     Core/TrackerFieldValueParser.extended.test.cpp
     Core/TrackerFieldValueUtils.test.cpp
+    # security H3 + E1 — shared JQL string-literal escape (tracker_jql::QuoteLiteral) used by
+    # BuildJqlUserInsert / BuildKeyInJql / BuildActivityDiscoveryJql. Pure string helper,
+    # no cpr/sqlite — safe in the doctest rig.
+    Core/JqlEscape.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlEscape.cpp"
     # dedup-tracker-query-and-ai-client-clones cluster A — backend-agnostic query-suggest
     # helpers extracted from JqlSuggestEngine.cpp + PlaneQuerySuggestEngine.cpp. The reparam
     # to const std::vector<TrackerField>& (away from AppController) makes the field-catalog
