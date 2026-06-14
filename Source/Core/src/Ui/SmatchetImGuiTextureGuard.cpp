@@ -24,11 +24,11 @@ bool g_textureGuardLogged = false;
 } // namespace
 
 // [P0 #1122] ImGui 1.92 dynamic-texture safety pass. Runs after ImGui::Render() and before the
-// backend reads any draw command's texture id. ImGui 1.92 owns texture lifetime via ImTextureData;
-// two paths can leave a committed ImDrawCmd pointing at a texture whose backend TexID is Invalid when
-// the command loop reads it, which ImDrawCmd::GetTexID() asserts on (SIGABRT, "Backend must call
+// backend reads any draw command's texture id, now that ImGui 1.92 owns texture lifetime through the
+// ImTextureData type. Two paths can leave a committed ImDrawCmd pointing at a texture whose backend
+// TexID is Invalid when the command loop reads it, which ImDrawCmd::GetTexID() asserts on (SIGABRT,
+// "Backend must call
 // ImTextureData::SetTexID()..."):
-//
 //   (1) Context-loss re-arm (list-walk). After an EGL/activity recreate (RecreateAfterContextLoss,
 //       INIT_WINDOW re-init, background->foreground) a font texture can reach render Destroyed with
 //       TexID=Invalid: the core's Destroyed->WantCreate self-heal is skipped when WantDestroyNextFrame
@@ -36,7 +36,6 @@ bool g_textureGuardLogged = false;
 //       force WantCreate so the backend re-uploads it during its Textures[] pass — which runs in the
 //       same RenderDrawData call, before the draw commands sample the texture. (Validated on device via
 //       the forced EGL_CONTEXT_LOST path.)
-//
 //   (2) Orphaned-command repoint (command-walk). A mid-frame dynamic-atlas grow / font re-apply
 //       (on-demand glyph baking when a new tab/label first renders) retires the OLD atlas texture while
 //       a command was already committed on it this frame; by the command loop that texture's id is
@@ -46,7 +45,6 @@ bool g_textureGuardLogged = false;
 //       (SmatchetDrawCmdTextureNeedsRebind: an Invalid id the upload pass will NOT validate this frame)
 //       at the live atlas texture, which that pass makes valid. The walk is over draw COMMANDS (tens to
 //       hundreds per frame, not vertices), so the per-frame cost is negligible (Quality Pillar 1).
-//
 // A repoint changes only the command's TexRef; its vertices keep their old UVs, so the worst case is
 // one frame of cosmetically-wrong glyphs on a rare transition — never a crash. Confirmed on a physical
 // Pixel for the rotate->dock-tab->tap-Tickets repro (#1122). Shared by the GL3 standalone render loop

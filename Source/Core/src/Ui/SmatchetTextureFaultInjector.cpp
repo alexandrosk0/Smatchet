@@ -16,7 +16,6 @@ bool g_rearmDisabled = false;
 // trigger the repoint+LOG_WARN — the original #1133 green-wash. It is function-local-static (not a
 // stack temp) because the ImDrawCmd we commit holds a RAW ImTextureData* (ImTextureRef::_TexData)
 // that must outlive ImGui::Render() AND the end-of-frame guard that reads it.
-//
 // Doomed state must satisfy SmatchetDrawCmdTextureNeedsRebind(status, hasPixels, texIdInvalid):
 // TexID Invalid AND not (WantCreate && hasPixels). We keep Pixels == NULL so SetStatus(Destroyed)
 // STICKS — ImTextureData::SetStatus auto-promotes Destroyed->WantCreate when Pixels != NULL (the

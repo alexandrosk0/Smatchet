@@ -1,5 +1,4 @@
 // MobileTextureGuardScenario — Issue #1133 mobile CI smoke gate.
-//
 // Drives the dynamic-texture guard end-to-end inside the live render loop so a
 // headless CI run proves the [P0 #1122] orphaned-command repoint path (a) does
 // not SIGABRT and (b) actually fires its once-latched LOG_WARN. The fault
@@ -8,14 +7,12 @@
 // (SmatchetImGuiTextureGuardRuntime.h GuardImGuiDynamicTextures, called from
 // Source/Standalone/main.cpp AFTER ImGui::Render()) repoints the orphan and
 // emits the verbatim LOG_WARN substring "[P0 #1122] repointed".
-//
 // Frame ordering: this scenario's OnFrame runs inside SmatchetUI::Draw (between
 // NewFrame and Render), so a fault forced on frame N is repointed by the SAME
 // frame's end-of-frame guard; we scan the log on frame N+1. The mere fact
 // OnFrame(N+1) runs at all proves frame N's RenderDrawData did not abort (a real
 // SIGABRT kills the process before the next Tick) — that is the no-crash
 // assertion, no in-process catch needed.
-//
 // The injector/guard symbols are ALWAYS callable (no-ops when
 // SMATCHET_ENABLE_TEXTURE_FAULT_INJECTION is undefined), so this TU compiles
 // unconditionally in CORE_SOURCES on every preset. When the macro is OFF the
