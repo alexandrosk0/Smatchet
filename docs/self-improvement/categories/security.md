@@ -17,6 +17,61 @@
      =========================================================================== -->
 
 <!-- ===========================================================================
+     2026-06-14 — AUDIT REMEDIATION CAMPAIGN DISPOSITION (single source of truth).
+     The 2026-06-13 audit was worked end-to-end. Per-finding outcome below; the
+     individual entries further down may still read "Status: open" where a fix
+     PR updated only one of the synthesis/re-run DUPLICATE entries — THIS block is
+     authoritative. (CodeRabbit / the agents also confirmed 3 audit false
+     positives: P4Annotate QuoteWinArgWide line-cite stale; model checksum already
+     SHA-256-enforced; MCP thread pool already bounded at 8.)
+
+     FIXED (merged or in-flight PRs):
+       H1 AgentsMd path-containment + hard-link guard ......... #1210 (merged)
+       H3 JQL AccountId + E1 issue-key (shared escape) ........ #1211 (merged)
+       H4/E2 tracker redirect auth-strip ..................... #1212 (merged)
+       H5 ai.prompt rate-limit + consent ..................... #1221 (merged)
+       ADF unbounded recursion (walkers) .................... #1220 (merged)
+       ADF dump-fallback DoS (walkers' sibling, ASan crash) .. #1237
+       #6 P4vLaunch QuoteWinArgWide arg-injection ............ #1222 (merged)
+       #4 MCP Host/Origin DNS-rebind ........................ #1228 (merged)
+       #10 OfflineQueue draft audit redaction ............... #1226 (merged)
+       #9 stb decode pre-allocation dimension cap ........... #1225 (merged)
+       #11 AI-client redirect auth-strip + #12 tracker error-body redaction #1232 (merged)
+       log-redaction gaps (Logger sink / CRLF-ANSI / 36-char UUID) #1230
+       #14 SSRF IP-encoding denylist (decimal/octal/hex/IPv6) #1229 (merged)
+       #15/#19/#16 subprocess env-scrub / spawn-log race / p4 PATH #1233 (merged)
+       #20 MCP SSE bound + Whisper download host-pin/size-cap + http→https #1235
+       (gate-fix) CallstackParser ReDoS-sentinel ASan budget . #1215 (merged)
+
+     ACCEPTED — per threat model §1 (same-user code is inside the trust boundary;
+     these are LOW/INFO precisely because of that, and coding them adds little on
+     a single-user local-first desktop app):
+       DPAPI user-scope no-added-entropy (#24); DPAPI plaintext-fallback uniqueness;
+       db_path "unsanitised" (the user's own %APPDATA%); SQLite local cache at-rest
+       unencrypted; p4/p4vc PATH residual (partially hardened by #1233); legacy
+       AiBaseUrl grandfather (cloud-metadata still blocked); attachment-proxy
+       user:pass@ userinfo; gradle-wrapper-jar sha (mobile pre-release, tracked).
+
+     DEFERRED — tracked, not coded this campaign (low-value-local or larger scope):
+       Crash-handler minidump may include process memory (#17 — minidump scrubbing
+       is complex + low-value local); Standalone DLL-search-path full harden (#18);
+       MCP attachment-proxy SSRF (#5 — already HTTPS-only + host-allow-listed +
+       redirects-disabled; confirm-only, minimal residual); Lua child-coroutine
+       hook not inherited (sandbox-completeness; paste-and-run is local).
+
+     STILL OPEN — needs action:
+       * #13 Automation-worker hook → shutdown deadlock / UI-thread starvation
+         (Pillar 2 MEDIUM) — NOT addressed this campaign (orchestration miss);
+         remains a real open MEDIUM.
+       * #2/#3 Command-registry / MCP-dispatch lack ctx.Source authz (+ the
+         Unreal-console partial #24) — a TRUST-MODEL DESIGN DECISION (deny
+         destructive / require-confirm / keep UI-parity), deferred for a human call.
+       * The deeper-audit-playbook CANDIDATES (g_ui race, AiAssistant cancel race,
+         FormatDateIfIso OOB, Plane/GitHub mapper hardening, JSON→Lua depth bound)
+         are a SEPARATE deeper-audit track (not adversarially-confirmed), unchanged.
+     =========================================================================== -->
+
+<!-- ===========================================================================
      2026-06-13 — deeper-audit playbook cross-reference (NOT yet confirmed).
      Source: docs/security/DEEPER_AUDIT_PLAYBOOK.md (the 7-tier / 34-target
      follow-up ladder, PR #1191) cross-referenced against this ledger via
