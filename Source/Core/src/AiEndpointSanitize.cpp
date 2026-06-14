@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <cstring>
 
 namespace smatchet {
@@ -45,54 +46,126 @@ std::string ExtractHostPort(const std::string& url, std::size_t schemeEnd) {
     return url.substr(hostStart, hostEnd - hostStart);
 }
 
-// Strip optional ":port" suffix from a "host[:port]" string. IPv6 [..] is not
-// considered here — IPv6 literal in an AI endpoint URL is exotic and the
-// validator falls back to the conservative "RejectedMalformed" if it ever
-// appears, since we never accept it as a host.
+// Strip optional ":port" suffix from a "host[:port]" string. A bracketed IPv6
+// literal "[::1]:443" keeps everything inside the brackets (its own colons are
+// not a port separator) and yields the bracket-stripped address "::1"; a plain
+// "host:port" splits at the single colon. An IPv4/host with no port is returned
+// as-is. (Multiple unbracketed colons => treated as a bare IPv6 literal, kept
+// whole; the canonicaliser decides whether it is a real address.)
 std::string StripPort(const std::string& hostPort) {
-    const std::size_t colon = hostPort.find(':');
-    if (colon == std::string::npos)
+    if (!hostPort.empty() && hostPort[0] == '[') {
+        const std::size_t close = hostPort.find(']');
+        if (close == std::string::npos)
+            return hostPort; // malformed; canonicaliser will reject
+        return hostPort.substr(1, close - 1);
+    }
+    const std::size_t first = hostPort.find(':');
+    if (first == std::string::npos)
         return hostPort;
-    return hostPort.substr(0, colon);
+    // A second colon means an unbracketed IPv6 literal — keep the whole thing.
+    if (hostPort.find(':', first + 1) != std::string::npos)
+        return hostPort;
+    return hostPort.substr(0, first);
 }
 
-bool IsAllDigitsOrDots(const std::string& s) {
-    if (s.empty())
+// Parse a single numeric IPv4 "part" supporting the three C-library radixes that
+// inet_aton / Windows resolvers accept: a leading "0x"/"0X" = hex, a leading "0"
+// = octal, otherwise decimal. Writes the value into `out` (0 .. cap). Returns
+// false on an empty part, a non-radix digit, or any value > cap — the > cap test
+// is the overflow guard, so a denied address can never wrap into an allowed one.
+// `cap` is 0xFF for the first three dotted parts and the remainder cap for the
+// last (so "169.254.43518" packs 43518 into the final two octets, like inet_aton).
+bool ParseIpv4Part(const std::string& s, std::size_t begin, std::size_t end, std::uint64_t cap, std::uint64_t& out) {
+    if (begin >= end)
         return false;
-    return std::all_of(s.begin(), s.end(), [](char c) { return c == '.' || (c >= '0' && c <= '9'); });
+    int radix = 10;
+    std::size_t i = begin;
+    if (s[i] == '0' && i + 1 < end && (s[i + 1] == 'x' || s[i + 1] == 'X')) {
+        radix = 16;
+        i += 2;
+        if (i >= end)
+            return false; // bare "0x"
+    } else if (s[i] == '0' && i + 1 < end) {
+        radix = 8;
+        ++i;
+    }
+    std::uint64_t val = 0;
+    for (; i < end; ++i) {
+        const char c = s[i];
+        int d;
+        if (c >= '0' && c <= '9')
+            d = c - '0';
+        else if (radix == 16 && c >= 'a' && c <= 'f')
+            d = c - 'a' + 10;
+        else if (radix == 16 && c >= 'A' && c <= 'F')
+            d = c - 'A' + 10;
+        else
+            return false;
+        if (d >= radix)
+            return false; // e.g. '8'/'9' in an octal part
+        val = val * static_cast<std::uint64_t>(radix) + static_cast<std::uint64_t>(d);
+        if (val > cap)
+            return false; // overflow / out-of-range guard
+    }
+    out = val;
+    return true;
 }
 
-// Parse "a.b.c.d" into 4 octets; returns false if the host is not a plain IPv4
-// literal (we use this purely to detect link-local / metadata addresses — DNS
-// resolution is intentionally NOT performed by the validator).
-bool ParseIpv4Literal(const std::string& host, unsigned char octets[4]) {
-    if (!IsAllDigitsOrDots(host))
+// Canonicalise any IPv4 literal — classic dotted-quad AND the alternate radix /
+// short forms that resolvers (and curl) accept and an SSRF denylist must not
+// miss: decimal "2852039166", hex "0xA9FEA9FE", octal "0251.0376.0251.0376",
+// and short forms with 1-3 parts (the last part packs the trailing octets, like
+// inet_aton: "169.254.43518" -> 169.254.169.254). Returns false if the host is
+// not an IPv4 literal in any of these forms. Overflow-safe via ParseIpv4Part.
+bool CanonicalizeIpv4(const std::string& host, unsigned char octets[4]) {
+    // Hex/octal digits push beyond the dotted-quad alphabet, so screen on the
+    // characters a numeric IPv4 literal can contain (digits, dots, x/X, a-f/A-F).
+    const bool numericLike = !host.empty() && std::all_of(host.begin(), host.end(), [](char c) {
+        return c == '.' || (c >= '0' && c <= '9') || c == 'x' || c == 'X' || (c >= 'a' && c <= 'f') ||
+               (c >= 'A' && c <= 'F');
+    });
+    if (!numericLike)
         return false;
-    std::size_t i = 0;
-    for (int oct = 0; oct < 4; ++oct) {
-        if (i >= host.size())
-            return false;
-        unsigned val = 0;
-        std::size_t digits = 0;
-        while (i < host.size() && host[i] != '.') {
-            if (host[i] < '0' || host[i] > '9')
+
+    // Split on '.' into up to 4 parts (reject 5+ or a trailing/empty part).
+    std::uint64_t parts[4];
+    int nparts = 0;
+    std::size_t start = 0;
+    for (std::size_t i = 0; i <= host.size(); ++i) {
+        if (i == host.size() || host[i] == '.') {
+            if (nparts >= 4)
+                return false;                        // too many parts
+            const std::uint64_t cap = 0xFFFFFFFFull; // per-part overflow cap; range checked below
+            if (!ParseIpv4Part(host, start, i, cap, parts[nparts]))
                 return false;
-            val = val * 10u + static_cast<unsigned>(host[i] - '0');
-            ++digits;
-            ++i;
-            if (digits > 3 || val > 255u)
-                return false;
-        }
-        if (digits == 0)
-            return false;
-        octets[oct] = static_cast<unsigned char>(val);
-        if (oct < 3) {
-            if (i >= host.size() || host[i] != '.')
-                return false;
-            ++i; // skip dot
+            ++nparts;
+            start = i + 1;
         }
     }
-    return i == host.size();
+    if (nparts == 0)
+        return false;
+
+    // inet_aton packing: the LAST part fills the remaining low octets; every
+    // leading part must fit in a single octet.
+    for (int p = 0; p < nparts - 1; ++p) {
+        if (parts[p] > 0xFFull)
+            return false;
+    }
+    const int trailingOctets = 4 - (nparts - 1);
+    const std::uint64_t trailingCap = (trailingOctets >= 4) ? 0xFFFFFFFFull : ((1ull << (8 * trailingOctets)) - 1ull);
+    if (parts[nparts - 1] > trailingCap)
+        return false;
+
+    std::uint32_t addr = 0;
+    for (int p = 0; p < nparts - 1; ++p)
+        addr |= static_cast<std::uint32_t>(parts[p]) << (8 * (3 - p));
+    addr |= static_cast<std::uint32_t>(parts[nparts - 1]);
+
+    octets[0] = static_cast<unsigned char>((addr >> 24) & 0xFF);
+    octets[1] = static_cast<unsigned char>((addr >> 16) & 0xFF);
+    octets[2] = static_cast<unsigned char>((addr >> 8) & 0xFF);
+    octets[3] = static_cast<unsigned char>(addr & 0xFF);
+    return true;
 }
 
 bool IsCloudMetadataLiteral(const unsigned char o[4]) {
@@ -110,14 +183,80 @@ bool IsLinkLocalLiteral(const unsigned char o[4]) {
     return o[0] == 169 && o[1] == 254;
 }
 
+// RFC1918 private ranges: 10/8, 172.16/12, 192.168/16. (Loopback 127/8 is handled
+// separately as an allowed-with-consent target, not a denied range.)
+bool IsPrivateNetworkLiteral(const unsigned char o[4]) {
+    if (o[0] == 10)
+        return true;
+    if (o[0] == 172 && o[1] >= 16 && o[1] <= 31)
+        return true;
+    if (o[0] == 192 && o[1] == 168)
+        return true;
+    return false;
+}
+
+// Classify a bare (bracket-stripped, lowercased) IPv6 literal against the same
+// denylist, mapping each match onto the existing IPv4 verdicts. Returns true and
+// sets `out` when the host is an IPv6 literal we recognise (incl. IPv4-mapped /
+// IPv4-compatible forms, which delegate to the IPv4 classifier). Returns false
+// when the host is not an IPv6 literal at all (a normal hostname).
+bool ClassifyIpv6Literal(const std::string& host, EndpointVerdict& out, bool& isLiteral) {
+    isLiteral = false;
+    // An IPv6 literal has >=2 colons (so a "host:port" leftover never reaches
+    // here) and only hex digits, colons, dots (for the embedded-v4 tail).
+    if (host.find("::") == std::string::npos && std::count(host.begin(), host.end(), ':') < 2)
+        return false;
+    const bool ipv6Like = !host.empty() && std::all_of(host.begin(), host.end(), [](char c) {
+        return c == ':' || c == '.' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+    });
+    if (!ipv6Like)
+        return false;
+    isLiteral = true;
+
+    // IPv4-mapped (::ffff:a.b.c.d) and IPv4-compatible (::a.b.c.d) embed a dotted
+    // IPv4 tail — pull it out and run the full IPv4 denylist on the real address.
+    const std::size_t lastColon = host.rfind(':');
+    if (lastColon != std::string::npos && host.find('.', lastColon) != std::string::npos) {
+        const std::string v4 = host.substr(lastColon + 1);
+        unsigned char o[4];
+        if (CanonicalizeIpv4(v4, o)) {
+            if (IsCloudMetadataLiteral(o))
+                out = EndpointVerdict::RejectedCloudMetadata;
+            else if (IsLinkLocalLiteral(o))
+                out = EndpointVerdict::RejectedLinkLocal;
+            else if (IsPrivateNetworkLiteral(o))
+                out = EndpointVerdict::RejectedPrivateNetwork;
+            else
+                out = EndpointVerdict::Allowed; // a mapped public v4 — let host-pin decide
+            return true;
+        }
+    }
+
+    // Pure-IPv6 prefixes: loopback ::1, link-local fe80::/10, ULA fc00::/7.
+    if (host == "::1") {
+        out = EndpointVerdict::Allowed; // loopback — consent gating handled by caller
+        return true;
+    }
+    if (host.compare(0, 5, "fe80:") == 0 || host == "fe80::") {
+        out = EndpointVerdict::RejectedLinkLocal;
+        return true;
+    }
+    if (!host.empty() && (host[0] == 'f') && host.size() >= 2 && (host[1] == 'c' || host[1] == 'd')) {
+        out = EndpointVerdict::RejectedPrivateNetwork; // fc00::/7 ULA (fc.. / fd..)
+        return true;
+    }
+    out = EndpointVerdict::Allowed; // a public/other IPv6 literal — host-pin decides
+    return true;
+}
+
 // Loopback = always-safe target for plain http:// (the local-Ollama case).
-// Covers "localhost" by name and the whole 127.0.0.0/8 IPv4 block. IPv6 "::1"
-// is not handled (the validator never accepts bracketed IPv6 hosts anyway).
+// Covers "localhost" by name, the whole 127.0.0.0/8 IPv4 block (any encoding),
+// and the IPv6 loopback ::1.
 bool IsLoopbackHost(const std::string& host) {
-    if (host == "localhost")
+    if (host == "localhost" || host == "::1")
         return true;
     unsigned char octets[4];
-    return ParseIpv4Literal(host, octets) && octets[0] == 127;
+    return CanonicalizeIpv4(host, octets) && octets[0] == 127;
 }
 
 } // namespace
@@ -143,12 +282,23 @@ EndpointVerdict SanitizeAiEndpointUrl(const std::string& url, const EndpointPoli
     if (host.empty())
         return EndpointVerdict::RejectedMalformed;
 
+    // SSRF denylist on the CANONICALISED address — alternate IPv4 encodings
+    // (decimal / octal / hex / short-form) and IPv6 literals (incl. IPv4-mapped
+    // ::ffff:) all resolve to their real address BEFORE the comparison, so a
+    // config-write attacker cannot smuggle a denied IP past the dotted-quad check.
     unsigned char octets[4];
-    if (ParseIpv4Literal(host, octets)) {
+    if (CanonicalizeIpv4(host, octets)) {
         if (IsCloudMetadataLiteral(octets))
             return EndpointVerdict::RejectedCloudMetadata;
         if (IsLinkLocalLiteral(octets))
             return EndpointVerdict::RejectedLinkLocal;
+        if (IsPrivateNetworkLiteral(octets))
+            return EndpointVerdict::RejectedPrivateNetwork;
+    } else {
+        EndpointVerdict v6 = EndpointVerdict::Allowed;
+        bool isV6Literal = false;
+        if (ClassifyIpv6Literal(host, v6, isV6Literal) && isV6Literal && v6 != EndpointVerdict::Allowed)
+            return v6;
     }
 
     // Loopback is auto-exempt ONLY for unpinned providers (Ollama / DeepSeek):
@@ -198,7 +348,10 @@ const char* EndpointVerdictDescription(EndpointVerdict v) {
     case EndpointVerdict::RejectedCloudMetadata:
         return "rejected: cloud-metadata IP literal (169.254.169.254 / 100.100.100.200) blocked to prevent SSRF";
     case EndpointVerdict::RejectedLinkLocal:
-        return "rejected: link-local IPv4 (169.254.0.0/16) blocked to prevent SSRF";
+        return "rejected: link-local address (169.254.0.0/16 or fe80::/10) blocked to prevent SSRF";
+    case EndpointVerdict::RejectedPrivateNetwork:
+        return "rejected: private-network address (RFC1918 10/8 · 172.16/12 · 192.168/16, or IPv6 ULA "
+               "fc00::/7) blocked to prevent SSRF";
     case EndpointVerdict::RejectedMalformed:
         return "rejected: malformed URL (missing host)";
     case EndpointVerdict::RejectedNonProviderHost:

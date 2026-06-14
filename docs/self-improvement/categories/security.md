@@ -172,6 +172,7 @@
   Concrete next action: Normalize via inet_pton/getaddrinfo and apply the denylist to resolved addresses. Effort S.
   Status: open
   Last-reviewed: 2026-06-13
+  Resolution: 2026-06-14 (PR #1229) — replaced the dotted-quad-only ParseIpv4Literal with an overflow-safe CanonicalizeIpv4 that normalises decimal (2852039166), hex (0xA9FEA9FE), octal (0251.0376.0251.0376), dotted-hex, and inet_aton short-forms (169.254.43518) to 4 octets BEFORE the denylist, plus a ClassifyIpv6Literal that handles bracketed IPv6 incl. IPv4-mapped ::ffff:169.254.169.254, link-local fe80::/10, and ULA fc00::/7. Added RejectedPrivateNetwork verdict for RFC1918 (10/8, 172.16/12, 192.168/16) + IPv6 ULA. The integer-form parse is overflow-guarded (>cap rejected) so a denied IP cannot wrap into an allowed one. Doctest coverage in tests/Core/AiEndpointSanitize.test.cpp. Residual: DNS-rebind-to-internal (a hostname that resolves to a denied IP) is still NOT blocked — sanitize-time resolution has its own TOCTOU and the audit scoped this finding to the literal-encoding bypass; tracked separately if pursued.
 
 - 2026-06-13 · deep-audit · [security] · P3 — SubprocessCapture inherits full parent environment
   Details: Source/Core/src/Ui/SubprocessCapture.cpp:106-119,492 — children inherit the full env and a manipulable PATH.

@@ -24,7 +24,8 @@ enum class EndpointVerdict {
     RejectedBadScheme,       // not http:// or https://
     RejectedControlChars,    // CR / LF / NUL embedded (header smuggling)
     RejectedCloudMetadata,   // 169.254.169.254 / 100.100.100.200 etc.
-    RejectedLinkLocal,       // 169.254.0.0/16 (link-local IPv4)
+    RejectedLinkLocal,       // 169.254.0.0/16 (link-local IPv4) or fe80::/10 (IPv6)
+    RejectedPrivateNetwork,  // RFC1918 (10/8, 172.16/12, 192.168/16) or IPv6 ULA fc00::/7
     RejectedMalformed,       // missing host, empty after scheme, etc.
     RejectedNonProviderHost, // host != provider canonical host + custom-endpoint consent not granted
     RejectedInsecureHttp,    // plain http:// to a non-loopback host + insecure-http consent not granted
