@@ -1166,13 +1166,17 @@ endif()
 # with zero AI deps, now also consumed by the backend-agnostic comments modal
 # (SmatchetCommentsModalUi.cpp). It must link in the AI-off light build, so it stays in the
 # unconditional glob'd CORE_SOURCES — do not move it back under SMATCHET_WITH_AI (#1217).
+# NOTE: AiErrorRedact.cpp is likewise NOT in this list (same #1217 rationale). It is a pure
+# string-redaction helper (smatchet::ai::pure::RedactProviderErrorBody) with zero AI deps,
+# now also consumed by the always-built tracker HTTP logging (TrackerHttpUtils
+# RedactHttpBodyForLog, security audit #12). Pruning it from the AI-off light build left
+# RedactProviderErrorBody undefined → LNK1120. It must stay in the unconditional CORE_SOURCES.
 set(_SMATCHET_AI_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/AgentsMdLoader.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/AiAssistantController.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/AiClientFactory.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/AiContextBuilder.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/AiEndpointSanitize.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/AiErrorRedact.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/AiModelCatalog.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/AiModelSignature.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/AiNdjsonParser.cpp"
