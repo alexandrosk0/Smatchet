@@ -96,6 +96,15 @@ std::string NormalizeBaseUrl(const std::string& domain) {
     if (base.compare(0, 7, "http://") != 0 && base.compare(0, 8, "https://") != 0) {
         base = "https://" + base;
     }
+    // Cleartext-credential hardening (security audit LOW). The tracker Basic-auth header is
+    // attached to every request; a cleartext `http://` base to a NON-loopback host would put
+    // those credentials on the wire in the clear. Upgrade such a base to `https://` and warn.
+    // Loopback `http://` (local dev / a loopback dev tracker) is left as-is.
+    if (TrackerHttpPure::ShouldUpgradeCleartextBase(base)) {
+        base = "https://" + base.substr(7);
+        LOG_WARN("NormalizeBaseUrl: upgraded cleartext http:// tracker base to https:// (credentials must "
+                 "not travel in the clear to a non-loopback host); fix the configured domain to https://.");
+    }
     while (!base.empty() && base.back() == '/') {
         base.pop_back();
     }
@@ -175,10 +184,9 @@ cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, c
     // 64-bit on LP64 (Linux/Android), so a braced-init {long} narrows — ill-formed under
     // clang (hard error, not a warning). It compiles on Windows only because LLP64 `long`
     // is 32-bit. Cast explicitly; HTTP timeouts in ms always fit int32 (<= ~24.8 days).
-    cpr::Response response = cpr::Get(cpr::Url{url}, headers, redirect,
-                                      cpr::ConnectTimeout{static_cast<std::int32_t>(connectTimeoutMs)},
-                                      cpr::Timeout{static_cast<std::int32_t>(overallTimeoutMs)},
-                                      MakeTrackerSslOptions());
+    cpr::Response response =
+        cpr::Get(cpr::Url{url}, headers, redirect, cpr::ConnectTimeout{static_cast<std::int32_t>(connectTimeoutMs)},
+                 cpr::Timeout{static_cast<std::int32_t>(overallTimeoutMs)}, MakeTrackerSslOptions());
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, NetworkUsageTracker::kEstimatedGetUploadBytes,
                                            response);
     LogTrackerHttpResult(clientName, "GET", url, response);

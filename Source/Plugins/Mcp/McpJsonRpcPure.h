@@ -52,6 +52,19 @@ bool ConstantTimeStringEquals(const std::string& a, const std::string& b);
 
 bool IsAllowedAttachmentHost(const std::string& host, const std::string& trackerDomain);
 
+// Max concurrent SSE streams the MCP server accepts. Each SSE stream parks a worker in the
+// heartbeat wait-loop for its whole lifetime; the httplib pool is 8 (StartServerThread), so
+// an unbounded number of SSE connections would exhaust the pool and silently hang every
+// later connection in httplib's job deque (security synthesis #20). 4 leaves >= 4 workers
+// for keep-alive POST channels + tool calls while bounding the parking surface.
+constexpr int kMaxConcurrentSseConnections = 4;
+
+// Connection-bound decision for a new SSE stream. `currentActive` is the count of SSE
+// streams already parked (BEFORE admitting this one). Returns true iff admitting one more
+// would stay within `kMaxConcurrentSseConnections` (i.e. currentActive < cap). Pure — the
+// caller owns the atomic counter + the 503 response. Negative input fails closed (false).
+bool CanAcceptSseConnection(int currentActive);
+
 /// Cap a string to `maxChars` characters and append "..." when truncated. Pure.
 std::string TruncateOneLine(const std::string& s, std::size_t maxChars);
 

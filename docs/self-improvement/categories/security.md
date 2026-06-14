@@ -17,6 +17,61 @@
      =========================================================================== -->
 
 <!-- ===========================================================================
+     2026-06-14 — AUDIT REMEDIATION CAMPAIGN DISPOSITION (single source of truth).
+     The 2026-06-13 audit was worked end-to-end. Per-finding outcome below; the
+     individual entries further down may still read "Status: open" where a fix
+     PR updated only one of the synthesis/re-run DUPLICATE entries — THIS block is
+     authoritative. (CodeRabbit / the agents also confirmed 3 audit false
+     positives: P4Annotate QuoteWinArgWide line-cite stale; model checksum already
+     SHA-256-enforced; MCP thread pool already bounded at 8.)
+
+     FIXED (merged or in-flight PRs):
+       H1 AgentsMd path-containment + hard-link guard ......... #1210 (merged)
+       H3 JQL AccountId + E1 issue-key (shared escape) ........ #1211 (merged)
+       H4/E2 tracker redirect auth-strip ..................... #1212 (merged)
+       H5 ai.prompt rate-limit + consent ..................... #1221 (merged)
+       ADF unbounded recursion (walkers) .................... #1220 (merged)
+       ADF dump-fallback DoS (walkers' sibling, ASan crash) .. #1237
+       #6 P4vLaunch QuoteWinArgWide arg-injection ............ #1222 (merged)
+       #4 MCP Host/Origin DNS-rebind ........................ #1228 (merged)
+       #10 OfflineQueue draft audit redaction ............... #1226 (merged)
+       #9 stb decode pre-allocation dimension cap ........... #1225 (merged)
+       #11 AI-client redirect auth-strip + #12 tracker error-body redaction #1232 (merged)
+       log-redaction gaps (Logger sink / CRLF-ANSI / 36-char UUID) #1230
+       #14 SSRF IP-encoding denylist (decimal/octal/hex/IPv6) #1229 (merged)
+       #15/#19/#16 subprocess env-scrub / spawn-log race / p4 PATH #1233 (merged)
+       #20 MCP SSE bound + Whisper download host-pin/size-cap + http→https #1235
+       (gate-fix) CallstackParser ReDoS-sentinel ASan budget . #1215 (merged)
+
+     ACCEPTED — per threat model §1 (same-user code is inside the trust boundary;
+     these are LOW/INFO precisely because of that, and coding them adds little on
+     a single-user local-first desktop app):
+       DPAPI user-scope no-added-entropy (#24); DPAPI plaintext-fallback uniqueness;
+       db_path "unsanitised" (the user's own %APPDATA%); SQLite local cache at-rest
+       unencrypted; p4/p4vc PATH residual (partially hardened by #1233); legacy
+       AiBaseUrl grandfather (cloud-metadata still blocked); attachment-proxy
+       user:pass@ userinfo; gradle-wrapper-jar sha (mobile pre-release, tracked).
+
+     DEFERRED — tracked, not coded this campaign (low-value-local or larger scope):
+       Crash-handler minidump may include process memory (#17 — minidump scrubbing
+       is complex + low-value local); Standalone DLL-search-path full harden (#18);
+       MCP attachment-proxy SSRF (#5 — already HTTPS-only + host-allow-listed +
+       redirects-disabled; confirm-only, minimal residual); Lua child-coroutine
+       hook not inherited (sandbox-completeness; paste-and-run is local).
+
+     STILL OPEN — needs action:
+       * #13 Automation-worker hook → shutdown deadlock / UI-thread starvation
+         (Pillar 2 MEDIUM) — NOT addressed this campaign (orchestration miss);
+         remains a real open MEDIUM.
+       * #2/#3 Command-registry / MCP-dispatch lack ctx.Source authz (+ the
+         Unreal-console partial #24) — a TRUST-MODEL DESIGN DECISION (deny
+         destructive / require-confirm / keep UI-parity), deferred for a human call.
+       * The deeper-audit-playbook CANDIDATES (g_ui race, AiAssistant cancel race,
+         FormatDateIfIso OOB, Plane/GitHub mapper hardening, JSON→Lua depth bound)
+         are a SEPARATE deeper-audit track (not adversarially-confirmed), unchanged.
+     =========================================================================== -->
+
+<!-- ===========================================================================
      2026-06-13 — deeper-audit playbook cross-reference (NOT yet confirmed).
      Source: docs/security/DEEPER_AUDIT_PLAYBOOK.md (the 7-tier / 34-target
      follow-up ladder, PR #1191) cross-referenced against this ledger via
@@ -210,7 +265,7 @@
 - 2026-06-13 · deep-audit · [security] · P3 — MCP thread pool / SSE parking lacks connection bounds
   Details: Source/Plugins/Mcp/McpPlugin.cpp:848-850,600-620 — no clear cap on concurrent parked SSE connections / pool threads.
   Concrete next action: Bound concurrent connections and idle-park duration. Effort S.
-  Status: open
+  Status: applied (2026-06-14, PR network-bounds-hardening-wave4) — the httplib worker pool was ALREADY bounded at 8 (#987, StartServerThread). The residual gap was unbounded *concurrent SSE streams*: each SSE stream parks ~2 workers in the heartbeat wait-loop, so ~4 SSE clients exhaust the size-8 pool and the next connection queues forever (the #987 comment itself flagged this). Fix: `McpPlugin::RegisterSseRoute` now reserves a slot via an `std::atomic<int> activeSseConnections` guarded by the pure `CanAcceptSseConnection(currentActive)` decision (cap `kMaxConcurrentSseConnections = 4`, McpJsonRpcPure.h), rejecting the over-cap connect with HTTP 503 + `Retry-After: 5` BEFORE streaming. The slot is released by a `std::shared_ptr<void>` custom-deleter (`sseGuard`) captured into the chunked-content provider, so the decrement fires exactly when httplib destroys the provider (stream close), with no leak on the early-return paths. Pure decision unit-tested (tests/Plugins/Mcp/McpHostOrigin.test.cpp).
   Last-reviewed: 2026-06-13
 
 - 2026-06-13 · deep-audit · [security] · P3 — Gradle wrapper jar/properties lack sha256 verification
@@ -261,30 +316,33 @@
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — Whisper model download follows redirects with no host-pin and no size cap
   Details: `Source/Plugins/Whisper/ModelDownloader.cpp:314` uses `cpr::Redirect(true,true)` with no host pin and no maximum response size on the ggml model fetch; a redirect to an attacker host serves an unverified blob (and there is no checksum gate on the model). Partly-confirmed LOW. NEW.
   Concrete next action: pin the download host, add a size cap, and sha256-verify the model artifact (mirror the Lua TOFU pin / E3). ~S.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Status: applied (2026-06-14, PR network-bounds-hardening-wave4) — SHA-256 verification already gates artefact identity (ModelCatalog, the audit's "no checksum gate" remark is a false positive — see Resolution). Added host-pin + size-cap: new pure helper `Source/Plugins/Whisper/ModelDownloadPolicy.{h,cpp}` (`IsAllowedModelUrl` = https + `*.huggingface.co`/`*.hf.co` exact-suffix allow-list; `ExceedsModelSizeCap`, ceiling 4 GiB > the 1.53 GB largest catalog model). `ModelDownloader::RunDownloadWorker` now (1) rejects a non-allow-listed/non-https initial URL before opening a socket, (2) caps redirect hops at 5 (`cpr::Redirect(5, true, false, POST_ALL)` — note redirects must stay ON: huggingface LFS 30x-bounces the `resolve/main` pointer to a CDN, so the H4 disable-follow approach is not applicable here), (3) aborts mid-stream via the WriteCallback when the running byte count crosses the cap, (4) re-checks the effective post-redirect host against the same allow-list. Pure decisions unit-tested (tests/Plugins/Whisper/ModelDownloadPolicy.test.cpp). cpr-bound redirect wiring itself is integration-only (untestable in the doctest rig).
+  Last-reviewed: 2026-06-14
 
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — NormalizeBaseUrl accepts cleartext http:// tracker endpoints
   Details: `Source/Core/src/Tracker/TrackerHttpUtils.cpp:85` `NormalizeBaseUrl` does not require `https://`, so a config (or first-run) `http://` tracker base sends credentials in cleartext and exposes the redirect-forwarding path (H4 / E2). Confirmed LOW. NEW.
   Concrete next action: default-reject `http://` (allow only behind the same explicit insecure-http consent gate the AI endpoint sanitizer uses), or upgrade to `https`. ~S.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Status: applied (2026-06-14, PR network-bounds-hardening-wave4) — `NormalizeBaseUrl` (TrackerHttpUtils.cpp) now upgrades a cleartext `http://` base to `https://` (with a LOG_WARN) when the host is NON-loopback, so the tracker Basic-auth header never travels in the clear to a public host; loopback `http://` (`localhost`/`127.0.0.0/8`/`::1`, local dev) is left untouched so a loopback dev config is not broken. Upgrade (not hard-reject) keeps the existing string-building contract of all 24 call sites intact. Decision extracted to the pure `TrackerHttpPure::ShouldUpgradeCleartextBase` + `IsLoopbackHost` (the latter requires a real `127.x` dotted-quad — `127.example.com` is correctly treated as a public host, a bug my own test caught). Unit-tested in tests/Core/TrackerHttpSslPure.test.cpp.
+  Last-reviewed: 2026-06-14
 
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — Logger file sink writes log lines without RedactLogLine
   Details: `Source/Core/src/Logger.cpp:320` `FileSinkWorker` writes `e.message` verbatim to the on-disk log; `RedactLogLine` (applied on the crash/bug-report paths) is NOT applied at the file sink, so any `LOG_*` that ever carries a secret/PII reaches the log file unredacted. No current `LOG_*` call places a raw credential there, but body-logging at Trace would. Partly-confirmed LOW. NEW.
   Concrete next action: route file-sink writes through `RedactLogLine` (or redact at emit for the body-logging paths). ~S.
+  Resolution: 2026-06-14 (fix/log-redaction-gaps-wave4) — `Logger::FileSinkWorker` now writes `smatchet::privacy::RedactLogLine(e.message)` instead of `e.message`, so the on-disk line is scrubbed on the same path the message reaches the sink. `TextRedaction.cpp` linked into the two test targets that link `Logger.cpp` (SmatchetTsanTests, SmatchetLuaTests). doctest `Logger file sink — redacts secret/long-token + strips CR/LF/ANSI on the persisted line` reads the file back and asserts the secret is gone. Status: resolved.
   Status: open
   Last-reviewed: 2026-06-13
 
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — CR/LF/ANSI log injection from server-controlled data
   Details: `Source/Core/src/Privacy/TextRedaction.cpp:80` — redaction does not strip CR/LF/ANSI escapes, so server-controlled strings reaching a log line can forge log entries or inject terminal escapes. Confirmed LOW. NEW.
   Concrete next action: strip/encode CR/LF and ANSI CSI sequences in the log-line redactor. ~S.
+  Resolution: 2026-06-14 (fix/log-redaction-gaps-wave4) — `RedactLogLine` now runs `StripControlAndAnsi` FIRST (before the secret-shape matchers), replacing CR/LF, lone ESC, ANSI CSI/OSC sequences, and all C0 controls + DEL with a single space. Running it first means a control byte hidden mid-token cannot evade the shape matchers and cannot survive to forge a log line. doctest `RedactLogLine — strips CR/LF/ANSI…` covers CRLF + CSI + bare-ESC/C0. Status: resolved.
   Status: open
   Last-reviewed: 2026-06-13
 
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — Redaction LongTokenRe 40-char threshold misses 36-char Plane UUID tokens
   Details: `Source/Core/src/Privacy/TextRedaction.cpp:45` `LongTokenRe` redacts only >=40-char tokens, so a 36-char Plane API UUID (and similarly-sized secrets) is not redacted if it reaches a log. Confirmed LOW. NEW.
   Concrete next action: add a UUID-shaped pattern (8-4-4-4-12) to the redactor, or lower the threshold with a git-hash guard. ~S.
+  Resolution: 2026-06-14 (fix/log-redaction-gaps-wave4) — added `UuidRe` matching the 36-char 8-4-4-4-12 hex-with-dashes shape and redacting it in `RedactLogLine` (chose the shape-specific pattern over lowering the 40-char floor, so arbitrary 36-char text is NOT over-redacted). doctest `RedactLogLine — redacts a 36-char UUID token…` asserts a Plane-style UUID is scrubbed AND a benign 36-char dash-free string survives. Status: resolved.
   Status: open
   Last-reviewed: 2026-06-13
 

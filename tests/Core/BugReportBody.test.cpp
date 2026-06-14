@@ -53,6 +53,38 @@ TEST_CASE("RedactLogText — applies per line, preserves newlines") {
     CHECK(std::count(out.begin(), out.end(), '\n') == 2);
 }
 
+TEST_CASE("RedactLogLine — redacts a 36-char UUID token (Plane), keeps benign 36-char text") {
+    const std::string uuid = "550e8400-e29b-41d4-a716-446655440000"; // 36 chars, 8-4-4-4-12
+    const std::string out = RedactLogLine("plane workspace " + uuid + " synced");
+    CHECK(out.find(uuid) == std::string::npos);
+    CHECK(out.find("<redacted>") != std::string::npos);
+
+    // A benign 36-char run that is NOT UUID-shaped (no 8-4-4-4-12 dash structure)
+    // must survive — the pattern is shape-specific, not any 36-char string.
+    const std::string benign = "abcdefghijklmnopqrstuvwxyz0123456789"; // 36 chars, no dashes
+    CHECK(static_cast<int>(benign.size()) == 36);
+    CHECK(RedactLogLine(benign).find(benign) != std::string::npos);
+}
+
+TEST_CASE("RedactLogLine — strips CR/LF/ANSI so server data cannot forge a log line") {
+    // CR/LF would forge a second physical log line; ANSI CSI drives the terminal.
+    const std::string injected = "user=bob\r\n2099-01-01 FAKE level=error forged\x1b[31m DANGER\x1b[0m";
+    const std::string out = RedactLogLine(injected);
+    CHECK(out.find('\r') == std::string::npos);
+    CHECK(out.find('\n') == std::string::npos);
+    CHECK(out.find('\x1b') == std::string::npos);
+    // The visible text survives (neutralized, not dropped) but as one inert line.
+    CHECK(out.find("user=bob") != std::string::npos);
+    CHECK(out.find("DANGER") != std::string::npos);
+
+    // A bare ESC and other C0 controls are stripped too (no partial-escape bypass).
+    const std::string ctl = std::string("a\x1b") + "b\x07" + "c\x08" + "d";
+    const std::string ctlOut = RedactLogLine(ctl);
+    CHECK(ctlOut.find('\x1b') == std::string::npos);
+    CHECK(ctlOut.find('\x07') == std::string::npos);
+    CHECK(ctlOut.find('\x08') == std::string::npos);
+}
+
 // --------------------------------------------------------------------------
 // ScreenshotCensor
 // --------------------------------------------------------------------------

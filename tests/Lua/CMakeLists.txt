@@ -41,6 +41,9 @@ add_executable(SmatchetLuaTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/KeybindingsConfig.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/FieldEditAuditSource.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Logger.cpp"
+    # Logger.cpp now routes the file sink through RedactLogLine (audit
+    # 2026-06-13 LOW) — link the pure redactor so the closure resolves.
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Privacy/TextRedaction.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Command.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/CommandRegistry.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/FuzzyMatch.cpp"
@@ -80,6 +83,7 @@ target_include_directories(SmatchetLuaTests PRIVATE
     "${CMAKE_SOURCE_DIR}/Source/Core/include/Persistence"
     "${CMAKE_SOURCE_DIR}/Source/Core/include/Config"
     "${CMAKE_SOURCE_DIR}/Source/Core/include/Ui"
+    "${CMAKE_SOURCE_DIR}/Source/Core/include/Privacy"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence"
