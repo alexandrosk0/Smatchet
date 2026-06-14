@@ -5,8 +5,10 @@
 #include <string>
 
 using TrackerHttpPure::GetCaBundlePath;
+using TrackerHttpPure::IsLoopbackHost;
 using TrackerHttpPure::ResolveSslConfig;
 using TrackerHttpPure::SetCaBundlePath;
+using TrackerHttpPure::ShouldUpgradeCleartextBase;
 using TrackerHttpPure::SslConfig;
 
 // WS2 / Issue #1068 — the runtime TLS-trust seam. These exercise the pure decision logic
@@ -70,4 +72,47 @@ TEST_CASE("SetCaBundlePath / GetCaBundlePath: process-global round-trip") {
     // Hygiene: leave the process-global holder empty so test ordering can't leak a CAINFO
     // into any other case that reads GetCaBundlePath().
     SetCaBundlePath("");
+}
+
+// Cleartext-credential hardening (security audit LOW): NormalizeBaseUrl must not send the
+// tracker Basic-auth header over cleartext http:// to a non-loopback host. These pin the
+// pure decision the production NormalizeBaseUrl applies before building any tracker URL.
+
+TEST_CASE("IsLoopbackHost: loopback literals accepted, public hosts rejected") {
+    SUBCASE("loopback literals (with/without scheme, port, IPv6)") {
+        CHECK(IsLoopbackHost("localhost"));
+        CHECK(IsLoopbackHost("localhost:8080"));
+        CHECK(IsLoopbackHost("127.0.0.1"));
+        CHECK(IsLoopbackHost("127.0.0.1:9999"));
+        CHECK(IsLoopbackHost("127.5.5.5")); // any 127.x.x.x is loopback.
+        CHECK(IsLoopbackHost("http://localhost:8080/jira"));
+        CHECK(IsLoopbackHost("https://127.0.0.1/"));
+        CHECK(IsLoopbackHost("::1"));
+        CHECK(IsLoopbackHost("[::1]"));
+        CHECK(IsLoopbackHost("[::1]:8080"));
+    }
+    SUBCASE("public / non-loopback hosts rejected") {
+        CHECK_FALSE(IsLoopbackHost("corp-jira.example.com"));
+        CHECK_FALSE(IsLoopbackHost("https://acme.atlassian.net"));
+        CHECK_FALSE(IsLoopbackHost("127.example.com")); // not a 127.x literal — a hostname.
+        CHECK_FALSE(IsLoopbackHost("localhost.evil.com"));
+        CHECK_FALSE(IsLoopbackHost(""));
+    }
+}
+
+TEST_CASE("ShouldUpgradeCleartextBase: cleartext http to public host must upgrade") {
+    SUBCASE("non-loopback cleartext http -> upgrade") {
+        CHECK(ShouldUpgradeCleartextBase("http://corp-jira.example.com"));
+        CHECK(ShouldUpgradeCleartextBase("http://acme.atlassian.net/rest/api"));
+        CHECK(ShouldUpgradeCleartextBase("HTTP://Corp-Jira.Example.Com")); // case-insensitive scheme.
+    }
+    SUBCASE("https never upgraded") {
+        CHECK_FALSE(ShouldUpgradeCleartextBase("https://corp-jira.example.com"));
+        CHECK_FALSE(ShouldUpgradeCleartextBase("https://127.0.0.1"));
+    }
+    SUBCASE("loopback cleartext http left as-is (local dev allowed)") {
+        CHECK_FALSE(ShouldUpgradeCleartextBase("http://localhost:8080"));
+        CHECK_FALSE(ShouldUpgradeCleartextBase("http://127.0.0.1:9999/jira"));
+        CHECK_FALSE(ShouldUpgradeCleartextBase("http://[::1]:8080"));
+    }
 }
