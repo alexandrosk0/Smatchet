@@ -100,7 +100,8 @@
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "SMATCHET_BUILD_TESTS": "ON",
-                "SMATCHET_BUILD_LUA_TESTS": "ON"
+                "SMATCHET_BUILD_LUA_TESTS": "ON",
+                "SMATCHET_ENABLE_TEXTURE_FAULT_INJECTION": "ON"
             }
         },
         {
@@ -116,7 +117,8 @@
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "SMATCHET_BUILD_UI_TESTS": "ON",
                 "SMATCHET_DEBUG_VISIBLE_CUE_HARNESS": "ON",
-                "SMATCHET_AGENT_DEBUG": "ON"
+                "SMATCHET_AGENT_DEBUG": "ON",
+                "SMATCHET_ENABLE_TEXTURE_FAULT_INJECTION": "ON"
             }
         },
         {
@@ -176,7 +178,8 @@
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
                 "SMATCHET_BUILD_TESTS": "ON",
-                "SMATCHET_BUILD_LUA_TESTS": "ON"
+                "SMATCHET_BUILD_LUA_TESTS": "ON",
+                "SMATCHET_ENABLE_TEXTURE_FAULT_INJECTION": "ON"
             }
         },
         {
@@ -208,7 +211,8 @@
                 "SMATCHET_SANITIZER": "asan",
                 "SMATCHET_BUILD_UI_TESTS": "ON",
                 "SMATCHET_DEBUG_VISIBLE_CUE_HARNESS": "ON",
-                "SMATCHET_AGENT_DEBUG": "ON"
+                "SMATCHET_AGENT_DEBUG": "ON",
+                "SMATCHET_ENABLE_TEXTURE_FAULT_INJECTION": "ON"
             }
         },
         {
@@ -225,7 +229,8 @@
                 "SMATCHET_SANITIZER": "asan",
                 "SMATCHET_BUILD_UI_TESTS": "ON",
                 "SMATCHET_DEBUG_VISIBLE_CUE_HARNESS": "ON",
-                "SMATCHET_AGENT_DEBUG": "ON"
+                "SMATCHET_AGENT_DEBUG": "ON",
+                "SMATCHET_ENABLE_TEXTURE_FAULT_INJECTION": "ON"
             }
         },
         {

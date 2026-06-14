@@ -21,6 +21,7 @@
 #include "TicketSyncService.h"
 #include "Commands/Scenarios/IScenario.h"
 #include "SmatchetDefaults.h"
+#include "Ui/SmatchetImGuiTextureGuardRuntime.h"
 #include "SmatchetImGuiFonts.h"
 #include "SmatchetUI.h"
 #include "SmatchetUiSession.h"
@@ -556,14 +557,20 @@ void RunRenderLoop(BootstrapContext& ctx, const std::function<bool()>& shouldSto
         glfwPollEvents();
         ctx.app->mainThreadDispatcher.Drain();
 
-        bool scenScrollActive = false;
-        int scenScrollTarget = -1;
-        ctx.app->Scenarios().Tick(*ctx.app, scenScrollActive, scenScrollTarget);
-
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
         ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_None);
+
+        // Scenarios().Tick MUST run INSIDE the NewFrame/Render bracket: the production
+        // loop drives it from SmatchetUI::Draw (between NewFrame and Render), and a
+        // scenario's OnFrame may touch per-frame ImGui state (GetForegroundDrawList,
+        // GetWindowDrawList) that null-derefs with no active frame (the #1133 fault-
+        // injector crash). Ticking before NewFrame here would crash the ephemeral child.
+        bool scenScrollActive = false;
+        int scenScrollTarget = -1;
+        ctx.app->Scenarios().Tick(*ctx.app, scenScrollActive, scenScrollTarget);
+
         SmatchetDrawFrameWithSeh(*ctx.mainWindow, *ctx.app, *ctx.pluginHost);
         ImGui::Render();
 
@@ -574,7 +581,12 @@ void RunRenderLoop(BootstrapContext& ctx, const std::function<bool()>& shouldSto
         const ImVec4 bg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
         glClearColor(bg.x * bg.w, bg.y * bg.w, bg.z * bg.w, bg.w);
         glClear(GL_COLOR_BUFFER_BIT);
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        // [P0 #1122] shared dynamic-texture guard — MUST run here too: this ephemeral
+        // (--spawn / headless scenario) render loop is a separate loop from main.cpp's
+        // RunFrameLoop, and the mobile-texture-guard scenario forces its faults inside it.
+        ImDrawData* drawData = ImGui::GetDrawData();
+        smatchet::ui::GuardImGuiDynamicTextures(drawData);
+        ImGui_ImplOpenGL3_RenderDrawData(drawData);
         glfwSwapBuffers(ctx.window);
         SmatchetApplyPendingWindowResize(ctx.window);
         SmatchetWritePendingScreenshot(ctx.window);
