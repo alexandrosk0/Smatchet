@@ -427,6 +427,12 @@ add_executable(SmatchetTests
     # ParseIso8601ToUnixSec (GitHubClientHelpers.cpp) — both already linked above.
     Core/JiraCommentMappingPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraCommentMappingPure.cpp"
+    # issue-comments PR-C — pure JSON array → TrackerIssueComment mapping, split
+    # out of PlaneClient.cpp (which pulls cpr). PlaneCommentMappingPure.cpp depends
+    # on JsonGetStringIfString (TrackerFieldValueParser.cpp) + ParseIso8601ToUnixSec
+    # (GitHubClientHelpers.cpp), both already linked into this target above.
+    Core/PlaneCommentMappingPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneCommentMappingPure.cpp"
     # Slice 1 of deterministic-jira-test-backend — pure
     # Jira JSON → CachedTicket mapper + field-list builder extracted from
     # JiraIssueSearch.cpp (which pulls cpr). Same pure-seam shape as the

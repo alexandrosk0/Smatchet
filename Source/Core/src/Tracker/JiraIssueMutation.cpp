@@ -588,7 +588,10 @@ JiraClient::AttachFilesToIssue(const std::string& issueKey, const std::vector<st
         }
 
         cpr::Multipart multipart{{"file", cpr::File{path}}};
-        cpr::Redirect redirect(true, true);
+        // Same cross-host credential-forwarding guard as the Tracker*Logged helpers (H4 / E2):
+        // this multipart upload carries the Basic Authorization header but can't route through
+        // TrackerPostLogged (string body), so apply the shared no-follow redirect policy here.
+        cpr::Redirect redirect = MakeTrackerRedirectPolicy();
         cpr::Response response =
             cpr::Post(cpr::Url{url}, headers, multipart, redirect, cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
                       cpr::Timeout{kTrackerOverallTimeoutMs});

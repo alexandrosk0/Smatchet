@@ -131,13 +131,25 @@ cpr::SslOptions MakeTrackerSslOptions() {
     return cpr::Ssl(cpr::ssl::CaInfo{std::string(ssl.caInfoPath)});
 }
 
+// Redirect policy for every tracker verb (security: H4 / E2). The tracker `Authorization`
+// header is a caller-set raw header, NOT libcurl `CURLOPT_USERPWD`, so curl's
+// `CURLOPT_UNRESTRICTED_AUTH=0` default does NOT strip it on a cross-host 30x — a redirect
+// from the configured tracker host to an attacker/MITM host would forward the API token.
+// cpr (1.9.2) exposes no same-host-only redirect knob, so we disable redirect-following
+// entirely: the Jira/Plane/GitHub REST verbs we issue (search / mutation / transitions /
+// users / meta / projects / activities) respond directly with 2xx/4xx and never depend on a
+// 30x. This mirrors the MCP attachment proxy's `cpr::Redirect(false, false)`
+// (Source/Plugins/Mcp/McpPlugin.cpp). A 30x now surfaces as a non-2xx status the callers
+// already handle, rather than a silent credential-forwarding follow.
+cpr::Redirect MakeTrackerRedirectPolicy() { return cpr::Redirect(/*follow=*/false, /*cont_send_cred=*/false); }
+
 cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, const cpr::Header& headers) {
     return TrackerGetLogged(clientName, url, headers, kTrackerConnectTimeoutMs, kTrackerOverallTimeoutMs);
 }
 
 cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                const cpr::Parameters& params) {
-    cpr::Redirect redirect(true, true);
+    cpr::Redirect redirect = MakeTrackerRedirectPolicy();
     cpr::Response response =
         cpr::Get(cpr::Url{url}, headers, params, redirect, cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
                  cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
@@ -149,7 +161,7 @@ cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, c
 
 cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                long connectTimeoutMs, long overallTimeoutMs) {
-    cpr::Redirect redirect(true, true);
+    cpr::Redirect redirect = MakeTrackerRedirectPolicy();
     // cpr's ConnectTimeout/Timeout take std::int32_t. These params are `long`, which is
     // 64-bit on LP64 (Linux/Android), so a braced-init {long} narrows — ill-formed under
     // clang (hard error, not a warning). It compiles on Windows only because LLP64 `long`
@@ -166,7 +178,7 @@ cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, c
 
 cpr::Response TrackerPostLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                 const std::string& body) {
-    cpr::Redirect redirect(true, true);
+    cpr::Redirect redirect = MakeTrackerRedirectPolicy();
     cpr::Response response =
         cpr::Post(cpr::Url{url}, headers, cpr::Body{body}, redirect, cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
                   cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
@@ -177,7 +189,7 @@ cpr::Response TrackerPostLogged(const char* clientName, const std::string& url, 
 
 cpr::Response TrackerPutLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                const std::string& body) {
-    cpr::Redirect redirect(true, true);
+    cpr::Redirect redirect = MakeTrackerRedirectPolicy();
     cpr::Response response =
         cpr::Put(cpr::Url{url}, headers, cpr::Body{body}, redirect, cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
                  cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
@@ -265,7 +277,7 @@ bool IsTrackerTransportErrorText(const std::string& error) {
 
 cpr::Response TrackerPatchLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                  const std::string& body) {
-    cpr::Redirect redirect(true, true);
+    cpr::Redirect redirect = MakeTrackerRedirectPolicy();
     cpr::Response response =
         cpr::Patch(cpr::Url{url}, headers, cpr::Body{body}, redirect, cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
                    cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
