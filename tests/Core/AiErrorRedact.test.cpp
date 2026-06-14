@@ -196,3 +196,30 @@ TEST_CASE("RedactProviderErrorBody handles benign inputs safely") {
         CHECK(out.find("Bearer") != std::string::npos);
     }
 }
+
+// security synthesis #11 — the AI clients (OpenAI/Anthropic/Ollama/Whisper) MUST
+// NOT follow redirects, so a cross-host 30x can never forward the provider key
+// (Bearer / x-api-key) as a caller-set raw header. The redirect call itself is
+// cpr-bound (untestable in the cpr-free rig), so pin the policy constant here.
+TEST_CASE("AI clients never follow redirects (synthesis #11)" * doctest::test_suite("[high-risk]")) {
+    CHECK(smatchet::ai::pure::kAiFollowRedirects == false);
+}
+
+// security synthesis #12 — tracker HTTP body logging (RedactHttpBodyForLog, which
+// delegates to RedactProviderErrorBody) must strip a reflected credential before
+// it reaches a log line. RedactHttpBodyForLog is cpr-bound; assert the delegated
+// redaction covers the tracker-shaped reflections (Basic-auth echo, PAT).
+TEST_CASE("Tracker error-body reflections are redacted before logging (synthesis #12)" *
+          doctest::test_suite("[high-risk]")) {
+    SUBCASE("Jira 401 echoing the raw Authorization header") {
+        const std::string body = R"({"errorMessages":["bad creds"],"Authorization":"Basic dXNlcjpzZWNyZXR0b2tlbg=="})";
+        const std::string out = RedactProviderErrorBody(body);
+        CHECK(out.find("dXNlcjpzZWNyZXR0b2tlbg==") == std::string::npos);
+        CHECK(out.find("\"Authorization\":\"[REDACTED]\"") != std::string::npos);
+    }
+    SUBCASE("GitHub error body reflecting the PAT verbatim") {
+        const std::string out = RedactProviderErrorBody("Bad credentials for token ghp_reflectedpat1234567890");
+        CHECK(out.find("reflectedpat1234567890") == std::string::npos);
+        CHECK(out.find("ghp_[REDACTED]") != std::string::npos);
+    }
+}

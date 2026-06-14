@@ -1,5 +1,6 @@
 #include "TrackerHttpUtils.h"
 
+#include "AiErrorRedact.h"
 #include "Logger.h"
 #include "NetworkUsageTracker.h"
 #include "StringUtil.h"
@@ -11,6 +12,12 @@
 
 constexpr std::size_t kMaxTrackerHttpBodyLogBytes = 65536;
 constexpr const char* kTrackerUserAgent = "Smatchet/1.0 Jira-Client";
+
+std::string RedactHttpBodyForLog(const std::string& body) {
+    // Strip reflected tokens (Bearer / api_key / Authorization / sk- / ghp_ …) via the
+    // shared cpr-free redactor, which also caps length to kMaxProviderErrorBodyChars.
+    return smatchet::ai::pure::RedactProviderErrorBody(body);
+}
 
 // Redact URL query for logging: keeps scheme://host/path, drops ?query and #fragment.
 std::string RedactUrlForLog(const std::string& url) {
@@ -37,7 +44,9 @@ void LogTrackerHttpResult(const char* clientName, const char* method, const std:
     if (!Logger::Instance().ShouldLog(LogLevel::Trace)) {
         return;
     }
-    std::string body = response.text;
+    // Redact reflected tokens before logging the body (security synthesis #12): a
+    // tracker 401/403 body can echo the Authorization header / a PAT verbatim.
+    std::string body = RedactHttpBodyForLog(response.text);
     std::string suffix;
     if (body.size() > kMaxTrackerHttpBodyLogBytes) {
         body.resize(kMaxTrackerHttpBodyLogBytes);
