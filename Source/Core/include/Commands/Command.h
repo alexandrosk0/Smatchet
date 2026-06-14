@@ -80,6 +80,58 @@ struct CommandResult {
 
 enum class CommandSource { Cli, Palette, Mcp, Lua, Unreal, Internal };
 
+/// Stable lowercase tag for a `CommandSource` (audit logs / diagnostics). Never localized.
+inline const char* CommandSourceString(CommandSource s) {
+    switch (s) {
+    case CommandSource::Cli:
+        return "cli";
+    case CommandSource::Palette:
+        return "palette";
+    case CommandSource::Mcp:
+        return "mcp";
+    case CommandSource::Lua:
+        return "lua";
+    case CommandSource::Unreal:
+        return "unreal";
+    case CommandSource::Internal:
+        return "internal";
+    }
+    return "unknown";
+}
+
+/// True when a source is non-interactive automation (no human at a confirm
+/// dialog): CLI, MCP, Lua. Palette + Unreal are interactive-UI (the front-end
+/// itself gates destructive intent — palette Shift+Enter, Unreal console flag).
+/// Internal is trusted system code (scenarios, in-process toolbar) and is NOT
+/// automation. Security audit 2026-06-13 #2/#3: a token/handle-holding automation
+/// source must not reach destructive commands without an explicit per-call signal.
+inline bool IsAutomationSource(CommandSource s) {
+    return s == CommandSource::Cli || s == CommandSource::Mcp || s == CommandSource::Lua;
+}
+
+/// Pure source-trust decision for the destructive guard. Returns true when the
+/// dispatch MUST be blocked with `ErrorCode::ConfirmRequired`. The rule under the
+/// "require-confirm destructive on non-UI sources" posture:
+///   - non-destructive command            -> never blocked
+///   - dry-run                            -> never blocked (no mutation happens)
+///   - already-confirmed (explicit signal)-> never blocked
+///   - destructive + unconfirmed:
+///       * automation source (CLI/MCP/Lua) -> BLOCKED (needs explicit confirm)
+///       * interactive-UI / Internal       -> BLOCKED too (registry has always
+///         required ConfirmedDestructive; the UI sets it deliberately before
+///         dispatch). Source only changes the *audit* posture, not the gate, so
+///         the guard stays a single chokepoint with no per-source bypass.
+/// The `source` parameter is retained so the predicate is the single place that
+/// reasons about trust; callers also use `IsAutomationSource` for audit logging.
+inline bool RequiresExplicitConfirm(CommandSource source, bool destructive, bool confirmed, bool dryRun) {
+    (void)source; // trust posture is uniform: no source may bypass the confirm gate.
+    if (!destructive)
+        return false;
+    if (dryRun)
+        return false;
+    return !confirmed;
+}
+
 struct CommandContext {
     AppController* App = nullptr;
     CommandSource Source = CommandSource::Internal;

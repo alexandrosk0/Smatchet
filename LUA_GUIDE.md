@@ -177,6 +177,13 @@ Calls any command in the unified command registry — the same registry behind t
 
 This includes the `view.*` (saved-view CRUD) and `pane.*` (grid-pane scripting) groups. The pane group: `pane.list`, `pane.focus{id=...}`, `pane.next` / `pane.prev`, `pane.new` / `pane.duplicate` / `pane.split{direction=...}` (direction advisory), `pane.close{id=...}` (focused pane when omitted), and `pane.rename{title=..., id=...}` (session-scoped label override).
 
+**Destructive commands require explicit confirmation.** Lua is a non-UI automation source: a command flagged destructive (e.g. `view.delete`, `sync.full`, `app.quit`) is **blocked** with `error.code = "confirm-required"` unless the args table carries `__confirm = true`. This must be a deliberate per-call flag — the binding never auto-confirms on your behalf (security audit 2026-06-13 #2/#3). Use `__dry_run = true` to preview without mutating.
+
+```lua
+-- Destructive: must pass __confirm explicitly, else confirm-required.
+local r = commands.invoke("view.delete", { id = "abc", __confirm = true })
+```
+
 ```lua
 -- Focus the next grid pane, then rename it.
 commands.invoke("pane.next")
