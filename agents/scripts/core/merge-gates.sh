@@ -358,6 +358,20 @@ poll_merge_gates() {
                    else ["StatusContext", (.context // "")] end)})
    | group_by(._k) | map(sort_by(.startedAt // "") | .[-1]) | map(del(._k))) as $ctx
 | ([$ctx[] | select(.isRequired == true)]) as $req
+# $blocking — the set the gate must wait on: REQUIRED contexts PLUS the
+# non-required meant-to-block allow-list (Coverage / Sanitizer / Bucket-* /
+# Perf PR-fast / Android security gate, non-advisory). The $failing set below
+# already unions these (the #923 fix), but the PENDING count historically
+# counted only $req — so a non-required allow-listed check still IN_PROGRESS
+# (not yet terminal) was invisible: not failing (not terminal) and not pending
+# (not required) → GATES_PASSED fired before ASAN/Coverage/Bucket finished and
+# the merge beat the sanitizer to the line (#1237/#1232/#1227/#1220/#1198
+# ASAN/Coverage escapes). Counting $blocking (not $req) for pending closes it.
+| ([$ctx[] | select(
+      (.isRequired == true)
+      or ((if .__typename == "CheckRun" then (.name // "") else (.context // "") end)
+          | (test("__BLOCK_ALLOWLIST_RE__"; "i")
+             and (ascii_downcase | contains("advisory") | not))))]) as $blocking
 | (__REQUIRED_CONTEXTS__) as $reqNames
 | ([$ctx[] | (if .__typename == "CheckRun" then (.name // "") else (.context // "") end)]) as $ctxNames
 | ([$reqNames[] | select(. as $n | ($ctxNames | any(. == $n)) | not)]) as $reqAbsent
@@ -431,7 +445,7 @@ poll_merge_gates() {
     ($perf | tostring),
     ($req | length),
     ([$failing[] | select(. as $f | ($downgraded | any(.name == $f.name and .__typename == $f.__typename)) | not)] | length),
-    ([$req[] | select(
+    ([$blocking[] | select(
         (.__typename == "CheckRun" and .status != "COMPLETED") or
         (.__typename == "StatusContext" and ((.state // "") | IN("PENDING","EXPECTED"))))] | length),
     ($downgraded | length),

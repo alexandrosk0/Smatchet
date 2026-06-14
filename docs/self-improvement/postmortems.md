@@ -1420,3 +1420,45 @@ testable non-render logic, so it stays a visible (cheap) ledger line pending a t
 
 ### Filed as
 This entry. Follow-up gate (render-only `tests-out-of-band` de-noise) noted, not yet shipped.
+
+## 2026-06-14 · PR #1237 (+ #1232 #1227 #1220 #1198) · red-check: Sanitizer / Coverage merged while IN_PROGRESS
+
+### What escaped
+`fix(security): bound value.dump() fallbacks on deep server json (ASAN DoS)` (#1237) merged
+to `develop` at 22:01:59Z while its `Sanitizer (ASAN via MSVC)` check was still
+`status=in_progress` (started 22:01:12Z, completed `success` only at 22:13Z — 11 min AFTER
+the merge). The merge-gate poller had recorded `GATES_PASSED` at 22:01:56Z with `0 fail,
+0 pending`. Same shape as the four other owed escapes this session (#1232 ASAN, #1227
+Coverage, #1220 ASAN, #1198 ASAN): each merged before a non-required allow-listed build
+(Sanitizer/Coverage/Bucket) reached a terminal state. #1237 was benign only by luck — the
+fix genuinely passed ASAN — but the gate provided no protection.
+
+### Root cause
+The #923 fix added the meant-to-block allow-list (`Coverage|Sanitizer|Bucket-|Perf
+PR-fast|Android security gate`, non-advisory) to the poller's **`$failing`** set, so a
+*terminally-failed* non-required allow-listed check blocks. But it never extended the
+**pending** count, which was computed over `$req` (required contexts) ONLY:
+
+    ([$req[] | select((.__typename=="CheckRun" and .status!="COMPLETED") or ...)] | length)
+
+So a non-required allow-listed check still `IN_PROGRESS` (not yet terminal) fell into a blind
+spot: not in `$failing` (not terminal-failed) and not in the pending count (not required) →
+`fail==0 && pending==0` → `GATES_PASSED`. The merge fired the instant the 5 *required*
+checks went green, racing — and beating — the ASAN/Coverage/Bucket build to the finish line.
+GitHub's native auto-merge has the same blind spot (those checks are non-required), so this
+also explains escapes that merged via `--auto`.
+
+### Preventing gate
+`merge-gates.sh` now binds a `$blocking` set = `$req` ∪ (non-required allow-listed
+non-advisory contexts) — the SAME predicate `$failing` already unions — and computes the
+**pending** count over `$blocking` instead of `$req`. An in-flight Sanitizer/Coverage/Bucket
+now counts as pending, so the poller WAITS for it to finish (then `$failing` blocks if it
+fails) instead of waving the merge through mid-build. Two `tests/bats/merge_gates.bats`
+cases lock it: a non-required `Sanitizer (ASAN via MSVC)` `IN_PROGRESS` → `1 pending` → block;
+an advisory non-allow-listed `IN_PROGRESS` → `0 pending` → still passes (prior contract
+preserved). Closes the in-flight half of the #923 allow-list; the terminal-failure half was
+already gated.
+
+### Filed as
+This entry (resolves the owe for #1237; the #1232/#1227/#1220/#1198 owes share this single
+root cause and gate) + the `$blocking`-pending fix in this PR.
