@@ -24,6 +24,29 @@ std::string ExtractHostFromUrl(const std::string& url);
 
 bool IsLoopbackAddress(const std::string& remoteAddr);
 
+// DNS-rebinding defence (synthesis #4). A rebound browser connects to the
+// loopback port but carries the attacker's hostname in `Host:`, never the
+// literal 127.0.0.1 -- so accepting only loopback-literal Host values closes the
+// attack without breaking legitimate local MCP clients (which send
+// `Host: 127.0.0.1:<port>` or `localhost`). Case-folds, strips an optional
+// `:port`, handles bracketed IPv6 (`[::1]:port`), and rejects a trailing dot
+// (`127.0.0.1.` / `localhost.`) which resolves to loopback but is not a literal
+// a legit client emits. Empty Host is rejected (fail closed).
+bool IsLoopbackHostHeader(const std::string& hostHeader);
+
+// Origin policy for the MCP loopback server. A legitimate local MCP client / the
+// same-origin tooling sends NO Origin (empty -> accept) or, at most, a loopback
+// Origin; a malicious cross-origin browser page carries the attacker's Origin.
+// Accepts: empty, the literal "null" (sandboxed/file origins send this), or an
+// http/https Origin whose host is a loopback literal. Rejects everything else.
+bool IsAllowedMcpOrigin(const std::string& originHeader);
+
+// Combined fail-closed Host/Origin decision for the Authorize path. Returns true
+// iff the Host header is loopback-literal AND the Origin (when present) is
+// allowed. `reason` is set to a short stable token ("bad_host" / "bad_origin")
+// for LOG_WARN when the decision is reject; left untouched on accept.
+bool IsMcpHostOriginAllowed(const std::string& hostHeader, const std::string& originHeader, std::string& reason);
+
 // Constant-time string compare: return true iff a == b. Always reads max(|a|,|b|) bytes.
 bool ConstantTimeStringEquals(const std::string& a, const std::string& b);
 
@@ -43,8 +66,8 @@ std::string BuildToolCallSummary(const std::string& toolName, const nlohmann::js
 
 std::string ExtractJsonRpcErrorMessage(const nlohmann::json& jres, std::size_t maxLen);
 
-}  // namespace pure
-}  // namespace mcp
-}  // namespace smatchet
+} // namespace pure
+} // namespace mcp
+} // namespace smatchet
 
-#endif  // SMATCHET_MCP_MCPJSONRPCPURE_H
+#endif // SMATCHET_MCP_MCPJSONRPCPURE_H

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "imgui.h"
+#include <cstddef>
 #include <cstdint>
 
 // Dockspace node IDs assigned by the default layout ini.
@@ -14,4 +15,9 @@ constexpr ImGuiID kSecondarySideBar = 0x00000010u;
 
 // Returns the default dock slot for a layout key, or 0 if the window is an overlay/popup.
 ImGuiID DefaultDockSlotForLayoutKey(const char* layoutKey);
+
+// Iteration over every registered layout key (windows that have a default dock slot).
+// Used by the live layout reset to arm a force-redock of all default windows.
+size_t DefaultDockLayoutKeyCount();
+const char* DefaultDockLayoutKeyAt(size_t i);
 } // namespace SmatchetDockNodeIds

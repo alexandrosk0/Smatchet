@@ -647,6 +647,21 @@ const TranslationEntry kEntries[] = {
     {"tracker.loading_watchers", "Loading watchers...", u8"Chargement des observateurs..."},
     {"tracker.loading_votes", "Loading votes...", u8"Chargement des votes..."},
 
+    // issue-comments PR-A — backend-agnostic comments read/post modal + grid cell.
+    {"comments.title", "Comments", u8"Commentaires"},
+    {"comments.loading", "Loading comments...", u8"Chargement des commentaires..."},
+    {"comments.none", "No comments yet.", u8"Aucun commentaire pour l'instant."},
+    {"comments.fetch_failed", "Failed to load comments.", u8"Impossible de charger les commentaires."},
+    {"comments.post_placeholder", "Write a comment (plain text)...", u8"Écrire un commentaire (texte brut)..."},
+    {"comments.posting", "Posting comment...", u8"Publication du commentaire..."},
+    {"comments.post_failed", "Failed to post comment.", u8"Impossible de publier le commentaire."},
+    {"comments.disabled_readonly", "(disabled while offline/read-only)", u8"(désactivé hors ligne / en lecture seule)"},
+    {"comments.cell_tooltip", "View / post comments", u8"Voir / publier des commentaires"},
+    {"comments.queued_title", "Comment Queued", u8"Commentaire en file"},
+    {"comments.posted_body", "Comment added.", u8"Commentaire ajouté."},
+    {"comments.post_button", "Post Comment", u8"Publier le commentaire"},
+    {"comments.unknown_author", "(unknown)", u8"(inconnu)"},
+
     {"field.clear", "<clear>", u8"<effacer>"},
     {"field.clear_all", "<clear all>", u8"<tout effacer>"},
     {"field.parent_only", "<parent only>", u8"<parent uniquement>"},

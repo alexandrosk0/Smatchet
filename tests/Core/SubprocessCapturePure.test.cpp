@@ -169,6 +169,75 @@ TEST_SUITE("SubprocessCapturePure::BuildEnvBlockWindows") {
     }
 }
 
+TEST_SUITE("SubprocessCapturePure::IsSensitiveEnvName") {
+
+    TEST_CASE("secret-bearing names are flagged (case-insensitive)") {
+        CHECK(SubprocessCapturePure::IsSensitiveEnvName("GH_TOKEN"));
+        CHECK(SubprocessCapturePure::IsSensitiveEnvName("gh_token"));
+        CHECK(SubprocessCapturePure::IsSensitiveEnvName("AWS_SECRET_ACCESS_KEY"));
+        CHECK(SubprocessCapturePure::IsSensitiveEnvName("OPENAI_API_KEY"));
+        CHECK(SubprocessCapturePure::IsSensitiveEnvName("MY_PASSWORD"));
+        CHECK(SubprocessCapturePure::IsSensitiveEnvName("DB_PASSWD"));
+        CHECK(SubprocessCapturePure::IsSensitiveEnvName("JIRA_PAT")); // _PAT suffix
+        CHECK(SubprocessCapturePure::IsSensitiveEnvName("GITHUB_TOKEN"));
+        CHECK(SubprocessCapturePure::IsSensitiveEnvName("SSH_PRIVATE_KEY"));
+        CHECK(SubprocessCapturePure::IsSensitiveEnvName("HTTP_AUTHORIZATION"));
+        CHECK(SubprocessCapturePure::IsSensitiveEnvName("AWS_SESSION_TOKEN"));
+        CHECK(SubprocessCapturePure::IsSensitiveEnvName("SOME_CREDENTIAL"));
+        CHECK(SubprocessCapturePure::IsSensitiveEnvName("HTTP_COOKIE"));
+        CHECK(SubprocessCapturePure::IsSensitiveEnvName("KEY_PASSPHRASE"));
+    }
+
+    TEST_CASE("tool-essential names survive the scrub") {
+        // The vars p4 / git / file-pickers actually need must NOT be flagged.
+        CHECK_FALSE(SubprocessCapturePure::IsSensitiveEnvName("PATH"));
+        CHECK_FALSE(SubprocessCapturePure::IsSensitiveEnvName("SYSTEMROOT"));
+        CHECK_FALSE(SubprocessCapturePure::IsSensitiveEnvName("windir"));
+        CHECK_FALSE(SubprocessCapturePure::IsSensitiveEnvName("TEMP"));
+        CHECK_FALSE(SubprocessCapturePure::IsSensitiveEnvName("TMP"));
+        CHECK_FALSE(SubprocessCapturePure::IsSensitiveEnvName("HOME"));
+        CHECK_FALSE(SubprocessCapturePure::IsSensitiveEnvName("LANG"));
+        CHECK_FALSE(SubprocessCapturePure::IsSensitiveEnvName("LC_ALL"));
+        CHECK_FALSE(SubprocessCapturePure::IsSensitiveEnvName("P4PORT"));
+        CHECK_FALSE(SubprocessCapturePure::IsSensitiveEnvName("P4USER"));
+        CHECK_FALSE(SubprocessCapturePure::IsSensitiveEnvName("P4CLIENT"));
+        CHECK_FALSE(SubprocessCapturePure::IsSensitiveEnvName("P4CONFIG"));
+        CHECK_FALSE(SubprocessCapturePure::IsSensitiveEnvName("GIT_DIR"));
+        CHECK_FALSE(SubprocessCapturePure::IsSensitiveEnvName("DISPLAY"));
+        CHECK_FALSE(SubprocessCapturePure::IsSensitiveEnvName("XDG_RUNTIME_DIR"));
+    }
+}
+
+TEST_SUITE("SubprocessCapturePure::ScrubSensitiveEnv") {
+
+    TEST_CASE("drops sensitive entries, preserves order of the rest") {
+        std::vector<std::pair<std::string, std::string>> parent;
+        parent.push_back(std::make_pair("PATH", "/usr/bin"));
+        parent.push_back(std::make_pair("GH_TOKEN", "ghp_xxx"));
+        parent.push_back(std::make_pair("P4PORT", "ssl:host:1666"));
+        parent.push_back(std::make_pair("AWS_SECRET_ACCESS_KEY", "abc"));
+        parent.push_back(std::make_pair("LANG", "en_US.UTF-8"));
+        const auto kept = SubprocessCapturePure::ScrubSensitiveEnv(parent);
+        REQUIRE(kept.size() == 3);
+        CHECK(kept[0].first == "PATH");
+        CHECK(kept[1].first == "P4PORT");
+        CHECK(kept[2].first == "LANG");
+    }
+
+    TEST_CASE("empty input yields empty output") {
+        const auto kept = SubprocessCapturePure::ScrubSensitiveEnv({});
+        CHECK(kept.empty());
+    }
+
+    TEST_CASE("all-sensitive input yields empty output") {
+        std::vector<std::pair<std::string, std::string>> parent;
+        parent.push_back(std::make_pair("API_KEY", "1"));
+        parent.push_back(std::make_pair("SECRET", "2"));
+        const auto kept = SubprocessCapturePure::ScrubSensitiveEnv(parent);
+        CHECK(kept.empty());
+    }
+}
+
 TEST_SUITE("SubprocessCapturePure::RemainingTimeoutMs") {
 
     TEST_CASE("zero total timeout returns zero (no timeout sentinel)") {

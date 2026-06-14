@@ -131,7 +131,7 @@ bool JiraClient::UpdateIssueFieldsViaTransition(const std::string& issueId, cons
         if (!transitionsJson.contains("transitions") || !transitionsJson["transitions"].is_array()) {
             outError = "Invalid transitions response format.";
             LOG_ERROR("JiraClient: %s issue=%s body=%s", outError.c_str(), issueId.c_str(),
-                      TruncateForLog(transitionsResp.text, 300).c_str());
+                      RedactHttpBodyForLog(transitionsResp.text).c_str());
             AppendTransitionFailure(issueId, auditOp, outError, targetStatusId, targetStatusName);
             return false;
         }
@@ -514,7 +514,7 @@ Result<std::string, TrackerError> JiraClient::CreateIssue(const nlohmann::json& 
         const std::string key = j.value("key", std::string());
         if (key.empty()) {
             outError = "Create issue response missing 'key'.";
-            LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), TruncateForLog(response.text, 300).c_str());
+            LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), RedactHttpBodyForLog(response.text).c_str());
             BackendAuditTrail::AppendResult(
                 "issue_create", "jira_client", std::string(), auditOp, false, outError,
                 nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
@@ -527,7 +527,7 @@ Result<std::string, TrackerError> JiraClient::CreateIssue(const nlohmann::json& 
         return Result<std::string, TrackerError>::Ok(key);
     } catch (const std::exception& ex) {
         outError = std::string("Failed to parse create response: ") + ex.what();
-        LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), TruncateForLog(response.text, 300).c_str());
+        LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), RedactHttpBodyForLog(response.text).c_str());
         BackendAuditTrail::AppendResult(
             "issue_create", "jira_client", std::string(), auditOp, false, outError,
             nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
@@ -588,7 +588,10 @@ JiraClient::AttachFilesToIssue(const std::string& issueKey, const std::vector<st
         }
 
         cpr::Multipart multipart{{"file", cpr::File{path}}};
-        cpr::Redirect redirect(true, true);
+        // Same cross-host credential-forwarding guard as the Tracker*Logged helpers (H4 / E2):
+        // this multipart upload carries the Basic Authorization header but can't route through
+        // TrackerPostLogged (string body), so apply the shared no-follow redirect policy here.
+        cpr::Redirect redirect = MakeTrackerRedirectPolicy();
         cpr::Response response =
             cpr::Post(cpr::Url{url}, headers, multipart, redirect, cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
                       cpr::Timeout{kTrackerOverallTimeoutMs});

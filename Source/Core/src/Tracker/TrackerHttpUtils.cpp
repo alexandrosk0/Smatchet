@@ -1,5 +1,6 @@
 #include "TrackerHttpUtils.h"
 
+#include "AiErrorRedact.h"
 #include "Logger.h"
 #include "NetworkUsageTracker.h"
 #include "StringUtil.h"
@@ -12,6 +13,12 @@
 
 constexpr std::size_t kMaxTrackerHttpBodyLogBytes = 65536;
 constexpr const char* kTrackerUserAgent = "Smatchet/1.0 Jira-Client";
+
+std::string RedactHttpBodyForLog(const std::string& body) {
+    // Strip reflected tokens (Bearer / api_key / Authorization / sk- / ghp_ …) via the
+    // shared cpr-free redactor, which also caps length to kMaxProviderErrorBodyChars.
+    return smatchet::ai::pure::RedactProviderErrorBody(body);
+}
 
 // Redact URL query for logging: keeps scheme://host/path, drops ?query and #fragment.
 std::string RedactUrlForLog(const std::string& url) {
@@ -38,7 +45,9 @@ void LogTrackerHttpResult(const char* clientName, const char* method, const std:
     if (!Logger::Instance().ShouldLog(LogLevel::Trace)) {
         return;
     }
-    std::string body = response.text;
+    // Redact reflected tokens before logging the body (security synthesis #12): a
+    // tracker 401/403 body can echo the Authorization header / a PAT verbatim.
+    std::string body = RedactHttpBodyForLog(response.text);
     std::string suffix;
     if (body.size() > kMaxTrackerHttpBodyLogBytes) {
         body.resize(kMaxTrackerHttpBodyLogBytes);
@@ -132,14 +141,27 @@ cpr::SslOptions MakeTrackerSslOptions() {
     return cpr::Ssl(cpr::ssl::CaInfo{std::string(ssl.caInfoPath)});
 }
 
+// Redirect policy for every tracker verb (security: H4 / E2). The tracker `Authorization`
+// header is a caller-set raw header, NOT libcurl `CURLOPT_USERPWD`, so curl's
+// `CURLOPT_UNRESTRICTED_AUTH=0` default does NOT strip it on a cross-host 30x — a redirect
+// from the configured tracker host to an attacker/MITM host would forward the API token.
+// cpr (1.9.2) exposes no same-host-only redirect knob, so we disable redirect-following
+// entirely: the Jira/Plane/GitHub REST verbs we issue (search / mutation / transitions /
+// users / meta / projects / activities) respond directly with 2xx/4xx and never depend on a
+// 30x. This mirrors the MCP attachment proxy's `cpr::Redirect(false, false)`
+// (Source/Plugins/Mcp/McpPlugin.cpp). A 30x now surfaces as a non-2xx status the callers
+// already handle, rather than a silent credential-forwarding follow.
+cpr::Redirect MakeTrackerRedirectPolicy() { return cpr::Redirect(/*follow=*/false, /*cont_send_cred=*/false); }
+
 // One GET attempt: cpr::Get + NetworkUsageTracker::Record + LogTrackerHttpResult. Shared by all
 // three TrackerGetLogged overloads so the retry-wrapping (or, for the probe overload, deliberate
-// single-shot) lives in one place. Timeouts arrive as std::int32_t — the long->int32 cast happens
-// at each call site (cpr's ConnectTimeout/Timeout take int32; a braced-init {long} narrows and is
-// ill-formed under clang on LP64). `params` is optional (nullptr = no query parameters).
+// single-shot) lives in one place. Redirects are disabled via MakeTrackerRedirectPolicy (security
+// H4/E2). Timeouts arrive as std::int32_t — the long->int32 cast happens at each call site (cpr's
+// ConnectTimeout/Timeout take int32; a braced-init {long} narrows and is ill-formed under clang on
+// LP64). `params` is optional (nullptr = no query parameters).
 static cpr::Response ExecuteTrackerGet(const char* clientName, const std::string& url, const cpr::Header& headers,
                                        const cpr::Parameters* params, std::int32_t connectMs, std::int32_t overallMs) {
-    cpr::Redirect redirect(true, true);
+    cpr::Redirect redirect = MakeTrackerRedirectPolicy();
     cpr::Response response;
     if (params != nullptr) {
         response = cpr::Get(cpr::Url{url}, headers, *params, redirect, cpr::ConnectTimeout{connectMs},
@@ -192,7 +214,7 @@ cpr::Response TrackerPostLogged(const char* clientName, const std::string& url, 
     // timeout). 429/5xx after a successful send are returned to the caller untouched.
     TrackerHttpResult result = TrackerHttpRequestWithRetry(
         [&]() {
-            cpr::Redirect redirect(true, true);
+            cpr::Redirect redirect = MakeTrackerRedirectPolicy();
             cpr::Response response = cpr::Post(cpr::Url{url}, headers, cpr::Body{body}, redirect,
                                                cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
                                                cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
@@ -210,7 +232,7 @@ cpr::Response TrackerPutLogged(const char* clientName, const std::string& url, c
                                const std::string& body) {
     // PUT is idempotent — safe to retry on Transport / 429 / 5xx (wrapper's default predicate).
     TrackerHttpResult result = TrackerHttpRequestWithRetry([&]() {
-        cpr::Redirect redirect(true, true);
+        cpr::Redirect redirect = MakeTrackerRedirectPolicy();
         cpr::Response response = cpr::Put(cpr::Url{url}, headers, cpr::Body{body}, redirect,
                                           cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
                                           cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
@@ -303,7 +325,7 @@ cpr::Response TrackerPatchLogged(const char* clientName, const std::string& url,
                                  const std::string& body) {
     // PATCH on tracker fields is idempotent (set-to-value, not delta) — safe to retry like PUT.
     TrackerHttpResult result = TrackerHttpRequestWithRetry([&]() {
-        cpr::Redirect redirect(true, true);
+        cpr::Redirect redirect = MakeTrackerRedirectPolicy();
         cpr::Response response = cpr::Patch(cpr::Url{url}, headers, cpr::Body{body}, redirect,
                                             cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
                                             cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());

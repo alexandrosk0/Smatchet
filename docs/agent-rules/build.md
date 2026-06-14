@@ -48,7 +48,7 @@ All four bit multiple agents during the multi-grid Slice-0/1 + perf-gate-revival
 
 ## ASan over the test rig
 
-The `ninja-msvc-asan` preset does not enable tests; to run the doctest rig under ASan, override at configure: `cmake --preset ninja-msvc-asan -DSMATCHET_BUILD_TESTS=ON`. (Known full-suite caveat: the `CallstackParser` ReDoS *timing* sentinel can exceed its 2000 ms wall-clock cap under ASan slowdown — a timing artifact, not a memory error.)
+The `ninja-msvc-asan` preset does not enable tests; to run the doctest rig under ASan, override at configure: `cmake --preset ninja-msvc-asan -DSMATCHET_BUILD_TESTS=ON`. (The `CallstackParser` ReDoS *timing* sentinel is now ASan-aware — #1215 (`36521f72`) guards it with `#if defined(__SANITIZE_ADDRESS__)` and widens the wall-clock cap 2000 ms→20000 ms, so the full suite runs clean under ASan; the old "exceeds its 2000 ms cap under ASan slowdown" caveat no longer applies.)
 
 ## Stale-PCH recovery (C2859)
 

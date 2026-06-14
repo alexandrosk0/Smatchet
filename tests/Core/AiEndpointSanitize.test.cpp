@@ -65,6 +65,74 @@ TEST_CASE("SanitizeAiEndpointUrl rejects link-local 169.254/16 (SSRF)" * doctest
     CHECK(SanitizeAiEndpointUrl("http://169.254.169.254", out) == EndpointVerdict::RejectedCloudMetadata);
 }
 
+TEST_CASE("SanitizeAiEndpointUrl rejects alternate IPv4 encodings of the metadata IP (SSRF)" *
+          doctest::test_suite("[security]")) {
+    std::string out;
+    // 169.254.169.254 re-encoded — every form must canonicalise + hit the denylist.
+    // decimal (0xA9FEA9FE = 2852039166)
+    CHECK(SanitizeAiEndpointUrl("http://2852039166/latest/meta-data/", out) == EndpointVerdict::RejectedCloudMetadata);
+    // hex (single 32-bit literal)
+    CHECK(SanitizeAiEndpointUrl("http://0xA9FEA9FE", out) == EndpointVerdict::RejectedCloudMetadata);
+    CHECK(SanitizeAiEndpointUrl("http://0xa9fea9fe", out) == EndpointVerdict::RejectedCloudMetadata);
+    // dotted octal
+    CHECK(SanitizeAiEndpointUrl("http://0251.0376.0251.0376", out) == EndpointVerdict::RejectedCloudMetadata);
+    // dotted hex
+    CHECK(SanitizeAiEndpointUrl("http://0xA9.0xFE.0xA9.0xFE", out) == EndpointVerdict::RejectedCloudMetadata);
+    // short form: 169.254.43518 packs the last two octets like inet_aton
+    CHECK(SanitizeAiEndpointUrl("http://169.254.43518", out) == EndpointVerdict::RejectedCloudMetadata);
+    // IPv4-mapped IPv6
+    CHECK(SanitizeAiEndpointUrl("http://[::ffff:169.254.169.254]/latest", out) ==
+          EndpointVerdict::RejectedCloudMetadata);
+    // IPv4-mapped via hex-grouped form is uncommon; the dotted-tail form is the canonical one.
+}
+
+TEST_CASE("SanitizeAiEndpointUrl rejects link-local + private + IPv6 ranges (SSRF)" *
+          doctest::test_suite("[security]")) {
+    std::string out;
+    // link-local via decimal: 169.254.1.1 = 2851996161
+    CHECK(SanitizeAiEndpointUrl("http://2851996161", out) == EndpointVerdict::RejectedLinkLocal);
+    // RFC1918 private ranges (any encoding)
+    CHECK(SanitizeAiEndpointUrl("http://10.0.0.5", out) == EndpointVerdict::RejectedPrivateNetwork);
+    CHECK(SanitizeAiEndpointUrl("http://172.16.0.1", out) == EndpointVerdict::RejectedPrivateNetwork);
+    CHECK(SanitizeAiEndpointUrl("http://192.168.1.1", out) == EndpointVerdict::RejectedPrivateNetwork);
+    CHECK(SanitizeAiEndpointUrl("http://0xC0A80101", out) == EndpointVerdict::RejectedPrivateNetwork); // 192.168.1.1
+    // IPv6 link-local + ULA
+    CHECK(SanitizeAiEndpointUrl("http://[fe80::1]", out) == EndpointVerdict::RejectedLinkLocal);
+    CHECK(SanitizeAiEndpointUrl("http://[fd00::1]/v1", out) == EndpointVerdict::RejectedPrivateNetwork);
+    CHECK(SanitizeAiEndpointUrl("http://[fc00::1]", out) == EndpointVerdict::RejectedPrivateNetwork);
+}
+
+TEST_CASE("SanitizeAiEndpointUrl: legitimate public host + IPv6 loopback accepted" *
+          doctest::test_suite("[security]")) {
+    std::string out;
+    // a legitimate public host is unaffected by the canonicaliser
+    CHECK(SanitizeAiEndpointUrl("https://api.openai.com/v1", out) == EndpointVerdict::Allowed);
+    CHECK(out == "https://api.openai.com/v1");
+    // IPv6 loopback is a legitimate local target (unpinned provider, like Ollama)
+    CHECK(SanitizeAiEndpointUrl("http://[::1]:11434/v1", out) == EndpointVerdict::Allowed);
+    // a public IPv6 literal is allowed for an unpinned provider (no denied prefix)
+    CHECK(SanitizeAiEndpointUrl("https://[2001:4860:4860::8888]", out) == EndpointVerdict::Allowed);
+}
+
+TEST_CASE("SanitizeAiEndpointUrl: overflow + garbage IP-ish inputs are handled (no UB, rejected)" *
+          doctest::test_suite("[security]")) {
+    std::string out;
+    // > 32-bit decimal must not wrap a denied IP into an allowed one — rejected as non-IP host.
+    // 99999999999 is not a valid IPv4 integer; falls through to host-pin/allow (treated as a hostname-shape).
+    // The key invariant: it must NOT be mis-canonicalised to a denied address.
+    CHECK(SanitizeAiEndpointUrl("http://99999999999", out) != EndpointVerdict::RejectedCloudMetadata);
+    // octal part with an out-of-range digit ('8') is not a valid octal octet
+    CHECK(SanitizeAiEndpointUrl("http://0251.0376.0251.0378", out) != EndpointVerdict::RejectedCloudMetadata);
+    // 5 dotted parts is not an IPv4 literal
+    CHECK(SanitizeAiEndpointUrl("http://1.2.3.4.5", out) != EndpointVerdict::RejectedLinkLocal);
+    // an octet > 255 in a 4-part form is rejected as an IP (256.254.169.254)
+    CHECK(SanitizeAiEndpointUrl("http://256.254.169.254", out) != EndpointVerdict::RejectedCloudMetadata);
+    // bare "0x" / lone dots do not crash and are never mis-read as a denied IP
+    CHECK(SanitizeAiEndpointUrl("http://0x", out) != EndpointVerdict::RejectedCloudMetadata);
+    CHECK(SanitizeAiEndpointUrl("http://...", out) != EndpointVerdict::RejectedCloudMetadata);
+    CHECK(SanitizeAiEndpointUrl("http://...", out) != EndpointVerdict::RejectedLinkLocal);
+}
+
 TEST_CASE("SanitizeAiEndpointUrl rejects malformed (missing host)" * doctest::test_suite("[security]")) {
     std::string out;
     CHECK(SanitizeAiEndpointUrl("https:///path", out) == EndpointVerdict::RejectedMalformed);

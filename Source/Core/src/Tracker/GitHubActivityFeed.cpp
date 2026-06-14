@@ -82,7 +82,7 @@ GitHubClient::FetchUserActivity(const TrackerConfig& cfg, const std::string& acc
         }
         if (!events.is_array()) {
             outError = "issue-events: expected array.";
-            LOG_ERROR("GitHubClient: %s body=%s", outError.c_str(), TruncateForLog(resp.text, 300).c_str());
+            LOG_ERROR("GitHubClient: %s body=%s", outError.c_str(), RedactHttpBodyForLog(resp.text).c_str());
             return FeedResult::Err(TrackerErrorParse(outError));
         }
         progress.Total.fetch_add(static_cast<int>(events.size()));
@@ -134,7 +134,7 @@ Result<std::vector<std::string>, TrackerError> GitHubClient::FetchUserGroupNames
     try {
         const auto teams = nlohmann::json::parse(resp.text);
         if (!teams.is_array()) {
-            LOG_WARN("GitHubClient: org teams: expected array, body=%s", TruncateForLog(resp.text, 300).c_str());
+            LOG_WARN("GitHubClient: org teams: expected array, body=%s", RedactHttpBodyForLog(resp.text).c_str());
             return GroupsResult::Ok(std::move(outGroupNames));
         }
         const int kMaxTeamChecks = 50; // one membership probe per team — sanity bound

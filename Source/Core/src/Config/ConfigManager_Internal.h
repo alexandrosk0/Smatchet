@@ -57,6 +57,13 @@ class ScopedFileLock {
 std::string ProtectSecretForConfig(const std::string& plainText);
 std::string UnprotectSecretFromConfig(const std::string& protectedBase64);
 
+// Pure decision helper for the POSIX secret-at-rest guard (audit H2): given a POSIX file mode
+// (the permission bits from stat::st_mode), returns true if any group/world bit is set, i.e. the
+// file is readable by someone other than the owner. Platform-agnostic and side-effect-free so the
+// Windows doctest rig can cover it; the actual chmod/stat plumbing is POSIX-only and lives in
+// ConfigManager_PathUtils.cpp. Mask is 0077 (group rwx + other rwx).
+bool IsLooseConfigFileMode(unsigned int mode);
+
 #if defined(_WIN32)
 // Helper used by Load() to surface a single warning per decrypt failure with the field name.
 std::string UnprotectSecretFieldFromConfig(const char* fieldName, const std::string& protectedBase64);

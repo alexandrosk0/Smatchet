@@ -102,7 +102,8 @@ std::string OllamaClient::ProbeReachability(const AiClientConfig& cfg) {
     const std::string url = JoinUrl(ResolveBaseUrl(cfg), "/api/tags");
     cpr::Header headers{{"Accept", "application/json"}};
     cpr::Response r =
-        cpr::Get(cpr::Url{url}, headers, cpr::ConnectTimeout{cfg.ConnectTimeoutMs}, cpr::Timeout{cfg.TotalTimeoutMs});
+        cpr::Get(cpr::Url{url}, headers, cpr::Redirect{smatchet::ai::pure::kAiFollowRedirects, false},
+                 cpr::ConnectTimeout{cfg.ConnectTimeoutMs}, cpr::Timeout{cfg.TotalTimeoutMs});
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Ai, NetworkUsageTracker::kEstimatedGetUploadBytes, r);
     if (r.error.code != cpr::ErrorCode::OK)
         return std::string("transport: ") + r.error.message;
@@ -120,7 +121,9 @@ void OllamaClient::SendStreaming(const AiClientConfig& cfg, const AiChatRequest&
         {"Accept", "application/x-ndjson"},
         {"Content-Type", "application/json"},
     };
-    // Ollama is local; no API key.
+    // Ollama-native is local + keyless, but a user-set OpenAI-compat BaseUrl can
+    // point elsewhere — disable redirect-following uniformly with the other AI
+    // clients (defense-in-depth, security synthesis #11).
 
     AiNdjsonParser parser;
     bool sawFinal = false;
@@ -150,8 +153,9 @@ void OllamaClient::SendStreaming(const AiClientConfig& cfg, const AiChatRequest&
                            },
                            0};
 
-    cpr::Response r = cpr::Post(cpr::Url{url}, headers, cpr::Body{body}, wcb, cpr::ConnectTimeout{cfg.ConnectTimeoutMs},
-                                cpr::Timeout{cfg.TotalTimeoutMs});
+    cpr::Response r = cpr::Post(cpr::Url{url}, headers, cpr::Body{body}, wcb,
+                                cpr::Redirect{smatchet::ai::pure::kAiFollowRedirects, false},
+                                cpr::ConnectTimeout{cfg.ConnectTimeoutMs}, cpr::Timeout{cfg.TotalTimeoutMs});
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Ai, static_cast<std::uint64_t>(body.size()), r);
 
     if (!sawFinal)

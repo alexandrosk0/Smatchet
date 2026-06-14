@@ -85,6 +85,14 @@ class PlaneClient : public ITrackerBackend,
     Result<std::unordered_map<std::string, bool>, TrackerError>
     FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issueKeyOrId) override;
 
+    // issue-comments PR-C — ITrackerCollaboration comment read + post overrides.
+    // FetchIssueComments takes no cfg (resolves on-disk config internally); both
+    // resolve the workspace slug + project id + work-item UUID before the HTTP call.
+    Result<std::vector<TrackerIssueComment>, TrackerError> FetchIssueComments(const std::string& issueKey) override;
+
+    TrackerError AddIssueCommentPlain(const TrackerConfig& cfg, const std::string& issueKey,
+                                      const std::string& plainText) override;
+
     std::string ExtractProjectFromQuery(const std::string& query) const override;
 
     /**

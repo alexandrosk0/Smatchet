@@ -53,6 +53,11 @@ bool P4RunCommand(const AnnotateAnalysisConfig& cfg, const std::vector<std::stri
     opts.argv0 = exe;
     opts.args = args;
     opts.timeoutMs = kP4ProcessTimeoutMs;
+    // Don't hand p4 the parent's secret-bearing env vars (GH_TOKEN, API keys,
+    // tracker PATs, etc.) — p4 needs none of them (audit #15). P4PORT / P4USER
+    // / P4CLIENT / P4CONFIG, PATH, locale and HOME all survive the scrub, so the
+    // p4 client keeps resolving its connection and ticket exactly as before.
+    opts.scrubSensitiveEnv = true;
     // Preserve P4Annotate's historical per-stream cap (4 MB) — matches
     // pre-lift kP4CaptureBytesMax behaviour for both stdout and stderr.
     opts.stdoutByteCap = kP4CaptureBytesMax;

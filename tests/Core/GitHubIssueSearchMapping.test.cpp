@@ -671,3 +671,102 @@ TEST_CASE("MapCommitJsonToCachedTicket — unverified commit encodes verified=fa
     const CachedTicket t = MapCommitJsonToCachedTicket(c, "o", "r");
     CHECK(GetField(t, "commit.verified") == "false");
 }
+
+// ---- issue-comments PR-A — read-only `comments` count field on issue/PR rows ----
+
+TEST_CASE("MapIssueOrPullRequestJsonToCachedTicket — REST `comments` integer maps to fieldValues[\"comments\"]") {
+    nlohmann::json issue;
+    issue["number"] = 42;
+    issue["title"] = "Has comments";
+    issue["state"] = "open";
+    issue["comments"] = 5;
+
+    const CachedTicket t = MapIssueOrPullRequestJsonToCachedTicket(issue, "o", "r");
+    CHECK(GetField(t, "comments") == "5");
+}
+
+TEST_CASE("MapIssueOrPullRequestJsonToCachedTicket — absent `comments` maps to \"0\"") {
+    nlohmann::json issue;
+    issue["number"] = 43;
+    issue["title"] = "No comment count";
+    issue["state"] = "open";
+    // no `comments` field
+
+    const CachedTicket t = MapIssueOrPullRequestJsonToCachedTicket(issue, "o", "r");
+    CHECK(GetField(t, "comments") == "0");
+}
+
+TEST_CASE("MapIssueOrPullRequestJsonToCachedTicket — non-integer `comments` maps to \"0\" (Pillar 3)") {
+    SUBCASE("null comments") {
+        nlohmann::json issue;
+        issue["number"] = 44;
+        issue["title"] = "Null count";
+        issue["state"] = "open";
+        issue["comments"] = nullptr;
+        const CachedTicket t = MapIssueOrPullRequestJsonToCachedTicket(issue, "o", "r");
+        CHECK(GetField(t, "comments") == "0");
+    }
+    SUBCASE("string comments") {
+        nlohmann::json issue;
+        issue["number"] = 45;
+        issue["title"] = "String count";
+        issue["state"] = "open";
+        issue["comments"] = "lots";
+        const CachedTicket t = MapIssueOrPullRequestJsonToCachedTicket(issue, "o", "r");
+        CHECK(GetField(t, "comments") == "0");
+    }
+    SUBCASE("float comments") {
+        nlohmann::json issue;
+        issue["number"] = 46;
+        issue["title"] = "Float count";
+        issue["state"] = "open";
+        issue["comments"] = 2.5;
+        const CachedTicket t = MapIssueOrPullRequestJsonToCachedTicket(issue, "o", "r");
+        CHECK(GetField(t, "comments") == "0");
+    }
+}
+
+TEST_CASE("MapGraphQlNodeToRestShape — comments{totalCount} flattens to integer `comments`, round-trips to count") {
+    nlohmann::json node;
+    node["__typename"] = "Issue";
+    node["number"] = 7;
+    node["title"] = "GraphQL with comments";
+    node["state"] = "OPEN";
+    node["comments"] = nlohmann::json::object();
+    node["comments"]["totalCount"] = 7;
+    node["repository"] = nlohmann::json::object();
+    node["repository"]["name"] = "Smatchet";
+    node["repository"]["owner"] = nlohmann::json::object();
+    node["repository"]["owner"]["login"] = "alexandrosk0";
+
+    const nlohmann::json rest = MapGraphQlNodeToRestShape(node);
+    REQUIRE(rest.contains("comments"));
+    REQUIRE(rest["comments"].is_number_integer());
+    CHECK(rest["comments"].get<int>() == 7);
+
+    // Round-trip through the REST mapper → fieldValues["comments"] == "7".
+    const CachedTicket t = MapIssueOrPullRequestJsonToCachedTicket(rest, "", "");
+    CHECK(GetField(t, "comments") == "7");
+}
+
+TEST_CASE("MapGraphQlNodeToRestShape — absent comments does not crash; downstream count is \"0\"") {
+    nlohmann::json node;
+    node["__typename"] = "Issue";
+    node["number"] = 8;
+    node["title"] = "GraphQL no comments";
+    node["state"] = "OPEN";
+    // no `comments` sub-object
+    node["repository"] = nlohmann::json::object();
+    node["repository"]["name"] = "Smatchet";
+    node["repository"]["owner"] = nlohmann::json::object();
+    node["repository"]["owner"]["login"] = "alexandrosk0";
+
+    nlohmann::json rest;
+    CHECK_NOTHROW(rest = MapGraphQlNodeToRestShape(node));
+    // No flat integer `comments` emitted when the GraphQL sub-object is absent.
+    CHECK(rest.find("comments") == rest.end());
+
+    // Downstream REST mapper defaults the count to "0".
+    const CachedTicket t = MapIssueOrPullRequestJsonToCachedTicket(rest, "", "");
+    CHECK(GetField(t, "comments") == "0");
+}

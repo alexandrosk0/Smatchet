@@ -156,6 +156,80 @@ bool IsLoopbackAddress(const std::string& remoteAddr) {
            lowered == "::ffff:127.0.0.1";
 }
 
+namespace {
+
+// Extract the bare host from a `Host:`-style authority (`host`, `host:port`,
+// `[ipv6]`, `[ipv6]:port`). Lowercased + whitespace-trimmed. Returns "" on a
+// malformed bracketed value (unterminated `[`) so the caller fails closed.
+std::string HostFromAuthority(const std::string& authority) {
+    const std::string trimmed = TrimAsciiWhitespace(authority);
+    if (trimmed.empty()) {
+        return std::string();
+    }
+    if (trimmed.front() == '[') {
+        const size_t closeBracket = trimmed.find(']');
+        if (closeBracket == std::string::npos) {
+            return std::string();
+        }
+        return ToLowerAscii(trimmed.substr(1, closeBracket - 1));
+    }
+    const size_t colonPos = trimmed.find(':');
+    if (colonPos != std::string::npos) {
+        return ToLowerAscii(trimmed.substr(0, colonPos));
+    }
+    return ToLowerAscii(trimmed);
+}
+
+// True iff `bareHost` (already lowercased, no port/brackets) is a loopback
+// literal a legitimate local client would send. Rejects a trailing dot so a
+// FQDN-style `127.0.0.1.` / `localhost.` cannot slip past.
+bool IsLoopbackHostLiteral(const std::string& bareHost) {
+    if (bareHost.empty() || bareHost.back() == '.') {
+        return false;
+    }
+    return bareHost == SmatchetDefaults::Mcp::kBindLocalhost || bareHost == "localhost" || bareHost == "::1";
+}
+
+} // namespace
+
+bool IsLoopbackHostHeader(const std::string& hostHeader) {
+    return IsLoopbackHostLiteral(HostFromAuthority(hostHeader));
+}
+
+bool IsAllowedMcpOrigin(const std::string& originHeader) {
+    const std::string trimmed = TrimAsciiWhitespace(originHeader);
+    if (trimmed.empty()) {
+        return true; // no Origin -- legitimate local MCP client / same-origin tooling.
+    }
+    const std::string lowered = ToLowerAscii(trimmed);
+    if (lowered == "null") {
+        return true; // sandboxed / file:// origins serialize to the literal "null".
+    }
+    const size_t schemeSep = lowered.find("://");
+    if (schemeSep == std::string::npos) {
+        return false; // not a serialized http/https origin -- reject.
+    }
+    const std::string scheme = lowered.substr(0, schemeSep);
+    if (scheme != "http" && scheme != "https") {
+        return false;
+    }
+    // An Origin has no path; the authority runs to the end of the string.
+    const std::string authority = lowered.substr(schemeSep + 3);
+    return IsLoopbackHostLiteral(HostFromAuthority(authority));
+}
+
+bool IsMcpHostOriginAllowed(const std::string& hostHeader, const std::string& originHeader, std::string& reason) {
+    if (!IsLoopbackHostHeader(hostHeader)) {
+        reason = "bad_host";
+        return false;
+    }
+    if (!IsAllowedMcpOrigin(originHeader)) {
+        reason = "bad_origin";
+        return false;
+    }
+    return true;
+}
+
 bool ConstantTimeStringEquals(const std::string& a, const std::string& b) {
     const size_t n = std::max(a.size(), b.size());
     unsigned int diff = static_cast<unsigned int>(a.size() ^ b.size());

@@ -31,6 +31,12 @@
      vulnerabilities, not tooling.
      =========================================================================== -->
 
+- 2026-06-14 · build-doctor · [security] · P2 — Android config secrets stored PLAINTEXT at rest (audit H2 remainder; Keystore deferred)
+  Details: Audit H2's POSIX half is now fixed (PR `fix/posix-secret-at-rest-perms-h2`: `chmod 0600` on the config file before the atomic rename + a loose-permission LOG_WARN on read, decision logic in the unit-tested `IsLooseConfigFileMode`). The **Android** half is NOT fixed: `ProtectSecretForConfig`'s `#else` branch still returns plaintext, so API tokens (`token`/`plane_api_key`/`github_pat`/`mcp_auth_token`/`ai_*_api_key`/`whisper_api_key`) land as cleartext in the app's filesDir JSON. Filesystem perms are not a reliable owner-isolation boundary on Android the way they are on a multi-user desktop, so the POSIX chmod mitigation does not transfer. The gap is now LOUD (a `LOG_WARN` fires on every Android secret write naming the gap) and Android is marked a known-unsupported platform for secret-at-rest in code + the H2 audit row, but the secret is still recoverable by anyone with filesystem access to the app sandbox (rooted device, ADB backup of a debuggable build, forensic image).
+  Concrete next action: Implement Android Keystore-backed encryption-at-rest for the secret fields — generate/resolve an AES key in the AndroidKeyStore provider via JNI, wrap (GCM) the secret value before it reaches the config JSON, unwrap on load; gate behind the same `ProtectSecretForConfig`/`UnprotectSecretFromConfig` seam so the call sites are unchanged. Big JNI effort (host-injected JNIEnv plumbing through `Source/Core`); size L. MUST land before Android ships with real-account secrets (H2 raises P2->P1 the moment POSIX/Android ships).
+  Status: open
+  Last-reviewed: 2026-06-14
+
 - 2026-06-13 · deep-audit-xref · [security] · P2 — Candidate MCP/UI cross-thread g_ui data race (playbook target 3)
   Details: MCP dispatch runs off the UI thread — `Source/Plugins/Mcp/McpPlugin.cpp:434` -> `Source/Core/src/Commands/CommandRegistry.cpp:317` -> command handlers that touch UI-owned globals, e.g. `BuiltinCommands_BugReport.cpp:62-64` and `BuiltinCommands_Debug.cpp:292-294` read/write `g_ui` with no synchronization vs the render thread. The existing MCP rows above cover *authorization* (un-gated dispatch, no Host/Origin), NOT this thread-safety gap. Candidate only — needs a TSan run to confirm a real race vs a benign single-writer pattern.
   Concrete next action: Build the MCP/AI TSan lane (see tooling `deeper-audit-harness-buildout`), drive an MCP command that reaches a g_ui handler concurrently with the render loop, confirm/deny the race; if real, marshal handler-side g_ui access onto the UI thread or guard it. Effort M.
@@ -103,6 +109,7 @@
   Concrete next action: Reject non-loopback Host and remote Origin headers; keep token as defense-in-depth. Effort S.
   Status: open
   Last-reviewed: 2026-06-13
+  Resolution: 2026-06-14 · fix/mcp-host-origin-dns-rebind (PR #1228) — McpPlugin::Authorize now applies a fail-closed Host/Origin gate when bound to loopback: rejects any Host that is not a loopback literal (127.0.0.1 / localhost / [::1], port-stripped, case-folded, trailing-dot rejected) and any present Origin that is not empty / "null" / a loopback http(s) origin; 403 + LOG_WARN(reason=bad_host|bad_origin). Decision extracted to pure helpers IsLoopbackHostHeader / IsAllowedMcpOrigin / IsMcpHostOriginAllowed (Source/Plugins/Mcp/McpJsonRpcPure.{h,cpp}) with doctest coverage (tests/Plugins/Mcp/McpHostOrigin.test.cpp). Skipped when McpAllowRemote binds 0.0.0.0 (a non-loopback Host is the operator's explicit intent there). Token check retained as defense-in-depth.
 
 - 2026-06-13 · deep-audit · [security] · P2 — MCP attachment proxy fetches caller-supplied URLs (SSRF surface)
   Details: Source/Plugins/Mcp/McpPlugin.cpp:275-352 fetches a caller URL; the mcp-lane coverage found it already HTTPS-only + host-allow-listed (tracker domain + api.media.atlassian.com) with redirects disabled, so this is a confirm-it-routes-through-the-shared-AiEndpointSanitize hardening rather than a live SSRF.
@@ -113,8 +120,9 @@
 - 2026-06-13 · deep-audit · [security] · P2 — P4vLaunch argument injection via QuoteWinArgWide trailing-backslash bug
   Details: Source/Core/src/Ui/P4vLaunch.cpp:72-86,149,172,189-190 and P4Annotate.cpp:52-59 compose argv from changelist/file fields; QuoteWinArgWide mishandles trailing backslashes, allowing argument-boundary injection. Re-run confirmed MEDIUM and located the custom-command {file}/{cl} template path at P4vLaunch.cpp:172 (gated by AnnotateAllowCustomCommands).
   Concrete next action: Fix backslash doubling per CommandLineToArgvW; prefer argv-array spawn. Effort S + unit test.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Resolution (2026-06-14 · p4-annotate · branch fix/p4v-arg-quote-trailing-backslash): QuoteWinArgWide rewritten to the canonical CommandLineToArgvW algorithm (backslash-run doubling before any literal quote AND before the closing wrap quote), extracted to a pure header-only helper Source/Core/include/Ui/P4vLaunchArgQuotePure.h::QuoteWinArgWidePure so it is doctest-unit-tested (tests/Core/P4vLaunchArgQuotePure.test.cpp — trailing-backslash, embedded-quote, and a CommandLineToArgvW round-trip property proving each input parses back to exactly itself). All cited direct-p4vc call sites route through it: the timelapse {file} arg (P4vLaunch.cpp:149) and the change {cl} arg (now quoted; was previously unquoted). The custom-command {file}/{cl} template path (gated by AnnotateAllowCustomCommands) cannot per-arg-requote a user-authored template, so it now rejects {file}/{cl} VALUES containing a double-quote (the injection-enabling case) on top of the existing newline rejection. The audit's P4Annotate.cpp:52-59 cite is stale — that file composes an argv VECTOR passed to SubprocessCapture::Run, which already uses the correct SubprocessCapturePure::QuoteArgvWindows; no manual quoting there to fix.
+  Status: fixed
+  Last-reviewed: 2026-06-14
 
 - 2026-06-13 · deep-audit · [security] · P2 — POSIX secret writes plaintext with no 0600 mode (re-run: HIGH at-rest exposure; raise to P1 when POSIX ships)
   Details: Source/Core/src/Config/ConfigManager.cpp:473-496 and ConfigManager_PathUtils.cpp:719-761 write secrets as plaintext config with default umask; no chmod 0600. The re-run confirmed the underlying no-op ProtectSecretForConfig #else branch (ConfigManager_PathUtils.cpp:331-334) as HIGH plaintext-at-rest (token/plane_api_key/github_pat/mcp_auth_token/ai_*_api_key/whisper_api_key). Windows (DPAPI) unaffected; this is the non-Windows gap.
@@ -137,20 +145,21 @@
 - 2026-06-13 · deep-audit · [security] · P2 — OfflineQueue serialized 'draft' string bypasses audit-trail redaction
   Details: Source/Core/src/Sync/OfflineQueueService.cpp:356,362 serializes the draft to a JSON string before BackendAuditTrail.cpp:124-148 redaction runs, so RedactJson/LooksSensitiveKey never sees nested keys.
   Concrete next action: Redact the draft object structurally pre-serialization or add a value-level pass. Effort S-M.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Status: resolved
+  Last-reviewed: 2026-06-14
+  Resolution: 2026-06-14 — QueueCreateOffline builds the audit copy via MakeAuditDraft() (anon ns, OfflineQueueService.cpp): the serialized payload is parsed back into a structured nlohmann::json object and run through BackendAuditTrail::RedactJson BEFORE it reaches the audit trail, so nested `fields` sensitive-keyed values redact (idempotent with AppendEvent's own pass; unparseable payload -> placeholder, never the raw string). The enqueued/replayed payload stays the FULL unredacted draft (replay intact). Only call-sites :356/:362 serialize a draft into the trail (the replay-create audit sites carry ids/errors only). Regression guard: tests/Core/OfflineQueueDraftAuditRedaction.test.cpp.
 
 - 2026-06-13 · deep-audit · [security] · P2 — AI client redirect can forward Anthropic x-api-key cross-host
   Details: AiAssistantController AI-client redirect config can retain the x-api-key header across a redirect to a different host (distinct from the tracker-scoped E2/H4 item).
   Concrete next action: Strip auth headers on cross-origin redirect for all AI clients (cpr::Redirect header-stripping). Effort S.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Status: applied (2026-06-14 — confirmed the AI provider clients set NO cpr::Redirect at all, so they used cpr's default (FOLLOW), forwarding the caller-set raw provider key (OpenAI/Whisper `Authorization: Bearer`, Anthropic `x-api-key`) on a cross-host 30x — same class as tracker H4 (#1212). Mirrored the H4 fix: added `constexpr bool kAiFollowRedirects = false` to the cpr-free `AiErrorRedact.h` and passed `cpr::Redirect{kAiFollowRedirects, false}` at ALL 8 AI-client cpr sites — OpenAiClient (Get probe + Post stream), AnthropicClient (Head probe + Post stream), WhisperApiClient (multipart Post), OllamaClient (Get probe + Post stream; keyless but covered for defense-in-depth since a user-set OpenAI-compat BaseUrl can differ). cpr 1.9.2 has no same-host-only knob and cont_send_cred=false alone does not strip a raw header, so disabling follow is the only complete fix; the AI REST/SSE verbs respond with 2xx/4xx and never depend on a 30x. Redirect call is cpr-bound (untestable in the cpr-free doctest rig, like H4); the policy constant is pinned by a doctest. Shipped in the ai-client-redirect-and-error-body-redaction PR.)
+  Last-reviewed: 2026-06-14
 
 - 2026-06-13 · deep-audit · [security] · P2 — Error/response bodies logged without key-name redaction
   Details: A backend client error-logging site (distinct from E8, which is the SSE/NDJSON parse-fail 200 B site) emits response/error bodies without RedactJson, leaking reflected tokens to logs.
   Concrete next action: Route all body logging through the redaction helper; cap length. Effort S.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Status: applied (2026-06-14 — located the tracker HTTP clients as the unredacted backend-client body-logging surface: `LogTrackerHttpResult` (TrackerHttpUtils.cpp) logged the FULL response body (up to 64 KB) at Trace with zero redaction, and ~14 `LOG_ERROR/LOG_WARN("...body=%s", TruncateForLog(resp.text, N))` sites across GitHubActivityFeed / JiraIssueMutation / JiraIssueSearch / JiraUserAndMeta / TrackerFieldCatalog logged raw bodies (TruncateForLog truncate-only, NO key/token redaction) — a Jira 401/403 echoing the raw Basic `Authorization` header or a reflected GitHub PAT would land in logs verbatim. Added a single `RedactHttpBodyForLog()` helper to TrackerHttpUtils that delegates to the existing cpr-free `smatchet::ai::pure::RedactProviderErrorBody` (Bearer / api_key / Authorization / x-api-key / sk-/org-/ghp_… heuristics + length cap) — did NOT invent a new redactor per the audit. Routed `LogTrackerHttpResult` + every tracker `body=%s` LOG site through it. The AI provider clients (OpenAI/Anthropic/Ollama/Whisper) already redacted their error bodies via RedactProviderErrorBody, so #12 was tracker-side. The user-facing `outError += TruncateForLog(...)` strings are a separate surface left untouched (this finding is the logging site). Tested: doctest pins the tracker-shaped reflections (Basic-auth echo, ghp_ PAT) get stripped (RedactHttpBodyForLog itself is cpr-bound; its delegated redaction is the tested unit). Shipped in the ai-client-redirect-and-error-body-redaction PR.)
+  Last-reviewed: 2026-06-14
 
 - 2026-06-13 · deep-audit · [security] · P2 — Automation worker hook aggravates shutdown deadlock / UI-thread starvation
   Details: The instruction-count worker hook interacts with shutdown so a long automation can hold the process from exiting (verifier raised LOW→MEDIUM). Re-run located it at AppController_LuaBindings.cpp:1257 (LUA_MASKCOUNT, 50000, only checks shuttingDown_) chaining to blocking JiraIssueMutation.cpp:206 — also a UI-thread block (Pillar 2) since the count-hook does not cover blocking C++ glue.
@@ -163,18 +172,21 @@
   Concrete next action: Normalize via inet_pton/getaddrinfo and apply the denylist to resolved addresses. Effort S.
   Status: open
   Last-reviewed: 2026-06-13
+  Resolution: 2026-06-14 (PR #1229) — replaced the dotted-quad-only ParseIpv4Literal with an overflow-safe CanonicalizeIpv4 that normalises decimal (2852039166), hex (0xA9FEA9FE), octal (0251.0376.0251.0376), dotted-hex, and inet_aton short-forms (169.254.43518) to 4 octets BEFORE the denylist, plus a ClassifyIpv6Literal that handles bracketed IPv6 incl. IPv4-mapped ::ffff:169.254.169.254, link-local fe80::/10, and ULA fc00::/7. Added RejectedPrivateNetwork verdict for RFC1918 (10/8, 172.16/12, 192.168/16) + IPv6 ULA. The integer-form parse is overflow-guarded (>cap rejected) so a denied IP cannot wrap into an allowed one. Doctest coverage in tests/Core/AiEndpointSanitize.test.cpp. Residual: DNS-rebind-to-internal (a hostname that resolves to a denied IP) is still NOT blocked — sanitize-time resolution has its own TOCTOU and the audit scoped this finding to the literal-encoding bypass; tracked separately if pursued.
 
 - 2026-06-13 · deep-audit · [security] · P3 — SubprocessCapture inherits full parent environment
   Details: Source/Core/src/Ui/SubprocessCapture.cpp:106-119,492 — children inherit the full env and a manipulable PATH.
   Concrete next action: Pass a minimal explicit environment; resolve binaries by absolute path. Effort S-M.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Resolution: 2026-06-14 (PR fix/subprocess-exec-hardening-wave4) — added CaptureOptions::scrubSensitiveEnv + pure SubprocessCapturePure::IsSensitiveEnvName / ScrubSensitiveEnv (drop-sensitive strategy, not a full allow-list: TOKEN/SECRET/PASSWORD/KEY/_PAT/AUTH/SESSION/COOKIE/PRIVATE/PASSPHRASE dropped; PATH/SYSTEMROOT/TEMP/locale/HOME/P4*/GIT* survive so p4+git+file-pickers keep working). Wired on in P4Annotate::P4RunCommand. argv0 already resolved to an absolute path via SearchPathW. Drop-sensitive chosen over allow-list to avoid silently breaking a tool that relies on an unlisted var. Unit tests cover the predicate + filter; end-to-end scrubbed spawn is process-bound (covered by the pure tests + compiled platform merge).
+  Status: resolved
+  Last-reviewed: 2026-06-14
 
 - 2026-06-13 · deep-audit · [security] · P3 — P4 executable resolved via PATH (binary planting)
   Details: Source/Core/src/Ui/P4vLaunch.cpp resolves p4/p4v via PATH search (verifier MEDIUM→LOW). Re-run also located the SearchPathW resolution at P4Annotate.cpp:49.
   Concrete next action: Resolve the binary by absolute/verified install path before spawn. Effort S.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Resolution: 2026-06-14 (PR fix/subprocess-exec-hardening-wave4) — both resolvers (SubprocessCapture::ResolveApplicationName, P4vLaunch::ResolveP4VcExecutableWide) ALREADY resolve a bare p4/p4vc name to its absolute SearchPathW result and hand CreateProcessW lpApplicationName / ShellExecuteW the absolute path (not a bare name the loader re-searches). Residual hardening: on a SearchPathW miss the code now LOG_WARNs that it is falling back to a PATH-based launch (binary-planting surface) instead of silently returning the bare name. Proportionate per the same-user threat model (no separate trust-store built).
+  Status: resolved
+  Last-reviewed: 2026-06-14
 
 - 2026-06-13 · deep-audit · [security] · P3 — Crash-handler minidump may include sensitive process memory
   Details: Source/Standalone/SmatchetCrashHandler.cpp:53-55 writes a minidump with flags that can capture broad process memory (in-memory secrets).
@@ -191,8 +203,9 @@
 - 2026-06-13 · deep-audit · [security] · P3 — CLI spawn log written to predictable /tmp path (symlink race)
   Details: Source/Core/src/Commands/CliCommandRunner.cpp:481-487,538 writes a spawn log to a predictable shared /tmp path without owner-only mode. Re-run confirmed the symlink race: no O_NOFOLLOW and a predictable pid+port name at :481.
   Concrete next action: Use a per-user temp dir with O_EXCL + O_NOFOLLOW + 0600. Effort S.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Resolution: 2026-06-14 (PR fix/subprocess-exec-hardening-wave4) — ComputeSpawnLogPath now appends 16 hex chars of std::random_device entropy (SpawnLogRandomToken) so the path is unpredictable, and the open is hardened against a pre-planted file/symlink: POSIX open() gains O_CREAT|O_EXCL|O_NOFOLLOW with mode 0600 (was O_TRUNC 0644); Windows CreateFileA uses CREATE_NEW (was CREATE_ALWAYS). O_NOFOLLOW guarded with a #ifndef fallback for the rare host lacking the macro.
+  Status: resolved
+  Last-reviewed: 2026-06-14
 
 - 2026-06-13 · deep-audit · [security] · P3 — MCP thread pool / SSE parking lacks connection bounds
   Details: Source/Plugins/Mcp/McpPlugin.cpp:848-850,600-620 — no clear cap on concurrent parked SSE connections / pool threads.
@@ -229,8 +242,9 @@
 - 2026-06-13 · deep-audit-rerun · [security] · P2 — ADF parser unbounded recursion on untrusted tracker JSON (Pillar 3 — Never Crash)
   Details: `Source/Core/src/Tracker/TrackerFieldValueParser.cpp:290` (`CollectAdfText`) and `:309` (`ExtractAdfTextToStream`) recurse over server-supplied Atlassian Document Format nodes with no depth bound; deeply-nested ADF blows the stack → crash / DoS from a malicious or buggy server response. Confirmed MEDIUM, adversarially verified, NEW.
   Concrete next action: add a recursion-depth cap (reject/clamp beyond ~64 levels) to both functions; convert to an explicit work-stack if needed. Unit-test with a deep-nest fixture. ~1 h.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Resolution: 2026-06-14 — capped BOTH walkers at `kMaxAdfRecursionDepth = 256` (threaded a `depth` param, default 0; on exceeding the cap the walker stops recursing and degrades gracefully — no throw — with a one-shot `LOG_WARN`). Picked 256 (well above any legitimate ADF nesting; real docs are a handful deep) over the ~64 suggested, to leave more headroom for legitimate-but-deep nested lists/tables while still bounding stack growth far short of overflow. Regression guards added in `tests/Core/TrackerFieldValueParser.extended.test.cpp`: two 5000-level deep-nest fixtures (one per walker entry point — `ExtractAdfTextToStream` via `NormalizeTrackerFieldValue`, `CollectAdfText` via the `ParseComments` empty-extraction fallback) parse without stack overflow, plus a shallow-doc no-regression check. Fix PR #1220.
+  Status: resolved
+  Last-reviewed: 2026-06-14
 
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — Lua child coroutine lua_State does not inherit the instruction-count hook
   Details: `Source/Core/src/AppController_LuaBindings.cpp:315,1257` — the LUA_MASKCOUNT hook is installed on the main lua_State; a `coroutine.create()`'d child State does not inherit it, so a tight loop inside a coroutine runs uncounted (sandbox timeout bypass). Partly-confirmed LOW (needs paste-and-run Lua; same-user boundary), NEW.
@@ -280,11 +294,11 @@
   Status: applied (2026-06-14 — `BuildKeyInJql` (`JiraIssueSearch.cpp`) now escapes every key through the shared `tracker_jql::QuoteLiteral` helper for both the single-key `=` and the multi-key `in (...)` paths. Helper lives at `Source/Core/include/Tracker/JqlEscape.h` (one canonical copy; the former file-local `EscapeJqlString` in `JiraActivityFeed.cpp` was promoted into it and all three sites — JqlSuggestEngine, JiraIssueSearch, JiraActivityFeed — now share it). Doctest `tests/Core/JqlEscape.test.cpp` covers the break-out payloads. Plane/GitHub JQL-equivalent audit left as follow-up.)
   Last-reviewed: 2026-06-14
 
-- 2026-05-28 · deep-audit · [security] · P3 — Tracker HTTP clients follow redirects with `Authorization` attached (cross-host credential forwarding)
+- 2026-05-28 · deep-audit · [security] · P2 — Tracker HTTP clients follow redirects with `Authorization` attached (cross-host credential forwarding) (E2; raised P3→P2 = H4 per the 2026-06-13 audit, both fleets confirmed HIGH)
   Details: All tracker request helpers construct `cpr::Redirect redirect(true, true)` (`Source/Core/src/Tracker/TrackerHttpUtils.cpp:118,131,143,154,242`) while `BuildTrackerHeaders` attaches a Basic `Authorization` header (`BuildTrackerBasicAuthHeader`, :108-110). Because that header is a caller-set raw header (not libcurl `CURLOPT_USERPWD`), libcurl's default `CURLOPT_UNRESTRICTED_AUTH=0` does NOT strip it on cross-host redirects — a 30x from the configured tracker domain to an attacker/MITM host forwards the API token. The MCP attachment proxy already defends this with `cpr::Redirect(false,false)` (`Source/Plugins/Mcp/McpPlugin.cpp:289`); the tracker clients do not. Low severity: base Domain is user-configured (self-targeting trust boundary) and Jira/Plane/GitHub Cloud are HTTPS without cross-host auth redirects — residual risk is a compromised endpoint or an `http://` MITM. Verified (deep-audit, adversarially confirmed).
   Concrete next action: disable redirect-following on the tracker helpers (`cpr::Redirect(false, ...)`) and handle same-host redirects explicitly, OR restrict follow to same host/scheme, OR strip `Authorization` on cross-origin redirects. Mirror the proxy's posture. ~1 h.
-  Status: open
-  Last-reviewed: 2026-05-28
+  Status: applied (2026-06-14 — all 5 tracker verb helpers (`TrackerGetLogged` x2, `TrackerPostLogged`, `TrackerPutLogged`, `TrackerPatchLogged`) PLUS the previously-uncovered 6th sink — the multipart attachment upload at `JiraIssueMutation.cpp` ~:591 that bypasses the verb helpers — now build their redirect via a single exported `MakeTrackerRedirectPolicy()` returning `cpr::Redirect(false, false)`: redirect-following DISABLED, mirroring the MCP attachment proxy. cpr 1.9.2 exposes no same-host-only knob and `cont_send_cred=false` alone does NOT strip the caller-set RAW `Authorization` header on a cross-host 30x (UNRESTRICTED_AUTH governs only `CURLOPT_USERPWD`), so a blanket disable is the only complete fix; the Jira/Plane/GitHub REST verbs respond directly with 2xx/4xx and never depend on a 30x, so no legitimate same-host redirect is broken. A 30x now surfaces as a non-2xx the callers already handle. Shipped in the tracker-redirect PR. Note the lower-LOW siblings `ModelDownloader.cpp:314` (Whisper) and the AI-client `x-api-key` redirect remain open — distinct sinks.)
+  Last-reviewed: 2026-06-14
 
 - 2026-05-28 · deep-audit · [security] · P3 — Lua source tarball fetched with no integrity hash (only unpinned external fetch)
   Details: `CMakeLists.txt:377` `file(DOWNLOAD https://www.lua.org/ftp/lua-5.3.6.tar.gz "${_lua_tar}")` has no `EXPECTED_HASH` (grep for EXPECTED_HASH/SHA256 across `CMakeLists.txt` + `cmake/` returns nothing). Every other dependency is pinned to an immutable git ref and FontAwesome's TTF is sha256-verified in CI (`build-and-test.yml:88-98`) — Lua is the lone gap. A compromised lua.org mirror or MITM injects unverified C source compiled into both standalone + Unreal targets. Inside `if(SMATCHET_WITH_LUA_AUTOMATION)` + guarded by `if(NOT EXISTS LUA_SRC_DIR)`, so the window is first-fetch / cache-miss CI runs. Mirrors the existing Mesa-archive-integrity entry (2026-05-24). Verified (deep-audit, adversarially confirmed).
@@ -308,8 +322,9 @@
 - 2026-05-17 · security-review · [security] · P2 — `ai.prompt` Lua glue has no rate limit + no per-session consent toast
   Details: Any Lua script (including one loaded via `Source/Plugins/LuaConsole` paste-and-run) can call `ai.prompt(...)` in a tight loop and burn the user's API quota or leak ticket data to the configured provider. `LuaAutomationHost`'s instruction-count `lua_sethook` doesn't cover the C++-side HTTP call. Sandbox escape with attacker-controlled outbound payload.
   Concrete next action: at the `ai.prompt` C++ glue site in [`AppController_LuaBindings.cpp:776-779`](../../../Source/Core/src/AppController_LuaBindings.cpp), reject calls when an in-flight prompt is already pending OR when the last `ai.prompt` fired less than ~5 s ago. Add a one-time-per-session toast on the first `ai.prompt` call naming the provider host. ~1 h.
-  Status: open
-  Last-reviewed: 2026-05-17
+  Resolution: applied 2026-06-14 (PR fix/ai-prompt-rate-limit-h5). The rate-limit decision was extracted to a pure header `Source/Core/include/AiLuaPromptRateLimit.h` (`DecideAiPromptGate` — re-entrancy checked first, then strict-`<` 5 s spacing via `kAiPromptMinIntervalMs`), unit-tested in `tests/Core/AiLuaPromptRateLimit.test.cpp`. Per-instance state (`aiPromptInFlight_`/`aiPromptLastCallAt_`/`aiPromptEverCalled_`/`aiPromptConsentShown_`, all under `aiPromptGateMutex_`) lives on `AppController::Impl`; the glue `LuaAiPromptGlue` calls `Impl::TryBeginLuaAiPromptTurn` BEFORE any context mutation / `PromptAi` submit and `luaL_error`s (no UI-thread block) on rejection, then `EndLuaAiPromptTurn` after submit. First accepted call fires a one-time `SmatchetToastManager` Warning toast naming `AiAssistantController::GetActiveProviderName()` (guarded `#if SMATCHET_WITH_AI`, falls back to a generic label).
+  Status: applied
+  Last-reviewed: 2026-06-14
 
 - 2026-05-17 · security-review · [security] · P3 — CR/LF/NUL strip at the config persist site (defense-in-depth)
   Details: PR #176 strips CR/LF/NUL at the use site (`BuildClientConfig` in `AiAssistantController`). For pure defense-in-depth, also strip at the persist site (`ConfigManager::Save`) so a value that round-trips through disk never carries header-smuggling control characters in the first place. Same applies to `MCP config.set` + Lua-config paths that write `AiApiKey` / `AiAnthropicApiKey` / `AiBaseUrl` / `AiOllamaBaseUrl` / `McpAuthToken`.

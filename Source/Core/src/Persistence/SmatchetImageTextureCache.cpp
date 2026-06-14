@@ -1,6 +1,8 @@
 #include "SmatchetImageTextureCache.h"
 
 #include "CacheEvictionPolicy.h"
+#include "Logger.h"
+#include "Persistence/IconDimensionsPolicy.h"
 #include "imgui_internal.h"
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -27,6 +29,12 @@ namespace {
 constexpr size_t kMaxCacheEntries = 384;
 constexpr size_t kMaxFileReadBytes = 4u * 1024u * 1024u;
 constexpr int kMaxIconDimension = 512;
+// Aggregate-pixel guard for the pre-decode dimension check: RGBA32 byte estimate at the
+// dimension ceiling (512 x 512 x 4 = 1 MiB). With both side caps already at kMaxIconDimension
+// this is the same bound, but it keeps the pre-check honest if the side cap ever grows faster
+// than intended and guards against a pathological aspect ratio.
+constexpr size_t kMaxIconPixelBytes =
+    static_cast<size_t>(kMaxIconDimension) * static_cast<size_t>(kMaxIconDimension) * 4u;
 // Aggregate gauge-byte cap (Phase 4). The 384-entry cap alone bounds memory only if every
 // entry is small; 384 entries at the 512×512 dimension ceiling would be ~384 MB. This caps the
 // summed Width·Height·4 estimate so a run of large-but-under-dimension icons can't balloon the
@@ -137,6 +145,21 @@ static bool DecodeWithStb(const unsigned char* bytes, size_t byteCount, std::vec
     int w = 0;
     int h = 0;
     int channels = 0;
+    // Pre-validate dimensions from the header ONLY (stbi_info reads no pixel data and allocates
+    // nothing) so a malicious oversized image is rejected before the full stbi_load decode/alloc
+    // (memory-pressure DoS, SECURITY_AUDIT_2026-06-13 synthesis #9). Overflow-safe pixel-budget
+    // math lives in the pure IconDimensionsWithinCap helper.
+    if (stbi_info_from_memory(bytes, static_cast<int>(byteCount), &w, &h, &channels) != 0) {
+        if (!smatchet::IconDimensionsWithinCap(w, h, kMaxIconDimension, kMaxIconPixelBytes)) {
+            LOG_WARN("Image rejected before decode: dimensions %dx%d exceed icon limit (%d) or pixel budget.", w, h,
+                     kMaxIconDimension);
+            outError = "Image dimensions exceed icon limit.";
+            return false;
+        }
+    }
+    w = 0;
+    h = 0;
+    channels = 0;
     unsigned char* pix =
         stbi_load_from_memory(bytes, static_cast<int>(byteCount), &w, &h, &channels, STBI_rgb_alpha);
     if (pix == nullptr || w <= 0 || h <= 0) {

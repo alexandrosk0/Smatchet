@@ -3,6 +3,7 @@
 #include "BackendAuditTrail.h"
 #include "ConfigManager.h"
 #include "GitHubClientHelpers.h"
+#include "GitHubCommentMappingPure.h"
 #include "GitHubIssueSearch.h"
 #include "IssueDraft.h"
 #include "LabelEditDiffPure.h"
@@ -12,6 +13,7 @@
 
 #include <cpr/cpr.h>
 
+#include <iterator>
 #include <sstream>
 
 namespace {
@@ -69,7 +71,7 @@ ITrackerIssueReader& GitHubClient::Reader() { return *this; }
 ITrackerConnectivity& GitHubClient::Connectivity() { return *this; }
 ITrackerFieldCatalog* GitHubClient::FieldCatalog() { return this; }
 ITrackerIssueMutations* GitHubClient::Mutations() { return this; }
-ITrackerCollaboration* GitHubClient::Collaboration() { return nullptr; }
+ITrackerCollaboration* GitHubClient::Collaboration() { return this; }
 ITrackerActivity* GitHubClient::Activity() { return this; }
 
 GitHubClient::GitHubClient(const std::string& baseUrl, const std::string& pat)
@@ -289,6 +291,11 @@ Result<TrackerFieldCatalogResult, TrackerError> GitHubClient::FetchFieldCatalog(
     addField("created", "Created", "datetime");
     addField("updated", "Updated", "datetime");
     addField("milestone", kMilestoneLabel, "string");
+    // issue-comments PR-A — read-only comment count. Unprefixed `comments`
+    // (plural) by design — GitHub's catalog uses unprefixed ids for common
+    // fields and there's no collision with Jira's singular `comment` blob.
+    // Non-editable in editmeta below (the UI intercepts the cell).
+    addField("comments", "Comments", "number");
     // PR12 — PR-only fields. Strings ("true"/"false"/"computing"/"" for
     // mergeable; "true"/"false"/"" for draft) consistent with the existing
     // bool-as-string pattern used by other tracker catalogs.
@@ -334,6 +341,7 @@ GitHubClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string
                                                          "assignee",
                                                          "labels",
                                                          "milestone",
+                                                         "comments",
                                                          "author",
                                                          "created",
                                                          "updated",
@@ -363,7 +371,92 @@ GitHubClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string
     outFieldIdCanEdit["author"] = false; // immutable on GitHub
     outFieldIdCanEdit["created"] = false;
     outFieldIdCanEdit["updated"] = false;
+    // issue-comments PR-A — comment count is read-only; the UI intercepts the
+    // cell, but editmeta must agree so the grid never offers an edit affordance.
+    outFieldIdCanEdit["comments"] = false;
     return Result<std::unordered_map<std::string, bool>, TrackerError>::Ok(std::move(outFieldIdCanEdit));
+}
+
+Result<std::vector<TrackerIssueComment>, TrackerError>
+GitHubClient::FetchIssueComments(const std::string& issueKey) {
+    using CommentsResult = Result<std::vector<TrackerIssueComment>, TrackerError>;
+    // No cfg parameter on this interface — resolve from the settled on-disk config
+    // (issue #979; same per-request pattern UpdateField / CreateIssue use).
+    const smatchet::github::GitHubRequestAuth auth = ResolveAuth(nullptr);
+    if (auth.Pat.empty()) {
+        return CommentsResult::Err(TrackerErrorAuth(kPatMissingError));
+    }
+    smatchet::github::ParsedIssueKey parsed;
+    if (!smatchet::github::ParseGitHubIssueKey(issueKey, parsed)) {
+        return CommentsResult::Err(TrackerErrorInvalidRequest(
+            "GitHubClient::FetchIssueComments: invalid issueKey shape (expected owner/repo#N): " + issueKey));
+    }
+    const cpr::Header headers = BuildGitHubHeaders(auth.Pat);
+    const std::string baseSuffix =
+        smatchet::github::BuildIssuePatchUrlSuffix(parsed.Owner, parsed.Repo, parsed.Number) + "/comments";
+
+    constexpr int kPerPage = 100;
+    constexpr int kMaxPages = 50; // safety ceiling — 5000 comments is well past any real issue.
+    std::vector<TrackerIssueComment> all;
+    for (int page = 1; page <= kMaxPages; ++page) {
+        std::ostringstream urlOut;
+        urlOut << auth.BaseUrl << baseSuffix << "?per_page=" << kPerPage << "&page=" << page;
+        const std::string url = urlOut.str();
+        const cpr::Response resp =
+            TrackerGetLogged("GitHubClient", url, headers, kTrackerConnectTimeoutMs, kTrackerOverallTimeoutMs);
+        if (resp.status_code != 200) {
+            const std::string msg =
+                smatchet::github::ExtractGitHubErrorMessage(static_cast<int>(resp.status_code), resp.text);
+            LOG_ERROR("GitHubClient::FetchIssueComments: HTTP %ld on page %d for %s — %s", resp.status_code, page,
+                      issueKey.c_str(), msg.c_str());
+            return CommentsResult::Err(TrackerErrorFromHttpStatus(static_cast<int>(resp.status_code), msg));
+        }
+        const nlohmann::json parsedJson = nlohmann::json::parse(resp.text, nullptr, false);
+        if (parsedJson.is_discarded() || !parsedJson.is_array()) {
+            LOG_ERROR("GitHubClient::FetchIssueComments: invalid JSON / not an array on page %d for %s", page,
+                      issueKey.c_str());
+            return CommentsResult::Err(TrackerErrorParse("GitHub issue-comments response was not a JSON array."));
+        }
+        const std::size_t pageCount = parsedJson.size();
+        std::vector<TrackerIssueComment> mapped = smatchet::github::MapGitHubIssueComments(parsedJson);
+        all.insert(all.end(), std::make_move_iterator(mapped.begin()), std::make_move_iterator(mapped.end()));
+        // Short page (< per_page) means the last page was reached — stop paging.
+        if (pageCount < static_cast<std::size_t>(kPerPage)) {
+            break;
+        }
+    }
+    LOG_INFO("GitHubClient::FetchIssueComments: %s → %zu comments", issueKey.c_str(), all.size());
+    return CommentsResult::Ok(std::move(all));
+}
+
+TrackerError GitHubClient::AddIssueCommentPlain(const TrackerConfig& cfg, const std::string& issueKey,
+                                                const std::string& plainText) {
+    // cfg-carrying mutation — resolve credentials from the live cfg (matches
+    // CreateIssue / UpdateField). Direct-post: comments are exempt from the
+    // offline-queue + audit-trail wiring (mirrors the existing Jira comment post).
+    const smatchet::github::GitHubRequestAuth auth = ResolveAuth(&cfg);
+    if (auth.Pat.empty()) {
+        return TrackerErrorAuth(kPatMissingError);
+    }
+    smatchet::github::ParsedIssueKey parsed;
+    if (!smatchet::github::ParseGitHubIssueKey(issueKey, parsed)) {
+        return TrackerErrorInvalidRequest(
+            "GitHubClient::AddIssueCommentPlain: invalid issueKey shape (expected owner/repo#N): " + issueKey);
+    }
+    const std::string url = auth.BaseUrl +
+                            smatchet::github::BuildIssuePatchUrlSuffix(parsed.Owner, parsed.Repo, parsed.Number) +
+                            "/comments";
+    nlohmann::json body = nlohmann::json::object();
+    body["body"] = plainText;
+    const cpr::Response resp = TrackerPostLogged("GitHubClient", url, BuildGitHubHeaders(auth.Pat), body.dump());
+    if (resp.status_code != 201 && resp.status_code != 200) {
+        const std::string msg =
+            smatchet::github::ExtractGitHubErrorMessage(static_cast<int>(resp.status_code), resp.text);
+        LOG_ERROR("GitHubClient::AddIssueCommentPlain: HTTP %ld for %s — %s", resp.status_code, issueKey.c_str(),
+                  msg.c_str());
+        return TrackerErrorFromHttpStatus(static_cast<int>(resp.status_code), msg);
+    }
+    return TrackerError::Ok();
 }
 
 std::string GitHubClient::BuildBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const {

@@ -303,7 +303,7 @@ bool FetchAndParseFieldList(const std::string& base, const cpr::Header& headers,
         auto response = nlohmann::json::parse(fieldsResponse.text);
         if (!response.is_array()) {
             outError = "Unexpected /field response shape.";
-            LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), TruncateForLog(fieldsResponse.text, 300).c_str());
+            LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), RedactHttpBodyForLog(fieldsResponse.text).c_str());
             return false;
         }
         for (const auto& field : response) {

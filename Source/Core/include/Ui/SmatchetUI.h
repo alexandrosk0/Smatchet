@@ -77,6 +77,14 @@ void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app);
  */
 void SmatchetUI_ResetLayoutToDefault(UiDrawSession& d);
 
+/**
+ * End-of-frame drain for a pending layout reset. SmatchetUI_ResetLayoutToDefault only LATCHES
+ * (UiDrawSession::pendingLayoutReset) because it is invoked mid-frame; this applies the heavy
+ * dock work (LoadIniSettingsFromMemory + force-redock arming) at the safe end-of-frame point.
+ * No-op when the latch is clear. Must be called on the UI thread.
+ */
+void SmatchetUI_ApplyDeferredLayoutReset(UiDrawSession& d);
+
 class SmatchetUI {
   public:
     void Draw(AppController& app);

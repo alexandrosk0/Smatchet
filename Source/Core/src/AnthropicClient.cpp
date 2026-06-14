@@ -129,7 +129,8 @@ std::string AnthropicClient::ProbeReachability(const AiClientConfig& cfg) {
         headers["x-api-key"] = cfg.ApiKey;
 
     cpr::Response r =
-        cpr::Head(cpr::Url{url}, headers, cpr::ConnectTimeout{cfg.ConnectTimeoutMs}, cpr::Timeout{cfg.TotalTimeoutMs});
+        cpr::Head(cpr::Url{url}, headers, cpr::Redirect{smatchet::ai::pure::kAiFollowRedirects, false},
+                  cpr::ConnectTimeout{cfg.ConnectTimeoutMs}, cpr::Timeout{cfg.TotalTimeoutMs});
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Ai, NetworkUsageTracker::kEstimatedGetUploadBytes, r);
     if (r.error.code != cpr::ErrorCode::OK)
         return std::string("transport: ") + r.error.message;
@@ -178,8 +179,9 @@ void AnthropicClient::SendStreaming(const AiClientConfig& cfg, const AiChatReque
                            },
                            0};
 
-    cpr::Response r = cpr::Post(cpr::Url{url}, headers, cpr::Body{body}, wcb, cpr::ConnectTimeout{cfg.ConnectTimeoutMs},
-                                cpr::Timeout{cfg.TotalTimeoutMs});
+    cpr::Response r = cpr::Post(cpr::Url{url}, headers, cpr::Body{body}, wcb,
+                                cpr::Redirect{smatchet::ai::pure::kAiFollowRedirects, false},
+                                cpr::ConnectTimeout{cfg.ConnectTimeoutMs}, cpr::Timeout{cfg.TotalTimeoutMs});
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Ai, static_cast<std::uint64_t>(body.size()), r);
 
     if (!sawFinal)

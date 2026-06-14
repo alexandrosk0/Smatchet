@@ -45,6 +45,16 @@ struct CaptureOptions {
     /// `setenv()` so the same allow-list semantic holds. False (the default)
     /// keeps the additive-merge behaviour the P4Annotate call sites expect.
     bool replaceParentEnv = false;
+    /// When true, the child does NOT inherit parent env vars whose name looks
+    /// secret-bearing (TOKEN / SECRET / PASSWORD / KEY / _PAT / …, see
+    /// SubprocessCapturePure::IsSensitiveEnvName). PATH / SYSTEMROOT / TEMP /
+    /// locale / HOME / P4* / GIT* all survive, so p4, git and the file-pickers
+    /// keep working. A proportionate defense-in-depth scrub for audit synthesis
+    /// #15 (same-user is inside the trust boundary, so the goal is to avoid
+    /// gratuitously handing a child every API token, not to build a sandbox).
+    /// Ignored when `replaceParentEnv` is set (that path already gives the child
+    /// only the explicit `env` entries). `env` overrides still apply on top.
+    bool scrubSensitiveEnv = false;
     /// Empty = inherit parent's working directory.
     std::string cwd;
     /// 0 = no timeout. > 0 = wall-clock budget in milliseconds.

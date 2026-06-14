@@ -106,6 +106,10 @@ add_executable(SmatchetTests
     Core/ConfigSaveConcurrency.test.cpp
     Core/MainThreadDispatcherDrain.test.cpp
     Core/CacheEvictionPolicy.test.cpp
+    # SECURITY_AUDIT_2026-06-13 synthesis #9 — pure pre-decode dimension/pixel-budget gate behind
+    # SmatchetImageTextureCache's stbi_info pre-check. Header-only
+    # (Source/Core/include/Persistence/IconDimensionsPolicy.h); no production .cpp to link.
+    Core/IconDimensionsPolicy.test.cpp
     # multi-grid-tabs.md Slice 5a (plan item 21) — pure hidden-pane LRU eviction decision
     # (least-recently-visible first; visible + busy-sync never evicted). Header-only policy.
     Core/GridPaneEvictionPolicy.test.cpp
@@ -228,6 +232,12 @@ add_executable(SmatchetTests
     # link: the predicate is value-only; android_main.cpp pins the status constants to the
     # real ImTextureStatus_* with static_assert.
     Core/SmatchetImGuiTextureGuard.test.cpp
+    # Reset-layout docking regression (PR #1198) — pure default dock-slot table +
+    # key-iteration accessors (SmatchetDockNodeIds.cpp) that drive both initial docking
+    # and the live-reset force-redock. ImGui-free at runtime (constexpr IDs + strcmp); the
+    # rig already links ImGuiLib + include/Ui so imgui.h resolves.
+    Core/SmatchetDockNodeIds.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetDockNodeIds.cpp"
     Core/MarkdownPreviewLangTag.test.cpp
     Core/MarkdownConvertAdf.test.cpp
     Core/MarkdownConvert.test.cpp
@@ -284,6 +294,11 @@ add_executable(SmatchetTests
     # test rig only needs the test TU itself (no separate cpp link).
     Core/LocalCacheManagerChat.test.cpp
     Core/BackendAuditTrail.test.cpp
+    # security #10 regression guard — the offline-queue create audit copy of the draft must be
+    # structurally redacted (RedactJson over the parsed payload) while the enqueued/replayed
+    # payload retains the real field values. Links IssueDraft.cpp + BackendAuditTrail.cpp (both
+    # already in the src list below); no extra .cpp link needed.
+    Core/OfflineQueueDraftAuditRedaction.test.cpp
     Core/IssueCreatePipelineIntegration.test.cpp
     Core/P4AnnotateParse.test.cpp
     # Slice 3 of autonomous-debugging-no-creds — runner-seam fake exercises
@@ -317,6 +332,9 @@ add_executable(SmatchetTests
     # policy (OfflineFieldConflictPolicy.h), zero banned includes; no extra .cpp link.
     Core/OfflineFieldConflictPolicy.test.cpp
     Core/ConfigManager.test.cpp
+    # audit H2 — pure POSIX secret-at-rest loose-permission decision (IsLooseConfigFileMode,
+    # defined in ConfigManager_PathUtils.cpp which is already linked below). No extra .cpp.
+    Core/ConfigSecretFilePerms.test.cpp
     # vsync-toggle plan — header-only live vsync hub (VsyncControl.h): Set/Get +
     # boot precedence (env > CLI flag > config). Pure C++14, no GLFW, no extra .cpp.
     Core/VsyncControl.test.cpp
@@ -354,6 +372,10 @@ add_executable(SmatchetTests
     Core/AiAssistantSystemPrompt.test.cpp
     Core/AiPrefsValidator.test.cpp
     Core/AiEndpointSanitize.test.cpp
+    # Pure rate-limit decision for the ai.prompt Lua glue (security audit H5 /
+    # E6). Header-only (Source/Core/include/AiLuaPromptRateLimit.h); no extra
+    # .cpp source — the glue calls the helper, the helper is the testable unit.
+    Core/AiLuaPromptRateLimit.test.cpp
     Core/CliArgCoercion.test.cpp
     Core/DictationInsertionRouter.test.cpp
     Core/AiAssistantInputSeedDecision.test.cpp
@@ -409,6 +431,18 @@ add_executable(SmatchetTests
     # without HTTP.
     Core/GitHubIssueSearchMapping.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubIssueSearchMapping.cpp"
+    # issue-comments PR-A — pure JSON array → TrackerIssueComment mapping, split
+    # out of GitHubClient.cpp (which pulls cpr). GitHubCommentMappingPure.cpp
+    # depends on ParseIso8601ToUnixSec from GitHubClientHelpers.cpp (already
+    # linked above), so no extra dep beyond the mapping TU itself.
+    Core/GitHubCommentMappingPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubCommentMappingPure.cpp"
+    # issue-comments PR-C — pure JSON array → TrackerIssueComment mapping, split
+    # out of PlaneClient.cpp (which pulls cpr). PlaneCommentMappingPure.cpp depends
+    # on JsonGetStringIfString (TrackerFieldValueParser.cpp) + ParseIso8601ToUnixSec
+    # (GitHubClientHelpers.cpp), both already linked into this target above.
+    Core/PlaneCommentMappingPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneCommentMappingPure.cpp"
     # Slice 1 of deterministic-jira-test-backend — pure
     # Jira JSON → CachedTicket mapper + field-list builder extracted from
     # JiraIssueSearch.cpp (which pulls cpr). Same pure-seam shape as the
@@ -493,12 +527,17 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownPreviewRender.cpp"
     Core/SubprocessCapturePure.test.cpp
     Core/SubprocessCapture.test.cpp
+    # Wide-char argv quoting for the p4v/p4vc launcher — canonical
+    # CommandLineToArgvW backslash-run doubling (trailing-backslash + embedded-
+    # quote injection fix). Header-only pure helper, no production .cpp to link.
+    Core/P4vLaunchArgQuotePure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SubprocessCapturePure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SubprocessCapture.cpp"
     Plugins/Mcp/McpRequestParser.test.cpp
     Plugins/Mcp/McpEnvelope.test.cpp
     Plugins/Mcp/McpToolSchemas.test.cpp
     Plugins/Mcp/McpDispatch.test.cpp
+    Plugins/Mcp/McpHostOrigin.test.cpp
     Plugins/LuaConsole/LuaConsoleSelection.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Plugins/Mcp/McpJsonRpcPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/CallstackParser.cpp"

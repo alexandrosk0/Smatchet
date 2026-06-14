@@ -287,7 +287,31 @@ std::string MaybeFormatDateString(const std::string& value) {
     return value;
 }
 
-void CollectAdfText(const nlohmann::json& node, std::vector<std::string>& out) {
+// Atlassian Document Format is server-supplied JSON (a foreign trust boundary):
+// a malicious or buggy tracker can return ADF nested thousands of levels deep,
+// blowing the C++ stack via the recursive walkers below (Pillar 3 — Never crash).
+// Real ADF is shallow (a handful of nesting levels); 256 sits far above any
+// legitimate document while still bounding stack growth well short of overflow.
+// On reaching the cap we stop recursing and degrade gracefully (truncate the
+// sub-tree) rather than throw — Pillar 3 wants graceful degradation, not an
+// exception unwinding through the parse.
+const int kMaxAdfRecursionDepth = 256;
+
+void WarnAdfDepthCapped() {
+    static bool warned = false;
+    if (!warned) {
+        warned = true;
+        LOG_WARN("TrackerFieldValueParser: ADF nesting exceeded depth cap (%d); truncating remainder of "
+                 "document. Possible hostile or malformed tracker response.",
+                 kMaxAdfRecursionDepth);
+    }
+}
+
+void CollectAdfText(const nlohmann::json& node, std::vector<std::string>& out, int depth = 0) {
+    if (depth >= kMaxAdfRecursionDepth) {
+        WarnAdfDepthCapped();
+        return;
+    }
     if (!node.is_object()) {
         return;
     }
@@ -301,15 +325,19 @@ void CollectAdfText(const nlohmann::json& node, std::vector<std::string>& out) {
 
     if (node.contains("content") && node["content"].is_array()) {
         for (const auto& child : node["content"]) {
-            CollectAdfText(child, out);
+            CollectAdfText(child, out, depth + 1);
         }
     }
 }
 
-void ExtractAdfTextToStream(const nlohmann::json& node, std::ostringstream& out) {
+void ExtractAdfTextToStream(const nlohmann::json& node, std::ostringstream& out, int depth = 0) {
+    if (depth >= kMaxAdfRecursionDepth) {
+        WarnAdfDepthCapped();
+        return;
+    }
     if (node.is_array()) {
         for (const auto& child : node) {
-            ExtractAdfTextToStream(child, out);
+            ExtractAdfTextToStream(child, out, depth + 1);
         }
         return;
     }
@@ -342,7 +370,7 @@ void ExtractAdfTextToStream(const nlohmann::json& node, std::ostringstream& out)
     }
 
     if (node.contains("content")) {
-        ExtractAdfTextToStream(node["content"], out);
+        ExtractAdfTextToStream(node["content"], out, depth + 1);
         if (nodeType == "paragraph" || nodeType == "heading" || nodeType == "listItem") {
             out << "\n";
         }

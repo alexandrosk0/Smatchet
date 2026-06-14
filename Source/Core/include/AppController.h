@@ -920,6 +920,14 @@ class AppController {
 
     bool AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText, std::string& outError);
 
+    /// issue-comments PR-A — off-UI read wrapper around
+    /// `ITrackerCollaboration::FetchIssueComments`. Latches the focused backend,
+    /// returns the backend-agnostic comment list in `outComments`. No read-only
+    /// guard (pure read). false + `outError` on no backend / no collaboration
+    /// support / backend error.
+    bool FetchIssueComments(const std::string& issueKey, std::vector<TrackerIssueComment>& outComments,
+                            std::string& outError);
+
     bool SubmitWorklog(const std::string& issueId, const std::string& timeSpent, const std::string& timeRemaining,
                        const std::string& adjustEstimate, const std::string& workDescription,
                        const std::string& startedDate, std::string& outError);
