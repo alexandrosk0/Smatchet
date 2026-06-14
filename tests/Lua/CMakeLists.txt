@@ -35,6 +35,10 @@ add_executable(SmatchetLuaTests
     # close-gate-gaps Slice 1a: ConfigManager_PathUtils/Views now call into UiThreadAffinity.
     "${CMAKE_SOURCE_DIR}/Source/Core/src/UiThreadAffinity.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ToolbarConfig.cpp"
+    # rebindable-shortcuts PR1: ConfigManager.cpp now constructs/serializes a
+    # KeybindingsConfig (TrackerConfig member), so the Lua-test link needs this
+    # TU too -- same transitive-dep rule as ToolbarConfig above (#1207 CI red).
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/KeybindingsConfig.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/FieldEditAuditSource.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Logger.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Command.cpp"
