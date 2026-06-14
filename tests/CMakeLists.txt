@@ -210,6 +210,12 @@ add_executable(SmatchetTests
     # link: the predicate is value-only; android_main.cpp pins the status constants to the
     # real ImTextureStatus_* with static_assert.
     Core/SmatchetImGuiTextureGuard.test.cpp
+    # Reset-layout docking regression (PR #1198) — pure default dock-slot table +
+    # key-iteration accessors (SmatchetDockNodeIds.cpp) that drive both initial docking
+    # and the live-reset force-redock. ImGui-free at runtime (constexpr IDs + strcmp); the
+    # rig already links ImGuiLib + include/Ui so imgui.h resolves.
+    Core/SmatchetDockNodeIds.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetDockNodeIds.cpp"
     Core/MarkdownPreviewLangTag.test.cpp
     Core/MarkdownConvertAdf.test.cpp
     Core/MarkdownConvert.test.cpp
