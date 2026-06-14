@@ -295,7 +295,19 @@ Result<std::int64_t, std::string> ParseIso8601ToUnixSec(const std::string& iso86
     if (std::sscanf(iso8601.c_str(), "%d-%d-%dT%d:%d:%d%n", &year, &mon, &day, &hour, &minute, &sec, &consumed) != 6) {
         return Result<std::int64_t, std::string>::Err("bad ISO-8601 format: " + iso8601);
     }
-    const std::string suffix = iso8601.substr(static_cast<std::size_t>(consumed));
+    std::string suffix = iso8601.substr(static_cast<std::size_t>(consumed));
+    // Strip a fractional-seconds component before classifying the timezone. Jira emits
+    // millisecond precision ("...:00.000+0000"); GitHub does not. The leading '.<digits>'
+    // is dropped so the tz classifier below sees the bare offset ("+0000") — otherwise the
+    // '.' falls through to the "missing timezone suffix" reject. Sub-second precision is
+    // discarded by design (epoch-seconds resolution).
+    if (!suffix.empty() && suffix.front() == '.') {
+        std::size_t i = 1;
+        while (i < suffix.size() && std::isdigit(static_cast<unsigned char>(suffix[i])) != 0) {
+            ++i;
+        }
+        suffix = suffix.substr(i);
+    }
     std::int64_t offsetSec = 0;
     if (suffix == "Z" || suffix == "+00:00" || suffix == "-00:00" || suffix == "+0000" || suffix == "-0000") {
         offsetSec = 0;

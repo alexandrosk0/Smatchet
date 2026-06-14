@@ -1,5 +1,6 @@
 #include "JiraClient.h"
 
+#include "JiraCommentMappingPure.h"
 #include "JiraIssueMappingPure.h"
 #include "Tracker/JqlEscape.h"
 #include "TrackerFieldValueParser.h"
@@ -465,4 +466,27 @@ JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::
         }
     }
     return FetchResult::Ok(std::move(outTickets));
+}
+
+Result<std::vector<TrackerIssueComment>, TrackerError> JiraClient::FetchIssueComments(const std::string& issueKey) {
+    using CommentsResult = Result<std::vector<TrackerIssueComment>, TrackerError>;
+    // No cfg parameter on this interface — resolve from the settled on-disk config
+    // (mirrors GitHubClient::FetchIssueComments / the cfg-less Jira read pattern).
+    const TrackerConfig cfg = ConfigManager::Load();
+    std::string outError;
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
+        return CommentsResult::Err(TrackerErrorAuth(outError));
+    }
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
+
+    nlohmann::json nodes = nlohmann::json::array();
+    if (!JiraFetchIssueCommentsPages(base, headers, issueKey, nodes)) {
+        return CommentsResult::Err(
+            TrackerErrorUnknown("JiraClient::FetchIssueComments: comment fetch failed for " + issueKey, 0));
+    }
+
+    std::vector<TrackerIssueComment> all = smatchet::jira::MapJiraIssueComments(nodes);
+    LOG_INFO("JiraClient::FetchIssueComments: %s → %zu comments", issueKey.c_str(), all.size());
+    return CommentsResult::Ok(std::move(all));
 }

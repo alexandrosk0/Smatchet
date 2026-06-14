@@ -2065,6 +2065,7 @@ void AppController::ApplyStartupFieldCatalogSnapshot(std::vector<TrackerField> s
             }
         }
         EnsureCatalogHistoryField();
+        EnsureCatalogCommentsField();
     }
 
     cat.TrackerFieldCatalogRevision.fetch_add(1);

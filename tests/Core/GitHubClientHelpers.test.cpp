@@ -196,6 +196,26 @@ TEST_CASE("ParseIso8601ToUnixSec — timezone-aware (Z + ±HH:MM + ±HHMM)") {
         CHECK_FALSE(r);
         CHECK(r.error().find("out of range") != std::string::npos);
     }
+    // issue-comments PR-B — Jira stamps millisecond precision ("...:00.000+0000").
+    // The fractional-second component is stripped before the timezone is classified,
+    // so a ms timestamp resolves to the same epoch as its second-precision form.
+    {
+        const auto r = ParseIso8601ToUnixSec("2024-01-15T00:00:00.000+0000");
+        REQUIRE(r);
+        CHECK(r.value() == 1705276800);
+    }
+    {
+        const auto r = ParseIso8601ToUnixSec("2024-01-15T00:00:00.123Z");
+        REQUIRE(r);
+        CHECK(r.value() == 1705276800);
+    }
+    // Fractional seconds coexist with a non-zero colon offset.
+    // 2024-01-15T00:00:00 +05:30 = 2024-01-14T18:30:00 UTC = 1705257000.
+    {
+        const auto r = ParseIso8601ToUnixSec("2024-01-15T00:00:00.500+05:30");
+        REQUIRE(r);
+        CHECK(r.value() == 1705257000);
+    }
 }
 
 // ---------------------------------------------------------------------------

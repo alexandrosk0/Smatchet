@@ -24,6 +24,11 @@ void MergeTrackerFieldOption(std::vector<TrackerFieldOption>& target, const Trac
 void RefreshTrackerAllowedValuesFromOptions(TrackerField& field);
 TrackerFieldFamily ClassifyTrackerFieldFamily(const TrackerField& field);
 std::string ParseComments(const nlohmann::json& commentsArray);
+/** Author display name from a Jira comment node (`author.displayName`); "Unknown" if absent. */
+std::string ParseCommentAuthor(const nlohmann::json& commentNode);
+/** Flatten an ADF (Atlassian Document Format) `body` node — or a plain string body — to plain
+ *  text. Object-without-`content` and non-string/non-object inputs return empty. Never throws. */
+std::string AdfBodyToPlainText(const nlohmann::json& body);
 std::string ParseChangelog(const nlohmann::json& histories);
 long long ParseWorkDurationToSeconds(const std::string& input);
 std::string FormatTrackerTimetrackingDisplay(const nlohmann::json& o);

@@ -1262,6 +1262,7 @@ class AppController {
                                      const std::shared_ptr<ITrackerBackend>& backend, GridContextFieldCatalog* catPtr,
                                      TrackerConfig trackerCfgForWorker);
     void EnsureCatalogHistoryField();
+    void EnsureCatalogCommentsField();
     bool TryBuildFieldEditPayloadForNetwork(const std::string& issueId, const TrackerField& field,
                                             const std::vector<std::string>& rawValues,
                                             const std::string& originalEstimateSnapshot,

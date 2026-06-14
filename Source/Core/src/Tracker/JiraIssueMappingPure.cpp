@@ -212,6 +212,11 @@ void MapJiraPresentField(const std::string& fieldKey, const nlohmann::json& rawV
                          CachedTicket& ticket) {
     if (fieldKey == "comment" && rawValue.is_object() && rawValue.contains("comments")) {
         ticket.fieldValues[fieldKey] = ResolveJiraCommentField(rawValue, ticketId, fetchIssueComments);
+        // issue-comments PR-B — populate the unified numeric `comments` column (plural, distinct
+        // from the `comment` display blob above) so the shared comments cell renders a count.
+        const auto& commentsArray = rawValue["comments"];
+        ticket.fieldValues["comments"] =
+            std::to_string(rawValue.value("total", static_cast<int>(commentsArray.size())));
     } else if (IsJiraTimetrackingFieldKey(fieldKey)) {
         ticket.fieldValues[fieldKey] =
             rawValue.is_object() ? FormatTrackerTimetrackingDisplay(rawValue) : NormalizeTrackerFieldValue(rawValue);

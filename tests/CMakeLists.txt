@@ -421,6 +421,12 @@ add_executable(SmatchetTests
     # linked above), so no extra dep beyond the mapping TU itself.
     Core/GitHubCommentMappingPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubCommentMappingPure.cpp"
+    # issue-comments PR-B — pure Jira comment-node array → TrackerIssueComment
+    # mapping, split out of JiraIssueSearch.cpp (which pulls cpr). Reuses
+    # ParseCommentAuthor / AdfBodyToPlainText (TrackerFieldValueParser.cpp) +
+    # ParseIso8601ToUnixSec (GitHubClientHelpers.cpp) — both already linked above.
+    Core/JiraCommentMappingPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraCommentMappingPure.cpp"
     # Slice 1 of deterministic-jira-test-backend — pure
     # Jira JSON → CachedTicket mapper + field-list builder extracted from
     # JiraIssueSearch.cpp (which pulls cpr). Same pure-seam shape as the

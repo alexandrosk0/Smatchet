@@ -325,6 +325,7 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
             }
         }
         EnsureCatalogHistoryField();
+        EnsureCatalogCommentsField();
     }
 
     cat.TrackerFieldCatalogRevision.fetch_add(1);
@@ -392,6 +393,7 @@ void AppController::HandleFieldCatalogError(const std::string& error, const std:
                                              " field catalog from local snapshot. Last fetch failed: " + error;
         if (!catalogPlane) {
             EnsureCatalogHistoryField();
+            EnsureCatalogCommentsField();
         }
         cat.TrackerFieldCatalogRevision.fetch_add(1);
         LOG_WARN("AppController::SetFieldCatalog transport failure; loaded snapshot err=%s", snapErr.c_str());
@@ -452,6 +454,29 @@ void AppController::EnsureCatalogHistoryField() {
     historyField.Name = "History";
     historyField.ReadOnly = true;
     cat.AvailableFields.push_back(std::move(historyField));
+}
+
+void AppController::EnsureCatalogCommentsField() {
+    // issue-comments PR-B — synthetic read-only `comments` count column for Jira. Mirrors the
+    // sibling history-field helper above: same atomic check-then-insert under the catalog lock,
+    // INLINE find_if rather than FindFieldById to avoid self-deadlocking the non-recursive mutex.
+    // Type "number" matches the GitHub catalog's comments field so the shared comments cell
+    // special-case renders a count. Read-only via ReadOnly=true alone — no Jira editmeta entry
+    // needed (the sibling `history` synthetic field is the precedent).
+    GridContextFieldCatalog& cat =
+        fieldCatalog(); // latch once — lock/object must resolve to the same context (Pillar 3)
+    std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+    const auto it = std::find_if(cat.AvailableFields.begin(), cat.AvailableFields.end(),
+                                 [](const TrackerField& field) { return field.Id == "comments"; });
+    if (it != cat.AvailableFields.end()) {
+        return;
+    }
+    TrackerField commentsField;
+    commentsField.Id = "comments";
+    commentsField.Name = "Comments";
+    commentsField.Type = "number";
+    commentsField.ReadOnly = true;
+    cat.AvailableFields.push_back(std::move(commentsField));
 }
 
 bool AppController::FieldEditSupportsOfflineQueue(const TrackerField& field) {
