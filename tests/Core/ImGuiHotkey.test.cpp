@@ -89,6 +89,12 @@ TEST_CASE("ParseImGuiHotkey: failure cases leave a reset struct") {
     CHECK_FALSE(ParseImGuiHotkey("F13", hk));     // F-key out of 1..12 range
     CHECK_FALSE(ParseImGuiHotkey("F0", hk));
     CHECK(hk.key == ImGuiKey_None); // last attempt reset out
+    // ...and every modifier too: an earlier "Ctrl+Shift" parse dirtied ctrl/shift,
+    // so these guard that a failed parse fully resets the struct (not just .key).
+    CHECK_FALSE(hk.ctrl);
+    CHECK_FALSE(hk.shift);
+    CHECK_FALSE(hk.alt);
+    CHECK_FALSE(hk.super);
 }
 
 TEST_CASE("ParseImGuiHotkey: last main key wins when several are present") {

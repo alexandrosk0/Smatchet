@@ -541,10 +541,10 @@ void SmatchetUI::drawPreWindowOverlays(AppController& app, UiDrawSession& d) {
         commandPalette_.Draw(app);
     }
 
-    // "Log a Bug" modal. Its opener is now the rebindable app.bug_report.open binding
-    // (default Ctrl+Shift+B), dispatched up in dispatchKeybindings. This block only
-    // renders the modal once showBugReport latches, and is drawn unconditionally so it
-    // still works while the active backend is unreachable.
+    // "Log a Bug" modal. Its opener is now the rebindable app.bug_report.open
+    // binding, default hotkey Ctrl+Shift+B, dispatched up in dispatchKeybindings.
+    // This block only renders the modal once showBugReport latches, and is drawn
+    // unconditionally so it still works while the active backend is unreachable.
     SmatchetBugReportUi_Draw(app, g_ui);
 
     // Scenario tick: drive the active scenario one frame and propagate scroll state
@@ -1005,7 +1005,8 @@ void SmatchetUI::drawSecondaryWindowsTail(AppController& app, UiDrawSession& d) 
     }
 }
 
-// Dock-node debug overlay — toggled by Ctrl+Alt+D. Owns its own ::ImGui::Begin/End pair.
+// Dock-node debug overlay — toggled by the rebindable app.dock_debug.toggle keybinding
+// (default Ctrl+Alt+D). Owns its own ::ImGui::Begin/End pair.
 // LOG_DEBUG throttle counter hoisted to drawBodyState_.
 void SmatchetUI::drawDockDebugOverlay(UiDrawSession& d) {
     if (!d.showDockDebug) {
@@ -1014,7 +1015,20 @@ void SmatchetUI::drawDockDebugOverlay(UiDrawSession& d) {
     const ImGuiWindowFlags kDbgFlags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse |
                                        ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings;
     ::ImGui::Begin("##DockDebug", nullptr, kDbgFlags);
-    ::ImGui::TextDisabled("Dock Node Debug (Ctrl+Alt+D to hide)");
+    // Resolve the live hotkey bound to app.dock_debug.toggle so the hint stays correct
+    // after a rebind (default Ctrl+Alt+D); show no key if the user disabled the binding.
+    std::string dbgHotkey;
+    for (const Keybinding& b : d.cfg.Keybindings.Bindings) {
+        if (b.Enabled && b.CommandId == "app.dock_debug.toggle") {
+            dbgHotkey = b.Hotkey;
+            break;
+        }
+    }
+    if (dbgHotkey.empty()) {
+        ::ImGui::TextDisabled("Dock Node Debug");
+    } else {
+        ::ImGui::TextDisabled("Dock Node Debug (%s to hide)", dbgHotkey.c_str());
+    }
     ::ImGui::Separator();
     static const ImGuiID kNodes[] = {
         SmatchetDockNodeIds::kPrimarySideBar,

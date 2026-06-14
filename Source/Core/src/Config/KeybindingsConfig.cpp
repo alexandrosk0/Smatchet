@@ -5,6 +5,8 @@
 
 #include "KeybindingsConfig.h"
 
+#include "Logger.h"
+
 #include <nlohmann/json.hpp>
 
 namespace {
@@ -49,7 +51,10 @@ void from_json(const nlohmann::json& j, KeybindingsConfig& c) {
             }
             try {
                 c.Bindings.push_back(item.get<Keybinding>());
-            } catch (...) { // catch-all-ok: skip a malformed binding, keep the rest
+            } catch (const std::exception& ex) {
+                // Skip a malformed binding, keep the rest of the table.
+                LOG_WARN("KeybindingsConfig::from_json: skipping malformed keybinding: %s",
+                         ex.what());
             }
         }
     }
