@@ -269,18 +269,21 @@
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — Logger file sink writes log lines without RedactLogLine
   Details: `Source/Core/src/Logger.cpp:320` `FileSinkWorker` writes `e.message` verbatim to the on-disk log; `RedactLogLine` (applied on the crash/bug-report paths) is NOT applied at the file sink, so any `LOG_*` that ever carries a secret/PII reaches the log file unredacted. No current `LOG_*` call places a raw credential there, but body-logging at Trace would. Partly-confirmed LOW. NEW.
   Concrete next action: route file-sink writes through `RedactLogLine` (or redact at emit for the body-logging paths). ~S.
+  Resolution: 2026-06-14 (fix/log-redaction-gaps-wave4) — `Logger::FileSinkWorker` now writes `smatchet::privacy::RedactLogLine(e.message)` instead of `e.message`, so the on-disk line is scrubbed on the same path the message reaches the sink. `TextRedaction.cpp` linked into the two test targets that link `Logger.cpp` (SmatchetTsanTests, SmatchetLuaTests). doctest `Logger file sink — redacts secret/long-token + strips CR/LF/ANSI on the persisted line` reads the file back and asserts the secret is gone. Status: resolved.
   Status: open
   Last-reviewed: 2026-06-13
 
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — CR/LF/ANSI log injection from server-controlled data
   Details: `Source/Core/src/Privacy/TextRedaction.cpp:80` — redaction does not strip CR/LF/ANSI escapes, so server-controlled strings reaching a log line can forge log entries or inject terminal escapes. Confirmed LOW. NEW.
   Concrete next action: strip/encode CR/LF and ANSI CSI sequences in the log-line redactor. ~S.
+  Resolution: 2026-06-14 (fix/log-redaction-gaps-wave4) — `RedactLogLine` now runs `StripControlAndAnsi` FIRST (before the secret-shape matchers), replacing CR/LF, lone ESC, ANSI CSI/OSC sequences, and all C0 controls + DEL with a single space. Running it first means a control byte hidden mid-token cannot evade the shape matchers and cannot survive to forge a log line. doctest `RedactLogLine — strips CR/LF/ANSI…` covers CRLF + CSI + bare-ESC/C0. Status: resolved.
   Status: open
   Last-reviewed: 2026-06-13
 
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — Redaction LongTokenRe 40-char threshold misses 36-char Plane UUID tokens
   Details: `Source/Core/src/Privacy/TextRedaction.cpp:45` `LongTokenRe` redacts only >=40-char tokens, so a 36-char Plane API UUID (and similarly-sized secrets) is not redacted if it reaches a log. Confirmed LOW. NEW.
   Concrete next action: add a UUID-shaped pattern (8-4-4-4-12) to the redactor, or lower the threshold with a git-hash guard. ~S.
+  Resolution: 2026-06-14 (fix/log-redaction-gaps-wave4) — added `UuidRe` matching the 36-char 8-4-4-4-12 hex-with-dashes shape and redacting it in `RedactLogLine` (chose the shape-specific pattern over lowering the 40-char floor, so arbitrary 36-char text is NOT over-redacted). doctest `RedactLogLine — redacts a 36-char UUID token…` asserts a Plane-style UUID is scrubbed AND a benign 36-char dash-free string survives. Status: resolved.
   Status: open
   Last-reviewed: 2026-06-13
 

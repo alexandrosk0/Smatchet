@@ -60,6 +60,9 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueDraft.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Logger.cpp"
+        # Logger.cpp now routes the file sink through RedactLogLine (audit
+        # 2026-06-13 LOW) — link the pure redactor so the closure resolves.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Privacy/TextRedaction.cpp"
     )
     target_include_directories(SmatchetTsanTests PRIVATE
         _helpers
@@ -418,6 +421,9 @@ add_executable(SmatchetTests
     # log-a-bug-github Phase 2 — crash marker survival + next-launch consume.
     Core/CrashSink.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/CrashSink.cpp"
+    # SECURITY_AUDIT_2026-06-13 LOW — Logger file sink now redacts on the persist
+    # path (Logger.cpp + TextRedaction.cpp already linked into this rig below).
+    Core/LoggerFileSinkRedaction.test.cpp
     # PR5 of docs/design/github-tracker-backend.md — JQL → GitHub-search translator.
     Core/GitHubQueryFromJql.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubQueryFromJql.cpp"

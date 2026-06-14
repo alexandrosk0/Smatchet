@@ -1,5 +1,7 @@
 #include "Logger.h"
 
+#include "Privacy/TextRedaction.h"
+
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -11,8 +13,7 @@
 
 namespace {
 std::string ToLowerAscii(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return s;
 }
 } // namespace
@@ -304,8 +305,7 @@ void Logger::FileSinkWorker() {
         {
             std::unique_lock<std::mutex> sinkLock(m_fileSinkMutex);
             m_fileSinkCv.wait(sinkLock, [this] {
-                return m_fileSinkShutdown.load(std::memory_order_acquire) ||
-                       !m_fileSinkQueue.empty() ||
+                return m_fileSinkShutdown.load(std::memory_order_acquire) || !m_fileSinkQueue.empty() ||
                        m_fileSinkFlushRequestedGen > m_fileSinkFlushAckedGen;
             });
             if (m_fileSinkShutdown.load(std::memory_order_acquire) && m_fileSinkQueue.empty()) {
@@ -319,10 +319,12 @@ void Logger::FileSinkWorker() {
         if (out.is_open()) {
             for (const LogEntry& e : batch) {
                 // Plain text line; format `t=<seconds> level=<name> message`.
-                out << "t=" << e.timestampSeconds
-                    << " level=" << LogLevelToString(e.level)
-                    << ' ' << e.message
-                    << '\n';
+                // Redact on the same path that persists the message: secret/PII
+                // shapes are scrubbed and CR/LF/ANSI is stripped so a
+                // server-controlled message cannot leak a credential or forge a
+                // log line in the on-disk file (audit 2026-06-13 LOW).
+                out << "t=" << e.timestampSeconds << " level=" << LogLevelToString(e.level) << ' '
+                    << smatchet::privacy::RedactLogLine(e.message) << '\n';
             }
             out.flush();
             if (!out.good()) {
@@ -377,10 +379,7 @@ void Logger::FileSinkWorker() {
 #if defined(SMATCHET_AGENT_DEBUG)
 #include "../../../tests/_debug/SmatchetAgentDebug.h"
 
-void SmatchetAgentDebugLogBridge(const char* category,
-                                 const char* file,
-                                 int line,
-                                 const std::string& msg) {
+void SmatchetAgentDebugLogBridge(const char* category, const char* file, int line, const std::string& msg) {
     nlohmann::json payload;
     payload["msg"] = msg;
     ::smatchet_agent_debug::Emit(category, file, line, payload);
