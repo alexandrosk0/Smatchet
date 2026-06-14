@@ -178,3 +178,85 @@ TEST_CASE("ParseImageDimensions: garbage bytes with UNsupported MIME → 'not a 
     CHECK_FALSE(r.Ok);
     CHECK(r.Error == "Attachment is not a supported image format for in-app preview.");
 }
+
+// --- Max-dimension cap (kMaxImageDimension = 16384) -------------------------
+// A crafted header can claim any width/height up to its field width. The parser
+// rejects anything past the inclusive cap *before* the uint->int cast, bounding
+// preview memory and closing the latent negative-dimension cast for uint32
+// formats. Boundary (== cap) is accepted; one-over is rejected.
+
+TEST_CASE("ParseImageDimensions: PNG width one over cap (16385) → exceeds-max error") {
+    std::vector<unsigned char> b =
+        Bytes({0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0,    0,
+               0,    13,   'I',  'H',  'D',  'R',  0x00, 0x00, 0x40, 0x01, // width  = 0x00004001 = 16385 @16
+               0x00, 0x00, 0x01, 0xE0});                                   // height = 480 @20
+    const ParsedImageInfo r = ParseImageDimensionsFromBytes(b, kPng);
+    CHECK_FALSE(r.Ok);
+    CHECK(r.Error == "PNG dimensions exceed the maximum supported size.");
+}
+
+TEST_CASE("ParseImageDimensions: PNG height one over cap (16385) → exceeds-max error") {
+    std::vector<unsigned char> b = Bytes({0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0,    0, 0,
+                                          13,   'I',  'H',  'D',  'R',  0x00, 0x00, 0x02, 0x80, // width  = 640 @16
+                                          0x00, 0x00, 0x40, 0x01}); // height = 0x00004001 = 16385 @20
+    const ParsedImageInfo r = ParseImageDimensionsFromBytes(b, kPng);
+    CHECK_FALSE(r.Ok);
+    CHECK(r.Error == "PNG dimensions exceed the maximum supported size.");
+}
+
+TEST_CASE("ParseImageDimensions: PNG exactly at cap (16384x16384) → accepted (inclusive boundary)") {
+    std::vector<unsigned char> b =
+        Bytes({0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0,    0,
+               0,    13,   'I',  'H',  'D',  'R',  0x00, 0x00, 0x40, 0x00, // width  = 0x00004000 = 16384 @16
+               0x00, 0x00, 0x40, 0x00});                                   // height = 16384 @20
+    const ParsedImageInfo r = ParseImageDimensionsFromBytes(b, kPng);
+    CHECK(r.Ok);
+    CHECK(r.Width == 16384);
+    CHECK(r.Height == 16384);
+}
+
+TEST_CASE("ParseImageDimensions: PNG width 0xFFFFFFFF (>INT_MAX) → rejected, never negative") {
+    std::vector<unsigned char> b = Bytes(
+        {0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0,    0, 0,
+         13,   'I',  'H',  'D',  'R',  0xFF, 0xFF, 0xFF, 0xFF, // width  = 0xFFFFFFFF @16 (would cast to a negative int)
+         0x00, 0x00, 0x01, 0xE0});                             // height = 480 @20
+    const ParsedImageInfo r = ParseImageDimensionsFromBytes(b, kPng);
+    CHECK_FALSE(r.Ok);
+    CHECK(r.Error == "PNG dimensions exceed the maximum supported size.");
+    CHECK(r.Width >= 0); // the latent uint32->int negative-cast this cap closes
+}
+
+TEST_CASE("ParseImageDimensions: GIF width 65535 (over cap) → exceeds-max error") {
+    // width 0xFFFF @6 (LE), height 32 @8.
+    std::vector<unsigned char> b = Bytes({'G', 'I', 'F', '8', '9', 'a', 0xFF, 0xFF, 0x20, 0x00});
+    const ParsedImageInfo r = ParseImageDimensionsFromBytes(b, kGif);
+    CHECK_FALSE(r.Ok);
+    CHECK(r.Error == "GIF dimensions exceed the maximum supported size.");
+}
+
+TEST_CASE("ParseImageDimensions: WEBP VP8X canvas over cap → exceeds-max error") {
+    std::vector<unsigned char> b = Bytes({'R', 'I', 'F', 'F', 0, 0, 0, 0, 'W', 'E', 'B', 'P', 'V', 'P', '8', 'X'});
+    b = Pad(b, 30);
+    // widthMinusOne = 0x004000 (16384) @24 → width 16385 (one over cap)
+    b[24] = 0x00;
+    b[25] = 0x40;
+    b[26] = 0x00;
+    // heightMinusOne = 0x0001DF (479) @27 → height 480 (valid)
+    b[27] = 0xDF;
+    b[28] = 0x01;
+    b[29] = 0x00;
+    const ParsedImageInfo r = ParseImageDimensionsFromBytes(b, kWebp);
+    CHECK_FALSE(r.Ok);
+    CHECK(r.Error == "WEBP dimensions exceed the maximum supported size.");
+}
+
+TEST_CASE("ParseImageDimensions: JPEG width 65535 (over cap) → exceeds-max error") {
+    // FFD8 SOI, FFC0 SOF0, segment length 0x0011, precision, height 400, width 0xFFFF.
+    std::vector<unsigned char> b =
+        Bytes({0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x08, 0x01, 0x90, // height = 0x0190 = 400 @ i+3..i+4
+               0xFF, 0xFF});                                         // width  = 0xFFFF = 65535 @ i+5..i+6
+    b = Pad(b, 32);
+    const ParsedImageInfo r = ParseImageDimensionsFromBytes(b, kJpeg);
+    CHECK_FALSE(r.Ok);
+    CHECK(r.Error == "JPEG dimensions exceed the maximum supported size.");
+}
