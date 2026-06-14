@@ -27,6 +27,51 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-14 · PR #1220, #1229 · merged past RED Sanitizer (ASAN via MSVC) — a REAL `AddressSanitizer: stack-overflow` (NOT the ReDoS false-red), LIVE on `develop`
+
+### What escaped
+Two PRs squash-merged to `develop` with the meant-to-block **Sanitizer (ASAN via MSVC)** lane terminal RED and **no override label naming it**: **#1220** (`fix(tracker): bound ADF parser recursion depth (security MEDIUM / Pillar 3)`, mergeCommit `3848b553`, 16:17:50Z, label `perf-out-of-band` — which downgrades **Perf**, not ASAN) and **#1229** (`fix(security): canonicalize alternate IP encodings before SSRF denylist (audit #14)`, mergeCommit `23e36c1f` = current `develop` tip, 17:18:02Z, no labels). Unlike the #1183 / #1210 / #1211 escapes (a *timing* false-red), the red here is a GENUINE memory-safety finding: `==NNNN==ERROR: AddressSanitizer: stack-overflow` (run 27505846342 on develop tip, thread T0, deep recursion in the doctest rig — surfaces right after `tests/Core/SmatchetAgentDebug.test.cpp:131`; prior-run frames pointed at `nlohmann … serializer::dump` recursion). The lane was confirmed green through #1219 (`2e0940ad`) post-#1215, then went RED from #1220 and stayed red through #1229 — so the lane is RED on `develop` **NOW**: a live Pillar-3 (sanitizer-clean / Never crash) violation, not a flake.
+
+### Root cause (blameless)
+Two layers:
+1. **Structural escape path (the same hole as #1210/#1211, now with a real bug behind it).** `Sanitizer (ASAN via MSVC)` is on the merge-gates poller's meant-to-block allow-list but is NOT a GitHub **required** context, so every required-only merge path (`gh pr merge --auto`, the merge button, direct `gh api …/merge`, admin) merges past a red ASAN with no human-in-the-loop block and no override label to mark the decision. The #1210/#1211 + #1183 postmortems explicitly flagged this as the deferred **#1130 option-A** residual and noted it was "safer to land now that #1215 removed the false-red" — that residual is exactly what #1220/#1229 walked through.
+2. **A real product defect the lane correctly caught.** `AddressSanitizer: stack-overflow` = unbounded recursion reaching the reduced ASan stack. #1220 itself *bounded* ADF-parser recursion (an attempted Pillar-3 fix), but the lane stayed red afterward — so either a second recursion site remains or #1220's depth bound is above ASan's stack budget. The precise C++ cause exceeds this skill's bounded rubric and is **escalated to debug-detective** (product-fix track, surfaced to the user). Whatever the site, a genuine crash-class bug is LIVE on develop. The ReDoS deferral rationale ("deadlock-risky while the lane is flaky") that justified leaving Sanitizer non-required is now obsolete: post-#1215 the lane is honest, and the first thing it caught honestly sailed straight through.
+
+### Preventing gate
+Promote **Sanitizer (ASAN via MSVC)** to a required context, extending the already-applied `coverage-required-context` pattern one lane over (single-workflow self-gate so docs-only PRs don't deadlock; maintainer runs `setup-branch-protection.sh` to bind GitHub-native paths; the poller honours `required_contexts` from config immediately). **HARD SEQUENCING:** a lane must be GREEN before it is made required, else `develop` deadlocks on a red required check — so the branch-protection promotion is BLOCKED behind fixing the live stack-overflow first (debug-detective → owning subsystem specialist). Order: fix the crash → confirm a post-fix develop ASAN run green → promote to required. The merges themselves were **human-authority overrides** (AI_POLICY — humans own quality + cost); binding the human-manual path is not in scope (needs `enforce_admins` / the same required-context change). The live product bug is surfaced to the user for a **GitHub Issue + debug-detective** dispatch — this skill does not auto-file product Issues.
+
+### Filed as
+`docs/self-improvement/categories/tooling.md` — new **P1 `sanitizer-required-context`** (extend the applied `coverage-required-context` pattern to the Sanitizer lane; blocked on the stack-overflow fix). The live crash itself is a product bug → owed a GitHub Issue + debug-detective (surfaced to the user, not filed here). `test.md`'s 2026-06-14 "ASAN lane confirmed green" residual note corrected (the ReDoS-timing fix holds; the lane is red again for this **distinct, real** cause).
+
+## 2026-06-14 · PR #1227 · merged past RED Coverage (windows-2022 + OpenCppCoverage) — a quarantine-self-test false-red on a non-poller path
+
+### What escaped
+PR #1227 (`fix(config): harden POSIX secret-at-rest perms + flag Android gap (audit H2)`, mergeCommit `3136abac`, 16:40:49Z, **no labels**) squash-merged to `develop` with the meant-to-block **Coverage (windows-2022 + OpenCppCoverage)** lane terminal RED and **no `coverage-out-of-band` label**. The red was NOT a coverage regression: `coverage.sh` runs the full `SmatchetTests` binary under OpenCppCoverage (`coverage.sh:186`) and `exit 1`s on a non-zero test-binary exit (`coverage.sh:196-198`) BEFORE the `--threshold 65` gate is evaluated, and the quarantine synthetic self-test `QuarantineMechanism: synthetic always-failing assertion [quarantined:test-rig]` (`tests/Core/FlakySelfTest.test.cpp:64`, `SMATCHET_QT_CHECK(1 == 2)`) hard-CHECKed under the capture run (job 81293411741: `Status: FAILURE!` → `FAIL: OpenCppCoverage returned non-zero (SmatchetTests=1)`). `SMATCHET_QT_CHECK` is WARN-by-default and only hard-fails when `SMATCHET_RUN_FLAKY=1`, so the capture run had RUN_FLAKY active (source unconfirmed — no workflow line sets it). A fixture false-red, merged past on the required-only path: Coverage is on the poller allow-list but not yet a GitHub required context (today's `coverage-required-context` is config-bound but the maintainer hasn't run `setup-branch-protection.sh`).
+
+### Root cause (blameless)
+Two layers:
+1. **`coverage.sh` conflates two distinct verdicts.** A non-zero TEST-binary exit (a doctest failure) and a non-zero OpenCppCoverage exit (a coverage-tooling failure) both trip the same `exit 1` (`coverage.sh:196-198`), so a quarantine synthetic always-fail reds the Coverage lane as if coverage tooling broke — the 65% gate never runs. The gating capture should keep quarantine cases in WARN (`[quarantined:*]` excluded / `SMATCHET_RUN_FLAKY` unset); the RUN_FLAKY leak that promoted it to a hard CHECK in the coverage run is the trigger, source unconfirmed.
+2. **Non-poller escape path (the `coverage-required-context` residual).** `coverage-required-context` was APPLIED in config today but is inert for GitHub-native merge paths until the maintainer runs `setup-branch-protection.sh` — so #1227's required-only merge sailed past the red the poller would have blocked.
+
+### Preventing gate
+Make the coverage capture quarantine-safe (filed as new **P2 `coverage-quarantine-safe`**): exclude `[quarantined:*]` / clear `SMATCHET_RUN_FLAKY` on the capture line (`coverage.sh:186`), and split the test-failure vs coverage-tooling-failure verdicts (`coverage.sh:196-198`) so a doctest failure can't masquerade as a coverage regression; confirm the RUN_FLAKY leak source. Plus the existing residual: the maintainer runs `setup-branch-protection.sh` to make Coverage binding on GitHub-native paths — already tracked under the applied `coverage-required-context` entry's "MAINTAINER MUST" note (referenced, not re-filed). The merge was a **human-authority override** of a false-red; no new merge-time gate for the human-manual path.
+
+### Filed as
+`docs/self-improvement/categories/tooling.md` — new **P2 `coverage-quarantine-safe`**; plus the open maintainer action on the existing applied `coverage-required-context` entry (run `setup-branch-protection.sh` — not duplicated).
+
+## 2026-06-14 · PR #1212 · override: tests-out-of-band — moot (Test-delta gate was GREEN at merge)
+
+### What escaped
+PR #1212 (`fix(tracker): disable redirect-following so the API token can't leak cross-host (security H4 / E2)`, mergeCommit `59107b39`, 14:44:56Z) carried the `tests-out-of-band` override label, which the `postmortem-owed` detector flags for confirmation. That label downgrades the **Test-delta gate** / test job — but Test-delta gate was terminal **pass** at #1212's head (run 27497112570, 6s) and **Sanitizer (ASAN via MSVC)** was **pass**. So the override downgraded nothing red: it was **MOOT**, not load-bearing. (`Bucket-E UI tests (Mesa headless GL)` shows a later red run that the detector did NOT flag as a terminal-blocking escape at merge — it is not what `tests-out-of-band` covers and was not terminal-blocking in the curated rollup; left to the bucket-E flake track, not adjudicated here.)
+
+### Root cause (blameless)
+A pre-emptive / habitual `tests-out-of-band` label on a security PR whose Test-delta gate was green at merge — the same moot-override class as #991 / #1124. No gate failed open; the label simply had nothing to downgrade. The detector correctly surfaces every override for confirmation (gate, don't trust); this one confirms clean.
+
+### Preventing gate: none — override legitimate (moot — the `tests-out-of-band` label downgraded nothing: Test-delta gate was terminal-green and Sanitizer was green at #1212's head; the label was unnecessary, not load-bearing). Recurring moot-override hygiene is already tracked by `postmortem-owed-moot-override-false-positive` (tooling P2, #991) — no new gate owed.
+
+### Filed as
+None — legitimate (moot) override; recorded here for the `postmortem-owed` dedupe. Moot-override-detection hygiene already filed (`postmortem-owed-moot-override-false-positive`, tooling P2).
+
 ## 2026-06-14 · PR #1210, #1211 · auto-merged past RED Sanitizer (ASAN via MSVC) — same flaky ReDoS-timing class as #1183, in the gap before the fix (#1215) landed
 
 ### What escaped
