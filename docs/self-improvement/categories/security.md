@@ -103,6 +103,7 @@
   Concrete next action: Reject non-loopback Host and remote Origin headers; keep token as defense-in-depth. Effort S.
   Status: open
   Last-reviewed: 2026-06-13
+  Resolution: 2026-06-14 · fix/mcp-host-origin-dns-rebind (PR #1228) — McpPlugin::Authorize now applies a fail-closed Host/Origin gate when bound to loopback: rejects any Host that is not a loopback literal (127.0.0.1 / localhost / [::1], port-stripped, case-folded, trailing-dot rejected) and any present Origin that is not empty / "null" / a loopback http(s) origin; 403 + LOG_WARN(reason=bad_host|bad_origin). Decision extracted to pure helpers IsLoopbackHostHeader / IsAllowedMcpOrigin / IsMcpHostOriginAllowed (Source/Plugins/Mcp/McpJsonRpcPure.{h,cpp}) with doctest coverage (tests/Plugins/Mcp/McpHostOrigin.test.cpp). Skipped when McpAllowRemote binds 0.0.0.0 (a non-loopback Host is the operator's explicit intent there). Token check retained as defense-in-depth.
 
 - 2026-06-13 · deep-audit · [security] · P2 — MCP attachment proxy fetches caller-supplied URLs (SSRF surface)
   Details: Source/Plugins/Mcp/McpPlugin.cpp:275-352 fetches a caller URL; the mcp-lane coverage found it already HTTPS-only + host-allow-listed (tracker domain + api.media.atlassian.com) with redirects disabled, so this is a confirm-it-routes-through-the-shared-AiEndpointSanitize hardening rather than a live SSRF.
