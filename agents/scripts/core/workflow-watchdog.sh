@@ -44,6 +44,9 @@
 #   WATCHDOG_FRESH_SECS        progressing threshold (default 120).
 #   WATCHDOG_FROZEN_SECS       frozen threshold (default 600 = ~10 min).
 #   WATCHDOG_MAX_CASCADE_VICTIMS  cascade trigger (default 3; --max-cascade-victims N).
+#   WATCHDOG_CASCADE_WINDOW_SECS  victim-recency window (default 1800 = 30 min);
+#                              only victims modified within it count, so a stale
+#                              incident in the shared history can't force cascade.
 #   WATCHDOG_NOW               "now" epoch seconds (default `date +%s`).
 #
 # GNU find (`-printf '%T@'`) is required for transcript mtimes — present in Git
@@ -60,7 +63,8 @@ MAX_CASCADE_VICTIMS="${WATCHDOG_MAX_CASCADE_VICTIMS:-3}"
 while [ $# -gt 0 ]; do
     case "$1" in
         --nudge)                 NUDGE=1; shift ;;
-        --max-cascade-victims)   MAX_CASCADE_VICTIMS="${2:-}"; shift 2 ;;
+        --max-cascade-victims)   [ $# -ge 2 ] || { echo "workflow-watchdog: --max-cascade-victims needs a value" >&2; usage; exit 2; }
+                                 MAX_CASCADE_VICTIMS="$2"; shift 2 ;;
         --max-cascade-victims=*) MAX_CASCADE_VICTIMS="${1#*=}"; shift ;;
         -h|--help)               usage; exit 0 ;;
         -*)                      echo "workflow-watchdog: unknown flag: $1" >&2; usage; exit 2 ;;
@@ -92,14 +96,18 @@ newest_jsonl_mtime() {
 # crawl/frozen path does. Per-lane attribution (which lane to re-scope) needs a
 # harness lane-id the transcript does not carry across restarts — deferred to the
 # launch-protocol abort; this aggregate count is the convergence-failure signal.
+# RUN-SCOPED: only victims modified within the recency window ($2 = cutoff epoch)
+# count — TRANSCRIPT_DIR defaults to the whole ~/.claude/projects history, so a
+# stale incident from days ago must NOT permanently force `cascade` on a healthy
+# current run (`-newermt @cutoff` drops anything older than the window).
 count_cascade_victims() {
-    local dir="$1" f n=0
+    local dir="$1" cutoff="$2" f n=0
     [ -d "$dir" ] || { echo 0; return 0; }
     while IFS= read -r f; do
         grep -q '"isCompactSummary":[[:space:]]*true' "$f" 2>/dev/null || continue
         grep -qi 'request interrupted by user' "$f" 2>/dev/null || continue
         n=$((n + 1))
-    done < <(find "$dir" -name 'agent-*.jsonl' 2>/dev/null)
+    done < <(find "$dir" -name 'agent-*.jsonl' -newermt "@$cutoff" 2>/dev/null)
     echo "$n"
 }
 
@@ -113,7 +121,13 @@ newest_mtime="$(newest_jsonl_mtime "$TRANSCRIPT_DIR")"
 age=$(( now - newest_mtime ))
 [ "$age" -lt 0 ] && age=0
 
-cascade_victims="$(count_cascade_victims "$TRANSCRIPT_DIR")"
+# Run-scope the victim count to a recency window (default 30 min) so a stale
+# incident in the shared ~/.claude/projects history can't permanently force
+# `cascade` on a healthy current run.
+CASCADE_WINDOW_SECS="${WATCHDOG_CASCADE_WINDOW_SECS:-1800}"
+case "$CASCADE_WINDOW_SECS" in ''|*[!0-9]*) CASCADE_WINDOW_SECS=1800 ;; esac
+cascade_cutoff=$(( now - CASCADE_WINDOW_SECS )); [ "$cascade_cutoff" -lt 0 ] && cascade_cutoff=0
+cascade_victims="$(count_cascade_victims "$TRANSCRIPT_DIR" "$cascade_cutoff")"
 
 # Prior poll baseline (count + newest mtime). Absent → 0/0 (first poll).
 prev_count=0

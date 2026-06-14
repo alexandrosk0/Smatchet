@@ -28,6 +28,9 @@ setup() {
     mkdir -p "$WATCHDOG_RESULTS_DIR" "$WATCHDOG_TRANSCRIPT_DIR"
 
     export WATCHDOG_NOW=1000000   # fixed clock
+    # Hermetic cascade defaults: a value inherited from the runner env would
+    # silently shift the default-threshold / recency-window assertions.
+    unset WATCHDOG_MAX_CASCADE_VICTIMS WATCHDOG_CASCADE_WINDOW_SECS
     # leave FRESH_SECS=120 / FROZEN_SECS=600 at their defaults
 }
 
@@ -177,6 +180,22 @@ JSONL
     transcript_at 999970
     printf '%s\n' '{"type":"user","message":{"content":"hi"}}' > "$WATCHDOG_TRANSCRIPT_DIR/agent-clean.jsonl"
     run bash "$SCRIPT" demo
+    [[ "$output" != *"]: cascade"* ]]
+    [[ "$output" == *"0 cascade victim"* ]]
+}
+
+@test "stale victims outside the recency window are not counted (run-scoped)" {
+    make_results 1
+    transcript_at 999970
+    victim_transcript a; victim_transcript b; victim_transcript c
+    # NOW=1000000, default window 1800 -> cutoff 998200; age these victims to
+    # epoch 990000 (older than the cutoff) so a stale historical incident in the
+    # shared ~/.claude/projects history does not force cascade on a healthy run.
+    touch -d @990000 "$WATCHDOG_TRANSCRIPT_DIR/agent-a.jsonl" \
+                     "$WATCHDOG_TRANSCRIPT_DIR/agent-b.jsonl" \
+                     "$WATCHDOG_TRANSCRIPT_DIR/agent-c.jsonl"
+    run bash "$SCRIPT" demo
+    [ "$status" -eq 0 ]
     [[ "$output" != *"]: cascade"* ]]
     [[ "$output" == *"0 cascade victim"* ]]
 }
