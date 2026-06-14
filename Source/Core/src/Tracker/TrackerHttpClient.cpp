@@ -31,7 +31,8 @@ TrackerHttpResult ClassifyTrackerResponse(const cpr::Response& response) {
 }
 
 TrackerHttpResult TrackerHttpRequestWithRetry(const std::function<TrackerHttpResult()>& requestFn, int maxAttempts,
-                                              const std::function<bool()>& cancelled) {
+                                              const std::function<bool()>& cancelled,
+                                              const std::function<bool(const TrackerError&)>& shouldRetry) {
     if (!requestFn) {
         TrackerHttpResult err;
         err.Error = TrackerErrorUnknown("TrackerHttpRequestWithRetry called with empty requestFn");
@@ -49,7 +50,8 @@ TrackerHttpResult TrackerHttpRequestWithRetry(const std::function<TrackerHttpRes
         }
 
         result = requestFn();
-        if (result.IsOk() || !result.Error.IsRetryable() || attempt == maxAttempts) {
+        const bool retryable = shouldRetry ? shouldRetry(result.Error) : result.Error.IsRetryable();
+        if (result.IsOk() || !retryable || attempt == maxAttempts) {
             return result;
         }
 
