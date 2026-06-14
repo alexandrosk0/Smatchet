@@ -47,7 +47,7 @@ bool JiraClient::FetchUsers(const TrackerConfig& cfg, std::vector<TrackerUser>& 
         auto usersJson = nlohmann::json::parse(usersResponse.text);
         if (!usersJson.is_array()) {
             outError = "Invalid users response format.";
-            LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), TruncateForLog(usersResponse.text, 300).c_str());
+            LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), RedactHttpBodyForLog(usersResponse.text).c_str());
             return false;
         }
 
@@ -117,14 +117,14 @@ Result<std::vector<TrackerUser>, TrackerError> JiraClient::FetchIssueWatchers(co
         if (!j.is_object()) {
             outError = "Invalid watchers response format.";
             LOG_ERROR("JiraClient: %s issue=%s body=%s", outError.c_str(), issueKey.c_str(),
-                      TruncateForLog(response.text, 300).c_str());
+                      RedactHttpBodyForLog(response.text).c_str());
             return WatchersResult::Err(TrackerErrorParse(outError));
         }
         const auto watchers = j.value("watchers", nlohmann::json::array());
         if (!watchers.is_array()) {
             outError = "Invalid watchers array in response.";
             LOG_ERROR("JiraClient: %s issue=%s body=%s", outError.c_str(), issueKey.c_str(),
-                      TruncateForLog(response.text, 300).c_str());
+                      RedactHttpBodyForLog(response.text).c_str());
             return WatchersResult::Err(TrackerErrorParse(outError));
         }
         AppendTrackerUsersFromJsonArray(watchers, outWatchers);
@@ -233,7 +233,7 @@ JiraClient::FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issu
         if (!root.is_object() || !root.contains("fields") || !root["fields"].is_object()) {
             outError = "Invalid editmeta response: missing fields object.";
             LOG_ERROR("JiraClient: %s issue=%s body=%s", outError.c_str(), issueKeyOrId.c_str(),
-                      TruncateForLog(response.text, 400).c_str());
+                      RedactHttpBodyForLog(response.text).c_str());
             return EditMetaResult::Err(TrackerErrorParse(std::move(outError)));
         }
         const auto& fields = root["fields"];
@@ -282,7 +282,7 @@ Result<TrackerIssueVotes, TrackerError> JiraClient::FetchIssueVotes(const Tracke
         if (!j.is_object()) {
             outError = "Invalid votes response format.";
             LOG_ERROR("JiraClient: %s issue=%s body=%s", outError.c_str(), issueKey.c_str(),
-                      TruncateForLog(response.text, 300).c_str());
+                      RedactHttpBodyForLog(response.text).c_str());
             return VotesResult::Err(TrackerErrorParse(outError));
         }
 
@@ -349,7 +349,7 @@ Result<std::vector<TrackerUser>, TrackerError> JiraClient::SearchUsersByQuery(co
         auto arr = nlohmann::json::parse(resp.text);
         if (!arr.is_array()) {
             outError = "user/search: expected array.";
-            LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), TruncateForLog(resp.text, 300).c_str());
+            LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), RedactHttpBodyForLog(resp.text).c_str());
             return UsersResult::Err(TrackerErrorParse(outError));
         }
         std::unordered_set<std::string> seen;

@@ -85,7 +85,7 @@ ProcessJiraSearchPage(int page, const std::string& responseText, const std::stri
         auto json = nlohmann::json::parse(responseText);
         if (!json.contains("issues")) {
             LOG_WARN("JiraClient: page %d response has no 'issues' key. Body (truncated):\n%s", page,
-                     TruncateForLog(responseText, 800).c_str());
+                     RedactHttpBodyForLog(responseText).c_str());
             outcome.Stop = true;
             outcome.EndedCleanly = false;
             outcome.HadFetchError = true;
@@ -141,7 +141,7 @@ ProcessJiraSearchPage(int page, const std::string& responseText, const std::stri
         outcome.NextToken = std::move(newToken);
     } catch (const std::exception& ex) {
         LOG_ERROR("JiraClient: JSON parse error on page %d: %s | response excerpt: %s", page, ex.what(),
-                  TruncateForLog(lastResponseBody).c_str());
+                  RedactHttpBodyForLog(lastResponseBody).c_str());
         outcome.Stop = true;
         outcome.EndedCleanly = false;
         outcome.HadFetchError = true;
@@ -167,7 +167,7 @@ void JiraDiagnoseZeroIssueResult(const TrackerConfig& cfg, const std::string& ba
             verifiedIdentity = true;
         } catch (const std::exception& ex) {
             LOG_WARN("JiraClient: failed to parse /myself response: %s body=%s", ex.what(),
-                     TruncateForLog(myselfResp.text, 300).c_str());
+                     RedactHttpBodyForLog(myselfResp.text).c_str());
         }
     }
 

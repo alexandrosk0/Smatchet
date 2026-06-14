@@ -164,7 +164,8 @@ bool WhisperApiClient::Transcribe(const std::vector<std::uint8_t>& wavBytes,
     // Connect timeout: short so a hung DNS / TCP handshake doesn't freeze the
     // CLI for the user. Total timeout: 60s — Whisper API quotes p99 < 30s for
     // a 30-second clip; doubling that gives slack for network jitter.
-    cpr::Response r = cpr::Post(cpr::Url{url}, headers, multipart, cpr::ConnectTimeout{5000},
+    cpr::Response r = cpr::Post(cpr::Url{url}, headers, multipart,
+                                cpr::Redirect{smatchet::ai::pure::kAiFollowRedirects, false}, cpr::ConnectTimeout{5000},
                                 cpr::Timeout{60000});
 
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Ai,
