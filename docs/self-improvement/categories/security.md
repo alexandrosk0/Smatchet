@@ -82,8 +82,9 @@
 - 2026-06-13 · deep-audit · [security] · P1 — Arbitrary config-specified file read prepended verbatim into outbound LLM system prompt (supersedes E5, raised P2→P1)
   Details: Source/Core/src/AgentsMdLoader.cpp:28-58,122-153 reads a config-specified override path (≤64 KB) guarded only by fs::exists (ConfigManager.cpp:791-792), concatenated into the system prompt at AiAssistantController.cpp:408,418. No canonicalization/allowlist/root-containment. Verified: a local config write → off-host exfil of any readable file to the remote LLM provider. Same gap as E5 below, with sharper exfil framing + exact sink lines.
   Concrete next action: Add a path-containment helper (canonicalize + reject symlinks/out-of-root absolute paths; pin the filename suffix to *agents.md) and treat override content as untrusted in prompt assembly. Effort M (~1 day + tests).
-  Status: open
-  Last-reviewed: 2026-06-13
+  Resolution: **applied — fix/agentsmd-path-containment**. `AgentsMdLoader.cpp` gained `ContainAgentsMdPath` (anon ns): `fs::canonical`-resolves the override path (resolving symlinks + `..`) and refuses it unless the REAL filename ends in `.md`; `LoadOneCapped` calls it before reading and reads the canonical (symlink-resolved) path (no TOCTOU re-traversal). This blocks a direct repoint to a credential file (id_rsa/cookies/known_hosts — no `.md`) AND a `evil.md`→secret symlink (canonical resolves to the non-`.md` real name → rejected). **Pin is `.md`, NOT the audit-suggested `*agents.md`** — the existing tests + defaults prove the override contract legitimately allows any markdown file (global.md / proj.md / my-instructions.md), and an attacker can't turn id_rsa into a `.md` without already holding its content, so `.md` closes the repoint vector without breaking valid configs. Covers both override entry points (global + project) + auto-discovery uniformly. 2 new doctest cases (non-`.md` file refused via direct + layered entry; `.md`-symlink→non-`.md`-secret refused, gracefully skipped where symlinks need privilege); AgentsMd suite 18/18. Supersedes E5 below (same gap — close both). Cross-ref: AiAssistantController.cpp:408 prompt-assembly sink.
+  Status: applied
+  Last-reviewed: 2026-06-14
 
 - 2026-06-13 · deep-audit · [security] · P2 — Command registry executes destructive commands with no ctx.Source authorization
   Details: Source/Core/src/Commands/CommandRegistry.cpp:298 gates only on (Destructive && !ConfirmedDestructive); no ctx.Source trust check, so MCP/Lua-sourced commands equal UI-sourced. Basis shared with MCP un-gated dispatch.
@@ -300,8 +301,9 @@
 - 2026-05-17 · security-review · [security] · P2 — `AgentsMdLoader` path-traversal: `ProjectAgentsMdPath` / `AgentsMdGlobalPath` accepted verbatim
   Details: A config-write attacker with access to `smatchet_config.json` can repoint either path to any readable file (`C:\Users\<victim>\.ssh\id_rsa`, browser cookies, ssh known_hosts). The first 64 KB are then silently injected into every system prompt sent to the third-party LLM. Loader at [`AgentsMdLoader.cpp:101-117`](../../../Source/Core/src/AgentsMdLoader.cpp) does no validation beyond the 64 KB cap.
   Concrete next action: require the configured path's filename to end in one of `agents.md` / `AGENTS.md` / `.agents.md` (case-insensitive); call `ghc::filesystem::canonical` and reject if the canonical path escapes a small allow-list of roots (`%LOCALAPPDATA%/Smatchet/`, repo root, `%USERPROFILE%`); reject symlinks via `ghc::filesystem::is_symlink`. ~1.5 h.
-  Status: open
-  Last-reviewed: 2026-05-17
+  Resolution: **applied — fix/agentsmd-path-containment** (the P1 entry above, which superseded this one). The shipped guard canonicalizes (resolving symlinks, so no separate `is_symlink` leg needed — a symlink to a secret resolves to the secret's non-`.md` real name and is rejected) and pins the resolved filename to `.md`. The proposed root-allow-list was deliberately NOT used: the override contract allows files outside any small root set (the user's own repos anywhere), so a root-containment would break valid configs while the `.md`-on-canonical pin already defeats the credential-file repoint vector this entry describes.
+  Status: applied
+  Last-reviewed: 2026-06-14
 
 - 2026-05-17 · security-review · [security] · P2 — `ai.prompt` Lua glue has no rate limit + no per-session consent toast
   Details: Any Lua script (including one loaded via `Source/Plugins/LuaConsole` paste-and-run) can call `ai.prompt(...)` in a tight loop and burn the user's API quota or leak ticket data to the configured provider. `LuaAutomationHost`'s instruction-count `lua_sethook` doesn't cover the C++-side HTTP call. Sandbox escape with attacker-controlled outbound payload.
