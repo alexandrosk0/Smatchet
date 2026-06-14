@@ -229,8 +229,9 @@
 - 2026-06-13 · deep-audit-rerun · [security] · P2 — ADF parser unbounded recursion on untrusted tracker JSON (Pillar 3 — Never Crash)
   Details: `Source/Core/src/Tracker/TrackerFieldValueParser.cpp:290` (`CollectAdfText`) and `:309` (`ExtractAdfTextToStream`) recurse over server-supplied Atlassian Document Format nodes with no depth bound; deeply-nested ADF blows the stack → crash / DoS from a malicious or buggy server response. Confirmed MEDIUM, adversarially verified, NEW.
   Concrete next action: add a recursion-depth cap (reject/clamp beyond ~64 levels) to both functions; convert to an explicit work-stack if needed. Unit-test with a deep-nest fixture. ~1 h.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Resolution: 2026-06-14 — capped BOTH walkers at `kMaxAdfRecursionDepth = 256` (threaded a `depth` param, default 0; on exceeding the cap the walker stops recursing and degrades gracefully — no throw — with a one-shot `LOG_WARN`). Picked 256 (well above any legitimate ADF nesting; real docs are a handful deep) over the ~64 suggested, to leave more headroom for legitimate-but-deep nested lists/tables while still bounding stack growth far short of overflow. Regression guards added in `tests/Core/TrackerFieldValueParser.extended.test.cpp`: two 5000-level deep-nest fixtures (one per walker entry point — `ExtractAdfTextToStream` via `NormalizeTrackerFieldValue`, `CollectAdfText` via the `ParseComments` empty-extraction fallback) parse without stack overflow, plus a shallow-doc no-regression check. Fix PR #<PR>.
+  Status: resolved
+  Last-reviewed: 2026-06-14
 
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — Lua child coroutine lua_State does not inherit the instruction-count hook
   Details: `Source/Core/src/AppController_LuaBindings.cpp:315,1257` — the LUA_MASKCOUNT hook is installed on the main lua_State; a `coroutine.create()`'d child State does not inherit it, so a tight loop inside a coroutine runs uncounted (sandbox timeout bypass). Partly-confirmed LOW (needs paste-and-run Lua; same-user boundary), NEW.

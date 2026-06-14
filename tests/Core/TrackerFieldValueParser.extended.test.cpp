@@ -362,6 +362,89 @@ TEST_CASE("NormalizeTrackerFieldValue passes ADF doc content through text extrac
     CHECK(result.find("hello there") != std::string::npos);
 }
 
+TEST_CASE("ADF text extraction preserves shallow doc output (no regression from depth cap)") {
+    // Regression guard: the recursion-depth cap added for the unbounded-recursion
+    // DoS fix must not alter output for legitimate (shallow) ADF. A two-level doc
+    // with two paragraphs must still extract both visible texts in order.
+    nlohmann::json doc;
+    doc["type"] = "doc";
+    nlohmann::json para1;
+    para1["type"] = "paragraph";
+    nlohmann::json text1;
+    text1["type"] = "text";
+    text1["text"] = "first line";
+    para1["content"] = nlohmann::json::array({text1});
+    nlohmann::json para2;
+    para2["type"] = "paragraph";
+    nlohmann::json text2;
+    text2["type"] = "text";
+    text2["text"] = "second line";
+    para2["content"] = nlohmann::json::array({text2});
+    doc["content"] = nlohmann::json::array({para1, para2});
+    const std::string result = NormalizeTrackerFieldValue(doc);
+    const std::string::size_type firstPos = result.find("first line");
+    const std::string::size_type secondPos = result.find("second line");
+    CHECK(firstPos != std::string::npos);
+    CHECK(secondPos != std::string::npos);
+    CHECK(firstPos < secondPos);
+}
+
+// Build an ADF document nested `depth` levels deep, in place, WITHOUT triggering
+// nlohmann::json's own recursive copy constructor (which would stack-overflow during
+// test setup rather than exercising our walker). We descend via references and push
+// each new level into the parent's "content" array; nlohmann's destructor is
+// iterative, so teardown of the deep tree is also safe.
+static nlohmann::json BuildDeepAdfDoc(int depth) {
+    nlohmann::json doc;
+    doc["type"] = "doc";
+    doc["content"] = nlohmann::json::array();
+    nlohmann::json* contentArr = &doc["content"];
+    for (int i = 0; i < depth; ++i) {
+        nlohmann::json para;
+        para["type"] = "paragraph";
+        para["content"] = nlohmann::json::array();
+        contentArr->push_back(std::move(para));
+        contentArr = &(*contentArr)[0]["content"];
+    }
+    nlohmann::json text;
+    text["type"] = "text";
+    text["text"] = "buried";
+    contentArr->push_back(std::move(text));
+    return doc;
+}
+
+TEST_CASE("ADF doc with hostile deep nesting parses without stack overflow (ExtractAdfTextToStream bound)") {
+    // Security regression guard (Pillar 3 — Never crash): a malicious/buggy tracker
+    // can return ADF nested thousands of levels deep. Before the depth cap this blew
+    // the C++ stack via ExtractAdfTextToStream. A 5000-level doc must return (bounded
+    // text, process survives) rather than crash. 5000 >> the 256 cap, so without the
+    // bound this overflows; with it, the walker stops at the cap and degrades.
+    nlohmann::json doc = BuildDeepAdfDoc(5000);
+
+    // The hard requirement is that this returns at all (no stack overflow / no thrown
+    // exception unwinding the parse). Output is bounded/truncated.
+    const std::string result = NormalizeTrackerFieldValue(doc);
+    CHECK(result.size() < 100000);
+}
+
+TEST_CASE("ADF comment body with hostile deep nesting parses without stack overflow (CollectAdfText bound)") {
+    // The comment path exercises BOTH recursive walkers: ExtractAdfTextToStream first,
+    // then CollectAdfText as the empty-extraction fallback. This guards the second
+    // entry point cited by the finding (CollectAdfText) under hostile depth.
+    nlohmann::json body = BuildDeepAdfDoc(5000);
+
+    nlohmann::json comments = nlohmann::json::array();
+    nlohmann::json c;
+    c["author"]["displayName"] = "Attacker";
+    c["created"] = "2024-01-15T12:34:56.000Z";
+    c["body"] = std::move(body);
+    comments.push_back(std::move(c));
+
+    // Must return without crashing; bounded output.
+    const std::string out = ParseComments(comments);
+    CHECK(out.size() < 100000);
+}
+
 TEST_CASE("ParseComments returns empty for non-array or empty input") {
     CHECK(ParseComments(nlohmann::json(nullptr)).empty());
     CHECK(ParseComments(nlohmann::json::object()).empty());
