@@ -295,13 +295,25 @@ TEST_CASE("CallstackParser::ParseCallstackText survives adversarial inputs" * do
         // recovered but no frame may reference the 'a'-noise content.
         // 2000 ms budget accommodates slow CI runners; true catastrophic ReDoS on 1 KiB would
         // take seconds-to-minutes, so this threshold still catches the failure class it guards.
+        // Under AddressSanitizer the instrumentation adds a large CONSTANT overhead (~3-10x) a
+        // 2 s wall-clock can't absorb — it red-walled every C++ PR's ASan rig once the doctest
+        // suite actually built with /fsanitize=address (#1190). ReDoS is a SUPER-LINEAR blowup
+        // (seconds-to-minutes even un-instrumented), so a 10x ceiling under ASan still catches
+        // the failure class while tolerating the constant slowdown.
         std::string noise(1 * 1024, 'a');
         const std::string text = noise + "\nC:\\real.cpp(7)\n";
         const auto t0 = std::chrono::steady_clock::now();
         const std::vector<ParsedCallstackFrame> frames = ParseCallstackText(text);
         const auto t1 = std::chrono::steady_clock::now();
         const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+#if defined(__SANITIZE_ADDRESS__)
+        // MSVC (+ GCC) define __SANITIZE_ADDRESS__ under /fsanitize=address — the rig
+        // that flaked (Sanitizer ASAN via MSVC). Clang's ASan uses __has_feature, but
+        // the Clang sanitizer lane here is UBSan, not ASan, so this guard suffices.
+        CHECK(elapsedMs < 20000);
+#else
         CHECK(elapsedMs < 2000);
+#endif
         for (size_t i = 0; i < frames.size(); ++i) {
             CHECK(frames[i].FilePath.find(noise) == std::string::npos);
             CHECK(frames[i].RawLine.find(noise) == std::string::npos);
