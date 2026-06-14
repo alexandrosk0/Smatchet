@@ -17,6 +17,14 @@ std::string NormalizeBaseUrl(const std::string& domain);
 bool EnsureTrackerAuthConfig(const TrackerConfig& cfg, std::string& outError);
 cpr::Header BuildTrackerHeaders(const TrackerConfig& cfg, bool includeJsonContentType = false);
 std::string BuildTrackerBasicAuthHeader(const TrackerConfig& cfg);
+/**
+ * Redirect policy for every tracker request (security H4 / E2): redirect-following DISABLED
+ * so a cross-host 30x can never forward the caller-set raw Basic/Bearer `Authorization`
+ * header to an attacker/MITM host (curl's UNRESTRICTED_AUTH default only governs USERPWD,
+ * not raw headers). Use this for any direct cpr verb that carries tracker auth and is not
+ * already routed through the Tracker*Logged helpers (e.g. multipart attachment upload).
+ */
+cpr::Redirect MakeTrackerRedirectPolicy();
 cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, const cpr::Header& headers);
 cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                const cpr::Parameters& params);
