@@ -541,10 +541,10 @@ void SmatchetUI::drawPreWindowOverlays(AppController& app, UiDrawSession& d) {
         commandPalette_.Draw(app);
     }
 
-    // "Log a Bug" modal. The opener hotkey is now a rebindable binding
-    // (app.bug_report.open, default Ctrl+Shift+B) dispatched in dispatchKeybindings above;
-    // this only renders the modal once showBugReport latches. Drawn unconditionally (the
-    // dev bug repo is independent of the active backend, so it works while disconnected).
+    // "Log a Bug" modal. Its opener is now the rebindable app.bug_report.open binding
+    // (default Ctrl+Shift+B), dispatched up in dispatchKeybindings. This block only
+    // renders the modal once showBugReport latches, and is drawn unconditionally so it
+    // still works while the active backend is unreachable.
     SmatchetBugReportUi_Draw(app, g_ui);
 
     // Scenario tick: drive the active scenario one frame and propagate scroll state
