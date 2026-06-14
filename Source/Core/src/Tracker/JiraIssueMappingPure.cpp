@@ -303,7 +303,11 @@ bool AppendCachedTicketFromJiraSearchIssue(
             }
             if (issueFields.contains(fieldKey)) {
                 MapJiraPresentField(fieldKey, issueFields[fieldKey], ticket.id, fetchIssueComments, ticket);
-            } else {
+            } else if (ticket.fieldValues.find(fieldKey) == ticket.fieldValues.end()) {
+                // Don't null a value a sibling field's handler already computed. The numeric
+                // `comments` count is derived from the `comment` field (MapJiraPresentField),
+                // and Jira's payload carries no literal `comments` key — so this absent-field
+                // path would otherwise clobber the count depending on selected-field order.
                 ticket.fieldValues[fieldKey] = std::string();
             }
         }

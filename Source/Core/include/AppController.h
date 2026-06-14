@@ -1261,8 +1261,11 @@ class AppController {
                                      const std::vector<std::string>& componentProjectKeys,
                                      const std::shared_ptr<ITrackerBackend>& backend, GridContextFieldCatalog* catPtr,
                                      TrackerConfig trackerCfgForWorker);
-    void EnsureCatalogHistoryField();
-    void EnsureCatalogCommentsField();
+    // Take the caller's already-latched catalog (#823 / CR PR#1218): fieldCatalog() re-resolves
+    // focusedContextPtr_ per call, so re-resolving inside the helper could insert the synthetic
+    // field into a different context than the caller populated. Caller passes its latch.
+    void EnsureCatalogHistoryField(GridContextFieldCatalog& cat);
+    void EnsureCatalogCommentsField(GridContextFieldCatalog& cat);
     bool TryBuildFieldEditPayloadForNetwork(const std::string& issueId, const TrackerField& field,
                                             const std::vector<std::string>& rawValues,
                                             const std::string& originalEstimateSnapshot,

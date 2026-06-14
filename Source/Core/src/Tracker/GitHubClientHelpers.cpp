@@ -306,6 +306,11 @@ Result<std::int64_t, std::string> ParseIso8601ToUnixSec(const std::string& iso86
         while (i < suffix.size() && std::isdigit(static_cast<unsigned char>(suffix[i])) != 0) {
             ++i;
         }
+        // A bare '.' with no following digit ("...:00.Z", "...:00.+0000") is malformed: reject
+        // rather than stripping the dot and silently re-accepting the remainder as the tz suffix.
+        if (i == 1) {
+            return Result<std::int64_t, std::string>::Err("malformed fractional seconds in ISO-8601: " + iso8601);
+        }
         suffix = suffix.substr(i);
     }
     std::int64_t offsetSec = 0;

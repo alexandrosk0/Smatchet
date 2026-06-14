@@ -324,8 +324,8 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
                 field.ReadOnly = true;
             }
         }
-        EnsureCatalogHistoryField();
-        EnsureCatalogCommentsField();
+        EnsureCatalogHistoryField(cat);
+        EnsureCatalogCommentsField(cat);
     }
 
     cat.TrackerFieldCatalogRevision.fetch_add(1);
@@ -392,8 +392,8 @@ void AppController::HandleFieldCatalogError(const std::string& error, const std:
         cat.LastTrackerFieldCatalogWarning = std::string("Offline: restored ") + (catalogPlane ? "Plane" : "Jira") +
                                              " field catalog from local snapshot. Last fetch failed: " + error;
         if (!catalogPlane) {
-            EnsureCatalogHistoryField();
-            EnsureCatalogCommentsField();
+            EnsureCatalogHistoryField(cat);
+            EnsureCatalogCommentsField(cat);
         }
         cat.TrackerFieldCatalogRevision.fetch_add(1);
         LOG_WARN("AppController::SetFieldCatalog transport failure; loaded snapshot err=%s", snapErr.c_str());
@@ -434,15 +434,13 @@ const TrackerField* AppController::FindFieldById(const std::string& fieldId) con
     return it == cat.AvailableFields.end() ? nullptr : &(*it);
 }
 
-void AppController::EnsureCatalogHistoryField() {
+void AppController::EnsureCatalogHistoryField(GridContextFieldCatalog& cat) {
     // Atomic check-then-insert under the catalog lock (#823). The existence
     // check is done INLINE (not via FindFieldById, which locks the same
     // non-recursive availableFieldsMutex_ → would self-deadlock) so the lookup
-    // and the push_back can't race a concurrent catalog read/write. Safe to
-    // lock here: the prior FindFieldById call already implied no caller holds
-    // the mutex across this method.
-    GridContextFieldCatalog& cat =
-        fieldCatalog(); // latch once — lock/object must resolve to the same context (Pillar 3)
+    // and the push_back can't race a concurrent catalog read/write. `cat` is the
+    // caller's latched catalog — must NOT re-resolve fieldCatalog() here, or a focus
+    // switch could insert into a different context than the caller populated (CR PR#1218).
     std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
     const auto it = std::find_if(cat.AvailableFields.begin(), cat.AvailableFields.end(),
                                  [](const TrackerField& field) { return field.Id == "history"; });
@@ -456,15 +454,14 @@ void AppController::EnsureCatalogHistoryField() {
     cat.AvailableFields.push_back(std::move(historyField));
 }
 
-void AppController::EnsureCatalogCommentsField() {
+void AppController::EnsureCatalogCommentsField(GridContextFieldCatalog& cat) {
     // issue-comments PR-B — synthetic read-only `comments` count column for Jira. Mirrors the
     // sibling history-field helper above: same atomic check-then-insert under the catalog lock,
     // INLINE find_if rather than FindFieldById to avoid self-deadlocking the non-recursive mutex.
     // Type "number" matches the GitHub catalog's comments field so the shared comments cell
     // special-case renders a count. Read-only via ReadOnly=true alone — no Jira editmeta entry
-    // needed (the sibling `history` synthetic field is the precedent).
-    GridContextFieldCatalog& cat =
-        fieldCatalog(); // latch once — lock/object must resolve to the same context (Pillar 3)
+    // needed (the sibling `history` synthetic field is the precedent). `cat` is the caller's
+    // latched catalog — do NOT re-resolve fieldCatalog() here (CR PR#1218; see header).
     std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
     const auto it = std::find_if(cat.AvailableFields.begin(), cat.AvailableFields.end(),
                                  [](const TrackerField& field) { return field.Id == "comments"; });

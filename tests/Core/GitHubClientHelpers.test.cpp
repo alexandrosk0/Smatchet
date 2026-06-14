@@ -216,6 +216,16 @@ TEST_CASE("ParseIso8601ToUnixSec — timezone-aware (Z + ±HH:MM + ±HHMM)") {
         REQUIRE(r);
         CHECK(r.value() == 1705257000);
     }
+    // A bare '.' with no fractional digit must NOT be silently accepted by stripping the dot
+    // and reading the remainder as the timezone suffix.
+    {
+        const auto r = ParseIso8601ToUnixSec("2024-01-15T00:00:00.Z");
+        CHECK_FALSE(r);
+    }
+    {
+        const auto r = ParseIso8601ToUnixSec("2024-01-15T00:00:00.+0000");
+        CHECK_FALSE(r);
+    }
 }
 
 // ---------------------------------------------------------------------------
