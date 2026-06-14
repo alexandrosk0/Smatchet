@@ -58,6 +58,13 @@
   Status: applied
   Last-reviewed: 2026-06-08
 
+- 2026-06-07 · 1b/1c agents · [test] · P2 — `CallstackParser.test.cpp` ReDoS sentinel's fixed 2000 ms wall-clock cap deterministically fails under ASan (~2.1 s); recurred 3× this session
+  Resolution: **applied by PR #1215** (`36521f72`, merged 2026-06-14) — exactly this entry's prescription. `tests/Core/CallstackParser.test.cpp:309-315` now guards the 1 KiB ReDoS sentinel with `#if defined(__SANITIZE_ADDRESS__)` (MSVC/GCC expose it under `/fsanitize=address`; Clang would need `__has_feature(address_sanitizer)` via a nested `#if`) and widens the wall-clock cap 2000 ms→20000 ms — at the test level so it covers BOTH the load-bearing "Run ctest under ASAN" step (`build-and-test.yml:956`) and the curated clean-subset step (`:972`), strictly better than the earlier `--test-case-exclude`. The stale `docs/agent-rules/build.md` § ASan caveat was dropped in the same drain.
+  Gate-escape note: this flake was a confirmed false-red trigger on THREE PRs — #1183 (manual override) and #1210/#1211 (auto-merged past the red `Sanitizer (ASAN via MSVC)` lane in the ~10 h gap before #1215 landed); RCAs in `postmortems.md` 2026-06-14.
+  Verification: develop post-merge **Sanitizer (ASAN via MSVC)** confirmed green on multiple post-#1215 commits — `2ae42828` (#1198), `3c10e1d1` (#1217), `2e0940ad` (#1219, develop tip) all `success`. (Resolves the "confirm green on the first PR past #1215" residual #1216 left open on the live 2026-06-13 P1 entry; that P1 stays open only for its separate INT_MAX-clamp subcase.)
+  Status: applied
+  Last-reviewed: 2026-06-14
+
 - 2026-06-07 · test-author (Slice-2 agent) · [test] · P3 — fresh-profile bucket-E drivers must seed `whisper_setup_completed=true` or the first-launch `##WhisperSetupBanner` swallows ItemClicks
   Resolution: **applied in this PR** — gotcha appended to `agents/_shared/skills/test-authoring/SKILL.md` § Gotchas: fresh-profile drivers seed `whisper_setup_completed=true` (+ ideally `backend_has_been_reachable=true`; both keys verified in `Source/Core/src/Config/ConfigManager.cpp:240,541`) or the first-launch banner (`Source/Core/src/SmatchetWhisperSetupBanner.cpp:325` `ImGui::Begin("##WhisperSetupBanner", ...)`) overlays the UI and swallows clicks.
   Status: applied
