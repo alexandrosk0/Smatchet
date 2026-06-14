@@ -106,6 +106,10 @@ add_executable(SmatchetTests
     Core/ConfigSaveConcurrency.test.cpp
     Core/MainThreadDispatcherDrain.test.cpp
     Core/CacheEvictionPolicy.test.cpp
+    # SECURITY_AUDIT_2026-06-13 synthesis #9 — pure pre-decode dimension/pixel-budget gate behind
+    # SmatchetImageTextureCache's stbi_info pre-check. Header-only
+    # (Source/Core/include/Persistence/IconDimensionsPolicy.h); no production .cpp to link.
+    Core/IconDimensionsPolicy.test.cpp
     # multi-grid-tabs.md Slice 5a (plan item 21) — pure hidden-pane LRU eviction decision
     # (least-recently-visible first; visible + busy-sync never evicted). Header-only policy.
     Core/GridPaneEvictionPolicy.test.cpp
