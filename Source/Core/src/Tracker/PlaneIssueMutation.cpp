@@ -1,5 +1,6 @@
 #include "PlaneClient.h"
 #include "PlaneClient_Internal.h"
+#include "PlaneCommentMappingPure.h"
 
 #include "IssueDraft.h"
 #include "Logger.h"
@@ -15,6 +16,7 @@
 #include <cpr/cpr.h>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 using smatchet::plane_detail::JsonFieldToString;
 using smatchet::plane_detail::NormalizePlaneApiBase;
@@ -420,4 +422,138 @@ Result<nlohmann::json, TrackerError> PlaneClient::BuildUpdatePayload(const Issue
                                                                      const std::vector<TrackerField>& catalog) {
     // For Plane, update payload is the same as create payload (subset of fields)
     return BuildCreatePayload(draft, catalog);
+}
+
+namespace {
+
+// Resolve the comments collection URL for `issueKey` from a settled cfg + pre-built
+// headers. Mirrors the project + work-item-UUID resolution in PlaneClient::UpdateIssueFields.
+// On success writes `outCommentsUrl` and returns Ok(); on failure returns an Err carrying
+// the resolution problem. The PlaneClient state (project key→query lookup, project-id cache,
+// key→UUID map, cache mutex) is threaded through explicitly so this stays a free helper.
+TrackerError ResolvePlaneCommentsUrl(PlaneClient& client, const TrackerConfig& cfg, const std::string& issueKey,
+                                     const cpr::Header& headers, std::string& cachedProjectId,
+                                     std::string& cachedProjectIdentifier,
+                                     std::unordered_map<std::string, std::string>& keyToId,
+                                     std::recursive_mutex& cacheMutex, std::string& outCommentsUrl) {
+    const std::string projectKey = client.ExtractProjectFromQuery(cfg.JqlQuery);
+    const std::string planeApi = NormalizePlaneApiBase(cfg.PlaneUrl);
+
+    std::string resolvedProjectId;
+    std::string targetUuid;
+    std::string resolveError;
+    {
+        std::lock_guard<std::recursive_mutex> lock(cacheMutex);
+        if (cachedProjectId.empty()) {
+            ResolvePlaneProject(planeApi, cfg, projectKey, headers, cachedProjectId, cachedProjectIdentifier,
+                                &resolveError);
+        }
+        if (cachedProjectId.empty()) {
+            return TrackerErrorUnknown(resolveError);
+        }
+        resolvedProjectId = cachedProjectId;
+
+        targetUuid = issueKey;
+        if (!LooksLikeUuid(issueKey)) {
+            auto it = keyToId.find(issueKey);
+            if (it != keyToId.end()) {
+                targetUuid = it->second;
+            } else {
+                return TrackerErrorInvalidRequest("Could not resolve Plane visual key '" + issueKey +
+                                                  "' to UUID. Try refreshing the grid.");
+            }
+        }
+    }
+
+    outCommentsUrl = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" + resolvedProjectId +
+                     "/work-items/" + targetUuid + "/comments/";
+    return TrackerError::Ok();
+}
+
+} // namespace
+
+Result<std::vector<TrackerIssueComment>, TrackerError>
+PlaneClient::FetchIssueComments(const std::string& issueKey) {
+    using CommentsResult = Result<std::vector<TrackerIssueComment>, TrackerError>;
+    // No cfg parameter on this interface — resolve from the settled on-disk config
+    // (same per-request pattern UpdateIssueFields / CreateIssue use).
+    TrackerConfig cfg = ConfigManager::Load();
+    if (cfg.PlaneUrl.empty() || cfg.PlaneApiKey.empty() || cfg.PlaneWorkspaceSlug.empty()) {
+        return CommentsResult::Err(TrackerErrorAuth("Missing Plane URL, API key, or workspace slug."));
+    }
+
+    cpr::Header headers;
+    for (const auto& kv : BuildPlaneHeaders(cfg)) {
+        headers.insert({kv.first, kv.second});
+    }
+    std::string commentsUrl;
+    const TrackerError resolved =
+        ResolvePlaneCommentsUrl(*this, cfg, issueKey, headers, planeProjectId_, planeProjectIdentifier_, keyToId_,
+                                planeCacheMutex_, commentsUrl);
+    if (!resolved.IsOk()) {
+        return CommentsResult::Err(resolved);
+    }
+
+    const cpr::Response resp =
+        TrackerGetLogged("PlaneClient", commentsUrl, headers, kTrackerConnectTimeoutMs, kTrackerOverallTimeoutMs);
+    LogTrackerHttpResult("PlaneClient", "GET", commentsUrl, resp);
+    if (resp.status_code != 200) {
+        const std::string msg = "Plane API error: " + std::to_string(resp.status_code);
+        LOG_ERROR("PlaneClient::FetchIssueComments: HTTP %ld for %s", resp.status_code, issueKey.c_str());
+        if (resp.status_code >= 200 && resp.status_code < 300) {
+            return CommentsResult::Err(TrackerErrorUnknown(msg, resp.status_code));
+        }
+        return CommentsResult::Err(TrackerErrorFromHttpStatus(resp.status_code, msg));
+    }
+
+    const nlohmann::json parsedJson = nlohmann::json::parse(resp.text, nullptr, false);
+    if (parsedJson.is_discarded()) {
+        LOG_ERROR("PlaneClient::FetchIssueComments: invalid JSON for %s", issueKey.c_str());
+        return CommentsResult::Err(TrackerErrorParse("Plane issue-comments response was not valid JSON."));
+    }
+    // Plane returns either a bare array or a paginated `{ "results": [...] }` envelope.
+    const nlohmann::json& nodes =
+        (parsedJson.is_object() && parsedJson.contains("results")) ? parsedJson["results"] : parsedJson;
+    std::vector<TrackerIssueComment> mapped = smatchet::plane::MapPlaneIssueComments(nodes);
+    LOG_INFO("PlaneClient::FetchIssueComments: %s → %zu comments", issueKey.c_str(), mapped.size());
+    return CommentsResult::Ok(std::move(mapped));
+}
+
+TrackerError PlaneClient::AddIssueCommentPlain(const TrackerConfig& cfg, const std::string& issueKey,
+                                               const std::string& plainText) {
+    // cfg-carrying mutation — resolve credentials from the live cfg (matches CreateIssue /
+    // UpdateIssueFields). Direct-post: comments are exempt from the offline-queue + audit-trail
+    // wiring (mirrors the existing GitHub / Jira comment post paths).
+    if (cfg.PlaneUrl.empty() || cfg.PlaneApiKey.empty() || cfg.PlaneWorkspaceSlug.empty()) {
+        return TrackerErrorAuth("Missing Plane URL, API key, or workspace slug.");
+    }
+
+    cpr::Header headers;
+    for (const auto& kv : BuildPlaneHeaders(cfg)) {
+        headers.insert({kv.first, kv.second});
+    }
+    std::string commentsUrl;
+    const TrackerError resolved =
+        ResolvePlaneCommentsUrl(*this, cfg, issueKey, headers, planeProjectId_, planeProjectIdentifier_, keyToId_,
+                                planeCacheMutex_, commentsUrl);
+    if (!resolved.IsOk()) {
+        return resolved;
+    }
+
+    nlohmann::json body = nlohmann::json::object();
+    // Plane stores comment bodies as HTML; convert the plain/Markdown text the modal produced
+    // into the HTML subset Plane accepts (same converter the description field uses).
+    body["comment_html"] = MarkdownConvert::MarkdownToHtml(plainText);
+
+    const cpr::Response resp = TrackerPostLogged("PlaneClient", commentsUrl, headers, body.dump());
+    LogTrackerHttpResult("PlaneClient", "POST", commentsUrl, resp);
+    if (resp.status_code != 200 && resp.status_code != 201) {
+        const std::string msg = "Plane API error: " + std::to_string(resp.status_code);
+        LOG_ERROR("PlaneClient::AddIssueCommentPlain: HTTP %ld for %s", resp.status_code, issueKey.c_str());
+        if (resp.status_code >= 200 && resp.status_code < 300) {
+            return TrackerErrorUnknown(msg, resp.status_code);
+        }
+        return TrackerErrorFromHttpStatus(resp.status_code, msg);
+    }
+    return TrackerError::Ok();
 }
