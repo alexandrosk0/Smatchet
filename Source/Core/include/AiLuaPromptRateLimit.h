@@ -6,14 +6,12 @@
 // outbound LLM HTTP call that `ai.prompt` kicks off — so paste-and-run Lua
 // could call it in a tight loop to burn the API quota or stream ticket data
 // off-host. This helper is the gate the glue consults before submitting.
-//
 // Two reject conditions:
 //   1. re-entrancy — a prior `ai.prompt` turn is still in flight (its HTTP
 //      call has not been observed to complete on this gate), so a fresh call
 //      from the same instance is rejected outright.
 //   2. spacing — the call lands < kMinIntervalMs after the previous accepted
 //      call's timestamp.
-//
 // Free-function + plain integer-millis args (NOT a clock type) so the unit
 // test (`AiLuaPromptRateLimit.test.cpp`) can exercise every branch without a
 // real clock, sol2, or cpr. The caller (AppController::Impl) owns the
