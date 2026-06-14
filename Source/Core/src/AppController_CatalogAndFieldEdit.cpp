@@ -1755,6 +1755,32 @@ bool AppController::AddIssueCommentPlain(const std::string& issueKey, const std:
     return ok;
 }
 
+bool AppController::FetchIssueComments(const std::string& issueKey, std::vector<TrackerIssueComment>& outComments,
+                                      std::string& outError) {
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
+        &focusedContext()
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+    outComments.clear();
+    outError.clear();
+    if (!backend) {
+        outError = "Jira backend is not initialized.";
+        return false;
+    }
+    if (!backend->Collaboration()) {
+        outError = "Tracker backend does not support collaboration features.";
+        return false;
+    }
+    auto r = backend->Collaboration()->FetchIssueComments(issueKey);
+    if (r) {
+        outComments = std::move(r.value());
+        requestDeferredLiveTrackerBackendSuccessNotify_();
+        return true;
+    }
+    outError = r.error().Detail;
+    LOG_ERROR("AppController::FetchIssueComments failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
+    return false;
+}
+
 bool AppController::SubmitWorklog(const std::string& issueId, const std::string& timeSpent,
                                   const std::string& timeRemaining, const std::string& adjustEstimate,
                                   const std::string& workDescription, const std::string& startedDate,

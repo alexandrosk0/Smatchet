@@ -73,6 +73,7 @@ query($q: String!, $first: Int!, $after: String) {
         assignees(first: 1) { nodes { login } }
         labels(first: 50) { nodes { name } }
         milestone { title }
+        comments { totalCount }
         repository { name owner { login } }
       }
       ... on PullRequest {
@@ -91,6 +92,7 @@ query($q: String!, $first: Int!, $after: String) {
         assignees(first: 1) { nodes { login } }
         labels(first: 50) { nodes { name } }
         milestone { title }
+        comments { totalCount }
         repository { name owner { login } }
       }
     }

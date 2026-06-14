@@ -87,6 +87,15 @@ class GitHubClient : public ITrackerBackend,
     Result<std::unordered_map<std::string, bool>, TrackerError>
     FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issueKeyOrId) override;
 
+    // === ITrackerCollaboration overrides (issue-comments PR-A) ===
+    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent
+    // backend clients; owner=tracker-backend; revisit=2026-12-31)
+    Result<std::vector<TrackerIssueComment>, TrackerError> FetchIssueComments(const std::string& issueKey) override;
+    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent
+    // backend clients; owner=tracker-backend; revisit=2026-12-31)
+    TrackerError AddIssueCommentPlain(const TrackerConfig& cfg, const std::string& issueKey,
+                                      const std::string& plainText) override;
+
     /**
      * Repo issue-events scan (GitHubActivityFeed) — one entry per event authored by
      * `accountId` inside the day window. Scope = cfg Owner/Repo, overridable by an
