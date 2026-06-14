@@ -35,7 +35,7 @@ Three secondary themes, each a cheap themed slice:
 
 **Triage verdict:** all 67 confirmed findings are agent-infrastructure / harness maintainability. **None is a user-observable product defect** — no confirmed finding touches `Source/Core/` runtime behaviour. Per `AGENTS.md` § Issue triage, that means **zero GitHub Issues are warranted**; this campaign's slice plan is the canonical artifact, and individual fixes route to `docs/self-improvement/categories/*` as they ship. (The fleet's only near-product-facing surface, the merge-pipeline correctness cluster, is CI/automation infrastructure, not shipped app behaviour.)
 
-**Numbers:** 67 confirmed (4 P0 · 18 P1 · 27 P2 · 18 P3), 7 already-tracked (appendix), ~30 refuted as stale / by-design / no-repro (validating the refutation design — e.g. all of charter `ci-workflows`' P0 and 4 of its 9 candidates fell, the entire `vexp-*` finding family collapsed because the code was deleted in commit `4b18918c` one day after the evidence was gathered).
+**Numbers:** 67 confirmed (4 P0 · 18 P1 · 27 P2 · 18 P3), 6 already-tracked (appendix), ~30 refuted as stale / by-design / no-repro (validating the refutation design — e.g. all of charter `ci-workflows`' P0 and 4 of its 9 candidates fell, the entire `vexp-*` finding family collapsed because the code was deleted in commit `4b18918c` one day after the evidence was gathered).
 
 ## Confirmed findings — ranked P0 → P3
 
@@ -215,7 +215,7 @@ This meta-campaign authors **one** file: this tracker. Every fix lands in its sl
 - **Risk — shell strict-mode (`-e`) breaks scripts that relied on continue-on-error.** *Mitigation:* A2 split into risk tiers (prod first, hooks/tests second), every continue-line audited for an explicit `|| true`, existing bats run per script.
 - **Non-goal — implementing the fixes.** This salvage was scoped READ-ONLY; this campaign is the stopping point. Slices are authored as a backlog, not executed here.
 - **Non-goal — the `vexp-*` finding family.** The entire `hooks-session-lifecycle` vexp cluster (4 candidates) was refuted: `vexp-strip-agents-md.sh` was deleted in commit `4b18918c`; do not resurrect those findings.
-- **Non-goal — re-filing already-tracked items.** The 7 appendix items already live in the backlog/plans; slices reference but do not duplicate them.
+- **Non-goal — re-filing already-tracked items.** The 6 appendix items already live in the backlog/plans; slices reference but do not duplicate them.
 
 ## Verification
 
