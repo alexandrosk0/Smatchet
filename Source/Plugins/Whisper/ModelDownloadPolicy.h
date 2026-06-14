@@ -3,9 +3,9 @@
 // ModelDownloadPolicy — pure (no cpr / no I/O) network-hardening decisions for the
 // Whisper model download (security audit LOW: "Whisper model-download redirect — no
 // host-pin, no size cap"). ModelDownloader streams catalog `.bin` files from the
-// huggingface mirror with redirects enabled (huggingface LFS sends a 30x from the
-// resolve-main pointer over to a CDN host, so disabling redirects is not an option);
-// instead every URL the transfer touches — the initial URL AND each redirect target —
+// huggingface mirror with redirects enabled. Huggingface LFS sends a 30x from the
+// resolve-main pointer over to a CDN host, so disabling redirects is not an option.
+// Instead every URL the transfer touches — the initial URL AND each redirect target —
 // must resolve to a host on the huggingface allow-list, and the streamed/declared size
 // must stay under a sane model-size ceiling. SHA-256 verification (in ModelCatalog)
 // already pins artefact identity; this layer caps the blast radius of a redirect to an
