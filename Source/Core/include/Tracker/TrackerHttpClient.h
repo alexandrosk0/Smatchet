@@ -41,10 +41,14 @@ TrackerHttpResult ClassifyTrackerResponse(const cpr::Response& response);
 
 /// Retry loop wrapping a request function. Invokes `requestFn` up to `maxAttempts` times,
 /// backing off `kTrackerHttpBaseRetryDelayMs * 2^(attempt-1)` (capped at
-/// `kTrackerHttpMaxRetryDelayMs`) between attempts when the result is `IsRetryable()`
-/// (Transport / RateLimited / ServerError). Non-retryable kinds return on the first attempt.
+/// `kTrackerHttpMaxRetryDelayMs`) between attempts when the result should be retried.
 /// `cancelled` (optional) is polled before each attempt and after each backoff; when it returns
 /// true, the loop exits with a `Cancelled` TrackerError on whatever the latest response was.
+/// `shouldRetry` (optional) decides retryability per error: when null, the default is
+/// `TrackerError::IsRetryable()` (Transport / RateLimited / ServerError). Callers wiring a
+/// non-idempotent verb (POST) pass a Transport-only predicate so a landed-then-5xx mutation is
+/// never re-sent (would double-fire); idempotent verbs keep the default.
 TrackerHttpResult TrackerHttpRequestWithRetry(const std::function<TrackerHttpResult()>& requestFn,
                                               int maxAttempts = kTrackerHttpDefaultMaxAttempts,
-                                              const std::function<bool()>& cancelled = nullptr);
+                                              const std::function<bool()>& cancelled = nullptr,
+                                              const std::function<bool(const TrackerError&)>& shouldRetry = nullptr);
