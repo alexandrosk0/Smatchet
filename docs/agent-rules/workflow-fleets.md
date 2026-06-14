@@ -91,8 +91,9 @@ A "stalled" fleet has two very different causes with opposite remedies. Read the
 |---|---|---|
 | Result files / transcript mtimes advancing, slowly | **Crawl** = TPM starvation | Reduce concurrency and/or pin a smaller model; do NOT kill — work is landing |
 | Newest transcript mtime static ≥ ~10 min, no new results | **Frozen** = permission prompt or agent death | Kill + enter the salvage runbook; waiting longer buys nothing |
+| Several agent transcripts ended `isCompactSummary:true` + `[Request interrupted by user]` | **Cascade** = compacted subagents auto-restarted onto the same oversized scope, re-compacting forever (never converges) | Abort + **re-scope** the churning lane(s) — smaller `model:`, tighter file list, windowed reads; reducing concurrency or waiting will NOT help |
 
-Poll: count of `build/<fleet-slug>/results/*` + newest agent-transcript mtime. Automated by [`workflow-watchdog.sh`](../../agents/scripts/core/workflow-watchdog.sh) (`<fleet-slug> [--nudge]`) — read-only; classifies crawl vs frozen per this table and emits a one-line verdict (or a SessionStart nudge, with `--nudge`, only when frozen). Two polls are needed to tell crawl from frozen (the first sets the baseline).
+Poll: count of `build/<fleet-slug>/results/*` + newest agent-transcript mtime + count of compacted-then-interrupted transcripts. Automated by [`workflow-watchdog.sh`](../../agents/scripts/core/workflow-watchdog.sh) (`<fleet-slug> [--nudge] [--max-cascade-victims N]`) — read-only; classifies crawl / frozen / **cascade** per this table and emits a one-line verdict (or a SessionStart nudge, with `--nudge`, when frozen OR cascade). The cascade check needs only one poll (it counts victim transcripts, no baseline); crawl-vs-frozen still needs two (the first sets the baseline). Cascade **overrides** crawl/frozen — it can co-occur with landing work and is the actionable signal.
 
 ## Salvage runbook — when a fleet dies with transcripts intact
 

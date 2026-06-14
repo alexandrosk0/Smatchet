@@ -19,18 +19,35 @@
 #
 # Verdict (needs two polls to tell crawl from frozen — a single sample cannot
 # show "advancing"; the first poll establishes the baseline and leans crawl):
+#   cascade victims ≥ MAX_CASCADE_VICTIMS     → cascade      (restart churn, OVERRIDES)
 #   age ≤ FRESH_SECS                          → progressing (transcript just touched)
 #   else, count or newest-mtime grew vs prev  → crawl       (work still landing)
 #   else, age ≥ FROZEN_SECS                   → frozen      (static, nothing new)
 #   else                                      → crawl       (uncertain → don't kill)
 #
+# CASCADE is a THIRD failure the mtime/count signals miss: a compacted subagent
+# is auto-restarted onto the SAME oversized scope, re-compacts, and restarts again
+# — 2.6× run amplification that never converges (run wf_62807bcd-dc8: 35/74
+# transcripts ended compacted+interrupted, 9/14 lanes done in 40 min). Its remedy
+# is OPPOSITE to crawl/frozen: not "reduce concurrency", not "kill+salvage", but
+# ABORT + RE-SCOPE the churning lane (smaller model / tighter file list / windowed
+# reads) so it stops re-crossing the compact threshold. A transcript is a cascade
+# VICTIM when it carries BOTH `"isCompactSummary":true` AND a "[Request interrupted
+# by user]" marker — the compact→interrupt→restart signature. Cascade can co-occur
+# with progressing (some lanes land while others churn), so it OVERRIDES the verdict
+# when the victim count crosses the threshold — it is the actionable signal.
+#
 # Test seams (production leaves all unset → identical behaviour):
-#   WATCHDOG_RESULTS_DIR     deliverable dir (default build/<slug>/results).
-#   WATCHDOG_TRANSCRIPT_DIR  agent-transcript root (default $HOME/.claude/projects).
-#   WATCHDOG_STATE_FILE      cross-poll baseline (default build/<slug>/.watchdog-state).
-#   WATCHDOG_FRESH_SECS      progressing threshold (default 120).
-#   WATCHDOG_FROZEN_SECS     frozen threshold (default 600 = ~10 min).
-#   WATCHDOG_NOW             "now" epoch seconds (default `date +%s`).
+#   WATCHDOG_RESULTS_DIR       deliverable dir (default build/<slug>/results).
+#   WATCHDOG_TRANSCRIPT_DIR    agent-transcript root (default $HOME/.claude/projects).
+#   WATCHDOG_STATE_FILE        cross-poll baseline (default build/<slug>/.watchdog-state).
+#   WATCHDOG_FRESH_SECS        progressing threshold (default 120).
+#   WATCHDOG_FROZEN_SECS       frozen threshold (default 600 = ~10 min).
+#   WATCHDOG_MAX_CASCADE_VICTIMS  cascade trigger (default 3; --max-cascade-victims N).
+#   WATCHDOG_CASCADE_WINDOW_SECS  victim-recency window (default 1800 = 30 min);
+#                              only victims modified within it count, so a stale
+#                              incident in the shared history can't force cascade.
+#   WATCHDOG_NOW               "now" epoch seconds (default `date +%s`).
 #
 # GNU find (`-printf '%T@'`) is required for transcript mtimes — present in Git
 # Bash / Linux CI where the bats gate runs.
@@ -38,19 +55,24 @@
 set -euo pipefail
 cd "$(dirname "$0")/../../.."
 
-usage() { echo "usage: workflow-watchdog.sh <fleet-slug> [--nudge]" >&2; }
+usage() { echo "usage: workflow-watchdog.sh <fleet-slug> [--nudge] [--max-cascade-victims N]" >&2; }
 
 NUDGE=0
 slug=""
-for a in "$@"; do
-    case "$a" in
-        --nudge)   NUDGE=1 ;;
-        -h|--help) usage; exit 0 ;;
-        -*)        echo "workflow-watchdog: unknown flag: $a" >&2; usage; exit 2 ;;
-        *)         [ -z "$slug" ] && slug="$a" ;;
+MAX_CASCADE_VICTIMS="${WATCHDOG_MAX_CASCADE_VICTIMS:-3}"
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --nudge)                 NUDGE=1; shift ;;
+        --max-cascade-victims)   [ $# -ge 2 ] || { echo "workflow-watchdog: --max-cascade-victims needs a value" >&2; usage; exit 2; }
+                                 MAX_CASCADE_VICTIMS="$2"; shift 2 ;;
+        --max-cascade-victims=*) MAX_CASCADE_VICTIMS="${1#*=}"; shift ;;
+        -h|--help)               usage; exit 0 ;;
+        -*)                      echo "workflow-watchdog: unknown flag: $1" >&2; usage; exit 2 ;;
+        *)                       [ -z "$slug" ] && slug="$1"; shift ;;
     esac
 done
 [ -z "$slug" ] && { usage; exit 2; }
+case "$MAX_CASCADE_VICTIMS" in ''|*[!0-9]*) MAX_CASCADE_VICTIMS=3 ;; esac
 
 RESULTS_DIR="${WATCHDOG_RESULTS_DIR:-build/$slug/results}"
 TRANSCRIPT_DIR="${WATCHDOG_TRANSCRIPT_DIR:-$HOME/.claude/projects}"
@@ -68,6 +90,27 @@ newest_jsonl_mtime() {
     echo "${m%.*}"   # drop the fractional part → integer epoch
 }
 
+# Count cascade VICTIM transcripts under a dir: an agent-*.jsonl that carries
+# BOTH a compaction summary AND an interrupt marker (the compact→interrupt→
+# restart signature). grep-based (no jq dependency) so it runs anywhere the
+# crawl/frozen path does. Per-lane attribution (which lane to re-scope) needs a
+# harness lane-id the transcript does not carry across restarts — deferred to the
+# launch-protocol abort; this aggregate count is the convergence-failure signal.
+# RUN-SCOPED: only victims modified within the recency window ($2 = cutoff epoch)
+# count — TRANSCRIPT_DIR defaults to the whole ~/.claude/projects history, so a
+# stale incident from days ago must NOT permanently force `cascade` on a healthy
+# current run (`-newermt @cutoff` drops anything older than the window).
+count_cascade_victims() {
+    local dir="$1" cutoff="$2" f n=0
+    [ -d "$dir" ] || { echo 0; return 0; }
+    while IFS= read -r f; do
+        grep -q '"isCompactSummary":[[:space:]]*true' "$f" 2>/dev/null || continue
+        grep -qi 'request interrupted by user' "$f" 2>/dev/null || continue
+        n=$((n + 1))
+    done < <(find "$dir" -name 'agent-*.jsonl' -newermt "@$cutoff" 2>/dev/null)
+    echo "$n"
+}
+
 # Current deliverable count (top-level files only).
 count=0
 if [ -d "$RESULTS_DIR" ]; then
@@ -77,6 +120,14 @@ fi
 newest_mtime="$(newest_jsonl_mtime "$TRANSCRIPT_DIR")"
 age=$(( now - newest_mtime ))
 [ "$age" -lt 0 ] && age=0
+
+# Run-scope the victim count to a recency window (default 30 min) so a stale
+# incident in the shared ~/.claude/projects history can't permanently force
+# `cascade` on a healthy current run.
+CASCADE_WINDOW_SECS="${WATCHDOG_CASCADE_WINDOW_SECS:-1800}"
+case "$CASCADE_WINDOW_SECS" in ''|*[!0-9]*) CASCADE_WINDOW_SECS=1800 ;; esac
+cascade_cutoff=$(( now - CASCADE_WINDOW_SECS )); [ "$cascade_cutoff" -lt 0 ] && cascade_cutoff=0
+cascade_victims="$(count_cascade_victims "$TRANSCRIPT_DIR" "$cascade_cutoff")"
 
 # Prior poll baseline (count + newest mtime). Absent → 0/0 (first poll).
 prev_count=0
@@ -88,7 +139,12 @@ if [ -f "$STATE_FILE" ]; then
 fi
 
 # --- classify ----------------------------------------------------------------
-if [ "$age" -le "$FRESH_SECS" ]; then
+# Cascade is orthogonal to the mtime/count axis (it can co-occur with landing
+# work) and has the opposite remedy, so it OVERRIDES once the victim count crosses
+# the threshold — it is the actionable signal.
+if [ "$cascade_victims" -ge "$MAX_CASCADE_VICTIMS" ]; then
+    verdict="cascade"
+elif [ "$age" -le "$FRESH_SECS" ]; then
     verdict="progressing"
 elif [ "$count" -gt "$prev_count" ] || [ "$newest_mtime" -gt "$prev_mtime" ]; then
     verdict="crawl"
@@ -106,19 +162,29 @@ case "$verdict" in
     progressing) action="healthy" ;;
     crawl)       action="TPM starvation — reduce concurrency / pin a smaller model; do NOT kill" ;;
     frozen)      action="permission prompt or agent death — kill + enter the salvage runbook; waiting buys nothing" ;;
+    cascade)     action="restart cascade — abort + RE-SCOPE the churning lane(s) (smaller model / tighter file list / windowed reads); reducing concurrency will NOT help (each restart re-crosses the compact threshold)" ;;
 esac
 
 # --- emit --------------------------------------------------------------------
 if [ "$NUDGE" -eq 1 ]; then
-    # Silent unless frozen (a SessionStart nudge that fires every poll is noise).
+    # Silent unless actionable-without-waiting (frozen or cascade); a SessionStart
+    # nudge that fires every poll is noise, and crawl/progressing self-resolve.
     if [ "$verdict" = "frozen" ]; then
         echo "## === workflow fleet frozen: ${slug} ==="
         echo "Newest agent transcript static for ${age}s (≥ ${FROZEN_SECS}s) and no new"
         echo "results in ${RESULTS_DIR} (${count} file(s)). Per workflow-fleets.md"
         echo "§ Stall watchdog this is FROZEN, not crawl — waiting buys nothing."
         echo "Action: kill the fleet, then enter the § Salvage runbook (transcripts survive)."
+    elif [ "$verdict" = "cascade" ]; then
+        echo "## === workflow fleet restart-cascade: ${slug} ==="
+        echo "${cascade_victims} agent transcript(s) ended compacted+interrupted (≥ ${MAX_CASCADE_VICTIMS})"
+        echo "— the compact→interrupt→restart cascade (workflow-fleets.md § Stall watchdog)."
+        echo "It will NOT converge by waiting or by reducing concurrency: each restart"
+        echo "re-crosses the compact threshold on the same oversized scope."
+        echo "Action: abort + RE-SCOPE the churning lane(s) — smaller model, tighter"
+        echo "file list, windowed reads — then relaunch only the unfinished lanes."
     fi
 else
-    echo "workflow-watchdog[${slug}]: ${verdict} — ${count} result(s), newest transcript ${age}s ago (${action})."
+    echo "workflow-watchdog[${slug}]: ${verdict} — ${count} result(s), ${cascade_victims} cascade victim(s), newest transcript ${age}s ago (${action})."
 fi
 exit 0
