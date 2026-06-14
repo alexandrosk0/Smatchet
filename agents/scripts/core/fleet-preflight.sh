@@ -20,6 +20,7 @@
 #   3. out-of-workspace(§ In-workspace staging)  no ~/.claude / %TEMP% / abs paths
 #   4. checkpoint-step (§ Checkpoint contract)   prompts write to a repo file
 #   5. concurrency     (§ Concurrency)           reminder when siblings are live
+#   6. fanout-width    (§ Two fan-out mechanisms) parallel/pipeline width ≤ slots
 #
 # Advisory by default (WARN lines, exit 0) so it can run on every launch without
 # blocking; --strict promotes it to a gate once the WARN rate is calibrated.
@@ -29,6 +30,8 @@
 #                              1/3 byte cap = WINDOW_TOKENS/3*4 (~4 bytes/token).
 #   PREFLIGHT_ACTIVE_SESSIONS  live-session registry dir (default .claude/.active-sessions).
 #   PREFLIGHT_CONCURRENCY_CAP  the ≤N reminder threshold (default 5).
+#   PREFLIGHT_SLOTS            in-process Workflow slot count for check 6
+#                              (default min(16, nproc-2)).
 
 set -euo pipefail
 cd "$(dirname "$0")/../../.."
@@ -156,6 +159,61 @@ if [ -d "$ACTIVE_SESSIONS" ]; then
     live=$(find "$ACTIVE_SESSIONS" -maxdepth 1 -type f 2>/dev/null | wc -l | tr -d ' ')
     if [ "${live:-0}" -ge 1 ]; then
         note "${live} sibling session(s) live — cap this fan-out at ≤ ${CONCURRENCY_CAP} concurrent agents (§ Concurrency)"
+    fi
+fi
+
+# --- check 6: fan-out width vs slot count (§ Two fan-out mechanisms) ----------
+# The in-process Workflow tool runs min(16, cores-2) agent() calls at once; a
+# parallel()/pipeline() whose fan-out WIDTH (items in one call) tops that queues
+# the tail, which reads as a stall in /workflows though nothing failed. Fires
+# only for scripts that call parallel()/pipeline(); counts the largest top-level
+# array-literal element count (the likely fan-out source — naive but adequate for
+# an advisory linter, like the other checks here) and WARNs when it exceeds the
+# local slot count. PREFLIGHT_SLOTS overrides the count for deterministic tests.
+if grep -qE '(parallel|pipeline)[[:space:]]*\(' "$script"; then
+    if [ -n "${PREFLIGHT_SLOTS:-}" ]; then
+        slots="$PREFLIGHT_SLOTS"
+    else
+        cores=$(nproc 2>/dev/null || echo 4)
+        slots=$(( cores - 2 )); [ "$slots" -lt 1 ] && slots=1
+        [ "$slots" -gt 16 ] && slots=16
+    fi
+    # Largest top-level array-literal element count. An array-literal '[' is one
+    # preceded (ignoring whitespace) by = ( , : [ { > or start-of-file — an index
+    # access (foo[i]) is preceded by an identifier/')'/']' and is skipped. Element
+    # count = commas at the array's own bracket depth + 1 (a trailing comma does
+    # not add an element). Quotes/comments ignored naively, per this file's policy.
+    width="$(awk '
+        { buf = buf $0 "\n" }
+        END {
+            n = length(buf); maxw = 0; i = 1
+            while (i <= n) {
+                if (substr(buf, i, 1) != "[") { i++; continue }
+                p = i - 1
+                while (p >= 1 && substr(buf, p, 1) ~ /[ \t\r\n]/) p--
+                pc = (p >= 1) ? substr(buf, p, 1) : "^"
+                if (pc != "^" && pc !~ /[=(,:[{>]/) { i++; continue }
+                depth = 1; commas = 0; sawelem = 0; lastComma = 0; j = i + 1
+                while (j <= n) {
+                    c = substr(buf, j, 1)
+                    if (c ~ /[([{]/)       { depth++; sawelem = 1; lastComma = 0 }
+                    else if (c ~ /[]})]/)  { depth--; if (depth == 0) break; sawelem = 1; lastComma = 0 }
+                    else if (c == ",")     { if (depth == 1) { commas++; lastComma = 1 } sawelem = 1 }
+                    else if (c !~ /[ \t\r\n]/) { sawelem = 1; lastComma = 0 }
+                    j++
+                }
+                w = 0
+                if (sawelem) { w = commas + 1; if (lastComma) w = commas }
+                if (w > maxw) maxw = w
+                i = j + 1
+            }
+            print maxw
+        }
+    ' "$script")"
+    if [ "${width:-0}" -gt "$slots" ]; then
+        warn "fan-out width ${width} > local slot count ${slots} (min(16,cores-2)) — tail queues & reads as a stall; merge clusters or wave the fan-out (§ Two fan-out mechanisms)"
+    else
+        note "fan-out width ${width:-0} ≤ ${slots} slot(s) (min(16,cores-2))"
     fi
 fi
 

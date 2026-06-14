@@ -343,6 +343,16 @@ if(SMATCHET_BUILD_TESTS)
 else()
     option(SMATCHET_BUILD_AGENT_DEBUG_TESTS "Build the SmatchetAgentDebug NDJSON helper doctest" OFF)
 endif()
+# Issue #1133 — compile-gated synthetic fault injector for the #1122 dynamic-texture
+# crash class. Default OFF; the SmatchetTextureFaultInjector entry points are inline
+# no-ops and its .cpp is an empty TU unless this is defined (so the injector adds ZERO
+# ship-build surface — never set on ninja-iter-msvc / ninja-publish-msvc / Unreal).
+# Flipped ON only by ninja-test-msvc / ninja-ui-test-msvc (+ their clang siblings) so the
+# headless `mobile-texture-guard` scenario can drive the guard's recovery path. Wired onto
+# SmatchetCoreInterface so the shared CORE_SOURCES injector TU sees it in the standalone
+# build (DX12/Unreal never set it; the TU compiles empty there).
+option(SMATCHET_ENABLE_TEXTURE_FAULT_INJECTION
+    "Compile the synthetic #1122 texture-fault injector (test/ui-test only; OFF in ship builds)" OFF)
 option(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME
     "Standalone: create GLFW window hidden; show after first SwapBuffers (perceived startup)"
     ON)
@@ -1245,6 +1255,19 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
 endif()
 if(SMATCHET_WITH_WHISPER)
     target_compile_definitions(SmatchetCoreInterface INTERFACE SMATCHET_WITH_WHISPER=1)
+endif()
+# Issue #1133 — propagate the texture-fault-injection macro to every TU that links
+# SmatchetCoreInterface (the shared CORE_SOURCES, hence both SmatchetStandalone and
+# SmatchetCore_DX12). The injector TU/header compile to no-ops without it. Hard-guard
+# against the macro ever reaching a ship build: an LTO publish build must NOT carry the
+# synthetic fault surface. Scoped to NOT DEFINED ENV{CI} per cmake-local-gate-ci-scope.
+if(SMATCHET_ENABLE_TEXTURE_FAULT_INJECTION)
+    if(CMAKE_BUILD_TYPE STREQUAL "Release" OR SMATCHET_ENABLE_LTO)
+        message(FATAL_ERROR
+            "SMATCHET_ENABLE_TEXTURE_FAULT_INJECTION must stay OFF in ship/publish builds "
+            "(Release/LTO). It is a test-only synthetic fault surface (Issue #1133).")
+    endif()
+    target_compile_definitions(SmatchetCoreInterface INTERFACE SMATCHET_ENABLE_TEXTURE_FAULT_INJECTION=1)
 endif()
 # MCP define is not on SmatchetCoreInterface: Unreal DX12 libs omit MCP without MSVC D9025 (/D vs /U clash).
 # Targets that compile MCP-gated code link SmatchetCoreMcpShim (PUBLIC) instead.

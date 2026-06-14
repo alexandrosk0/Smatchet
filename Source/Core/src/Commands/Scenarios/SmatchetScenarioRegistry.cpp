@@ -42,6 +42,10 @@ extern std::unique_ptr<smatchet::cmd::IScenario> MakeDescriptionTooltipMarkdownR
 // Multi-grid-tabs Slice 5b — two multi-grid concurrency / registration perf scenarios.
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeSideBySide2GridScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeConcurrentSyncScenario();
+// Issue #1133 mobile CI smoke gate — drives the dynamic-texture guard's
+// [P0 #1122] repoint path end-to-end. Always registered (the fault-injector /
+// guard symbols are no-ops when SMATCHET_ENABLE_TEXTURE_FAULT_INJECTION is OFF).
+extern std::unique_ptr<smatchet::cmd::IScenario> MakeMobileTextureGuardScenario();
 #if defined(SMATCHET_WITH_AI)
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreamingHappyPathScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreamingTransportDownScenario();
@@ -103,6 +107,10 @@ void RegisterAllScenarios(ScenarioRunner& runner) {
     // covers multi-grid on every Core PR.
     runner.RegisterFactory("side-by-side-2-grid", []() { return ::MakeSideBySide2GridScenario(); });
     runner.RegisterFactory("concurrent-sync", []() { return ::MakeConcurrentSyncScenario(); });
+    // Issue #1133 mobile CI smoke gate — no ifdef: the TU compiles on every
+    // preset and the guard/injector calls are no-ops when the fault-injection
+    // macro is OFF (recoveryLogSeen stays false, which is expected off-preset).
+    runner.RegisterFactory("mobile-texture-guard", []() { return ::MakeMobileTextureGuardScenario(); });
 #if defined(SMATCHET_WITH_AI)
     runner.RegisterFactory("ai-assistant-streaming-happy-path",
                            []() { return ::MakeAiAssistantStreamingHappyPathScenario(); });
