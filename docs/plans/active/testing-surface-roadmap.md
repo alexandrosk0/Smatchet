@@ -188,6 +188,15 @@ Each lands in the slice that resolves it (don't batch into a separate PR):
 
 - 2026-06-14 — Master plan drafted from 3-agent recon. Awaiting user review of slice
   order before any slice executes.
+- 2026-06-14 — User approved sequence `H→A→D→E1→C→B→E2→G→J→F→I` ("Approve + start
+  additive block"): ship H now, author Slice A plan for review, then stop for
+  re-confirmation after the additive block (H+A+D+E1) before gating slices C/B.
+- 2026-06-14 — **Slice H done** (this PR). `WORKTREE_INCOMPATIBLE_RE` in
+  `scripts/dev/test-all.sh` trimmed 6→3 alternatives (3 dead scripts removed:
+  `test-lint-hook-split`, `test-ui-callstack-tooltip`, `test-ui-ai-assistant`); 3
+  survivors kept + justified (bucket-E UI drivers, skip orthogonal to #1166).
+  `testing-surface.md` §5 Gap 7 + §5.1 row 7 + §6 follow-up marked resolved.
+  Verified: `test-docs.sh` 13/13, `shellcheck test-all.sh` clean.
 
 ## Deviations
 

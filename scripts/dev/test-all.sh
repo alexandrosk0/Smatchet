@@ -35,7 +35,14 @@ fi
 # Scripts that are known to be worktree-incompatible (per
 # docs/self-improvement/categories/tooling.md "test-all.sh baseline drift
 # across worktrees"). Extend this list as new worktree-only failures surface.
-WORKTREE_INCOMPATIBLE_RE='(test-lint-hook-split|test-ui-views-columns-reorder|test-ui-callstack-tooltip|test-ui-ai-assistant|test-ui-funcsize-window-render-smoke|test-ui-funcsize-grid-render)'
+#
+# Re-audit 2026-06-14 (testing-surface.md Gap 7): trimmed 3 dead alternatives
+# whose scripts no longer exist (test-lint-hook-split, test-ui-callstack-tooltip,
+# test-ui-ai-assistant). The 3 survivors are bucket-E UI drivers needing a built
+# UI binary + display under Mesa; their skip guards real worktree baseline-drift
+# and is orthogonal to the #1166 GIT_EXEC_PATH cold-configure fix (so still
+# justified — not removable by that fix).
+WORKTREE_INCOMPATIBLE_RE='(test-ui-views-columns-reorder|test-ui-funcsize-window-render-smoke|test-ui-funcsize-grid-render)'
 
 FILTER=""
 if [ "${1:-}" = "--filter" ]; then
