@@ -64,6 +64,20 @@ bool ContainAgentsMdPath(const std::string& path, fs::path& realOut) {
                  path.c_str(), real.generic_string().c_str());
         return false;
     }
+    // fs::canonical resolves SYMlinks but NOT hard links (a hard link is just
+    // another directory entry for the same inode — there is no "canonical" name
+    // to resolve to). So a hard link `evil.md` -> id_rsa keeps its .md name and
+    // would slip past the suffix pin. A legitimate agents.md override is a single
+    // standalone file (link count 1); reject any path whose resolved file is
+    // hard-linked (count > 1) — closes the hard-link bypass (CodeRabbit #1210).
+    std::error_code linkEc;
+    const auto links = fs::hard_link_count(real, linkEc);
+    if (linkEc || links > 1) {
+        LOG_WARN("AgentsMdLoader: refusing AgentsMd path '%s' — resolved file '%s' has %llu hard "
+                 "link(s) (containment guard, security audit H1 hard-link bypass).",
+                 path.c_str(), real.generic_string().c_str(), static_cast<unsigned long long>(links));
+        return false;
+    }
     realOut = real;
     return true;
 }

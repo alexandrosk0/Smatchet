@@ -140,6 +140,25 @@ TEST_CASE("AgentsMdLoader — refuses a .md symlink resolving to a non-.md secre
     CHECK(out.find("PRIVATE-KEY-BYTES") == std::string::npos);
 }
 
+// fs::canonical resolves symlinks but NOT hard links, so a `.md`-named hard link
+// to a secret would pass the suffix pin. The hard_link_count>1 guard closes it.
+// Hard links work on NTFS without privilege (unlike symlinks), so this runs in CI.
+TEST_CASE("AgentsMdLoader — refuses a .md hard link to a secret (H1 hard-link bypass) [high-risk]") {
+    TempDir tmp;
+    const fs::path secret = tmp.path() / "id_rsa";
+    WriteFile(secret, "HARD-LINK-SECRET-BYTES");
+    const fs::path link = tmp.path() / "evil.md";
+    std::error_code ec;
+    fs::create_hard_link(secret, link, ec);
+    if (ec) {
+        MESSAGE("hard-link creation unsupported here — skipping hard-link-bypass leg");
+        return;
+    }
+    const std::string out = AgentsMdLoader::LoadOneCapped(link.generic_string());
+    CHECK(out.empty());
+    CHECK(out.find("HARD-LINK-SECRET-BYTES") == std::string::npos);
+}
+
 TEST_CASE("AgentsMdLoader::FindProjectAgentsMd — file at current dir found at depth 0") {
     TempDir tmp;
     const fs::path p = tmp.path() / "agents.md";
