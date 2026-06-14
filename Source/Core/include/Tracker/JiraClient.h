@@ -138,6 +138,9 @@ class JiraClient : public ITrackerBackend,
     TrackerError AddIssueCommentPlain(const TrackerConfig& cfg, const std::string& issueKey,
                                       const std::string& plainText) override;
 
+    /** GET /rest/api/3/issue/{key}/comment — paginated; ADF body → plain text. */
+    Result<std::vector<TrackerIssueComment>, TrackerError> FetchIssueComments(const std::string& issueKey) override;
+
     TrackerError AddWorklog(const TrackerConfig& cfg, const std::string& issueKey, const std::string& timeSpent,
                             const std::string& timeRemaining, const std::string& adjustEstimate,
                             const std::string& workDescription, const std::string& startedDate) override;

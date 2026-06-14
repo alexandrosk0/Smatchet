@@ -1,5 +1,6 @@
 #include "JiraClient.h"
 
+#include "JiraCommentMappingPure.h"
 #include "JiraIssueMappingPure.h"
 #include "Tracker/JqlEscape.h"
 #include "TrackerFieldValueParser.h"
@@ -31,14 +32,16 @@ bool JiraFetchIssueCommentsPages(const std::string& base, const cpr::Header& hea
         if (commentsResp.status_code != 200) {
             LOG_WARN("JiraClient: failed to fetch comments for issue %s. HTTP %d", issueKey.c_str(),
                      commentsResp.status_code);
-            return !outComments.empty();
+            // Signal failure on a mid-stream page error rather than returning the pages gathered
+            // so far — a partial-Ok would silently truncate the thread shown in the modal.
+            return false;
         }
 
         try {
             auto commentsJson = nlohmann::json::parse(commentsResp.text);
             if (!commentsJson.contains("comments") || !commentsJson["comments"].is_array()) {
                 LOG_WARN("JiraClient: comments endpoint for %s missing comments array.", issueKey.c_str());
-                return !outComments.empty();
+                return false;
             }
 
             const auto& pageComments = commentsJson["comments"];
@@ -54,7 +57,7 @@ bool JiraFetchIssueCommentsPages(const std::string& base, const cpr::Header& hea
             }
         } catch (const std::exception& ex) {
             LOG_WARN("JiraClient: failed to parse comments for issue %s: %s", issueKey.c_str(), ex.what());
-            return !outComments.empty();
+            return false;
         }
     }
     return true;
@@ -465,4 +468,32 @@ JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::
         }
     }
     return FetchResult::Ok(std::move(outTickets));
+}
+
+Result<std::vector<TrackerIssueComment>, TrackerError> JiraClient::FetchIssueComments(const std::string& issueKey) {
+    using CommentsResult = Result<std::vector<TrackerIssueComment>, TrackerError>;
+    // Reject an empty key before any network call — otherwise the URL builder emits
+    // `/issue//comment`, returning transport noise instead of a deterministic error.
+    if (issueKey.empty()) {
+        return CommentsResult::Err(TrackerErrorInvalidRequest("JiraClient::FetchIssueComments: empty issue key"));
+    }
+    // No cfg parameter on this interface — resolve from the settled on-disk config
+    // (mirrors GitHubClient::FetchIssueComments / the cfg-less Jira read pattern).
+    const TrackerConfig cfg = ConfigManager::Load();
+    std::string outError;
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
+        return CommentsResult::Err(TrackerErrorAuth(outError));
+    }
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
+
+    nlohmann::json nodes = nlohmann::json::array();
+    if (!JiraFetchIssueCommentsPages(base, headers, issueKey, nodes)) {
+        return CommentsResult::Err(
+            TrackerErrorUnknown("JiraClient::FetchIssueComments: comment fetch failed for " + issueKey, 0));
+    }
+
+    std::vector<TrackerIssueComment> all = smatchet::jira::MapJiraIssueComments(nodes);
+    LOG_INFO("JiraClient::FetchIssueComments: %s → %zu comments", issueKey.c_str(), all.size());
+    return CommentsResult::Ok(std::move(all));
 }

@@ -437,6 +437,12 @@ add_executable(SmatchetTests
     # linked above), so no extra dep beyond the mapping TU itself.
     Core/GitHubCommentMappingPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubCommentMappingPure.cpp"
+    # issue-comments PR-B — pure Jira comment-node array → TrackerIssueComment
+    # mapping, split out of JiraIssueSearch.cpp (which pulls cpr). Reuses
+    # ParseCommentAuthor / AdfBodyToPlainText (TrackerFieldValueParser.cpp) +
+    # ParseIso8601ToUnixSec (GitHubClientHelpers.cpp) — both already linked above.
+    Core/JiraCommentMappingPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraCommentMappingPure.cpp"
     # issue-comments PR-C — pure JSON array → TrackerIssueComment mapping, split
     # out of PlaneClient.cpp (which pulls cpr). PlaneCommentMappingPure.cpp depends
     # on JsonGetStringIfString (TrackerFieldValueParser.cpp) + ParseIso8601ToUnixSec

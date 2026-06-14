@@ -426,6 +426,24 @@ std::string ParseCommentAuthor(const nlohmann::json& commentNode) {
     return author;
 }
 
+std::string AdfBodyToPlainText(const nlohmann::json& body) {
+    if (body.is_string()) {
+        return body.get<std::string>();
+    }
+    if (body.is_object() && body.contains("content")) {
+        std::ostringstream textStream;
+        ExtractAdfTextToStream(body, textStream);
+        std::string text = TrimCopy(textStream.str());
+        if (text.empty()) {
+            std::vector<std::string> fallbackParts;
+            CollectAdfText(body, fallbackParts);
+            text = JoinStrings(fallbackParts, " ");
+        }
+        return text;
+    }
+    return std::string();
+}
+
 void SortTrackerUsersForDisplay(std::vector<TrackerUser>& users) {
     std::sort(users.begin(), users.end(), [](const TrackerUser& a, const TrackerUser& b) {
         const std::string& lhs = a.DisplayName.empty() ? a.AccountId : a.DisplayName;
@@ -503,18 +521,7 @@ std::string ParseComments(const nlohmann::json& commentsArray) {
         if (commentNode.contains("body")) {
             const auto& body = commentNode["body"];
             bodyNode = &body;
-            if (body.is_string()) {
-                commentText = body.get<std::string>();
-            } else if (body.is_object() && body.contains("content")) {
-                std::ostringstream textStream;
-                ExtractAdfTextToStream(body, textStream);
-                commentText = TrimCopy(textStream.str());
-                if (commentText.empty()) {
-                    std::vector<std::string> fallbackParts;
-                    CollectAdfText(body, fallbackParts);
-                    commentText = JoinStrings(fallbackParts, " ");
-                }
-            }
+            commentText = AdfBodyToPlainText(body);
         }
 
         if (commentText.empty()) {
