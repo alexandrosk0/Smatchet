@@ -9,6 +9,7 @@
 #include "TrackerGridFieldDisplay.h"
 #include "TrackerHttpUtils.h"
 #include "Logger.h"
+#include "SmatchetCommentsModalUi.h"
 #include "SmatchetFieldRender.h"
 #include "SmatchetInputModifierBridge.h"
 #include "SmatchetLocalization.h"
@@ -547,6 +548,10 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
     // render once, from the focused pane.
     if (pane.focused) {
         TicketFieldEditor::RenderLongTextModal(pendingEdits);
+        // issue-comments PR-A — backend-agnostic comments read/post modal. Top-level so it survives
+        // the originating cell scrolling out of view; the popup stack is global, so render once from
+        // the focused pane. readOnlyMode disables the post box.
+        RenderCommentsModal(app, readOnlyMode);
     }
 
     // Enqueue only — the pane-window host runs the dispatch pump + chip decay ONCE
@@ -1323,6 +1328,37 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
         const std::string* saveTip = (column.IsDateLike || isDescriptionField) ? &currentValue : nullptr;
         RenderClippedFieldText(saveDisplay, valueAvailWidth, d.cfg.EnableFieldOverflowTooltips, true, saveTip,
                                isDescriptionField, &column.FieldId);
+        ImGui::EndGroup();
+        cellGroupMin = ImGui::GetItemRectMin();
+        cellGroupMax = ImGui::GetItemRectMax();
+        DrawGridCellRightClickPopups(cellKey, ticket.id, column.FieldId, column.Label, currentValue,
+                                     ticket.GetFieldRichValue(column.FieldId), &app, &d, readOnlyMode, &ticket);
+    } else if (column.FieldId == "comments") {
+        // issue-comments PR-A — backend-agnostic comments cell. Comments are read-only (editmeta
+        // marks the field non-editable), so this bypasses the field-edit path entirely. The count
+        // comes from the cached fieldValues["comments"] ("0","3",… for GitHub) — NO per-row network.
+        // Plane (PR-C) leaves the value empty, so the icon-only branch must handle empty/non-numeric.
+        ImGui::BeginGroup();
+        bool isNumber = !currentValue.empty();
+        for (size_t ci = 0; ci < currentValue.size(); ++ci) {
+            if (currentValue[ci] < '0' || currentValue[ci] > '9') {
+                isNumber = false;
+                break;
+            }
+        }
+        // 0xF0 0x9F 0x92 0xAC == U+1F4AC SPEECH BALLOON (💬). Built as a string literal so the
+        // selectable label is unique per cell (id includes the issue id) without a per-row alloc on
+        // the common path beyond the label itself.
+        const char* kBalloon = "\xf0\x9f\x92\xac";
+        std::string label = isNumber ? (std::string(kBalloon) + " " + currentValue) : std::string(kBalloon);
+        label += "##cmt_" + ticket.id;
+        if (ImGui::Selectable(label.c_str(), false, ImGuiSelectableFlags_None, ImVec2(valueAvailWidth, 0.0f))) {
+            OpenCommentsModal(app, ticket.id);
+        }
+        if (ImGui::IsItemHovered()) {
+            // Cheap localized static tooltip — NO network on hover.
+            ImGui::SetTooltip("%s", SmatchetLocalization::T("comments.cell_tooltip", "View / post comments"));
+        }
         ImGui::EndGroup();
         cellGroupMin = ImGui::GetItemRectMin();
         cellGroupMax = ImGui::GetItemRectMax();

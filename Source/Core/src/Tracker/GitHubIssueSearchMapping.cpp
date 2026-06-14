@@ -44,6 +44,20 @@ std::string IssueNumberString(const nlohmann::json& issue) {
     return std::string("0");
 }
 
+// issue-comments PR-A — reads the named integer member when present and integral,
+// returning 0 otherwise (Pillar 3, no throw). There is no shared JsonInt helper, so
+// this mirrors IssueNumberString's local-helper style.
+long long GitHubJsonInt(const nlohmann::json& obj, const char* key) {
+    if (!obj.is_object()) {
+        return 0;
+    }
+    const auto it = obj.find(key);
+    if (it != obj.end() && it->is_number_integer()) {
+        return it->get<long long>();
+    }
+    return 0;
+}
+
 // True iff `issue` carries the PR sub-object (the GitHub-API marker that
 // distinguishes PRs from plain issues on shared endpoints).
 bool IsPullRequest(const nlohmann::json& issue) {
@@ -185,6 +199,11 @@ CachedTicket MapIssueOrPullRequestJsonToCachedTicket(const nlohmann::json& issue
     if (issue.is_object() && issue.contains("milestone") && issue["milestone"].is_object()) {
         ticket.fieldValues["milestone"] = JsonString(issue["milestone"], "title");
     }
+
+    // issue-comments PR-A — read-only comment count for the grid cell. GitHub's
+    // /issues + /search/issues payloads carry an integer `comments` field; absent
+    // / non-integer → 0. Commit rows leave `comments` unset (no count concept).
+    ticket.fieldValues["comments"] = std::to_string(GitHubJsonInt(issue, "comments"));
 
     return ticket;
 }
@@ -413,6 +432,17 @@ nlohmann::json MapGraphQlNodeToRestShape(const nlohmann::json& node) {
         nlohmann::json ms = nlohmann::json::object();
         ms["title"] = MaybeString(node["milestone"], "title");
         out["milestone"] = ms;
+    }
+
+    // issue-comments PR-A — GraphQL `comments { totalCount }` → the integer
+    // `comments` field the REST mapper (GitHubJsonInt) reads. REST /issues
+    // already returns a flat integer `comments`; this lines the GraphQL shape up.
+    if (node.contains("comments") && node["comments"].is_object()) {
+        const auto& comments = node["comments"];
+        const auto it = comments.find("totalCount");
+        if (it != comments.end() && it->is_number_integer()) {
+            out["comments"] = it->get<std::int64_t>();
+        }
     }
 
     // PR detection: emit the `pull_request` marker sub-object so the existing
