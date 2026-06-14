@@ -51,6 +51,16 @@ transcript_at() {
 # Seed the prior-poll baseline "<count> <mtime>".
 baseline() { printf '%s %s\n' "$1" "$2" > "$WATCHDOG_STATE_FILE"; }
 
+# Drop a cascade-VICTIM transcript: an agent-*.jsonl carrying BOTH a compaction
+# summary and an interrupt marker (the compact->interrupt->restart signature).
+victim_transcript() {
+    cat > "$WATCHDOG_TRANSCRIPT_DIR/agent-$1.jsonl" <<'JSONL'
+{"type":"user","message":{"content":[{"type":"text","text":"lane task prompt"}]}}
+{"type":"system","isCompactSummary":true,"message":{"content":"[compacted]"}}
+{"type":"user","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}
+JSONL
+}
+
 @test "fresh transcript (age ≤ FRESH) → progressing" {
     make_results 2
     transcript_at 999970            # age 30 ≤ 120
@@ -120,6 +130,55 @@ baseline() { printf '%s %s\n' "$1" "$2" > "$WATCHDOG_STATE_FILE"; }
     read -r c m < "$WATCHDOG_STATE_FILE"
     [ "$c" -eq 4 ]
     [ "$m" -eq 999700 ]
+}
+
+# --- restart cascade ---------------------------------------------------------
+
+@test "victims at-or-above MAX_CASCADE_VICTIMS yield a cascade verdict (overrides progressing)" {
+    make_results 2
+    transcript_at 999970                 # fresh -> would be 'progressing' absent cascade
+    victim_transcript a; victim_transcript b; victim_transcript c
+    run bash "$SCRIPT" demo
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"]: cascade"* ]]
+    [[ "$output" == *"3 cascade victim"* ]]
+    [[ "$output" == *"RE-SCOPE"* ]]
+}
+
+@test "victims below MAX_CASCADE_VICTIMS keep the normal verdict (counted, not cascade)" {
+    make_results 2
+    transcript_at 999970
+    victim_transcript a; victim_transcript b   # 2 < default 3
+    run bash "$SCRIPT" demo
+    [[ "$output" != *"]: cascade"* ]]
+    [[ "$output" == *"2 cascade victim"* ]]
+}
+
+@test "--max-cascade-victims lowers the trigger" {
+    make_results 1
+    transcript_at 999970
+    victim_transcript a; victim_transcript b   # 2 victims
+    run bash "$SCRIPT" demo --max-cascade-victims 2
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"]: cascade"* ]]
+}
+
+@test "--nudge prints a restart-cascade block when cascade detected" {
+    transcript_at 999970
+    victim_transcript a; victim_transcript b; victim_transcript c
+    run bash "$SCRIPT" demo --nudge
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"restart-cascade: demo"* ]]
+    [[ "$output" == *"RE-SCOPE"* ]]
+}
+
+@test "clean transcripts (no compaction) do not trigger cascade" {
+    make_results 2
+    transcript_at 999970
+    printf '%s\n' '{"type":"user","message":{"content":"hi"}}' > "$WATCHDOG_TRANSCRIPT_DIR/agent-clean.jsonl"
+    run bash "$SCRIPT" demo
+    [[ "$output" != *"]: cascade"* ]]
+    [[ "$output" == *"0 cascade victim"* ]]
 }
 
 @test "no fleet-slug argument is a usage error (exit 2)" {
