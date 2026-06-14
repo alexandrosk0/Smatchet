@@ -528,6 +528,50 @@ TEST_CASE("MapIssueOrPullRequestJsonToCachedTicket — stamps github.kind=pull_r
     CHECK(GetField(t, "github.kind") == "pull_request");
 }
 
+// ---- issue body is not clipped below GitHub's max body length (gh#1018) ----
+
+TEST_CASE("MapIssueOrPullRequestJsonToCachedTicket — 5KB body survives in full (regression gh#1018)") {
+    // gh#1018's body was 4490 bytes — above the old 4096 cap, so its tail
+    // (the `## Status` checklist) was silently chopped. Pin that any body up
+    // to GitHub's documented max is now delivered whole.
+    const std::string head(4000, 'a');
+    const std::string tail = "## Status\n- [x] done";
+    nlohmann::json issue;
+    issue["number"] = 1018;
+    issue["title"] = "Long body";
+    issue["state"] = "open";
+    issue["body"] = head + tail;
+
+    const CachedTicket t = MapIssueOrPullRequestJsonToCachedTicket(issue, "o", "r");
+    const std::string desc = GetField(t, "description");
+    CHECK(desc.size() == head.size() + tail.size());
+    CHECK(StartsWith(desc, head));
+    // The tail (previously clipped) is present.
+    CHECK(desc.compare(desc.size() - tail.size(), tail.size(), tail) == 0);
+}
+
+TEST_CASE("MapIssueOrPullRequestJsonToCachedTicket — body at GitHub max (64KB) survives whole") {
+    const std::string body(65536, 'x');
+    nlohmann::json issue;
+    issue["number"] = 1;
+    issue["title"] = "t";
+    issue["state"] = "open";
+    issue["body"] = body;
+    const CachedTicket t = MapIssueOrPullRequestJsonToCachedTicket(issue, "o", "r");
+    CHECK(GetField(t, "description").size() == 65536);
+}
+
+TEST_CASE("MapIssueOrPullRequestJsonToCachedTicket — pathological over-max body is bounded") {
+    const std::string body(70000, 'y');
+    nlohmann::json issue;
+    issue["number"] = 1;
+    issue["title"] = "t";
+    issue["state"] = "open";
+    issue["body"] = body;
+    const CachedTicket t = MapIssueOrPullRequestJsonToCachedTicket(issue, "o", "r");
+    CHECK(GetField(t, "description").size() == 65536);
+}
+
 // ---- github-commit-tracker-rows — commit JSON → CachedTicket mapping ----
 
 namespace {

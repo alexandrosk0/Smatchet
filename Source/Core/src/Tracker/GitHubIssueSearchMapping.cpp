@@ -13,9 +13,11 @@ namespace github {
 
 namespace {
 
-// Truncate description bodies above this size — saves memory + log volume.
-// Mirrors the constant in GitHubIssueSearch.cpp; kept private here.
-constexpr std::size_t kGitHubBodyMaxBytes = 4096;
+// Defensive upper bound on description bodies — caps memory + log volume for a
+// pathological payload. Set to GitHub's documented max issue/PR body length
+// (65536 chars) so no real body is ever clipped; mirrors the long-text field
+// editor buffer (kBufferSize = 64*1024 in TicketFieldEditor_Modal.cpp).
+constexpr std::size_t kGitHubBodyMaxBytes = 65536;
 
 std::string JsonString(const nlohmann::json& j, const char* key) {
     if (!j.is_object()) {
