@@ -6,6 +6,7 @@
 
 #include "Logger.h"
 #include "StringUtil.h"
+#include "Ui/P4vLaunchArgQuotePure.h"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -70,19 +71,13 @@ bool SplitCommandExecutableAndArgs(const std::string& command, std::string& outE
 }
 
 std::wstring QuoteWinArgWide(const std::wstring& arg) {
-    if (arg.find_first_of(L" \t\n\"") == std::wstring::npos) {
-        return arg;
-    }
-    std::wstring out = L"\"";
-    for (wchar_t c : arg) {
-        if (c == L'"') {
-            out += L"\\\"";
-        } else {
-            out += c;
-        }
-    }
-    out += L"\"";
-    return out;
+    // Delegate to the pure, unit-tested helper. The canonical CommandLineToArgvW
+    // quoting algorithm (backslash-run doubling before any quote AND before the
+    // closing wrap quote) lives in P4vLaunchArgQuotePure.h so the trailing-
+    // backslash + embedded-quote corner cases are covered by doctest without a
+    // Windows toolchain. The prior in-place version doubled neither, letting a
+    // file/changelist field ending in '\' break out of its quoted argument.
+    return P4vLaunch::QuoteWinArgWidePure(arg);
 }
 
 std::wstring ResolveP4VcExecutableWide(const AnnotateAnalysisConfig& cfg) {
@@ -148,7 +143,10 @@ bool LaunchP4VcLike(const AnnotateAnalysisConfig& cfg, const std::string& timela
         if (isTimelapse) {
             params = L"timelapse -l " + std::to_wstring(line) + L" " + QuoteWinArgWide(Utf8ToWide(file));
         } else {
-            params = L"change " + Utf8ToWide(cl);
+            // Quote the changelist field too: it is a user/server-supplied value
+            // and an embedded space / quote / trailing backslash would otherwise
+            // shift the argument boundary on the spawned p4vc command line.
+            params = L"change " + QuoteWinArgWide(Utf8ToWide(cl));
         }
         LOG_INFO("LaunchP4VcLike (direct p4vc): %s | CWD=%s",
                  (WideToUtf8ForLog(app) + " " + WideToUtf8ForLog(params)).c_str(),
@@ -168,6 +166,16 @@ bool LaunchP4VcLike(const AnnotateAnalysisConfig& cfg, const std::string& timela
         cmd = timelapseTemplate;
     } else {
         cmd = changeTemplate;
+    }
+    // Placeholder values are substituted raw into a command line whose quoting
+    // structure the template author controls — we cannot re-quote per-arg here.
+    // A value containing a double-quote could close the template's wrap quote
+    // and inject new arguments/flags, so reject those values outright (same
+    // injection class as the QuoteWinArgWide trailing-backslash bug, but on the
+    // custom-command path the field, not the helper, is the vector).
+    if (file.find('"') != std::string::npos || cl.find('"') != std::string::npos) {
+        LOG_WARN("LaunchP4VcLike: custom command rejected because a {file}/{cl} value contains a double-quote");
+        return false;
     }
     ReplacePlaceholder(cmd, "{file}", file);
     ReplacePlaceholder(cmd, "{line}", std::to_string(line));

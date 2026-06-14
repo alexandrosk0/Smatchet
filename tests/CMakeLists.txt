@@ -511,6 +511,10 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownPreviewRender.cpp"
     Core/SubprocessCapturePure.test.cpp
     Core/SubprocessCapture.test.cpp
+    # Wide-char argv quoting for the p4v/p4vc launcher — canonical
+    # CommandLineToArgvW backslash-run doubling (trailing-backslash + embedded-
+    # quote injection fix). Header-only pure helper, no production .cpp to link.
+    Core/P4vLaunchArgQuotePure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SubprocessCapturePure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SubprocessCapture.cpp"
     Plugins/Mcp/McpRequestParser.test.cpp
