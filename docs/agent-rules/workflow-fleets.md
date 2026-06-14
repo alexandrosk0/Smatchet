@@ -45,6 +45,8 @@ A survey/reader agent that auto-compacts has already failed: compaction throws a
 - **Prefer `agentType: 'caveman:cavecrew-investigator'`** for locate-style sweeps — compressed output, refuses scope creep.
 - **Chain two stages (locate → read)** when a dimension genuinely needs huge exploration — a cheap locator returns `file:line` targets, a second agent reads only those — rather than one mega-agent.
 
+A broad-scope prompt with a windowed-read directive (a budget line, `offset/limit`, a `file:line` target, or the scope-refusing `cavecrew-investigator` agentType) is a **MUST**, not a nicety — `fleet-preflight.sh` check 7 WARNs a fan-out `agent()` that names a directory / glob scope but carries none. Pass agents **repo-relative** `file:line` targets, never bare basenames (a bare `Foo.cpp` reads as File-not-found + a wasted recovery turn that compounds compaction pressure — `fleet-preflight.sh` check 8, AGENTS.md § Semantic-search exceptions).
+
 ## Model pinning — never inherit a large-context model into a fan-out
 
 Workflow `agent()` calls inherit the main-loop model by default. If the orchestrator session runs a 1M-context model, N inherited fan-out agents share one tokens-per-minute limit and the whole fleet crawls (failure 2). For fleets:
@@ -112,5 +114,6 @@ Before any `Workflow` fleet launch, confirm:
 - [ ] All inputs/outputs staged under `build/<fleet-slug>/` (§ In-workspace staging)
 - [ ] Each agent prompt includes the write-your-result-to-a-repo-file step (§ Checkpoint contract)
 - [ ] **In-process `Workflow` tool**: fan-out width ≤ local slots `min(16,cores−2)`; `pipeline()` not `parallel()` unless a stage needs all prior results (§ Two fan-out mechanisms)
+- [ ] Every broad-scope agent prompt carries a windowed-read directive; source files are passed as repo-relative `file:line`, never bare basenames (§ Per-agent scoping)
 
-Mechanical validation of this checklist runs via [`fleet-preflight.sh`](../../agents/scripts/core/fleet-preflight.sh) (`<workflow-script> [fleet-dir] [--strict]`) — static-analyses the Workflow script + staged inputs for the checks above (incl. the in-process fan-out-width vs slot-count check); advisory (WARN lines, exit 0) by default, `--strict` turns any WARN into a non-zero exit to gate a launch.
+Mechanical validation of this checklist runs via [`fleet-preflight.sh`](../../agents/scripts/core/fleet-preflight.sh) (`<workflow-script> [fleet-dir] [--strict]`) — static-analyses the Workflow script + staged inputs for the checks above (incl. the in-process fan-out-width vs slot-count check, the broad-scope read-discipline check, and the bare-basename path-hygiene check); advisory (WARN lines, exit 0) by default, `--strict` turns any WARN into a non-zero exit to gate a launch.
