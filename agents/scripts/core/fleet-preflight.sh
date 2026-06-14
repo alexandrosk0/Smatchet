@@ -21,6 +21,8 @@
 #   4. checkpoint-step (§ Checkpoint contract)   prompts write to a repo file
 #   5. concurrency     (§ Concurrency)           reminder when siblings are live
 #   6. fanout-width    (§ Two fan-out mechanisms) parallel/pipeline width ≤ slots
+#   7. read-discipline (§ Per-agent scoping)      broad-scope prompt needs a windowed-read directive
+#   8. path-hygiene    (§ Semantic-search exceptions) no bare-basename source file in a prompt
 #
 # Advisory by default (WARN lines, exit 0) so it can run on every launch without
 # blocking; --strict promotes it to a gate once the WARN rate is calibrated.
@@ -216,6 +218,63 @@ if grep -qE '(parallel|pipeline)[[:space:]]*\(' "$script"; then
         note "fan-out width ${width:-0} ≤ ${slots} slot(s) (min(16,cores-2))"
     fi
 fi
+
+# --- checks 7-8: per-agent prompt read-discipline + path hygiene -------------
+# Walk every agent() call (same paren-depth scan as check 1) and emit its full
+# argument buffer once; shell-side, two prompt-SHAPE checks the static gate can
+# see run per call. These are the runtime-killers the input-size byte cap (check
+# 2) is blind to — a prompt that *tells* the agent to read broadly:
+#   7. read-discipline (§ Per-agent scoping, failure 6): a prompt naming a broad
+#      dir / glob scope with NO windowed-read directive lets the agent Read files
+#      whole → transcript bloat → mid-run auto-compaction (the survey-fleet death).
+#   8. path-hygiene (§ Semantic-search exceptions): a *.cpp/*.h/... token with no
+#      '/' is a bare basename → "File does not exist" + a wasted recovery turn
+#      that compounds compaction pressure (7 such errors in run wf_62807bcd-dc8).
+calls_out="$(awk '
+    { buf = buf $0 "\n" }
+    END {
+        n = length(buf); i = 1
+        while (i <= n - 5) {
+            if (substr(buf, i, 6) == "agent(" \
+                && (i == 1 || substr(buf, i - 1, 1) !~ /[A-Za-z0-9_]/)) {
+                depth = 0; started = 0; callbuf = ""; j = i + 5
+                while (j <= n) {
+                    ch = substr(buf, j, 1)
+                    if (ch == "(") { depth++; started = 1 }
+                    else if (ch == ")") { depth-- }
+                    callbuf = callbuf ch
+                    if (started && depth == 0) break
+                    j++
+                }
+                gsub(/\n/, " ", callbuf)
+                print "CALL\t" callbuf
+            }
+            i++
+        }
+    }
+' "$script")"
+
+# A prompt has "broad scope" when it points an agent at a directory / glob / the
+# whole tree; it is DISCIPLINED when it also carries a windowed-read directive
+# (offset/limit, "window", "never read whole", a file:line target, a tool-call
+# budget, Grep-only, or the scope-refusing cavecrew-investigator agentType).
+broad_re='Source/|tests/|docs/|\*\*|all files|every file|entire (repo|codebase|tree|directory)|across the (repo|codebase|tree)|examine all|whole (repo|tree|directory)'
+windowed_re='offset|limit|window|never read|cavecrew-investigator|targeted read|stay under|tool call|grep|file:line|:[0-9]+|repo-relative'
+# A bare source basename: a *.cpp/.hpp/.cc/.cxx/.hh/.h token NOT preceded by '/'
+# (a path like Source/Foo.cpp has the '/' and is fine).
+basename_re='(^|[^/A-Za-z0-9_.])[A-Za-z0-9_]+\.(cpp|hpp|cxx|cc|hh|h)([^A-Za-z0-9]|$)'
+while IFS=$'\t' read -r tag callbuf; do
+    [ "$tag" = CALL ] || continue
+    [ -z "$callbuf" ] && continue
+    snip="${callbuf:0:70}"
+    if printf '%s' "$callbuf" | grep -qiE "$broad_re" \
+       && ! printf '%s' "$callbuf" | grep -qiE "$windowed_re"; then
+        warn "agent() names a broad scope with no windowed-read directive — the agent may Read files whole and auto-compact (§ Per-agent scoping): ${snip}"
+    fi
+    if printf '%s' "$callbuf" | grep -qE "$basename_re"; then
+        warn "agent() prompt references a bare source basename (no path) — likely File-not-found + a wasted turn (§ Semantic-search exceptions): ${snip}"
+    fi
+done <<< "$calls_out"
 
 # --- verdict -----------------------------------------------------------------
 echo "fleet-preflight: ${warn_count} warning(s) over ${agent_calls:-0} agent() call(s)."

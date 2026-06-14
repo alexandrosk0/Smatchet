@@ -301,6 +301,58 @@ JS
 }
 
 # ============================================================================
+# Check 7 — read-discipline (broad scope needs a windowed-read directive)
+# ============================================================================
+
+@test "broad-scope prompt with no windowed-read directive warns (read-discipline)" {
+    f="$(fixture <<'JS'
+const x = await agent('Examine all files in Source/Core/src/Ui/ and summarize', {model: 'sonnet'})
+log('build/x/results')
+JS
+)"
+    run bash "$SCRIPT" "$f"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"broad scope with no windowed-read directive"* ]]
+}
+
+@test "broad-scope prompt WITH a windowed-read directive does not warn" {
+    f="$(fixture <<'JS'
+const x = await agent('Examine Source/Core/src/Ui/ — Grep + offset/limit windowed reads, stay under 40 tool calls', {model: 'sonnet'})
+log('build/x/results')
+JS
+)"
+    run bash "$SCRIPT" "$f"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"broad scope with no windowed-read directive"* ]]
+}
+
+# ============================================================================
+# Check 8 — path-hygiene (no bare-basename source file in a prompt)
+# ============================================================================
+
+@test "a bare source basename in a prompt warns (path-hygiene)" {
+    f="$(fixture <<'JS'
+const x = await agent('Read AiErrorRedact.cpp and explain the redaction path', {model: 'sonnet'})
+log('build/x/results')
+JS
+)"
+    run bash "$SCRIPT" "$f"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"bare source basename"* ]]
+}
+
+@test "a path-prefixed source file does not trip path-hygiene" {
+    f="$(fixture <<'JS'
+const x = await agent('Read Source/Core/src/Tracker/AiErrorRedact.cpp:42 and explain', {model: 'sonnet'})
+log('build/x/results')
+JS
+)"
+    run bash "$SCRIPT" "$f"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"bare source basename"* ]]
+}
+
+# ============================================================================
 # Argument handling
 # ============================================================================
 
