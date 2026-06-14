@@ -390,10 +390,13 @@ TEST_CASE("ADF text extraction preserves shallow doc output (no regression from 
 }
 
 // Build an ADF document nested `depth` levels deep, in place, WITHOUT triggering
-// nlohmann::json's own recursive copy constructor (which would stack-overflow during
-// test setup rather than exercising our walker). We descend via references and push
-// each new level into the parent's "content" array; nlohmann's destructor is
-// iterative, so teardown of the deep tree is also safe.
+// nlohmann::json's own recursive copy constructor during setup. We descend via
+// references and push each new level into the parent's "content" array.
+// IMPORTANT: nlohmann::json's destructor is ALSO recursive, so `depth` must stay
+// modest — a multi-thousand-deep tree stack-overflows on teardown regardless of
+// our walker. Since the walker's cap is 256, a fixture just above that (kDeepAdfDepth)
+// is enough to prove the cap triggers while keeping the fixture's own ctor/dtor safe.
+static const int kDeepAdfDepth = 400;  // > kMaxAdfRecursionDepth (256), safe for json ctor/dtor
 static nlohmann::json BuildDeepAdfDoc(int depth) {
     nlohmann::json doc;
     doc["type"] = "doc";
@@ -415,11 +418,12 @@ static nlohmann::json BuildDeepAdfDoc(int depth) {
 
 TEST_CASE("ADF doc with hostile deep nesting parses without stack overflow (ExtractAdfTextToStream bound)") {
     // Security regression guard (Pillar 3 — Never crash): a malicious/buggy tracker
-    // can return ADF nested thousands of levels deep. Before the depth cap this blew
-    // the C++ stack via ExtractAdfTextToStream. A 5000-level doc must return (bounded
-    // text, process survives) rather than crash. 5000 >> the 256 cap, so without the
-    // bound this overflows; with it, the walker stops at the cap and degrades.
-    nlohmann::json doc = BuildDeepAdfDoc(5000);
+    // can return ADF nested far past any legitimate document. Before the depth cap this
+    // blew the C++ stack via ExtractAdfTextToStream. A doc nested past the 256 cap must
+    // return (bounded text, process survives) rather than crash; the walker stops at the
+    // cap and degrades. (Fixture depth is kept just above the cap so nlohmann's own
+    // recursive json ctor/dtor doesn't overflow the test itself — see kDeepAdfDepth.)
+    nlohmann::json doc = BuildDeepAdfDoc(kDeepAdfDepth);
 
     // The hard requirement is that this returns at all (no stack overflow / no thrown
     // exception unwinding the parse). Output is bounded/truncated.
@@ -431,7 +435,7 @@ TEST_CASE("ADF comment body with hostile deep nesting parses without stack overf
     // The comment path exercises BOTH recursive walkers: ExtractAdfTextToStream first,
     // then CollectAdfText as the empty-extraction fallback. This guards the second
     // entry point cited by the finding (CollectAdfText) under hostile depth.
-    nlohmann::json body = BuildDeepAdfDoc(5000);
+    nlohmann::json body = BuildDeepAdfDoc(kDeepAdfDepth);
 
     nlohmann::json comments = nlohmann::json::array();
     nlohmann::json c;
