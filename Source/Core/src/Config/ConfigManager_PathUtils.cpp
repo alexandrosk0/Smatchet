@@ -329,9 +329,38 @@ std::string UnprotectSecretFieldFromConfig(const char* fieldName, const std::str
     return plainText;
 }
 #else
-std::string ProtectSecretForConfig(const std::string& plainText) { return plainText; }
+// SECURITY (audit H2): no OS-backed secret encryption-at-rest off Windows. On Windows the
+// CryptProtectData path above binds the ciphertext to the user/machine; here the secret value is
+// returned verbatim and lands as cleartext JSON. Two distinct mitigations cover the two
+// non-Windows families:
+//   * POSIX desktop (Linux/macOS): the config file is chmod 0600 (owner-only) by
+//     AtomicWriteTextFile below, and LoadJsonFile LOG_WARNs on a group/world-readable file. That
+//     bounds exposure to the file owner; it is NOT encryption.
+//   * Android: secret-at-rest is plaintext AND filesystem perms are not a reliable owner-isolation
+//     boundary the way they are on a multi-user desktop. Keystore-backed encryption is a tracked
+//     follow-up (audit H2 / security backlog), NOT implemented here — JNI Keystore integration is
+//     out of scope for this change. Android is a known-UNSUPPORTED platform for secret-at-rest.
+std::string ProtectSecretForConfig(const std::string& plainText) {
+#if defined(__ANDROID__)
+    if (!plainText.empty()) {
+        // SECURITY: Android secret-at-rest is plaintext — Keystore integration is a tracked
+        // follow-up (audit H2). Loud so a build that ships secrets on Android cannot do so silently.
+        LOG_WARN("ConfigManager: Android stores config secrets as PLAINTEXT (no Keystore encryption "
+                 "— tracked follow-up, audit H2). Treat this device profile as untrusted for secrets.");
+    }
+#endif
+    return plainText;
+}
 std::string UnprotectSecretFromConfig(const std::string& protectedBase64) { return protectedBase64; }
 #endif
+
+// Pure, platform-agnostic decision helper (audit H2). Declared in ConfigManager_Internal.h so the
+// Windows doctest rig can exercise the loose-permission decision without POSIX stat/chmod.
+bool IsLooseConfigFileMode(unsigned int mode) {
+    // 0077 = group rwx | other rwx. Any of those bits set means the file is reachable by a
+    // principal other than the owner — too loose for a secret-bearing config.
+    return (mode & 0077u) != 0u;
+}
 
 // Meyers singletons for cross-call state (process-wide IO + cache mutexes,
 // cached config, base directories). Previously private static methods of
@@ -585,6 +614,20 @@ nlohmann::json ConfigManager::LoadJsonFile(const std::string& path) {
         }
     }
 #else
+    // SECURITY (audit H2): on POSIX, verify the secret-bearing user config is not group/world
+    // readable. AtomicWriteTextFile lands new writes at 0600, but a config created by an older build
+    // (pre-H2) or relaxed by hand can still be loose — surface it loudly on read so the user can
+    // re-tighten. Scoped to the user config path only (the read-only default-settings file carries
+    // no secrets, so a warning there would just be noise).
+    if (path == GetConfigPath()) {
+        struct stat st;
+        if (::stat(path.c_str(), &st) == 0 &&
+            smatchet::config_detail::IsLooseConfigFileMode(static_cast<unsigned int>(st.st_mode))) {
+            LOG_WARN("ConfigManager: '%s' is group/world-readable (mode %#o) — it holds API secrets in "
+                     "plaintext; run 'chmod 600' on it (audit H2)",
+                     path.c_str(), static_cast<unsigned int>(st.st_mode) & 0777u);
+        }
+    }
     {
         std::ifstream file(path, std::ios::binary);
         if (file.is_open()) {
@@ -736,6 +779,17 @@ bool ConfigManager::AtomicWriteTextFile(const std::string& path, const std::stri
             return false;
         }
     }
+#if !defined(_WIN32)
+    // SECURITY (audit H2): tighten the temp file to owner-only (0600) BEFORE the atomic rename, so
+    // the secret-bearing config never appears at its final path with the default-umask perms
+    // (commonly 0644 — group/world readable). Windows is covered by DPAPI + NTFS ACLs, so this is
+    // POSIX-only. chmod on the .tmp path (it is already created and fully written here) — failure
+    // is logged but non-fatal: a perms-tightening miss must not lose the user's config write.
+    if (::chmod(tmp.c_str(), S_IRUSR | S_IWUSR) != 0) {
+        LOG_WARN("ConfigManager: chmod 0600 on '%s' failed errno=%d; config may be group/world-readable", tmp.c_str(),
+                 errno);
+    }
+#endif
 #if defined(_WIN32)
     const std::wstring wSrc = smatchet::config_detail::Utf8ToWide(tmp);
     const std::wstring wDst = smatchet::config_detail::Utf8ToWide(path);
