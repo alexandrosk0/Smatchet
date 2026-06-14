@@ -86,11 +86,18 @@ std::wstring ResolveP4VcExecutableWide(const AnnotateAnalysisConfig& cfg) {
     if (wexe.find(L'\\') != std::wstring::npos || wexe.find(L'/') != std::wstring::npos) {
         return wexe;
     }
+    // Resolve a bare p4vc name to its absolute path so ShellExecuteW launches a
+    // fully-qualified trusted binary rather than re-searching PATH (audit #16 —
+    // binary-planting surface). A resolution miss falls back to the bare name
+    // and warns so the residual PATH-launch is observable.
     wchar_t found[MAX_PATH];
     wchar_t* fname = nullptr;
     if (SearchPathW(nullptr, wexe.c_str(), L".exe", MAX_PATH, found, &fname) > 0) {
         return std::wstring(found);
     }
+    LOG_WARN("P4vLaunch: could not resolve \"%s\" to an absolute path via SearchPathW; "
+             "falling back to PATH-based launch (binary-planting surface, audit #16)",
+             exeUtf8.c_str());
     return wexe;
 }
 

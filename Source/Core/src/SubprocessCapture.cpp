@@ -111,11 +111,20 @@ std::wstring ResolveApplicationName(const std::string& argv0) {
     if (wexe.find(L'\\') != std::wstring::npos || wexe.find(L'/') != std::wstring::npos) {
         return wexe;
     }
+    // Resolve a bare exe name to its absolute path so CreateProcessW receives a
+    // fully-qualified lpApplicationName rather than a name the loader would
+    // re-search against PATH (audit #16 — prefer an absolute trusted path over a
+    // bare name). On a resolution miss we fall back to the bare name and warn:
+    // CreateProcessW will then do its own PATH search, which is the planting
+    // surface the audit flags — surfacing it in the log keeps it observable.
     wchar_t found[MAX_PATH];
     wchar_t* fname = nullptr;
     if (SearchPathW(nullptr, wexe.c_str(), L".exe", MAX_PATH, found, &fname) > 0) {
         return std::wstring(found);
     }
+    LOG_WARN("SubprocessCapture: could not resolve \"%s\" to an absolute path via SearchPathW; "
+             "falling back to PATH-based launch (binary-planting surface, audit #16)",
+             argv0.c_str());
     return wexe;
 }
 
@@ -140,12 +149,13 @@ std::string LowerAscii(std::string s) {
     return s;
 }
 
-// Pull parent env, drop entries shadowed by opts.env, then prepend.
-// The Windows env block is case-insensitive at name lookup so dedupe
-// on a lowercased key. Returns the merged (parent-minus-shadowed,
+// Pull parent env, drop entries shadowed by opts.env (and, when `scrub` is
+// set, any secret-bearing parent var per IsSensitiveEnvName), then append the
+// overrides. The Windows env block is case-insensitive at name lookup so dedupe
+// on a lowercased key. Returns the merged (parent-minus-shadowed-minus-scrubbed,
 // then overrides) entry vector.
 std::vector<std::pair<std::string, std::string>>
-MergeParentEnvWindows(const std::vector<std::pair<std::string, std::string>>& overrides) {
+MergeParentEnvWindows(const std::vector<std::pair<std::string, std::string>>& overrides, bool scrub) {
     std::vector<std::string> overrideKeys;
     overrideKeys.reserve(overrides.size());
     for (size_t i = 0; i < overrides.size(); ++i) {
@@ -169,7 +179,7 @@ MergeParentEnvWindows(const std::vector<std::pair<std::string, std::string>>& ov
                     const std::string lname = LowerAscii(name);
                     const bool shadowed = std::any_of(overrideKeys.begin(), overrideKeys.end(),
                                                       [&lname](const std::string& k) { return k == lname; });
-                    if (!shadowed) {
+                    if (!shadowed && !(scrub && SubprocessCapturePure::IsSensitiveEnvName(name))) {
                         merged.emplace_back(std::move(name), std::move(value));
                     }
                 }
@@ -184,24 +194,27 @@ MergeParentEnvWindows(const std::vector<std::pair<std::string, std::string>>& ov
     return merged;
 }
 
-// Build the wide env block for CreateProcessW. An empty options.env means
-// inherit the parent — this returns an empty string and the caller passes a
-// null lpEnvironment. A non-empty env with replaceParentEnv set means the
-// child sees ONLY the supplied entries, the env allow-list shape. A non-empty
-// env without replaceParentEnv merges the supplied entries on top of the
-// parent's env, mimicking the POSIX additive setenv semantic so
-// P4Annotate-style overrides hold cross-platform.
+// Build the wide env block for CreateProcessW. With no overrides AND no scrub
+// requested, returns an empty string and the caller passes a null
+// lpEnvironment, so the child inherits the parent's env. The replaceParentEnv
+// flag gives the child ONLY the supplied entries — the allow-list shape.
+// Otherwise the supplied entries merge on top of the parent's env, mimicking
+// the POSIX additive setenv semantic so P4Annotate-style overrides hold
+// cross-platform. When scrubSensitiveEnv is set the parent's secret-bearing
+// vars are dropped from that merge per audit #15, and the merge runs even with
+// no overrides so the scrubbed block actually replaces the full inheritance.
 // UTF-16 env block — CREATE_UNICODE_ENVIRONMENT pairs with this so
 // CreateProcessW reads it as wide characters. The pure helper handles
 // UTF-8 → UTF-16 conversion so non-ASCII values (Unicode paths,
 // locale-translated user dirs) round-trip cleanly. Without UTF-16,
 // ANSI interpretation corrupts any byte > 0x7F.
 std::wstring BuildWindowsEnvBlock(const CaptureOptions& opts) {
-    if (opts.env.empty()) {
+    const bool scrub = opts.scrubSensitiveEnv && !opts.replaceParentEnv;
+    if (opts.env.empty() && !scrub) {
         return std::wstring();
     }
     std::vector<std::pair<std::string, std::string>> effectiveEnv =
-        opts.replaceParentEnv ? opts.env : MergeParentEnvWindows(opts.env);
+        opts.replaceParentEnv ? opts.env : MergeParentEnvWindows(opts.env, scrub);
     return SubprocessCapturePure::BuildEnvBlockWindows(effectiveEnv);
 }
 
@@ -485,6 +498,26 @@ void PosixChildExec(const CaptureOptions& opts, int* pipeOutFds, int* pipeErrFds
             unsetenv(name.c_str());
         }
 #endif
+    } else if (opts.scrubSensitiveEnv) {
+        // Drop secret-bearing parent vars before the child execs (audit #15).
+        // Collect first, then unset: unsetenv() mutates ::environ in place, so
+        // unsetting mid-walk would skip neighbours. PATH / HOME / locale / P4*
+        // / GIT* survive (IsSensitiveEnvName returns false for them) so the p4,
+        // git and file-picker children keep working.
+        std::vector<std::string> toDrop;
+        for (char** e = ::environ; e && *e; ++e) {
+            const char* eq = std::strchr(*e, '=');
+            if (!eq) {
+                continue;
+            }
+            std::string name(*e, static_cast<size_t>(eq - *e));
+            if (SubprocessCapturePure::IsSensitiveEnvName(name)) {
+                toDrop.push_back(std::move(name));
+            }
+        }
+        for (size_t i = 0; i < toDrop.size(); ++i) {
+            unsetenv(toDrop[i].c_str());
+        }
     }
     for (size_t i = 0; i < opts.env.size(); ++i) {
         setenv(opts.env[i].first.c_str(), opts.env[i].second.c_str(), 1);

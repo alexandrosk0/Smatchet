@@ -29,9 +29,11 @@
 #include <ghc/filesystem.hpp>
 
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <random>
 #include <string>
 #include <thread>
 #include <vector>
@@ -459,9 +461,26 @@ void EmitErrorToStderr(const nlohmann::json& envelope) {
 } // CLI stdout — product output, not logging
 
 #if defined(SMATCHET_WITH_MCP)
+/// 16 hex chars of randomness for the spawn-log filename. A predictable
+/// `<pid>-<port>` name let any same-user-or-not process pre-plant a file or
+/// symlink at the known path that the spawn redirect then wrote through (audit
+/// #19). std::random_device is non-deterministic on every supported host; we
+/// mix in two draws so a 32-bit device still yields 64 bits of entropy.
+std::string SpawnLogRandomToken() {
+    std::random_device rd;
+    const uint64_t hi = static_cast<uint64_t>(rd());
+    const uint64_t lo = static_cast<uint64_t>(rd());
+    const uint64_t mixed = (hi << 32) ^ lo;
+    char buf[17];
+    std::snprintf(buf, sizeof(buf), "%016llx", static_cast<unsigned long long>(mixed));
+    return std::string(buf);
+}
+
 /// Compute a per-spawn log file path so child stdout/stderr survive the
-/// parent's --spawn redirection. Format: $TMPDIR/Smatchet-spawn-<pid>-<port>.log.
-/// Per-process suffix avoids collisions when two --spawn drivers run concurrently.
+/// parent's --spawn redirection. Format:
+/// $TMPDIR/Smatchet-spawn-<pid>-<port>-<rand>.log. The random suffix makes the
+/// path unpredictable so it can't be pre-planted (audit #19); the open below
+/// pairs it with an exclusive / no-follow create as the actual race guard.
 std::string ComputeSpawnLogPath(int port) {
 #if defined(_WIN32)
 #ifdef _MSC_VER
@@ -484,7 +503,7 @@ std::string ComputeSpawnLogPath(int port) {
     const pid_t parentPid = getpid();
 #endif
     return std::string(tmpEnv) + "/Smatchet-spawn-" + std::to_string(static_cast<long long>(parentPid)) + "-" +
-           std::to_string(port) + ".log";
+           std::to_string(port) + "-" + SpawnLogRandomToken() + ".log";
 }
 
 bool LaunchEphemeralInstance(const std::string& exePath, int port, std::string* outLogPath) {
@@ -506,7 +525,10 @@ bool LaunchEphemeralInstance(const std::string& exePath, int port, std::string* 
     SECURITY_ATTRIBUTES sa = {};
     sa.nLength = sizeof(sa);
     sa.bInheritHandle = TRUE;
-    HANDLE hLog = CreateFileA(logPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS,
+    // CREATE_NEW fails if the path already exists, so a pre-planted file or
+    // symlink at the (now random) path cannot be hijacked (audit #19). The
+    // random suffix makes a spurious collision negligible.
+    HANDLE hLog = CreateFileA(logPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_NEW,
                               FILE_ATTRIBUTE_NORMAL, nullptr);
     if (hLog == INVALID_HANDLE_VALUE) {
         // Log capture failure is non-fatal — fall back to inheriting parent
@@ -535,7 +557,15 @@ bool LaunchEphemeralInstance(const std::string& exePath, int port, std::string* 
         setsid();
         // Redirect stdout + stderr to the log file. open() returns -1 on
         // failure; in that case stdio falls through to whatever the parent had.
-        int fd = open(logPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        // O_EXCL|O_CREAT refuses to open a path that already exists, and
+        // O_NOFOLLOW refuses a symlink at the final component, so a pre-planted
+        // file or symlink at the (now random) path can't redirect the write
+        // (audit #19 — symlink race). O_NOFOLLOW is POSIX.1-2008; guard it for
+        // the rare host that lacks the macro.
+#ifndef O_NOFOLLOW
+#define O_NOFOLLOW 0
+#endif
+        int fd = open(logPath.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
         if (fd >= 0) {
             dup2(fd, STDOUT_FILENO);
             dup2(fd, STDERR_FILENO);
