@@ -29,6 +29,20 @@
 #include <fstream>
 #include <sstream>
 
+#if defined(_WIN32)
+// IsWow64Process2 (Win10 1709+) reports the process image machine + the native
+// host machine — the only reliable way to tell an x64 build running under arm64
+// emulation (Prism) apart from a native build. Resolved dynamically in
+// DetectHostMachine so the binary still loads on pre-1709 hosts.
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace fs = ghc::filesystem;
 
 namespace smatchet {
@@ -98,6 +112,57 @@ const char* HostArchName() {
 #else
     return sizeof(void*) == 8 ? "64-bit" : "32-bit";
 #endif
+}
+
+// Runtime host-machine probe. HostArchName above is the compile-time *build*
+// target; this reports the *native silicon* and whether the process is being
+// emulated on top of it (e.g. an x86_64 build under Prism on an arm64 host).
+// Unresolved (Resolved == false) on pre-1709 Windows and non-Windows — callers
+// omit the fields rather than guessing.
+struct HostMachineInfo {
+    const char* NativeArch; // "" when the native machine id is unrecognised
+    bool Emulated;
+    bool Resolved;
+};
+
+HostMachineInfo DetectHostMachine() {
+    HostMachineInfo info{"", false, false};
+#if defined(_WIN32)
+    typedef BOOL(WINAPI * IsWow64Process2Fn)(HANDLE, USHORT*, USHORT*);
+    const HMODULE k32 = ::GetModuleHandleW(L"kernel32.dll");
+    if (k32 == nullptr) {
+        return info;
+    }
+    const IsWow64Process2Fn isWow64Process2 =
+        reinterpret_cast<IsWow64Process2Fn>(::GetProcAddress(k32, "IsWow64Process2"));
+    if (isWow64Process2 == nullptr) {
+        return info; // pre-Win10 1709 — API absent
+    }
+    USHORT processMachine = IMAGE_FILE_MACHINE_UNKNOWN;
+    USHORT nativeMachine = IMAGE_FILE_MACHINE_UNKNOWN;
+    if (!isWow64Process2(::GetCurrentProcess(), &processMachine, &nativeMachine)) {
+        return info;
+    }
+    info.Resolved = true;
+    // processMachine == UNKNOWN => the process runs natively (not under WOW64 /
+    // emulation); any other value is the image machine of an emulated process.
+    info.Emulated = processMachine != IMAGE_FILE_MACHINE_UNKNOWN;
+    switch (nativeMachine) {
+    case IMAGE_FILE_MACHINE_ARM64:
+        info.NativeArch = "arm64";
+        break;
+    case IMAGE_FILE_MACHINE_AMD64:
+        info.NativeArch = "x86_64";
+        break;
+    case IMAGE_FILE_MACHINE_I386:
+        info.NativeArch = "x86";
+        break;
+    default:
+        info.NativeArch = "";
+        break;
+    }
+#endif
+    return info;
 }
 
 std::string Base64EncodeBytes(const std::vector<unsigned char>& in) {
@@ -447,7 +512,16 @@ ContextBundle GatherContext(const AppController& app, const BugReportOptions& op
     env["build_tag"] = std::string("standalone | built ") + __DATE__ + " " + __TIME__;
 #endif
     env["os"] = HostOsName();
-    env["arch"] = HostArchName();
+    env["arch"] = HostArchName(); // compile-time build target
+    // Native silicon + emulation telemetry (e.g. x86_64 build under Prism on an
+    // arm64 host). Omitted entirely when unresolvable (pre-1709 / non-Windows).
+    const HostMachineInfo machine = DetectHostMachine();
+    if (machine.Resolved) {
+        env["emulated"] = machine.Emulated;
+        if (machine.NativeArch[0] != '\0') {
+            env["host_arch"] = machine.NativeArch;
+        }
+    }
     env["tracker"] = cfg.TrackerType.empty() ? std::string("(none)") : cfg.TrackerType;
     env["utc"] = UtcNowIso8601();
 
