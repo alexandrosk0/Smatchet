@@ -88,8 +88,12 @@ void DispatchOpenAiDataLine(const std::string& data, const IAiClient::DeltaCallb
     try {
         j = nlohmann::json::parse(data);
     } catch (const std::exception& e) {
+        // The raw SSE payload is server-supplied; a misconfigured proxy could echo the
+        // request Authorization header into a malformed stream. Redact (Bearer / api-key
+        // shapes) before logging, then cap the excerpt at 200 chars.
+        const std::string redacted = smatchet::ai::pure::RedactProviderErrorBody(data);
         LOG_WARN("OpenAiClient: SSE data not valid JSON (%s): %.*s", e.what(),
-                 static_cast<int>(data.size() > 200 ? 200 : data.size()), data.c_str());
+                 static_cast<int>(redacted.size() > 200 ? 200 : redacted.size()), redacted.c_str());
         return;
     }
     if (!j.is_object() || !j.contains("choices") || !j["choices"].is_array() || j["choices"].empty())
@@ -121,9 +125,8 @@ std::string OpenAiClient::ProbeReachability(const AiClientConfig& cfg) {
     if (!cfg.ApiKey.empty())
         headers["Authorization"] = std::string("Bearer ") + cfg.ApiKey;
 
-    cpr::Response r =
-        cpr::Get(cpr::Url{url}, headers, cpr::Redirect{smatchet::ai::pure::kAiFollowRedirects, false},
-                 cpr::ConnectTimeout{cfg.ConnectTimeoutMs}, cpr::Timeout{cfg.TotalTimeoutMs});
+    cpr::Response r = cpr::Get(cpr::Url{url}, headers, cpr::Redirect{smatchet::ai::pure::kAiFollowRedirects, false},
+                               cpr::ConnectTimeout{cfg.ConnectTimeoutMs}, cpr::Timeout{cfg.TotalTimeoutMs});
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Ai, NetworkUsageTracker::kEstimatedGetUploadBytes, r);
     if (r.error.code != cpr::ErrorCode::OK)
         return std::string("transport: ") + r.error.message;
