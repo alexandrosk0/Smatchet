@@ -171,6 +171,11 @@ FUNCSIZE_RULES=(function-too-long function-too-branchy)
 # by agent_size_audit.py --diff). KEEP IN SYNC with AGENTS.md § Project rules § Prompt/contract size.
 AGENTSIZE_RULES=(agent-too-long)
 
+# core-include-dag Phase 0 — Source/Core include-graph acyclicity + layer-DAG rule-id (delta-gated;
+# classified by include_cycle_audit.py --diff). BLOCKS (fails CLOSED) on a NEW SCC>1 cycle or a
+# NEW low->high named-layer header back-edge. KEEP IN SYNC with AGENTS.md § Tiered enforcement.
+INCLUDECYCLE_RULES=(include-cycle)
+
 ratio_warn_for() {
     # Advisory soft warning (never blocks): delegate to comment_audit.py --ratio-warn, which warns
     # per changed file whose comment ratio rises vs base AND exceeds 0.50. Always returns 0.
@@ -868,6 +873,7 @@ case "${1:-}" in
     --funcsize-baseline) MODE=funcsizebaseline ;;
     --agentsize-baseline) MODE=agentsizebaseline ;;
     --dup-baseline) MODE=dupbaseline ;;
+    --include-cycle-baseline) MODE=includecyclebaseline ;;
     --scan-file)   MODE=scanfile; ARG="${2:-}" ;;
     --scan-file=*) MODE=scanfile; ARG="${1#--scan-file=}" ;;
     --full)        MODE=full ;;
@@ -877,7 +883,7 @@ case "${1:-}" in
     --scan-unused-cfg) MODE=scanunusedcfg ;;
     --selftest)    MODE=selftest ;;
     "")            MODE=diff ;;
-    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--agentsize-baseline|--dup-baseline|--scan-file[=]<f>|--full|--scan-wide|--scan-glfw|--scan-cmake-ci|--scan-unused-cfg|--selftest]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--agentsize-baseline|--dup-baseline|--include-cycle-baseline|--scan-file[=]<f>|--full|--scan-wide|--scan-glfw|--scan-cmake-ci|--scan-unused-cfg|--selftest]" >&2; exit 2 ;;
 esac
 
 case "$MODE" in
@@ -905,6 +911,10 @@ case "$MODE" in
     # Assert the agent-prompt-size rule-id is documented in AGENTS.md (delta-gated list).
     for r in "${AGENTSIZE_RULES[@]}"; do
         if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: agent-size rule '$r' missing from AGENTS.md" >&2; miss=1; fi
+    done
+    # Assert the include-cycle rule-id is documented in AGENTS.md (delta-gated, BLOCKING gate).
+    for r in "${INCLUDECYCLE_RULES[@]}"; do
+        if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: include-cycle rule '$r' missing from AGENTS.md" >&2; miss=1; fi
     done
     # Delegate the tiered-cap + UI-classification in-sync assertion to the audit script's own
     # --selftest (single source of truth = function_size_audit.py is_ui_function() vs AGENTS.md).
@@ -972,8 +982,9 @@ case "$MODE" in
         if ! "$st_py" "$REPO_ROOT/agents/scripts/core/function_size_audit.py" --selftest; then miss=1; fi
         if ! "$st_py" "$REPO_ROOT/agents/scripts/core/dup_audit.py" --selftest; then miss=1; fi
         if ! "$st_py" "$REPO_ROOT/agents/scripts/core/agent_size_audit.py" --selftest; then miss=1; fi
+        if ! "$st_py" "$REPO_ROOT/agents/scripts/core/include_cycle_audit.py" --selftest; then miss=1; fi
     else
-        echo "test-lint-rules: WARN: no python interpreter; skipped function_size_audit.py / dup_audit.py / agent_size_audit.py --selftest" >&2
+        echo "test-lint-rules: WARN: no python interpreter; skipped function_size_audit.py / dup_audit.py / agent_size_audit.py / include_cycle_audit.py --selftest" >&2
     fi
     [ "$miss" -eq 0 ] && echo "selftest: AGENTS.md zone globs + comment + function-size + duplication rules in sync" || exit 1
     ;;
@@ -1075,6 +1086,19 @@ case "$MODE" in
     mkdir -p "$(dirname "$DUP_BASELINE_FILE")"
     "$dup_py" "$REPO_ROOT/agents/scripts/core/dup_audit.py" --baseline-md > "$DUP_BASELINE_FILE"
     echo "[test-lint-rules] refreshed $DUP_BASELINE_FILE"
+    ;;
+
+  includecyclebaseline)
+    # Refresh the include-cycle grandfather/ratchet snapshot (core-include-dag Phase 0). Same
+    # contract as --dup-baseline: the gate is a live merge-base delta (include_cycle_audit.py
+    # --diff), not this file — but unlike dup this snapshot is also the RATCHET ledger (each later
+    # phase deletes the line for the edge it kills).
+    ic_py="$(resolve_python || true)"
+    [ -n "$ic_py" ] || { echo "test-lint-rules: ERROR: no python interpreter for --include-cycle-baseline" >&2; exit 2; }
+    INCLUDECYCLE_BASELINE_FILE="docs/high-integrity/include-cycle-baseline.md"
+    mkdir -p "$(dirname "$INCLUDECYCLE_BASELINE_FILE")"
+    "$ic_py" "$REPO_ROOT/agents/scripts/core/include_cycle_audit.py" --baseline-md > "$INCLUDECYCLE_BASELINE_FILE"
+    echo "[test-lint-rules] refreshed $INCLUDECYCLE_BASELINE_FILE"
     ;;
 
   diff)
@@ -1287,6 +1311,35 @@ case "$MODE" in
         echo "  (comma-separate the rule ids — rule=function-too-long,function-too-branchy — to suppress both caps)."
     else
         echo "[test-lint-rules] PASS — no new oversized functions vs $BASE"
+    fi
+
+    # --- include-cycle gate (Source/Core quote-include graph; delta-gated; BLOCKS) ---
+    # A NEW SCC>1 include cycle OR a NEW low->high named-layer header back-edge in the Source/Core
+    # quote-include graph fails the gate (core-include-dag Phase 0). include_cycle_audit.py keys each
+    # violation by includer->resolved-target (path-pair, line-independent) and diffs HEAD vs the
+    # merge-base of $BASE, so the current grandfathered edges (the ~5 baselined in
+    # docs/high-integrity/include-cycle-baseline.md) stay green and only a genuinely-new cycle/back-edge
+    # fires. Unlike the dup gate this FAILS CLOSED (exit 1 on a new violation) — the acyclicity ratchet
+    # is the load-bearing deliverable that keeps the cleanup from regressing. A
+    # `// SMATCHET_DEVIATION(rule=include-cycle; ...)` on the nearest non-blank line above the offending
+    # #include suppresses it. Fail CLOSED on infra error too, identical contract to the function-size
+    # gate (0 clean / 1 violations / >=2 infra). $cr_py is the validated interpreter from above.
+    ic_aud="$REPO_ROOT/agents/scripts/core/include_cycle_audit.py"
+    if [ ! -f "$ic_aud" ]; then
+        echo "test-lint-rules: ERROR: missing $ic_aud; cannot enforce include-cycle gate" >&2
+        exit 2
+    fi
+    if ic_out="$("$cr_py" "$ic_aud" --diff "$BASE")"; then ic_rc=0; else ic_rc=$?; fi
+    if [ "$ic_rc" -ge 2 ]; then
+        echo "test-lint-rules: ERROR: include_cycle_audit.py --diff failed (exit $ic_rc) for base '$BASE'" >&2
+        exit 2
+    fi
+    if [ -n "$ic_out" ]; then
+        rc=1
+        echo
+        printf '%s\n' "$ic_out" | sed 's/^/  /'
+    else
+        echo "[test-lint-rules] PASS — no new Source/Core include cycle / layer back-edge vs $BASE"
     fi
 
     # --- soft comment-ratio warning (ADVISORY — never changes exit code) ---
