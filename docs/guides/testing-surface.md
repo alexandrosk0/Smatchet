@@ -84,10 +84,13 @@ infrastructure**, never "manual forever."
 **The load-bearing consequence.** UX Pillars 1-3 (perf / no-freeze / no-crash)
 are described as auto-fail, but the lanes that *dynamically* prove them (bucket-C/E,
 sanitizers) don't branch-gate. The merge-poller ([`merge-gates.sh`](../../agents/scripts/core/merge-gates.sh))
-keeps `Coverage`/`Sanitizer`/`Bucket-` on a *meant-to-block allow-list*, so the
+keeps `Coverage`/`Sanitizer` on a *meant-to-block allow-list*, so the
 **normal** ship path respects them — but a direct `gh api …/merge` (a documented
 valid path with no merge queue) and the blanket `continue-on-error` on bucket-C/E
-together let visual/interaction failures escape. **Documented escape:** PR #1180
+together let visual/interaction failures escape. (`Bucket-` was dropped from that
+allow-list 2026-06-15 — `infra.md` `bucket-mesa-exe-boot` P1: the Mesa-software-GL
+bucket-C/E lanes can't boot the CI exe, so they are now fully advisory and the
+poller no longer blocks on them; re-add on boot-fix graduation.) **Documented escape:** PR #1180
 shipped red bucket-C/E under a `cr-out-of-band` override (postmortem owed).
 
 ---
