@@ -61,10 +61,17 @@ static ILuaBindingHost* ResolveHost(sol::this_state L) {
 
 constexpr int kJsonToLuaMaxDepth = 64;
 
-static sol::object JsonToLuaImpl(sol::state_view luaView, const nlohmann::json& j, int depth) {
-    if (depth > kJsonToLuaMaxDepth) {
+// Node budget mirrors AppController_LuaBindings.cpp (kept in sync — see the note
+// there). Guards the converter from fanning out an unbounded number of sol
+// tables on a pathological internal commands.invoke result; on overflow we stop
+// converting (nil for the remaining subtree) rather than throw (Pillar 3).
+constexpr std::size_t kJsonToLuaMaxNodes = 200000u;
+
+static sol::object JsonToLuaImpl(sol::state_view luaView, const nlohmann::json& j, int depth, std::size_t& nodes) {
+    if (depth > kJsonToLuaMaxDepth || nodes == 0) {
         return sol::make_object(luaView, sol::nil);
     }
+    --nodes;
     switch (j.type()) {
     case nlohmann::json::value_t::null:
         return sol::make_object(luaView, sol::nil);
@@ -82,14 +89,14 @@ static sol::object JsonToLuaImpl(sol::state_view luaView, const nlohmann::json& 
         sol::table arr = luaView.create_table();
         std::size_t idx = 1;
         for (const auto& el : j) {
-            arr[idx++] = JsonToLuaImpl(luaView, el, depth + 1);
+            arr[idx++] = JsonToLuaImpl(luaView, el, depth + 1, nodes);
         }
         return arr;
     }
     case nlohmann::json::value_t::object: {
         sol::table tbl = luaView.create_table();
         for (auto it = j.begin(); it != j.end(); ++it) {
-            tbl[it.key()] = JsonToLuaImpl(luaView, it.value(), depth + 1);
+            tbl[it.key()] = JsonToLuaImpl(luaView, it.value(), depth + 1, nodes);
         }
         return tbl;
     }
@@ -98,7 +105,10 @@ static sol::object JsonToLuaImpl(sol::state_view luaView, const nlohmann::json& 
     }
 }
 
-static sol::object JsonToLua(sol::state_view luaView, const nlohmann::json& j) { return JsonToLuaImpl(luaView, j, 0); }
+static sol::object JsonToLua(sol::state_view luaView, const nlohmann::json& j) {
+    std::size_t nodes = kJsonToLuaMaxNodes;
+    return JsonToLuaImpl(luaView, j, 0, nodes);
+}
 
 static nlohmann::json LuaToJsonImpl(sol::object obj, int depth) {
     if (depth > 64)
