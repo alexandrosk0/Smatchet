@@ -489,7 +489,15 @@ std::vector<TicketGridColumn> TicketGridColumnsBuilder::Build(const ViewDefiniti
     }
 
     std::unordered_set<std::string> usedKeys;
-    for (const auto& key : view.ColumnOrder) {
+    for (const auto& rawKey : view.ColumnOrder) {
+        // issue-comments fix (#1018) — normalize a legacy `field:comment` order key to
+        // `field:comments` so an old saved view keeps its comment-column *position*. Mirrors the
+        // field-id fold above (the column Key was built from the canonicalized id); without it the
+        // byKey lookup misses and the comment column drops to the appended-tail default.
+        std::string key = rawKey;
+        if (key.compare(0, 6, "field:") == 0) {
+            key = "field:" + CanonicalizeGridFieldId(key.substr(6));
+        }
         const auto it = byKey.find(key);
         if (it == byKey.end()) {
             continue;

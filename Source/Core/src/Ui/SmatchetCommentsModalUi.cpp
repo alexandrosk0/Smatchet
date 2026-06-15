@@ -67,6 +67,9 @@ void KickCommentsFetch(AppController& app, const std::string& issueId, int gen) 
                 // issue-comments fix (#1018) — runs on every fetch: modal-open AND the post-success
                 // re-fetch. Pushes the observed count into the cached ticket so the grid Comments
                 // column reflects a just-posted comment without a full re-sync. UI thread (post-back).
+                // narrowing-ok: a single issue thread's comment count is far below INT_MAX; the
+                // cached-count field is int. No saturation (matches the codebase's bounded-container
+                // size()->int convention).
                 appPtr->UpdateCachedCommentCount(capturedIssueId,
                                                  static_cast<int>(s_CommentsState.Comments.size()));
             } else {
