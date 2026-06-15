@@ -25,9 +25,9 @@ if [ -z "$JSON_LINE" ]; then
     exit 1
 fi
 
-PASSED="$(printf '%s\n' "$JSON_LINE" | sed -n 's/.*"passed":\([0-9][0-9]*\).*/\1/p')"
-FAILED="$(printf '%s\n' "$JSON_LINE" | sed -n 's/.*"failed":\([0-9][0-9]*\).*/\1/p')"
-LOG="$(printf '%s\n' "$JSON_LINE" | sed -n 's/.*"log":"\([^"]*\)".*/\1/p')"
+PASSED="$(printf '%s\n' "$JSON_LINE" | sed -n 's/.*"passed"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')"
+FAILED="$(printf '%s\n' "$JSON_LINE" | sed -n 's/.*"failed"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p')"
+LOG="$(printf '%s\n' "$JSON_LINE" | sed -n 's/.*"log"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
 PASSED="${PASSED:-?}"
 FAILED="${FAILED:-?}"
 LOG="${LOG:-?}"

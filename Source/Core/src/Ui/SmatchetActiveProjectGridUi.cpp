@@ -153,15 +153,6 @@ static void RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGuiTable* table,
     ImGui::SetScrollX(inner, targetX);
 }
 
-#if defined(SMATCHET_BUILD_UI_TESTS)
-extern "C" void SmatchetUiTestRouteActiveProjectGridWheelForCurrentTable(UiDrawSession* d, GridPane* pane) {
-    if (!d || !pane) {
-        return;
-    }
-    RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGui::GetCurrentTable(), *d, *pane);
-}
-#endif
-
 // Rebuild ONE PANE's cached sort-order + filter projection (`pane.cachedSortedIndices` →
 // `pane.filteredIndices`). Extracted from drawActiveProjectGridSort so that helper stays
 // under the function-size cap; runs only when the projection is dirty AND the streaming
@@ -328,6 +319,15 @@ static void PromoteActiveRowToSelection(GridPane& pane, RectSelT& sel, const std
 }
 
 } // namespace
+
+#if defined(SMATCHET_BUILD_UI_TESTS)
+extern "C" void SmatchetUiTestRouteActiveProjectGridWheelForCurrentTable(UiDrawSession* d, GridPane* pane) {
+    if (!d || !pane) {
+        return;
+    }
+    RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGui::GetCurrentTable(), *d, *pane);
+}
+#endif
 
 // Shared per-frame state for the drawActiveProjectWindow section helpers (monoliths
 // Slice 1b). Constructed once at the top of drawActiveProjectWindow from orchestrator-
