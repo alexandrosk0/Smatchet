@@ -1,5 +1,9 @@
 #include "CallstackParser.h"
 
+// [asan-fix-smoke] Throwaway no-op touch — flips source_core_cpp=true so the
+// Slice C ASAN/UBSan jobs run their fixed ctest steps on this PR. NEVER merged;
+// this branch is closed once the sanitizer jobs report green.
+
 #include <algorithm>
 #include <cctype>
 #include <regex>
