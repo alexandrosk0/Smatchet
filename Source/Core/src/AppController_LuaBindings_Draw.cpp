@@ -40,6 +40,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "Json/BoundedJsonParse.h"
+
 #include "imgui.h"
 #include "Logger.h"
 #include "SmatchetFieldIconRender.h"
@@ -877,10 +879,23 @@ std::string AppController::ExecuteLuaMcpTool(const std::string& name, const std:
         return "";
     }
 
-    nlohmann::json jParams;
-    try {
-        jParams = nlohmann::json::parse(paramsJson);
-    } catch (...) { // catch-all-ok: parse on untrusted Lua-provided JSON string
+    // `paramsJson` is the MCP tool `arguments.dump()` — ATTACKER-CONTROLLED, and a
+    // deeply-nested payload would stack-overflow a bare json::parse before JsonToLua
+    // runs (Pillar 3 — Never crash). Parse through the shared depth/node-bounded
+    // helper (NO throw across the sol2 boundary). On a depth/node-cap hit reject via
+    // the path's nil+error contract (outError + return ""); ordinary shallow-malformed
+    // JSON keeps the prior lenient empty-object fallback so valid tool calls are
+    // unaffected.
+    std::string parseErr;
+    nlohmann::json jParams = smatchet::json_safe::ParseBounded(paramsJson, parseErr);
+    if (!parseErr.empty()) {
+        if (parseErr == smatchet::json_safe::OverflowError() || parseErr == smatchet::json_safe::TooLargeError()) {
+            outError = parseErr;
+            LOG_WARN("ExecuteLuaMcpTool: params rejected — input too deeply nested or too large; possible hostile "
+                     "payload (name=%s)",
+                     name.c_str());
+            return "";
+        }
         jParams = nlohmann::json::object();
     }
     try {

@@ -16,6 +16,7 @@
 #endif
 #include "ConfigManager.h"
 #include "Commands/Command.h"
+#include "Json/BoundedJsonParse.h" // smatchet::json_safe::ParseBounded — depth/node-bounded ingress parse (#1271)
 #include "McpJsonRpcPure.h"
 #include <cstdio> // std::remove, std::fopen/fwrite/fclose
 #if !defined(_WIN32)
@@ -488,7 +489,23 @@ void McpPlugin::HandleToolsCall(const httplib::Request& req, httplib::Response& 
         return;
     const std::string remote = req.remote_addr;
     try {
-        auto body = nlohmann::json::parse(req.body);
+        // Depth/node-bounded parse of the raw HTTP body (ATTACKER-CONTROLLED). A bare
+        // json::parse recurses once per nesting level and stack-overflows on a hostile
+        // deep payload BEFORE name/arguments are extracted — the 1 MiB payload cap bounds
+        // BYTES only, not depth (Pillar 3 — Never crash). On a cap hit return the same
+        // structured HTTP-400 envelope the parse-exception path below produces; never log
+        // the raw body.
+        std::string parseErr;
+        const nlohmann::json body =
+            smatchet::json_safe::ParseBounded(req.body, parseErr, /*maxBytes=*/1u * 1024u * 1024u);
+        if (!parseErr.empty()) {
+            LOG_WARN("MCP: REST tools/call rejected malformed/oversized body remote=%s", remote.c_str());
+            res.status = 400;
+            res.set_content(nlohmann::json{{"isError", true}, {"error", parseErr}}.dump(), "application/json");
+            AppendMcpActivityLine(impl_->app, "MCP: REST tools/call FAIL remote=" + remote + " err=parse error: " +
+                                                  TruncateOneLine(parseErr, 200));
+            return;
+        }
         std::string name = body.value("name", "");
         const nlohmann::json arguments = body.value("arguments", nlohmann::json::object());
         std::string paramsStr = arguments.dump();
@@ -795,7 +812,26 @@ void McpPlugin::RegisterJsonRpcRoutes() {
             return;
 
         try {
-            auto jreq = nlohmann::json::parse(req.body);
+            // Depth/node-bounded parse of the raw HTTP body (ATTACKER-CONTROLLED). A bare
+            // json::parse recurses once per nesting level and stack-overflows on a hostile
+            // deep payload — the 1 MiB payload cap bounds BYTES only, not depth (Pillar 3 —
+            // Never crash). On a cap hit return the JSON-RPC -32700 parse error the
+            // parse-exception path below produces; never log the raw body.
+            std::string parseErr;
+            const nlohmann::json jreq =
+                smatchet::json_safe::ParseBounded(req.body, parseErr, /*maxBytes=*/1u * 1024u * 1024u);
+            if (!parseErr.empty()) {
+                LOG_WARN("MCP: JSON-RPC rejected malformed/oversized body remote=%s", req.remote_addr.c_str());
+                res.status = 400;
+                res.set_content(nlohmann::json{{"jsonrpc", "2.0"},
+                                               {"error", {{"code", -32700}, {"message", std::string("Parse error: ") +
+                                                                                             parseErr}}}}
+                                    .dump(),
+                                "application/json");
+                AppendMcpActivityLine(impl_->app, std::string("MCP: JSON-RPC parse FAIL remote=") + req.remote_addr +
+                                                      " err=" + TruncateOneLine(parseErr, 200));
+                return;
+            }
             std::string method = jreq.value("method", "");
             const bool isNotification = !jreq.contains("id");
             LOG_TRACE("MCP: JSON-RPC remote=%s method=%s notification=%d body_len=%zu", req.remote_addr.c_str(),
