@@ -52,7 +52,11 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}" 2>/dev/null || true
+            # NO --depth: a shallow base-ref fetch re-shallows develop after the
+            # fetch-depth:0 checkout and breaks merge-base for any diff consumer
+            # (same defect as the Pillar-2 scanner, #1227(b)) — here it is masked
+            # because the job always exits 0, but keep it correct for consistency.
+            git fetch --no-tags origin "${{ github.base_ref }}" 2>/dev/null || true
             base="origin/${{ github.base_ref }}"
           else
             base="${{ github.event.before }}"

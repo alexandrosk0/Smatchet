@@ -47,7 +47,13 @@ jobs:
           set -euo pipefail
           # Base = develop for PRs; for develop pushes, diff against the prior commit.
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}" 2>/dev/null || true
+            # NO --depth here: a shallow `--depth=1` re-introduces a .git/shallow
+            # boundary at develop's tip even after the fetch-depth:0 checkout, so
+            # the three-dot `git diff base...HEAD` below can't find the merge-base
+            # and exits 128 → the #518 fail-closed guard hard-fails docs-only PRs
+            # whose branch point predates the depth. Full fetch keeps the common
+            # ancestor present (matches the passing Doc-anchors job). (#1227(b))
+            git fetch --no-tags origin "${{ github.base_ref }}" 2>/dev/null || true
             base="origin/${{ github.base_ref }}"
           else
             base="${{ github.event.before }}"
