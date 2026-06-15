@@ -1065,11 +1065,23 @@ void MigrateBugReportHotkeyToKeybindings(const nlohmann::json& j, TrackerConfig&
     if (cfg.MigratedBugReportHotkeyV1) {
         return;
     }
-    cfg.Keybindings.SetBindingHotkey("app.bug_report.open", "{}", cfg.BugReportHotkey);
-    if (!cfg.BugReportHotkeyEnabled) {
-        const int idx = cfg.Keybindings.FindBindingIndex("app.bug_report.open", "{}");
-        if (idx >= 0) {
-            cfg.Keybindings.Bindings[static_cast<std::size_t>(idx)].Enabled = false;
+    // Only fold the legacy pair forward when it actually diverged from the seeded default. A fresh
+    // profile (no config file) skips this migration entirely — LoadListFields runs only when the
+    // loaded JSON is non-empty — so the flag stays false; a user who then rebinds
+    // "app.bug_report.open" via the editor and saves would, on the NEXT load, have that
+    // customization clobbered here by the default legacy hotkey. Guarding on legacy-customized
+    // keeps the rebind intact while still carrying a genuinely customized / disabled legacy hotkey
+    // forward exactly once. ("Ctrl+Shift+B" mirrors the BugReportHotkey default in ConfigManager.h
+    // and the app.bug_report.open seed in KeybindingsConfig::Defaults().)
+    const bool legacyCustomized =
+        cfg.BugReportHotkey != "Ctrl+Shift+B" || !cfg.BugReportHotkeyEnabled;
+    if (legacyCustomized) {
+        cfg.Keybindings.SetBindingHotkey("app.bug_report.open", "{}", cfg.BugReportHotkey);
+        if (!cfg.BugReportHotkeyEnabled) {
+            const int idx = cfg.Keybindings.FindBindingIndex("app.bug_report.open", "{}");
+            if (idx >= 0) {
+                cfg.Keybindings.Bindings[static_cast<std::size_t>(idx)].Enabled = false;
+            }
         }
     }
     cfg.MigratedBugReportHotkeyV1 = true;

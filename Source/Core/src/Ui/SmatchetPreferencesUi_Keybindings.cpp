@@ -78,10 +78,18 @@ void DrawSystemShortcutRow(const char* label, const char* combo) {
 } // namespace
 
 void DrawKeybindingsPreferencesTab(SmatchetUI& ui, AppController& app, UiDrawSession& d) {
+    // Persistent across frames (single Preferences window): the search filter and the command
+    // key of the row currently capturing a combo (empty = none; at most one). Declared above
+    // BeginTabItem so the inactive-tab early return can abandon an armed capture — otherwise the
+    // static survives and re-arms that row when the tab is reopened.
+    static std::string filter;
+    static std::string capturingKey;
+
     const std::string tabLabel =
         std::string(SmatchetLocalization::T("prefs.tab.keybindings", "Keyboard Shortcuts")) +
         "###prefsTabKeybindings";
     if (!ImGui::BeginTabItem(tabLabel.c_str())) {
+        capturingKey.clear(); // tab switched away / closed mid-capture — drop the armed row
         return;
     }
     d.preferencesActiveTab = PreferencesActiveTab::Keybindings;
@@ -91,11 +99,6 @@ void DrawKeybindingsPreferencesTab(SmatchetUI& ui, AppController& app, UiDrawSes
                                  "Rebind in-app keyboard shortcuts. Click a shortcut to capture a new "
                                  "key combo (Esc cancels). Changes save automatically."));
     ImGui::Spacing();
-
-    // Persistent across frames (single Preferences window): the search filter and the
-    // command key of the row currently capturing a combo (empty = none; at most one).
-    static std::string filter;
-    static std::string capturingKey;
 
     char searchBuf[160];
     std::snprintf(searchBuf, sizeof(searchBuf), "%s", filter.c_str());

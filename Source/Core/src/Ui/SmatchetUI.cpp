@@ -837,7 +837,11 @@ void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
 // same-frame. This TU's `#define ImGui` does not reach the popup — it draws via the
 // shared smatchet::ui widget, which uses raw ImGui.
 void SmatchetUI::drawQuickBindPopup(AppController& app, UiDrawSession& d) {
-    std::string cmdId = toolbar_.TakeQuickBindRequest();
+    // argsJson defaults to "{}"; the toolbar overwrites it with the clicked button's real args
+    // so a parametrized button binds its (commandId, args) identity, not the default variant.
+    // Command-palette rows are bare commands, so that path keeps the "{}" default.
+    std::string argsJson = "{}";
+    std::string cmdId = toolbar_.TakeQuickBindRequest(argsJson);
     if (cmdId.empty()) {
         cmdId = commandPalette_.TakeQuickBindRequest();
     }
@@ -847,7 +851,7 @@ void SmatchetUI::drawQuickBindPopup(AppController& app, UiDrawSession& d) {
         if (c != nullptr && !c->Summary.empty()) {
             label = c->Summary;
         }
-        quickBind_.Open(cmdId, label, "{}");
+        quickBind_.Open(cmdId, label, argsJson);
     }
     if (quickBind_.Draw(d.cfg)) {
         MarkKeybindingsDirty();

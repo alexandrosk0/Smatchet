@@ -304,6 +304,7 @@ void SmatchetToolbarUi::RenderButtonContextMenu(TrackerConfig& cfg, int src) {
     if (clicked.Kind == ToolbarButtonKind::Command && !clicked.CommandId.empty()) {
         if (ImGui::MenuItem("Set shortcut...")) {
             requestQuickBindCommandId_ = clicked.CommandId;
+            requestQuickBindArgsJson_ = clicked.ArgsJson; // bind the button's real args, not "{}"
         }
     }
     ImGui::Separator();
@@ -328,9 +329,13 @@ void SmatchetToolbarUi::RenderButtonContextMenu(TrackerConfig& cfg, int src) {
     }
 }
 
-std::string SmatchetToolbarUi::TakeQuickBindRequest() {
+std::string SmatchetToolbarUi::TakeQuickBindRequest(std::string& argsJsonOut) {
     std::string id;
     id.swap(requestQuickBindCommandId_);
+    if (!id.empty()) {
+        argsJsonOut = requestQuickBindArgsJson_;
+    }
+    requestQuickBindArgsJson_ = "{}"; // reset the paired latch for the next request
     return id;
 }
 
