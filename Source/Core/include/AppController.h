@@ -41,6 +41,7 @@ struct McpToolDefinition;
 #include "LocalCacheManager.h"
 #include "ITrackerBackend.h"
 #include "MainThreadDispatcher.h"
+#include "Commands/IMainThreadPoster.h"
 #include "SmatchetMergeWatchNotifyServer.h"
 #include "IssueDraft.h"
 #include "IssueCreatePipeline.h"
@@ -125,7 +126,7 @@ class ScenarioRunner;
 }
 } // namespace smatchet
 
-class AppController {
+class AppController : public IMainThreadPoster {
     /// `GridContextDepsAdapter` implements `IOfflineQueueDeps` + `ITicketSyncDeps` against
     /// this AppController + one `GridLiveContext` and forwards every method either to the
     /// per-context state (`Backend`, `ActiveTickets*`) or to AppController-shared state
@@ -226,7 +227,13 @@ class AppController {
     /// Used by Command handlers to decide whether to mutate UI state inline (safe) or post
     /// the mutation to `mainThreadDispatcher` (required when called from an MCP / Lua worker).
     /// Recorded once in `Initialize`; reads are atomic loads — safe from any thread.
-    bool IsOnUiThread() const;
+    bool IsOnUiThread() const override;
+
+    /// IMainThreadPoster — post `fn` to the UI thread by delegating to
+    /// `mainThreadDispatcher`. Lets command helpers marshal onto the UI thread
+    /// through the interface without depending on AppController (core-include-dag
+    /// Phase 2 — severs the Commands -> AppController include back-edge).
+    void PostToMainThread(std::function<void()> fn) override;
 
     /// Unified Command System registry. See docs/plans/shipped/command-system-plan.md.
     /// Lifetime: created in `Initialize`; the same instance feeds the CLI, the
