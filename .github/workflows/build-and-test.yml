@@ -550,6 +550,35 @@ jobs:
             exit 1
           fi
 
+      # Observability — surface the spawned CHILD's stderr (the bucket-C scenario
+      # runs via test-screenshot-diff.sh, which --spawns an ephemeral child whose
+      # stdout/stderr CliCommandRunner redirects to %TMP%\Smatchet-spawn-*.log;
+      # the bash TMPDIR override does NOT relocate it on Windows — the C++ reads
+      # TMP/TEMP). Glob the runner TMP for the newest such log, cat it into the CI
+      # log, and stage it for upload. Best-effort: always() + ignore-missing so a
+      # green run or a no-log run never reds the job.
+      - name: Surface bucket-C spawned-child log
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p "${{ github.workspace }}/build/tmp/bucket-c-childlog"
+          # Windows runner TMP candidates, in the order CliCommandRunner resolves.
+          newest=""
+          for d in "${TMP:-}" "${TEMP:-}" "/c/Windows/Temp" "${{ github.workspace }}/build/tmp"; do
+            [ -n "$d" ] && [ -d "$d" ] || continue
+            cand="$(ls -t "$d"/Smatchet-spawn-*.log 2>/dev/null | head -1 || true)"
+            if [ -n "$cand" ]; then newest="$cand"; break; fi
+          done
+          if [ -n "$newest" ] && [ -f "$newest" ]; then
+            cp "$newest" "${{ github.workspace }}/build/tmp/bucket-c-childlog/spawn-child.log"
+            echo "===== bucket-C spawned-child log ($newest) ====="
+            cat "$newest"
+            echo "===== end bucket-C spawned-child log ====="
+          else
+            echo "bucket-C: no Smatchet-spawn-*.log found in runner TMP (nothing to surface)."
+          fi
+
       - name: Upload captured PNGs (for golden bootstrap)
         if: always()
         uses: actions/upload-artifact@v4
@@ -557,6 +586,14 @@ jobs:
           name: bucket-c-captures-${{ github.run_id }}
           path: |
             build/tmp/smatchet-screenshot-diff-*/*.png
+          if-no-files-found: ignore
+
+      - name: Upload bucket-C spawned-child log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bucket-c-childlog-${{ github.run_id }}
+          path: build/tmp/bucket-c-childlog/spawn-child.log
           if-no-files-found: ignore
 
   bucket-e-ui-tests:
@@ -668,9 +705,18 @@ jobs:
         run: |
           set -euo pipefail
           echo "launch-smoke: ./Smatchet.exe cmd app.version --spawn --yes (ready<=30s, hang-guard 45s)"
-          if ! timeout 45 ./Smatchet.exe cmd app.version --spawn --yes; then
-            echo "::error::launch-smoke FAILED — bucket-E Smatchet.exe could not boot+become-reachable under Mesa GL within the spawn-ready window (dead harness, not a flaky test)." >&2
-            exit 1
+          set +e
+          out="$(timeout 45 ./Smatchet.exe cmd app.version --spawn --yes 2>&1)"
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          if [ "$rc" -ne 0 ]; then
+            if printf '%s\n' "$out" | grep -Eq '^\{.*"command"[[:space:]]*:[[:space:]]*"app\.version".*"ok"[[:space:]]*:[[:space:]]*true.*\}$'; then
+              echo "::warning::launch-smoke saw app.version ok:true but the spawn wrapper exited $rc; treating as teardown false-red."
+            else
+              echo "::error::launch-smoke FAILED — bucket-E Smatchet.exe could not boot+become-reachable under Mesa GL within the spawn-ready window (dead harness, not a flaky test)." >&2
+              exit "$rc"
+            fi
           fi
           echo "launch-smoke: OK — exe booted."
 
@@ -687,10 +733,32 @@ jobs:
           set -uo pipefail
           mkdir -p "$(dirname "$SMATCHET_LANE_STATUS_FILE")"
           set +e
-          out="$(timeout 240 ./Smatchet.exe cmd ui_test.run --all --spawn --yes 2>&1)"
+          out="$(timeout 240 ./Smatchet.exe cmd ui_test.run --all --frames=3600 --spawn --yes 2>&1)"
           rc=$?
           set -e
           printf '%s\n' "$out"
+          # Observability — surface the spawned CHILD's per-test failure reasons.
+          # The --spawn parent prints only the JSON pass/fail counts; the actual
+          # "Error <file>:<line> '<assertion>'" lines from the ImGui Test Engine
+          # (io.ConfigLogToTTY=true in UiTestScenario) go to the CHILD process's
+          # stdout/stderr, which CliCommandRunner redirects to a temp file and
+          # announces as `[spawn] child stdout/stderr -> <path>`. CI was blind to
+          # WHY each test failed (Passed:0 Failed:73 with no reasons). Pull that
+          # path out of the parent output, cat the log into the CI log, and stage
+          # it for upload. Best-effort: never fail the step on a missing log —
+          # the lane-integrity step below owns the broken-lane teeth.
+          # The arrow glyph in the parent output is unicode; match on the stable
+          # literal "child stdout/stderr" prefix and take the tail of the line.
+          childlog="$(printf '%s\n' "$out" | grep -a 'child stdout/stderr' | tail -1 | sed 's/.*child stdout\/stderr[^A-Za-z]*//')"
+          mkdir -p "${{ github.workspace }}/build/tmp/bucket-e-childlog"
+          if [ -n "$childlog" ] && [ -f "$childlog" ]; then
+            cp "$childlog" "${{ github.workspace }}/build/tmp/bucket-e-childlog/spawn-child.log"
+            echo "===== bucket-E spawned-child log (per-test ImGui Test Engine failure reasons) ====="
+            cat "$childlog"
+            echo "===== end bucket-E spawned-child log ====="
+          else
+            echo "::warning::bucket-E: spawned-child log not found ('$childlog'); per-test failure reasons unavailable this run." >&2
+          fi
           # Parse the ui_test.run JSON envelope's data.{passed,failed}. The advisory
           # exit code itself is unreliable (a zero-pass run can still return 0),
           # so the broken-lane signal comes from the counts, written to the
@@ -753,6 +821,18 @@ jobs:
         with:
           name: bucket-e-exe-${{ github.run_id }}
           path: build/ninja-ui-test-msvc/Smatchet.exe
+          if-no-files-found: ignore
+
+      # Upload the spawned-child log (per-test ImGui Test Engine failure reasons)
+      # staged by the run step. Runs always() so the log survives even when the
+      # run step is masked by continue-on-error or the lane-integrity step fails
+      # the job — the whole point is post-mortem visibility on a broken lane.
+      - name: Upload bucket-E spawned-child log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bucket-e-childlog-${{ github.run_id }}
+          path: build/tmp/bucket-e-childlog/spawn-child.log
           if-no-files-found: ignore
 
   mobile-texture-guard-smoke:

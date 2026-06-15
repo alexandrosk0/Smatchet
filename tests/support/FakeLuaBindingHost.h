@@ -42,6 +42,74 @@
 
 namespace smatchet_tests {
 
+// Mirrors AppController_LuaBindings.cpp's depth/node caps + bounded SAX handler
+// (security finding A). Kept byte-identical in intent so the fake's decode_json
+// rejects the same hostile payloads production does. If the production caps move,
+// move these too.
+constexpr int kDecodeJsonMaxDepth = 256;
+constexpr std::size_t kDecodeJsonMaxNodes = 200000u;
+
+class BoundedDecodeSax : public nlohmann::detail::json_sax_dom_parser<nlohmann::json> {
+  public:
+    using base = nlohmann::detail::json_sax_dom_parser<nlohmann::json>;
+    explicit BoundedDecodeSax(nlohmann::json& root) : base(root, /*allow_exceptions=*/false) {}
+
+    bool null() { return Count() && base::null(); }
+    bool boolean(bool v) { return Count() && base::boolean(v); }
+    bool number_integer(nlohmann::json::number_integer_t v) { return Count() && base::number_integer(v); }
+    bool number_unsigned(nlohmann::json::number_unsigned_t v) { return Count() && base::number_unsigned(v); }
+    bool number_float(nlohmann::json::number_float_t v, const nlohmann::json::string_t& s) {
+        return Count() && base::number_float(v, s);
+    }
+    bool string(nlohmann::json::string_t& v) { return Count() && base::string(v); }
+    bool binary(nlohmann::json::binary_t& v) { return Count() && base::binary(v); }
+
+    bool start_object(std::size_t elements) {
+        if (!Count() || !Descend()) {
+            return false;
+        }
+        return base::start_object(elements);
+    }
+    bool end_object() {
+        --depth_;
+        return base::end_object();
+    }
+    bool start_array(std::size_t elements) {
+        if (!Count() || !Descend()) {
+            return false;
+        }
+        return base::start_array(elements);
+    }
+    bool end_array() {
+        --depth_;
+        return base::end_array();
+    }
+    bool key(nlohmann::json::string_t& v) { return base::key(v); }
+
+    bool Overflowed() const { return overflowed_; }
+
+  private:
+    bool Count() {
+        if (++nodes_ > kDecodeJsonMaxNodes) {
+            overflowed_ = true;
+            return false;
+        }
+        return true;
+    }
+    bool Descend() {
+        if (depth_ >= kDecodeJsonMaxDepth) {
+            overflowed_ = true;
+            return false;
+        }
+        ++depth_;
+        return true;
+    }
+
+    int depth_ = 0;
+    std::size_t nodes_ = 0;
+    bool overflowed_ = false;
+};
+
 class FakeLuaBindingHost : public ILuaBindingHost {
   public:
     // ----- Observable fields (tests CHECK against these) -----
@@ -127,8 +195,26 @@ class FakeLuaBindingHost : public ILuaBindingHost {
         if (DecodeJsonImpl) {
             return DecodeJsonImpl(sv, s);
         }
+        // Mirror the production AppController::Impl::LuaDecodeJsonBind depth/node
+        // bound (security finding A): the ImGui-coupled production sink is not
+        // linked into SmatchetLuaTests, so the fake reproduces the bounded parse
+        // here to keep `decode_json` faithful and let the doctest assert the cap.
+        constexpr size_t kMaxDecodeBytes = 4u * 1024u * 1024u;
+        if (s.size() > kMaxDecodeBytes) {
+            return std::make_tuple(sol::make_object(sv, sol::nil), std::string("input too large"));
+        }
         try {
-            nlohmann::json j = nlohmann::json::parse(s);
+            nlohmann::json j;
+            BoundedDecodeSax sax(j);
+            const bool ok = nlohmann::json::sax_parse(s, &sax, nlohmann::json::input_format_t::json,
+                                                      /*strict=*/true, /*ignore_comments=*/false);
+            if (!ok) {
+                if (sax.Overflowed()) {
+                    return std::make_tuple(sol::make_object(sv, sol::nil),
+                                           std::string("input too deeply nested or too many elements"));
+                }
+                return std::make_tuple(sol::make_object(sv, sol::nil), std::string("invalid JSON"));
+            }
             sol::object obj = JsonToSolObject(sv, j);
             return std::make_tuple(obj, std::string());
         } catch (const std::exception& e) {

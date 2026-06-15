@@ -79,6 +79,7 @@ Full per-outcome semantics + halt-prompt return-code table + env knobs + REST co
 | `comment-commented-out-code`, `comment-decorative-banner`, `comment-blank-run` | all first-party C++ | comment-regrowth |
 | `function-too-long` | all first-party C++ | **120** lines non-UI / **200** ImGui-draw (path under `Ui/` OR name starts `Draw`/`Render`) |
 | `function-too-branchy` | all first-party C++ | **30** decision points |
+| `include-cycle` | `Source/Core/**` quote-includes | acyclicity + layer-DAG; delta-gated vs origin/develop; baseline-grandfathered; SCC>1 or low→high back-edge fails |
 | `agent-too-long` (`agent_size_audit.py`) | agent prompts / `AGENTS.md` | **250** / **150** lines |
 | `duplication` | all first-party C++ | copy-paste clone (WARN-first calibration) |
 | `interface-doc` (WARN) | `ITracker*.h`/`Tracker/*Client.h` ↔ `Tracker/AGENTS.md` | advisory: a doc-pinned `Type::method` changed in the header without a doc touch (symbol-pinned, not coarse — noise-spike-rejected) |
