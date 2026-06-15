@@ -7,7 +7,7 @@
 // "Log a Bug" opener. Registered from RegisterBuiltinCommands so the unified command
 // registry (and therefore CLI / Palette / MCP / Lua / the rebindable shortcut table)
 // can drive them from any surface. Handlers mutate `g_ui` on the UI thread.
-// See docs/plans/active/keyboard-shortcuts-rebindable.md.
+// See docs/plans/shipped/keyboard-shortcuts-rebindable.md.
 
 class AppController;
 

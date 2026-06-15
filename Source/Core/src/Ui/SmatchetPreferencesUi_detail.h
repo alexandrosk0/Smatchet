@@ -84,5 +84,6 @@ void DrawWhisperPreferencesTab(AppController& app, UiDrawSession& d);
 #endif
 
 void DrawLocalAndAppearancePreferencesTabs(SmatchetUI& ui, AppController& app, UiDrawSession& d);
+void DrawKeybindingsPreferencesTab(SmatchetUI& ui, AppController& app, UiDrawSession& d);
 void DrawTemplatePreferencesTabs(SmatchetUI& ui, AppController& app, UiDrawSession& d,
                                  SmatchetPreferencesUiTemplateFlags& flags);

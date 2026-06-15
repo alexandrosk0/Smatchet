@@ -13,6 +13,7 @@
 #include "Commands/CommandPaletteUi.h"
 #include "Commands/CommandRegistry.h"
 #include "ConfigManager.h"
+#include "KeybindingsConfig.h" // BoundHotkeyDisplay — live shortcut hints on menu items
 #include "Logger.h"
 #include "NavigationHistory.h"
 #include "SmatchetGridUiSupport.h"
@@ -62,6 +63,20 @@ struct MainMenuDrawCtx {
     bool hasTickets;
     bool trackerLocked;
 };
+
+// Live shortcut text for a menu item bound to a registry command. The keybinding registry is
+// authoritative (KeybindingsConfig::Defaults() is seeded on every config load — ConfigManager
+// load path), so the menu hint tracks user rebinds and clears instead of a stale literal. The
+// `fallback` literal is used only when the command has no binding row at all (not possible
+// post-seed, kept as a defensive default). A row whose hotkey was cleared shows no hint.
+static std::string MenuShortcut(const MainMenuDrawCtx& ctx, const char* commandId, const char* fallback) {
+    for (const Keybinding& b : ctx.d.cfg.Keybindings.Bindings) {
+        if (b.CommandId == commandId) {
+            return BoundHotkeyDisplay(ctx.d.cfg.Keybindings.Bindings, commandId);
+        }
+    }
+    return std::string(fallback);
+}
 
 void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
     if (!ImGui::BeginMainMenuBar()) {
@@ -381,7 +396,8 @@ void SmatchetUI::drawMenuBarAppearanceMenu(MainMenuDrawCtx& ctx) {
         return;
     }
 #ifndef SMATCHET_EMBEDDED_IN_UNREAL
-    if (ImGui::MenuItem("Full Screen", "F11", d.cfg.FullScreen)) {
+    if (ImGui::MenuItem("Full Screen", MenuShortcut(ctx, "app.fullscreen.toggle", "F11").c_str(),
+                        d.cfg.FullScreen)) {
         d.requestFullScreenToggle = true;
     }
 #endif
@@ -415,12 +431,14 @@ void SmatchetUI::drawMenuBarAppearanceMenu(MainMenuDrawCtx& ctx) {
         ConfigManager::Save(d.cfg);
     }
     ImGui::Separator();
-    if (ImGui::MenuItem("Primary Side Bar", "Ctrl+B", d.cfg.ShowPrimarySideBar)) {
+    if (ImGui::MenuItem("Primary Side Bar", MenuShortcut(ctx, "view.sidebar.primary", "Ctrl+B").c_str(),
+                        d.cfg.ShowPrimarySideBar)) {
         SetViewVisible(d.cfg, ViewSlot::PrimarySideBar, !d.cfg.ShowPrimarySideBar);
         recentViews_.Touch("view.toggle.primary-side-bar");
         ConfigManager::Save(d.cfg);
     }
-    if (ImGui::MenuItem("Secondary Side Bar", "Ctrl+Alt+B", d.cfg.ShowSecondarySideBar)) {
+    if (ImGui::MenuItem("Secondary Side Bar", MenuShortcut(ctx, "view.sidebar.secondary", "Ctrl+Alt+B").c_str(),
+                        d.cfg.ShowSecondarySideBar)) {
         SetViewVisible(d.cfg, ViewSlot::SecondarySideBar, !d.cfg.ShowSecondarySideBar);
         recentViews_.Touch("view.toggle.secondary-side-bar");
         ConfigManager::Save(d.cfg);
@@ -430,7 +448,7 @@ void SmatchetUI::drawMenuBarAppearanceMenu(MainMenuDrawCtx& ctx) {
         recentViews_.Touch("view.toggle.status-bar");
         ConfigManager::Save(d.cfg);
     }
-    if (ImGui::MenuItem("Panel", "Ctrl+J", d.cfg.ShowPanel)) {
+    if (ImGui::MenuItem("Panel", MenuShortcut(ctx, "view.panel.bottom", "Ctrl+J").c_str(), d.cfg.ShowPanel)) {
         SetViewVisible(d.cfg, ViewSlot::BottomPanel, !d.cfg.ShowPanel);
         recentViews_.Touch("view.toggle.panel");
         ConfigManager::Save(d.cfg);
@@ -447,7 +465,7 @@ void SmatchetUI::drawMenuBarViewMenu(MainMenuDrawCtx& ctx) {
     if (!ImGui::BeginMenu("View")) {
         return;
     }
-    if (ImGui::MenuItem("Command Palette...", "Ctrl+Shift+P")) {
+    if (ImGui::MenuItem("Command Palette...", MenuShortcut(ctx, "ui.command_palette", "Ctrl+Shift+P").c_str())) {
         commandPalette_.Open();
     }
     if (ImGui::MenuItem("Open View...", "Ctrl+Shift+V")) {
@@ -539,47 +557,55 @@ void SmatchetUI::drawMenuBarViewWindowToggles(MainMenuDrawCtx& ctx) {
         d.requestAuditTrailFocus = true;
         recentViews_.Touch("view.toggle.backend-audit");
     }
-    if (ImGui::MenuItem("Performance", "Ctrl+Shift+F", d.showPerformance)) {
+    if (ImGui::MenuItem("Performance", MenuShortcut(ctx, "view.toggle.performance", "Ctrl+Shift+F").c_str(),
+                        d.showPerformance)) {
         d.showPerformance = true;
         d.requestPerformanceFocus = true;
         recentViews_.Touch("view.toggle.performance");
     }
-    if (ImGui::MenuItem("Plan docs", "Ctrl+Shift+D", d.showPlanDocViewer)) {
+    if (ImGui::MenuItem("Plan docs", MenuShortcut(ctx, "view.toggle.plan_doc_viewer", "Ctrl+Shift+D").c_str(),
+                        d.showPlanDocViewer)) {
         d.showPlanDocViewer = true;
         d.requestPlanDocViewerFocus = true;
         recentViews_.Touch("view.toggle.plan_doc_viewer");
     }
-    if (ImGui::MenuItem("Bulk Import", "Ctrl+Shift+I", d.showBulkImport)) {
+    if (ImGui::MenuItem("Bulk Import", MenuShortcut(ctx, "view.toggle.bulk_import", "Ctrl+Shift+I").c_str(),
+                        d.showBulkImport)) {
         d.showBulkImport = true;
         d.requestBulkImportFocus = true;
         recentViews_.Touch("view.toggle.bulk-import");
     }
-    if (ImGui::MenuItem("Bulk Export", "Ctrl+Shift+X", d.showBulkExport)) {
+    if (ImGui::MenuItem("Bulk Export", MenuShortcut(ctx, "view.toggle.bulk_export", "Ctrl+Shift+X").c_str(),
+                        d.showBulkExport)) {
         d.showBulkExport = true;
         d.requestBulkExportFocus = true;
         recentViews_.Touch("view.toggle.bulk-export");
     }
-    if (ImGui::MenuItem("Preferences", "Ctrl+,", d.showPreferences)) {
+    if (ImGui::MenuItem("Preferences", MenuShortcut(ctx, "view.toggle.preferences", "Ctrl+,").c_str(),
+                        d.showPreferences)) {
         d.showPreferences = true;
         d.requestPreferencesFocus = true;
         recentViews_.Touch("view.toggle.preferences");
     }
 #if defined(SMATCHET_WITH_MCP)
-    if (ImGui::MenuItem("MCP Server", "Ctrl+Shift+K", d.showMcpServerWindow)) {
+    if (ImGui::MenuItem("MCP Server", MenuShortcut(ctx, "view.toggle.mcp_server", "Ctrl+Shift+K").c_str(),
+                        d.showMcpServerWindow)) {
         d.showMcpServerWindow = true;
         d.requestMcpServerFocus = true;
         recentViews_.Touch("view.toggle.mcp-server");
     }
 #endif
 #if defined(SMATCHET_WITH_AI)
-    if (ImGui::MenuItem("Assistant", "Ctrl+Shift+A", d.assistantPanelOpen)) {
+    if (ImGui::MenuItem("Assistant", MenuShortcut(ctx, "view.assistant", "Ctrl+Shift+A").c_str(),
+                        d.assistantPanelOpen)) {
         d.assistantPanelOpen = true;
         d.requestAssistantFocus = true;
         recentViews_.Touch("view.toggle.assistant");
     }
 #endif
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-    if (ImGui::MenuItem("Scripts & Actions", "Ctrl+Shift+L", d.showLuaAutomationWindow)) {
+    if (ImGui::MenuItem("Scripts & Actions", MenuShortcut(ctx, "view.toggle.scripts", "Ctrl+Shift+L").c_str(),
+                        d.showLuaAutomationWindow)) {
         d.showLuaAutomationWindow = true;
         d.requestLuaAutomationFocus = true;
         d.requestScriptingEditorTabFocus = true;
@@ -608,7 +634,7 @@ void SmatchetUI::drawMenuBarRunMenu(MainMenuDrawCtx& ctx) {
 void SmatchetUI::drawMenuBarToolsMenu(MainMenuDrawCtx& ctx) {
     UiDrawSession& d = ctx.d;
     if (ImGui::BeginMenu("Tools")) {
-        if (ImGui::MenuItem("Preferences...", "Ctrl+,")) {
+        if (ImGui::MenuItem("Preferences...", MenuShortcut(ctx, "view.toggle.preferences", "Ctrl+,").c_str())) {
             d.showPreferences = true;
             d.requestPreferencesFocus = true;
         }
@@ -635,7 +661,8 @@ void SmatchetUI::drawMenuBarHelpMenu(MainMenuDrawCtx& ctx) {
         if (ImGui::MenuItem("Check for Updates...", nullptr, false, !d.appUpdateCheckInFlight)) {
             smatchet::ui_detail::StartAppUpdateCheck(d, app, true);
         }
-        if (ImGui::MenuItem("Report a Bug...", d.cfg.BugReportHotkey.c_str())) {
+        if (ImGui::MenuItem("Report a Bug...",
+                            MenuShortcut(ctx, "app.bug_report.open", d.cfg.BugReportHotkey.c_str()).c_str())) {
             d.showBugReport = true;
             d.bugReportOpenLatch = true;
             // Opener owns the screenshot toggle — seed from config (the modal no longer does).
