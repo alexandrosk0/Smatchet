@@ -210,6 +210,36 @@ JSON
     [[ "$output" != *"PR #2006"* ]]
 }
 
+# --- sourced-scope proof (de-dup of the allow-list constant) ----------------
+# The allow-list regex is now SOURCED from merge-gates.sh's
+# MERGE_GATES_BLOCK_ALLOWLIST_RE rather than hand-copied. These two pin the
+# sourced content: Coverage IS owed (above), a dropped Bucket-* is NOT.
+
+@test "non-allowlist non-required (Bucket-E UI tests) red owes nothing — #1258 regression guard" {
+    # The #1258 false-flag: a stale branch's hand-synced copy still carried
+    # `Bucket-|`, so a red Bucket-E lane (Mesa-GL, can't boot the exe) was
+    # mis-flagged. The sourced list dropped Bucket-* in lock-step → not owed.
+    prlist <<'JSON'
+[{"number":2008,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"a8"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Bucket-E UI tests (Mesa headless GL)","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"PR #2008"* ]]
+}
+
+@test "allow-list is sourced from merge-gates.sh, not hand-duplicated (drift guard)" {
+    # Guards the exact duplication that drifted and caused #1258: there must be a
+    # `source merge-gates.sh`, and the ONLY ALLOW_LIST_RE assignment must read the
+    # sourced constant (never re-hardcode the regex literal).
+    run grep -cE 'source .*merge-gates\.sh' "$SCRIPT"
+    [ "$status" -eq 0 ]
+    run grep -nE 'ALLOW_LIST_RE=' "$SCRIPT"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'ALLOW_LIST_RE="$MERGE_GATES_BLOCK_ALLOWLIST_RE"'* ]]
+    [[ "$output" != *"Coverage"* ]]
+}
+
 # ============================================================================
 # Trigger 2 — moot vs load-bearing override (item 2)
 # ============================================================================
