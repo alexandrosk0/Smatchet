@@ -994,7 +994,7 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
             } else if (v.is_string()) {
                 try {
                     frames = std::stoi(v.get<std::string>());
-                } catch (...) {
+                } catch (...) { // catch-all-ok: malformed frames string falls back to the default.
                 }
             }
         }
@@ -1036,7 +1036,7 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
             MakeErrorEnvelope(commandName, "handler-error", std::string("--spawn: internal error: ") + e.what());
         try {
             EmitErrorToStderr(env);
-        } catch (...) {
+        } catch (...) { // catch-all-ok: already handling a spawn exception; preserve handler exit code.
         }
         return kExitHandler;
     } catch (...) {
@@ -1532,7 +1532,7 @@ int RunCmdAttach(int argc, char** argv) {
                               "This is a bug — bad input should produce a structured error, not throw.");
         try {
             EmitErrorToStderr(env);
-        } catch (...) {
+        } catch (...) { // catch-all-ok: already handling a CLI exception; preserve handler exit code.
         }
         return kExitHandler;
     } catch (...) {
