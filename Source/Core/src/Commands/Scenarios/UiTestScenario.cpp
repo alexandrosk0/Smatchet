@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <string>
 #include <utility>
 
 namespace smatchet {
@@ -44,6 +45,51 @@ std::atomic<AppController*> g_active_app{nullptr};
 extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine);
 #endif
 
+#if defined(SMATCHET_BUILD_UI_TESTS)
+void AppendUiTestFailures(ImGuiTestEngine* engine, nlohmann::json& out) {
+    nlohmann::json failures = nlohmann::json::array();
+    if (engine != nullptr) {
+        ImVector<ImGuiTest*> tests;
+        ImGuiTestEngine_GetTestList(engine, &tests);
+        for (int i = 0; i < tests.Size; ++i) {
+            ImGuiTest* test = tests[i];
+            if (test == nullptr || test->Output.Status != ImGuiTestStatus_Error) {
+                continue;
+            }
+
+            ImGuiTextBuffer log;
+            test->Output.Log.ExtractLinesForVerboseLevels(ImGuiTestVerboseLevel_Error, ImGuiTestVerboseLevel_Trace,
+                                                          &log);
+            std::string logText = log.empty() ? std::string(test->Output.Log.GetText()) : std::string(log.c_str());
+            if (logText.size() > 2000) {
+                logText.resize(2000);
+                logText += "...";
+            }
+            failures.push_back({{"category", test->Category ? test->Category : ""},
+                                {"name", test->Name ? test->Name : ""},
+                                {"log", logText}});
+        }
+    }
+    out["failures"] = failures;
+}
+
+bool HasQueuedOrRunningUiTest(ImGuiTestEngine* engine) {
+    if (engine == nullptr) {
+        return false;
+    }
+    ImVector<ImGuiTest*> tests;
+    ImGuiTestEngine_GetTestList(engine, &tests);
+    for (int i = 0; i < tests.Size; ++i) {
+        ImGuiTest* test = tests[i];
+        if (test != nullptr &&
+            (test->Output.Status == ImGuiTestStatus_Queued || test->Output.Status == ImGuiTestStatus_Running)) {
+            return true;
+        }
+    }
+    return false;
+}
+#endif
+
 } // namespace
 
 UiTestScenario::UiTestScenario() = default;
@@ -69,6 +115,8 @@ void UiTestScenario::OnStart(AppController& app, const nlohmann::json& args, std
     }
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
+    runAll_ = filter_.empty();
+
     ImGuiContext* uiCtx = ImGui::GetCurrentContext();
     if (uiCtx == nullptr) {
         outErr = "ui_test.run: no active ImGuiContext at OnStart";
@@ -104,13 +152,7 @@ void UiTestScenario::OnStart(AppController& app, const nlohmann::json& args, std
     g_active_engine.store(engine_, std::memory_order_release);
     g_active_app.store(&app, std::memory_order_release);
 
-    // QueueTests with an empty filter runs every registered test in the
-    // ImGuiTestGroup_Tests group. The filter is a comma-separated wildcard
-    // list — pass the user-supplied --name= verbatim.
-    const char* filterArg = filter_.empty() ? nullptr : filter_.c_str();
-    ImGuiTestEngine_QueueTests(engine_, ImGuiTestGroup_Tests, filterArg, ImGuiTestRunFlags_None);
-    startedQueue_ = true;
-    LOG_INFO("ui_test.run: queued tests (filter='%s')", filterArg ? filterArg : "(all)");
+    LOG_INFO("ui_test.run: engine started (filter='%s')", filter_.empty() ? "(all)" : filter_.c_str());
 #else
     (void)app;
     (void)outErr;
@@ -119,10 +161,25 @@ void UiTestScenario::OnStart(AppController& app, const nlohmann::json& args, std
 #endif
 }
 
-void UiTestScenario::OnFrame(AppController& /*app*/, int /*frameIndex*/) {
-    // Engine is driven by ImGuiTestEngine_PostSwap from Source/Standalone's
-    // glfwSwapBuffers hook (see SmatchetActiveUiTestEngine accessor). Nothing
-    // to do here.
+void UiTestScenario::OnFrame(AppController& /*app*/, int frameIndex) {
+#if defined(SMATCHET_BUILD_UI_TESTS)
+    if (engine_ == nullptr || startedQueue_) {
+        return;
+    }
+    if (frameIndex < 1) {
+        return;
+    }
+    // Queue after the engine's NewFrame hook has synchronized its frame
+    // counter. Queueing immediately in OnStart can run before that hook in a
+    // long-lived spawned app and the test engine marks every test as a
+    // "missing signal" error before any test body executes.
+    const char* filterArg = filter_.empty() ? nullptr : filter_.c_str();
+    ImGuiTestEngine_QueueTests(engine_, ImGuiTestGroup_Tests, filterArg, ImGuiTestRunFlags_None);
+    startedQueue_ = true;
+    LOG_INFO("ui_test.run: queued tests (filter='%s')", filterArg ? filterArg : "(all)");
+#else
+    (void)frameIndex;
+#endif
 }
 
 bool UiTestScenario::IsDone(int frameIndex) const {
@@ -130,14 +187,20 @@ bool UiTestScenario::IsDone(int frameIndex) const {
         return true;
     }
 #if defined(SMATCHET_BUILD_UI_TESTS)
-    if (engine_ == nullptr || !startedQueue_) {
+    if (engine_ == nullptr) {
         return true;
+    }
+    if (!startedQueue_) {
+        return false;
     }
     // Give the engine at least one frame to dequeue before claiming "done".
     if (frameIndex < 1) {
         return false;
     }
-    return ImGuiTestEngine_IsTestQueueEmpty(engine_);
+    if (runAll_) {
+        return ImGuiTestEngine_IsTestQueueEmpty(engine_);
+    }
+    return !HasQueuedOrRunningUiTest(engine_) && ImGuiTestEngine_IsTestQueueEmpty(engine_);
 #else
     (void)frameIndex;
     return true;
@@ -155,6 +218,7 @@ nlohmann::json UiTestScenario::OnFinish(AppController& /*app*/) {
 #if defined(SMATCHET_BUILD_UI_TESTS)
     if (engine_ != nullptr) {
         ImGuiTestEngine_GetResult(engine_, tested_, passed_);
+        AppendUiTestFailures(engine_, out);
         ImGuiTestEngine_Stop(engine_);
         g_active_engine.store(nullptr, std::memory_order_release);
         g_active_app.store(nullptr, std::memory_order_release);

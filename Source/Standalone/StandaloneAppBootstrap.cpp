@@ -79,8 +79,10 @@
 #if defined(SMATCHET_BUILD_UI_TESTS)
 // Fixture-backed backend injection for deterministic Jira UI tests.
 // Headers live in tests/support/ — added to the include path by tests/ui/CMakeLists.txt.
+#include "Commands/Scenarios/UiTestScenario.h"
 #include "JiraFakeTrackerFixture.h"
 #include "ScriptedTrackerBackendFactory.h"
+#include "imgui_te_engine.h"
 #endif
 
 #if defined(__APPLE__)
@@ -684,16 +686,17 @@ void RunRenderLoop(BootstrapContext& ctx, const std::function<bool()>& shouldSto
         ImGui::NewFrame();
         ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_None);
 
-        // Scenarios().Tick MUST run INSIDE the NewFrame/Render bracket: the production
-        // loop drives it from SmatchetUI::Draw (between NewFrame and Render), and a
-        // scenario's OnFrame may touch per-frame ImGui state (GetForegroundDrawList,
-        // GetWindowDrawList) that null-derefs with no active frame (the #1133 fault-
-        // injector crash). Ticking before NewFrame here would crash the ephemeral child.
+        SmatchetDrawFrameWithSeh(*ctx.mainWindow, *ctx.app, *ctx.pluginHost);
+
+        // Scenarios().Tick MUST run INSIDE the NewFrame/Render bracket and after
+        // the app draw, matching SmatchetUI::Draw's production ordering. Scenario
+        // OnFrame may touch per-frame ImGui state (GetForegroundDrawList,
+        // GetWindowDrawList), and ui_test.run completion must observe the frame
+        // after test GuiFunc submission rather than racing ahead of it.
         bool scenScrollActive = false;
         int scenScrollTarget = -1;
         ctx.app->Scenarios().Tick(*ctx.app, scenScrollActive, scenScrollTarget);
 
-        SmatchetDrawFrameWithSeh(*ctx.mainWindow, *ctx.app, *ctx.pluginHost);
         ImGui::Render();
 
         int display_w = 0;
@@ -721,6 +724,12 @@ void RunRenderLoop(BootstrapContext& ctx, const std::function<bool()>& shouldSto
         }
         SmatchetApplyPendingWindowResize(ctx.window);
         SmatchetWritePendingScreenshot(ctx);
+
+#if defined(SMATCHET_BUILD_UI_TESTS)
+        if (ImGuiTestEngine* uiTestEngine = SmatchetActiveUiTestEngine()) {
+            ImGuiTestEngine_PostSwap(uiTestEngine);
+        }
+#endif
 
         if (shouldStop && shouldStop()) {
             break;
