@@ -10,6 +10,7 @@
 
 #include "GridPane.h"
 #include "SmatchetUiSession.h"
+#include "Ui/SmatchetTooltipWheelRouter.h"
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -123,6 +124,7 @@ void DrawScrollableTooltip(WheelRouteState& s, const ImRect& tableRect) {
 void DrawGridWindow(WheelRouteState& s) {
     ImGui::SetNextWindowPos(ImVec2(60, 80), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(330, 220), ImGuiCond_Always);
+    (void)smatchet::ui::RouteWheelToScrollableTooltip();
     if (ImGui::Begin("SmatchetTest::WheelRouteGrid", nullptr, kWindowFlags)) {
         const ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollX |
                                       ImGuiTableFlags_ScrollY;
@@ -232,10 +234,10 @@ void RegisterTests(ImGuiTestEngine* engine) {
         ctx->WindowFocus("//SmatchetTest::WheelRouteGrid");
         IM_CHECK_NO_RET(YieldUntil(ctx, [&] { return s->tableReady && s->tooltipReady; }));
         ctx->MouseMoveToPos(s->tooltipCenter);
+        ctx->Yield();
         ctx->MouseWheelY(-1.0f);
-        ctx->Yield();
-        ctx->Yield();
-        if (s->tooltipScrollY <= 0.0f) {
+        const bool tooltipScrolled = YieldUntil(ctx, [&] { return s->tooltipScrollY > 0.0f; }, 12);
+        if (!tooltipScrolled) {
             ctx->LogError("wheel over scrollable tooltip did not scroll tooltip: tooltipScrollY=%.2f tooltipMaxY=%.2f",
                           s->tooltipScrollY, s->tooltipScrollMaxY);
             IM_CHECK(false);

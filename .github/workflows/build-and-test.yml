@@ -686,7 +686,10 @@ jobs:
         run: |
           set -uo pipefail
           mkdir -p "$(dirname "$SMATCHET_LANE_STATUS_FILE")"
-          out="$(timeout 240 ./Smatchet.exe cmd ui_test.run --all --spawn --yes 2>&1)"; rc=$?
+          set +e
+          out="$(timeout 240 ./Smatchet.exe cmd ui_test.run --all --spawn --yes 2>&1)"
+          rc=$?
+          set -e
           printf '%s\n' "$out"
           # Parse the ui_test.run JSON envelope's data.{passed,failed}. The advisory
           # exit code itself is unreliable (a zero-pass run can still return 0),

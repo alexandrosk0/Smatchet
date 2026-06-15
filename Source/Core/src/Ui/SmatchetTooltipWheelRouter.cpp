@@ -67,23 +67,43 @@ void ApplyVerticalWheelToTooltip(ImGuiWindow* tooltipOwner, float wheelY) {
     }
 }
 
+void RestoreWheelFromNonTooltipWindow(ImGuiContext* g, ImGuiWindow* tooltipOwner, float wheelY) {
+    if (!g || !g->WithinFrameScope || !tooltipOwner || std::abs(wheelY) <= 0.0f) {
+        return;
+    }
+
+    ImGuiWindow* wheelOwner = g->WheelingWindow;
+    if (!wheelOwner || wheelOwner == tooltipOwner || HasTooltipAncestor(wheelOwner, true) ||
+        wheelOwner->ScrollMax.y <= 0.0f) {
+        return;
+    }
+
+    const float step = WindowVerticalWheelStep(wheelOwner);
+    if (step > 0.0f) {
+        ImGui::SetScrollY(wheelOwner, wheelOwner->Scroll.y + wheelY * step);
+    }
+}
+
 } // namespace
 
 namespace smatchet {
 namespace ui {
 
-void RouteWheelToScrollableTooltipBeforeNewFrame() {
+bool RouteWheelToScrollableTooltip() {
     ImGuiContext* g = ImGui::GetCurrentContext();
     ImGuiWindow* tooltipOwner = FindScrollableTooltipOwner(g, true);
     if (!g || !tooltipOwner) {
-        return;
+        return false;
     }
 
+    bool consumed = false;
     ImGuiIO& io = ImGui::GetIO();
-    if (std::abs(io.MouseWheel) > 0.0f) {
+    if (std::abs(io.MouseWheel) > 0.0f || std::abs(io.MouseWheelH) > 0.0f) {
+        RestoreWheelFromNonTooltipWindow(g, tooltipOwner, io.MouseWheel);
         ApplyVerticalWheelToTooltip(tooltipOwner, io.MouseWheel);
         io.MouseWheel = 0.0f;
         io.MouseWheelH = 0.0f;
+        consumed = true;
     }
 
     for (int i = 0; i < g->InputEventsQueue.Size; ++i) {
@@ -91,10 +111,19 @@ void RouteWheelToScrollableTooltipBeforeNewFrame() {
         if (e.Type != ImGuiInputEventType_MouseWheel) {
             continue;
         }
+        if (std::abs(e.MouseWheel.WheelX) > 0.0f || std::abs(e.MouseWheel.WheelY) > 0.0f) {
+            consumed = true;
+        }
+        RestoreWheelFromNonTooltipWindow(g, tooltipOwner, e.MouseWheel.WheelY);
         ApplyVerticalWheelToTooltip(tooltipOwner, e.MouseWheel.WheelY);
         e.MouseWheel.WheelX = 0.0f;
         e.MouseWheel.WheelY = 0.0f;
     }
+    return consumed;
+}
+
+void RouteWheelToScrollableTooltipBeforeNewFrame() {
+    (void)RouteWheelToScrollableTooltip();
 }
 
 bool HasOpenScrollableTooltip() {

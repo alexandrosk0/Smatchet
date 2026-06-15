@@ -353,3 +353,42 @@ jobs:
       - name: agent-size gate — agent prompt / AGENTS.md line budget (delta vs develop)
         if: steps.detect.outputs.docs == 'true'
         run: python3 agents/scripts/core/agent_size_audit.py --diff origin/develop
+
+  # Advisory (WARN-first, NON-required) PR-body lint: flag a PR whose body has
+  # no filled `## Intent` section (the one-line redacted statement of the
+  # originating human ask — see docs/agent-rules/ship-loops.md § Intent capture).
+  # PR-only (no push / merge_group), always exits 0 → emits a `::warning::`,
+  # never a red check, so it can NEVER block a merge (AGENTS.md § Merge gates:
+  # "Never merge past ANY red check"). Sibling-precedent: `autosync-plan-index`
+  # is the other PR-only non-required job in this workflow. Deliberately NOT in
+  # project.config.json § branch_protection → not a required context.
+  pr-intent-lint:
+    name: Intent section (advisory)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check PR body has a filled ## Intent section
+        # The PR body is untrusted input — route it through the env (never inline
+        # ${{ }} expansion into the script body, which would let backticks / $()
+        # in a title re-parse as shell). See the autosync-plan-index job header.
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          python3 - <<'PY'
+          import os, re, sys
+          body = os.environ.get("PR_BODY", "") or ""
+          guide = "see docs/agent-rules/ship-loops.md § Intent capture"
+          m = re.search(r'(?ms)^##\s+Intent\s*$(.*?)(?=^##\s|\Z)', body)
+          if not m:
+              print("::warning title=Intent section missing::PR body has no `## Intent` "
+                    "section. Add a one-line redacted statement of the originating ask (%s)." % guide)
+              sys.exit(0)
+          # Strip HTML-comment template placeholder before the empty check.
+          section = re.sub(r'(?s)<!--.*?-->', '', m.group(1)).strip()
+          if not section:
+              print("::warning title=Intent section empty::PR body `## Intent` is empty or "
+                    "only the template placeholder. Fill it with the originating ask (%s)." % guide)
+              sys.exit(0)
+          print("Intent section present and filled.")
+          PY
