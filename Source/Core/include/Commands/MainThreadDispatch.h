@@ -27,7 +27,7 @@
 //   (b) AppController::mainThreadDispatcher.BeginShutdown() was called.
 // Case (b) returns immediately with a SetException error.
 
-#include "AppController.h"
+#include "Commands/IMainThreadPoster.h"
 #include "Commands/Command.h"
 
 #include <exception>
@@ -40,7 +40,7 @@ namespace cmd {
 /// Run `fn` on the UI thread and return its result. Type-erased over the result type so
 /// it works for `CommandResult`, `bool`, plain JSON, etc. — but the most common usage is
 /// `RunOnUiThread<CommandResult>(app, []() -> CommandResult { ... });`.
-template <typename Result, typename Fn> Result RunOnUiThread(AppController& app, Fn fn) {
+template <typename Result, typename Fn> Result RunOnUiThread(IMainThreadPoster& app, Fn fn) {
     // Fast path: already on UI thread.
     if (app.IsOnUiThread()) {
         return fn();
@@ -49,7 +49,7 @@ template <typename Result, typename Fn> Result RunOnUiThread(AppController& app,
     // Slow path: cross-thread hop via the bounded main-thread dispatcher.
     auto promise = std::make_shared<std::promise<Result>>();
     auto future = promise->get_future();
-    app.mainThreadDispatcher.PostToMainThread([promise, fn = std::move(fn)]() mutable {
+    app.PostToMainThread([promise, fn = std::move(fn)]() mutable {
         try {
             promise->set_value(fn());
         } catch (...) {
@@ -66,7 +66,7 @@ template <typename Result, typename Fn> Result RunOnUiThread(AppController& app,
 /// Specialisation-free helper for handlers that already return `CommandResult`. Catches
 /// any exception escaped from `fn` and converts it into a `HandlerError` envelope so the
 /// CLI gets a well-formed response instead of an unhandled exception from `future::get()`.
-template <typename Fn> CommandResult RunOnUiThreadAsCommandResult(AppController& app, Fn fn) {
+template <typename Fn> CommandResult RunOnUiThreadAsCommandResult(IMainThreadPoster& app, Fn fn) {
     try {
         return RunOnUiThread<CommandResult>(app, std::move(fn));
     } catch (const std::exception& e) {

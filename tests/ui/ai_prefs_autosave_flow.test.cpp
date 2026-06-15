@@ -238,7 +238,7 @@ void RegisterVerifyOnSaveTestConnectionVariant(ImGuiTestEngine* engine) {
 
         IM_CHECK(!g_ui.assistantPrefsTestInFlight);
         IM_CHECK_EQ(g_ui.assistantPrefsTestResultType, 1);
-        IM_CHECK_STR_EQ(g_ui.assistantPrefsTestResult.c_str(), "Verified.");
+        IM_CHECK_STR_EQ(g_ui.assistantPrefsTestResult.c_str(), "Verified");
     };
 }
 

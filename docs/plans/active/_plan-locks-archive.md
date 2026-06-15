@@ -3,15 +3,15 @@
 > **🛑 FROZEN at Phase 6 cutover (2026-05-17).**
 >
 > This file is no longer the live coordination surface. New plan-lock claims
-> live in `refs/locks/<slug>` per the [`git-ref-plan-locks`](./git-ref-plan-locks.md) design.
+> live in `refs/locks/<slug>` per the [`git-ref-plan-locks`](../shipped/git-ref-plan-locks.md) design.
 >
 > - **Live coordination state**: `bash scripts/dev/locks-show.sh` (canonical) or
 >   [`_plan-locks.generated.md`](./_plan-locks.generated.md) (snapshot, may lag up to 30 min).
 > - **Claim a new lock**: `bash scripts/dev/lock-claim.sh <slug> <write-set-file>`.
 > - **Update scope mid-slice**: `bash scripts/dev/lock-claim-update.sh <slug> <write-set-file>`.
 > - **Release a lock (manual)**: `bash scripts/dev/lock-release.sh <slug>` — usually auto-handled by
->   [`.github/workflows/lock-cleanup.yml`](../../.github/workflows/lock-cleanup.yml) on PR-merge.
-> - **Plan + rationale**: [`docs/plans/shipped/git-ref-plan-locks.md`](./git-ref-plan-locks.md).
+>   [`.github/workflows/lock-cleanup.yml`](../../../.github/workflows/lock-cleanup.yml) on PR-merge.
+> - **Plan + rationale**: [`docs/plans/shipped/git-ref-plan-locks.md`](../shipped/git-ref-plan-locks.md).
 >
 > Hand-edits below the Protocol section are **no longer authoritative** and may be removed
 > in future archive cleanups. The Protocol section is retained for reference on the
@@ -71,7 +71,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/h12-l16-m13-bundle`
 - **Owner agent**: `claude` (orchestrator-dispatched general-purpose)
-- **Originating plan**: [`docs/plans/shipped/pillar-1-2-audit-2026-05-17.md`](archive/pillar-1-2-audit-2026-05-17.md) § Open / backlog — H12 + L16 + M13
+- **Originating plan**: [`docs/plans/shipped/pillar-1-2-audit-2026-05-17.md`](../shipped/pillar-1-2-audit-2026-05-17.md) § Open / backlog — H12 + L16 + M13
 - **Claimed write set**:
   - `Source_Core/src/SmatchetBulkTicketsUi.cpp` (H12 — Load file + Save to file buttons)
   - `Source_Core/src/SmatchetFieldIconRender.cpp` (L16 — URL-disk-cache-hit branch + file-path branch)
@@ -88,7 +88,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/configmanager-save-coalesce` (deleted)
 - **Owner agent**: `claude` (orchestrator-dispatched)
-- **Originating plan**: [`docs/plans/shipped/pillar-1-2-audit-2026-05-17.md`](archive/pillar-1-2-audit-2026-05-17.md) § H11 + § Pillar 1 P1
+- **Originating plan**: [`docs/plans/shipped/pillar-1-2-audit-2026-05-17.md`](../shipped/pillar-1-2-audit-2026-05-17.md) § H11 + § Pillar 1 P1
 - **Claimed write set**:
   - `Source_Core/include/SmatchetUiSession.h` (MOD — add `prefsDirty` + `prefsSaveDueAt` + `MarkPrefsDirty` helper)
   - `Source_Core/src/SmatchetPreferencesUi.cpp` (MOD — 31 sites replaced with `MarkPrefsDirty(d)`; 3 AI Assistant tab sites preserved at lines 953/1024/1048)
@@ -104,7 +104,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/pillar-2-top5-fixes`
 - **Owner agent**: `claude` (orchestrator-dispatched)
-- **Originating plan**: [`docs/plans/shipped/pillar-1-2-audit-2026-05-17.md`](archive/pillar-1-2-audit-2026-05-17.md) § Pillar 2 — CRITICAL (findings 1-9)
+- **Originating plan**: [`docs/plans/shipped/pillar-1-2-audit-2026-05-17.md`](../shipped/pillar-1-2-audit-2026-05-17.md) § Pillar 2 — CRITICAL (findings 1-9)
 - **Claimed write set**:
   - `Source_Core/src/SmatchetFieldIconRender.cpp` (finding #1 — icon fetch worker dispatch + loading sentinel)
   - `Source_Core/src/SmatchetAttachmentPreviewUi.cpp` (finding #2 — attachment download worker dispatch)
@@ -189,7 +189,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `fix/ai-feature-p0-p1-hotfix` (deleted)
 - **Owner agent**: `orchestrator`
-- **Originating plan**: orchestrator-direct (retrospective review of [`docs/plans/shipped/ai-assistant-side-panel.md`](./archive/ai-assistant-side-panel.md) by `code-review` + `security-review` after merge of Phase E; 4 CRITICAL + 8 HIGH findings)
+- **Originating plan**: orchestrator-direct (retrospective review of [`docs/plans/shipped/ai-assistant-side-panel.md`](../shipped/ai-assistant-side-panel.md) by `code-review` + `security-review` after merge of Phase E; 4 CRITICAL + 8 HIGH findings)
 - **Claimed write set**:
   - `Source_Core/src/AnthropicClient.cpp` (MOD — redact error body)
   - `Source_Core/src/OllamaClient.cpp` (MOD — redact error body)
@@ -241,7 +241,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/ai-assistant-side-panel-phase-e` (deleted)
 - **Owner agent**: `lua-binder`
-- **Originating plan**: [`docs/plans/shipped/ai-assistant-side-panel.md`](./archive/ai-assistant-side-panel.md) § File-level changes (Phase E rows) — Lua glue + stubs + LayoutSchemaVersion bump + README/LUA_GUIDE bullets
+- **Originating plan**: [`docs/plans/shipped/ai-assistant-side-panel.md`](../shipped/ai-assistant-side-panel.md) § File-level changes (Phase E rows) — Lua glue + stubs + LayoutSchemaVersion bump + README/LUA_GUIDE bullets
 - **Claimed write set**:
   - `Source_Core/src/AppController_LuaBindings.cpp` (MOD — restore 3 `ai.*` glues registered on `state["ai"]`)
   - `Source_Core/src/AppController_LuaStubs.cpp` (MOD — no-op stub parity for `ai.*` Lua-callable names so script-load works under `SMATCHET_WITH_LUA_AUTOMATION=0`)
@@ -260,7 +260,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/ai-assistant-side-panel-phase-d`
 - **Owner agent**: `claude` (orchestrator-direct implementer, per plan)
-- **Originating plan**: [`docs/plans/shipped/ai-assistant-side-panel.md`](./archive/ai-assistant-side-panel.md) § Streaming protocol (Anthropic SSE + Ollama native) + § File-level changes (Phase D rows) + § Preferences extension
+- **Originating plan**: [`docs/plans/shipped/ai-assistant-side-panel.md`](../shipped/ai-assistant-side-panel.md) § Streaming protocol (Anthropic SSE + Ollama native) + § File-level changes (Phase D rows) + § Preferences extension
 - **Claimed write set**:
   - `Source_Core/include/AiNdjsonParser.h` (NEW — line-buffered NDJSON sibling to `AiSseParser`)
   - `Source_Core/src/AiNdjsonParser.cpp` (NEW)
@@ -284,7 +284,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/ai-assistant-side-panel-phase-c` (deleted)
 - **Owner agent**: `claude` (orchestrator-direct implementer, per plan)
-- **Originating plan**: [`docs/plans/shipped/ai-assistant-side-panel.md`](./archive/ai-assistant-side-panel.md) § agents.md loader + § Auto-context blocks + § File-level changes (Phase C rows)
+- **Originating plan**: [`docs/plans/shipped/ai-assistant-side-panel.md`](../shipped/ai-assistant-side-panel.md) § agents.md loader + § Auto-context blocks + § File-level changes (Phase C rows)
 - **Claimed write set**:
   - `Source_Core/include/AgentsMdLoader.h` (NEW)
   - `Source_Core/src/AgentsMdLoader.cpp` (NEW)
@@ -307,7 +307,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/ai-assistant-side-panel-phase-b` (deleted)
 - **Owner agent**: `claude` (orchestrator-direct implementer, per plan)
-- **Originating plan**: [`docs/plans/shipped/ai-assistant-side-panel.md`](./archive/ai-assistant-side-panel.md) § File-level changes (Phase B rows) + § Side-panel layout + § Streaming protocol § Main-thread posting + § Cancellation
+- **Originating plan**: [`docs/plans/shipped/ai-assistant-side-panel.md`](../shipped/ai-assistant-side-panel.md) § File-level changes (Phase B rows) + § Side-panel layout + § Streaming protocol § Main-thread posting + § Cancellation
 - **Claimed write set**:
   - `Source_Core/include/AiAssistantController.h` (NEW)
   - `Source_Core/src/AiAssistantController.cpp` (NEW)
@@ -332,7 +332,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/lua-host-friend-drop` (deleted)
 - **Owner agent**: `lua-binder`
-- **Originating plan**: [`docs/plans/shipped/lua-host-friend-drop.md`](./archive/lua-host-friend-drop.md)
+- **Originating plan**: [`docs/plans/shipped/lua-host-friend-drop.md`](../shipped/lua-host-friend-drop.md)
 - **Claimed write set**:
   - `Source_Core/include/AppController.h` (drop `friend class LuaAutomationHost;` + surrounding comment block at lines 105-109; drop `class LuaAutomationHost;` forward-decl if no longer needed)
   - `Source_Core/include/LuaAutomationHost.h` (default ctor; remove `AppController& app_;` field + forward-decl; rewrite header doc-comment)
@@ -368,7 +368,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/test-phase-5-mcp-json-rpc` (deleted)
 - **Owner agent**: `test-rig`
-- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](./archive/test-suite-expansion-completion.md) § Phase 5
+- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](../shipped/test-suite-expansion-completion.md) § Phase 5
 - **Claimed write set**:
   - `tests/Plugins/Mcp/McpRequestParser.test.cpp` (NEW)
   - `tests/Plugins/Mcp/McpEnvelope.test.cpp` (NEW)
@@ -387,7 +387,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/test-phase-6-lua-bindings` (merged)
 - **Owner agent**: `test-rig`
-- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](./archive/test-suite-expansion-completion.md) § Phase 6
+- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](../shipped/test-suite-expansion-completion.md) § Phase 6
 - **Claimed write set**: see prior entry (preserved for audit)
 - **InitLuaCore classification**: Class C — `AppController_LuaBindings.cpp:32` `#include "imgui.h"` + `:766` `state["__smatchet_app"] = this` + glue functions in `smatchet_lua_init_detail::` resolve `__smatchet_app` back to live `AppController*`. Binding TU is unusable as a test link target without production refactor. LuaBindings.test.cpp deferred; sandbox + timeout + stubs-compile shipped this slice.
 - **Started**: 2026-05-16
@@ -398,7 +398,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/lua-bindings-host-interface-lift` (deleted)
 - **Owner agent**: `lua-binder`
-- **Originating plan**: backlog entry `2026-05-16 · lua-binder · [infra]` in [`docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`](../backlog/AGENT_SELF_IMPROVEMENT.md)
+- **Originating plan**: backlog entry `2026-05-16 · lua-binder · [infra]` in [`docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`](../../self-improvement/AGENT_SELF_IMPROVEMENT.md)
 - **Claimed write set**:
   - `Source_Core/include/ILuaBindingHost.h` (NEW)
   - `Source_Core/src/AppController_LuaBindingsCore.cpp` (NEW)
@@ -417,7 +417,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/test-phase-6b-lua-bindings-roundtrip` (deleted)
 - **Owner agent**: `test-rig`
-- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](./archive/test-suite-expansion-completion.md) § Phase 6 (Phase 6b — Lua bindings roundtrip deferred from PR #143)
+- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](../shipped/test-suite-expansion-completion.md) § Phase 6 (Phase 6b — Lua bindings roundtrip deferred from PR #143)
 - **Claimed write set**:
   - `tests/Lua/LuaBindings.test.cpp` (NEW)
   - `tests/support/FakeLuaBindingHost.h` (NEW)
@@ -434,7 +434,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/test-phase-9-coverage-gates` (deleted)
 - **Owner agent**: `build-doctor`
-- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](./archive/test-suite-expansion-completion.md) § Phase 9
+- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](../shipped/test-suite-expansion-completion.md) § Phase 9
 - **Claimed write set**:
   - `scripts/dev/coverage.sh` (NEW — Windows-OpenCppCoverage-first wrapper; inline POSIX `lcov+gcov` fallback documented in header)
   - `scripts/dev/coverage-delta-gate.sh` (NEW — per-PR `Source_Core/` change without test delta → exit 1)
@@ -453,7 +453,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/test-phase-7-screenshot-diff` (deleted)
 - **Owner agent**: `test-author`
-- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](./archive/test-suite-expansion-completion.md) § Phase 7
+- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](../shipped/test-suite-expansion-completion.md) § Phase 7
 - **Claimed write set**:
   - `Source_Core/include/SmatchetUiSession.h` (add `requestCommandPaletteOpen` + `requestCommandPaletteFilter` flag pair so the palette scenario can open + pre-filter the modal without touching `SmatchetUI`'s private `commandPalette_`)
   - `Source_Core/src/SmatchetUI.cpp` (consume the new flags once per frame right before `commandPalette_.Draw`)
@@ -486,7 +486,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/test-phase-4-config-migration` (deleted)
 - **Owner agent**: `test-rig`
-- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](./archive/test-suite-expansion-completion.md) § Phase 4
+- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](../shipped/test-suite-expansion-completion.md) § Phase 4
 - **Last update**: 2026-05-16 — merged via PR #134 at sha 3e19f93. 21 cases / 99 assertions on Config surface. Shared `tests/support/TestEnvGuard.h` shipped — Phase 5+ can consume.
 - **Cleared by**: PR `#134` merged at `3e19f93`.
 
@@ -494,7 +494,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/test-phase-5-mcp-json-rpc` (never pushed — agent stopped before commits)
 - **Owner agent**: `test-rig` (test-only scope per Phase 5 plan)
-- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](./archive/test-suite-expansion-completion.md) § Phase 5
+- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](../shipped/test-suite-expansion-completion.md) § Phase 5
 - **Started**: 2026-05-16
 - **Last update**: 2026-05-16 — user stopped agent at session end (wrap-up). Agent's discovery phase confirmed Phase 5 is **blocked** by the same pattern as the P4Blame deferral: every pure helper (`BuildRunLuaToolEntry`, `BuildRunLuaSummary`, `BuildToolCallSummary`, `ExtractJsonRpcErrorMessage`, `Base64Encode`, `NormalizeDomain`, `IsLoopbackAddress`, `ConstantTimeStringEquals`, `IsAllowedAttachmentHost`) lives in an anonymous namespace inside a `Plugins/Mcp/*.cpp` whose top of file pulls `winsock2` + `httplib` + `cpr`. Tests cannot link the unit without dragging banned deps. Production-side TU split needed first (same recipe as `P4BlameParse`, `TrackerLabelsPure`, etc).
 - **Cleared by**: blocked — see backlog entry `2026-05-16 · mcp-toolsmith · [infra] — MCP wire-protocol logic entombed in cpr/httplib-tainted lambda`.
@@ -503,7 +503,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/audit-trail-per-event-path`
 - **Owner agent**: orchestrator
-- **Originating plan**: backlog entries 2026-05-16 `security-review` + `offline-sync` in [`docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`](../backlog/AGENT_SELF_IMPROVEMENT.md)
+- **Originating plan**: backlog entries 2026-05-16 `security-review` + `offline-sync` in [`docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`](../../self-improvement/AGENT_SELF_IMPROVEMENT.md)
 - **Claimed write set**:
   - `Source_Core/src/BackendAuditTrail.cpp` (writer re-resolves `GetAuditFilePath()` per-event)
   - `tests/Source_Core/BackendAuditTrail.test.cpp` (add runtime-dir-change case; existing TEST_CASE workaround drops)
@@ -517,7 +517,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/cached-ticket-types-header-split`
 - **Owner agent**: orchestrator
-- **Originating plan**: backlog entry 2026-05-16 `test-rig · [infra]` in [`docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`](../backlog/AGENT_SELF_IMPROVEMENT.md)
+- **Originating plan**: backlog entry 2026-05-16 `test-rig · [infra]` in [`docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`](../../self-improvement/AGENT_SELF_IMPROVEMENT.md)
 - **Claimed write set**:
   - `Source_Core/include/CachedTicketTypes.h` (NEW)
   - `Source_Core/include/LocalCacheManager.h`
@@ -531,7 +531,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/required-field-ui-glyph` (deleted)
 - **Owner agent**: `tracker-backend`
-- **Originating plan**: [`backlog/BACKLOG_CODE_REVIEW.md`](../../backlog/BACKLOG_CODE_REVIEW.md) § A3
+- **Originating plan**: [`backlog/BACKLOG_CODE_REVIEW.md`](../../../backlog/BACKLOG_CODE_REVIEW.md) § A3
 - **Claimed write set**:
   - `Source_Core/src/TicketFieldEditor.cpp`
   - `Source_Core/src/SmatchetNewIssueDraftUi.cpp`
@@ -546,7 +546,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/grid-pushcliprect-audit` (deleted)
 - **Owner agent**: `grid-engine`
-- **Originating plan**: [`backlog/BACKLOG_CODE_REVIEW.md`](../../backlog/BACKLOG_CODE_REVIEW.md) § C7
+- **Originating plan**: [`backlog/BACKLOG_CODE_REVIEW.md`](../../../backlog/BACKLOG_CODE_REVIEW.md) § C7
 - **Claimed write set**:
   - `Source_Core/src/SmatchetActiveProjectGridUi.cpp` (lines 843, 905, 930 — remove `PushClipRect`/`PopClipRect` pairs if redundant)
   - `backlog/BACKLOG_CODE_REVIEW.md` (status flip C7)
@@ -559,7 +559,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/markdown-emitinlinetext-scratch` (deleted)
 - **Owner agent**: orchestrator (direct — small allocator-only change, no header touch)
-- **Originating plan**: [`backlog/BACKLOG_CODE_REVIEW.md`](../../backlog/BACKLOG_CODE_REVIEW.md) § C2
+- **Originating plan**: [`backlog/BACKLOG_CODE_REVIEW.md`](../../../backlog/BACKLOG_CODE_REVIEW.md) § C2
 - **Claimed write set**:
   - `Source_Core/src/MarkdownConvert.cpp` (EmitInlineText at line 723 only)
   - `backlog/BACKLOG_CODE_REVIEW.md` (status flip C2)
@@ -572,7 +572,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/plane-fetchissueeditmeta-broaden` (deleted)
 - **Owner agent**: orchestrator (direct — one-line list expansion)
-- **Originating plan**: [`backlog/BACKLOG_CODE_REVIEW.md`](../../backlog/BACKLOG_CODE_REVIEW.md) § C3
+- **Originating plan**: [`backlog/BACKLOG_CODE_REVIEW.md`](../../../backlog/BACKLOG_CODE_REVIEW.md) § C3
 - **Claimed write set**:
   - `Source_Core/src/PlaneFieldCatalog.cpp` (FetchIssueEditMeta at line 492 only — broaden hardcoded set; root cause "Plane has no per-issue capability endpoint" documented inline)
   - `backlog/BACKLOG_CODE_REVIEW.md` (status flip C3 → 🟡 partial; real-permissions query deferred)
@@ -585,7 +585,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/plane-fetchissuesforkeys-filter` (deleted)
 - **Owner agent**: `tracker-backend` (orchestrator-direct after isolated worktrees thrashed twice on API 500)
-- **Originating plan**: [`backlog/BACKLOG_CODE_REVIEW.md`](../../backlog/BACKLOG_CODE_REVIEW.md) § B4
+- **Originating plan**: [`backlog/BACKLOG_CODE_REVIEW.md`](../../../backlog/BACKLOG_CODE_REVIEW.md) § B4
 - **Claimed write set**:
   - `Source_Core/src/PlaneIssueSearch.cpp` (FetchIssuesForKeys only — file split from `PlaneClient.cpp` since the backlog entry was written)
   - `backlog/BACKLOG_CODE_REVIEW.md` (status flip B4 → 🟡 partial; server-side `sequence_id__in` filter deferred as B4-v2)
@@ -598,7 +598,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/test-callstack-adversarial`
 - **Owner agent**: `test-rig`
-- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](./archive/test-suite-expansion-completion.md) § Carry-over A
+- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](../shipped/test-suite-expansion-completion.md) § Carry-over A
 - **Claimed write set**:
   - `tests/Source_Core/CallstackParser.test.cpp`
   - `docs/plans/shipped/test-suite-expansion.md` (impl-log appendix)
@@ -612,7 +612,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/p4blame-parse-tu-split`
 - **Owner agent**: `test-rig` (TU-split pre-authorised per AGENTS.md applied rule)
-- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](./archive/test-suite-expansion-completion.md) § Carry-over B
+- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](../shipped/test-suite-expansion-completion.md) § Carry-over B
 - **Claimed write set**:
   - `Source_Core/include/P4BlameParse.h` (NEW)
   - `Source_Core/src/P4BlameParse.cpp` (NEW)
@@ -630,7 +630,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/tracker-labels-pure-tu`
 - **Owner agent**: `test-rig` (TU-split pre-authorised)
-- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](./archive/test-suite-expansion-completion.md) § Carry-overs C1
+- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](../shipped/test-suite-expansion-completion.md) § Carry-overs C1
 - **Claimed write set**:
   - `Source_Core/include/TrackerLabelsPure.h` (NEW)
   - `Source_Core/src/TrackerLabelsPure.cpp` (NEW)
@@ -649,7 +649,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/tracker-datetime-pure-tu`
 - **Owner agent**: `test-rig` (TU-split pre-authorised)
-- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](./archive/test-suite-expansion-completion.md) § Carry-overs C2
+- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](../shipped/test-suite-expansion-completion.md) § Carry-overs C2
 - **Claimed write set**:
   - `Source_Core/include/TrackerDateTimePure.h` (NEW)
   - `Source_Core/src/TrackerDateTimePure.cpp` (NEW)
@@ -668,7 +668,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/tracker-payload-pure-tu`
 - **Owner agent**: `test-rig` (TU-split pre-authorised)
-- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](./archive/test-suite-expansion-completion.md) § Carry-overs C3
+- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](../shipped/test-suite-expansion-completion.md) § Carry-overs C3
 - **Claimed write set**:
   - `Source_Core/include/TrackerFieldPayloadPure.h` (NEW)
   - `Source_Core/src/TrackerFieldPayloadPure.cpp` (NEW)
@@ -689,7 +689,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/offline-queue-deps-interface` (deleted)
 - **Owner agent**: `offline-sync`
-- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](./archive/test-suite-expansion-completion.md) § Per-slice scoping § PR D
+- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](../shipped/test-suite-expansion-completion.md) § Per-slice scoping § PR D
 - **Started**: 2026-05-16
 - **Last update**: 2026-05-16 — merged via PR #127 at sha b5fc194. Track B (`large-files-and-phase-2`) on-hold gate now releases.
 - **Cleared by**: PR `#127` merged at `b5fc194`.
@@ -698,7 +698,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/offline-queue-runtime-tests` (deleted)
 - **Owner agent**: `test-rig`
-- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](./archive/test-suite-expansion-completion.md) § Per-slice scoping § PR E
+- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](../shipped/test-suite-expansion-completion.md) § Per-slice scoping § PR E
 - **Started**: 2026-05-16
 - **Last update**: 2026-05-16 — merged via PR #131 at sha e35794d. Required orchestrator-side dedup after rebase: test-side `IsTrackerTransportErrorText` mirror collided with production once PR F's `TrackerHttpUtils.cpp` joined the test target source list.
 - **Cleared by**: PR `#131` merged at `e35794d`.
@@ -707,14 +707,14 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/ticket-sync-service-tests` (deleted)
 - **Owner agent**: `test-rig`
-- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](./archive/test-suite-expansion-completion.md) § Per-slice scoping § PR F
+- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](../shipped/test-suite-expansion-completion.md) § Per-slice scoping § PR F
 - **Started**: 2026-05-16
 - **Last update**: 2026-05-16 — merged via PR #130 at sha a618a2f. 12 cases / 83 assertions. Case 3 documents a current production bug (empty fetch in full-sync deletes all rows) — separate fix-PR pending under `offline-sync` follow-up (backlog entry filed).
 - **Cleared by**: PR `#130` merged at `a618a2f`.
 
 - **Branch**: `feat/tracker-field-catalog-pure-tu`
 - **Owner agent**: `test-rig` (TU-split pre-authorised)
-- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](./archive/test-suite-expansion-completion.md) § Carry-overs C4
+- **Originating plan**: [`docs/plans/shipped/test-suite-expansion-completion.md`](../shipped/test-suite-expansion-completion.md) § Carry-overs C4
 - **Claimed write set**:
   - `Source_Core/include/TrackerFieldCatalogPure.h` (NEW)
   - `Source_Core/src/TrackerFieldCatalogPure.cpp` (NEW)
@@ -733,7 +733,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/test-phase-1-tracker-pure-logic`
 - **Owner agent**: orchestrator (autonomous multi-phase mode per the plan's § Execution contract)
-- **Originating plan**: [`docs/plans/shipped/test-suite-expansion.md`](./archive/test-suite-expansion.md) § Phase 1
+- **Originating plan**: [`docs/plans/shipped/test-suite-expansion.md`](../shipped/test-suite-expansion.md) § Phase 1
 - **Claimed write set**:
   - `Source_Core/include/IssueCreatePipelineHelpers.h` (NEW)
   - `Source_Core/src/IssueCreatePipeline.cpp`
@@ -754,7 +754,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 ### test-suite-expansion · phases 2–9 · status: abandoned (superseded by `test-suite-expansion-completion.md` per-phase claims)
 
-- **Original Owner**: orchestrator (autonomous; see [`docs/plans/shipped/test-suite-expansion.md`](./archive/test-suite-expansion.md) § Execution contract).
+- **Original Owner**: orchestrator (autonomous; see [`docs/plans/shipped/test-suite-expansion.md`](../shipped/test-suite-expansion.md) § Execution contract).
 - **Superseded by**: Phase-by-phase claims under `test-suite-expansion-completion.md`. Phases 1 + 4 shipped; Phase 5 abandoned then unblocked by the `mcp-jsonrpc-pure-tu-split` slice above. The umbrella claim was never honoured across the 8 phases that actually shipped against develop.
 - **Started**: 2026-05-16
 - **Last update**: 2026-05-16 — converted `claimed` → `abandoned` by the Phase-5 pre-flight unblocker so the lock file matches reality.
@@ -764,7 +764,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: TBD per slice (B1: `claude/offline-queue-icache-access`, B2: TBD, B3: TBD)
 - **Owner agent**: `offline-sync` (B1, B2), `lua-binder` (B3)
-- **Originating plan**: [`docs/plans/shipped/large-files-and-phase-2.md`](./archive/large-files-and-phase-2.md) § Track B
+- **Originating plan**: [`docs/plans/shipped/large-files-and-phase-2.md`](../shipped/large-files-and-phase-2.md) § Track B
 - **Reason on-hold (historical)**: overlapping write set with `test-suite-expansion` phases 2-9 (`TicketSyncService.cpp`, `ConfigManager.cpp`, `AppController.h`, `tests/CMakeLists.txt`). Resuming Track B before those test phases landed would have forced a multi-way rebase that defeated both efforts. Resume gate cleared by PR #148 + #149.
 - **Claimed write set on resume** (preview — re-asserted at resume time):
   - B1: shipped as `IOfflineQueueDeps` (PR #127) — `Deps` suffix naming, not `Access`/`Host`. Behaviour equivalent.
@@ -778,7 +778,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/ai-assistant-side-panel` (plan recovered from dangling 84913a8 → a39097c)
 - **Owner agent**: orchestrator (direct — provider-pluggable C++14 skeleton)
-- **Originating plan**: [`docs/plans/shipped/ai-assistant-side-panel.md`](./archive/ai-assistant-side-panel.md) § Phase A
+- **Originating plan**: [`docs/plans/shipped/ai-assistant-side-panel.md`](../shipped/ai-assistant-side-panel.md) § Phase A
 - **Claimed write set** (narrowed — ConfigManager fields + tests deferred to Phase A' until `test-suite-expansion` umbrella releases `Source_Core/src/ConfigManager*.cpp` + `tests/**`):
   - `Source_Core/include/IAiClient.h` (NEW)
   - `Source_Core/include/AiTypes.h` (NEW)
@@ -806,7 +806,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/ai-config-fields-and-tests`
 - **Owner agent**: `test-rig`
-- **Originating plan**: [`docs/plans/shipped/ai-assistant-side-panel.md`](./archive/ai-assistant-side-panel.md) § File-level changes (ConfigManager rows) + § Pending follow-ups (Phase A' row)
+- **Originating plan**: [`docs/plans/shipped/ai-assistant-side-panel.md`](../shipped/ai-assistant-side-panel.md) § File-level changes (ConfigManager rows) + § Pending follow-ups (Phase A' row)
 - **Claimed write set**:
   - `Source_Core/include/ConfigManager.h` (append 17 `TrackerConfig` Ai fields + `#include "AiTypes.h"`)
   - `Source_Core/src/ConfigManager.cpp` (serialize + deserialize of new fields; DPAPI on `AiApiKey` + `AiAnthropicApiKey`; clamp `AiProviderKind`; `%LOCALAPPDATA%/Smatchet/agents.md` default at Load time)

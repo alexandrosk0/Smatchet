@@ -48,7 +48,7 @@ Modes mirror dup_audit.py:
 Exit contract (so test-lint-rules.sh fails CLOSED): 0 = clean / grandfathered, 1 = NEW violation
 (blocking), >=2 = infra error (main wraps in try/except -> exit 2).
 
-See docs/plans/active/core-include-dag.md + docs/high-integrity/include-cycle-baseline.md.
+See docs/plans/core-include-dag.md + docs/high-integrity/include-cycle-baseline.md.
 """
 
 import argparse

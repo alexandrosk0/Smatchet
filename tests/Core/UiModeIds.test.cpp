@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "Ui/SmatchetUiModeIds.h"
+#include "SmatchetUiModeIds.h"
 
 #include <string>
 #include <vector>

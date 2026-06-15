@@ -80,7 +80,11 @@ TEST_SUITE("SubprocessCapture::Run") {
         // Allow generous slack on overburdened CI runners; the killed
         // child should still be reaped well under the original 5 s
         // sleep budget.
+#if defined(__SANITIZE_ADDRESS__)
+        CHECK(out.durationMs < 20000); // ASAN ~3-10x wall-clock overhead; budget loosened (#1215 pattern)
+#else
         CHECK(out.durationMs < 2000);
+#endif
         CHECK_FALSE(out.stderrText.empty());
     }
 
@@ -119,7 +123,11 @@ TEST_SUITE("SubprocessCapture::Run") {
         flipper.join();
         REQUIRE(ran);
         CHECK(out.cancelled);
+#if defined(__SANITIZE_ADDRESS__)
+        CHECK(out.durationMs < 20000); // ASAN ~3-10x wall-clock overhead; budget loosened (#1215 pattern)
+#else
         CHECK(out.durationMs < 2000);
+#endif
     }
 
     TEST_CASE("spawn failure surfaces in outError") {
