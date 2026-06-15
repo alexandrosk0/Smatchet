@@ -87,7 +87,11 @@ jobs:
             exit 0
           fi
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}" 2>/dev/null || true
+            # NO --depth: a shallow base-ref fetch re-shallows develop after the
+            # fetch-depth:0 checkout and breaks merge-base for the three-dot range
+            # below (#1227(b)). Masked here (diff is `2>/dev/null || true` + a
+            # fail-safe default) but kept correct so the diff scans the true range.
+            git fetch --no-tags origin "${{ github.base_ref }}" 2>/dev/null || true
             range="origin/${{ github.base_ref }}...HEAD"
           else
             before="${{ github.event.before }}"
@@ -1664,7 +1668,11 @@ jobs:
           # Mirror the `changes` job's range logic so the lint scans exactly the
           # PR's (or push's) new C++. merge_group/push fall back to HEAD~1...HEAD.
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}" 2>/dev/null || true
+            # NO --depth: a shallow base-ref fetch re-shallows develop after the
+            # fetch-depth:0 checkout and breaks merge-base for the three-dot range
+            # below (#1227(b)). Masked here (diff is `2>/dev/null || true` + a
+            # fail-safe default) but kept correct so the diff scans the true range.
+            git fetch --no-tags origin "${{ github.base_ref }}" 2>/dev/null || true
             range="origin/${{ github.base_ref }}...HEAD"
           else
             before="${{ github.event.before }}"
