@@ -24,6 +24,15 @@ std::wstring Utf8ToWide(const std::string& s);
 #endif
 
 std::string NormalizeDirectoryPath(const std::string& baseDir);
+
+// Defense-in-depth: pure, side-effect-free strip of every CR (\r), LF (\n), and NUL (\0) from a
+// config value. Applied at the config PERSIST site (ConfigManager::Save) to the header-bound string
+// fields (API keys, base URLs, MCP auth token) so a value that round-trips through disk — e.g. one
+// injected via the MCP `config.set` or Lua-config write paths — can never carry the control
+// characters used to smuggle extra HTTP headers when the value is later spliced into a request
+// (behind the use-site strip in AiAssistantController::BuildClientConfig, PR #176).
+std::string SanitizeConfigStringValue(const std::string& value);
+
 bool EnsureDirectoryExists(const std::string& path);
 void CreateDirectories(const std::string& rawPath);
 void EnsureParentDirectoryForFile(const std::string& path);
