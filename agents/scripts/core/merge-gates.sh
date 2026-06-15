@@ -113,9 +113,10 @@ DEFAULT_QUERY_FILE="$SCRIPT_DIR/merge-gates.graphql"
 #  boot the exe on the CI runner (infra.md `bucket-mesa-exe-boot` P1 /
 #  `ci-infra-flake-reds-masquerade-as-real-breakage` item (c)), so they are
 #  ~100% red regardless of code correctness and only jam the poller. Re-add
-#  `Bucket-|` to BOTH this constant AND postmortem-owed.sh's ALLOW_LIST_RE the
-#  moment the boot is fixed and the bucket launch-smoke graduates back to
-#  hard-fail — that is the `bucket-mesa-exe-boot` P1 graduation step.)
+#  `Bucket-|` to THIS constant the moment the boot is fixed and the bucket
+#  launch-smoke graduates back to hard-fail — that is the `bucket-mesa-exe-boot`
+#  P1 graduation step. postmortem-owed.sh sources this constant (no separate
+#  copy to keep in sync since the de-dup), so one edit here covers both.)
 MERGE_GATES_BLOCK_ALLOWLIST_RE="Coverage|Sanitizer|Perf PR-fast|Android security gate"
 
 # Source prompt shim so `ask_user_question` is callable from the caller's

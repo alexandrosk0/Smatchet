@@ -72,6 +72,21 @@ std::string NormalizeDirectoryPath(const std::string& baseDir) {
     return normalized;
 }
 
+// Defense-in-depth (security backlog 2026-05-17): strip CR/LF/NUL from a header-bound config value
+// before it is persisted, so a value that round-trips through disk can never carry the control
+// characters used for HTTP header smuggling. Pure + platform-agnostic so the doctest rig can cover
+// it on every platform; declared in ConfigManager_Internal.h.
+std::string SanitizeConfigStringValue(const std::string& value) {
+    std::string out;
+    out.reserve(value.size());
+    for (char c : value) {
+        if (c != '\r' && c != '\n' && c != '\0') {
+            out.push_back(c);
+        }
+    }
+    return out;
+}
+
 bool EnsureDirectoryExists(const std::string& path) {
 #if defined(_WIN32)
     // Use the wide-char APIs so non-ASCII paths (é/ñ/CJK) survive on systems where the

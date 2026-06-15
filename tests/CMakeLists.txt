@@ -349,6 +349,9 @@ add_executable(SmatchetTests
     # audit H2 — pure POSIX secret-at-rest loose-permission decision (IsLooseConfigFileMode,
     # defined in ConfigManager_PathUtils.cpp which is already linked below). No extra .cpp.
     Core/ConfigSecretFilePerms.test.cpp
+    # security backlog 2026-05-17 — pure CR/LF/NUL strip for header-bound config fields
+    # (SanitizeConfigStringValue, defined in ConfigManager_PathUtils.cpp linked below). No extra .cpp.
+    Core/ConfigStringSanitize.test.cpp
     # vsync-toggle plan — header-only live vsync hub (VsyncControl.h): Set/Get +
     # boot precedence (env > CLI flag > config). Pure C++14, no GLFW, no extra .cpp.
     Core/VsyncControl.test.cpp

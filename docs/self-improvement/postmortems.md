@@ -27,6 +27,93 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-15 · PR #1265 · `cr-out-of-band` after CodeRabbit rate-limit skipped a code/CI harness review
+
+### What escaped
+PR #1265 (`Stabilize spawned UI test runner`, head `b271e5373`, merge
+`9fd92514`) changed five files across CI, the spawned UI-test command path, the
+standalone hidden loop, and a regression test. CodeRabbit selected those files
+for processing, then posted its `Review limit reached` rate-limit comment and did
+not produce an inline review. The merge gate was run and all CI was green
+(including Bucket-E and the label-triggered Perf PR-fast rerun), but the
+CodeRabbit condition was waived with `cr-out-of-band`. The escaped class is not a
+known product defect; it is a code-bearing PR landing without the intended
+automated CodeRabbit review signal.
+
+### Root cause
+CodeRabbit review capacity is external and the hard signal arrived only after the
+PR existed. The existing `pr-burst-guard` cheapest form is advisory and counts
+current open-PR pressure; it does not detect CodeRabbit's own rate-limit comment,
+pause a code PR until review capacity returns, or require an explicit
+rate-limit disposition before accepting `cr-out-of-band`. Once CR had skipped the
+review, `cr-out-of-band` was the documented narrow escape hatch. The waiver
+decision was deliberate and bounded by local validation, user validation, and a
+green merge-gate run, but it still suppressed the CR signal the gate normally
+expects.
+
+### Preventing gate
+Add a code-PR CodeRabbit rate-limit pause/disposition gate: when CR posts a
+rate-limit / `review-skipped` comment on a non-pure-docs PR, the ship loop should
+either wait/retry after the reported cooldown or require a `cr-disposition:`
+marker recording the substitute review evidence before `cr-out-of-band` can be
+treated as sufficient. This is the richer, load-bearing follow-up to the existing
+`pr-burst-guard`; the pure-docs auto-downgrade remains a separate safe case.
+
+### Filed as
+[`infra.md`](categories/infra.md) `cr-rate-limit-code-pr-auto-pause` (new) +
+[`process.md`](categories/process.md) `cr-out-of-band-disposition-trail`
+(recurrence: #1265 had no disposition marker because CR skipped before review).
+
+## 2026-06-14 · PR #1230, #1235, #1240 · direct/manual merge past PENDING→RED `Sanitizer (ASAN via MSVC)` — the non-required-Sanitizer direct-merge-bypass the #1242 poller fix structurally could not reach (now closed by the live required-context bind)
+
+### What escaped
+Three security-hardening PRs squash-merged to `develop` in a 6-min window — #1230
+`fix(logging): redaction hardening` (22:09:06Z), #1235 `fix(security): network/bounds
+hardening (Whisper redirect, cleartext base, MCP SSE bound)` (22:12:33Z), #1240
+`harden(ui): cap image-preview dimensions at 16384` (22:15:36Z) — each with `Sanitizer
+(ASAN via MSVC)` non-terminal/red at merge. All three: `autoMergeRequest=null`,
+`mergedBy=alexandrosk0` → landed via a **direct/manual `gh pr merge` / `gh api … PUT
+…/merge`**, NOT `--auto`. They merged in the window AFTER #1237 (22:01Z) but BEFORE the
+#1242 `$blocking`-pending poller fix landed (22:33Z). Same non-required Sanitizer lane as
+#1220/#1229/#1237; the product fixes are sound (security-hardening, each carries its own
+coverage — cross-ref security.md #1230/#1235), no GitHub Issue owed.
+
+### Root cause (blameless)
+The #1242 fix that closed the four sibling escapes (#1237/#1232/#1227/#1220/#1198) extended
+the **poller's** pending count to the `$blocking` set — but the poller is consulted ONLY on
+the `--auto` / scripted path. These three merged via a **direct/manual merge**, which never
+invokes the poller at all: GitHub-native branch-protection enforced only the 6 required
+contexts at that moment, and `Sanitizer (ASAN via MSVC)` was NOT among them (the #1130
+option-A Sanitizer half, still unbound at 22:09–22:15Z). So a direct PUT resolved "all
+required green" and merged past the in-flight/red Sanitizer — the exact non-poller-merge-path
+residual the #1237 entry explicitly predicted ("GitHub's native auto-merge has the same blind
+spot … those checks are non-required") but that #1242 (a poller-only fix) structurally could
+not reach. The escape is the MECHANISM (a direct merge bypasses every poller-side guard), not
+a poller bug.
+
+### Preventing gate
+The gate already existed as a filed-but-unbound action — `sanitizer-required-context`
+(tooling.md, the #1130 option-A Sanitizer half) — and it is now **bound live**: develop
+branch-protection `required_status_checks.contexts` enforces **9** contexts incl. `Sanitizer
+(ASAN via MSVC)`, `Sanitizer (UBSan via Clang)`, and `Coverage (windows-2022 +
+OpenCppCoverage)` (confirmed `gh api …/required_status_checks` 2026-06-15). A required context
+gates EVERY merge path — `--auto`, the merge button, AND a direct `gh api … PUT …/merge`
+(GitHub refuses the merge until the required context is terminal-green) — so it closes the
+direct-merge-bypass the poller never could. No new poller knob needed: promotion-to-required
+is the correct hammer for the direct-merge path (vs the `Bucket-*` lane, intentionally
+advisory → #1218's inverse downgrade-label route). **Residual now LIVE:** the bind landed
+BEFORE its documented dependency — the ASAN-unsafe deep-nest fixture (`kDeepAdfDepth=400`,
+still unhardened) — so the now-required Sanitizer lane can false-red and deadlock-by-reflex
+every merge until the fixture is hardened. That prerequisite is therefore elevated P2 → P1.
+
+### Filed as
+[`tooling.md`](categories/tooling.md) `sanitizer-required-context` — status flipped to
+**applied + bound (live — 9 required contexts confirmed 2026-06-15)**, escape list extended
+#1230/#1235/#1240 (direct-merge-bypass variant); [`test.md`](categories/test.md)
+`adf-deep-nest-fixture-asan-unsafe` — elevated **P2 → P1** (deadlock risk now live: Sanitizer
+required while the fixture is still unhardened). No GitHub Issue — the three product fixes are
+sound.
+
 ## 2026-06-14 · PR #1218 · force-merged via direct REST PUT past a CANCELLED `Bucket-E` UI-tests check (no scoped override label exists)
 
 > User-authorized force-merge while landing the issue-comments feature (Jira

@@ -409,6 +409,9 @@ void ExtractAdfTextToStream(const nlohmann::json& node, std::ostringstream& out,
 }
 
 std::string FormatDateIfIso(const std::string& value) {
+    // `value` is server-supplied (a foreign trust boundary). The size() >= 10 guard MUST
+    // precede the fixed-index reads below — value[4]/value[7] on a shorter field is an
+    // out-of-bounds read (Pillar 3 — Never crash). Do not weaken this to a bare index.
     if (value.size() >= 10 && value[4] == '-' && value[7] == '-') {
         return value.substr(0, 10);
     }

@@ -72,8 +72,12 @@ void DispatchAnthropicEvent(const AiSseParser::Event& ev, const IAiClient::Delta
     try {
         j = nlohmann::json::parse(ev.Data);
     } catch (const std::exception& e) {
+        // The raw SSE payload is server-supplied; a misconfigured proxy could echo the
+        // request Authorization header into a malformed stream. Redact (Bearer / api-key
+        // shapes) before logging, then cap the excerpt at 200 chars.
+        const std::string redacted = smatchet::ai::pure::RedactProviderErrorBody(ev.Data);
         LOG_WARN("AnthropicClient: SSE data not valid JSON (%s): %.*s", e.what(),
-                 static_cast<int>(ev.Data.size() > 200 ? 200 : ev.Data.size()), ev.Data.c_str());
+                 static_cast<int>(redacted.size() > 200 ? 200 : redacted.size()), redacted.c_str());
         return;
     }
     if (!j.is_object())
@@ -128,9 +132,8 @@ std::string AnthropicClient::ProbeReachability(const AiClientConfig& cfg) {
     if (!cfg.ApiKey.empty())
         headers["x-api-key"] = cfg.ApiKey;
 
-    cpr::Response r =
-        cpr::Head(cpr::Url{url}, headers, cpr::Redirect{smatchet::ai::pure::kAiFollowRedirects, false},
-                  cpr::ConnectTimeout{cfg.ConnectTimeoutMs}, cpr::Timeout{cfg.TotalTimeoutMs});
+    cpr::Response r = cpr::Head(cpr::Url{url}, headers, cpr::Redirect{smatchet::ai::pure::kAiFollowRedirects, false},
+                                cpr::ConnectTimeout{cfg.ConnectTimeoutMs}, cpr::Timeout{cfg.TotalTimeoutMs});
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Ai, NetworkUsageTracker::kEstimatedGetUploadBytes, r);
     if (r.error.code != cpr::ErrorCode::OK)
         return std::string("transport: ") + r.error.message;
@@ -196,8 +199,8 @@ void AnthropicClient::SendStreaming(const AiClientConfig& cfg, const AiChatReque
     }
 
     if (r.error.code != cpr::ErrorCode::OK && r.error.code != cpr::ErrorCode::REQUEST_CANCELLED) {
-        LOG_ERROR("AnthropicClient: transport error - cpr code %d, message: %s",
-                  static_cast<int>(r.error.code), r.error.message.c_str());
+        LOG_ERROR("AnthropicClient: transport error - cpr code %d, message: %s", static_cast<int>(r.error.code),
+                  r.error.message.c_str());
         AiStreamError err;
         err.HttpStatus = r.status_code;
         err.Message = std::string("transport: ") + r.error.message;

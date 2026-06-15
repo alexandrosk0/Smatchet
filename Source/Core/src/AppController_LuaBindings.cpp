@@ -87,10 +87,99 @@ namespace {
 
 constexpr int kJsonToLuaMaxDepth = 64;
 
-sol::object JsonToLuaImpl(sol::state_view luaView, const nlohmann::json& j, int depth) {
-    if (depth > kJsonToLuaMaxDepth) {
+// `decode_json` parses ATTACKER-CONTROLLED text (a Lua script can hand it any
+// string). nlohmann's recursive-descent parser builds the DOM by recursing once
+// per nesting level, so a deeply-nested payload ("[[[[...]]]]") overflows the
+// C++ stack BEFORE JsonToLua ever runs (Pillar 3 — Never crash). The 4 MB byte
+// cap in LuaDecodeJsonBind does NOT bound depth — ~2 M nested arrays fit easily.
+// We therefore parse through a depth/node-bounded SAX handler that aborts past a
+// cap instead of `json::parse` (which is unbounded). The caps sit far above any
+// legitimate JSON the bindings exchange (tracker payloads are a handful of
+// levels deep, a few thousand nodes) while bounding stack + heap growth well
+// short of exhaustion. On overflow we return a parse error string up to Lua —
+// graceful degradation, NOT a C++ throw across the sol2 boundary.
+constexpr int kDecodeJsonMaxDepth = 256;
+constexpr std::size_t kDecodeJsonMaxNodes = 200000u;
+
+// Bounded SAX handler: wraps nlohmann's own DOM builder, rejecting once the live
+// container depth exceeds kDecodeJsonMaxDepth or the total node count exceeds
+// kDecodeJsonMaxNodes. Returning `false` from any callback aborts sax_parse
+// without descending further, so the parser's recursion is hard-bounded by the
+// cap (ASAN-safe even on a hostile arbitrarily-deep string).
+class BoundedDecodeSax : public nlohmann::detail::json_sax_dom_parser<nlohmann::json> {
+  public:
+    using base = nlohmann::detail::json_sax_dom_parser<nlohmann::json>;
+    explicit BoundedDecodeSax(nlohmann::json& root) : base(root, /*allow_exceptions=*/false) {}
+
+    bool null() { return Count() && base::null(); }
+    bool boolean(bool v) { return Count() && base::boolean(v); }
+    bool number_integer(nlohmann::json::number_integer_t v) { return Count() && base::number_integer(v); }
+    bool number_unsigned(nlohmann::json::number_unsigned_t v) { return Count() && base::number_unsigned(v); }
+    bool number_float(nlohmann::json::number_float_t v, const nlohmann::json::string_t& s) {
+        return Count() && base::number_float(v, s);
+    }
+    bool string(nlohmann::json::string_t& v) { return Count() && base::string(v); }
+    bool binary(nlohmann::json::binary_t& v) { return Count() && base::binary(v); }
+
+    bool start_object(std::size_t elements) {
+        if (!Count() || !Descend()) {
+            return false;
+        }
+        return base::start_object(elements);
+    }
+    bool end_object() {
+        --depth_;
+        return base::end_object();
+    }
+    bool start_array(std::size_t elements) {
+        if (!Count() || !Descend()) {
+            return false;
+        }
+        return base::start_array(elements);
+    }
+    bool end_array() {
+        --depth_;
+        return base::end_array();
+    }
+    bool key(nlohmann::json::string_t& v) { return base::key(v); }
+
+    bool Overflowed() const { return overflowed_; }
+
+  private:
+    bool Count() {
+        if (++nodes_ > kDecodeJsonMaxNodes) {
+            overflowed_ = true;
+            return false;
+        }
+        return true;
+    }
+    bool Descend() {
+        if (depth_ >= kDecodeJsonMaxDepth) {
+            overflowed_ = true;
+            return false;
+        }
+        ++depth_;
+        return true;
+    }
+
+    int depth_ = 0;
+    std::size_t nodes_ = 0;
+    bool overflowed_ = false;
+};
+
+// Node budget for the converter itself (defense-in-depth). decode_json already
+// bounds depth + nodes at parse time; this guards the OTHER caller — commands.invoke
+// results (cr.Data), which the bindings produce internally — from fanning out an
+// unbounded number of sol tables. `nodes` is decremented past zero to signal the
+// cap was hit; on overflow we stop converting (return nil for the remaining
+// subtree) rather than throw (Pillar 3 graceful degradation).
+constexpr std::size_t kJsonToLuaMaxNodes = 200000u;
+
+sol::object JsonToLuaImpl(sol::state_view luaView, const nlohmann::json& j, int depth, std::size_t& nodes) {
+    if (depth > kJsonToLuaMaxDepth || nodes == 0) {
         return sol::make_object(luaView, sol::nil);
     }
+    --nodes;
     switch (j.type()) {
     case nlohmann::json::value_t::null:
         return sol::make_object(luaView, sol::nil);
@@ -108,14 +197,14 @@ sol::object JsonToLuaImpl(sol::state_view luaView, const nlohmann::json& j, int 
         sol::table arr = luaView.create_table();
         std::size_t idx = 1;
         for (const auto& el : j) {
-            arr[idx++] = JsonToLuaImpl(luaView, el, depth + 1);
+            arr[idx++] = JsonToLuaImpl(luaView, el, depth + 1, nodes);
         }
         return arr;
     }
     case nlohmann::json::value_t::object: {
         sol::table tbl = luaView.create_table();
         for (auto it = j.begin(); it != j.end(); ++it) {
-            tbl[it.key()] = JsonToLuaImpl(luaView, it.value(), depth + 1);
+            tbl[it.key()] = JsonToLuaImpl(luaView, it.value(), depth + 1, nodes);
         }
         return tbl;
     }
@@ -312,7 +401,10 @@ static void LuaMergeIssueCreateSpec(IssueDraft& draft, sol::table spec, const st
 // File-scope wrappers — call through to the TU-private *Impl helpers above.
 // Declared in AppController_LuaBindings_detail.h; visible to _Draw.cpp.
 
-sol::object JsonToLua(sol::state_view luaView, const nlohmann::json& j) { return JsonToLuaImpl(luaView, j, 0); }
+sol::object JsonToLua(sol::state_view luaView, const nlohmann::json& j) {
+    std::size_t nodes = kJsonToLuaMaxNodes;
+    return JsonToLuaImpl(luaView, j, 0, nodes);
+}
 
 nlohmann::json LuaToJson(sol::object obj) { return LuaToJsonImpl(obj, 0); }
 
@@ -837,8 +929,28 @@ std::tuple<sol::object, std::string> AppController::Impl::LuaDecodeJsonBind(sol:
         return {sol::make_object(sv, sol::nil), std::string("input too large")};
     }
     try {
-        const nlohmann::json j =
-            nlohmann::json::parse(s, nullptr, /*allow_exceptions=*/true, /*ignore_comments=*/false);
+        // Depth/node-bounded parse (NOT json::parse, which recurses unbounded and
+        // stack-overflows on a hostile deep payload — see BoundedDecodeSax). On a
+        // cap hit `ok` is false: report it to Lua as a parse error string rather
+        // than crashing or throwing across the sol2 boundary (Pillar 3).
+        nlohmann::json j;
+        BoundedDecodeSax sax(j);
+        const bool ok = nlohmann::json::sax_parse(s, &sax, nlohmann::json::input_format_t::json,
+                                                  /*strict=*/true, /*ignore_comments=*/false);
+        if (!ok) {
+            if (sax.Overflowed()) {
+                static bool warned = false;
+                if (!warned) {
+                    warned = true;
+                    LOG_WARN("decode_json: input exceeded depth (%d) or node (%zu) cap; rejecting. "
+                             "Possible hostile or malformed payload.",
+                             kDecodeJsonMaxDepth, kDecodeJsonMaxNodes);
+                }
+                return {sol::make_object(sv, sol::nil),
+                        std::string("input too deeply nested or too many elements")};
+            }
+            return {sol::make_object(sv, sol::nil), std::string("invalid JSON")};
+        }
         return {JsonToLua(sv, j), std::string()};
     } catch (const std::exception& e) {
         return {sol::make_object(sv, sol::nil), std::string(e.what())};
@@ -1318,6 +1430,13 @@ void AppController::Impl::AutomationWorkerLoop() {
                       job.scriptPathOrActionName.c_str());
         }
     }
+    // Signal a clean loop exit so the dtor's bounded shutdown wait can distinguish
+    // "worker finished" from "worker still stuck in blocking glue" (see
+    // automationWorkerExited_ in AppControllerImpl.h). Set BEFORE the thread
+    // function returns; the subsequent join in the dtor is the happens-before
+    // barrier, so a relaxed-visible store here is observed there.
+    automationWorkerExited_.store(true);
+    automationJobCv_.notify_all();
 }
 
 // Automation count-hook tuning (security finding #13). The hook fires every kHookCountInterval

@@ -170,6 +170,58 @@ TEST_CASE("Lua bindings · decode_json valid -> table, invalid -> nil + err") {
     CHECK_EQ(r2.get<bool>(), true);
 }
 
+// Security finding A (SECURITY_AUDIT, Pillar 3 — Never crash): `decode_json`
+// parses ATTACKER-CONTROLLED text. nlohmann's recursive parser overflows the C++
+// stack on a deeply-nested payload BEFORE conversion. The bounded SAX parse must
+// reject past the depth cap (and the node cap) with a graceful (nil, err) tuple —
+// NOT a crash, NOT a C++ throw across the sol2 boundary. The deep string is built
+// in Lua (not a C++ nlohmann::json) so there is no deep C++ tree to construct or
+// recursively destruct in the fixture.
+TEST_CASE("Lua bindings · decode_json rejects over-deep nesting without crashing" *
+          doctest::test_suite("[high-risk]")) {
+    CoreFixture fx;
+
+    // 5000 '[' then 5000 ']' — depth 5000, well past kDecodeJsonMaxDepth (256).
+    // Production stack-overflows here without the bound; with it we expect a clean
+    // rejection.
+    sol::protected_function_result r = Run(fx.state(), R"(
+        local n = 5000
+        local s = string.rep("[", n) .. string.rep("]", n)
+        local t, err = decode_json(s)
+        local t_is_nil = (t == nil)
+        local err_nonempty = (type(err) == "string" and #err > 0)
+        return t_is_nil and err_nonempty
+    )");
+    CHECK_EQ(r.get<bool>(), true);
+
+    // Shallow-but-legitimate JSON still decodes after the deep rejection — the cap
+    // did not poison the fixture or leave the parser in a broken state.
+    sol::protected_function_result ok = Run(fx.state(), R"(
+        local t, err = decode_json('{"a":[1,2,3]}')
+        if not t then return "ERR:" .. tostring(err) end
+        return tostring(t.a[1]) .. "|" .. tostring(t.a[3])
+    )");
+    CHECK_EQ(ok.get<std::string>(), std::string("1.0|3.0"));
+}
+
+// Security finding A — node-count cap. A wide-but-shallow payload (a single array
+// with > kDecodeJsonMaxNodes elements) must also be rejected gracefully: depth
+// alone does not bound total allocation.
+TEST_CASE("Lua bindings · decode_json rejects excessive node count" *
+          doctest::test_suite("[high-risk]")) {
+    CoreFixture fx;
+
+    // A flat array of 250000 zeros (> kDecodeJsonMaxNodes = 200000).
+    sol::protected_function_result r = Run(fx.state(), R"(
+        local s = "[" .. string.rep("0,", 249999) .. "0]"
+        local t, err = decode_json(s)
+        local t_is_nil = (t == nil)
+        local err_nonempty = (type(err) == "string" and #err > 0)
+        return t_is_nil and err_nonempty
+    )");
+    CHECK_EQ(r.get<bool>(), true);
+}
+
 // =============================================================================
 // smatchet.create_issue — state-relative marshalling (cross-thread race fix)
 // =============================================================================

@@ -15,6 +15,10 @@
 std::string FormatWorkDurationFromSeconds(long long seconds);
 
 std::string JsonGetStringIfString(const nlohmann::json& j, const char* key);
+/** Compact an ISO-8601 date/datetime string to its `YYYY-MM-DD` prefix. Returns `value`
+ *  unchanged unless it is at least 10 chars with `-` at indices 4 and 7 — the length guard
+ *  makes the fixed-index sniff safe on a short server-supplied value (no out-of-bounds read). */
+std::string FormatDateIfIso(const std::string& value);
 std::string JsonValueToCompactString(const nlohmann::json& value);
 std::string JsonIdToString(const nlohmann::json& value);
 std::string BuildTrackerOptionDisplayValue(const nlohmann::json& value);

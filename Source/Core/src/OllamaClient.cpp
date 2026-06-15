@@ -101,9 +101,8 @@ std::string OllamaClient::ProbeReachability(const AiClientConfig& cfg) {
     // installed models. A 200 with a JSON body confirms reachability.
     const std::string url = JoinUrl(ResolveBaseUrl(cfg), "/api/tags");
     cpr::Header headers{{"Accept", "application/json"}};
-    cpr::Response r =
-        cpr::Get(cpr::Url{url}, headers, cpr::Redirect{smatchet::ai::pure::kAiFollowRedirects, false},
-                 cpr::ConnectTimeout{cfg.ConnectTimeoutMs}, cpr::Timeout{cfg.TotalTimeoutMs});
+    cpr::Response r = cpr::Get(cpr::Url{url}, headers, cpr::Redirect{smatchet::ai::pure::kAiFollowRedirects, false},
+                               cpr::ConnectTimeout{cfg.ConnectTimeoutMs}, cpr::Timeout{cfg.TotalTimeoutMs});
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Ai, NetworkUsageTracker::kEstimatedGetUploadBytes, r);
     if (r.error.code != cpr::ErrorCode::OK)
         return std::string("transport: ") + r.error.message;
@@ -135,8 +134,12 @@ void OllamaClient::SendStreaming(const AiClientConfig& cfg, const AiChatRequest&
         DispatchOllamaLine(j, onDelta, sawFinal);
     };
     auto onParseError = [](const std::string& rawLine) {
+        // The raw NDJSON line is server-supplied; a misconfigured proxy could echo the
+        // request Authorization header into a malformed stream. Redact (Bearer / api-key
+        // shapes) before logging, then cap the excerpt at 200 chars.
+        const std::string redacted = smatchet::ai::pure::RedactProviderErrorBody(rawLine);
         LOG_WARN("OllamaClient: NDJSON line not valid JSON: %.*s",
-                 static_cast<int>(rawLine.size() > 200 ? 200 : rawLine.size()), rawLine.c_str());
+                 static_cast<int>(redacted.size() > 200 ? 200 : redacted.size()), redacted.c_str());
     };
 
     cpr::WriteCallback wcb{[&](const std::string& chunk, intptr_t) -> bool {

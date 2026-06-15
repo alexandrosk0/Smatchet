@@ -10,10 +10,10 @@ The plan is fully shipped to develop. Four items below require a human action (U
 |---|---|---|---|---|
 | 1 | **Create `LOCK_RENDER_PAT` fine-grained PAT + add as repo secret.** Without this the `locks-render.yml` workflow fails at the `gh pr create` step and leaves orphan `bot/plan-locks-sync` branches on origin every cron fire. | **DONE 2026-05-18** — verified via two consecutive `conclusion: success` workflow runs after configuration. | — | § Operational requirements → `LOCK_RENDER_PAT` secret |
 | 2 | **Calendar reminder to rotate `LOCK_RENDER_PAT` at +90 days** (the recommended expiry set at creation time). | OPEN — set the reminder once and forget | At PAT expiry. Workflow will start failing again the day after expiry. | § Operational requirements → `LOCK_RENDER_PAT` secret → "Rotation" |
-| 3 | **Run `bash scripts/dev/setup-locks-ruleset.sh`** to enable Phase 7b ref-namespace hardening. | OPEN — opportunistic | Build when: (a) a `refs/locks/*` ref is mutated by an actor who shouldn't have (audit via reflog / staleness Issue), or (b) the repo gains a second collaborator with `push` access. | § Phase 7b |
+| 3 | **Run `bash agents/scripts/core/setup-locks-ruleset.sh`** to enable Phase 7b ref-namespace hardening. | OPEN — opportunistic | Build when: (a) a `refs/locks/*` ref is mutated by an actor who shouldn't have (audit via reflog / staleness Issue), or (b) the repo gains a second collaborator with `push` access. | § Phase 7b |
 | 4 | **Enable GitHub merge queue on develop** (Phase 7d). | OPEN — opportunistic | Build when: (a) a "merged green broke develop" incident happens, or (b) PR throughput climbs past ~5 PRs/day. | § Phase 7d |
 
-Manual stop-gap available while item 1 is pending: `bash scripts/dev/manual-locks-render-sync.sh` (full lifecycle: regen → push → PR → merge → cleanup). Use sparingly; configuring the PAT is the real fix.
+Manual stop-gap available while item 1 is pending: `bash scripts/dev/local/manual-locks-render-sync.sh` (full lifecycle: regen → push → PR → merge → cleanup). Use sparingly; configuring the PAT is the real fix.
 
 Already-shipped items (no further action required): primitive scripts (Phase 1), render workflow (Phase 2), cleanup workflow (Phase 3), staleness workflow + sweep script (Phase 4), agent prompts migrated (Phase 5), markdown cutover to refs (Phase 6), CODEOWNERS (Phase 7a). Phase 7c (cleanup PAT) was deprioritised indefinitely after investigation showed it offered zero benefit over `GITHUB_TOKEN` — see § Phase 7c.
 
@@ -31,14 +31,14 @@ The four orthogonal subproblems (claim / discovery / collision-catch / cleanup) 
 
 ## Terminology
 
-The vocabulary in this doc + `AGENTS.md` § Orchestrator delegation packet + `scripts/dev/lock-*.sh` uses four terms that look adjacent but are **role-distinct**. Cross-link: [`docs/CONTEXT.md`](../CONTEXT.md) § Plan locks for the glossary form.
+The vocabulary in this doc + `AGENTS.md` § Orchestrator delegation packet + `agents/scripts/core/lock-*.sh` uses four terms that look adjacent but are **role-distinct**. Cross-link: [`docs/CONTEXT.md`](../CONTEXT.md) § Plan locks for the glossary form.
 
 | Term | Role | Form on disk / wire |
 |---|---|---|
 | **Plan-lock** | the **object** — a claim on a planned write set | `refs/locks/<slug>` on origin (one ref per active slice); rendered as a row in `docs/plans/active/_plan-locks.generated.md` |
 | **Lock-slug** | the **identifier field** — kebab-case name of the slice | URL-safe ASCII; ref-name suffix; script argument; line key `lock-slug: <slug>` in PR bodies |
-| **Lock-claim** | the **action** of acquiring + the **script** that performs it | `bash scripts/dev/lock-claim.sh <slug> <write-set-file>`; writes a `claim.json` blob into the ref; fails on ref-update conflict |
-| **Holds-lock** | the **predicate** — "agent X holds-lock Y" | derived field on the rendered table from `bash scripts/dev/locks-show.sh`; reads `claim.json.owner` |
+| **Lock-claim** | the **action** of acquiring + the **script** that performs it | `bash agents/scripts/core/lock-claim.sh <slug> <write-set-file>`; writes a `claim.json` blob into the ref; fails on ref-update conflict |
+| **Holds-lock** | the **predicate** — "agent X holds-lock Y" | derived field on the rendered table from `bash agents/scripts/core/locks-show.sh`; reads `claim.json.owner` |
 
 The four do not overlap. A `plan-lock` is the object; `lock-slug` is its identifier; `lock-claim` is the action that brings one into being; `holds-lock` is the predicate that names its current owner. If a future doc / commit / script needs a new term in this space, pick one of the existing four if it fits, or add a fifth row here.
 
@@ -306,7 +306,7 @@ In-tree only. Adds `.github/CODEOWNERS` mapping the lock primitive scripts (`scr
 
 Build when: any of (a) `refs/locks/*` ref is mutated by an actor who shouldn't have (caught via reflog audit or anomalous staleness-sweep Issue), (b) the repo gains a second collaborator with `push` access, (c) a security audit demands defence-in-depth beyond convention.
 
-**Script**: `bash scripts/dev/setup-locks-ruleset.sh`. Idempotent — creates the ruleset on first run, updates in place on subsequent runs (look-up by name `plan-locks`).
+**Script**: `bash agents/scripts/core/setup-locks-ruleset.sh`. Idempotent — creates the ruleset on first run, updates in place on subsequent runs (look-up by name `plan-locks`).
 
 **What the ruleset enforces**:
 - Target ref pattern `refs/locks/*`.
