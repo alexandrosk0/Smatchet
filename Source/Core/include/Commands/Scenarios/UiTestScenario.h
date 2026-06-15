@@ -44,6 +44,7 @@ class UiTestScenario : public IScenario {
 #if defined(SMATCHET_BUILD_UI_TESTS)
     ImGuiTestEngine* engine_ = nullptr;
     bool startedQueue_ = false;
+    bool runAll_ = false;
     // Result counters — only populated/read by the gated OnFrame/OnFinish body
     // (ImGuiTestEngine_GetResult). Kept inside the gate so the non-UI-test build
     // doesn't carry unread private fields (-Wunused-private-field under clang).

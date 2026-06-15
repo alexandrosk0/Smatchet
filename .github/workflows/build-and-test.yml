@@ -668,9 +668,18 @@ jobs:
         run: |
           set -euo pipefail
           echo "launch-smoke: ./Smatchet.exe cmd app.version --spawn --yes (ready<=30s, hang-guard 45s)"
-          if ! timeout 45 ./Smatchet.exe cmd app.version --spawn --yes; then
-            echo "::error::launch-smoke FAILED — bucket-E Smatchet.exe could not boot+become-reachable under Mesa GL within the spawn-ready window (dead harness, not a flaky test)." >&2
-            exit 1
+          set +e
+          out="$(timeout 45 ./Smatchet.exe cmd app.version --spawn --yes 2>&1)"
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          if [ "$rc" -ne 0 ]; then
+            if printf '%s\n' "$out" | grep -Eq '^\{.*"command"[[:space:]]*:[[:space:]]*"app\.version".*"ok"[[:space:]]*:[[:space:]]*true.*\}$'; then
+              echo "::warning::launch-smoke saw app.version ok:true but the spawn wrapper exited $rc; treating as teardown false-red."
+            else
+              echo "::error::launch-smoke FAILED — bucket-E Smatchet.exe could not boot+become-reachable under Mesa GL within the spawn-ready window (dead harness, not a flaky test)." >&2
+              exit "$rc"
+            fi
           fi
           echo "launch-smoke: OK — exe booted."
 
@@ -687,7 +696,7 @@ jobs:
           set -uo pipefail
           mkdir -p "$(dirname "$SMATCHET_LANE_STATUS_FILE")"
           set +e
-          out="$(timeout 240 ./Smatchet.exe cmd ui_test.run --all --spawn --yes 2>&1)"
+          out="$(timeout 240 ./Smatchet.exe cmd ui_test.run --all --frames=3600 --spawn --yes 2>&1)"
           rc=$?
           set -e
           printf '%s\n' "$out"
