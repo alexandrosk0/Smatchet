@@ -143,6 +143,12 @@ the general raw-PUT guard as a residual P3; P2→P3; Last-reviewed 2026-06-15.
   Pattern C not the Pattern-A self-gate this plan drafted → **Slice 2 dropped as
   superseded** (see banner + Slice 2 section). Plan re-scoped to ASAN-lane fragility
   hardening. User-approved (AskUserQuestion: "Ship the hardening").
+- 2026-06-15 — **Post-ship.** User authorized registering guards PR #1280 with the
+  merge-watcher (post-ship menu → "Register #1280 too"); #1280 now auto-merges when green
+  alongside #1273. Registration was a no-op — #1280 was already present in the watcher
+  registry (`registered_at` predates the authorization, head `af508448`, 6 CR-none-grace
+  polls; never merged — stayed BLOCKED awaiting checks); surfaced to user. Both PRs
+  BLOCKED (normal, awaiting required checks) at hand-off.
 - 2026-06-15 — Slice 1b: exhaustive audit found 9 wall-clock timing assertions across
   6 files; applied the #1215 `__SANITIZE_ADDRESS__` guard to all 9 uniformly on
   branch `feat/asan-timing-guards`. Guards (ASAN budget / non-ASAN budget):
