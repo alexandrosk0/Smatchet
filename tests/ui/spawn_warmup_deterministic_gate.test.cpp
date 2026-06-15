@@ -35,6 +35,8 @@ struct WarmupGateState {
 
 WarmupGateState g_warmupGateState;
 
+bool UiTestQueueMayStart(int scenarioFrameIndex) { return scenarioFrameIndex >= 1; }
+
 void ResetWarmupGateState() {
     g_warmupGateState.framesObserved = 0;
     g_warmupGateState.handshakeAccepted = false;
@@ -109,11 +111,21 @@ void RegisterWarmupGateBudgetCeilingVariant(ImGuiTestEngine* engine) {
     };
 }
 
+void RegisterDeferredQueueVariant(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "SpawnWarmup", "DeferredQueue_RejectsStartFrame");
+
+    t->TestFunc = [](ImGuiTestContext* /*ctx*/) {
+        IM_CHECK(!UiTestQueueMayStart(0));
+        IM_CHECK(UiTestQueueMayStart(1));
+    };
+}
+
 } // namespace
 
 extern "C" void SmatchetRegisterSpawnWarmupDeterministicGateTests(ImGuiTestEngine* engine) {
     RegisterWarmupGateVariant(engine);
     RegisterWarmupGateBudgetCeilingVariant(engine);
+    RegisterDeferredQueueVariant(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS
