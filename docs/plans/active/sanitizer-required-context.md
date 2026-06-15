@@ -101,9 +101,23 @@ the general raw-PUT guard as a residual P3; P2→P3; Last-reviewed 2026-06-15.
 ## Implementation log
 
 - 2026-06-15 — Slice 1 fixture edits applied (`<vector>`, `DismantleDeepJson`, 3
-  teardown calls, comment rewrite); bucket entry down-scoped. ASAN build/verify in
-  progress.
+  teardown calls, comment rewrite); bucket entry down-scoped. ASAN build verified:
+  3 deep-nest cases `3 | 3 passed | 0 failed` under `ninja-msvc-asan`, no
+  stack-overflow; lint all PASS. Slice 1 shipped as PR #1273 (test + docs only;
+  NOT watcher-registered — no auto-merge authorization given).
 
 ## Deviations
 
-(none yet)
+- **Residual finding (surfaced, not silently fixed) — Slice 2 blocker decision.**
+  Verifying Slice 1 under local ASAN exposed a *second* ASAN-fragile assertion
+  unrelated to the ADF fixture: the `LocalCacheManagerChat` hydration-latency
+  microbench (`tests/Core/LocalCacheManagerChat.test.cpp:194`,
+  `CHECK(perIterUs < 6940.0)`) is a wall-clock perf assertion **not ASAN-guarded**.
+  It fails LOCALLY under ASAN (11829.4 us/iter ≈ 1.7× the 6.94 ms / 144 Hz budget,
+  ASAN slowdown) but passes on CI's faster hardware (CI ASAN lane is consistently
+  green when it runs). Same fragility class as #1215 (CallstackParser ReDoS timing
+  wrap). Once the ASAN lane is **required** (Slice 2), a single slow CI runner
+  could red it and deadlock a real merge. **Decision needed before Slice 2**:
+  ASAN-guard the microbench (skip / loosen the threshold under
+  `__SANITIZE_ADDRESS__` like #1215) vs. accept as CI-green residual. Out of the
+  approved plan's scope → escalated per loop-mode `in`.
