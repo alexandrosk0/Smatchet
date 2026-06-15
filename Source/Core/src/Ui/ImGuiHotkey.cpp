@@ -29,6 +29,32 @@ ImGuiKey KeyFromToken(const std::string& tok) {
         if (c >= '0' && c <= '9') {
             return static_cast<ImGuiKey>(ImGuiKey_0 + (c - '0'));
         }
+        switch (c) {
+        case '=':
+            return ImGuiKey_Equal;
+        case '-':
+            return ImGuiKey_Minus;
+        case ',':
+            return ImGuiKey_Comma;
+        case '.':
+            return ImGuiKey_Period;
+        case '/':
+            return ImGuiKey_Slash;
+        case ';':
+            return ImGuiKey_Semicolon;
+        case '\'':
+            return ImGuiKey_Apostrophe;
+        case '`':
+            return ImGuiKey_GraveAccent;
+        case '[':
+            return ImGuiKey_LeftBracket;
+        case ']':
+            return ImGuiKey_RightBracket;
+        case '\\':
+            return ImGuiKey_Backslash;
+        default:
+            break;
+        }
     }
     if (tok.size() >= 2 && tok[0] == 'f') {
         const std::string num = tok.substr(1);
@@ -46,15 +72,37 @@ ImGuiKey KeyFromToken(const std::string& tok) {
             }
         }
     }
-    if (tok == ",") {
-        return ImGuiKey_Comma;
-    }
-    if (tok == "space") {
+    // Named keys (navigation / editing). Tokens arrive lower-cased.
+    if (tok == "space")
         return ImGuiKey_Space;
-    }
-    if (tok == "enter" || tok == "return") {
+    if (tok == "enter" || tok == "return")
         return ImGuiKey_Enter;
-    }
+    if (tok == "tab")
+        return ImGuiKey_Tab;
+    if (tok == "backspace")
+        return ImGuiKey_Backspace;
+    if (tok == "delete" || tok == "del")
+        return ImGuiKey_Delete;
+    if (tok == "escape" || tok == "esc")
+        return ImGuiKey_Escape;
+    if (tok == "insert" || tok == "ins")
+        return ImGuiKey_Insert;
+    if (tok == "home")
+        return ImGuiKey_Home;
+    if (tok == "end")
+        return ImGuiKey_End;
+    if (tok == "pageup" || tok == "pgup")
+        return ImGuiKey_PageUp;
+    if (tok == "pagedown" || tok == "pgdn")
+        return ImGuiKey_PageDown;
+    if (tok == "up")
+        return ImGuiKey_UpArrow;
+    if (tok == "down")
+        return ImGuiKey_DownArrow;
+    if (tok == "left")
+        return ImGuiKey_LeftArrow;
+    if (tok == "right")
+        return ImGuiKey_RightArrow;
     return ImGuiKey_None;
 }
 
@@ -73,14 +121,61 @@ std::string KeyToToken(ImGuiKey key) {
         const int n = 1 + (key - ImGuiKey_F1);
         return std::string("F") + std::to_string(n);
     }
-    if (key == ImGuiKey_Comma) {
+    switch (key) {
+    case ImGuiKey_Equal:
+        return "=";
+    case ImGuiKey_Minus:
+        return "-";
+    case ImGuiKey_Comma:
         return ",";
-    }
-    if (key == ImGuiKey_Space) {
+    case ImGuiKey_Period:
+        return ".";
+    case ImGuiKey_Slash:
+        return "/";
+    case ImGuiKey_Semicolon:
+        return ";";
+    case ImGuiKey_Apostrophe:
+        return "'";
+    case ImGuiKey_GraveAccent:
+        return "`";
+    case ImGuiKey_LeftBracket:
+        return "[";
+    case ImGuiKey_RightBracket:
+        return "]";
+    case ImGuiKey_Backslash:
+        return "\\";
+    case ImGuiKey_Space:
         return "Space";
-    }
-    if (key == ImGuiKey_Enter) {
+    case ImGuiKey_Enter:
         return "Enter";
+    case ImGuiKey_Tab:
+        return "Tab";
+    case ImGuiKey_Backspace:
+        return "Backspace";
+    case ImGuiKey_Delete:
+        return "Delete";
+    case ImGuiKey_Escape:
+        return "Escape";
+    case ImGuiKey_Insert:
+        return "Insert";
+    case ImGuiKey_Home:
+        return "Home";
+    case ImGuiKey_End:
+        return "End";
+    case ImGuiKey_PageUp:
+        return "PageUp";
+    case ImGuiKey_PageDown:
+        return "PageDown";
+    case ImGuiKey_UpArrow:
+        return "Up";
+    case ImGuiKey_DownArrow:
+        return "Down";
+    case ImGuiKey_LeftArrow:
+        return "Left";
+    case ImGuiKey_RightArrow:
+        return "Right";
+    default:
+        break;
     }
     return std::string();
 }
@@ -157,20 +252,17 @@ bool MatchHotkey(const ImGuiIO& io, const ImGuiBugHotkey& hk) {
     if (hk.key == ImGuiKey_None) {
         return false;
     }
-    if (io.KeyCtrl != hk.ctrl || io.KeyShift != hk.shift || io.KeyAlt != hk.alt ||
-        io.KeySuper != hk.super) {
+    if (io.KeyCtrl != hk.ctrl || io.KeyShift != hk.shift || io.KeyAlt != hk.alt || io.KeySuper != hk.super) {
         return false;
     }
     return ImGui::IsKeyPressed(hk.key, /*repeat*/ false);
 }
 
-int FindShortcutConflict(const std::vector<ImGuiBugHotkey>& existing,
-                         const ImGuiBugHotkey& candidate) {
+int FindShortcutConflict(const std::vector<ImGuiBugHotkey>& existing, const ImGuiBugHotkey& candidate) {
     for (size_t i = 0; i < existing.size(); ++i) {
         const ImGuiBugHotkey& e = existing[i];
-        if (e.key == candidate.key && e.ctrl == candidate.ctrl &&
-            e.shift == candidate.shift && e.alt == candidate.alt &&
-            e.super == candidate.super) {
+        if (e.key == candidate.key && e.ctrl == candidate.ctrl && e.shift == candidate.shift &&
+            e.alt == candidate.alt && e.super == candidate.super) {
             return static_cast<int>(i);
         }
     }

@@ -39,6 +39,17 @@ const ExpectedBinding kExpectedDefaults[] = {
     {"F11", "app.fullscreen.toggle", "{}"},
     {"Ctrl+Shift+P", "ui.command_palette", "{}"},
     {"Ctrl+Shift+B", "app.bug_report.open", "{}"},
+    // Menu-bar shortcuts wired by keybindings-menu-shortcuts-fix.md.
+    {"Ctrl+=", "ui.zoom.in", "{}"},
+    {"Ctrl+-", "ui.zoom.out", "{}"},
+    {"Ctrl+0", "ui.zoom.reset", "{}"},
+    {"Ctrl+Shift+V", "ui.open_view", "{}"},
+    {"Ctrl+Shift+G", "grid.clear_selection", "{}"},
+    {"Ctrl+O", "view.toggle.views_dashboard", "{\"action\":\"show\",\"via\":\"open_project_view\"}"},
+    {"Ctrl+Shift+E", "view.toggle.views_dashboard", "{\"action\":\"show\"}"},
+    {"Ctrl+Shift+U", "view.toggle.log", "{\"action\":\"show\"}"},
+    {"Ctrl+Shift+M", "view.toggle.backend_audit", "{\"action\":\"show\"}"},
+    {"Ctrl+Shift+N", "view.toggle.source_annotate", "{\"action\":\"toggle\"}"},
 };
 
 } // namespace
@@ -99,12 +110,14 @@ TEST_CASE("KeybindingsConfig from_json skips malformed bindings, keeps the rest"
     // is the wrong JSON type (number, not string) — the latter throws inside
     // j.value() and is caught + skipped. Only the well-formed binding survives.
     const nlohmann::json j = {
-        {"bindings",
-         nlohmann::json::array({
-             {{"command_id", "view.toggle.performance"}, {"hotkey", "Ctrl+Shift+F"}, {"args_json", "{}"}, {"enabled", true}},
-             42,                          // non-object — skipped
-             {{"command_id", 5}},          // command_id wrong type — throws, skipped
-         })},
+        {"bindings", nlohmann::json::array({
+                         {{"command_id", "view.toggle.performance"},
+                          {"hotkey", "Ctrl+Shift+F"},
+                          {"args_json", "{}"},
+                          {"enabled", true}},
+                         42,                  // non-object — skipped
+                         {{"command_id", 5}}, // command_id wrong type — throws, skipped
+                     })},
     };
     const KeybindingsConfig c = j.get<KeybindingsConfig>();
     REQUIRE(c.Bindings.size() == 1);
@@ -171,4 +184,65 @@ TEST_CASE("RemoveBinding erases the matching action and reports the outcome") {
     // Second remove of the same action is a no-op false.
     CHECK_FALSE(c.RemoveBinding("app.fullscreen.toggle", "{}"));
     CHECK(c.Bindings.size() == before - 1);
+}
+
+TEST_CASE("BoundHotkeyDisplayForArgs resolves distinct-args bindings to distinct keys") {
+    // One command id, two args, two keys — the menu's "Open Project View" vs
+    // "Views Dashboard" case. String equality alone can't tell them apart from the
+    // wrong key; semantic args matching must pick the right Hotkey for each.
+    const KeybindingsConfig c = KeybindingsConfig::Defaults();
+    CHECK(BoundHotkeyDisplayForArgs(c.Bindings, "view.toggle.views_dashboard",
+                                    "{\"action\":\"show\",\"via\":\"open_project_view\"}") == "Ctrl+O");
+    CHECK(BoundHotkeyDisplayForArgs(c.Bindings, "view.toggle.views_dashboard", "{\"action\":\"show\"}") ==
+          "Ctrl+Shift+E");
+}
+
+TEST_CASE("BoundHotkeyDisplayForArgs matches args by JSON semantics, not string bytes") {
+    std::vector<Keybinding> bindings;
+    Keybinding b;
+    b.CommandId = "view.toggle.views_dashboard";
+    b.Hotkey = "Ctrl+O";
+    b.ArgsJson = "{\"action\":\"show\",\"via\":\"open_project_view\"}";
+    b.Enabled = true;
+    bindings.push_back(b);
+
+    // Same object, keys in the opposite order — semantic equality must still match.
+    CHECK(BoundHotkeyDisplayForArgs(bindings, "view.toggle.views_dashboard",
+                                    "{\"via\":\"open_project_view\",\"action\":\"show\"}") == "Ctrl+O");
+}
+
+TEST_CASE("BoundHotkeyDisplayForArgs treats empty and \"{}\" args as equivalent") {
+    std::vector<Keybinding> bindings;
+    Keybinding b;
+    b.CommandId = "ui.zoom.in";
+    b.Hotkey = "Ctrl+=";
+    b.ArgsJson = "{}";
+    b.Enabled = true;
+    bindings.push_back(b);
+
+    CHECK(BoundHotkeyDisplayForArgs(bindings, "ui.zoom.in", "{}") == "Ctrl+=");
+    CHECK(BoundHotkeyDisplayForArgs(bindings, "ui.zoom.in", "") == "Ctrl+=");
+
+    // An empty-args query must NOT match a non-empty-args binding.
+    bindings[0].ArgsJson = "{\"delta\":1}";
+    CHECK(BoundHotkeyDisplayForArgs(bindings, "ui.zoom.in", "{}").empty());
+}
+
+TEST_CASE("BoundHotkeyDisplayForArgs returns empty for unbound or disabled bindings") {
+    const KeybindingsConfig c = KeybindingsConfig::Defaults();
+    // No such command id.
+    CHECK(BoundHotkeyDisplayForArgs(c.Bindings, "no.such.command", "{}").empty());
+
+    // Right command, wrong args — no match.
+    CHECK(BoundHotkeyDisplayForArgs(c.Bindings, "view.toggle.log", "{\"action\":\"hide\"}").empty());
+
+    // A disabled binding is skipped.
+    std::vector<Keybinding> bindings;
+    Keybinding b;
+    b.CommandId = "ui.zoom.in";
+    b.Hotkey = "Ctrl+=";
+    b.ArgsJson = "{}";
+    b.Enabled = false;
+    bindings.push_back(b);
+    CHECK(BoundHotkeyDisplayForArgs(bindings, "ui.zoom.in", "{}").empty());
 }
