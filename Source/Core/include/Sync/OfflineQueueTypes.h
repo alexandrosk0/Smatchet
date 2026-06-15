@@ -3,14 +3,12 @@
 
 // Leaf home for the six offline-queue summary result structs shared by
 // Sync/OfflineQueueService.h and AppController.h. Relocated out of AppController.h
-// (where they were nested in `class AppController`) to TOP-LEVEL (global namespace)
-// so the Sync layer can name them WITHOUT including AppController.h — severing the
-// Sync -> AppController include back-edge (core-include-dag Phase 3).
-//
-// AppController re-exports each as `using DeadLetterRestoreSummary = ::DeadLetterRestoreSummary;`
-// so its ~113 includers that reference `AppController::DeadLetterRestoreSummary` see an
-// identical name (the structs were `AppController::*` nested types before this move).
-// All six are trivial PODs (two ints) — dependency-free beyond the language.
+// (where they were nested in the AppController class) to the top-level global
+// namespace so the Sync layer can name them without including AppController.h,
+// severing the Sync to AppController include back-edge (core-include-dag Phase 3).
+// AppController re-exports each via a using-alias so its ~113 includers that
+// reference the former nested names still see an identical type. All six are
+// trivial PODs (two ints) — dependency-free beyond the language.
 
 /** Result of moving dead-letter create rows back to the active offline queue. */
 struct DeadLetterRestoreSummary {

@@ -3,13 +3,11 @@
 
 // Leaf home for the two tracker-sync result structs shared by Sync/TicketSyncService.h
 // and AppController.h. Relocated out of AppController.h so the Sync layer can depend on
-// these types WITHOUT including AppController.h — severing the Sync -> AppController
-// include back-edge (core-include-dag Phase 3).
-//
-// Both types are in the GLOBAL namespace, exactly where they lived in AppController.h
-// (between the closed `smatchet::lua` block and `class AppController`), so the relocation
-// is byte-identical with no namespace/ADL shift; AppController.h includes this header in
-// their place. Dependency-light: CachedTicketTypes.h (for CachedTicket) + <string>/<vector>.
+// these types without including AppController.h, severing the Sync to AppController
+// include back-edge (core-include-dag Phase 3). Both types stay in the global namespace,
+// exactly where they lived in AppController.h, so the relocation is byte-identical with no
+// namespace or ADL shift; AppController.h includes this header in their place.
+// Dependency-light: CachedTicketTypes.h plus the standard string and vector headers.
 
 #include "CachedTicketTypes.h"
 
