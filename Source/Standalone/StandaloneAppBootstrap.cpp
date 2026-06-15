@@ -22,6 +22,7 @@
 #include "Commands/Scenarios/IScenario.h"
 #include "SmatchetDefaults.h"
 #include "Ui/SmatchetImGuiTextureGuardRuntime.h"
+#include "Ui/SmatchetTooltipWheelRouter.h"
 #include "SmatchetImGuiFonts.h"
 #include "SmatchetUI.h"
 #include "SmatchetUiSession.h"
@@ -559,6 +560,7 @@ void RunRenderLoop(BootstrapContext& ctx, const std::function<bool()>& shouldSto
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
+        smatchet::ui::RouteWheelToScrollableTooltipBeforeNewFrame();
         ImGui::NewFrame();
         ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_None);
 

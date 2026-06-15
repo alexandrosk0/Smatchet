@@ -51,6 +51,7 @@
 #endif
 #include "SmatchetInputModifierBridge.h"
 #include "SmatchetTheme.h"
+#include "Ui/SmatchetTooltipWheelRouter.h"
 
 namespace {
 
@@ -744,6 +745,7 @@ void SmatchetImGuiHost::BeginFrame(float deltaTimeSeconds, float viewportWidth, 
     }
 
     ImGui_ImplDX12_NewFrame();
+    smatchet::ui::RouteWheelToScrollableTooltipBeforeNewFrame();
     ImGui::NewFrame();
 
     ImGuiIO& io = ImGui::GetIO();
