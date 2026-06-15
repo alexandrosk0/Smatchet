@@ -1,34 +1,27 @@
 #pragma once
 
 // Pure abort-decision policy for the automation worker's Lua instruction-count hook
-// (AppController::Impl::RunAutomationJob in AppController_LuaBindings.cpp).
-//
-// Security finding #13 (SECURITY_AUDIT_2026-06-13, Pillar 2 MEDIUM): the original count-hook
-// fired every 50000 instructions but its ONLY escape was `app_.shuttingDown_`. Two exposures:
-//
-//   (A) Shutdown / exit hold. `~AppController` sets `automationWorkerShuttingDown_` BEFORE the
-//       blocking `automationWorker_.join()`, but `shuttingDown_` is set only AFTER the join. A
-//       long-running automation loop therefore never saw an abort signal during the join, and the
-//       dtor blocked on exit indefinitely. The hook must observe `automationWorkerShuttingDown_`
-//       (the flag actually raised before the join) — not just `shuttingDown_`.
-//
-//   (B) Unbounded runaway. Unlike the UI-thread hooks (LuaHookGuard / console snippet / setup
-//       script), which self-terminate after a fixed instruction budget, the automation hook had
-//       NO budget — a runaway pure-Lua loop ran forever on the worker thread (it never blocked the
-//       UI thread, which is the worker-thread architecture's mitigation, but it pinned a core and
-//       held shutdown). A bounded budget makes a runaway job self-abort even with no shutdown
-//       signal, matching the UI-thread contract.
-//
-// This predicate is split out so the decision is unit-testable on the desktop test build with no
-// Lua state, no threads, and no AppController — the caller passes the two flag snapshots plus the
-// elapsed-instruction count, and acts on the returned reason.
-//
-// NOTE on the blocking-C++-glue half of #13 (e.g. JiraClient::UpdateIssueFields' synchronous HTTP
-// PUT): an instruction-count hook cannot interrupt time spent inside a C++ call (no Lua opcodes
-// retire there), so a single blocking glue call is bounded by that call's own HTTP timeout, not by
-// this predicate. Because automation runs on the dedicated `automationWorker_` thread and never on
-// the UI thread, that blocking call cannot freeze the UI (Pillar 2 satisfied by thread affinity);
-// the residual is bounded worker-thread occupancy, which the shutdown-flag fix (A) bounds at exit.
+// in AppController::Impl::RunAutomationJob. Security finding #13 from the 2026-06-13
+// audit (Pillar 2 MEDIUM): the original count-hook fired every 50000 instructions but
+// its only escape was app_.shuttingDown_, leaving two exposures.
+// Exposure A — shutdown / exit hold: the destructor raises automationWorkerShuttingDown_
+// BEFORE the blocking automationWorker_.join, but shuttingDown_ is raised only AFTER the
+// join, so a long-running automation loop saw no abort signal during the join and the
+// destructor blocked on exit indefinitely. The hook must observe the early flag, not just
+// shuttingDown_. Exposure B — unbounded runaway: unlike the UI-thread hooks, the automation
+// hook had no instruction budget, so a runaway pure-Lua loop ran forever on the worker
+// thread; it never blocked the UI thread, but it pinned a core and held shutdown. A bounded
+// budget makes a runaway job self-abort even with no shutdown signal.
+// The decision is split into this predicate so it is unit-testable on the desktop test build
+// with no Lua state, no threads, and no AppController: the caller passes the two flag
+// snapshots plus the elapsed-instruction count and acts on the returned reason.
+// On the blocking-C++-glue half of #13 such as a synchronous tracker HTTP PUT: an
+// instruction-count hook cannot interrupt time spent inside a C++ call because no Lua
+// opcodes retire there, so a single blocking glue call is bounded by that call's own HTTP
+// timeout, not by this predicate. Automation runs on the dedicated automationWorker_ thread
+// and never on the UI thread, so that blocking call cannot freeze the UI and Pillar 2 holds
+// by thread affinity; the residual is bounded worker-thread occupancy, which the exposure-A
+// shutdown-flag fix bounds at exit. See debt.md automation-shutdown-blocking-glue.
 namespace LuaAutomationHookPolicyPure {
 
 // Why an automation job's count-hook decided to abort. kNone means keep running.
