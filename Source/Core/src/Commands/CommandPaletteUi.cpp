@@ -6,6 +6,7 @@
 #include "AppController.h"
 #include "Commands/CommandRegistry.h"
 #include "Commands/FuzzyMatch.h"
+#include "Config/KeybindingsConfig.h"
 #include "DictationInsertionRouter.h"
 #include "Logger.h"
 #include "SmatchetTheme.h"
@@ -284,12 +285,17 @@ void CommandPaletteUi::drawCommandList(AppController& app, const ImGuiIO& io) {
         const Command& c = filtered_[i];
         const bool isSelected = (i == selected_);
 
+        // Full row width captured before the selectable (cursor is at the row's left edge) so the
+        // bound-combo hint can be right-aligned over the selectable's empty right region.
+        const float rowWidth = ImGui::GetContentRegionAvail().x;
+
         // Destructive rows drawn in warning colour.
         if (c.Destructive) {
             ImGui::PushStyleColor(ImGuiCol_Text, SmatchetTheme::Colors::PriorityHigh);
         }
 
-        // Selectable row.
+        // Selectable row. The combo (if any) is drawn separately right-aligned, not baked into
+        // the label, so the selectable id stays stable as bindings change.
         const std::string rowLabel = c.Name + "  " + c.Summary;
         if (ImGui::Selectable(rowLabel.c_str(), isSelected, ImGuiSelectableFlags_None, ImVec2(0, 0))) {
             selected_ = i;
@@ -300,12 +306,33 @@ void CommandPaletteUi::drawCommandList(AppController& app, const ImGuiIO& io) {
         if (c.Destructive) {
             ImGui::PopStyleColor();
         }
+        // Per-row right-click: latch a "Set shortcut…" request for SmatchetUI's quick-bind modal.
+        if (ImGui::BeginPopupContextItem()) {
+            if (ImGui::MenuItem("Set shortcut...")) {
+                requestQuickBindCommandId_ = c.Name;
+            }
+            ImGui::EndPopup();
+        }
+        // Surface the bound combo, dimmed, right-aligned on the same row.
+        const std::string combo =
+            keybindings_ != nullptr ? BoundHotkeyDisplay(*keybindings_, c.Name) : std::string();
+        if (!combo.empty()) {
+            const float comboW = ImGui::CalcTextSize(combo.c_str()).x;
+            ImGui::SameLine(rowWidth - comboW);
+            ImGui::TextDisabled("%s", combo.c_str());
+        }
         if (isSelected) {
             ImGui::SetItemDefaultFocus();
             ImGui::SetScrollHereY(0.5f);
         }
     }
     ImGui::EndChild();
+}
+
+std::string CommandPaletteUi::TakeQuickBindRequest() {
+    std::string id;
+    id.swap(requestQuickBindCommandId_);
+    return id;
 }
 
 } // namespace cmd

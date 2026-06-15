@@ -2,7 +2,7 @@
 
 > **Slug**: `keyboard-shortcuts-rebindable` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `shipped`
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 
@@ -153,10 +153,27 @@ Per `AGENTS.md` § Verification automation — zero manual steps.
 - `AppViewCommands` (`include/Commands/AppViewCommands.h` + `src/Commands/AppViewCommands.cpp`, registered in `BuiltinCommands.cpp`): registry handlers for primary/secondary side-bar, bottom panel, assistant reveal (`SMATCHET_WITH_AI`), `app.fullscreen.toggle` (`!SMATCHET_EMBEDDED_IN_UNREAL`), `app.dock_debug.toggle`, `app.bug_report.open`. The `view.toggle.*` reveals gained `action` + focus-latch params in `ViewToggleCommands.cpp`. `CommandPaletteUi.cpp` lost its inline self-toggle (now driven by the binding).
 - Tests: `tests/Core/ImGuiHotkey.test.cpp` + `tests/Core/KeybindingsConfig.test.cpp`, both wired into `tests/CMakeLists.txt` (source list + production-TU deps) so the configure-time glob-guard is satisfied.
 
+### PR2 — Editor + surfacing (the visible UX, commit `6c79695b`) — shipped to PR
+- **Capture widget** (`include/Ui/SmatchetHotkeyCapture.h` + `src/Ui/SmatchetHotkeyCapture.cpp`): shared `smatchet::ui` helpers — `DrawHotkeyRebindControl` (click-to-capture button → live ImGuiKey latch → `StringifyImGuiHotkey`, Esc cancels), `FindKeybindingConflict` (single-combo warn lookup over the live binding vector), and a `QuickBindPopup` modal reused by the toolbar + palette quick-bind paths. Plain ImGui + explicit `SmatchetLocalization::T()` (avoids the `#define ImGui SmatchetLocalizedImGui` macro-ordering trap when pulling `imgui.h`).
+- **Editor tab** (`src/Ui/SmatchetPreferencesUi_Keybindings.cpp`, item 10): `DrawKeybindingsPreferencesTab` — searchable 3-col table over `cfg.Keybindings.Bindings`, inline rebind, per-row warn-only conflict, enable/clear, "Reset all to defaults", read-only System-shortcuts header (Zen `Ctrl+M, Z`, `Esc Esc`, palette nav). Mutations `MarkKeybindingsDirty()` + `MarkPrefsDirty(d)`. Registered in `SmatchetPreferencesUi.cpp` + `_detail.h` + the `PreferencesActiveTab::Keybindings` enum.
+- **SmatchetUI plumbing** (`SmatchetUI.{h,cpp}`, `SmatchetUiSession.h`, item 11): `MarkKeybindingsDirty()` (arms the dispatch parse-cache rebuild) + an owned `QuickBindPopup` instance + per-frame consume of the toolbar/palette "set-shortcut" latches.
+- **Toolbar quick-bind** (`SmatchetToolbarUi.{h,cpp}`, item 12): right-click "Set shortcut…" context item on toolbar buttons → arms the owned `QuickBindPopup` against that command id; tooltip surfaces the bound combo (item 14).
+- **Command-palette surfacing** (`CommandPaletteUi.{h,cpp}`, item 13): per-row bound-combo column + a right-click "Set shortcut…" path into the same `QuickBindPopup`.
+- **Menu/toolbar tooltip combo** (`SmatchetUI_MainMenu.cpp`, item 14): main-menu items + toolbar tooltips show the active combo from the live binding table.
+- **Config migration** (`Config/ConfigManager.{h,cpp}`, item 15): one-time `BugReportHotkey` → `Keybindings` migration via a file-local `MigrateBugReportHotkeyToKeybindings(j, cfg)` helper, gated on a persisted `migrated_bugreport_hotkey_v1` flag (serialized in `Save`); a disabled legacy hotkey carries `Enabled=false` onto the new binding.
+- **Locales + user doc** (`SmatchetLocalization.cpp`, item 16; `docs/guides/keyboard-shortcuts.md`, item 17): all `keybindings.editor.*` / `prefs.tab.keybindings` / `keybindings.system.*` strings + a user-facing guide.
+- **Bucket-E coverage** (`tests/ui/keybindings_editor_rebind.test.cpp` + `ui_tests_registry.cpp` + `tests/ui/CMakeLists.txt`, item 17): group `"Keybindings"`, 2 tests — `EditorTabRendersWithLiveConflict` (seeds a Ctrl+B conflict, opens Preferences, clicks the tab, asserts `preferencesActiveTab==Keybindings`) + `DefaultComboDispatchesToCommand` (presses Ctrl+Alt+D, asserts `showDockDebug` flips).
+
 ## Deviations from plan
 
 - **PR1**: one comment-noise lint fixup (commit `82d14d71`). The bug-report migration breadcrumb `// (app.bug_report.open, default Ctrl+Shift+B) dispatched ...` tripped the `comment-commented-out-code` heuristic (parenthesized dotted-id + comma reads as a call). Reworded to prose that keeps the command id grep-able without the call shape. Comment-only, no behavior change. No design deviations otherwise — PR1 shipped as planned.
 - DRY WARN (non-blocking, calibration phase per ADR-0015): `KeybindingsConfig.cpp:44 ↔ ToolbarConfig.cpp:62` (98-token clone) — parallel per-config to_json/from_json scaffolding; left as-is (WARN-first, not exempted).
+- **PR2 — Locales landed in `SmatchetLocalization.cpp`, not `Locales/*.json`.** § Files-to-modify item 16 named `Locales/*.json`, but this project's localization strings live in the `SmatchetLocalization.cpp` table (there is no per-language JSON file set on the standalone path). Strings were added there with the same key namespace; no behavior change vs the planned key set.
+- **PR2 — two lint fixups (no behavior change), folded into the editor/migration commit:**
+  - `comment-blank-run`: a stray bare `//` at `SmatchetPreferencesUi_Keybindings.cpp:9` tripped the blank-comment-run heuristic → deleted.
+  - `function-too-branchy`: the `BugReportHotkey` migration block pushed `ConfigManager::LoadListFields` to 31 branches (cap 30). Extracted the block into the file-local `MigrateBugReportHotkeyToKeybindings(j, cfg)` helper (its current home) — `LoadListFields` drops back under cap; net behavior identical.
+- **PR2 — non-blocking WARNs left as-is (calibration / soft tier):** `DrawKeybindingsPreferencesTab` 131 lines > 100 (soft func-size tier, not blocking); `ConfigManager.h` / `KeybindingsConfig.h` comment-ratio 52% > 50%; 3 DRY copy-paste WARNs (ImGuiHotkey↔editor, toolbar↔catalog, UI↔MainMenu) — all WARN-first per ADR-0015, none exempted.
+- **PR2 — bucket-E click-through residue logged, not silently dropped:** the editor's click-to-rebind seam + quick-bind modal interior have no bucket-E assertion (blocked by the private `MarkKeybindingsDirty()` + headless docked-window content clipping); the 2 shipped bucket-E tests cover render + default-combo dispatch, bucket-A covers the pure `KeybindingsConfig`/`ImGuiHotkey` logic. Deferred-automation options recorded in `docs/self-improvement/categories/tooling.md` (`keybindings-editor-rebind-bucketE-residue`, P2) per the no-silent-residue contract.
 
 ## Verification (actual)
 
@@ -165,12 +182,11 @@ Per `AGENTS.md` § Verification automation — zero manual steps.
   - dual-target build (`ninja-iter-msvc`): `SmatchetStandalone` (`Smatchet.exe`) + `SmatchetCore_DX12.lib` both clean with warnings-as-errors ON.
   - `test-lint-rules.sh --diff origin/develop`: all rules PASS (strict-zone, comment-noise, no-raw-new, oversized-function, agent-size); 2 DRY WARNs (non-blocking).
   - Remote CI on [#1207](https://github.com/alexandrosk0/Smatchet/pull/1207): pending at hand-off (not auto-merged — awaiting user authorization).
-- **PR2**: not yet implemented.
-
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*In the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*(Delete this `## Archive` block as part of step 2.)*
+- **PR2** — local pre-merge gates, read from real log markers (per "validate before assuming"; the `exit 0` masking trap was caught again this round — the background notification reported `exit 0` while the real ctest marker was `CTEST_EXIT:8`, so every number below is read from an explicit `===MARKER_EXIT:N===` in the logfile, not from a reported exit code):
+  - doctest rig (`ninja-test-msvc` → `SmatchetTests.exe`): **1856 cases / 16622 assertions / 0 failed / 0 skipped**, `Status: SUCCESS!` (count reflects the branch = `origin/develop` merged in + the PR2 tests; Keybindings + Hotkey cases present).
+  - dual-target build (`ninja-iter-msvc`): `CONFIGURE_EXIT:0` + `BUILD_EXIT:0`, zero error/warning lines — `Smatchet.exe` (`SmatchetStandalone`) + `SmatchetCore_DX12.lib` both linked under warnings-as-errors. (Earlier `/EHsc` C4530→C2220 failure root-caused to a stale/corrupt `CMakeCache` from a prior **un-wrapped** configure that left `CMAKE_CXX_FLAGS` empty — nuked the build dir + reconfigured via `scripts/dev/with-msvc-env.sh`; not a code regression.)
+  - Bucket E (`ninja-ui-test-msvc` → `Smatchet.exe`, group `"Keybindings"`): `{"data":{"failed":0,"filter":"Keybindings","passed":2,"tested":2},"ok":true}` → **passed=2 failed=0**, `RESULT:PASS` (booted + passed locally on this Windows 11 box; bucket-E is dead in CI — Mesa software-GL can't boot — so this is the authoritative run).
+  - `test-lint-rules.sh --diff origin/develop`: `===LINT_EXIT:0===` — all hard rules PASS after the two fixups above; only non-blocking WARNs remain (func-size soft tier, comment-ratio, 3 DRY calibration WARNs).
+  - `scripts/dev/test-docs.sh`: `Passed: 13  Failed: 0`, `PASS — local doc-validation mirror clean` (re-run after the plan `git mv` to revalidate the plan-index).
+  - ctest caveat (honest): the `ninja-test-msvc` build was scoped `--target SmatchetTests`, so `SmatchetLuaTests.exe` was never compiled → ctest counted it "Not Run" (1-of-7 "fail"). That is a build-scoping artifact, **not** a regression — the diff touches zero Lua files; the authoritative `smatchet_tests` run passed (above).
+  - Remote CI on the PR2 PR: pending at hand-off (not auto-merged — registered with `smatchet-merge-watcher` for authorized merge-when-green; do not self-merge).

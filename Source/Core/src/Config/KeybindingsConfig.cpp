@@ -1,7 +1,7 @@
 // Keybinding-table serialization + the built-in default shortcut set. The defaults
 // reproduce the shortcuts that were hardcoded across SmatchetUI / CommandPaletteUi /
 // the bug-report poll before the rebindable registry landed (PR1 migration). See
-// docs/plans/active/keyboard-shortcuts-rebindable.md.
+// docs/plans/shipped/keyboard-shortcuts-rebindable.md.
 
 #include "KeybindingsConfig.h"
 
@@ -58,6 +58,61 @@ void from_json(const nlohmann::json& j, KeybindingsConfig& c) {
             }
         }
     }
+}
+
+std::string BoundHotkeyDisplay(const std::vector<Keybinding>& bindings,
+                               const std::string& commandId) {
+    std::string fallback;
+    for (const Keybinding& b : bindings) {
+        if (b.CommandId != commandId || !b.Enabled || b.Hotkey.empty()) {
+            continue;
+        }
+        if (b.ArgsJson == "{}" || b.ArgsJson.empty()) {
+            return b.Hotkey; // exact default-args match wins
+        }
+        if (fallback.empty()) {
+            fallback = b.Hotkey;
+        }
+    }
+    return fallback;
+}
+
+int KeybindingsConfig::FindBindingIndex(const std::string& commandId,
+                                        const std::string& argsJson) const {
+    for (std::size_t i = 0; i < Bindings.size(); ++i) {
+        if (Bindings[i].CommandId == commandId && Bindings[i].ArgsJson == argsJson) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+int KeybindingsConfig::SetBindingHotkey(const std::string& commandId,
+                                        const std::string& argsJson,
+                                        const std::string& hotkey) {
+    int idx = FindBindingIndex(commandId, argsJson);
+    if (idx >= 0) {
+        Bindings[static_cast<std::size_t>(idx)].Hotkey = hotkey;
+        Bindings[static_cast<std::size_t>(idx)].Enabled = true;
+        return idx;
+    }
+    Keybinding b;
+    b.CommandId = commandId;
+    b.ArgsJson = argsJson;
+    b.Hotkey = hotkey;
+    b.Enabled = true;
+    Bindings.push_back(b);
+    return static_cast<int>(Bindings.size()) - 1;
+}
+
+bool KeybindingsConfig::RemoveBinding(const std::string& commandId,
+                                      const std::string& argsJson) {
+    int idx = FindBindingIndex(commandId, argsJson);
+    if (idx < 0) {
+        return false;
+    }
+    Bindings.erase(Bindings.begin() + idx);
+    return true;
 }
 
 KeybindingsConfig KeybindingsConfig::Defaults() {

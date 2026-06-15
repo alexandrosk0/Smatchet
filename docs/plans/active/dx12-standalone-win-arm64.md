@@ -189,11 +189,17 @@ Diff touches `Source/Core/` (BugReportService) + the render path under it, so ga
 ## Implementation log
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
 
+**Phase 0 — telemetry** (PR pending):
+- `af44ffae` · bug-report emulation telemetry — `DetectHostMachine()` (`IsWow64Process2`, dynamic `GetProcAddress` from kernel32) in BugReportService.cpp surfaces `emulated` + `host_arch` env keys; BugReportBody.cpp annotates the OS/Arch markdown row; +2 BuildMarkdownBody doctest cases.
+
 **Phase 1 — standalone DX12 renderer (PR pending):**
 - `4d7f3b41` · DX12 standalone renderer backend — `Dx12Bootstrap.{h,cpp}` pImpl D3D12 device/swapchain/RTV/fence + WARP fallback + SRV allocator + top-left backbuffer capture; renderer-conditional `StandaloneAppBootstrap`/`main.cpp` (init/render-loop/shutdown/screenshot); `Initialize` decomposed into `InitRendererBackend` + `TeardownPartialBoot`; CMake links `d3d12/dxgi/d3dcompiler` + compiles `imgui_impl_dx12.cpp` under `WIN32 AND MSVC`; `ResolveStandaloneRenderer` precedence `--renderer` > `SMATCHET_RENDERER` env > platform default; CI pins `SMATCHET_RENDERER=gl` workflow-wide.
 
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+**Phase 0**:
+- Plan row 1 named only BugReportService.cpp; the markdown OS/Arch row is hard-coded in **BugReportBody.cpp** (the pure half), so the arch-cell composition + its 2 unit tests landed there too — keeps the rendering unit-testable in the doctest rig (BugReportService.cpp links cpr/host symbols and is excluded from the rig). No behavioural change vs the plan's intent ("surfaced in the bug-report environment block").
 
 **Phase 1:**
 - **Renderer precedence gained an env layer** — plan specified `--renderer` flag > platform default; shipped as flag > `SMATCHET_RENDERER` env > platform default. The env knob lets CI pin every standalone launch (incl. the `scenario.run` buried inside `scripts/dev/test-screenshot-diff.sh`) to gl via one workflow-level var instead of threading `--renderer=gl` through every launch site.
@@ -206,6 +212,12 @@ Diff touches `Source/Core/` (BugReportService) + the render path under it, so ga
 
 ## Verification (actual)
 *(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+
+**Phase 0** (at `af44ffae`, rebased onto current `origin/develop`):
+- **Build** — PASS: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12 SmatchetTests` green pre- and post-rebase (dual-target verified: standalone compiles the Win32 `DetectHostMachine` path; `SmatchetCore_DX12` links).
+- **Tests** — PASS: full doctest rig 1704 cases / 15765 assertions, 0 failed; the 2 new BuildMarkdownBody emulation cases pass.
+- **Lint** — PASS: `test-lint-rules.sh --diff origin/develop` clean (strict-zone, comment-noise, no-raw-new/deviation-overdue/no-detach, GLFW-in-Core-headers, CMake-FATAL all green; narrowing-conversions skipped — opt-in).
+- **Not run** — perf gates (Phase 0 adds no draw-code path; `DetectHostMachine` is a one-shot bug-report-time call, not a per-frame path); ASan/UBSan (deferred to CI).
 
 **Phase 1 (commit `4d7f3b41`, worktree `C:\Dev\trees\dx12-phase1`):**
 

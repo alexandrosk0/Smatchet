@@ -26,6 +26,14 @@ class SmatchetToolbarUi {
     /** Open the Customize Toolbar editor on the next Draw() (View menu / pseudo-action). */
     void OpenEditor();
 
+    /** Poll-and-clear the latched "Set shortcut…" request: returns the command id whose
+     *  right-click menu fired the item since the last call (empty = none) and writes the
+     *  clicked button's ArgsJson into argsJsonOut — only when a request is returned, so the
+     *  caller's default survives an empty poll. SmatchetUI polls this each frame to drive the
+     *  shared quick-bind modal — keeps the toolbar ImGui-free and avoids threading the modal
+     *  through Draw()'s cfg-only signature. */
+    std::string TakeQuickBindRequest(std::string& argsJsonOut);
+
   private:
     // Which list the Customize editor mutates: the shared toolbar or the active backend's append.
     enum class EditScope { Global, Tracker };
@@ -57,6 +65,12 @@ class SmatchetToolbarUi {
     void RefreshTrackerAppendCache(AppController& app);
 
     SmatchetIconPickerUi iconPicker_;
+    // One-shot latch set by the per-button "Set shortcut…" context-menu item; drained by
+    // TakeQuickBindRequest(). Empty id = no pending request. The paired ArgsJson carries the
+    // clicked button's command args so a parametrized button binds its real (commandId, args)
+    // identity rather than the default "{}" variant.
+    std::string requestQuickBindCommandId_;
+    std::string requestQuickBindArgsJson_ = "{}";
     bool requestEditorOpen_ = false;
     int requestEditSelect_ = -1; // button index to preselect when the editor next opens; -1 = default
     int selected_ = -1;          // selected button index in the editor

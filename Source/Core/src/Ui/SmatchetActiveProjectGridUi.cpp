@@ -19,6 +19,7 @@
 #include "StringUtil.h"
 #include "TicketFieldEditor.h"
 #include "TicketGridModel.h"
+#include "Ui/SmatchetTooltipWheelRouter.h"
 #include "UiPerfMonitor.h"
 
 #include "imgui.h"
@@ -57,6 +58,30 @@ static bool IsPersistableSortDirection(ImGuiSortDirection dir) {
     return dir == ImGuiSortDirection_Ascending || dir == ImGuiSortDirection_Descending;
 }
 
+static bool WindowBelongsToTableWheelScope(ImGuiTable* table, ImGuiWindow* window) {
+    if (!table || !window) {
+        return false;
+    }
+    ImGuiWindow* inner = table->InnerWindow;
+    ImGuiWindow* outer = table->OuterWindow;
+    return window == inner || window == outer ||
+           (inner && ImGui::IsWindowChildOf(window, inner, false, false)) ||
+           (outer && ImGui::IsWindowChildOf(window, outer, false, false));
+}
+
+static bool TableOwnsCurrentWheelRoute(ImGuiTable* table) {
+    ImGuiContext* g = ImGui::GetCurrentContext();
+    if (!g || !table || smatchet::ui::HasOpenScrollableTooltip()) {
+        return false;
+    }
+
+    ImGuiWindow* wheelOwner = g->WheelingWindow ? g->WheelingWindow : g->HoveredWindow;
+    if (!wheelOwner) {
+        return false;
+    }
+    return WindowBelongsToTableWheelScope(table, wheelOwner);
+}
+
 /** When vertically at top/bottom (or no vertical scroll), map mouse wheel to horizontal scroll; first N wheel ticks at
  * each end ignored (configured by GridEndWheelSwallowsBeforeHorizontal). Per-pane hysteresis (Slice 2). */
 static void RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGuiTable* table, UiDrawSession& d, GridPane& pane) {
@@ -71,6 +96,9 @@ static void RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGuiTable* table,
 
     if (!inner || std::abs(io.MouseWheel) <= 0.0f || std::abs(io.MouseWheelH) >= 0.0001f ||
         inner->ScrollMax.x <= 0.0f) {
+        return;
+    }
+    if (!TableOwnsCurrentWheelRoute(table)) {
         return;
     }
 
@@ -291,6 +319,15 @@ static void PromoteActiveRowToSelection(GridPane& pane, RectSelT& sel, const std
 }
 
 } // namespace
+
+#if defined(SMATCHET_BUILD_UI_TESTS)
+extern "C" void SmatchetUiTestRouteActiveProjectGridWheelForCurrentTable(UiDrawSession* d, GridPane* pane) {
+    if (!d || !pane) {
+        return;
+    }
+    RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGui::GetCurrentTable(), *d, *pane);
+}
+#endif
 
 // Shared per-frame state for the drawActiveProjectWindow section helpers (monoliths
 // Slice 1b). Constructed once at the top of drawActiveProjectWindow from orchestrator-

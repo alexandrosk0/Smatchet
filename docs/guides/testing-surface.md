@@ -61,7 +61,7 @@ infrastructure**, never "manual forever."
 
 ## 3. CI gating map — required vs advisory (the asymmetry)
 
-**Required contexts on `develop`** (branch protection, [`project.config.json`](../../project.config.json) § `branch_protection`) — only 6:
+**Required contexts on `develop`** (branch protection, [`project.config.json`](../../project.config.json) § `branch_protection`) — 9 (Slice C promoted Coverage + both sanitizers, 2026-06):
 
 1. `Test-delta gate` — every `Source/Core/` change needs a test-file delta (ubuntu)
 2. `Windows + MSVC` — ctest (units/Lua/MCP) + non-UI bucket-A
@@ -69,6 +69,15 @@ infrastructure**, never "manual forever."
 4. `Shell lint (shellcheck)`
 5. `Doc anchors + agent contract` — doc-validation suite
 6. `Perf PR-fast (windows-2022)` — diff→scenario subset (Pillar 1)
+7. `Coverage (windows-2022 + OpenCppCoverage)` — line-coverage floor (`--threshold 65`)
+8. `Sanitizer (ASAN via MSVC)` — Debug ASan: android-openssl ctest probes + instrumented doctest rig (Core PRs; `skipped`=success otherwise)
+9. `Sanitizer (UBSan via Clang)` — RelWithDebInfo Clang ASan+UBSan ctest (Core PRs; `skipped`=success otherwise)
+
+> **Config↔live drift caveat:** these names are only *enforced* once
+> `agents/scripts/core/setup-branch-protection.sh` re-runs (a manual full-replace PUT
+> that lives in **no** workflow). Editing `branch_protection.required_contexts` is
+> inert until then — the exact gap that let the #1227 red-Coverage merge escape (live
+> ruleset had 6 contexts, config listed 7). Slice C re-ran the apply script as Phase 2.
 
 **Outside branch protection (advisory or poller-soft):**
 
@@ -76,19 +85,22 @@ infrastructure**, never "manual forever."
 |---|---|---|---|
 | **Bucket-C screenshot diff** | PR (`needs: windows-msvc`) | `continue-on-error: true`; flaky **Mesa software-GL** | Visual regression never blocks merge |
 | **Bucket-E UI tests** | PR | `continue-on-error: true`; same Mesa flakiness | 26 interaction tests never block merge |
-| **Coverage** (`--threshold 65`) | PR (paths) | blocks its own job, but **not** in `required_contexts` | direct REST merge bypasses |
-| **Sanitizer (ASan / UBSan)** | PR if `source_core_cpp` | not branch-required; enforced only by merge-poller allow-list | direct merge bypasses |
 | **TSan (Linux)** | PR (paths-scoped) + nightly cron | paths-scoped → can't be `required` (path-filter deadlock) | data-race detection advisory |
 | **Sanitizer-nightly / perf-full / tsan nightly** | cron | backstop, not PR-gating | regressions surface next day |
 
 **The load-bearing consequence.** UX Pillars 1-3 (perf / no-freeze / no-crash)
-are described as auto-fail, but the lanes that *dynamically* prove them (bucket-C/E,
-sanitizers) don't branch-gate. The merge-poller ([`merge-gates.sh`](../../agents/scripts/core/merge-gates.sh))
-keeps `Coverage`/`Sanitizer`/`Bucket-` on a *meant-to-block allow-list*, so the
-**normal** ship path respects them — but a direct `gh api …/merge` (a documented
-valid path with no merge queue) and the blanket `continue-on-error` on bucket-C/E
-together let visual/interaction failures escape. **Documented escape:** PR #1180
-shipped red bucket-C/E under a `cr-out-of-band` override (postmortem owed).
+are described as auto-fail. Slice C closed the biggest gap — `Coverage` +
+`Sanitizer (ASAN via MSVC)` + `Sanitizer (UBSan via Clang)` are now **branch-required**,
+so a direct `gh api …/merge` can no longer bypass them (GitHub rejects the merge
+until each reports green or `skipped`). The residual escape is the **bucket-C/E**
+dynamic lanes (screenshot diff + ImGui Test Engine): both carry a blanket
+`continue-on-error: true` for **Mesa software-GL** flakiness, so visual/interaction
+failures still never block merge. (`Bucket-` was dropped from the merge-poller
+([`merge-gates.sh`](../../agents/scripts/core/merge-gates.sh)) *meant-to-block allow-list*
+2026-06-15 — `infra.md` `bucket-mesa-exe-boot` P1: the Mesa-software-GL bucket-C/E lanes
+can't boot the CI exe, so they are now fully advisory and the poller no longer blocks
+on them; re-add on boot-fix graduation.) **Documented escape:** PR
+#1180 shipped red bucket-C/E under a `cr-out-of-band` override (postmortem owed).
 
 ---
 

@@ -570,6 +570,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["quick_comment_templates"] = config.QuickCommentTemplates;
     j["toolbar"] = config.Toolbar;
     j["keybindings"] = config.Keybindings;
+    j["migrated_bugreport_hotkey_v1"] = config.MigratedBugReportHotkeyV1;
     j["annotate_comment_templates"] = config.AnnotateCommentTemplates;
     j["duration_suggestions"] = config.DurationSuggestions;
     j["worklog_comment_templates"] = config.WorkLogCommentTemplates;
@@ -1053,6 +1054,39 @@ void LoadInheritFieldIds(const nlohmann::json& j, const char* key, std::vector<s
     }
 }
 
+// One-shot migration: fold the legacy BugReportHotkey / BugReportHotkeyEnabled pair into the
+// keybinding registry ("app.bug_report.open"). The registry became authoritative for the
+// bug-report shortcut in the PR1 migration, but Defaults() seeded "Ctrl+Shift+B" regardless of
+// a user's customized / disabled BugReportHotkey — fold it once so that customization survives.
+// Runs after the keybindings load (cfg.Keybindings populated) and after LoadScalarFields
+// (cfg.BugReportHotkey* populated). SetBindingHotkey upserts the "{}" binding in place.
+void MigrateBugReportHotkeyToKeybindings(const nlohmann::json& j, TrackerConfig& cfg) {
+    cfg.MigratedBugReportHotkeyV1 = j.value("migrated_bugreport_hotkey_v1", false);
+    if (cfg.MigratedBugReportHotkeyV1) {
+        return;
+    }
+    // Only fold the legacy pair forward when it actually diverged from the seeded default. A fresh
+    // profile (no config file) skips this migration entirely — LoadListFields runs only when the
+    // loaded JSON is non-empty — so the flag stays false; a user who then rebinds
+    // "app.bug_report.open" via the editor and saves would, on the NEXT load, have that
+    // customization clobbered here by the default legacy hotkey. Guarding on legacy-customized
+    // keeps the rebind intact while still carrying a genuinely customized / disabled legacy hotkey
+    // forward exactly once. ("Ctrl+Shift+B" mirrors the BugReportHotkey default in ConfigManager.h
+    // and the app.bug_report.open seed in KeybindingsConfig::Defaults().)
+    const bool legacyCustomized =
+        cfg.BugReportHotkey != "Ctrl+Shift+B" || !cfg.BugReportHotkeyEnabled;
+    if (legacyCustomized) {
+        cfg.Keybindings.SetBindingHotkey("app.bug_report.open", "{}", cfg.BugReportHotkey);
+        if (!cfg.BugReportHotkeyEnabled) {
+            const int idx = cfg.Keybindings.FindBindingIndex("app.bug_report.open", "{}");
+            if (idx >= 0) {
+                cfg.Keybindings.Bindings[static_cast<std::size_t>(idx)].Enabled = false;
+            }
+        }
+    }
+    cfg.MigratedBugReportHotkeyV1 = true;
+}
+
 // List + nested-object fields: mcp_export_fields, comment-template arrays, duration/worklog
 // suggestion lists, the three inherit-id lists, and the one-shot issuetype-inject migration.
 void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
@@ -1150,6 +1184,8 @@ void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
         injectIfMissing(cfg.NewIssueInheritFieldIdsGitHub);
         cfg.MigratedInheritIssueTypeV1 = true;
     }
+
+    MigrateBugReportHotkeyToKeybindings(j, cfg);
 }
 
 // Env-var + CLI overrides applied post-disk-read, plus the final post-override safety clamps.

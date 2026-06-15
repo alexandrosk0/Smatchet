@@ -54,6 +54,9 @@ jobs:
             # base") and the fail-closed guard rejects the PR (a recurring false
             # FAIL — bit the security campaign's #1245). checkout uses fetch-depth:0,
             # so the repo is already un-shallow and a full ref fetch is cheap.
+            # Same defect lived in 4 sibling delta gates (dup-scan / build-and-test
+            # ×2 / perf-pr-fast); all fixed + lint-swept by tests/bats/
+            # delta_gate_base_ref_fetch.bats. (#1227(b))
             git fetch --no-tags origin "${{ github.base_ref }}" 2>/dev/null || true
             base="origin/${{ github.base_ref }}"
           else

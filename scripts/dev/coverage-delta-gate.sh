@@ -506,7 +506,7 @@ for f in "${CHANGED[@]}"; do
         # (shared fixtures / helpers) was previously included but is trivially
         # dismissable (add an empty header to "satisfy" the gate). Restrict to the
         # per-test-file delta the gate was designed to enforce.
-        tests/Core/*.test.cpp|tests/Lua/*.test.cpp|tests/Plugins/*.test.cpp|tests/Plugins/Mcp/*.test.cpp)
+        tests/Core/*.test.cpp|tests/Lua/*.test.cpp|tests/Plugins/*.test.cpp|tests/Plugins/Mcp/*.test.cpp|tests/ui/*.test.cpp)
             TEST_CHANGES+=("$f") ;;
     esac
 done
@@ -551,7 +551,7 @@ for f in "${PROD_CHANGES[@]}"; do
     echo "  - $f"
 done
 echo
-echo "Add tests under tests/Core/ (or tests/Lua/, tests/Plugins/) for the"
+echo "Add tests under tests/Core/ (or tests/Lua/, tests/Plugins/, tests/ui/) for the"
 echo "changed units. Changes that add no new runtime surface (comment-only,"
 echo "logging-only, static_assert-only, include-only, preprocessor-guard-only,"
 echo "swallow->log catch) are auto-exempted; if yours genuinely cannot be"

@@ -8,6 +8,7 @@
 #include "SmatchetThemeIds.h"
 #include "TicketGridModel.h"
 #include "Ui/ImGuiHotkey.h"
+#include "Ui/SmatchetHotkeyCapture.h"
 #include "Ui/SmatchetUserInfoUi.h"
 #include "Views.h"
 
@@ -95,6 +96,12 @@ class SmatchetUI {
         annotateAnalysisUi_.DrawAnnotatePreferencesTab(app);
     }
 
+    /// Mark the parsed keybinding dispatch cache stale so the next frame rebuilds it
+    /// from cfg.Keybindings (rebuildKeybindingCache). The Keyboard Shortcuts editor +
+    /// the toolbar / command-palette quick-bind call this after mutating the binding
+    /// table so a rebind takes effect immediately, without a restart.
+    void MarkKeybindingsDirty() { keybindingCacheDirty_ = true; }
+
     /// Ring-buffer LRU of recently toggled view command ids (capacity 5, oldest-first on read).
     class RecentViewLru {
       public:
@@ -152,6 +159,11 @@ class SmatchetUI {
     GridFrameContext gridFrameCtx_;
     smatchet::cmd::CommandPaletteUi commandPalette_;
     SmatchetToolbarUi toolbar_;
+    // Shared "Set shortcut..." quick-bind modal (toolbar button + command-palette row
+    // context action). Owned here so it outlives the per-frame context menus that open
+    // it; drawQuickBindPopup polls toolbar_/commandPalette_ for a fired request, opens
+    // the modal, and persists + invalidates the dispatch cache on a commit/clear.
+    smatchet::ui::QuickBindPopup quickBind_;
     // Tracks the palette currently applied to ImGui::GetStyle() so SmatchetUI::Draw can detect
     // a cfg.Theme change and re-apply once per dirty event (not every frame).
     ThemeId lastAppliedTheme_ = ThemeId::SmatchetDark;
@@ -178,6 +190,10 @@ class SmatchetUI {
     bool keybindingCacheDirty_ = true;
 
     void drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSession& d);
+    // Consume the toolbar / command-palette "Set shortcut..." request latch and draw the
+    // shared quick-bind modal once per frame (desktop path only — the toolbar + palette
+    // are desktop chrome). On a commit/clear, persists cfg + marks the dispatch cache dirty.
+    void drawQuickBindPopup(AppController& app, UiDrawSession& d);
     void drawMainMenuBar(AppController& app, UiDrawSession& d);
     // Per-menu section helpers for drawMainMenuBar (function-size-compliance, monoliths
     // campaign). Each top-level helper owns its own BeginMenu/EndMenu pair identically to the
