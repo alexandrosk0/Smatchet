@@ -4,6 +4,8 @@
 #include "SmatchetUiSession.h"
 #include "StringUtil.h"
 #include "Ui/SmatchetAudit_detail.h"
+#include "Ui/SmatchetIconButtons.h"
+#include "IconsFontAwesome6.h"
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
@@ -268,7 +270,7 @@ void SmatchetUI::drawAuditWindow(AppController& app, UiDrawSession& d) {
     repairTopLevelWindow(d, "audit", 420.0f, 300.0f);
     ImGui::Text("Audit file: %s", BackendAuditTrail::GetAuditFilePath().c_str());
     ImGui::SameLine();
-    const bool userRefresh = ImGui::Button("Refresh");
+    const bool userRefresh = SmatchetIconButton(ICON_FA_ARROWS_ROTATE, "Refresh", "Reload the audit trail.");
     if (userRefresh || pollDue) {
         d.auditLastFilePoll = nowPoll;
         RequestAuditReload(d);

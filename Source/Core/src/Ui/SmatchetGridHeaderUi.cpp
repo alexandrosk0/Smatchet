@@ -11,7 +11,9 @@
 #include "Views.h"
 #include "IssueDraft.h"
 #include "ProjectResolver.h"
+#include "Ui/SmatchetIconButtons.h"
 
+#include "IconsFontAwesome6.h"
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
@@ -206,7 +208,8 @@ void DrawHeaderViewToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
     // separate green "Save View" chip is needed.
     if (activeViewForGrid) {
         ImGui::SameLine();
-        if (ImGui::Button("Refresh View")) {
+        if (SmatchetIconButton(ICON_FA_ARROWS_ROTATE, "Refresh View",
+                               "Re-run this view's query and refresh the grid.")) {
             if (pane.focused) {
                 d.cfg.JqlQuery = activeViewForGrid->Jql;
                 d.cfg.SelectedFields = activeViewForGrid->Fields;
@@ -220,8 +223,6 @@ void DrawHeaderViewToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
                 d.paneDeferredActionKind = UiDrawSession::PaneDeferredActionKind::RefreshView;
             }
         }
-        if (ImGui::IsItemHovered())
-            ImGui::SetTooltip("Re-run this view's query and refresh the grid.");
     }
 
     // Quick Filter UI — per-pane buffer (Slice 2): each pane window filters alone.

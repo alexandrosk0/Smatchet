@@ -30,6 +30,8 @@
 #include "WindowsAudioCapture.h"
 #include <cpr/cpr.h>
 
+#include "Ui/SmatchetIconButtons.h"
+#include "IconsFontAwesome6.h"
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
@@ -830,7 +832,9 @@ void DrawWhisperPrivacyAndRerun(UiDrawSession& d) {
     // QA / repro flows; not for routine users (no harm if pressed — the banner
     // just re-asks the consent question).
     ImGui::Separator();
-    if (ImGui::Button(SmatchetLocalization::T("whisper.preferences.rerunSetup.button", "Re-run setup banner"))) {
+    if (SmatchetIconButton(ICON_FA_ARROWS_ROTATE,
+                           SmatchetLocalization::T("whisper.preferences.rerunSetup.button", "Re-run setup banner"),
+                           nullptr)) {
         d.cfg.WhisperSetupCompleted = false;
         d.cfg.WhisperSetupChoice.clear();
         MarkPrefsDirty(d);

@@ -36,7 +36,9 @@
 #include "SmatchetHelpMarker.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetToast.h"
+#include "Ui/SmatchetIconButtons.h"
 
+#include "IconsFontAwesome6.h"
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
@@ -716,7 +718,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
         "Log level and verbose logging: Inspect -> Runtime Log. The Annotate Analysis tab has its own Save "
         "settings and Reload settings buttons.");
     ImGui::Spacing();
-    if (ImGui::Button("Save & Sync", ImVec2(140.0f, 0.0f))) {
+    if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Save & Sync", nullptr, ImVec2(140.0f, 0.0f))) {
         onPreferencesSaveAndSync(app, d);
     }
 

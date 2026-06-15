@@ -242,6 +242,13 @@ add_executable(SmatchetTests
     # rig already links ImGuiLib + include/Ui so imgui.h resolves.
     Core/SmatchetDockNodeIds.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetDockNodeIds.cpp"
+    # jql-omnibox-search Stream A — pure icon/text fallback-selection predicate
+    # behind SmatchetIconButton (the icon-only Refresh + icon-leading Save&Sync
+    # helpers). SmatchetIconButtonLabel.h is header-only + ImGui-free; the ImGui
+    # wrapper SmatchetIconButtons.cpp depends on SmatchetAreFaIconsLoaded()
+    # (SmatchetImGuiFonts.cpp, not linked here) so it is deliberately NOT in the
+    # rig — only the pure predicate is. No extra .cpp link.
+    Core/SmatchetIconButtons.test.cpp
     Core/MarkdownPreviewLangTag.test.cpp
     Core/MarkdownConvertAdf.test.cpp
     Core/MarkdownConvert.test.cpp
