@@ -2,6 +2,19 @@
 
 Slug: `sanitizer-required-context` · Owner: orchestrator · Started: 2026-06-15 · Loop-mode: `in`
 
+> **RE-SCOPED 2026-06-15 — Slice 2 SUPERSEDED.** Mid-flight recon found a parallel
+> `Slice C` effort ([`coverage-sanitizer-required-contexts.md`](coverage-sanitizer-required-contexts.md))
+> already promoted BOTH Sanitizer lanes to **live** branch-protection required
+> contexts: PR #1253 (`af475041`, merged 2026-06-15 12:46) added them to config
+> `required_contexts` + `ci.required_checks` + escape hatches + the deterministic-red
+> ctest fix; Phase 2 already ran (live `develop` ruleset shows 9 contexts, both
+> sanitizers present). Slice C also chose **Pattern C** (job-level `if:` skip →
+> GitHub treats skipped-required as success), NOT the Pattern-A self-gate this plan
+> had drafted — so Slice 2 is not only done but my approach was wrong. **This plan is
+> re-scoped to the half Slice C did NOT cover: ASAN-lane fixture/assertion *fragility
+> hardening*** so the now-live required ASAN lane can't false-red on a slow runner —
+> Slice 1 (ADF fixture, PR #1273) + Slice 1b (9 wall-clock timing-assertion guards).
+
 ## Problem
 
 The `Sanitizer (ASAN via MSVC)` + `Sanitizer (UBSan via Clang)` per-PR lanes are
@@ -60,17 +73,28 @@ safely:
 does NOT match, so the per-PR ASAN lane **skips**. Verify LOCALLY under
 `ninja-msvc-asan` (`-DSMATCHET_BUILD_TESTS=ON`) instead.
 
-### Slice 2 — config-flip + self-gate (separate PR; held for maintainer; lands AFTER Slice 1)
+### Slice 1b — wall-clock timing-assertion ASAN guards (test-only PR; complementary to Slice 1)
 
-- `.github/workflows/build-and-test.yml` — self-gate both `sanitizer-asan` and
-  `sanitizer-ubsan-pr` jobs: on the `source_core_cpp == false` skip path emit the
-  context name as a green status, marked `# ci-required-context: self-gated`
-  (mirror Coverage), so docs-only PRs don't deadlock.
-- `project.config.json` — add `Sanitizer (ASAN via MSVC)` + `Sanitizer (UBSan via Clang)`
-  to `branch_protection.required_contexts` + `ci.required_checks` (Coverage already there).
-- Parity selftest (`test-required-context-parity.sh`) green.
-- **Held, NOT watcher-registered** — the maintainer reviews, merges after Slice 1
-  is on develop, then runs `setup-branch-protection.sh` to make the bind live.
+The now-live required ASAN rig runs the whole doctest exe (minus the one excluded
+CallstackParser case), so EVERY wall-clock `CHECK(elapsed < budget)` that ASAN
+inflates ~3–10× can false-red the required lane on a slow runner → real-merge
+deadlock (escapable only by the manual `sanitizer-out-of-band` label). An exhaustive
+audit found **9 such assertions across 6 files**. Apply the #1215 guard pattern
+(`#if defined(__SANITIZE_ADDRESS__)` → loosen ~10×; `#else` unchanged) to all 9
+uniformly. The `UserInfoActivityCancelUaf` site guards ONLY the teardown-time budget —
+the UAF sentinel / ASan heap-tracking asserts stay untouched. Separate branch
+`feat/asan-timing-guards` off origin/develop; test-only; NOT watcher-registered.
+
+### Slice 2 — ~~config-flip + self-gate~~ **SUPERSEDED by PR #1253 (Slice C)**
+
+**DONE + LIVE — do NOT build.** Slice C (`coverage-sanitizer-required-contexts.md`)
+promoted both Sanitizer lanes to live required contexts via PR #1253 and the Phase-2
+`setup-branch-protection.sh` flip (live ruleset = 9 contexts, both sanitizers
+present). It used **Pattern C** (job-level `if: source_core_cpp` skip; GitHub treats a
+skipped required job as success) — so the Pattern-A `# ci-required-context: self-gated`
+marker this slice had drafted is unnecessary AND incorrect for these jobs. The parity
+gate passes because Pattern C carries no workflow-level `on.pull_request.paths` filter.
+No config / workflow edits from this plan.
 
 ### Side task — down-scope `bucket-ui-lane-out-of-band-label` (docs)
 
@@ -86,8 +110,14 @@ the general raw-PUT guard as a residual P3; P2→P3; Last-reviewed 2026-06-15.
 |---|---|---|
 | `tests/Core/TrackerFieldValueParser.extended.test.cpp` | 1 | `<vector>`, `DismantleDeepJson`, 3 teardown calls, comment rewrite |
 | `docs/self-improvement/categories/tooling.md` | side | down-scope bucket entry |
-| `.github/workflows/build-and-test.yml` | 2 | self-gate both Sanitizer jobs |
-| `project.config.json` | 2 | add both Sanitizer lanes to required_contexts + ci.required_checks |
+| `tests/Core/LocalCacheManagerChat.test.cpp` | 1b | ASAN-guard `perIterUs` budget (1 site) |
+| `tests/Core/BulkImportAbandonNonBlocking.test.cpp` | 1b | ASAN-guard `abandonMs` + `joinMs` (2 sites) |
+| `tests/Core/CancelToken.test.cpp` | 1b | ASAN-guard `elapsedMs` (1 site) |
+| `tests/Core/SubprocessCapture.test.cpp` | 1b | ASAN-guard `durationMs` (2 sites) |
+| `tests/Core/StubAiClientCancel.test.cpp` | 1b | ASAN-guard `postCancelMs` + `totalMs` (2 sites) |
+| `tests/Core/UserInfoActivityCancelUaf.test.cpp` | 1b | ASAN-guard `teardownMs` ONLY (1 site; UAF asserts untouched) |
+| ~~`.github/workflows/build-and-test.yml`~~ | ~~2~~ | **SUPERSEDED — Slice C / PR #1253 (Pattern C, no self-gate)** |
+| ~~`project.config.json`~~ | ~~2~~ | **SUPERSEDED — already on develop + live (9 contexts)** |
 
 ## Verification
 
@@ -95,29 +125,41 @@ the general raw-PUT guard as a residual P3; P2→P3; Last-reviewed 2026-06-15.
   `scripts/dev/with-msvc-env.sh`) then run the doctest binary filtered to the three
   ADF deep-nest cases — must pass with NO ASAN stack-overflow. Lint:
   `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop`.
-- Slice 2: parity selftest + the build-and-test workflow self-gate emits the
-  context green on a docs-only PR (no deadlock).
+- Slice 1b: fresh `ninja-msvc-asan` build, run the full rig (minus the excluded
+  CallstackParser case) — all 9 guarded sites pass under ASAN (no timing false-red);
+  lint PASS. Non-ASAN budgets unchanged (the `#else` branch).
+- Slice 2: N/A — superseded; live ruleset already shows 9 required contexts.
 
 ## Implementation log
 
 - 2026-06-15 — Slice 1 fixture edits applied (`<vector>`, `DismantleDeepJson`, 3
   teardown calls, comment rewrite); bucket entry down-scoped. ASAN build verified:
   3 deep-nest cases `3 | 3 passed | 0 failed` under `ninja-msvc-asan`, no
-  stack-overflow; lint all PASS. Slice 1 shipped as PR #1273 (test + docs only;
-  NOT watcher-registered — no auto-merge authorization given).
+  stack-overflow; lint all PASS. Slice 1 shipped as PR #1273; registered with
+  merge-watcher (auto-merge when green — authorized: test + docs only).
+- 2026-06-15 — **Re-scope.** Recon found Slice C (PR #1253 + Phase-2 flip) already
+  promoted both Sanitizer lanes to live required contexts (live ruleset = 9), using
+  Pattern C not the Pattern-A self-gate this plan drafted → **Slice 2 dropped as
+  superseded** (see banner + Slice 2 section). Plan re-scoped to ASAN-lane fragility
+  hardening. User-approved (AskUserQuestion: "Ship the hardening").
+- 2026-06-15 — Slice 1b: exhaustive audit found 9 wall-clock timing assertions across
+  6 files; applying the #1215 `__SANITIZE_ADDRESS__` guard to all 9 uniformly on
+  branch `feat/asan-timing-guards`. (Implementation log updated on completion.)
 
 ## Deviations
 
-- **Residual finding (surfaced, not silently fixed) — Slice 2 blocker decision.**
-  Verifying Slice 1 under local ASAN exposed a *second* ASAN-fragile assertion
-  unrelated to the ADF fixture: the `LocalCacheManagerChat` hydration-latency
-  microbench (`tests/Core/LocalCacheManagerChat.test.cpp:194`,
-  `CHECK(perIterUs < 6940.0)`) is a wall-clock perf assertion **not ASAN-guarded**.
-  It fails LOCALLY under ASAN (11829.4 us/iter ≈ 1.7× the 6.94 ms / 144 Hz budget,
-  ASAN slowdown) but passes on CI's faster hardware (CI ASAN lane is consistently
-  green when it runs). Same fragility class as #1215 (CallstackParser ReDoS timing
-  wrap). Once the ASAN lane is **required** (Slice 2), a single slow CI runner
-  could red it and deadlock a real merge. **Decision needed before Slice 2**:
-  ASAN-guard the microbench (skip / loosen the threshold under
-  `__SANITIZE_ADDRESS__` like #1215) vs. accept as CI-green residual. Out of the
-  approved plan's scope → escalated per loop-mode `in`.
+- **Residual finding (surfaced, not silently fixed) → became Slice 1b.** Verifying
+  Slice 1 under local ASAN exposed a second ASAN-fragile assertion unrelated to the
+  ADF fixture: the `LocalCacheManagerChat` hydration-latency microbench
+  (`tests/Core/LocalCacheManagerChat.test.cpp:194`, `CHECK(perIterUs < 6940.0)`) is a
+  wall-clock perf assertion not ASAN-guarded — fails LOCALLY under ASAN (11829.4
+  us/iter ≈ 1.7× the 6.94 ms / 144 Hz budget) but passes on CI's faster hardware.
+  Same class as #1215. Surfaced per loop-mode `in`; user chose to audit ALL timing
+  CHECKs (found 9) and guard them uniformly → folded into **Slice 1b** above, not a
+  Slice-2 blocker (Slice 2 is superseded). The required ASAN lane is already **live**,
+  so this hardening protects real merges from slow-runner false-reds now, not later.
+- **Slice 2 superseded mid-flight (duplicate-effort collision).** ~10 concurrent
+  sessions share the integration tree; a parallel `Slice C` landed the identical
+  config promotion (PR #1253) + live flip while this plan was mid-Slice-1. Lesson:
+  before a CI-config slice, grep open PRs + recent develop log for the same
+  `required_contexts` edit. Logged to self-improvement (process).
