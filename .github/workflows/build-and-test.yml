@@ -677,9 +677,9 @@ jobs:
         run: |
           set -uo pipefail
           mkdir -p "$(dirname "$SMATCHET_LANE_STATUS_FILE")"
-          out="$(./Smatchet.exe scenario.run --name=ui-test --yes 2>&1)"; rc=$?
+          out="$(timeout 240 ./Smatchet.exe cmd ui_test.run --all --spawn --yes 2>&1)"; rc=$?
           printf '%s\n' "$out"
-          # Parse the scenario JSON envelope's data.{passed,failed}. The advisory
+          # Parse the ui_test.run JSON envelope's data.{passed,failed}. The advisory
           # exit code itself is unreliable (a zero-pass run can still return 0),
           # so the broken-lane signal comes from the counts, written to the
           # sentinel the non-advisory lane-integrity step asserts on.
@@ -858,7 +858,19 @@ jobs:
         working-directory: build/ninja-ui-test-msvc
         run: |
           set -euo pipefail
-          ./Smatchet.exe cmd app.version --spawn --yes
+          set +e
+          out="$(./Smatchet.exe cmd app.version --spawn --yes 2>&1)"
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          if [ "$rc" -ne 0 ]; then
+            if printf '%s\n' "$out" | grep -Eq '^\{.*"command"[[:space:]]*:[[:space:]]*"app\.version".*"ok"[[:space:]]*:[[:space:]]*true.*\}$'; then
+              echo "::warning::launch-smoke saw app.version ok:true but the spawn wrapper exited $rc; treating as teardown false-red."
+            else
+              echo "::error::launch-smoke FAILED — texture-guard Smatchet.exe could not boot+become-reachable under Mesa GL within the spawn-ready window (dead harness, not a flaky test)." >&2
+              exit "$rc"
+            fi
+          fi
 
       - name: Run mobile-texture-guard scenario (advisory)
         id: run-texture-guard

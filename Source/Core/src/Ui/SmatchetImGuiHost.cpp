@@ -51,6 +51,7 @@
 #endif
 #include "SmatchetInputModifierBridge.h"
 #include "SmatchetTheme.h"
+#include "Ui/SmatchetTooltipWheelRouter.h"
 
 namespace {
 
@@ -744,6 +745,7 @@ void SmatchetImGuiHost::BeginFrame(float deltaTimeSeconds, float viewportWidth, 
     }
 
     ImGui_ImplDX12_NewFrame();
+    smatchet::ui::RouteWheelToScrollableTooltipBeforeNewFrame();
     ImGui::NewFrame();
 
     ImGuiIO& io = ImGui::GetIO();
@@ -1073,7 +1075,7 @@ void SmatchetImGuiHost::DrainCommandQueue(std::size_t maxCount) {
             resultJson = MakeCommandFailureResultJson(req.CommandName, smatchet::cmd::ErrorCode::ValidationError,
                                                       std::string("Command arguments must be valid JSON: ") + ex.what(),
                                                       std::string(), req.DryRun);
-        } catch (...) {
+        } catch (...) { // catch-all-ok: unknown command failure is returned as JSON.
             resultJson = MakeCommandFailureResultJson(req.CommandName, smatchet::cmd::ErrorCode::HandlerError,
                                                       "Command dispatch failed with an unknown exception.",
                                                       std::string(), req.DryRun);

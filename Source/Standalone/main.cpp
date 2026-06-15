@@ -108,6 +108,7 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 #include "PluginHost.h"
 #include "SmatchetUI.h"
 #include "Ui/SmatchetImGuiTextureGuardRuntime.h"
+#include "Ui/SmatchetTooltipWheelRouter.h"
 
 #ifndef GL_SHADING_LANGUAGE_VERSION
 #define GL_SHADING_LANGUAGE_VERSION 0x8B8C
@@ -772,6 +773,7 @@ static bool RenderOneFrame(GLFWwindow* window, SmatchetUI& mainWindow, AppContro
     // Start the ImGui frame
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
+    smatchet::ui::RouteWheelToScrollableTooltipBeforeNewFrame();
     ImGui::NewFrame();
 
     // THE BRIDGE: Hand control over to your engine-agnostic UI layer
