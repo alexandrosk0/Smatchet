@@ -397,6 +397,12 @@ class SmatchetUI {
     /// and the dashboard JQL editor buffer. Shared core of userInfoAddToQuery + the omnibar.
     ApplyQueryResult applyQueryToPaneView(AppController& app, UiDrawSession& d, GridPane& target,
                                           const std::string& query);
+    /// Routes a committed omnibar Enter against `target` per OmnibarInputClassifier (slice 2c,
+    /// sync v1): a bare ticket key jumps the pane (SetActiveIssue if the row is already loaded,
+    /// else opens the browse URL); a structured query drives applyQueryToPaneView; plain words
+    /// fill the pane's grid filter box. No network on the UI thread — the loaded-row check is a
+    /// snapshot membership test (an async existence-fetch is a deferred follow-up).
+    void applyOmnibarEnter(AppController& app, UiDrawSession& d, GridPane& target, const std::string& raw);
     void viewsRequestActivate(AppController& app, UiDrawSession& d, const ViewDefinition* activeView,
                               const std::string& id);
     void viewsCreateNewView(UiDrawSession& d, const ViewDefinition* activeView);
