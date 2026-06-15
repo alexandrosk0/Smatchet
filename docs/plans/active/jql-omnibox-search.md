@@ -134,11 +134,27 @@ Per `AGENTS.md` § Verification automation — zero manual steps where physicall
 ## Implementation log
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
 
+**Stream A — icon-Refresh sweep (PR #1257, base `develop`) — SHIPPED.** Stream B still active (sections below cover Stream A only).
+- `161ebb37` · feat(ui): icon helpers (`SmatchetIconButton` icon-only + `SmatchetIconLeadingButton` icon-leading) + 6 call sites iconified + header-only pure-label test.
+- `1166df0b` · merge `origin/develop` forward (clean, no conflict; test entry survived at `tests/CMakeLists.txt:251`).
+- `2544ebf7` · style(ui): tighten `SmatchetIconButtons.h` doc comments (drop bare `//` blank-run, condense).
+
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
 
+**Stream A:**
+- **Files #7 — test rig: header-only split instead of listing the production `.cpp`.** The plan said register `Source/Core/src/Ui/SmatchetIconButtons.cpp` in the `SmatchetTests` source list. Instead the testable pure logic was extracted to a new header-only `Source/Core/include/Ui/SmatchetIconButtonLabel.h`, which the rig exercises directly. Rationale: the ImGui wrapper `.cpp` depends on `SmatchetAreFaIconsLoaded()` (in `SmatchetImGuiFonts.cpp`, not linked in the doctest rig) — listing it would drag ImGui/font deps into the pure-logic rig. Net coverage of the label-selection logic is unchanged (8 cases / 17 assertions). `tests/CMakeLists.txt` registers the test header-only (no extra `.cpp` link), which the `:910-928` glob-vs-list guard accepts.
+- **New helper split into two functions, not one.** Plan named a single `SmatchetIconButton(icon, fallbackLabel, tooltip)`. Shipped as that **plus** `SmatchetIconLeadingButton(icon, label, tooltip)` for the two "& Sync" commit buttons (icon-leading, label retained) — the plan's § Risks already called out that those two sites differ; a dedicated helper keeps their id-derivation rule (translate-then-pin-English-`##`) distinct from the icon-only path (defer to `LabelFromSource`).
+
 ## Verification (actual)
 *(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+
+**Stream A (PR #1257):**
+- **Bucket A (pure-logic doctest)** — PASS. `tests/Core/SmatchetIconButtons.test.cpp`, 8 cases / 17 assertions (icon path, two-same-glyph distinct ids, font-absent fallback, null/empty degradation for both helpers). Run via `SmatchetTests.exe --test-case="*IconButton*,*IconLeading*"` → SUCCESS.
+- **Build gate (dual-target)** — PASS. `cmake --build build/ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` on the forward-merged tree: `Smatchet.exe` + `SmatchetCore_DX12.lib` both linked, 0 errors/warnings.
+- **Localization** — verified preserved at all 6 sites by `code-review` agent (CLEAN, 0/0/0): ImGui ids stable + identical to the pre-change call sites across en/fr and font-loaded/absent; live fr-FR entries for "Save & Sync"/"Refresh"/"Reload" still apply.
+- **pre-ship gate** — PASS (lint + doc-validation + code-review ack). comment-ratio + DRY-dup findings are WARN-only (calibration).
+- **Bucket E (ImGui Test Engine) + Bucket C (screenshot)** — NOT-RUN for Stream A. Stream A is a visual change touching `Smatchet*Ui*.cpp` with no bucket-C/E coverage → **visual-validation exception applies**: ship-loop paused at the post-ship menu for user visual verify (glyph renders, tooltips on hover, text fallback when `fa-solid-900.ttf` absent). Automated bucket-C/E coverage for the icon buttons is deferred to Stream B's harness work (the omnibar bucket-E suite in § Verification covers the same draw path).
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
