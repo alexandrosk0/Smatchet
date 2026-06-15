@@ -294,8 +294,17 @@ CommandResult CommandRegistry::Dispatch(const std::string& name, const nlohmann:
         }
     }
 
-    // (4) destructive guard (dry-run bypasses).
-    if (snapshot.Destructive && !ctx.ConfirmedDestructive && !ctx.DryRun) {
+    // (4) destructive guard (dry-run bypasses). Source-aware: the gate is uniform
+    // (no source bypasses confirm — see RequiresExplicitConfirm), but a destructive
+    // command from a non-UI automation source (CLI/MCP/Lua) is audit-logged whether
+    // it is blocked or proceeds, so token/handle-driven destructive automation is
+    // traceable (security audit 2026-06-13 #2/#3, Pillar-3/observability).
+    if (snapshot.Destructive && IsAutomationSource(ctx.Source)) {
+        LOG_WARN("CommandRegistry: destructive command '%s' from automation source=%s confirmed=%d dryRun=%d",
+                 snapshot.Name.c_str(), CommandSourceString(ctx.Source), ctx.ConfirmedDestructive ? 1 : 0,
+                 ctx.DryRun ? 1 : 0);
+    }
+    if (RequiresExplicitConfirm(ctx.Source, snapshot.Destructive, ctx.ConfirmedDestructive, ctx.DryRun)) {
         CommandResult r =
             CommandResult::Failure(ErrorCode::ConfirmRequired,
                                    "Command '" + snapshot.Name + "' is destructive and requires explicit confirmation.",

@@ -35,6 +35,19 @@ SslConfig ResolveSslConfig(const std::string& caBundlePath);
 void SetCaBundlePath(const std::string& path);
 const std::string& GetCaBundlePath();
 
+// Is `host` a loopback/localhost literal? Case-folds and strips an optional `:port` and
+// bracketed IPv6. Accepts any `127.x.x.x`, `localhost`, `::1`, `[::1]`. Pure: no DNS,
+// literal-only (mirrors the MCP DNS-rebinding loopback policy).
+bool IsLoopbackHost(const std::string& host);
+
+// Cleartext-credential hardening (audit LOW: NormalizeBaseUrl accepts `http://`). A tracker
+// base URL configured as cleartext `http://` sends the Basic-auth credentials in the clear.
+// Decision: a cleartext `http://` base whose host is NON-loopback must be upgraded to
+// `https://` (returns true). Loopback `http://` (local dev / a loopback dev config) and any
+// `https://` are left untouched (returns false). `rawBase` is the scheme-prefixed base
+// (e.g. "http://corp-jira.example.com"). Pure: no I/O.
+bool ShouldUpgradeCleartextBase(const std::string& rawBase);
+
 } // namespace TrackerHttpPure
 
 #endif

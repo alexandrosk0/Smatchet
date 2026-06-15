@@ -22,6 +22,12 @@ struct ParsedImageInfo {
     std::string Error;
 };
 
+// Inclusive upper bound on accepted image dimensions. Rejecting past this cap
+// bounds preview memory and keeps the value below INT_MAX, so the parsers'
+// `static_cast<int>` can never yield a negative dimension feeding UI layout /
+// texture alloc. Parallels post-decode `kMaxGoldenImageDim` (test harness).
+constexpr int kMaxImageDimension = 16384;
+
 // Parse image dimensions from an already-read header byte buffer. `mimeType` is
 // only consulted for the final "unsupported vs unparseable" error wording when
 // no format signature matches. Empty buffer yields the empty-file error.

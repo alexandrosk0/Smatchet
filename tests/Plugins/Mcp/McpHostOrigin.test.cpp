@@ -9,9 +9,11 @@
 
 #include <string>
 
+using smatchet::mcp::pure::CanAcceptSseConnection;
 using smatchet::mcp::pure::IsAllowedMcpOrigin;
 using smatchet::mcp::pure::IsLoopbackHostHeader;
 using smatchet::mcp::pure::IsMcpHostOriginAllowed;
+using smatchet::mcp::pure::kMaxConcurrentSseConnections;
 
 TEST_CASE("IsLoopbackHostHeader accepts loopback literals with/without port") {
     CHECK(IsLoopbackHostHeader("127.0.0.1"));
@@ -97,4 +99,15 @@ TEST_CASE("IsMcpHostOriginAllowed combines checks and reports a reason on reject
     reason.clear();
     CHECK_FALSE(IsMcpHostOriginAllowed("127.0.0.1:42360", "https://attacker.example.com", reason));
     CHECK(reason == "bad_origin");
+}
+
+// Concurrent-SSE bound (security synthesis #20): the MCP server admits at most
+// kMaxConcurrentSseConnections SSE streams so an unbounded number cannot exhaust the
+// fixed httplib worker pool. CanAcceptSseConnection is the pure admit/reject decision.
+TEST_CASE("CanAcceptSseConnection admits below the cap and rejects at/above it") {
+    CHECK(CanAcceptSseConnection(0));
+    CHECK(CanAcceptSseConnection(kMaxConcurrentSseConnections - 1)); // last admissible slot.
+    CHECK_FALSE(CanAcceptSseConnection(kMaxConcurrentSseConnections));
+    CHECK_FALSE(CanAcceptSseConnection(kMaxConcurrentSseConnections + 1));
+    CHECK_FALSE(CanAcceptSseConnection(-1)); // corrupted counter fails closed.
 }

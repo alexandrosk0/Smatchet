@@ -4,6 +4,7 @@
 #include "Logger.h"
 #include "NetworkUsageTracker.h"
 #include "StringUtil.h"
+#include "TrackerHttpClient.h"
 #include "TrackerHttpPure.h"
 
 #include <cstdint>
@@ -96,6 +97,15 @@ std::string NormalizeBaseUrl(const std::string& domain) {
     if (base.compare(0, 7, "http://") != 0 && base.compare(0, 8, "https://") != 0) {
         base = "https://" + base;
     }
+    // Cleartext-credential hardening (security audit LOW). The tracker Basic-auth header is
+    // attached to every request; a cleartext `http://` base to a NON-loopback host would put
+    // those credentials on the wire in the clear. Upgrade such a base to `https://` and warn.
+    // Loopback `http://` (local dev / a loopback dev tracker) is left as-is.
+    if (TrackerHttpPure::ShouldUpgradeCleartextBase(base)) {
+        base = "https://" + base.substr(7);
+        LOG_WARN("NormalizeBaseUrl: upgraded cleartext http:// tracker base to https:// (credentials must "
+                 "not travel in the clear to a non-loopback host); fix the configured domain to https://.");
+    }
     while (!base.empty() && base.back() == '/') {
         base.pop_back();
     }
@@ -152,59 +162,97 @@ cpr::SslOptions MakeTrackerSslOptions() {
 // already handle, rather than a silent credential-forwarding follow.
 cpr::Redirect MakeTrackerRedirectPolicy() { return cpr::Redirect(/*follow=*/false, /*cont_send_cred=*/false); }
 
+// One GET attempt: cpr::Get + NetworkUsageTracker::Record + LogTrackerHttpResult. Shared by all
+// three TrackerGetLogged overloads so the retry-wrapping (or, for the probe overload, deliberate
+// single-shot) lives in one place. Redirects are disabled via MakeTrackerRedirectPolicy (security
+// H4/E2). Timeouts arrive as std::int32_t — the long->int32 cast happens at each call site (cpr's
+// ConnectTimeout/Timeout take int32; a braced-init {long} narrows and is ill-formed under clang on
+// LP64). `params` is optional (nullptr = no query parameters).
+static cpr::Response ExecuteTrackerGet(const char* clientName, const std::string& url, const cpr::Header& headers,
+                                       const cpr::Parameters* params, std::int32_t connectMs, std::int32_t overallMs) {
+    cpr::Redirect redirect = MakeTrackerRedirectPolicy();
+    cpr::Response response;
+    if (params != nullptr) {
+        response = cpr::Get(cpr::Url{url}, headers, *params, redirect, cpr::ConnectTimeout{connectMs},
+                            cpr::Timeout{overallMs}, MakeTrackerSslOptions());
+    } else {
+        response = cpr::Get(cpr::Url{url}, headers, redirect, cpr::ConnectTimeout{connectMs},
+                            cpr::Timeout{overallMs}, MakeTrackerSslOptions());
+    }
+    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, NetworkUsageTracker::kEstimatedGetUploadBytes,
+                                           response);
+    LogTrackerHttpResult(clientName, "GET", url, response);
+    return response;
+}
+
 cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, const cpr::Header& headers) {
-    return TrackerGetLogged(clientName, url, headers, kTrackerConnectTimeoutMs, kTrackerOverallTimeoutMs);
+    // Idempotent GET — retry on Transport / 429 / 5xx (wrapper's default IsRetryable predicate).
+    TrackerHttpResult result = TrackerHttpRequestWithRetry([&]() {
+        return ClassifyTrackerResponse(ExecuteTrackerGet(clientName, url, headers, nullptr,
+                                                         static_cast<std::int32_t>(kTrackerConnectTimeoutMs),
+                                                         static_cast<std::int32_t>(kTrackerOverallTimeoutMs)));
+    });
+    return std::move(result.Response);
 }
 
 cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                const cpr::Parameters& params) {
-    cpr::Redirect redirect = MakeTrackerRedirectPolicy();
-    cpr::Response response =
-        cpr::Get(cpr::Url{url}, headers, params, redirect, cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
-                 cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
-    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, NetworkUsageTracker::kEstimatedGetUploadBytes,
-                                           response);
-    LogTrackerHttpResult(clientName, "GET", url, response);
-    return response;
+    // Idempotent GET (paged) — same retry policy as the no-params overload.
+    TrackerHttpResult result = TrackerHttpRequestWithRetry([&]() {
+        return ClassifyTrackerResponse(ExecuteTrackerGet(clientName, url, headers, &params,
+                                                         static_cast<std::int32_t>(kTrackerConnectTimeoutMs),
+                                                         static_cast<std::int32_t>(kTrackerOverallTimeoutMs)));
+    });
+    return std::move(result.Response);
 }
 
 cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                long connectTimeoutMs, long overallTimeoutMs) {
-    cpr::Redirect redirect = MakeTrackerRedirectPolicy();
-    // cpr's ConnectTimeout/Timeout take std::int32_t. These params are `long`, which is
-    // 64-bit on LP64 (Linux/Android), so a braced-init {long} narrows — ill-formed under
-    // clang (hard error, not a warning). It compiles on Windows only because LLP64 `long`
-    // is 32-bit. Cast explicitly; HTTP timeouts in ms always fit int32 (<= ~24.8 days).
-    cpr::Response response = cpr::Get(cpr::Url{url}, headers, redirect,
-                                      cpr::ConnectTimeout{static_cast<std::int32_t>(connectTimeoutMs)},
-                                      cpr::Timeout{static_cast<std::int32_t>(overallTimeoutMs)},
-                                      MakeTrackerSslOptions());
-    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, NetworkUsageTracker::kEstimatedGetUploadBytes,
-                                           response);
-    LogTrackerHttpResult(clientName, "GET", url, response);
-    return response;
+    // Single attempt — NO retry. This custom-timeout overload backs periodic reachability probes
+    // (2s/5s budget, kTrackerProbe*TimeoutMs). Retrying would multiply the probe's worst-case
+    // latency and defeat its fast-fail contract, so it stays single-shot by design. ExecuteTrackerGet
+    // already applies MakeTrackerRedirectPolicy() + MakeTrackerSslOptions() (the host-pin / TLS
+    // hardening develop added inline), so routing through it keeps that security hardening centralized.
+    return ExecuteTrackerGet(clientName, url, headers, nullptr, static_cast<std::int32_t>(connectTimeoutMs),
+                             static_cast<std::int32_t>(overallTimeoutMs));
 }
 
 cpr::Response TrackerPostLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                 const std::string& body) {
-    cpr::Redirect redirect = MakeTrackerRedirectPolicy();
-    cpr::Response response =
-        cpr::Post(cpr::Url{url}, headers, cpr::Body{body}, redirect, cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
-                  cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
-    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, static_cast<std::uint64_t>(body.size()), response);
-    LogTrackerHttpResult(clientName, "POST", url, response);
-    return response;
+    // POST is non-idempotent: a request that LANDED (server applied it) then returned 429/5xx must
+    // NEVER be re-sent — that would double-create / double-comment. So the predicate retries only on
+    // Transport errors, where the request provably never reached the server (DNS / connect / pre-send
+    // timeout). 429/5xx after a successful send are returned to the caller untouched.
+    TrackerHttpResult result = TrackerHttpRequestWithRetry(
+        [&]() {
+            cpr::Redirect redirect = MakeTrackerRedirectPolicy();
+            cpr::Response response = cpr::Post(cpr::Url{url}, headers, cpr::Body{body}, redirect,
+                                               cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
+                                               cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
+            NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, static_cast<std::uint64_t>(body.size()),
+                                                   response);
+            LogTrackerHttpResult(clientName, "POST", url, response);
+            return ClassifyTrackerResponse(response);
+        },
+        kTrackerHttpDefaultMaxAttempts, nullptr,
+        [](const TrackerError& e) { return e.Kind == TrackerErrorKind::Transport; });
+    return std::move(result.Response);
 }
 
 cpr::Response TrackerPutLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                const std::string& body) {
-    cpr::Redirect redirect = MakeTrackerRedirectPolicy();
-    cpr::Response response =
-        cpr::Put(cpr::Url{url}, headers, cpr::Body{body}, redirect, cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
-                 cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
-    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, static_cast<std::uint64_t>(body.size()), response);
-    LogTrackerHttpResult(clientName, "PUT", url, response);
-    return response;
+    // PUT is idempotent — safe to retry on Transport / 429 / 5xx (wrapper's default predicate).
+    TrackerHttpResult result = TrackerHttpRequestWithRetry([&]() {
+        cpr::Redirect redirect = MakeTrackerRedirectPolicy();
+        cpr::Response response = cpr::Put(cpr::Url{url}, headers, cpr::Body{body}, redirect,
+                                          cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
+                                          cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
+        NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, static_cast<std::uint64_t>(body.size()),
+                                               response);
+        LogTrackerHttpResult(clientName, "PUT", url, response);
+        return ClassifyTrackerResponse(response);
+    });
+    return std::move(result.Response);
 }
 
 bool IsTrackerTransportErrorText(const std::string& error) {
@@ -286,11 +334,16 @@ bool IsTrackerTransportErrorText(const std::string& error) {
 
 cpr::Response TrackerPatchLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                  const std::string& body) {
-    cpr::Redirect redirect = MakeTrackerRedirectPolicy();
-    cpr::Response response =
-        cpr::Patch(cpr::Url{url}, headers, cpr::Body{body}, redirect, cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
-                   cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
-    NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, static_cast<std::uint64_t>(body.size()), response);
-    LogTrackerHttpResult(clientName, "PATCH", url, response);
-    return response;
+    // PATCH on tracker fields is idempotent (set-to-value, not delta) — safe to retry like PUT.
+    TrackerHttpResult result = TrackerHttpRequestWithRetry([&]() {
+        cpr::Redirect redirect = MakeTrackerRedirectPolicy();
+        cpr::Response response = cpr::Patch(cpr::Url{url}, headers, cpr::Body{body}, redirect,
+                                            cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
+                                            cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
+        NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, static_cast<std::uint64_t>(body.size()),
+                                               response);
+        LogTrackerHttpResult(clientName, "PATCH", url, response);
+        return ClassifyTrackerResponse(response);
+    });
+    return std::move(result.Response);
 }

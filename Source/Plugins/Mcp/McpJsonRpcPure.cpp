@@ -256,6 +256,13 @@ bool IsAllowedAttachmentHost(const std::string& host, const std::string& tracker
     return host == "api.media.atlassian.com";
 }
 
+bool CanAcceptSseConnection(int currentActive) {
+    if (currentActive < 0) {
+        return false; // fail closed on a corrupted counter.
+    }
+    return currentActive < kMaxConcurrentSseConnections;
+}
+
 nlohmann::json BuildRunLuaToolEntry() {
     return {{"name", "run_lua"},
             {"description", "Run a Lua snippet or Scripts/*.lua file with optional args."},

@@ -14,6 +14,7 @@
 #include "ConfigManager.h"
 #include "Logger.h"
 #include "ModelCatalog.h"
+#include "ModelDownloadPolicy.h"
 #include "WhisperConsentGate.h"
 
 #include <cpr/cpr.h>
@@ -171,6 +172,32 @@ std::string BuildHttpFetchError(const cpr::Response& resp) {
     return err;
 }
 
+// Classify the network outcome of a completed (non-cancelled) transfer into a Failed-state
+// error message, or empty when the bytes are safe to hand to SHA-256 verification. Drops
+// the partial file on any failure so a later resume cannot append onto rejected bytes.
+// Order: size-cap, then redirect host re-check (both security audit LOW), then HTTP status.
+std::string ClassifyPostFetchFailure(const cpr::Response& resp, bool sizeExceeded, const std::string& partialPath) {
+    auto dropPartial = [&partialPath]() {
+        std::error_code rmEc;
+        ghc::filesystem::remove(partialPath, rmEc);
+    };
+    if (sizeExceeded) {
+        dropPartial();
+        return "download exceeded the maximum model size cap";
+    }
+    // The effective URL libcurl landed on (after any 30x) must still be an allow-listed
+    // https model host; the SHA-256 pass is the backstop, this gives an early rejection.
+    if (!resp.url.str().empty() && !smatchet::whisper::policy::IsAllowedModelUrl(resp.url.str())) {
+        dropPartial();
+        return "model download redirected to a non-allow-listed host";
+    }
+    if (resp.error.code != cpr::ErrorCode::OK ||
+        (resp.status_code != 200 && resp.status_code != 206 && resp.status_code != 0)) {
+        return BuildHttpFetchError(resp);
+    }
+    return std::string();
+}
+
 } // namespace
 
 struct ModelDownloader::Impl {
@@ -290,6 +317,16 @@ void ModelDownloader::RunDownloadWorker(std::shared_ptr<Impl> implPtr, const std
         implPtr->progress.error = errMsg;
     };
 
+    // Host-pin (security audit LOW). Refuse before opening a socket if the catalog URL is
+    // not an https huggingface host — a tampered catalog or a non-https URL must never reach
+    // the network. Redirect targets are re-checked against the same allow-list below.
+    if (!smatchet::whisper::policy::IsAllowedModelUrl(url)) {
+        finalize(State::Failed, "refusing model download: URL is not an allow-listed https model host");
+        implPtr->running.store(false, std::memory_order_release);
+        LOG_WARN("ModelDownloader: rejected non-allow-listed model URL host (model=%s)", modelId.c_str());
+        return;
+    }
+
     // Resume: if `<final>.partial` exists with non-zero size, append
     // via Range: bytes=<size>-. Else start from scratch.
     const std::uint64_t resumeFrom = DetectResumeOffset(partialPath);
@@ -311,12 +348,24 @@ void ModelDownloader::RunDownloadWorker(std::shared_ptr<Impl> implPtr, const std
     if (resumeFrom > 0) {
         headers["Range"] = "bytes=" + std::to_string(resumeFrom) + "-";
     }
-    cpr::Redirect redirect(true, true);
+    // Follow redirects (huggingface LFS bounces the resolve/main pointer to a CDN host) but
+    // cap the hop count (limit 5) so a redirect loop cannot spin. cont_send_cred=false: we
+    // send no credentials, but be explicit so a cross-host 30x never forwards any. The
+    // streamed-size cap below and the post-fetch effective-host re-check bound the rest.
+    cpr::Redirect redirect(/*maximum=*/5L, /*follow=*/true, /*cont_send_cred=*/false, cpr::PostRedirectFlags::POST_ALL);
     bool cancelled = false;
+    bool sizeExceeded = false;
 
     cpr::WriteCallback writeCb{[&, implPtr](const std::string& data, intptr_t /*sz*/) -> bool {
         if (cancelAtom && cancelAtom->load(std::memory_order_acquire)) {
             cancelled = true;
+            return false;
+        }
+        // Size cap (security audit LOW): abort mid-stream if the running total crosses the
+        // ceiling, so a redirect to an attacker host streaming an unbounded body cannot
+        // exhaust disk before the SHA-256 pass would reject it.
+        if (smatchet::whisper::policy::ExceedsModelSizeCap(bytesWritten + data.size())) {
+            sizeExceeded = true;
             return false;
         }
         ofs.write(data.data(), static_cast<std::streamsize>(data.size()));
@@ -347,10 +396,11 @@ void ModelDownloader::RunDownloadWorker(std::shared_ptr<Impl> implPtr, const std
         LOG_INFO("ModelDownloader: cancelled at %llu bytes", static_cast<unsigned long long>(bytesWritten));
         return;
     }
-    if (resp.error.code != cpr::ErrorCode::OK ||
-        (resp.status_code != 200 && resp.status_code != 206 && resp.status_code != 0)) {
-        finalize(State::Failed, BuildHttpFetchError(resp));
+    const std::string fetchFailure = ClassifyPostFetchFailure(resp, sizeExceeded, partialPath);
+    if (!fetchFailure.empty()) {
+        finalize(State::Failed, fetchFailure);
         implPtr->running.store(false, std::memory_order_release);
+        LOG_WARN("ModelDownloader: fetch rejected (model=%s): %s", modelId.c_str(), fetchFailure.c_str());
         return;
     }
 
