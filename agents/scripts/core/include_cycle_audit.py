@@ -519,6 +519,8 @@ def run_selftest():
             print("SELFTEST FAIL: layer_rank(%s) = %d, want %d" % (path, got, want), file=sys.stderr)
             miss = 1
 
+    # selftest: asserts-failure — a synthetic cycle (here) and a low->high back-edge (below) MUST
+    # be detected; these are the gate's flag paths (the violation-emitting branch of find_violations).
     # --- a synthetic 2-node include cycle is detected (SCC > 1) ---
     cyc = {
         "Source/Core/include/A.h": '#include "B.h"\n',
