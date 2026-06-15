@@ -13,6 +13,12 @@
 # (admin-merge a STALE-BLOCKED PR only when everything is actually green) was
 # asserted in prose, not enforced by an exit code.
 #
+# (Historical note: `Bucket-*` was DROPPED from $MERGE_GATES_BLOCK_ALLOWLIST_RE
+# on 2026-06-15 — the Mesa-software-GL bucket-C/E lanes cannot boot the CI exe
+# (infra.md `bucket-mesa-exe-boot` P1), so a RED bucket lane no longer gates
+# this guard. The #1180 escape above predates that flip; re-add when the lane
+# graduates back to hard-fail.)
+#
 # This guard makes the green assertion an EXIT CODE, not text:
 #   * reads the head's statusCheckRollup (`gh pr view --json statusCheckRollup`)
 #   * EXITS NON-ZERO without merging if ANY required-or-allow-listed check is
@@ -172,19 +178,24 @@ evaluate_rollup() {
 run_selftest() {
     local fails=0
 
-    # CASE 1 — REFUSES on a synthetic rollup with a RED allow-listed check.
-    # Bucket-C/E are allow-listed via "Bucket-"; one is FAILURE -> must block.
+    # CASE 1 — REFUSES on a RED allow-listed check, AND proves the Mesa-GL
+    # bucket lanes are now advisory. `Coverage` (still allow-listed) is FAILURE
+    # -> must block; `Bucket-C` is FAILURE but `Bucket-` was dropped from the
+    # allow-list 2026-06-15 (infra.md `bucket-mesa-exe-boot` P1) -> must NOT
+    # block. Re-add the `&& grep Bucket-C` blocker assertion when the bucket
+    # lane graduates back to hard-fail.
     local red_rollup
     red_rollup='{"state":"OPEN","labels":[],"statusCheckRollup":[
+      {"__typename":"CheckRun","name":"Coverage","status":"COMPLETED","conclusion":"FAILURE"},
       {"__typename":"CheckRun","name":"Bucket-C (ImGui Test Engine)","status":"COMPLETED","conclusion":"FAILURE"},
-      {"__typename":"CheckRun","name":"Bucket-E (UI smoke)","status":"COMPLETED","conclusion":"SUCCESS"},
       {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"}]}'
     local blockers
     blockers=$(evaluate_rollup "$red_rollup" "Windows + MSVC")
-    if [ -n "$blockers" ] && printf '%s' "$blockers" | grep -q 'Bucket-C'; then
-        echo "selftest CASE1 PASS — refuses on RED allow-listed Bucket-C"
+    if [ -n "$blockers" ] && printf '%s' "$blockers" | grep -q 'Coverage' \
+       && ! printf '%s' "$blockers" | grep -q 'Bucket-C'; then
+        echo "selftest CASE1 PASS — refuses on RED allow-listed Coverage; advisory Bucket-C ignored"
     else
-        echo "selftest CASE1 FAIL — should have flagged Bucket-C as a blocker (got: '$blockers')" >&2
+        echo "selftest CASE1 FAIL — Coverage must block, Bucket-C must NOT (got: '$blockers')" >&2
         fails=$((fails + 1))
     fi
 

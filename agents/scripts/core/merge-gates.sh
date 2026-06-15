@@ -6,7 +6,7 @@
 # Polls three conditions on a PR via one `gh api graphql` call:
 #   1. CI — every required check passes (CheckRun terminal SUCCESS/NEUTRAL/SKIPPED;
 #      StatusContext state == SUCCESS) PLUS any non-required check on the
-#      meant-to-block allow-list (name ~ Coverage|Sanitizer|Bucket-, non-advisory)
+#      meant-to-block allow-list (name ~ Coverage|Sanitizer, non-advisory)
 #      — see $failing below + postmortems.md 2026-06-06 "#923".
 #   2. CodeRabbit — latest review on current headRefOid is not CHANGES_REQUESTED;
 #      zero unresolved non-outdated review threads contain a CodeRabbit comment
@@ -107,9 +107,16 @@ DEFAULT_QUERY_FILE="$SCRIPT_DIR/merge-gates.graphql"
 # Other tooling that must apply the IDENTICAL allow-list (e.g.
 # safe-admin-merge.sh) sources this file and reads MERGE_GATES_BLOCK_ALLOWLIST_RE
 # rather than duplicating the regex — change it HERE and every consumer follows.
-#   Coverage / Sanitizer / Bucket-* / Perf PR-fast / Android security gate
-# (history: Perf PR-fast 2026-06-07; Android security gate 2026-06-09).
-MERGE_GATES_BLOCK_ALLOWLIST_RE="Coverage|Sanitizer|Bucket-|Perf PR-fast|Android security gate"
+#   Coverage / Sanitizer / Perf PR-fast / Android security gate
+# (history: Perf PR-fast 2026-06-07; Android security gate 2026-06-09;
+#  Bucket-* REMOVED 2026-06-15 — the Mesa-software-GL bucket-C/E lanes cannot
+#  boot the exe on the CI runner (infra.md `bucket-mesa-exe-boot` P1 /
+#  `ci-infra-flake-reds-masquerade-as-real-breakage` item (c)), so they are
+#  ~100% red regardless of code correctness and only jam the poller. Re-add
+#  `Bucket-|` to BOTH this constant AND postmortem-owed.sh's ALLOW_LIST_RE the
+#  moment the boot is fixed and the bucket launch-smoke graduates back to
+#  hard-fail — that is the `bucket-mesa-exe-boot` P1 graduation step.)
+MERGE_GATES_BLOCK_ALLOWLIST_RE="Coverage|Sanitizer|Perf PR-fast|Android security gate"
 
 # Source prompt shim so `ask_user_question` is callable from the caller's
 # integration flow. Lazy — only if available.
@@ -359,7 +366,7 @@ poll_merge_gates() {
    | group_by(._k) | map(sort_by(.startedAt // "") | .[-1]) | map(del(._k))) as $ctx
 | ([$ctx[] | select(.isRequired == true)]) as $req
 # $blocking — the set the gate must wait on: REQUIRED contexts PLUS the
-# non-required meant-to-block allow-list (Coverage / Sanitizer / Bucket-* /
+# non-required meant-to-block allow-list (Coverage / Sanitizer /
 # Perf PR-fast / Android security gate, non-advisory). The $failing set below
 # already unions these (the #923 fix), but the PENDING count historically
 # counted only $req — so a non-required allow-listed check still IN_PROGRESS
@@ -384,7 +391,7 @@ poll_merge_gates() {
       # allow-list AND is not explicitly "advisory". This closes the gate-escape
       # where the watcher auto-merged #923 past a RED non-required "Coverage"
       # check (postmortems.md 2026-06-06 "#923", option B). The allow-list is
-      # deliberately tight (Coverage / Sanitizer / Bucket-* / Perf PR-fast /
+      # deliberately tight (Coverage / Sanitizer / Perf PR-fast /
       # Android security gate) — a non-allow-listed non-required red (e.g. the
       # `non-required-fail` test fixture, or "Duplication scanner (advisory)")
       # still passes, preserving the prior "non-required → pass" contract.
