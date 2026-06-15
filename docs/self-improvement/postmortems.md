@@ -27,6 +27,43 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-15 · PR #1265 · `cr-out-of-band` after CodeRabbit rate-limit skipped a code/CI harness review
+
+### What escaped
+PR #1265 (`Stabilize spawned UI test runner`, head `b271e5373`, merge
+`9fd92514`) changed five files across CI, the spawned UI-test command path, the
+standalone hidden loop, and a regression test. CodeRabbit selected those files
+for processing, then posted its `Review limit reached` rate-limit comment and did
+not produce an inline review. The merge gate was run and all CI was green
+(including Bucket-E and the label-triggered Perf PR-fast rerun), but the
+CodeRabbit condition was waived with `cr-out-of-band`. The escaped class is not a
+known product defect; it is a code-bearing PR landing without the intended
+automated CodeRabbit review signal.
+
+### Root cause
+CodeRabbit review capacity is external and the hard signal arrived only after the
+PR existed. The existing `pr-burst-guard` cheapest form is advisory and counts
+current open-PR pressure; it does not detect CodeRabbit's own rate-limit comment,
+pause a code PR until review capacity returns, or require an explicit
+rate-limit disposition before accepting `cr-out-of-band`. Once CR had skipped the
+review, `cr-out-of-band` was the documented narrow escape hatch. The waiver
+decision was deliberate and bounded by local validation, user validation, and a
+green merge-gate run, but it still suppressed the CR signal the gate normally
+expects.
+
+### Preventing gate
+Add a code-PR CodeRabbit rate-limit pause/disposition gate: when CR posts a
+rate-limit / `review-skipped` comment on a non-pure-docs PR, the ship loop should
+either wait/retry after the reported cooldown or require a `cr-disposition:`
+marker recording the substitute review evidence before `cr-out-of-band` can be
+treated as sufficient. This is the richer, load-bearing follow-up to the existing
+`pr-burst-guard`; the pure-docs auto-downgrade remains a separate safe case.
+
+### Filed as
+[`infra.md`](categories/infra.md) `cr-rate-limit-code-pr-auto-pause` (new) +
+[`process.md`](categories/process.md) `cr-out-of-band-disposition-trail`
+(recurrence: #1265 had no disposition marker because CR skipped before review).
+
 ## 2026-06-14 · PR #1230, #1235, #1240 · direct/manual merge past PENDING→RED `Sanitizer (ASAN via MSVC)` — the non-required-Sanitizer direct-merge-bypass the #1242 poller fix structurally could not reach (now closed by the live required-context bind)
 
 ### What escaped
