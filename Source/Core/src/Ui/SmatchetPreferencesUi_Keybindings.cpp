@@ -5,8 +5,7 @@
 // reset-to-defaults. A read-only section lists the special-cased system shortcuts
 // that stay non-rebindable (Zen chord, palette nav). Mutations mark the dispatch
 // cache dirty + arm the debounced ConfigManager::Save via MarkPrefsDirty.
-// See docs/plans/active/keyboard-shortcuts-rebindable.md (PR2, item 10).
-//
+// See docs/plans/shipped/keyboard-shortcuts-rebindable.md (PR2, item 10).
 // Localization idiom: this TU uses plain ImGui + explicit SmatchetLocalization::T()
 // (NOT the `#define ImGui SmatchetLocalizedImGui` macro the other prefs TUs use) so
 // it can include the shared capture header (which pulls imgui.h) without tripping the

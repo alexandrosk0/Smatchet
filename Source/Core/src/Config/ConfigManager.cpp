@@ -1054,6 +1054,27 @@ void LoadInheritFieldIds(const nlohmann::json& j, const char* key, std::vector<s
     }
 }
 
+// One-shot migration: fold the legacy BugReportHotkey / BugReportHotkeyEnabled pair into the
+// keybinding registry ("app.bug_report.open"). The registry became authoritative for the
+// bug-report shortcut in the PR1 migration, but Defaults() seeded "Ctrl+Shift+B" regardless of
+// a user's customized / disabled BugReportHotkey — fold it once so that customization survives.
+// Runs after the keybindings load (cfg.Keybindings populated) and after LoadScalarFields
+// (cfg.BugReportHotkey* populated). SetBindingHotkey upserts the "{}" binding in place.
+void MigrateBugReportHotkeyToKeybindings(const nlohmann::json& j, TrackerConfig& cfg) {
+    cfg.MigratedBugReportHotkeyV1 = j.value("migrated_bugreport_hotkey_v1", false);
+    if (cfg.MigratedBugReportHotkeyV1) {
+        return;
+    }
+    cfg.Keybindings.SetBindingHotkey("app.bug_report.open", "{}", cfg.BugReportHotkey);
+    if (!cfg.BugReportHotkeyEnabled) {
+        const int idx = cfg.Keybindings.FindBindingIndex("app.bug_report.open", "{}");
+        if (idx >= 0) {
+            cfg.Keybindings.Bindings[static_cast<std::size_t>(idx)].Enabled = false;
+        }
+    }
+    cfg.MigratedBugReportHotkeyV1 = true;
+}
+
 // List + nested-object fields: mcp_export_fields, comment-template arrays, duration/worklog
 // suggestion lists, the three inherit-id lists, and the one-shot issuetype-inject migration.
 void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
@@ -1152,23 +1173,7 @@ void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
         cfg.MigratedInheritIssueTypeV1 = true;
     }
 
-    // One-shot migration: fold the legacy BugReportHotkey / BugReportHotkeyEnabled pair into the
-    // keybinding registry ("app.bug_report.open"). The registry became authoritative for the
-    // bug-report shortcut in the PR1 migration, but Defaults() seeded "Ctrl+Shift+B" regardless of
-    // a user's customized / disabled BugReportHotkey — fold it once so that customization survives.
-    // Runs after the keybindings load above (cfg.Keybindings populated) and after LoadScalarFields
-    // (cfg.BugReportHotkey* populated). SetBindingHotkey upserts the "{}" binding in place.
-    cfg.MigratedBugReportHotkeyV1 = j.value("migrated_bugreport_hotkey_v1", false);
-    if (!cfg.MigratedBugReportHotkeyV1) {
-        cfg.Keybindings.SetBindingHotkey("app.bug_report.open", "{}", cfg.BugReportHotkey);
-        if (!cfg.BugReportHotkeyEnabled) {
-            const int idx = cfg.Keybindings.FindBindingIndex("app.bug_report.open", "{}");
-            if (idx >= 0) {
-                cfg.Keybindings.Bindings[static_cast<std::size_t>(idx)].Enabled = false;
-            }
-        }
-        cfg.MigratedBugReportHotkeyV1 = true;
-    }
+    MigrateBugReportHotkeyToKeybindings(j, cfg);
 }
 
 // Env-var + CLI overrides applied post-disk-read, plus the final post-override safety clamps.

@@ -1,7 +1,7 @@
 // Keybinding-table serialization + the built-in default shortcut set. The defaults
 // reproduce the shortcuts that were hardcoded across SmatchetUI / CommandPaletteUi /
 // the bug-report poll before the rebindable registry landed (PR1 migration). See
-// docs/plans/active/keyboard-shortcuts-rebindable.md.
+// docs/plans/shipped/keyboard-shortcuts-rebindable.md.
 
 #include "KeybindingsConfig.h"
 

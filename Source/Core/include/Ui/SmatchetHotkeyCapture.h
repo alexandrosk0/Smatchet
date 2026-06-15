@@ -6,7 +6,7 @@
 // Generalises the Whisper push-to-talk rebind UX (SmatchetPreferencesUi_Whisper.cpp)
 // but captures an ImGuiKey combo, not a Win32 VK — the in-app shortcuts dispatch on
 // ImGui input frames, the Whisper hotkey is an OS-global RegisterHotKey. See
-// docs/plans/active/keyboard-shortcuts-rebindable.md (PR2).
+// docs/plans/shipped/keyboard-shortcuts-rebindable.md (PR2).
 
 #include <string>
 #include <vector>

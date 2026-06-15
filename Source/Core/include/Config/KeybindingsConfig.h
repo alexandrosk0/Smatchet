@@ -3,7 +3,7 @@
 
 // Data model for the rebindable global keyboard-shortcut table. Each binding maps
 // a hotkey spec ("Ctrl+Shift+F") to a command id + JSON args, dispatched through the
-// unified command registry. See docs/plans/active/keyboard-shortcuts-rebindable.md.
+// unified command registry. See docs/plans/shipped/keyboard-shortcuts-rebindable.md.
 // Header-cost discipline (mirrors ConfigManager.h / ToolbarConfig.h): this header
 // pulls only <nlohmann/json_fwd.hpp>. Command arguments are stored as a JSON *string*
 // (ArgsJson), parsed at dispatch, so no TU including this header pays the full

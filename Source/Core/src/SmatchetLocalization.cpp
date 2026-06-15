@@ -133,7 +133,7 @@ const TranslationEntry kEntries[] = {
 
     // Preferences "Keyboard Shortcuts" tab + the shared capture widget + quick-bind popup.
     // See SmatchetPreferencesUi_Keybindings.cpp / SmatchetHotkeyCapture.cpp and
-    // docs/plans/active/keyboard-shortcuts-rebindable.md (PR2).
+    // docs/plans/shipped/keyboard-shortcuts-rebindable.md (PR2).
     {"keybindings.editor.intro",
      "Rebind in-app keyboard shortcuts. Click a shortcut to capture a new key combo (Esc cancels). "
      "Changes save automatically.",

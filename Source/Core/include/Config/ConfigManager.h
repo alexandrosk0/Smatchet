@@ -221,7 +221,7 @@ struct TrackerConfig {
     ToolbarConfig Toolbar = ToolbarConfig::Default();
 
     // Rebindable global keyboard shortcuts dispatched through the command registry.
-    // See KeybindingsConfig.h and docs/plans/active/keyboard-shortcuts-rebindable.md.
+    // See KeybindingsConfig.h and docs/plans/shipped/keyboard-shortcuts-rebindable.md.
     KeybindingsConfig Keybindings = KeybindingsConfig::Defaults();
     // One-shot migration flag: folds the legacy BugReportHotkey / BugReportHotkeyEnabled
     // pair into the keybinding registry ("app.bug_report.open") so a user who customized
