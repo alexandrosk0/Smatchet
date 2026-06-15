@@ -95,6 +95,7 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 #include "AppController.h"
 #include "CliCommandRunner.h"
 #include "StandaloneAppBootstrap.h"
+#include "Dx12Bootstrap.h" // StandaloneRenderer + optional DX12 backend (no-op shell off-Windows)
 // AppController holds unique_ptr<> members of these service types; main.cpp's
 // stack instance triggers destructor / noexcept evaluation that requires the
 // complete types, so include them here (CODE_REVIEW items 11/12/13/14).
@@ -255,6 +256,11 @@ struct MainBootState {
     int initialWindowH = 0;
     bool restoreMaximized = false;
     std::string logPath; // recorded for the crash reporter's next-launch log-tail
+    // Renderer resolved once in BootApplication and carried through the frame
+    // loop. `dx12` owns the D3D12 swapchain when renderer == Dx12; it is a
+    // no-op shell (never constructed) on the OpenGL path and off-Windows.
+    smatchet::standalone::StandaloneRenderer renderer = smatchet::standalone::StandaloneRenderer::OpenGL;
+    std::unique_ptr<smatchet::standalone::Dx12Bootstrap> dx12;
 };
 
 // Resolve the SMATCHET_USER_DATA override + wire the default file log sink.
@@ -454,18 +460,27 @@ static GLFWwindow* BootInitGlfwAndWindow(MainBootState& boot, const char*& outGl
     const bool restoreMaximized = boot.restoreMaximized;
     const bool havePosHint = (windowStateCfg.WindowX != -1 && windowStateCfg.WindowY != -1);
 
-    // Decide GL+GLSL versions
+    // Renderer-specific window hints. The DX12 path creates the GLFW window with
+    // no client API (we drive a D3D12 swapchain on the HWND directly, so GLFW
+    // must not make a GL context); the GL path requests the 3.0/3.2 context as
+    // before. boot.renderer was resolved in BootApplication before this call.
+    const bool useDx12 = (boot.renderer == smatchet::standalone::StandaloneRenderer::Dx12);
+    if (useDx12) {
+        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+        outGlslVersion = NULL; // no GLSL on the DX12 path
+    } else {
 #if defined(__APPLE__)
-    outGlslVersion = "#version 150";
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+        outGlslVersion = "#version 150";
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
+        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #else
-    outGlslVersion = "#version 130";
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+        outGlslVersion = "#version 130";
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
 #endif
+    }
 
 #if defined(SMATCHET_START_HIDDEN_UNTIL_FIRST_FRAME)
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
@@ -477,6 +492,17 @@ static GLFWwindow* BootInitGlfwAndWindow(MainBootState& boot, const char*& outGl
     // Create window with graphics context
     GLFWwindow* window = glfwCreateWindow(initialWindowW, initialWindowH, "Smatchet - Standalone", NULL, NULL);
     if (window == NULL) {
+        // Pillar 3 (never crash silently): a NULL window means the driver/context
+        // request failed. Surface it — logged for the next-launch tail and an OS
+        // dialog so a windowless launch isn't a silent exit.
+        LOG_ERROR("glfwCreateWindow failed (renderer=%s, %dx%d) — cannot open the standalone window.",
+                  useDx12 ? "dx12" : "gl", initialWindowW, initialWindowH);
+#if defined(_WIN32)
+        MessageBoxA(NULL,
+                    "Smatchet could not create its application window.\n\n"
+                    "Your graphics driver may be missing or out of date.",
+                    "Smatchet - Window creation failed", MB_OK | MB_ICONERROR);
+#endif
         return NULL;
     }
 
@@ -507,11 +533,15 @@ static GLFWwindow* BootInitGlfwAndWindow(MainBootState& boot, const char*& outGl
     SmatchetApplyWindowIcon(window);
 #endif
 
-    glfwMakeContextCurrent(window);
+    // GL-only context binding. The DX12 path has no GLFW GL context (GLFW_NO_API)
+    // — calling these would assert; vsync there is per-Present(syncInterval).
+    if (!useDx12) {
+        glfwMakeContextCurrent(window);
 
-    // Initial vsync-on; BootApplication re-applies the resolved value (env >
-    // CLI flag > persisted config) right after ConfigManager::Load(cli).
-    glfwSwapInterval(1);
+        // Initial vsync-on; BootApplication re-applies the resolved value (env >
+        // CLI flag > persisted config) right after ConfigManager::Load(cli).
+        glfwSwapInterval(1);
+    }
 
     return window;
 }
@@ -519,7 +549,7 @@ static GLFWwindow* BootInitGlfwAndWindow(MainBootState& boot, const char*& outGl
 // ImGui context + ini-schema migration + style/font + platform/renderer init.
 // Runs after the GL context is current. Returns false if the OpenGL device
 // objects fail to create (caller maps that to exit code 1).
-static bool BootSetupImGui(GLFWwindow* window, const char* glsl_version) {
+static bool BootSetupImGui(GLFWwindow* window, const char* glsl_version, MainBootState& boot) {
     // 2. Setup Dear ImGui Context
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -552,6 +582,30 @@ static bool BootSetupImGui(GLFWwindow* window, const char* glsl_version) {
     SmatchetApplyImGuiDefaultFontWithExtendedGlyphs(io);
 
     // Setup Platform/Renderer bindings
+    if (boot.renderer == smatchet::standalone::StandaloneRenderer::Dx12) {
+        // DX12: the GLFW platform backend runs in no-GL ("Other") mode; the
+        // renderer backend is the D3D12 swapchain owned by boot.dx12.
+        ImGui_ImplGlfw_InitForOther(window, true);
+        glfwSetKeyCallback(window, SmatchetKeypadEnterBridgeCallback);
+
+        int fbW = 0, fbH = 0;
+        glfwGetFramebufferSize(window, &fbW, &fbH);
+#if defined(_WIN32)
+        void* hwnd = glfwGetWin32Window(window);
+#else
+        void* hwnd = nullptr;
+#endif
+        boot.dx12 = std::make_unique<smatchet::standalone::Dx12Bootstrap>();
+        std::string dxErr;
+        if (!boot.dx12->Init(hwnd, fbW, fbH, dxErr)) {
+            LOG_ERROR("DX12 renderer init failed: %s", dxErr.c_str());
+            return false;
+        }
+        LOG_INFO("DX12 renderer initialised (adapter: %s%s).", boot.dx12->AdapterDescription().c_str(),
+                 boot.dx12->IsWarp() ? ", WARP software" : "");
+        return true;
+    }
+
     ImGui_ImplGlfw_InitForOpenGL(window, true);
     glfwSetKeyCallback(window, SmatchetKeypadEnterBridgeCallback);
     ImGui_ImplOpenGL3_Init(glsl_version);
@@ -574,13 +628,17 @@ static bool BootSetupImGui(GLFWwindow* window, const char* glsl_version) {
 // behaviour exactly, preserving glfwTerminate then ImGui shutdown order.
 // A result of -1 means boot succeeded, so proceed to RunFrameLoop.
 static int BootApplication(int argc, char** argv, MainBootState& boot) {
+    // Resolve the renderer before any window hint is set — both the window-hint
+    // choice (GL context vs GLFW_NO_API) and the backend init branch on it.
+    boot.renderer = smatchet::standalone::ResolveStandaloneRenderer(argc, argv);
+
     const char* glsl_version = NULL;
     GLFWwindow* window = BootInitGlfwAndWindow(boot, glsl_version);
     if (window == NULL) {
         return 1;
     }
 
-    if (!BootSetupImGui(window, glsl_version)) {
+    if (!BootSetupImGui(window, glsl_version, boot)) {
         return 1;
     }
 
@@ -597,7 +655,11 @@ static int BootApplication(int argc, char** argv, MainBootState& boot) {
     {
         const char* vsyncSource = smatchet::vsync::SeedFromBootSources(cfg.VsyncEnabled, cli.HasVsync, cli.Vsync);
         LOG_INFO("Vsync %s at boot (source: %s)", smatchet::vsync::Enabled() ? "enabled" : "disabled", vsyncSource);
-        glfwSwapInterval(smatchet::vsync::Enabled() ? 1 : 0);
+        // GL applies vsync via the swap interval on the current context; DX12 has
+        // no GL context and applies it per-frame in Present(syncInterval).
+        if (boot.renderer == smatchet::standalone::StandaloneRenderer::OpenGL) {
+            glfwSwapInterval(smatchet::vsync::Enabled() ? 1 : 0);
+        }
     }
 
     BootstrapContext& bootCtx = boot.bootCtx;
@@ -606,7 +668,13 @@ static int BootApplication(int argc, char** argv, MainBootState& boot) {
     std::string bootErr;
     if (!smatchet::standalone::InitAppAndPlugins(bootCtx, cfg, false, bootErr)) {
         LOG_ERROR("App bootstrap failed: %s", bootErr.c_str());
-        ImGui_ImplOpenGL3_Shutdown();
+        if (boot.renderer == smatchet::standalone::StandaloneRenderer::Dx12) {
+            if (boot.dx12) {
+                boot.dx12->Shutdown();
+            }
+        } else {
+            ImGui_ImplOpenGL3_Shutdown();
+        }
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
         glfwDestroyWindow(window);
@@ -648,10 +716,67 @@ static void HandleResizeRequest(GLFWwindow* window) {
     }
 }
 
-// Screenshot request from `debug.window.screenshot` — read framebuffer + write PNG
+// Pack a top-left-origin RGBA source into tightly-packed top-left RGB, dropping
+// the alpha channel (golden diffs compare R/G/B only). `flipVertical` reads rows
+// bottom-up — the GL path needs it (GL readback is bottom-left origin); the DX12
+// path does not (its readback is already top-left).
+static void PackRgbDropAlpha(const unsigned char* rgbaSrc, int w, int h, bool flipVertical,
+                             std::vector<unsigned char>& rgb) {
+    const size_t rowBytesRgb = static_cast<size_t>(w) * 3u;
+    rgb.assign(static_cast<size_t>(h) * rowBytesRgb, 0);
+    for (int y = 0; y < h; ++y) {
+        const int srcRow = flipVertical ? (h - 1 - y) : y;
+        const unsigned char* src = &rgbaSrc[static_cast<size_t>(srcRow) * static_cast<size_t>(w) * 4u];
+        unsigned char* dst = &rgb[static_cast<size_t>(y) * rowBytesRgb];
+        for (int x = 0; x < w; ++x) {
+            dst[0] = src[0];
+            dst[1] = src[1];
+            dst[2] = src[2];
+            dst += 3;
+            src += 4;
+        }
+    }
+}
+
+// Read the just-presented frame into top-left-origin RGB. GL reads the front
+// buffer (bottom-left, flipped here); DX12 reads its swapchain back buffer
+// (already top-left, no flip). Returns false on an empty framebuffer / failure.
+static bool CaptureFrameRgb(GLFWwindow* window, MainBootState& boot, std::vector<unsigned char>& rgb, int& outW,
+                            int& outH) {
+    if (boot.renderer == smatchet::standalone::StandaloneRenderer::Dx12) {
+        std::vector<uint8_t> rgba;
+        int w = 0;
+        int h = 0;
+        if (!boot.dx12 || !boot.dx12->CaptureBackbuffer(rgba, w, h) || w <= 0 || h <= 0) {
+            return false;
+        }
+        PackRgbDropAlpha(rgba.data(), w, h, /*flipVertical=*/false, rgb);
+        outW = w;
+        outH = h;
+        return true;
+    }
+
+    int fw = 0;
+    int fh = 0;
+    glfwGetFramebufferSize(window, &fw, &fh);
+    if (fw <= 0 || fh <= 0) {
+        return false;
+    }
+    std::vector<unsigned char> pixels(static_cast<size_t>(fw) * static_cast<size_t>(fh) * 4u);
+    // Read from the front buffer; we have just SwapBuffers'd, so front == this frame.
+    glReadBuffer(GL_FRONT);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, fw, fh, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    PackRgbDropAlpha(pixels.data(), fw, fh, /*flipVertical=*/true, rgb);
+    outW = fw;
+    outH = fh;
+    return true;
+}
+
+// Screenshot request from `debug.window.screenshot` — capture frame + write PNG
 // via stb_image_write. PNG keeps tests/golden/* repo bloat down (~40× smaller than
 // raw PPM-P6 on typical UI captures) and is readable by every image tool.
-static void HandleScreenshotRequest(GLFWwindow* window) {
+static void HandleScreenshotRequest(GLFWwindow* window, MainBootState& boot) {
     if (!g_ui.requestScreenshot) {
         return;
     }
@@ -668,28 +793,8 @@ static void HandleScreenshotRequest(GLFWwindow* window) {
     }
     int fw = 0;
     int fh = 0;
-    glfwGetFramebufferSize(window, &fw, &fh);
-    if (fw > 0 && fh > 0 && !screenshotPath.empty()) {
-        std::vector<unsigned char> pixels(static_cast<size_t>(fw) * static_cast<size_t>(fh) * 4u);
-        // Read from the back buffer; we have just SwapBuffers'd, so front == previous frame.
-        glReadBuffer(GL_FRONT);
-        glPixelStorei(GL_PACK_ALIGNMENT, 1);
-        glReadPixels(0, 0, fw, fh, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-        // Flip vertically: OpenGL origin is bottom-left, image files expect top-left.
-        // Drop the alpha channel — golden diffs only compare R/G/B.
-        const size_t rowBytesRgb = static_cast<size_t>(fw) * 3u;
-        std::vector<unsigned char> rgb(static_cast<size_t>(fh) * rowBytesRgb);
-        for (int y = 0; y < fh; ++y) {
-            const unsigned char* src = &pixels[static_cast<size_t>(fh - 1 - y) * static_cast<size_t>(fw) * 4u];
-            unsigned char* dst = &rgb[static_cast<size_t>(y) * rowBytesRgb];
-            for (int x = 0; x < fw; ++x) {
-                dst[0] = src[0];
-                dst[1] = src[1];
-                dst[2] = src[2];
-                dst += 3;
-                src += 4;
-            }
-        }
+    std::vector<unsigned char> rgb;
+    if (CaptureFrameRgb(window, boot, rgb, fw, fh) && fw > 0 && fh > 0 && !screenshotPath.empty()) {
         // "Log a Bug" capture: downscale so the base64 PNG fits the relay
         // payload cap. A full-size frame is several times too big. Text
         // redaction already happened at render time via the font swap, so
@@ -746,19 +851,26 @@ static void MaybePrimeCrashReport() {
 
 // Render exactly one frame: poll events, apply any pending font reload, run the
 // redaction-font swap window, build + draw the ImGui frame via the SEH-guarded
-// bridge, clear with the active theme background, render the draw data, and swap
-// buffers (plus the bucket-E post-swap hook). Extracted verbatim from the loop
-// body — call order is load-bearing (steady-state render path); do not reorder.
-// Returns whether the redaction font was pushed this frame so the caller can pop
-// it after the post-swap screenshot capture (the original ordering).
+// bridge, clear with the active theme background, render the draw data, and
+// present (plus the bucket-E post-swap hook). The renderer (GL vs DX12) is a
+// runtime branch on boot.renderer — call order is load-bearing (steady-state
+// render path); do not reorder. `syncInterval` is the resolved vsync interval
+// (0/1) the DX12 path passes to Present each frame. Returns whether the
+// redaction font was pushed this frame so the caller can pop it after the
+// post-swap screenshot capture (the original ordering).
 static bool RenderOneFrame(GLFWwindow* window, SmatchetUI& mainWindow, AppController& smatchetApp,
-                           PluginHost& pluginHost, const ImVec4& clear_color) {
+                           PluginHost& pluginHost, const ImVec4& clear_color, MainBootState& boot, int syncInterval) {
     // Poll and handle events (inputs, window resize, etc.)
     glfwPollEvents();
 
     if (SmatchetCheckAndApplyFontReload()) {
-        ImGui_ImplOpenGL3_DestroyDeviceObjects();
-        ImGui_ImplOpenGL3_CreateDeviceObjects();
+        // GL owns its font texture as a backend device object; the DX12 backend
+        // rebuilds the atlas texture inside NewFrame, so only the GL path needs
+        // the explicit destroy/recreate here.
+        if (boot.renderer == smatchet::standalone::StandaloneRenderer::OpenGL) {
+            ImGui_ImplOpenGL3_DestroyDeviceObjects();
+            ImGui_ImplOpenGL3_CreateDeviceObjects();
+        }
     }
 
     // font-redaction censor — if the bug-report modal armed a capture last frame,
@@ -771,7 +883,11 @@ static bool RenderOneFrame(GLFWwindow* window, SmatchetUI& mainWindow, AppContro
     }
 
     // Start the ImGui frame
-    ImGui_ImplOpenGL3_NewFrame();
+    if (boot.renderer == smatchet::standalone::StandaloneRenderer::Dx12) {
+        boot.dx12->NewFrame();
+    } else {
+        ImGui_ImplOpenGL3_NewFrame();
+    }
     ImGui_ImplGlfw_NewFrame();
     smatchet::ui::RouteWheelToScrollableTooltipBeforeNewFrame();
     ImGui::NewFrame();
@@ -787,18 +903,27 @@ static bool RenderOneFrame(GLFWwindow* window, SmatchetUI& mainWindow, AppContro
     ImGui::Render();
     int display_w, display_h;
     glfwGetFramebufferSize(window, &display_w, &display_h);
-    glViewport(0, 0, display_w, display_h);
     // Clear with the active theme's WindowBg so any dock gaps blend with panel
     // backgrounds — viewport background should never visibly differ from panels.
     const ImVec4 bg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
-    glClearColor(bg.x * bg.w, bg.y * bg.w, bg.z * bg.w, bg.w);
-    glClear(GL_COLOR_BUFFER_BIT);
     (void)clear_color;
     ImDrawData* drawData = ImGui::GetDrawData();
     smatchet::ui::GuardImGuiDynamicTextures(drawData); // [P0 #1122] shared dynamic-texture guard
-    ImGui_ImplOpenGL3_RenderDrawData(drawData);
-
-    glfwSwapBuffers(window);
+    if (boot.renderer == smatchet::standalone::StandaloneRenderer::Dx12) {
+        // Swapchain resize tracks the framebuffer; skip rendering at 0x0 (minimised).
+        boot.dx12->Resize(display_w, display_h);
+        if (display_w > 0 && display_h > 0) {
+            boot.dx12->BeginFrame(bg); // premultiplied clear inside, matching the GL path
+            boot.dx12->RenderDrawData(drawData);
+            boot.dx12->Present(syncInterval);
+        }
+    } else {
+        glViewport(0, 0, display_w, display_h);
+        glClearColor(bg.x * bg.w, bg.y * bg.w, bg.z * bg.w, bg.w);
+        glClear(GL_COLOR_BUFFER_BIT);
+        ImGui_ImplOpenGL3_RenderDrawData(drawData);
+        glfwSwapBuffers(window);
+    }
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
     // ImGui Test Engine bucket-E hookup. The engine is created /
@@ -937,12 +1062,18 @@ static int RunFrameLoop(MainBootState& boot) {
 
         while (!glfwWindowShouldClose(window)) {
             const bool liveVsync = smatchet::vsync::Enabled();
-            if (liveVsync != lastAppliedVsync) {
+            const int syncInterval = liveVsync ? 1 : 0;
+            // GL applies vsync via glfwSwapInterval on-change; DX12 takes syncInterval
+            // per-frame into Present() (inside RenderOneFrame), so only the GL path
+            // touches the GL context here.
+            if (boot.renderer == smatchet::standalone::StandaloneRenderer::OpenGL &&
+                liveVsync != lastAppliedVsync) {
                 glfwSwapInterval(liveVsync ? 1 : 0);
                 lastAppliedVsync = liveVsync;
             }
 
-            const bool redactThisFrame = RenderOneFrame(window, mainWindow, smatchetApp, pluginHost, clear_color);
+            const bool redactThisFrame =
+                RenderOneFrame(window, mainWindow, smatchetApp, pluginHost, clear_color, boot, syncInterval);
 
             fpsMeasure.Sample(window);
 
@@ -955,7 +1086,7 @@ static int RunFrameLoop(MainBootState& boot) {
 
             HandleFullScreenToggle(window);
             HandleResizeRequest(window);
-            HandleScreenshotRequest(window);
+            HandleScreenshotRequest(window, boot);
 
             // Restore normal fonts after the redacted capture frame (next frame is normal).
             if (redactThisFrame) {
@@ -989,7 +1120,13 @@ static int RunFrameLoop(MainBootState& boot) {
     }
 
     // 5. Cleanup
-    ImGui_ImplOpenGL3_Shutdown();
+    if (boot.renderer == smatchet::standalone::StandaloneRenderer::Dx12) {
+        if (boot.dx12) {
+            boot.dx12->Shutdown();
+        }
+    } else {
+        ImGui_ImplOpenGL3_Shutdown();
+    }
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
 

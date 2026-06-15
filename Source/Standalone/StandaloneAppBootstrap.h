@@ -5,6 +5,7 @@
 // and (future) ephemeral GUI refactor. See docs/plans/shipped/light-release-unreal-default.md.
 
 #include "ConfigManager.h"
+#include "Dx12Bootstrap.h" // StandaloneRenderer + optional DX12 backend (no-op shell off-Windows)
 
 #include <functional>
 #include <memory>
@@ -30,6 +31,11 @@ struct BootstrapContext {
     std::unique_ptr<PluginHost> pluginHost;
     std::unique_ptr<SmatchetUI> mainWindow;
     const char* glslVersion = nullptr;
+    // Renderer for this hidden/ephemeral window. Resolved in Initialize() from
+    // argv (or the platform default); both loops branch on it at runtime. The
+    // DX12 backend is owned here when renderer == Dx12 (no-op shell elsewhere).
+    StandaloneRenderer renderer = StandaloneRenderer::OpenGL;
+    std::unique_ptr<Dx12Bootstrap> dx12;
     // Ctor + dtor are out-of-line (defined in the .cpp where AppController /
     // PluginHost / SmatchetUI are complete) so construction/destruction sites
     // don't need those member types complete. Without the out-of-line ctor the

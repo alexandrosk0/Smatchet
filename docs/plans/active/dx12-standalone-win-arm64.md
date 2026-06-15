@@ -192,11 +192,23 @@ Diff touches `Source/Core/` (BugReportService) + the render path under it, so ga
 **Phase 0 — telemetry** (PR pending):
 - `af44ffae` · bug-report emulation telemetry — `DetectHostMachine()` (`IsWow64Process2`, dynamic `GetProcAddress` from kernel32) in BugReportService.cpp surfaces `emulated` + `host_arch` env keys; BugReportBody.cpp annotates the OS/Arch markdown row; +2 BuildMarkdownBody doctest cases.
 
+**Phase 1 — standalone DX12 renderer (PR pending):**
+- `4d7f3b41` · DX12 standalone renderer backend — `Dx12Bootstrap.{h,cpp}` pImpl D3D12 device/swapchain/RTV/fence + WARP fallback + SRV allocator + top-left backbuffer capture; renderer-conditional `StandaloneAppBootstrap`/`main.cpp` (init/render-loop/shutdown/screenshot); `Initialize` decomposed into `InitRendererBackend` + `TeardownPartialBoot`; CMake links `d3d12/dxgi/d3dcompiler` + compiles `imgui_impl_dx12.cpp` under `WIN32 AND MSVC`; `ResolveStandaloneRenderer` precedence `--renderer` > `SMATCHET_RENDERER` env > platform default; CI pins `SMATCHET_RENDERER=gl` workflow-wide.
+
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
 
 **Phase 0**:
 - Plan row 1 named only BugReportService.cpp; the markdown OS/Arch row is hard-coded in **BugReportBody.cpp** (the pure half), so the arch-cell composition + its 2 unit tests landed there too — keeps the rendering unit-testable in the doctest rig (BugReportService.cpp links cpr/host symbols and is excluded from the rig). No behavioural change vs the plan's intent ("surfaced in the bug-report environment block").
+
+**Phase 1:**
+- **Renderer precedence gained an env layer** — plan specified `--renderer` flag > platform default; shipped as flag > `SMATCHET_RENDERER` env > platform default. The env knob lets CI pin every standalone launch (incl. the `scenario.run` buried inside `scripts/dev/test-screenshot-diff.sh`) to gl via one workflow-level var instead of threading `--renderer=gl` through every launch site.
+- **CI substrate pinned by env, not per-launch flag** (plan row 5c left the mechanism open) — workflow-level `SMATCHET_RENDERER: gl` in `build-and-test.yml`; env inherits to every child exe, so bucket-C/E + mobile-texture-guard + perf-headless stay Mesa-GL byte-stable. A future DX12 CI job overrides via explicit `--renderer=dx12` (flag > env).
+- **CMake guard is `WIN32 AND MSVC`, not the plan's literal "WIN32 branch"** — MinGW lacks `_MSC_VER` + the DX12 SDK import libs, so it must stay GL-only; matches the `SMATCHET_STANDALONE_HAS_DX12` compile predicate.
+- **`Initialize` decomposed** into file-local `InitRendererBackend` + `TeardownPartialBoot` (not in plan) — the renderer-conditional branch pushed `Initialize` past the 120-line `function-too-long` gate (142L); the shared teardown helper also removes the three-way duplicated failure-unwind.
+- **DRY WARNs accepted (calibration phase, non-blocking)** — SRV allocator mirrors `SmatchetImGuiHost.cpp`; `PackRgbDropAlpha`/`CaptureFrameRgb` screenshot helpers duplicated across `StandaloneAppBootstrap.cpp` ↔ `main.cpp` (two standalone loops, one shape). Comment-ratio WARNs on the two scenario headers accepted (renderer-agnostic doc text).
+- **Plan kept `active`** — multi-phase (Phase 2 Unreal-side + Phase 3 WoA hardware validation pending); the `## Archive` `git mv` to `shipped/` is deferred to the final-phase PR, not executed here.
+- **Flagged debt** — `CMakeLists.txt` dead `if(SMATCHET_EMBEDDED_IN_UNREAL)` *variable* branch (plan § Out-of-scope) filed to `docs/self-improvement/categories/debt.md` this PR.
 
 ## Verification (actual)
 *(populated post-ship — what was actually tested + result, passed / failed / not-run)*
@@ -206,6 +218,20 @@ Diff touches `Source/Core/` (BugReportService) + the render path under it, so ga
 - **Tests** — PASS: full doctest rig 1704 cases / 15765 assertions, 0 failed; the 2 new BuildMarkdownBody emulation cases pass.
 - **Lint** — PASS: `test-lint-rules.sh --diff origin/develop` clean (strict-zone, comment-noise, no-raw-new/deviation-overdue/no-detach, GLFW-in-Core-headers, CMake-FATAL all green; narrowing-conversions skipped — opt-in).
 - **Not run** — perf gates (Phase 0 adds no draw-code path; `DetectHostMachine` is a one-shot bug-report-time call, not a per-frame path); ASan/UBSan (deferred to CI).
+
+**Phase 1 (commit `4d7f3b41`, worktree `C:\Dev\trees\dx12-phase1`):**
+
+| Gate | Command | Result |
+|---|---|---|
+| Standalone build (GL + DX12 backend linked) | `with-msvc-env.sh cmake --build --preset ninja-iter-msvc --target SmatchetStandalone` | **PASS** — `Smatchet.exe` linked, EXIT=0 |
+| DX12 dual-target compile | `… --target SmatchetCore_DX12` | **PASS** — `SmatchetCore_DX12.lib`, EXIT=0 |
+| Unit + Lua tests | `ctest --test-dir build/ninja-test-msvc` (built `SmatchetTests` + `SmatchetLuaTests`) | **PASS** — 7/7 100% |
+| Lint (delta vs `origin/develop`) | `agents/scripts/project/test-lint-rules.sh --diff origin/develop` | **PASS** EXIT=0 — WARN-only (4 DRY copy-paste, 2 comment-ratio, 1 soft func-size; all non-blocking, see Deviations) |
+| Docs | `scripts/dev/test-docs.sh` | **PASS** — 13/0 |
+
+**NOT-RUN / deferred (not a Phase-1 regression — tracked to later phases):**
+- **DX12 runtime render smoke on physical Windows-on-ARM hardware** — Phase 3 residue; no WoA runner / device available this session. The build links DX12 + WARP fallback but no frame has been presented through the DX12 backend on real hardware.
+- **DX12 visual parity under bucket-C/E** — CI pins `SMATCHET_RENDERER=gl` to keep Mesa goldens byte-stable, so the bucket goldens never exercise the DX12 backbuffer-capture path. DX12 pixel output is therefore **unverified in CI**. Local manual smoke (`Smatchet.exe --renderer=dx12`) on x64 Windows is the only available check this session and is offered in the post-ship menu.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*

@@ -22,6 +22,15 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   SCCACHE_DIR: ${{ github.workspace }}\.sccache
+  # Pin the standalone renderer to OpenGL workflow-wide so EVERY headless exe
+  # launch renders through Mesa software GL — bucket-C screenshot-diff (incl. the
+  # scenario.run buried in scripts/dev/test-screenshot-diff.sh), bucket-E,
+  # mobile-texture-guard, and the perf headless runs — keeping the committed Mesa
+  # goldens byte-stable. The Windows default is now DX12 (WARP on CI runners),
+  # whose output would diverge from those goldens. ResolveStandaloneRenderer reads
+  # this env; an explicit `--renderer=dx12` flag still overrides it for any future
+  # DX12-specific job (flag > env > platform default).
+  SMATCHET_RENDERER: "gl"
 
 on:
   # NO paths-ignore: required status checks (Windows + MSVC, Windows + MSVC
