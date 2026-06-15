@@ -161,7 +161,20 @@ std::string BuildMarkdownBody(const BugReportOptions& opts, const ContextBundle&
     head << "| Field | Value |\n|---|---|\n";
     head << "| Version | " << envStr("version") << " |\n";
     head << "| Build | " << envStr("build_tag") << " |\n";
-    head << "| OS / Arch | " << envStr("os") << " / " << envStr("arch") << " |\n";
+    // Arch cell = compile-time build target, annotated with the native silicon
+    // when the process is emulated (x86_64 under Prism on arm64) or the host
+    // machine otherwise differs. Both annotation inputs are optional.
+    const std::string buildArch = envStr("arch");
+    std::string archCell = buildArch;
+    if (env.is_object()) {
+        const std::string hostArch = env.value("host_arch", std::string());
+        if (env.value("emulated", false) && !hostArch.empty()) {
+            archCell += " (emulated on " + hostArch + ")";
+        } else if (!hostArch.empty() && hostArch != buildArch) {
+            archCell += " (native host " + hostArch + ")";
+        }
+    }
+    head << "| OS / Arch | " << envStr("os") << " / " << archCell << " |\n";
     head << "| Active tracker | " << envStr("tracker") << " |\n";
     head << "| Captured (UTC) | " << envStr("utc") << " |\n\n";
     head << "### Description\n\n";
