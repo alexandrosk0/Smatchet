@@ -1,12 +1,12 @@
 // CancelToken.test.cpp — WS-A of docs/plans/active/ui-freeze-pillar2-blocking.md.
 //
 // Pure-logic coverage of the cooperative-cancellation primitives in
-// Source/Core/include/Ui/CancelToken.h: the CancelToken shared atomic flag and
+// Source/Core/include/CancelToken.h: the CancelToken shared atomic flag and
 // the CancellableFutureSet owner helper (signal-all-cancel, non-blocking
 // abandon, teardown join). No AppController / no ImGui — just the helper and a
 // stub worker future that observes the flag.
 
-#include "Ui/CancelToken.h"
+#include "CancelToken.h"
 
 #include "doctest/doctest.h"
 

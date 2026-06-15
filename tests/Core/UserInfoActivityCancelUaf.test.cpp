@@ -48,7 +48,7 @@
 // whole point of the test. Run under ninja-msvc-asan with
 // ASAN_OPTIONS=abort_on_error=1.
 
-#include "Ui/CancelToken.h"
+#include "CancelToken.h"
 
 #include "doctest/doctest.h"
 

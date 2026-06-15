@@ -4,7 +4,6 @@
 // Pure interface that lets command-helper templates (Commands/MainThreadDispatch.h)
 // hop work onto the UI thread WITHOUT including AppController.h — severing the
 // Commands -> AppController include back-edge (DAG-ify core-include-dag, Phase 2).
-//
 // AppController implements this by delegating to its `mainThreadDispatcher` member.
 // The interface lives in the Commands/ layer so MainThreadDispatch.h depends only
 // on a same-layer header. Dependency-light: <functional> only — no Ui/GL include.
