@@ -127,7 +127,8 @@ the general raw-PUT guard as a residual P3; P2→P3; Last-reviewed 2026-06-15.
   `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop`.
 - Slice 1b: fresh `ninja-msvc-asan` build, run the full rig (minus the excluded
   CallstackParser case) — all 9 guarded sites pass under ASAN (no timing false-red);
-  lint PASS. Non-ASAN budgets unchanged (the `#else` branch).
+  lint PASS. Non-ASAN budgets unchanged (the `#else` branch). **DONE** — full rig
+  **1872 passed | 0 failed** under ASAN; lint PASS; guards PR #1280 (test-only).
 - Slice 2: N/A — superseded; live ruleset already shows 9 required contexts.
 
 ## Implementation log
@@ -143,8 +144,18 @@ the general raw-PUT guard as a residual P3; P2→P3; Last-reviewed 2026-06-15.
   superseded** (see banner + Slice 2 section). Plan re-scoped to ASAN-lane fragility
   hardening. User-approved (AskUserQuestion: "Ship the hardening").
 - 2026-06-15 — Slice 1b: exhaustive audit found 9 wall-clock timing assertions across
-  6 files; applying the #1215 `__SANITIZE_ADDRESS__` guard to all 9 uniformly on
-  branch `feat/asan-timing-guards`. (Implementation log updated on completion.)
+  6 files; applied the #1215 `__SANITIZE_ADDRESS__` guard to all 9 uniformly on
+  branch `feat/asan-timing-guards`. Guards (ASAN budget / non-ASAN budget):
+  `LocalCacheManagerChat` perIterUs 69400/6940; `BulkImportAbandonNonBlocking`
+  abandonMs 2500/250 + joinMs **WARN-downgrade under ASAN** (a 10× loosen would mask a
+  full-runtime inline-join regression, so the cooperative-bail join budget degrades to
+  `WARN` not a loosened `CHECK`); `CancelToken` elapsedMs; `SubprocessCapture` durationMs
+  ×2; `StubAiClientCancel` postCancelMs + totalMs; `UserInfoActivityCancelUaf` teardownMs
+  ONLY (UAF sentinel `0xC0FFEE` + heap-tracking asserts untouched). **ASAN verify**: fresh
+  `ninja-msvc-asan`, full rig **1872 passed | 0 failed** — the feared ADF deep-nest
+  overflow did NOT materialise even though the guards branch lacks Slice 1's ADF teardown
+  fix. Lint PASS. Shipped as guards PR #1280 (test-only; **NOT** watcher-registered —
+  user reserved auto-merge authorization for PR #1273 only).
 
 ## Deviations
 
