@@ -270,8 +270,12 @@ def _merge_base_or_ref(ref):
     return ref
 
 
-def run_diff_mode(ref):
-    """Phase-4 regrowth: emit noise-bucket violations for lines ADDED vs the merge-base of <ref>."""
+def _scan_added_noise(ref):
+    """Scan lines ADDED vs the merge-base of <ref>; return the noise-bucket hits as
+    [(path, line_no, bucket, rule_id, body), ...]. `line_no` is the working-tree (new-side)
+    line number; `bucket` is the classify_comment id; `rule_id` is the gate rule name.
+    Deviation-suppressed lines are excluded. Shared by --diff (report) and --fix (strip) so
+    both see an identical set."""
     ref = _merge_base_or_ref(ref)
     rule_for = {
         "cut-blank": "comment-blank-run",
@@ -281,7 +285,7 @@ def run_diff_mode(ref):
     diff = _git(["diff", "--unified=0", ref, "--", *[r + "**" for r in SWEEP_ROOTS]])
     cur_file = None
     cur_line = 0
-    violations = []
+    hits = []
     file_cache = {}
 
     def suppressed(path, line_no, rule_id):
@@ -321,12 +325,68 @@ def run_diff_mode(ref):
                 if kinds and kinds[0] == "full_comment":
                     b = classify_comment(body.strip(), body)
                     if b in rule_for and not suppressed(cur_file, cur_line, rule_for[b]):
-                        base = os.path.basename(cur_file)
-                        violations.append(f"{rule_for[b]}\t{base}:{cur_line}\t{body.strip()[:80]}")
+                        hits.append((cur_file, cur_line, b, rule_for[b], body))
             cur_line += 1
-    for v in violations:
-        print(v)
-    return 1 if violations else 0
+    return hits
+
+
+def run_diff_mode(ref):
+    """Phase-4 regrowth: emit noise-bucket violations for lines ADDED vs the merge-base of <ref>."""
+    hits = _scan_added_noise(ref)
+    for path, line_no, _b, rule_id, body in hits:
+        print("%s\t%s:%d\t%s" % (rule_id, os.path.basename(path), line_no, body.strip()[:80]))
+    return 1 if hits else 0
+
+
+def _strip_line_numbers(lines, line_nos):
+    """Pure helper for --fix: return `lines` with the 1-based indices in `line_nos` removed.
+    Deletes high-to-low so earlier indices stay valid; out-of-range numbers are ignored."""
+    out = list(lines)
+    for ln in sorted({n for n in line_nos if 1 <= n <= len(out)}, reverse=True):
+        del out[ln - 1]
+    return out
+
+
+def run_fix(ref):
+    """Auto-strip the mechanically-removable NEW comment-noise this change added vs <ref>, in
+    place: blank-comment runs (`cut-blank`) and decorative banners/dividers (`cut-decorative`).
+    NEVER touches `comment-commented-out-code` — a code-like comment needs a human reword (delete
+    the code or reword the prose), not blind deletion — those are reported for manual handling.
+    Reads/writes with newline='' so existing line endings are preserved. The delta lint gate run
+    AFTER this (pre-ship.sh / CI) stays the authority; --fix only removes what it proves is noise."""
+    hits = _scan_added_noise(ref)
+    by_file = {}
+    manual = []
+    for path, line_no, bucket, _rule_id, body in hits:
+        if bucket in CUT_BUCKETS:
+            by_file.setdefault(path, []).append(line_no)
+        else:  # flag-commented-code — human reword, never auto-deleted
+            manual.append((path, line_no, body))
+    stripped = 0
+    for path, line_nos in by_file.items():
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace", newline="") as fh:
+                lines = fh.read().split("\n")
+        except OSError:
+            continue
+        kept = _strip_line_numbers(lines, line_nos)
+        removed = len(lines) - len(kept)
+        if removed:
+            with open(path, "w", encoding="utf-8", errors="replace", newline="") as fh:
+                fh.write("\n".join(kept))
+            stripped += removed
+    if stripped:
+        print("comment_audit --fix: stripped %d new blank-run/decorative comment line(s) from "
+              "%d file(s)" % (stripped, len(by_file)))
+    if manual:
+        print("comment_audit --fix: %d new commented-out-code line(s) need MANUAL handling "
+              "(reword the prose or delete the code — NOT auto-stripped):" % len(manual),
+              file=sys.stderr)
+        for path, line_no, body in manual:
+            print("  %s:%d  %s" % (os.path.basename(path), line_no, body.strip()[:80]), file=sys.stderr)
+    if not stripped and not manual:
+        print("comment_audit --fix: no new mechanically-removable comment-noise")
+    return 0
 
 
 def _file_ratio(text):
@@ -399,10 +459,15 @@ def run_selftest():
         if b == "flag-commented-code":
             print("FAIL: expected prose (not flagged) for: %s" % s)
             fails += 1
+    # Pure strip-helper invariant used by --fix: remove the given 1-based lines, high-to-low,
+    # ignoring out-of-range; survivors keep order. Guards the auto-strip's delete arithmetic.
+    if _strip_line_numbers(["a", "b", "c", "d"], [2, 4, 99]) != ["a", "c"]:
+        print("FAIL: _strip_line_numbers removed the wrong lines")
+        fails += 1
     if fails:
         print("comment_audit --selftest: FAIL (%d)" % fails)
         return 1
-    print("comment_audit --selftest: PASS (%d flag + %d prose fixtures)" % (len(flag), len(prose)))
+    print("comment_audit --selftest: PASS (%d flag + %d prose fixtures + strip-helper)" % (len(flag), len(prose)))
     return 0
 
 
@@ -421,6 +486,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--json", metavar="PATH")
     ap.add_argument("--diff", metavar="REF")
+    ap.add_argument("--fix", metavar="REF",
+                    help="auto-strip NEW blank-run/decorative comment-noise vs REF, in place "
+                         "(commented-out-code is reported for manual reword, never deleted)")
     ap.add_argument("--ratio-warn", metavar="REF")
     ap.add_argument("--selftest", action="store_true",
                     help="run the prose-vs-code discriminator fixtures and exit")
@@ -441,6 +509,12 @@ def main():
             sys.exit(run_diff_mode(args.diff))
         except Exception as e:
             print("comment_audit: ERROR (diff): %s" % e, file=sys.stderr)
+            sys.exit(2)
+    if args.fix:
+        try:
+            sys.exit(run_fix(args.fix))
+        except Exception as e:
+            print("comment_audit: ERROR (fix): %s" % e, file=sys.stderr)
             sys.exit(2)
     grand, per_sub, file_reports = run_audit()
     if args.json:

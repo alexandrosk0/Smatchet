@@ -325,6 +325,27 @@ setup() {
     [[ "$output" == *"PASS"* ]]
 }
 
+@test "comment_audit.py --fix strips a new blank-comment run but keeps prose AND code-like" {
+    PY="$(command -v python3 || command -v python)"
+    AUDIT="$REPO_ROOT/agents/scripts/core/comment_audit.py"
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/include"
+    printf '#pragma once\n// header line one\n' > "$tmp/Source/Core/include/X.h"
+    ( cd "$tmp" && git init -q && git config user.email a@b.c && git config user.name t \
+        && git add -A && git commit -qm base ) >/dev/null 2>&1
+    # Add a bare // (blank-run, auto-strippable) + prose + commented-out code (NOT auto-strippable).
+    printf '//\n// kept prose paragraph here\n// foo(bar);\n' >> "$tmp/Source/Core/include/X.h"
+    run bash -c "cd '$tmp' && '$PY' '$AUDIT' --fix HEAD"
+    [ "$status" -eq 0 ]
+    # The bare // is gone; the prose + the code-like line (manual reword) stay; header intact.
+    run grep -c '^//$' "$tmp/Source/Core/include/X.h"
+    [ "$output" -eq 0 ]
+    grep -q 'kept prose paragraph' "$tmp/Source/Core/include/X.h"
+    grep -q 'foo(bar);' "$tmp/Source/Core/include/X.h"
+    grep -q 'header line one' "$tmp/Source/Core/include/X.h"
+    rm -rf "$tmp"
+}
+
 # ---------- catalog: format + determinism ----------
 
 @test "--catalog emits the rule-id sections + Totals" {
