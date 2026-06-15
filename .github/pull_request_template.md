@@ -1,5 +1,9 @@
 <!-- Delete sections that don't apply. Keep what's useful for the reviewer. -->
 
+## Intent
+
+<!-- One line: the originating human ask that drove this PR (redacted). The ship-loop fills this from .session-intent/<branch>.log at `gh pr create` time; see docs/agent-rules/ship-loops.md § Intent capture. Keep it even on a hand-authored PR — a missing/empty Intent trips the advisory Intent-section CI check. -->
+
 ## Summary
 
 <!-- 1–3 sentences: what changed, why, and what stays the same. Link the originating plan / backlog entry / issue when one exists. -->

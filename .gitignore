@@ -75,6 +75,11 @@ skills-lock.json
 .session-context.md
 .session-context.archive/
 
+# Per-branch redacted prompt-intent capture (see docs/agent-rules/ship-loops.md
+# § Intent capture). Written by the capture-intent.sh UserPromptSubmit hook,
+# read by the orchestrator at gh pr create time to fill the PR `## Intent`.
+.session-intent/
+
 # Per-run coderabbit-triage temp dumps (see agents/coderabbit-triage.md)
 .triage-reviews.json
 .triage-review-comments.json

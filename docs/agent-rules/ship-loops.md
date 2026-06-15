@@ -71,6 +71,18 @@ The post-ship 4-option `AskUserQuestion` is the **first** user-facing prompt aft
 
    Pillar anchor: see [`docs/agent-rules/quality-pillars.md`](quality-pillars.md) § 4 § Visual-validation acceptance for the cross-link from the pillar side.
 
+## Intent capture — prompt → PR `## Intent`
+
+**Rule**: at `gh pr create` time the orchestrator **MUST** fill the PR body's `## Intent` section (top of [`.github/pull_request_template.md`](../../.github/pull_request_template.md)) with a one-line, redacted statement of the **originating human ask** that drove the PR. This is the traceability seam: human prompt → diff.
+
+**Source** — the `capture-intent.sh` `UserPromptSubmit` hook ([`docs/harness/claude-code/hooks/capture-intent.sh`](../harness/claude-code/hooks/capture-intent.sh)) appends one **already-redacted** one-liner per prompt to a gitignored, branch-keyed file `.session-intent/<branch>.log`. Each line is run through [`agents/scripts/core/redact-intent.py`](../../agents/scripts/core/redact-intent.py) first (fail-safe: secrets + home-dir usernames stripped; a raw prompt never reaches the file). A batched feature → one branch → many prompts → many lines.
+
+**Synthesise, don't paste** — read the accumulated lines and write **one** synthesised intent line for the feature (not a verbatim dump of every prompt). Synthesis keeps the section readable *and* is a second human-judgement redaction layer: even though the lines are pre-redacted, never re-introduce a secret or a home-dir path from your own session context when phrasing the intent — describe the *ask*, not any credential you happen to know.
+
+**Fallback** — if `.session-intent/<branch>.log` is absent or empty (hook not wired yet, a fresh worktree provisioned before this hook existed, or a non-Claude-Code harness with no `UserPromptSubmit` capture), fill `## Intent` from the live session's originating prompt directly, applying the same discipline by hand (no secrets, no home-dir usernames). Never leave the template placeholder comment in a shipped PR body.
+
+**Advisory gate** — the non-required `Intent section (advisory)` job in [`.github/workflows/doc-validation.yml`](../../.github/workflows/doc-validation.yml) emits a `::warning::` when a PR body's `## Intent` is missing or still only the placeholder. It is **WARN-first / never red** (per [`AGENTS.md`](../../AGENTS.md) § Merge gates — never merge past a red check, so this nudge stays advisory).
+
 ## PR batching — logical-feature granularity
 
 **Rule**: the orchestrator opens **one PR per logical feature, not one PR per slice/task/fix**. Related slices that serve a single coherent goal accumulate on one feature branch and ship as a **single** PR. This is the default; it overrides any reflex to open a fresh PR per stage of the ship-loop.
