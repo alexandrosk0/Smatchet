@@ -55,8 +55,8 @@ void KickCommentsFetch(AppController& app, const std::string& issueId, int gen) 
         std::vector<TrackerIssueComment> comments;
         std::string err;
         const bool ok = appPtr->FetchIssueComments(capturedIssueId, comments, err);
-        appPtr->mainThreadDispatcher.PostToMainThread([gen, capturedIssueId, ok, comments = std::move(comments),
-                                                       err]() mutable {
+        appPtr->mainThreadDispatcher.PostToMainThread([appPtr, gen, capturedIssueId, ok,
+                                                       comments = std::move(comments), err]() mutable {
             if (!s_CommentsState.Active || s_CommentsState.Gen != gen || s_CommentsState.IssueId != capturedIssueId) {
                 return;
             }
@@ -64,6 +64,14 @@ void KickCommentsFetch(AppController& app, const std::string& issueId, int gen) 
             if (ok) {
                 s_CommentsState.Comments = std::move(comments);
                 s_CommentsState.Error.clear();
+                // issue-comments fix (#1018) — runs on every fetch: modal-open AND the post-success
+                // re-fetch. Pushes the observed count into the cached ticket so the grid Comments
+                // column reflects a just-posted comment without a full re-sync. UI thread (post-back).
+                // narrowing-ok: a single issue thread's comment count is far below INT_MAX; the
+                // cached-count field is int. No saturation (matches the codebase's bounded-container
+                // size()->int convention).
+                appPtr->UpdateCachedCommentCount(capturedIssueId,
+                                                 static_cast<int>(s_CommentsState.Comments.size()));
             } else {
                 s_CommentsState.Error =
                     err.empty()

@@ -639,6 +639,10 @@ add_executable(SmatchetTests
     # Natural-order key/issuekey sort — exercises CompareIssueKeyNatural
     # (inline in StringUtil.h) which CompareFieldValuesForSort dispatches to.
     Core/TicketGridModelKeySort.test.cpp
+    # Legacy `comment` grid-field-id canonicalization (#1018) — exercises
+    # CanonicalizeGridFieldId (inline in StringUtil.h) which
+    # TicketGridColumnsBuilder::Build folds each saved view field id through.
+    Core/GridFieldIdCanonical.test.cpp
     # Function-size decomposition (PR A7-A8) — deterministic dispatch coverage for
     # FormatCompactJiraDateForDisplay (parse-failure passthrough + absolute_iso /
     # absolute_friendly). CompactDateFormat.cpp is already linked above (line ~233).
