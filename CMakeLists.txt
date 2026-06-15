@@ -981,6 +981,16 @@ endif()
 if(NOT ANDROID)
     file(GLOB IMGUI_SOURCES "${imgui_SOURCE_DIR}/*.cpp")
     list(APPEND IMGUI_SOURCES "${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp" "${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp")
+    # Windows+MSVC standalone defaults to the native DX12 renderer (the GL path is
+    # software-emulated on Windows-on-ARM64), so the DX12 ImGui backend ships in the
+    # same desktop ImGuiLib the standalone links — Dx12Bootstrap.cpp resolves
+    # ImGui_ImplDX12_* from here. Guarded WIN32 AND MSVC: MinGW stays GL-only, and
+    # this is NOT IMGUI_DX12_SOURCES (that feeds the separate ImGuiLib_DX12 — linking
+    # both into one target double-defines the impl symbols). clang-cl defines
+    # _MSC_VER too, matching the SMATCHET_STANDALONE_HAS_DX12 predicate.
+    if(WIN32 AND MSVC)
+        list(APPEND IMGUI_SOURCES "${imgui_SOURCE_DIR}/backends/imgui_impl_dx12.cpp")
+    endif()
     add_library(ImGuiLib STATIC ${IMGUI_SOURCES})
     target_include_directories(ImGuiLib PUBLIC
             ${imgui_SOURCE_DIR}
@@ -1907,6 +1917,13 @@ endif()
 
 if(WIN32)
     target_link_libraries(SmatchetStandalone PRIVATE opengl32 ws2_32 crypt32)
+    # Native DX12 renderer (default on Windows+MSVC) — Dx12Bootstrap + the imgui
+    # DX12 backend need the D3D12 / DXGI runtime libs and d3dcompiler (the backend
+    # compiles its embedded shaders at runtime via D3DCompile). MSVC-only: MinGW
+    # is GL-only here (no DX12 backend compiled into ImGuiLib).
+    if(MSVC)
+        target_link_libraries(SmatchetStandalone PRIVATE d3d12 dxgi d3dcompiler)
+    endif()
     # MinGW release exe otherwise depends on libgcc/libstdc++ DLLs; wrong DLL on PATH → 0xC0000139
     # (entry point not found) before main — no logs, "release doesn't run".
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")

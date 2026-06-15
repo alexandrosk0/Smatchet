@@ -11,6 +11,7 @@
 #include "StandaloneAppBootstrap.h"
 
 #include "AppController.h"
+#include "Dx12Bootstrap.h"
 #include "GridContextDepsAdapter.h"
 #include "Commands/CommandRegistry.h"
 #include "ConfigManager.h"
@@ -54,6 +55,10 @@
 #endif
 
 #include <GLFW/glfw3.h>
+#if defined(_WIN32)
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h> // glfwGetWin32Window — HWND for the DX12 swapchain
+#endif
 
 #include <ghc/filesystem.hpp>
 
@@ -218,7 +223,63 @@ static void SmatchetDrawFrameWithSeh(SmatchetUI& mainWindow, AppController& smat
 #endif
 }
 
-static void SmatchetWritePendingScreenshot(GLFWwindow* window) {
+// Drop the alpha channel from tightly-packed RGBA8 into RGB8. When flipVertical
+// is set the source is bottom-left-origin (GL front-buffer readback) and rows are
+// reversed to top-left; DX12 readback is already top-left (flipVertical=false).
+// Mirrors the same-named helper in main.cpp (two standalone loops, one shape —
+// copy-paste DRY WARN accepted, see the Phase 1 plan).
+static void PackRgbDropAlpha(const unsigned char* rgbaSrc, int w, int h, bool flipVertical,
+                             std::vector<unsigned char>& rgb) {
+    const size_t rowBytesRgb = static_cast<size_t>(w) * 3u;
+    rgb.resize(static_cast<size_t>(h) * rowBytesRgb);
+    for (int y = 0; y < h; ++y) {
+        const int srcRow = flipVertical ? (h - 1 - y) : y;
+        const unsigned char* src = &rgbaSrc[static_cast<size_t>(srcRow) * static_cast<size_t>(w) * 4u];
+        unsigned char* dst = &rgb[static_cast<size_t>(y) * rowBytesRgb];
+        for (int x = 0; x < w; ++x) {
+            dst[0] = src[0];
+            dst[1] = src[1];
+            dst[2] = src[2];
+            dst += 3;
+            src += 4;
+        }
+    }
+}
+
+// Read the just-presented frame into top-left-origin RGB. DX12 reads its swapchain
+// back buffer (already top-left, no flip); GL reads the front buffer (bottom-left,
+// flipped here). Returns false on an empty framebuffer / capture failure.
+static bool CaptureFrameRgb(BootstrapContext& ctx, std::vector<unsigned char>& rgb, int& outW, int& outH) {
+    if (ctx.renderer == StandaloneRenderer::Dx12) {
+        std::vector<uint8_t> rgba;
+        int w = 0;
+        int h = 0;
+        if (!ctx.dx12 || !ctx.dx12->CaptureBackbuffer(rgba, w, h) || w <= 0 || h <= 0) {
+            return false;
+        }
+        PackRgbDropAlpha(rgba.data(), w, h, /*flipVertical=*/false, rgb);
+        outW = w;
+        outH = h;
+        return true;
+    }
+
+    int fw = 0;
+    int fh = 0;
+    glfwGetFramebufferSize(ctx.window, &fw, &fh);
+    if (fw <= 0 || fh <= 0) {
+        return false;
+    }
+    std::vector<unsigned char> pixels(static_cast<size_t>(fw) * static_cast<size_t>(fh) * 4u);
+    glReadBuffer(GL_FRONT);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, fw, fh, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    PackRgbDropAlpha(pixels.data(), fw, fh, /*flipVertical=*/true, rgb);
+    outW = fw;
+    outH = fh;
+    return true;
+}
+
+static void SmatchetWritePendingScreenshot(BootstrapContext& ctx) {
     if (!g_ui.requestScreenshot) {
         return;
     }
@@ -227,33 +288,14 @@ static void SmatchetWritePendingScreenshot(GLFWwindow* window) {
     const std::string screenshotPath = g_ui.requestScreenshotPath;
     int fw = 0;
     int fh = 0;
-    glfwGetFramebufferSize(window, &fw, &fh);
-    if (fw <= 0 || fh <= 0 || screenshotPath.empty()) {
+    std::vector<unsigned char> rgb;
+    if (!CaptureFrameRgb(ctx, rgb, fw, fh) || fw <= 0 || fh <= 0 || screenshotPath.empty()) {
         LOG_ERROR("debug.window.screenshot: invalid framebuffer or empty path");
         return;
     }
 
-    std::vector<unsigned char> pixels(static_cast<size_t>(fw) * static_cast<size_t>(fh) * 4u);
-    glReadBuffer(GL_FRONT);
-    glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glReadPixels(0, 0, fw, fh, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-
-    const size_t rowBytesRgb = static_cast<size_t>(fw) * 3u;
-    std::vector<unsigned char> rgb(static_cast<size_t>(fh) * rowBytesRgb);
-    for (int y = 0; y < fh; ++y) {
-        const unsigned char* src = &pixels[static_cast<size_t>(fh - 1 - y) * static_cast<size_t>(fw) * 4u];
-        unsigned char* dst = &rgb[static_cast<size_t>(y) * rowBytesRgb];
-        for (int x = 0; x < fw; ++x) {
-            dst[0] = src[0];
-            dst[1] = src[1];
-            dst[2] = src[2];
-            dst += 3;
-            src += 4;
-        }
-    }
-
     stbi_write_png_compression_level = 8;
-    const int rc = stbi_write_png(screenshotPath.c_str(), fw, fh, 3, rgb.data(), static_cast<int>(rowBytesRgb));
+    const int rc = stbi_write_png(screenshotPath.c_str(), fw, fh, 3, rgb.data(), fw * 3);
     if (rc == 0) {
         LOG_ERROR("debug.window.screenshot: stbi_write_png failed for %s", screenshotPath.c_str());
     } else {
@@ -290,8 +332,15 @@ void ApplyUserDataEnvOverride() {
     }
 }
 
-// Per-platform GLFW GL-context window hints; sets ctx.glslVersion. Window starts hidden.
+// Per-platform GLFW window hints; sets ctx.glslVersion. Window starts hidden.
+// DX12 takes a GLFW_NO_API window (no GL context — it drives its own swapchain).
 void ConfigureGlfwWindowHints(BootstrapContext& ctx) {
+    if (ctx.renderer == StandaloneRenderer::Dx12) {
+        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+        ctx.glslVersion = nullptr;
+        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+        return;
+    }
 #if defined(__APPLE__)
     ctx.glslVersion = "#version 150";
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -335,15 +384,17 @@ bool ParseStandaloneCli(int argc, char** argv, ConfigManager::CliOverrides& cli)
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--help" || arg == "-h") {
-            std::fprintf(stdout, "Smatchet Standalone Client\n" // CLI stdout — product output, not logging
-                                 "Usage: Smatchet [options]\n"
-                                 "Options:\n"
-                                 "  -d, --db-path <path>         Path to sqlite database\n"
-                                 "  -b, --backend-type <type>    Tracker type ('Jira' or 'Plane')\n"
-                                 "  -p, --mcp-port <port>        MCP server port number\n"
-                                 "      --mcp-allow-remote       Allow remote connections to MCP server\n"
-                                 "      --vsync | --no-vsync     Force vsync on/off for this launch (not persisted)\n"
-                                 "  -h, --help                   Show help message\n");
+            std::fprintf(stdout,
+                         "Smatchet Standalone Client\n" // CLI stdout — product output, not logging
+                         "Usage: Smatchet [options]\n"
+                         "Options:\n"
+                         "  -d, --db-path <path>         Path to sqlite database\n"
+                         "  -b, --backend-type <type>    Tracker type ('Jira' or 'Plane')\n"
+                         "  -p, --mcp-port <port>        MCP server port number\n"
+                         "      --mcp-allow-remote       Allow remote connections to MCP server\n"
+                         "      --vsync | --no-vsync     Force vsync on/off for this launch (not persisted)\n"
+                         "      --renderer <dx12|gl>     Force renderer (default: dx12 on Windows, gl elsewhere)\n"
+                         "  -h, --help                   Show help message\n");
             return false;
         }
         if ((arg == "--db-path" || arg == "-d") && i + 1 < argc) {
@@ -448,11 +499,72 @@ bool InitAppAndPlugins(BootstrapContext& ctx, const TrackerConfig& cfg, const bo
     return false;
 }
 
+// Tear down a partially-initialised standalone boot — renderer backend (DX12
+// swapchain or GL3 device objects), the ImGui platform backend + context, and
+// the GLFW window. Shared by Initialize's three failure exits so the unwind
+// order stays identical on every path. Null-safe: a DX12 init that failed has
+// already reset ctx.dx12, so the swapchain branch is skipped.
+void TeardownPartialBoot(BootstrapContext& ctx, GLFWwindow* window, const bool useDx12) {
+    if (useDx12) {
+        if (ctx.dx12) {
+            ctx.dx12->Shutdown();
+        }
+    } else {
+        ImGui_ImplOpenGL3_Shutdown();
+    }
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+    if (window != NULL) {
+        glfwDestroyWindow(window);
+    }
+    glfwTerminate();
+}
+
+// Initialise the ImGui platform + renderer backend for ctx.renderer. On success
+// the chosen backend is live (DX12 swapchain ready, or GL3 device objects
+// created); on failure `err` is set and the partial DX12 state is rolled back —
+// the caller still owns the window/GLFW unwind via TeardownPartialBoot.
+bool InitRendererBackend(BootstrapContext& ctx, GLFWwindow* window, std::string& err) {
+    if (ctx.renderer == StandaloneRenderer::Dx12) {
+        ImGui_ImplGlfw_InitForOther(window, true);
+        glfwSetKeyCallback(window, SmatchetKeypadEnterBridgeCallback);
+        int fbW = 0;
+        int fbH = 0;
+        glfwGetFramebufferSize(window, &fbW, &fbH);
+#if defined(_WIN32)
+        void* hwnd = glfwGetWin32Window(window);
+#else
+        void* hwnd = nullptr;
+#endif
+        ctx.dx12 = std::make_unique<Dx12Bootstrap>();
+        std::string dxErr;
+        if (!ctx.dx12->Init(hwnd, fbW, fbH, dxErr)) {
+            err = "DX12 renderer init failed: " + dxErr;
+            ctx.dx12.reset();
+            return false;
+        }
+        LOG_INFO("DX12 renderer initialised (adapter: %s%s).", ctx.dx12->AdapterDescription().c_str(),
+                 ctx.dx12->IsWarp() ? ", WARP software" : "");
+        return true;
+    }
+    ImGui_ImplGlfw_InitForOpenGL(window, true);
+    glfwSetKeyCallback(window, SmatchetKeypadEnterBridgeCallback);
+    ImGui_ImplOpenGL3_Init(ctx.glslVersion);
+    if (!ImGui_ImplOpenGL3_CreateDeviceObjects()) {
+        err = "ImGui OpenGL device objects failed";
+        return false;
+    }
+    return true;
+}
+
 bool Initialize(BootstrapContext& ctx, int argc, char** argv, HeadlessCliMode /*mode*/, std::string& err,
                 const bool forceMcp) {
-    (void)argc;
-    (void)argv;
     err.clear();
+
+    // Resolve the renderer before any window hint is set — the hint choice (GL
+    // context vs GLFW_NO_API) and the backend-init branch below both depend on it.
+    ctx.renderer = ResolveStandaloneRenderer(argc, argv);
+    const bool useDx12 = (ctx.renderer == StandaloneRenderer::Dx12);
 
     ApplyUserDataEnvOverride();
 
@@ -487,37 +599,28 @@ bool Initialize(BootstrapContext& ctx, int argc, char** argv, HeadlessCliMode /*
         return false;
     }
 
-    glfwMakeContextCurrent(window);
-    // Initial vsync-on; the resolved value (env > --vsync/--no-vsync flag >
-    // config) is applied right after the ParseStandaloneCli call below — this
-    // path parses the standalone CLI itself, so the flag works here too.
-    glfwSwapInterval(1);
+    if (!useDx12) {
+        glfwMakeContextCurrent(window);
+        // Initial vsync-on; the resolved value (env > --vsync/--no-vsync flag >
+        // config) is applied right after the ParseStandaloneCli call below — this
+        // path parses the standalone CLI itself, so the flag works here too. DX12
+        // has no GL context and applies vsync per-frame in Present(syncInterval).
+        glfwSwapInterval(1);
+    }
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     SetupImGuiContext();
 
-    ImGui_ImplGlfw_InitForOpenGL(window, true);
-    glfwSetKeyCallback(window, SmatchetKeypadEnterBridgeCallback);
-    ImGui_ImplOpenGL3_Init(ctx.glslVersion);
-    if (!ImGui_ImplOpenGL3_CreateDeviceObjects()) {
-        err = "ImGui OpenGL device objects failed";
-        ImGui_ImplOpenGL3_Shutdown();
-        ImGui_ImplGlfw_Shutdown();
-        ImGui::DestroyContext();
-        glfwDestroyWindow(window);
-        glfwTerminate();
+    if (!InitRendererBackend(ctx, window, err)) {
+        TeardownPartialBoot(ctx, window, useDx12);
         return false;
     }
 
     ConfigManager::CliOverrides cli;
     if (!ParseStandaloneCli(argc, argv, cli)) {
         err = "help";
-        ImGui_ImplOpenGL3_Shutdown();
-        ImGui_ImplGlfw_Shutdown();
-        ImGui::DestroyContext();
-        glfwDestroyWindow(window);
-        glfwTerminate();
+        TeardownPartialBoot(ctx, window, useDx12);
         return false;
     }
     const TrackerConfig cfg = ConfigManager::Load(cli);
@@ -525,10 +628,13 @@ bool Initialize(BootstrapContext& ctx, int argc, char** argv, HeadlessCliMode /*
     // Seed the live vsync hub with the documented precedence and apply it to the
     // (current) hidden-window GL context — --vsync/--no-vsync works on this path
     // too since the parse above consumes the same standalone grammar (CR-953).
+    // DX12 carries the resolved value per-frame into Present (no GL context here).
     {
         const char* vsyncSource = smatchet::vsync::SeedFromBootSources(cfg.VsyncEnabled, cli.HasVsync, cli.Vsync);
         LOG_INFO("Vsync %s at boot (source: %s)", smatchet::vsync::Enabled() ? "enabled" : "disabled", vsyncSource);
-        glfwSwapInterval(smatchet::vsync::Enabled() ? 1 : 0);
+        if (!useDx12) {
+            glfwSwapInterval(smatchet::vsync::Enabled() ? 1 : 0);
+        }
     }
 
     ctx.window = window;
@@ -536,11 +642,7 @@ bool Initialize(BootstrapContext& ctx, int argc, char** argv, HeadlessCliMode /*
         return true;
     }
 
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
-    ImGui::DestroyContext();
-    glfwDestroyWindow(window);
-    glfwTerminate();
+    TeardownPartialBoot(ctx, window, useDx12);
     return false;
 }
 
@@ -553,11 +655,17 @@ void RunRenderLoop(BootstrapContext& ctx, const std::function<bool()>& shouldSto
         ctx.mainWindow = std::make_unique<SmatchetUI>();
     }
 
+    const bool useDx12 = (ctx.renderer == StandaloneRenderer::Dx12);
+
     while (!glfwWindowShouldClose(ctx.window)) {
         glfwPollEvents();
         ctx.app->mainThreadDispatcher.Drain();
 
-        ImGui_ImplOpenGL3_NewFrame();
+        if (useDx12) {
+            ctx.dx12->NewFrame();
+        } else {
+            ImGui_ImplOpenGL3_NewFrame();
+        }
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
         ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_None);
@@ -577,19 +685,28 @@ void RunRenderLoop(BootstrapContext& ctx, const std::function<bool()>& shouldSto
         int display_w = 0;
         int display_h = 0;
         glfwGetFramebufferSize(ctx.window, &display_w, &display_h);
-        glViewport(0, 0, display_w, display_h);
         const ImVec4 bg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
-        glClearColor(bg.x * bg.w, bg.y * bg.w, bg.z * bg.w, bg.w);
-        glClear(GL_COLOR_BUFFER_BIT);
         // [P0 #1122] shared dynamic-texture guard — MUST run here too: this ephemeral
         // (--spawn / headless scenario) render loop is a separate loop from main.cpp's
         // RunFrameLoop, and the mobile-texture-guard scenario forces its faults inside it.
         ImDrawData* drawData = ImGui::GetDrawData();
         smatchet::ui::GuardImGuiDynamicTextures(drawData);
-        ImGui_ImplOpenGL3_RenderDrawData(drawData);
-        glfwSwapBuffers(ctx.window);
+        if (useDx12) {
+            ctx.dx12->Resize(display_w, display_h);
+            if (display_w > 0 && display_h > 0) {
+                ctx.dx12->BeginFrame(bg); // premultiplied clear inside, matching the GL path
+                ctx.dx12->RenderDrawData(drawData);
+                ctx.dx12->Present(smatchet::vsync::Enabled() ? 1 : 0);
+            }
+        } else {
+            glViewport(0, 0, display_w, display_h);
+            glClearColor(bg.x * bg.w, bg.y * bg.w, bg.z * bg.w, bg.w);
+            glClear(GL_COLOR_BUFFER_BIT);
+            ImGui_ImplOpenGL3_RenderDrawData(drawData);
+            glfwSwapBuffers(ctx.window);
+        }
         SmatchetApplyPendingWindowResize(ctx.window);
-        SmatchetWritePendingScreenshot(ctx.window);
+        SmatchetWritePendingScreenshot(ctx);
 
         if (shouldStop && shouldStop()) {
             break;
@@ -633,7 +750,12 @@ void Shutdown(BootstrapContext& ctx) {
     ShutdownApplication(ctx);
 
     if (ctx.window) {
-        ImGui_ImplOpenGL3_Shutdown();
+        if (ctx.dx12) {
+            ctx.dx12->Shutdown();
+            ctx.dx12.reset();
+        } else {
+            ImGui_ImplOpenGL3_Shutdown();
+        }
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
         glfwDestroyWindow(ctx.window);

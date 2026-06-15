@@ -24,9 +24,11 @@
 // into SmatchetDark" capture — any colour drift, even a single ImU32 in one
 // TextEditor pane, breaks the diff. Tolerance is the standard L∞ ≤ 4 used by
 // the rest of bucket-C so AA / sub-pixel rounding can't trip the gate.
-// The scenario lives in Source/Core/ so DX12 / Unreal still compiles the TU,
-// but the screenshot capture itself is GL-only (Source/Standalone/main.cpp
-// owns the glReadPixels path); DX12 leaves the request flag untriggered.
+// The scenario lives in Source/Core/ so DX12 / Unreal still compiles the TU.
+// The standalone screenshot path is renderer-agnostic (GL front-buffer readback
+// or DX12 swapchain back-buffer capture), so both standalone renderers satisfy
+// the request; CI pins the bucket-C launch to `--renderer=gl` to keep the
+// Mesa-rendered goldens byte-stable.
 
 #include <memory>
 

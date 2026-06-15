@@ -9,10 +9,11 @@
 // with per-channel L∞ ≤ 4 tolerance — any new dock gap, palette shift, or
 // shell-chrome regression breaks the diff. Goldens regenerate on first run if
 // absent (bootstrap mode).
-// The scenario lives in Source/Core/ so DX12 / Unreal still compiles the TU,
-// but the screenshot capture itself is GL-only (Source/Standalone/main.cpp
-// owns the glReadPixels path); DX12 leaves the request flag untriggered and
-// the scenario reports it in `OnFinish` as `captured=false`.
+// The scenario lives in Source/Core/ so DX12 / Unreal still compiles the TU.
+// The standalone screenshot path is renderer-agnostic: it captures from the GL
+// front buffer (flipped) or the DX12 swapchain back buffer (already top-left),
+// so both standalone renderers satisfy the request. CI pins the bucket-C launch
+// to `--renderer=gl` to keep the Mesa-rendered goldens byte-stable.
 
 #include <memory>
 
