@@ -274,6 +274,25 @@ TEST_CASE("BuildMarkdownBody — header table + description + screenshot + redac
     CHECK(body.find("supersecretvalue123") == std::string::npos);
 }
 
+TEST_CASE("BuildMarkdownBody — arch cell annotates emulation on arm64 host") {
+    ContextBundle bundle = MakeBundle();
+    bundle.Env["emulated"] = true;
+    bundle.Env["host_arch"] = "arm64";
+    BugReportOptions opts;
+    const std::string body = BuildMarkdownBody(opts, bundle, "");
+    CHECK(body.find("| OS / Arch | Windows / x86_64 (emulated on arm64) |") != std::string::npos);
+}
+
+TEST_CASE("BuildMarkdownBody — arch cell unannotated when native (not emulated)") {
+    ContextBundle bundle = MakeBundle();
+    bundle.Env["emulated"] = false;
+    bundle.Env["host_arch"] = "x86_64"; // host == build target
+    BugReportOptions opts;
+    const std::string body = BuildMarkdownBody(opts, bundle, "");
+    CHECK(body.find("| OS / Arch | Windows / x86_64 |") != std::string::npos);
+    CHECK(body.find("emulated") == std::string::npos);
+}
+
 TEST_CASE("BuildMarkdownBody — empty description placeholder, no screenshot block") {
     BugReportOptions opts; // empty description
     const std::string body = BuildMarkdownBody(opts, MakeBundle(), "");

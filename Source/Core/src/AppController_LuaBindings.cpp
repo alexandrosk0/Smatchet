@@ -11,6 +11,7 @@
 #include "ConfigManager.h"
 #include "FieldEditAuditSource.h"
 #include "IssueTableSerializer.h"
+#include "LuaAutomationHookPolicyPure.h"
 #include "SmatchetToast.h"
 
 #include <algorithm>
@@ -1319,13 +1320,30 @@ void AppController::Impl::AutomationWorkerLoop() {
     }
 }
 
+// Automation count-hook tuning (security finding #13). The hook fires every kHookCountInterval
+// Lua instructions; kAutomationInstructionBudget caps a single automation job so a runaway pure-Lua
+// loop self-aborts even with no shutdown signal (exposure B). Budget chosen to allow substantial
+// automation (~5e8 instructions ≈ 10000 hook ticks) while still terminating a true infinite loop.
+// The abort/keep-running decision is the pure LuaAutomationHookPolicyPure predicate (unit-tested).
+namespace {
+constexpr int kHookCountInterval = 50000;
+constexpr unsigned long long kAutomationInstructionBudget = 500000000ULL;
+
+// Per-job accumulated instruction count. The worker is single-threaded and runs one job at a
+// time on a fresh sol::state; reset in RunAutomationJob before each job. thread_local (not a
+// member) so the count-hook — a plain C function pointer with no closure — can reach it.
+thread_local unsigned long long g_automationInstructionsElapsed = 0ULL;
+} // namespace
+
 void AppController::Impl::RunAutomationJob(sol::state& state, sol::environment& env,
                                            const AppController::AutomationJob& job) {
     FieldEditAuditSource::ScopedOverride luaSource(FieldEditAuditSource::kLua);
 
+    g_automationInstructionsElapsed = 0ULL;
     lua_sethook(
         state.lua_state(),
         [](lua_State* L, lua_Debug* /*ar*/) {
+            g_automationInstructionsElapsed += static_cast<unsigned long long>(kHookCountInterval);
             sol::state_view sv(L);
             // `__smatchet_app_ui` is the AppController::Impl* alias (see ResolveApp comment).
             // The Core `__smatchet_app` now holds an `ILuaBindingHost*`; resolving it
@@ -1335,11 +1353,18 @@ void AppController::Impl::RunAutomationJob(sol::state& state, sol::environment& 
             if (appObj.valid() && appObj.get_type() != sol::type::lua_nil) {
                 app = appObj.as<AppController::Impl*>();
             }
-            if (app && app->app_.shuttingDown_.load()) {
-                luaL_error(L, "Script execution aborted (shutdown).");
+            // Shutdown abort must observe automationWorkerShuttingDown_ — it is raised BEFORE the
+            // dtor's blocking automationWorker_.join(), whereas shuttingDown_ is set only AFTER the
+            // join, so checking shuttingDown_ alone never released a long job during exit (#13 A).
+            const bool shuttingDown = app && app->app_.shuttingDown_.load();
+            const bool workerShuttingDown = app && app->automationWorkerShuttingDown_.load();
+            const LuaAutomationHookPolicyPure::AbortReason reason = LuaAutomationHookPolicyPure::DecideAutomationAbort(
+                shuttingDown, workerShuttingDown, g_automationInstructionsElapsed, kAutomationInstructionBudget);
+            if (reason != LuaAutomationHookPolicyPure::AbortReason::kNone) {
+                luaL_error(L, "%s", LuaAutomationHookPolicyPure::AbortReasonMessage(reason));
             }
         },
-        LUA_MASKCOUNT, 50000);
+        LUA_MASKCOUNT, kHookCountInterval);
 
     auto logErr = [this](const char* prefix, const std::string& detail) {
         const std::string bare = std::string(prefix) + detail;

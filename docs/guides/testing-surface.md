@@ -95,9 +95,11 @@ so a direct `gh api …/merge` can no longer bypass them (GitHub rejects the mer
 until each reports green or `skipped`). The residual escape is the **bucket-C/E**
 dynamic lanes (screenshot diff + ImGui Test Engine): both carry a blanket
 `continue-on-error: true` for **Mesa software-GL** flakiness, so visual/interaction
-failures still never block merge. The merge-poller
-([`merge-gates.sh`](../../agents/scripts/core/merge-gates.sh)) keeps `Bucket-` on its
-*meant-to-block allow-list* for the normal ship path only. **Documented escape:** PR
+failures still never block merge. (`Bucket-` was dropped from the merge-poller
+([`merge-gates.sh`](../../agents/scripts/core/merge-gates.sh)) *meant-to-block allow-list*
+2026-06-15 — `infra.md` `bucket-mesa-exe-boot` P1: the Mesa-software-GL bucket-C/E lanes
+can't boot the CI exe, so they are now fully advisory and the poller no longer blocks
+on them; re-add on boot-fix graduation.) **Documented escape:** PR
 #1180 shipped red bucket-C/E under a `cr-out-of-band` override (postmortem owed).
 
 ---
