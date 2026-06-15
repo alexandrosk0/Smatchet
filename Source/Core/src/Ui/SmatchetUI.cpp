@@ -326,6 +326,10 @@ void SmatchetUI::Draw(AppController& app) {
     drawMobileRestoreDesktopIni(d);
 
     drawChromeAndModeToggles(app, d);
+    // Global Chrome-omnibox search bar (jql-omnibox plan, Stream B). Drawn after the chrome
+    // and before the docked windows so its BeginViewportSideBar(Up) strip shrinks the work
+    // area the grid panes dock into (mechanism A — no host/frame-loop edit).
+    drawOmnibar(app, d);
     DrainAppUpdateCheck(d);
     drawSecondaryWindows(app, d);
     drawDockDebugOverlay(d);
@@ -933,27 +937,19 @@ void SmatchetUI::userInfoAddToQuery(AppController& app, UiDrawSession& d, const 
     }
     // Per-backend key clause: Plane filter syntax vs Jira JQL.
     const std::string query = (target->backendKey == "plane") ? ("key:" + issueKey) : ("key = \"" + issueKey + "\"");
-    const ViewDefinition* active = ViewState.GetActiveView();
-    if (!active || active->Id != target->viewId) {
-        // Adopt the pane's view identity without the network re-fetch — the
-        // UpdateActive + SyncWithCurrentView below kicks the sync with the new query.
-        viewsActivateView(app, d, target->viewId, /*kickSync=*/false);
-        active = ViewState.GetActiveView();
-    }
-    if (!active || active->Id != target->viewId) {
-        // Activation fell back to a non-target view (or none) — never overwrite an
-        // unrelated view's query; bail with a warning instead.
+    // Shared apply path (slice 2b) — same core the global omnibar drives. Each variant maps
+    // to this command's own User-Info toast copy; UpdateFailed stays a silent no-op to match
+    // the original behaviour (ViewState.UpdateActive false → no toast).
+    switch (applyQueryToPaneView(app, d, *target, query)) {
+    case ApplyQueryResult::Ok:
+        SmatchetToastManager::Instance().Push("User Info", "View query set to " + issueKey + ".", ToastType::Success);
+        break;
+    case ApplyQueryResult::ViewUnavailable:
         SmatchetToastManager::Instance().Push("User Info", "Target view is unavailable; cannot update query.",
                                               ToastType::Warning);
-        return;
-    }
-    ViewDefinition updated = *active;
-    updated.Jql = query;
-    if (ViewState.UpdateActive(updated)) {
-        d.cfg.JqlQuery = query;
-        SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlEditor.buf, query);
-        SyncWithCurrentView(app, d, ViewState.GetStore(), true);
-        SmatchetToastManager::Instance().Push("User Info", "View query set to " + issueKey + ".", ToastType::Success);
+        break;
+    case ApplyQueryResult::UpdateFailed:
+        break;
     }
 }
 

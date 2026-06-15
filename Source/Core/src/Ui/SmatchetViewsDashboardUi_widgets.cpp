@@ -307,7 +307,7 @@ void DrawJqlProjectPill(AppController& app, UiDrawSession& d) {
 }
 } // namespace
 
-void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorState& st) {
+void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorState& st, bool drawProjectPill) {
     // Lightweight variant of DrawJqlQueryEditor — used when the surrounding tab
     // already provides the label / open-in-browser chrome. Reuses the same
     // autocomplete machinery (TrackerQueryAcp_*) and the JqlEditorState buffer so the
@@ -378,7 +378,10 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorS
     TrackerQueryAcp_FlushPendingReplace(st);
 
     // PR 4b: project pill beneath the query bar — pick a single project scope for the active view.
-    DrawJqlProjectPill(app, d);
+    // Dashboard-only: the pill is hard-bound to d.viewJqlEditor, so the omnibar opts out.
+    if (drawProjectPill) {
+        DrawJqlProjectPill(app, d);
+    }
 }
 
 } // namespace SmatchetViewsDashboardUiDetail

@@ -384,6 +384,19 @@ class SmatchetUI {
     /// view query with a single-key lookup (bound into d.onUserInfoAddToQuery).
     void userInfoAddToQuery(AppController& app, UiDrawSession& d, const std::string& sourcePaneId,
                             const std::string& issueKey);
+    /// Global Chrome-omnibox-style search bar (jql-omnibox plan, Stream B). Reserved as a
+    /// top viewport side-bar (ImGui::BeginViewportSideBar) and drawn between the chrome and
+    /// the docked windows in Draw; drives the FOCUSED grid pane's view. Owns its own
+    /// JqlEditorState instance (d.omniJqlEditor) so its in-flight autocomplete request-ids
+    /// never collide with the dashboard editor's.
+    void drawOmnibar(AppController& app, UiDrawSession& d);
+    /// Outcome of applyQueryToPaneView — each caller maps the variants to its own toast copy.
+    enum class ApplyQueryResult { Ok, ViewUnavailable, UpdateFailed };
+    /// Replaces the view owned by `target` with `query` and re-runs it, adopting that view's
+    /// identity first if it isn't the active one. Mirrors the applied query into d.cfg.JqlQuery
+    /// and the dashboard JQL editor buffer. Shared core of userInfoAddToQuery + the omnibar.
+    ApplyQueryResult applyQueryToPaneView(AppController& app, UiDrawSession& d, GridPane& target,
+                                          const std::string& query);
     void viewsRequestActivate(AppController& app, UiDrawSession& d, const ViewDefinition* activeView,
                               const std::string& id);
     void viewsCreateNewView(UiDrawSession& d, const ViewDefinition* activeView);
