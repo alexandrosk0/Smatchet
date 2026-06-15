@@ -2,7 +2,7 @@
 
 > **Slug**: `core-include-dag` (matches this file's basename without `.md`).
 >
-> **Status**: `active`.
+> **Status**: `shipped`.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 
@@ -147,10 +147,23 @@ agentic-infra / pure-docs → gates N/A for those). For Phases 1–4:
 - **Angle-bracket / generated / third-party include edges** — no-action: outside the first-party quote-include DAG the gate defines.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+*(per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit)*
+
+Phase 0 (gate + baseline of 5 edges) was already merged on `develop` before this PR.
+Phases 1–3 shipped on branch `feat/core-include-dag-impl` as one PR:
+
+- `111c48b3` · Phase 1 — `git mv` CancelToken.h + SmatchetUiModeIds.h to `Source/Core/include/` root; repoint the 4 path-qualified includers (UiModeCommand.cpp, AppController.h, SmatchetUiSession.h, SmatchetUserInfoUi.h). Kills the Config→Ui and AppController→Ui edges. Baseline 5→3.
+- `c28c3622` · Phase 2 — new `Commands/IMainThreadPoster.h` interface; AppController inherits it (IsOnUiThread override + new PostToMainThread override delegating to mainThreadDispatcher); MainThreadDispatch.h repointed to the interface, the two RunOnUiThread* helpers take `IMainThreadPoster&`. Kills the Commands→AppController edge. Baseline 3→2.
+- `7c702146` · Phase 3 — new `Sync/SyncTypes.h` (2 banner/fetch structs) + `Sync/OfflineQueueTypes.h` (6 summary PODs to top-level); AppController re-exports the 6 via `using X = ::X;`; TicketSyncService.h → SyncTypes.h + ConfigManager.h; OfflineQueueService.h → OfflineQueueTypes.h (6 return types `AppController::X`→`::X`, fwd-declares IssueDraft). Kills the 2 Sync→AppController edges. Baseline 2→0 (EMPTY — full DAG enforced).
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+- **CMake `Source/Core/include/Ui` include-root entry NOT deleted (plan step 8 skipped).** The grill found that root is *global*, not site-local: deleting it breaks ~126 files that bare-include Ui-rooted headers, not the handful the plan listed. It is also unnecessary — moving the 2 headers to root already resolves the bare names there, the old `Ui/` copies are gone via `git mv`, and the Phase-0 gate now prevents re-rot (it resolves Ui includes and flags any new Config→Ui low→high edge). Recorded per `AGENTS.md` § Scope-reduction.
+- **Folded 5th edge (`AppController.h → Ui/CancelToken.h`) included in Phase 1.** Baseline at implementation time carried 5 edges (CancelToken in addition to the grill's 4); Phase 1 killed both leaf-enum edges (CancelToken + UiModeIds) in one move, user-approved.
+- **Phase 1 scope extended to `tests/`.** Four test files path-included the moved headers (`tests/Core/{CancelToken,BulkImportAbandonNonBlocking,UserInfoActivityCancelUaf}.test.cpp` → `Ui/CancelToken.h`; `tests/Core/UiModeIds.test.cpp` → `Ui/SmatchetUiModeIds.h`). The plan's site inventory was `Source/`-scoped only; repointed to the bare root names. Folded into the Phase 3 commit.
+- **Phase 1 also repointed two extra `Ui/CancelToken.h` includers** (`Ui/SmatchetUiSession.h`, `Ui/SmatchetUserInfoUi.h`) the plan didn't list — both used the path-qualified form, which breaks on the `git mv`.
+- **Phase 3 — all 6 Offline structs relocated cleanly; none kept nested.** Each is a trivial two-int POD with no AppController-internal type dep, so straight top-level relocation + `using`-alias re-export succeeded. `TicketSyncService.h` needed `Config/ConfigManager.h` added (TrackerConfig + ViewsStore, formerly transitive via AppController.h) and `OfflineQueueService.h` a forward-decl of `IssueDraft` (same reason).
+- **No deferred sub-items from Phases 1–3** (Phase 4 + the two non-goals remain out of scope as planned). No residue-sweep needed beyond the non-goals already documented in § Out of scope.
 
 ### grill-with-docs outcome (pre-implementation, 2026-06-15)
 Ran the mandatory plan stress-test (Verification § grill bullet) as a codebase-grounded re-verification against *current* `develop` (the plan's anchors were authored ~2026-06-14 against an older tree that has since moved). Findings:
@@ -161,22 +174,10 @@ Ran the mandatory plan stress-test (Verification § grill bullet) as a codebase-
 - **Layer model REFINED (load-bearing for Phase 0)** — the plan groups `AppController` + `Commands` as one "orchestration" layer, but the behavioural edge it targets is `Commands/MainThreadDispatch.h → AppController.h`, and that is verifiably **not a cycle**: `MainThreadDispatch.h` is included only by `Commands/*.cpp` (never a header), and `AppController.h` includes no `Commands/` header, so AppController never reaches back. Under a coarse same-layer grouping the gate would catch it as neither a cycle (SCC>1) nor a lower→higher edge — Phase 2 would be un-enforced. Resolution: the audit's layer ranking puts **`AppController.*` strictly above `Commands/`** (top orchestrator drives the command sub-layer), so `Commands→AppController` is a lower→higher violation the gate flags. Phase 2's fix (repoint to `IMainThreadPoster.h`, which lives in `Commands/` → same-layer) clears it. Final ranking used by `include_cycle_audit.py`: `Ui(6) > AppController(5) > Commands(4) > Tracker(3) > Sync/Persistence(2) > Config(1) > root-leaf headers(0)`; violation = any edge low→high OR any SCC>1.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-   > **Keep the literal `<slug>` placeholder in this committed step — do NOT
-   > expand it to this plan's real filename.** Writing the actual basename here
-   > manufactures a `docs/plans/shipped/<name>.md` path that points at a file
-   > still living in `active/` (the move hasn't happened yet), which
-   > `test-plan-ref-integrity.sh` reports as a dangling self-reference. The gate
-   > carves out the *placeholder* form on the Archive `git mv` line; the
-   > expanded form defeats that carve-out. Run the literal command with your
-   > slug substituted at the shell — never bake the expansion into the file.
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*No ref-sweep — references use the tier-less form `docs/plans/<slug>.md` (the gates resolve it against any tier; PR #890), so the move can't break them. Write new plan references tier-less.*
-
-*(Delete this `## Archive` block as part of step 2 — once moved to `shipped/`, the file is reference material and the checklist has served its purpose.)*
+- **Bucket A (pure-logic doctest)** — PASSED. Full `SmatchetTests` suite green after Phase 3: 1878 cases / 16679 assertions / 0 failed / 0 skipped. Sync/Offline/CancelToken/UiMode-filtered subset also green (195 cases / 997 assertions). The struct relocation + `using`-alias re-export is behaviour-preserving.
+- **Build gate (dual-target)** — PASSED at every phase boundary. `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` linked both `Smatchet.exe` (GL standalone) and `SmatchetCore_DX12.lib` after Phase 1, Phase 2, and Phase 3.
+- **Include-cycle gate** — PASSED. `python agents/scripts/core/include_cycle_audit.py --diff origin/develop` exit 0 after each phase; `--list` reports **zero** violations at HEAD; the baseline (`docs/high-integrity/include-cycle-baseline.md`) is now **empty** (0 grandfathered edges) → the gate enforces a fully clean `Source/Core` DAG.
+- **Lint gate** — PASSED. `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop` exit 0 (strict-zone, comment-noise, no-raw-new, no-glfw-in-core-headers, include-cycle, function-size, agent-size all PASS; one advisory `comment-ratio` WARN on AppController.h at 56% from the new using-alias comments — non-blocking).
+- **Doc validation** — `bash scripts/dev/test-docs.sh` run as part of the archive step (plan-index regen + ref-integrity); result recorded in the PR.
+- **Perf** — N/A by design: pure compile-time include-graph restructuring; one interface indirection on the already-dispatcher-hopping `PostToMainThread` (not a per-frame hot path). No `Source/Core/` runtime path changed.
