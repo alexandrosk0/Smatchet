@@ -143,6 +143,19 @@ the general raw-PUT guard as a residual P3; P2→P3; Last-reviewed 2026-06-15.
   Pattern C not the Pattern-A self-gate this plan drafted → **Slice 2 dropped as
   superseded** (see banner + Slice 2 section). Plan re-scoped to ASAN-lane fragility
   hardening. User-approved (AskUserQuestion: "Ship the hardening").
+- 2026-06-15 — **Slice 1 test work superseded by #1277 (duplicate-effort collision #2).**
+  A parallel session's PR #1277 (`test(tracker): make ADF deep-nest fixture ASAN-safe via
+  iterative teardown`) landed the IDENTICAL hardening on develop — same `DismantleDeepJson`
+  helper, same `kDeepAdfDepth=400`, same iterative approach (trunk used the cleaner
+  `DismantleDeepJson(json&&)` rvalue-ref API). Surfaced when #1273 went `DIRTY` after #1277
+  merged; resolved the merge by taking trunk's version of
+  `tests/Core/TrackerFieldValueParser.extended.test.cpp` wholesale (don't re-assert the
+  lvalue-ref variant over a merged sibling) → #1273's test-file diff vs develop is now
+  **empty**. #1273 still ships its docs (bucket-oob down-scope + this plan + the dup-preflight
+  process lesson). Slice 1's *goal* (ASAN-safe ADF fixture on develop) is **achieved** — via
+  #1277, not #1273. Second collision in this plan (after Slice 2 vs #1253) → broadened the
+  `slice-dup-preflight` process lesson from "CI-config slice" to "any slice on a
+  high-contention file/symbol" (categories/process.md Recurrence).
 - 2026-06-15 — **Post-ship.** User authorized registering guards PR #1280 with the
   merge-watcher (post-ship menu → "Register #1280 too"); #1280 now auto-merges when green
   alongside #1273. Registration was a no-op — #1280 was already present in the watcher
