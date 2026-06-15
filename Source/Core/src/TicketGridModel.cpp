@@ -44,6 +44,8 @@ long long ParseDurationToSecondsForSort(const std::string& input) {
             return v;
         }
     } catch (...) {
+        // catch-all-ok: std::stoll throws on non-numeric input — intentional fall-through to the
+        // manual unit-by-unit duration parse below.
     }
     pos = 0;
     long long total = 0;
@@ -460,14 +462,10 @@ std::vector<TicketGridColumn> TicketGridColumnsBuilder::Build(const ViewDefiniti
 
     std::unordered_set<std::string> seenFieldIds;
     for (const auto& rawFieldId : view.Fields) {
-        std::string fieldId = TrimFieldId(rawFieldId);
-        // issue-comments fix (#1018) — a view saved before the dedupe may carry Jira's legacy `comment`
-        // column. Upgrade it to the unified `comments` cell here so it renders the count/modal instead of
-        // the raw ADF blob, and dedups against an explicit `comments` column via seenFieldIds below.
-        // Backend-safe: GitHub/Plane have no `comment` field id.
-        if (fieldId == "comment") {
-            fieldId = "comments";
-        }
+        // issue-comments fix (#1018) — fold Jira's legacy `comment` column onto the unified `comments`
+        // cell so a view saved before the dedupe renders the count/modal (not the raw ADF blob) and
+        // dedups against an explicit `comments` column via seenFieldIds below. See CanonicalizeGridFieldId.
+        const std::string fieldId = CanonicalizeGridFieldId(TrimFieldId(rawFieldId));
         if (fieldId.empty() || !seenFieldIds.insert(fieldId).second) {
             continue;
         }
