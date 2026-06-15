@@ -32,6 +32,7 @@ using smatchet::config_detail::GetCachedConfigRef;
 using smatchet::config_detail::GetCacheMutexRef;
 using smatchet::config_detail::GetConfigRmwMutexRef;
 using smatchet::config_detail::GetHasCachedConfigRef;
+using smatchet::config_detail::SanitizeConfigStringValue;
 
 #if defined(_WIN32)
 using smatchet::config_detail::ProtectSecretForConfig;
@@ -316,6 +317,12 @@ void SaveScalarFields(nlohmann::json& j, const TrackerConfig& config) {
     for (std::size_t i = 0; i < CountOf(kStringFields); ++i) {
         j[kStringFields[i].key] = config.*(kStringFields[i].member);
     }
+    // Defense-in-depth (security backlog 2026-05-17): the two header-bound base-URL fields are
+    // spliced into outbound HTTP requests, so strip CR/LF/NUL before they hit disk — a value
+    // round-tripped via the MCP/Lua config-write paths can never carry header-smuggling control
+    // chars. Overwrites the table-driven write just above with the sanitized value.
+    j["ai_base_url"] = SanitizeConfigStringValue(config.AiBaseUrl);
+    j["ai_ollama_base_url"] = SanitizeConfigStringValue(config.AiOllamaBaseUrl);
     for (std::size_t i = 0; i < CountOf(kBoolFields); ++i) {
         j[kBoolFields[i].key] = config.*(kBoolFields[i].member);
     }
@@ -446,20 +453,26 @@ void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
             j["bugreport_github_pat"] = config.BugReportGitHubPat; // DPAPI failed — keep plaintext fallback
         }
     }
-    const std::string mcpAuthTokenEnc = ProtectSecretForConfig(config.McpAuthToken);
+    // Defense-in-depth (security backlog 2026-05-17): strip CR/LF/NUL from the header-bound secrets
+    // (MCP auth token, AI API keys) before DPAPI-encrypting them, so a value round-tripped via the
+    // MCP/Lua config-write paths can never carry header-smuggling control chars once decrypted.
+    const std::string mcpAuthTokenSanitized = SanitizeConfigStringValue(config.McpAuthToken);
+    const std::string mcpAuthTokenEnc = ProtectSecretForConfig(mcpAuthTokenSanitized);
     // New field migration: keep the legacy plaintext fallback if DPAPI fails instead of dropping the only copy.
-    if (config.McpAuthToken.empty() || !mcpAuthTokenEnc.empty()) {
+    if (mcpAuthTokenSanitized.empty() || !mcpAuthTokenEnc.empty()) {
         j.erase("mcp_auth_token");
     }
     j["mcp_auth_token_enc"] = mcpAuthTokenEnc;
     // Smatchet Assistant API keys — same DPAPI + legacy-plaintext fallback pattern as McpAuthToken.
-    const std::string aiApiKeyEnc = ProtectSecretForConfig(config.AiApiKey);
-    if (config.AiApiKey.empty() || !aiApiKeyEnc.empty()) {
+    const std::string aiApiKeySanitized = SanitizeConfigStringValue(config.AiApiKey);
+    const std::string aiApiKeyEnc = ProtectSecretForConfig(aiApiKeySanitized);
+    if (aiApiKeySanitized.empty() || !aiApiKeyEnc.empty()) {
         j.erase("ai_api_key");
     }
     j["ai_api_key_enc"] = aiApiKeyEnc;
-    const std::string aiAnthropicEnc = ProtectSecretForConfig(config.AiAnthropicApiKey);
-    if (config.AiAnthropicApiKey.empty() || !aiAnthropicEnc.empty()) {
+    const std::string aiAnthropicSanitized = SanitizeConfigStringValue(config.AiAnthropicApiKey);
+    const std::string aiAnthropicEnc = ProtectSecretForConfig(aiAnthropicSanitized);
+    if (aiAnthropicSanitized.empty() || !aiAnthropicEnc.empty()) {
         j.erase("ai_anthropic_api_key");
     }
     j["ai_anthropic_api_key_enc"] = aiAnthropicEnc;
@@ -492,9 +505,12 @@ void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
     if (config.BugReportPersistPat && !config.BugReportGitHubPat.empty()) {
         j["bugreport_github_pat"] = config.BugReportGitHubPat;
     }
-    j["mcp_auth_token"] = config.McpAuthToken;
-    j["ai_api_key"] = config.AiApiKey;
-    j["ai_anthropic_api_key"] = config.AiAnthropicApiKey;
+    // Defense-in-depth (security backlog 2026-05-17): strip CR/LF/NUL from the header-bound secrets
+    // before they land as plaintext JSON, so a round-tripped value can never carry header-smuggling
+    // control chars (mirrors the DPAPI path above for the Windows build).
+    j["mcp_auth_token"] = SanitizeConfigStringValue(config.McpAuthToken);
+    j["ai_api_key"] = SanitizeConfigStringValue(config.AiApiKey);
+    j["ai_anthropic_api_key"] = SanitizeConfigStringValue(config.AiAnthropicApiKey);
     j["ai_deepseek_api_key"] = config.AiDeepSeekApiKey;
 #if defined(SMATCHET_WITH_WHISPER)
     j.erase("whisper_api_key_enc");
@@ -1073,8 +1089,7 @@ void MigrateBugReportHotkeyToKeybindings(const nlohmann::json& j, TrackerConfig&
     // keeps the rebind intact while still carrying a genuinely customized / disabled legacy hotkey
     // forward exactly once. ("Ctrl+Shift+B" mirrors the BugReportHotkey default in ConfigManager.h
     // and the app.bug_report.open seed in KeybindingsConfig::Defaults().)
-    const bool legacyCustomized =
-        cfg.BugReportHotkey != "Ctrl+Shift+B" || !cfg.BugReportHotkeyEnabled;
+    const bool legacyCustomized = cfg.BugReportHotkey != "Ctrl+Shift+B" || !cfg.BugReportHotkeyEnabled;
     if (legacyCustomized) {
         cfg.Keybindings.SetBindingHotkey("app.bug_report.open", "{}", cfg.BugReportHotkey);
         if (!cfg.BugReportHotkeyEnabled) {

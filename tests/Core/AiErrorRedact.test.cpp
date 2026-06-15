@@ -223,3 +223,24 @@ TEST_CASE("Tracker error-body reflections are redacted before logging (synthesis
         CHECK(out.find("ghp_[REDACTED]") != std::string::npos);
     }
 }
+
+// SSE/NDJSON parse-failure log-line hardening — the AnthropicClient / OpenAiClient /
+// OllamaClient parse-failure paths now route the raw `data` / `rawLine` excerpt through
+// RedactProviderErrorBody before LOG_WARN. A misconfigured proxy can echo the request
+// Authorization header into a malformed stream chunk; redaction strips it before it reaches
+// the log. The LOG_WARN call is cpr/stream-bound (integration-only), so pin the delegated
+// redaction over the exact shapes a malformed stream chunk would carry.
+TEST_CASE("Malformed SSE/NDJSON stream chunk redacts a reflected Authorization header before logging" *
+          doctest::test_suite("[high-risk]")) {
+    SUBCASE("Bearer token echoed in a malformed SSE data line") {
+        const std::string chunk = "<html>502 Bad Gateway: Authorization: Bearer sk-proxyleaked1234567890</html>";
+        const std::string out = RedactProviderErrorBody(chunk);
+        CHECK(out.find("proxyleaked1234567890") == std::string::npos);
+        CHECK(out.find("Bearer [REDACTED]") != std::string::npos);
+    }
+    SUBCASE("x-api-key echoed in a malformed NDJSON line") {
+        const std::string line = R"({"not":"json-the-stream-broke","x-api-key":"sk-ant-ndjsonleak1234567"})";
+        const std::string out = RedactProviderErrorBody(line);
+        CHECK(out.find("ndjsonleak") == std::string::npos);
+    }
+}

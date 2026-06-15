@@ -189,6 +189,15 @@ struct AppController::Impl {
     std::deque<AppController::AutomationJob> automationJobs_;
     std::thread automationWorker_;
     std::atomic<bool> automationWorkerShuttingDown_{false};
+    // Set true by AutomationWorkerLoop the instant it breaks its loop, BEFORE the
+    // thread function returns. The dtor polls this to bound its shutdown wait: a
+    // worker stuck inside blocking C++ glue (a synchronous tracker HTTP PUT — see
+    // LuaAutomationHookPolicyPure.h) cannot be released by the count-hook and would
+    // make automationWorker_.join() hang until the HTTP timeout. The dtor waits on
+    // this flag up to a deadline and emits a loud WARN naming the hang if it
+    // overruns, then still joins (the only no-detach-compliant terminal — abandoning
+    // the thread is banned, so the warned bounded wait is the safe observable cap).
+    std::atomic<bool> automationWorkerExited_{false};
     std::vector<std::string> activeSetupScripts_;
 #endif
 };

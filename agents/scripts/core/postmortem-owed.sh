@@ -48,7 +48,10 @@
 #   POSTMORTEM_DIRECTPUSH_MAX     cap on pulls-confirmation gh calls (default 40).
 
 set -euo pipefail
-cd "$(dirname "$0")/../../.."
+# Resolve our own dir BEFORE the repo-root cd (BASH_SOURCE still resolves here)
+# so we can source merge-gates.sh by absolute path regardless of cwd.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/../../.."
 
 MODE="list"
 case "${1:-}" in
@@ -62,15 +65,22 @@ LEDGER="${POSTMORTEM_LEDGER:-docs/self-improvement/postmortems.md}"
 CONFIG_FILE="${POSTMORTEM_CONFIG_FILE:-project.config.json}"
 SCAN_N="${POSTMORTEM_SCAN_N:-20}"
 
-# Curated blocking-scope allow-list — the meant-to-block constant from
-# merge-gates.sh (kept byte-identical so the two stay in lock-step; #923 fix).
-# A non-required failing context blocks (and therefore owes a postmortem when it
-# merged red) only if its name matches this regex AND is not "advisory".
-# Bucket-* REMOVED 2026-06-15 in lock-step with merge-gates.sh: the Mesa-GL
-# bucket-C/E lanes cannot boot the CI exe (infra.md `bucket-mesa-exe-boot` P1),
-# so a red Bucket-* no longer blocks and merging past it owes NO postmortem.
-# Re-add when the boot is fixed and the bucket launch-smoke graduates to hard-fail.
-ALLOW_LIST_RE='Coverage|Sanitizer|Perf PR-fast|Android security gate'
+# Curated blocking-scope allow-list — SINGLE SOURCE OF TRUTH lives in
+# merge-gates.sh as MERGE_GATES_BLOCK_ALLOWLIST_RE. Source it rather than keep a
+# hand-synced copy: the duplicate drifted once (a stale branch still carried
+# `Bucket-|` after #1259 dropped it from both lists), false-flagging #1258 as a
+# gate-escape (tooling.md `postmortem-owed-overreports-nonblocking-and-cancelled-twins`).
+# Sourcing is side-effect-free — merge-gates.sh's CLI entry is guarded by
+# `[ "${BASH_SOURCE[0]}" = "${0}" ]`, false when sourced (mirrors safe-admin-merge.sh).
+# A non-required failing context owes a postmortem (when merged red) only if its
+# name matches this regex AND is not "advisory".
+# shellcheck source=agents/scripts/core/merge-gates.sh
+source "$SCRIPT_DIR/merge-gates.sh"
+if [ -z "${MERGE_GATES_BLOCK_ALLOWLIST_RE:-}" ]; then
+    echo "postmortem-owed: merge-gates.sh did not export MERGE_GATES_BLOCK_ALLOWLIST_RE — refusing (fail-closed)." >&2
+    exit 2
+fi
+ALLOW_LIST_RE="$MERGE_GATES_BLOCK_ALLOWLIST_RE"
 
 # gh is required; without it, degrade to a quiet notice (advisory tool).
 if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
