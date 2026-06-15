@@ -4,6 +4,20 @@ Plan: [`docs/plans/shipped/gate-enforcement-hardening.md`](../plans/shipped/gate
 
 > The set of **required status checks** on `develop` is codified + applied by [`agents/scripts/core/setup-branch-protection.sh`](../../agents/scripts/core/setup-branch-protection.sh) (sourced from `project.config.json` § `branch_protection`). The separate decision to require **0 approving reviews** lives in [`docs/adr/0013-solo-no-required-review.md`](../adr/0013-solo-no-required-review.md).
 
+> **Config↔live drift — editing the config is inert until the script re-runs.**
+> `branch_protection.required_contexts` is the *intended* set; the *enforced* set is
+> whatever `setup-branch-protection.sh` last PUT to the live ruleset (a full-replace
+> REST call that lives in **no** workflow — nothing re-applies it on merge). Adding a
+> context name to the config without re-running the script leaves the live ruleset
+> behind, and a check the config *claims* is required is silently waivable. This is
+> #1227: Coverage was added to the config but the apply script was never re-run, so
+> the live ruleset enforced only 6 contexts and a red-Coverage PR merged clean. After
+> editing `required_contexts`, **always** re-run the script and verify with
+> `gh api repos/.../branches/develop/protection/required_status_checks --jq '.contexts'`.
+> The [`test-required-context-parity.sh`](../../agents/scripts/core/test-required-context-parity.sh)
+> gate guards config↔workflow parity (every named context resolves to an emitting job),
+> **not** config↔live parity — that one is operational, owned by re-running the script.
+
 ## The deadlock
 
 A **required** status check must report on **every** PR or the PR is wedged
