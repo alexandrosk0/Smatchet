@@ -191,7 +191,11 @@ TEST_CASE("LocalCacheManager AI chat: hydration latency microbench (Phase 3.10 P
     // this is a hard Pillar 2 violation and signals the inline-hydration cutoff
     // needs lowering. In-memory SQLite measures sub-millisecond on modern dev
     // boxes; on-disk WAL is typically 2-5x slower but still well under budget.
+#if defined(__SANITIZE_ADDRESS__)
+    CHECK(perIterUs < 69400.0);  // ASAN ~3-10x wall-clock overhead; budget loosened (#1215 pattern)
+#else
     CHECK(perIterUs < 6940.0);
+#endif
 }
 
 TEST_CASE("LocalCacheManager AI chat: UpdatePin on missing id is graceful (no throw)") {
