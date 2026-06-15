@@ -894,7 +894,27 @@ AppController::~AppController() {
     impl_->automationJobCv_.notify_all();
 
     if (impl_->automationWorker_.joinable()) {
-
+        // Bounded, observable shutdown wait. The count-hook releases a pure-Lua job
+        // the instant automationWorkerShuttingDown_ is seen, but a job blocked inside
+        // synchronous C++ glue (a tracker HTTP PUT — see LuaAutomationHookPolicyPure.h)
+        // executes no Lua instructions, so the hook never fires and an unbounded join
+        // would hang here until the HTTP timeout with no diagnostic. Wait on the
+        // worker-exited flag up to a deadline; if it overruns, log a loud WARN naming
+        // the hang, then still join — abandoning the thread (.detach) is banned and
+        // unsafe (it could touch freed Impl state), so the warned bounded wait is the
+        // safe terminal: the join still completes once the blocking call returns.
+        constexpr std::chrono::seconds kAutomationJoinWarnDeadline(5);
+        {
+            std::unique_lock<std::mutex> lock(impl_->automationJobMutex_);
+            const bool exited = impl_->automationJobCv_.wait_for(
+                lock, kAutomationJoinWarnDeadline, [this]() { return impl_->automationWorkerExited_.load(); });
+            if (!exited) {
+                LOG_WARN("AppController shutdown: automation worker did not exit within %llds — likely blocked in "
+                         "synchronous tracker glue (e.g. an in-flight HTTP request). Waiting for it to return; "
+                         "shutdown is bounded by that call's own timeout, not hung.",
+                         static_cast<long long>(kAutomationJoinWarnDeadline.count()));
+            }
+        }
         impl_->automationWorker_.join();
     }
 
