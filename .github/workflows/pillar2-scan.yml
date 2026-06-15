@@ -47,12 +47,16 @@ jobs:
           set -euo pipefail
           # Base = develop for PRs; for develop pushes, diff against the prior commit.
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            # NO --depth here: a shallow `--depth=1` re-introduces a .git/shallow
-            # boundary at develop's tip even after the fetch-depth:0 checkout, so
-            # the three-dot `git diff base...HEAD` below can't find the merge-base
-            # and exits 128 → the #518 fail-closed guard hard-fails docs-only PRs
-            # whose branch point predates the depth. Full fetch keeps the common
-            # ancestor present (matches the passing Doc-anchors job). (#1227(b))
+            # NO --depth here: the diff below is three-dot ("$base"...HEAD), which
+            # needs the merge-base of develop and HEAD. A --depth=1 fetch truncates
+            # origin/develop to its tip, so a branch lagging the tip by even one
+            # commit has no reachable merge-base → `git diff` exits 128 ("no merge
+            # base") and the fail-closed guard rejects the PR (a recurring false
+            # FAIL — bit the security campaign's #1245). checkout uses fetch-depth:0,
+            # so the repo is already un-shallow and a full ref fetch is cheap.
+            # Same defect lived in 4 sibling delta gates (dup-scan / build-and-test
+            # ×2 / perf-pr-fast); all fixed + lint-swept by tests/bats/
+            # delta_gate_base_ref_fetch.bats. (#1227(b))
             git fetch --no-tags origin "${{ github.base_ref }}" 2>/dev/null || true
             base="origin/${{ github.base_ref }}"
           else
