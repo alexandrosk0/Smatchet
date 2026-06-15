@@ -460,7 +460,14 @@ std::vector<TicketGridColumn> TicketGridColumnsBuilder::Build(const ViewDefiniti
 
     std::unordered_set<std::string> seenFieldIds;
     for (const auto& rawFieldId : view.Fields) {
-        const std::string fieldId = TrimFieldId(rawFieldId);
+        std::string fieldId = TrimFieldId(rawFieldId);
+        // issue-comments fix (#1018) — a view saved before the dedupe may carry Jira's legacy `comment`
+        // column. Upgrade it to the unified `comments` cell here so it renders the count/modal instead of
+        // the raw ADF blob, and dedups against an explicit `comments` column via seenFieldIds below.
+        // Backend-safe: GitHub/Plane have no `comment` field id.
+        if (fieldId == "comment") {
+            fieldId = "comments";
+        }
         if (fieldId.empty() || !seenFieldIds.insert(fieldId).second) {
             continue;
         }

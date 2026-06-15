@@ -320,10 +320,11 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
     }
     if (!catalogPlane) {
         for (auto& field : cat.AvailableFields) {
-            if (field.Id == "comment" || IsNonEditableTimetrackingFieldId(field.Id)) {
+            if (IsNonEditableTimetrackingFieldId(field.Id)) {
                 field.ReadOnly = true;
             }
         }
+        EraseCatalogLegacyCommentField(cat);
         EnsureCatalogHistoryField(cat);
         EnsureCatalogCommentsField(cat);
     }
@@ -381,7 +382,7 @@ void AppController::HandleFieldCatalogError(const std::string& error, const std:
             cat.AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
             if (!catalogPlane) {
                 for (auto& field : cat.AvailableFields) {
-                    if (field.Id == "comment" || IsNonEditableTimetrackingFieldId(field.Id)) {
+                    if (IsNonEditableTimetrackingFieldId(field.Id)) {
                         field.ReadOnly = true;
                     }
                 }
@@ -392,6 +393,7 @@ void AppController::HandleFieldCatalogError(const std::string& error, const std:
         cat.LastTrackerFieldCatalogWarning = std::string("Offline: restored ") + (catalogPlane ? "Plane" : "Jira") +
                                              " field catalog from local snapshot. Last fetch failed: " + error;
         if (!catalogPlane) {
+            EraseCatalogLegacyCommentField(cat);
             EnsureCatalogHistoryField(cat);
             EnsureCatalogCommentsField(cat);
         }
@@ -474,6 +476,21 @@ void AppController::EnsureCatalogCommentsField(GridContextFieldCatalog& cat) {
     commentsField.Type = "number";
     commentsField.ReadOnly = true;
     cat.AvailableFields.push_back(std::move(commentsField));
+}
+
+void AppController::EraseCatalogLegacyCommentField(GridContextFieldCatalog& cat) {
+    // issue-comments fix (#1018 follow-up) — drop Jira's legacy system `comment` field (ADF blob,
+    // catalog label "Comment") from the picker. It duplicates the synthetic `comments` count column
+    // (EnsureCatalogCommentsField): the user saw two "Comment(s)" entries. The blob still rides in
+    // per-ticket fieldValues["comment"] via the Jira mapper (catalog-independent) and surfaces as the
+    // Comments-cell hover tooltip — so dropping it from the catalog removes the duplicate picker entry
+    // without losing the text. Mirrors the sibling Ensure* helpers: own the catalog lock, INLINE scan
+    // (not FindFieldById, which re-locks the non-recursive mutex → self-deadlock). `cat` is the
+    // caller's latched catalog — do NOT re-resolve fieldCatalog() here (CR PR#1218; see header).
+    std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+    cat.AvailableFields.erase(std::remove_if(cat.AvailableFields.begin(), cat.AvailableFields.end(),
+                                             [](const TrackerField& field) { return field.Id == "comment"; }),
+                              cat.AvailableFields.end());
 }
 
 bool AppController::FieldEditSupportsOfflineQueue(const TrackerField& field) {
@@ -1801,6 +1818,37 @@ bool AppController::FetchIssueComments(const std::string& issueKey, std::vector<
     outError = r.error().Detail;
     LOG_ERROR("AppController::FetchIssueComments failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
     return false;
+}
+
+void AppController::UpdateCachedCommentCount(const std::string& issueId, int newCount) {
+    // issue-comments fix (#1018) — after the comments modal fetches / re-fetches a thread, push the live
+    // count into the cached ticket so the grid's Comments column reflects a freshly-posted comment
+    // without a full re-sync. Called on the UI thread from the modal's main-thread post-back (mirrors
+    // the optimistic-update pattern: mutate a ticket copy → UpdateTicket → SaveTicket + grid refresh).
+    // Two gates keep it well-behaved: (1) only count-backed backends — if the cell currently carries no
+    // count (Plane leaves fieldValues["comments"] empty for its icon-only cell), leave it empty so the
+    // cell stays icon-only; (2) skip when unchanged, so the routine modal-open fetch causes no churn.
+    if (newCount < 0) {
+        return;
+    }
+    std::shared_ptr<const std::vector<CachedTicket>> snapshot = GetActiveTicketsSnapshot();
+    if (!snapshot) {
+        return;
+    }
+    const std::string newValue = std::to_string(newCount);
+    for (const CachedTicket& ticket : *snapshot) {
+        if (ticket.id != issueId) {
+            continue;
+        }
+        const std::string& existing = ticket.GetFieldValueRef("comments");
+        if (existing.empty() || existing == newValue) {
+            return; // icon-only backend (keep empty) or no change (avoid a needless grid refresh)
+        }
+        CachedTicket updated = ticket;
+        updated.fieldValues["comments"] = newValue;
+        UpdateTicket(updated);
+        return;
+    }
 }
 
 bool AppController::SubmitWorklog(const std::string& issueId, const std::string& timeSpent,

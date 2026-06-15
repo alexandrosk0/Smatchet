@@ -2059,11 +2059,12 @@ void AppController::ApplyStartupFieldCatalogSnapshot(std::vector<TrackerField> s
 
     if (activeTrackerType == "Jira") {
         for (auto& field : cat.AvailableFields) {
-            if (field.Id == "comment" || field.Id == "timespent" || field.Id == "aggregatetimeoriginalestimate" ||
+            if (field.Id == "timespent" || field.Id == "aggregatetimeoriginalestimate" ||
                 field.Id == "aggregatetimeestimate" || field.Id == "aggregatetimespent") {
                 field.ReadOnly = true;
             }
         }
+        EraseCatalogLegacyCommentField(cat);
         EnsureCatalogHistoryField(cat);
         EnsureCatalogCommentsField(cat);
     }

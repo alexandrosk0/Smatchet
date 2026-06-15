@@ -1399,8 +1399,21 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
             OpenCommentsModal(app, ticket.id);
         }
         if (ImGui::IsItemHovered()) {
-            // Cheap localized static tooltip — NO network on hover.
-            ImGui::SetTooltip("%s", SmatchetLocalization::T("comments.cell_tooltip", "View / post comments"));
+            // issue-comments fix (#1018) — match the retired Jira "Comment" field: on hover show the
+            // full comment text wrapped. The Jira mapper resolves it into fieldValues["comment"]
+            // (catalog-independent, so it survives the legacy field's removal from the picker); read it
+            // zero-copy from the cache — NO network on hover. Backends without a comment blob
+            // (GitHub/Plane) fall back to the cheap localized static hint.
+            const std::string& commentBlob = ticket.GetFieldValueRef("comment");
+            if (!commentBlob.empty()) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 40.0f);
+                ImGui::TextUnformatted(commentBlob.c_str());
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            } else {
+                ImGui::SetTooltip("%s", SmatchetLocalization::T("comments.cell_tooltip", "View / post comments"));
+            }
         }
         ImGui::EndGroup();
         cellGroupMin = ImGui::GetItemRectMin();
