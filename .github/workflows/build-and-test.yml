@@ -696,7 +696,7 @@ jobs:
           set -uo pipefail
           mkdir -p "$(dirname "$SMATCHET_LANE_STATUS_FILE")"
           set +e
-          out="$(timeout 240 ./Smatchet.exe cmd ui_test.run --all --spawn --yes 2>&1)"
+          out="$(timeout 240 ./Smatchet.exe cmd ui_test.run --all --frames=3600 --spawn --yes 2>&1)"
           rc=$?
           set -e
           printf '%s\n' "$out"
