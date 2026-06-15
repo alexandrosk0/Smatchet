@@ -409,9 +409,12 @@ bool ParseStandaloneCli(int argc, char** argv, ConfigManager::CliOverrides& cli)
         }
         if ((arg == "--mcp-port" || arg == "-p") && i + 1 < argc) {
             try {
-                cli.HasMcpPort = true;
                 cli.McpPort = std::stoi(argv[++i]);
+                cli.HasMcpPort = true;
             } catch (...) {
+                // Invalid --mcp-port value — ignore the flag and fall back to the
+                // configured/default port. Pre-logger-init, so no LOG_* here.
+                cli.HasMcpPort = false;
             }
             continue;
         }
@@ -526,7 +529,10 @@ void TeardownPartialBoot(BootstrapContext& ctx, GLFWwindow* window, const bool u
 // the caller still owns the window/GLFW unwind via TeardownPartialBoot.
 bool InitRendererBackend(BootstrapContext& ctx, GLFWwindow* window, std::string& err) {
     if (ctx.renderer == StandaloneRenderer::Dx12) {
-        ImGui_ImplGlfw_InitForOther(window, true);
+        if (!ImGui_ImplGlfw_InitForOther(window, true)) {
+            err = "ImGui GLFW platform backend init failed (DX12 path)";
+            return false;
+        }
         glfwSetKeyCallback(window, SmatchetKeypadEnterBridgeCallback);
         int fbW = 0;
         int fbH = 0;
@@ -547,9 +553,15 @@ bool InitRendererBackend(BootstrapContext& ctx, GLFWwindow* window, std::string&
                  ctx.dx12->IsWarp() ? ", WARP software" : "");
         return true;
     }
-    ImGui_ImplGlfw_InitForOpenGL(window, true);
+    if (!ImGui_ImplGlfw_InitForOpenGL(window, true)) {
+        err = "ImGui GLFW platform backend init failed (OpenGL path)";
+        return false;
+    }
     glfwSetKeyCallback(window, SmatchetKeypadEnterBridgeCallback);
-    ImGui_ImplOpenGL3_Init(ctx.glslVersion);
+    if (!ImGui_ImplOpenGL3_Init(ctx.glslVersion)) {
+        err = "ImGui OpenGL3 renderer backend init failed";
+        return false;
+    }
     if (!ImGui_ImplOpenGL3_CreateDeviceObjects()) {
         err = "ImGui OpenGL device objects failed";
         return false;

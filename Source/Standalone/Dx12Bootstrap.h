@@ -2,12 +2,10 @@
 #define SMATCHET_STANDALONE_DX12_BOOTSTRAP_H
 
 // Standalone DirectX 12 renderer bootstrap for the GLFW window.
-//
 // Phase 1 of docs/plans/active/dx12-standalone-win-arm64.md: gives the
 // standalone build a native D3D12 swapchain so it runs without OpenGL on
 // Windows-on-ARM64 (where the GL path is software-emulated and slow). The
 // OpenGL path stays the default everywhere else.
-//
 // This header is platform-agnostic on purpose: it declares only `void*`/POD
 // surfaces (no <d3d12.h>, no <windows.h>) so both render loops can hold a
 // `std::unique_ptr<Dx12Bootstrap>` and branch on a runtime enum without any

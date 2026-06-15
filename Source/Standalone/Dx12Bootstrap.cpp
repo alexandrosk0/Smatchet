@@ -18,7 +18,6 @@ namespace {
 
 using Microsoft::WRL::ComPtr;
 
-// ---------------------------------------------------------------------------
 // Shader-visible SRV heap allocator for the ImGui DX12 backend's dynamic
 // textures. Slot 0 is reserved for the font atlas; further slots come from a
 // tiny free-list. Mirrored from Source/Core/src/Ui/SmatchetImGuiHost.cpp (the
@@ -623,7 +622,6 @@ bool Dx12Bootstrap::IsWarp() const { return false; }
 
 #endif // SMATCHET_STANDALONE_HAS_DX12
 
-// ---------------------------------------------------------------------------
 // Renderer selection — common to every toolchain (outside the DX12 guard so the
 // same resolution runs whether or not a real backend is compiled in). The
 // window-hint choice happens before ParseStandaloneCli in both render loops, so
