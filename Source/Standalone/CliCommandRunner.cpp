@@ -732,6 +732,18 @@ void PostAppQuitBestEffort(httplib::Client& cli) {
     }
 }
 
+void PostAppQuitBestEffort(const std::string& host, int port) {
+    if (host.empty() || port <= 0)
+        return;
+    try {
+        httplib::Client cli(host, port);
+        cli.set_connection_timeout(1, 0);
+        cli.set_read_timeout(1, 0);
+        PostAppQuitBestEffort(cli);
+    } catch (...) { // catch-all-ok: exception cleanup is best-effort after a spawn failure.
+    }
+}
+
 /// Normalize a relative outPath argument to an absolute path resolved against the CLI's CWD,
 /// since the spawned instance may have a different working directory. Pass-through for absolute paths.
 nlohmann::json NormalizeOutPath(const nlohmann::json& argsToSend) {
@@ -973,16 +985,18 @@ int SpawnAndRunHandleSync(const ParsedArgs& pa, httplib::Client& cli, const nloh
 /// Full spawn-attach-run flow invoked when --spawn is set and no instance is reachable.
 /// Launches a hidden ephemeral app instance, sends the command, waits for results, quits the app.
 int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nlohmann::json& argsToSendRaw) {
+    std::string host;
+    int port = 0;
+    bool spawnedReady = false;
     try {
         // Normalize outPath: relative paths must be made absolute so both processes agree on location.
         const nlohmann::json argsToSend = NormalizeOutPath(argsToSendRaw);
 
         // Phase 1: launch ephemeral instance and wait for MCP ready.
-        std::string host;
-        int port = 0;
         const int setupResult = SpawnAndRunSetup(commandName, host, port);
         if (setupResult != kExitOk)
             return setupResult;
+        spawnedReady = true;
 
         // For scenario.run, compute a wait timeout from the frames param.
         // ParseArgs stores --key=value pairs as strings; coerce defensively.
@@ -1032,6 +1046,8 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
         PostAppQuitBestEffort(cli);
         return kExitOk;
     } catch (const std::exception& e) {
+        if (spawnedReady)
+            PostAppQuitBestEffort(host, port);
         nlohmann::json env =
             MakeErrorEnvelope(commandName, "handler-error", std::string("--spawn: internal error: ") + e.what());
         try {
@@ -1040,6 +1056,8 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
         }
         return kExitHandler;
     } catch (...) {
+        if (spawnedReady)
+            PostAppQuitBestEffort(host, port);
         std::fprintf(stderr, // CLI stdout — product output, not logging
                      "{\"ok\":false,\"command\":\"%s\",\"error\":{\"code\":\"handler-error\","
                      "\"message\":\"--spawn: unknown internal exception.\"}}\n",
