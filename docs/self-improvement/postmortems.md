@@ -27,6 +27,56 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-14 · PR #1230, #1235, #1240 · direct/manual merge past PENDING→RED `Sanitizer (ASAN via MSVC)` — the non-required-Sanitizer direct-merge-bypass the #1242 poller fix structurally could not reach (now closed by the live required-context bind)
+
+### What escaped
+Three security-hardening PRs squash-merged to `develop` in a 6-min window — #1230
+`fix(logging): redaction hardening` (22:09:06Z), #1235 `fix(security): network/bounds
+hardening (Whisper redirect, cleartext base, MCP SSE bound)` (22:12:33Z), #1240
+`harden(ui): cap image-preview dimensions at 16384` (22:15:36Z) — each with `Sanitizer
+(ASAN via MSVC)` non-terminal/red at merge. All three: `autoMergeRequest=null`,
+`mergedBy=alexandrosk0` → landed via a **direct/manual `gh pr merge` / `gh api … PUT
+…/merge`**, NOT `--auto`. They merged in the window AFTER #1237 (22:01Z) but BEFORE the
+#1242 `$blocking`-pending poller fix landed (22:33Z). Same non-required Sanitizer lane as
+#1220/#1229/#1237; the product fixes are sound (security-hardening, each carries its own
+coverage — cross-ref security.md #1230/#1235), no GitHub Issue owed.
+
+### Root cause (blameless)
+The #1242 fix that closed the four sibling escapes (#1237/#1232/#1227/#1220/#1198) extended
+the **poller's** pending count to the `$blocking` set — but the poller is consulted ONLY on
+the `--auto` / scripted path. These three merged via a **direct/manual merge**, which never
+invokes the poller at all: GitHub-native branch-protection enforced only the 6 required
+contexts at that moment, and `Sanitizer (ASAN via MSVC)` was NOT among them (the #1130
+option-A Sanitizer half, still unbound at 22:09–22:15Z). So a direct PUT resolved "all
+required green" and merged past the in-flight/red Sanitizer — the exact non-poller-merge-path
+residual the #1237 entry explicitly predicted ("GitHub's native auto-merge has the same blind
+spot … those checks are non-required") but that #1242 (a poller-only fix) structurally could
+not reach. The escape is the MECHANISM (a direct merge bypasses every poller-side guard), not
+a poller bug.
+
+### Preventing gate
+The gate already existed as a filed-but-unbound action — `sanitizer-required-context`
+(tooling.md, the #1130 option-A Sanitizer half) — and it is now **bound live**: develop
+branch-protection `required_status_checks.contexts` enforces **9** contexts incl. `Sanitizer
+(ASAN via MSVC)`, `Sanitizer (UBSan via Clang)`, and `Coverage (windows-2022 +
+OpenCppCoverage)` (confirmed `gh api …/required_status_checks` 2026-06-15). A required context
+gates EVERY merge path — `--auto`, the merge button, AND a direct `gh api … PUT …/merge`
+(GitHub refuses the merge until the required context is terminal-green) — so it closes the
+direct-merge-bypass the poller never could. No new poller knob needed: promotion-to-required
+is the correct hammer for the direct-merge path (vs the `Bucket-*` lane, intentionally
+advisory → #1218's inverse downgrade-label route). **Residual now LIVE:** the bind landed
+BEFORE its documented dependency — the ASAN-unsafe deep-nest fixture (`kDeepAdfDepth=400`,
+still unhardened) — so the now-required Sanitizer lane can false-red and deadlock-by-reflex
+every merge until the fixture is hardened. That prerequisite is therefore elevated P2 → P1.
+
+### Filed as
+[`tooling.md`](categories/tooling.md) `sanitizer-required-context` — status flipped to
+**applied + bound (live — 9 required contexts confirmed 2026-06-15)**, escape list extended
+#1230/#1235/#1240 (direct-merge-bypass variant); [`test.md`](categories/test.md)
+`adf-deep-nest-fixture-asan-unsafe` — elevated **P2 → P1** (deadlock risk now live: Sanitizer
+required while the fixture is still unhardened). No GitHub Issue — the three product fixes are
+sound.
+
 ## 2026-06-14 · PR #1218 · force-merged via direct REST PUT past a CANCELLED `Bucket-E` UI-tests check (no scoped override label exists)
 
 > User-authorized force-merge while landing the issue-comments feature (Jira
