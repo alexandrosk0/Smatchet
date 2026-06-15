@@ -40,7 +40,12 @@ class JiraCatalogHttpFixture {
     typedef std::function<nlohmann::json(const httplib::Request&)> JsonHandler;
 
     JiraCatalogHttpFixture() {
+        // All four verbs route through Dispatch; routes are keyed on "<METHOD> <path>" so a POST to
+        // a comment endpoint can be scripted to 5xx while a GET to the same-ish path serves JSON.
         server_.Get(".*", [this](const httplib::Request& req, httplib::Response& res) { Dispatch(req, res); });
+        server_.Post(".*", [this](const httplib::Request& req, httplib::Response& res) { Dispatch(req, res); });
+        server_.Put(".*", [this](const httplib::Request& req, httplib::Response& res) { Dispatch(req, res); });
+        server_.Patch(".*", [this](const httplib::Request& req, httplib::Response& res) { Dispatch(req, res); });
         port_ = server_.bind_to_any_port("127.0.0.1");
         serverThread_ = std::thread([this]() { server_.listen_after_bind(); });
         server_.wait_until_ready();
@@ -56,28 +61,29 @@ class JiraCatalogHttpFixture {
     JiraCatalogHttpFixture(const JiraCatalogHttpFixture&) = delete;
     JiraCatalogHttpFixture& operator=(const JiraCatalogHttpFixture&) = delete;
 
-    /// Serve a fixed JSON body (HTTP 200) for an exact request path (query
-    /// string excluded — Jira paging params are ignored by fixed routes).
-    void ScriptJson(const std::string& path, const nlohmann::json& body) {
+    /// Serve a fixed JSON body (HTTP 200) for an exact "<method> <path>" (query
+    /// string excluded — Jira paging params are ignored by fixed routes). `method`
+    /// defaults to "GET" so existing GET-only callers stay source-compatible.
+    void ScriptJson(const std::string& path, const nlohmann::json& body, const std::string& method = "GET") {
         std::lock_guard<std::mutex> lock(mutex_);
-        fixedRoutes_[path] = body.dump();
+        fixedRoutes_[RouteKey(method, path)] = body.dump();
     }
 
-    /// Serve a scripted handler for an exact request path — used by paged
+    /// Serve a scripted handler for an exact "<method> <path>" — used by paged
     /// endpoints that need to branch on `startAt` etc.
-    void ScriptHandler(const std::string& path, JsonHandler handler) {
+    void ScriptHandler(const std::string& path, JsonHandler handler, const std::string& method = "GET") {
         std::lock_guard<std::mutex> lock(mutex_);
-        dynamicRoutes_[path] = std::move(handler);
+        dynamicRoutes_[RouteKey(method, path)] = std::move(handler);
     }
 
-    /// Force an HTTP status (with an empty JSON-object body) for an exact path.
-    void ScriptStatus(const std::string& path, int status) {
+    /// Force an HTTP status (with an empty JSON-object body) for an exact "<method> <path>".
+    void ScriptStatus(const std::string& path, int status, const std::string& method = "GET") {
         std::lock_guard<std::mutex> lock(mutex_);
-        statusRoutes_[path] = status;
+        statusRoutes_[RouteKey(method, path)] = status;
     }
 
-    /// Number of requests whose path matched exactly. Counts every hit,
-    /// scripted or not.
+    /// Number of requests whose path matched exactly, summed across all verbs.
+    /// Counts every hit, scripted or not.
     int RequestCount(const std::string& path) const {
         std::lock_guard<std::mutex> lock(mutex_);
         const std::map<std::string, int>::const_iterator it = requestCounts_.find(path);
@@ -98,8 +104,11 @@ class JiraCatalogHttpFixture {
     int Port() const { return port_; }
 
   private:
+    static std::string RouteKey(const std::string& method, const std::string& path) { return method + " " + path; }
+
     void Dispatch(const httplib::Request& req, httplib::Response& res) {
         // Copy handler state under the lock, run the (possibly slow) handler outside it.
+        const std::string key = RouteKey(req.method, req.path);
         JsonHandler handler;
         std::string fixedBody;
         bool haveFixed = false;
@@ -107,15 +116,15 @@ class JiraCatalogHttpFixture {
         {
             std::lock_guard<std::mutex> lock(mutex_);
             ++requestCounts_[req.path];
-            const std::map<std::string, int>::const_iterator sIt = statusRoutes_.find(req.path);
+            const std::map<std::string, int>::const_iterator sIt = statusRoutes_.find(key);
             if (sIt != statusRoutes_.end()) {
                 forcedStatus = sIt->second;
             }
-            const std::map<std::string, JsonHandler>::const_iterator dIt = dynamicRoutes_.find(req.path);
+            const std::map<std::string, JsonHandler>::const_iterator dIt = dynamicRoutes_.find(key);
             if (dIt != dynamicRoutes_.end()) {
                 handler = dIt->second;
             }
-            const std::map<std::string, std::string>::const_iterator fIt = fixedRoutes_.find(req.path);
+            const std::map<std::string, std::string>::const_iterator fIt = fixedRoutes_.find(key);
             if (fIt != fixedRoutes_.end()) {
                 fixedBody = fIt->second;
                 haveFixed = true;

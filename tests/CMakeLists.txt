@@ -388,6 +388,11 @@ add_executable(SmatchetTests
     # .cpp source — the glue calls the helper, the helper is the testable unit.
     Core/AiLuaPromptRateLimit.test.cpp
     Core/CliArgCoercion.test.cpp
+    # Source-aware destructive guard (security audit 2026-06-13 #2/#3). Pure
+    # trust predicate RequiresExplicitConfirm + IsAutomationSource live inline in
+    # Source/Core/include/Commands/Command.h — no extra .cpp linked (the registry
+    # TU + handlers stay out of the cpr-free rig).
+    Core/CommandSourceTrust.test.cpp
     Core/DictationInsertionRouter.test.cpp
     Core/AiAssistantInputSeedDecision.test.cpp
     Core/AiAssistantSendButton.test.cpp
@@ -591,6 +596,20 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/TicketSyncService.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpUtils.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpPure.cpp"
+    # Slice D of docs/plans/active/http-fault-injection.md — the retry+classify engine
+    # (TrackerHttpRequestWithRetry / ClassifyTrackerResponse). Wired live into the
+    # TrackerXxxLogged helper bodies in TrackerHttpUtils.cpp (D3), so the rig must link
+    # it or TrackerHttpUtils.cpp's now-live retry calls are unresolved symbols.
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpClient.cpp"
+    # Pure unit coverage of the retry+classify engine: ClassifyTrackerResponse status
+    # mapping, retry-recovers / exhaustion-count / POST-predicate-stops semantics via
+    # stateful requestFn lambdas (no socket). No extra production TU.
+    Core/TrackerHttpRetry.test.cpp
+    # Integration coverage of the live D3 wiring: drives TrackerGet/Post/PutLogged at a
+    # scripted httplib loopback (JiraCatalogHttpFixture) and asserts retry counts prove
+    # GET/PUT retry-on-5xx while POST is single-shot (Transport-only). Needs only
+    # TrackerHttpUtils.cpp + TrackerHttpClient.cpp + cpr + fixture (all already linked).
+    Core/TrackerHttpFaults.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/NetworkUsageTracker.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/OfflineQueueService.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/Views.cpp"
@@ -774,6 +793,9 @@ if(SMATCHET_WITH_WHISPER)
         Core/WavWriter.test.cpp
         # Phase C — local backend, downloader catalog, consent gate, mode router.
         Core/ModelCatalog.test.cpp
+        # Network-hardening (security audit LOW): host-pin + size-cap policy for the
+        # model-download redirect path. Pure decision; no cpr / no I/O.
+        Plugins/Whisper/ModelDownloadPolicy.test.cpp
         Core/WhisperConsentGate.test.cpp
         Core/WhisperModeRouter.test.cpp
         # Phase E — pure hotkey-descriptor parser.
@@ -786,6 +808,7 @@ if(SMATCHET_WITH_WHISPER)
         "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/WhisperApiClient.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/WavWriter.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/ModelCatalog.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/ModelDownloadPolicy.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/WhisperConsentGate.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/HotkeyParse.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Plugins/Whisper/SilenceTrim.cpp"

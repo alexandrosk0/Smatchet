@@ -271,6 +271,40 @@ set_fixture() {
     rm -f "$f"
 }
 
+@test "non-required allow-listed Sanitizer IN_PROGRESS blocks as pending (gate-escape #1237 fix)" {
+    # The #923 fix made a TERMINAL non-required allow-listed FAILURE block, but
+    # the pending count only ever looked at $req — so a non-required allow-listed
+    # check still IN_PROGRESS (not yet terminal) was invisible: not failing (not
+    # terminal) and not pending (not required) → GATES_PASSED fired and the merge
+    # beat ASAN/Coverage/Bucket to the line (#1237/#1232/#1227/#1220/#1198). The
+    # gate must now WAIT on an in-flight allow-listed check. Required check kept
+    # green so the in-progress Sanitizer is the sole non-terminal context.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS","isRequired":true},{"__typename":"CheckRun","name":"Sanitizer (ASAN via MSVC)","status":"IN_PROGRESS","conclusion":null,"isRequired":false}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"1 pending"* ]]
+    rm -f "$f"
+}
+
+@test "non-required NON-allow-listed advisory IN_PROGRESS does NOT block (preserves prior contract)" {
+    # Converse of the #1237 fix: a non-required check that is NOT on the
+    # meant-to-block allow-list (e.g. an advisory job) stays non-blocking even
+    # while in progress — the gate must not start waiting on every advisory job.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS","isRequired":true},{"__typename":"CheckRun","name":"Duplication scanner (advisory)","status":"IN_PROGRESS","conclusion":null,"isRequired":false}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"0 pending"* ]]
+    rm -f "$f"
+}
+
 @test "CodeRabbit CHANGES_REQUESTED on current head → return 1" {
     set_fixture "$FIXTURES_DIR/merge_gates_cr_changes.json"
     run poll_merge_gates org repo 1

@@ -57,6 +57,8 @@ Smatchet exposes several core tools to connected AI agents by default:
 
 In addition, **every command in the unified command registry auto-publishes as an MCP tool** (its `inputSchema` is generated from the command's param specs). This includes the `view.*` (saved-view CRUD) and `pane.*` (grid-pane scripting) groups — e.g. `pane.list`, `pane.focus` (`id`), `pane.next` / `pane.prev`, `pane.new` / `pane.duplicate` / `pane.split` (`direction?`), `pane.close` (`id?`), and `pane.rename` (`title`, `id?`). Call `tools/list` against your running instance for the live, schema-complete set.
 
+> **Destructive tools require explicit confirmation.** MCP is a non-UI automation source: authenticating with the loopback token grants *reach*, not *blanket destructive authority*. A destructive tool (e.g. `view.delete`, `sync.full`, `app.quit`) returns the structured envelope `{"ok":false,"error":{"code":"confirm-required"}}` unless the `arguments` object carries `"__confirm": true` — a deliberate per-call flag the server never auto-sets. Pass `"__dry_run": true` to preview without mutating. Every destructive call from MCP is audit-logged server-side (security audit 2026-06-13 #2/#3).
+
 ---
 
 ## 4. Custom Tools via Lua

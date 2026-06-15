@@ -27,6 +27,57 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-14 · PR #1218 · force-merged via direct REST PUT past a CANCELLED `Bucket-E` UI-tests check (no scoped override label exists)
+
+> User-authorized force-merge while landing the issue-comments feature (Jira
+> read+count slice, PR-B of #1217/#1218/#1219). #1218 squash-merged `1aa25cf15`
+> (2026-06-14T22:02:09Z) via `gh api -X PUT …/pulls/1218/merge` while `Bucket-E`
+> was terminal **CANCELLED** (the 30-min job timeout killing a ~21-min Mesa
+> software-GL startup hang, reproduced 2×). All 6 required branch-protection
+> checks — incl. `Sanitizer (ASAN via MSVC)` — were green.
+
+### What escaped
+The poller's meant-to-block `Bucket-*` rule. `merge-gates.sh:374` blocks a red
+`Bucket-*` (block-list `Coverage|Sanitizer|Bucket-|Perf PR-fast|Android security
+gate`). The direct `gh api …/merge` path gates on the 6 GitHub *required* contexts
+only — it never consults the poller — so the CANCELLED Bucket-E (non-required) did
+not stop the merge. Same non-poller-merge-path class as #1130 (Coverage) and
+#1220/#1229 (Sanitizer).
+
+### Root cause
+Two layers. (1) **Env-outage producer** — Bucket-E is dead env-wide
+(`bucket-mesa-exe-boot` P1, infra.md): the Mesa software-GL exe can't boot / hangs
+~21 min at the scenario step until the 30-min job timeout kills it (GH reports a
+timeout as CANCELLED); zero terminal bucket-E in ~40 runs across all branches; CI's
+own label "dead harness, not a flaky test". PR-B adds zero UI and bucket-E
+exercises only mock/standalone backends, so the lane never touched the diff.
+(2) **No scoped override** — of the five block-list members only `Test-delta gate`
+and `Perf PR-fast` carry a downgrade label (tests/perf-out-of-band, `:376-378`);
+`Bucket-*` (and `Coverage`/`Sanitizer`/`Android security gate`) have none. With the
+lane un-greenable and no label to wave it through the poller, the only path to land
+an otherwise-green PR was a raw direct PUT — which bypasses the ENTIRE block-list,
+not just the one dead lane (the same keystroke would equally have passed a real red
+Coverage/Sanitizer). The override DECISION was legitimate (confirmed env-outage,
+zero diff exposure, all required green); it was executed via an unscoped mechanism
+only because the scoped one does not exist.
+
+### Preventing gate
+Add a `bucket-out-of-band` (UI-lane) downgrade label to `merge-gates.sh` mirroring
+tests/perf-out-of-band, so a confirmed env-outage on an advisory `Bucket-*` lane is
+waved through the AUDITABLE poller path (labeled, logged in the `WARN: out-of-band
+label(s) downgraded …` line, post-merge-strippable, postmortem-tracked) instead of
+a raw direct PUT that escapes every block-list entry. NOT the #1130/#1220 "promote
+to required" route — a `Bucket-*` lane is intentionally advisory (a 30-min Mesa lane
+on every PR is wrong), so it needs the inverse: a scoped downgrade. Belt-and-
+suspenders: a direct-PUT guard that refuses the merge while any block-list check is
+non-green absent its matching out-of-band label (the general form, closing the
+raw-PUT hole for all block-list members). The root-cause boot fix
+(`bucket-mesa-exe-boot`) is the real cure — it removes the NEED for any override;
+this gate makes the rare, legitimate override safe until then.
+
+### Filed as
+[`docs/self-improvement/categories/tooling.md`](categories/tooling.md) (2026-06-14, P2 — `bucket-ui-lane-out-of-band-label`: scoped downgrade label for advisory `Bucket-*` lanes + optional direct-PUT guard).
+
 ## 2026-06-14 · PR #1229 · merged while `Sanitizer (ASAN via MSVC)` was still PENDING — the non-required Sanitizer lane (same #1130 option-A hole as #1220) + the inherited ASAN-unsafe fixture
 
 ### What escaped
@@ -1420,3 +1471,45 @@ testable non-render logic, so it stays a visible (cheap) ledger line pending a t
 
 ### Filed as
 This entry. Follow-up gate (render-only `tests-out-of-band` de-noise) noted, not yet shipped.
+
+## 2026-06-14 · PR #1237 (+ #1232 #1227 #1220 #1198) · red-check: Sanitizer / Coverage merged while IN_PROGRESS
+
+### What escaped
+`fix(security): bound value.dump() fallbacks on deep server json (ASAN DoS)` (#1237) merged
+to `develop` at 22:01:59Z while its `Sanitizer (ASAN via MSVC)` check was still
+`status=in_progress` (started 22:01:12Z, completed `success` only at 22:13Z — 11 min AFTER
+the merge). The merge-gate poller had recorded `GATES_PASSED` at 22:01:56Z with `0 fail,
+0 pending`. Same shape as the four other owed escapes this session (#1232 ASAN, #1227
+Coverage, #1220 ASAN, #1198 ASAN): each merged before a non-required allow-listed build
+(Sanitizer/Coverage/Bucket) reached a terminal state. #1237 was benign only by luck — the
+fix genuinely passed ASAN — but the gate provided no protection.
+
+### Root cause
+The #923 fix added the meant-to-block allow-list (`Coverage|Sanitizer|Bucket-|Perf
+PR-fast|Android security gate`, non-advisory) to the poller's **`$failing`** set, so a
+*terminally-failed* non-required allow-listed check blocks. But it never extended the
+**pending** count, which was computed over `$req` (required contexts) ONLY:
+
+    ([$req[] | select((.__typename=="CheckRun" and .status!="COMPLETED") or ...)] | length)
+
+So a non-required allow-listed check still `IN_PROGRESS` (not yet terminal) fell into a blind
+spot: not in `$failing` (not terminal-failed) and not in the pending count (not required) →
+`fail==0 && pending==0` → `GATES_PASSED`. The merge fired the instant the 5 *required*
+checks went green, racing — and beating — the ASAN/Coverage/Bucket build to the finish line.
+GitHub's native auto-merge has the same blind spot (those checks are non-required), so this
+also explains escapes that merged via `--auto`.
+
+### Preventing gate
+`merge-gates.sh` now binds a `$blocking` set = `$req` ∪ (non-required allow-listed
+non-advisory contexts) — the SAME predicate `$failing` already unions — and computes the
+**pending** count over `$blocking` instead of `$req`. An in-flight Sanitizer/Coverage/Bucket
+now counts as pending, so the poller WAITS for it to finish (then `$failing` blocks if it
+fails) instead of waving the merge through mid-build. Two `tests/bats/merge_gates.bats`
+cases lock it: a non-required `Sanitizer (ASAN via MSVC)` `IN_PROGRESS` → `1 pending` → block;
+an advisory non-allow-listed `IN_PROGRESS` → `0 pending` → still passes (prior contract
+preserved). Closes the in-flight half of the #923 allow-list; the terminal-failure half was
+already gated.
+
+### Filed as
+This entry (resolves the owe for #1237; the #1232/#1227/#1220/#1198 owes share this single
+root cause and gate) + the `$blocking`-pending fix in this PR.
