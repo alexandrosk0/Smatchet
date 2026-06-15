@@ -85,17 +85,21 @@
 //
 //   8. Offline Queue panel (DrawUnifiedOfflineQueuesPanel, SmatchetOfflineQueueUi.cpp)
 //      Embedded inline in drawActiveProjectUnsavedStrip (focused pane only), NOT a
-//      standalone window — invoked every frame from the always-drawn host window.
-//      EMPTY path (always covered): host window live ⇒ the panel's total==0
-//      early-return branch ticked under the engine's assert trap (no data needed).
+//      standalone window — invoked every frame from the docked "Smatchet - Active
+//      Project" host window. FIXTURE-GATED (same as case 7): that host window is a
+//      docked NoTitleBar pane that only becomes Active once its dock tab is selected,
+//      which the minimal no-fixture boot never reaches (no tickets, pane never
+//      forwarded) — so the inline panel is unreachable without the fixture. With the
+//      fixture: sync loads tickets, the host pane docks + activates, and the panel's
+//      branches become reachable.
+//      EMPTY path: host window live ⇒ the panel's total==0 early-return branch ticked
+//      under the engine's assert trap.
 //      POPULATED path (opportunistic): enqueue one synthetic create via
 //      AppController::QueueCreateOffline (a pure local-SQLite write — no backend) so
-//      total>0 forces the panel body (header + toolbar + table) to render. The
-//      OfflineQueueService only exists when the local cache is live, which the
-//      minimal UiTestScenario boot does not always provide; QueueCreateOffline
-//      returning 0 keeps the test on the empty-path coverage instead of failing
-//      (it self-upgrades once the harness gains a live cache — see tooling backlog).
-//      The synthetic row is removed via DeletePendingCreates so it never leaks.
+//      total>0 forces the panel body (header + toolbar + table) to render. When
+//      QueueCreateOffline returns 0 (OfflineQueueService not constructed) the test
+//      stays on the empty-path coverage instead of failing. The synthetic row is
+//      removed via DeletePendingCreates so it never leaks.
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
 
@@ -338,14 +342,17 @@ void RegisterPlanDocViewerWindowRenderSmoke(ImGuiTestEngine* engine) {
 // "FPS: ... Frame: ... ms" Text + a BeginTabBar("PerformanceTabs") on every
 // frame, zero backend required.
 //
-// Robust probe: "CPU" — the first BeginTabItem("CPU") inside PerformanceTabs,
-// always active on first open, queryable as an item in the ImGui Test Engine
-// tree (tab items have an ID derived from their label within the tab bar scope).
+// Robust probe: "PerformanceTabs/CPU" — the first BeginTabItem("CPU") inside the
+// BeginTabBar("PerformanceTabs"), always active on first open. A tab item's
+// ImGui ID is seeded inside the tab-bar scope, so the engine ref must be
+// tab-bar-qualified ("<TabBarID>/<label>"), mirroring the passing
+// funcsize_preferences_tabs pilot's "PreferencesTabs/<label>" idiom. A bare
+// "CPU" resolves against the window root, where no such item exists.
 void RegisterPerformanceWindowRenderSmoke(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "DataDependentWindowsSmoke", "PerformanceWindow_RendersAndShowsTabBar");
     t->TestFunc = [](ImGuiTestContext* ctx) {
         RunWindowRenderSmoke(ctx, &UiDrawSession::showPerformance, &UiDrawSession::requestPerformanceFocus,
-                             "Performance", "CPU");
+                             "Performance", "PerformanceTabs/CPU");
     };
 }
 
@@ -561,13 +568,22 @@ void RegisterNewIssueDraftRowRenderSmoke(ImGuiTestEngine* engine) {
 // ============================================================================
 // DrawUnifiedOfflineQueuesPanel (SmatchetOfflineQueueUi.cpp), drawn inline by
 // drawActiveProjectUnsavedStrip (focused pane only) — NOT a standalone window. The
-// panel is invoked every frame from the always-drawn "Smatchet - Active Project"
-// window; it early-returns when the offline queue is empty (total==0).
+// panel is invoked every frame from the docked "Smatchet - Active Project" window;
+// it early-returns when the offline queue is empty (total==0).
 //
-// Two paths, both covered:
+// FIXTURE-GATED setup (mirrors grid_pane_windows + case 7): "Smatchet - Active
+// Project" is the main grid pane, drawn with ImGuiWindowFlags_NoTitleBar and docked
+// (SmatchetActiveProjectGridUi.cpp:455-471). Its Begin() only returns true — making
+// the window Active / WindowIsLive — once its dock tab is the selected one, which
+// the minimal no-fixture boot never reaches (no tickets ⇒ pane never forwarded ⇒
+// SetWindowFocus() at line 469-471 is skipped because Begin() bailed first: a
+// catch-22). So like every sibling that drives this window we gate on the fixture
+// env + run a real backend sync to load tickets before asserting the window live.
+//
+// Two paths, both covered (post-fixture):
 //   a) EMPTY (always): the host window being live proves the panel's empty-guard
 //      branch (FetchOfflineQueueData → total==0 → return false) ticked under the
-//      engine's in-frame assert trap. This is the HARD assertion and needs no data.
+//      engine's in-frame assert trap. This is the HARD assertion.
 //   b) POPULATED (opportunistic): we enqueue one synthetic create via
 //      AppController::QueueCreateOffline (a pure local-SQLite write — no backend) so
 //      total>0 forces the panel BODY (header + toolbar + table) to render. The
@@ -581,11 +597,24 @@ void RegisterOfflineQueuePanelRenderSmoke(ImGuiTestEngine* engine) {
     ImGuiTest* t =
         IM_REGISTER_TEST(engine, "DataDependentWindowsSmoke", "OfflineQueuePanel_RendersInlineInActiveProject");
     t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!FixtureEnvSet()) {
+            ctx->LogInfo("SKIP: SMATCHET_TEST_JIRA_BACKEND_FIXTURE not set — the docked Active Project host "
+                         "window does not become live under the minimal boot (same gate as NewIssueDraftRow / "
+                         "grid_pane_windows); the inline offline-queue panel is unreachable without it");
+            return;
+        }
+
         AppController* app = SmatchetActiveUiTestAppController();
         if (app == nullptr) {
             ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
             return;
         }
+
+        // Load the fixture grid so the host pane docks + activates (mirrors case 7).
+        app->SyncWithBackend();
+        const bool syncDone = YieldUntil(ctx, [&] { return !app->IsStreamingSyncActive(); });
+        IM_CHECK_NO_RET(syncDone);
+        IM_CHECK_NO_RET(!app->GetActiveTickets().empty());
 
         const char* kWindowTitle = "Smatchet - Active Project";
         ctx->SetRef(kWindowTitle);
@@ -596,6 +625,9 @@ void RegisterOfflineQueuePanelRenderSmoke(ImGuiTestEngine* engine) {
         // Empty-path coverage: the host window ticked, so the inline panel's
         // total==0 early-return branch ran without an ImGui assertion.
         IM_CHECK_NO_RET(visible);
+        if (!visible) {
+            return;
+        }
 
         // Populated-path coverage (opportunistic — needs a live local cache).
         IssueDraft draft;
