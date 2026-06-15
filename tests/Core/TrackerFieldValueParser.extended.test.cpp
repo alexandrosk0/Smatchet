@@ -396,7 +396,7 @@ TEST_CASE("ADF text extraction preserves shallow doc output (no regression from 
 // modest — a multi-thousand-deep tree stack-overflows on teardown regardless of
 // our walker. Since the walker's cap is 256, a fixture just above that (kDeepAdfDepth)
 // is enough to prove the cap triggers while keeping the fixture's own ctor/dtor safe.
-static const int kDeepAdfDepth = 400;  // > kMaxAdfRecursionDepth (256), safe for json ctor/dtor
+static const int kDeepAdfDepth = 400; // > kMaxAdfRecursionDepth (256), safe for json ctor/dtor
 static nlohmann::json BuildDeepAdfDoc(int depth) {
     nlohmann::json doc;
     doc["type"] = "doc";
@@ -465,9 +465,28 @@ TEST_CASE("NormalizeTrackerFieldValue — deep non-ADF object hits a bounded saf
         cur = &(*cur)["nested"];
     }
     (*cur)["leaf"] = "x";
-    const std::string out = NormalizeTrackerFieldValue(deep);  // would SIGSEGV pre-fix
-    CHECK(out.size() < 10000);                                 // bounded marker, not a 400-level dump
+    const std::string out = NormalizeTrackerFieldValue(deep); // would SIGSEGV pre-fix
+    CHECK(out.size() < 10000);                                // bounded marker, not a 400-level dump
     CHECK(out.find("depth cap") != std::string::npos);
+}
+
+TEST_CASE("FormatDateIfIso length-guards the fixed-index ISO sniff (no OOB read) [high-risk]") {
+    // Security regression guard (Pillar 3 — Never crash): `value` is server-supplied. The
+    // function indexes value[4] and value[7] to sniff the ISO `-` separators; without the
+    // size() >= 10 guard a field shorter than 8 chars is an out-of-bounds read (caught by
+    // UBSan/ASan). A value below the length floor must be returned verbatim, never indexed.
+    // The 7-char case is THE regression: value[7] would over-read by one past the end.
+    CHECK(FormatDateIfIso(std::string()) == "");      // 0 chars — empty
+    CHECK(FormatDateIfIso("2024") == "2024");         // 4 chars — value[7] would over-read
+    CHECK(FormatDateIfIso("2024-01") == "2024-01");   // 7 chars — value[7] is one past the end
+    CHECK(FormatDateIfIso("2024-1-2") == "2024-1-2"); // 8 chars — in-bounds but not ISO shape (no '-' at 7)
+
+    // A well-formed ISO date / datetime is compacted to the YYYY-MM-DD prefix.
+    CHECK(FormatDateIfIso("2024-01-15") == "2024-01-15");               // 10 chars — exact ISO date
+    CHECK(FormatDateIfIso("2024-01-15T12:34:56.000Z") == "2024-01-15"); // datetime -> date prefix
+
+    // A 10-char string that is NOT ISO-shaped (wrong separator positions) is returned as-is.
+    CHECK(FormatDateIfIso("abcdefghij") == "abcdefghij");
 }
 
 TEST_CASE("ParseComments returns empty for non-array or empty input") {
