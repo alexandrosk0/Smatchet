@@ -1,0 +1,244 @@
+#!/usr/bin/env bats
+# tests/bats/capture_intent.bats
+# ----------------------------------------------------------------------------
+# Bats tests for the prompt-intent capture pipeline:
+#   * agents/scripts/core/redact-intent.py          — the security redactor
+#   * docs/harness/claude-code/hooks/capture-intent.sh — the UserPromptSubmit hook
+#
+# This is a SECURITY boundary (a leaked secret/credential or home-dir username
+# ends up in a public PR body), so the redactor cases are the load-bearing ones:
+# every high-confidence secret class is stripped, home-dir usernames collapse to
+# `[user]`, emails are deliberately preserved, output is always a single line.
+# The hook cases assert the two hard invariants: it writes a REDACTED line to a
+# branch-keyed capture file, and it prints NOTHING to stdout (UserPromptSubmit
+# stdout is injected into the model's context). Fail-safe: a missing/erroring
+# redactor writes nothing (never the raw prompt) and still exits 0.
+#
+# Drives the redactor directly over stdin (deterministic, no env seams needed)
+# and the hook with a fresh isolated CLAUDE_PROJECT_DIR per test (the real
+# redactor copied in, so the capture file lands in a temp tree, not the repo).
+#
+# Requires: bash, python3 or python (on PATH), bats.
+# ----------------------------------------------------------------------------
+
+setup() {
+    REPO_ROOT="$(git rev-parse --show-toplevel)"
+    export REPO_ROOT
+    REDACTOR_SRC="$REPO_ROOT/agents/scripts/core/redact-intent.py"
+    export REDACTOR_SRC
+    HOOK="$REPO_ROOT/docs/harness/claude-code/hooks/capture-intent.sh"
+    export HOOK
+
+    # Resolve a python interpreter by PROBE-EXECUTING each candidate — a bare
+    # `command -v python3` on Windows finds the Microsoft Store alias stub that
+    # errors on run. (Mirrors the resolver in capture-intent.sh.)
+    PY=""
+    for _cand in python3 python py; do
+        if command -v "$_cand" >/dev/null 2>&1 && "$_cand" -c "import sys" >/dev/null 2>&1; then
+            PY="$_cand"; break
+        fi
+    done
+    export PY
+    [ -n "$PY" ] || skip "no working python interpreter on PATH"
+
+    # Isolated project dir with the real redactor copied in. The hook's capture
+    # file lands here (not in the real repo's .session-intent/).
+    PROJ_DIR="$(mktemp -d)"
+    export PROJ_DIR
+    mkdir -p "$PROJ_DIR/agents/scripts/core"
+    cp "$REDACTOR_SRC" "$PROJ_DIR/agents/scripts/core/redact-intent.py"
+    export CLAUDE_PROJECT_DIR="$PROJ_DIR"
+    export CAPTURE_DIR="$PROJ_DIR/.session-intent"
+}
+
+teardown() {
+    [ -n "${PROJ_DIR:-}" ] && rm -rf "$PROJ_DIR"
+}
+
+# Run the redactor over a literal prompt string. Output captured in $output.
+redact() { run bash -c 'printf "%s" "$1" | "$PY" "$REDACTOR_SRC"' _ "$1"; }
+
+# Feed an event-JSON (arg $1) to the hook on stdin. A here-string (not a pipe)
+# so `run` executes in THIS shell and its $status/$output propagate to the test
+# — `printf ... | run_hook` would run `run` in a subshell and lose both.
+run_hook() { run bash "$HOOK" <<<"$1"; }
+
+# Concatenate every capture-file line written this test (empty if none).
+capture_body() { cat "$CAPTURE_DIR"/*.log 2>/dev/null || true; }
+
+# ============================================================================
+# redact-intent.py — secret classes stripped
+# ============================================================================
+
+@test "selftest suite passes" {
+    run "$PY" "$REDACTOR_SRC" --selftest
+    [ "$status" -eq 0 ]
+}
+
+@test "GitHub token (ghp_) stripped" {
+    redact "deploy token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 now"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"ghp_ABCDEFGHIJKLMNOPQRST"* ]]
+    [[ "$output" == *"[REDACTED]"* ]]
+}
+
+@test "fine-grained github_pat_ stripped" {
+    redact "github_pat_11ABCDEFG0abcdefghijklmnopqrstuvwxyz0123456789"
+    [[ "$output" != *"github_pat_11ABCDEFG0"* ]]
+    [[ "$output" == *"[REDACTED-TOKEN]"* ]]
+}
+
+@test "JWT stripped" {
+    redact "auth eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.dBjftJeZ4CVP done"
+    [[ "$output" != *"eyJhbGci"* ]]
+    [[ "$output" == *"[REDACTED-JWT]"* ]]
+}
+
+@test "AWS access key stripped" {
+    redact "creds AKIAIOSFODNN7EXAMPLE used"
+    [[ "$output" != *"AKIAIOSFODNN7EXAMPLE"* ]]
+    [[ "$output" == *"[REDACTED-TOKEN]"* ]]
+}
+
+@test "Slack token stripped" {
+    redact "slack xoxb-1234567890-abcdefghijkl here"
+    [[ "$output" != *"xoxb-1234567890"* ]]
+    [[ "$output" == *"[REDACTED-TOKEN]"* ]]
+}
+
+@test "Google API key stripped" {
+    # Real shape: AIza + exactly 35 chars (39 total).
+    redact "key AIzaabcdefghijklmnopqrstuvwxyz012345678 end"
+    [[ "$output" != *"AIzaabcdefghij"* ]]
+    [[ "$output" == *"[REDACTED-TOKEN]"* ]]
+}
+
+@test "Bearer header value stripped, keyword kept" {
+    redact "Authorization: Bearer abcdef0123456789xyz"
+    [[ "$output" != *"abcdef0123456789"* ]]
+    [[ "$output" == *"Bearer [REDACTED]"* ]]
+}
+
+@test "key=value secret pair value stripped, key kept" {
+    redact "set password: hunter2supersecret please"
+    [[ "$output" != *"hunter2supersecret"* ]]
+    [[ "$output" == *"password"* ]]
+    [[ "$output" == *"[REDACTED]"* ]]
+}
+
+@test "PRIVATE KEY block stripped" {
+    redact "-----BEGIN RSA PRIVATE KEY-----
+MIIEowIBAAKCAQEAabcdef
+-----END RSA PRIVATE KEY-----"
+    [[ "$output" != *"MIIEowIBAAKCAQEA"* ]]
+    [[ "$output" == *"[REDACTED-PRIVATE-KEY]"* ]]
+}
+
+@test "long hex blob (>=32) stripped" {
+    redact "blob deadbeefdeadbeefdeadbeefdeadbeefdeadbeef tail"
+    [[ "$output" != *"deadbeefdeadbeefdeadbeef"* ]]
+    [[ "$output" == *"[REDACTED-HEX]"* ]]
+}
+
+# ============================================================================
+# redact-intent.py — home-dir collapse, email preserved, single-line
+# ============================================================================
+
+@test "Windows home-dir username collapsed to [user]" {
+    redact "open C:\\Users\\alexk\\.aws\\credentials file"
+    [[ "$output" != *"alexk"* ]]
+    [[ "$output" == *"[user]"* ]]
+}
+
+@test "POSIX /home username collapsed to [user]" {
+    redact "read /home/alexk/.ssh/id_rsa key"
+    [[ "$output" != *"/home/alexk"* ]]
+    [[ "$output" == *"[user]"* ]]
+}
+
+@test "macOS /Users username collapsed to [user]" {
+    redact "stat /Users/alexk/Library/foo path"
+    [[ "$output" != *"/Users/alexk"* ]]
+    [[ "$output" == *"[user]"* ]]
+}
+
+@test "email is NOT redacted (explicit scope decision)" {
+    redact "ping alexkonstantonis@gmail.com about it"
+    [[ "$output" == *"alexkonstantonis@gmail.com"* ]]
+    [[ "$output" != *"[REDACTED"* ]]
+}
+
+@test "multi-line prompt collapses to a single line" {
+    redact "line one
+line two	tabbed"
+    [[ "$output" == "line one line two tabbed" ]]
+    [[ "$output" != *$'\n'* ]]
+}
+
+@test "empty input yields empty output" {
+    redact ""
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+# ============================================================================
+# capture-intent.sh — end-to-end hook behaviour + invariants
+# ============================================================================
+
+@test "hook writes a redacted bullet line to the capture file" {
+    run_hook '{"prompt":"fix the login bug"}'
+    [ "$status" -eq 0 ]
+    [[ "$(capture_body)" == *"- fix the login bug"* ]]
+}
+
+@test "hook prints NOTHING to stdout (stdout is injected into model context)" {
+    run_hook '{"prompt":"some ordinary prompt"}'
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "hook redacts a secret before writing (end-to-end)" {
+    run_hook '{"prompt":"deploy with token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"}'
+    [ "$status" -eq 0 ]
+    [[ "$(capture_body)" != *"ghp_ABCDEFGHIJKLMNOPQRST"* ]]
+    [[ "$(capture_body)" == *"[REDACTED]"* ]]
+}
+
+@test "hook redacts a home-dir username before writing" {
+    # JSON \\ parses to a single backslash → redactor sees C:\Users\alexk.
+    run_hook '{"prompt":"open C:\\Users\\alexk\\notes.txt"}'
+    [ "$status" -eq 0 ]
+    [[ "$(capture_body)" != *"alexk"* ]]
+    [[ "$(capture_body)" == *"[user]"* ]]
+}
+
+@test "empty prompt writes nothing and exits 0" {
+    run_hook '{"prompt":""}'
+    [ "$status" -eq 0 ]
+    [ -z "$(capture_body)" ]
+}
+
+@test "non-JSON / no .prompt field writes nothing and exits 0" {
+    run_hook 'not json at all'
+    [ "$status" -eq 0 ]
+    [ -z "$(capture_body)" ]
+}
+
+@test "fail-safe: missing redactor writes nothing (never the raw prompt), exits 0" {
+    rm -f "$PROJ_DIR/agents/scripts/core/redact-intent.py"
+    run_hook '{"prompt":"secret token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"}'
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [[ "$(capture_body)" != *"ghp_"* ]]
+    [ -z "$(capture_body)" ]
+}
+
+@test "fail-safe: an erroring redactor (no output) writes nothing, exits 0" {
+    # Replace the redactor with one that emits nothing and exits non-zero.
+    printf '#!/usr/bin/env python3\nimport sys; sys.exit(1)\n' \
+        > "$PROJ_DIR/agents/scripts/core/redact-intent.py"
+    run_hook '{"prompt":"secret token=ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"}'
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    [[ "$(capture_body)" != *"ghp_"* ]]
+}
