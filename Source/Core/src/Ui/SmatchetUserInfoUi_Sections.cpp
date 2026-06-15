@@ -10,7 +10,9 @@
 #include "Tracker/ProjectResolver.h"
 #include "Ui/P4ClPreview.h"
 #include "Ui/P4vLaunch.h"
+#include "Ui/SmatchetIconButtons.h"
 
+#include "IconsFontAwesome6.h"
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
@@ -140,7 +142,8 @@ void SmatchetUserInfoUi::drawActivitySection(AppController& app, UiDrawSession& 
         return;
     }
     ImGui::BeginDisabled(activityLoading_);
-    if (ImGui::Button(activityLoaded_ ? "Reload" : "Load")) {
+    if (SmatchetIconButton(ICON_FA_ARROWS_ROTATE, activityLoaded_ ? "Reload" : "Load",
+                           activityLoaded_ ? "Reload activity" : "Load activity")) {
         launchActivityFetch(app);
     }
     ImGui::EndDisabled();

@@ -9,7 +9,9 @@
 #include "StringUtil.h"
 #include "TrackerFieldSchema.h"
 #include "Logger.h"
+#include "Ui/SmatchetIconButtons.h"
 
+#include "IconsFontAwesome6.h"
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "SmatchetLocalizedImGui.h"
@@ -311,11 +313,9 @@ void SmatchetUI::drawViewsEditorHeader(ViewsDashboardDrawCtx& ctx) {
         ImGui::EndDisabled();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Apply & Sync")) {
+    if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Apply & Sync",
+                                  "Apply changes and sync issues (Ctrl+Enter).")) {
         ctx.applyAndSync();
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("Apply changes and sync issues (Ctrl+Enter).");
     }
     ImGui::SameLine();
     const bool disableDelete = (store.Views.size() <= 1);
