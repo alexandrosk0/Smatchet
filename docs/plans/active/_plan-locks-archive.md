@@ -5,11 +5,11 @@
 > This file is no longer the live coordination surface. New plan-lock claims
 > live in `refs/locks/<slug>` per the [`git-ref-plan-locks`](./git-ref-plan-locks.md) design.
 >
-> - **Live coordination state**: `bash scripts/dev/locks-show.sh` (canonical) or
+> - **Live coordination state**: `bash agents/scripts/core/locks-show.sh` (canonical) or
 >   [`_plan-locks.generated.md`](./_plan-locks.generated.md) (snapshot, may lag up to 30 min).
-> - **Claim a new lock**: `bash scripts/dev/lock-claim.sh <slug> <write-set-file>`.
-> - **Update scope mid-slice**: `bash scripts/dev/lock-claim-update.sh <slug> <write-set-file>`.
-> - **Release a lock (manual)**: `bash scripts/dev/lock-release.sh <slug>` — usually auto-handled by
+> - **Claim a new lock**: `bash agents/scripts/core/lock-claim.sh <slug> <write-set-file>`.
+> - **Update scope mid-slice**: `bash agents/scripts/core/lock-claim-update.sh <slug> <write-set-file>`.
+> - **Release a lock (manual)**: `bash agents/scripts/core/lock-release.sh <slug>` — usually auto-handled by
 >   [`.github/workflows/lock-cleanup.yml`](../../.github/workflows/lock-cleanup.yml) on PR-merge.
 > - **Plan + rationale**: [`docs/plans/shipped/git-ref-plan-locks.md`](./git-ref-plan-locks.md).
 >
