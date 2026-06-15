@@ -9,6 +9,7 @@
 #include "Commands/PaneCommands.h"
 #include "Commands/ViewCommands.h"
 #include "ConfigManager.h"
+#include "ConfigSaveWorker.h"
 #include "TrackerGridFieldDisplay.h"
 #include "SmatchetGridUiSupport.h"
 #include "SmatchetImageTextureCache.h"
@@ -329,6 +330,10 @@ void SmatchetUI::Draw(AppController& app) {
     DrainAppUpdateCheck(d);
     drawSecondaryWindows(app, d);
     drawDockDebugOverlay(d);
+    // Shared "Set shortcut..." quick-bind modal. Drawn late (top level, after the toolbar
+    // + palette have submitted their context menus this frame) so a request latched this
+    // frame opens the modal this frame, and the modal stacks above all docked windows.
+    drawQuickBindPopup(app, d);
     drawEndOfFramePersistence(d);
 }
 
@@ -538,6 +543,8 @@ void SmatchetUI::drawPreWindowOverlays(AppController& app, UiDrawSession& d) {
                 commandPalette_.SetFilterText(g_ui.requestCommandPaletteFilter.c_str());
             }
         }
+        // Borrow the live keybinding table so palette rows surface their bound combo.
+        commandPalette_.SetKeybindings(&d.cfg.Keybindings.Bindings);
         commandPalette_.Draw(app);
     }
 
@@ -818,6 +825,37 @@ void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
         if (!r.Ok) {
             LOG_WARN("Keybindings: command \"%s\" failed: %s", pk.commandId.c_str(), r.Error.Message.c_str());
         }
+    }
+}
+
+// Drives the shared "Set shortcut…" quick-bind modal for the toolbar + command-palette
+// right-click entry points. Each owner (toolbar_, commandPalette_) latches a one-shot
+// request id we poll-and-clear here; a non-empty id opens the modal seeded with the
+// command's registry Summary as the human label. A committed rebind marks the dispatch
+// cache dirty + arms the debounced ConfigManager::Save via the config-save worker.
+// Polled late in Draw (after both owners drew this frame) so a same-frame request opens
+// same-frame. This TU's `#define ImGui` does not reach the popup — it draws via the
+// shared smatchet::ui widget, which uses raw ImGui.
+void SmatchetUI::drawQuickBindPopup(AppController& app, UiDrawSession& d) {
+    // argsJson defaults to "{}"; the toolbar overwrites it with the clicked button's real args
+    // so a parametrized button binds its (commandId, args) identity, not the default variant.
+    // Command-palette rows are bare commands, so that path keeps the "{}" default.
+    std::string argsJson = "{}";
+    std::string cmdId = toolbar_.TakeQuickBindRequest(argsJson);
+    if (cmdId.empty()) {
+        cmdId = commandPalette_.TakeQuickBindRequest();
+    }
+    if (!cmdId.empty()) {
+        std::string label = cmdId;
+        const smatchet::cmd::Command* c = app.Commands().FindLocked(cmdId);
+        if (c != nullptr && !c->Summary.empty()) {
+            label = c->Summary;
+        }
+        quickBind_.Open(cmdId, label, argsJson);
+    }
+    if (quickBind_.Draw(d.cfg)) {
+        MarkKeybindingsDirty();
+        smatchet::config_save::EnqueueTrackerConfig(d.cfg);
     }
 }
 

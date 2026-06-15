@@ -60,7 +60,9 @@
       "Shell lint (shellcheck)",
       "Doc anchors + agent contract",
       "Perf PR-fast (windows-2022)",
-      "Coverage (windows-2022 + OpenCppCoverage)"
+      "Coverage (windows-2022 + OpenCppCoverage)",
+      "Sanitizer (ASAN via MSVC)",
+      "Sanitizer (UBSan via Clang)"
     ],
     "required_review_count": 0,
     "enforce_admins": false,
@@ -74,7 +76,9 @@
       "Shell lint (shellcheck)",
       "Doc anchors + agent contract",
       "Perf PR-fast (windows-2022)",
-      "Coverage (windows-2022 + OpenCppCoverage)"
+      "Coverage (windows-2022 + OpenCppCoverage)",
+      "Sanitizer (ASAN via MSVC)",
+      "Sanitizer (UBSan via Clang)"
     ],
     "path_filters": {
       "code_globs": ["Source/**"],

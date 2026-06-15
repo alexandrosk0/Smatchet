@@ -14,6 +14,7 @@
 #include "imgui.h"
 
 class AppController;
+struct Keybinding; // global-namespace, from Config/KeybindingsConfig.h (borrowed by pointer)
 
 namespace smatchet {
 namespace cmd {
@@ -34,8 +35,23 @@ class CommandPaletteUi {
     /// renders the BeginPopupModal, and dispatches the selected command.
     void Draw(AppController& app);
 
+    /// Borrow the active keybinding table for the frame so rows can surface their bound
+    /// combo. SmatchetUI re-points this each Draw from d.cfg.Keybindings.Bindings; the
+    /// pointer is not owned and must outlive the next Draw. Null = no combo surfacing.
+    void SetKeybindings(const std::vector<Keybinding>* binds) { keybindings_ = binds; }
+
+    /// Poll-and-clear the latched "Set shortcut…" request: the command id whose row
+    /// right-click menu fired the item since the last call (empty = none). SmatchetUI
+    /// polls this each frame to drive the shared quick-bind modal.
+    std::string TakeQuickBindRequest();
+
   private:
     bool open_ = false;
+
+    /// Borrowed (non-owning) keybinding table for combo surfacing; re-pointed each frame.
+    const std::vector<Keybinding>* keybindings_ = nullptr;
+    /// One-shot latch set by a row's "Set shortcut…" item; drained by TakeQuickBindRequest().
+    std::string requestQuickBindCommandId_;
 
     /// Text filter buffer.
     char filterBuf_[256] = {};

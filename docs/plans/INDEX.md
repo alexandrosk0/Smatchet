@@ -139,6 +139,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`pane-backend-picker`](shipped/pane-backend-picker.md) | 2026-06-11 | Plan — Per-pane backend picker (choose which tracker a new grid pane loads) |
 | [`build-infra-followups`](shipped/build-infra-followups.md) | 2026-06-12 | Plan — build-infra followups (6 backlog items) |
 | [`mobile-ci-smoke-gate`](shipped/mobile-ci-smoke-gate.md) | 2026-06-13 | Plan — Mobile CI smoke gate for the #1122 texture-lifetime crash class |
+| [`keyboard-shortcuts-rebindable`](shipped/keyboard-shortcuts-rebindable.md) | 2026-06-14 | Plan — Rebindable keyboard shortcuts (unified, all shortcuts listed + changeable) |
 | [`pr-intent-capture`](shipped/pr-intent-capture.md) | 2026-06-14 | Plan — PR intent capture (prompt → PR `## Intent`, redacted) |
 <!-- END auto-plan-index -->
 

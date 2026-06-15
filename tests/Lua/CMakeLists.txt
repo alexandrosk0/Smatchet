@@ -76,8 +76,8 @@ target_include_directories(SmatchetLuaTests PRIVATE
     "${CMAKE_SOURCE_DIR}/Source/Core/src"   # for ConfigManager_Internal.h
     # Subsystem subdirs from source-core-dir-reorg. All 5 are needed (not just
     # Config/Persistence): moved headers cross-include each other bare — e.g.
-    # ConfigManager.h -> SmatchetThemeIds.h (Ui), ILuaBindingHost.h ->
-    # TrackerFieldSchema.h (Tracker) — so the full subdir set must be on the path.
+    # ILuaBindingHost.h -> TrackerFieldSchema.h (Tracker) — so the full subdir
+    # set must be on the path.
     "${CMAKE_SOURCE_DIR}/Source/Core/include/Tracker"
     "${CMAKE_SOURCE_DIR}/Source/Core/include/Sync"
     "${CMAKE_SOURCE_DIR}/Source/Core/include/Persistence"

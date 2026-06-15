@@ -320,6 +320,9 @@ add_executable(SmatchetTests
     Core/TicketFieldEditorLongTextPure.test.cpp
     Core/TicketFieldEditorOptionFilterPure.test.cpp
     Core/TicketFieldEditorCommitPolicyPure.test.cpp
+    # Security finding #13 — automation count-hook abort policy (shutdown + runaway budget).
+    # Header-only pure predicate; no extra production .cpp to link.
+    Core/LuaAutomationHookPolicyPure.test.cpp
     Core/TicketFieldEditorDurationPopupPure.test.cpp
     Core/IsDescriptionLikeFieldId.test.cpp
     Core/TrackerFieldPayloadPure.test.cpp

@@ -147,6 +147,7 @@ enum class PreferencesActiveTab : std::uint8_t {
     Appearance,
     Templates,
     Annotate,
+    Keybindings,
 };
 
 struct CellWriteFeedback {

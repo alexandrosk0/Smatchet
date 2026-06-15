@@ -66,7 +66,11 @@ SCAN_N="${POSTMORTEM_SCAN_N:-20}"
 # merge-gates.sh (kept byte-identical so the two stay in lock-step; #923 fix).
 # A non-required failing context blocks (and therefore owes a postmortem when it
 # merged red) only if its name matches this regex AND is not "advisory".
-ALLOW_LIST_RE='Coverage|Sanitizer|Bucket-|Perf PR-fast|Android security gate'
+# Bucket-* REMOVED 2026-06-15 in lock-step with merge-gates.sh: the Mesa-GL
+# bucket-C/E lanes cannot boot the CI exe (infra.md `bucket-mesa-exe-boot` P1),
+# so a red Bucket-* no longer blocks and merging past it owes NO postmortem.
+# Re-add when the boot is fixed and the bucket launch-smoke graduates to hard-fail.
+ALLOW_LIST_RE='Coverage|Sanitizer|Perf PR-fast|Android security gate'
 
 # gh is required; without it, degrade to a quiet notice (advisory tool).
 if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then

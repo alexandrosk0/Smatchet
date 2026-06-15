@@ -66,15 +66,19 @@ JSON
     [[ "$output" == *"PASS — safe-admin-merge --selftest (6/6)"* ]]
 }
 
-@test "REFUSES on a RED allow-listed Bucket check (exit 1, no merge)" {
+@test "a RED Bucket-C does NOT block (Mesa-GL advisory-flip 2026-06-15, exit 0)" {
+    # `Bucket-` was dropped from the allow-list 2026-06-15 (infra.md
+    # `bucket-mesa-exe-boot` P1): the Mesa-software-GL bucket lanes cannot boot
+    # the CI exe, so a RED Bucket-C is now a non-allow-listed advisory red and
+    # must NOT block the admin-merge. Required check kept green so Bucket-C is
+    # the sole red. Re-arm as a REFUSES test when the lane graduates to hard-fail.
     export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","labels":[],"statusCheckRollup":[
       {"__typename":"CheckRun","name":"Bucket-C (ImGui Test Engine)","status":"COMPLETED","conclusion":"FAILURE"},
-      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"}]}'
+      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"},
+      {"__typename":"StatusContext","context":"Test-delta gate","state":"SUCCESS"}]}'
     run bash "$SCRIPT" 1180
-    [ "$status" -eq 1 ]
-    [[ "$output" == *"REFUSED"* ]]
-    [[ "$output" == *"Bucket-C"* ]]
-    [ ! -f "$MERGE_SENTINEL" ]
+    [ "$status" -eq 0 ]
+    [ -f "$MERGE_SENTINEL" ]
 }
 
 @test "REFUSES on a RED required StatusContext (exit 1, no merge)" {
@@ -187,7 +191,10 @@ JSON
 
 @test "the allow-list is single-sourced from merge-gates.sh (not duplicated)" {
     # The script must NOT carry its own copy of the allow-list regex literal.
-    run grep -c 'Coverage|Sanitizer|Bucket-' "$SCRIPT"
+    # Pattern narrowed to the live `Coverage|Sanitizer` prefix 2026-06-15 when
+    # `Bucket-` was dropped from the canonical regex — the absence-check must
+    # match a substring that still exists in the source-of-truth to stay honest.
+    run grep -c 'Coverage|Sanitizer' "$SCRIPT"
     [ "$output" -eq 0 ]
     # And merge-gates.sh must export the shared constant the script reads.
     run grep -c 'MERGE_GATES_BLOCK_ALLOWLIST_RE=' "$REPO_ROOT/agents/scripts/core/merge-gates.sh"

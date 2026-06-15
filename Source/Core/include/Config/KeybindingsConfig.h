@@ -3,7 +3,7 @@
 
 // Data model for the rebindable global keyboard-shortcut table. Each binding maps
 // a hotkey spec ("Ctrl+Shift+F") to a command id + JSON args, dispatched through the
-// unified command registry. See docs/plans/active/keyboard-shortcuts-rebindable.md.
+// unified command registry. See docs/plans/shipped/keyboard-shortcuts-rebindable.md.
 // Header-cost discipline (mirrors ConfigManager.h / ToolbarConfig.h): this header
 // pulls only <nlohmann/json_fwd.hpp>. Command arguments are stored as a JSON *string*
 // (ArgsJson), parsed at dispatch, so no TU including this header pays the full
@@ -35,8 +35,33 @@ struct KeybindingsConfig {
         hardcoded shortcuts). */
     static KeybindingsConfig Defaults();
 
+    /** Index of the first binding for (commandId, argsJson), or -1 if none. The
+        (commandId, argsJson) pair is the action key — the same command with
+        different args (e.g. sidebar toggle vs show) is a distinct binding. Pure;
+        no ImGui dependency, so the editor + the toolbar/palette quick-bind both
+        share it and it is bucket-A testable. */
+    int FindBindingIndex(const std::string& commandId, const std::string& argsJson) const;
+
+    /** Upsert the hotkey for (commandId, argsJson): mutate the existing binding if
+        present (re-enabling it), else append a fresh one. Returns the affected
+        index. An empty hotkey is allowed (an "unbound but listed" row). */
+    int SetBindingHotkey(const std::string& commandId, const std::string& argsJson,
+                         const std::string& hotkey);
+
+    /** Remove the first binding for (commandId, argsJson). Returns true if one was
+        erased. */
+    bool RemoveBinding(const std::string& commandId, const std::string& argsJson);
+
     friend void to_json(nlohmann::json& j, const KeybindingsConfig& c);
     friend void from_json(const nlohmann::json& j, KeybindingsConfig& c);
 };
+
+/** Display hotkey to surface for a command id on menus / tooltips / palette rows:
+    the first enabled, non-empty Hotkey bound to commandId, preferring the
+    default-args ("{}") binding, else any. Empty string when unbound. Pure (no
+    ImGui) so the palette rows, toolbar tooltips, and menu shortcut hints all share
+    one lookup (DRY / Pillar 5) and it is bucket-A testable. */
+std::string BoundHotkeyDisplay(const std::vector<Keybinding>& bindings,
+                               const std::string& commandId);
 
 #endif // SMATCHET_CONFIG_KEYBINDINGS_CONFIG_H

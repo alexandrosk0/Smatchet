@@ -22,6 +22,7 @@
 #include "Commands/Scenarios/IScenario.h"
 #include "SmatchetDefaults.h"
 #include "Ui/SmatchetImGuiTextureGuardRuntime.h"
+#include "Ui/SmatchetTooltipWheelRouter.h"
 #include "SmatchetImGuiFonts.h"
 #include "SmatchetUI.h"
 #include "SmatchetUiSession.h"
@@ -360,7 +361,7 @@ bool ParseStandaloneCli(int argc, char** argv, ConfigManager::CliOverrides& cli)
             try {
                 cli.HasMcpPort = true;
                 cli.McpPort = std::stoi(argv[++i]);
-            } catch (...) {
+            } catch (...) { // catch-all-ok: invalid CLI MCP port leaves the configured default.
             }
             continue;
         }
@@ -442,7 +443,7 @@ bool InitAppAndPlugins(BootstrapContext& ctx, const TrackerConfig& cfg, const bo
         return true;
     } catch (const std::exception& ex) {
         err = ex.what();
-    } catch (...) {
+    } catch (...) { // catch-all-ok: boot failure is returned to caller as err.
         err = "unknown exception during AppController boot";
     }
     return false;
@@ -559,6 +560,7 @@ void RunRenderLoop(BootstrapContext& ctx, const std::function<bool()>& shouldSto
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
+        smatchet::ui::RouteWheelToScrollableTooltipBeforeNewFrame();
         ImGui::NewFrame();
         ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_None);
 

@@ -75,7 +75,11 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}" 2>/dev/null || true
+          # NO --depth: a shallow base-ref fetch re-shallows develop after the
+          # fetch-depth:0 checkout and breaks merge-base for the three-dot diff
+          # below (#1227(b)). Masked here (`2>/dev/null || true` + fail-safe
+          # perf=true default) but kept correct so the diff scans the true range.
+          git fetch --no-tags origin "${{ github.base_ref }}" 2>/dev/null || true
           files=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD" 2>/dev/null || true)
           echo "Changed files:"; printf '  %s\n' $files
           # Default perf=true (fail-safe): only flip to false when we have a

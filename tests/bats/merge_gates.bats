@@ -252,6 +252,25 @@ set_fixture() {
     rm -f "$f"
 }
 
+@test "non-required Bucket-E FAILURE does NOT block (Mesa-GL advisory-flip 2026-06-15)" {
+    # `Bucket-` was DROPPED from the meant-to-block allow-list 2026-06-15: the
+    # Mesa-software-GL bucket-C/E lanes cannot boot the CI exe (infra.md
+    # `bucket-mesa-exe-boot` P1), so they are ~100% red regardless of code
+    # correctness and only jam the poller. A red bucket-C/E must therefore NOT
+    # block (it is now a non-allow-listed advisory lane). Required check kept
+    # green so the bucket failure is the sole non-required red. Re-arm this as a
+    # BLOCKS test (add `Bucket-|` back to the regex) when the boot graduates.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS","isRequired":true},{"__typename":"CheckRun","name":"Bucket-E UI tests (Mesa headless GL)","status":"COMPLETED","conclusion":"FAILURE","isRequired":false}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    rm -f "$f"
+}
+
 @test "CI pending IN_PROGRESS → return 1" {
     set_fixture "$FIXTURES_DIR/merge_gates_ci_pending.json"
     run poll_merge_gates org repo 1
