@@ -17,9 +17,9 @@
 #include <unordered_set>
 #include <vector>
 
-#include "AppController.h"     // Needed for TrackerIssueFetchPack + ViewsStore + TrackerConfig.
-                               // (Also the deferred transitive-SQLite conduit per ADR-0020 — debt.md.)
-#include "CachedTicketTypes.h" // For CachedTicket inside StreamingSyncState (SQLite-free; ADR-0020).
+#include "Sync/SyncTypes.h" // For TrackerIssueFetchPack (relocated out of AppController.h; core-include-dag Phase 3).
+#include "Config/ConfigManager.h" // For TrackerConfig + ViewsStore (formerly via AppController.h).
+#include "CachedTicketTypes.h"    // For CachedTicket inside StreamingSyncState (SQLite-free; ADR-0020).
 
 class ITicketSyncDeps;
 

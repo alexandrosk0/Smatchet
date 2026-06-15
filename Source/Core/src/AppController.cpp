@@ -1651,6 +1651,13 @@ bool AppController::IsOnUiThread() const {
     return std::this_thread::get_id() == uiThreadId_;
 }
 
+void AppController::PostToMainThread(std::function<void()> fn) {
+    // IMainThreadPoster — delegate to the concrete dispatcher. Lets the Commands/
+    // helper templates marshal onto the UI thread through the interface without
+    // including AppController.h (core-include-dag Phase 2).
+    mainThreadDispatcher.PostToMainThread(std::move(fn));
+}
+
 void AppController::Initialize(const std::string& dbPath, const std::string& backendType) {
     // Thin bootstrap sequencer (decompose-top-20-monoliths). Each phase runs in
     // strict order; the ordering, error handling, and early-returns are identical

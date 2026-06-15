@@ -24,7 +24,7 @@
 // signal-then-abandon semantics deterministically (see report's deferred-automation
 // note for the full-window drive).
 
-#include "Ui/CancelToken.h"
+#include "CancelToken.h"
 
 #include "doctest/doctest.h"
 

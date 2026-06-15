@@ -4,7 +4,7 @@
 #include "ConfigManager.h"
 #include "ITrackerActivity.h"
 #include "TrackerFieldSchema.h"
-#include "Ui/CancelToken.h"
+#include "CancelToken.h"
 #include "Vcs/VcsSubmission.h"
 
 #include <future>

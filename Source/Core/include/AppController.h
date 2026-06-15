@@ -41,10 +41,11 @@ struct McpToolDefinition;
 #include "LocalCacheManager.h"
 #include "ITrackerBackend.h"
 #include "MainThreadDispatcher.h"
+#include "Commands/IMainThreadPoster.h"
 #include "SmatchetMergeWatchNotifyServer.h"
 #include "IssueDraft.h"
 #include "IssueCreatePipeline.h"
-#include "Ui/CancelToken.h"
+#include "CancelToken.h"
 // JiraClient.h was transitively supplying TrackerConfig and the tracker
 // role-interface types (connectivity probes, fetch summaries, and others) used by
 // AppController.h and its ~105 includers. Include their real homes directly here:
@@ -73,21 +74,14 @@ class PluginHost;
 #include "AiAssistantController.h"
 #endif
 
-/** Single consolidated tracker degraded/offline banner for main windows (replaces stacked warnings). */
-struct TrackerConnectivityBannerForUi {
-    enum class Level { None, Warning, Error };
-    Level Kind = Level::None;
-    std::string Message;
-};
-
-/** Raw tracker issue fetch result; apply on the UI thread via AppController::ApplyIssueFetchPack. */
-struct TrackerIssueFetchPack {
-    std::vector<CachedTicket> Tickets;
-    bool FullSyncCompleted = false;
-    std::string FetchError;
-    /// Soft caveat (e.g. pagination cap). See TrackerIssueFetchSummary::Warning.
-    std::string Warning;
-};
+// TrackerConnectivityBannerForUi + TrackerIssueFetchPack moved to the leaf header
+// Sync/SyncTypes.h so the Sync layer can name them without including AppController.h
+// (core-include-dag Phase 3). They remain global-namespace, byte-identical.
+#include "Sync/SyncTypes.h"
+// The six offline-queue summary structs moved to Sync/OfflineQueueTypes.h (top-level)
+// for the same reason; AppController re-exports them via using-aliases below so its
+// ~113 includers keep seeing `AppController::DeadLetterRestoreSummary` etc.
+#include "Sync/OfflineQueueTypes.h"
 
 struct AppUpdateAsset {
     std::string Name;
@@ -125,7 +119,7 @@ class ScenarioRunner;
 }
 } // namespace smatchet
 
-class AppController {
+class AppController : public IMainThreadPoster {
     /// `GridContextDepsAdapter` implements `IOfflineQueueDeps` + `ITicketSyncDeps` against
     /// this AppController + one `GridLiveContext` and forwards every method either to the
     /// per-context state (`Backend`, `ActiveTickets*`) or to AppController-shared state
@@ -226,7 +220,13 @@ class AppController {
     /// Used by Command handlers to decide whether to mutate UI state inline (safe) or post
     /// the mutation to `mainThreadDispatcher` (required when called from an MCP / Lua worker).
     /// Recorded once in `Initialize`; reads are atomic loads — safe from any thread.
-    bool IsOnUiThread() const;
+    bool IsOnUiThread() const override;
+
+    /// IMainThreadPoster — post `fn` to the UI thread by delegating to
+    /// `mainThreadDispatcher`. Lets command helpers marshal onto the UI thread
+    /// through the interface without depending on AppController (core-include-dag
+    /// Phase 2 — severs the Commands -> AppController include back-edge).
+    void PostToMainThread(std::function<void()> fn) override;
 
     /// Unified Command System registry. See docs/plans/shipped/command-system-plan.md.
     /// Lifetime: created in `Initialize`; the same instance feeds the CLI, the
@@ -746,26 +746,17 @@ class AppController {
     size_t GetDeadPendingCreateCount() const;
     std::vector<DeadPendingCreate> GetDeadPendingCreates() const;
 
-    struct DeadLetterRestoreSummary {
-        int Restored = 0;
-        int Failed = 0;
-    };
+    using DeadLetterRestoreSummary = ::DeadLetterRestoreSummary; // moved to Sync/OfflineQueueTypes.h
     /** Move selected dead-letter rows back to the active offline queue (attempts reset to 0). */
     DeadLetterRestoreSummary RestoreDeadPendingCreates(const std::vector<std::int64_t>& originalIds);
     /** One-shot startup message from legacy max-attempt pending drop; empty if none. */
     std::string TakeLegacyPendingStartupBanner();
 
-    struct DeadLetterDeleteSummary {
-        int Deleted = 0;
-        int Failed = 0;
-    };
+    using DeadLetterDeleteSummary = ::DeadLetterDeleteSummary; // moved to Sync/OfflineQueueTypes.h
     /** Permanently remove dead-letter rows by `pending_creates_dead.dead_id`. */
     DeadLetterDeleteSummary DeleteDeadPendingCreates(const std::vector<std::int64_t>& deadIds);
 
-    struct PendingQueueDeleteSummary {
-        int Deleted = 0;
-        int Failed = 0;
-    };
+    using PendingQueueDeleteSummary = ::PendingQueueDeleteSummary; // moved to Sync/OfflineQueueTypes.h
     /** Permanently remove active offline-queue rows by `pending_creates.id`. */
     PendingQueueDeleteSummary DeletePendingCreates(const std::vector<std::int64_t>& pendingIds);
 
@@ -796,22 +787,13 @@ class AppController {
     void ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedValue, const std::string& richKind,
                                   const std::string& kind = std::string("text"));
 
-    struct PendingFieldEditDeleteSummary {
-        int Deleted = 0;
-        int Failed = 0;
-    };
+    using PendingFieldEditDeleteSummary = ::PendingFieldEditDeleteSummary; // moved to Sync/OfflineQueueTypes.h
     PendingFieldEditDeleteSummary DeletePendingFieldEdits(const std::vector<std::int64_t>& ids);
 
-    struct DeadFieldEditDeleteSummary {
-        int Deleted = 0;
-        int Failed = 0;
-    };
+    using DeadFieldEditDeleteSummary = ::DeadFieldEditDeleteSummary; // moved to Sync/OfflineQueueTypes.h
     DeadFieldEditDeleteSummary DeleteDeadPendingFieldEdits(const std::vector<std::int64_t>& deadIds);
 
-    struct DeadFieldEditRestoreSummary {
-        int Restored = 0;
-        int Failed = 0;
-    };
+    using DeadFieldEditRestoreSummary = ::DeadFieldEditRestoreSummary; // moved to Sync/OfflineQueueTypes.h
     /** Move selected dead-letter field-edit rows back to the active queue (attempts reset to
      * 0), each keeping its ORIGINAL `backend_key` — the field-edit twin of
      * `RestoreDeadPendingCreates`. */

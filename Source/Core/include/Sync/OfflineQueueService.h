@@ -25,11 +25,11 @@
 
 #include <nlohmann/json_fwd.hpp>
 
-// AppController.h is needed for the nested summary structs that several methods below return
-// (`DeadLetterRestoreSummary`, `DeadLetterDeleteSummary`, …). Pulling it here keeps the
-// service's method signatures self-documenting at the cost of a heavier include — acceptable
-// since this service header is only consumed by AppController-side TUs.
-#include "AppController.h"
+// The summary structs that several methods below return (`DeadLetterRestoreSummary`,
+// `DeadLetterDeleteSummary`, …) live in this leaf header (top-level / global namespace).
+// Relocated out of AppController.h so this service no longer drags in the orchestrator
+// (core-include-dag Phase 3 — severs the Sync -> AppController include back-edge).
+#include "Sync/OfflineQueueTypes.h"
 
 namespace OfflineFieldEditMergeDetail {
 /// True when `rich` (after leading whitespace) begins with '{' — i.e. an ADF JSON document
@@ -54,6 +54,7 @@ struct MergeResult;
 }
 struct TrackerField;
 struct CachedTicket;
+struct IssueDraft; // formerly via AppController.h; used only by const-ref here (core-include-dag Phase 3)
 struct PendingCreate;
 struct DeadPendingCreate;
 struct PendingFieldEditRecord;
@@ -88,19 +89,18 @@ class OfflineQueueService {
     /// context's key — and is re-queued as a fresh create (`ExistingIssueKey` + issuekey/key
     /// field values scrubbed, the dead-letter restore UI contract; the scrub itself runs
     /// inside `LocalCacheManager::RestoreDeadPendingCreate`'s transaction, CR-959).
-    AppController::DeadLetterRestoreSummary RestoreDeadPendingCreates(const std::vector<std::int64_t>& originalIds);
+    ::DeadLetterRestoreSummary RestoreDeadPendingCreates(const std::vector<std::int64_t>& originalIds);
 
     /// Field-edit twin of `RestoreDeadPendingCreates`: move selected dead-letter field-edit
     /// rows back to the active queue (attempts reset to 0), each keeping its ORIGINAL
     /// `backend_key` and both merge bases.
-    AppController::DeadFieldEditRestoreSummary
-    RestoreDeadPendingFieldEdits(const std::vector<std::int64_t>& originalIds);
+    ::DeadFieldEditRestoreSummary RestoreDeadPendingFieldEdits(const std::vector<std::int64_t>& originalIds);
 
     /// Permanently remove dead-letter rows by `pending_creates_dead.dead_id`.
-    AppController::DeadLetterDeleteSummary DeleteDeadPendingCreates(const std::vector<std::int64_t>& deadIds);
+    ::DeadLetterDeleteSummary DeleteDeadPendingCreates(const std::vector<std::int64_t>& deadIds);
 
     /// Permanently remove active offline-queue rows by `pending_creates.id`.
-    AppController::PendingQueueDeleteSummary DeletePendingCreates(const std::vector<std::int64_t>& pendingIds);
+    ::PendingQueueDeleteSummary DeletePendingCreates(const std::vector<std::int64_t>& pendingIds);
 
     /// Persist a tracker field payload for later replay when connectivity returns.
     /// `originalRichValue` is the rich (ADF/HTML) base for the 3-way merge; `originalValue` is
@@ -127,9 +127,9 @@ class OfflineQueueService {
     void ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedValue, const std::string& richKind,
                                   const std::string& kind = std::string("text"));
 
-    AppController::PendingFieldEditDeleteSummary DeletePendingFieldEdits(const std::vector<std::int64_t>& ids);
+    ::PendingFieldEditDeleteSummary DeletePendingFieldEdits(const std::vector<std::int64_t>& ids);
 
-    AppController::DeadFieldEditDeleteSummary DeleteDeadPendingFieldEdits(const std::vector<std::int64_t>& deadIds);
+    ::DeadFieldEditDeleteSummary DeleteDeadPendingFieldEdits(const std::vector<std::int64_t>& deadIds);
 
     // --- Phase 1C: replay loops + replay-timer accessors ---------------------------------
     /// Replay queued offline creates. Called from the UI tick. Rate-limited internally via
