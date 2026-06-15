@@ -47,7 +47,14 @@ jobs:
           set -euo pipefail
           # Base = develop for PRs; for develop pushes, diff against the prior commit.
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}" 2>/dev/null || true
+            # NO --depth here: the diff below is three-dot ("$base"...HEAD), which
+            # needs the merge-base of develop and HEAD. A --depth=1 fetch truncates
+            # origin/develop to its tip, so a branch lagging the tip by even one
+            # commit has no reachable merge-base → `git diff` exits 128 ("no merge
+            # base") and the fail-closed guard rejects the PR (a recurring false
+            # FAIL — bit the security campaign's #1245). checkout uses fetch-depth:0,
+            # so the repo is already un-shallow and a full ref fetch is cheap.
+            git fetch --no-tags origin "${{ github.base_ref }}" 2>/dev/null || true
             base="origin/${{ github.base_ref }}"
           else
             base="${{ github.event.before }}"
