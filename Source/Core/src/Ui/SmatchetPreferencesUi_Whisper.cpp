@@ -832,9 +832,7 @@ void DrawWhisperPrivacyAndRerun(UiDrawSession& d) {
     // QA / repro flows; not for routine users (no harm if pressed — the banner
     // just re-asks the consent question).
     ImGui::Separator();
-    if (SmatchetIconButton(ICON_FA_ARROWS_ROTATE,
-                           SmatchetLocalization::T("whisper.preferences.rerunSetup.button", "Re-run setup banner"),
-                           nullptr)) {
+    if (SmatchetIconButton(ICON_FA_ARROWS_ROTATE, "Re-run setup banner", nullptr)) {
         d.cfg.WhisperSetupCompleted = false;
         d.cfg.WhisperSetupChoice.clear();
         MarkPrefsDirty(d);
