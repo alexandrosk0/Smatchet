@@ -722,6 +722,16 @@ nlohmann::json ExtractEnvelopeFromMcpResult(const nlohmann::json& body) {
     return *result;
 }
 
+void PostAppQuitBestEffort(httplib::Client& cli) {
+    try {
+        nlohmann::json quitBody;
+        quitBody["name"] = "app.quit";
+        quitBody["arguments"] = {{"__confirm", true}}; // app.quit is Destructive
+        cli.Post("/mcp/tools/call", quitBody.dump(), "application/json");
+    } catch (...) { // catch-all-ok: spawn teardown must not overwrite the already-emitted command result.
+    }
+}
+
 /// Normalize a relative outPath argument to an absolute path resolved against the CLI's CWD,
 /// since the spawned instance may have a different working directory. Pass-through for absolute paths.
 nlohmann::json NormalizeOutPath(const nlohmann::json& argsToSend) {
@@ -840,10 +850,7 @@ int SpawnAndRunDispatch(httplib::Client& cli, const std::string& commandName, co
         env["error"] = {{"code", "transport"}, {"message", "--spawn: command dispatch failed after launch."}};
         EmitErrorToStderr(env);
         // Best-effort quit so a reachable-but-erroring instance isn't orphaned.
-        nlohmann::json qb;
-        qb["name"] = "app.quit";
-        qb["arguments"] = {{"__confirm", true}};
-        cli.Post("/mcp/tools/call", qb.dump(), "application/json");
+        PostAppQuitBestEffort(cli);
         return kExitTransport;
     }
 
@@ -854,10 +861,7 @@ int SpawnAndRunDispatch(httplib::Client& cli, const std::string& commandName, co
                                                    std::to_string(res->status) + ").");
         EmitErrorToStderr(env);
         // Best-effort quit.
-        nlohmann::json qb;
-        qb["name"] = "app.quit";
-        qb["arguments"] = {{"__confirm", true}};
-        cli.Post("/mcp/tools/call", qb.dump(), "application/json");
+        PostAppQuitBestEffort(cli);
         return kExitTransport;
     }
 
@@ -892,10 +896,7 @@ int SpawnAndRunHandleAsync(const ParsedArgs& pa, httplib::Client& cli, const std
                            {"hint", "Try --timeout=<larger-ms> or --frames=<smaller-n>"}};
         EmitErrorToStderr(errEnv);
         // Still try to quit the spawned app.
-        nlohmann::json quitBody;
-        quitBody["name"] = "app.quit";
-        quitBody["arguments"] = {{"__confirm", true}}; // app.quit is Destructive
-        cli.Post("/mcp/tools/call", quitBody.dump(), "application/json");
+        PostAppQuitBestEffort(cli);
         return kExitTimeout;
     }
 
@@ -914,10 +915,7 @@ int SpawnAndRunHandleAsync(const ParsedArgs& pa, httplib::Client& cli, const std
         errEnv["command"] = commandName;
         errEnv["error"] = {{"code", "handler-error"}, {"message", "--spawn: could not read result file: " + outPath}};
         EmitErrorToStderr(errEnv);
-        nlohmann::json quitBody;
-        quitBody["name"] = "app.quit";
-        quitBody["arguments"] = {{"__confirm", true}}; // app.quit is Destructive
-        cli.Post("/mcp/tools/call", quitBody.dump(), "application/json");
+        PostAppQuitBestEffort(cli);
         return kExitHandler;
     }
 
@@ -953,10 +951,7 @@ int SpawnAndRunHandleAsync(const ParsedArgs& pa, httplib::Client& cli, const std
         // branches above) — honour the documented invariant at this function's header that
         // every failure path quits the spawned app. Omitting it orphaned the ephemeral
         // instance (TCP port held) whenever the result file existed but wasn't valid JSON.
-        nlohmann::json quitBody;
-        quitBody["name"] = "app.quit";
-        quitBody["arguments"] = {{"__confirm", true}}; // app.quit is Destructive
-        cli.Post("/mcp/tools/call", quitBody.dump(), "application/json");
+        PostAppQuitBestEffort(cli);
         return kExitHandler;
     }
     return kExitOk;
@@ -969,10 +964,7 @@ int SpawnAndRunHandleSync(const ParsedArgs& pa, httplib::Client& cli, const nloh
     if (!SafeBool(envelope, "ok", false)) {
         const nlohmann::json errObj = SafeObject(envelope, "error");
         const std::string code = SafeString(errObj, "code");
-        nlohmann::json quitBody;
-        quitBody["name"] = "app.quit";
-        quitBody["arguments"] = {{"__confirm", true}}; // app.quit is Destructive
-        cli.Post("/mcp/tools/call", quitBody.dump(), "application/json");
+        PostAppQuitBestEffort(cli);
         return ExitCodeForErrorCode(code);
     }
     return kExitOk;
@@ -1037,10 +1029,7 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
 
         // Phase 5 (quit): send app.quit to the spawned instance (app.quit is Destructive → __confirm:true).
         std::fprintf(stderr, "[spawn] sending app.quit ...\n"); // CLI stdout — product output, not logging
-        nlohmann::json quitBody;
-        quitBody["name"] = "app.quit";
-        quitBody["arguments"] = {{"__confirm", true}};
-        cli.Post("/mcp/tools/call", quitBody.dump(), "application/json");
+        PostAppQuitBestEffort(cli);
         return kExitOk;
     } catch (const std::exception& e) {
         nlohmann::json env =
