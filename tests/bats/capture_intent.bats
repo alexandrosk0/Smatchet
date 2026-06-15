@@ -114,7 +114,11 @@ capture_body() { cat "$CAPTURE_DIR"/*.log 2>/dev/null || true; }
 }
 
 @test "Bearer header value stripped, keyword kept" {
-    redact "Authorization: Bearer abcdef0123456789xyz"
+    # Bare-Bearer prose isolates _BEARER (no `authorization` KV-stem collision):
+    # the keyword survives, only the token is stripped. The `Authorization: Bearer`
+    # form — where the `authorization` KV-stem also eats the `Bearer` keyword (more
+    # redaction, the safe direction) — is covered by the selftest at the same input.
+    redact "use Bearer abcdef0123456789xyz now"
     [[ "$output" != *"abcdef0123456789"* ]]
     [[ "$output" == *"Bearer [REDACTED]"* ]]
 }
@@ -140,6 +144,44 @@ MIIEowIBAAKCAQEAabcdef
     [[ "$output" == *"[REDACTED-HEX]"* ]]
 }
 
+@test "C1: JSON quoted-key secret value stripped (no _KV bypass)" {
+    redact '{"password":"hunter2supersecret"}'
+    [[ "$output" != *"hunter2supersecret"* ]]
+    [[ "$output" == *"[REDACTED]"* ]]
+}
+
+@test "C1: quoted-key with spaces around = stripped" {
+    redact "config 'api_key' = 'sneakyvalue123' done"
+    [[ "$output" != *"sneakyvalue123"* ]]
+    [[ "$output" == *"[REDACTED]"* ]]
+}
+
+@test "H1: Stripe sk_live_ key stripped" {
+    redact "stripe sk_live_abcdEFGH1234 charge"
+    [[ "$output" != *"sk_live_abcdEFGH1234"* ]]
+    [[ "$output" == *"[REDACTED-TOKEN]"* ]]
+}
+
+@test "H1: OpenAI sk- key stripped" {
+    redact "openai sk-abcdEFGHijklMNOPqrstUV call"
+    [[ "$output" != *"sk-abcdEFGHijklMNOP"* ]]
+    [[ "$output" == *"[REDACTED-TOKEN]"* ]]
+}
+
+@test "H1: connection-URL password stripped, user+host kept" {
+    redact "clone https://user:s3cr3ttoken@github.com/x"
+    [[ "$output" != *"s3cr3ttoken"* ]]
+    [[ "$output" == *"[REDACTED]"* ]]
+    [[ "$output" == *"@github.com"* ]]
+}
+
+@test "H1: connection-URL empty-username form password stripped" {
+    redact "cache redis://:s3cr3tpass@cache:6379/0"
+    [[ "$output" != *"s3cr3tpass"* ]]
+    [[ "$output" == *"[REDACTED]"* ]]
+    [[ "$output" == *"@cache"* ]]
+}
+
 # ============================================================================
 # redact-intent.py — home-dir collapse, email preserved, single-line
 # ============================================================================
@@ -159,6 +201,18 @@ MIIEowIBAAKCAQEAabcdef
 @test "macOS /Users username collapsed to [user]" {
     redact "stat /Users/alexk/Library/foo path"
     [[ "$output" != *"/Users/alexk"* ]]
+    [[ "$output" == *"[user]"* ]]
+}
+
+@test "H2: UNC \\\\host\\Users\\name username collapsed to [user]" {
+    redact "unc \\\\fileserver\\Users\\alexk\\notes.txt"
+    [[ "$output" != *"alexk"* ]]
+    [[ "$output" == *"[user]"* ]]
+}
+
+@test "H2: legacy Documents and Settings username collapsed to [user]" {
+    redact "xp C:\\Documents and Settings\\alexk\\app.ini"
+    [[ "$output" != *"alexk"* ]]
     [[ "$output" == *"[user]"* ]]
 }
 
