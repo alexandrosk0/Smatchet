@@ -162,8 +162,8 @@
 - 2026-06-13 · deep-audit · [security] · P2 — MCP server performs no Host/Origin check (DNS-rebinding exposure)
   Details: Source/Plugins/Mcp/McpPlugin.cpp:137-161 Authorize validates loopback+token but not Host/Origin; a rebound browser origin can reach the loopback port with only the token as barrier.
   Concrete next action: Reject non-loopback Host and remote Origin headers; keep token as defense-in-depth. Effort S.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Status: resolved
+  Last-reviewed: 2026-06-15
   Resolution: 2026-06-14 · fix/mcp-host-origin-dns-rebind (PR #1228) — McpPlugin::Authorize now applies a fail-closed Host/Origin gate when bound to loopback: rejects any Host that is not a loopback literal (127.0.0.1 / localhost / [::1], port-stripped, case-folded, trailing-dot rejected) and any present Origin that is not empty / "null" / a loopback http(s) origin; 403 + LOG_WARN(reason=bad_host|bad_origin). Decision extracted to pure helpers IsLoopbackHostHeader / IsAllowedMcpOrigin / IsMcpHostOriginAllowed (Source/Plugins/Mcp/McpJsonRpcPure.{h,cpp}) with doctest coverage (tests/Plugins/Mcp/McpHostOrigin.test.cpp). Skipped when McpAllowRemote binds 0.0.0.0 (a non-loopback Host is the operator's explicit intent there). Token check retained as defense-in-depth.
 
 - 2026-06-13 · deep-audit · [security] · P2 — MCP attachment proxy fetches caller-supplied URLs (SSRF surface)
@@ -194,8 +194,9 @@
 - 2026-06-13 · deep-audit · [security] · P2 — stb image decode dimension cap applied after allocation
   Details: Source/Core/src/Persistence/SmatchetImageTextureCache.cpp:141,149 checks the max-dimension cap after stb allocation; oversized images allocate before rejection (memory-pressure DoS).
   Concrete next action: Pre-validate via stbi_info before full decode. Effort S.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Resolution: 2026-06-15 (PR #1225) — stb decode now pre-validates dimensions via stbi_info before the full decode/allocation, so an oversized image is rejected before the large allocation (memory-pressure DoS closed).
+  Status: resolved
+  Last-reviewed: 2026-06-15
 
 - 2026-06-13 · deep-audit · [security] · P2 — OfflineQueue serialized 'draft' string bypasses audit-trail redaction
   Details: Source/Core/src/Sync/OfflineQueueService.cpp:356,362 serializes the draft to a JSON string before BackendAuditTrail.cpp:124-148 redaction runs, so RedactJson/LooksSensitiveKey never sees nested keys.
@@ -225,8 +226,8 @@
 - 2026-06-13 · deep-audit · [security] · P3 — SSRF IP denylist parses dotted-quad literals only
   Details: Source/Core/src/AiEndpointSanitize.cpp:68-96,146-152 ParseIpv4Literal matches only dotted-quad; alternate IP encodings skip the literal denylist (resolution-time block backstops; verifier MEDIUM→LOW).
   Concrete next action: Normalize via inet_pton/getaddrinfo and apply the denylist to resolved addresses. Effort S.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Status: resolved
+  Last-reviewed: 2026-06-15
   Resolution: 2026-06-14 (PR #1229) — replaced the dotted-quad-only ParseIpv4Literal with an overflow-safe CanonicalizeIpv4 that normalises decimal (2852039166), hex (0xA9FEA9FE), octal (0251.0376.0251.0376), dotted-hex, and inet_aton short-forms (169.254.43518) to 4 octets BEFORE the denylist, plus a ClassifyIpv6Literal that handles bracketed IPv6 incl. IPv4-mapped ::ffff:169.254.169.254, link-local fe80::/10, and ULA fc00::/7. Added RejectedPrivateNetwork verdict for RFC1918 (10/8, 172.16/12, 192.168/16) + IPv6 ULA. The integer-form parse is overflow-guarded (>cap rejected) so a denied IP cannot wrap into an allowed one. Doctest coverage in tests/Core/AiEndpointSanitize.test.cpp. Residual: DNS-rebind-to-internal (a hostname that resolves to a denied IP) is still NOT blocked — sanitize-time resolution has its own TOCTOU and the audit scoped this finding to the literal-encoding bypass; tracked separately if pursued.
 
 - 2026-06-13 · deep-audit · [security] · P3 — SubprocessCapture inherits full parent environment
@@ -329,22 +330,22 @@
   Details: `Source/Core/src/Logger.cpp:320` `FileSinkWorker` writes `e.message` verbatim to the on-disk log; `RedactLogLine` (applied on the crash/bug-report paths) is NOT applied at the file sink, so any `LOG_*` that ever carries a secret/PII reaches the log file unredacted. No current `LOG_*` call places a raw credential there, but body-logging at Trace would. Partly-confirmed LOW. NEW.
   Concrete next action: route file-sink writes through `RedactLogLine` (or redact at emit for the body-logging paths). ~S.
   Resolution: 2026-06-14 (fix/log-redaction-gaps-wave4) — `Logger::FileSinkWorker` now writes `smatchet::privacy::RedactLogLine(e.message)` instead of `e.message`, so the on-disk line is scrubbed on the same path the message reaches the sink. `TextRedaction.cpp` linked into the two test targets that link `Logger.cpp` (SmatchetTsanTests, SmatchetLuaTests). doctest `Logger file sink — redacts secret/long-token + strips CR/LF/ANSI on the persisted line` reads the file back and asserts the secret is gone. Status: resolved.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Status: resolved
+  Last-reviewed: 2026-06-15
 
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — CR/LF/ANSI log injection from server-controlled data
   Details: `Source/Core/src/Privacy/TextRedaction.cpp:80` — redaction does not strip CR/LF/ANSI escapes, so server-controlled strings reaching a log line can forge log entries or inject terminal escapes. Confirmed LOW. NEW.
   Concrete next action: strip/encode CR/LF and ANSI CSI sequences in the log-line redactor. ~S.
   Resolution: 2026-06-14 (fix/log-redaction-gaps-wave4) — `RedactLogLine` now runs `StripControlAndAnsi` FIRST (before the secret-shape matchers), replacing CR/LF, lone ESC, ANSI CSI/OSC sequences, and all C0 controls + DEL with a single space. Running it first means a control byte hidden mid-token cannot evade the shape matchers and cannot survive to forge a log line. doctest `RedactLogLine — strips CR/LF/ANSI…` covers CRLF + CSI + bare-ESC/C0. Status: resolved.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Status: resolved
+  Last-reviewed: 2026-06-15
 
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — Redaction LongTokenRe 40-char threshold misses 36-char Plane UUID tokens
   Details: `Source/Core/src/Privacy/TextRedaction.cpp:45` `LongTokenRe` redacts only >=40-char tokens, so a 36-char Plane API UUID (and similarly-sized secrets) is not redacted if it reaches a log. Confirmed LOW. NEW.
   Concrete next action: add a UUID-shaped pattern (8-4-4-4-12) to the redactor, or lower the threshold with a git-hash guard. ~S.
   Resolution: 2026-06-14 (fix/log-redaction-gaps-wave4) — added `UuidRe` matching the 36-char 8-4-4-4-12 hex-with-dashes shape and redacting it in `RedactLogLine` (chose the shape-specific pattern over lowering the 40-char floor, so arbitrary 36-char text is NOT over-redacted). doctest `RedactLogLine — redacts a 36-char UUID token…` asserts a Plane-style UUID is scrubbed AND a benign 36-char dash-free string survives. Status: resolved.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Status: resolved
+  Last-reviewed: 2026-06-15
 
 - 2026-05-28 · deep-audit · [security] · P2 — JQL injection via unescaped issue keys in `JiraClient::FetchIssuesForKeys`
   Details: `Source/Core/src/Tracker/JiraIssueSearch.cpp:470-487` interpolates issue keys into double-quoted JQL literals with no escaping of `"` or `\` — single-key path builds `jql = "key = \"" + keys[offset] + "\"";` (:472) and the IN-list appends raw `'"' + keys[offset+i] + '"'` (:479-481). `UrlEncode` (`TrackerHttpUtils.cpp:44-59`) only percent-encodes for transport; the Jira server URL-decodes before JQL parsing, so an embedded `"` reaches the parser intact and breaks out of the quoted literal (e.g. `FOO" OR project=SECRET OR key="BAR`), widening the query beyond the intended key set (cross-project disclosure). Callers: `AppController.cpp:514`, `Source/Core/src/Sync/OfflineQueueService.cpp:714` (offline-queue restore). Keys are mostly server-issued today, so this is defense-in-depth / fragility rather than currently-exploitable. Verified from real code (deep-audit, adversarially confirmed).
