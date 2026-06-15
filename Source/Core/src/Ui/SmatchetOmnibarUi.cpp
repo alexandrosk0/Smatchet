@@ -93,6 +93,17 @@ void SmatchetUI::drawOmnibar(AppController& app, UiDrawSession& d) {
         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings;
     if (ImGui::BeginViewportSideBar("##SmatchetOmnibar", viewport, ImGuiDir_Up, barHeight, barFlags)) {
         GridPane& pane = d.focusedPane();
+
+        // Per-tab persistence: each pane keeps its own omnibar text. On a focus change, load the
+        // newly-focused pane's saved text into the shared editor; edits are written back at the end
+        // of the frame so switching tabs and returning restores what was typed for that tab. The
+        // editor's transient autocomplete state recomputes from buf each frame, so a text-only swap
+        // is safe (the popup is closed on a focus change anyway).
+        if (d.omnibarSyncedPaneId != pane.id) {
+            SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.omniJqlEditor.buf, pane.omnibarText);
+            d.omnibarSyncedPaneId = pane.id;
+        }
+
         const omni::OmnibarBackend backend = omni::OmnibarBackendFromKey(pane.backendKey);
 
         // Classify the live buffer every frame (pure, allocation-free) to drive the leading glyph
@@ -112,6 +123,10 @@ void SmatchetUI::drawOmnibar(AppController& app, UiDrawSession& d) {
             d.omniJqlEditor.jqlWantsApplyFromEnter = false;
             applyOmnibarEnter(app, d, pane, std::string(d.omniJqlEditor.buf));
         }
+
+        // Write this frame's edits back to the focused pane so the text persists when the user
+        // switches tabs (the restore above reloads it when this pane regains focus).
+        pane.omnibarText.assign(d.omniJqlEditor.buf);
     }
     ImGui::End();
 }

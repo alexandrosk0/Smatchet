@@ -9,7 +9,7 @@
 //   * Jql          — a structured filter query (operators / grouping / field:value
 //                    / ORDER BY); Enter replaces the focused pane's view query.
 //   * TitleSearch  — plain words; Enter filters the focused pane's loaded rows.
-//
+
 // No ImGui / no session state / no I/O — bucket-A testable in isolation
 // (tests/Core/OmnibarInputClassifier.test.cpp). Ticket-key shape detection reuses
 // the single-source backend helpers (ExtractIssueKeyPrefix for Jira keys,

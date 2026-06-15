@@ -476,6 +476,9 @@ struct UiDrawSession {
     JqlEditorState viewJqlEditor;
     /// Global omnibar JQL/search editor — independent instance (own async request-ids).
     JqlEditorState omniJqlEditor;
+    /// Pane id whose saved omnibar text is currently loaded into omniJqlEditor.buf. drawOmnibar
+    /// restores the focused pane's text on a change so each tab keeps its own omnibar input.
+    std::string omnibarSyncedPaneId;
 
     // Authoritative selected-field id set for the Views editor (#views-field-uncheck).
     // The toggle handlers / select-all / clear mutate THIS directly; it is seeded
