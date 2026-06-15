@@ -244,8 +244,8 @@ StartFieldCatalogFetchAsync(AppController& app, const TrackerConfig& fetchCfg, c
         std::string projectKey;
         const std::shared_ptr<ITrackerBackend> backend = latchedBackend;
         if (fetchCfg.TrackerType == "Plane" && backend != nullptr) {
-            projectKey = smatchet::ResolvePlaneOperationProject(&backend->Connectivity(), activeViewJql,
-                                                                fetchCfg.JqlQuery);
+            projectKey =
+                smatchet::ResolvePlaneOperationProject(&backend->Connectivity(), activeViewJql, fetchCfg.JqlQuery);
         } else {
             projectKey = smatchet::ResolveProjectForDraft(backend ? &backend->Connectivity() : nullptr, activeViewJql,
                                                           std::string(), std::string());
@@ -951,7 +951,7 @@ void SmatchetUI::userInfoAddToQuery(AppController& app, UiDrawSession& d, const 
     updated.Jql = query;
     if (ViewState.UpdateActive(updated)) {
         d.cfg.JqlQuery = query;
-        SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlBuf, query);
+        SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlEditor.buf, query);
         SyncWithCurrentView(app, d, ViewState.GetStore(), true);
         SmatchetToastManager::Instance().Push("User Info", "View query set to " + issueKey + ".", ToastType::Success);
     }

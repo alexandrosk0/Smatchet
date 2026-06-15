@@ -46,7 +46,7 @@ void ApplyViewsActiveJqlFromBuffers(AppController& app, UiDrawSession& d, Views&
                                     const ViewDefinition& activeView) {
     ViewDefinition updated = activeView;
     updated.Name = d.viewNameBuf;
-    updated.Jql = d.viewJqlBuf;
+    updated.Jql = d.viewJqlEditor.buf;
     // Authoritative selection set, not the truncating buffer (#views-field-uncheck).
     updated.Fields = SmatchetViewsDashboardUiDetail::ToSortedVector(d.selectedFieldSet);
     updated.ColumnOrder = d.editingColumnOrder;
@@ -242,7 +242,7 @@ namespace {
 // PR 4b project pill: clickable label under the query bar whose popup clamps the active view to
 // a single project. Jira uses JQL `project = …`; Plane stores `project_id` in structured JSON.
 void DrawJqlProjectPill(AppController& app, UiDrawSession& d) {
-    const std::string currentJql(d.viewJqlBuf);
+    const std::string currentJql(d.viewJqlEditor.buf);
     const ITrackerBackend* backend = app.GetTrackerBackend();
     const bool isPlane = d.cfg.TrackerType == "Plane";
     const std::string backendKind = isPlane ? std::string("Plane") : std::string("Jira");
@@ -292,7 +292,7 @@ void DrawJqlProjectPill(AppController& app, UiDrawSession& d) {
             if (ImGui::Selectable(e.projectKey.c_str(), e.projectKey == scopeProj)) {
                 const std::string newJql = isPlane ? PlaneProjectScope::SetProjectInQuery(currentJql, e.projectKey)
                                                    : JqlProjectScope::SetProjectClause(currentJql, e.projectKey);
-                CopyStringToBuffer(d.viewJqlBuf, newJql);
+                CopyStringToBuffer(d.viewJqlEditor.buf, newJql);
                 d.viewsDirty = true;
                 ImGui::CloseCurrentPopup();
             }
@@ -307,74 +307,75 @@ void DrawJqlProjectPill(AppController& app, UiDrawSession& d) {
 }
 } // namespace
 
-void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d) {
+void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorState& st) {
     // Lightweight variant of DrawJqlQueryEditor — used when the surrounding tab
     // already provides the label / open-in-browser chrome. Reuses the same
-    // autocomplete machinery (TrackerQueryAcp_*) and viewJqlBuf storage so the
+    // autocomplete machinery (TrackerQueryAcp_*) and the JqlEditorState buffer so the
     // legacy flow and modern flow stay in lock-step.
     QuerySuggestBuild jqlSuggestBuild;
     QuerySuggestMeta jqlMeta;
     TrackerQueryAcpCallbackUserData jqlCb{};
     jqlCb.session = &d;
+    jqlCb.editor = &st;
     jqlCb.app = &app;
     jqlCb.suggestBuild = &jqlSuggestBuild;
     jqlCb.meta = &jqlMeta;
     jqlCb.kind = d.cfg.TrackerType == "Plane" ? TrackerQuerySuggestKind::PlaneFilter : TrackerQuerySuggestKind::JiraJql;
 
-    if (d.jqlAcpWantsJqlInputFocus) {
+    if (st.jqlAcpWantsJqlInputFocus) {
         ImGui::SetKeyboardFocusHere(0);
-        d.jqlAcpWantsJqlInputFocus = false;
+        st.jqlAcpWantsJqlInputFocus = false;
     }
 
     const float clearBtnW = ImGui::CalcTextSize("x").x + ImGui::GetStyle().FramePadding.x * 2.0f + 8.0f;
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
     const float inputW = ImGui::GetContentRegionAvail().x - clearBtnW - spacing;
     ImGui::SetNextItemWidth((std::max)(120.0f, inputW));
-    ImGui::InputText("##JQLEmbedded", d.viewJqlBuf, sizeof(d.viewJqlBuf),
+    ImGui::InputText("##JQLEmbedded", st.buf, sizeof(st.buf),
                      ImGuiInputTextFlags_CallbackAlways | ImGuiInputTextFlags_CallbackHistory,
                      &TrackerQueryAcp_InputTextCallback, &jqlCb);
     const bool jqlInputHot = ImGui::IsItemActive() || ImGui::IsItemFocused();
     const ImVec2 jqlFieldRectMin = ImGui::GetItemRectMin();
     const ImVec2 jqlFieldRectSize = ImGui::GetItemRectSize();
     if (!jqlInputHot) {
-        d.jqlAcpListDismissed = false;
+        st.jqlAcpListDismissed = false;
     }
     ImGui::SameLine();
     if (ImGui::Button("x##ClearQueryEmbedded")) {
-        std::memset(d.viewJqlBuf, 0, sizeof(d.viewJqlBuf));
-        d.jqlAcpAsyncUserItems.clear();
-        d.jqlAcpAsyncUserError.clear();
-        d.jqlAcpUserSearchFireAt = 0.0;
-        d.jqlAcpUserSearchQuery.clear();
-        ++d.jqlAcpUserSearchRequestId;
-        d.jqlAcpListDismissed = false;
-        d.jqlAcpCaretSnapFramesRemaining = 0;
+        std::memset(st.buf, 0, sizeof(st.buf));
+        st.jqlAcpAsyncUserItems.clear();
+        st.jqlAcpAsyncUserError.clear();
+        st.jqlAcpUserSearchFireAt = 0.0;
+        st.jqlAcpUserSearchQuery.clear();
+        ++st.jqlAcpUserSearchRequestId;
+        st.jqlAcpListDismissed = false;
+        st.jqlAcpCaretSnapFramesRemaining = 0;
         d.viewsDirty = true;
     }
     ImGui::SetItemTooltip("Clear query");
 
-    TrackerQueryAcp_TickDebouncedUserSearch(app, d, jqlMeta, jqlSuggestBuild);
+    TrackerQueryAcp_TickDebouncedUserSearch(app, d, st, jqlMeta, jqlSuggestBuild);
 
     std::vector<QuerySuggestion> merged = jqlSuggestBuild.Items;
-    if (!d.jqlAcpAsyncUserItems.empty()) {
+    if (!st.jqlAcpAsyncUserItems.empty()) {
         std::unordered_set<std::string> seen;
         for (const auto& s : merged) {
             seen.insert(s.Insert);
         }
-        std::copy_if(d.jqlAcpAsyncUserItems.begin(), d.jqlAcpAsyncUserItems.end(), std::back_inserter(merged),
+        std::copy_if(st.jqlAcpAsyncUserItems.begin(), st.jqlAcpAsyncUserItems.end(), std::back_inserter(merged),
                      [&](const auto& a) { return seen.insert(a.Insert).second; });
     }
 
     const bool waitingUser = d.cfg.TrackerType != "Plane" && jqlMeta.UserValueToken &&
-                             jqlMeta.UserSearchPrefix.size() >= 2 && d.jqlAcpUserSearchFireAt > 0.0 &&
-                             ImGui::GetTime() < d.jqlAcpUserSearchFireAt;
+                             jqlMeta.UserSearchPrefix.size() >= 2 && st.jqlAcpUserSearchFireAt > 0.0 &&
+                             ImGui::GetTime() < st.jqlAcpUserSearchFireAt;
     const bool jqlAcpOpen =
-        jqlInputHot && !d.jqlAcpListDismissed &&
-        (!merged.empty() || waitingUser || (!d.jqlAcpAsyncUserError.empty() && jqlMeta.UserValueToken));
+        jqlInputHot && !st.jqlAcpListDismissed &&
+        (!merged.empty() || waitingUser || (!st.jqlAcpAsyncUserError.empty() && jqlMeta.UserValueToken));
     if (jqlAcpOpen) {
-        TrackerQueryAcp_DrawPopup(d, jqlFieldRectMin, jqlFieldRectSize, jqlSuggestBuild, merged);
+        TrackerQueryAcp_DrawPopup(d, st, jqlFieldRectMin, jqlFieldRectSize, jqlSuggestBuild, merged);
     }
-    TrackerQueryAcp_FlushPendingReplace(d);
+    TrackerQueryAcp_FlushPendingReplace(st);
 
     // PR 4b: project pill beneath the query bar — pick a single project scope for the active view.
     DrawJqlProjectPill(app, d);

@@ -808,7 +808,7 @@ void SmatchetUI::drawActiveProjectUnsavedStrip(ActiveProjectDrawCtx& ctx) {
             // Commit editing buffers + currently-stored widths/sort onto the active view.
             ViewDefinition updated = *activeViewForGrid;
             updated.Name = d.viewNameBuf[0] ? std::string(d.viewNameBuf) : activeViewForGrid->Name;
-            updated.Jql = d.viewJqlBuf[0] ? std::string(d.viewJqlBuf) : activeViewForGrid->Jql;
+            updated.Jql = d.viewJqlEditor.buf[0] ? std::string(d.viewJqlEditor.buf) : activeViewForGrid->Jql;
             // Authoritative selection set, not the truncating buffer (#views-field-uncheck) — a
             // large selection persists in full instead of being clipped on disk at the 1023-byte cap.
             const std::vector<std::string> editedFields =
@@ -849,7 +849,7 @@ void SmatchetUI::drawActiveProjectUnsavedStrip(ActiveProjectDrawCtx& ctx) {
             d.editingColumnOrder = restoreSource->ColumnOrder;
             d.lastSyncedColumnOrder = restoreSource->ColumnOrder;
             SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewNameBuf, restoreSource->Name);
-            SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlBuf, restoreSource->Jql);
+            SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlEditor.buf, restoreSource->Jql);
             // Re-seed the authoritative field selection from the restored view
             // (#views-field-uncheck).
             d.selectedFieldSet.clear();
@@ -925,8 +925,8 @@ void SmatchetUI::drawActiveProjectSaveAsNewModal(ActiveProjectDrawCtx& ctx) {
             if (!editedFields.empty()) {
                 created.Fields = editedFields;
             }
-            if (d.viewJqlBuf[0]) {
-                created.Jql = d.viewJqlBuf;
+            if (d.viewJqlEditor.buf[0]) {
+                created.Jql = d.viewJqlEditor.buf;
             }
             d.viewsPendingCreate = true;
             d.viewsPendingCreatePayload = std::move(created);

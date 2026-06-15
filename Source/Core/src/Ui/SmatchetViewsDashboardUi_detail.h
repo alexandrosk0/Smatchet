@@ -12,6 +12,7 @@
 
 class AppController;
 struct UiDrawSession;
+struct JqlEditorState;
 
 namespace SmatchetViewsDashboardUiDetail {
 
@@ -213,7 +214,7 @@ void ApplyViewsActiveJqlFromBuffers(AppController& app, UiDrawSession& d, Views&
 /// Embedded JQL editor for the Filter tab — input + clear + autocomplete
 /// popup. The surrounding tab provides its own label and "open in browser"
 /// chrome. The popup is drawn as part of this call.
-void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d);
+void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorState& st);
 
 /// Vertical splitter that lets the user drag a horizontal divider; stores the new
 /// height in *height and clamps to [min, max]. Triggers ConfigManager::Save(d.cfg)

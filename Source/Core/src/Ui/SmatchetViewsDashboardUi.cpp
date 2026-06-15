@@ -42,20 +42,20 @@ enum ViewsEditorTab : int {
 // Load all edit buffers from a saved view. Resets dirty + autocomplete state.
 void LoadBuffersFromView(UiDrawSession& d, const ViewDefinition& view) {
     std::memset(d.fieldSearchBuf, 0, sizeof(d.fieldSearchBuf));
-    d.jqlAcpApplyReplace = false;
-    d.jqlAcpReplaceStart = -1;
-    d.jqlAcpReplaceEnd = -1;
-    d.jqlAcpReplaceText.clear();
-    d.jqlAcpListSelected = -1;
-    d.jqlAcpLastCursor = 0;
-    d.jqlAcpLastSelectionStart = 0;
-    d.jqlAcpLastSelectionEnd = 0;
-    d.jqlAcpWantsJqlInputFocus = false;
-    d.jqlAcpScrollToSelected = false;
-    d.jqlAcpCaretSnapFramesRemaining = 0;
-    d.jqlWantsApplyFromEnter = false;
+    d.viewJqlEditor.jqlAcpApplyReplace = false;
+    d.viewJqlEditor.jqlAcpReplaceStart = -1;
+    d.viewJqlEditor.jqlAcpReplaceEnd = -1;
+    d.viewJqlEditor.jqlAcpReplaceText.clear();
+    d.viewJqlEditor.jqlAcpListSelected = -1;
+    d.viewJqlEditor.jqlAcpLastCursor = 0;
+    d.viewJqlEditor.jqlAcpLastSelectionStart = 0;
+    d.viewJqlEditor.jqlAcpLastSelectionEnd = 0;
+    d.viewJqlEditor.jqlAcpWantsJqlInputFocus = false;
+    d.viewJqlEditor.jqlAcpScrollToSelected = false;
+    d.viewJqlEditor.jqlAcpCaretSnapFramesRemaining = 0;
+    d.viewJqlEditor.jqlWantsApplyFromEnter = false;
     SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewNameBuf, view.Name);
-    SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlBuf, view.Jql);
+    SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlEditor.buf, view.Jql);
     // Seed the authoritative selection set straight from the saved view
     // (#views-field-uncheck) — never via a truncating CSV buffer.
     d.selectedFieldSet.clear();
@@ -81,7 +81,7 @@ void LoadBuffersFromView(UiDrawSession& d, const ViewDefinition& view) {
 ViewDefinition BuildUpdatedView(const ViewDefinition& base, const UiDrawSession& d) {
     ViewDefinition updated = base;
     updated.Name = d.viewNameBuf;
-    updated.Jql = d.viewJqlBuf;
+    updated.Jql = d.viewJqlEditor.buf;
     // Read the authoritative set (#views-field-uncheck), not the truncating buffer, so a
     // >1023-byte selection persists ALL fields on save instead of being clipped on disk.
     updated.Fields = SmatchetViewsDashboardUiDetail::ToSortedVector(d.selectedFieldSet);
@@ -356,7 +356,7 @@ void SmatchetUI::drawViewsFilterTab(ViewsDashboardDrawCtx& ctx) {
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted(isPlane ? "Plane filter" : "JQL");
         ImGui::SameLine();
-        const std::string currentJql(d.viewJqlBuf);
+        const std::string currentJql(d.viewJqlEditor.buf);
         const bool disableOpenJql = currentJql.empty() || d.cfg.Domain.empty() || isPlane;
         if (disableOpenJql) {
             ImGui::BeginDisabled();
@@ -370,17 +370,17 @@ void SmatchetUI::drawViewsFilterTab(ViewsDashboardDrawCtx& ctx) {
             ImGui::EndDisabled();
         }
 
-        const int beforeLen = static_cast<int>(std::strlen(d.viewJqlBuf));
-        SmatchetViewsDashboardUiDetail::DrawJqlQueryEditorEmbedded(app, d);
-        if (static_cast<int>(std::strlen(d.viewJqlBuf)) != beforeLen) {
+        const int beforeLen = static_cast<int>(std::strlen(d.viewJqlEditor.buf));
+        SmatchetViewsDashboardUiDetail::DrawJqlQueryEditorEmbedded(app, d, d.viewJqlEditor);
+        if (static_cast<int>(std::strlen(d.viewJqlEditor.buf)) != beforeLen) {
             d.viewsDirty = true;
         }
         ImGui::TextDisabled(isPlane
                                 ? "field:value AND field:value  ·  Up/Down list  ·  Enter/Tab pick  ·  Esc close list"
                                 : "JQL tokens + catalog  ·  Up/Down list  ·  Enter/Tab pick  ·  Esc close list");
 
-        if (d.jqlWantsApplyFromEnter) {
-            d.jqlWantsApplyFromEnter = false;
+        if (d.viewJqlEditor.jqlWantsApplyFromEnter) {
+            d.viewJqlEditor.jqlWantsApplyFromEnter = false;
             ctx.applyAndSync();
         }
 
