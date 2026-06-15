@@ -45,6 +45,15 @@ class UiTestScenario : public IScenario {
     ImGuiTestEngine* engine_ = nullptr;
     bool startedQueue_ = false;
     bool runAll_ = false;
+    // Count of consecutive frames observed with a non-zero ImGui DisplaySize
+    // before we queue the tests. Under a slow software-GL backend (Mesa
+    // llvmpipe in CI) the first frames can present with DisplaySize == 0 (the
+    // GLFW framebuffer-size callback / window-show has not settled), so the
+    // windows never lay out — every itemPresent/visible probe then fails and
+    // the whole suite collapses to 0 passed. Gating the queue on N settled,
+    // really-rendered frames wins that race without a wall-clock sleep: a
+    // slower machine simply takes more frames to satisfy the floor.
+    int settledFrames_ = 0;
     // Result counters — only populated/read by the gated OnFrame/OnFinish body
     // (ImGuiTestEngine_GetResult). Kept inside the gate so the non-UI-test build
     // doesn't carry unread private fields (-Wunused-private-field under clang).

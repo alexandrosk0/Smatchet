@@ -25,6 +25,17 @@ namespace cmd {
 namespace {
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
+// Number of consecutive frames with a non-zero ImGui DisplaySize that must
+// present before we queue the test bodies. The test engine only begins
+// executing queued tests from the PostSwap after the queueing frame, so by the
+// time the first item-probe runs the UI has rendered + presented this many
+// real frames and the windows are laid out at a genuine size. Chosen as a
+// small floor that tolerates Mesa llvmpipe's slow first frames in CI while
+// staying snappy on a real GPU (the engine itself drains the queue in a single
+// PostSwap once probing can succeed). Not a wall-clock sleep — a slower backend
+// just needs more frames to reach the floor.
+const int kUiTestSettleFrames = 3;
+
 // Active engine pointer surfaced to Source/Standalone/main.cpp via
 // SmatchetActiveUiTestEngine(). Atomic for the unlikely case where the swap
 // hook runs while the scenario is being torn down on the same thread (both
@@ -169,14 +180,30 @@ void UiTestScenario::OnFrame(AppController& /*app*/, int frameIndex) {
     if (frameIndex < 1) {
         return;
     }
-    // Queue after the engine's NewFrame hook has synchronized its frame
-    // counter. Queueing immediately in OnStart can run before that hook in a
-    // long-lived spawned app and the test engine marks every test as a
-    // "missing signal" error before any test body executes.
+    // Only count frames that are actually rendering at a real size. Under Mesa
+    // llvmpipe the reported display extent can still be zero-by-zero on the
+    // earliest frames, so counting only DisplaySize-valid frames keeps the
+    // settle floor honest (a zero-area frame lays out nothing, so probing it
+    // would still fail).
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.DisplaySize.x <= 0.0f || io.DisplaySize.y <= 0.0f) {
+        settledFrames_ = 0;
+        return;
+    }
+    if (++settledFrames_ < kUiTestSettleFrames) {
+        return;
+    }
+    // Queue after the engine's NewFrame hook has synchronized its frame counter
+    // AND a few real frames have presented. Queueing immediately in OnStart can
+    // run before that hook in a long-lived spawned app, and queueing on the
+    // first frame lets the engine probe items before the windows have laid out
+    // at a non-zero size under slow software GL — both make the engine mark
+    // tests as errors before any test body meaningfully executes.
     const char* filterArg = filter_.empty() ? nullptr : filter_.c_str();
     ImGuiTestEngine_QueueTests(engine_, ImGuiTestGroup_Tests, filterArg, ImGuiTestRunFlags_None);
     startedQueue_ = true;
-    LOG_INFO("ui_test.run: queued tests (filter='%s')", filterArg ? filterArg : "(all)");
+    LOG_INFO("ui_test.run: queued tests (filter='%s') after %d settled frames", filterArg ? filterArg : "(all)",
+             settledFrames_);
 #else
     (void)frameIndex;
 #endif
