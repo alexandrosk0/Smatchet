@@ -15,6 +15,7 @@
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 #include "Config/ConfigManager.h"
+#include "Config/KeybindingsConfig.h" // BoundHotkeyDisplay — surface bound combo on button tooltips
 #include "ConfigSaveWorker.h"
 #include "ITrackerConnectivity.h"
 #include "IconsFontAwesome6.h"
@@ -221,6 +222,14 @@ void SmatchetToolbarUi::RenderBar(AppController& app, TrackerConfig& cfg) {
             }
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                 std::string tip = b.Tooltip.empty() ? b.CommandId : b.Tooltip;
+                if (b.Kind == ToolbarButtonKind::Command && !b.CommandId.empty()) {
+                    const std::string combo = BoundHotkeyDisplay(cfg.Keybindings.Bindings, b.CommandId);
+                    if (!combo.empty()) {
+                        tip += "  (";
+                        tip += combo;
+                        tip += ")";
+                    }
+                }
                 if (b.Kind == ToolbarButtonKind::Command && !enabled) {
                     tip += "  (command not found)";
                 }
@@ -289,6 +298,14 @@ void SmatchetToolbarUi::RenderButtonContextMenu(TrackerConfig& cfg, int src) {
         requestEditorOpen_ = true;
         requestEditSelect_ = src;
     }
+    // Only command buttons map to a rebindable keybinding; Lua/separator buttons have no
+    // command id to bind. Latches the request for SmatchetUI to open the shared quick-bind modal.
+    const ToolbarButton& clicked = buttons[src];
+    if (clicked.Kind == ToolbarButtonKind::Command && !clicked.CommandId.empty()) {
+        if (ImGui::MenuItem("Set shortcut...")) {
+            requestQuickBindCommandId_ = clicked.CommandId;
+        }
+    }
     ImGui::Separator();
     if (ImGui::MenuItem("Move Left", nullptr, false, src > 0)) {
         std::swap(buttons[src], buttons[src - 1]);
@@ -309,6 +326,12 @@ void SmatchetToolbarUi::RenderButtonContextMenu(TrackerConfig& cfg, int src) {
         buttons.erase(buttons.begin() + src);
         smatchet::config_save::EnqueueTrackerConfig(cfg);
     }
+}
+
+std::string SmatchetToolbarUi::TakeQuickBindRequest() {
+    std::string id;
+    id.swap(requestQuickBindCommandId_);
+    return id;
 }
 
 void SmatchetToolbarUi::SyncEditorOpenRequest(AppController& app, TrackerConfig& cfg) {

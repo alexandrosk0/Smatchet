@@ -673,6 +673,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
         DrawWhisperPreferencesTab(app, d);
 #endif
         DrawLocalAndAppearancePreferencesTabs(*this, app, d);
+        DrawKeybindingsPreferencesTab(*this, app, d);
         DrawTemplatePreferencesTabs(*this, app, d, preferencesState_.templateFlags);
         ImGui::EndTabBar();
     }
@@ -693,6 +694,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
     case PreferencesActiveTab::Assistant:
     case PreferencesActiveTab::Whisper:
     case PreferencesActiveTab::Templates:
+    case PreferencesActiveTab::Keybindings:
         footerKey = "prefs.footer.autosave.short";
         footerFallback = "Settings on this tab save automatically when changed.";
         break;

@@ -129,6 +129,40 @@ const TranslationEntry kEntries[] = {
     {"prefs.tab.fields_inputs", "Fields Inputs", u8"Saisie des champs"},
     {"prefs.tab.annotate_analysis", "Annotate", u8"Annoter"},
     {"prefs.tab.local_data", "Local data", u8"Données locales"},
+    {"prefs.tab.keybindings", "Keyboard Shortcuts", u8"Raccourcis clavier"},
+
+    // Preferences "Keyboard Shortcuts" tab + the shared capture widget + quick-bind popup.
+    // See SmatchetPreferencesUi_Keybindings.cpp / SmatchetHotkeyCapture.cpp and
+    // docs/plans/active/keyboard-shortcuts-rebindable.md (PR2).
+    {"keybindings.editor.intro",
+     "Rebind in-app keyboard shortcuts. Click a shortcut to capture a new key combo (Esc cancels). "
+     "Changes save automatically.",
+     u8"Réattribuez les raccourcis clavier de l'application. Cliquez sur un raccourci pour capturer une "
+     u8"nouvelle combinaison de touches (Échap annule). Les changements sont enregistrés automatiquement."},
+    {"keybindings.editor.searchHint", "Filter shortcuts...", u8"Filtrer les raccourcis..."},
+    {"keybindings.editor.colCommand", "Action", u8"Action"},
+    {"keybindings.editor.colShortcut", "Shortcut", u8"Raccourci"},
+    {"keybindings.editor.colActions", "", ""},
+    {"keybindings.editor.conflict", "conflicts with", u8"en conflit avec"},
+    {"keybindings.editor.enabled", "On", u8"Activé"},
+    {"keybindings.editor.clear", "Clear", u8"Effacer"},
+    {"keybindings.editor.resetDefaults", "Reset all to defaults", u8"Tout réinitialiser par défaut"},
+    {"keybindings.editor.systemHeader", "System shortcuts (not rebindable)",
+     u8"Raccourcis système (non modifiables)"},
+    {"keybindings.editor.unbound", "(unbound)", u8"(non défini)"},
+    {"keybindings.editor.rebindButton", "Click to rebind", u8"Cliquer pour modifier"},
+    {"keybindings.editor.capturing", "Press a key combo... (Esc to cancel)",
+     u8"Appuyez sur une combinaison... (Échap pour annuler)"},
+    {"keybindings.system.zenToggle", "Toggle Zen mode", u8"Basculer le mode Zen"},
+    {"keybindings.system.zenExit", "Exit Zen mode", u8"Quitter le mode Zen"},
+    {"keybindings.system.paletteNav", "Command palette navigation",
+     u8"Navigation dans la palette de commandes"},
+    {"keybindings.quickbind.title", "Set shortcut", u8"Définir le raccourci"},
+    {"keybindings.quickbind.forCommand", "Shortcut for:", u8"Raccourci pour :"},
+    {"keybindings.quickbind.conflict", "Already bound to:", u8"Déjà attribué à :"},
+    {"keybindings.quickbind.set", "Set", u8"Définir"},
+    {"keybindings.quickbind.clear", "Clear", u8"Effacer"},
+    {"keybindings.quickbind.cancel", "Cancel", u8"Annuler"},
     {"prefs.local_data.help",
      "Stored tickets, offline create queues, and pending field edits live in a local SQLite file. "
      "Recreating it clears that data only; tracker credentials and views are not removed. A full "

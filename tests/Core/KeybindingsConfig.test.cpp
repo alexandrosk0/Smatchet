@@ -120,3 +120,55 @@ TEST_CASE("KeybindingsConfig from_json yields an empty table when bindings is ab
     const KeybindingsConfig bad = notArray.get<KeybindingsConfig>();
     CHECK(bad.Bindings.empty());
 }
+
+TEST_CASE("FindBindingIndex keys on (commandId, argsJson), not commandId alone") {
+    KeybindingsConfig c;
+    c.Bindings.push_back(Keybinding());
+    c.Bindings[0].CommandId = "view.sidebar.primary";
+    c.Bindings[0].ArgsJson = "{\"action\":\"toggle\"}";
+    c.Bindings.push_back(Keybinding());
+    c.Bindings[1].CommandId = "view.sidebar.primary";
+    c.Bindings[1].ArgsJson = "{\"action\":\"show\"}";
+
+    CHECK(c.FindBindingIndex("view.sidebar.primary", "{\"action\":\"toggle\"}") == 0);
+    CHECK(c.FindBindingIndex("view.sidebar.primary", "{\"action\":\"show\"}") == 1);
+    CHECK(c.FindBindingIndex("view.sidebar.primary", "{}") == -1);
+    CHECK(c.FindBindingIndex("nope", "{}") == -1);
+}
+
+TEST_CASE("SetBindingHotkey upserts: mutates an existing row, appends a new one") {
+    KeybindingsConfig c = KeybindingsConfig::Defaults();
+    const size_t before = c.Bindings.size();
+
+    // Existing action (app.bug_report.open / "{}") — mutate in place, no growth.
+    const int idx = c.SetBindingHotkey("app.bug_report.open", "{}", "Ctrl+Alt+G");
+    CHECK(idx >= 0);
+    CHECK(c.Bindings.size() == before);
+    CHECK(c.Bindings[static_cast<size_t>(idx)].Hotkey == "Ctrl+Alt+G");
+    CHECK(c.Bindings[static_cast<size_t>(idx)].CommandId == "app.bug_report.open");
+
+    // Re-enable on upsert: a disabled row comes back enabled.
+    c.Bindings[static_cast<size_t>(idx)].Enabled = false;
+    c.SetBindingHotkey("app.bug_report.open", "{}", "Ctrl+Alt+H");
+    CHECK(c.Bindings[static_cast<size_t>(idx)].Enabled);
+
+    // New action — appends.
+    const int added = c.SetBindingHotkey("view.export", "{}", "Ctrl+E");
+    CHECK(added == static_cast<int>(c.Bindings.size()) - 1);
+    CHECK(c.Bindings.size() == before + 1);
+    CHECK(c.Bindings[static_cast<size_t>(added)].Hotkey == "Ctrl+E");
+    CHECK(c.Bindings[static_cast<size_t>(added)].Enabled);
+}
+
+TEST_CASE("RemoveBinding erases the matching action and reports the outcome") {
+    KeybindingsConfig c = KeybindingsConfig::Defaults();
+    const size_t before = c.Bindings.size();
+
+    CHECK(c.RemoveBinding("app.fullscreen.toggle", "{}"));
+    CHECK(c.Bindings.size() == before - 1);
+    CHECK(c.FindBindingIndex("app.fullscreen.toggle", "{}") == -1);
+
+    // Second remove of the same action is a no-op false.
+    CHECK_FALSE(c.RemoveBinding("app.fullscreen.toggle", "{}"));
+    CHECK(c.Bindings.size() == before - 1);
+}

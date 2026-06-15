@@ -1,0 +1,196 @@
+#include "SmatchetHotkeyCapture.h"
+
+#include "ConfigManager.h"        // TrackerConfig (mutated in Draw)
+#include "SmatchetLocalization.h" // SmatchetLocalization::T
+
+#include "imgui.h"
+
+#include <string>
+#include <vector>
+
+namespace smatchet {
+namespace ui {
+
+namespace {
+
+// The keys the parser/stringifier round-trip (see ImGuiHotkey.cpp KeyFromToken):
+// letters, digits, F-keys are contiguous in imgui so we scan by range; the three
+// punctuation keys are listed explicitly. Anything outside this set is rejected so
+// a captured combo always survives Stringify -> Parse.
+ImGuiKey FirstBindableKeyPressedThisFrame() {
+    for (ImGuiKey k = ImGuiKey_A; k <= ImGuiKey_Z; k = static_cast<ImGuiKey>(k + 1)) {
+        if (ImGui::IsKeyPressed(k, /*repeat*/ false)) {
+            return k;
+        }
+    }
+    for (ImGuiKey k = ImGuiKey_0; k <= ImGuiKey_9; k = static_cast<ImGuiKey>(k + 1)) {
+        if (ImGui::IsKeyPressed(k, /*repeat*/ false)) {
+            return k;
+        }
+    }
+    for (ImGuiKey k = ImGuiKey_F1; k <= ImGuiKey_F12; k = static_cast<ImGuiKey>(k + 1)) {
+        if (ImGui::IsKeyPressed(k, /*repeat*/ false)) {
+            return k;
+        }
+    }
+    const ImGuiKey kExtras[] = {ImGuiKey_Comma, ImGuiKey_Space, ImGuiKey_Enter};
+    for (ImGuiKey k : kExtras) {
+        if (ImGui::IsKeyPressed(k, /*repeat*/ false)) {
+            return k;
+        }
+    }
+    return ImGuiKey_None;
+}
+
+} // namespace
+
+bool CaptureImGuiHotkeyThisFrame(ImGuiBugHotkey& out) {
+    const ImGuiKey pressed = FirstBindableKeyPressedThisFrame();
+    if (pressed == ImGuiKey_None) {
+        return false;
+    }
+    const ImGuiIO& io = ImGui::GetIO();
+    out = ImGuiBugHotkey{};
+    out.ctrl = io.KeyCtrl;
+    out.shift = io.KeyShift;
+    out.alt = io.KeyAlt;
+    out.super = io.KeySuper;
+    out.key = pressed;
+    return true;
+}
+
+bool DrawHotkeyRebindControl(const char* idSuffix, const std::string& display,
+                             bool& capturing, std::string& out) {
+    bool committed = false;
+    if (!capturing) {
+        if (display.empty()) {
+            ImGui::TextDisabled("%s", SmatchetLocalization::T("keybindings.editor.unbound", "(unbound)"));
+        } else {
+            ImGui::TextUnformatted(display.c_str());
+        }
+        ImGui::SameLine();
+        const std::string btnId =
+            std::string(SmatchetLocalization::T("keybindings.editor.rebindButton", "Click to rebind")) +
+            "##rebind" + (idSuffix != nullptr ? idSuffix : "");
+        if (ImGui::SmallButton(btnId.c_str())) {
+            capturing = true;
+        }
+    } else {
+        ImGui::TextColored(
+            ImVec4(0.95f, 0.85f, 0.30f, 1.0f), "%s",
+            SmatchetLocalization::T("keybindings.editor.capturing", "Press a key combo... (Esc to cancel)"));
+        // Esc cancels without clobbering the existing combo; otherwise commit on the
+        // first bindable key press.
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, /*repeat*/ false)) {
+            capturing = false;
+        } else {
+            ImGuiBugHotkey hk;
+            if (CaptureImGuiHotkeyThisFrame(hk)) {
+                out = StringifyImGuiHotkey(hk);
+                capturing = false;
+                committed = true;
+            }
+        }
+    }
+    return committed;
+}
+
+std::string FindKeybindingConflict(const std::vector<Keybinding>& bindings,
+                                   const std::string& candidateHotkey,
+                                   const std::string& selfCommandId,
+                                   const std::string& selfArgsJson) {
+    ImGuiBugHotkey cand;
+    if (!ParseImGuiHotkey(candidateHotkey, cand)) {
+        return std::string(); // unparseable candidate -> nothing to conflict against
+    }
+    for (const Keybinding& b : bindings) {
+        if (b.CommandId == selfCommandId && b.ArgsJson == selfArgsJson) {
+            continue; // the row being edited never conflicts with itself
+        }
+        if (!b.Enabled || b.Hotkey.empty()) {
+            continue; // disabled / unbound rows do not dispatch, so they can't collide
+        }
+        ImGuiBugHotkey existing;
+        if (!ParseImGuiHotkey(b.Hotkey, existing)) {
+            continue;
+        }
+        if (existing.key == cand.key && existing.ctrl == cand.ctrl && existing.shift == cand.shift &&
+            existing.alt == cand.alt && existing.super == cand.super) {
+            return b.CommandId;
+        }
+    }
+    return std::string();
+}
+
+void QuickBindPopup::Open(const std::string& commandId, const std::string& displayName,
+                          const std::string& argsJson) {
+    commandId_ = commandId;
+    displayName_ = displayName;
+    argsJson_ = argsJson.empty() ? std::string("{}") : argsJson;
+    pendingOpen_ = true;
+    capturing_ = false;
+    draft_.clear();
+}
+
+bool QuickBindPopup::Draw(TrackerConfig& cfg) {
+    const char* kPopupId = "###QuickBindPopup";
+    if (pendingOpen_) {
+        // Seed the draft from the action's current binding (empty if unbound).
+        const int idx = cfg.Keybindings.FindBindingIndex(commandId_, argsJson_);
+        draft_ = (idx >= 0) ? cfg.Keybindings.Bindings[static_cast<std::size_t>(idx)].Hotkey : std::string();
+        capturing_ = false;
+        ImGui::OpenPopup(kPopupId);
+        pendingOpen_ = false;
+    }
+
+    bool changed = false;
+    // Title carries the target command so the same popup id serves every button.
+    const std::string title =
+        std::string(SmatchetLocalization::T("keybindings.quickbind.title", "Set shortcut")) + kPopupId;
+    if (ImGui::BeginPopupModal(title.c_str(), nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextUnformatted(SmatchetLocalization::T("keybindings.quickbind.forCommand", "Shortcut for:"));
+        ImGui::SameLine();
+        ImGui::TextUnformatted(displayName_.empty() ? commandId_.c_str() : displayName_.c_str());
+        ImGui::Separator();
+
+        DrawHotkeyRebindControl("quickbind", draft_, capturing_, draft_);
+
+        // Live conflict warning (warn-only — single-combo policy still lets the user set it).
+        const std::string conflict = FindKeybindingConflict(cfg.Keybindings.Bindings, draft_, commandId_, argsJson_);
+        if (!conflict.empty()) {
+            ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.35f, 1.0f), "%s %s",
+                               SmatchetLocalization::T("keybindings.quickbind.conflict", "Already bound to:"),
+                               conflict.c_str());
+        }
+
+        ImGui::Separator();
+        const bool canSet = !draft_.empty();
+        if (!canSet) {
+            ImGui::BeginDisabled(true);
+        }
+        if (ImGui::Button(SmatchetLocalization::T("keybindings.quickbind.set", "Set"))) {
+            cfg.Keybindings.SetBindingHotkey(commandId_, argsJson_, draft_);
+            changed = true;
+            ImGui::CloseCurrentPopup();
+        }
+        if (!canSet) {
+            ImGui::EndDisabled();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(SmatchetLocalization::T("keybindings.quickbind.clear", "Clear"))) {
+            if (cfg.Keybindings.RemoveBinding(commandId_, argsJson_)) {
+                changed = true;
+            }
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(SmatchetLocalization::T("keybindings.quickbind.cancel", "Cancel"))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    return changed;
+}
+
+} // namespace ui
+} // namespace smatchet

@@ -223,6 +223,11 @@ struct TrackerConfig {
     // Rebindable global keyboard shortcuts dispatched through the command registry.
     // See KeybindingsConfig.h and docs/plans/active/keyboard-shortcuts-rebindable.md.
     KeybindingsConfig Keybindings = KeybindingsConfig::Defaults();
+    // One-shot migration flag: folds the legacy BugReportHotkey / BugReportHotkeyEnabled
+    // pair into the keybinding registry ("app.bug_report.open") so a user who customized
+    // or disabled the bug-report shortcut before the rebindable registry landed keeps it.
+    // Persisted so the fold fires once — afterwards the registry is authoritative.
+    bool MigratedBugReportHotkeyV1 = false;
 
     // Custom suggestions and templates saved in smatchet_config.json
     std::vector<std::string> DurationSuggestions = {"15m", "30m", "1h", "2h", "4h", "8h", "1d", "2d", "1w"};

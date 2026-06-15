@@ -1,0 +1,182 @@
+// keybindings_editor_rebind.test.cpp — bucket-E (ImGui Test Engine) coverage
+// for the rebindable keyboard-shortcut feature's visible UX (PR2 of
+// docs/plans/active/keyboard-shortcuts-rebindable.md).
+//
+// Two real-UI assertions, each driven against the LIVE app (no replica window):
+//
+//   A. EditorTabRendersWithLiveConflict — seed a deliberate collision into the
+//      live keybinding table (app.dock_debug.toggle rebound onto Ctrl+B, which
+//      view.sidebar.primary already owns by default), open Preferences, click
+//      the "Keyboard Shortcuts" tab, and YieldUntil the editor reports itself
+//      active (d.preferencesActiveTab == Keybindings). Tab-active means
+//      BeginTabItem returned true → DrawKeybindingsPreferencesTab's body ran for
+//      several frames WITH a live conflict present, so the per-row
+//      FindKeybindingConflict() + the "conflicts with <action>" TextColored
+//      branch + the searchable table + the System-shortcuts CollapsingHeader all
+//      ticked. A Begin/End or Push/PopID imbalance in any of those paths would
+//      trip an ImGui IM_ASSERT trapped by the engine and fail the test. This is
+//      the plan's "the conflict warning shows on a colliding bind" line, covered
+//      at the render-without-crash level.
+//
+//   B. DefaultComboDispatchesToCommand — press the default Ctrl+Alt+D combo and
+//      YieldUntil the public g_ui.showDockDebug flag flips. This exercises the
+//      full live dispatch chain end-to-end: the dispatch cache (built from the
+//      bindings at config load) → smatchet::ui::MatchHotkey → the unified command
+//      registry Dispatch("app.dock_debug.toggle") → the observable UI flag. This
+//      is the plan's "assert the combo fires the command" line.
+//
+// WHY NO CLICK-TO-REBIND-THEN-FIRE IN ONE TEST: SmatchetUI::MarkKeybindingsDirty
+// (the trigger that rebuilds the dispatch cache after an edit) is a private
+// member with no global accessor reachable from a bucket-E test, and the editor's
+// mutating widgets (the per-row capture control, the "Reset all to defaults"
+// button below a 320px scroll-table) sit in the docked Preferences window's
+// clipped content region — which this repo's bucket-E suite has documented as
+// unreliable for ItemClick (see funcsize_preferences_tabs.test.cpp). The
+// rebind→MarkKeybindingsDirty→rebuildKeybindingCache→new-combo-fires integration
+// seam is therefore the residue tracked in docs/self-improvement/categories/
+// tooling.md; its constituent logic — SetBindingHotkey upsert, FindKeybinding-
+// Conflict, the ParseImGuiHotkey/StringifyImGuiHotkey round-trip, and MatchHotkey
+// — is covered by bucket-A (tests/Core/KeybindingsConfig.test.cpp +
+// tests/Core/ImGuiHotkey.test.cpp).
+
+#if defined(SMATCHET_BUILD_UI_TESTS)
+
+#include "AppController.h"
+#include "Commands/Scenarios/UiTestScenario.h" // SmatchetActiveUiTestAppController
+#include "Config/KeybindingsConfig.h"          // KeybindingsConfig, SetBindingHotkey
+#include "SmatchetUiSession.h"                  // UiDrawSession, PreferencesActiveTab, g_ui
+#include "Ui/SmatchetHotkeyCapture.h"           // smatchet::ui::FindKeybindingConflict
+
+#include "imgui.h"
+#include "imgui_internal.h" // ImGuiWindow, FindWindowByName — the proven real-window probe
+#include "imgui_te_context.h"
+#include "imgui_te_engine.h"
+
+#include <string>
+
+// g_ui — the shared bag of UI-thread visibility flags + the live TrackerConfig
+// (g_ui.cfg). We set showPreferences / requestPreferencesFocus and read
+// preferencesActiveTab / showDockDebug exactly as the real View menu / dispatch
+// paths do. Same handle the funcsize_preferences_tabs pilot drives.
+extern UiDrawSession g_ui;
+
+namespace {
+
+template <typename Pred> bool YieldUntil(ImGuiTestContext* ctx, Pred pred, int maxFrames = 300) {
+    for (int i = 0; i < maxFrames; ++i) {
+        ctx->Yield();
+        if (pred()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool WindowIsLive(const char* title) {
+    const ImGuiWindow* win = ImGui::FindWindowByName(title);
+    return win != nullptr && win->Active;
+}
+
+// Open Preferences and tick until its window is live (Active). Mirrors the pilot's
+// docked-window open recipe: re-arm the focus latch every frame until the docked
+// tab activates, since the draw fn consumes it in one frame.
+bool OpenPreferences(ImGuiTestContext* ctx) {
+    g_ui.showPreferences = true;
+    g_ui.requestPreferencesFocus = true;
+    ctx->SetRef("Preferences");
+    return YieldUntil(ctx, [&] {
+        g_ui.requestPreferencesFocus = true;
+        return WindowIsLive("Preferences");
+    });
+}
+
+// --- Test A: editor body renders with a live conflict --------------------
+void RegisterEditorTabRendersWithLiveConflict(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "Keybindings", "EditorTabRendersWithLiveConflict");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+            return;
+        }
+
+        // Snapshot the live bindings so we restore them no matter how the test exits.
+        const KeybindingsConfig original = g_ui.cfg.Keybindings;
+
+        // Seed a deliberate collision: rebind app.dock_debug.toggle onto Ctrl+B,
+        // which view.sidebar.primary owns by default. The editor reads the live
+        // table each frame, so the conflict surfaces immediately — no dirty flag
+        // needed (the dirty flag gates the *dispatch* cache, not the editor view).
+        g_ui.cfg.Keybindings.SetBindingHotkey("app.dock_debug.toggle", "{}", "Ctrl+B");
+
+        // Sanity (pure, pre-UI): the shared conflict check the editor renders from
+        // reports the collision. Non-empty == Ctrl+B is double-bound.
+        const std::string conflict = smatchet::ui::FindKeybindingConflict(
+            g_ui.cfg.Keybindings.Bindings, "Ctrl+B", "app.dock_debug.toggle", "{}");
+        IM_CHECK_NO_RET(!conflict.empty());
+
+        const bool prefsLive = OpenPreferences(ctx);
+        IM_CHECK_NO_RET(prefsLive);
+        if (!prefsLive) {
+            g_ui.cfg.Keybindings = original;
+            g_ui.showPreferences = false;
+            return;
+        }
+
+        // The Keyboard Shortcuts tab carries a locale-stable ###id suffix
+        // ("Keyboard Shortcuts###prefsTabKeybindings"), so the header ref resolves
+        // regardless of UI language (ImHashStr restarts at ###). A tab header is
+        // addressed tab-bar-qualified: "<TabBarID>/<label>".
+        const char* tabRef = "PreferencesTabs/Keyboard Shortcuts###prefsTabKeybindings";
+        const bool tabExists = ctx->ItemExists(tabRef);
+        IM_CHECK_NO_RET(tabExists);
+        if (tabExists) {
+            ctx->ItemClick(tabRef);
+            // Tab-active is the editor's own signal: DrawKeybindingsPreferencesTab
+            // sets d.preferencesActiveTab = Keybindings inside its BeginTabItem body,
+            // so this is true only once the full body (incl. the conflict-render
+            // branch above) has ticked. Locale-independent — set by code, not a label.
+            const bool active = YieldUntil(
+                ctx, [] { return g_ui.preferencesActiveTab == PreferencesActiveTab::Keybindings; });
+            IM_CHECK_NO_RET(active);
+        }
+
+        // Restore the seeded binding + close Preferences so sibling tests start clean.
+        g_ui.cfg.Keybindings = original;
+        g_ui.showPreferences = false;
+        ctx->Yield();
+    };
+}
+
+// --- Test B: a registry combo dispatches end-to-end ----------------------
+void RegisterDefaultComboDispatchesToCommand(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "Keybindings", "DefaultComboDispatchesToCommand");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+            return;
+        }
+
+        // app.dock_debug.toggle's default combo (Ctrl+Alt+D) was parsed into the
+        // dispatch cache at config load. It is ungated (no backend reachability
+        // gate) and flips the public g_ui.showDockDebug — the cleanest observable.
+        const bool before = g_ui.showDockDebug;
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiMod_Alt | ImGuiKey_D);
+        const bool flipped = YieldUntil(ctx, [&] { return g_ui.showDockDebug != before; });
+        IM_CHECK_NO_RET(flipped);
+
+        // Leave the dev overlay flag as we found it.
+        g_ui.showDockDebug = before;
+        ctx->Yield();
+    };
+}
+
+} // namespace
+
+extern "C" void SmatchetRegisterKeybindingsEditorRebindTests(ImGuiTestEngine* engine) {
+    RegisterEditorTabRendersWithLiveConflict(engine);
+    RegisterDefaultComboDispatchesToCommand(engine);
+}
+
+#endif // SMATCHET_BUILD_UI_TESTS

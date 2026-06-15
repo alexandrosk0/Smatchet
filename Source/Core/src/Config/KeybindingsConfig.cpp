@@ -60,6 +60,61 @@ void from_json(const nlohmann::json& j, KeybindingsConfig& c) {
     }
 }
 
+std::string BoundHotkeyDisplay(const std::vector<Keybinding>& bindings,
+                               const std::string& commandId) {
+    std::string fallback;
+    for (const Keybinding& b : bindings) {
+        if (b.CommandId != commandId || !b.Enabled || b.Hotkey.empty()) {
+            continue;
+        }
+        if (b.ArgsJson == "{}" || b.ArgsJson.empty()) {
+            return b.Hotkey; // exact default-args match wins
+        }
+        if (fallback.empty()) {
+            fallback = b.Hotkey;
+        }
+    }
+    return fallback;
+}
+
+int KeybindingsConfig::FindBindingIndex(const std::string& commandId,
+                                        const std::string& argsJson) const {
+    for (std::size_t i = 0; i < Bindings.size(); ++i) {
+        if (Bindings[i].CommandId == commandId && Bindings[i].ArgsJson == argsJson) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+int KeybindingsConfig::SetBindingHotkey(const std::string& commandId,
+                                        const std::string& argsJson,
+                                        const std::string& hotkey) {
+    int idx = FindBindingIndex(commandId, argsJson);
+    if (idx >= 0) {
+        Bindings[static_cast<std::size_t>(idx)].Hotkey = hotkey;
+        Bindings[static_cast<std::size_t>(idx)].Enabled = true;
+        return idx;
+    }
+    Keybinding b;
+    b.CommandId = commandId;
+    b.ArgsJson = argsJson;
+    b.Hotkey = hotkey;
+    b.Enabled = true;
+    Bindings.push_back(b);
+    return static_cast<int>(Bindings.size()) - 1;
+}
+
+bool KeybindingsConfig::RemoveBinding(const std::string& commandId,
+                                      const std::string& argsJson) {
+    int idx = FindBindingIndex(commandId, argsJson);
+    if (idx < 0) {
+        return false;
+    }
+    Bindings.erase(Bindings.begin() + idx);
+    return true;
+}
+
 KeybindingsConfig KeybindingsConfig::Defaults() {
     KeybindingsConfig c;
     // Panel visibility — toggle persisted cfg slots (was: handlePanelVisibilityShortcuts).
