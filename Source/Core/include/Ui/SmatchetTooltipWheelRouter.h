@@ -7,6 +7,10 @@ namespace ui {
 /// before ImGui's NewFrame can scroll the window underneath it.
 void RouteWheelToScrollableTooltipBeforeNewFrame();
 
+/// Gives an open, vertically scrollable tooltip first claim on mouse-wheel input.
+/// Returns true if wheel input was consumed by the tooltip.
+bool RouteWheelToScrollableTooltip();
+
 /// True while any active tooltip hierarchy owns a vertical scrollbar.
 bool HasOpenScrollableTooltip();
 

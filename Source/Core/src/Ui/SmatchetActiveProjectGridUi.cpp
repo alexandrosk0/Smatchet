@@ -87,6 +87,10 @@ static bool TableOwnsCurrentWheelRoute(ImGuiTable* table) {
 static void RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGuiTable* table, UiDrawSession& d, GridPane& pane) {
     const int endWheelSwallowsBeforeHorizontal = (std::max)(0, d.cfg.GridEndWheelSwallowsBeforeHorizontal);
 
+    if (smatchet::ui::RouteWheelToScrollableTooltip()) {
+        return;
+    }
+
     if (!table) {
         return;
     }
@@ -760,6 +764,8 @@ void SmatchetUI::drawActiveProjectTable(ActiveProjectDrawCtx& ctx) {
                                        ImGuiTableFlags_SortTristate | ImGuiTableFlags_NoSavedSettings;
 
     ImGui::Separator();
+
+    (void)smatchet::ui::RouteWheelToScrollableTooltip();
 
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 1.0f));
     if (!columns.empty() && ImGui::BeginTable("TicketGrid", static_cast<int>(columns.size()), tableFlags)) {
