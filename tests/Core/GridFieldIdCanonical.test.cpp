@@ -4,10 +4,10 @@
 
 // TicketGridColumnsBuilder::Build canonicalizes each saved view field id via
 // CanonicalizeGridFieldId (inline in StringUtil.h) so a Jira view saved before
-// the #1018 comments dedupe renders the unified `comments` cell. We test the
+// the #1291 comments dedupe renders the unified `comments` cell. We test the
 // helper directly — linking TicketGridModel.cpp would pull heavy transitive deps.
 
-TEST_CASE("CanonicalizeGridFieldId — legacy comment alias (#1018)") {
+TEST_CASE("CanonicalizeGridFieldId — legacy comment alias (#1291)") {
     SUBCASE("legacy singular folds onto unified id") {
         CHECK(CanonicalizeGridFieldId("comment") == "comments");
     }

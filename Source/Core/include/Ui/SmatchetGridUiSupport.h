@@ -37,6 +37,11 @@ void CopyGridRectAsTsv(const std::vector<CachedTicket>& tickets, const std::vect
 std::uint64_t ComputeGridSortSignature(const std::string& sortFingerprint, std::uint64_t ticketsRevision,
                                        std::size_t ticketCount);
 
+/// Select every row in `pane`'s grid (filtered set if any, else all `tickets`),
+/// seeding PrimaryRow / SortSignature / ActiveIssueId. Shared by the menu-bar
+/// "Select All" item and the grid-local Ctrl+A handler so the two stay in sync.
+void GridSelectAllRows(GridPane& pane, const std::vector<CachedTicket>& tickets);
+
 std::string BuildGridContextSignature(const ViewDefinition* view, const std::string& jqlQuery);
 void CancelUnfinishedNewIssueForGridChange(UiDrawSession& d);
 

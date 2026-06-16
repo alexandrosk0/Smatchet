@@ -228,6 +228,11 @@ struct TrackerConfig {
     // or disabled the bug-report shortcut before the rebindable registry landed keeps it.
     // Persisted so the fold fires once — afterwards the registry is authoritative.
     bool MigratedBugReportHotkeyV1 = false;
+    // One-shot migration flag: seeds the menu-bar shortcut bindings (Zoom In/Out/Reset,
+    // open-view, clear-selection, the new view reveals) into a config saved by an older
+    // build. from_json replaces (not merges) the binding table, so without this an
+    // upgrading user never receives the new defaults. Persisted so the seed fires once.
+    bool MigratedMenuShortcutsV1 = false;
 
     // Custom suggestions and templates saved in smatchet_config.json
     std::vector<std::string> DurationSuggestions = {"15m", "30m", "1h", "2h", "4h", "8h", "1d", "2d", "1w"};

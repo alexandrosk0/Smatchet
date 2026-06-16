@@ -325,6 +325,30 @@
             }
         },
         {
+            "name": "ninja-fuzzer-linux",
+            "inherits": [
+                "_smatchet-clang-linux-base"
+            ],
+            "displayName": "Ninja libFuzzer (Linux Clang)",
+            "description": "Headless Linux Clang libFuzzer build over the untrusted-byte parser fuzz targets (tests/fuzz/). SMATCHET_SANITIZER=fuzzer wires -fsanitize=fuzzer,address,undefined (coverage + libFuzzer main) via cmake/Sanitizers.cmake. SMATCHET_BUILD_APP=OFF skips GLFW/ImGui/Lua/whisper/Standalone/DX12 (the targets are pure ImGui-free Core parsers, md4c is ungated). SMATCHET_BUILD_TESTS=ON so add_subdirectory(tests) runs; the fuzzer guard in tests/CMakeLists.txt early-returns into tests/fuzz/ and skips the doctest rig (mirrors the tsan guard). Advisory; not on the develop merge-gate. See .github/workflows/fuzz-smoke.yml.",
+            "binaryDir": "${sourceDir}/build/ninja-fuzzer-linux",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_SANITIZER": "fuzzer",
+                "SMATCHET_BUILD_TESTS": "ON",
+                "SMATCHET_BUILD_APP": "OFF",
+                "SMATCHET_WITH_LUA_AUTOMATION": "OFF",
+                "SMATCHET_WITH_MCP": "OFF",
+                "SMATCHET_WITH_AI": "OFF",
+                "SMATCHET_WITH_WHISPER": "OFF",
+                "SMATCHET_WHISPER_LOCAL_BACKEND": "OFF",
+                "SMATCHET_BUILD_LUA_TESTS": "OFF",
+                "SMATCHET_AGENT_DEBUG": "OFF",
+                "SMATCHET_BUILD_AGENT_DEBUG_TESTS": "OFF"
+            }
+        },
+        {
             "name": "android-ndk-arm64",
             "inherits": [
                 "_smatchet-light-features"
@@ -485,6 +509,11 @@
             "targets": [
                 "SmatchetTsanTests"
             ]
+        },
+        {
+            "name": "ninja-fuzzer-linux",
+            "configurePreset": "ninja-fuzzer-linux",
+            "inheritConfigureEnvironment": true
         },
         {
             "name": "android-ndk-arm64",

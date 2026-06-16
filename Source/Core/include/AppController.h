@@ -910,7 +910,7 @@ class AppController : public IMainThreadPoster {
     bool FetchIssueComments(const std::string& issueKey, std::vector<TrackerIssueComment>& outComments,
                             std::string& outError);
 
-    /// issue-comments fix (#1018) — push a freshly-observed comment count into the
+    /// issue-comments fix (#1291) — push a freshly-observed comment count into the
     /// cached ticket so the grid Comments column updates after a post, without a
     /// full re-sync. UI-thread only (mirrors the optimistic-update path). No-op for
     /// icon-only backends (cell value empty) and when the count is unchanged.
@@ -1254,7 +1254,7 @@ class AppController : public IMainThreadPoster {
     // field into a different context than the caller populated. Caller passes its latch.
     void EnsureCatalogHistoryField(GridContextFieldCatalog& cat);
     void EnsureCatalogCommentsField(GridContextFieldCatalog& cat);
-    // issue-comments fix (#1018) — erase Jira's legacy system `comment` field (ADF blob) from the
+    // issue-comments fix (#1291) — erase Jira's legacy system `comment` field (ADF blob) from the
     // catalog so it stops duplicating the synthetic `comments` count column in the Fields picker.
     // Same latched-catalog contract as the Ensure* helpers above. The blob survives in per-ticket
     // fieldValues["comment"] (Jira mapper, catalog-independent) for the Comments-cell hover tooltip.

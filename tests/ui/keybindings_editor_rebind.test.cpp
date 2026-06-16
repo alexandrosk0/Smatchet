@@ -26,9 +26,10 @@
 //      is the plan's "assert the combo fires the command" line.
 //
 // WHY NO CLICK-TO-REBIND-THEN-FIRE IN ONE TEST: SmatchetUI::MarkKeybindingsDirty
-// (the trigger that rebuilds the dispatch cache after an edit) is a private
-// member with no global accessor reachable from a bucket-E test, and the editor's
-// mutating widgets (the per-row capture control, the "Reset all to defaults"
+// (the trigger that rebuilds the dispatch cache after an edit) is public, but no
+// accessor exposes the live SmatchetUI instance to a bucket-E test
+// (UiTestScenario.h surfaces only the AppController + the test engine), and the
+// editor's mutating widgets (the per-row capture control, the "Reset all to defaults"
 // button below a 320px scroll-table) sit in the docked Preferences window's
 // clipped content region — which this repo's bucket-E suite has documented as
 // unreliable for ItemClick (see funcsize_preferences_tabs.test.cpp). The
@@ -44,8 +45,8 @@
 #include "AppController.h"
 #include "Commands/Scenarios/UiTestScenario.h" // SmatchetActiveUiTestAppController
 #include "Config/KeybindingsConfig.h"          // KeybindingsConfig, SetBindingHotkey
-#include "SmatchetUiSession.h"                  // UiDrawSession, PreferencesActiveTab, g_ui
-#include "Ui/SmatchetHotkeyCapture.h"           // smatchet::ui::FindKeybindingConflict
+#include "SmatchetUiSession.h"                 // UiDrawSession, PreferencesActiveTab, g_ui
+#include "Ui/SmatchetHotkeyCapture.h"          // smatchet::ui::FindKeybindingConflict
 
 #include "imgui.h"
 #include "imgui_internal.h" // ImGuiWindow, FindWindowByName — the proven real-window probe
@@ -111,8 +112,8 @@ void RegisterEditorTabRendersWithLiveConflict(ImGuiTestEngine* engine) {
 
         // Sanity (pure, pre-UI): the shared conflict check the editor renders from
         // reports the collision. Non-empty == Ctrl+B is double-bound.
-        const std::string conflict = smatchet::ui::FindKeybindingConflict(
-            g_ui.cfg.Keybindings.Bindings, "Ctrl+B", "app.dock_debug.toggle", "{}");
+        const std::string conflict = smatchet::ui::FindKeybindingConflict(g_ui.cfg.Keybindings.Bindings, "Ctrl+B",
+                                                                          "app.dock_debug.toggle", "{}");
         IM_CHECK_NO_RET(!conflict.empty());
 
         const bool prefsLive = OpenPreferences(ctx);
@@ -136,8 +137,8 @@ void RegisterEditorTabRendersWithLiveConflict(ImGuiTestEngine* engine) {
             // sets d.preferencesActiveTab = Keybindings inside its BeginTabItem body,
             // so this is true only once the full body (incl. the conflict-render
             // branch above) has ticked. Locale-independent — set by code, not a label.
-            const bool active = YieldUntil(
-                ctx, [] { return g_ui.preferencesActiveTab == PreferencesActiveTab::Keybindings; });
+            const bool active =
+                YieldUntil(ctx, [] { return g_ui.preferencesActiveTab == PreferencesActiveTab::Keybindings; });
             IM_CHECK_NO_RET(active);
         }
 
@@ -172,11 +173,52 @@ void RegisterDefaultComboDispatchesToCommand(ImGuiTestEngine* engine) {
     };
 }
 
+// --- Test C: the Ctrl+= zoom combo dispatches end-to-end -----------------
+// This is the plan's marquee root-cause regression ("Zoom In is an example"),
+// which had TWO independent causes, both fixed by keybindings-menu-shortcuts-fix.md:
+//   (1) ParseImGuiHotkey could not parse "=" / "-", so even a present Ctrl+= bind
+//       never produced a MatchHotkey (fixed in ImGuiHotkey.cpp — see
+//       tests/Core/ImGuiHotkey.test.cpp); and
+//   (2) the new menu-shortcut defaults never reached an upgrading user at all,
+//       because KeybindingsConfig::from_json REPLACES (not merges) the binding
+//       table — so a stale on-disk config kept only its old binds (fixed by the
+//       migrated_menu_shortcuts_v1 seed migration — see ConfigMigration.test.cpp).
+// This test presses the real Ctrl+= combo and YieldUntil the observable
+// g_ui.cfg.FontSizePt rises — exercising the punctuation-token parse → dispatch
+// cache (built from the loaded+migrated bindings) → MatchHotkey → ui.zoom.in
+// registry command → font-size field, the same end-to-end seam as Test B but over
+// the punctuation key that was the actual bug.
+void RegisterZoomComboAdjustsFontSize(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "Keybindings", "ZoomComboAdjustsFontSize");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+            return;
+        }
+
+        // ui.zoom.in nudges cfg.FontSizePt by +1, clamped to 8..32. Start from a
+        // mid-range value so a single +1 is observable (and never clamp-swallowed).
+        const int before = g_ui.cfg.FontSizePt;
+        g_ui.cfg.FontSizePt = 16;
+        ctx->Yield();
+
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_Equal); // Ctrl+= — Zoom In default
+        const bool grew = YieldUntil(ctx, [] { return g_ui.cfg.FontSizePt > 16; });
+        IM_CHECK_NO_RET(grew);
+
+        // Restore the user's original font size so sibling tests start clean.
+        g_ui.cfg.FontSizePt = before;
+        ctx->Yield();
+    };
+}
+
 } // namespace
 
 extern "C" void SmatchetRegisterKeybindingsEditorRebindTests(ImGuiTestEngine* engine) {
     RegisterEditorTabRendersWithLiveConflict(engine);
     RegisterDefaultComboDispatchesToCommand(engine);
+    RegisterZoomComboAdjustsFontSize(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

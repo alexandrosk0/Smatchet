@@ -732,57 +732,96 @@ jobs:
         run: |
           set -uo pipefail
           mkdir -p "$(dirname "$SMATCHET_LANE_STATUS_FILE")"
-          set +e
-          out="$(timeout 240 ./Smatchet.exe cmd ui_test.run --all --frames=3600 --spawn --yes 2>&1)"
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          # Observability — surface the spawned CHILD's per-test failure reasons.
-          # The --spawn parent prints only the JSON pass/fail counts; the actual
-          # "Error <file>:<line> '<assertion>'" lines from the ImGui Test Engine
-          # (io.ConfigLogToTTY=true in UiTestScenario) go to the CHILD process's
-          # stdout/stderr, which CliCommandRunner redirects to a temp file and
-          # announces as `[spawn] child stdout/stderr -> <path>`. CI was blind to
-          # WHY each test failed (Passed:0 Failed:73 with no reasons). Pull that
-          # path out of the parent output, cat the log into the CI log, and stage
-          # it for upload. Best-effort: never fail the step on a missing log —
-          # the lane-integrity step below owns the broken-lane teeth.
-          # The arrow glyph in the parent output is unicode; match on the stable
-          # literal "child stdout/stderr" prefix and take the tail of the line.
-          childlog="$(printf '%s\n' "$out" | grep -a 'child stdout/stderr' | tail -1 | sed 's/.*child stdout\/stderr[^A-Za-z]*//')"
           mkdir -p "${{ github.workspace }}/build/tmp/bucket-e-childlog"
-          if [ -n "$childlog" ] && [ -f "$childlog" ]; then
-            cp "$childlog" "${{ github.workspace }}/build/tmp/bucket-e-childlog/spawn-child.log"
-            echo "===== bucket-E spawned-child log (per-test ImGui Test Engine failure reasons) ====="
-            cat "$childlog"
-            echo "===== end bucket-E spawned-child log ====="
-          else
-            echo "::warning::bucket-E: spawned-child log not found ('$childlog'); per-test failure reasons unavailable this run." >&2
-          fi
-          # Parse the ui_test.run JSON envelope's data.{passed,failed}. The advisory
-          # exit code itself is unreliable (a zero-pass run can still return 0),
-          # so the broken-lane signal comes from the counts, written to the
-          # sentinel the non-advisory lane-integrity step asserts on.
-          # Parse passed+failed together; a JSON-envelope MISS (no '{...}' in the
-          # output, or absent data.passed/data.failed) exits non-zero so we can
-          # tell a real "0 0" run apart from a parse miss. Defaulting to 0 here
-          # would let malformed driver output sail past the broken-lane guard
-          # (Passed==0 && Failed>0 never fires when both are 0-from-parse-miss).
-          parsed="$(printf '%s' "$out" | python -c "import sys,json,re; t=sys.stdin.read(); m=re.search(r'\{.*\}',t,re.S); d=(json.loads(m.group(0)).get('data',{}) if m else {}); sys.exit(2) if ('passed' not in d or 'failed' not in d) else print(d['passed'], d['failed'])" 2>/dev/null || true)"
-          if [ -z "$parsed" ]; then
-            # Parse miss / malformed output / absent results — fail-closed.
-            status=broken; passed=0; failed=1
-          else
-            # parsed is "<passed> <failed>" (single line); split on the space.
-            passed="${parsed%% *}"; failed="${parsed##* }"
-            status=ok
-            if [ "$passed" = "0" ] && [ "$failed" != "0" ]; then status=broken
-            elif [ "$failed" != "0" ]; then status=fail; fi
-          fi
+
+          # Retry-on-collapse, fail-closed on persistent collapse.
+          #
+          # The headless Mesa lane is flaky, not dead: the same exe under the same
+          # llvmpipe env intermittently collapses to Passed:0 Failed:73 (a first-
+          # frame render race in the ImGui Test Engine path) on one run and passes
+          # 71/74 minutes later. A single collapse red-walls every C++ PR. So we
+          # retry a COLLAPSE (Passed==0 && Failed>0, OR a JSON-envelope parse-miss)
+          # up to 3 attempts total, accepting the first attempt that actually boots
+          # + runs (Passed>0). The #923 broken-lane teeth stay intact: 3 consecutive
+          # collapses ⇒ status=broken ⇒ the non-advisory lane-integrity step below
+          # fails-closed — a genuinely dead harness still reds the lane.
+          #
+          # Per attempt we OVERWRITE the staged child log, so the upload always
+          # carries the LAST attempt's diagnostic (the one whose sentinel we keep).
+
+          # Surface the spawned CHILD's per-test failure reasons. The --spawn parent
+          # prints only the JSON pass/fail counts; the actual "Error <file>:<line>
+          # '<assertion>'" lines from the ImGui Test Engine (io.ConfigLogToTTY=true
+          # in UiTestScenario) go to the CHILD process's stdout/stderr, which
+          # CliCommandRunner redirects to a temp file and announces as `[spawn] child
+          # stdout/stderr -> <path>`. Pull that path out of the parent output, cat
+          # the log into the CI log, and stage it for upload. Best-effort: never
+          # fail the step on a missing log — the lane-integrity step owns the teeth.
+          # The arrow glyph is unicode; match the stable literal "child stdout/stderr"
+          # prefix and take the tail of the line.
+          capture_childlog() {
+            local out_text="$1" childlog
+            childlog="$(printf '%s\n' "$out_text" | grep -a 'child stdout/stderr' | tail -1 | sed 's/.*child stdout\/stderr[^A-Za-z]*//')"
+            if [ -n "$childlog" ] && [ -f "$childlog" ]; then
+              cp "$childlog" "${{ github.workspace }}/build/tmp/bucket-e-childlog/spawn-child.log"
+              echo "===== bucket-E spawned-child log (per-test ImGui Test Engine failure reasons) ====="
+              cat "$childlog"
+              echo "===== end bucket-E spawned-child log ====="
+            else
+              echo "::warning::bucket-E: spawned-child log not found ('$childlog'); per-test failure reasons unavailable this attempt." >&2
+            fi
+          }
+
+          attempts=3
+          status=broken; passed=0; failed=1
+          for attempt in $(seq 1 "$attempts"); do
+            echo "bucket-E: attempt ${attempt}/${attempts} — ui_test.run --all --frames=3600 --spawn --yes"
+            set +e
+            out="$(timeout 240 ./Smatchet.exe cmd ui_test.run --all --frames=3600 --spawn --yes 2>&1)"
+            rc=$?
+            set -e
+            printf '%s\n' "$out"
+            # Stage THIS attempt's child log (overwrites prior attempts; the last
+            # attempt's diagnostic is the one uploaded).
+            capture_childlog "$out"
+            # Parse the ui_test.run JSON envelope's data.{passed,failed}. The advisory
+            # exit code itself is unreliable (a zero-pass run can still return 0), so
+            # the signal comes from the counts. A JSON-envelope MISS (no '{...}' in the
+            # output, or absent data.passed/data.failed) exits non-zero so we can tell
+            # a real "0 0" run apart from a parse miss — defaulting to 0 here would let
+            # malformed output sail past the broken guard (Passed==0 && Failed>0 never
+            # fires when both are 0-from-parse-miss).
+            parsed="$(printf '%s' "$out" | python -c "import sys,json,re; t=sys.stdin.read(); m=re.search(r'\{.*\}',t,re.S); d=(json.loads(m.group(0)).get('data',{}) if m else {}); sys.exit(2) if ('passed' not in d or 'failed' not in d) else print(d['passed'], d['failed'])" 2>/dev/null || true)"
+            if [ -z "$parsed" ]; then
+              # Parse miss / malformed output / absent results — collapse, fail-closed.
+              status=broken; passed=0; failed=1
+            else
+              # parsed is "<passed> <failed>" (single line); split on the space.
+              passed="${parsed%% *}"; failed="${parsed##* }"
+              status=ok
+              if [ "$passed" = "0" ] && [ "$failed" != "0" ]; then status=broken
+              elif [ "$failed" != "0" ]; then status=fail; fi
+            fi
+            # A COLLAPSE is the transient class: Passed==0 with failures, OR a parse
+            # miss (both land on status=broken above). Anything that produced Passed>0
+            # (status=ok|fail) booted + ran — accept it and stop retrying.
+            if [ "$status" != "broken" ]; then
+              echo "bucket-E: attempt ${attempt}/${attempts} accepted (status=${status} passed=${passed} failed=${failed})."
+              break
+            fi
+            if [ "$attempt" -lt "$attempts" ]; then
+              echo "::warning::bucket-E transient collapse on attempt ${attempt}/${attempts}, retrying"
+            fi
+          done
+
+          # If every attempt collapsed, status is still 'broken' here (persistent →
+          # genuine dead harness). A parse-miss on the FINAL attempt keeps status=broken
+          # too — it never silently becomes ok.
+          echo "::notice::bucket-E used ${attempt}/${attempts} attempt(s); final status=${status} (passed=${passed} failed=${failed})."
           printf 'status=%s passed=%s failed=%s\n' "$status" "$passed" "$failed" > "$SMATCHET_LANE_STATUS_FILE"
           echo "bucket-E lane-status: $(cat "$SMATCHET_LANE_STATUS_FILE")"
-          # Stay advisory for the run itself (continue-on-error); the lane-
-          # integrity step below carries the real teeth for the broken case.
+          # Stay advisory for the run itself (continue-on-error); the lane-integrity
+          # step below carries the real teeth for the broken case.
           exit "$rc"
 
       # Lane-integrity (NOT continue-on-error): bucket-E broken-lane teeth. Reads

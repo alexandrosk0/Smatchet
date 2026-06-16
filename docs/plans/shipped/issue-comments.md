@@ -10,7 +10,7 @@
 
 ## Context
 
-Surface more issue data inside the tracker grid (origin: issue #1018). Today no backend
+Surface more issue data inside the tracker grid (origin: issue #1291). Today no backend
 surfaces a comment thread in the UI. Goal: a grid column whose cell click opens a modal that
 **reads the full comment thread + lets the user post a new comment**, for **all three backends**
 (GitHub, Jira, Plane). After this lands: from any tracker grid the user can see comment counts
@@ -108,7 +108,7 @@ Trade-off: Plane has no comment count in its list payload, so rather than a per-
 - **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target) per PR.
 - **Doc validation (blocks plan-doc PRs — keep this bullet)**: the canonical `scripts/dev/test-docs.sh` suite green (anchors / agent-contract / plan-index / ref-integrity / portable-purity / md_lint).
 - **Plan stress-test — `grill-with-docs` (keep this bullet)**: run before finalising; record the outcome below.
-- **Manual residue**: modal open/post flow is manually verified per PR (GitHub on #1018, Jira on a live instance, Plane on a live instance). If a bucket-E case proves infeasible, a `docs/self-improvement/categories/tooling.md` entry tracks the deferred automation. No silent residue.
+- **Manual residue**: modal open/post flow is manually verified per PR (GitHub on #1291, Jira on a live instance, Plane on a live instance). If a bucket-E case proves infeasible, a `docs/self-improvement/categories/tooling.md` entry tracks the deferred automation. No silent residue.
 
 ## Out of scope (flagged, not designed)
 

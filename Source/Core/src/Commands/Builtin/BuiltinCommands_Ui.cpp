@@ -1,0 +1,123 @@
+// ui.* / grid.* interaction commands — font-size zoom, "open view" palette
+// shortcut, and grid selection clear. These are the app-global, rebindable
+// registry commands behind the menu-bar shortcuts (Zoom In/Out/Reset, Open
+// View, Clear Selection); see docs/plans/active/keybindings-menu-shortcuts-fix.md.
+// Like ViewToggleCommands.cpp the handlers mutate `g_ui` (UI-thread-owned), so
+// every effect hops to the UI thread via RunOnUiThreadAsCommandResult.
+// Strict-lint zone (Commands/): LOG_* only, no raw new/delete, obj["k"]=v.
+
+#include "BuiltinCommands_Internal.h"
+
+#include "Commands/Command.h"
+#include "Commands/CommandRegistry.h"
+#include "Commands/MainThreadDispatch.h"
+
+#include "AppController.h"
+#include "ConfigManager.h"
+#include "SmatchetUiSession.h"
+
+#include <string>
+#include <utility>
+
+// Same g_ui singleton accessed by SmatchetUI.cpp / ViewToggleCommands.cpp —
+// file-static definition lives in SmatchetUI.cpp. extern avoids a getter on
+// AppController for what is a bag of UI state.
+extern UiDrawSession g_ui;
+
+namespace smatchet {
+namespace cmd {
+
+using builtin_detail::MakeCommand;
+
+namespace {
+
+// Per-frame zoom: the renderer derives ImGui's FontGlobalScale from
+// cfg.FontSizePt (no atlas rebuild), so a zoom command only needs to set the
+// field and persist it. `reset` snaps to the TrackerConfig default; otherwise
+// `delta` nudges the current value. Clamped to a legible 8..32 pt range.
+CommandResult AdjustFontSize(AppController& app, int delta, bool reset) {
+    return RunOnUiThreadAsCommandResult(app, [delta, reset]() {
+        int pt = reset ? 16 : g_ui.cfg.FontSizePt + delta; // 16 = TrackerConfig default FontSizePt
+        if (pt < 8) {
+            pt = 8;
+        }
+        if (pt > 32) {
+            pt = 32;
+        }
+        g_ui.cfg.FontSizePt = pt;
+        ConfigManager::Save(g_ui.cfg);
+        nlohmann::json out;
+        out["fontSizePt"] = g_ui.cfg.FontSizePt;
+        return CommandResult::Success(std::move(out));
+    });
+}
+
+} // namespace
+
+void RegisterUiInteractionCommands(CommandRegistry& reg, AppController& app) {
+    if (reg.HasExact("ui.zoom.in")) {
+        return;
+    }
+
+    {
+        Command c = MakeCommand("ui.zoom.in", "Increase the UI font size by one point (max 32).",
+                                [&app](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
+                                    return AdjustFontSize(app, +1, /*reset=*/false);
+                                });
+        c.Destructive = false;
+        c.Idempotent = false; // clamps at 32, but each call nudges until then
+        c.AsyncSafe = true;
+        reg.Register(std::move(c));
+    }
+    {
+        Command c = MakeCommand("ui.zoom.out", "Decrease the UI font size by one point (min 8).",
+                                [&app](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
+                                    return AdjustFontSize(app, -1, /*reset=*/false);
+                                });
+        c.Destructive = false;
+        c.Idempotent = false;
+        c.AsyncSafe = true;
+        reg.Register(std::move(c));
+    }
+    {
+        Command c = MakeCommand("ui.zoom.reset", "Reset the UI font size to the default (16).",
+                                [&app](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
+                                    return AdjustFontSize(app, 0, /*reset=*/true);
+                                });
+        c.Destructive = false;
+        c.Idempotent = true; // always lands on the default
+        c.AsyncSafe = true;
+        reg.Register(std::move(c));
+    }
+    {
+        Command c =
+            MakeCommand("ui.open_view", "Open the command palette pre-filtered to the view.toggle.* panel commands.",
+                        [&app](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
+                            return RunOnUiThreadAsCommandResult(app, []() {
+                                g_ui.requestCommandPaletteOpen = true;
+                                g_ui.requestCommandPaletteFilter = "view.toggle.";
+                                return CommandResult::Success({{"opened", true}});
+                            });
+                        });
+        c.Destructive = false;
+        c.Idempotent = false; // raises a one-frame open latch
+        c.AsyncSafe = true;
+        reg.Register(std::move(c));
+    }
+    {
+        Command c = MakeCommand("grid.clear_selection", "Clear the focused grid pane's rectangular selection.",
+                                [&app](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
+                                    return RunOnUiThreadAsCommandResult(app, []() {
+                                        g_ui.focusedPane().gridState.RectSel.ClearAll();
+                                        return CommandResult::Success({{"cleared", true}});
+                                    });
+                                });
+        c.Destructive = false;
+        c.Idempotent = true; // clearing an empty selection is a no-op
+        c.AsyncSafe = true;
+        reg.Register(std::move(c));
+    }
+}
+
+} // namespace cmd
+} // namespace smatchet

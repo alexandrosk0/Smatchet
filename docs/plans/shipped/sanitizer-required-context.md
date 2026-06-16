@@ -2,10 +2,13 @@
 
 Slug: `sanitizer-required-context` · Owner: orchestrator · Started: 2026-06-15 · Loop-mode: `in`
 
-> **Status**: `shipped` — all cited PRs merged (see Implementation log); archived 2026-06-16 via plan-archival sweep.
-
+> **Status**: shipped — Slice 1 superseded by #1277 (duplicate-effort collision #2),
+> Slice 1b shipped via #1280 (merged), Slice 2 superseded by #1253, side-task
+> (bucket down-scope) shipped via #1273 (merged). All goals achieved on `develop`;
+> see § Implementation log + § Verification for per-slice disposition.
+>
 > **RE-SCOPED 2026-06-15 — Slice 2 SUPERSEDED.** Mid-flight recon found a parallel
-> `Slice C` effort ([`coverage-sanitizer-required-contexts.md`](coverage-sanitizer-required-contexts.md))
+> `Slice C` effort ([`coverage-sanitizer-required-contexts.md`](docs/plans/coverage-sanitizer-required-contexts.md))
 > already promoted BOTH Sanitizer lanes to **live** branch-protection required
 > contexts: PR #1253 (`af475041`, merged 2026-06-15 12:46) added them to config
 > `required_contexts` + `ci.required_checks` + escape hatches + the deterministic-red
@@ -127,14 +130,11 @@ the general raw-PUT guard as a residual P3; P2→P3; Last-reviewed 2026-06-15.
   `scripts/dev/with-msvc-env.sh`) then run the doctest binary filtered to the three
   ADF deep-nest cases — must pass with NO ASAN stack-overflow. Lint:
   `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop`.
-  **MERGED** — PR #1273 (`d1328a43`) merged to develop; ASAN deep-nest cases PASS, lint PASS.
 - Slice 1b: fresh `ninja-msvc-asan` build, run the full rig (minus the excluded
   CallstackParser case) — all 9 guarded sites pass under ASAN (no timing false-red);
   lint PASS. Non-ASAN budgets unchanged (the `#else` branch). **DONE** — full rig
   **1872 passed | 0 failed** under ASAN; lint PASS; guards PR #1280 (test-only).
-- Slice 2: N/A — legitimately **SUPERSEDED** by the parallel Slice C (PR #1253,
-  `af475041`, merged to develop) which promoted both Sanitizer lanes to live required
-  contexts; live ruleset already shows 9 required contexts. No edits owed from this plan.
+- Slice 2: N/A — superseded; live ruleset already shows 9 required contexts.
 
 ## Implementation log
 
@@ -148,12 +148,25 @@ the general raw-PUT guard as a residual P3; P2→P3; Last-reviewed 2026-06-15.
   Pattern C not the Pattern-A self-gate this plan drafted → **Slice 2 dropped as
   superseded** (see banner + Slice 2 section). Plan re-scoped to ASAN-lane fragility
   hardening. User-approved (AskUserQuestion: "Ship the hardening").
+- 2026-06-15 — **Slice 1 test work superseded by #1277 (duplicate-effort collision #2).**
+  A parallel session's PR #1277 (`test(tracker): make ADF deep-nest fixture ASAN-safe via
+  iterative teardown`) landed the IDENTICAL hardening on develop — same `DismantleDeepJson`
+  helper, same `kDeepAdfDepth=400`, same iterative approach (trunk used the cleaner
+  `DismantleDeepJson(json&&)` rvalue-ref API). Surfaced when #1273 went `DIRTY` after #1277
+  merged; resolved the merge by taking trunk's version of
+  `tests/Core/TrackerFieldValueParser.extended.test.cpp` wholesale (don't re-assert the
+  lvalue-ref variant over a merged sibling) → #1273's test-file diff vs develop is now
+  **empty**. #1273 still ships its docs (bucket-oob down-scope + this plan + the dup-preflight
+  process lesson). Slice 1's *goal* (ASAN-safe ADF fixture on develop) is **achieved** — via
+  #1277, not #1273. Second collision in this plan (after Slice 2 vs #1253) → broadened the
+  `slice-dup-preflight` process lesson from "CI-config slice" to "any slice on a
+  high-contention file/symbol" (categories/process.md Recurrence).
 - 2026-06-15 — **Post-ship.** User authorized registering guards PR #1280 with the
   merge-watcher (post-ship menu → "Register #1280 too"); #1280 now auto-merges when green
   alongside #1273. Registration was a no-op — #1280 was already present in the watcher
   registry (`registered_at` predates the authorization, head `af508448`, 6 CR-none-grace
-  polls); surfaced to user. Both PRs were BLOCKED (normal, awaiting required checks) at
-  hand-off but subsequently **merged** to develop (#1273 `d1328a43`, #1280 `dcf8abd8`).
+  polls; never merged — stayed BLOCKED awaiting checks); surfaced to user. Both PRs
+  BLOCKED (normal, awaiting required checks) at hand-off.
 - 2026-06-15 — Slice 1b: exhaustive audit found 9 wall-clock timing assertions across
   6 files; applied the #1215 `__SANITIZE_ADDRESS__` guard to all 9 uniformly on
   branch `feat/asan-timing-guards`. Guards (ASAN budget / non-ASAN budget):
