@@ -71,13 +71,20 @@ smatchet_add_fuzz_target(fuzz_cpp_lex
     CORPUS cpp_lex)
 
 # ParseCallstackText — untrusted pasted callstack text -> structured frames.
-# Closure: CallstackParser.cpp only (regex + cctype + algorithm, no Logger).
+# Closure: CallstackParser.cpp (regex + cctype + algorithm, no Logger). The header
+# pulls Config/ConfigManager.h for PathRemapRule (ApplyPathRemaps is defined in the
+# same .cpp), which bare-includes KeybindingsConfig.h + ToolbarConfig.h (under
+# include/Config) and <nlohmann/json_fwd.hpp> — hence the extra include dir + the
+# nlohmann interface lib, mirroring fuzz_markdown_adf below.
 smatchet_add_fuzz_target(fuzz_callstack
     SOURCES
         fuzz_callstack.cpp
         "${_fuzz_core}/src/CallstackParser.cpp"
     INCLUDES
         "${_fuzz_core}/include"
+        "${_fuzz_core}/include/Config"
+    LIBS
+        nlohmann_json::nlohmann_json
     CORPUS callstack)
 
 # MarkdownConvert::MarkdownToAdf — untrusted Markdown (issue descriptions/comments)

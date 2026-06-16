@@ -1,6 +1,8 @@
 #ifndef CALLSTACK_PARSER_H
 #define CALLSTACK_PARSER_H
 
+#include "ConfigManager.h"
+
 #include <string>
 #include <vector>
 
