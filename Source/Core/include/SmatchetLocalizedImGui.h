@@ -98,7 +98,6 @@ inline bool Combo(const char* label, int* current_item, const char* (*getter)(vo
 // long-text editor, focused-InputText catch-all). Tighter splice-at-cursor
 // for the multiline editor lands when an ImGuiInputTextCallback wire-up is
 // added (Phase E or later).
-//
 // Defined out-of-line in SmatchetDictationHook.cpp (debt 2026-05-18) so this hot,
 // ~45-includer header carries only the declaration — the body's ImGui item-state
 // queries (IsItemActive / IsItemFocused / GetItemID) stay out of every TU that
