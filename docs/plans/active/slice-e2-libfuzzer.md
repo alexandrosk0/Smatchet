@@ -286,7 +286,40 @@ have zero Core-build coupling.
 - 2026-06-15 — Plan drafted from infra recon (Sanitizers.cmake, tsan-linux-nightly.yml
   template, the six target headers + their doctest link closures, CMakePresets). Awaiting
   user review of §3 host decision (recommend B) + §10 open questions.
+- 2026-06-15 — **E2a implemented** (autonomous, §3 Option B + §10 recommendations adopted).
+  `cmake/Sanitizers.cmake` fuzzer branch (FATAL on MSVC/clang-cl + non-Clang; flags
+  `-fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all`)
+  + matrix doc row + recognised-values list. `ninja-fuzzer-linux` configure+build presets
+  (clone of `ninja-tsan-linux`). `tests/CMakeLists.txt` fuzzer guard (`add_subdirectory(fuzz)`
+  → `return()`, mirrors tsan). New `tests/fuzz/` — reusable `smatchet_add_fuzz_target()`
+  helper + `fuzz_image_dims` driver (links `ImageDimensionsPure.cpp` only) + PNG/GIF/JPEG
+  seed corpus + README. `.github/workflows/fuzz-smoke.yml` advisory lane (auto-discovers
+  `fuzz_*` binaries). Local validation: `cmake --list-presets` registers both presets,
+  YAML+JSON parse clean, lint-rules gate on the diff. **Linux native-clang build/run =
+  CI-only** (Windows host cannot build the lane) — `fuzz-smoke.yml` is the sole build
+  validator, so it ships in PR 1 (deviation 2 below).
 
 ## Deviations
 
-_(none yet — populated as slices ship)_
+1. **Preset `SMATCHET_BUILD_TESTS=ON`, not `OFF`** — §4.2 specified `BUILD_TESTS=OFF`. That
+   is wrong: the root `CMakeLists.txt` only runs `add_subdirectory(tests)` under
+   `if(SMATCHET_BUILD_TESTS)`, so OFF would mean `tests/fuzz/` is never configured and no
+   driver builds. Set to `ON` (matching `ninja-tsan-linux`); the fuzzer guard in
+   `tests/CMakeLists.txt` early-`return()`s past the ImGui-linked doctest rig, so ON costs
+   nothing but the `add_subdirectory(fuzz)`.
+2. **CI lane (`fuzz-smoke.yml`) pulled forward into PR 1** — §6 slated it for E2c/PR 2. The
+   `ninja-fuzzer-linux` lane is **native-clang on Linux**; this is a Windows host, so the
+   harness cannot build or run the fuzzers locally → **CI (ubuntu) is the only build
+   validator**. The workflow must ship with E2a to prove the toolchain end-to-end. The lane
+   auto-discovers `fuzz_*` binaries (find-loop + `tests/fuzz/**` path trigger), so PR 2 adds
+   drivers with **no workflow edit** — the original "CI in E2c" intent (zero churn when
+   drivers land) is preserved, just front-loaded.
+3. **Build preset omits an explicit `targets` list** (builds the default `all`) instead of
+   naming a single target like the tsan build preset names `SmatchetTsanTests`. Reason: same
+   auto-scale goal — PR 2's five drivers build with no preset edit.
+4. **Verification method: `-runs=0` smoke (ctest) + `-max_total_time` CI run**, not §9's
+   `-runs=100000` local loop. The local loop is impossible on a Windows host; the ctest
+   `-runs=0` smoke proves each binary loads its corpus + libFuzzer init, and `fuzz-smoke.yml`
+   does the real time-boxed bug-finding run (45 s/target PR, 300 s/target nightly).
+5. **PR fuzz budget 45 s/target, not §10-Q5's 60 s** — trims worst-case PR CPU as the driver
+   count grows (45 s × 6 ≈ 4.5 min). Nightly stays generous at 300 s/target.
