@@ -93,12 +93,16 @@ void SanitizeHeaderBoundConfigKeys(nlohmann::json& j) {
     }
     // The persisted JSON keys whose value is spliced into an outbound HTTP request URL or header.
     // Keep in sync with the URL/header sinks: domain + plane_url -> tracker request URLs
-    // (NormalizeBaseUrl in JiraClient / PlaneClient); ai_*_base_url -> AI endpoint URLs. Secret keys
-    // are intentionally absent — their on-disk form is DPAPI ciphertext (no CR/LF) or POSIX plaintext
-    // already sanitized in Save before encryption.
+    // (NormalizeBaseUrl in JiraClient / PlaneClient); plane_workspace_slug -> concatenated raw into
+    // every Plane workspace request path (".../api/v1/workspaces/<slug>/projects/..." across
+    // PlaneClient / PlaneFieldCatalog / PlaneIssueSearch / PlaneIssueMutation / PlaneActivityFeed) with
+    // NO use-site normalization — so it is strictly LESS guarded than the base URL and must be stripped
+    // here; ai_*_base_url -> AI endpoint URLs. Secret keys are intentionally absent — their on-disk form
+    // is DPAPI ciphertext (no CR/LF) or POSIX plaintext already sanitized in Save before encryption.
     static const char* const kHeaderBoundKeys[] = {
         "domain",
         "plane_url",
+        "plane_workspace_slug",
         "ai_base_url",
         "ai_ollama_base_url",
         "ai_deepseek_base_url",

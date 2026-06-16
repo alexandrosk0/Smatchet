@@ -90,11 +90,17 @@ TEST_CASE("SanitizeConfigStringValue: strips CR/LF/NUL from the DeepSeek header-
 TEST_CASE("SanitizeHeaderBoundConfigKeys: config.set-style write strips CR/LF/NUL from URL keys") {
     // Models the config.set / Lua direct-write round-trip: RunConfigSet builds a config JSON and
     // hands it to ConfigManager::WriteConfigJson, which now routes it through this central helper
-    // before the value reaches disk. domain / plane_url are config.set-allowlisted and are spliced
-    // into outbound tracker request URLs, so a CR/LF/NUL injected via config.set must be stripped.
+    // before the value reaches disk. domain / plane_url / plane_workspace_slug are config.set-
+    // allowlisted and are spliced into outbound tracker request URLs, so a CR/LF/NUL injected via
+    // config.set must be stripped.
     nlohmann::json j;
     j["domain"] = "evil.example.com\r\nX-Injected: 1";
     j["plane_url"] = "https://plane.example.com\r\n\r\nGET /admin HTTP/1.1";
+
+    // plane_workspace_slug is concatenated raw into every Plane workspace request path
+    // (".../api/v1/workspaces/<slug>/projects/...") with NO use-site normalization, so it is strictly
+    // less guarded than the base URL — the chokepoint strip is its only defense.
+    j["plane_workspace_slug"] = "my-workspace\r\nX-Injected: 1";
 
     // Re-confirm an AI base URL stays covered at the chokepoint (already sanitized in Save; the
     // central pass guards it for any direct-write path too). Built with an embedded NUL explicitly
@@ -112,6 +118,7 @@ TEST_CASE("SanitizeHeaderBoundConfigKeys: config.set-style write strips CR/LF/NU
 
     CHECK(j["domain"].get<std::string>() == "evil.example.comX-Injected: 1");
     CHECK(j["plane_url"].get<std::string>() == "https://plane.example.comGET /admin HTTP/1.1");
+    CHECK(j["plane_workspace_slug"].get<std::string>() == "my-workspaceX-Injected: 1");
     CHECK(j["ai_base_url"].get<std::string>() == "https://api.example.com/v1");
     CHECK(j["jql"].get<std::string>() == "project = FOO\r\nORDER BY created");
 }

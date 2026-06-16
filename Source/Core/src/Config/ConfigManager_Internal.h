@@ -38,8 +38,8 @@ std::string SanitizeConfigStringValue(const std::string& value);
 // ConfigManager::WriteConfigJson — the single config-write chokepoint every writer funnels through
 // (ConfigManager::Save, the MCP `config.set` command, and the Lua layout writer) — so a control
 // character injected via the config.set / Lua direct-write paths (which bypass Save's per-field
-// sanitize) can never reach disk. Covered keys: domain, plane_url, ai_base_url, ai_ollama_base_url,
-// ai_deepseek_base_url. Absent keys are left absent (never inserted); non-string values are left
+// sanitize) can never reach disk. Covered keys: domain, plane_url, plane_workspace_slug, ai_base_url,
+// ai_ollama_base_url, ai_deepseek_base_url. Absent keys are left absent (never inserted); non-string values are left
 // untouched. Idempotent. The use-site strip in the tracker / AI clients stays the primary guard.
 void SanitizeHeaderBoundConfigKeys(nlohmann::json& j);
 
