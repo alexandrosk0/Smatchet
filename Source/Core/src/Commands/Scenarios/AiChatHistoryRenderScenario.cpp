@@ -220,9 +220,9 @@ class AiChatHistoryRenderScenario : public IScenario {
     // scope name → finalized per-frame totalMs collected across the post-warmup
     // window; OnFinish reports the median of each as the gated lastTotalMs.
     std::unordered_map<std::string, std::vector<double>> perFrameTotals_;
-    // scope name → finalized per-frame avgPerCallMs over the same window;
-    // OnFinish reports the median of each as the gated avgPerCallMs (kept on the
-    // same sampling basis as the total rather than derived from it).
+    // scope name → finalized per-frame avgPerCallMs over the same window. OnFinish
+    // reports the median of each as the gated avgPerCallMs (kept on the same
+    // sampling basis as the total rather than derived from it).
     std::unordered_map<std::string, std::vector<double>> perFrameAvgPerCall_;
 };
 
