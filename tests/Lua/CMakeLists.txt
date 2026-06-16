@@ -27,6 +27,11 @@ add_executable(SmatchetLuaTests
     # that every JSON ingress (decode_json, MCP REST/JSON-RPC, Lua-MCP params) routes
     # through. Header-only + nlohmann-only; no extra production .cpp to link.
     BoundedJsonParse.test.cpp
+    # debt luajson-convert-leaf — direct doctest for the JSON<->Lua marshalling
+    # leaf (Source/Core/include/Json/LuaJsonConvert.h) lifted out of the two
+    # binding TUs. Header-only inline (sol2 + nlohmann already on this target);
+    # no extra production .cpp to link.
+    LuaJsonConvert.test.cpp
     # Phase 6b: link the lifted, ImGui-free production TU directly so the
     # round-trip test exercises the real `smatchet::lua::InitLuaCore` body
     # (per the Phase-5 mcp-pure recipe -- production .cpp on the test target's
