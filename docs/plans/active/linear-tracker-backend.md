@@ -2,6 +2,8 @@
 
 > **Slug**: `linear-tracker-backend` (matches this file's basename without `.md`).
 >
+> **Status**: `active` — not started (only the plan doc merged, #466).
+>
 > **Origin**: User request, 2026-05-26: "Can I add Linear as a tracker to smatchet?" followed by "make a plan for it".
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` Project rules for plan location, plan-doc safety, plan revision after implementation, plan stress-test, plan template, and plan-doc perf-gate section.
@@ -39,56 +41,56 @@ Key decisions:
 
 Core backend additions:
 
-1. `Source_Core/include/LinearClient.h`: new `ITrackerBackend` implementation declaration.
-2. `Source_Core/src/LinearClient.cpp`: tracker shell, reachability probe, field catalog, browse URL, and routing for shared helpers.
-3. `Source_Core/include/LinearClientHelpers.h` and `Source_Core/src/LinearClientHelpers.cpp`: GraphQL headers, API URL normalization, issue key parsing, ISO timestamp parsing, and GraphQL error extraction.
-4. `Source_Core/src/LinearIssueSearch.h` and `Source_Core/src/LinearIssueSearch.cpp`: paginated issue fetch and per-key lookup.
-5. `Source_Core/include/LinearIssueMappingPure.h` and `Source_Core/src/LinearIssueMappingPure.cpp`: pure JSON issue node to `CachedTicket` mapping.
-6. `Source_Core/include/LinearQueryFromJql.h` and `Source_Core/src/LinearQueryFromJql.cpp`: pure translator from Smatchet view query text to Linear GraphQL filter/search variables.
-7. `Source_Core/src/LinearIssueMutation.cpp`: `issueUpdate`, `issueCreate`, and `commentCreate` implementation split out of the client shell.
+1. `Source/Core/include/LinearClient.h`: new `ITrackerBackend` implementation declaration.
+2. `Source/Core/src/LinearClient.cpp`: tracker shell, reachability probe, field catalog, browse URL, and routing for shared helpers.
+3. `Source/Core/include/LinearClientHelpers.h` and `Source/Core/src/LinearClientHelpers.cpp`: GraphQL headers, API URL normalization, issue key parsing, ISO timestamp parsing, and GraphQL error extraction.
+4. `Source/Core/src/LinearIssueSearch.h` and `Source/Core/src/LinearIssueSearch.cpp`: paginated issue fetch and per-key lookup.
+5. `Source/Core/include/LinearIssueMappingPure.h` and `Source/Core/src/LinearIssueMappingPure.cpp`: pure JSON issue node to `CachedTicket` mapping.
+6. `Source/Core/include/LinearQueryFromJql.h` and `Source/Core/src/LinearQueryFromJql.cpp`: pure translator from Smatchet view query text to Linear GraphQL filter/search variables.
+7. `Source/Core/src/LinearIssueMutation.cpp`: `issueUpdate`, `issueCreate`, and `commentCreate` implementation split out of the client shell.
 
 Config and UI:
 
-8. [`Source_Core/include/ConfigManager.h`](../../Source_Core/include/ConfigManager.h:60): add `LinearApiKey`, `LinearApiUrl`, `LinearTeamId`, `LinearTeamKey`, `LinearWorkspaceUrl`, and `NewIssueInheritFieldIdsLinear`.
-9. [`Source_Core/src/ConfigManager.cpp`](../../Source_Core/src/ConfigManager.cpp:381): persist Linear config; DPAPI-encrypt `LinearApiKey`; map `SMATCHET_TRACKER_TOKEN` and `SMATCHET_TRACKER_BASE_URL` for `TrackerType=Linear`.
-10. [`Source_Core/src/ConfigManager_Views.cpp`](../../Source_Core/src/ConfigManager_Views.cpp:131): add Linear default view and `NormalizeViewsBackendKey("linear") -> "Linear"`.
-11. [`Source_Core/include/SmatchetUiSession.h`](../../Source_Core/include/SmatchetUiSession.h:293): add Preferences buffers for Linear fields.
-12. [`Source_Core/src/SmatchetPreferencesUi.cpp`](../../Source_Core/src/SmatchetPreferencesUi.cpp:292): add `Linear` to the tracker combo, render the Linear config panel, save/load buffers, and filter recently used projects by the Linear endpoint.
-13. [`Source_Core/src/FieldCatalogCache.cpp`](../../Source_Core/src/FieldCatalogCache.cpp:433): add a Linear cache key shape, likely `Linear|<api-url>|<team-id-or-key>`.
-14. [`Source_Core/include/FieldCatalogCache.h`](../../Source_Core/include/FieldCatalogCache.h:14): update comments/schema docs for the Linear cache key.
+8. [`Source/Core/include/ConfigManager.h`](../../../Source/Core/include/Config/ConfigManager.h:60): add `LinearApiKey`, `LinearApiUrl`, `LinearTeamId`, `LinearTeamKey`, `LinearWorkspaceUrl`, and `NewIssueInheritFieldIdsLinear`.
+9. [`Source/Core/src/ConfigManager.cpp`](../../../Source/Core/src/Config/ConfigManager.cpp:381): persist Linear config; DPAPI-encrypt `LinearApiKey`; map `SMATCHET_TRACKER_TOKEN` and `SMATCHET_TRACKER_BASE_URL` for `TrackerType=Linear`.
+10. [`Source/Core/src/ConfigManager_Views.cpp`](../../../Source/Core/src/Config/ConfigManager_Views.cpp:131): add Linear default view and `NormalizeViewsBackendKey("linear") -> "Linear"`.
+11. [`Source/Core/include/SmatchetUiSession.h`](../../../Source/Core/include/Ui/SmatchetUiSession.h:293): add Preferences buffers for Linear fields.
+12. [`Source/Core/src/SmatchetPreferencesUi.cpp`](../../../Source/Core/src/Ui/SmatchetPreferencesUi.cpp:292): add `Linear` to the tracker combo, render the Linear config panel, save/load buffers, and filter recently used projects by the Linear endpoint.
+13. [`Source/Core/src/FieldCatalogCache.cpp`](../../../Source/Core/src/Tracker/FieldCatalogCache.cpp:433): add a Linear cache key shape, likely `Linear|<api-url>|<team-id-or-key>`.
+14. [`Source/Core/include/FieldCatalogCache.h`](../../../Source/Core/include/Tracker/FieldCatalogCache.h:14): update comments/schema docs for the Linear cache key.
 
 Factory, sync, and shared flow:
 
-15. [`Source_Core/src/DefaultTrackerBackendFactory.cpp`](../../Source_Core/src/DefaultTrackerBackendFactory.cpp:9): include `LinearClient.h` and construct `LinearClient` for `trackerType=Linear`.
-16. [`Source_Core/src/TicketSyncService.cpp`](../../Source_Core/src/TicketSyncService.cpp:443): add Linear backend switching and stale-grid clearing parity with the other backends.
-17. [`Source_Core/src/ProjectResolver.cpp`](../../Source_Core/src/ProjectResolver.cpp:33): resolve Linear team from explicit draft state or a supported `team = ...` query clause; do not treat Linear issue `project` as the draft scope.
-18. [`Source_Core/src/SmatchetNewIssueDraftUi.cpp`](../../Source_Core/src/SmatchetNewIssueDraftUi.cpp:439): render the draft scope picker as `Team` when the active backend is Linear, while leaving Jira/Plane wording unchanged.
-19. [`Source_Core/include/NewIssueInheritDefaults.h`](../../Source_Core/include/NewIssueInheritDefaults.h:6): verify default inherit fields make sense for Linear; add a Linear-specific list only if the shared default is wrong.
-20. [`Source_Core/include/IssueCreatePipeline.h`](../../Source_Core/include/IssueCreatePipeline.h:29): comments may need neutral wording where they still say "Jira payload" for a now-four-backend path.
+15. [`Source/Core/src/DefaultTrackerBackendFactory.cpp`](../../../Source/Core/src/Tracker/DefaultTrackerBackendFactory.cpp:9): include `LinearClient.h` and construct `LinearClient` for `trackerType=Linear`.
+16. [`Source/Core/src/TicketSyncService.cpp`](../../../Source/Core/src/Sync/TicketSyncService.cpp:443): add Linear backend switching and stale-grid clearing parity with the other backends.
+17. [`Source/Core/src/ProjectResolver.cpp`](../../../Source/Core/src/Tracker/ProjectResolver.cpp:33): resolve Linear team from explicit draft state or a supported `team = ...` query clause; do not treat Linear issue `project` as the draft scope.
+18. [`Source/Core/src/SmatchetNewIssueDraftUi.cpp`](../../../Source/Core/src/Ui/SmatchetNewIssueDraftUi.cpp:439): render the draft scope picker as `Team` when the active backend is Linear, while leaving Jira/Plane wording unchanged.
+19. [`Source/Core/include/NewIssueInheritDefaults.h`](../../../Source/Core/include/NewIssueInheritDefaults.h:6): verify default inherit fields make sense for Linear; add a Linear-specific list only if the shared default is wrong.
+20. [`Source/Core/include/IssueCreatePipeline.h`](../../../Source/Core/include/Tracker/IssueCreatePipeline.h:29): comments may need neutral wording where they still say "Jira payload" for a now-four-backend path.
 
 Tests and build:
 
-21. [`tests/CMakeLists.txt`](../../tests/CMakeLists.txt:98): add new pure helper tests and any non-network client tests.
-22. `tests/Source_Core/LinearClientHelpers.test.cpp`: GraphQL error handling, API URL normalization, and issue key parsing.
-23. `tests/Source_Core/LinearIssueMappingPure.test.cpp`: JSON fixture to `CachedTicket` mapping, including nulls and missing optional relations.
-24. `tests/Source_Core/LinearQueryFromJql.test.cpp`: supported/unsupported query translation and warning behavior.
-25. `tests/Source_Core/ConfigManager.test.cpp`: Linear config round-trip, secret migration shape, and env overrides.
-26. `tests/Source_Core/TicketSyncService.test.cpp`: switching Jira/Plane/GitHub/Linear clears active tickets and recreates the backend.
+21. [`tests/CMakeLists.txt`](../../../tests/CMakeLists.txt:98): add new pure helper tests and any non-network client tests.
+22. `tests/Source/Core/LinearClientHelpers.test.cpp`: GraphQL error handling, API URL normalization, and issue key parsing.
+23. `tests/Source/Core/LinearIssueMappingPure.test.cpp`: JSON fixture to `CachedTicket` mapping, including nulls and missing optional relations.
+24. `tests/Source/Core/LinearQueryFromJql.test.cpp`: supported/unsupported query translation and warning behavior.
+25. `tests/Source/Core/ConfigManager.test.cpp`: Linear config round-trip, secret migration shape, and env overrides.
+26. `tests/Source/Core/TicketSyncService.test.cpp`: switching Jira/Plane/GitHub/Linear clears active tickets and recreates the backend.
 27. `tests/ui/*preferences*tracker*.test.cpp` or a new scenario: Preferences tracker combo includes Linear and switching to Linear renders the right fields.
 28. `tests/fixtures/linear/*.json`: deterministic GraphQL responses for teams, issues, field catalog, and mutation success/error bodies.
 
 ## Existing utilities reused
 
-- [`ITrackerBackend`](../../Source_Core/include/ITrackerBackend.h:58): existing tracker abstraction; Linear implements the same virtuals as Jira, Plane, and GitHub.
-- [`DefaultTrackerBackendFactory::Create`](../../Source_Core/src/DefaultTrackerBackendFactory.cpp:9): one construction point for backend selection.
-- [`TicketSyncService::StartStreamingSync`](../../Source_Core/src/TicketSyncService.cpp:443): existing async worker path; all Linear network I/O stays off the UI thread.
-- [`TrackerPostLogged`](../../Source_Core/src/TrackerHttpUtils.cpp:139): GraphQL is POST-only, so reuse tracker HTTP logging/timeouts instead of adding ad hoc `cpr::Post` calls.
-- [`IsTrackerTransportErrorText`](../../Source_Core/src/TrackerHttpUtils.cpp:161): reuse sync warning/connectivity classification.
-- [`ConfigManager` secret persistence](../../Source_Core/src/ConfigManager.cpp:381): same DPAPI + plaintext legacy fallback pattern as Plane API key and GitHub PAT.
-- [`ConfigManager::NormalizeViewsBackendKey`](../../Source_Core/src/ConfigManager_Views.cpp:217): extend existing per-backend view buckets.
-- [`FieldCatalogCache`](../../Source_Core/src/FieldCatalogCache.cpp:433): cache Linear field catalog snapshots by backend/endpoint/team.
-- [`IssueCreatePipeline`](../../Source_Core/include/IssueCreatePipeline.h:29): existing create/update validation and offline queue integration.
-- [`FakeTrackerClient`](../../tests/support/FakeTrackerClient.h:69): test sync switching and create/update integration without live Linear credentials.
+- [`ITrackerBackend`](../../../Source/Core/include/ITrackerBackend.h:58): existing tracker abstraction; Linear implements the same virtuals as Jira, Plane, and GitHub.
+- [`DefaultTrackerBackendFactory::Create`](../../../Source/Core/src/Tracker/DefaultTrackerBackendFactory.cpp:9): one construction point for backend selection.
+- [`TicketSyncService::StartStreamingSync`](../../../Source/Core/src/Sync/TicketSyncService.cpp:443): existing async worker path; all Linear network I/O stays off the UI thread.
+- [`TrackerPostLogged`](../../../Source/Core/src/Tracker/TrackerHttpUtils.cpp:139): GraphQL is POST-only, so reuse tracker HTTP logging/timeouts instead of adding ad hoc `cpr::Post` calls.
+- [`IsTrackerTransportErrorText`](../../../Source/Core/src/Tracker/TrackerHttpUtils.cpp:161): reuse sync warning/connectivity classification.
+- [`ConfigManager` secret persistence](../../../Source/Core/src/Config/ConfigManager.cpp:381): same DPAPI + plaintext legacy fallback pattern as Plane API key and GitHub PAT.
+- [`ConfigManager::NormalizeViewsBackendKey`](../../../Source/Core/src/Config/ConfigManager_Views.cpp:217): extend existing per-backend view buckets.
+- [`FieldCatalogCache`](../../../Source/Core/src/Tracker/FieldCatalogCache.cpp:433): cache Linear field catalog snapshots by backend/endpoint/team.
+- [`IssueCreatePipeline`](../../../Source/Core/include/Tracker/IssueCreatePipeline.h:29): existing create/update validation and offline queue integration.
+- [`FakeTrackerClient`](../../../tests/support/FakeTrackerClient.h:69): test sync switching and create/update integration without live Linear credentials.
 
 ## UX Pillar callouts
 
@@ -97,7 +99,7 @@ Tests and build:
 - **Pillar 3 (never crash)**: GraphQL null-heavy responses are mapped defensively in pure helpers; 200-with-errors is treated as failure or partial warning, never as a valid full sync.
 - **Pillar 4 (accessibility - keyboard nav / font scaling / WCAG AA)**: Preferences uses existing ImGui controls and layout; add bucket-E coverage for the tracker combo so the new fields remain reachable.
 
-## Perf-review-system gates (mandatory when diff touches `Source_Core/`; else `N/A - <reason>`)
+## Perf-review-system gates (mandatory when diff touches `Source/Core/`; else `N/A - <reason>`)
 
 1. **PR-fast CI** - fires. No Linear-specific perf scenario exists today; run `idle` for config/factory/worker reachability and `priority-grid-scroll` once mapped Linear tickets enter the grid. If a `tracker_sync` scenario is added before implementation, switch to that named scenario.
 2. **Pillar 2 static scanner** - fires. Any new GraphQL helper callable from sync/update paths gets reviewed for UI-thread reachability; worker-only calls should carry `/* PILLAR2_WORKER_ONLY */ // est-latency: 15000ms` near the boundary.

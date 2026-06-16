@@ -2,7 +2,7 @@
 
 > **Slug**: `subagent-eval-flywheel` (matches this file's basename without `.md`).
 >
-> **Status**: `deferred — superseded by docs/plans/subagent-eval-agentic-coverage.md`. **➡ This plan is folded, not cancelled** — its entire trace-flywheel design is now Phase 2 of the unified [`subagent-eval-agentic-coverage`](subagent-eval-agentic-coverage.md) plan, which sequences the judge-calibration prerequisite (its Phase 0) *ahead* of the flywheel that was blocking this file. Read the unified plan for the live design; this file is retained as the superseded source-of-record (do not implement from it directly). Original block reason: BLOCKED on `docs/plans/shipped/subagent-eval-harness.md` Phase 1 — the scoring contract had to be proven and the judge calibrated before auto-harvesting was worth building; that prerequisite is now the unified plan's Phase 0.
+> **Status**: `deferred` — superseded by docs/plans/subagent-eval-agentic-coverage.md (design folded into its Phase 2 via #978); no flywheel deliverables shipped independently.
 >
 > **Scope clarifier**: evaluates the **development agents** (`agents/*.md`), same as the parent plan. This plan adds **automatic golden-case growth** ("production traces become eval datasets").
 >

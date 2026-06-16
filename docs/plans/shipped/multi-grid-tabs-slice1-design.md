@@ -1,5 +1,7 @@
 # Design addendum — multi-grid-tabs Slice 1 (AppController de-singleton + concurrency foundation)
 
+> **Status**: `shipped` — all cited PRs merged (see Implementation log); archived 2026-06-16 via plan-archival sweep.
+>
 > Companion to [`multi-grid-tabs.md`](multi-grid-tabs.md) § Out of scope item "Concurrency design
 > depth" — the architect design pass that plan required before Slice 1 implementation
 > (2026-06-06). ADR: [`docs/adr/0018-multi-grid-pane-contexts.md`](../../adr/0018-multi-grid-pane-contexts.md).
@@ -211,3 +213,20 @@ not.
 3. **Should `GetAllTickets()`/`ForEachTicket` ever serve cross-backend (un-scoped) reads** for
    tooling/MCP, or is every read backend-scoped post-migration? Recommend: scoped-only, with an
    explicit `ForEachTicketAllBackends` if a real consumer appears.
+
+## Implementation log
+
+- `af465eb8` · #940 — Slice-1 design addendum + ADR-0018 (architect pass; this doc landed).
+- #945 · 1a — `GridLiveContext` extraction + per-context adapter + delegators; `ITicketSyncDeps` unchanged, graveyard stays in AppController, catalog block not moved.
+- #948 · 1b — `tickets_v2` family migration in `LocalCacheManager` (cache_meta-gated copy; legacy v1 tables retained).
+- #951 · 1c — pending-queue `BackendKey` (ADD COLUMN + stamp migration) + scoped replay matching (`OfflineQueueService`).
+- Later slices merged on the same line: #962, #975, #1010, #1013, #1156.
+
+## Deviations from plan
+
+- Field-catalog block (3.1 — `TrackerFieldCatalogRevision` / `AvailableFields` / `AvailableComponents` / `AvailableIssueTypeMeta` / catalog keys) and paneId sync-completion attribution (3.2) were correctly punted to Slice 3, landing in #975 — matching the plan's flagged-deferral, not silent scope drop.
+
+## Verification (actual)
+
+Archival audit 2026-06-16 confirmed the Slice-1 deliverables present in the tree:
+`GridLiveContext.{h,cpp}`, `ConfigManager_Panes.cpp`, `BackendKey` in `CachedTicketTypes.h`, the `tickets_v2` family in `LocalCacheManager`, and `ADR-0018`. All verified present in tree (archival audit 2026-06-16), not re-run (no build/test suite re-executed for this archival).

@@ -1,4 +1,4 @@
-// Slice D of docs/plans/active/http-fault-injection.md — pure unit coverage of the
+// Slice D of docs/plans/http-fault-injection.md — pure unit coverage of the
 // retry+classify engine (TrackerHttpClient.cpp). No socket: ClassifyTrackerResponse is
 // driven with hand-built cpr::Response values, and TrackerHttpRequestWithRetry is driven
 // with stateful requestFn lambdas that count invocations, so we assert retry COUNT and

@@ -2,7 +2,7 @@
 
 > **Slug**: `ci-gate-hardening-parity-bucketlane` (matches this file's basename without `.md`).
 >
-> **Status**: `active`.
+> **Status**: `shipped` — all cited PRs merged (see Implementation log); archived 2026-06-16 via plan-archival sweep.
 >
 > **Usage**: design-only plan authored per `docs/plans/active/_plan-template.md`. Closes two related "gate, don't trust" P1 backlog items in `docs/self-improvement/categories/infra.md` (2026-06-05 required-context parity; 2026-06-07 bucket-lane-launch-smoke).
 
@@ -93,15 +93,15 @@ Intended outcome — after this lands: (a) adding a required context whose workf
 - **Promoting bucket-C/E to required GitHub contexts** — out of scope; this plan keeps them advisory-but-honest.
 
 ## Implementation log
-*(populated post-ship)*
+- `393bb748` · #1180 — required-context parity selftest + bucket-lane-launch-smoke (infra P1): 22 files incl. `agents/scripts/core/lib/ci-check-resolve.sh`, `test-required-context-parity.sh` (`--selftest`/`--check`), `doc-validation.yml` enrollment, launch-smoke steps in `build-and-test.yml`, broken-lane guard in `scripts/dev/test-screenshot-diff.sh`, bats fixtures.
+- `458facdc` · #1187 — launch-smoke advisory tuning (kept the shipped launch-smoke advisory/WARN-first).
+- `67098d12` · #1183 — mobile texture-guard dependency follow-up.
 
 ## Deviations from plan
-*(populated post-ship)*
+- The 3 explicitly out-of-scope items remain deferred by design (not shipped): allow-list-present assertion (infra.md), self-gate marker-enforcement, and promoting bucket-C/E to required GitHub contexts. All stay as follow-ups; the shared resolution map shipped so the allow-list item can build on it later.
+- #1187 only tuned the shipped launch-smoke to advisory/WARN-first; the broken-lane hard-fail teeth (sentinel + non-advisory lane-integrity assertion) remained, but the launch-smoke step itself was kept advisory rather than gating.
 
 ## Verification (actual)
-*(populated post-ship)*
-
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+- Archival audit (2026-06-16) confirmed present in tree: `agents/scripts/core/lib/ci-check-resolve.sh`, `agents/scripts/core/test-required-context-parity.sh` (with `--selftest`/`--check` modes), `doc-validation.yml` enrollment of the new gate, the launch-smoke steps in `build-and-test.yml`, and the broken-lane guard in `scripts/dev/test-screenshot-diff.sh`, plus the bats fixtures.
+- Both infra.md P1 backlog entries (required-context parity; bucket-lane-launch-smoke) flipped to applied.
+- Gate selftests / bats / CI runs verified present in tree (archival audit 2026-06-16), not re-run.

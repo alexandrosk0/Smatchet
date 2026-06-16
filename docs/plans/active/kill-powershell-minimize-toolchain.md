@@ -1,8 +1,10 @@
 # Kill PowerShell + Minimize External Tools
 
+> **Status**: `active` — not started (no slices merged).
+
 ## Context
 
-Smatchet's dev toolchain currently sprawls across **20 PowerShell scripts** + a wide external-tool dependency set (`jq`, `flock`, `gh`, `BurntToast`, plus the build core). This couples the project to Windows-specific tooling, doubles the maintenance surface (PS↔bash drift in scripts like `setup-harness.{ps1,sh}`), and makes the iter-loop fragile on first setup (jq + gh PATH bugs already burned the orchestrator mid-merge-gates-poll per the agent-self-improvement backlog).
+Smatchet's dev toolchain currently sprawls across **~25 PowerShell scripts under `scripts/`** (point-in-time count as of 2026-06-15; the plan was originally drafted against 20) + a wide external-tool dependency set (`jq`, `flock`, `gh`, `BurntToast`, plus the build core). This couples the project to Windows-specific tooling, doubles the maintenance surface (PS↔bash drift in scripts like `setup-harness.{ps1,sh}`), and makes the iter-loop fragile on first setup (jq + gh PATH bugs already burned the orchestrator mid-merge-gates-poll per the agent-self-improvement backlog).
 
 Goal: **collapse to bash + minimal cross-platform tool set**. Keep PS only where Windows fundamentally requires it (chicken-and-egg + Scheduled Tasks + OS-toast).
 

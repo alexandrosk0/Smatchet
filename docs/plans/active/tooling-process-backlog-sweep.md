@@ -2,6 +2,10 @@
 
 > **Slug**: `tooling-process-backlog-sweep` (matches this file's basename without `.md`).
 >
+> **Status**: `active` — 9 of 10 slices shipped (#475-#487); slice 7 still open, so NOT yet archived.
+>
+> Stays active because slice 7 (items #13/#23/#24/#25/#31) is unshipped — specifically item #31 (the `BucketE::TooltipContentMatches` shared helper) is still an open P2 in `tooling.md` and the helper does not yet exist in the tree. The other 9 slices merged via PRs #475-#487.
+>
 > **Origin**: User request, 2026-05-27. Sweep all P0-P2 items from `docs/self-improvement/categories/process.md` and `tooling.md`.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules for plan location, plan-doc safety, plan revision after implementation, plan stress-test, plan template, and plan-doc perf-gate section.

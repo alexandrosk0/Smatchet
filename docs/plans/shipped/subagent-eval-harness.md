@@ -4,7 +4,7 @@
 >
 > **Scope clarifier**: this evaluates the **development agents** (`agents/*.md` — orchestrator + the ~30 delegated subagents), NOT the Smatchet product or any in-app AI-assistant surface. See § Out of scope.
 >
-> **Scope (this plan)**: Phase 1 MVP only — **prove the scoring contract before any live agent, harvester, or merge-gate block**. `code-review` only. The trace flywheel (Phase 2) is split into a separate follow-up plan: `docs/plans/active/subagent-eval-flywheel.md`.
+> **Scope (this plan)**: Phase 1 MVP only — **prove the scoring contract before any live agent, harvester, or merge-gate block**. `code-review` only. The trace flywheel (Phase 2) is split into a separate follow-up plan: `docs/plans/subagent-eval-flywheel.md`.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template.
 
@@ -107,7 +107,7 @@ Not C++ — Bucket A/E N/A. Everything in the MVP is verifiable **without a live
 
 ## Out of scope (flagged, not designed here)
 
-- **Phase 2 — trace flywheel → follow-up plan `docs/plans/active/subagent-eval-flywheel.md`**: `agent-eval-harvest.sh`, `_candidates/` staging, harvest dedup ledger, secret/PII redaction policy, candidate curation. Security-sensitive; blocked on Phase-1 calibration.
+- **Phase 2 — trace flywheel → follow-up plan `docs/plans/subagent-eval-flywheel.md`**: `agent-eval-harvest.sh`, `_candidates/` staging, harvest dedup ledger, secret/PII redaction policy, candidate curation. Security-sensitive; blocked on Phase-1 calibration.
 - **Coverage beyond `code-review`** (`debug-detective`, `perf-detective`, …): after the MVP proves the gate catches a real prompt regression.
 - **Live merge-gate BLOCK / WARN→BLOCK graduation**: after calibration data exists.
 - **Phase 3 — online / continuous eval + dashboard**: no-action. An internal fleet doesn't warrant live sampling / observability infra.

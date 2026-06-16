@@ -2,11 +2,13 @@
 
 > **Slug**: `bug-report-font-redaction-censor` (matches this file's basename without `.md`).
 >
+> **Status**: `active` — v1 shipped (#618); the 3 hardening slices below are not started.
+>
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 
 ## Context
 
-The bug-report screenshot censor shipped its v1 under the parent feature [`log-a-bug-github.md`](log-a-bug-github.md) (commit `71059e93`, "font-redaction screenshot censor (replaces mosaic)"). Instead of mosaicing rectangles, the capture frame now swaps the whole UI to a `█`-block font (U+2588) so every text codepoint renders as a block — sharp, layout/icon/colour-preserving, no readable text. The mosaic path (`MosaicCensorInPlace`, `bugreport_censor_block`, the `bug.report --censored` param) was removed entirely; downscale-to-1280px was kept.
+The bug-report screenshot censor shipped its v1 under the parent feature [`log-a-bug-github.md`](docs/plans/log-a-bug-github.md) (commit `71059e93`, "font-redaction screenshot censor (replaces mosaic)"). Instead of mosaicing rectangles, the capture frame now swaps the whole UI to a `█`-block font (U+2588) so every text codepoint renders as a block — sharp, layout/icon/colour-preserving, no readable text. The mosaic path (`MosaicCensorInPlace`, `bugreport_censor_block`, the `bug.report --censored` param) was removed entirely; downscale-to-1280px was kept.
 
 That v1 commit explicitly deferred three residual leaks to *this* follow-up plan (and the `SmatchetImGuiFonts.h` Redaction-font comment anchors here):
 
@@ -93,7 +95,7 @@ Per `AGENTS.md` § Verification automation.
 ## Implementation log
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit)*
 
-- v1 baseline shipped under the parent feature: `71059e93` · font-redaction screenshot censor replaces mosaic (`SmatchetImGuiFonts` Redaction font + `Push`/`Pop`; modal drops Full/Censored radios; mosaic + `bugreport_censor_block` removed; downscale kept). Hardening (slices 1–3) in-flight on `feat/bug-report-font-redaction-impl`.
+- v1 baseline shipped under the parent feature: `71059e93` · font-redaction screenshot censor replaces mosaic (`SmatchetImGuiFonts` Redaction font + `Push`/`Pop`; modal drops Full/Censored radios; mosaic + `bugreport_censor_block` removed; downscale kept).
 
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan)*

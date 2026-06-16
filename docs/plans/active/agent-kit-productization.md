@@ -2,6 +2,8 @@
 
 > **Slug**: `agent-kit-productization` (matches this file's basename without `.md`).
 >
+> **Status**: `active` — not started (only the plan-staging commit merged, #747).
+>
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template.
 
 ## Context

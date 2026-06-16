@@ -1,5 +1,5 @@
 // BulkImportAbandonNonBlocking.test.cpp — WS-A bucket-E (#734) of
-// docs/plans/active/ui-freeze-pillar2-blocking.md.
+// docs/plans/ui-freeze-pillar2-blocking.md.
 //
 // Pillar-2 (UI never freezes) regression guard for the bulk-import futures-clear
 // path. The real flow: a `.clear()` / re-parse / re-run on the bulk-import window

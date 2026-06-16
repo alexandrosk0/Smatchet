@@ -1,6 +1,6 @@
 # Plan — Image-dimension cap in the attachment-preview parser (testing-surface Slice E1)
 
-**Status:** implemented — PR open, awaiting gates (code + 7 tests landed; reviewer chose the shared-helper option)
+**Status**: `shipped` — all cited PRs merged (see Implementation log); archived 2026-06-16 via plan-archival sweep.
 **Branch:** `harden/image-dim-cap` · worktree `C:\Dev\trees\image-dim-cap`
 **Parent:** [`testing-surface-roadmap.md`](testing-surface-roadmap.md) Slice **E1** (§6 P1, Gap 3 narrow; `security.md:59-60`). Part of the approved additive block H→A→D→**E1**.
 
@@ -66,6 +66,7 @@ Touched zone is `Source/Core/src/Ui/` (**light/ungated**), and the change is two
 
 ## Implementation log
 
+- `5f680668` (PR #1240) · image-dim cap (`kMaxImageDimension = 16384`) + shared `FinalizeImageDimensions` tail across all 4 byte-header parsers + cap tests — merged.
 - **Header** (`ImageDimensionsPure.h`): added `constexpr int kMaxImageDimension = 16384;` with a cross-reference note to the post-decode `kMaxGoldenImageDim` test-harness cap.
 - **Parser** (`ImageDimensionsPure.cpp`): added the anon-namespace shared tail `FinalizeImageDimensions(result, width, height, formatLabel)` (takes `std::uint32_t`; uint16 formats promote) — zero-check → cap-check (`> kMaxImageDimension` → "<FORMAT> dimensions exceed the maximum supported size.") → assign with `static_cast<int>` *after* the cap passes. Routed all four `TryParse{Png,Gif,Webp,Jpeg}` tails through it, collapsing the prior 4× zero-check/assign duplication (reviewer-selected option 4, shared-helper). WebP picked up a zero-check it never had (harmless — its `+1` form can't be zero) and the cap.
 - **Tests** (`ParseImageDimensions.test.cpp`): +7 cap cases (PNG one-over width/height, PNG 16384² boundary-accept, PNG 0xFFFFFFFF overflow-never-negative, GIF 65535, WEBP VP8X over-cap, JPEG 65535). 13 existing cases stay green.

@@ -1,4 +1,4 @@
-// Slice D of docs/plans/active/http-fault-injection.md — integration coverage of the LIVE
+// Slice D of docs/plans/http-fault-injection.md — integration coverage of the LIVE
 // D3 wiring. Drives the real TrackerGet/Post/PutLogged helpers (TrackerHttpUtils.cpp) against
 // a scripted in-process httplib loopback (JiraCatalogHttpFixture), then asserts on the
 // fixture's per-path request count to prove the safe-tiered retry policy end-to-end over real

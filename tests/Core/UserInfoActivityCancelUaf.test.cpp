@@ -1,5 +1,5 @@
 // UserInfoActivityCancelUaf.test.cpp — WS-A ASan #1150 repro (Pillar-3, MANDATORY)
-// of docs/plans/active/ui-freeze-pillar2-blocking.md.
+// of docs/plans/ui-freeze-pillar2-blocking.md.
 //
 // THE EXACT #1150 UAF SHAPE this guards against
 // ------------------------------------------------------------------------------

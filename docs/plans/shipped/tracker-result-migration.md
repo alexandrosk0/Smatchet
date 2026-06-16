@@ -2,7 +2,7 @@
 
 > **Slug**: `tracker-result-migration`
 >
-> **Status**: `active`
+> **Status**: `shipped` — all cited PRs merged (see Implementation log); archived 2026-06-16 via plan-archival sweep.
 >
 > **Usage**: execution-ready slicing plan. Each slice below is an independently-compiling, independently-shippable PR. Implement one slice per PR.
 >
@@ -184,7 +184,7 @@ Per `AGENTS.md` § Verification automation — zero manual steps.
 - Non-tracker `outError` sites (Whisper / P4 / config / texture cache) — separate hardening item.
 
 ## Implementation log
-*Slices 1–7 shipped (the FULL `ITrackerBackend` virtual-interface migration). Plan stays `active` — Slices 8–9 (public-API flip) are scoped-but-not-executed follow-on.*
+*Slices 1–7 shipped (the FULL `ITrackerBackend` virtual-interface migration); parent hardening #21b SHIPPED via #1037 (`5eefb9c2`). Slices 8–9 (public-API flip) are scoped-but-not-executed follow-on, owned by build-quality-velocity-hardening.*
 
 - `775b462f` (#1020) · Slice 1 · `GitHubClientHelpers` validators/parsers → `Result<T>` (default-E `std::string`): `IsValidGitHubBaseUrl` / `ParseIso8601ToUnixSec` / `BuildGitHubCreatePayload`.
 - `09fa95f4` (#1022) · Slice 2 · FieldCatalog virtuals → `Result<T, TrackerError>`: `FetchFieldCatalog` / `FetchIssueEditMeta` / `FetchProjectComponents` (+ FIX-1 2xx guard, FIX-3 Unknown-wrap deferral).
@@ -192,9 +192,10 @@ Per `AGENTS.md` § Verification automation — zero manual steps.
 - `1cc98f9b` (#1029) · Slice 4 · Mutations void-payload writes → bare `TrackerError`: `UpdateIssueFields` / `UpdateField` / `AddIssueToSprint`.
 - `f62105cd` (#1030) · Slice 5 · Mutations create/attach → `Result<T, TrackerError>`: `CreateIssue` / `AttachFilesToIssue` (L3 — per-file failures are the Ok payload).
 - `d5eed664` (#1033) · Slice 6 · Reader `FetchIssuesForKeys` → `Result<std::vector<CachedTicket>, TrackerError>` (incl. the `GitHubIssueSearch::FetchIssuesForKeysViaRestApi` helper).
-- (#1035, merging) · Slice 7 · Collaboration virtuals → `Result<T>` reads / bare `TrackerError` writes (9 methods) + the `TrackerIssueVotes` struct. *(fill squash sha when #1035 merges)*
+- `8a02d450` (#1035) · Slice 7 · Collaboration virtuals → `Result<T>` reads / bare `TrackerError` writes (9 methods) + the `TrackerIssueVotes` struct.
 
 ## Deviations from plan
+- **Slices 8–9 (AppController public-API flip) — explicit FOLLOW-ON, out of this plan's delivered scope:** scoped-but-not-executed; ownership handed to **build-quality-velocity-hardening**. Slices 1–7 stand as the delivered #21b goal.
 - **Slice 7 — Collaboration (7a reads + 7b writes shipped together as one PR):** the plan flagged a 7a/7b split "if over ceiling"; the combined diff is ~8 files (well under), so both ship in one "Collaboration" PR per the one-PR-per-feature batching rule. `FetchIssueComments` migrated **decl-only** (L5 — no override, no caller; Jira uses the internal `JiraFetchIssueCommentsPages` helper, untouched). `FetchIssueVotes`' four out-params (`outVoters` + `int* outVoteCount` + `bool* outHasVoted` + `bool* outVotersInResponse`) collapsed into the `TrackerIssueVotes` Ok struct; the `AppController::FetchIssueVotes` wrapper unpacks the struct back into its existing out-pointer signature (zero-inits them up-front to match the old virtual's entry-zeroing) so UI callers (`TrackerGridFieldDisplay`, `BuiltinCommands_Users`) are untouched. All Jira HTTP failure branches carry the FIX-1 2xx guard before `TrackerErrorFromHttpStatus`. `EnsureTrackerAuthConfig`/missing-creds fails → `Auth`; empty-key/precondition → `InvalidRequest`; parse/missing-key → `Parse`. The 8 `AppController` wrappers translate the Result/`TrackerError` back to their existing `bool + outError`(+ out-param) public signatures, so **all UI/command callers stay untouched** (the public-wrapper flip is Slices 8–9). GitHub/Plane/all fixtures use the new interface defaults (Collaboration is Jira-only).
 - **Slice 6 — partial-fetch tickets dropped on `Err` + defensive 2xx guards:** `FetchIssuesForKeys` accumulates tickets across pages/keys; on a mid-stream failure the old code returned `false` and the callers (`AppController` prefetch, `OfflineQueueService` conflict re-fetch) discarded the partial `outTickets`. The migration returns `Err` and drops the partial accumulation identically (the local vector isn't moved into an Ok) — zero behaviour change. The Jira search `!= 200` branch and the GitHub `FetchIssuesForKeysViaRestApi` `!= 200` branch both carry the **FIX-1 2xx guard** before `TrackerErrorFromHttpStatus` (defensive — these endpoints return 200 on success, but a 2xx-other must not collapse to a dropped `Ok()` inside an `Err(...)`). Plane's path surfaces only `summary.FetchError` (a string, no HTTP status) → wrapped `Unknown` with Detail verbatim + a TODO (same precedent as Slice 4 Plane). Fixture `loadError_` → `InvalidRequest`. Both callers read `.Detail` into their existing `err`/`fetchErr` string, so the `IsTrackerTransportErrorText` archive-vs-retry decision is byte-identical.
 - **Slice 5 — `AttachFilesToIssue` hard-fail is still swallowed by the caller (pre-existing behaviour preserved):** per L3, per-file failures become the Ok payload and only hard failures (auth / empty key / Plane-unsupported) are `Err`. The sole caller `IssueCreatePipeline::ApplyPostIssueAttachmentStep` historically **ignored** the old `bool`/`outError` and read only `result.AttachmentFailures`; the old hard-fail path returned `false` with an *empty* failures list, so a hard attach failure was silently dropped. The migration preserves that exactly (on `Err`, `AttachmentFailures` stays empty → no warn) rather than newly surfacing it — zero behaviour change. Follow-up (Slices 8–9 or later) could map `Err` to a synthetic failure entry so hard attach failures are reported; flagged, not done here.
@@ -211,8 +212,3 @@ Per `AGENTS.md` § Verification automation — zero manual steps.
 - **Slice 3** (`BuildFieldPayload` / `BuildCreatePayload` / `BuildUpdatePayload` → `Result<nlohmann::json, TrackerError>`) *(reconstructed from the `a406c696`/#1023 merge record)*: dual-target build green (`SmatchetStandalone` + `SmatchetCore_DX12`); `SmatchetTests` **1479/1479**. Lint `test-lint-rules.sh --diff origin/develop` PASS; clang-format clean; code-review clean (0 Critical/High/Medium).
 - **Slice 2** (`FetchFieldCatalog` / `FetchIssueEditMeta` / `FetchProjectComponents` → `Result<T, TrackerError>` + `TrackerProjectComponents` struct) *(reconstructed from the `09fa95f4`/#1022 merge record)*: dual-target build green; `SmatchetTests` **1479/1479**. Lint PASS; clang-format clean; code-review clean (1 Medium found + fixed; no Critical/High). The FIX-1 2xx guard + FIX-3 Unknown-wrap deferral originate here (see § Deviations).
 - **Slice 1** (`GitHubClientHelpers` validators/parsers → `Result<T>` default-E) *(reconstructed from the `775b462f`/#1020 merge record)*: dual-target build green; `SmatchetTests` **1475/1475**. Lint PASS; clang-format clean. First slice — validated the `Result` type + strict-zone lint mechanics before any virtual dispatch.
-
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. flip § Status to `shipped`,
-2. `git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md` (slug = `tracker-result-migration`),
-3. regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.

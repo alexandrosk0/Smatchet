@@ -2,7 +2,7 @@
 
 > **Slug**: `sanitizer-nightly-asan-ubsan-fix` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — see `_plan-template.md` § Status for lifecycle values.
+> **Status**: `shipped` — all cited PRs merged (see Implementation log); archived 2026-06-16 via plan-archival sweep.
 >
 > **Mandatory rules cross-link**: `AGENTS.md` § Project rules (Plan-doc family), § Merge gates (gate-escape postmortem), `docs/agent-rules/build.md` § ASan over the test rig.
 
@@ -99,15 +99,18 @@ Per `AGENTS.md` § Verification automation — zero manual steps. Buckets:
 - **Changing the nightly to fail-faster or post richer reports** — the nightly already auto-Issues correctly (#863 is proof); no change.
 
 ## Implementation log
-*(populated post-ship)*
+
+- `ac4b94be` · #1184 — `unused-symbol-under-config-guard` lint rule + #863 gate-escape postmortem: AGENTS.md contract-card row, rule wired into `agents/scripts/project/test-lint-rules.sh` (with `--selftest` fixtures in `tests/bats/lint_rules.bats`), `postmortems.md` #863 entry with mandatory `### Preventing gate`, and applied `infra.md` self-improvement entry.
+- `61b17427` · #945 — product premise fix (`#if defined(SMATCHET_WITH_LUA_AUTOMATION)` guard on the `LogLuaScriptFileProbe` definition); pre-merged before this plan (non-goal — no re-fix here). Issue #863 CLOSED 2026-06-13.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **Down-scoped the new `unused-symbol-under-config-guard` rule from the preferred absolute-0 enforcement to WARN-first / advisory calibration** — consistent with the AGENTS.md WARN-first precedent (e.g. `duplication`); the rule is a per-file text proxy for the Clang `-Werror,-Wunused-function` semantics, not the compiler, so it ships advisory with the nightly Lua-OFF sanitizer build as the authoritative backstop. Rationale recorded in commit `ac4b94be` + `infra.md`.
 
 ## Verification (actual)
-*(populated post-ship)*
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+- AGENTS.md Enforcement contract-card carries the `unused-symbol-under-config-guard` (WARN) row — verified present in tree (archival audit 2026-06-16).
+- Lint rule registered in `agents/scripts/project/test-lint-rules.sh` with `--selftest` fixtures in `tests/bats/lint_rules.bats` — verified present in tree (archival audit 2026-06-16), not re-run.
+- `docs/self-improvement/postmortems.md` #863 entry present with the mandatory `### Preventing gate` section — verified present in tree (archival audit 2026-06-16).
+- `docs/self-improvement/categories/infra.md` self-improvement entry present (applied) — verified present in tree (archival audit 2026-06-16).
+- Issue #863 CLOSED 2026-06-13; product premise fix `61b17427`/#945 pre-merged — verified present in tree (archival audit 2026-06-16), not re-run.

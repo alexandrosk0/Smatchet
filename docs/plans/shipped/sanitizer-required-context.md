@@ -2,6 +2,8 @@
 
 Slug: `sanitizer-required-context` · Owner: orchestrator · Started: 2026-06-15 · Loop-mode: `in`
 
+> **Status**: `shipped` — all cited PRs merged (see Implementation log); archived 2026-06-16 via plan-archival sweep.
+
 > **RE-SCOPED 2026-06-15 — Slice 2 SUPERSEDED.** Mid-flight recon found a parallel
 > `Slice C` effort ([`coverage-sanitizer-required-contexts.md`](coverage-sanitizer-required-contexts.md))
 > already promoted BOTH Sanitizer lanes to **live** branch-protection required
@@ -125,11 +127,14 @@ the general raw-PUT guard as a residual P3; P2→P3; Last-reviewed 2026-06-15.
   `scripts/dev/with-msvc-env.sh`) then run the doctest binary filtered to the three
   ADF deep-nest cases — must pass with NO ASAN stack-overflow. Lint:
   `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop`.
+  **MERGED** — PR #1273 (`d1328a43`) merged to develop; ASAN deep-nest cases PASS, lint PASS.
 - Slice 1b: fresh `ninja-msvc-asan` build, run the full rig (minus the excluded
   CallstackParser case) — all 9 guarded sites pass under ASAN (no timing false-red);
   lint PASS. Non-ASAN budgets unchanged (the `#else` branch). **DONE** — full rig
   **1872 passed | 0 failed** under ASAN; lint PASS; guards PR #1280 (test-only).
-- Slice 2: N/A — superseded; live ruleset already shows 9 required contexts.
+- Slice 2: N/A — legitimately **SUPERSEDED** by the parallel Slice C (PR #1253,
+  `af475041`, merged to develop) which promoted both Sanitizer lanes to live required
+  contexts; live ruleset already shows 9 required contexts. No edits owed from this plan.
 
 ## Implementation log
 
@@ -147,8 +152,8 @@ the general raw-PUT guard as a residual P3; P2→P3; Last-reviewed 2026-06-15.
   merge-watcher (post-ship menu → "Register #1280 too"); #1280 now auto-merges when green
   alongside #1273. Registration was a no-op — #1280 was already present in the watcher
   registry (`registered_at` predates the authorization, head `af508448`, 6 CR-none-grace
-  polls; never merged — stayed BLOCKED awaiting checks); surfaced to user. Both PRs
-  BLOCKED (normal, awaiting required checks) at hand-off.
+  polls); surfaced to user. Both PRs were BLOCKED (normal, awaiting required checks) at
+  hand-off but subsequently **merged** to develop (#1273 `d1328a43`, #1280 `dcf8abd8`).
 - 2026-06-15 — Slice 1b: exhaustive audit found 9 wall-clock timing assertions across
   6 files; applied the #1215 `__SANITIZE_ADDRESS__` guard to all 9 uniformly on
   branch `feat/asan-timing-guards`. Guards (ASAN budget / non-ASAN budget):

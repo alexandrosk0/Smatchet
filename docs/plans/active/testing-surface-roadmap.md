@@ -34,8 +34,10 @@ one-line correction back to `testing-surface.md` in the slice that resolves it.*
 2. **HTTP fault-injection is cheaper than §5 Gap 2 says.**
    `JiraCatalogHttpFixture.h` is an **in-process httplib loopback server** (not a
    client stub) — the production `JiraClient` drives *real cpr* at it, so
-   `TrackerHttpRequestWithRetry` retry + `startAt` pagination **are already
-   exercised**, and the fixture can force status codes (429/500). The guide's "Fake
+   `TrackerHttpRequestWithRetry` retry + `startAt` pagination **are now wired into
+   the live tracker paths and exercised by the fault-injection tests** (#1231;
+   previously the retry path was effectively unreached), and the fixture can force
+   status codes (429/500). The guide's "Fake
    fixtures stub the client interface, not the transport" is wrong for *this*
    fixture. So extending it (debt.md:65, [planned]) reaches most transport faults
    with **no new `IHttpTransport` seam**. Only timeout / SSL / truncated-body still
@@ -121,7 +123,10 @@ pause to re-confirm before the gating-policy slices (C, B) that affect all sessi
   429/500/partial-page routes + search/mutation/user-meta endpoints; add
   `tests/Core/*` integration tests asserting `TrackerHttpRequestWithRetry`
   backoff/retry count + `startAt` pagination assembly against the loopback server.
-  Short plan: route list + assertion matrix. Defers timeout/SSL/truncated-body to a
+  Short plan: route list + assertion matrix. **Shipped as Slice D+D3 (#1231):** the
+  `TrackerHttpRequestWithRetry` retry path is now wired into the live tracker paths
+  and exercised by these fault-injection tests (it is no longer the unreached
+  "already exercised" code the recon assumed). Defers timeout/SSL/truncated-body to a
   **D2** (needs a real transport seam) — flagged, not built here.
 - **E1 — PNG-dims cap test.** New `tests/Core/GoldenImage.test.cpp` (or extend
   existing): craft PNG byte headers at / above `kMaxGoldenImageDim = 16384`, assert
@@ -191,16 +196,40 @@ Each lands in the slice that resolves it (don't batch into a separate PR):
 - 2026-06-14 — User approved sequence `H→A→D→E1→C→B→E2→G→J→F→I` ("Approve + start
   additive block"): ship H now, author Slice A plan for review, then stop for
   re-confirmation after the additive block (H+A+D+E1) before gating slices C/B.
-- 2026-06-14 — **Slice H done** (this PR). `WORKTREE_INCOMPATIBLE_RE` in
+- 2026-06-14 — **Slice H done** (#1214). `WORKTREE_INCOMPATIBLE_RE` in
   `scripts/dev/test-all.sh` trimmed 6→3 alternatives (3 dead scripts removed:
   `test-lint-hook-split`, `test-ui-callstack-tooltip`, `test-ui-ai-assistant`); 3
   survivors kept + justified (bucket-E UI drivers, skip orthogonal to #1166).
   `testing-surface.md` §5 Gap 7 + §5.1 row 7 + §6 follow-up marked resolved.
   Verified: `test-docs.sh` 13/13, `shellcheck test-all.sh` clean.
+- 2026-06-14 — **Slice A done** (#1180 / #1183 / #1187). Bucket-lane launch-smoke +
+  zero-pass hard-fail landed across three independent PRs (not the single short-plan
+  PR the slice catalog assumed): the launch-smoke step in `build-and-test.yml` plus
+  the `Passed==0 && Failed>0` driver guards. Restores trust in the advisory lanes
+  (catches dead-harness).
+- 2026-06-14 — **Slice D done** (Slice D+D3, #1231 / 377c9f72). HTTP fault-injection:
+  extended `JiraCatalogHttpFixture.h` with forced 429/500/partial-page routes +
+  `tests/Core/*` integration tests; **wired `TrackerHttpRequestWithRetry` into the
+  live tracker paths** so the retry/backoff + `startAt` pagination are now genuinely
+  exercised. Shipped combined as D+D3 rather than D-then-deferred-D3.
+- 2026-06-14 — **Slice E1 done** (#1240 / 5f680668). Crafted-PNG-dims cap test +
+  `kMaxGoldenImageDim = 16384` enforcement: `ParseImageDimensionsFromBytes` rejects
+  over-cap headers, exercised by crafted-header tests.
+- 2026-06-14 — **Slice C done** (Phase 1, #1253 / af475041). Coverage + both
+  sanitizers (ASan/UBSan) promoted to required contexts via Pattern A — they always
+  report and now join `required_contexts` so a direct REST merge can no longer bypass
+  them.
 
 ## Deviations
 
-_(none yet)_
+- **Slice A — shipped via three independent PRs (#1180 / #1183 / #1187)** instead of
+  the single "short plan → one PR" plan-doc-per-slice flow the catalog prescribed.
+  The launch-smoke + zero-pass hard-fail work split naturally across the CI-step,
+  driver-guard, and screenshot-diff seams; each landed on its own.
+- **Slice D — shipped combined as Slice D+D3 (#1231).** The catalog scoped D as the
+  loopback-fixture extension with D2/D3 (real transport seam) deferred; in practice
+  wiring `TrackerHttpRequestWithRetry` into the live paths shipped together with the
+  fault-injection tests in one PR.
 
 ## Verification
 

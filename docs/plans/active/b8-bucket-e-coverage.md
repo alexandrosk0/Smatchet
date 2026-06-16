@@ -2,6 +2,8 @@
 
 > **Slug**: `b8-bucket-e-coverage`. Sub-plan of [`agentic-backlog-campaign.md`](agentic-backlog-campaign.md) batch **B8**.
 >
+> **Status**: `active` — Phase 0 shipped (#711/#715); Phase 1 (L1-L5 TUs) not yet landed.
+>
 > Mandatory cross-link: `AGENTS.md` § Project rules § Plan-doc family, § Verification automation.
 
 ## Context
@@ -124,6 +126,7 @@ Two phases, one PR each (or one combined PR if the live set stays small).
 
 - **Phase-0 over-archived the spawn-flake entry — re-filed.** Phase 0 archived the `--spawn` flake as stale ("warmup gate closed it"). During L1 authoring the bucket-E harness flaked ~80%; isolating with the existing `Views` TU (1/6 green under the same path) proved the flake is **harness-wide, not eliminated** — only reduced + tolerated-with-retries. Re-filed as a live 2026-06-02 infra P2 (warmup gate reduced-not-removed; empty-child-log diagnosability gap). The other two infra archivals (/EHsc, perf-run file-result) still hold.
 - **L1 held pending a verifiable harness.** L1 passes intermittently exactly like the 15 shipped bucket-E TUs, but a clean ×4 local verify isn't achievable under this session's machine load, so per the #707 "don't ship unverified tests" rule it stays on its branch until the harness is idle/fixed. L2-L5 not started.
+- **L1 branch lost (stale ref).** The held L1 work lived on `feat/b8-l1-command-palette-typing`, which **no longer exists** (neither local nor remote as of 2026-06-15) — the held TU + `CommandPaletteUi::FilterText()` accessor appear lost/unrecovered and would need re-authoring to land L1. Only Phase 0 backlog-archival actually shipped (#711/#715); L2-L5 were never started.
 - **tooling:300 S4 bounded-read residue is now DONE** — develop `#657` (memory-budget hardening) shipped `ImageDimensionsPure.{h,cpp}` + `tests/Core/ParseImageDimensions.test.cpp`, closing the S4 bounded-read unit test. So L5's scope narrows to the rendered "loading thumbnails" cue only; the tooling:300 entry retains just its ASan live-swap residue (not bucket-E).
 - Re-verified all Phase-0 verdicts on current develop (post #701/#703/#704-707/#657) before archiving — the coverage-dependent ones held; only the spawn-flake infra one was wrong (above).
 
