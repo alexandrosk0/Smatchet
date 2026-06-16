@@ -61,6 +61,17 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Free disk space (Android x86_64 system images are large — avoid "No space left on device")
+        run: |
+          echo "disk before:"; df -h / | tail -1
+          # Reclaim ~15-25 GB of pre-installed toolchains the emulator smoke never uses. The x86_64
+          # Android system-image install was intermittently OOM-ing the runner disk (e.g. run
+          # 27613893042). KEEP the Android SDK (/usr/local/lib/android) and the Java toolcache
+          # (/opt/hostedtoolcache/Java) — only unused dotnet / Haskell / CodeQL / boost + docker images go.
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/local/share/boost 2>/dev/null || true
+          sudo docker image prune --all --force 2>/dev/null || true
+          echo "disk after:"; df -h / | tail -1
+
       - name: Enable KVM (hardware-accelerated emulator)
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
