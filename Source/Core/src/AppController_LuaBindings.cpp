@@ -88,106 +88,10 @@ std::string AsciiLowerCopy(std::string s) {
 
 namespace {
 
-constexpr int kJsonToLuaMaxDepth = 64;
-
-// `decode_json` parses ATTACKER-CONTROLLED text (a Lua script can hand it any
-// string). nlohmann's recursive-descent parser builds the DOM by recursing once
-// per nesting level, so a deeply-nested payload ("[[[[...]]]]") overflows the
-// C++ stack BEFORE JsonToLua ever runs (Pillar 3 — Never crash). The 4 MB byte
-// cap in LuaDecodeJsonBind does NOT bound depth — ~2 M nested arrays fit easily.
-// The depth/node-bounded parse lives in the shared smatchet::json_safe helper
-// (Source/Core/include/Json/BoundedJsonParse.h) so this sink, the MCP REST /
-// JSON-RPC ingress, and the Lua-MCP-tool params path all route through ONE
-// BoundedDecodeSax (DRY / Pillar 5). The caps sit far above any legitimate JSON
-// the bindings exchange. On overflow we return a parse error string up to Lua —
-// graceful degradation, NOT a C++ throw across the sol2 boundary.
-
-// Node budget for the converter itself (defense-in-depth). decode_json already
-// bounds depth + nodes at parse time; this guards the OTHER caller — commands.invoke
-// results (cr.Data), which the bindings produce internally — from fanning out an
-// unbounded number of sol tables. `nodes` is decremented past zero to signal the
-// cap was hit; on overflow we stop converting (return nil for the remaining
-// subtree) rather than throw (Pillar 3 graceful degradation).
-constexpr std::size_t kJsonToLuaMaxNodes = 200000u;
-
-sol::object JsonToLuaImpl(sol::state_view luaView, const nlohmann::json& j, int depth, std::size_t& nodes) {
-    if (depth > kJsonToLuaMaxDepth || nodes == 0) {
-        return sol::make_object(luaView, sol::nil);
-    }
-    --nodes;
-    switch (j.type()) {
-    case nlohmann::json::value_t::null:
-        return sol::make_object(luaView, sol::nil);
-    case nlohmann::json::value_t::boolean:
-        return sol::make_object(luaView, j.get<bool>());
-    case nlohmann::json::value_t::number_integer:
-        return sol::make_object(luaView, static_cast<double>(j.get<std::int64_t>()));
-    case nlohmann::json::value_t::number_unsigned:
-        return sol::make_object(luaView, static_cast<double>(j.get<std::uint64_t>()));
-    case nlohmann::json::value_t::number_float:
-        return sol::make_object(luaView, j.get<double>());
-    case nlohmann::json::value_t::string:
-        return sol::make_object(luaView, j.get<std::string>());
-    case nlohmann::json::value_t::array: {
-        sol::table arr = luaView.create_table();
-        std::size_t idx = 1;
-        for (const auto& el : j) {
-            arr[idx++] = JsonToLuaImpl(luaView, el, depth + 1, nodes);
-        }
-        return arr;
-    }
-    case nlohmann::json::value_t::object: {
-        sol::table tbl = luaView.create_table();
-        for (auto it = j.begin(); it != j.end(); ++it) {
-            tbl[it.key()] = JsonToLuaImpl(luaView, it.value(), depth + 1, nodes);
-        }
-        return tbl;
-    }
-    default:
-        return sol::make_object(luaView, sol::nil);
-    }
-}
-
-nlohmann::json LuaToJsonImpl(sol::object obj, int depth) {
-    if (depth > 64)
-        return nullptr;
-    if (obj.get_type() == sol::type::lua_nil)
-        return nullptr;
-    if (obj.is<bool>())
-        return obj.as<bool>();
-    if (obj.is<double>())
-        return obj.as<double>();
-    if (obj.is<std::string>())
-        return obj.as<std::string>();
-    if (obj.is<sol::table>()) {
-        sol::table t = obj.as<sol::table>();
-        bool is_array = true;
-        size_t max_idx = 0;
-        t.for_each([&](sol::object k, sol::object /*value*/) {
-            if (k.is<size_t>()) {
-                max_idx = (std::max)(max_idx, k.as<size_t>());
-            } else {
-                is_array = false;
-            }
-        });
-        if (is_array && max_idx > 0) {
-            nlohmann::json j = nlohmann::json::array();
-            for (size_t i = 1; i <= max_idx; ++i) {
-                j.push_back(LuaToJsonImpl(t[i], depth + 1));
-            }
-            return j;
-        } else {
-            nlohmann::json j = nlohmann::json::object();
-            t.for_each([&](sol::object k, sol::object v) {
-                if (k.is<std::string>()) {
-                    j[k.as<std::string>()] = LuaToJsonImpl(v, depth + 1);
-                }
-            });
-            return j;
-        }
-    }
-    return nullptr;
-}
+// JSON <-> Lua marshalling moved to the shared Json/LuaJsonConvert.h leaf
+// (reached via AppController_LuaBindings_detail.h). The public JsonToLua /
+// LuaToJson are global-scope inline there; call sites below are unchanged.
+// decode_json's threat-model rationale now lives above LuaDecodeJsonBind.
 
 std::string SanitizeLogText(const std::string& s) {
     std::string out;
@@ -332,16 +236,6 @@ static void LuaMergeIssueCreateSpec(IssueDraft& draft, sol::table spec, const st
 }
 
 } // namespace
-
-// File-scope wrappers — call through to the TU-private *Impl helpers above.
-// Declared in AppController_LuaBindings_detail.h; visible to _Draw.cpp.
-
-sol::object JsonToLua(sol::state_view luaView, const nlohmann::json& j) {
-    std::size_t nodes = kJsonToLuaMaxNodes;
-    return JsonToLuaImpl(luaView, j, 0, nodes);
-}
-
-nlohmann::json LuaToJson(sol::object obj) { return LuaToJsonImpl(obj, 0); }
 
 sol::environment CreateSandboxEnvironment(sol::state& lua) {
     // Lua semantics gotcha: `sandbox["X"] = nil` is equivalent to `rawset(sandbox, "X", nil)`
@@ -857,6 +751,17 @@ std::tuple<sol::object, std::string> AppController::Impl::LuaGetTicketBind(sol::
     return {sol::make_object(sv, sol::nil), "Ticket not found in local cache"};
 }
 
+// `decode_json` parses ATTACKER-CONTROLLED text (a Lua script can hand it any
+// string). nlohmann's recursive-descent parser builds the DOM by recursing once
+// per nesting level, so a deeply-nested payload ("[[[[...]]]]") overflows the
+// C++ stack BEFORE JsonToLua ever runs (Pillar 3 — Never crash). The 4 MB byte
+// cap in LuaDecodeJsonBind does NOT bound depth — ~2 M nested arrays fit easily.
+// The depth/node-bounded parse lives in the shared smatchet::json_safe helper
+// (Source/Core/include/Json/BoundedJsonParse.h) so this sink, the MCP REST /
+// JSON-RPC ingress, and the Lua-MCP-tool params path all route through ONE
+// BoundedDecodeSax (DRY / Pillar 5). The caps sit far above any legitimate JSON
+// the bindings exchange. On overflow we return a parse error string up to Lua —
+// graceful degradation, NOT a C++ throw across the sol2 boundary.
 std::tuple<sol::object, std::string> AppController::Impl::LuaDecodeJsonBind(sol::state_view sv, const std::string& s) {
     // Marshal against the calling state `sv` (see LuaGetTicketBind).
     // Depth/node-bounded parse via the shared json_safe helper (NOT json::parse,
