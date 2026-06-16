@@ -98,20 +98,11 @@ inline bool Combo(const char* label, int* current_item, const char* (*getter)(vo
 // long-text editor, focused-InputText catch-all). Tighter splice-at-cursor
 // for the multiline editor lands when an ImGuiInputTextCallback wire-up is
 // added (Phase E or later).
-inline void HookDictationOnLastItem(char* buf, std::size_t buf_size) {
-    const bool active = ::ImGui::IsItemActive() || ::ImGui::IsItemFocused();
-    if (active) {
-        // Capture the just-drawn widget's ImGui id so the router can pick the
-        // correct entry from multiple registered surfaces when
-        // `InsertIntoFocusedInputText(text, ImGui::GetActiveID())` runs.
-        // ImGuiID is `unsigned int`; the router takes it through a plain
-        // `unsigned int` parameter to keep imgui.h out of the router header.
-        const ImGuiID itemId = ::ImGui::GetItemID();
-        g_dictationRouter.RegisterInputTextWithItemId(buf, buf_size, nullptr, static_cast<unsigned int>(itemId));
-    } else {
-        g_dictationRouter.UnregisterInputText(buf);
-    }
-}
+// Defined out-of-line in SmatchetDictationHook.cpp (debt 2026-05-18) so this hot,
+// ~45-includer header carries only the declaration — the body's ImGui item-state
+// queries (IsItemActive / IsItemFocused / GetItemID) stay out of every TU that
+// merely draws a localized widget. Behaviour is identical to the prior inline body.
+void HookDictationOnLastItem(char* buf, std::size_t buf_size);
 
 inline bool InputText(const char* label, char* buf, size_t buf_size, ImGuiInputTextFlags flags = 0,
                       ImGuiInputTextCallback callback = nullptr, void* user_data = nullptr) {
