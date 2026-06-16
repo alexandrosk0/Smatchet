@@ -36,6 +36,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "Json/BoundedJsonParse.h"
+
 #include "imgui.h"
 #include "Logger.h"
 #include "SmatchetFieldIconRender.h"
@@ -93,80 +95,12 @@ constexpr int kJsonToLuaMaxDepth = 64;
 // per nesting level, so a deeply-nested payload ("[[[[...]]]]") overflows the
 // C++ stack BEFORE JsonToLua ever runs (Pillar 3 — Never crash). The 4 MB byte
 // cap in LuaDecodeJsonBind does NOT bound depth — ~2 M nested arrays fit easily.
-// We therefore parse through a depth/node-bounded SAX handler that aborts past a
-// cap instead of `json::parse` (which is unbounded). The caps sit far above any
-// legitimate JSON the bindings exchange (tracker payloads are a handful of
-// levels deep, a few thousand nodes) while bounding stack + heap growth well
-// short of exhaustion. On overflow we return a parse error string up to Lua —
+// The depth/node-bounded parse lives in the shared smatchet::json_safe helper
+// (Source/Core/include/Json/BoundedJsonParse.h) so this sink, the MCP REST /
+// JSON-RPC ingress, and the Lua-MCP-tool params path all route through ONE
+// BoundedDecodeSax (DRY / Pillar 5). The caps sit far above any legitimate JSON
+// the bindings exchange. On overflow we return a parse error string up to Lua —
 // graceful degradation, NOT a C++ throw across the sol2 boundary.
-constexpr int kDecodeJsonMaxDepth = 256;
-constexpr std::size_t kDecodeJsonMaxNodes = 200000u;
-
-// Bounded SAX handler: wraps nlohmann's own DOM builder, rejecting once the live
-// container depth exceeds kDecodeJsonMaxDepth or the total node count exceeds
-// kDecodeJsonMaxNodes. Returning `false` from any callback aborts sax_parse
-// without descending further, so the parser's recursion is hard-bounded by the
-// cap (ASAN-safe even on a hostile arbitrarily-deep string).
-class BoundedDecodeSax : public nlohmann::detail::json_sax_dom_parser<nlohmann::json> {
-  public:
-    using base = nlohmann::detail::json_sax_dom_parser<nlohmann::json>;
-    explicit BoundedDecodeSax(nlohmann::json& root) : base(root, /*allow_exceptions=*/false) {}
-
-    bool null() { return Count() && base::null(); }
-    bool boolean(bool v) { return Count() && base::boolean(v); }
-    bool number_integer(nlohmann::json::number_integer_t v) { return Count() && base::number_integer(v); }
-    bool number_unsigned(nlohmann::json::number_unsigned_t v) { return Count() && base::number_unsigned(v); }
-    bool number_float(nlohmann::json::number_float_t v, const nlohmann::json::string_t& s) {
-        return Count() && base::number_float(v, s);
-    }
-    bool string(nlohmann::json::string_t& v) { return Count() && base::string(v); }
-    bool binary(nlohmann::json::binary_t& v) { return Count() && base::binary(v); }
-
-    bool start_object(std::size_t elements) {
-        if (!Count() || !Descend()) {
-            return false;
-        }
-        return base::start_object(elements);
-    }
-    bool end_object() {
-        --depth_;
-        return base::end_object();
-    }
-    bool start_array(std::size_t elements) {
-        if (!Count() || !Descend()) {
-            return false;
-        }
-        return base::start_array(elements);
-    }
-    bool end_array() {
-        --depth_;
-        return base::end_array();
-    }
-    bool key(nlohmann::json::string_t& v) { return base::key(v); }
-
-    bool Overflowed() const { return overflowed_; }
-
-  private:
-    bool Count() {
-        if (++nodes_ > kDecodeJsonMaxNodes) {
-            overflowed_ = true;
-            return false;
-        }
-        return true;
-    }
-    bool Descend() {
-        if (depth_ >= kDecodeJsonMaxDepth) {
-            overflowed_ = true;
-            return false;
-        }
-        ++depth_;
-        return true;
-    }
-
-    int depth_ = 0;
-    std::size_t nodes_ = 0;
-    bool overflowed_ = false;
-};
 
 // Node budget for the converter itself (defense-in-depth). decode_json already
 // bounds depth + nodes at parse time; this guards the OTHER caller — commands.invoke
@@ -925,36 +859,27 @@ std::tuple<sol::object, std::string> AppController::Impl::LuaGetTicketBind(sol::
 
 std::tuple<sol::object, std::string> AppController::Impl::LuaDecodeJsonBind(sol::state_view sv, const std::string& s) {
     // Marshal against the calling state `sv` (see LuaGetTicketBind).
-    constexpr size_t kMaxDecodeBytes = 4u * 1024u * 1024u;
-    if (s.size() > kMaxDecodeBytes) {
-        return {sol::make_object(sv, sol::nil), std::string("input too large")};
-    }
-    try {
-        // Depth/node-bounded parse (NOT json::parse, which recurses unbounded and
-        // stack-overflows on a hostile deep payload — see BoundedDecodeSax). On a
-        // cap hit `ok` is false: report it to Lua as a parse error string rather
-        // than crashing or throwing across the sol2 boundary (Pillar 3).
-        nlohmann::json j;
-        BoundedDecodeSax sax(j);
-        const bool ok = nlohmann::json::sax_parse(s, &sax, nlohmann::json::input_format_t::json,
-                                                  /*strict=*/true, /*ignore_comments=*/false);
-        if (!ok) {
-            if (sax.Overflowed()) {
-                static bool warned = false;
-                if (!warned) {
-                    warned = true;
-                    LOG_WARN("decode_json: input exceeded depth (%d) or node (%zu) cap; rejecting. "
-                             "Possible hostile or malformed payload.",
-                             kDecodeJsonMaxDepth, kDecodeJsonMaxNodes);
-                }
-                return {sol::make_object(sv, sol::nil), std::string("input too deeply nested or too many elements")};
+    // Depth/node-bounded parse via the shared json_safe helper (NOT json::parse,
+    // which recurses unbounded and stack-overflows on a hostile deep payload). On
+    // a cap hit ParseBounded returns null + a non-empty errOut: report it to Lua
+    // as a parse error string rather than crashing or throwing across the sol2
+    // boundary (Pillar 3). Keep the 4 MiB byte cap on top of the depth/node caps.
+    constexpr std::size_t kMaxDecodeBytes = 4u * 1024u * 1024u;
+    std::string err;
+    const nlohmann::json j = smatchet::json_safe::ParseBounded(s, err, kMaxDecodeBytes);
+    if (!err.empty()) {
+        if (err == smatchet::json_safe::OverflowError()) {
+            static bool warned = false;
+            if (!warned) {
+                warned = true;
+                LOG_WARN("decode_json: input exceeded depth (%d) or node (%zu) cap; rejecting. "
+                         "Possible hostile or malformed payload.",
+                         smatchet::json_safe::kDefaultMaxDepth, smatchet::json_safe::kDefaultMaxNodes);
             }
-            return {sol::make_object(sv, sol::nil), std::string("invalid JSON")};
         }
-        return {JsonToLua(sv, j), std::string()};
-    } catch (const std::exception& e) {
-        return {sol::make_object(sv, sol::nil), std::string(e.what())};
+        return {sol::make_object(sv, sol::nil), err};
     }
+    return {JsonToLua(sv, j), std::string()};
 }
 
 std::tuple<sol::object, std::string> AppController::Impl::LuaCreateIssueBind(sol::state_view sv, sol::table spec) {

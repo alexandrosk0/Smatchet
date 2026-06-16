@@ -156,6 +156,57 @@ struct CellWriteFeedback {
     int FramesRemaining = 0;
 };
 
+/// Reusable JQL/filter editor state — buffer + autocomplete bookkeeping for one
+/// query-input surface. The dashboard Views editor and the global omnibar each own
+/// an independent instance so their in-flight async user-search request-ids never
+/// collide (a shared id let one surface's stale completion clobber the other's).
+struct JqlEditorState {
+    char buf[512]{};
+    /** Last cursor/selection from JQL InputText callback (for autocomplete). */
+    int jqlAcpLastCursor = 0;
+    int jqlAcpLastSelectionStart = 0;
+    int jqlAcpLastSelectionEnd = 0;
+    /** Pending replace from autocomplete (applied inside InputText callback). */
+    int jqlAcpReplaceStart = -1;
+    int jqlAcpReplaceEnd = -1;
+    std::string jqlAcpReplaceText;
+    bool jqlAcpApplyReplace = false;
+    /** If >= 0, override the post-insert cursor to this many bytes INTO the replace text
+     *  (used by JQL function suggestions like `membersOf("…")` so the caret lands between
+     *  the parens). -1 = default behaviour (cursor at end of inserted text). */
+    int jqlAcpReplaceCaretOffset = -1;
+    int jqlAcpListSelected = -1;
+    /** Set after JQL apply from popup; next frame: refocus JQL so typing continues. */
+    bool jqlAcpWantsJqlInputFocus = false;
+    bool jqlAcpScrollToSelected = false;
+    /** After inline apply: force cursor to BufTextLen for N more CallbackAlways passes so ImGui scrolls to end. */
+    int jqlAcpCaretSnapFramesRemaining = 0;
+    /** Set from JQL InputText callback when Enter pressed with no autocomplete rows; UI runs Apply JQL. */
+    bool jqlWantsApplyFromEnter = false;
+    /** Esc closed suggestion list until focus leaves input. */
+    bool jqlAcpListDismissed = false;
+    /** Debounced Jira user search (hybrid async on main thread). */
+    uint64_t jqlAcpUserSearchRequestId = 0;
+    double jqlAcpUserSearchFireAt = 0.0;
+    uint64_t jqlAcpUserSearchArmedId = 0;
+    std::string jqlAcpUserSearchQuery;
+    std::vector<QuerySuggestion> jqlAcpAsyncUserItems;
+    std::string jqlAcpAsyncUserError;
+
+    /// JQL @-mention worker-thread search (Pillar 2 — finding #3). When set, the result of
+    /// `SearchUsersByQuery` is pending in `jqlAcpUserSearchFuture`; polled per-frame via
+    /// `wait_for(0ms)` and reduced into the items vector on completion.
+    /// `jqlAcpUserSearchInFlightId` identifies which request the future belongs to so a
+    /// stale completion (user typed a new query) is discarded.
+    struct JqlUserSearchResult {
+        bool Ok = false;
+        std::vector<TrackerUser> Users;
+        std::string Error;
+    };
+    std::future<JqlUserSearchResult> jqlAcpUserSearchFuture;
+    uint64_t jqlAcpUserSearchInFlightId = 0;
+};
+
 struct UiDrawSession {
     bool cfgInitialized = false;
     TrackerConfig cfg;
@@ -421,50 +472,14 @@ struct UiDrawSession {
     bool prefsTrackerTabWasOpen = false;
 
     char viewNameBuf[128]{};
-    char viewJqlBuf[512]{};
-    /** Last cursor/selection from JQL InputText callback (for autocomplete). */
-    int jqlAcpLastCursor = 0;
-    int jqlAcpLastSelectionStart = 0;
-    int jqlAcpLastSelectionEnd = 0;
-    /** Pending replace from autocomplete (applied inside InputText callback). */
-    int jqlAcpReplaceStart = -1;
-    int jqlAcpReplaceEnd = -1;
-    std::string jqlAcpReplaceText;
-    bool jqlAcpApplyReplace = false;
-    /** If >= 0, override the post-insert cursor to this many bytes INTO the replace text
-     *  (used by JQL function suggestions like `membersOf("…")` so the caret lands between
-     *  the parens). -1 = default behaviour (cursor at end of inserted text). */
-    int jqlAcpReplaceCaretOffset = -1;
-    int jqlAcpListSelected = -1;
-    /** Set after JQL apply from popup; next frame: refocus JQL so typing continues. */
-    bool jqlAcpWantsJqlInputFocus = false;
-    bool jqlAcpScrollToSelected = false;
-    /** After inline apply: force cursor to BufTextLen for N more CallbackAlways passes so ImGui scrolls to end. */
-    int jqlAcpCaretSnapFramesRemaining = 0;
-    /** Set from JQL InputText callback when Enter pressed with no autocomplete rows; UI runs Apply JQL. */
-    bool jqlWantsApplyFromEnter = false;
-    /** Esc closed suggestion list until focus leaves input. */
-    bool jqlAcpListDismissed = false;
-    /** Debounced Jira user search (hybrid async on main thread). */
-    uint64_t jqlAcpUserSearchRequestId = 0;
-    double jqlAcpUserSearchFireAt = 0.0;
-    uint64_t jqlAcpUserSearchArmedId = 0;
-    std::string jqlAcpUserSearchQuery;
-    std::vector<QuerySuggestion> jqlAcpAsyncUserItems;
-    std::string jqlAcpAsyncUserError;
-
-    /// JQL @-mention worker-thread search (Pillar 2 — finding #3). When set, the result of
-    /// `SearchUsersByQuery` is pending in `jqlAcpUserSearchFuture`; polled per-frame via
-    /// `wait_for(0ms)` and reduced into the items vector on completion.
-    /// `jqlAcpUserSearchInFlightId` identifies which request the future belongs to so a
-    /// stale completion (user typed a new query) is discarded.
-    struct JqlUserSearchResult {
-        bool Ok = false;
-        std::vector<TrackerUser> Users;
-        std::string Error;
-    };
-    std::future<JqlUserSearchResult> jqlAcpUserSearchFuture;
-    uint64_t jqlAcpUserSearchInFlightId = 0;
+    /// Dashboard Views JQL editor (buffer + autocomplete state). Extracted into a reusable
+    /// JqlEditorState so the omnibar can own a second independent instance (request-id isolation).
+    JqlEditorState viewJqlEditor;
+    /// Global omnibar JQL/search editor — independent instance (own async request-ids).
+    JqlEditorState omniJqlEditor;
+    /// Pane id whose saved omnibar text is currently loaded into omniJqlEditor.buf. drawOmnibar
+    /// restores the focused pane's text on a change so each tab keeps its own omnibar input.
+    std::string omnibarSyncedPaneId;
 
     // Authoritative selected-field id set for the Views editor (#views-field-uncheck).
     // The toggle handlers / select-all / clear mutate THIS directly; it is seeded

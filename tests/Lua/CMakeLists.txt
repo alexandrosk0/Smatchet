@@ -22,6 +22,11 @@ add_executable(SmatchetLuaTests
     LuaTimeout.test.cpp
     LuaStubsCompile.test.cpp
     LuaBindings.test.cpp
+    # PR #1271 — pure doctest for the shared depth/node-bounded parse helper
+    # (smatchet::json_safe::ParseBounded, Source/Core/include/Json/BoundedJsonParse.h)
+    # that every JSON ingress (decode_json, MCP REST/JSON-RPC, Lua-MCP params) routes
+    # through. Header-only + nlohmann-only; no extra production .cpp to link.
+    BoundedJsonParse.test.cpp
     # Phase 6b: link the lifted, ImGui-free production TU directly so the
     # round-trip test exercises the real `smatchet::lua::InitLuaCore` body
     # (per the Phase-5 mcp-pure recipe -- production .cpp on the test target's

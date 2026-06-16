@@ -734,23 +734,35 @@ def squash_merge_pr(owner: str, repo: str, pr: int) -> str:
     required checks on the merge (or on the queue's merge_group run); we do not
     duplicate that client-side.
     """
-    result = subprocess.run(
-        [
-            GH_BIN,
-            "pr",
-            "merge",
-            str(pr),
-            "--repo",
-            f"{owner}/{repo}",
-            "--squash",
-            "--auto",
-        ],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=60,
-    )
+    try:
+        result = subprocess.run(
+            [
+                GH_BIN,
+                "pr",
+                "merge",
+                str(pr),
+                "--repo",
+                f"{owner}/{repo}",
+                "--squash",
+                "--auto",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        # Normalize launch/timeout failures (subprocess.TimeoutExpired,
+        # FileNotFoundError, ...) into the single RuntimeError contract every
+        # caller relies on (handle_pass: `except RuntimeError`). Mirrors _gh_json.
+        # A bare TimeoutExpired here would escape handle_pass, unwind the daemon's
+        # per-PR loop past `except StopSignal`, and crash the WHOLE daemon —
+        # stranding every registered PR (infra-outage class; see the daemon_loop
+        # per-PR backstop + postmortems.md).
+        raise RuntimeError(
+            f"gh pr merge --auto of PR #{pr} failed to launch or timed out: {exc}"
+        ) from exc
     if result.returncode != 0:
         raise RuntimeError(
             f"gh pr merge --auto of PR #{pr} exited {result.returncode}: "
@@ -2204,13 +2216,154 @@ def handle_pass(
             try:
                 with cascade_lock(child_head):
                     ok, msg = cascade_update_child(owner, repo, child_pr)
-            except TimeoutError as exc:
-                ok, msg = False, str(exc)
+            except (TimeoutError, OSError, subprocess.SubprocessError) as exc:
+                # cascade_lock raises TimeoutError on a lock-acquire timeout;
+                # cascade_update_child's `gh api PUT update-branch` runs
+                # subprocess.run(timeout=30) un-normalized, so a hung update-branch
+                # raises subprocess.TimeoutExpired (a subprocess.SubprocessError, NOT
+                # the builtins.TimeoutError this clause used to catch) or OSError on a
+                # launch failure. Widen to all three so ONE hung/failed child degrades
+                # to a per-child ERR row and the cascade still dispatches to its
+                # siblings — same exception-contract normalization as squash_merge_pr /
+                # _gh_json, applied at the post-merge cascade (which the L2 per-PR
+                # backstop would otherwise only coarsely contain, silently dropping the
+                # rest of the cascade).
+                ok, msg = False, f"{type(exc).__name__}: {exc}"
             children_results.append(
                 {"pr": child_pr, "head": child_head, "ok": ok, "msg": msg}
             )
     extras["cascade_children"] = children_results
     return extras
+
+
+def process_registered_pr(entry: dict[str, Any]) -> dict[str, Any]:
+    """Poll + act on ONE registered PR for a single cycle, then flush its state.
+
+    Extracted from daemon_loop's per-PR body so each iteration can be wrapped in
+    a backstop (see daemon_loop): one PR's transient failure — a gh launch/timeout
+    (now normalized to RuntimeError in squash_merge_pr) or any unexpected raise
+    from a sub-handler — degrades to a retry next cycle instead of unwinding the
+    loop and crashing the WHOLE daemon, which would strand EVERY registered PR
+    (infra-outage class; see postmortems.md). References only `entry` + module
+    globals (no cycle/entries/poll_interval state), so the move is behaviour-
+    preserving. Returns the final flushed state dict.
+    """
+    state = poll_one(entry)
+    # Persist the cross-cycle nudge guard + STALE streak the poll
+    # emitted (GATE_CARRY) so the once-per-HEAD @coderabbitai-review
+    # nudge doesn't re-fire next cycle and the STALE streak
+    # accumulates (merge-gates.sh's in-process locals reset under
+    # MERGE_GATES_MAX_POLLS=1). pop() so it never lands in state/<pr>.json.
+    nudge_carry = state.pop("nudge_carry", None)
+    if nudge_carry is not None:
+        _bump_nudge_state(
+            int(entry["pr"]),
+            entry["clone_path"],
+            nudge_carry["nudged_head"],
+            nudge_carry["stale_head"],
+            nudge_carry["stale_streak"],
+        )
+    # CR-NONE grace driver — flip BLOCKED -> GATES_PASSED once a
+    # skipped/absent-review grace window has elapsed across real
+    # cycles (closes the MAX_POLLS=1 grace wedge). Runs before
+    # the dispatch so a forced pass routes into handle_pass.
+    if state.get("last_state") == "BLOCKED":
+        grace_extras = maybe_pass_cr_none_grace(entry, state)
+        if grace_extras:
+            state.update(grace_extras)
+            if grace_extras.get("cr_none_grace_action"):
+                print(
+                    f"  PR#{state['pr']:<6} cr-none-grace: "
+                    f"{grace_extras['cr_none_grace_action']}"
+                )
+    # GATE_SNAPSHOT — the override-bypass record the PASS-path poll
+    # emitted (which checks tests-/perf-out-of-band downgraded +
+    # whether cr-out-of-band waived a CR block). pop() so it never
+    # lands in state/<pr>.json; hand to handle_pass so the merge
+    # snapshot records what the override bypassed (redChecks),
+    # not the hardcoded [] (mandatory-merge-snapshot-on-override-merge).
+    gate_snapshot = state.pop("gate_snapshot", None)
+    # Phase 2 — PASS-branch auto-merge + cascade.
+    if state.get("last_state") == "GATES_PASSED":
+        extras = handle_pass(entry, gate_snapshot=gate_snapshot)
+        state.update(extras)
+        if extras.get("merge_action") == "merged":
+            print(
+                f"  PR#{state['pr']:<6} MERGED sha={extras.get('merge_sha','?')[:10]} "
+                f"cascade_children={len(extras.get('cascade_children', []))}"
+            )
+            for child in extras.get("cascade_children", []):
+                tag = "OK" if child["ok"] else "ERR"
+                print(f"    cascade #{child['pr']:<5} {tag}: {child['msg'][:80]}")
+        else:
+            print(
+                f"  PR#{state['pr']:<6} PASS but {extras.get('merge_action', '?')}"
+            )
+    # Phase 3 — BLOCKED on CR findings → triage classifier + comment.
+    elif state.get("last_state") == "BLOCKED":
+        extras = handle_blocked_cr_triage(entry, state.get("last_status_line", ""))
+        state.update(extras)
+        if extras.get("triage_action"):
+            print(
+                f"  PR#{state['pr']:<6} BLOCKED -> triage: {extras.get('triage_action')}"
+            )
+        else:
+            print(
+                f"  PR#{state['pr']:<6} BLOCKED (no triage) "
+                f"poll_line={state.get('last_status_line', '')[:100]}"
+            )
+    elif state.get("last_state") == "PR_CLOSED_OR_MERGED":
+        # PR closed or merged externally (merge-gates exit 4):
+        # drop it from the registry so the daemon stops polling a
+        # dead PR. Without this, closed PRs accrete as stale
+        # registry entries (observed: 17 pre-fix EXIT-state PRs).
+        # maybe_notify below still fires once so the user sees the
+        # terminal state before the entry is removed.
+        maybe_remove_from_registry(int(entry["pr"]), entry["clone_path"])
+        state["registry_action"] = "auto-unregistered (closed/merged)"
+        print(f"  PR#{state['pr']:<6} CLOSED/MERGED -> auto-unregistered")
+    else:
+        print(
+            f"  PR#{state['pr']:<6} state={state['last_state']:<24} "
+            f"poll_line={state.get('last_status_line', '')[:120]}"
+        )
+    # Sub-bug (b) — resolve stuck CR review threads after
+    # an auto-act push lands (opt-in via
+    # MERGE_WATCH_RESOLVE_CR_THREADS). Runs before notify so
+    # that if resolution succeeds, the next poll's gates can
+    # pass cleanly without surfacing a spurious notification.
+    resolve_extras = maybe_resolve_stuck_cr_threads(state, entry)
+    if resolve_extras:
+        state.update(resolve_extras)
+        if "resolve_action" in resolve_extras:
+            print(
+                f"    resolve-threads: {resolve_extras.get('resolve_action', '?')}"
+            )
+    # Phase 4a — fire smatchet-notify on terminal states.
+    notify_extras = maybe_notify(state, entry)
+    if notify_extras:
+        state.update(notify_extras)
+        if "notify_action" in notify_extras and notify_extras["notify_action"] != "suppressed (same state as last notify)":
+            print(
+                f"    notify: {notify_extras.get('notify_action', '?')}"
+            )
+    # Option A (opt-in) — spawn `claude -p` in the background
+    # to address CR findings. Gated by MERGE_WATCH_AUTO_ACT.
+    auto_act_extras = maybe_auto_act(state, entry)
+    if auto_act_extras:
+        state.update(auto_act_extras)
+        if "auto_act_action" in auto_act_extras:
+            print(
+                f"    auto-act: {auto_act_extras.get('auto_act_action', '?')}"
+            )
+    try:
+        write_state(state)
+    except OSError as _write_err:
+        print(
+            f"  WARN: write_state PR#{state['pr']} failed after retries: {_write_err}; "
+            "skipping this cycle's state flush — daemon continues"
+        )
+    return state
 
 
 def daemon_loop(poll_interval: int) -> int:
@@ -2224,127 +2377,54 @@ def daemon_loop(poll_interval: int) -> int:
     try:
         while True:
             cycle += 1
-            entries = read_registry()
-            if not entries:
-                print(f"[cycle {cycle}] registry empty; sleeping {poll_interval}s")
-            else:
-                print(f"[cycle {cycle}] polling {len(entries)} registered PR(s)")
-                for entry in entries:
-                    state = poll_one(entry)
-                    # Persist the cross-cycle nudge guard + STALE streak the poll
-                    # emitted (GATE_CARRY) so the once-per-HEAD @coderabbitai-review
-                    # nudge doesn't re-fire next cycle and the STALE streak
-                    # accumulates (merge-gates.sh's in-process locals reset under
-                    # MERGE_GATES_MAX_POLLS=1). pop() so it never lands in state/<pr>.json.
-                    nudge_carry = state.pop("nudge_carry", None)
-                    if nudge_carry is not None:
-                        _bump_nudge_state(
-                            int(entry["pr"]),
-                            entry["clone_path"],
-                            nudge_carry["nudged_head"],
-                            nudge_carry["stale_head"],
-                            nudge_carry["stale_streak"],
-                        )
-                    # CR-NONE grace driver — flip BLOCKED -> GATES_PASSED once a
-                    # skipped/absent-review grace window has elapsed across real
-                    # cycles (closes the MAX_POLLS=1 grace wedge). Runs before
-                    # the dispatch so a forced pass routes into handle_pass.
-                    if state.get("last_state") == "BLOCKED":
-                        grace_extras = maybe_pass_cr_none_grace(entry, state)
-                        if grace_extras:
-                            state.update(grace_extras)
-                            if grace_extras.get("cr_none_grace_action"):
-                                print(
-                                    f"  PR#{state['pr']:<6} cr-none-grace: "
-                                    f"{grace_extras['cr_none_grace_action']}"
-                                )
-                    # GATE_SNAPSHOT — the override-bypass record the PASS-path poll
-                    # emitted (which checks tests-/perf-out-of-band downgraded +
-                    # whether cr-out-of-band waived a CR block). pop() so it never
-                    # lands in state/<pr>.json; hand to handle_pass so the merge
-                    # snapshot records what the override bypassed (redChecks),
-                    # not the hardcoded [] (mandatory-merge-snapshot-on-override-merge).
-                    gate_snapshot = state.pop("gate_snapshot", None)
-                    # Phase 2 — PASS-branch auto-merge + cascade.
-                    if state.get("last_state") == "GATES_PASSED":
-                        extras = handle_pass(entry, gate_snapshot=gate_snapshot)
-                        state.update(extras)
-                        if extras.get("merge_action") == "merged":
+            try:
+                entries = read_registry()
+                if not entries:
+                    print(f"[cycle {cycle}] registry empty; sleeping {poll_interval}s")
+                else:
+                    print(f"[cycle {cycle}] polling {len(entries)} registered PR(s)")
+                    for entry in entries:
+                        try:
+                            process_registered_pr(entry)
+                        except StopSignal:
+                            # Clean shutdown — the signal handler raises StopSignal
+                            # (an Exception subclass) to unwind to the outer handler
+                            # below. It MUST re-raise here, BEFORE the broad backstop,
+                            # or Ctrl-C/SIGTERM during a PR's processing gets swallowed
+                            # and the daemon never stops.
+                            raise
+                        except Exception as _poll_err:
+                            # Per-PR backstop: one PR's transient failure (a gh
+                            # launch/timeout, or any unexpected raise in a sub-handler)
+                            # degrades to a retry next cycle instead of unwinding the
+                            # loop and crashing the WHOLE daemon — which would strand
+                            # EVERY registered PR (the infra-outage this fixes).
                             print(
-                                f"  PR#{state['pr']:<6} MERGED sha={extras.get('merge_sha','?')[:10]} "
-                                f"cascade_children={len(extras.get('cascade_children', []))}"
+                                f"  WARN: PR#{entry.get('pr', '?')} poll cycle raised "
+                                f"{type(_poll_err).__name__}: {_poll_err}; degrading to "
+                                "retry next cycle — daemon continues, other PRs unaffected"
                             )
-                            for child in extras.get("cascade_children", []):
-                                tag = "OK" if child["ok"] else "ERR"
-                                print(f"    cascade #{child['pr']:<5} {tag}: {child['msg'][:80]}")
-                        else:
-                            print(
-                                f"  PR#{state['pr']:<6} PASS but {extras.get('merge_action', '?')}"
-                            )
-                    # Phase 3 — BLOCKED on CR findings → triage classifier + comment.
-                    elif state.get("last_state") == "BLOCKED":
-                        extras = handle_blocked_cr_triage(entry, state.get("last_status_line", ""))
-                        state.update(extras)
-                        if extras.get("triage_action"):
-                            print(
-                                f"  PR#{state['pr']:<6} BLOCKED -> triage: {extras.get('triage_action')}"
-                            )
-                        else:
-                            print(
-                                f"  PR#{state['pr']:<6} BLOCKED (no triage) "
-                                f"poll_line={state.get('last_status_line', '')[:100]}"
-                            )
-                    elif state.get("last_state") == "PR_CLOSED_OR_MERGED":
-                        # PR closed or merged externally (merge-gates exit 4):
-                        # drop it from the registry so the daemon stops polling a
-                        # dead PR. Without this, closed PRs accrete as stale
-                        # registry entries (observed: 17 pre-fix EXIT-state PRs).
-                        # maybe_notify below still fires once so the user sees the
-                        # terminal state before the entry is removed.
-                        maybe_remove_from_registry(int(entry["pr"]), entry["clone_path"])
-                        state["registry_action"] = "auto-unregistered (closed/merged)"
-                        print(f"  PR#{state['pr']:<6} CLOSED/MERGED -> auto-unregistered")
-                    else:
-                        print(
-                            f"  PR#{state['pr']:<6} state={state['last_state']:<24} "
-                            f"poll_line={state.get('last_status_line', '')[:120]}"
-                        )
-                    # Sub-bug (b) — resolve stuck CR review threads after
-                    # an auto-act push lands (opt-in via
-                    # MERGE_WATCH_RESOLVE_CR_THREADS). Runs before notify so
-                    # that if resolution succeeds, the next poll's gates can
-                    # pass cleanly without surfacing a spurious notification.
-                    resolve_extras = maybe_resolve_stuck_cr_threads(state, entry)
-                    if resolve_extras:
-                        state.update(resolve_extras)
-                        if "resolve_action" in resolve_extras:
-                            print(
-                                f"    resolve-threads: {resolve_extras.get('resolve_action', '?')}"
-                            )
-                    # Phase 4a — fire smatchet-notify on terminal states.
-                    notify_extras = maybe_notify(state, entry)
-                    if notify_extras:
-                        state.update(notify_extras)
-                        if "notify_action" in notify_extras and notify_extras["notify_action"] != "suppressed (same state as last notify)":
-                            print(
-                                f"    notify: {notify_extras.get('notify_action', '?')}"
-                            )
-                    # Option A (opt-in) — spawn `claude -p` in the background
-                    # to address CR findings. Gated by MERGE_WATCH_AUTO_ACT.
-                    auto_act_extras = maybe_auto_act(state, entry)
-                    if auto_act_extras:
-                        state.update(auto_act_extras)
-                        if "auto_act_action" in auto_act_extras:
-                            print(
-                                f"    auto-act: {auto_act_extras.get('auto_act_action', '?')}"
-                            )
-                    try:
-                        write_state(state)
-                    except OSError as _write_err:
-                        print(
-                            f"  WARN: write_state PR#{state['pr']} failed after retries: {_write_err}; "
-                            "skipping this cycle's state flush — daemon continues"
-                        )
+                            continue
+            except StopSignal:
+                # Clean shutdown must propagate past the per-cycle backstop too:
+                # re-raise BEFORE the broad except (same ordering rule as the per-PR
+                # backstop), so a signal arriving during read_registry — or any
+                # cycle-scope work outside the per-PR try — still unwinds to the
+                # outer handler instead of being swallowed below.
+                raise
+            except Exception as _cycle_err:
+                # Per-CYCLE backstop: a cycle-scope failure outside the per-PR try —
+                # read_registry raising on a malformed/locked registry file (a
+                # concurrent session's tempfile-rename write, a transient Windows
+                # file lock, corrupt JSON) — degrades to skip-this-cycle/retry-next
+                # instead of unwinding past the StopSignal-only outer handler into
+                # main and crashing the WHOLE daemon (the same all-PRs-stranded
+                # blast radius the per-PR backstop closes; see postmortems.md).
+                print(
+                    f"[cycle {cycle}] WARN: cycle raised "
+                    f"{type(_cycle_err).__name__}: {_cycle_err}; skipping this cycle, "
+                    "retrying next — daemon continues"
+                )
             time.sleep(poll_interval)
     except StopSignal:
         print("\nmerge-watcher: stop signal received; exiting cleanly.")
