@@ -87,6 +87,34 @@ std::string SanitizeConfigStringValue(const std::string& value) {
     return out;
 }
 
+void SanitizeHeaderBoundConfigKeys(nlohmann::json& j) {
+    if (!j.is_object()) {
+        return;
+    }
+    // The persisted JSON keys whose value is spliced into an outbound HTTP request URL or header.
+    // Keep in sync with the URL/header sinks: domain + plane_url -> tracker request URLs
+    // (NormalizeBaseUrl in JiraClient / PlaneClient); plane_workspace_slug -> concatenated raw into
+    // every Plane workspace request path (".../api/v1/workspaces/<slug>/projects/..." across
+    // PlaneClient / PlaneFieldCatalog / PlaneIssueSearch / PlaneIssueMutation / PlaneActivityFeed) with
+    // NO use-site normalization — so it is strictly LESS guarded than the base URL and must be stripped
+    // here; ai_*_base_url -> AI endpoint URLs. Secret keys are intentionally absent — their on-disk form
+    // is DPAPI ciphertext (no CR/LF) or POSIX plaintext already sanitized in Save before encryption.
+    static const char* const kHeaderBoundKeys[] = {
+        "domain",
+        "plane_url",
+        "plane_workspace_slug",
+        "ai_base_url",
+        "ai_ollama_base_url",
+        "ai_deepseek_base_url",
+    };
+    for (const char* key : kHeaderBoundKeys) {
+        nlohmann::json::iterator it = j.find(key);
+        if (it != j.end() && it->is_string()) {
+            *it = SanitizeConfigStringValue(it->get<std::string>());
+        }
+    }
+}
+
 bool EnsureDirectoryExists(const std::string& path) {
 #if defined(_WIN32)
     // Use the wide-char APIs so non-ASCII paths (é/ñ/CJK) survive on systems where the
@@ -706,7 +734,13 @@ void ConfigManager::WriteConfigJson(const nlohmann::json& j) {
     const std::string path = GetConfigPath();
     std::lock_guard<std::mutex> lock(GetIoMutexRef());
     ScopedFileLock fileLock(path);
-    const std::string content = j.dump(4);
+    // Defense-in-depth (security backlog 2026-06-15): strip CR/LF/NUL from the header/URL-bound keys
+    // at this central chokepoint so the `config.set` / Lua direct-write paths (which bypass Save's
+    // per-field sanitize) cannot persist an HTTP-header/URL-smuggling payload. Copy-then-sanitize
+    // leaves the caller's json untouched; the copy is cheap on this infrequent (non-per-frame) path.
+    nlohmann::json sanitized = j;
+    smatchet::config_detail::SanitizeHeaderBoundConfigKeys(sanitized);
+    const std::string content = sanitized.dump(4);
     if (!AtomicWriteTextFile(path, content)) {
         LOG_ERROR("ConfigManager: atomic write failed for '%s'", path.c_str());
     }
