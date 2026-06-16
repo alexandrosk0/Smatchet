@@ -1,7 +1,7 @@
 # Slice E2b — libFuzzer drivers for the 5 remaining untrusted-byte parsers (PR 2a + PR 2b)
 
-**Status:** APPROVED — split into **PR 2a + PR 2b** per user decision ("Approve but split", to stay well under CodeRabbit's per-PR file ceiling). **PR 2a in flight.**
-**Branch / worktree:** `feat/slice-e2b-libfuzzer` @ `C:\Dev\trees\slice-e2b-libfuzzer` (off `origin/develop` @ `eeeaabb7`, the E2a merge). PR 2b stacks on this branch (or ships off `develop` once 2a merges).
+**Status:** APPROVED — split into **PR 2a + PR 2b** per user decision ("Approve but split", to stay well under CodeRabbit's per-PR file ceiling). **PR 2a merged (#1301); PR 2b in flight.**
+**Branch / worktree:** PR 2a shipped on `feat/slice-e2b-libfuzzer` (merged #1301). **PR 2b** on `feat/slice-e2b-ai-fuzzers` @ `C:\Dev\trees\slice-e2b-aifz` — ships **off `develop`** (unstacked; 2a already merged so its branch is push-closed), not stacked on 2a's branch. See §10 Deviations.
 
 ### PR split (primary plan)
 
@@ -196,11 +196,11 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
 | Path | Action |
 |---|---|
-| `tests/fuzz/CMakeLists.txt` | EDIT — add 2 target calls (`ai_sse`, `ai_ndjson`); `LIBS` helper already present from 2a |
+| `tests/fuzz/CMakeLists.txt` | EDIT — add 2 target calls (`ai_sse`, `ai_ndjson`, each w/ `include/Privacy`, no `include/Ui`); **+ add `include/Privacy` to `fuzz_markdown_adf`** (repairs develop's red lane — §10 D1). `LIBS` helper already present from 2a |
 | `tests/fuzz/fuzz_ai_sse.cpp` | NEW |
 | `tests/fuzz/fuzz_ai_ndjson.cpp` | NEW |
 | `tests/fuzz/corpus/{ai_sse,ai_ndjson}/*` | NEW — 6 seed files |
-| `tests/fuzz/README.md` | EDIT — flip the 2 PR-2b Status cells to "this PR" |
+| `tests/fuzz/README.md` | EDIT — flip the 2 PR-2b Status cells to "this PR"; flip the 3 PR-2a cells to "(#1301)" |
 
 ---
 
@@ -233,7 +233,9 @@ Windows dev box **cannot** build these (`cmake/Sanitizers.cmake` FATALs on MSVC/
 
 ## 10. Deviations log
 
-_(none yet — append during implementation)_
+- **D1 — `include/Privacy` was missing; PR 2a shipped a red `fuzz-smoke`.** §2/§55 assumed `Logger.cpp`'s `"Privacy/TextRedaction.h"` prefix made `include` + `include/Ui` sufficient for the shared logger closure. Wrong: `TextRedaction.cpp` itself bare-includes `"TextRedaction.h"` (header at `include/Privacy/TextRedaction.h`), so **every target that compiles `_fuzz_logger_srcs` needs `include/Privacy` on its `INCLUDES`.** PR 2a's `fuzz_markdown_adf` lacked it → `fatal error: 'TextRedaction.h' file not found` → 3 consecutive red `fuzz-smoke` runs. #1301 was merged past the red advisory lane (manual human merge — gate-escape, postmortem owed in `docs/self-improvement/postmortems.md`). **PR 2b folds the fix in:** adds `include/Privacy` to `fuzz_markdown_adf` (repairs develop's red lane) and to both new ai_* targets.
+- **D2 — PR 2b ships off `develop`, unstacked.** Header envisaged 2b stacking on 2a's branch. Because 2a already squash-merged (#1301) and its branch is merged-closed (push blocked by the merged-PR guard), 2b is built fresh in a new worktree (`feat/slice-e2b-ai-fuzzers` off `origin/develop`) — all non-ai files byte-identical to develop, so the 2b diff is `ai_*` + the one-line markdown hotfix only.
+- **D3 — ai_* targets omit `include/Ui`.** §55 specified `include` + `include/Ui` for every driver. The two ai parsers and the logger srcs touch nothing under `Ui/`, so the ai_* targets carry only `include` + `include/Privacy`. (`fuzz_markdown_adf` keeps `include/Ui` for `MarkdownConvert`.)
 
 ## 11. Self-improvement
 
