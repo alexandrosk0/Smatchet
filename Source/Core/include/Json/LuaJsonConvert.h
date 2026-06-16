@@ -2,7 +2,6 @@
 // Shared JSON <-> Lua marshalling leaf, lifted out of the two Lua binding TUs
 // (AppController_LuaBindings.cpp + AppController_LuaBindingsCore.cpp) per debt
 // line 129 / DRY Pillar 5 — the converter was a byte-identical copy in both.
-//
 // Header-only inline: the converter is reached ONLY through the Lua-gated
 // binding TUs and AppController_LuaBindings_detail.h, so the whole surface sits
 // behind SMATCHET_WITH_LUA_AUTOMATION exactly like ILuaBindingHost.h. In a
