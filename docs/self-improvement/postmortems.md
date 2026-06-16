@@ -27,6 +27,51 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-16 · PR #1328 · override: cr-out-of-band (CodeRabbit false-positive finding it later retracted in-thread)
+
+### What escaped
+`feat(core): AppController fan-in Phase 2 — close the json doors (json_fwd)` (#1328, head
+`97480e23`, merge `15:08:59Z`) merged to `develop` with a `cr-out-of-band` label downgrading
+CodeRabbit's `COMMENTED + 1 actionable` block to WARN. The single actionable (Major) finding was on
+`Source/Standalone/main.cpp:96`: CR claimed `CommandRegistry.h` declares
+`Dispatch(const nlohmann::json&)` without including the json header, "forcing main.cpp to include it"
+— i.e. a spurious / redundant include introduced by the PR.
+
+### Root cause
+Not a defect — the CR finding was a **verified false positive**. `Commands/Command.h:19` owns the
+full `#include <nlohmann/json.hpp>`; `CommandRegistry.h:4` includes `"Commands/Command.h"`, so it
+inherits the `nlohmann::json` type transitively and correctly omits a direct include (its
+`Dispatch(..., const nlohmann::json&, ...)` at line 57 compiles fine). main.cpp:96's
+`<nlohmann/json.hpp>` is unrelated to `CommandRegistry` — it exists because *that TU uses
+`nlohmann::json` directly* now that Phase 2 closed `AppController.h`'s transitive json door
+(`json.hpp` → `json_fwd.hpp`), and the include carries an inline comment saying exactly that. The
+author posted an in-thread rejection ("Triaged — rejecting (out of scope + inaccurate premise …)")
+and **CodeRabbit itself acknowledged the premise was wrong** ("Acknowledged — premise was wrong.
+`Command.h:19` already owns the full `<nlohmann/json.hpp>` include …"). But CR does not re-flip its
+review state from `COMMENTED + 1-actionable` to `APPROVED` after retracting a finding in-thread, so
+the merge-gate poller still counted it as a CR block — the only escape hatch is the blanket
+`cr-out-of-band` label.
+
+### Preventing gate
+**none — override legitimate** (the sole CR actionable was a factually-wrong premise, refuted from
+the code and retracted by CR in-thread; CI was green; the include the finding objected to is correct
+and necessary). The gate hole — CR leaving a retracted finding as a live `actionable` so the poller
+blocks until a blanket downgrade is applied — is real but not worth a bespoke auto-detector here:
+trusting CR's "Acknowledged" reply text to auto-clear the block is exactly the
+"never trust a CodeRabbit ✅-annotation blindly" foot-gun AGENTS.md § Merge gates warns against (it
+matches phrasing, not the diff). The durable mitigation is the **machine-readable disposition trail**
+already tracked as `cr-out-of-band-disposition-trail` (process.md): #1328's rejection rationale
+existed only as PR-thread prose, so the poller couldn't see it and the override's legitimacy was
+reconstructable only from the thread — the same evidence-gap that entry exists to close, now with a
+new sub-case (CR-retracted-but-still-actionable, not just CR-skipped/no-actionables).
+
+### Filed as
+Recurrence note appended to [`process.md`](categories/process.md)
+`cr-out-of-band-disposition-trail` (P3; recurrence set now #945 / #953 / #1046–#1072 / #1265 /
+#1328 — #1328 is the first instance where a human-readable disposition was present in-thread but not
+in the grep-able `cr-disposition:` marker form, reinforcing concrete-action (1)). No new category
+entry — the gate is already tracked.
+
 ## 2026-06-16 · PR #1317 · override: tests-out-of-band (red Test-delta gate) — behaviour-preserving header→cpp body relocation
 
 ### What escaped
