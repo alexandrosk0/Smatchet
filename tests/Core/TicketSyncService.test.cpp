@@ -264,6 +264,52 @@ TEST_CASE("TicketSyncService::SyncWithBackend end-to-end populates cache + activ
     svc.CancelAndJoinActiveStreamingSync();
 }
 
+TEST_CASE("TicketSyncService::SyncWithBackend routes user-facing toasts through NotifySyncStatus (UI-free)") {
+    // sync-imgui-coupling decouple (debt 2026-06-07): TicketSyncService no longer pokes the
+    // ImGui SmatchetToastManager directly — every user-facing toast now flows through
+    // ITicketSyncDeps::NotifySyncStatus, which the fake records. Assert the happy-path sequence:
+    // a "Syncing" Info toast fires synchronously at session start, then a "Sync Complete" Success
+    // toast fires once the worker drains. No ToastType / imgui.h is reachable from this TU.
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> scripted;
+    scripted.push_back(MakeTicket("TOAST-1", "alpha"));
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+
+    TicketSyncService svc(deps);
+
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake"; // matches FakeTrackerClient::GetTrackerType — no backend swap
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+
+    // The "Syncing" Info toast is emitted synchronously inside StartStreamingSync.
+    REQUIRE_FALSE(deps.SyncNotifications.empty());
+    CHECK(deps.SyncNotifications.front().Title == "Syncing");
+    CHECK(deps.SyncNotifications.front().Level == ITicketSyncDeps::SyncNotifyLevel::Info);
+
+    const bool drained = SpinUntil(svc, [&]() {
+        for (const auto& n : deps.SyncNotifications) {
+            if (n.Title == "Sync Complete") {
+                return true;
+            }
+        }
+        return false;
+    });
+    REQUIRE(drained);
+
+    bool sawComplete = false;
+    for (const auto& n : deps.SyncNotifications) {
+        if (n.Title == "Sync Complete") {
+            sawComplete = true;
+            CHECK(n.Level == ITicketSyncDeps::SyncNotifyLevel::Success);
+        }
+    }
+    CHECK(sawComplete);
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
 TEST_CASE("TicketSyncService::ApplyIssueFetchPack with non-transport FetchError still applies tickets without "
           "flipping connectivity state" *
           doctest::test_suite("[high-risk]")) {
