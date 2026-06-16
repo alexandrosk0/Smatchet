@@ -70,11 +70,14 @@ class PluginHost;
 // stub methods take it by const-ref / return std::vector<AiContextBlock>.
 #include "AiTypes.h"
 #if defined(SMATCHET_WITH_AI)
-// Phase B: AiAssistantController is a complete type here so `std::unique_ptr<AiAssistantController>`
-// can be destroyed by the (implicit-on-translation-unit) default deleter when consumers include
-// this header. Without the full type, every TU that includes AppController.h would have to
-// either provide a dtor or run into the unique_ptr<incomplete-type> sizeof error.
-#include "AiAssistantController.h"
+// Fan-in Phase 4 (docs/plans/appcontroller-fan-in.md): forward-decl, not a full include. The
+// `std::unique_ptr<AiAssistantController> aiAssistant_` member moved into the src-only
+// AppController::Impl (AppControllerImpl.h includes the full type for its dtor); AppController.h only
+// declares `AiAssistantController& GetAiAssistantController()` (out-of-line) + `HasAiAssistantController()`
+// (by-reference / value-return), so the forward declaration suffices and AI-on includers stop
+// pulling AiAssistantController.h transitively. (The old "complete type needed for the member dtor"
+// rationale is stale — the member is no longer declared in this header.)
+class AiAssistantController;
 #endif
 
 // TrackerConnectivityBannerForUi + TrackerIssueFetchPack moved to the leaf header
