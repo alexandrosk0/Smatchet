@@ -5,6 +5,7 @@
 #include "Commands/PaneCommands.h"
 
 #include "AppController.h"
+#include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 #include "Commands/MainThreadDispatch.h"

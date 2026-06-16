@@ -4,7 +4,11 @@
 #include "IssueDraft.h"
 #include "TrackerFieldSchema.h"
 
-#include <nlohmann/json.hpp>
+// Fan-in Phase 2 (docs/plans/appcontroller-fan-in.md): json_fwd, not json.hpp — this header names
+// nlohmann::json only as `nlohmann::json& outFields` in the BuildFieldsPayload decl (L43, by-ref).
+// It is reached by AppController.h's includers (AppController.h includes IssueCreatePipeline.h), so
+// the full-json door is closed here; the .cpp that defines BuildFieldsPayload includes json.hpp.
+#include <nlohmann/json_fwd.hpp>
 
 #include <string>
 #include <vector>

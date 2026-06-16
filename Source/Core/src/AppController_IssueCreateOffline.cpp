@@ -1,4 +1,5 @@
 #include "AppController.h"
+#include "ITrackerIssueMutations.h" // fan-in Phase 2: AppController.h fwd-decls it now; this TU calls Mutations() methods.
 
 #include "MarkdownConvert.h"
 #include "OfflineQueueService.h"

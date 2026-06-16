@@ -1,4 +1,5 @@
 #include "IssueCreatePipeline.h"
+#include <nlohmann/json.hpp> // fan-in Phase 2: IssueCreatePipeline.h dropped json.hpp for json_fwd; BuildFieldsPayload constructs json here.
 
 #include "ITrackerIssueMutations.h"
 #include "IssueCreatePipelineHelpers.h"
