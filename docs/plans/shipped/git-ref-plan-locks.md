@@ -192,6 +192,8 @@ Greenlight Phases 1–6. No environmental blockers. The optional Phase 7 ruleset
 
 Build the claim primitive standalone. No agent reads it yet.
 
+> **Path note (relocated post-#1274):** the Phase-1 primitives below shipped under `scripts/dev/` but now live at `agents/scripts/core/` (the lock infra moved with PR #1274). The `scripts/dev/…` paths in this Phases-1–6 inventory are the as-built historical record, **not** live refs — to invoke a script today, read it from `agents/scripts/core/`.
+
 Files (new):
 
 - `scripts/dev/lock-claim.sh` — args: `<slug> <write-set-file>`. Builds claim blob, commits on detached tree, pushes to `refs/locks/<slug>`. Atomic CAS via standard non-fast-forward rejection. Retries only on transient errors (3 retries, exponential backoff); CAS rejection is terminal.
