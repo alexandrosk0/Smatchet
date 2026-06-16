@@ -1253,7 +1253,8 @@ bool AppController::SubmitFieldEditRegular(const SubmitFieldEditCtx& ctx, std::s
         std::string payloadForLog;
         try {
             payloadForLog = fieldsPayload.dump();
-        } catch (...) {
+        } catch (...) { // catch-all-ok: best-effort payload dump for the adjacent LOG_ERROR; fallback string on any
+                        // json dump failure
             payloadForLog = "(payload dump failed)";
         }
         LOG_ERROR(
@@ -1467,7 +1468,8 @@ bool AppController::ApplyFieldUpdateWithEditMetaRetry(const std::string& issueId
         std::string payloadForLog;
         try {
             payloadForLog = fieldsPayload.dump();
-        } catch (...) {
+        } catch (...) { // catch-all-ok: best-effort payload dump for the adjacent LOG_ERROR; fallback string on any
+                        // json dump failure
             payloadForLog = "(payload dump failed)";
         }
         LOG_ERROR("AppController::SubmitFieldEditNetworkOnly failed issue=%s field=%s retried_after_400=%d "
