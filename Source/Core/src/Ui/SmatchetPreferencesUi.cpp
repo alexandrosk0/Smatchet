@@ -401,8 +401,9 @@ void DrawTrackerRecentProjects(UiDrawSession& d, int currentItem) {
 // no Save button. These keys were config-only (not on the config.set allowlist, hand-edited JSON)
 // until exposed here.
 void DrawUserInfoFeedSettings(UiDrawSession& d) {
-    ImGui::Separator();
     ImGui::TextUnformatted("User Info & commit feed");
+    ImGui::Separator();
+    ImGui::Spacing();
     ImGui::InputText("Git commit repos", d.gitCommitReposBuf, sizeof(d.gitCommitReposBuf));
     ImGui::SameLine();
     SmatchetHelpMarker::Render("prefs.userinfo.git_commit_repos.help",
@@ -460,7 +461,6 @@ void SmatchetUI::drawPreferencesTrackerTab(UiDrawSession& d) {
     const int currentItem = DrawTrackerBackendSelection(d);
     DrawTrackerBackendConfig(d, currentItem);
     DrawTrackerRecentProjects(d, currentItem);
-    DrawUserInfoFeedSettings(d);
     if (ImGui::Button("Open Views Dashboard")) {
         d.showViewsDashboard = true;
         d.requestViewsDashboardFocus = true;
@@ -468,6 +468,15 @@ void SmatchetUI::drawPreferencesTrackerTab(UiDrawSession& d) {
     ImGui::SameLine();
     SmatchetHelpMarker::Render("prefs.tracker.views_note.help",
                                "Query/JQL and column fields are configured in the Views dashboard.");
+    ImGui::EndTabItem();
+}
+
+void SmatchetUI::drawPreferencesUserInfoTab(UiDrawSession& d) {
+    if (!ImGui::BeginTabItem("User Info")) {
+        return;
+    }
+    d.preferencesActiveTab = PreferencesActiveTab::UserInfo;
+    DrawUserInfoFeedSettings(d);
     ImGui::EndTabItem();
 }
 
@@ -665,6 +674,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
 
     if (ImGui::BeginTabBar("PreferencesTabs")) {
         drawPreferencesTrackerTab(d);
+        drawPreferencesUserInfoTab(d);
 #if defined(SMATCHET_WITH_MCP)
         drawPreferencesIntegrationsTab(app, d);
 #endif
@@ -702,6 +712,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
         break;
     case PreferencesActiveTab::LocalData:
     case PreferencesActiveTab::Appearance:
+    case PreferencesActiveTab::UserInfo:
         footerKey = "prefs.footer.immediate.short";
         footerFallback = "Options on this tab apply and save immediately.";
         break;
