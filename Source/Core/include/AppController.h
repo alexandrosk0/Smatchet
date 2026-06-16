@@ -88,23 +88,14 @@ class AiAssistantController;
 // for the same reason; AppController re-exports them via using-aliases below so its
 // ~113 includers keep seeing `AppController::DeadLetterRestoreSummary` etc.
 #include "Sync/OfflineQueueTypes.h"
-
-struct AppUpdateAsset {
-    std::string Name;
-    std::string DownloadUrl;
-};
-
-struct AppUpdateInfo {
-    bool Ok = false;
-    bool UpdateAvailable = false;
-    std::string CurrentVersion;
-    std::string LatestVersion;
-    std::string ReleaseTag;
-    std::string ReleaseUrl;
-    std::string ReleaseNotes;
-    std::string Error;
-    AppUpdateAsset InstallerAsset;
-};
+// Fan-in Phase 3 (docs/plans/appcontroller-fan-in.md): AppUpdateAsset/AppUpdateInfo (global),
+// FieldEditResult, and TrackerConnectivityState (formerly nested) relocated to rank-0 leaf headers
+// under Types/ so editing them no longer recompiles the ~115 AppController.h includers. The two
+// formerly-nested types are re-exported via in-class `using`-aliases (below) so consumers keep
+// naming `AppController::FieldEditResult` / `AppController::TrackerConnectivityState` unchanged.
+#include "Types/AppUpdateTypes.h"
+#include "Types/FieldEditTypes.h"
+#include "Types/ConnectivityTypes.h"
 
 class ITrackerBackendFactory;
 class LocalCacheManager; // fan-in Phase 1: fwd-decl (was a direct heavy include); `std::unique_ptr<LocalCacheManager>
@@ -157,11 +148,7 @@ class AppController : public IMainThreadPoster {
     // (AppControllerImpl.h); `impl_` itself remains a private member below.
     struct Impl;
 
-    struct FieldEditResult {
-        bool Ok = false;
-        std::string Error;
-        std::unordered_map<std::string, std::string> UpdatedDisplayValues;
-    };
+    using FieldEditResult = ::FieldEditResult; // moved to Types/FieldEditTypes.h (fan-in Phase 3)
 
     /// Inject a custom tracker-backend factory. Must be called BEFORE `Initialize` to take
     /// effect on the first backend instantiation. Tests / Unreal-host embeddings use this
@@ -633,14 +620,8 @@ class AppController : public IMainThreadPoster {
     TrackerConnectivityBannerForUi
     GetTrackerConnectivityBannerForUi(const std::string* sessionCatalogNote = nullptr) const;
 
-    /** Last outcome of periodic tracker probe (UI thread). */
-    enum class TrackerConnectivityState {
-        Unknown,
-        AuthenticatedReachable,
-        ReachableAuthOrConfigError,
-        TransportDown,
-        ServiceUnavailable,
-    };
+    /** Last outcome of periodic tracker probe (UI thread). Defined in Types/ConnectivityTypes.h. */
+    using TrackerConnectivityState = ::TrackerConnectivityState; // moved (fan-in Phase 3)
     /** Rate-limited background probe; updates connectivity state and recovery latch. */
     void TickTrackerConnectivityMonitor(const TrackerConfig& cfg);
     /** Latest reachability from background probe (or after a successful live backend request). */
