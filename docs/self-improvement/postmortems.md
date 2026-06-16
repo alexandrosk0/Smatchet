@@ -27,6 +27,81 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-16 · PR #1308 · override: tests-out-of-band (red Test-delta gate) — behaviour-preserving header-lift refactor
+
+### What escaped
+`feat(core): AppController fan-in Phase 1` (#1308) merged to `develop` with a `tests-out-of-band`
+label dismissing a genuinely-RED `Test-delta gate`. The gate fired because the diff touched
+`Source/Core/src/AppController*.cpp` (3 TUs) with **zero** paired `tests/Core/*.test.cpp` delta.
+
+### Root cause
+Not a defect — the diff is a pure include / forward-declaration restructuring with **no behaviour
+change**. `AppController.h` swaps `<nlohmann/json.hpp>` → `<nlohmann/json_fwd.hpp>` and
+`#include "LocalCacheManager.h"` → a `class LocalCacheManager;` forward-decl (the
+`unique_ptr<LocalCacheManager>` member is fine with the incomplete type — `~AppController` is
+out-of-line, identical to the ~16 other fwd-declared `unique_ptr` members), plus IWYU direct
+includes pushed into the 3 calling TUs and a new `appcontroller_fan_in_audit.py` ratchet gate.
+There is no testable logic delta to pair a unit test with — the win (recompile blast-radius
+shrink) is verified by the build itself: dual-target × dual-toolchain (`SmatchetStandalone` GL
+json-less PCH + `SmatchetCore_DX12`, MSVC 14.38 + Clang) all link clean. Same
+behaviour-preserving-header-lift class as #1016 / #1083 / #1096 (residue (a) of the Test-delta
+override family): `coverage-delta-gate.sh` `_classify_diff` counts production `.cpp` churn with no
+`*.test.cpp` delta as a fail and still has no auto-exemption for a behaviour-preserving cross-TU
+refactor, so the `tests-out-of-band` override was applied — correctly.
+
+### Preventing gate
+**none — override legitimate** (pure include/forward-decl restructuring, no behaviour change, no
+testable-logic delta; the recompile-blast-radius win is verified by the green dual-target ×
+dual-toolchain build, not by a unit test). This is the **4th** ledgered instance of residue (a) —
+the behaviour-preserving cross-TU refactor the Test-delta gate cannot distinguish from an untested
+logic change (after #1016 / #1083 / #1096). No NEW gate is filed; instead the existing follow-up
+(`coverage-gate-platform-else-arm-exemption`, residue (a), already bumped to P2 on #1096) gets a
+4th-recurrence note reinforcing that an auto-honoured "behaviour-preserving-refactor" exemption is
+overdue.
+
+### Filed as
+4th-recurrence priority note appended to [`tooling.md`](categories/tooling.md)
+`coverage-gate-platform-else-arm-exemption` residue (a) (P2; recurrence set now
+#1016 / #1083 / #1096 / #1308). No new category entry — the gate is already tracked.
+
+## 2026-06-16 · PR #1301 · discretionary (advisory-red, NOT an owed escape) — merged past a RED `Fuzz smoke` whose libFuzzer driver failed to compile
+
+> Flagged **discretionary**, not owed: `Fuzz smoke (Linux libFuzzer)` was a non-required ADVISORY
+> lane, so `postmortem-owed.sh` correctly owes nothing for #1301 (advisory red ≠ gate escape).
+> Logged here only because the red was a *real* broken-develop build, not a false red — exactly
+> the breakage an advisory lane is meant to eventually gate. This PR promotes the deterministic
+> half so the next #1301 blocks.
+
+### What escaped
+#1301 merged to `develop` past a RED `Fuzz smoke` check. The check went red because a libFuzzer
+driver **failed to compile** (a stale `include/` path after a header move) — a genuinely broken
+fuzz-driver build on `develop` — but the check was non-required and absent from the meant-to-block
+allow-list, so the gate-poller waved it through.
+
+### Root cause
+The `Fuzz smoke` job folds a DETERMINISTIC half (configure → build drivers → `ctest -runs=0`) and
+a STOCHASTIC half (time-boxed libFuzzer run) into ONE check name. It was kept fully advisory
+because naively allow-listing the whole check would also gate the stochastic fuzz run — the exact
+poller-jam that got the Mesa `Bucket-` lanes removed 2026-06-15. So the deterministic compile —
+which IS a real-breakage signal — had no enforcement.
+
+### Preventing gate
+Make the deterministic build/ctest a merge blocker WITHOUT gating the stochastic run, in one
+atomic change: (1) add `continue-on-error: ${{ github.event_name != 'schedule' }}` to the
+workflow's time-boxed fuzz STEP — a stochastic PR crash is masked (advisory) while configure /
+build-drivers / `ctest -runs=0` carry NO `continue-on-error`, so a real compile break still reds
+the check; the nightly `schedule` keeps the step HARD-fail so the tracking Issue still opens;
+(2) add `Fuzz smoke` to `MERGE_GATES_BLOCK_ALLOWLIST_RE` in `merge-gates.sh`. The check now reds
+(and blocks) ONLY on a deterministic build/compile/ctest failure — the #1301 class — and the
+paths-scoped `pull_request` trigger means it only appears on fuzz-relevant PRs. Both halves MUST
+ship together (allow-listing without the step-guard would re-create the poller-jam); they do, in
+this PR, with two `merge_gates.bats` cases locking the FAILURE-blocks + IN_PROGRESS-pending
+contract.
+
+### Filed as
+This entry + the workflow + allow-list change shipped together in this PR (discretionary hardening
+— no category backlog entry; the gate ships with the postmortem).
+
 ## 2026-06-15 · merge-watcher daemon (latent post-merge bug; fix branch `fix-merge-watcher-daemon-crash`) · unhandled `gh pr merge --auto` subprocess timeout crashed the whole daemon, stranding every registered PR
 
 > Shared-infra outage (not a red-check escape): the long-lived `smatchet-merge-watcher`

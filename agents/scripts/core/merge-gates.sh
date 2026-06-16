@@ -107,8 +107,15 @@ DEFAULT_QUERY_FILE="$SCRIPT_DIR/merge-gates.graphql"
 # Other tooling that must apply the IDENTICAL allow-list (e.g.
 # safe-admin-merge.sh) sources this file and reads MERGE_GATES_BLOCK_ALLOWLIST_RE
 # rather than duplicating the regex — change it HERE and every consumer follows.
-#   Coverage / Sanitizer / Perf PR-fast / Android security gate
+#   Coverage / Sanitizer / Perf PR-fast / Android security gate / Fuzz smoke
 # (history: Perf PR-fast 2026-06-07; Android security gate 2026-06-09;
+#  Fuzz smoke 2026-06-16 — gates the #1301 class (a fuzz-relevant PR that breaks
+#  the DETERMINISTIC configure/build/ctest of the libFuzzer drivers). Only safe
+#  because fuzz-smoke.yml's time-boxed fuzz STEP is continue-on-error on PRs
+#  (advisory) while those build steps stay hard-fail — so the one check name
+#  reds on a real build break but NOT on stochastic crash discovery. Adding it
+#  here WITHOUT that step-guard would re-introduce the Bucket-style poller jam;
+#  the two ship together (see fuzz-smoke.yml + postmortems.md 2026-06-16 #1301);
 #  Bucket-* REMOVED 2026-06-15 — the Mesa-software-GL bucket-C/E lanes cannot
 #  boot the exe on the CI runner (infra.md `bucket-mesa-exe-boot` P1 /
 #  `ci-infra-flake-reds-masquerade-as-real-breakage` item (c)), so they are
@@ -117,7 +124,7 @@ DEFAULT_QUERY_FILE="$SCRIPT_DIR/merge-gates.graphql"
 #  launch-smoke graduates back to hard-fail — that is the `bucket-mesa-exe-boot`
 #  P1 graduation step. postmortem-owed.sh sources this constant (no separate
 #  copy to keep in sync since the de-dup), so one edit here covers both.)
-MERGE_GATES_BLOCK_ALLOWLIST_RE="Coverage|Sanitizer|Perf PR-fast|Android security gate"
+MERGE_GATES_BLOCK_ALLOWLIST_RE="Coverage|Sanitizer|Perf PR-fast|Android security gate|Fuzz smoke"
 
 # Source prompt shim so `ask_user_question` is callable from the caller's
 # integration flow. Lazy — only if available.
@@ -368,7 +375,7 @@ poll_merge_gates() {
 | ([$ctx[] | select(.isRequired == true)]) as $req
 # $blocking — the set the gate must wait on: REQUIRED contexts PLUS the
 # non-required meant-to-block allow-list (Coverage / Sanitizer /
-# Perf PR-fast / Android security gate, non-advisory). The $failing set below
+# Perf PR-fast / Android security gate / Fuzz smoke, non-advisory). The $failing set below
 # already unions these (the #923 fix), but the PENDING count historically
 # counted only $req — so a non-required allow-listed check still IN_PROGRESS
 # (not yet terminal) was invisible: not failing (not terminal) and not pending
@@ -393,7 +400,7 @@ poll_merge_gates() {
       # where the watcher auto-merged #923 past a RED non-required "Coverage"
       # check (postmortems.md 2026-06-06 "#923", option B). The allow-list is
       # deliberately tight (Coverage / Sanitizer / Perf PR-fast /
-      # Android security gate) — a non-allow-listed non-required red (e.g. the
+      # Android security gate / Fuzz smoke) — a non-allow-listed non-required red (e.g. the
       # `non-required-fail` test fixture, or "Duplication scanner (advisory)")
       # still passes, preserving the prior "non-required → pass" contract.
       # Extend the regex to gate more checks. "Perf PR-fast" added 2026-06-07
@@ -403,7 +410,12 @@ poll_merge_gates() {
       # Issues #1067/#1068): the advisory mobile jobs (posix-core / android-ndk /
       # apk) let a green develop ship mobile breakage (precedent #1021/#1064), so
       # the manifest-allowBackup + OpenSSL-fail-fast regression gate is routed
-      # onto the blocking path here, NOT left advisory.
+      # onto the blocking path here, NOT left advisory. "Fuzz smoke" added
+      # 2026-06-16 (#1301 merged past a RED fuzz-smoke whose libFuzzer driver
+      # FAILED TO COMPILE — a real broken develop build the poller waved through
+      # because the check is non-required): paired with a continue-on-error guard
+      # on the stochastic time-boxed fuzz STEP in the workflow so only the
+      # deterministic build/ctest reds the check (see fuzz-smoke.yml).
       ((.isRequired == true)
        or ((if .__typename == "CheckRun" then (.name // "") else (.context // "") end)
            | (test("__BLOCK_ALLOWLIST_RE__"; "i")
