@@ -55,7 +55,11 @@ struct McpToolDefinition;
 #include "ITrackerCollaboration.h"
 #include "ITrackerConnectivity.h"
 #include "ITrackerFieldCatalog.h"
-#include "ITrackerIssueMutations.h"
+// Fan-in Phase 2 (docs/plans/appcontroller-fan-in.md): ITrackerIssueMutations is forward-declared
+// via ITrackerBackend.h (included above) — it pulls full <nlohmann/json.hpp> (inline json-constructing
+// virtuals), so dropping its direct include here closes the second json door to the AppController.h
+// includers. AppController.h names it only by-ref/ptr in out-of-line decls (ApplyFieldUpdate... +
+// the mutations* members); the few TUs that call Mutations() include ITrackerIssueMutations.h directly.
 #include "ITrackerIssueReader.h"
 
 // Fan-in stabilization (docs/plans/appcontroller-fan-in.md, Phase 1): json_fwd, not

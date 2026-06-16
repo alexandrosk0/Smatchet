@@ -1,4 +1,5 @@
 #include "AppController.h"
+#include "ITrackerIssueMutations.h" // fan-in Phase 2: AppController.h fwd-decls it now; this TU calls Mutations() methods.
 #include "LocalCacheManager.h" // direct: AppController.h now fwd-decls LocalCacheManager (fan-in Phase 1); this TU calls Cache-> methods.
 
 #include <algorithm>

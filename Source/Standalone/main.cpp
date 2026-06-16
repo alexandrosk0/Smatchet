@@ -93,6 +93,7 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 #include "ConfigManager.h"
 #include "VsyncControl.h"
 #include "AppController.h"
+#include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "CliCommandRunner.h"
 #include "StandaloneAppBootstrap.h"
 #include "Dx12Bootstrap.h" // StandaloneRenderer + optional DX12 backend (no-op shell off-Windows)

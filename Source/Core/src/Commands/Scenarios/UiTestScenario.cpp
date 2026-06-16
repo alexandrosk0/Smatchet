@@ -6,6 +6,7 @@
 #include "Commands/Scenarios/UiTestScenario.h"
 
 #include "AppController.h"
+#include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "Logger.h"
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
