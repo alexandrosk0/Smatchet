@@ -287,6 +287,14 @@ add_executable(SmatchetTests
     # and two-backend disjointness on a colliding numeric id. Links the production LCM TU
     # already pulled in below.
     Core/LocalCacheTicketsV2Migration.test.cpp
+    # Slice G Phase 1 (testing-surface.md §6 Gap 6, plan slice-g-db-corruption.md) —
+    # characterizes today's corrupt/truncated cache-file-on-open behaviour: the ctor's
+    # schema-init runs OUTSIDE the WAL-pragma try/catch, so a non-SQLite/truncated file throws
+    # past the ctor (Pillar-3 startup-crash gap), while a zero-byte file opens fresh. Pins the
+    # throw so the planned Phase-2 graceful-rebuild lands as a deliberate test diff. File-backed
+    # (the throw is on the on-disk header read), so it uses the shared support/TempDbFile.h RAII
+    # helper. Links the production LCM TU already pulled in below.
+    Core/LocalCacheManagerCorruption.test.cpp
     # Multi-grid Slice 1c (ADR-0018) — pending-queue backend_key: ADD-COLUMN migration
     # idempotence on a pre-1c fixture DB, one-time stamp migration, backend-scoped replay
     # matching (A-rows replay, B-rows stay queued), dead-letter key carry + restore. Links
