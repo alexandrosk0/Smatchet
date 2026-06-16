@@ -163,6 +163,11 @@ void RegisterPreferencesTabsRenderSmoke(ImGuiTestEngine* engine) {
         // DrawTemplatePreferencesTabs — its first tab is "Grid".
         ClickTabAndAssertSelected(ctx, "Grid");
 
+        // drawPreferencesUserInfoTab — the "User Info" tab hosts the User Info &
+        // commit-feed settings (relocated out of the Tracker tab). Config-backed,
+        // zero backend — same green class as the tabs above.
+        ClickTabAndAssertSelected(ctx, "User Info");
+
 #if defined(SMATCHET_WITH_AI)
         // DrawAssistantPreferencesTab — "Assistant" tab.
         ClickTabAndAssertSelected(ctx, "Assistant");
