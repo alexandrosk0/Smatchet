@@ -19,6 +19,13 @@
 #include "AppController_LuaTypes.h" // smatchet::lua::ImCmd / ... — uses sol::, so MUST follow ILuaBindingHost.h
 #endif
 
+#if defined(SMATCHET_WITH_AI)
+// Fan-in Phase 4: AppController.h now forward-declares AiAssistantController, so the full type for
+// the `aiAssistant_` (unique_ptr<AiAssistantController>) member declared below — and its dtor,
+// instantiated in the AppController*.cpp TUs that own Impl — must be included directly here.
+#include "AiAssistantController.h"
+#endif
+
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
 struct AppController::Impl : public ILuaBindingHost {
 #else
