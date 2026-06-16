@@ -1399,7 +1399,7 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
             OpenCommentsModal(app, ticket.id);
         }
         if (ImGui::IsItemHovered()) {
-            // issue-comments fix (#1018) — match the retired Jira "Comment" field: on hover show the
+            // issue-comments fix (#1291) — match the retired Jira "Comment" field: on hover show the
             // full comment text wrapped. The Jira mapper resolves it into fieldValues["comment"]
             // (catalog-independent, so it survives the legacy field's removal from the picker); read it
             // zero-copy from the cache — NO network on hover. Backends without a comment blob
