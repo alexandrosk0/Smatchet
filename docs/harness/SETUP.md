@@ -59,6 +59,23 @@ Optional (warn-only — not required for the standard ship-loop):
 
 Ad-hoc invocation: `bash scripts/dev/check-required-tools.sh` (add `--quiet` to suppress PASS lines). Re-run anytime; idempotent.
 
+## VCS mode (git vs Perforce) — per machine
+
+Smatchet's VCS layer is `git` by default (the GitHub ship-line). The Perforce local layer is opt-in via two env vars (AGENTS.md § Dual-VCS topology): `SMATCHET_AGENT_VCS` (`git` | `p4` — ship-loop variant) and `SMATCHET_LOCK_BACKEND` (`git-ref` | `p4-counter` — plan-lock backend). Both must agree, and on **Windows both layers must agree**: PowerShell inherits the Windows User-registry env while git-bash sources `~/.bashrc`, so a divergence (registry=`git`, `.bashrc`=`p4`) silently routes `lock-claim.sh` to the p4 path and fails "P4USER not set".
+
+`scripts/dev/set-vcs-mode.{sh,ps1}` sets **both** layers idempotently — run it **once per machine** to pin the mode you want everywhere:
+
+```powershell
+# Windows (authoritative — sets the User registry + the ~/.bashrc managed block)
+pwsh scripts/dev/set-vcs-mode.ps1 git    # or: p4
+```
+```bash
+# git-bash / POSIX (also syncs the Windows registry via setx when on Windows)
+bash scripts/dev/set-vcs-mode.sh git     # or: p4;  no arg prints the current mode
+```
+
+It rewrites a marked block in `~/.bashrc` (between `# >>> smatchet vcs-mode >>>` … `# <<< smatchet vcs-mode <<<`) and, on Windows, the User-registry env. Open a new shell afterwards for the change to take effect. Re-runs and git↔p4 toggles are idempotent (the block is replaced in place); legacy unmarked `export SMATCHET_*` lines are stripped so they can't shadow it. Tests: `tests/bats/set_vcs_mode.bats`.
+
 ## Why links + copies, not a tracked mirror
 
 The setup script uses **directory junctions** (Windows) / **symlinks** (Unix) for harnesses that need linked agent definitions and shared skills, so edits to `agents/*.md` are picked up immediately - no sync step, no banner injection, no drift-check. Codex skips links because its native rule discovery path is already `AGENTS.md` + `agents/{core,project}/*.md`; its setup generates `.codex/agents/*.toml` from those same canonical files for Codex custom-subagent spawning.
