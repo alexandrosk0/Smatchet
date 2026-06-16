@@ -142,6 +142,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`core-include-dag`](shipped/core-include-dag.md) | 2026-06-14 | Plan — DAG-ify the Source/Core include graph |
 | [`keyboard-shortcuts-rebindable`](shipped/keyboard-shortcuts-rebindable.md) | 2026-06-14 | Plan — Rebindable keyboard shortcuts (unified, all shortcuts listed + changeable) |
 | [`pr-intent-capture`](shipped/pr-intent-capture.md) | 2026-06-15 | Plan — PR intent capture (prompt → PR `## Intent`, redacted) |
+| [`sanitizer-required-context`](shipped/sanitizer-required-context.md) | 2026-06-15 | Plan — `sanitizer-required-context`: promote both Sanitizer PR lanes to required |
 <!-- END auto-plan-index -->
 
 ### Notes
