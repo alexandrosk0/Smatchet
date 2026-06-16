@@ -29,9 +29,11 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cstdio>
 #include <iterator>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -107,10 +109,23 @@ class AiChatHistoryRenderScenario : public IScenario {
     void OnFrame(AppController& /*app*/, int frameIndex) override {
         // No per-frame mutation — the scenario's whole job is to let
         // DrawHistoryArea render the seeded set repeatedly so the perf monitor
-        // accumulates representative timings. After warmup, vary the hover/
-        // focus latch slightly so the action-row alpha gate gets exercised
-        // (the pin status alone keeps a handful permanently active).
-        (void)frameIndex;
+        // accumulates representative timings. Past warmup, sample each scope's
+        // *finalized* per-frame total (the
+        // value BeginFrame just rolled into lastFrame_) and accumulate it. The
+        // gated metric is then the run-median of these per-frame totals rather
+        // than a single arbitrary frame's lastTotalMs (#1261): for a sub-10µs
+        // scope the single-frame snapshot swings 2.7× run-to-run — above the
+        // 0.05ms perf-gate abs floor — so the gate trips on jitter, not code.
+        // GetLastFrameRows(false) is a cheap copy of lastFrame_ (no nth_element)
+        // and runs here in OnFrame, *outside* any measured Draw scope, so it
+        // adds no observer cost to the scopes it samples.
+        if (frameIndex >= warmupFrames_) {
+            const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/false);
+            for (std::vector<UiPerfRow>::const_iterator it = rows.begin(); it != rows.end(); ++it) {
+                perFrameTotals_[it->name].push_back(it->lastTotalMs);
+                perFrameAvgPerCall_[it->name].push_back(it->avgPerCallMs);
+            }
+        }
     }
 
     bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
@@ -125,14 +140,31 @@ class AiChatHistoryRenderScenario : public IScenario {
         // JSON object per row). The PriorityGridScrollScenario reference uses
         // a raw loop and is not flagged — likely grandfathered. New code
         // follows the algorithm style.
-        std::transform(rows.begin(), rows.end(), std::back_inserter(rowsJson), [](const UiPerfRow& r) {
+        std::transform(rows.begin(), rows.end(), std::back_inserter(rowsJson), [this](const UiPerfRow& r) {
+            // Override the per-frame-volatile totals with the run-median of the
+            // finalized per-frame totals collected across the post-warmup window
+            // (#1261). avgPerCallMs is medianed from its OWN per-frame samples
+            // (same sampling basis as the total) rather than derived as
+            // median(total) / r.calls — r.calls is the final-frame snapshot's
+            // count, so dividing a window-median total by it mixes two bases and
+            // skews the per-call figure whenever the call count varies frame to
+            // frame. p99Ms/maxMs/emaAvgMs already aggregate over many frames
+            // (ring / EMA) and stay as the monitor reports them. If a scope was
+            // never sampled (e.g. it only appeared on the final frame) keep its
+            // snapshot value rather than fabricating a zero.
+            double lastTotalMs = r.lastTotalMs;
+            double avgPerCallMs = r.avgPerCallMs;
+            std::unordered_map<std::string, std::vector<double>>::const_iterator s = perFrameTotals_.find(r.name);
+            if (s != perFrameTotals_.end() && !s->second.empty()) {
+                lastTotalMs = MedianOf(s->second);
+            }
+            std::unordered_map<std::string, std::vector<double>>::const_iterator a = perFrameAvgPerCall_.find(r.name);
+            if (a != perFrameAvgPerCall_.end() && !a->second.empty()) {
+                avgPerCallMs = MedianOf(a->second);
+            }
             return nlohmann::json{
-                {"name", r.name},
-                {"lastTotalMs", r.lastTotalMs},
-                {"avgPerCallMs", r.avgPerCallMs},
-                {"maxMs", r.maxMs},
-                {"calls", r.calls},
-                {"emaAvgMs", r.emaAvgMs},
+                {"name", r.name},   {"lastTotalMs", lastTotalMs}, {"avgPerCallMs", avgPerCallMs},
+                {"maxMs", r.maxMs}, {"calls", r.calls},           {"emaAvgMs", r.emaAvgMs},
                 {"p99Ms", r.p99Ms},
             };
         });
@@ -147,6 +179,25 @@ class AiChatHistoryRenderScenario : public IScenario {
     }
 
   private:
+    // Median of a sample set (copy-by-value: caller's vector is untouched).
+    // Even counts average the two central order statistics; biased-low ties
+    // are fine for a perf-gate metric. nth_element is O(n) per call.
+    static double MedianOf(std::vector<double> v) {
+        if (v.empty()) {
+            return 0.0;
+        }
+        const std::size_t n = v.size();
+        const std::size_t mid = n / 2;
+        std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(mid), v.end());
+        const double hi = v[mid];
+        if (n % 2 == 1) {
+            return hi;
+        }
+        std::nth_element(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(mid - 1), v.end());
+        const double lo = v[mid - 1];
+        return (lo + hi) * 0.5;
+    }
+
     void Restore() {
         g_ui.assistantHistory = std::move(savedHistory_);
         g_ui.assistantHistoryRowIds = std::move(savedRowIds_);
@@ -165,6 +216,14 @@ class AiChatHistoryRenderScenario : public IScenario {
     bool savedHydrated_ = false;
     bool savedPanelOpen_ = false;
     int savedScrollIdx_ = -1;
+
+    // scope name → finalized per-frame totalMs collected across the post-warmup
+    // window; OnFinish reports the median of each as the gated lastTotalMs.
+    std::unordered_map<std::string, std::vector<double>> perFrameTotals_;
+    // scope name → finalized per-frame avgPerCallMs over the same window. OnFinish
+    // reports the median of each as the gated avgPerCallMs (kept on the same
+    // sampling basis as the total rather than derived from it).
+    std::unordered_map<std::string, std::vector<double>> perFrameAvgPerCall_;
 };
 
 } // namespace cmd

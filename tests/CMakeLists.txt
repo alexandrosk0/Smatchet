@@ -446,6 +446,12 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LabelEditDiffPure.cpp"
     Core/GitHubClientHelpers.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubClientHelpers.cpp"
+    # jql-omnibox plan Stream B slice 2c — pure omnibar input classifier
+    # (Jql | TicketKey | TitleSearch). Header-only (Source/Core/include/Ui/
+    # OmnibarInputClassifier.h); reuses ExtractIssueKeyPrefix (ProjectResolver.cpp)
+    # + ParseGitHubIssueKey (GitHubClientHelpers.cpp) — both already linked above,
+    # so no new production TU.
+    Core/OmnibarInputClassifier.test.cpp
     # docs/plans/shipped/log-a-bug-github.md Slice 2 — pure half of the bug-report
     # service (target/PAT resolution + markdown body) + redaction + censor. The
     # heavy half (BugReportService.cpp: cpr/host/AppController) is NOT linked here.

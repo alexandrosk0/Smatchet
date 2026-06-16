@@ -59,6 +59,8 @@ struct GridPane {
     SpreadsheetState gridState; ///< Active issue, cell edit state, rectangular selection.
     char gridFilterBuf[128] = {};
     char lastFilterBuf[128] = {}; ///< Last filter applied to the cached projection (change detector).
+    std::string omnibarText;      ///< This tab's omnibar search text — restored when the pane regains focus
+                                  ///< (drawOmnibar swaps it into the shared d.omniJqlEditor on focus change).
 
     // Sort + filter projection cache (per-pane so N panes don't thrash one cache).
     std::vector<size_t> cachedSortedIndices;
