@@ -27,6 +27,44 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-16 · PR #1317 · override: tests-out-of-band (red Test-delta gate) — behaviour-preserving header→cpp body relocation
+
+### What escaped
+`refactor(debt): move dictation hook body out of hot localized-imgui header` (#1317) merged to
+`develop` with a `tests-out-of-band` label dismissing a genuinely-RED `Test-delta gate`. The gate
+fired because the diff touched `Source/Core/include/SmatchetLocalizedImGui.h` plus a new
+`Source/Core/src/SmatchetDictationHook.cpp` with **zero** paired `tests/Core/*.test.cpp` delta.
+
+### Root cause
+Not a defect — the diff relocates one function body across the header→TU boundary with **no
+behaviour change**. `SmatchetLocalizedImGui.h` drops the `inline` definition of
+`HookDictationOnLastItem(char*, std::size_t)` for a bare declaration (header annotated "Behaviour is
+identical to the prior inline body."); the byte-identical body moves into a new TU
+`SmatchetDictationHook.cpp` in the same `namespace SmatchetLocalizedImGui`. The function is
+ImGui-coupled (Class-C — pulls `imgui.h`), so it has no headless unit-test home: the moved body
+can't be exercised by a pure-logic doctest TU on the desktop test target. The win (de-inlining a
+hot header → recompile-blast-radius shrink) is verified by the build itself, not by a test. Same
+behaviour-preserving cross-TU class as #1016 / #1083 / #1096 / #1308 (residue (a) of the Test-delta
+override family): `coverage-delta-gate.sh` `_classify_diff` counts a new production `.cpp` with no
+`*.test.cpp` delta as a fail and still has no auto-exemption for a pure body relocation, so the
+`tests-out-of-band` override was applied — correctly.
+
+### Preventing gate
+**none — override legitimate** (byte-identical body relocated across the header→cpp boundary, no
+behaviour change, ImGui-coupled Class-C with no headless test home; the de-inline win is verified by
+the green dual-target × dual-toolchain build, not a unit test). This is the **5th** ledgered
+instance of residue (a) — the behaviour-preserving cross-TU refactor the Test-delta gate cannot
+distinguish from an untested logic change (after #1016 / #1083 / #1096 / #1308). No NEW gate is
+filed; the existing follow-up (`coverage-gate-platform-else-arm-exemption`, residue (a), P2) gets a
+5th-recurrence note naming **header→cpp body relocation** (inline-in-header → out-of-line definition
+in a new TU, body unchanged) as a second clean mechanical sub-case to auto-detect alongside the
+fwd-decl-only diff (#1308).
+
+### Filed as
+5th-recurrence note appended to [`tooling.md`](categories/tooling.md)
+`coverage-gate-platform-else-arm-exemption` residue (a) (P2; recurrence set now
+#1016 / #1083 / #1096 / #1308 / #1317). No new category entry — the gate is already tracked.
+
 ## 2026-06-16 · PR #1308 · override: tests-out-of-band (red Test-delta gate) — behaviour-preserving header-lift refactor
 
 ### What escaped
