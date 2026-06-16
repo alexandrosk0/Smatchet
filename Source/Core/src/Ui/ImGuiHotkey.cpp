@@ -18,8 +18,39 @@ std::string LowerAscii(const std::string& s) {
     return out;
 }
 
+// Punctuation + named navigation/edit keys — single source of truth for both
+// directions. `token` is stored display-cased (what KeyToToken emits); parsing
+// compares case-insensitively, so "Esc"/"esc" both resolve. Multiple rows may
+// share a key (aliases like Return/Enter); `canonical` marks the one row
+// KeyToToken renders. Letters / digits / F-keys are contiguous in imgui and use
+// offset arithmetic instead of a table row.
+struct NamedKey {
+    const char* token;
+    ImGuiKey key;
+    bool canonical;
+};
+const NamedKey kNamedKeys[] = {
+    {"=", ImGuiKey_Equal, true},           {"-", ImGuiKey_Minus, true},
+    {",", ImGuiKey_Comma, true},           {".", ImGuiKey_Period, true},
+    {"/", ImGuiKey_Slash, true},           {";", ImGuiKey_Semicolon, true},
+    {"'", ImGuiKey_Apostrophe, true},      {"`", ImGuiKey_GraveAccent, true},
+    {"[", ImGuiKey_LeftBracket, true},     {"]", ImGuiKey_RightBracket, true},
+    {"\\", ImGuiKey_Backslash, true},      {"Space", ImGuiKey_Space, true},
+    {"Enter", ImGuiKey_Enter, true},       {"Return", ImGuiKey_Enter, false},
+    {"Tab", ImGuiKey_Tab, true},           {"Backspace", ImGuiKey_Backspace, true},
+    {"Delete", ImGuiKey_Delete, true},     {"Del", ImGuiKey_Delete, false},
+    {"Escape", ImGuiKey_Escape, true},     {"Esc", ImGuiKey_Escape, false},
+    {"Insert", ImGuiKey_Insert, true},     {"Ins", ImGuiKey_Insert, false},
+    {"Home", ImGuiKey_Home, true},         {"End", ImGuiKey_End, true},
+    {"PageUp", ImGuiKey_PageUp, true},     {"PgUp", ImGuiKey_PageUp, false},
+    {"PageDown", ImGuiKey_PageDown, true}, {"PgDn", ImGuiKey_PageDown, false},
+    {"Up", ImGuiKey_UpArrow, true},        {"Down", ImGuiKey_DownArrow, true},
+    {"Left", ImGuiKey_LeftArrow, true},    {"Right", ImGuiKey_RightArrow, true},
+};
+
 // Map a single non-modifier token to an ImGuiKey. ImGuiKey_A..Z, _0..9, _F1..F12
-// are contiguous in imgui, so offset arithmetic is safe.
+// are contiguous in imgui, so offset arithmetic is safe; everything else is a
+// case-insensitive lookup in kNamedKeys. Tokens arrive lower-cased.
 ImGuiKey KeyFromToken(const std::string& tok) {
     if (tok.size() == 1) {
         const char c = tok[0];
@@ -28,32 +59,6 @@ ImGuiKey KeyFromToken(const std::string& tok) {
         }
         if (c >= '0' && c <= '9') {
             return static_cast<ImGuiKey>(ImGuiKey_0 + (c - '0'));
-        }
-        switch (c) {
-        case '=':
-            return ImGuiKey_Equal;
-        case '-':
-            return ImGuiKey_Minus;
-        case ',':
-            return ImGuiKey_Comma;
-        case '.':
-            return ImGuiKey_Period;
-        case '/':
-            return ImGuiKey_Slash;
-        case ';':
-            return ImGuiKey_Semicolon;
-        case '\'':
-            return ImGuiKey_Apostrophe;
-        case '`':
-            return ImGuiKey_GraveAccent;
-        case '[':
-            return ImGuiKey_LeftBracket;
-        case ']':
-            return ImGuiKey_RightBracket;
-        case '\\':
-            return ImGuiKey_Backslash;
-        default:
-            break;
         }
     }
     if (tok.size() >= 2 && tok[0] == 'f') {
@@ -72,37 +77,11 @@ ImGuiKey KeyFromToken(const std::string& tok) {
             }
         }
     }
-    // Named keys (navigation / editing). Tokens arrive lower-cased.
-    if (tok == "space")
-        return ImGuiKey_Space;
-    if (tok == "enter" || tok == "return")
-        return ImGuiKey_Enter;
-    if (tok == "tab")
-        return ImGuiKey_Tab;
-    if (tok == "backspace")
-        return ImGuiKey_Backspace;
-    if (tok == "delete" || tok == "del")
-        return ImGuiKey_Delete;
-    if (tok == "escape" || tok == "esc")
-        return ImGuiKey_Escape;
-    if (tok == "insert" || tok == "ins")
-        return ImGuiKey_Insert;
-    if (tok == "home")
-        return ImGuiKey_Home;
-    if (tok == "end")
-        return ImGuiKey_End;
-    if (tok == "pageup" || tok == "pgup")
-        return ImGuiKey_PageUp;
-    if (tok == "pagedown" || tok == "pgdn")
-        return ImGuiKey_PageDown;
-    if (tok == "up")
-        return ImGuiKey_UpArrow;
-    if (tok == "down")
-        return ImGuiKey_DownArrow;
-    if (tok == "left")
-        return ImGuiKey_LeftArrow;
-    if (tok == "right")
-        return ImGuiKey_RightArrow;
+    for (const NamedKey& nk : kNamedKeys) {
+        if (tok == LowerAscii(nk.token)) {
+            return nk.key;
+        }
+    }
     return ImGuiKey_None;
 }
 
@@ -121,61 +100,10 @@ std::string KeyToToken(ImGuiKey key) {
         const int n = 1 + (key - ImGuiKey_F1);
         return std::string("F") + std::to_string(n);
     }
-    switch (key) {
-    case ImGuiKey_Equal:
-        return "=";
-    case ImGuiKey_Minus:
-        return "-";
-    case ImGuiKey_Comma:
-        return ",";
-    case ImGuiKey_Period:
-        return ".";
-    case ImGuiKey_Slash:
-        return "/";
-    case ImGuiKey_Semicolon:
-        return ";";
-    case ImGuiKey_Apostrophe:
-        return "'";
-    case ImGuiKey_GraveAccent:
-        return "`";
-    case ImGuiKey_LeftBracket:
-        return "[";
-    case ImGuiKey_RightBracket:
-        return "]";
-    case ImGuiKey_Backslash:
-        return "\\";
-    case ImGuiKey_Space:
-        return "Space";
-    case ImGuiKey_Enter:
-        return "Enter";
-    case ImGuiKey_Tab:
-        return "Tab";
-    case ImGuiKey_Backspace:
-        return "Backspace";
-    case ImGuiKey_Delete:
-        return "Delete";
-    case ImGuiKey_Escape:
-        return "Escape";
-    case ImGuiKey_Insert:
-        return "Insert";
-    case ImGuiKey_Home:
-        return "Home";
-    case ImGuiKey_End:
-        return "End";
-    case ImGuiKey_PageUp:
-        return "PageUp";
-    case ImGuiKey_PageDown:
-        return "PageDown";
-    case ImGuiKey_UpArrow:
-        return "Up";
-    case ImGuiKey_DownArrow:
-        return "Down";
-    case ImGuiKey_LeftArrow:
-        return "Left";
-    case ImGuiKey_RightArrow:
-        return "Right";
-    default:
-        break;
+    for (const NamedKey& nk : kNamedKeys) {
+        if (nk.canonical && nk.key == key) {
+            return std::string(nk.token);
+        }
     }
     return std::string();
 }

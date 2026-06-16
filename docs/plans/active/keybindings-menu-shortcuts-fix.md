@@ -175,3 +175,67 @@ PR #1256 then merged, the old feat/keybindings-editor-pr2 branch went post-squas
 work was re-based onto a fresh feat/keybindings-menu-shortcuts branch off origin/develop.
 Relaunch with cwd = this worktree so the guard evaluates the stable feat/keybindings-menu-shortcuts
 HEAD (drift-proof, Workflow-capable).
+
+## Implementation log
+All 7 ordered steps landed across two commits on feat/keybindings-menu-shortcuts:
+- `cf0f06c7` wip(plan): handoff doc.
+- `51f77d74` feat(ui): wire menu-bar keyboard shortcuts to the command registry — steps 1-7
+  (ImGuiHotkey parser "=" / "-" + punctuation/nav set; BuiltinCommands_Ui.cpp
+  RegisterUiInteractionCommands; grid-local Select All Ctrl+A + shared GridSelectAllRows helper;
+  ~10 Defaults() bindings + BoundHotkeyDisplayForArgs; MenuShortcutArgs rewiring of 13 menu items +
+  zoom-click Dispatch; Preferences "Add shortcut for a command..." button; Locales string keys).
+- `806e0ba8` merge origin/develop (fast-forward of upstream; no conflicts in touched files).
+- Follow-up (this session, uncommitted at log time → committed next): the migration fix + ImGuiHotkey
+  table refactor + new tests (see Deviations).
+
+## Deviations
+1. **NEW root cause found + fixed — config load REPLACES keybindings (the real reason Zoom In stayed
+   dead for upgrading users).** `KeybindingsConfig::from_json` clears then loads only the JSON-present
+   bindings — it never merges in defaults. So an existing `%LOCALAPPDATA%\Smatchet` config (every
+   upgrading user) never receives the 9 new menu-shortcut default bindings; the parser fix alone
+   (step 1) was necessary but not sufficient. Fix: one-shot idempotent migration
+   `MigrateMenuShortcutKeybindingsV1(j, cfg)` in ConfigManager.cpp (STRICT Config zone), gated on a
+   persisted `migrated_menu_shortcuts_v1` flag (`TrackerConfig::MigratedMenuShortcutsV1`, saved in
+   ConfigManager.h). It seeds only the new command ids (ui.zoom.in/out/reset, ui.open_view,
+   grid.clear_selection, view.toggle.{views_dashboard,log,backend_audit,source_annotate}) and only
+   when that exact `(CommandId, ArgsJson)` is absent (`FindBindingIndex < 0`) — a user's existing
+   rebind of the same command is never duplicated or overwritten. Called immediately after
+   `MigrateBugReportHotkeyToKeybindings` in `LoadListFields`. No try/catch (strict-zone empty-catch is
+   CRITICAL): reads via `j.value(...)`. Covered by 4 new TEST_CASEs in ConfigMigration.test.cpp
+   (seed-into-existing, respect-user-rebind-no-dup, flag-on-disk-skips-seed, both-views_dashboard-arg-
+   variants + idempotent-on-reload) — 26 assertions, all pass.
+2. **ImGuiHotkey.cpp KeyFromToken/KeyToToken refactor (LIGHT zone).** Replaced the two long switch
+   statements with a single `kNamedKeys[]` table (`{token, ImGuiKey, canonical}`) to keep
+   KeyFromToken under the branchiness cap after adding the punctuation/nav tokens; letters/digits/
+   F-keys stay offset arithmetic. Net −122 lines.
+3. **2 corrected comments in keybindings_editor_rebind.test.cpp** — MarkKeybindingsDirty is public but
+   no accessor exposes the live SmatchetUI instance; Test C now credits BOTH root causes (parse fix +
+   config-merge migration).
+4. **Tooling deviations (process, not product):** DX12 configure run via the PowerShell tool, not the
+   Bash tool — the Bash tool's MSYS bash mangles `/DWIN32` → `C:/Program Files/Git/DWIN32` on a fresh
+   configure (C1083). PS-5.1 `2>&1` on a native exe wraps stderr as NativeCommandError and falsifies
+   `$LASTEXITCODE`/`$?` even on success — read the real code via a trailing `"EXITCODE=$LASTEXITCODE"`
+   instead of redirecting. ctest run via `--test-dir build/ninja-test-msvc` (no testPresets defined).
+
+## Verification results
+- **Dual-target build** — standalone `Smatchet.exe` (ninja-iter): clean (`ninja: no work to do` on
+  no-op rebuild, fresh exe). Unreal DX12 `SmatchetCore_DX12.lib` (ninja-iter-unreal-msvc): configured
+  via PowerShell (CMAKE_CXX_FLAGS `/DWIN32 /D_WINDOWS /EHsc`, no MSYS mangling), built 503/504,
+  lib linked, EXITCODE=0.
+- **ctest** — `ctest --test-dir build/ninja-test-msvc --output-on-failure`: 7/7 passed (16.59s).
+  The 4 new menu-shortcut migration cases run green directly (`--test-case="*menu shortcuts*"`):
+  4/4, 26 assertions, 0 failed.
+- **Lint** — `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop`: PASS on every
+  gated rule (strict-zone, comment-noise, no-raw-new, oversize, include-cycle, agent-size). Only
+  WARN: comment-ratio on ConfigManager.h (52%) + KeybindingsConfig.h (57%) — advisory, non-blocking
+  (header doc comments).
+- **Bucket-E (ImGui Test Engine)** — `Smatchet.exe cmd ui_test.run --name=Keybindings --spawn`:
+  3/3 pass (`passed:3, tested:3, failed:0, ok:true`) — EditorTabRendersWithLiveConflict,
+  DefaultComboDispatchesToCommand, ZoomComboAdjustsFontSize (line 208 `'grew'` OK — was the failing
+  assertion before the migration; the migration is the fix). The spawned child exits 4 with a
+  `std::terminate` on teardown; proven pre-existing harness noise by running an untouched suite
+  (DurationInlineEdit) through the same `--spawn` path — identical exit-4/std::terminate after all its
+  tests report `Success.`. Bucket-C/E are not required CI checks (dropped 2026-06-15, Mesa-GL lanes
+  can't boot the CI exe), so this does not gate merge.
+- **Manual** — surfaced as a post-ship "Manual verify" option (launch exe; confirm Zoom In/Out/Reset,
+  Open View, Clear Selection, Select All, and the rewired menu hints show the real combos).
