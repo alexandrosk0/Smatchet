@@ -40,6 +40,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "Json/LuaJsonConvert.h" // JsonToLua / LuaToJson — shared inline leaf
+
 namespace smatchet_lua_init_detail {
 
 // `ResolveHost` is the cast site that the slice exists to introduce. Every
@@ -53,105 +55,9 @@ static ILuaBindingHost* ResolveHost(sol::this_state L) {
     return hostObj.as<ILuaBindingHost*>();
 }
 
-// --- JSON <-> Lua marshalling -------------------------------------------------
-// Mirrors the helpers in AppController_LuaBindings.cpp. The bindings TU also
-// references LuaToJson / JsonToLua from non-glue code paths, so it keeps its
-// own private copy in its anonymous namespace -- duplication is cheap and the
-// no-ImGui isolation is the point.
-
-constexpr int kJsonToLuaMaxDepth = 64;
-
-// Node budget mirrors AppController_LuaBindings.cpp (kept in sync — see the note
-// there). Guards the converter from fanning out an unbounded number of sol
-// tables on a pathological internal commands.invoke result; on overflow we stop
-// converting (nil for the remaining subtree) rather than throw (Pillar 3).
-constexpr std::size_t kJsonToLuaMaxNodes = 200000u;
-
-static sol::object JsonToLuaImpl(sol::state_view luaView, const nlohmann::json& j, int depth, std::size_t& nodes) {
-    if (depth > kJsonToLuaMaxDepth || nodes == 0) {
-        return sol::make_object(luaView, sol::nil);
-    }
-    --nodes;
-    switch (j.type()) {
-    case nlohmann::json::value_t::null:
-        return sol::make_object(luaView, sol::nil);
-    case nlohmann::json::value_t::boolean:
-        return sol::make_object(luaView, j.get<bool>());
-    case nlohmann::json::value_t::number_integer:
-        return sol::make_object(luaView, static_cast<double>(j.get<std::int64_t>()));
-    case nlohmann::json::value_t::number_unsigned:
-        return sol::make_object(luaView, static_cast<double>(j.get<std::uint64_t>()));
-    case nlohmann::json::value_t::number_float:
-        return sol::make_object(luaView, j.get<double>());
-    case nlohmann::json::value_t::string:
-        return sol::make_object(luaView, j.get<std::string>());
-    case nlohmann::json::value_t::array: {
-        sol::table arr = luaView.create_table();
-        std::size_t idx = 1;
-        for (const auto& el : j) {
-            arr[idx++] = JsonToLuaImpl(luaView, el, depth + 1, nodes);
-        }
-        return arr;
-    }
-    case nlohmann::json::value_t::object: {
-        sol::table tbl = luaView.create_table();
-        for (auto it = j.begin(); it != j.end(); ++it) {
-            tbl[it.key()] = JsonToLuaImpl(luaView, it.value(), depth + 1, nodes);
-        }
-        return tbl;
-    }
-    default:
-        return sol::make_object(luaView, sol::nil);
-    }
-}
-
-static sol::object JsonToLua(sol::state_view luaView, const nlohmann::json& j) {
-    std::size_t nodes = kJsonToLuaMaxNodes;
-    return JsonToLuaImpl(luaView, j, 0, nodes);
-}
-
-static nlohmann::json LuaToJsonImpl(sol::object obj, int depth) {
-    if (depth > 64)
-        return nullptr;
-    if (obj.get_type() == sol::type::lua_nil)
-        return nullptr;
-    if (obj.is<bool>())
-        return obj.as<bool>();
-    if (obj.is<double>())
-        return obj.as<double>();
-    if (obj.is<std::string>())
-        return obj.as<std::string>();
-    if (obj.is<sol::table>()) {
-        sol::table t = obj.as<sol::table>();
-        bool is_array = true;
-        size_t max_idx = 0;
-        t.for_each([&](sol::object k, sol::object /*value*/) {
-            if (k.is<size_t>()) {
-                max_idx = (std::max)(max_idx, k.as<size_t>());
-            } else {
-                is_array = false;
-            }
-        });
-        if (is_array && max_idx > 0) {
-            nlohmann::json j = nlohmann::json::array();
-            for (size_t i = 1; i <= max_idx; ++i) {
-                j.push_back(LuaToJsonImpl(t[i], depth + 1));
-            }
-            return j;
-        } else {
-            nlohmann::json j = nlohmann::json::object();
-            t.for_each([&](sol::object k, sol::object v) {
-                if (k.is<std::string>()) {
-                    j[k.as<std::string>()] = LuaToJsonImpl(v, depth + 1);
-                }
-            });
-            return j;
-        }
-    }
-    return nullptr;
-}
-
-static nlohmann::json LuaToJson(sol::object obj) { return LuaToJsonImpl(obj, 0); }
+// JSON <-> Lua marshalling moved to the shared Json/LuaJsonConvert.h leaf
+// (included above). The public JsonToLua / LuaToJson resolve there at global
+// scope; the unqualified call sites below reach them by outward lookup.
 
 // --- Glues with non-UI behaviour. Pre-lift home: AppController_LuaBindings.cpp
 // inside the same namespace. Each body is byte-identical except for the

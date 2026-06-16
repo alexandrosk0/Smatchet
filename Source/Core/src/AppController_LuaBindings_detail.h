@@ -14,6 +14,7 @@
 // live on AppController.h, so include the Impl header to get the full Lua surface.
 #include "AppControllerImpl.h"
 #include <nlohmann/json.hpp>
+#include "Json/LuaJsonConvert.h" // JsonToLua / LuaToJson — shared inline leaf
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -124,6 +125,5 @@ class LuaDrawList {
 bool LuaTruthy(const sol::object& o);
 std::string AsciiLowerCopy(std::string s);
 std::string TruncateForTrace(const std::string& s, std::size_t maxLen = 480);
-sol::object JsonToLua(sol::state_view luaView, const nlohmann::json& j);
-nlohmann::json LuaToJson(sol::object obj);
+// JsonToLua / LuaToJson now live in Json/LuaJsonConvert.h (included above).
 sol::environment CreateSandboxEnvironment(sol::state& lua);
