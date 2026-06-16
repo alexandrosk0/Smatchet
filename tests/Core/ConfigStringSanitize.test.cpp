@@ -1,20 +1,26 @@
-// Security backlog 2026-05-17 — defense-in-depth strip of header-smuggling control characters at the
-// config PERSIST site. SanitizeConfigStringValue removes CR/LF/NUL from the header-bound string
-// fields (API keys, base URLs, MCP auth token) in ConfigManager::Save so a value persisted to disk
-// (via the Preferences UI -> Save path) can never carry the control characters used to splice extra
-// HTTP headers into a later request. NB: the config.set / Lua direct-write paths cannot reach these
-// fields (absent from the config.set allowlist), so this is parity hardening, not the primary guard
-// — the use-site strip in AiAssistantController::BuildClientConfig stays the primary defense. The
-// helper is pure and platform-agnostic (defined in ConfigManager_PathUtils.cpp, already linked), so
-// the decision is covered here on every platform.
+// Security backlog (2026-05-17, extended 2026-06-15) — defense-in-depth strip of header-smuggling
+// control characters (CR/LF/NUL) from the header/URL-bound config string fields. Two layers are
+// exercised here:
+//   1. SanitizeConfigStringValue — the pure per-value strip applied in ConfigManager::Save to the
+//      header-bound fields (API keys, base URLs, MCP auth token) before persist.
+//   2. SanitizeHeaderBoundConfigKeys — the central pass applied inside ConfigManager::WriteConfigJson
+//      (the chokepoint every writer funnels through: Save, the MCP `config.set` command, and the Lua
+//      layout writer), which closes the gap where config.set's allowlisted URL keys (domain,
+//      plane_url) reached disk via WriteConfigJson WITHOUT Save's per-field sanitize.
+// The use-site strip in the tracker / AI clients (SanitizeBaseUrlOrLog / BuildClientConfig) stays the
+// primary guard; these are defense-in-depth. Both helpers are pure + platform-agnostic (defined in
+// ConfigManager_PathUtils.cpp, already linked), so this doctest covers them on every platform.
 
 #include "ConfigManager_Internal.h"
 
 #include <doctest/doctest.h>
 
+#include <nlohmann/json.hpp>
+
 #include <string>
 
 using smatchet::config_detail::SanitizeConfigStringValue;
+using smatchet::config_detail::SanitizeHeaderBoundConfigKeys;
 
 TEST_CASE("SanitizeConfigStringValue: clean values pass through unchanged") {
     CHECK(SanitizeConfigStringValue("https://api.example.com/v1") == "https://api.example.com/v1");
@@ -79,4 +85,48 @@ TEST_CASE("SanitizeConfigStringValue: strips CR/LF/NUL from the DeepSeek header-
     // A DeepSeek key that is nothing but control chars sanitizes to empty — the WriteSecretFields
     // empty-check now keys off this sanitized value to decide whether to drop the legacy plaintext.
     CHECK(SanitizeConfigStringValue("\r\n\r\n").empty());
+}
+
+TEST_CASE("SanitizeHeaderBoundConfigKeys: config.set-style write strips CR/LF/NUL from URL keys") {
+    // Models the config.set / Lua direct-write round-trip: RunConfigSet builds a config JSON and
+    // hands it to ConfigManager::WriteConfigJson, which now routes it through this central helper
+    // before the value reaches disk. domain / plane_url are config.set-allowlisted and are spliced
+    // into outbound tracker request URLs, so a CR/LF/NUL injected via config.set must be stripped.
+    nlohmann::json j;
+    j["domain"] = "evil.example.com\r\nX-Injected: 1";
+    j["plane_url"] = "https://plane.example.com\r\n\r\nGET /admin HTTP/1.1";
+
+    // Re-confirm an AI base URL stays covered at the chokepoint (already sanitized in Save; the
+    // central pass guards it for any direct-write path too). Built with an embedded NUL explicitly
+    // so the \0 is not treated as a C-string terminator.
+    std::string aiUrlWithNul = "https://api.example.com";
+    aiUrlWithNul.push_back('\0');
+    aiUrlWithNul += "/v1";
+    j["ai_base_url"] = aiUrlWithNul;
+
+    // A key NOT in the header/URL-bound set is left verbatim — the use-site escaping owns it, and the
+    // central pass must not over-reach into arbitrary config values (e.g. a JQL string with newlines).
+    j["jql"] = "project = FOO\r\nORDER BY created";
+
+    SanitizeHeaderBoundConfigKeys(j);
+
+    CHECK(j["domain"].get<std::string>() == "evil.example.comX-Injected: 1");
+    CHECK(j["plane_url"].get<std::string>() == "https://plane.example.comGET /admin HTTP/1.1");
+    CHECK(j["ai_base_url"].get<std::string>() == "https://api.example.com/v1");
+    CHECK(j["jql"].get<std::string>() == "project = FOO\r\nORDER BY created");
+}
+
+TEST_CASE("SanitizeHeaderBoundConfigKeys: absent keys not created, non-string/non-object untouched") {
+    nlohmann::json j;
+    j["mcp_port"] = 8765;   // a non-string scalar under a non-URL key -> ignored
+    j["plane_url"] = 42;    // wrong type for a URL key -> left as-is, never stringified
+    SanitizeHeaderBoundConfigKeys(j);
+    CHECK_FALSE(j.contains("domain"));   // the helper must not insert an absent header/URL key
+    CHECK(j["mcp_port"].get<int>() == 8765);
+    CHECK(j["plane_url"].get<int>() == 42);
+
+    // Non-object input (e.g. a bare array or scalar) is a no-op, not a crash.
+    nlohmann::json arr = nlohmann::json::array({"a", "b"});
+    SanitizeHeaderBoundConfigKeys(arr);
+    CHECK(arr.size() == 2u);
 }

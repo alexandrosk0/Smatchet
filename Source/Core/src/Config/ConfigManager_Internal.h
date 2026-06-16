@@ -33,6 +33,16 @@ std::string NormalizeDirectoryPath(const std::string& baseDir);
 // (behind the use-site strip in AiAssistantController::BuildClientConfig, PR #176).
 std::string SanitizeConfigStringValue(const std::string& value);
 
+// Defense-in-depth (security backlog 2026-06-15): apply SanitizeConfigStringValue to every present
+// header/URL-bound string key of a config JSON object, in place. Called from
+// ConfigManager::WriteConfigJson — the single config-write chokepoint every writer funnels through
+// (ConfigManager::Save, the MCP `config.set` command, and the Lua layout writer) — so a control
+// character injected via the config.set / Lua direct-write paths (which bypass Save's per-field
+// sanitize) can never reach disk. Covered keys: domain, plane_url, ai_base_url, ai_ollama_base_url,
+// ai_deepseek_base_url. Absent keys are left absent (never inserted); non-string values are left
+// untouched. Idempotent. The use-site strip in the tracker / AI clients stays the primary guard.
+void SanitizeHeaderBoundConfigKeys(nlohmann::json& j);
+
 bool EnsureDirectoryExists(const std::string& path);
 void CreateDirectories(const std::string& rawPath);
 void EnsureParentDirectoryForFile(const std::string& path);
