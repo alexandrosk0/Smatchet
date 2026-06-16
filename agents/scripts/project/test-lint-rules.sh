@@ -176,6 +176,12 @@ AGENTSIZE_RULES=(agent-too-long)
 # NEW low->high named-layer header back-edge. KEEP IN SYNC with AGENTS.md § Tiered enforcement.
 INCLUDECYCLE_RULES=(include-cycle)
 
+# appcontroller-fan-in Phase 1 — AppController.h fan-in ratchet rule-id (delta-gated; classified by
+# appcontroller_fan_in_audit.py --diff). BLOCKS (fails CLOSED, hard-FAIL) on a NEW Source/-wide
+# quote-form `#include "AppController.h"` includer above the merge-base count. KEEP IN SYNC with
+# AGENTS.md § Tiered enforcement.
+FANIN_RULES=(app-controller-fan-in)
+
 ratio_warn_for() {
     # Advisory soft warning (never blocks): delegate to comment_audit.py --ratio-warn, which warns
     # per changed file whose comment ratio rises vs base AND exceeds 0.50. Always returns 0.
@@ -916,6 +922,10 @@ case "$MODE" in
     for r in "${INCLUDECYCLE_RULES[@]}"; do
         if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: include-cycle rule '$r' missing from AGENTS.md" >&2; miss=1; fi
     done
+    # Assert the AppController fan-in rule-id is documented in AGENTS.md (delta-gated, BLOCKING gate).
+    for r in "${FANIN_RULES[@]}"; do
+        if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: fan-in rule '$r' missing from AGENTS.md" >&2; miss=1; fi
+    done
     # Delegate the tiered-cap + UI-classification in-sync assertion to the audit script's own
     # --selftest (single source of truth = function_size_audit.py is_ui_function() vs AGENTS.md).
     # Assert the duplication rule-id (DRY Engineering Pillar 5) is documented in AGENTS.md.
@@ -983,6 +993,7 @@ case "$MODE" in
         if ! "$st_py" "$REPO_ROOT/agents/scripts/core/dup_audit.py" --selftest; then miss=1; fi
         if ! "$st_py" "$REPO_ROOT/agents/scripts/core/agent_size_audit.py" --selftest; then miss=1; fi
         if ! "$st_py" "$REPO_ROOT/agents/scripts/core/include_cycle_audit.py" --selftest; then miss=1; fi
+        if ! "$st_py" "$REPO_ROOT/agents/scripts/core/appcontroller_fan_in_audit.py" --selftest; then miss=1; fi
     else
         echo "test-lint-rules: WARN: no python interpreter; skipped function_size_audit.py / dup_audit.py / agent_size_audit.py / include_cycle_audit.py --selftest" >&2
     fi
@@ -1340,6 +1351,30 @@ case "$MODE" in
         printf '%s\n' "$ic_out" | sed 's/^/  /'
     else
         echo "[test-lint-rules] PASS — no new Source/Core include cycle / layer back-edge vs $BASE"
+    fi
+
+    # --- AppController.h fan-in ratchet (Source/-wide quote-includers; delta-gated; BLOCKS) ---
+    # A NEW Source/-wide quote-form `#include "AppController.h"` includer above the merge-base count
+    # fails the gate (appcontroller-fan-in Phase 1). appcontroller_fan_in_audit.py --diff is DOWN-only
+    # and hard-FAILs (exit 1) on a regression; a `// SMATCHET_DEVIATION(rule=app-controller-fan-in; ...)`
+    # above the offending #include escapes a genuinely-needed new includer. Fails CLOSED on infra error
+    # (0 clean / 1 new includer / >=2 infra), same contract as the include-cycle gate above.
+    fi_aud="$REPO_ROOT/agents/scripts/core/appcontroller_fan_in_audit.py"
+    if [ ! -f "$fi_aud" ]; then
+        echo "test-lint-rules: ERROR: missing $fi_aud; cannot enforce app-controller-fan-in gate" >&2
+        exit 2
+    fi
+    if fi_out="$("$cr_py" "$fi_aud" --diff "$BASE")"; then fi_rc=0; else fi_rc=$?; fi
+    if [ "$fi_rc" -ge 2 ]; then
+        echo "test-lint-rules: ERROR: appcontroller_fan_in_audit.py --diff failed (exit $fi_rc) for base '$BASE'" >&2
+        exit 2
+    fi
+    if [ -n "$fi_out" ]; then
+        rc=1
+        echo
+        printf '%s\n' "$fi_out" | sed 's/^/  /'
+    else
+        echo "[test-lint-rules] PASS — no new AppController.h includer (fan-in ratchet) vs $BASE"
     fi
 
     # --- soft comment-ratio warning (ADVISORY — never changes exit code) ---

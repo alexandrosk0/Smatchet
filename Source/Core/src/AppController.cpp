@@ -19,6 +19,8 @@
 #include "AppControllerImpl.h"
 #include "GridContextDepsAdapter.h"
 #include "GridPaneEvictionPolicy.h"
+#include "LocalCacheManager.h" // direct: AppController.h now fwd-decls LocalCacheManager (fan-in Phase 1); this TU calls Cache-> methods.
+#include <nlohmann/json.hpp> // direct: AppController.h dropped json.hpp for json_fwd (fan-in Phase 1); this TU constructs nlohmann::json.
 
 #include <algorithm>
 #include <array>
