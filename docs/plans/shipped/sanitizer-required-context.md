@@ -2,8 +2,13 @@
 
 Slug: `sanitizer-required-context` · Owner: orchestrator · Started: 2026-06-15 · Loop-mode: `in`
 
+> **Status**: shipped — Slice 1 superseded by #1277 (duplicate-effort collision #2),
+> Slice 1b shipped via #1280 (merged), Slice 2 superseded by #1253, side-task
+> (bucket down-scope) shipped via #1273 (merged). All goals achieved on `develop`;
+> see § Implementation log + § Verification for per-slice disposition.
+
 > **RE-SCOPED 2026-06-15 — Slice 2 SUPERSEDED.** Mid-flight recon found a parallel
-> `Slice C` effort ([`coverage-sanitizer-required-contexts.md`](coverage-sanitizer-required-contexts.md))
+> `Slice C` effort ([`coverage-sanitizer-required-contexts.md`](../active/coverage-sanitizer-required-contexts.md))
 > already promoted BOTH Sanitizer lanes to **live** branch-protection required
 > contexts: PR #1253 (`af475041`, merged 2026-06-15 12:46) added them to config
 > `required_contexts` + `ci.required_checks` + escape hatches + the deterministic-red
