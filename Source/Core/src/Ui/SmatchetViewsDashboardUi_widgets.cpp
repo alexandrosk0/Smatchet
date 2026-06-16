@@ -350,7 +350,11 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorS
         ++st.jqlAcpUserSearchRequestId;
         st.jqlAcpListDismissed = false;
         st.jqlAcpCaretSnapFramesRemaining = 0;
-        d.viewsDirty = true;
+        // Only the dashboard/views editor tracks saved-view dirtiness; the omnibar
+        // (drawProjectPill=false) clears a transient search and must not flag the saved view (#4).
+        if (drawProjectPill) {
+            d.viewsDirty = true;
+        }
     }
     ImGui::SetItemTooltip("Clear query");
 

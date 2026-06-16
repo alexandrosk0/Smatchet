@@ -123,6 +123,7 @@ class AiChatHistoryRenderScenario : public IScenario {
             const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/false);
             for (std::vector<UiPerfRow>::const_iterator it = rows.begin(); it != rows.end(); ++it) {
                 perFrameTotals_[it->name].push_back(it->lastTotalMs);
+                perFrameAvgPerCall_[it->name].push_back(it->avgPerCallMs);
             }
         }
     }
@@ -142,7 +143,12 @@ class AiChatHistoryRenderScenario : public IScenario {
         std::transform(rows.begin(), rows.end(), std::back_inserter(rowsJson), [this](const UiPerfRow& r) {
             // Override the per-frame-volatile totals with the run-median of the
             // finalized per-frame totals collected across the post-warmup window
-            // (#1261). p99Ms/maxMs/emaAvgMs already aggregate over many frames
+            // (#1261). avgPerCallMs is medianed from its OWN per-frame samples
+            // (same sampling basis as the total) rather than derived as
+            // median(total) / r.calls — r.calls is the final-frame snapshot's
+            // count, so dividing a window-median total by it mixes two bases and
+            // skews the per-call figure whenever the call count varies frame to
+            // frame. p99Ms/maxMs/emaAvgMs already aggregate over many frames
             // (ring / EMA) and stay as the monitor reports them. If a scope was
             // never sampled (e.g. it only appeared on the final frame) keep its
             // snapshot value rather than fabricating a zero.
@@ -151,7 +157,10 @@ class AiChatHistoryRenderScenario : public IScenario {
             std::unordered_map<std::string, std::vector<double>>::const_iterator s = perFrameTotals_.find(r.name);
             if (s != perFrameTotals_.end() && !s->second.empty()) {
                 lastTotalMs = MedianOf(s->second);
-                avgPerCallMs = (r.calls > 0) ? (lastTotalMs / static_cast<double>(r.calls)) : 0.0;
+            }
+            std::unordered_map<std::string, std::vector<double>>::const_iterator a = perFrameAvgPerCall_.find(r.name);
+            if (a != perFrameAvgPerCall_.end() && !a->second.empty()) {
+                avgPerCallMs = MedianOf(a->second);
             }
             return nlohmann::json{
                 {"name", r.name},   {"lastTotalMs", lastTotalMs}, {"avgPerCallMs", avgPerCallMs},
@@ -211,6 +220,10 @@ class AiChatHistoryRenderScenario : public IScenario {
     // scope name → finalized per-frame totalMs collected across the post-warmup
     // window; OnFinish reports the median of each as the gated lastTotalMs.
     std::unordered_map<std::string, std::vector<double>> perFrameTotals_;
+    // scope name → finalized per-frame avgPerCallMs over the same window;
+    // OnFinish reports the median of each as the gated avgPerCallMs (kept on the
+    // same sampling basis as the total rather than derived from it).
+    std::unordered_map<std::string, std::vector<double>> perFrameAvgPerCall_;
 };
 
 } // namespace cmd

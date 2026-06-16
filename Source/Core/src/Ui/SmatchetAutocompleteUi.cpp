@@ -394,6 +394,15 @@ void TrackerQueryAcp_TickDebouncedUserSearch(const AppController& app, UiDrawSes
         // Already issued for this request id; let it complete (poll above next frame).
         return;
     }
+    if (st.jqlAcpUserSearchFuture.valid() &&
+        st.jqlAcpUserSearchFuture.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+        // A prior async user-search is still running (e.g. left in-flight after an early reset
+        // of jqlAcpUserSearchInFlightId above, where the future is not consumed). Reassigning
+        // jqlAcpUserSearchFuture now would run ~future on the std::async result, which BLOCKS the
+        // UI thread until the worker finishes (Pillar 2 — finding #2). Defer: the poll above
+        // consumes it once ready, then we re-dispatch next frame.
+        return;
+    }
 
     // Dispatch to worker thread via std::async — Jira/Plane user search HTTP must not block
     // the UI thread (Pillar 2 — finding #3). `AppController&` outlives any UI frame so the

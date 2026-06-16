@@ -189,6 +189,6 @@ SmatchetUI::ApplyQueryResult SmatchetUI::applyQueryToPaneView(AppController& app
     }
     d.cfg.JqlQuery = query;
     SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlEditor.buf, query);
-    SyncWithCurrentView(app, d, ViewState.GetStore(), true);
+    SmatchetViewsDashboardUiDetail::SyncWithCurrentView(app, d, ViewState.GetStore(), true);
     return ApplyQueryResult::Ok;
 }

@@ -54,6 +54,15 @@ void LoadBuffersFromView(UiDrawSession& d, const ViewDefinition& view) {
     d.viewJqlEditor.jqlAcpScrollToSelected = false;
     d.viewJqlEditor.jqlAcpCaretSnapFramesRemaining = 0;
     d.viewJqlEditor.jqlWantsApplyFromEnter = false;
+    // Reset async user-search state too — otherwise a prior view's in-flight results / pending
+    // dispatch bleed into the freshly loaded view (#5). Mirrors the early-return resets in
+    // TrackerQueryAcp_TickDebouncedUserSearch; the running future (if any) is dropped as stale by
+    // the next poll (armed id moved on) rather than destroyed here (would block the UI thread).
+    d.viewJqlEditor.jqlAcpAsyncUserItems.clear();
+    d.viewJqlEditor.jqlAcpAsyncUserError.clear();
+    d.viewJqlEditor.jqlAcpUserSearchQuery.clear();
+    d.viewJqlEditor.jqlAcpUserSearchFireAt = 0.0;
+    d.viewJqlEditor.jqlAcpUserSearchInFlightId = 0;
     SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewNameBuf, view.Name);
     SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlEditor.buf, view.Jql);
     // Seed the authoritative selection set straight from the saved view
@@ -370,9 +379,11 @@ void SmatchetUI::drawViewsFilterTab(ViewsDashboardDrawCtx& ctx) {
             ImGui::EndDisabled();
         }
 
-        const int beforeLen = static_cast<int>(std::strlen(d.viewJqlEditor.buf));
+        char beforeJql[sizeof(d.viewJqlEditor.buf)];
+        std::memcpy(beforeJql, d.viewJqlEditor.buf, sizeof(beforeJql));
         SmatchetViewsDashboardUiDetail::DrawJqlQueryEditorEmbedded(app, d, d.viewJqlEditor);
-        if (static_cast<int>(std::strlen(d.viewJqlEditor.buf)) != beforeLen) {
+        // Compare content, not just length — a same-length edit ("abc" -> "xyz") still dirties (#6).
+        if (std::strcmp(d.viewJqlEditor.buf, beforeJql) != 0) {
             d.viewsDirty = true;
         }
         ImGui::TextDisabled(isPlane
