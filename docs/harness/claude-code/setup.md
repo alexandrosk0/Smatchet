@@ -46,6 +46,14 @@ The lint hooks (`lint-cpp.sh`, `lint-syntax-both.py`) are copies for the same re
 - File hardlinks (`mklink /H`) — no admin required, same-volume only (always true within the repo).
 - File symlinks (`mklink`) — preferred if Dev Mode is on; the script tries them first and falls back to hardlinks.
 
+## Windows text-plumbing — Bash tool vs PowerShell tool
+
+On Windows the agent drives two shells with opposite strengths; using the wrong one corrupts commit/PR bodies and multi-line file writes. The split:
+
+- **Commit / PR bodies → POSIX heredoc piped to `-F -` / `--body-file -` (Bash tool).** `git -C <path> commit -F - <<'EOF'` … `EOF`; `gh pr create --body-file - <<'EOF'` … `EOF` (or `gh pr edit N --body-file -`). **Never pipe a PowerShell here-string `@'...'@` to git/gh** — in bash the `@` is literal, so `@'...'@` prepends/appends a stray `@` line that corrupts the commit subject + PR body (hit twice in PR #1197 — the subject became a bare `@`). Reserve `@'...'@` for the PowerShell tool only.
+- **Multi-line FILE writes → the `Write` tool first; when you must write via a shell, use the PowerShell tool's single-quoted here-string + `[IO.File]::WriteAllText($path,$c,(New-Object System.Text.UTF8Encoding $false))` (UTF-8 no-BOM).** A large `cat > file <<'EOF'` through the **Bash tool** is unreliable on Windows — the body parses as shell (`unexpected EOF looking for matching '`), especially with apostrophes or non-ASCII em-dashes. `Set-Content -Encoding utf8` in PS 5.1 adds a BOM and mojibakes existing UTF-8 on a Get/Set round-trip, so use `WriteAllText` with the no-BOM encoder, not `Set-Content`.
+- **Reserve the Bash tool for the repo's own `.sh` tooling** (`test-lint-rules.sh`, `with-msvc-env.sh`, `merge-gates.sh`, bats); PowerShell is the primary interactive shell. The one MSYS gotcha is **path-mangling** — set `MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'` ONLY for a colon-path `git show "ref:path"`, never for `git/gh -C`.
+
 ## Hooks
 
 `.claude/settings.json` wires these hook surfaces:
