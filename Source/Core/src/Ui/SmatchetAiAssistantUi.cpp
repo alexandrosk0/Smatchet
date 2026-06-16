@@ -685,71 +685,79 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
     // BuildPlan / RenderPlan caching. Finalised history messages have
     // immutable content — their parsed plan is computed once + cached. Only
     // the streaming tail re-parses every frame.
-    ImGui::BeginChild("##AiAssistantHistory", ImVec2(0.0f, bodyH), true);
+    // Honor BeginChild's contract: when the history scroll-child is fully
+    // collapsed/clipped (e.g. the omnibar shrinks the assistant panel below the
+    // child's reserved height at small window sizes), BeginChild returns false
+    // and sets SkipItems — every turn would otherwise render into a zero-height
+    // clip rect, defeating the off-screen cull and paying per-turn hash + plan
+    // cost for nothing. Skip the whole render body when not visible; the empty
+    // child still needs its matching EndChild() below.
+    const bool historyVisible = ImGui::BeginChild("##AiAssistantHistory", ImVec2(0.0f, bodyH), true);
+    if (historyVisible) {
+        // Phase 6 of ai-chat-claude-desktop-parity. Per-message Y-position cache
+        // keyed by `messageIndex` (NOT content hash — review issue #3 fix). Used
+        // by the scroll-to-pinned-bookmark latch to jump the scroll-child to the
+        // message's last-known window-relative Y. Reset on history size change
+        // (push_back grows; clear-chat / hydrate clears). Static is fine because
+        // exactly one AI chat panel exists in the app at a time.
+        static std::vector<float> s_messageYCache;
+        ApplyScrollToPinnedLatch(d, s_messageYCache);
 
-    // Phase 6 of ai-chat-claude-desktop-parity. Per-message Y-position cache
-    // keyed by `messageIndex` (NOT content hash — review issue #3 fix). Used
-    // by the scroll-to-pinned-bookmark latch to jump the scroll-child to the
-    // message's last-known window-relative Y. Reset on history size change
-    // (push_back grows; clear-chat / hydrate clears). Static is fine because
-    // exactly one AI chat panel exists in the app at a time.
-    static std::vector<float> s_messageYCache;
-    ApplyScrollToPinnedLatch(d, s_messageYCache);
+        auto& selCtx = SelectableText::Begin("##AiAssistantHistorySel");
 
-    auto& selCtx = SelectableText::Begin("##AiAssistantHistorySel");
+        MarkdownPreviewRender::Options renderOpts;
+        renderOpts.mode = MarkdownPreviewRender::Mode::Full;
+        renderOpts.clickableLinks = true;
+        renderOpts.existingSelCtx = &selCtx;
 
-    MarkdownPreviewRender::Options renderOpts;
-    renderOpts.mode = MarkdownPreviewRender::Mode::Full;
-    renderOpts.clickableLinks = true;
-    renderOpts.existingSelCtx = &selCtx;
+        // s_messageHeightCache + s_turnActiveLastFrame are file-scope (above) so the clear-history
+        // action can drop them; the off-screen-cull height cache (Opt #4) and the show-on-hover alpha
+        // gate read them exactly as before. Invalidate the height cache when the layout basis changes
+        // (font size or wrap width) — cached heights are pixel layouts that go stale otherwise, which
+        // would mis-cull. Cheap epoch compare: steady-state frames clear nothing.
+        static float s_lastLayoutFontSize = 0.0f;
+        static float s_lastLayoutWrapWidth = 0.0f;
+        if (AiLayoutBasisChanged(ImGui::GetFontSize(), ImGui::GetContentRegionAvail().x, s_lastLayoutFontSize,
+                                 s_lastLayoutWrapWidth)) {
+            s_messageHeightCache.clear();
+        }
 
-    // s_messageHeightCache + s_turnActiveLastFrame are file-scope (above) so the clear-history
-    // action can drop them; the off-screen-cull height cache (Opt #4) and the show-on-hover alpha
-    // gate read them exactly as before. Invalidate the height cache when the layout basis changes
-    // (font size or wrap width) — cached heights are pixel layouts that go stale otherwise, which
-    // would mis-cull. Cheap epoch compare: steady-state frames clear nothing.
-    static float s_lastLayoutFontSize = 0.0f;
-    static float s_lastLayoutWrapWidth = 0.0f;
-    if (AiLayoutBasisChanged(ImGui::GetFontSize(), ImGui::GetContentRegionAvail().x, s_lastLayoutFontSize,
-                             s_lastLayoutWrapWidth)) {
-        s_messageHeightCache.clear();
-    }
+        const SmatchetThemeAiColors& aiPalette = SmatchetTheme::GetActiveAiColors();
+        AiHistoryDrawCtx ctx{
+            d, aiPalette, selCtx, renderOpts, s_messageYCache, SmatchetAreFaIconsLoaded(), smatchet::ai::NowUnixMs()};
 
-    const SmatchetThemeAiColors& aiPalette = SmatchetTheme::GetActiveAiColors();
-    AiHistoryDrawCtx ctx{
-        d, aiPalette, selCtx, renderOpts, s_messageYCache, SmatchetAreFaIconsLoaded(), smatchet::ai::NowUnixMs()};
+        const ImVec4 userColor(aiPalette.AiUserRoleLabel[0], aiPalette.AiUserRoleLabel[1], aiPalette.AiUserRoleLabel[2],
+                               aiPalette.AiUserRoleLabel[3]);
+        const ImVec4 asstColor(aiPalette.AiAssistantRoleLabel[0], aiPalette.AiAssistantRoleLabel[1],
+                               aiPalette.AiAssistantRoleLabel[2], aiPalette.AiAssistantRoleLabel[3]);
+        for (std::size_t i = 0; i < d.assistantHistory.size(); ++i) {
+            AiMessage& m = d.assistantHistory[i];
+            const bool isUser = (m.Role == "user");
+            RenderHistoryTurn(ctx, static_cast<int>(i), isUser ? "You:" : "Assistant:", isUser ? userColor : asstColor,
+                              &m, m.Content, /*cacheable=*/true);
+            ImGui::Spacing();
+        }
+        if (d.assistantInFlight && !d.assistantStreamBuf.empty()) {
+            // Streaming tail mutates per frame — bypass cache. No messageIndex
+            // (msgPtr nullptr) → no Y-cache write, no action row (the tail isn't
+            // finalised and has no persistence row to pin).
+            RenderHistoryTurn(ctx, -1, "Assistant (streaming...):", asstColor, nullptr, d.assistantStreamBuf,
+                              /*cacheable=*/false);
+        }
 
-    const ImVec4 userColor(aiPalette.AiUserRoleLabel[0], aiPalette.AiUserRoleLabel[1], aiPalette.AiUserRoleLabel[2],
-                           aiPalette.AiUserRoleLabel[3]);
-    const ImVec4 asstColor(aiPalette.AiAssistantRoleLabel[0], aiPalette.AiAssistantRoleLabel[1],
-                           aiPalette.AiAssistantRoleLabel[2], aiPalette.AiAssistantRoleLabel[3]);
-    for (std::size_t i = 0; i < d.assistantHistory.size(); ++i) {
-        AiMessage& m = d.assistantHistory[i];
-        const bool isUser = (m.Role == "user");
-        RenderHistoryTurn(ctx, static_cast<int>(i), isUser ? "You:" : "Assistant:", isUser ? userColor : asstColor, &m,
-                          m.Content, /*cacheable=*/true);
-        ImGui::Spacing();
-    }
-    if (d.assistantInFlight && !d.assistantStreamBuf.empty()) {
-        // Streaming tail mutates per frame — bypass cache. No messageIndex
-        // (msgPtr nullptr) → no Y-cache write, no action row (the tail isn't
-        // finalised and has no persistence row to pin).
-        RenderHistoryTurn(ctx, -1, "Assistant (streaming...):", asstColor, nullptr, d.assistantStreamBuf,
-                          /*cacheable=*/false);
-    }
+        SelectableText::End(selCtx);
 
-    SelectableText::End(selCtx);
-
-    // Tail tracking: update for next frame based on user's current scroll.
-    // Auto-scroll-to-tail re-pins when the user is already at the bottom.
-    const float scrollY = ImGui::GetScrollY();
-    const float scrollMax = ImGui::GetScrollMaxY();
-    const bool wasAtTail = d.assistantAutoScrollAtTail;
-    d.assistantAutoScrollAtTail = (scrollMax <= 0.0f) || (scrollY >= scrollMax - 1.0f);
-    if (wasAtTail && scrollMax > 0.0f && d.assistantScrollToMessageIndex < 0) {
-        // Don't auto-pin to tail when a bookmark jump is queued for next frame
-        // (e.g. Y-cache wasn't populated this frame); the bookmark wins.
-        ImGui::SetScrollY(scrollMax);
+        // Tail tracking: update for next frame based on user's current scroll.
+        // Auto-scroll-to-tail re-pins when the user is already at the bottom.
+        const float scrollY = ImGui::GetScrollY();
+        const float scrollMax = ImGui::GetScrollMaxY();
+        const bool wasAtTail = d.assistantAutoScrollAtTail;
+        d.assistantAutoScrollAtTail = (scrollMax <= 0.0f) || (scrollY >= scrollMax - 1.0f);
+        if (wasAtTail && scrollMax > 0.0f && d.assistantScrollToMessageIndex < 0) {
+            // Don't auto-pin to tail when a bookmark jump is queued for next frame
+            // (e.g. Y-cache wasn't populated this frame); the bookmark wins.
+            ImGui::SetScrollY(scrollMax);
+        }
     }
     ImGui::EndChild();
 }
