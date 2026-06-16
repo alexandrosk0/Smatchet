@@ -15,6 +15,7 @@
 // is created per case and removed (with its WAL/SHM siblings) on scope exit.
 
 #include "../support/SqliteMemFixture.h"
+#include "../support/TempDbFile.h"
 
 #include "ConfigManager.h"
 #include "LocalCacheManager.h"
@@ -22,40 +23,13 @@
 #include <SQLiteCpp/SQLiteCpp.h>
 #include <doctest/doctest.h>
 
-#include <atomic>
-#include <chrono>
-#include <cstdio>
-#include <cstdlib>
 #include <memory>
 #include <string>
 
 using smatchet_tests::SqliteMemFixture;
+using smatchet_tests::TempDbFile;
 
 namespace {
-
-// RAII temp-file DB path: unique per instance, removes the SQLite file family on destruction.
-class TempDbFile {
-  public:
-    TempDbFile() {
-        static std::atomic<int> counter{0};
-        const char* base = std::getenv("TEMP");
-        if (!base) {
-            base = std::getenv("TMPDIR");
-        }
-        const long long stamp = static_cast<long long>(std::chrono::steady_clock::now().time_since_epoch().count());
-        path_ = std::string(base ? base : ".") + "/smatchet_tickets_v2_mig_" + std::to_string(stamp) + "_" +
-                std::to_string(counter.fetch_add(1)) + ".db";
-    }
-    ~TempDbFile() {
-        std::remove(path_.c_str());
-        std::remove((path_ + "-wal").c_str());
-        std::remove((path_ + "-shm").c_str());
-    }
-    const std::string& Path() const { return path_; }
-
-  private:
-    std::string path_;
-};
 
 // Write legacy v1 rows with a raw connection — byte-for-byte what a pre-1b build persisted.
 void SeedLegacyTicket(SQLite::Database& db, const std::string& id, const std::string& summary,
