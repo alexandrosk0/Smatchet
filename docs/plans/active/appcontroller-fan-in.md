@@ -1,0 +1,149 @@
+# Plan — AppController god-header fan-in stabilization
+
+> **Slug**: `appcontroller-fan-in` (matches this file's basename without `.md`).
+>
+> **Status**: `active` — driving in-flight work. Flip to `shipped` (and `git mv` active → shipped) in the SAME post-ship PR that fills § Implementation log per § Archive.
+>
+> **Mandatory rules cross-link**: `AGENTS.md` § Project rules (Plan-doc family) + `docs/agent-rules/process-rules.md`.
+
+## Context
+
+`Source/Core/include/AppController.h` (~1421 lines, `class AppController : public IMainThreadPoster`) is `#include`d by **113 first-party translation units**. It is **Risk #1 (CRITICAL, CONFIRMED)** in `docs/reference/architecture-analysis-2026-06-13.md`: it re-exports types so service headers depend back on it, and any header change recompiles roughly a third of the tree — the dominant merge-conflict and reasoning bottleneck. Mitigation is already in flight (ISP `*Deps` extraction, the cycle-break work below); full retirement is multi-PR. Tracked in `docs/self-improvement/categories/debt.md` (deep-audit 2026-05-28).
+
+This is the explicit follow-up named in `docs/plans/shipped/core-include-dag.md` § Out of scope ("AppController god-header decomposition (fan-in / risk #1) — its own decompose-monolith plan"). The cycle / layer-back-edge work is **done and merged** (PR #1282: `Sync/SyncTypes.h`, `Sync/OfflineQueueTypes.h`, `IMainThreadPoster` dependency-inversion; the include-DAG gate `agents/scripts/core/include_cycle_audit.py` enforces 1782 edges / 0 violations). Fan-in is a **different problem** — too many TUs depend on one header — and is attacked here by *stabilizing the header*, not by splitting the class.
+
+**Intended outcome — after this lands:** an edit to `AppController.h` recompiles materially fewer transitive lines per includer (and, in the optional endgame, fewer includers), measured and ratcheted, while `AppController` stays a single class with unchanged behavior.
+
+## Approach
+
+**Stabilize the header to cut recompile blast radius — do NOT split the class.** Every method, member, and behavior of `AppController` stays. What changes is (1) *what each of the 113 includers is forced to compile transitively* when the header is touched, and (2) *which symbols force a header edit at all*. Three proven, mostly zero-includer-edit techniques, ordered lowest-risk / highest-yield first:
+
+1. **Drop heavy transitive includes to forward-decls / `_fwd.hpp`** (the header takes those types only by-reference in out-of-line declarations).
+2. **Relocate header-declared types to genuinely leaf headers + `using`-alias re-export** — the proven core-include-dag Phase-3 pattern (already shipped for the six offline-queue summary structs at `AppController.h` L749–L796: `using DeadLetterRestoreSummary = ::DeadLetterRestoreSummary;`). The 113 includers keep naming `AppController::Foo` and see **zero source change**.
+3. **Extend the existing pImpl** (`struct AppController::Impl`, already holding sol2 + `aiAssistant_`) to hide more volatile private members so their churn stops triggering 113 rebuilds.
+
+The architectural endgame — carving stable `IApp*` interface facets so includer-clusters depend on a narrow interface instead of the concrete class — has the highest ceiling but is the **only** lever that edits includers and risks per-frame virtual-call cost, so it is **deferred** to an optional Phase 5 after the cheap wins are banked.
+
+**Non-obvious trade-off that shaped this plan (from adversarial stress-test):** the project builds with PCH **on by default** (`SMATCHET_USE_PCH` defaults `ON`, `CMakeLists.txt:251`), and the DX12 PCH *already* precompiles `nlohmann/json.hpp` for the whole target (`SmatchetPchCoreDx12.h:13`, because ~64% of ~225 TUs pull it). So the json-removal win is **real on Standalone** (its PCH deliberately dropped json — `SmatchetPch.h:17-19`) but **near-zero on DX12**. The plan's success metric is therefore *edit-isolation + measured preprocessed-size reduction on a PCH-on build*, **not** an inflated "60–70% / 2–3×" claim — that projection was refuted and is dropped.
+
+## Files to modify
+
+Numbered; grouped by phase. **Grep before creating any new file** (`rg -l '<Name>' Source/` / `agents/scripts/`) — a parallel duplicate is expensive to unwind.
+
+**Phase 1 — kill the two heaviest direct includes**
+1. `Source/Core/include/AppController.h:62` — replace `#include <nlohmann/json.hpp>` with `#include <nlohmann/json_fwd.hpp>` (header uses `nlohmann::json` only as by-reference params in out-of-line decls: L463–465, L853, L1266 — no inline construction).
+2. `Source/Core/include/AppController.h:41` + `:957` — replace `#include "LocalCacheManager.h"` with `class LocalCacheManager;`; move `std::unique_ptr<LocalCacheManager> Cache;` into `AppController::Impl`.
+3. `Source/Core/src/AppControllerImpl.h` — add the relocated `Cache` member (joins `aiAssistant_` already there, `:172`).
+4. `Source/Core/src/AppController*.cpp` (the ~10 partial-class TUs) — reroute private `Cache` access through `impl_->Cache`; add direct `#include <nlohmann/json.hpp>` / `"LocalCacheManager.h"` to any TU that had relied on the transitive pull.
+
+**Phase 2 — forward-decl by-reference interface/config types**
+5. `Source/Core/include/AppController.h:55` — forward-declare `struct TrackerConfig;`, drop `#include "Config/ConfigManager.h"` (all uses are `const TrackerConfig&` in out-of-line decls).
+6. `Source/Core/include/AppController.h:59` — forward-declare `class ITrackerIssueMutations;`, drop its include (only use is the out-of-line `ApplyFieldUpdateWithEditMetaRetry(..., ITrackerIssueMutations&, ...)` at L854; also `*` at L1278 — both well-formed C++14 incomplete-type ref/ptr in a declaration).
+7. `Source/Core/include/AppController.h:56-58,60` — **delete** the four remaining ITracker role-interface includes (`ITrackerCollaboration/Connectivity/FieldCatalog/IssueReader`): stress-test confirmed they appear **only in doc comments** (L683, L906), never in a signature/member — no forward-decl needed, just remove.
+8. `Source/Core/include/IssueCreatePipeline.h:7` — fwd-swap its `#include <nlohmann/json.hpp>` → `json_fwd.hpp` (its `nlohmann::json& outFields` at L43 is decl-only). **This is the second json door** that reaches the 113 TUs while `IssueCreatePipeline.h` stays in `AppController.h` (L47); without it, full json survives the closure regardless of step 1.
+9. `Source/Core/src/*.cpp` consumers of the above — add direct includes where the transitive pull is removed.
+
+**Phase 3 — relocate header-declared types to leaf headers (`using`-alias re-export)**
+10. `Source/Core/include/AppUpdateTypes.h` **(new, root leaf — NOT prefixed `AppController`, NOT under `Commands/`)** — move `AppUpdateAsset` + `AppUpdateInfo` (`AppController.h:86-101`, POD/`<string>`).
+11. `Source/Core/include/FieldEditTypes.h` **(new, root leaf)** — move `AppController::FieldEditResult` (`:151-155`); re-export `using AppController::FieldEditResult`.
+12. `Source/Core/include/AttachmentTypes.h` **(new, root leaf)** — move `AttachmentDescriptor` + the three attachment handler aliases + `OpenFilePathsHandler` (`:359-381`); re-export each.
+13. `Source/Core/include/ConnectivityTypes.h` **(new, root leaf)** — move `AppController::TrackerConnectivityState` enum (`:628-634`); re-export. **Do NOT touch `ITicketSyncDeps.h`'s mirror enum `ConnectivityState`** (`:36-40`) — that Sync-layer decoupling is intentional/ADR-blessed.
+14. `Source/Core/include/AppController.h` — `#include` the four new leaf headers near the top; add the `using`-alias re-exports.
+15. Defining `.cpp` sites (e.g. `AppController.cpp:1482` for `AppUpdateInfo`).
+
+> **Naming is load-bearing (stress-test attack (e), REFUTED the original names).** `include_cycle_audit.py:107` `layer_rank` matches `base.startswith("AppController")` → **rank 5** and `Commands/*` → **rank 4**. Leaf headers named `AppController_*.h` or placed under `Commands/` are **not** leaf-rank; a later `Sync/`(2) or `Tracker/`(3) include of them manufactures a low→high back-edge that fails the cycle gate. The root-level non-`AppController` names above resolve to **rank 0** and are safe from any layer. Phase-3 verification asserts `layer_rank(new_header) == 0`.
+
+**Phase 4 — extend pImpl for remaining heavy private members**
+16. `Source/Core/include/AppController.h:74,:337` + `Source/Core/src/AppControllerImpl.h:172` — drop the `SMATCHET_WITH_AI`-guarded `#include "AiAssistantController.h"`; forward-declare; delegate `GetAiAssistantController()` out-of-line (`aiAssistant_` already lives in `Impl`). **The one Phase-4 step whose premise fully survives stress-test.**
+17. `Source/Core/include/AppController.h:45,:279` — *(low payoff, do only if diff is otherwise small)* move `mergeWatchNotifyServer_` behind `Impl` + forward-decl. Note: `SmatchetMergeWatchNotifyServer.h` is already lightweight (fwd-declares `httplib::Server`, no cpp-httplib pull), so the win is small; the L275-278 "must be complete in every TU" comment is an outdated myth (`~AppController` is out-of-line).
+
+**Fan-in ratchet gate (lands with Phase 1)**
+18. `agents/scripts/core/appcontroller_fan_in_audit.py` **(new)** — `--diff <ref>` counts quote-form `#include "AppController.h"` across `Source/` at HEAD vs `merge-base(ref)`; FAIL on regression above baseline, ratchet DOWN only; `--selftest`. **Define its own `Source/`-wide scope — do NOT reuse `include_cycle_audit._in_scope`** (whose `SWEEP_ROOTS` is `Source/Core/` only and would undercount by excluding Standalone/Mobile/Plugins — stress-test BUG 2).
+19. `agents/scripts/project/test-lint-rules.sh` — wire the new audit into `--diff` (after the `include_cycle_audit` block) and `--selftest`.
+20. `AGENTS.md` § Enforcement contract-card — add the `app-controller-fan-in` rule row after the `include-cycle` row.
+
+## Existing utilities reused
+
+- `AppController::Impl` (pImpl) — `Source/Core/src/AppControllerImpl.h` — already isolates sol2 + `aiAssistant_` (`:172`); Phases 1 & 4 extend it (`Cache`, optional `mergeWatchNotifyServer_`). No new pattern.
+- `using`-alias re-export pattern — `AppController.h:749-796` (six offline-queue summary structs) + `:77-84` (Sync banner/fetch types) — Phase 3 reuses it verbatim.
+- `nlohmann/json_fwd.hpp` — ships with the FetchContent'd nlohmann v3.11.3 (`CMakeLists.txt:457`); already used by `Config/ConfigManager.h:21`. No new dep.
+- `CachedTicketTypes.h` — `CachedTicket`/`Pending*`/`DeadPending*` value types (`:13/51/68/107/123`) already live here, reaching `AppController.h` via `GridLiveContext.h:21`, `Sync/SyncTypes.h`, and `IssueDraft.h:10` — so forward-declaring `LocalCacheManager` does **not** break any `std::vector<CachedTicket>` signature (stress-test (b), value-type half HOLDS).
+- `include_cycle_audit.py` `_git` / `_merge_base_or_ref` helpers — `agents/scripts/core/` — the fan-in audit mirrors its `--diff`/`--selftest` contract and exit-code convention (1 regression / 0 pass / ≥2 infra). Merge-base resolution WARNs + falls back to ref-tip on shallow clones (does **not** hard-fail), so the Pillar-2-scanner "no merge base → red" flake class does not apply here.
+
+## UX Pillar callouts
+
+- **Pillar 1 (perf, 144 Hz / 6.94 ms steady-state)**: Phases 1–4 are header/include/declaration restructuring with **zero runtime delta** (no frame-loop code, allocation pattern, or runtime call-graph change). pImpl adds one pointer indirection on access to relocated members (`Cache`, `aiAssistant_`, `mergeWatchNotifyServer_`) — none are per-frame hot members; confirm no per-frame path touches them. **Phase 5 caveat (deferred):** the hot inline getters `GetActiveTicketsRevision()` (L577), `GetFieldCatalogRevision()` (L584), `GetAvailableFields()` (L609), `GetTrackerBackend()` (L688) are currently zero-cost inline and called per-frame from `Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp` + `SmatchetUI.cpp`; routing them through an `IApp*&` would make them virtual and **lose inlining** — Phase 5 must exclude these from any facet (keep them on the concrete class).
+- **Pillar 2 (UI-thread never blocks > 100 ms without visible cue)**: no impact — no I/O, threading, or blocking call added.
+- **Pillar 3 (never crash)**: no impact — members stay `unique_ptr`-owned; destruction order preserved by the existing out-of-line ctor/dtor (`AppController.cpp:137-139`). RAII unchanged.
+- **Pillar 4 (accessibility — keyboard nav / font scaling / WCAG AA)**: N/A — no UI surface change.
+
+## Perf-review-system gates (mandatory — diff touches `Source/Core/`)
+
+Per `docs/plans/shipped/pillar-1-2-perf-review-system.md`. The diff touches `Source/Core/`, so this section is **mandatory** — but every change is include/declaration/private-member-relocation with **no runtime path touched**, so each gate is N/A with the justification recorded (not omitted).
+
+1. **PR-fast CI** — **N/A** — no changed runtime code path; no scenario exercises an include-graph edit. No re-baseline.
+2. **Pillar 2 static scanner** — **N/A** — no new sync-I/O reachable from `ImGui::*` (no I/O added at all).
+3. **Dispatcher drain** — **N/A** — does not touch `MainThreadDispatcher::Drain()`.
+4. **Visible-cue bucket-E harness** — **N/A** — adds no sync-stall code path.
+5. **Marker inventory** — **N/A** — adds no `SMATCHET_UI_PERF_SCOPE` markers.
+
+**Override**: not needed (no regression).
+
+## Risks / non-goals
+
+**Risks**
+- **json removal yields little on PCH-on builds (esp. DX12)** — refuted the "60–70% / 2–3×" projection. *Mitigation:* scope the json win to Standalone; measure preprocessed size on a **PCH-on** build before quoting any number; treat Phase 1's primary value as edit-isolation (Cache behind Impl).
+- **SQLiteCpp survives the closure via `IssueDraft.h`** — `IssueDraft.h:10` includes `LocalCacheManager.h` → `<SQLiteCpp/SQLiteCpp.h>`, and `IssueDraft.h` **stays** in `AppController.h:47`. *Mitigation:* Phase 1's `Cache`-fwd-decl claim is demoted to "removes the **direct** edge + isolates `Cache` churn behind Impl"; fully banishing SQLiteCpp additionally requires forward-declaring `LocalCacheManager` inside `IssueDraft.h` — flagged as a **larger follow-up, not scoped here**.
+- **`ITrackerIssueMutations.h` cannot itself drop to json_fwd** — it has inline default-bodied virtuals constructing `nlohmann::json` (`:25-37`). *Mitigation:* Phase 2 only **forward-decls it inside `AppController.h`** (removing it from the 113-TU closure); the header's own json dependency is out of scope.
+- **Phase-3 leaf-header naming can break the cycle gate** — `AppController_*` / `Commands/*` names inherit rank 5/4. *Mitigation:* root-level non-`AppController` names (rank 0) + a Phase-3 verification step asserting `layer_rank == 0`.
+- **Fan-in gate baseline/scope authoring bugs** — count is **113 total**; verify the exact `.cpp`/`.h` split at gate-authoring time (stress-test counted **111 `.cpp` + 2 `.h`** at branch HEAD — the two `.h` are `Source/Core/include/Ui/SmatchetUiSession.h` and `Source/Core/src/AppControllerImpl.h`; the architecture doc's "108 + 5" predates recent merges). *Mitigation:* `--selftest` asserts only the **total (113)** + the AGENTS.md row, never a hardcoded cpp/h split that drifts; the audit defines its own `Source/`-wide scope.
+- **Config-skew (#863/#945)** — the AI-controller pImpl change (Phase 4) must compile in `SMATCHET_WITH_AI` ON **and** OFF. *Mitigation:* build both configs locally; nightly AI-OFF sanitizer build is the authoritative backstop.
+
+**Non-goals**
+- **No class split** — `AppController` stays one class; pImpl moves *private members* behind the existing `Impl`, which is not a split.
+- **No behavior change** — pure include/declaration restructuring + type relocation; no control-flow, API-semantics, or runtime-path change.
+- **No cycle re-litigation** — `Sync/SyncTypes.h` / `Sync/OfflineQueueTypes.h` / `IMainThreadPoster` work is done and untouched; `ITicketSyncDeps.h`'s mirror enum stays.
+- **No forced facet adoption** — Phase 5 is optional/incremental; Phases 1–4 deliver the zero-includer-edit bulk.
+- **No new includers** — the fan-in gate forbids regression above baseline.
+
+## Verification
+
+Per `AGENTS.md` § Verification automation. Each phase ships as one PR with the build/lint/test gates below; the plan-doc PR itself is pure-docs.
+
+- **Bucket A (pure-logic ctest, `test-rig`)**: N/A for the header changes (no new pure function). For the **fan-in audit script**, the `--selftest` is the unit gate (asserts HEAD count == baseline total + AGENTS.md row in sync); add a `tests/bats/appcontroller_fan_in.bats` if the metric proves regression-prone.
+- **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msvc`)**: N/A — no UI behavior change; existing bucket-E suite is the regression backstop that behavior is unchanged.
+- **Bash-driver scenario / screenshot / sanitizer**: nightly AI-OFF sanitizer build gates Phase 4's config-skew; no new scenario.
+- **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — **dual-target, and on both MSVC + Clang** (json_fwd template-alias and SQLiteCpp template instantiation differ subtly between toolchains; Phase 4 additionally builds AI-ON **and** AI-OFF).
+- **Include-graph gate (every phase)**: `python agents/scripts/core/include_cycle_audit.py --diff origin/develop` green (0 new violations) **plus** `python agents/scripts/core/appcontroller_fan_in_audit.py --diff origin/develop` green. Phase 3 additionally asserts `layer_rank == 0` for each new leaf header.
+- **Lint gate (every phase)**: `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop` green.
+- **Per-phase blast-radius evidence**: preprocess one representative Standalone UI TU on a **PCH-on** build before/after; Phase 1 → `basic_json`/`SQLiteCpp` direct-edge gone; Phase 2 → second json path (`IssueCreatePipeline.h`) + `ConfigManager` gone. Record the measured preprocessed-size delta (do not quote a projected number).
+- **Doc validation (blocks plan-doc PRs — keep this bullet)**: the canonical `scripts/dev/test-docs.sh` suite green (it enumerates anchors / agent-contract / plan-index / ref-integrity / portable-purity / md_lint — defer to the script). A red doc-validation job blocks merge even though non-required.
+- **Plan stress-test — `grill-with-docs` (keep this bullet)**: stress-test this plan against the domain model + sharpen terms before finalising; record the outcome. **Done in authoring** — a 6-agent design workflow (4 readers → synthesize → adversarial refute) produced the corrections now baked into Phases 1–5 (json/PCH reframe, SQLiteCpp re-pull, hot-getter virtual cost, fan-in baseline split, Phase-3 rank-0 naming). Re-run `grill-with-docs` if the approach changes.
+- **Manual residue**: none — all gates are automated (build + two include-graph audits + lint + doc-validation). If a future phase introduces a manual step, name the deferred-automation action + add a `docs/self-improvement/categories/tooling.md` entry.
+
+## Out of scope (flagged, not designed)
+
+**Deferral residue-sweep (keep this note)** — per `AGENTS.md` § Process rules § Scope-reduction edits: before finalising, grep `**/CONTEXT*.md`, `docs/adr/`, `agents/*.md`, and `docs/self-improvement/categories/` for stray references to anything deferred here, and revise or delete them.
+
+- **Forward-declaring `LocalCacheManager` inside `IssueDraft.h`** — the additional change needed to fully banish `SQLiteCpp` from the 113-TU closure (Phase 1 only removes the *direct* edge). Larger blast radius (every `IssueDraft.h` includer) → own follow-up plan.
+- **Splitting `ITrackerIssueMutations.h`'s inline json-constructing virtuals out-of-line** — would let *that* header drop to json_fwd; separate from AppController fan-in. No-action here.
+- **Phase 5 facet carving (`IApp*` ISP interfaces)** — designed at sketch level in § Approach but **deferred**: it is the only includer-editing, virtual-call-introducing lever; sequence it after Phases 1–4 bank the cheap wins, one facet + one cluster per sub-PR, excluding hot inline getters. Follow-up: its own plan once Phases 1–4 ship.
+- **Reducing `AppController.h` LOC for its own sake** — explicitly not a goal; the metric is fan-in / transitive cost, not line count (splitting the header into three still leaves 113 includers).
+
+## Implementation log
+*(populated post-ship — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+## Deviations from plan
+*(populated post-ship — what changed, removed, or deferred vs the original plan, one-line rationale each)*
+
+## Verification (actual)
+*(populated post-ship — what was actually tested + result: passed / failed / not-run)*
+
+## Archive (post-ship — DO IN THIS PR, never a follow-up)
+*In the SAME PR that populates the three sections above —*
+1. *flip the § Status header to `shipped`,*
+2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
+   > **Keep the literal `<slug>` placeholder in this committed step — do NOT expand it to this plan's real filename** (expanding it manufactures a `docs/plans/shipped/<name>.md` self-reference that `test-plan-ref-integrity.sh` flags while the file still lives in `active/`). Run the literal command with your slug substituted at the shell.
+3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+
+*(Delete this `## Archive` block as part of step 2 — once moved to `shipped/`, the file is reference material.)*
