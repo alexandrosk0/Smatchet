@@ -36,11 +36,11 @@ ctest --preset ninja-fuzzer-linux                # -runs=0 smoke (loads seeds, e
 | Driver | Parser under test | Status |
 |---|---|---|
 | `fuzz_image_dims` | `image_dim::ParseImageDimensionsFromBytes` (PNG/GIF/WEBP/JPEG headers) | E2a (shipped, #1296) |
-| `fuzz_cpp_lex` | `CppLexLine` / `CppLexCallstackLine` (annotate syntax highlighter) | E2b PR 2a (this PR) |
-| `fuzz_callstack` | `ParseCallstackText` (pasted stack frames) | E2b PR 2a (this PR) |
-| `fuzz_markdown_adf` | `MarkdownConvert::MarkdownToAdf` (md4c) | E2b PR 2a (this PR) |
-| `fuzz_ai_sse` | `AiSseParser::Feed` (SSE stream) | E2b PR 2b (next) |
-| `fuzz_ai_ndjson` | `AiNdjsonParser::Feed` (NDJSON stream) | E2b PR 2b (next) |
+| `fuzz_cpp_lex` | `CppLexLine` / `CppLexCallstackLine` (annotate syntax highlighter) | E2b PR 2a (#1301) |
+| `fuzz_callstack` | `ParseCallstackText` (pasted stack frames) | E2b PR 2a (#1301) |
+| `fuzz_markdown_adf` | `MarkdownConvert::MarkdownToAdf` (md4c) | E2b PR 2a (#1301) |
+| `fuzz_ai_sse` | `AiSseParser::Feed` (SSE stream) | E2b PR 2b (this PR) |
+| `fuzz_ai_ndjson` | `AiNdjsonParser::Feed` (NDJSON stream) | E2b PR 2b (this PR) |
 
 ## Adding a driver
 

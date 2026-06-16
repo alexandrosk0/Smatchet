@@ -99,7 +99,43 @@ smatchet_add_fuzz_target(fuzz_markdown_adf
     INCLUDES
         "${_fuzz_core}/include"
         "${_fuzz_core}/include/Ui"
+        "${_fuzz_core}/include/Privacy"
     LIBS
         md4c
         nlohmann_json::nlohmann_json
     CORPUS markdown_adf)
+
+# --- PR 2b -------------------------------------------------------------------
+# Both AI-stream drivers compile ${_fuzz_logger_srcs}, so both need
+# include/Privacy: TextRedaction.cpp bare-includes "TextRedaction.h" (the header
+# lives under include/Privacy/). The markdown target above carries the same dir
+# for the same reason. No include/Ui — neither parser nor the logger srcs touch Ui.
+
+# AiSseParser::Feed — untrusted Server-Sent-Events byte stream (OpenAI/Anthropic
+# chat completions) -> framed events. Closure: AiSseParser.cpp + the shared logger
+# srcs (LOG_ERROR on the 4 MiB cap-exceeded path). No nlohmann (Event is plain
+# std::string).
+smatchet_add_fuzz_target(fuzz_ai_sse
+    SOURCES
+        fuzz_ai_sse.cpp
+        "${_fuzz_core}/src/AiSseParser.cpp"
+        ${_fuzz_logger_srcs}
+    INCLUDES
+        "${_fuzz_core}/include"
+        "${_fuzz_core}/include/Privacy"
+    CORPUS ai_sse)
+
+# AiNdjsonParser::Feed — untrusted newline-delimited JSON byte stream (Ollama
+# /api/chat) -> parsed objects. Closure: AiNdjsonParser.cpp + the shared logger
+# srcs; links nlohmann (the parsed line type, included by the parser header).
+smatchet_add_fuzz_target(fuzz_ai_ndjson
+    SOURCES
+        fuzz_ai_ndjson.cpp
+        "${_fuzz_core}/src/AiNdjsonParser.cpp"
+        ${_fuzz_logger_srcs}
+    INCLUDES
+        "${_fuzz_core}/include"
+        "${_fuzz_core}/include/Privacy"
+    LIBS
+        nlohmann_json::nlohmann_json
+    CORPUS ai_ndjson)
