@@ -27,6 +27,69 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-15 · merge-watcher daemon (latent post-merge bug; fix branch `fix-merge-watcher-daemon-crash`) · unhandled `gh pr merge --auto` subprocess timeout crashed the whole daemon, stranding every registered PR
+
+> Shared-infra outage (not a red-check escape): the long-lived `smatchet-merge-watcher`
+> daemon died mid-run ~2026-06-15 and stopped polling ALL registered PRs. A
+> `subprocess.TimeoutExpired` from `squash_merge_pr`'s `gh pr merge --auto` (`timeout=60`)
+> escaped `handle_pass`'s `except RuntimeError`, unwound `daemon_loop`'s unguarded per-PR
+> body past `except StopSignal`, reached `main`, and crashed the process.
+
+### What escaped
+No gate covered the daemon's crash-resilience. `squash_merge_pr` (merge-watcher.py) ran
+`gh pr merge --auto` under `timeout=60` with NO try/except, while every caller relies on
+the single-`RuntimeError` contract (`handle_pass`: `except RuntimeError`).
+`subprocess.TimeoutExpired ⊂ subprocess.SubprocessError`, NOT `RuntimeError` — so it
+slipped the contract. `daemon_loop`'s `for entry in entries:` body was likewise unguarded
+(only `write_state` caught `OSError`), so the escaped exception unwound the whole loop past
+the outer `except StopSignal` into `main`. No bats test exercised a squash timeout or a
+per-PR exception — the crash path was untested.
+
+### Root cause
+Two-layer gate hole. (1) **Source contract not honored** — `_gh_json` (merge-watcher.py:644)
+already normalizes `(OSError, subprocess.SubprocessError) -> RuntimeError` precisely so
+callers' `except RuntimeError` holds; `squash_merge_pr` was added later as the queue-safe
+`--auto` path and did NOT adopt that normalization, leaving a timeout/launch failure as a
+raw non-`RuntimeError`. (2) **No loop backstop** — the per-PR body had no per-iteration
+guard, so ANY unhandled exception from ANY sub-handler (not just this one) crashed the whole
+daemon and stranded every other registered PR. The blast radius (all PRs, one shared daemon)
+is the structural defect; the timeout was only the trigger.
+
+### Preventing gate
+Five, all in this PR. (1) **`squash_merge_pr` normalizes launch/timeout to `RuntimeError`**
+(mirrors `_gh_json`) — the timeout now degrades to a clean `merge_failed` + retry. (2)
+**Per-PR backstop** — the loop body is extracted to `process_registered_pr()` and wrapped:
+`except StopSignal: raise` (clean Ctrl-C/SIGTERM shutdown MUST propagate) BEFORE
+`except Exception: WARN + continue` — so one PR's failure can never crash the daemon or
+strand the others. (3) **Per-CYCLE backstop** — the cycle body (`read_registry()` + the
+per-PR loop) is wrapped in the same `except StopSignal: raise` / `except Exception: WARN +
+skip-cycle` shape, because `read_registry` runs at cycle scope OUTSIDE the per-PR try and
+raises a bare `RuntimeError` (malformed/non-list registry) or an uncaught `OSError`
+(a concurrent session's tempfile-rename write / a transient Windows file lock) — the SAME
+all-PRs-stranded crash class. Gates (2)+(3) together are the load-bearing structural gate:
+every unhandled exception at PR scope OR cycle scope now degrades to a retry, never crashes
+the daemon. (This cycle-scope hole was caught by an adversarial Workflow verification pass on
+the diff BEFORE merge — itself the "gate, don't trust" pattern working.) (4) **Cascade
+narrow-`except` widened** — a second adversarial Workflow pass surfaced a sibling instance one
+layer down: `cascade_update_child`'s `gh api PUT update-branch` runs `subprocess.run(timeout=30)`
+un-normalized, and the post-merge cascade loop guarded it with `except TimeoutError` ONLY.
+`subprocess.TimeoutExpired` is a `subprocess.SubprocessError`, NOT a `builtins.TimeoutError`,
+so a hung child slipped that clause and unwound out of `handle_pass` MID-cascade — contained by
+gate (2) (daemon survives) but masked: every sibling after the hung child silently lost its
+update-branch dispatch, surfacing only as a coarse per-PR WARN. Widened to
+`except (TimeoutError, OSError, subprocess.SubprocessError)` so one hung child degrades to a
+per-child ERR row and the cascade still dispatches to its siblings. (5) **7 bats regression
+tests** (merge_watcher.bats): squash `TimeoutExpired`→`RuntimeError`; `handle_pass`
+→`merge_failed` on squash timeout; per-PR backstop logs + continues across PRs; per-PR
+StopSignal re-raise; per-cycle `read_registry` raise logs + continues; per-cycle StopSignal
+re-raise; cascade hung-child `TimeoutExpired` degrades per-child + loop continues to siblings —
+the two StopSignal tests are ordering guards that fail if the `except` clauses are swapped.
+
+### Filed as
+[`infra.md`](categories/infra.md) 2026-06-15 `daemon-loop-per-iteration-backstop-audit`
+(P2) — audit the other agentic daemons for a missing per-iteration backstop + the
+timeout-bearing `subprocess.run` sites that feed `except RuntimeError`-only callers.
+
 ## 2026-06-15 · PR #1265 · `cr-out-of-band` after CodeRabbit rate-limit skipped a code/CI harness review
 
 ### What escaped

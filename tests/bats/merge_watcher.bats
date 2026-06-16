@@ -454,6 +454,14 @@ print('merge_action:', extras.get('merge_action'))
 }
 
 @test "handle_pass enqueues on a merge queue (state OPEN after --auto) → merge_action: enqueued" {
+    # Windows: the gh stub below is an extensionless bash script; merge-watcher's
+    # _resolve_bin() uses shutil.which("gh"), which on Windows skips a name with
+    # no PATHEXT extension and resolves the REAL gh.exe instead → the stub is
+    # bypassed, handle_pass hits live GitHub, and PR#999 doesn't exist. A shebang
+    # script also can't be subprocess.run() directly on Windows even by explicit
+    # path, so a same-PR fix isn't viable. Pre-existing on develop (identical
+    # failure); runs cleanly on Linux/macOS. Backlog: merge-watcher-gh-stub-windows.
+    case "$OSTYPE" in msys*|cygwin*|win*) skip "gh bash-script stub unresolvable by Windows _resolve_bin; pre-existing on develop (see backlog merge-watcher-gh-stub-windows)" ;; esac
     # Merge-queue-safe path: `gh pr merge --auto` succeeds (enqueue) but the PR
     # is still OPEN afterwards (queue will merge it once merge_group checks pass).
     # squash_merge_pr returns ENQUEUED_SENTINEL → handle_pass records `enqueued`,
@@ -491,6 +499,9 @@ print('merge_sha:', extras.get('merge_sha', '<none>'))
 }
 
 @test "handle_pass merges immediately when no queue (state MERGED after --auto) → merge_action: merged" {
+    # Windows-skip — same root cause as the enqueued test above: the extensionless
+    # gh bash stub is bypassed by shutil.which on Windows. Pre-existing on develop.
+    case "$OSTYPE" in msys*|cygwin*|win*) skip "gh bash-script stub unresolvable by Windows _resolve_bin; pre-existing on develop (see backlog merge-watcher-gh-stub-windows)" ;; esac
     # No merge queue configured: `gh pr merge --auto` merges immediately; the PR
     # state reads MERGED with a mergeCommit oid → squash_merge_pr returns the SHA
     # → handle_pass proceeds to merged + cascade (prior behaviour preserved).
@@ -550,6 +561,225 @@ print('owner_repo:', mw._gh_owner_repo(bad))
     [[ "$output" == *"runtimeerror"* ]]
     [[ "$output" != *"leaked_oserror"* ]]
     [[ "$output" == *"owner_repo: None"* ]]
+}
+
+# ---------- daemon-crash resilience: squash timeout + per-PR backstop ----------
+
+@test "squash_merge_pr normalizes a gh launch/timeout into RuntimeError (not TimeoutExpired) — daemon-crash guard" {
+    # Regression (infra-outage): the `gh pr merge --auto` subprocess.run carries
+    # timeout=60. A bare subprocess.TimeoutExpired is NOT a RuntimeError, so it
+    # would escape handle_pass (`except RuntimeError`), unwind daemon_loop's
+    # per-PR body past `except StopSignal`, and crash the whole daemon — stranding
+    # every registered PR. squash_merge_pr must normalize launch/timeout failures
+    # to RuntimeError, mirroring _gh_json.
+    run python -c "
+import importlib.util, subprocess
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec); spec.loader.exec_module(mw)
+def boom(*a, **k):
+    raise subprocess.TimeoutExpired(cmd='gh pr merge', timeout=60)
+mw.subprocess.run = boom
+try:
+    mw.squash_merge_pr('o', 'r', 999)
+    print('NO_EXCEPTION')
+except RuntimeError as e:
+    print('runtimeerror:', 'timed out' in str(e))
+except subprocess.TimeoutExpired:
+    print('leaked_timeout')
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"runtimeerror: True"* ]]
+    [[ "$output" != *"leaked_timeout"* ]]
+    [[ "$output" != *"NO_EXCEPTION"* ]]
+}
+
+@test "handle_pass degrades to merge_failed when squash_merge_pr times out (no crash escape)" {
+    # End-to-end: a gh-merge timeout flows squash_merge_pr -> RuntimeError ->
+    # handle_pass `except RuntimeError` -> merge_failed extras. handle_pass must
+    # return cleanly (the daemon records merge_failed + retries next cycle), never
+    # let a TimeoutExpired propagate up the per-PR loop.
+    run python -c "
+import importlib.util, subprocess
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec); spec.loader.exec_module(mw)
+mw._gh_owner_repo = lambda cp: ('o', 'r')
+mw.ensure_pr_ready_for_review = lambda o, r, pr: None
+mw.detect_merged_branch_name = lambda o, r, pr: 'feat/foo'
+def boom(*a, **k):
+    raise subprocess.TimeoutExpired(cmd='gh pr merge', timeout=60)
+mw.subprocess.run = boom
+extras = mw.handle_pass({'pr': 999, 'clone_path': r'$REPO_ROOT'})
+print('merge_action:', extras.get('merge_action'))
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"merge_action: merge_failed"* ]]
+    [[ "$output" == *"timed out"* ]]
+}
+
+@test "daemon_loop per-PR backstop: a transient exception in one PR is logged + the loop continues to the next PR" {
+    # Layer-2 structural fix: process_registered_pr is wrapped per-iteration so
+    # one PR's unexpected raise degrades to a retry instead of crashing the whole
+    # daemon. Both registered PRs must be attempted; daemon_loop returns 0.
+    run python -c "
+import importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec); spec.loader.exec_module(mw)
+seen = []
+def fake_proc(entry):
+    seen.append(entry['pr'])
+    raise ValueError('simulated transient gh failure')
+mw.process_registered_pr = fake_proc
+mw.read_registry = lambda: [{'pr': 901, 'clone_path': 'x'}, {'pr': 902, 'clone_path': 'x'}]
+mw.write_pid_file = lambda: None
+mw.clear_pid_file = lambda: None
+def stop(_):
+    raise mw.StopSignal()
+mw.time.sleep = stop
+rc = mw.daemon_loop(0)
+print('rc:', rc)
+print('seen:', seen)
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"rc: 0"* ]]
+    [[ "$output" == *"seen: [901, 902]"* ]]
+    [[ "$output" == *"WARN: PR#901 poll cycle raised ValueError"* ]]
+    [[ "$output" == *"WARN: PR#902 poll cycle raised ValueError"* ]]
+}
+
+@test "daemon_loop per-PR backstop re-raises StopSignal (clean shutdown not swallowed by the broad except)" {
+    # Critical ordering guard: StopSignal is an Exception subclass raised from the
+    # SIGINT/SIGTERM handler. The per-PR `except StopSignal: raise` MUST precede
+    # `except Exception`, or Ctrl-C during a PR's processing gets swallowed and the
+    # daemon never stops. If StopSignal raised in PR 901 propagates correctly, PR
+    # 902 is never reached (seen == [901]); if it were swallowed, both would run.
+    run python -c "
+import importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec); spec.loader.exec_module(mw)
+seen = []
+def fake_proc(entry):
+    seen.append(entry['pr'])
+    raise mw.StopSignal()
+mw.process_registered_pr = fake_proc
+mw.read_registry = lambda: [{'pr': 901, 'clone_path': 'x'}, {'pr': 902, 'clone_path': 'x'}]
+mw.write_pid_file = lambda: None
+mw.clear_pid_file = lambda: None
+def stop(_):
+    raise mw.StopSignal()
+mw.time.sleep = stop
+rc = mw.daemon_loop(0)
+print('rc:', rc)
+print('seen:', seen)
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"rc: 0"* ]]
+    [[ "$output" == *"seen: [901]"* ]]
+}
+
+@test "daemon_loop per-CYCLE backstop: a cycle-scope read_registry raise is logged + the daemon continues (not a whole-daemon crash)" {
+    # The per-PR backstop only wraps process_registered_pr; read_registry runs at
+    # cycle scope OUTSIDE it. A malformed/locked registry file makes read_registry
+    # raise a bare RuntimeError (or read_text OSError) — without the per-cycle
+    # backstop that escapes the StopSignal-only outer handler into the catch-less
+    # main and crashes the WHOLE daemon, stranding every registered PR. With the
+    # fix it degrades to a logged skip-this-cycle and the daemon stays up.
+    run python -c "
+import importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec); spec.loader.exec_module(mw)
+proc_called = []
+mw.process_registered_pr = lambda entry: proc_called.append(entry)
+def bad_registry():
+    raise RuntimeError('malformed registry: not a list')
+mw.read_registry = bad_registry
+mw.write_pid_file = lambda: None
+mw.clear_pid_file = lambda: None
+def stop(_):
+    raise mw.StopSignal()
+mw.time.sleep = stop
+rc = mw.daemon_loop(0)
+print('rc:', rc)
+print('proc_called:', len(proc_called))
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"rc: 0"* ]]
+    [[ "$output" == *"WARN: cycle raised RuntimeError"* ]]
+    [[ "$output" == *"stop signal received"* ]]
+    [[ "$output" == *"proc_called: 0"* ]]
+}
+
+@test "daemon_loop per-CYCLE backstop re-raises StopSignal (clean shutdown during read_registry not swallowed)" {
+    # Ordering guard for the per-cycle backstop: a signal arriving DURING
+    # read_registry raises StopSignal at cycle scope. The per-cycle
+    # `except StopSignal: raise` MUST precede `except Exception`, or the broad
+    # backstop swallows it into a 'cycle raised StopSignal' WARN and the daemon
+    # never stops. Correct ordering re-raises straight to the outer handler with
+    # NO per-cycle WARN; a swapped order would log the WARN.
+    run python -c "
+import importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec); spec.loader.exec_module(mw)
+def signal_mid_read():
+    raise mw.StopSignal()
+mw.read_registry = signal_mid_read
+mw.write_pid_file = lambda: None
+mw.clear_pid_file = lambda: None
+def stop(_):
+    raise mw.StopSignal()
+mw.time.sleep = stop
+rc = mw.daemon_loop(0)
+print('rc:', rc)
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"rc: 0"* ]]
+    [[ "$output" == *"stop signal received"* ]]
+    [[ "$output" != *"cycle raised StopSignal"* ]]
+}
+
+@test "handle_pass cascade: a hung child's subprocess.TimeoutExpired degrades to a per-child ERR + the loop continues to siblings (no escape)" {
+    # Same trap-class as the squash timeout, one layer down: cascade_update_child's
+    # `gh api PUT update-branch` runs subprocess.run(timeout=30) un-normalized, and
+    # the cascade loop's guard used to be `except TimeoutError` only. subprocess.
+    # TimeoutExpired is a subprocess.SubprocessError, NOT a builtins.TimeoutError, so
+    # a hung child would slip that narrow except, unwind out of handle_pass MID-cascade
+    # (post-merge), and only be coarsely caught by the L2 per-PR backstop — silently
+    # dropping update-branch dispatch to every sibling after the hung one. The widened
+    # `except (TimeoutError, OSError, subprocess.SubprocessError)` must degrade the hung
+    # child to ok=False and STILL dispatch to the next sibling (proving loop-continue).
+    run python -c "
+import importlib.util, subprocess, contextlib
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec); spec.loader.exec_module(mw)
+mw._gh_owner_repo = lambda cp: ('o', 'r')
+mw.ensure_pr_ready_for_review = lambda o, r, pr: None
+mw.detect_merged_branch_name = lambda o, r, pr: 'feat/parent'
+mw.squash_merge_pr = lambda o, r, pr: 'sha123abc'
+mw._append_merge_snapshot = lambda o, r, pr, sha, gate_snapshot=None: 'snapshot_skipped'
+mw.maybe_remove_from_registry = lambda pr, cp: None
+mw.find_stacked_children = lambda o, r, b: [
+    {'number': 801, 'headRefName': 'feat/child-a'},
+    {'number': 802, 'headRefName': 'feat/child-b'},
+]
+mw.cascade_lock = lambda head, **k: contextlib.nullcontext()
+def cascade(o, r, child_pr):
+    if child_pr == 801:
+        raise subprocess.TimeoutExpired(cmd='gh api PUT update-branch', timeout=30)
+    return True, 'update-branch dispatched'
+mw.cascade_update_child = cascade
+extras = mw.handle_pass({'pr': 999, 'clone_path': 'x'})
+print('merge_action:', extras.get('merge_action'))
+kids = extras.get('cascade_children', [])
+print('child_count:', len(kids))
+for k in kids:
+    print('child:', k['pr'], k['ok'], k['msg'])
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"merge_action: merged"* ]]
+    [[ "$output" == *"child_count: 2"* ]]
+    # First child's subprocess timeout degraded to a per-child ERR (not an escape).
+    [[ "$output" == *"child: 801 False TimeoutExpired"* ]]
+    # The sibling after the hung child was STILL reached — the loop continued.
+    [[ "$output" == *"child: 802 True update-branch dispatched"* ]]
 }
 
 # ---------- Phase 3: CR-triage classifier ----------
