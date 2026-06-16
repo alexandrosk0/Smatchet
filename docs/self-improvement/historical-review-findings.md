@@ -51,7 +51,7 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
 - ⏭ **#908** (CMake dead sol2 re-run-cleanup group) — left as-is: editing the
   sol2 patch chain is higher-risk than the harmless dead comment; deferred.
 
-## Sweep status & remaining work (as of 2026-06-13)
+## Sweep status & remaining work (as of 2026-06-16)
 
 - **Swept:** **#1–#1174** (batches 1–11) — **the entire merged-PR history reviewed.**
   **SWEEP COMPLETE** — Batch 11 (#116–#1, 113 PRs, the final tail incl. the early
@@ -61,11 +61,21 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   Batch 7 (#1029–#1174, 122 PRs) added the same day. Tooling:
   `agents/scripts/core/historical-review-survivors.sh` + the `historical-code-review`
   skill (shipped PR #968); the persisted workflow shipped PR #1182.
-- **Remaining (UNSWEPT):** **none.** Every merged PR (#1 → #1174) has been
+- **Baseline #1–#1174:** **SWEEP COMPLETE** (above). Every merged PR #1→#1174 was
   historically reviewed survivor-only against origin/develop. (#117 has no merge
   commit — open/closed-unmerged, not a develop squash — and was correctly skipped;
-  #18/#72/#96 were never merged.) New PRs merged *after* #1174 are the only future
-  work: resume from the highest reviewed PR with the recipe below.
+  #18/#72/#96 were never merged.)
+- **Post-#1174 (incremental — NOT a clean frontier):** **140 PRs merged into develop
+  in (#1174, #1322].** **Batch 12** (below, 2026-06-16) survivor-swept **17** of them
+  (a sparse subset of #1282–#1318 surfaced as "merged-since unreviewed" this session,
+  **not** a contiguous range) — 2 LOW findings (both → tooling.md, PR #1321), 13 clean,
+  2 superseded. The other **~123 are NOT yet survivor-swept here.** A subset was
+  spot-reviewed by per-session *rolling* backlog sweeps (e.g. #1300 reviewed
+  #1261/#1266/#1293; #1302 reviewed #1268/#1274; #1304 reviewed #1301), routing findings
+  to `categories/*`, but those were **never laddered into this ledger** — so there is
+  **no clean contiguous reviewed frontier above #1174.** To re-establish one, run the
+  persisted workflow over the full `(1174, 1322]` work-list (recipe below; ~123 PRs ≈
+  6–7M tokens) and append as Batch 13.
 - **Resume instructions (for PRs merged after #1174):**
   1. List the new batch — `gh pr list --state merged --base develop --limit 900
      --json number --jq '[.[] | select(.number > 1174) | .number] | sort |
@@ -101,6 +111,18 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   Issues per ADR-0014 when actioned.
 
 <!-- Batches appended at the top. -->
+
+## Batch 12 — post-#1174 incremental (17-PR session sweep, 2026-06-16)
+
+Coverage: **17 reviewed — 2 with findings, 13 clean, 2 fully superseded, 0 errored, 0 died.** Net: **0 CRITICAL, 0 HIGH, 0 MEDIUM, 2 LOW.** **First post-#1174 installment** — reviewed the merged PRs surfaced as "merged-since unreviewed" this session, a **sparse subset of #1282–#1318** (NOT a contiguous range — see § Sweep status; ~123 other post-#1174 PRs remain unswept-by-survivor here). Survivor-filtered against origin/develop, so every finding is current — already-fixed/reverted code excluded by construction. (Reviewer model `code-review` opus/high via the persisted `historical-review-sweep` workflow; 17/17 agents returned, 0 died, 0 errored.) **Both findings are `userVisible:false` (internal tooling/docs) → NO GitHub Issues; already filed to [`categories/tooling.md`](categories/tooling.md) in PR #1321 (merged).**
+
+### LOW (2)
+- **#1296 (eeeaabb7) · `tests/fuzz/README.md:27`** — broken smoke instruction. The "How it builds" block tells Linux users to run `ctest --preset ninja-fuzzer-linux`, but #1296 added `ninja-fuzzer-linux` only as a configure+build preset — there is **no `testPresets` entry** (CMakePresets.json has no testPresets section at all), and CMake test presets don't inherit from configure/build presets, so the command errors with `No such test preset`. CI is unaffected (`fuzz-smoke.yml` uses bare `ctest --output-on-failure` from the build dir; the smoke test IS registered via `add_test`, so the lane works). Fix: add a matching `testPresets` entry, or change README:27 to `ctest --test-dir build/ninja-fuzzer-linux --output-on-failure`. Filed: tooling.md (P3), PR #1321.
+- **#1308 (a96b1cb0) · `agents/scripts/core/appcontroller_fan_in_audit.py` (`regression()`)** — fan-in ratchet is COUNT-based, not SET-based. `regression()` short-circuits to pass whenever `len(head_paths) <= len(base_paths)`, so a PR that drops one existing `#include "AppController.h"` includer and adds a different NEW one in the same change (net count flat) is **not** flagged — the new dependency slips through, defeating the gate's stated "block a new includer on sight" contract. The offender-listing loop below already computes the true set-difference `sorted(head_paths - base_paths)`; the count guard pre-empts it for count-neutral swaps. Fail-open. Fix: drop the count early-return, always evaluate the set-diff, FAIL on any new includer, add a same-cardinality selftest (`base={A}`, `head={B}`). Filed: tooling.md (P3), PR #1321. (Symbol-pinned, not line-pinned — verified live on develop: `def regression()` :181, count guard :186, set-diff :189.)
+
+**Clean (13, surviving lines reviewed, no findings):** #1282, #1285, #1289, #1290, #1306, #1307, #1309, #1310, #1311, #1312, #1316, #1317, #1318.
+
+**Fully superseded (2, no review surface):** #1284, #1297 — every introduced line was changed/reverted by a later PR (the config-string sanitize layer both PRs added is gone at HEAD); excluded by construction.
 
 ## Batch 11 — #116–#1 (FINAL, 113-PR sweep, 2026-06-13)
 
