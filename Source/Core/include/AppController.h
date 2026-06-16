@@ -96,6 +96,7 @@ class AiAssistantController;
 #include "Types/AppUpdateTypes.h"
 #include "Types/FieldEditTypes.h"
 #include "Types/ConnectivityTypes.h"
+#include "Types/AttachmentTypes.h"
 
 class ITrackerBackendFactory;
 class LocalCacheManager; // fan-in Phase 1: fwd-decl (was a direct heavy include); `std::unique_ptr<LocalCacheManager>
@@ -352,18 +353,15 @@ class AppController : public IMainThreadPoster {
      * If set, Smatchet will download the attachment bytes and save them to a local temp file,
      * then call this handler with the file path.
      */
-    using AttachmentViewerHandler =
-        std::function<void(const std::string& localPath, const std::string& mimeType, const std::string& filename)>;
+    // Fan-in Phase 3b (docs/plans/appcontroller-fan-in.md): AttachmentDescriptor + the host-callback
+    // aliases moved to Types/AttachmentTypes.h; re-exported in-class so consumers keep naming
+    // AppController::AttachmentDescriptor / AppController::Attachment*Handler unchanged.
+    using AttachmentViewerHandler = ::AttachmentViewerHandler;
     void SetAttachmentViewerHandler(AttachmentViewerHandler handler);
-    using AttachmentPreviewHandler = std::function<bool(const std::string& localPath, const std::string& mimeType,
-                                                        const std::string& filename, const std::string& sourceUrl)>;
+    using AttachmentPreviewHandler = ::AttachmentPreviewHandler;
     void SetAttachmentPreviewHandler(AttachmentPreviewHandler handler);
-    struct AttachmentDescriptor {
-        std::string Filename;
-        std::string Url;
-        std::string MimeType;
-    };
-    using AttachmentCollectionHandler = std::function<void(const std::vector<AttachmentDescriptor>& attachments)>;
+    using AttachmentDescriptor = ::AttachmentDescriptor;
+    using AttachmentCollectionHandler = ::AttachmentCollectionHandler;
     void SetAttachmentCollectionHandler(AttachmentCollectionHandler handler);
     void ShowAttachmentCollection(const std::vector<AttachmentDescriptor>& attachments);
 
@@ -372,9 +370,7 @@ class AppController : public IMainThreadPoster {
      * Invoked on the UI thread; implementation may block (e.g. Win32 IFileDialog).
      * If unset, RequestOpenFilePaths completes with an empty vector.
      */
-    using OpenFilePathsHandler =
-        std::function<void(bool allowMultiple, const std::string& initialDirectoryUtf8,
-                           std::function<void(std::vector<std::string> absolutePathsUtf8)> onComplete)>;
+    using OpenFilePathsHandler = ::OpenFilePathsHandler; // moved to Types/AttachmentTypes.h (fan-in Phase 3b)
     void SetOpenFilePathsHandler(OpenFilePathsHandler handler);
     void RequestOpenFilePaths(bool allowMultiple, const std::string& initialDirectoryUtf8,
                               std::function<void(std::vector<std::string>)> onComplete) const;
