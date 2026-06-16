@@ -150,14 +150,20 @@ void RegisterAuditWindowRenderSmoke(ImGuiTestEngine* engine) {
 }
 
 // --- Preferences window --------------------------------------------------
-// drawPreferencesWindow (SmatchetPreferencesUi.cpp). Title "Preferences". The
-// "Save & Sync" button is submitted unconditionally below the tab bar, so it
-// is present regardless of which tab is active and needs no backend state.
+// drawPreferencesWindow (SmatchetPreferencesUi.cpp). Title "Preferences". Probe
+// the first tab header in BeginTabBar("PreferencesTabs") — BeginTabItem("Tracker")
+// — addressed tab-bar-qualified as "PreferencesTabs/Tracker". The tab bar sits at
+// the very top of the window, so its header is never clipped (proving Begin() ran
+// past the tab-bar open) and needs no backend state. The original "Save & Sync"
+// footer button is submitted below a tall tab body in a short docked content
+// region, which clips it out of the Test Engine item table — the same docked-
+// Preferences clipping documented in funcsize_preferences_tabs.test.cpp, which
+// likewise asserts on tab-bar structure rather than a clipped lower widget.
 void RegisterPreferencesWindowRenderSmoke(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "FuncSizeWindowRender", "PreferencesWindow_RendersAndShowsSaveButton");
     t->TestFunc = [](ImGuiTestContext* ctx) {
         RunWindowRenderSmoke(ctx, &UiDrawSession::showPreferences, &UiDrawSession::requestPreferencesFocus,
-                             "Preferences", "Save & Sync");
+                             "Preferences", "PreferencesTabs/Tracker");
     };
 }
 

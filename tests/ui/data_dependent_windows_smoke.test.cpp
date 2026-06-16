@@ -85,9 +85,14 @@
 //
 //   8. Offline Queue panel (DrawUnifiedOfflineQueuesPanel, SmatchetOfflineQueueUi.cpp)
 //      Embedded inline in drawActiveProjectUnsavedStrip (focused pane only), NOT a
-//      standalone window — invoked every frame from the always-drawn host window.
-//      EMPTY path (always covered): host window live ⇒ the panel's total==0
-//      early-return branch ticked under the engine's assert trap (no data needed).
+//      standalone window — invoked every frame from the active-project host window.
+//      FIXTURE-COUPLED (same gate as case 7 + funcsize_grid_render): the host
+//      "Smatchet - Active Project" window only bootstraps once the grid has synced;
+//      without the fixture EnsurePanesLoaded leaves the pane unloaded and the window
+//      is never created (FindWindowByName null), so the test SKIPS rather than
+//      asserting against a window that cannot exist. With the fixture we sync, wait
+//      for tickets, then the panel's total==0 empty-guard branch ticks on the synced
+//      (offline-queue-empty) grid — the EMPTY-path structural coverage.
 //      POPULATED path (opportunistic): enqueue one synthetic create via
 //      AppController::QueueCreateOffline (a pure local-SQLite write — no backend) so
 //      total>0 forces the panel body (header + toolbar + table) to render. The
@@ -338,14 +343,16 @@ void RegisterPlanDocViewerWindowRenderSmoke(ImGuiTestEngine* engine) {
 // "FPS: ... Frame: ... ms" Text + a BeginTabBar("PerformanceTabs") on every
 // frame, zero backend required.
 //
-// Robust probe: "CPU" — the first BeginTabItem("CPU") inside PerformanceTabs,
-// always active on first open, queryable as an item in the ImGui Test Engine
-// tree (tab items have an ID derived from their label within the tab bar scope).
+// Robust probe: "PerformanceTabs/CPU" — the first BeginTabItem("CPU") inside the
+// BeginTabBar("PerformanceTabs") scope, always active on first open. A tab header
+// is addressed tab-bar-qualified ("<TabBarID>/<TabLabel>"), not by its bare label,
+// so the ref must carry the "PerformanceTabs/" prefix to resolve in the Test
+// Engine item tree (the bare "CPU" never resolves under SetRef("Performance")).
 void RegisterPerformanceWindowRenderSmoke(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "DataDependentWindowsSmoke", "PerformanceWindow_RendersAndShowsTabBar");
     t->TestFunc = [](ImGuiTestContext* ctx) {
         RunWindowRenderSmoke(ctx, &UiDrawSession::showPerformance, &UiDrawSession::requestPerformanceFocus,
-                             "Performance", "CPU");
+                             "Performance", "PerformanceTabs/CPU");
     };
 }
 
@@ -581,11 +588,35 @@ void RegisterOfflineQueuePanelRenderSmoke(ImGuiTestEngine* engine) {
     ImGuiTest* t =
         IM_REGISTER_TEST(engine, "DataDependentWindowsSmoke", "OfflineQueuePanel_RendersInlineInActiveProject");
     t->TestFunc = [](ImGuiTestContext* ctx) {
+        // The host window only materialises once the grid has booted on synced
+        // data — every Active-Project test in this suite (funcsize_grid_render,
+        // grid_pane_windows, case 7 above) gates on the fixture and syncs first,
+        // because without it EnsurePanesLoaded leaves the pane unbootstrapped and
+        // drawActiveProjectWindow never creates the "Smatchet - Active Project"
+        // window (FindWindowByName returns null — proven by an engine WindowFocus
+        // "window != nullptr" failure). The earlier "empty path needs no data"
+        // premise was wrong: window activation itself requires the synced grid.
+        // So gate + sync like the siblings; the panel's total==0 empty-guard
+        // branch ticks on the synced (but offline-queue-empty) grid before the
+        // opportunistic enqueue below.
+        if (!FixtureEnvSet()) {
+            ctx->LogInfo("SKIP: SMATCHET_TEST_JIRA_BACKEND_FIXTURE not set — the active-project host "
+                         "window does not bootstrap without a synced grid, so the inline offline-queue "
+                         "panel has no host to tick. Same gate as case 7 + funcsize_grid_render.");
+            return;
+        }
         AppController* app = SmatchetActiveUiTestAppController();
         if (app == nullptr) {
             ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
             return;
         }
+
+        // Boot the fixture grid so the host window renders (same recipe as the
+        // sibling Active-Project tests).
+        app->SyncWithBackend();
+        const bool syncDone = YieldUntil(ctx, [&] { return !app->IsStreamingSyncActive(); });
+        IM_CHECK_NO_RET(syncDone);
+        IM_CHECK_NO_RET(!app->GetActiveTickets().empty());
 
         const char* kWindowTitle = "Smatchet - Active Project";
         ctx->SetRef(kWindowTitle);
