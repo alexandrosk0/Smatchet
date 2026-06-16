@@ -1,5 +1,5 @@
 // Pending-queue backend_key + backend-scoped replay — multi-grid Slice 1c (ADR-0018 decision
-// 4, docs/plans/active/multi-grid-tabs-slice1-design.md § 3.5 "Pending queues" +
+// 4, docs/plans/multi-grid-tabs-slice1-design.md § 3.5 "Pending queues" +
 // "Replay-matching rule").
 //
 // Covers the SERVICE-level bucket-A cases the design mandates (pure-logic on FakeSyncCache —

@@ -2,7 +2,7 @@
 
 > **Slug**: `cell-edit-burst-p99-verify` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `deferred` — parked on unavailable real-GPU (native-GL) hardware / self-hosted runner; the CI-only 15.0 ms p99 ceiling holds in the interim. Resume when a real-GPU box exists (issue #973 open).
 
 ## Context
 

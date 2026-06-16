@@ -1,6 +1,6 @@
 # Plan — Promote Coverage + ASAN + UBSan to branch-protection required contexts (testing-surface Slice C)
 
-**Status:** plan — RE-REVISED after deep recon overturned the premise (the per-PR UBSan job already exists; the real Phase-1 work is fixing an ASAN check that deterministically reds, not adding a job). Phase 1 (safe, non-wedging) may proceed; Phase 2 (live-ruleset flip) is gated on develop-green + reported before/after.
+**Status**: `shipped` — all cited PRs merged (see Implementation log); archived 2026-06-16 via plan-archival sweep.
 **Branch:** `ci/coverage-sanitizer-required-contexts` · worktree `C:\Dev\trees\coverage-sanitizer-required`
 **Parent:** [`testing-surface-roadmap.md`](testing-surface-roadmap.md) Slice **C** (§6 P0). First of the two gating-policy slices (C → B).
 
@@ -98,3 +98,17 @@ N/A — diff is CI YAML + JSON config + docs only. No `Source/Core/` code, no ru
 
 - vs the original (pre-recon) plan: there is **no new UBSan job** — it already exists (`Sanitizer (UBSan via Clang)`). The real Phase-1 product of this slice is the ASAN `Run ctest under ASAN` deterministic-red fix + escape hatches + config promotion, not a job stand-up. The α/β preset fork is moot (α was already the implementation).
 - UBSan-job ctest symmetry refactor (mirror the MSVC job's `-E smatchet_tests` + excluded rig step) deferred — the job is green; changing it adds risk for no current gain. Backlog candidate if the adversarial case ever flakes under Clang instrumentation.
+
+## Implementation log
+
+- `af475041` · Phase 1 (#1253) — fixed the `Run ctest under ASAN` deterministic-red, added both in-workflow `*-out-of-band` escape hatches (`sanitizer-asan` + `sanitizer-ubsan-pr`), and added both `Sanitizer (ASAN via MSVC)` + `Sanitizer (UBSan via Clang)` contexts to `project.config.json` (`branch_protection.required_contexts` + `ci.required_checks`).
+- Phase 2 (final deliverable) — flipped the live `develop` branch-protection `required_status_checks` 6 → 9 via `setup-branch-protection.sh`, now requiring `Coverage` + both Sanitizer contexts.
+
+## Deviations from plan
+
+- None beyond those already recorded in § Deviations above (no new UBSan job; UBSan ctest symmetry refactor deferred).
+
+## Verification (actual)
+
+- Live `develop` branch-protection ruleset now lists **9** required contexts including all three targets (`Coverage (windows-2022 + OpenCppCoverage)`, `Sanitizer (ASAN via MSVC)`, `Sanitizer (UBSan via Clang)`) — confirmed via live `gh api .../protection/required_status_checks`; corroborated by sibling `sanitizer-required-context.md` + `process.md`.
+- Both Sanitizer contexts present in `project.config.json` (`branch_protection.required_contexts` + `ci.required_checks`) — verified present in tree (archival audit 2026-06-16), not re-run.

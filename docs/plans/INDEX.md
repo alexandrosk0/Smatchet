@@ -122,6 +122,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`reduce-coderabbit-review-spend`](shipped/reduce-coderabbit-review-spend.md) | 2026-06-05 | Plan — Reduce CodeRabbit review spend |
 | [`triggered-followup-tracking`](shipped/triggered-followup-tracking.md) | 2026-06-05 | Plan — Triggered follow-up tracking (machine-checkable deferred follow-ups) |
 | [`multi-grid-tabs`](shipped/multi-grid-tabs.md) | 2026-06-06 | Plan — Multiple grid panes (dockable; same or different tracker backend, side-by-side) |
+| [`multi-grid-tabs-slice1-design`](shipped/multi-grid-tabs-slice1-design.md) | 2026-06-06 | Design addendum — multi-grid-tabs Slice 1 (AppController de-singleton + concurrency foundation) |
 | [`perf-gate-revival`](shipped/perf-gate-revival.md) | 2026-06-06 | Perf-gate revival (Pillar 1) — execution playbook |
 | [`shrink-over-100-line-functions`](shipped/shrink-over-100-line-functions.md) | 2026-06-06 | Decompose all 68 functions over the 100-line soft-warn tier (UI + non-UI) under 100 lines, ideally 40-80. Follow-up to decompose-top-20-monoliths (which cleared the hard cap). |
 | [`user-info-window`](shipped/user-info-window.md) | 2026-06-06 | Plan — User Info Window |
@@ -132,15 +133,25 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`dedup-tracker-query-and-ai-client-clones`](shipped/dedup-tracker-query-and-ai-client-clones.md) | 2026-06-08 | Plan — De-duplicate tracker query-suggest + AI-client SSE clones |
 | [`mobile-app-jql-mvp`](shipped/mobile-app-jql-mvp.md) | 2026-06-08 | Plan — Mobile app (Android-first) — Jira JQL → editable-column ticket list |
 | [`p4-git-connector-github-mirror`](shipped/p4-git-connector-github-mirror.md) | 2026-06-08 | Plan — GitHub → p4d one-way mirror via Helix4Git Git Connector (WSL2) |
+| [`tracker-result-migration`](shipped/tracker-result-migration.md) | 2026-06-08 | Plan — Tracker backend `Result<T, TrackerError>` migration (hardening #21b) |
 | [`backend-switch-sync-race-1081`](shipped/backend-switch-sync-race-1081.md) | 2026-06-09 | Fix #1081 backend-switch (Jira→GitHub) `std::terminate` — publish-under-lock, `backendGeneration_` token gating stale-worker writes + replay-refresh TOCTOU re-check, captured-key replay latch, and `PaneSyncKickPolicy` sync-storm damping. |
 | [`dual-ui-mode-desktop-mobile`](shipped/dual-ui-mode-desktop-mobile.md) | 2026-06-09 | Plan — Desktop / Mobile switchable UI modes |
 | [`mobile-mvp-completion`](shipped/mobile-mvp-completion.md) | 2026-06-09 | Plan — Mobile (Android) Phase-0 MVP completion |
 | [`ilocalcache-seam`](shipped/ilocalcache-seam.md) | 2026-06-10 | ISyncCache seam (ADR-0020) — 28-method sync-cache interface decouples OfflineQueueService/TicketSyncService/IssueCreatePipeline from SQLite; service tests run on a contract-suite-verified FakeSyncCache with a configure-time purity guard; PR1 #1112 (seam) + PR2 (test purity). |
+| [`ui-help-marker-tooltips`](shipped/ui-help-marker-tooltips.md) | 2026-06-10 | UI text shortening + (?) help-marker tooltip |
 | [`pane-backend-picker`](shipped/pane-backend-picker.md) | 2026-06-11 | Plan — Per-pane backend picker (choose which tracker a new grid pane loads) |
 | [`build-infra-followups`](shipped/build-infra-followups.md) | 2026-06-12 | Plan — build-infra followups (6 backlog items) |
+| [`a11y-help-marker-keyboard-nav`](shipped/a11y-help-marker-keyboard-nav.md) | 2026-06-13 | Plan — a11y: keyboard-reachable (?) help-marker tooltips (#1128) |
+| [`ci-gate-hardening-parity-bucketlane`](shipped/ci-gate-hardening-parity-bucketlane.md) | 2026-06-13 | Plan — CI gate hardening: required-context parity selftest + bucket-lane launch-smoke |
 | [`mobile-ci-smoke-gate`](shipped/mobile-ci-smoke-gate.md) | 2026-06-13 | Plan — Mobile CI smoke gate for the #1122 texture-lifetime crash class |
+| [`sanitizer-nightly-asan-ubsan-fix`](shipped/sanitizer-nightly-asan-ubsan-fix.md) | 2026-06-13 | Plan — Sanitizer nightly (ASan+UBSan) fix + config-skew preventing gate |
+| [`ui-freeze-pillar2-blocking`](shipped/ui-freeze-pillar2-blocking.md) | 2026-06-13 | Plan — Pillar-2 UI-thread blocking elimination (future-destructor + sync-I/O cluster) |
 | [`core-include-dag`](shipped/core-include-dag.md) | 2026-06-14 | Plan — DAG-ify the Source/Core include graph |
+| [`http-fault-injection`](shipped/http-fault-injection.md) | 2026-06-14 | Plan — HTTP fault-injection + retry wiring (testing-surface Slice D + D3) |
+| [`image-dim-cap`](shipped/image-dim-cap.md) | 2026-06-14 | Plan — Image-dimension cap in the attachment-preview parser (testing-surface Slice E1) |
+| [`issue-comments`](shipped/issue-comments.md) | 2026-06-14 | Plan — Issue comments (all 3 backends): count column + read/post modal |
 | [`keyboard-shortcuts-rebindable`](shipped/keyboard-shortcuts-rebindable.md) | 2026-06-14 | Plan — Rebindable keyboard shortcuts (unified, all shortcuts listed + changeable) |
+| [`coverage-sanitizer-required-contexts`](shipped/coverage-sanitizer-required-contexts.md) | 2026-06-15 | Plan — Promote Coverage + ASAN + UBSan to branch-protection required contexts (testing-surface Slice C) |
 | [`pr-intent-capture`](shipped/pr-intent-capture.md) | 2026-06-15 | Plan — PR intent capture (prompt → PR `## Intent`, redacted) |
 | [`sanitizer-required-context`](shipped/sanitizer-required-context.md) | 2026-06-15 | Plan — `sanitizer-required-context`: promote both Sanitizer PR lanes to required |
 <!-- END auto-plan-index -->

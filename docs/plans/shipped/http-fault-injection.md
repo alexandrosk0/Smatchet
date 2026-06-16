@@ -2,7 +2,7 @@
 
 > **Slug**: `http-fault-injection` (matches this file's basename without `.md`).
 >
-> **Status**: `active`.
+> **Status**: `shipped` — all cited PRs merged (see Implementation log); archived 2026-06-16 via plan-archival sweep.
 >
 > **Parent**: [`testing-surface-roadmap.md`](testing-surface-roadmap.md) Slice **D** (§6 P1 Gap 2; `debt.md:65`) + the **D3** wiring follow-up (user-approved to do now). Part of the approved additive block H→A→D→E1. **Product change** — touches the strict zone `Source/Core/src/Tracker/`, so the perf-gate section fires.
 
@@ -61,7 +61,7 @@ Transport-only POST retry is safe for *all* POST shapes: if the request never la
 
 **Docs:**
 8. `docs/guides/testing-surface.md` — §5 Gap 2 + §5.1 row 2 corrections (loopback reaches transport; retry now wired; void reframed to D2 only).
-9. `docs/plans/active/testing-surface-roadmap.md` — fold recon #2 correction (retry was dead code, now wired), Slice A row ("already shipped via #1180"), Slice D row → D+D3.
+9. `docs/plans/testing-surface-roadmap.md` — fold recon #2 correction (retry was dead code, now wired), Slice A row ("already shipped via #1180"), Slice D row → D+D3.
 10. `docs/self-improvement/categories/debt.md` — close the `debt.md:65` item; add no new D3 backlog (D3 done). Add a D2 follow-up entry (timeout/SSL/truncated-body seam).
 
 **Grep-before-naming**: `rg -l 'TrackerHttpRetry|JiraHttpFaults' tests/` → neither TU exists. Retry helper lives only in `TrackerHttpClient.{h,cpp}`.
@@ -125,15 +125,14 @@ Per `docs/plans/shipped/pillar-1-2-perf-review-system.md`:
 - **`Retry-After` header honouring on 429** — the wrapper uses fixed exponential backoff; reading `Retry-After` is a future refinement, not in scope.
 
 ## Implementation log
-*(populated post-ship)*
+- `377c9f72` · #1231 — HTTP fault-injection tests + wire retry into live paths (Slice D+D3): wired `TrackerHttpRequestWithRetry` into the live `TrackerHttpUtils.cpp` helpers, added `kTrackerHttpDefaultMaxAttempts` + `maxAttempts`/`cancelled` params, extended `JiraCatalogHttpFixture`, added `tests/Core/TrackerHttpRetry.test.cpp` + `tests/Core/TrackerHttpFaults.test.cpp`.
 
 ## Deviations from plan
-*(populated post-ship)*
+- **Integration TU renamed**: the loopback integration TU shipped as `tests/Core/TrackerHttpFaults.test.cpp`, not the planned `tests/Core/JiraHttpFaults.test.cpp` (§ Approach test 3 + § Files-to-modify row 6).
+- **Cancel-token threading deferred** (§ Files-to-modify row 3): threading the existing `shouldCancel` token into the Jira/Plane search-fetch GET loops (`JiraIssueSearch.cpp` / `PlaneIssueSearch.cpp`) was NOT landed. The worker-thread no-token fallback is acceptable (every tracker HTTP call already runs off-UI, so the ≤ ~7 s backoff never freezes the UI; worst case a background worker lingers on shutdown); deferred as hardening.
+- **Doc-update rows 8-10 deferred** (§ Files-to-modify): the `docs/guides/testing-surface.md`, `docs/plans/testing-surface-roadmap.md`, and `docs/self-improvement/categories/debt.md` updates were NOT landed in #1231 — deferred follow-up tracked in `debt.md`.
 
 ## Verification (actual)
-*(populated post-ship)*
-
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. flip § Status to `shipped`,
-2. `git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,
-3. regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.
+- **Bucket A (pure-logic ctest)**: `tests/Core/TrackerHttpRetry.test.cpp` + `tests/Core/TrackerHttpFaults.test.cpp` verified present in tree (archival audit 2026-06-16), not re-run.
+- **Retry wired live**: `TrackerHttpRequestWithRetry` wired into the live `TrackerHttpUtils.cpp` helpers with `kTrackerHttpDefaultMaxAttempts` + `maxAttempts`/`cancelled` params; `JiraCatalogHttpFixture` extended for mutations — verified present in tree (archival audit 2026-06-16), not re-run.
+- **Build / sanitizer / perf / doc gates**: not independently re-run during the archival audit; merged under #1231's CI.

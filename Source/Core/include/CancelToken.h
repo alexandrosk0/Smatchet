@@ -2,7 +2,7 @@
 #define SMATCHET_UI_CANCEL_TOKEN_H
 
 // Cooperative cancellation primitive for UI-owned background workers
-// (docs/plans/active/ui-freeze-pillar2-blocking.md, WS-A).
+// (docs/plans/ui-freeze-pillar2-blocking.md, WS-A).
 // Pillar-2 (UI never freezes): destroying a `std::async` future whose worker is
 // still running blocks the UI thread until the worker drains — several seconds
 // for a p4-annotate activity scan (#1150) or a bulk-import run (#734). A worker

@@ -624,7 +624,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/TicketSyncService.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpUtils.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpPure.cpp"
-    # Slice D of docs/plans/active/http-fault-injection.md — the retry+classify engine
+    # Slice D of docs/plans/http-fault-injection.md — the retry+classify engine
     # (TrackerHttpRequestWithRetry / ClassifyTrackerResponse). Wired live into the
     # TrackerXxxLogged helper bodies in TrackerHttpUtils.cpp (D3), so the rig must link
     # it or TrackerHttpUtils.cpp's now-live retry calls are unresolved symbols.

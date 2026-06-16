@@ -2,6 +2,8 @@
 
 > **Slug**: `harness-audit-suite` (matches this file's basename without `.md`).
 >
+> **Status**: `active` — not started (only the plan doc merged, #793).
+>
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template.
 >
 > **Concept credit**: the four tool ideas below are inspired by the ECC harness-audit skills ([affaan-m/ECC](https://github.com/affaan-m/ECC), MIT). This is a **clean-room** adoption — ECC's `SKILL.md` / collector scripts were read for *concept understanding only*; nothing is copied byte-for-byte. Each shipped tool carries a one-line courtesy credit; there is **no** vendored file, **no** `NOTICE`, **no** `origin: ECC` frontmatter (none is owed when no copyrighted expression is reproduced — and foreign literals would trip `test-portable-purity` for nothing).

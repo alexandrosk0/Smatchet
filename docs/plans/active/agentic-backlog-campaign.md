@@ -2,11 +2,13 @@
 
 > **Slug**: `agentic-backlog-campaign` (matches this file's basename without `.md`).
 >
+> **Status**: `active` — most priority batches shipped; B7 (supply-chain) + B8 (bucket-E keystone) remain.
+>
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template.
 
 ## Context
 
-The self-improvement backlog (`docs/self-improvement/categories/`) holds **138 live entries** as of 2026-06-02 (bug 14 · process 27 · tooling 46 · infra 17 · test 19 · security 14 · external 1). They accumulated organically from agent `## Self-improvement` reports across many ship-loops; no campaign has driven them down. This plan batches the 137 actionable entries (one is already resolved — see below) into cohesive, shippable PRs ordered by priority + dependency, so the loop tightens instead of growing.
+The self-improvement backlog (`docs/self-improvement/categories/`) held **138 live entries** as of 2026-06-02 — *point-in-time snapshot, now stale* (bug 14 · process 27 · tooling 46 · infra 17 · test 19 · security 14 · external 1); the count has since dropped as the batches below shipped. They accumulated organically from agent `## Self-improvement` reports across many ship-loops; no campaign has driven them down. This plan batches the 137 actionable entries (one is already resolved — see below) into cohesive, shippable PRs ordered by priority + dependency, so the loop tightens instead of growing.
 
 Already-dead entry: **security P1 "bug-reporter must NOT ship a GitHub token"** is marked `RESOLVED — relay deployed + verified live 2026-05-30`. It needs archiving to `applied.md`, not work. Folded into B0.
 
@@ -139,9 +141,10 @@ Grouped by batch. `path` links are representative anchors; each batch's PR enume
 ## Implementation log
 
 - `bedda57e` · #691 · B0 — plan doc + archived 3 already-shipped P1s (CI merge-base #688, bug-reporter relay, merge-watcher GH_API_DOWN). Squash-merged to develop.
-- `32040e3e` · #693 · Phase-0 staleness sweep — archived 11 more already-shipped entries (1 P1 + 8 P2 + 2 P3) with per-entry tree evidence.
-- #701 · **B4** — AI-endpoint host allow-list + insecure-http consent (the lone live P1): `EndpointPolicy` host-pin + consent verdicts, single-source `AiEndpointPolicy`, migration grandfather, consent UI, 18 tests. Survived a CR round (loopback-bypass tightening + host-exact grandfather). Archived the source security P1.
+- `00b6caf5` · #693 · Phase-0 staleness sweep — archived 11 more already-shipped entries (1 P1 + 8 P2 + 2 P3) with per-entry tree evidence. **MERGED** to develop (was previously logged as open).
+- #701 · **B4** — AI-endpoint host allow-list + insecure-http consent (the lone live P1 at the time): `EndpointPolicy` host-pin + consent verdicts, single-source `AiEndpointPolicy`, migration grandfather, consent UI, 18 tests. Survived a CR round (loopback-bypass tightening + host-exact grandfather). Archived the source security P1. **MERGED.**
 - #703 · **B10** — encoded 14 deferred process forcing-rules into their home docs (AGENTS.md, process-rules.md, delegation.md, git-janitor.md, architect.md, _plan-template.md, imgui-draw-pattern.md, SI workflow) + archived all 14 source entries. Sub-plan: `b10-docs-forcing-rules.md`.
+- **Post-2026-06-02 batch members merged** (B5/B6 cluster + B9 tooling drained the bulk of the remainder): #1210 (`AgentsMdLoader` containment / path-traversal hardening), #1221 (`ai.prompt` rate-limit), #1268 + #1284 (CR/LF persist-strip), #1230 + #1269 (stream-error redaction), #1211 (JQL escape), #1212 + #1232 (`cpr` redirect-disable on tracker helpers). **B9 tooling landed**: `scripts/dev/git-leftover-audit.sh` + `scripts/dev/worktree-prune.sh` now exist.
 
 ## Deviations from plan
 
@@ -149,20 +152,25 @@ Grouped by batch. `path` links are representative anchors; each batch's PR enume
 - **B6 and B11 shrank; B7 partially cleared.** Tracker option-resolution + Plane empty-page (B6) done; AiClientFactory-raw-new + 11-empty-catch (B11) done; CI dead-job + workflow-permissions (B7) done. Remaining members of those batches stay live.
 - **Sweep coverage is scoped to code-defect entries** (staleness detectable by grep/tree-check). Process-rule proposals (process.md, B10) and coverage-gap entries (test.md, most B8 dependents) do not go stale via code drift — they remain live by nature and were not re-verified one-by-one.
 
-## Re-scoped live remainder (post-sweep)
+## Re-scoped live remainder (post-sweep, post-2026-06-02 drain)
 
-Single live P1: **B4 AI-endpoint host allow-list**. Revised live batches:
+**No live P1 remains** — B4 (the former lone P1) merged via #701, and the bulk of the B5/B6/B9 clusters drained through the post-2026-06-02 PRs logged above. The two genuinely remaining campaign batches are **B7 (supply-chain hardening)** and **B8 (bucket-E keystone)**:
 
-- **B4** (P1) — AI-endpoint allow-list + http→non-loopback consent. `AiEndpointSanitize.cpp` still only checks scheme.
-- **B5** — AI assistant cluster, all live: torn-config (4 `ConfigManager::Load()`/turn), `RefreshProviderForTurn` fail-open, `ComposeSystemPrompt` escape, `AgentsMdLoader` path-traversal, `ai.prompt` rate-limit, first-send consent modal, CR/LF persist-strip, `AiSseParser::Flush` partial-frame.
-- **B6** (shrunk) — JQL injection, tracker `cpr::Redirect(true,true)` ×5 cross-host auth forwarding.
-- **B7** (shrunk) — Lua tarball `EXPECTED_HASH`, action SHA-pins (23 floating `@v`), Mesa TOFU SHA256, narrowing-scan parallelize, C++ lint in CI.
-- **B8** — bucket-E unblock keystone (spawn flake + `SmatchetTests` `/EHsc` + perf-run worktree handshake) → ~10 dependent coverage TUs.
-- **B9** — `git-leftover-audit.sh` → `worktree-prune.sh` + `git-janitor --light`.
-- **B10** — ~12 doc/process forcing-rule edits (live by nature).
-- **B11** (shrunk) — `IAiClient ~ = default`, AiTypes sentinel comments, SSE/NDJSON `LOG_WARN` redact ×3, `merge_gates.bats` `LC_ALL`, PR-numbered comment sweep.
-- **Tier-3 (own plans)** — B12 AppController decomposition (1263 LOC, live), B13 TU-splits, B14 `#define ImGui` sweep (10+ TUs, live).
+- **B7 (supply-chain hardening — remaining)** — verified still open against the tree: there is **no `.github/dependabot.yml`** (github-actions weekly update never landed), and `CMakeLists.txt` carries only a **soft `file(SHA256 …)` check** on the Lua tarball, *not* a hard `EXPECTED_HASH SHA256=` on the download. Plus action SHA-pins / Mesa TOFU SHA256 to the extent not yet pinned. This is the live supply-chain work.
+- **B8 (bucket-E keystone — remaining)** — verified still open: `tests/CMakeLists.txt` has **no `/EHsc`** on `SmatchetTests` (so `CHECK_THROWS*` won't compile locally), and the **spawn-warmup + perf-run handshake** (deterministic spawn-warmup gate + headless file-result mode bypassing the spawn socket) have **not landed**. Unblocks ~10 dependent coverage TUs once done.
+
+Drained / no-longer-live (merged via the post-2026-06-02 PRs above):
+
+- **B4** (P1) — DONE (#701): AI-endpoint allow-list + http→non-loopback consent.
+- **B5** — substantially drained: `AgentsMdLoader` containment (#1210), `ai.prompt` rate-limit (#1221), CR/LF persist-strip (#1268/#1284), stream-error redaction (#1230/#1269). Remaining B5 members (e.g. torn-config snapshot, `RefreshProviderForTurn` fail-closed, `ComposeSystemPrompt` escape, `AiSseParser::Flush` partial-frame) ride along future AiAssistant touches if still live.
+- **B6** — drained: JQL escape (#1211), tracker `cpr` redirect-disable (#1212/#1232).
+- **B9** — landed: `git-leftover-audit.sh` + `worktree-prune.sh` exist; `git-janitor --light` follows opportunistically.
+- **B10** — ~14 doc/process forcing-rule edits encoded via #703 (live-by-nature residue, if any, folds into future doc passes).
+- **B11** (shrunk) — `IAiClient ~ = default`, AiTypes sentinel comments, SSE/NDJSON `LOG_WARN` redact ×3, `merge_gates.bats` `LC_ALL`, PR-numbered comment sweep — fold opportunistically.
+- **Tier-3 (own plans)** — B12 AppController decomposition (live), B13 TU-splits, B14 `#define ImGui` sweep (live).
 
 ## Verification (actual)
 
-- B0 + sweep: pure-docs. `test-backlog-counts.sh` 8/0 on both. #691 squash-merged clean (gates passed via watcher). #693 open.
+- B0 + sweep: pure-docs. `test-backlog-counts.sh` 8/0 on both. #691 squash-merged clean (gates passed via watcher). #693 **MERGED** at `00b6caf5` (was previously logged as open).
+- B4 (#701) + B10 (#703) + the post-2026-06-02 batch members (#1210, #1221, #1268/#1284, #1230/#1269, #1211, #1212/#1232) all merged to develop. B9 tooling (`git-leftover-audit.sh`, `worktree-prune.sh`) landed.
+- **Still to verify on completion**: B7 (`dependabot.yml` + Lua `EXPECTED_HASH`) and B8 (`/EHsc` + spawn-warmup/perf-run handshake) — neither landed yet per tree check.

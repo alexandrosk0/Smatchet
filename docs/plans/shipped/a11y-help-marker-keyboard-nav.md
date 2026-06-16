@@ -2,7 +2,7 @@
 
 > **Slug**: `a11y-help-marker-keyboard-nav` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `shipped` — all cited PRs merged (see Implementation log); archived 2026-06-16 via plan-archival sweep.
 
 ## Context
 
@@ -62,15 +62,11 @@ Make the marker a **focusable item that shows its tooltip on focus as well as ho
 - A broader Pillar-4 audit (font scaling, contrast) — the backlogged Pillar-4 epic.
 
 ## Implementation log
-*(populated post-ship)*
+- `4be10390` · fix(a11y): keyboard-reachable (?) help-marker tooltips (#1128) (#1179) — `InvisibleButton` + `ImGuiButtonFlags_EnableNav` in `SmatchetHelpMarker.cpp`; tooltip on `IsItemHovered() || IsItemFocused()`; bucket-E gate `tests/ui/help_marker_keyboard_focus.test.cpp`. Related postmortem #1131 (`707bf79c`).
 
 ## Deviations from plan
-*(populated post-ship)*
+- None — shipped as planned; out-of-scope items unchanged (global show-all-help toggle and broader Pillar-4 audit remain deferred).
 
 ## Verification (actual)
-*(populated post-ship)*
-
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+- Bucket-E gate `tests/ui/help_marker_keyboard_focus.test.cpp` present in tree (archival audit 2026-06-16), not re-run.
+- Centralized fix in `Source/Core/src/Ui/SmatchetHelpMarker.cpp` (focusable `InvisibleButton` + `ImGuiButtonFlags_EnableNav`, tooltip on `IsItemHovered() || IsItemFocused()`) verified present in tree (archival audit 2026-06-16), not re-run.

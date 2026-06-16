@@ -2,6 +2,8 @@
 
 > **Slug**: `agentic-harness-campaign` (matches this file's basename without `.md`).
 >
+> **Status**: `active` — 4 of 6 child waves shipped; agent-kit-productization + harness-audit-suite remain.
+>
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template.
 
 ## Context
@@ -66,10 +68,20 @@ N/A at the campaign level — no `Source/Core/` source change in any wave. Each 
 - **Per-child:** each child plan owns its § Verification; this campaign only tracks sequence + blocker state.
 
 ## Implementation log
-*(populated post-ship — one bullet per shipped child wave)*
+*(one bullet per shipped child wave)*
+
+- **Shipped (4 of 6 children, now in `docs/plans/shipped/`):**
+  - `agent-charter-altitude` (#774) — Wave 1 #1.
+  - `internal-procedure-skills` (#776) — Wave 1 #2 (keystone; unblocked #6).
+  - `solo-merge-review-gate` (#777) — Wave 1 #3 (re-scoped codify-only).
+  - `coverage-threshold-graduation` (#834) — Wave 3 #6.
+- **Still active (2 of 6 children):**
+  - `agent-kit-productization` — Phase A unbuilt.
+  - `harness-audit-suite` — unbuilt.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- `coverage-threshold-graduation` (#834): the threshold flip landed at **65%** (a measured floor), not the **70%** originally floated in correction 3 / Wave 3 #6 — the real coverage number did not clear 70, so the maintainer set a 65% floor.
 
 ## Verification (actual)
 *(populated post-ship)*

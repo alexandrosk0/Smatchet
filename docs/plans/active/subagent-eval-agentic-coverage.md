@@ -6,7 +6,7 @@
 >
 > **Scope clarifier**: evaluates the **development agents** (`agents/*.md` — the orchestrator + the ~30 delegated subagents), NOT the Smatchet product or any in-app AI-assistant surface. Same scope as the parent `subagent-eval-harness.md` (shipped) and the now-absorbed `subagent-eval-flywheel.md`.
 >
-> **Absorbs**: `docs/plans/active/subagent-eval-flywheel.md` — that plan's trace-flywheel content is folded into Phase 2 here; the old file is marked `deferred — superseded by this plan` in the same PR that lands this doc.
+> **Absorbs**: `docs/plans/subagent-eval-flywheel.md` — that plan's trace-flywheel content is folded into Phase 2 here; the old file is marked `deferred — superseded by this plan` in the same PR that lands this doc.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 
@@ -84,7 +84,7 @@ Grouped by phase; each group is one PR. `path` links point at the existing files
 29. `tests/bats/agent_eval_run.bats` (edit) — fault-injection + delegation-capture assertions with the fake runner.
 
 **Cross-cutting (done in THIS plan-doc PR — the absorb; the rest land per-phase above):**
-30. `docs/plans/active/subagent-eval-flywheel.md` — set `Status` to `deferred — superseded by subagent-eval-agentic-coverage`; add a one-line redirect banner. (Folded, not cancelled — its content lives in Phase 2 here.) **Done in this PR.**
+30. `docs/plans/subagent-eval-flywheel.md` — set `Status` to `deferred — superseded by subagent-eval-agentic-coverage`; add a one-line redirect banner. (Folded, not cancelled — its content lives in Phase 2 here.) **Done in this PR.**
 31. [`docs/agent-rules/subagent-eval.md`](../../agent-rules/subagent-eval.md) line 5 — repoint the forward-roadmap pointer from the standalone flywheel plan to this unified plan (tier-less). **Done in this PR.** (AGENTS.md needs no edit: it references subagent-eval only via the `cpp-rules.md` keyword row — the nav chain is `AGENTS.md` → `cpp-rules.md` → `subagent-eval.md`, and the load-bearing pointer is the one in `subagent-eval.md`.) The deeper Phase-0 doc edit — documenting the calibration loop + WARN→BLOCK criteria — is item #7 above and lands with Phase 0.
 32. `docs/self-improvement/categories/tooling.md` (2026-05-31 P2 residue) — repoint its item-(3) flywheel reference to this unified plan; entry stays **open** until Phase 0 actually ships (then partly retire it). **Done in this PR.**
 

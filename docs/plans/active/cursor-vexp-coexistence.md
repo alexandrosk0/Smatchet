@@ -12,6 +12,8 @@ Two layout models collide. The vexp installer (v1.2.x) writes `.cursor/rules` as
 
 After this lands: one idempotent `bash agents/scripts/core/setup-harness.sh cursor` run auto-migrates the vexp single-file into `.cursor/rules/vexp.mdc`, installs `agents.mdc`, and emits per-subsystem `subsystem-<ctx>.mdc` shims — with vexp + Smatchet search policies reconciled rather than contradictory.
 
+> **Stale-context note (added during plan-archival sweep)**: PR #1084 (merged 2026-06-09, before this plan was filed 2026-06-13) removed vexp as a Claude Code nav tool and scrubbed vexp from the `docs/harness/cursor/` docs; vexp now survives only in `AGENTS.md` + the locally-deployed `CLAUDE.md`. The Cursor-vexp-coexistence premise should be re-validated / re-scoped before implementation begins.
+
 ```
 vexp installer        --writes single file-->  .cursor/rules (file)        --blocks-->  .cursor/rules/*.mdc (dir)
 setup-harness cursor  --needs directory----->  .cursor/rules/*.mdc (dir)

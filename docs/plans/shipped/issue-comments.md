@@ -2,7 +2,7 @@
 
 > **Slug**: `issue-comments` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `shipped` — all cited PRs merged (see Implementation log); archived 2026-06-16 via plan-archival sweep.
 >
 > **Usage**: copy this template to `docs/plans/active/<slug>.md` as the first step of any new plan. Fill every section.
 >
@@ -120,15 +120,14 @@ Trade-off: Plane has no comment count in its list payload, so rather than a per-
 - bucket-E automation of the modal flow if not landed in PR-A — `docs/self-improvement/categories/tooling.md` follow-up.
 
 ## Implementation log
-*(populated post-ship)*
+- `3c10e1d1` · PR-A #1217 — shared comments UI/modal + AppController read wrapper + GitHub end-to-end (both `ITrackerCollaboration` overrides, catalog field, free count from search payload).
+- `1aa25cf1` · PR-B #1218 — Jira `FetchIssueComments` read override + free count from the comment `total`.
+- `2e0940ad` · PR-C #1219 — Plane read+post from scratch (UUID resolution, `comment_html` body) + icon-only grid column (no count).
+- `1cce7c12` · consolidating fix #1266 — wired `SmatchetCommentsModalUi` into the active-project grid and reconciled the 3 backends.
 
 ## Deviations from plan
-*(populated post-ship)*
+- Explicitly deferred (no-action / follow-up): comment edit/delete, the Plane comment count column (icon-only by design — a per-row count fetch would violate Pillar 2), rich-text/markdown rendering of comment bodies (plain-text `Body` contract), and bucket-E modal-flow automation.
 
 ## Verification (actual)
-*(populated post-ship)*
-
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+- Deliverables verified present in tree (archival audit 2026-06-16): GitHub/Jira/Plane `CommentMappingPure` modules + tests; `FetchIssueComments` overrides in all three clients; `SmatchetCommentsModalUi.{h,cpp}` wired into `SmatchetActiveProjectGridUi.cpp`.
+- Test/build gates (Bucket A ctest, dual-target build, ASAN, doc-validation, grid-scenario perf): verified present in tree (archival audit 2026-06-16), not re-run.

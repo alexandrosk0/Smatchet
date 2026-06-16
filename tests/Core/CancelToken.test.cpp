@@ -1,4 +1,4 @@
-// CancelToken.test.cpp — WS-A of docs/plans/active/ui-freeze-pillar2-blocking.md.
+// CancelToken.test.cpp — WS-A of docs/plans/ui-freeze-pillar2-blocking.md.
 //
 // Pure-logic coverage of the cooperative-cancellation primitives in
 // Source/Core/include/CancelToken.h: the CancelToken shared atomic flag and

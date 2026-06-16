@@ -2,7 +2,7 @@
 
 > **Slug**: `ui-freeze-pillar2-blocking` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `shipped` — all cited PRs merged (see Implementation log); archived 2026-06-16 via plan-archival sweep.
 
 ## Context
 
@@ -102,7 +102,7 @@ WS-B (one site per row; each its own commit, batchable):
 
 **WS-A — cooperative future cancellation (shipped 2026-06-13).** WS-B (#1001 cluster) shipped separately as #1181; this entry covers WS-A only.
 
-- **`Source/Core/include/Ui/CancelToken.h`** (new, header-only) — `smatchet::ui::CancelToken` (copyable handle onto a shared `std::atomic<bool>`; `Cancel` / `IsCancelled` / `Reset`, fail-safe-to-cancelled on a null handle) + `smatchet::ui::CancellableFutureSet<T>` owner helper (`Token` / `Add` / `SignalCancelAll` / `AbandonInto` non-blocking / `JoinAll` teardown drain). Dual-target-safe (only `<atomic>/<future>/<memory>/<vector>`); no GLFW/GL.
+- **`Source/Core/include/CancelToken.h`** (new, header-only) — `smatchet::ui::CancelToken` (copyable handle onto a shared `std::atomic<bool>`; `Cancel` / `IsCancelled` / `Reset`, fail-safe-to-cancelled on a null handle) + `smatchet::ui::CancellableFutureSet<T>` owner helper (`Token` / `Add` / `SignalCancelAll` / `AbandonInto` non-blocking / `JoinAll` teardown drain). Dual-target-safe (only `<atomic>/<future>/<memory>/<vector>`); no GLFW/GL.
 - **`SmatchetBulkTicketsUi.cpp`** (#734) — the three `bulkImportFutures.clear()` sites (parse / close / run) now call a new `BulkImportAbandonFutures(d)` = signal `d.bulkImportCancel.Cancel()` → move still-valid futures into `d.bulkImportFutureGraveyard` → `Reset()` the token. The per-row create passes `d.bulkImportCancel` to `CreateIssueAsync`.
 - **`AppController::CreateIssueAsync`** — gained a defaulted `smatchet::ui::CancelToken cancel` param (Lua caller unaffected); the worker checks `IsCancelled()` before the network create (returns a benign "Cancelled." result) and again before the post-create `RefreshLocalData` / hydration that dereferences `this`.
 - **`SmatchetUiSession.h`** — added `bulkImportCancel` (token) + `bulkImportFutureGraveyard` to `UiDrawSession`.
@@ -128,8 +128,3 @@ WS-B (one site per row; each its own commit, batchable):
 - **Manual residue**: full-stack bucket-E drive of `SmatchetUserInfoUi::DrawWindow` (real ImGui frame + mock blocking backend) and full-rig ASan in CI are deferred with concrete follow-up plans (see Deviations); the faithful doctest analogue covers the Pillar-3 ordering contract today.
 
 *(WS-B already shipped as #1181 — its log/verification lives on that PR.)*
-
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*

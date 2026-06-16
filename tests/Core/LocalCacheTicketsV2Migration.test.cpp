@@ -1,5 +1,5 @@
 // tickets_v2 backend-key namespacing — multi-grid Slice 1b (ADR-0018 decision 4,
-// docs/plans/active/multi-grid-tabs-slice1-design.md § 3.5).
+// docs/plans/multi-grid-tabs-slice1-design.md § 3.5).
 //
 // Covers the three bucket-A cases the design mandates:
 //   * One-time copy migration round-trip on a PRE-migration fixture DB: legacy v1 rows

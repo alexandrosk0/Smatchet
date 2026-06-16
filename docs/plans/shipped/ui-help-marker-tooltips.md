@@ -1,5 +1,7 @@
 # UI text shortening + (?) help-marker tooltip
 
+> **Status**: `shipped` — all cited PRs merged (see Implementation log); archived 2026-06-16 via plan-archival sweep.
+
 ## Context
 
 Smatchet UI has ~40 visible strings longer than 8 words or multiline — mostly in Preferences tabs, Annotate Analysis, Perf and Offline Queue. Long paragraphs inline waste vertical space, push controls below the fold, and make the panels feel noisy. User wants the visible text shrunk and the full original text reachable via a "(?)"-in-a-circle icon next to it that shows a hover tooltip.
@@ -149,21 +151,23 @@ Localization: new `<panel>.<field>.{short,help}` keys appear inline at the `T(ke
 
 - **Bucket A — lint/build** — `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop` (dup_audit + agent_size_audit + zone lints). `cmake --build --preset ninja-msvc` and the DX12 preset both clean. `pre-ship.sh` once per slice.
 - **Bucket C — screenshot diff** per touched panel pre/post: `(?)` glyph present, short-label one-liner fits at default + 1.5× font scale, tooltip body wraps at ~35 ems, multiline preserved, hover delay matches existing tooltips. Visual-validation exception applies (visual change in `Smatchet*Ui*.cpp` — orchestrator pauses for user verdict per `ship-loops.md` if no bucket-E coverage exists for the panel).
-- **Bucket E (deferred)** — keyboard-nav reachability of new tooltips: no ImGui Test Engine coverage for hover surfaces today; flag `test-author` to wire alongside slice ship.
+- **Bucket E (resolved)** — keyboard-nav reachability of new tooltips: now covered by `tests/ui/help_marker_keyboard_focus.test.cpp` (ImGui Test Engine), added in the a11y follow-up (#1179).
 - **Localization sanity** — grep `Source/Core/src/SmatchetLocalization.cpp` for any new key whose English column differs from the callsite fallback literal (duplicate-fallback drift). Switch language to fr-FR in Preferences and spot-check touched panels: short labels + tooltips render French, no `missing translation key` warnings in log for new keys.
 - **`scripts/dev/test-all.sh`** — once at end of each slice (per process-rules: at most one full run per slice).
 - **`BeginDisabled` regression check** — explicitly hover the (?) inside the Assistant custom-endpoint disabled group (Slice 0 demo) and confirm the tooltip fires. This is the canonical test of the `AllowWhenDisabled` flag.
 
 ## Implementation log
 
-All four slices shipped together on one branch (`feat/help-marker`, commit `917f45d9`) per the PR-batching rule (one PR per logical feature) — the per-slice "pause for tone thumbs-up" was waived by the user's "go autonomously until ready for visual approval".
+All four slices shipped together on one branch (`feat/help-marker`) per the PR-batching rule (one PR per logical feature), squash-merged as `9c0ef307` (#1124) — the per-slice "pause for tone thumbs-up" was waived by the user's "go autonomously until ready for visual approval". The keyboard-a11y regression noted below was filed as Issue #1128 and fixed in the follow-up squash-merge `4be10390` (#1179).
 
 - **Slice 0** — `SmatchetHelpMarker.{h,cpp}` + Assistant custom-endpoint demo (dynamic `std::string` path, inside `BeginDisabled`). Glyph fallback checks `SmatchetAreFaIconsLoaded()` per call.
 - **Slice 1a** — Assistant remaining sites (reasoning_effort / agents.md tooltips) + Whisper PTT.
 - **Slice 1b** — Local (DB recreate intro, storage-mode paragraphs, typography/language/vsync/wheel/date tooltips), Tracker (read-only, inherit-token trio, GitHub repo), Integrations (MCP bind/token/lua), Templates (long-text modal, duration suggestions).
 - **Slice 2** — Annotate window (4 sites) + Annotate config blurb, Perf CPU/Network intros, Offline-queue unknown-conflict pane, AI-assistant per-turn effort, Bug-report screenshot redaction, update banner.
 - **Localization** — ~90 `{key, en, fr}` entries (`<panel>.<field>.{short,help}`). `.short` English columns byte-match callsite literals (localized-ImGui source lookup); `.help` bodies resolve by key. Drift check (29 `.short` entries grep-verified against `Source/Core/src/Ui/`) passed pre- and post-clang-format.
-- **Follow-up (visual round 1, commit `3bc0d1c4`)** — tab-aware Preferences footer per user feedback. New `PreferencesActiveTab` enum + `UiDrawSession::preferencesActiveTab` (`SmatchetUiSession.h`); 9 `BeginTabItem`-true set-points across 5 Preferences TUs (nested Fields Inputs sub-tabs map to parent); footer switch in `drawPreferencesWindow` shows one of 5 per-tab save-semantics lines (`prefs.footer.*.short`) + shared `(?)` carrying the full cross-tab paragraph (`prefs.footer.save_sync.help`). 6 new `{key, en, fr}` entries. Works in both desktop and embedded (mobile Settings) footer paths.
+- **Follow-up (visual round 1, in squash-merge `9c0ef307`, #1124)** — tab-aware Preferences footer per user feedback. New `PreferencesActiveTab` enum + `UiDrawSession::preferencesActiveTab` (`SmatchetUiSession.h`); 9 `BeginTabItem`-true set-points across 5 Preferences TUs (nested Fields Inputs sub-tabs map to parent); footer switch in `drawPreferencesWindow` shows one of 5 per-tab save-semantics lines (`prefs.footer.*.short`) + shared `(?)` carrying the full cross-tab paragraph (`prefs.footer.save_sync.help`). 6 new `{key, en, fr}` entries. Works in both desktop and embedded (mobile Settings) footer paths.
+
+- **Keyboard-a11y follow-up** — `4be10390` · keyboard-reachable (?) help-marker tooltips (Issue #1128, #1179): made the (?) marker focusable so keyboard-only users surface the long-form text; added bucket-E coverage `tests/ui/help_marker_keyboard_focus.test.cpp`.
 
 ## Deviations
 
@@ -180,10 +184,10 @@ All four slices shipped together on one branch (`feat/help-marker`, commit `917f
 - Localization drift check: 29 `.short` entries byte-match UI callsite literals — clean.
 - Bucket C / visual-validation exception: standalone launched for user verdict (markers in Preferences tabs, Annotate, Perf, Offline conflict, Bug report, AI assistant; `AllowWhenDisabled` hover inside the Assistant disabled block; fr-FR spot check).
 - `test-all.sh`: bats/agent-infra failures attributed to background-sandbox `/tmp` blocking (foreground spot-checks 14/14); `test-doctor.sh` 3/3 under `with-msvc-env.sh` (plain-shell FAIL = no `cl.exe` on PATH, environmental); whisper autosend/roundtrip script FAILs reproduce identically on develop — pre-existing local stdout/stderr-interleave parse bug in the scripts (scenario envelopes show `passed:true`), filed as a spawn-task, not branch-caused.
-- Bucket E: deferred — there is no `ux` backlog category (closed set per `AGENT_SELF_IMPROVEMENT.md`), so the coverage gap is filed in `docs/self-improvement/categories/test.md` (P2: bucket-E hover coverage + AllowWhenDisabled contract), and the keyboard-only reachability regression (user-observable, Pillar 4) is to be elevated to a GitHub Issue at ship time per issue-triage.md.
+- Bucket E: resolved — the keyboard-only reachability regression (user-observable, Pillar 4) was filed as Issue #1128 and fixed via #1179 (squash `4be10390`), which added bucket-E coverage `tests/ui/help_marker_keyboard_focus.test.cpp` (hover/focus surface + `AllowWhenDisabled` contract). The originally-deferred coverage gap is now closed in-tree.
 
 ## Out of scope
 
 - Rewriting log/CLI/MCP strings (this task is UI-only; AGENTS.md `LOG_*` rule untouched).
-- Adding accessibility cues (Pillar 4 backlogged). **Known regression**: keyboard-only users lose direct access to the long-form text — currently visible inline, now mouse-hover-only. Coverage gap filed in `docs/self-improvement/categories/test.md`; the regression itself is elevated to a GitHub Issue per issue-triage.md at ship time (no `ux` category exists).
+- Adding accessibility cues (Pillar 4 backlogged). The keyboard-only-access regression originally introduced here (long-form text became mouse-hover-only) was **filed as Issue #1128 and resolved** in the a11y follow-up #1179 (squash `4be10390`): the (?) marker is now keyboard-focusable, with bucket-E coverage `tests/ui/help_marker_keyboard_focus.test.cpp`.
 - Refactoring strings inside Lua scripts or MCP tool descriptions.
