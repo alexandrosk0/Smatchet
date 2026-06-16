@@ -36,6 +36,22 @@ FetchContent_MakeAvailable(doctest)
 # -fsanitize=thread -fno-omit-frame-pointer (compile) + -fsanitize=thread (link)
 # PRIVATE to this target under a non-MSVC compiler.
 # ============================================================================
+# ============================================================================
+# libFuzzer harness (Slice E2 — testing-surface.md §6 P1 Gap 3).
+#
+# When the headless Linux Clang libFuzzer preset (ninja-fuzzer-linux) is active,
+# build ONLY the fuzz drivers under tests/fuzz/ and skip the full SmatchetTests
+# rig (it links ImGuiLib → GLFW/X11/OpenGL, deliberately not configured on the
+# Linux runner — see SMATCHET_BUILD_APP in the root CMakeLists). Mirrors the tsan
+# guard below. Gated on UNIX so a Windows fuzzer misconfig can never reach here
+# (cmake/Sanitizers.cmake FATALs on MSVC/clang-cl anyway). The doctest rig is not
+# linked; libFuzzer supplies main() via -fsanitize=fuzzer.
+# ============================================================================
+if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "fuzzer")
+    add_subdirectory(fuzz)
+    return()
+endif()
+
 if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
     add_executable(SmatchetTsanTests
         test_main.cpp
