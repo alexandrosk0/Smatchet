@@ -68,6 +68,7 @@ void RegisterAttachCommands(CommandRegistry& reg, AppController& app);
 void RegisterAiCommands(CommandRegistry& reg, AppController& app);
 void RegisterAutomationCommands(CommandRegistry& reg, AppController& app);
 void RegisterBugReportCommands(CommandRegistry& reg, AppController& app);
+void RegisterUiInteractionCommands(CommandRegistry& reg, AppController& app);
 
 } // namespace cmd
 } // namespace smatchet

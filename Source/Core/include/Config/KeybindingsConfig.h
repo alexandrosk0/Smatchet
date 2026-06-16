@@ -45,8 +45,7 @@ struct KeybindingsConfig {
     /** Upsert the hotkey for (commandId, argsJson): mutate the existing binding if
         present (re-enabling it), else append a fresh one. Returns the affected
         index. An empty hotkey is allowed (an "unbound but listed" row). */
-    int SetBindingHotkey(const std::string& commandId, const std::string& argsJson,
-                         const std::string& hotkey);
+    int SetBindingHotkey(const std::string& commandId, const std::string& argsJson, const std::string& hotkey);
 
     /** Remove the first binding for (commandId, argsJson). Returns true if one was
         erased. */
@@ -61,7 +60,15 @@ struct KeybindingsConfig {
     default-args ("{}") binding, else any. Empty string when unbound. Pure (no
     ImGui) so the palette rows, toolbar tooltips, and menu shortcut hints all share
     one lookup (DRY / Pillar 5) and it is bucket-A testable. */
-std::string BoundHotkeyDisplay(const std::vector<Keybinding>& bindings,
-                               const std::string& commandId);
+std::string BoundHotkeyDisplay(const std::vector<Keybinding>& bindings, const std::string& commandId);
+
+/** Args-aware variant of BoundHotkeyDisplay: the hotkey bound to (commandId, args)
+    where `argsJson` is matched by JSON *semantic* equality (key order independent),
+    not string equality. Needed when one command id carries several distinct-args
+    bindings to distinct keys (e.g. view.toggle.views_dashboard for both "Open
+    Project View" and "Views Dashboard"). Empty/"{}" argsJson matches a binding
+    with empty/"{}" args. Pure; no ImGui. Empty string when unbound. */
+std::string BoundHotkeyDisplayForArgs(const std::vector<Keybinding>& bindings, const std::string& commandId,
+                                      const std::string& argsJson);
 
 #endif // SMATCHET_CONFIG_KEYBINDINGS_CONFIG_H

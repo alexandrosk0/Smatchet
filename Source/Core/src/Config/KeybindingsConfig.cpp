@@ -53,15 +53,13 @@ void from_json(const nlohmann::json& j, KeybindingsConfig& c) {
                 c.Bindings.push_back(item.get<Keybinding>());
             } catch (const std::exception& ex) {
                 // Skip a malformed binding, keep the rest of the table.
-                LOG_WARN("KeybindingsConfig::from_json: skipping malformed keybinding: %s",
-                         ex.what());
+                LOG_WARN("KeybindingsConfig::from_json: skipping malformed keybinding: %s", ex.what());
             }
         }
     }
 }
 
-std::string BoundHotkeyDisplay(const std::vector<Keybinding>& bindings,
-                               const std::string& commandId) {
+std::string BoundHotkeyDisplay(const std::vector<Keybinding>& bindings, const std::string& commandId) {
     std::string fallback;
     for (const Keybinding& b : bindings) {
         if (b.CommandId != commandId || !b.Enabled || b.Hotkey.empty()) {
@@ -77,8 +75,31 @@ std::string BoundHotkeyDisplay(const std::vector<Keybinding>& bindings,
     return fallback;
 }
 
-int KeybindingsConfig::FindBindingIndex(const std::string& commandId,
-                                        const std::string& argsJson) const {
+std::string BoundHotkeyDisplayForArgs(const std::vector<Keybinding>& bindings, const std::string& commandId,
+                                      const std::string& argsJson) {
+    // Semantic (order-independent) args comparison via nlohmann ==. Parse with the
+    // non-throwing overload + is_discarded() — this is the strict Config zone where
+    // an empty catch is a CRITICAL finding, so no try/catch around json::parse.
+    nlohmann::json want = nlohmann::json::parse(argsJson.empty() ? "{}" : argsJson, nullptr, false);
+    if (want.is_discarded()) {
+        want = nlohmann::json::object();
+    }
+    for (const Keybinding& b : bindings) {
+        if (b.CommandId != commandId || !b.Enabled || b.Hotkey.empty()) {
+            continue;
+        }
+        nlohmann::json have = nlohmann::json::parse(b.ArgsJson.empty() ? "{}" : b.ArgsJson, nullptr, false);
+        if (have.is_discarded()) {
+            have = nlohmann::json::object();
+        }
+        if (have == want) {
+            return b.Hotkey;
+        }
+    }
+    return std::string();
+}
+
+int KeybindingsConfig::FindBindingIndex(const std::string& commandId, const std::string& argsJson) const {
     for (std::size_t i = 0; i < Bindings.size(); ++i) {
         if (Bindings[i].CommandId == commandId && Bindings[i].ArgsJson == argsJson) {
             return static_cast<int>(i);
@@ -87,8 +108,7 @@ int KeybindingsConfig::FindBindingIndex(const std::string& commandId,
     return -1;
 }
 
-int KeybindingsConfig::SetBindingHotkey(const std::string& commandId,
-                                        const std::string& argsJson,
+int KeybindingsConfig::SetBindingHotkey(const std::string& commandId, const std::string& argsJson,
                                         const std::string& hotkey) {
     int idx = FindBindingIndex(commandId, argsJson);
     if (idx >= 0) {
@@ -105,8 +125,7 @@ int KeybindingsConfig::SetBindingHotkey(const std::string& commandId,
     return static_cast<int>(Bindings.size()) - 1;
 }
 
-bool KeybindingsConfig::RemoveBinding(const std::string& commandId,
-                                      const std::string& argsJson) {
+bool KeybindingsConfig::RemoveBinding(const std::string& commandId, const std::string& argsJson) {
     int idx = FindBindingIndex(commandId, argsJson);
     if (idx < 0) {
         return false;
@@ -135,5 +154,22 @@ KeybindingsConfig KeybindingsConfig::Defaults() {
     c.Bindings.push_back(MakeBinding("F11", "app.fullscreen.toggle", "{}"));
     c.Bindings.push_back(MakeBinding("Ctrl+Shift+P", "ui.command_palette", "{}"));
     c.Bindings.push_back(MakeBinding("Ctrl+Shift+B", "app.bug_report.open", "{}"));
+    // Menu-bar shortcuts that previously had hints but no working binding
+    // (docs/plans/active/keybindings-menu-shortcuts-fix.md). Zoom + open-view +
+    // clear-selection are app-global registry commands (BuiltinCommands_Ui.cpp).
+    c.Bindings.push_back(MakeBinding("Ctrl+=", "ui.zoom.in", "{}"));
+    c.Bindings.push_back(MakeBinding("Ctrl+-", "ui.zoom.out", "{}"));
+    c.Bindings.push_back(MakeBinding("Ctrl+0", "ui.zoom.reset", "{}"));
+    c.Bindings.push_back(MakeBinding("Ctrl+Shift+V", "ui.open_view", "{}"));
+    c.Bindings.push_back(MakeBinding("Ctrl+Shift+G", "grid.clear_selection", "{}"));
+    // View reveals. "Open Project View" and "Views Dashboard" share the
+    // views_dashboard command but bind distinct keys via distinct args (matched
+    // semantically by BoundHotkeyDisplayForArgs).
+    c.Bindings.push_back(
+        MakeBinding("Ctrl+O", "view.toggle.views_dashboard", "{\"action\":\"show\",\"via\":\"open_project_view\"}"));
+    c.Bindings.push_back(MakeBinding("Ctrl+Shift+E", "view.toggle.views_dashboard", "{\"action\":\"show\"}"));
+    c.Bindings.push_back(MakeBinding("Ctrl+Shift+U", "view.toggle.log", "{\"action\":\"show\"}"));
+    c.Bindings.push_back(MakeBinding("Ctrl+Shift+M", "view.toggle.backend_audit", "{\"action\":\"show\"}"));
+    c.Bindings.push_back(MakeBinding("Ctrl+Shift+N", "view.toggle.source_annotate", "{\"action\":\"toggle\"}"));
     return c;
 }

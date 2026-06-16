@@ -336,3 +336,120 @@ TEST_CASE("ConfigMigration migrated_inherit_issuetype_v1=true on disk: injection
     CHECK_FALSE(Contains(cfg.NewIssueInheritFieldIds, "issuetype")); // user-removed; respected
     CHECK_FALSE(Contains(cfg.NewIssueInheritFieldIdsPlane, "issuetype"));
 }
+
+// --- Menu-bar shortcut keybindings — one-shot seed migration (migrated_menu_shortcuts_v1) ---
+//
+// KeybindingsConfig::from_json REPLACES (does not merge) the binding table, so a config saved by a
+// build that predates the menu-bar shortcut defaults keeps only the bindings it knew about. Without
+// the migration an upgrading user never receives Ctrl+= → ui.zoom.in et al. — the marquee "Zoom In
+// doesn't work" symptom. MigrateMenuShortcutKeybindingsV1 seeds the new defaults exactly once,
+// append-only, only when the (command_id, args_json) identity is absent — preserving user rebinds
+// and never resurrecting a binding the user later cleared.
+
+namespace {
+int CountCommand(const KeybindingsConfig& kb, const std::string& commandId) {
+    int n = 0;
+    for (const Keybinding& b : kb.Bindings) {
+        if (b.CommandId == commandId) {
+            ++n;
+        }
+    }
+    return n;
+}
+} // namespace
+
+TEST_CASE("ConfigMigration menu shortcuts: seeds the new bindings into a pre-existing config") {
+    smatchet_tests::TestEnvGuard env;
+    // Config saved by a build that predates the menu-shortcut defaults: it carries a keybindings
+    // block (so from_json replaces the table with just these two), and no migrated flag.
+    const std::string pre = R"json({"tracker_type":"Jira","keybindings":{"bindings":[
+        {"command_id":"view.sidebar.primary","hotkey":"Ctrl+B","args_json":"{\"action\":\"toggle\"}","enabled":true},
+        {"command_id":"app.dock_debug.toggle","hotkey":"Ctrl+Alt+D","args_json":"{}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    // Flag flips true and the new menu-bar shortcuts are now present.
+    CHECK(cfg.MigratedMenuShortcutsV1 == true);
+    CHECK(cfg.Keybindings.FindBindingIndex("ui.zoom.in", "{}") >= 0);
+    CHECK(cfg.Keybindings.FindBindingIndex("ui.zoom.out", "{}") >= 0);
+    CHECK(cfg.Keybindings.FindBindingIndex("ui.zoom.reset", "{}") >= 0);
+    CHECK(cfg.Keybindings.FindBindingIndex("ui.open_view", "{}") >= 0);
+    CHECK(cfg.Keybindings.FindBindingIndex("grid.clear_selection", "{}") >= 0);
+    CHECK(cfg.Keybindings.FindBindingIndex("view.toggle.log", "{\"action\":\"show\"}") >= 0);
+    CHECK(cfg.Keybindings.FindBindingIndex("view.toggle.backend_audit", "{\"action\":\"show\"}") >= 0);
+    CHECK(cfg.Keybindings.FindBindingIndex("view.toggle.source_annotate", "{\"action\":\"toggle\"}") >= 0);
+
+    // The Ctrl+= → ui.zoom.in default binding (the marquee "Zoom In" symptom) is restored on its key.
+    const int zi = cfg.Keybindings.FindBindingIndex("ui.zoom.in", "{}");
+    REQUIRE(zi >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)].Hotkey == "Ctrl+=");
+
+    // Pre-existing bindings survive the seed (append-only — the migration never clobbers the table).
+    CHECK(cfg.Keybindings.FindBindingIndex("app.dock_debug.toggle", "{}") >= 0);
+    CHECK(cfg.Keybindings.FindBindingIndex("view.sidebar.primary", "{\"action\":\"toggle\"}") >= 0);
+}
+
+TEST_CASE("ConfigMigration menu shortcuts: respects a user rebind of a new command (no duplicate)") {
+    smatchet_tests::TestEnvGuard env;
+    // User already rebound Zoom In to Ctrl+Up in this build, then the migration lands. The
+    // (command_id, args_json) identity matches the default, so the seed must NOT add a second
+    // ui.zoom.in binding — the user's chosen key is preserved.
+    const std::string pre = R"json({"tracker_type":"Jira","keybindings":{"bindings":[
+        {"command_id":"ui.zoom.in","hotkey":"Ctrl+Up","args_json":"{}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedMenuShortcutsV1 == true);
+    CHECK(CountCommand(cfg.Keybindings, "ui.zoom.in") == 1); // not duplicated
+    const int zi = cfg.Keybindings.FindBindingIndex("ui.zoom.in", "{}");
+    REQUIRE(zi >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)].Hotkey == "Ctrl+Up"); // user key kept
+    // The other new defaults are still seeded alongside the preserved rebind.
+    CHECK(cfg.Keybindings.FindBindingIndex("ui.zoom.out", "{}") >= 0);
+}
+
+TEST_CASE("ConfigMigration menu shortcuts: flag set on disk skips the seed (cleared stays cleared)") {
+    smatchet_tests::TestEnvGuard env;
+    // User on the current build cleared Zoom In then saved — migrated_menu_shortcuts_v1=true
+    // persists. A reload must respect that choice and NOT resurrect ui.zoom.in.
+    const std::string pre =
+        R"json({"tracker_type":"Jira","migrated_menu_shortcuts_v1":true,"keybindings":{"bindings":[
+        {"command_id":"view.sidebar.primary","hotkey":"Ctrl+B","args_json":"{\"action\":\"toggle\"}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedMenuShortcutsV1 == true);
+    CHECK(cfg.Keybindings.FindBindingIndex("ui.zoom.in", "{}") < 0); // not resurrected
+}
+
+TEST_CASE("ConfigMigration menu shortcuts: both views_dashboard arg variants seeded, idempotent on reload") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre = R"json({"tracker_type":"Jira","keybindings":{"bindings":[
+        {"command_id":"app.dock_debug.toggle","hotkey":"Ctrl+Alt+D","args_json":"{}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig first = ConfigManager::Load();
+    // The shared views_dashboard command binds two distinct args → two distinct bindings, matched
+    // by exact (command, args) identity.
+    CHECK(first.Keybindings.FindBindingIndex("view.toggle.views_dashboard", "{\"action\":\"show\"}") >= 0);
+    CHECK(first.Keybindings.FindBindingIndex("view.toggle.views_dashboard",
+                                             "{\"action\":\"show\",\"via\":\"open_project_view\"}") >= 0);
+    CHECK(CountCommand(first.Keybindings, "view.toggle.views_dashboard") == 2);
+
+    // Persist (writes migrated_menu_shortcuts_v1=true + the full table) + reload — the seed is a
+    // one-shot, so the binding count does not grow on the second Load.
+    const std::size_t firstCount = first.Keybindings.Bindings.size();
+    ConfigManager::Save(first);
+    ConfigManager::InvalidateCache();
+    const TrackerConfig second = ConfigManager::Load();
+    CHECK(second.MigratedMenuShortcutsV1 == true);
+    CHECK(second.Keybindings.Bindings.size() == firstCount); // no duplicate seed on reload
+    CHECK(CountCommand(second.Keybindings, "view.toggle.views_dashboard") == 2);
+}

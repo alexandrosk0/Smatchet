@@ -64,8 +64,7 @@ static bool WindowBelongsToTableWheelScope(ImGuiTable* table, ImGuiWindow* windo
     }
     ImGuiWindow* inner = table->InnerWindow;
     ImGuiWindow* outer = table->OuterWindow;
-    return window == inner || window == outer ||
-           (inner && ImGui::IsWindowChildOf(window, inner, false, false)) ||
+    return window == inner || window == outer || (inner && ImGui::IsWindowChildOf(window, inner, false, false)) ||
            (outer && ImGui::IsWindowChildOf(window, outer, false, false));
 }
 
@@ -1705,6 +1704,13 @@ void SmatchetUI::drawActiveProjectGridRectSelKeys(ActiveProjectDrawCtx& ctx) {
             pane.gridState.ActiveIssueId.clear();
         }
         const bool windowFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+        // Ctrl+A selects every row. Outside the HasAnySelection() guard below
+        // (select-all needs no prior selection) and gated on !effShift so
+        // Ctrl+Shift+A (Toggle Assistant) doesn't trigger it. !io.WantTextInput
+        // keeps a text field's own select-all intact.
+        if (windowFocused && !io.WantTextInput && effCtrl && !effShift && ImGui::IsKeyPressed(ImGuiKey_A, false)) {
+            GridSelectAllRows(pane, tickets);
+        }
         if (windowFocused && sel.HasAnySelection()) {
             if (!io.WantTextInput && effCtrl && ImGui::IsKeyPressed(ImGuiKey_C, false)) {
                 CopyGridRectAsTsv(tickets, pane.filteredIndices, columns, catalogIndex, sel);
