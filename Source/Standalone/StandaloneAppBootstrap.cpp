@@ -414,7 +414,7 @@ bool ParseStandaloneCli(int argc, char** argv, ConfigManager::CliOverrides& cli)
             try {
                 cli.McpPort = std::stoi(argv[++i]);
                 cli.HasMcpPort = true;
-            } catch (...) {
+            } catch (...) { // catch-all-ok: invalid --mcp-port -> configured/default port (pre-logger-init)
                 // Invalid --mcp-port value — ignore the flag and fall back to the
                 // configured/default port. Pre-logger-init, so no LOG_* here.
                 cli.HasMcpPort = false;
