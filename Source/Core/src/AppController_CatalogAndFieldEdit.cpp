@@ -479,7 +479,7 @@ void AppController::EnsureCatalogCommentsField(GridContextFieldCatalog& cat) {
 }
 
 void AppController::EraseCatalogLegacyCommentField(GridContextFieldCatalog& cat) {
-    // issue-comments fix (#1018 follow-up) — drop Jira's legacy system `comment` field (ADF blob,
+    // issue-comments fix (#1291 follow-up) — drop Jira's legacy system `comment` field (ADF blob,
     // catalog label "Comment") from the picker. It duplicates the synthetic `comments` count column
     // (EnsureCatalogCommentsField): the user saw two "Comment(s)" entries. The blob still rides in
     // per-ticket fieldValues["comment"] via the Jira mapper (catalog-independent) and surfaces as the
@@ -1821,7 +1821,7 @@ bool AppController::FetchIssueComments(const std::string& issueKey, std::vector<
 }
 
 void AppController::UpdateCachedCommentCount(const std::string& issueId, int newCount) {
-    // issue-comments fix (#1018) — after the comments modal fetches / re-fetches a thread, push the live
+    // issue-comments fix (#1291) — after the comments modal fetches / re-fetches a thread, push the live
     // count into the cached ticket so the grid's Comments column reflects a freshly-posted comment
     // without a full re-sync. Called on the UI thread from the modal's main-thread post-back (mirrors
     // the optimistic-update pattern: mutate a ticket copy → UpdateTicket → SaveTicket + grid refresh).

@@ -639,7 +639,7 @@ add_executable(SmatchetTests
     # Natural-order key/issuekey sort — exercises CompareIssueKeyNatural
     # (inline in StringUtil.h) which CompareFieldValuesForSort dispatches to.
     Core/TicketGridModelKeySort.test.cpp
-    # Legacy `comment` grid-field-id canonicalization (#1018) — exercises
+    # Legacy `comment` grid-field-id canonicalization (#1291) — exercises
     # CanonicalizeGridFieldId (inline in StringUtil.h) which
     # TicketGridColumnsBuilder::Build folds each saved view field id through.
     Core/GridFieldIdCanonical.test.cpp

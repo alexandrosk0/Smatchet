@@ -462,7 +462,7 @@ std::vector<TicketGridColumn> TicketGridColumnsBuilder::Build(const ViewDefiniti
 
     std::unordered_set<std::string> seenFieldIds;
     for (const auto& rawFieldId : view.Fields) {
-        // issue-comments fix (#1018) — fold Jira's legacy `comment` column onto the unified `comments`
+        // issue-comments fix (#1291) — fold Jira's legacy `comment` column onto the unified `comments`
         // cell so a view saved before the dedupe renders the count/modal (not the raw ADF blob) and
         // dedups against an explicit `comments` column via seenFieldIds below. See CanonicalizeGridFieldId.
         const std::string fieldId = CanonicalizeGridFieldId(TrimFieldId(rawFieldId));
@@ -490,7 +490,7 @@ std::vector<TicketGridColumn> TicketGridColumnsBuilder::Build(const ViewDefiniti
 
     std::unordered_set<std::string> usedKeys;
     for (const auto& rawKey : view.ColumnOrder) {
-        // issue-comments fix (#1018) — normalize a legacy `field:comment` order key to
+        // issue-comments fix (#1291) — normalize a legacy `field:comment` order key to
         // `field:comments` so an old saved view keeps its comment-column *position*. Mirrors the
         // field-id fold above (the column Key was built from the canonicalized id); without it the
         // byKey lookup misses and the comment column drops to the appended-tail default.
