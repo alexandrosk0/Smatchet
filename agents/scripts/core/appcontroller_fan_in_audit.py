@@ -49,11 +49,13 @@ CPP_EXT = (".cpp", ".h", ".hpp", ".cc", ".cxx")
 RULE = "app-controller-fan-in"
 TARGET_BASENAME = "AppController.h"
 
-# Documented current fan-in (verified at gate-authoring time: 114 = 112 .cpp + 2 .h, the two
-# headers being Source/Core/include/Ui/SmatchetUiSession.h + Source/Core/src/AppControllerImpl.h).
-# --selftest asserts live count == this (NOT the .cpp/.h split, which drifts). Each phase that
-# reduces fan-in lowers this constant + the AGENTS.md row in the same PR (the ratchet record).
-BASELINE_FAN_IN = 114
+# Documented current fan-in (informational doc reference; the .cpp/.h split drifts so it is not
+# asserted). The DOWN-only ratchet is enforced by `--diff` vs merge-base, NOT by this constant, so
+# a legitimate concurrent includer addition does not need a same-PR bump — `--selftest` only WARNs
+# on drift (it broke twice as a hard assert: 113->114 at authoring, then 114->115 when the omnibar
+# feature #1261 landed a new includer right after). Bump opportunistically (e.g. after a phase that
+# reduces fan-in) together with the AGENTS.md row.
+BASELINE_FAN_IN = 115
 
 # Quote-form include whose spelling's BASENAME is AppController.h (bare `"AppController.h"` or a
 # path-qualified `"../include/AppController.h"`). Excludes AppControllerImpl.h etc. by basename.
@@ -271,15 +273,18 @@ def run_selftest():
         print("SELFTEST FAIL: bare/path-qualified AppController.h not matched", file=sys.stderr)
         miss = 1
 
-    # Live baseline: the real tree's includer count must equal the documented constant (drift -> bump
-    # BASELINE_FAN_IN + the AGENTS.md row in the same PR). Skipped if not in a git tree.
+    # Live baseline: WARN (never FAIL) on drift. The DOWN-only ratchet is enforced by `--diff` vs
+    # merge-base, NOT by this constant — so a legitimate concurrent includer add/remove must not break
+    # the selftest (it did twice as a hard assert: 113->114 at authoring, 114->115 when omnibar #1261
+    # landed). The constant is an informational doc reference; bump it + the AGENTS.md row when
+    # convenient. Skipped if not in a git tree.
     try:
         live = len(includer_set(texts_head()))
         if live != BASELINE_FAN_IN:
-            print("SELFTEST FAIL: live AppController.h fan-in = %d, documented BASELINE_FAN_IN = %d "
-                  "(ratchet changed? update the constant + the AGENTS.md app-controller-fan-in row)."
+            print("appcontroller_fan_in_audit: selftest NOTE: live AppController.h fan-in = %d, documented "
+                  "BASELINE_FAN_IN = %d — bump the constant + the AGENTS.md row when convenient "
+                  "(informational; the --diff merge-base ratchet is the enforcement)."
                   % (live, BASELINE_FAN_IN), file=sys.stderr)
-            miss = 1
     except Exception as e:
         print("appcontroller_fan_in_audit: selftest WARN: could not count live fan-in (%s)" % e,
               file=sys.stderr)
