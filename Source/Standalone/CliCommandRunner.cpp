@@ -86,7 +86,7 @@ bool SafeBool(const nlohmann::json& j, const char* key, bool fallback) {
             return s == "true" || s == "1" || s == "yes" || s == "on";
         }
         return fallback;
-    } catch (...) {
+    } catch (...) { // catch-all-ok: defensive JSON read - any access/type error yields the fallback
         return fallback;
     }
 }
@@ -102,7 +102,7 @@ std::string SafeString(const nlohmann::json& j, const char* key, const std::stri
             return fallback;
         // Numeric / boolean → stringify for display purposes.
         return v.dump();
-    } catch (...) {
+    } catch (...) { // catch-all-ok: defensive JSON read - any access/type error yields the fallback
         return fallback;
     }
 }
@@ -119,12 +119,12 @@ int SafeInt(const nlohmann::json& j, const char* key, int fallback) {
         if (v.is_string()) {
             try {
                 return std::stoi(v.get<std::string>());
-            } catch (...) {
+            } catch (...) { // catch-all-ok: non-numeric string -> fallback int
                 return fallback;
             }
         }
         return fallback;
-    } catch (...) {
+    } catch (...) { // catch-all-ok: defensive JSON read - any access/type error yields the fallback
         return fallback;
     }
 }
@@ -136,7 +136,7 @@ nlohmann::json SafeObject(const nlohmann::json& j, const char* key) {
             return nlohmann::json::object();
         const auto& v = j[key];
         return v.is_object() ? v : nlohmann::json::object();
-    } catch (...) {
+    } catch (...) { // catch-all-ok: defensive JSON read - non-object/access error yields an empty object
         return nlohmann::json::object();
     }
 }
@@ -146,7 +146,7 @@ bool SafeParseJson(const std::string& text, nlohmann::json& out) {
     try {
         out = nlohmann::json::parse(text);
         return true;
-    } catch (...) {
+    } catch (...) { // catch-all-ok: malformed JSON -> empty object + false return
         out = nlohmann::json::object();
         return false;
     }
@@ -322,7 +322,7 @@ int EnvIntOr(const char* name, int fallback) {
         return fallback;
     try {
         return std::stoi(std::string(v));
-    } catch (...) {
+    } catch (...) { // catch-all-ok: malformed env override -> caller's fallback int
         return fallback;
     }
 }
@@ -379,7 +379,7 @@ bool ParseArgs(int argc, char** argv, ParsedArgs& out, std::string& outError) {
         if (a.rfind("--mcp-port=", 0) == 0) {
             try {
                 out.mcpPort = std::stoi(a.substr(11));
-            } catch (...) {
+            } catch (...) { // catch-all-ok: non-integer --mcp-port -> validation error returned to caller below
                 outError = "invalid --mcp-port value";
                 return false;
             }
@@ -389,7 +389,7 @@ bool ParseArgs(int argc, char** argv, ParsedArgs& out, std::string& outError) {
         if (a.rfind("--timeout=", 0) == 0) {
             try {
                 out.timeoutMs = std::stoi(a.substr(10));
-            } catch (...) {
+            } catch (...) { // catch-all-ok: non-integer --timeout -> validation error returned to caller below
                 outError = "invalid --timeout value (expected integer ms)";
                 return false;
             }
@@ -418,7 +418,7 @@ void EmitEnvelope(const nlohmann::json& envelope, bool pretty, bool quiet) {
             std::fprintf(stdout, "%s\n",
                          pretty ? envelope.dump(2).c_str()
                                 : envelope.dump().c_str()); // CLI stdout — product output, not logging
-        } catch (...) {
+        } catch (...) {          // catch-all-ok: serialize failure emits a handler-error envelope to stdout
             std::fprintf(stdout, // CLI stdout — product output, not logging
                          "{\"ok\":false,\"error\":{\"code\":\"handler-error\","
                          "\"message\":\"failed to serialize envelope\"}}\n");
@@ -643,7 +643,7 @@ bool TryAppendLiveCatalogToHelp(std::FILE* out, const std::string& host, int por
                      "\nFor full schema:    Smatchet.exe cmd commands.help --name=<name>\n"
                      "All commands + schema: Smatchet.exe cmd commands.list --full --pretty\n");
         return true;
-    } catch (...) {
+    } catch (...) { // catch-all-ok: best-effort live-catalog append - any failure leaves help static
         return false;
     }
 }
@@ -716,7 +716,7 @@ nlohmann::json ExtractEnvelopeFromMcpResult(const nlohmann::json& body) {
             env["data"] = text;
             return env;
         }
-    } catch (...) {
+    } catch (...) { // catch-all-ok: unexpected MCP result shape -> return result as-is below
         // Fall through — return result as-is below.
     }
     return *result;
@@ -823,7 +823,7 @@ int SpawnAndRunSetup(const std::string& commandName, std::string& outHost, int& 
             int v = std::stoi(envOverride);
             if (v > 0)
                 readyTimeoutMs = v;
-        } catch (...) {
+        } catch (...) { // catch-all-ok: malformed SMATCHET_SPAWN_READY_MS -> default ready timeout
             // Ignore malformed override; fall through to default.
         }
     }
@@ -879,7 +879,7 @@ int SpawnAndRunDispatch(httplib::Client& cli, const std::string& commandName, co
 
     try {
         outEnvelope = ExtractEnvelopeFromMcpResult(parsedBody);
-    } catch (...) {
+    } catch (...) { // catch-all-ok: extract failure -> transport error envelope
         outEnvelope = MakeErrorEnvelope(commandName, "transport", "--spawn: failed to extract envelope from response.");
     }
     return kExitOk;
@@ -952,7 +952,7 @@ int SpawnAndRunHandleAsync(const ParsedArgs& pa, httplib::Client& cli, const std
         resultEnv["command"] = commandName;
         resultEnv["data"] = fileData;
         EmitEnvelope(resultEnv, pa.pretty, pa.quiet);
-    } catch (...) {
+    } catch (...) { // catch-all-ok: result file not valid JSON -> handler-error envelope + app.quit
         nlohmann::json errEnv;
         errEnv["ok"] = false;
         errEnv["command"] = commandName;
@@ -1055,7 +1055,7 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
         } catch (...) { // catch-all-ok: already handling a spawn exception; preserve handler exit code.
         }
         return kExitHandler;
-    } catch (...) {
+    } catch (...) { // catch-all-ok: unknown spawn-flow exception -> error JSON to stderr + app.quit
         if (spawnedReady)
             PostAppQuitBestEffort(host, port);
         std::fprintf(stderr, // CLI stdout — product output, not logging
@@ -1264,7 +1264,7 @@ int RunCmdInProcessImpl(int argc, char** argv) {
         nlohmann::json env = MakeErrorEnvelope("", "handler-error", std::string("CLI internal error: ") + e.what());
         EmitErrorToStderr(env);
         return kExitHandler;
-    } catch (...) {
+    } catch (...) {          // catch-all-ok: unknown CLI exception -> error JSON to stderr (pre-logger-init)
         std::fprintf(stderr, // pre-logger-init — LOG_* unavailable
                      "{\"ok\":false,\"command\":\"\",\"error\":{\"code\":\"handler-error\","
                      "\"message\":\"CLI internal error: unknown exception.\"}}\n");
@@ -1358,7 +1358,7 @@ bool RunCmdAttachResolveHostPort(int argc, char** argv, ParsedArgs& outPa, std::
                     if (pidAlive && instPort > 0 && instPort <= 65535) {
                         outPort = instPort;
                     }
-                } catch (...) {
+                } catch (...) { // catch-all-ok: best-effort port discovery - any failure leaves outPort at default
                     // Best-effort instance.json port discovery: any failure here
                     // (bad JSON shape, OS probe error) leaves outPort unset so the
                     // caller falls through to the default port. Non-fatal by design.
@@ -1465,7 +1465,7 @@ int RunCmdAttachDispatch(const ParsedArgs& pa, const std::string& host, int port
 
     try {
         outEnvelope = ExtractEnvelopeFromMcpResult(parsed);
-    } catch (...) {
+    } catch (...) { // catch-all-ok: extract failure -> transport error envelope
         outEnvelope = MakeErrorEnvelope(toolName, "transport", "Failed to extract envelope from MCP response.");
     }
     if (!outEnvelope.is_object())
@@ -1487,7 +1487,7 @@ int RunCmdAttachProcessResult(const ParsedArgs& pa, const nlohmann::json& envelo
         std::string dataStr;
         try {
             dataStr = envelope.contains("data") ? envelope["data"].dump() : std::string("{}");
-        } catch (...) {
+        } catch (...) { // catch-all-ok: serialize failure -> empty-object byte estimate
             dataStr = "{}";
         }
         const long long bytes = static_cast<long long>(dataStr.size());
@@ -1553,7 +1553,7 @@ int RunCmdAttach(int argc, char** argv) {
         } catch (...) { // catch-all-ok: already handling a CLI exception; preserve handler exit code.
         }
         return kExitHandler;
-    } catch (...) {
+    } catch (...) {          // catch-all-ok: unknown CLI exception -> error JSON to stderr (pre-logger-init)
         std::fprintf(stderr, // pre-logger-init — LOG_* unavailable
                      "{\"ok\":false,\"command\":\"\",\"error\":{\"code\":\"handler-error\","
                      "\"message\":\"CLI internal error: unknown exception.\"}}\n");
