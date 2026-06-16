@@ -10,7 +10,7 @@
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 #include "Commands/MainThreadDispatch.h"
-#include "Ui/SmatchetUiModeIds.h"
+#include "SmatchetUiModeIds.h"
 #include "SmatchetUiSession.h"
 
 #include <string>

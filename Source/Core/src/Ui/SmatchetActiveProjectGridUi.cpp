@@ -64,8 +64,7 @@ static bool WindowBelongsToTableWheelScope(ImGuiTable* table, ImGuiWindow* windo
     }
     ImGuiWindow* inner = table->InnerWindow;
     ImGuiWindow* outer = table->OuterWindow;
-    return window == inner || window == outer ||
-           (inner && ImGui::IsWindowChildOf(window, inner, false, false)) ||
+    return window == inner || window == outer || (inner && ImGui::IsWindowChildOf(window, inner, false, false)) ||
            (outer && ImGui::IsWindowChildOf(window, outer, false, false));
 }
 
@@ -1399,8 +1398,21 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
             OpenCommentsModal(app, ticket.id);
         }
         if (ImGui::IsItemHovered()) {
-            // Cheap localized static tooltip — NO network on hover.
-            ImGui::SetTooltip("%s", SmatchetLocalization::T("comments.cell_tooltip", "View / post comments"));
+            // issue-comments fix (#1291) — match the retired Jira "Comment" field: on hover show the
+            // full comment text wrapped. The Jira mapper resolves it into fieldValues["comment"]
+            // (catalog-independent, so it survives the legacy field's removal from the picker); read it
+            // zero-copy from the cache — NO network on hover. Backends without a comment blob
+            // (GitHub/Plane) fall back to the cheap localized static hint.
+            const std::string& commentBlob = ticket.GetFieldValueRef("comment");
+            if (!commentBlob.empty()) {
+                ImGui::BeginTooltip();
+                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 40.0f);
+                ImGui::TextUnformatted(commentBlob.c_str());
+                ImGui::PopTextWrapPos();
+                ImGui::EndTooltip();
+            } else {
+                ImGui::SetTooltip("%s", SmatchetLocalization::T("comments.cell_tooltip", "View / post comments"));
+            }
         }
         ImGui::EndGroup();
         cellGroupMin = ImGui::GetItemRectMin();
@@ -1692,6 +1704,13 @@ void SmatchetUI::drawActiveProjectGridRectSelKeys(ActiveProjectDrawCtx& ctx) {
             pane.gridState.ActiveIssueId.clear();
         }
         const bool windowFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+        // Ctrl+A selects every row. Outside the HasAnySelection() guard below
+        // (select-all needs no prior selection) and gated on !effShift so
+        // Ctrl+Shift+A (Toggle Assistant) doesn't trigger it. !io.WantTextInput
+        // keeps a text field's own select-all intact.
+        if (windowFocused && !io.WantTextInput && effCtrl && !effShift && ImGui::IsKeyPressed(ImGuiKey_A, false)) {
+            GridSelectAllRows(pane, tickets);
+        }
         if (windowFocused && sel.HasAnySelection()) {
             if (!io.WantTextInput && effCtrl && ImGui::IsKeyPressed(ImGuiKey_C, false)) {
                 CopyGridRectAsTsv(tickets, pane.filteredIndices, columns, catalogIndex, sel);

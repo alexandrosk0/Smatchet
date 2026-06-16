@@ -15,6 +15,11 @@
 #                  a Linux runner is available.
 #   msan         : Clang-only. We hard-fail here if the active compiler
 #                  is not Clang.
+#   fuzzer       : Clang-only (libFuzzer). Native-clang Linux lane only
+#                  (ninja-fuzzer-linux); we hard-fail on MSVC / clang-cl.
+#                  -fsanitize=fuzzer,address,undefined both instruments
+#                  coverage AND links libFuzzer's main() (which drives each
+#                  fuzz target's LLVMFuzzerTestOneInput). See tests/fuzz/.
 #
 # Hard rules (mirrored in agents/build-doctor.md § Stack):
 #   * Two sanitizers must not coexist in one build (ASan + TSan, ASan + MSan
@@ -129,10 +134,41 @@ function(smatchet_apply_sanitizers tgt)
             -fno-omit-frame-pointer)
         list(APPEND _link
             -fsanitize=memory)
+    elseif("${SMATCHET_SANITIZER}" STREQUAL "fuzzer")
+        # libFuzzer is a Clang runtime. clang-cl's -fsanitize=fuzzer is fragile
+        # on the MSVC ABI (it would need the same manual clang_rt lib-hunt the
+        # ASan path above does), so the fuzz lane is native-clang/Linux only
+        # (ninja-fuzzer-linux). Hard-fail loudly on any MSVC-ABI compiler rather
+        # than emit a half-linked binary.
+        if(_msvc)
+            message(FATAL_ERROR
+                "SMATCHET_SANITIZER=fuzzer targets native Clang on Linux. "
+                "libFuzzer is a Clang runtime and clang-cl's -fsanitize=fuzzer "
+                "is fragile on the MSVC ABI. Active compiler is MSVC-ABI "
+                "'${CMAKE_CXX_COMPILER}'. Use the ninja-fuzzer-linux preset on "
+                "a Linux clang toolchain (apt-get install -y clang lld).")
+        endif()
+        if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
+            message(FATAL_ERROR
+                "SMATCHET_SANITIZER=fuzzer requires Clang (libFuzzer). "
+                "Active C++ compiler is '${CMAKE_CXX_COMPILER_ID}' "
+                "(${CMAKE_CXX_COMPILER}).")
+        endif()
+        # -fsanitize=fuzzer instruments coverage AND links libFuzzer's main(),
+        # which drives each target's LLVMFuzzerTestOneInput(). Compose with
+        # ASan+UBSan so a fuzz-found input that reads OOB / triggers UB aborts
+        # into a reproducible crash- artifact; -fno-sanitize-recover=all makes
+        # UBSan fatal (default is warn-and-continue).
+        list(APPEND _flags
+            -fsanitize=fuzzer,address,undefined
+            -fno-omit-frame-pointer
+            -fno-sanitize-recover=all)
+        list(APPEND _link
+            -fsanitize=fuzzer,address,undefined)
     else()
         message(WARNING
             "SMATCHET_SANITIZER='${SMATCHET_SANITIZER}' not recognised "
-            "(expected: asan, tsan, msan, off). Ignoring for target '${tgt}'.")
+            "(expected: asan, tsan, msan, fuzzer, off). Ignoring for target '${tgt}'.")
         return()
     endif()
 

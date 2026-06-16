@@ -1,0 +1,157 @@
+name: Fuzz smoke (Linux libFuzzer)
+
+# Coverage-guided libFuzzer smoke over Smatchet's untrusted-byte parsers on
+# ubuntu-latest (Slice E2 — testing-surface.md §6 P1 Gap 3; security.md §59-60).
+# libFuzzer is a Clang runtime with no usable MSVC-ABI lane (clang-cl's
+# -fsanitize=fuzzer is fragile), so the fuzz surface is exercised on a Linux
+# Clang build of the tests/fuzz/ drivers (SMATCHET_SANITIZER=fuzzer →
+# -fsanitize=fuzzer,address,undefined via cmake/Sanitizers.cmake).
+#
+# ADVISORY / non-required: NOT on the develop merge-gate critical path and NOT in
+# project.config.json required_contexts. The pull_request trigger (paths-scoped)
+# runs a short time-boxed fuzz on PRs that touch the build/sanitizer surface or
+# any tests/fuzz/ driver so a parser regression surfaces at review time; the
+# nightly cron does a longer run and is the develop backstop.
+#
+# Driver discovery is automatic: every executable named fuzz_* under
+# build/ninja-fuzzer-linux/tests/fuzz/ is built (the build preset builds the
+# default `all` target) and fuzzed. Adding a driver in tests/fuzz/CMakeLists.txt
+# (Slice E2b/E2c, PR 2) requires NO edit here — the tests/fuzz/** path trigger and
+# the find-loop pick it up. SMATCHET_BUILD_APP=OFF (set by ninja-fuzzer-linux)
+# skips GLFW / Dear ImGui / Lua / whisper / Standalone / DX12, so only clang, lld,
+# and the TLS/zlib headers cpr's (unbuilt) curl config probes are needed.
+
+on:
+  schedule:
+    - cron: '30 4 * * *'    # 04:30 UTC daily (offset from TSan nightly at 05:00)
+  workflow_dispatch: {}     # manual trigger (gh workflow run fuzz-smoke.yml --ref <branch>)
+  pull_request:
+    paths:
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'cmake/Sanitizers.cmake'
+      - 'tests/CMakeLists.txt'
+      - 'tests/fuzz/**'
+      - 'Source/Core/src/Ui/ImageDimensionsPure.cpp'
+      - '.github/workflows/fuzz-smoke.yml'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: fuzz-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  fuzz-smoke:
+    name: Fuzz smoke (Linux libFuzzer)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install toolchain (clang, lld, ninja, TLS/zlib headers)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld ninja-build libssl-dev zlib1g-dev libcurl4-openssl-dev
+
+      - name: Verify clang
+        run: clang++ --version
+
+      - name: Cache FetchContent sources
+        uses: actions/cache@v4
+        with:
+          path: |
+            .fetchcontent-src
+          key: ${{ runner.os }}-fuzzer-fetchcontent-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fuzzer-fetchcontent-
+
+      - name: Configure ninja-fuzzer-linux
+        run: cmake --preset ninja-fuzzer-linux
+
+      - name: Build fuzz drivers (Clang libFuzzer)
+        run: cmake --build --preset ninja-fuzzer-linux
+
+      - name: Smoke each driver (-runs=0, loads seed corpus)
+        working-directory: build/ninja-fuzzer-linux
+        run: ctest --output-on-failure
+
+      - name: Time-boxed fuzz run
+        working-directory: build/ninja-fuzzer-linux
+        run: |
+          set -uo pipefail
+          # Short on PRs (keep the advisory lane fast); longer on the nightly cron.
+          if [ "${{ github.event_name }}" = "schedule" ]; then BUDGET=300; else BUDGET=45; fi
+          mkdir -p crashes
+          # Auto-discover every fuzz_* driver — PR 2 drivers scale in with no edit.
+          mapfile -t targets < <(find tests/fuzz -maxdepth 1 -type f -name 'fuzz_*' -perm -u+x | sort)
+          if [ ${#targets[@]} -eq 0 ]; then
+            echo "No fuzz_* binaries under tests/fuzz — build produced none." >&2
+            exit 1
+          fi
+          echo "Fuzzing ${#targets[@]} target(s) at ${BUDGET}s each."
+          status=0
+          for bin in "${targets[@]}"; do
+            name=$(basename "$bin")
+            corpus="../../tests/fuzz/corpus/${name#fuzz_}"
+            seedargs=()
+            [ -d "$corpus" ] && seedargs+=("$corpus")
+            echo "::group::${name} (${BUDGET}s)"
+            if ! "$bin" -max_total_time="$BUDGET" -print_final_stats=1 \
+                   -artifact_prefix="crashes/${name}-" "${seedargs[@]}"; then
+              echo "FUZZ FAILURE: ${name} found a crash/leak/timeout."
+              status=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $status
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: build/ninja-fuzzer-linux/crashes/
+          if-no-files-found: ignore
+
+      - name: Surface fuzz failure in job summary
+        if: failure()
+        run: |
+          echo "## Fuzz smoke failure (Linux libFuzzer)" >> "$GITHUB_STEP_SUMMARY"
+          echo "A fuzz driver crashed, leaked, or timed out. Crash inputs (if any)" >> "$GITHUB_STEP_SUMMARY"
+          echo "are uploaded as the \`fuzz-crashes\` artifact — reproduce locally with:" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo './build/ninja-fuzzer-linux/tests/fuzz/<driver> <crash-file>' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update issue on nightly failure
+        if: ${{ failure() && github.event_name == 'schedule' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          title="Fuzz smoke nightly failed (parser crash on develop)"
+          existing=$(gh issue list --state open --search "$title in:title" \
+                       --json number --jq '.[0].number' 2>/dev/null || true)
+          body="The nightly Linux Clang libFuzzer smoke on \`develop\` failed.
+
+          Run: ${RUN_URL}
+
+          A fuzz driver over an untrusted-byte parser (tests/fuzz/) found a
+          crash, leak, or timeout. The crash input is attached to the run as the
+          \`fuzz-crashes\` artifact; add it as a regression seed under
+          tests/fuzz/corpus/<target>/ once fixed. Advisory lane — not a merge gate."
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            gh issue comment "$existing" --body "Recurred: ${RUN_URL}" || true
+          else
+            gh issue create --title "$title" --body "$body" || true
+          fi

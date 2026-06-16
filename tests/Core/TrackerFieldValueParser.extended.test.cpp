@@ -5,6 +5,8 @@
 #include <nlohmann/json.hpp>
 
 #include <string>
+#include <utility>
+#include <vector>
 
 TEST_CASE("BuildTrackerOptionDisplayValue handles null + primitive") {
     CHECK(BuildTrackerOptionDisplayValue(nlohmann::json(nullptr)) == "");
@@ -389,14 +391,40 @@ TEST_CASE("ADF text extraction preserves shallow doc output (no regression from 
     CHECK(firstPos < secondPos);
 }
 
+// Dismantle an arbitrarily deep json tree iteratively so no single ~json() recurses
+// deeply. nlohmann::json's destructor is recursive, so a deep tree stack-overflows on
+// teardown under ASAN's inflated frames (the walker is bounded; only the fixture's own
+// teardown is the hazard). Move every nested container onto a flat work list and clear
+// each node, so when a node finally destructs its children are already gone — shallow.
+static void DismantleDeepJson(nlohmann::json&& root) {
+    std::vector<nlohmann::json> work;
+    work.push_back(std::move(root));
+    while (!work.empty()) {
+        nlohmann::json node = std::move(work.back());
+        work.pop_back();
+        if (node.is_object() || node.is_array()) {
+            for (nlohmann::json::iterator it = node.begin(); it != node.end(); ++it) {
+                if (it->is_object() || it->is_array()) {
+                    work.push_back(std::move(*it));
+                }
+            }
+            node.clear();
+        }
+        // node destructs here — shallow (deep children already moved onto `work`)
+    }
+}
+
 // Build an ADF document nested `depth` levels deep, in place, WITHOUT triggering
 // nlohmann::json's own recursive copy constructor during setup. We descend via
 // references and push each new level into the parent's "content" array.
-// IMPORTANT: nlohmann::json's destructor is ALSO recursive, so `depth` must stay
-// modest — a multi-thousand-deep tree stack-overflows on teardown regardless of
-// our walker. Since the walker's cap is 256, a fixture just above that (kDeepAdfDepth)
-// is enough to prove the cap triggers while keeping the fixture's own ctor/dtor safe.
-static const int kDeepAdfDepth = 400; // > kMaxAdfRecursionDepth (256), safe for json ctor/dtor
+// Teardown safety: nlohmann::json's destructor is ALSO recursive, so a deep tree would
+// stack-overflow when it goes out of scope at end of TEST_CASE (this is the ASAN red the
+// fixture caused — inflated sanitizer frames overflow on `~json()`, NOT a walker finding).
+// Each deep-tree TEST_CASE hands its tree to DismantleDeepJson(std::move(...)) before
+// scope end, which flattens teardown — so the fixture stays safe at ANY depth and we keep
+// full coverage on the sanitizer lane (no depth-shrink guard). The walker's cap is 256;
+// kDeepAdfDepth is set above it so the deep-nest cases prove the cap actually triggers.
+static const int kDeepAdfDepth = 400; // > kMaxAdfRecursionDepth (256) — proves the walker cap fires
 static nlohmann::json BuildDeepAdfDoc(int depth) {
     nlohmann::json doc;
     doc["type"] = "doc";
@@ -421,14 +449,18 @@ TEST_CASE("ADF doc with hostile deep nesting parses without stack overflow (Extr
     // can return ADF nested far past any legitimate document. Before the depth cap this
     // blew the C++ stack via ExtractAdfTextToStream. A doc nested past the 256 cap must
     // return (bounded text, process survives) rather than crash; the walker stops at the
-    // cap and degrades. (Fixture depth is kept just above the cap so nlohmann's own
-    // recursive json ctor/dtor doesn't overflow the test itself — see kDeepAdfDepth.)
+    // cap and degrades. (Fixture depth is set just above the cap to prove it fires; the
+    // tree's recursive ~json() teardown is made safe by DismantleDeepJson below.)
     nlohmann::json doc = BuildDeepAdfDoc(kDeepAdfDepth);
 
     // The hard requirement is that this returns at all (no stack overflow / no thrown
     // exception unwinding the parse). Output is bounded/truncated.
     const std::string result = NormalizeTrackerFieldValue(doc);
     CHECK(result.size() < 100000);
+
+    // Iterative teardown: nlohmann's ~json() is recursive, so let the deep tree's
+    // children destruct shallow-first rather than overflow the stack under ASAN.
+    DismantleDeepJson(std::move(doc));
 }
 
 TEST_CASE("ADF comment body with hostile deep nesting parses without stack overflow (CollectAdfText bound)") {
@@ -447,6 +479,10 @@ TEST_CASE("ADF comment body with hostile deep nesting parses without stack overf
     // Must return without crashing; bounded output.
     const std::string out = ParseComments(comments);
     CHECK(out.size() < 100000);
+
+    // `comments` transitively owns the deep `body` (moved into `c`, then `comments`).
+    // Iterative teardown so the recursive ~json() doesn't overflow under ASAN.
+    DismantleDeepJson(std::move(comments));
 }
 
 // The #1220 ADF cap bounded the WALKERS, but a deeply-nested value that is NOT a
@@ -456,8 +492,8 @@ TEST_CASE("ADF comment body with hostile deep nesting parses without stack overf
 // value past the cap returns a marker instead of recursing into the serializer.
 TEST_CASE("NormalizeTrackerFieldValue — deep non-ADF object hits a bounded safe-dump (no stack overflow) [high-risk]") {
     // Build a deep plain-object chain in place (refs — no recursive copy-ctor at
-    // setup); kDeepAdfDepth (> the 256 cap) is shallow enough that nlohmann's own
-    // recursive ctor/dtor of the fixture is safe, but past the dump cap.
+    // setup); kDeepAdfDepth (> the 256 cap) is past the dump cap. The deep chain's
+    // own recursive ~json() teardown is made safe by DismantleDeepJson below.
     nlohmann::json deep = nlohmann::json::object();
     nlohmann::json* cur = &deep;
     for (int i = 0; i < kDeepAdfDepth; ++i) {
@@ -468,6 +504,9 @@ TEST_CASE("NormalizeTrackerFieldValue — deep non-ADF object hits a bounded saf
     const std::string out = NormalizeTrackerFieldValue(deep); // would SIGSEGV pre-fix
     CHECK(out.size() < 10000);                                // bounded marker, not a 400-level dump
     CHECK(out.find("depth cap") != std::string::npos);
+
+    // Iterative teardown so the deep object chain's recursive ~json() doesn't overflow.
+    DismantleDeepJson(std::move(deep));
 }
 
 TEST_CASE("FormatDateIfIso length-guards the fixed-index ISO sniff (no OOB read) [high-risk]") {

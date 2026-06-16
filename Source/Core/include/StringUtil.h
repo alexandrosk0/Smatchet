@@ -85,6 +85,19 @@ inline bool CompareIssueKeyNatural(const std::string& a, const std::string& b) {
     return pa.second < pb.second;
 }
 
+/// Canonicalize a grid field id, folding legacy aliases onto their unified id.
+/// Jira once exposed a singular `comment` column (raw ADF blob) before the unified
+/// `comments` count/modal cell (#1291); a view saved in that era still carries the
+/// legacy id. Fold it here so the old column renders the unified cell and dedups
+/// against an explicit `comments` column. Backend-safe: GitHub/Plane never use
+/// `comment`. Any other id passes through unchanged.
+inline std::string CanonicalizeGridFieldId(const std::string& fieldId) {
+    if (fieldId == "comment") {
+        return "comments";
+    }
+    return fieldId;
+}
+
 /** Split a string by a delimiter, trimming whitespace from parts. */
 inline std::vector<std::string> SplitAndTrim(const std::string& input, char delimiter = ',') {
     std::vector<std::string> result;

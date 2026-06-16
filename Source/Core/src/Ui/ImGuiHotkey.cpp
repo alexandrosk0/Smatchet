@@ -18,8 +18,39 @@ std::string LowerAscii(const std::string& s) {
     return out;
 }
 
+// Punctuation + named navigation/edit keys — single source of truth for both
+// directions. `token` is stored display-cased (what KeyToToken emits); parsing
+// compares case-insensitively, so "Esc"/"esc" both resolve. Multiple rows may
+// share a key (aliases like Return/Enter); `canonical` marks the one row
+// KeyToToken renders. Letters / digits / F-keys are contiguous in imgui and use
+// offset arithmetic instead of a table row.
+struct NamedKey {
+    const char* token;
+    ImGuiKey key;
+    bool canonical;
+};
+const NamedKey kNamedKeys[] = {
+    {"=", ImGuiKey_Equal, true},           {"-", ImGuiKey_Minus, true},
+    {",", ImGuiKey_Comma, true},           {".", ImGuiKey_Period, true},
+    {"/", ImGuiKey_Slash, true},           {";", ImGuiKey_Semicolon, true},
+    {"'", ImGuiKey_Apostrophe, true},      {"`", ImGuiKey_GraveAccent, true},
+    {"[", ImGuiKey_LeftBracket, true},     {"]", ImGuiKey_RightBracket, true},
+    {"\\", ImGuiKey_Backslash, true},      {"Space", ImGuiKey_Space, true},
+    {"Enter", ImGuiKey_Enter, true},       {"Return", ImGuiKey_Enter, false},
+    {"Tab", ImGuiKey_Tab, true},           {"Backspace", ImGuiKey_Backspace, true},
+    {"Delete", ImGuiKey_Delete, true},     {"Del", ImGuiKey_Delete, false},
+    {"Escape", ImGuiKey_Escape, true},     {"Esc", ImGuiKey_Escape, false},
+    {"Insert", ImGuiKey_Insert, true},     {"Ins", ImGuiKey_Insert, false},
+    {"Home", ImGuiKey_Home, true},         {"End", ImGuiKey_End, true},
+    {"PageUp", ImGuiKey_PageUp, true},     {"PgUp", ImGuiKey_PageUp, false},
+    {"PageDown", ImGuiKey_PageDown, true}, {"PgDn", ImGuiKey_PageDown, false},
+    {"Up", ImGuiKey_UpArrow, true},        {"Down", ImGuiKey_DownArrow, true},
+    {"Left", ImGuiKey_LeftArrow, true},    {"Right", ImGuiKey_RightArrow, true},
+};
+
 // Map a single non-modifier token to an ImGuiKey. ImGuiKey_A..Z, _0..9, _F1..F12
-// are contiguous in imgui, so offset arithmetic is safe.
+// are contiguous in imgui, so offset arithmetic is safe; everything else is a
+// case-insensitive lookup in kNamedKeys. Tokens arrive lower-cased.
 ImGuiKey KeyFromToken(const std::string& tok) {
     if (tok.size() == 1) {
         const char c = tok[0];
@@ -46,14 +77,10 @@ ImGuiKey KeyFromToken(const std::string& tok) {
             }
         }
     }
-    if (tok == ",") {
-        return ImGuiKey_Comma;
-    }
-    if (tok == "space") {
-        return ImGuiKey_Space;
-    }
-    if (tok == "enter" || tok == "return") {
-        return ImGuiKey_Enter;
+    for (const NamedKey& nk : kNamedKeys) {
+        if (tok == LowerAscii(nk.token)) {
+            return nk.key;
+        }
     }
     return ImGuiKey_None;
 }
@@ -73,14 +100,10 @@ std::string KeyToToken(ImGuiKey key) {
         const int n = 1 + (key - ImGuiKey_F1);
         return std::string("F") + std::to_string(n);
     }
-    if (key == ImGuiKey_Comma) {
-        return ",";
-    }
-    if (key == ImGuiKey_Space) {
-        return "Space";
-    }
-    if (key == ImGuiKey_Enter) {
-        return "Enter";
+    for (const NamedKey& nk : kNamedKeys) {
+        if (nk.canonical && nk.key == key) {
+            return std::string(nk.token);
+        }
     }
     return std::string();
 }
@@ -157,20 +180,17 @@ bool MatchHotkey(const ImGuiIO& io, const ImGuiBugHotkey& hk) {
     if (hk.key == ImGuiKey_None) {
         return false;
     }
-    if (io.KeyCtrl != hk.ctrl || io.KeyShift != hk.shift || io.KeyAlt != hk.alt ||
-        io.KeySuper != hk.super) {
+    if (io.KeyCtrl != hk.ctrl || io.KeyShift != hk.shift || io.KeyAlt != hk.alt || io.KeySuper != hk.super) {
         return false;
     }
     return ImGui::IsKeyPressed(hk.key, /*repeat*/ false);
 }
 
-int FindShortcutConflict(const std::vector<ImGuiBugHotkey>& existing,
-                         const ImGuiBugHotkey& candidate) {
+int FindShortcutConflict(const std::vector<ImGuiBugHotkey>& existing, const ImGuiBugHotkey& candidate) {
     for (size_t i = 0; i < existing.size(); ++i) {
         const ImGuiBugHotkey& e = existing[i];
-        if (e.key == candidate.key && e.ctrl == candidate.ctrl &&
-            e.shift == candidate.shift && e.alt == candidate.alt &&
-            e.super == candidate.super) {
+        if (e.key == candidate.key && e.ctrl == candidate.ctrl && e.shift == candidate.shift &&
+            e.alt == candidate.alt && e.super == candidate.super) {
             return static_cast<int>(i);
         }
     }

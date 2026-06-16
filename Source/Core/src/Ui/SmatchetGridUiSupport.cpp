@@ -458,6 +458,24 @@ std::uint64_t ComputeGridSortSignature(const std::string& sortFingerprint, std::
     return h;
 }
 
+void GridSelectAllRows(GridPane& pane, const std::vector<CachedTicket>& tickets) {
+    GridRectSelection& sel = pane.gridState.RectSel;
+    sel.ClearAll();
+    const size_t rowCount = !pane.filteredIndices.empty() ? pane.filteredIndices.size() : tickets.size();
+    for (size_t row = 0; row < rowCount; ++row) {
+        sel.Rows.insert(static_cast<int>(row));
+    }
+    if (rowCount > 0) {
+        sel.PrimaryRow = 0;
+        sel.SortSignature =
+            ComputeGridSortSignature(pane.cachedSortFingerprint, pane.cachedSortTicketsRevision, tickets.size());
+        const size_t firstTicketIndex = !pane.filteredIndices.empty() ? pane.filteredIndices.front() : 0;
+        if (firstTicketIndex < tickets.size()) {
+            pane.gridState.ActiveIssueId = tickets[firstTicketIndex].id;
+        }
+    }
+}
+
 std::string BuildGridContextSignature(const ViewDefinition* view, const std::string& jqlQuery) {
     std::string s;
     if (!view) {

@@ -59,8 +59,8 @@ bool ContainsLower(const std::string& haystack, const std::string& needleLower) 
 
 // A row matches when the (already-lowercased) filter is a substring of the action
 // label, the command id, or the bound combo. Empty filter matches everything.
-bool RowMatchesFilter(const std::string& filterLower, const std::string& label,
-                      const std::string& commandId, const std::string& hotkey) {
+bool RowMatchesFilter(const std::string& filterLower, const std::string& label, const std::string& commandId,
+                      const std::string& hotkey) {
     if (filterLower.empty()) {
         return true;
     }
@@ -75,6 +75,80 @@ void DrawSystemShortcutRow(const char* label, const char* combo) {
     ImGui::TextDisabled("%s", combo);
 }
 
+// True when any binding row already targets `commandId` (any args). Used to hide
+// already-listed commands from the "Add shortcut for a command..." picker.
+bool CommandHasRow(const std::vector<Keybinding>& binds, const std::string& commandId) {
+    for (const Keybinding& b : binds) {
+        if (b.CommandId == commandId) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// "Add shortcut for a command..." popup: a filterable list of every registry command
+// that has no row yet. Picking one appends an unbound+enabled row (the user then
+// captures a combo into it via the inline rebind control). Returns true if a row was
+// appended so the caller marks the table dirty. Mirrors the toolbar command picker
+// (InputTextWithHint filter + scrollable child + Selectable). The popup must be drawn
+// every frame (BeginPopup) for OpenPopup to keep it open.
+bool DrawAddCommandPopup(AppController& app, std::vector<Keybinding>& binds) {
+    if (!ImGui::BeginPopup("###kbAddCommandPopup")) {
+        return false;
+    }
+    static std::string addFilter;
+    char buf[160];
+    std::snprintf(buf, sizeof(buf), "%s", addFilter.c_str());
+    ImGui::SetNextItemWidth(340.0f);
+    if (ImGui::InputTextWithHint("###kbAddSearch",
+                                 SmatchetLocalization::T("keybindings.editor.addSearchHint", "Search commands..."), buf,
+                                 sizeof(buf))) {
+        addFilter = buf;
+    }
+    const std::string addFilterLower = ToLowerAscii(addFilter);
+
+    bool added = false;
+    ImGui::BeginChild("###kbAddList", ImVec2(360.0f, 280.0f), true);
+    const std::vector<smatchet::cmd::Command> all = app.Commands().All();
+    bool anyShown = false;
+    for (const smatchet::cmd::Command& c : all) {
+        if (CommandHasRow(binds, c.Name)) {
+            continue; // already listed in the table
+        }
+        const std::string label = !c.Summary.empty() ? c.Summary : c.Name;
+        if (!addFilterLower.empty() && !ContainsLower(label, addFilterLower) &&
+            !ContainsLower(c.Name, addFilterLower)) {
+            continue;
+        }
+        anyShown = true;
+        ImGui::PushID(c.Name.c_str());
+        if (ImGui::Selectable(label.c_str())) {
+            Keybinding nb;
+            nb.CommandId = c.Name;
+            nb.Hotkey.clear(); // unbound row — user captures the combo inline
+            nb.ArgsJson = "{}";
+            nb.Enabled = true;
+            binds.push_back(nb);
+            added = true;
+            ImGui::CloseCurrentPopup();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", c.Name.c_str());
+        }
+        ImGui::PopID();
+        if (added) {
+            break; // binds was mutated; stop iterating the now-stale-vs-row list
+        }
+    }
+    if (!anyShown) {
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("keybindings.editor.addNoneLeft",
+                                                          "All commands already have a shortcut row."));
+    }
+    ImGui::EndChild();
+    ImGui::EndPopup();
+    return added;
+}
+
 } // namespace
 
 void DrawKeybindingsPreferencesTab(SmatchetUI& ui, AppController& app, UiDrawSession& d) {
@@ -86,18 +160,17 @@ void DrawKeybindingsPreferencesTab(SmatchetUI& ui, AppController& app, UiDrawSes
     static std::string capturingKey;
 
     const std::string tabLabel =
-        std::string(SmatchetLocalization::T("prefs.tab.keybindings", "Keyboard Shortcuts")) +
-        "###prefsTabKeybindings";
+        std::string(SmatchetLocalization::T("prefs.tab.keybindings", "Keyboard Shortcuts")) + "###prefsTabKeybindings";
     if (!ImGui::BeginTabItem(tabLabel.c_str())) {
         capturingKey.clear(); // tab switched away / closed mid-capture — drop the armed row
         return;
     }
     d.preferencesActiveTab = PreferencesActiveTab::Keybindings;
 
-    ImGui::TextWrapped("%s", SmatchetLocalization::T(
-                                 "keybindings.editor.intro",
-                                 "Rebind in-app keyboard shortcuts. Click a shortcut to capture a new "
-                                 "key combo (Esc cancels). Changes save automatically."));
+    ImGui::TextWrapped("%s",
+                       SmatchetLocalization::T("keybindings.editor.intro",
+                                               "Rebind in-app keyboard shortcuts. Click a shortcut to capture a new "
+                                               "key combo (Esc cancels). Changes save automatically."));
     ImGui::Spacing();
 
     char searchBuf[160];
@@ -192,16 +265,21 @@ void DrawKeybindingsPreferencesTab(SmatchetUI& ui, AppController& app, UiDrawSes
         capturingKey.clear();
         mutated = true;
     }
+    ImGui::SameLine();
+    if (ImGui::Button(SmatchetLocalization::T("keybindings.editor.addCommand", "Add shortcut for a command..."))) {
+        ImGui::OpenPopup("###kbAddCommandPopup");
+    }
+    if (DrawAddCommandPopup(app, binds)) {
+        mutated = true;
+    }
 
     ImGui::Spacing();
     if (ImGui::CollapsingHeader(
             SmatchetLocalization::T("keybindings.editor.systemHeader", "System shortcuts (not rebindable)"))) {
-        DrawSystemShortcutRow(SmatchetLocalization::T("keybindings.system.zenToggle", "Toggle Zen mode"),
-                              "Ctrl+M, Z");
+        DrawSystemShortcutRow(SmatchetLocalization::T("keybindings.system.zenToggle", "Toggle Zen mode"), "Ctrl+M, Z");
         DrawSystemShortcutRow(SmatchetLocalization::T("keybindings.system.zenExit", "Exit Zen mode"), "Esc Esc");
-        DrawSystemShortcutRow(
-            SmatchetLocalization::T("keybindings.system.paletteNav", "Command palette navigation"),
-            "Up / Down / Enter / Esc");
+        DrawSystemShortcutRow(SmatchetLocalization::T("keybindings.system.paletteNav", "Command palette navigation"),
+                              "Up / Down / Enter / Esc");
     }
 
     if (mutated) {

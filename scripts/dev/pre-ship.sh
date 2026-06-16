@@ -218,6 +218,15 @@ else
     clang-format -i "${fmt_targets[@]}"
 fi
 
+# Auto-strip the mechanically-removable comment-noise this change added (blank-comment runs +
+# decorative banners) BEFORE the gate — and AFTER clang-format, which can itself reflow a comment
+# into a flagged shape. Commented-out-code is NOT auto-deleted (needs a human reword); it's
+# reported and still blocks the gate below. This kills the recurring comment-blank-run footgun
+# (postmortem: 6 PRs in one session re-tripped it on bare `//` header-doc separators).
+echo "pre-ship: auto-stripping new blank-run/decorative comment-noise vs $base_ref"
+python3 agents/scripts/core/comment_audit.py --fix "$base_ref" \
+    || echo "pre-ship: WARN — comment-noise auto-strip errored; the gate below still enforces." >&2
+
 echo "pre-ship: running delta lint gate vs $base_ref"
 if ! bash agents/scripts/project/test-lint-rules.sh --diff "$base_ref"; then
     echo "pre-ship: FAIL — fix the delta lint findings above before pushing." >&2

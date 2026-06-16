@@ -78,6 +78,35 @@ static std::string MenuShortcut(const MainMenuDrawCtx& ctx, const char* commandI
     return std::string(fallback);
 }
 
+// Args-aware variant of MenuShortcut: one command id may carry several distinct-args
+// bindings on distinct keys (e.g. view.toggle.views_dashboard for both "Open Project
+// View" and "Views Dashboard"); BoundHotkeyDisplayForArgs picks the row matching
+// argsJson by JSON semantic equality. Same fallback contract as MenuShortcut.
+static std::string MenuShortcutArgs(const MainMenuDrawCtx& ctx, const char* commandId, const char* argsJson,
+                                    const char* fallback) {
+    for (const Keybinding& b : ctx.d.cfg.Keybindings.Bindings) {
+        if (b.CommandId == commandId) {
+            return BoundHotkeyDisplayForArgs(ctx.d.cfg.Keybindings.Bindings, commandId, argsJson);
+        }
+    }
+    return std::string(fallback);
+}
+
+// Dispatch a zero-arg registry command from a menu click so the menu and the
+// keybinding share one code path (zoom items). Already on the UI thread here; the
+// command's RunOnUiThreadAsCommandResult re-posts to the dispatcher and applies on
+// the next drain. Source mirrors the recently-used-views menu dispatch below.
+static void DispatchMenuCommand(MainMenuDrawCtx& ctx, const char* commandId) {
+    smatchet::cmd::CommandContext cmdCtx;
+    cmdCtx.App = &ctx.app;
+    cmdCtx.Source = smatchet::cmd::CommandSource::Palette;
+    const nlohmann::json emptyArgs = nlohmann::json::object();
+    const smatchet::cmd::CommandResult r = ctx.app.Commands().Dispatch(commandId, emptyArgs, cmdCtx);
+    if (!r.Ok) {
+        LOG_DEBUG("SmatchetUI: menu command dispatch failed: %s", commandId);
+    }
+}
+
 void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
     if (!ImGui::BeginMainMenuBar()) {
         return;
@@ -227,30 +256,18 @@ void SmatchetUI::drawMenuBarUnrealCloseButton(MainMenuDrawCtx& ctx) {
 // `selectAllRows` lambda inside the menu-bar body.
 void SmatchetUI::selectAllGridRows(MainMenuDrawCtx& ctx) {
     // Menu actions target the FOCUSED pane (ADR-0018 focused-pane semantics).
-    GridPane& pane = ctx.d.focusedPane();
-    const std::vector<CachedTicket>& tickets = ctx.tickets;
-    auto& sel = pane.gridState.RectSel;
-    sel.ClearAll();
-    const size_t rowCount = !pane.filteredIndices.empty() ? pane.filteredIndices.size() : tickets.size();
-    for (size_t row = 0; row < rowCount; ++row) {
-        sel.Rows.insert(static_cast<int>(row));
-    }
-    if (rowCount > 0) {
-        sel.PrimaryRow = 0;
-        sel.SortSignature =
-            ComputeGridSortSignature(pane.cachedSortFingerprint, pane.cachedSortTicketsRevision, tickets.size());
-        const size_t firstTicketIndex = !pane.filteredIndices.empty() ? pane.filteredIndices.front() : 0;
-        if (firstTicketIndex < tickets.size()) {
-            pane.gridState.ActiveIssueId = tickets[firstTicketIndex].id;
-        }
-    }
+    // Shared with the grid-local Ctrl+A handler via GridSelectAllRows.
+    GridSelectAllRows(ctx.d.focusedPane(), ctx.tickets);
 }
 
 // File menu. Owns its own BeginMenu/EndMenu pair (EndMenu only when BeginMenu returns true).
 void SmatchetUI::drawMenuBarFileMenu(MainMenuDrawCtx& ctx) {
     UiDrawSession& d = ctx.d;
     if (ImGui::BeginMenu("File")) {
-        if (ImGui::MenuItem("Open Project View...", "Ctrl+O")) {
+        if (ImGui::MenuItem("Open Project View...",
+                            MenuShortcutArgs(ctx, "view.toggle.views_dashboard",
+                                             "{\"action\":\"show\",\"via\":\"open_project_view\"}", "Ctrl+O")
+                                .c_str())) {
             d.showViewsDashboard = true;
             d.requestViewsDashboardFocus = true;
         }
@@ -276,8 +293,7 @@ void SmatchetUI::drawMenuBarEditMenu(MainMenuDrawCtx& ctx) {
     if (ImGui::BeginMenu("Edit")) {
         if (ImGui::MenuItem("Copy", "Ctrl+C", false, ctx.hasSelection && !ctx.columns.empty())) {
             GridPane& pane = d.focusedPane();
-            CopyGridRectAsTsv(ctx.tickets, pane.filteredIndices, ctx.columns, ctx.catalogIndex,
-                              pane.gridState.RectSel);
+            CopyGridRectAsTsv(ctx.tickets, pane.filteredIndices, ctx.columns, ctx.catalogIndex, pane.gridState.RectSel);
         }
         ImGui::EndMenu();
     }
@@ -290,13 +306,13 @@ void SmatchetUI::drawMenuBarSelectionMenu(MainMenuDrawCtx& ctx) {
         if (ImGui::MenuItem("Select All", "Ctrl+A", false, ctx.hasTickets)) {
             selectAllGridRows(ctx);
         }
-        if (ImGui::MenuItem("Clear Selection", "Ctrl+Shift+A", false, ctx.hasSelection)) {
+        if (ImGui::MenuItem("Clear Selection", MenuShortcut(ctx, "grid.clear_selection", "Ctrl+Shift+G").c_str(), false,
+                            ctx.hasSelection)) {
             d.focusedPane().gridState.RectSel.ClearAll();
         }
         if (ImGui::MenuItem("Copy Selection", "Ctrl+Shift+C", false, ctx.hasSelection && !ctx.columns.empty())) {
             GridPane& pane = d.focusedPane();
-            CopyGridRectAsTsv(ctx.tickets, pane.filteredIndices, ctx.columns, ctx.catalogIndex,
-                              pane.gridState.RectSel);
+            CopyGridRectAsTsv(ctx.tickets, pane.filteredIndices, ctx.columns, ctx.catalogIndex, pane.gridState.RectSel);
         }
         ImGui::EndMenu();
     }
@@ -396,8 +412,7 @@ void SmatchetUI::drawMenuBarAppearanceMenu(MainMenuDrawCtx& ctx) {
         return;
     }
 #ifndef SMATCHET_EMBEDDED_IN_UNREAL
-    if (ImGui::MenuItem("Full Screen", MenuShortcut(ctx, "app.fullscreen.toggle", "F11").c_str(),
-                        d.cfg.FullScreen)) {
+    if (ImGui::MenuItem("Full Screen", MenuShortcut(ctx, "app.fullscreen.toggle", "F11").c_str(), d.cfg.FullScreen)) {
         d.requestFullScreenToggle = true;
     }
 #endif
@@ -418,17 +433,18 @@ void SmatchetUI::drawMenuBarAppearanceMenu(MainMenuDrawCtx& ctx) {
         }
     }
     ImGui::Separator();
-    if (ImGui::MenuItem("Zoom In", "Ctrl+=", false, d.cfg.FontSizePt < 32)) {
-        d.cfg.FontSizePt = (d.cfg.FontSizePt < 32) ? (d.cfg.FontSizePt + 1) : 32;
-        ConfigManager::Save(d.cfg);
+    // Zoom clicks route through the command registry (ui.zoom.*) so the menu and the
+    // Ctrl+= / Ctrl+- / Ctrl+0 keybindings share one clamp+Save path. Enable-gates keep
+    // the pre-registry min/max bounds (the command clamps too).
+    if (ImGui::MenuItem("Zoom In", MenuShortcut(ctx, "ui.zoom.in", "Ctrl+=").c_str(), false, d.cfg.FontSizePt < 32)) {
+        DispatchMenuCommand(ctx, "ui.zoom.in");
     }
-    if (ImGui::MenuItem("Zoom Out", "Ctrl+-", false, d.cfg.FontSizePt > 8)) {
-        d.cfg.FontSizePt = (d.cfg.FontSizePt > 8) ? (d.cfg.FontSizePt - 1) : 8;
-        ConfigManager::Save(d.cfg);
+    if (ImGui::MenuItem("Zoom Out", MenuShortcut(ctx, "ui.zoom.out", "Ctrl+-").c_str(), false, d.cfg.FontSizePt > 8)) {
+        DispatchMenuCommand(ctx, "ui.zoom.out");
     }
-    if (ImGui::MenuItem("Reset Zoom", "Ctrl+0", false, d.cfg.FontSizePt != 16)) {
-        d.cfg.FontSizePt = 16;
-        ConfigManager::Save(d.cfg);
+    if (ImGui::MenuItem("Reset Zoom", MenuShortcut(ctx, "ui.zoom.reset", "Ctrl+0").c_str(), false,
+                        d.cfg.FontSizePt != 16)) {
+        DispatchMenuCommand(ctx, "ui.zoom.reset");
     }
     ImGui::Separator();
     if (ImGui::MenuItem("Primary Side Bar", MenuShortcut(ctx, "view.sidebar.primary", "Ctrl+B").c_str(),
@@ -468,7 +484,7 @@ void SmatchetUI::drawMenuBarViewMenu(MainMenuDrawCtx& ctx) {
     if (ImGui::MenuItem("Command Palette...", MenuShortcut(ctx, "ui.command_palette", "Ctrl+Shift+P").c_str())) {
         commandPalette_.Open();
     }
-    if (ImGui::MenuItem("Open View...", "Ctrl+Shift+V")) {
+    if (ImGui::MenuItem("Open View...", MenuShortcut(ctx, "ui.open_view", "Ctrl+Shift+V").c_str())) {
         commandPalette_.Open();
         commandPalette_.SetFilterText("view.toggle.");
     }
@@ -534,25 +550,31 @@ void SmatchetUI::drawMenuBarViewMenu(MainMenuDrawCtx& ctx) {
 void SmatchetUI::drawMenuBarViewWindowToggles(MainMenuDrawCtx& ctx) {
     UiDrawSession& d = ctx.d;
     ImGui::Separator();
-    if (ImGui::MenuItem("Views Dashboard", "Ctrl+Shift+E", d.showViewsDashboard)) {
+    if (ImGui::MenuItem(
+            "Views Dashboard",
+            MenuShortcutArgs(ctx, "view.toggle.views_dashboard", "{\"action\":\"show\"}", "Ctrl+Shift+E").c_str(),
+            d.showViewsDashboard)) {
         // Menu click always reveals + focuses the window. Closing happens via the
         // window's X button (the p_open arg to ImGui::Begin flips d.showViewsDashboard
-        // back to false). See AGENTS.md for the always-reveal contract.
+        // back to false). See AGENTS.md for the always-reveal contract. Click stays
+        // inline (not Dispatch) to preserve the recentViews_.Touch the command lacks.
         d.showViewsDashboard = true;
         d.requestViewsDashboardFocus = true;
         recentViews_.Touch("view.toggle.views-dashboard");
     }
-    if (ImGui::MenuItem("Annotate", "Ctrl+Shift+B", d.showAnnotateAnalysis)) {
+    if (ImGui::MenuItem("Annotate", MenuShortcut(ctx, "view.toggle.source_annotate", "Ctrl+Shift+N").c_str(),
+                        d.showAnnotateAnalysis)) {
         d.showAnnotateAnalysis = !d.showAnnotateAnalysis;
         recentViews_.Touch("view.toggle.source-annotate");
     }
     ImGui::Separator();
-    if (ImGui::MenuItem("Log", "Ctrl+Shift+U", d.showLogWindow)) {
+    if (ImGui::MenuItem("Log", MenuShortcut(ctx, "view.toggle.log", "Ctrl+Shift+U").c_str(), d.showLogWindow)) {
         d.showLogWindow = true;
         d.requestLogFocus = true;
         recentViews_.Touch("view.toggle.log");
     }
-    if (ImGui::MenuItem("Backend Audit", "Ctrl+Shift+M", d.showAuditTrail)) {
+    if (ImGui::MenuItem("Backend Audit", MenuShortcut(ctx, "view.toggle.backend_audit", "Ctrl+Shift+M").c_str(),
+                        d.showAuditTrail)) {
         d.showAuditTrail = true;
         d.requestAuditTrailFocus = true;
         recentViews_.Touch("view.toggle.backend-audit");

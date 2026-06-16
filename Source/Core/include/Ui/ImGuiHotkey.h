@@ -25,9 +25,11 @@ struct ImGuiBugHotkey {
 
 /// Parse "Ctrl+Shift+B" (case-insensitive, '+'-separated). Recognises modifiers
 /// ctrl/control, shift, alt, super/win/cmd, and a single main key: A-Z, 0-9,
-/// F1-F12, comma, space, enter/return. Returns false (and leaves `out` partial)
-/// when no main key resolves or the string is empty. At most one main key; extra
-/// main keys -> the last one wins.
+/// F1-F12; punctuation = - , . / ; ' ` [ ] backslash; and named keys space,
+/// enter/return, tab, backspace, delete/del, escape/esc, insert/ins, home, end,
+/// pageup/pgup, pagedown/pgdn, up, down, left, right. Returns false (and leaves
+/// `out` partial) when no main key resolves or the string is empty. At most one
+/// main key; extra main keys -> the last one wins.
 bool ParseImGuiHotkey(const std::string& spec, ImGuiBugHotkey& out);
 
 /// Inverse of ParseImGuiHotkey: render a canonical "Ctrl+Shift+B" string.
@@ -43,8 +45,7 @@ bool MatchHotkey(const ImGuiIO& io, const ImGuiBugHotkey& hk);
 /// Pure conflict check (no ImGui-IO dependency): returns the index of the first
 /// entry in `existing` whose modifiers + key equal `candidate`, or -1 if none.
 /// Used by the keybinding editor to warn on a duplicate combo.
-int FindShortcutConflict(const std::vector<ImGuiBugHotkey>& existing,
-                         const ImGuiBugHotkey& candidate);
+int FindShortcutConflict(const std::vector<ImGuiBugHotkey>& existing, const ImGuiBugHotkey& candidate);
 
 } // namespace ui
 } // namespace smatchet

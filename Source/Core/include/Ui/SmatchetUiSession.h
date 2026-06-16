@@ -4,7 +4,7 @@
 #include "ConfigManager.h"
 #include "GridPane.h"
 #include "SmatchetDefaults.h"
-#include "Ui/CancelToken.h"
+#include "CancelToken.h"
 
 #include <nlohmann/json.hpp>
 #include "IssueCreatePipeline.h"
