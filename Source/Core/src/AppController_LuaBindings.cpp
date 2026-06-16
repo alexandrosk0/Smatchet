@@ -2,6 +2,7 @@
 #include "AppControllerImpl.h" // AppController::Impl — cold sol2/automation member storage (pImpl #19b)
 #include "ILuaBindingHost.h"
 #include "LuaAutomationHost.h"
+#include "LocalCacheManager.h" // direct: AppController.h now fwd-decls LocalCacheManager (fan-in Phase 1); this TU calls app_.Cache-> methods.
 
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
@@ -946,8 +947,7 @@ std::tuple<sol::object, std::string> AppController::Impl::LuaDecodeJsonBind(sol:
                              "Possible hostile or malformed payload.",
                              kDecodeJsonMaxDepth, kDecodeJsonMaxNodes);
                 }
-                return {sol::make_object(sv, sol::nil),
-                        std::string("input too deeply nested or too many elements")};
+                return {sol::make_object(sv, sol::nil), std::string("input too deeply nested or too many elements")};
             }
             return {sol::make_object(sv, sol::nil), std::string("invalid JSON")};
         }

@@ -1,4 +1,5 @@
 #include "AppController.h"
+#include "LocalCacheManager.h" // direct: AppController.h now fwd-decls LocalCacheManager (fan-in Phase 1); this TU calls Cache-> methods.
 
 #include <algorithm>
 #include <chrono>
@@ -1795,7 +1796,7 @@ bool AppController::AddIssueCommentPlain(const std::string& issueKey, const std:
 }
 
 bool AppController::FetchIssueComments(const std::string& issueKey, std::vector<TrackerIssueComment>& outComments,
-                                      std::string& outError) {
+                                       std::string& outError) {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
         &focusedContext()
              .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)

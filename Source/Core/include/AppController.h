@@ -38,7 +38,6 @@ struct McpToolDefinition;
 #include <future>
 #include <map>
 #include "GridLiveContext.h"
-#include "LocalCacheManager.h"
 #include "ITrackerBackend.h"
 #include "MainThreadDispatcher.h"
 #include "Commands/IMainThreadPoster.h"
@@ -59,7 +58,11 @@ struct McpToolDefinition;
 #include "ITrackerIssueMutations.h"
 #include "ITrackerIssueReader.h"
 
-#include <nlohmann/json.hpp>
+// Fan-in stabilization (docs/plans/appcontroller-fan-in.md, Phase 1): json_fwd, not
+// json.hpp — AppController.h names nlohmann::json only by-reference in out-of-line
+// method decls (no inline construction), so the forward-declaration header suffices
+// and the heavy full json.hpp no longer rides the direct edge to the 114 includers.
+#include <nlohmann/json_fwd.hpp>
 
 class PluginHost;
 // AiTypes.h is unconditional (POD header, no transitive includes beyond <atomic>/<memory>/etc.)
@@ -101,6 +104,9 @@ struct AppUpdateInfo {
 };
 
 class ITrackerBackendFactory;
+class LocalCacheManager; // fan-in Phase 1: fwd-decl (was a direct heavy include); `std::unique_ptr<LocalCacheManager>
+                         // Cache` member is fine with the incomplete type since ~AppController is out-of-line. Defining
+                         // TUs include LocalCacheManager.h directly.
 class GridContextDepsAdapter;
 class OfflineQueueService;
 class TicketSyncService;
