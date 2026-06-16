@@ -1,7 +1,16 @@
-# Slice E2b — libFuzzer drivers for the 5 remaining untrusted-byte parsers (PR 2)
+# Slice E2b — libFuzzer drivers for the 5 remaining untrusted-byte parsers (PR 2a + PR 2b)
 
-**Status:** DRAFT — awaiting review (no code until approved).
-**Branch / worktree:** `feat/slice-e2b-libfuzzer` @ `C:\Dev\trees\slice-e2b-libfuzzer` (off `origin/develop` @ `eeeaabb7`, the E2a merge).
+**Status:** APPROVED — split into **PR 2a + PR 2b** per user decision ("Approve but split", to stay well under CodeRabbit's per-PR file ceiling). **PR 2a in flight.**
+**Branch / worktree:** `feat/slice-e2b-libfuzzer` @ `C:\Dev\trees\slice-e2b-libfuzzer` (off `origin/develop` @ `eeeaabb7`, the E2a merge). PR 2b stacks on this branch (or ships off `develop` once 2a merges).
+
+### PR split (primary plan)
+
+| PR | Drivers | Why this seam |
+|---|---|---|
+| **PR 2a** (this PR) | `fuzz_cpp_lex`, `fuzz_callstack`, `fuzz_markdown_adf` | The lexer + callstack + markdown surface. `markdown_adf` carries the `LIBS` helper extension (md4c + nlohmann), so the CMake change lands here. |
+| **PR 2b** (next) | `fuzz_ai_sse`, `fuzz_ai_ndjson` | The streamed-AI-response surface (SSE + NDJSON), 2-chunk split-feed. Structurally depends on 2a's `LIBS` helper (`ndjson` needs nlohmann). |
+
+Split keeps each PR at ~7-8 files — well under CR's per-PR ceiling.
 **Roadmap:** `docs/guides/testing-surface.md` §6 P1 Gap 3 → `docs/plans/active/testing-surface-roadmap.md` step E2. `security.md` §59-60.
 **Predecessor:** PR #1296 (E2a, **merged clean**) shipped the lane (`ninja-fuzzer-linux` preset, `cmake/Sanitizers.cmake` fuzzer branch, `tests/fuzz/` scaffold + `smatchet_add_fuzz_target` helper, advisory `fuzz-smoke.yml`) + the first driver `fuzz_image_dims`.
 
@@ -9,9 +18,9 @@
 
 ## 1. Goal
 
-Add the **5 remaining** libFuzzer drivers over Smatchet's untrusted-byte parsers, completing Slice E2's stated surface (the 6 parsers in `security.md` §59-60). One PR (PR 2). Each driver links its parser's **minimal ImGui-free `.cpp` link closure** (not the Core static lib — `SMATCHET_BUILD_APP=OFF` may not build it), registers a `-runs=0` smoke ctest, and ships 2-3 seed corpus inputs.
+Add the **5 remaining** libFuzzer drivers over Smatchet's untrusted-byte parsers, completing Slice E2's stated surface (the 6 parsers in `security.md` §59-60). Shipped as **two PRs** (2a + 2b, table above). Each driver links its parser's **minimal ImGui-free `.cpp` link closure** (not the Core static lib — `SMATCHET_BUILD_APP=OFF` may not build it), registers a `-runs=0` smoke ctest, and ships 2-3 seed corpus inputs.
 
-This collapses the README's nominal E2b/E2c split into one PR — which the merged scaffold's own `tests/fuzz/CMakeLists.txt` header already anticipates ("PR 2 (Slice E2b/E2c) adds the remaining five drivers"). **Not a scope deviation** — it matches the shipped intent.
+The merged scaffold's own `tests/fuzz/CMakeLists.txt` header anticipated the remaining five as "PR 2"; we split that into 2a + 2b for file-count headroom. **Not a scope deviation** — same surface, two slices.
 
 ### Parsers (all confirmed ImGui-free; signatures verified against `origin/develop`)
 
@@ -159,28 +168,39 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
 2-3 small, valid seeds each (keep file count under the CR per-PR ceiling). Seeds prime libFuzzer's coverage frontier; they are plain text written verbatim.
 
-| Corpus | Seeds |
-|---|---|
-| `cpp_lex/` | `decl` (`int main() { return 0; }`), `mixed` (line with `"string"`, `'c'`, `// comment`, keyword), `callstack` (a frame-shaped line, e.g. `Foo::Bar(int) Line 42`) |
-| `markdown_adf/` | `headings` (ATX `#`/`##` + para), `table` (GFM pipe table), `fenced` (```` ```cpp ```` block + list + `~~strike~~` + `[link](http://x)` + `- [ ]` task) |
-| `ai_sse/` | `event` (`event: message\ndata: {"delta":"hi"}\n\n`), `multiline_data` (two `data:` lines + blank), `comment` (`: keepalive\n\n`) |
-| `ai_ndjson/` | `two_objs` (`{"a":1}\n{"b":2}\n`), `partial` (one full line + an unterminated fragment, no trailing `\n`), `empty_lines` (blank lines between objects) |
-| `callstack/` | `two_frames` (two stack frames), `with_addr` (frame with `0x...` address + module), `noise` (free text that is not a callstack) |
+| Corpus | PR | Seeds (as committed) |
+|---|---|---|
+| `cpp_lex/` | 2a | `decl` (`int main(...)`), `mixed` (`"string"` + `'c'` + `// comment` + keyword + `0xDEAD`), `callstack_line` (addr + `Module!Sym::Fn() Line N`) |
+| `callstack/` | 2a | `two_frames` (two stack frames), `with_addr` (frames with `0x...` addresses + `+ 0x..` offsets), `noise` (prose, not a callstack) |
+| `markdown_adf/` | 2a | `headings` (ATX `#`/`##` + bold/italic/inline-code + blockquote), `table` (GFM pipe table), `fenced_tasks` (`- [ ]`/`- [x]` task list + `~~strike~~` + autolink + ```` ```cpp ```` block) |
+| `ai_sse/` | 2b | `event` (`event: message\ndata: {"delta":"hi"}\n\n`), `multiline_data` (two `data:` lines + blank), `comment` (`: keepalive\n\n`) |
+| `ai_ndjson/` | 2b | `two_objs` (`{"a":1}\n{"b":2}\n`), `partial` (one full line + an unterminated fragment, no trailing `\n`), `empty_lines` (blank lines between objects) |
 
 ---
 
 ## 6. Files to modify
 
+**PR 2a (this PR):**
+
 | Path | Action |
 |---|---|
-| `tests/fuzz/CMakeLists.txt` | EDIT — add `LIBS` to helper; add 5 `smatchet_add_fuzz_target` calls + `_fuzz_logger_srcs` var |
+| `tests/fuzz/CMakeLists.txt` | EDIT — add `LIBS` to helper; add 3 target calls (`cpp_lex`, `callstack`, `markdown_adf`) + `_fuzz_logger_srcs` var |
 | `tests/fuzz/fuzz_cpp_lex.cpp` | NEW |
+| `tests/fuzz/fuzz_callstack.cpp` | NEW |
 | `tests/fuzz/fuzz_markdown_adf.cpp` | NEW |
+| `tests/fuzz/corpus/{cpp_lex,callstack,markdown_adf}/*` | NEW — 9 seed files (3/corpus) |
+| `tests/fuzz/README.md` | EDIT — flip the 3 PR-2a Status cells to "E2b PR 2a (this PR)"; mark 2b rows "(next)" |
+| `docs/plans/active/slice-e2b-libfuzzer.md` | NEW — this plan |
+
+**PR 2b (next):**
+
+| Path | Action |
+|---|---|
+| `tests/fuzz/CMakeLists.txt` | EDIT — add 2 target calls (`ai_sse`, `ai_ndjson`); `LIBS` helper already present from 2a |
 | `tests/fuzz/fuzz_ai_sse.cpp` | NEW |
 | `tests/fuzz/fuzz_ai_ndjson.cpp` | NEW |
-| `tests/fuzz/fuzz_callstack.cpp` | NEW |
-| `tests/fuzz/corpus/{cpp_lex,markdown_adf,ai_sse,ai_ndjson,callstack}/*` | NEW — ~13 seed files |
-| `tests/fuzz/README.md` | EDIT — flip the 5 Status cells to "PR 2 (this PR)" |
+| `tests/fuzz/corpus/{ai_sse,ai_ndjson}/*` | NEW — 6 seed files |
+| `tests/fuzz/README.md` | EDIT — flip the 2 PR-2b Status cells to "this PR" |
 
 ---
 
@@ -206,7 +226,7 @@ Windows dev box **cannot** build these (`cmake/Sanitizers.cmake` FATALs on MSVC/
 |---|---|
 | A closure misses a transitive `.cpp` → link error (undefined symbol) | First CI run surfaces it; add the missing `.cpp`. Closures are minimal-by-design; Logger/TextRedaction pre-verified for sse/ndjson/markdown. |
 | `MarkdownToAdf` or a parser is **not** total (crashes on adversarial bytes) | That is exactly the bug class the fuzzer exists to find — a real finding, filed as a GitHub Issue + regression seed, fixed by the owning specialist (md4c wrapper → ui-host/`p4-annotate` lineage; not auto-fixed). Not a plan failure. |
-| File count trips CR's per-PR ceiling | Seeds capped at 2-3/corpus (~13 files). Fallback split seam if CR balks: **PR 2a** = self-contained drivers (`cpp_lex`, `callstack`) + `markdown_adf`; **PR 2b** = `ai_sse` + `ai_ndjson`. Single PR is the default. |
+| File count trips CR's per-PR ceiling | **Resolved by the 2a/2b split** (primary plan, table at top). Each PR is ~7-8 files (3 drivers + 9 seeds + CMake/README for 2a; 2 drivers + 6 seeds for 2b) — well under the ceiling. |
 | md4c unavailable under `BUILD_APP=OFF` | **Disproven** (§2): block is ungated + tests link it under `BUILD_TESTS`. |
 
 ---

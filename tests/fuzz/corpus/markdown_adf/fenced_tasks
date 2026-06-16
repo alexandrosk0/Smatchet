@@ -1,0 +1,8 @@
+- [ ] todo one
+- [x] done two
+
+~~struck~~ text and an autolink https://example.com
+
+```cpp
+int x = 1;
+```

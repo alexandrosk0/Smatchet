@@ -1,0 +1,2 @@
+0x00007ff612340000 SmatchetApp!Renderer::Draw() Line 256 + 0x40
+0x00007ff612350000 SmatchetApp!AppController::Tick() Line 88
