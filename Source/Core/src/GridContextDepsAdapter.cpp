@@ -8,6 +8,7 @@
 #include "ITrackerIssueMutations.h"
 #include "ITrackerIssueReader.h"
 #include "LocalCacheManager.h"
+#include "SmatchetToast.h"
 
 #include <chrono>
 #include <cstdint>
@@ -123,6 +124,30 @@ void GridContextDepsAdapter::SetNextTrackerConnectivityProbeAt(std::chrono::stea
 
 void GridContextDepsAdapter::PushOfflineReplayTimersDuringTransportOutage(std::chrono::steady_clock::time_point now) {
     app_.PushOfflineReplayTimersDuringTransportOutage(now);
+}
+
+// UI-glue: map the UI-free SyncNotifyLevel onto a ToastType and push a toast. This adapter is
+// the chokepoint where TicketSyncService's UI-free notification re-acquires its ImGui toast
+// rendering (debt 2026-06-07 — sync-imgui-coupling). No `default:` case so a future enumerator
+// trips Clang -Werror,-Wswitch instead of silently mapping to Info.
+void GridContextDepsAdapter::NotifySyncStatus(const std::string& title, const std::string& message,
+                                              ITicketSyncDeps::SyncNotifyLevel level, int durationMs) {
+    ToastType type = ToastType::Info;
+    switch (level) {
+    case ITicketSyncDeps::SyncNotifyLevel::Info:
+        type = ToastType::Info;
+        break;
+    case ITicketSyncDeps::SyncNotifyLevel::Success:
+        type = ToastType::Success;
+        break;
+    case ITicketSyncDeps::SyncNotifyLevel::Warning:
+        type = ToastType::Warning;
+        break;
+    case ITicketSyncDeps::SyncNotifyLevel::Error:
+        type = ToastType::Error;
+        break;
+    }
+    SmatchetToastManager::Instance().Push(title, message, type, durationMs);
 }
 
 void GridContextDepsAdapter::OnStreamingSyncSessionFinished(bool fetchOk) {
