@@ -98,6 +98,22 @@ inline std::string CanonicalizeGridFieldId(const std::string& fieldId) {
     return fieldId;
 }
 
+/// Canonicalize a full grid column key the same way TicketGridColumnsBuilder builds a
+/// column's Key from view.Fields, so a saved view.ColumnOrder entry matches by key
+/// regardless of stray whitespace or a legacy field alias. A "field:<id>" key folds its
+/// id via CanonicalizeGridFieldId after an ASCII-whitespace trim (mirroring the Fields
+/// loop, which keys on "field:" + CanonicalizeGridFieldId(TrimCopyAsciiWhitespace(id)));
+/// any other key (e.g. "id") is just trimmed and passed through. Keeps the ColumnOrder
+/// lookup in lock-step with the Key so a pre-canonicalization view keeps its column
+/// positions instead of dropping them to the appended tail (ticketgrid-columnorder-canon).
+inline std::string CanonicalGridColumnKey(const std::string& rawKey) {
+    const std::string trimmed = TrimCopyAsciiWhitespace(rawKey);
+    if (trimmed.compare(0, 6, "field:") == 0) {
+        return "field:" + CanonicalizeGridFieldId(TrimCopyAsciiWhitespace(trimmed.substr(6)));
+    }
+    return trimmed;
+}
+
 /** Split a string by a delimiter, trimming whitespace from parts. */
 inline std::vector<std::string> SplitAndTrim(const std::string& input, char delimiter = ',') {
     std::vector<std::string> result;

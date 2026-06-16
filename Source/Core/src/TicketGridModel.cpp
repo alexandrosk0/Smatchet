@@ -96,20 +96,6 @@ const std::unordered_set<std::string> kTimeTrackingFieldIds = {
 
 const std::unordered_set<std::string> kDateFieldIds = {"created", "updated", "duedate"};
 
-std::string TrimFieldId(const std::string& value) {
-    size_t start = 0;
-    size_t end = value.size();
-    while (start < end &&
-           (value[start] == ' ' || value[start] == '\t' || value[start] == '\n' || value[start] == '\r')) {
-        ++start;
-    }
-    while (end > start &&
-           (value[end - 1] == ' ' || value[end - 1] == '\t' || value[end - 1] == '\n' || value[end - 1] == '\r')) {
-        --end;
-    }
-    return value.substr(start, end - start);
-}
-
 // Returns a Special* render plan for id-only columns (field == null) by column-id
 // predicate, or PlainText when nothing special matches.
 TicketGridColumn::RenderPlan ResolveRenderPlanForFieldId(const std::string& fieldId) {
@@ -465,7 +451,7 @@ std::vector<TicketGridColumn> TicketGridColumnsBuilder::Build(const ViewDefiniti
         // issue-comments fix (#1291) — fold Jira's legacy `comment` column onto the unified `comments`
         // cell so a view saved before the dedupe renders the count/modal (not the raw ADF blob) and
         // dedups against an explicit `comments` column via seenFieldIds below. See CanonicalizeGridFieldId.
-        const std::string fieldId = CanonicalizeGridFieldId(TrimFieldId(rawFieldId));
+        const std::string fieldId = CanonicalizeGridFieldId(TrimCopyAsciiWhitespace(rawFieldId));
         if (fieldId.empty() || !seenFieldIds.insert(fieldId).second) {
             continue;
         }
@@ -490,20 +476,17 @@ std::vector<TicketGridColumn> TicketGridColumnsBuilder::Build(const ViewDefiniti
 
     std::unordered_set<std::string> usedKeys;
     for (const auto& rawKey : view.ColumnOrder) {
-        // issue-comments fix (#1291) — normalize a legacy `field:comment` order key to
-        // `field:comments` so an old saved view keeps its comment-column *position*. Mirrors the
-        // field-id fold above (the column Key was built from the canonicalized id); without it the
-        // byKey lookup misses and the comment column drops to the appended-tail default.
-        std::string key = rawKey;
-        if (key.compare(0, 6, "field:") == 0) {
-            key = "field:" + CanonicalizeGridFieldId(key.substr(6));
-        }
+        // Canonicalize the saved order key the same way the column Key was built from view.Fields
+        // above (ASCII-whitespace trim + legacy-alias fold, e.g. `field:comment` → `field:comments`,
+        // #1291). A pre-canonicalization view — or one carrying stray whitespace — then keeps each
+        // column's saved position instead of dropping it to the appended tail; the dedup guard drops
+        // a ColumnOrder that lists the same canonical key twice (ticketgrid-columnorder-canon).
+        const std::string key = CanonicalGridColumnKey(rawKey);
         const auto it = byKey.find(key);
-        if (it == byKey.end()) {
+        if (it == byKey.end() || !usedKeys.insert(key).second) {
             continue;
         }
         columns.push_back(it->second);
-        usedKeys.insert(key);
     }
     std::copy_if(allColumns.begin(), allColumns.end(), std::back_inserter(columns),
                  [&](const TicketGridColumn& col) { return usedKeys.find(col.Key) == usedKeys.end(); });
