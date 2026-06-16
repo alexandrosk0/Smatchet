@@ -80,7 +80,7 @@ Full per-outcome semantics + halt-prompt return-code table + env knobs + REST co
 | `function-too-long` | all first-party C++ | **120** lines non-UI / **200** ImGui-draw (path under `Ui/` OR name starts `Draw`/`Render`) |
 | `function-too-branchy` | all first-party C++ | **30** decision points |
 | `include-cycle` | `Source/Core/**` quote-includes | acyclicity + layer-DAG; delta-gated vs origin/develop; baseline-grandfathered; SCC>1 or low→high back-edge fails |
-| `app-controller-fan-in` (`appcontroller_fan_in_audit.py`) | `Source/**` quote-form `#include "AppController.h"` | cap = baseline fan-in (currently 114), **ratchet-down only**, **hard-FAIL absolute** (intentionally *not* WARN-first, unlike `duplication`/`unused-symbol` — a new includer is an exact signal); `SMATCHET_DEVIATION(rule=app-controller-fan-in; …)` above the include escapes a genuinely-needed new includer |
+| `app-controller-fan-in` (`appcontroller_fan_in_audit.py`) | `Source/**` quote-form `#include "AppController.h"` | cap = baseline fan-in (currently 115; enforced as a merge-base delta, not the constant), **ratchet-down only**, **hard-FAIL absolute** (intentionally *not* WARN-first, unlike `duplication`/`unused-symbol` — a new includer is an exact signal); `SMATCHET_DEVIATION(rule=app-controller-fan-in; …)` above the include escapes a genuinely-needed new includer |
 | `agent-too-long` (`agent_size_audit.py`) | agent prompts / `AGENTS.md` | **250** / **150** lines |
 | `duplication` | all first-party C++ | copy-paste clone (WARN-first calibration) |
 | `interface-doc` (WARN) | `ITracker*.h`/`Tracker/*Client.h` ↔ `Tracker/AGENTS.md` | advisory: a doc-pinned `Type::method` changed in the header without a doc touch (symbol-pinned, not coarse — noise-spike-rejected) |
