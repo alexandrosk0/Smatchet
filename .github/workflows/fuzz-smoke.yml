@@ -85,6 +85,15 @@ jobs:
         run: ctest --output-on-failure
 
       - name: Time-boxed fuzz run
+        id: fuzz
+        # PR fuzz crashes are ADVISORY (stochastic corpus-luck discovery, not
+        # necessarily caused by the PR) so they never red the check — otherwise
+        # promoting "Fuzz smoke" onto the merge-gate allow-list would jam the
+        # poller the same way the Mesa bucket lanes did (removed 2026-06-15).
+        # The nightly cron keeps it HARD-fail (so the tracking Issue still opens)
+        # and the configure/build/ctest steps above carry NO continue-on-error,
+        # so a real broken build still reds the check (the #1301 case we DO gate).
+        continue-on-error: ${{ github.event_name != 'schedule' }}
         working-directory: build/ninja-fuzzer-linux
         run: |
           set -uo pipefail
@@ -115,7 +124,9 @@ jobs:
           exit $status
 
       - name: Upload crash artifacts
-        if: failure()
+        # failure() is false when the advisory PR fuzz step is continue-on-error'd,
+        # so also fire on the step's pre-mask outcome to preserve the PR repro corpus.
+        if: ${{ failure() || steps.fuzz.outcome == 'failure' }}
         uses: actions/upload-artifact@v4
         with:
           name: fuzz-crashes
@@ -123,7 +134,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Surface fuzz failure in job summary
-        if: failure()
+        if: ${{ failure() || steps.fuzz.outcome == 'failure' }}
         run: |
           echo "## Fuzz smoke failure (Linux libFuzzer)" >> "$GITHUB_STEP_SUMMARY"
           echo "A fuzz driver crashed, leaked, or timed out. Crash inputs (if any)" >> "$GITHUB_STEP_SUMMARY"

@@ -252,6 +252,41 @@ set_fixture() {
     rm -f "$f"
 }
 
+@test "non-required Fuzz smoke FAILURE blocks (#1301 compile-break promotion 2026-06-16)" {
+    # "Fuzz smoke" joined the meant-to-block allow-list 2026-06-16: #1301 merged
+    # past a RED fuzz-smoke whose libFuzzer driver FAILED TO COMPILE (a real
+    # broken develop build) because the check is non-required. A red "Fuzz smoke
+    # (Linux libFuzzer)" must now block. Safe to promote because the workflow's
+    # stochastic time-boxed fuzz STEP is continue-on-error on PRs, so only the
+    # deterministic build/ctest reds the check. Required check kept green so the
+    # fuzz check is the sole failure.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS","isRequired":true},{"__typename":"CheckRun","name":"Fuzz smoke (Linux libFuzzer)","status":"COMPLETED","conclusion":"FAILURE","isRequired":false}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"1 fail"* ]]
+    rm -f "$f"
+}
+
+@test "non-required Fuzz smoke IN_PROGRESS blocks as pending (allow-list pending parity)" {
+    # Same $blocking-pending contract as the Sanitizer #1237 fix: an in-flight
+    # allow-listed "Fuzz smoke" must count as pending so the poller WAITS for it
+    # to go terminal instead of waving the merge through. Required check kept
+    # green so the in-progress fuzz check is the sole non-terminal context.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS","isRequired":true},{"__typename":"CheckRun","name":"Fuzz smoke (Linux libFuzzer)","status":"IN_PROGRESS","conclusion":null,"isRequired":false}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"1 pending"* ]]
+    rm -f "$f"
+}
+
 @test "non-required Bucket-E FAILURE does NOT block (Mesa-GL advisory-flip 2026-06-15)" {
     # `Bucket-` was DROPPED from the meant-to-block allow-list 2026-06-15: the
     # Mesa-software-GL bucket-C/E lanes cannot boot the CI exe (infra.md
