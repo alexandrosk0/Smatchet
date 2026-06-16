@@ -21,6 +21,10 @@
 #   * comment/marker-only  — //, /* */, doc-* continuation, // catch-all-ok: …
 #   * logging-only         — LOG_{DEBUG,INFO,WARN,ERROR,TRACE}(…) calls
 #   * static_assert-only   — static_assert(…) (compile-time; the build is the test)
+#   * forward-decl-only    — `class/struct/union/enum Foo;` name declarations
+#                            (optionally template-prefixed) — a type name with no
+#                            body and no object carries no runtime surface (the
+#                            #1308 fan-in swaps a heavy include for a fwd-decl).
 #   * include/using-only   — #include / using directives
 #   * preprocessor-guard   — #if/#ifdef/#ifndef/#elif/#else/#endif conditional
 #                            directives (compile-config selection; the wrapped
@@ -120,6 +124,22 @@ _line_is_no_runtime_surface() {
     case "$code" in
         'static_assert('*) return 0 ;;
     esac
+
+    # Forward declaration — `class Foo;` / `struct Foo;` / `union Foo;` /
+    # `enum [class|struct] Foo [: underlying];`, optionally template-prefixed
+    # (`template <…> class Foo;`). A pure name declaration introduces a type name
+    # with NO definition body and NO object, so it carries zero runtime surface
+    # (the #1308 AppController fan-in swaps a heavy `#include` for a bare
+    # `class LocalCacheManager;` fwd-decl). The trailing `;$` anchor keeps this
+    # tight: a definition opener (`class Foo : public Bar {` / `enum E { … }`),
+    # an elaborated-type object (`class Foo bar;`), or anything with `=`/`(`
+    # all fail to match and fall through to real surface. The regex lives in a
+    # single-quoted var referenced unquoted so `<`/`>`/`;` stay literal ERE (an
+    # inline `\<` would mean a GNU word-boundary, not a literal angle bracket).
+    local fwd_decl_re='^(template[[:space:]]*<[^{}]*>[[:space:]]*)?(class|struct|union|enum([[:space:]]+(class|struct))?)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*([[:space:]]*:[[:space:]]*[A-Za-z_:][A-Za-z0-9_:]*)?[[:space:]]*;$'
+    if [[ "$code" =~ $fwd_decl_re ]]; then
+        return 0
+    fi
 
     # Logging-only — LOG_{DEBUG,INFO,WARN,ERROR,TRACE}(…). Must be the start of
     # the statement (a LOG_ embedded as an argument would have other tokens
@@ -345,6 +365,22 @@ diff --git a/scripts/dev/test-lua-mirror-smoke.sh b/scripts/dev/test-lua-mirror-
 +echo "smoke"
 EOF
 
+    # #1308-equivalent — forward-declaration-only header diff (the AppController
+    # fan-in: drop a heavy `#include`, add a `class …;` fwd-decl + json_fwd).
+    _expect EXEMPT "forward-declaration-only header (#1308)" <<'EOF'
+diff --git a/Source/Core/include/AppController.h b/Source/Core/include/AppController.h
+--- a/Source/Core/include/AppController.h
++++ b/Source/Core/include/AppController.h
+@@ -37,7 +37,12 @@
+-#include "LocalCacheManager.h"
++#include <nlohmann/json_fwd.hpp>
++// Forward-declare instead of pulling the heavy include (the #1308 fan-in).
++class LocalCacheManager;
++struct TrackerFieldCatalog;
++enum class SyncPhase : int;
++template <typename T> class Pool;
+EOF
+
     # ---- FALLTHROUGH cases (must NOT exempt — real runtime surface) ----
     # selftest: asserts-failure — real runtime-surface diffs must NOT be exempted (the gate's block path).
 
@@ -442,6 +478,31 @@ diff --git a/Source/Core/src/Sync/Guarded.cpp b/Source/Core/src/Sync/Guarded.cpp
 +#ifndef SMATCHET_EMBEDDED_IN_UNREAL
 +    g_counter = computeStamp();
 +#endif
+EOF
+
+    # A class DEFINITION opener (has a body `{`) is real surface — the fwd-decl
+    # exemption must NOT swallow it.
+    _expect FALLTHROUGH "class definition opener (not a fwd-decl)" <<'EOF'
+diff --git a/Source/Core/include/Widget.h b/Source/Core/include/Widget.h
+--- a/Source/Core/include/Widget.h
++++ b/Source/Core/include/Widget.h
+@@ -5,0 +6,4 @@
++class Widget : public Base {
++    int compute() { return x_ + 1; }
++};
++Widget gWidget;
+EOF
+
+    # An elaborated-type-specifier OBJECT declaration (`class Foo bar;`) declares
+    # a variable — real surface, NOT a forward declaration (no trailing object
+    # name in a fwd-decl). Proves the `;$` anchor can't be gamed.
+    _expect FALLTHROUGH "elaborated-type object decl (not a fwd-decl)" <<'EOF'
+diff --git a/Source/Core/src/Sync/Elab.cpp b/Source/Core/src/Sync/Elab.cpp
+--- a/Source/Core/src/Sync/Elab.cpp
++++ b/Source/Core/src/Sync/Elab.cpp
+@@ -10,0 +11,2 @@
++    class LocalCacheManager cache;
++    struct Foo f = make();
 EOF
 
     if [ "$fail" -eq 0 ]; then
@@ -553,8 +614,9 @@ done
 echo
 echo "Add tests under tests/Core/ (or tests/Lua/, tests/Plugins/, tests/ui/) for the"
 echo "changed units. Changes that add no new runtime surface (comment-only,"
-echo "logging-only, static_assert-only, include-only, preprocessor-guard-only,"
-echo "swallow->log catch) are auto-exempted; if yours genuinely cannot be"
+echo "logging-only, static_assert-only, forward-declaration-only, include-only,"
+echo "preprocessor-guard-only, swallow->log catch) are auto-exempted; if yours"
+echo "genuinely cannot be"
 echo "unit-tested, apply the"
 echo "'tests-out-of-band' PR label to dismiss this gate."
 exit 1
