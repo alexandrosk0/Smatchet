@@ -45,6 +45,17 @@ class ITicketSyncDeps {
         ServiceUnavailable = 4,
     };
 
+    /// Severity of a user-facing sync notification. UI-free analogue of `ToastType` (the deps
+    /// adapter maps it to a toast in the GUI build) so the interface does not pull `imgui.h`
+    /// via `SmatchetToast.h`. Decouples TicketSyncService from the ImGui toast layer
+    /// (debt 2026-06-07 — sync-imgui-coupling).
+    enum class SyncNotifyLevel {
+        Info,
+        Success,
+        Warning,
+        Error,
+    };
+
     virtual ~ITicketSyncDeps() = default;
 
     // ---- Cache + backend handles ------------------------------------------------------
@@ -75,6 +86,11 @@ class ITicketSyncDeps {
     /// the two services don't need direct knowledge of each other.
     virtual void PushOfflineReplayTimersDuringTransportOutage(std::chrono::steady_clock::time_point now) = 0;
     virtual void RequestDeferredLiveTrackerBackendSuccessNotify() = 0;
+    /// Surface a transient user-facing sync notification (a toast in the GUI build; a no-op /
+    /// recorded event in headless + test builds). Routed through the deps adapter so
+    /// TicketSyncService carries no UI / ImGui dependency. `durationMs` is the on-screen dwell.
+    virtual void NotifySyncStatus(const std::string& title, const std::string& message, SyncNotifyLevel level,
+                                  int durationMs) = 0;
     /// Session-end notification (UI thread — fired once per streaming session from
     /// `FinalizeStreamingSessionIfDone`, after the error/warning classification).
     /// `fetchOk` is false when the session ended with a non-empty fetch error.

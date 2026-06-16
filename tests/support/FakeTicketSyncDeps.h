@@ -53,6 +53,16 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
     int PushOutageCalls = 0;
     int DeferredLiveNotifyCalls = 0;
 
+    /// Records every NotifySyncStatus call (the UI-free toast hook). Tests assert the
+    /// title / level sequence instead of poking the real ImGui toast manager.
+    struct RecordedSyncNotification {
+        std::string Title;
+        std::string Message;
+        SyncNotifyLevel Level = SyncNotifyLevel::Info;
+        int DurationMs = 0;
+    };
+    std::vector<RecordedSyncNotification> SyncNotifications;
+
     mutable std::mutex ActiveTicketsMutexImpl;
     std::vector<CachedTicket> ActiveTicketsImpl;
     std::shared_ptr<const std::vector<CachedTicket>> ActiveTicketsPublishedImpl;
@@ -94,6 +104,10 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
         ++PushOutageCalls;
     }
     void RequestDeferredLiveTrackerBackendSuccessNotify() override { ++DeferredLiveNotifyCalls; }
+    void NotifySyncStatus(const std::string& title, const std::string& message, SyncNotifyLevel level,
+                          int durationMs) override {
+        SyncNotifications.push_back(RecordedSyncNotification{title, message, level, durationMs});
+    }
 
     std::mutex& ActiveTicketsMutex() override { return ActiveTicketsMutexImpl; }
     std::vector<CachedTicket>& ActiveTickets() override { return ActiveTicketsImpl; }

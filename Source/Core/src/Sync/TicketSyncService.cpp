@@ -6,7 +6,6 @@
 #include "ITrackerBackendFactory.h"
 #include "ISyncCache.h"
 #include "Logger.h"
-#include "SmatchetToast.h"
 #include "StringUtil.h"
 #include "TrackerHttpUtils.h"
 #include "Views.h"
@@ -377,22 +376,22 @@ void TicketSyncService::FinalizeStreamingSessionIfDone() {
         const auto nowProbe = std::chrono::steady_clock::now();
         deps_.SetNextTrackerConnectivityProbeAt(nowProbe);
         deps_.PushOfflineReplayTimersDuringTransportOutage(nowProbe);
-        SmatchetToastManager::Instance().Push("Sync Failed", fetchError, ToastType::Error, 5000);
+        deps_.NotifySyncStatus("Sync Failed", fetchError, ITicketSyncDeps::SyncNotifyLevel::Error, 5000);
     } else if (!fetchError.empty()) {
-        SmatchetToastManager::Instance().Push("Sync Warning", fetchError, ToastType::Warning, 5000);
+        deps_.NotifySyncStatus("Sync Warning", fetchError, ITicketSyncDeps::SyncNotifyLevel::Warning, 5000);
     } else {
         // Soft warnings: data is good, just partial — still notify success but surface
         // the caveat as a warning banner + toast.
         if (!fetchWarning.empty()) {
             deps_.SetLastTrackerTicketSyncWarning("Sync completed with a caveat: " + fetchWarning);
             LOG_WARN("TicketSyncService::TickStreamingApply soft warning: %s", fetchWarning.c_str());
-            SmatchetToastManager::Instance().Push("Sync Warning", fetchWarning, ToastType::Warning, 5000);
+            deps_.NotifySyncStatus("Sync Warning", fetchWarning, ITicketSyncDeps::SyncNotifyLevel::Warning, 5000);
         }
         deps_.RequestDeferredLiveTrackerBackendSuccessNotify();
 
         std::string msg =
             "Synchronized " + std::to_string(activeStreamingSync_.KeepIds.size()) + " issues successfully.";
-        SmatchetToastManager::Instance().Push("Sync Complete", msg, ToastType::Success, 4000);
+        deps_.NotifySyncStatus("Sync Complete", msg, ITicketSyncDeps::SyncNotifyLevel::Success, 4000);
     }
 
     // Session-end deps hook (review MEDIUM-1): a failed session re-arms the owning pane
@@ -552,7 +551,8 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
     // doesn't carry over and trigger an unexpected wipe on the very first batch.
     consecutiveEmptyFullSyncs_ = 0;
 
-    SmatchetToastManager::Instance().Push("Syncing", "Refreshing issues from Tracker...", ToastType::Info, 2500);
+    deps_.NotifySyncStatus("Syncing", "Refreshing issues from Tracker...", ITicketSyncDeps::SyncNotifyLevel::Info,
+                           2500);
 
     SwapBackendIfTrackerChanged(cfgCopy);
 
