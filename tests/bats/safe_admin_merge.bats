@@ -19,6 +19,11 @@ setup() {
     # Fixed required-context set so tests are independent of project.config.json.
     export SAFE_ADMIN_MERGE_REQUIRED_CONTEXTS=$'Windows + MSVC\nTest-delta gate'
 
+    # Isolate the CI-blocker cases from the CodeRabbit-completion gate: default it
+    # OFF here so a green rollup with no CodeRabbit row still merges. The dedicated
+    # CR tests below flip SAFE_ADMIN_MERGE_CR_INSTALLED=true to exercise the gate.
+    export SAFE_ADMIN_MERGE_CR_INSTALLED=false
+
     # Stub gh — records `gh pr merge ...` to $MERGE_SENTINEL so a test can assert
     # the merge fired (or did NOT). Any other gh call is a no-op success.
     STUB_BIN_DIR="$(mktemp -d)"
@@ -60,10 +65,10 @@ JSON
 
 # ----------------------------------------------------------------------------
 
-@test "--selftest passes (6/6) and dogfoods the gate" {
+@test "--selftest passes (12/12) and dogfoods the gate" {
     run bash "$SCRIPT" --selftest
     [ "$status" -eq 0 ]
-    [[ "$output" == *"PASS — safe-admin-merge --selftest (6/6)"* ]]
+    [[ "$output" == *"PASS — safe-admin-merge --selftest (12/12)"* ]]
 }
 
 @test "a RED Bucket-C does NOT block (Mesa-GL advisory-flip 2026-06-15, exit 0)" {
@@ -187,6 +192,74 @@ JSON
 @test "no arg prints usage (exit 2)" {
     run bash "$SCRIPT"
     [ "$status" -eq 2 ]
+}
+
+# ----------------------------------------------------------------------------
+# CodeRabbit-completion gate (added 2026-06-17 — the #1332 merge-beats-review race).
+# These flip SAFE_ADMIN_MERGE_CR_INSTALLED=true (setup() defaults it OFF) so the
+# gate is live. CI rollup is kept fully green in every case, so the ONLY variable
+# under test is whether CodeRabbit has completed its review on the head.
+# ----------------------------------------------------------------------------
+
+@test "CR gate REFUSES when CodeRabbit has not reviewed the head (exit 1, no merge)" {
+    # Green CI, CR installed, but no CodeRabbit row at all — the #1332 race: an
+    # admin-merge here would beat the review. Must block.
+    export SAFE_ADMIN_MERGE_CR_INSTALLED=true
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP="$(green_rollup)"
+    run bash "$SCRIPT" 1332
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"CodeRabbit"* ]]
+    [ ! -f "$MERGE_SENTINEL" ]
+}
+
+@test "CR gate ALLOWS when CodeRabbit review is terminal-green on the head (exit 0, merge fires)" {
+    export SAFE_ADMIN_MERGE_CR_INSTALLED=true
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","labels":[],"statusCheckRollup":[
+      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"},
+      {"__typename":"StatusContext","context":"Test-delta gate","state":"SUCCESS"},
+      {"__typename":"CheckRun","name":"CodeRabbit","status":"COMPLETED","conclusion":"SUCCESS"}]}'
+    run bash "$SCRIPT" 1332
+    [ "$status" -eq 0 ]
+    [ -f "$MERGE_SENTINEL" ]
+    run cat "$MERGE_SENTINEL"
+    [[ "$output" == *"pr merge 1332 --squash --admin"* ]]
+}
+
+@test "CR gate REFUSES while the CodeRabbit review is still in progress (exit 1, no merge)" {
+    # CodeRabbit row present but not terminal — review running. Must block, not
+    # treat a pending CR CheckRun as a silent pass.
+    export SAFE_ADMIN_MERGE_CR_INSTALLED=true
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","labels":[],"statusCheckRollup":[
+      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"},
+      {"__typename":"StatusContext","context":"Test-delta gate","state":"SUCCESS"},
+      {"__typename":"CheckRun","name":"CodeRabbit","status":"IN_PROGRESS","conclusion":null}]}'
+    run bash "$SCRIPT" 1332
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"CodeRabbit"* ]]
+    [ ! -f "$MERGE_SENTINEL" ]
+}
+
+@test "CR gate: cr-out-of-band label waives the wait (exit 0, merge fires)" {
+    # Explicit operator override — no CodeRabbit row, but the label says merge
+    # without waiting. CI stays green; CR is the only thing being waived.
+    export SAFE_ADMIN_MERGE_CR_INSTALLED=true
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","labels":[{"name":"cr-out-of-band"}],"statusCheckRollup":[
+      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"},
+      {"__typename":"StatusContext","context":"Test-delta gate","state":"SUCCESS"}]}'
+    run bash "$SCRIPT" 1332
+    [ "$status" -eq 0 ]
+    [ -f "$MERGE_SENTINEL" ]
+}
+
+@test "CR gate: grace expired on a stale head degrades to a backstop pass (exit 0, merge fires)" {
+    # CR installed, no review row, but the head is older than the grace window —
+    # a CR outage must not wedge every session. Force the grace verdict (test-only).
+    export SAFE_ADMIN_MERGE_CR_INSTALLED=true
+    export SAFE_ADMIN_MERGE_CR_GRACE_EXPIRED=true
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP="$(green_rollup)"
+    run bash "$SCRIPT" 1332
+    [ "$status" -eq 0 ]
+    [ -f "$MERGE_SENTINEL" ]
 }
 
 @test "the allow-list is single-sourced from merge-gates.sh (not duplicated)" {
