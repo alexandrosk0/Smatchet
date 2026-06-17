@@ -3,12 +3,34 @@
 #include "IssueDraft.h"
 #include "Logger.h"
 
+#include <ghc/filesystem.hpp>
+#include <sqlite3.h> // SQLITE_NOTADB / SQLITE_CORRUPT result codes (corrupt-file classification)
+
 #include <chrono>
 #include <cstring>
+#include <ctime>
 #include <exception>
 #include <stdexcept>
+#include <string>
+#include <system_error>
 
 namespace {
+
+namespace fs = ghc::filesystem;
+
+/// Best-effort move of `from` -> `to` (never throws). Used to quarantine a corrupt
+/// cache file + its WAL sidecars before rebuilding. A missing `from` is a silent no-op.
+void QuarantinePath(const std::string& from, const std::string& to) {
+    std::error_code ec;
+    if (!fs::exists(from, ec) || ec) {
+        return;
+    }
+    fs::rename(from, to, ec);
+    if (ec) {
+        LOG_WARN("LocalCacheManager: could not quarantine '%s' -> '%s': %s",
+                 from.c_str(), to.c_str(), ec.message().c_str());
+    }
+}
 
 /// True if `table` has column `col` (identifier names only — must be fixed literals at call sites).
 bool SqliteTableHasColumn(const SQLite::Database& db, const char* table, const char* col) {
@@ -128,8 +150,50 @@ void InitTicketsV2Schema(SQLite::Database& db) {
 } // namespace
 
 LocalCacheManager::LocalCacheManager(const std::string& dbPath)
-    : db(dbPath, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE | SQLite::OPEN_FULLMUTEX) {
-    LOG_INFO("LocalCacheManager: opening db path=%s", dbPath.c_str());
+    : dbPath_(dbPath),
+      db(dbPath_, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE | SQLite::OPEN_FULLMUTEX) {
+    LOG_INFO("LocalCacheManager: opening db path=%s", dbPath_.c_str());
+    ApplyWalPragmas();
+    // Schema-init is where a corrupt on-disk file first surfaces (the open is lazy). Catch it
+    // and rebuild — but ONLY for genuine on-disk corruption. A transient SQLITE_BUSY /
+    // SQLITE_CANTOPEN / SQLITE_IOERR (DB momentarily locked, a permission/ENOENT race) must
+    // NOT nuke a healthy cache, so re-throw anything that is not NOTADB / CORRUPT. (Empty and
+    // missing files are not corrupt — SQLite opens them as a fresh DB and InitSchema succeeds,
+    // so they never reach this catch.)
+    try {
+        InitSchema();
+    } catch (const SQLite::Exception& ex) {
+        const int code = ex.getErrorCode();
+        if (code != SQLITE_NOTADB && code != SQLITE_CORRUPT) {
+            throw;
+        }
+        RebuildFreshAfterCorruption(ex);
+    }
+    LOG_INFO("LocalCacheManager: schema ready");
+}
+
+void LocalCacheManager::RebuildFreshAfterCorruption(const SQLite::Exception& ex) {
+    const std::string suffix =
+        ".corrupt-" + std::to_string(static_cast<long long>(std::time(nullptr)));
+    LOG_ERROR("LocalCacheManager: cache file '%s' is corrupt (%s); quarantining to '%s' and "
+              "rebuilding a fresh cache",
+              dbPath_.c_str(), ex.what(), (dbPath_ + suffix).c_str());
+    // Release the SQLite handle BEFORE renaming — Windows cannot move an open file. Move-assigning
+    // an in-memory DB closes the on-disk connection (SQLiteCpp Database is move-assignable).
+    db = SQLite::Database(":memory:");
+    // Quarantine the corrupt main DB AND its WAL sidecars — a stale -wal/-shm against a fresh main
+    // DB is itself a corruption hazard. Best-effort (QuarantinePath never throws).
+    QuarantinePath(dbPath_, dbPath_ + suffix);
+    QuarantinePath(dbPath_ + "-wal", dbPath_ + "-wal" + suffix);
+    QuarantinePath(dbPath_ + "-shm", dbPath_ + "-shm" + suffix);
+    // Reopen on the now-absent path → fresh empty DB, then re-init. A throw HERE is an
+    // unrecoverable environment fault (not a corrupt file) and propagates.
+    db = SQLite::Database(dbPath_, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE | SQLite::OPEN_FULLMUTEX);
+    ApplyWalPragmas();
+    InitSchema();
+}
+
+void LocalCacheManager::ApplyWalPragmas() {
     // WAL improves crash safety and allows readers while a writer is active.
     // synchronous=NORMAL is the recommended pairing with WAL (fsync on checkpoint, not every commit).
     try {
@@ -139,6 +203,9 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
     } catch (const std::exception& ex) {
         LOG_WARN("LocalCacheManager: failed to set WAL pragmas: %s", ex.what());
     }
+}
+
+void LocalCacheManager::InitSchema() {
     // Legacy v1 ticket tables — created for back-compat with the one-time v2 copy migration
     // (RunOneTimeTicketsV2CopyMigration reads them) and retained on disk unused afterwards
     // (Persistence additive-only invariant). All live reads/writes target the v2 family below.
@@ -206,7 +273,6 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
             "pinned INTEGER NOT NULL DEFAULT 0)");
     db.exec("CREATE INDEX IF NOT EXISTS idx_ai_chat_messages_id_desc ON ai_chat_messages(id DESC)");
 #endif
-    LOG_INFO("LocalCacheManager: schema ready");
 }
 
 SQLite::Statement& LocalCacheManager::stmt(std::unique_ptr<SQLite::Statement>& slot, const char* sql) {
