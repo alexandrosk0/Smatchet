@@ -188,8 +188,9 @@
 - 2026-06-13 · deep-audit · [security] · P3 — Standalone main does not fully harden DLL search path
   Details: Source/Standalone/main.cpp:1001 — incomplete DLL search-order hardening at startup.
   Concrete next action: Call SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32) early. Effort S.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Resolution (2026-06-16 · PR #1345 fix(standalone): harden DLL search order to System32 at startup): SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32) is now the first statement of main() (Source/Standalone/main.cpp), _WIN32-guarded — it drops the CWD + application directory from the implicit LoadLibrary search path, closing the DLL-planting / search-order hijack vector at process start. Verified no Source/ runtime LoadLibrary loads an app-local DLL, so SYSTEM32-only breaks nothing; static-import DLLs resolve before main() and are unaffected by the call. POSIX/Android skip the block via the guard.
+  Status: fixed
+  Last-reviewed: 2026-06-16
 
 - 2026-06-13 · deep-audit · [security] · P3 — Gradle wrapper jar/properties lack sha256 verification
   Details: gradle/wrapper/gradle-wrapper.jar + .properties are not sha256-verified in CI.
@@ -221,8 +222,9 @@
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — Lua child coroutine lua_State does not inherit the instruction-count hook
   Details: `Source/Core/src/AppController_LuaBindings.cpp:315,1257` — the LUA_MASKCOUNT hook is installed on the main lua_State; a `coroutine.create()`'d child State does not inherit it, so a tight loop inside a coroutine runs uncounted (sandbox timeout bypass). Partly-confirmed LOW (needs paste-and-run Lua; same-user boundary), NEW.
   Concrete next action: re-install the count hook on each created coroutine State (sol2 coroutine hook), or refuse coroutine creation in the sandbox. ~1 h.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Resolution (2026-06-16 · PR #1345 · no defect — premise unreachable): the audited bypass requires a script to create a coroutine, which the sandbox does not permit. InitLuaCore (AppController_LuaBindingsCore.cpp:230-236) opens ONLY sol::lib::{base,string,table,math} plus a curated osSafe table — sol::lib::coroutine is never opened, and Lua 5.3.6's base lib does not bundle the coroutine library (it is a separate LUA_COLIBNAME, unlike Lua 5.1), so `coroutine` is nil in every sandboxed environment. The host also never creates a coroutine/thread to run scripts: both execution paths (RunAutomationJob :1292 and RunLuaSetupScript :1492) install the LUA_MASKCOUNT hook on the same lua_State they then run the script body in directly via func(); grep confirms zero sol::thread / sol::coroutine / lua_newthread / new_thread anywhere in Source/. No reachable child lua_State exists to escape the hook. Future-guard: if sol::lib::coroutine is ever opened, re-install the count hook on each created coroutine State (the audit's original fix) before this is shippable.
+  Status: fixed
+  Last-reviewed: 2026-06-16
 
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — SQLite local ticket cache stored unencrypted
   Details: `Source/Core/src/Persistence/LocalCacheManager.cpp:131` opens the local ticket cache DB with no encryption; cached ticket bodies/PII sit in cleartext in the per-user data dir. Confirmed LOW (same-user is in-scope; relevant if the file is synced/backed-up off-host). NEW.

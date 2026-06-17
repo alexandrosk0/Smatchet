@@ -1142,6 +1142,17 @@ static int RunFrameLoop(MainBootState& boot) {
 } // namespace smatchet
 
 int main(int argc, char** argv) {
+#if defined(_WIN32)
+    // Security (startup hardening): restrict the implicit DLL search order to
+    // System32 before any library is dynamically loaded. This drops the current
+    // working directory and the application directory from the default
+    // LoadLibrary search path, closing the classic DLL-planting / search-order
+    // hijack vector at process start. Must be the first statement in main() so it
+    // precedes every subsequent runtime load. SetDefaultDllDirectories lives in
+    // kernel32 (always linked) and is declared by <windows.h>, included above.
+    SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32);
+#endif
+
     smatchet::standalone::MainBootState boot;
 
     // Resolve user-data + wire the log sink first so the cmd/ephemeral
