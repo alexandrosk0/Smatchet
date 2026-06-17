@@ -118,6 +118,15 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # fixture maps fixture JSON via JiraIssueMappingPure (pure mapper, cpr-free).
         support/JiraFakeTrackerFixture.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraIssueMappingPure.cpp"
+        # JiraIssueMappingPure fans into the field-value parser: it calls
+        # JsonGetStringIfString / ParseComments / ParseChangelog / NormalizeTrackerFieldValue
+        # / FormatWorkDurationFromSeconds / FormatTrackerTimetrackingDisplay — all defined in
+        # TrackerFieldValueParser.cpp, which in turn calls TrackerFieldValueUtils helpers
+        # (option-resolve + duration/comment template load via ConfigManager, already linked).
+        # Both TUs are cpr/ImGui/GL-free (includes: parser.h + Utils.h + Logger + StringUtil +
+        # ConfigManager + std only).
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldValueParser.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldValueUtils.cpp"
     )
     target_include_directories(SmatchetTsanTests PRIVATE
         _helpers
