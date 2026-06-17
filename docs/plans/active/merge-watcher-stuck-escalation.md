@@ -2,7 +2,7 @@
 
 > **Slug**: `merge-watcher-stuck-escalation` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `active` — **not started** (no wedge-classifier / `STUCK_NEEDS_ATTENTION` state on develop).
 
 ## Context
 

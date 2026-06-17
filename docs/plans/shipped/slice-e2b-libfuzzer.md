@@ -1,6 +1,6 @@
 # Slice E2b — libFuzzer drivers for the 5 remaining untrusted-byte parsers (PR 2a + PR 2b)
 
-**Status:** APPROVED — split into **PR 2a + PR 2b** per user decision ("Approve but split", to stay well under CodeRabbit's per-PR file ceiling). **PR 2a merged (#1301); PR 2b in flight.**
+**Status:** `shipped` — both PRs merged: **PR 2a (#1301)** + **PR 2b (#1307, merged 2026-06-16)**. All 5 drivers (`fuzz_cpp_lex`, `fuzz_callstack`, `fuzz_markdown_adf`, `fuzz_ai_sse`, `fuzz_ai_ndjson`) on develop; the Slice-E2 untrusted-byte-parser fuzz surface is complete.
 **Branch / worktree:** PR 2a shipped on `feat/slice-e2b-libfuzzer` (merged #1301). **PR 2b** on `feat/slice-e2b-ai-fuzzers` @ `C:\Dev\trees\slice-e2b-aifz` — ships **off `develop`** (unstacked; 2a already merged so its branch is push-closed), not stacked on 2a's branch. See §10 Deviations.
 
 ### PR split (primary plan)
@@ -190,7 +190,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 | `tests/fuzz/fuzz_markdown_adf.cpp` | NEW |
 | `tests/fuzz/corpus/{cpp_lex,callstack,markdown_adf}/*` | NEW — 9 seed files (3/corpus) |
 | `tests/fuzz/README.md` | EDIT — flip the 3 PR-2a Status cells to "E2b PR 2a (this PR)"; mark 2b rows "(next)" |
-| `docs/plans/active/slice-e2b-libfuzzer.md` | NEW — this plan |
+| `docs/plans/slice-e2b-libfuzzer.md` | NEW — this plan (now archived to `shipped/`) |
 
 **PR 2b (next):**
 
@@ -239,4 +239,4 @@ Windows dev box **cannot** build these (`cmake/Sanitizers.cmake` FATALs on MSVC/
 
 ## 11. Self-improvement
 
-_(populated at closeout)_
+- Closeout (2026-06-16): both PRs landed clean after the D1 `include/Privacy` fix folded into PR 2b. No new friction beyond the gate-escape already logged for #1301 (PR 2a merged past a red advisory `fuzz-smoke` lane — postmortem owed in `docs/self-improvement/postmortems.md`).

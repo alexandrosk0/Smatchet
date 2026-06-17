@@ -4,7 +4,7 @@
 rebindable-shortcut editor, PR2) is ALREADY MERGED into develop, so this is its OWN follow-up PR,
 not a slice on the merged PR2 branch.
 **Worktree:** C:/Dev/trees/keybindings-menu-shortcuts. All Edit/Write under that prefix.
-**Status:** design LOCKED, no code written yet. This doc is the handoff for the worktree session.
+**Status:** `shipped` — delivered via #1293 (merged 2026-06-16): menu-bar keyboard shortcuts wired to the command registry, the config-load migration fix (`MigrateMenuShortcutKeybindingsV1`), and the Preferences "Add shortcut for a command..." button. See § Implementation log.
 
 ## User request (verbatim)
 There are many multiple shortcuts displayed in the menu bar that are not working. Go through all of

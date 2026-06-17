@@ -2,7 +2,7 @@
 
 > **Slug**: `cursor-vexp-coexistence` (matches this file's basename without `.md`).
 >
-> **Status**: `active`.
+> **Status**: `active` — **not started** (no code on develop). Premise needs re-validation: vexp was removed as the Claude Code nav tool by #1084 before this plan was filed.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules (Plan location, Plan-doc safety, Plan revision after implementation, Plan stress-test, Plan template).
 

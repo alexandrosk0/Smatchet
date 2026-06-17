@@ -1,5 +1,7 @@
 # Slice E2 — libFuzzer harness for the untrusted-byte parsers
 
+> **Status:** `shipped` — all 6 fuzz targets on develop. E2a (harness + `fuzz_image_dims`) via #1296; the remaining 5 drivers shipped under the child plan [`slice-e2b-libfuzzer.md`](slice-e2b-libfuzzer.md) (PR 2a #1301 + PR 2b #1307). Surface complete.
+
 | Field | Value |
 |---|---|
 | Slice | **E2** of [`testing-surface-roadmap.md`](testing-surface-roadmap.md) (§6 P1, Gap 3) |
@@ -283,6 +285,7 @@ have zero Core-build coupling.
 
 ## Implementation log
 
+- 2026-06-16 — **Slice complete / archived.** The 5 remaining drivers (cpp_lex, callstack, markdown_adf, ai_sse, ai_ndjson) shipped under the child plan `slice-e2b-libfuzzer.md` (PR 2a #1301 + PR 2b #1307). All 6 `fuzz_*` targets now on develop; this parent plan is archived to `shipped/`.
 - 2026-06-15 — Plan drafted from infra recon (Sanitizers.cmake, tsan-linux-nightly.yml
   template, the six target headers + their doctest link closures, CMakePresets). Awaiting
   user review of §3 host decision (recommend B) + §10 open questions.

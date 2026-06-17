@@ -2,7 +2,7 @@
 
 > **Slug**: `session-guard-agnostic` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `active` — **not started** (no `agents/_shared/session-guard/` on develop).
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan-doc family.
 

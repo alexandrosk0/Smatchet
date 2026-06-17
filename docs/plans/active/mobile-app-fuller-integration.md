@@ -1,7 +1,7 @@
 # Mobile app — fuller integration (Phase 1)
 
 > **Slug**: `mobile-app-fuller-integration`
-> **Status**: `active`
+> **Status**: `active` — Phase-0 shipped; **no Phase-1 slices started yet** (P1.0–P1.6 all pending).
 > <!-- index-summary: Phase-1 Android app: Keystore-encrypted token, offline-cache replay on device, touch cell editors + explicit-commit interaction model, attachments, multi-backend, a11y research. -->
 
 ## Context

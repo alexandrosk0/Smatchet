@@ -2,7 +2,7 @@
 
 > **Slug**: `jql-omnibox-search` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — driving in-flight work. Flip to `shipped` in the SAME post-ship PR that fills § Implementation log AND `git mv`s this file active → shipped (see § Archive).
+> **Status**: `active` — Stream A (icon-Refresh sweep) **shipped** (#1257, merged 2026-06-15); Stream B (global omnibox) **not yet started** — no branch or PR open. Flip to `shipped` in the SAME post-ship PR that fills § Implementation log AND `git mv`s this file active → shipped (see § Archive).
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 

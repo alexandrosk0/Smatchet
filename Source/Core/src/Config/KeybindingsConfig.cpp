@@ -155,7 +155,7 @@ KeybindingsConfig KeybindingsConfig::Defaults() {
     c.Bindings.push_back(MakeBinding("Ctrl+Shift+P", "ui.command_palette", "{}"));
     c.Bindings.push_back(MakeBinding("Ctrl+Shift+B", "app.bug_report.open", "{}"));
     // Menu-bar shortcuts that previously had hints but no working binding
-    // (docs/plans/active/keybindings-menu-shortcuts-fix.md). Zoom + open-view +
+    // (docs/plans/keybindings-menu-shortcuts-fix.md). Zoom + open-view +
     // clear-selection are app-global registry commands (BuiltinCommands_Ui.cpp).
     c.Bindings.push_back(MakeBinding("Ctrl+=", "ui.zoom.in", "{}"));
     c.Bindings.push_back(MakeBinding("Ctrl+-", "ui.zoom.out", "{}"));
