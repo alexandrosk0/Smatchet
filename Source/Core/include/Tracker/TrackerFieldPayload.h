@@ -1,7 +1,7 @@
 #ifndef SMATCHET_TRACKER_FIELD_PAYLOAD_H
 #define SMATCHET_TRACKER_FIELD_PAYLOAD_H
 
-#include "JiraClient.h"
+#include "TrackerFieldSchema.h" // TrackerField (cpr-free; JiraClient.h dragged <cpr/cpr.h>)
 
 #include <nlohmann/json.hpp>
 
