@@ -1116,14 +1116,9 @@ jobs:
 
       # ctest here runs the cmake-only android-openssl fail-fast probes. The full
       # smatchet_tests doctest rig is EXCLUDED (`-E '^smatchet_tests$'`): the next step
-      # (`Run sanitized doctest rig`) runs that same exe with the adversarial
-      # CallstackParser case excluded and IS the genuine instrumented ASan surface.
-      # Running the unconstrained rig here too would only re-add that one case, which
-      # deep-recurses and stack-overflows under Debug ASan fat frames (an instrumentation
-      # artifact, not a memory bug — categories/{test,infra}.md) — the deterministic red
-      # behind the #1240/#1235/#1230 ASAN gate-escapes. The android probes keep ctest
-      # non-empty. abort_on_error=0 so a stray abort() surfaces with a stack, not an
-      # opaque SIGABRT.
+      # (`Run sanitized doctest rig`) runs that same exe directly and IS the genuine
+      # instrumented ASan surface. The android probes keep ctest non-empty.
+      # abort_on_error=0 so a stray abort() surfaces with a stack, not an opaque SIGABRT.
       - name: Run ctest under ASAN
         id: ctest_asan
         continue-on-error: ${{ steps.oob.outputs.oob == '1' }}
@@ -1133,16 +1128,15 @@ jobs:
         run: ctest --output-on-failure -E '^smatchet_tests$'
 
       # Sanitized doctest rig — the genuine ASan surface across the whole unit-test
-      # tree (~15k assertions). Two pre-existing cases are EXCLUDED (not ASan
-      # findings; tracked in docs/self-improvement/categories/{test,infra}.md):
-      #   * "CallstackParser::ParseCallstackText survives adversarial inputs" — the
-      #     INT_MAX-clamp subcase is a Debug-build std::stoi discrepancy (pure logic,
-      #     ASan-independent) and the ReDoS sentinel is a TIMING budget the ~2-3x ASan
-      #     slowdown blows. Both fail the assert, neither is a memory-safety finding.
-      # The rest of the rig running clean under ASan is the load-bearing gate here:
-      # a real heap-use-after-free / leak / overflow in any covered TU now reds this
-      # step (it could not before — the rig compiled uninstrumented).
-      - name: Run sanitized doctest rig (ASan, clean subset)
+      # tree (~15k assertions), run with NO test-case exclusions. The previously
+      # excluded "CallstackParser::ParseCallstackText survives adversarial inputs"
+      # case is now fully ASan-clean: the INT_MAX-clamp subcase no longer relies on
+      # std::stoi's Debug-CRT overflow behaviour (range-checked via std::stoll in
+      # CallstackParser.cpp), and the ReDoS-timing subcase widens its budget under
+      # __SANITIZE_ADDRESS__ (#1215). A real heap-use-after-free / leak / overflow in
+      # any covered TU now reds this step (it could not before — the rig compiled
+      # uninstrumented).
+      - name: Run sanitized doctest rig (ASan)
         id: rig_asan
         continue-on-error: ${{ steps.oob.outputs.oob == '1' }}
         shell: bash
@@ -1150,8 +1144,7 @@ jobs:
         env:
           ASAN_OPTIONS: abort_on_error=0
         run: |
-          ./tests/SmatchetTests.exe \
-            --test-case-exclude="CallstackParser::ParseCallstackText survives adversarial inputs"
+          ./tests/SmatchetTests.exe
 
       - name: Warn on downgraded ASan failure
         if: ${{ (steps.ctest_asan.outcome == 'failure' || steps.rig_asan.outcome == 'failure') && steps.oob.outputs.oob == '1' }}

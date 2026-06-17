@@ -275,8 +275,11 @@ TEST_CASE("CallstackParser::FrameMatchesIgnoreKeywords matches case-insensitivel
 
 TEST_CASE("CallstackParser::ParseCallstackText survives adversarial inputs" * doctest::test_suite("[high-risk]")) {
     SUBCASE("MSVC line number one past INT_MAX clamps without crashing") {
-        // `std::stoi` throws `std::out_of_range` on 2147483648 (INT_MAX + 1); the parser is
-        // wrapped in try/catch and must drop the frame rather than propagate the exception.
+        // 2147483648 is INT_MAX + 1. The parser must NOT rely on std::stoi throwing
+        // std::out_of_range: the MSVC Debug CRT was observed to SATURATE std::stoi to
+        // INT_MAX instead of throwing, leaking the frame through as LineNumber==INT_MAX.
+        // TryParsePathLinePair now range-checks the digit run via std::stoll against
+        // INT_MAX and drops the frame on overflow — toolchain-independent.
         const std::vector<ParsedCallstackFrame> frames = ParseCallstackText(R"(C:\overflow.cpp(2147483648))");
         // Either zero frames (parser rejected) or a frame whose LineNumber is the safe-default 0.
         // No INT_MAX-1 wrap, no UB, no crash — that is the load-bearing invariant.

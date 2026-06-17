@@ -2,9 +2,31 @@
 
 #include <algorithm>
 #include <cctype>
+#include <climits>
 #include <regex>
 
 namespace {
+
+// Parse a matched `(\d+)` digit string into an `int` line number, range-checking
+// against INT_MAX explicitly rather than relying on std::stoi's overflow behaviour.
+// The MSVC Debug CRT was observed to SATURATE std::stoi("2147483648") to INT_MAX
+// instead of throwing std::out_of_range, so a line one past INT_MAX would leak
+// through as LineNumber==INT_MAX. std::stoll holds every value the regex can match
+// (a pure digit run is non-negative and far below LLONG_MAX for any realistic frame),
+// and we reject anything exceeding INT_MAX. Returns false (caller drops the frame)
+// on overflow or any parse failure — toolchain-independent, no exceptions-as-flow.
+bool ParseLineNumberInRange(const std::string& digits, int& outLine) {
+    try {
+        const long long v = std::stoll(digits);
+        if (v < 0 || v > static_cast<long long>(INT_MAX)) {
+            return false;
+        }
+        outLine = static_cast<int>(v);
+        return true;
+    } catch (...) { // catch-all-ok: stoll on untrusted callstack line (e.g. > LLONG_MAX)
+        return false;
+    }
+}
 
 std::string Trim(std::string s) {
     while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\r')) {
@@ -60,9 +82,7 @@ bool TryParsePathLinePair(const std::string& line, std::string& outPath, int& ou
         std::smatch m;
         if (std::regex_search(line, m, re)) {
             outPath = Trim(m[1].str());
-            try {
-                outLine = std::stoi(m[2].str());
-            } catch (...) { // catch-all-ok: stoi on untrusted callstack line
+            if (!ParseLineNumberInRange(m[2].str(), outLine)) {
                 return false;
             }
             const size_t pos = line.find(m[0].str());
@@ -87,9 +107,7 @@ bool TryParsePathLinePair(const std::string& line, std::string& outPath, int& ou
         std::smatch m;
         if (std::regex_search(line, m, re)) {
             outPath = Trim(m[1].str());
-            try {
-                outLine = std::stoi(m[2].str());
-            } catch (...) { // catch-all-ok: stoi on untrusted callstack line
+            if (!ParseLineNumberInRange(m[2].str(), outLine)) {
                 return false;
             }
             // Optional "at Function " prefix
@@ -113,9 +131,7 @@ bool TryParsePathLinePair(const std::string& line, std::string& outPath, int& ou
             if (!p.empty() && (p.find('.') != std::string::npos || p.find('/') != std::string::npos ||
                                p.find('\\') != std::string::npos)) {
                 outPath = p;
-                try {
-                    outLine = std::stoi(m[2].str());
-                } catch (...) {
+                if (!ParseLineNumberInRange(m[2].str(), outLine)) {
                     return false;
                 }
                 TryExtractUnrealOrModuleFunctionPrefix(line, outPath, outFunction);
