@@ -29,8 +29,20 @@ if [ ! -f "$EXE" ]; then
 fi
 
 echo "[test-ui-callstack-tooltip-hover] launching ephemeral Smatchet (port $TEST_PORT)..."
-RAW_OUTPUT="$("$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
-    --mcp-port="$TEST_PORT" 2>&1 || true)"
+# Hard timeout so a hung spawn / wedged test run can't block forever and stall CI
+# (CodeRabbit #1364). Override via UI_TEST_TIMEOUT. `timeout` exits 124 on expiry.
+RUN_TIMEOUT="${UI_TEST_TIMEOUT:-240}"
+set +e
+RAW_OUTPUT="$(timeout "$RUN_TIMEOUT" "$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
+    --mcp-port="$TEST_PORT" 2>&1)"
+RUN_RC=$?
+set -e
+if [ "$RUN_RC" -eq 124 ]; then
+    echo "$RAW_OUTPUT" | tail -40
+    echo "FAIL: ui_test.run exceeded ${RUN_TIMEOUT}s hard timeout (hung spawn?) — aborted." >&2
+    echo "Passed: 0  Failed: 1"
+    exit 1
+fi
 
 echo "$RAW_OUTPUT" | tail -40
 
