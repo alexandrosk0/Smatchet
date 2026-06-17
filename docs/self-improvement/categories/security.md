@@ -121,14 +121,16 @@
 - 2026-06-13 · deep-audit-xref · [security] · P3 — Plane issue-mapping parsers unhardened against malformed tracker JSON (playbook target 11)
   Details: `Source/Core/include/Tracker/PlaneIssueMappingPure.h` (`:53`/`:60`/`:78`) + `Source/Core/src/Tracker/PlaneIssueMappingPure.cpp` map Plane API JSON into issue structs with no fuzz coverage; only the Jira ADF path has any hardening tracked. A malformed/hostile Plane response is an untested parse surface (type confusion, missing-key deref, deep nesting). Candidate — no confirmed defect, this is an untested-surface gap.
   Concrete next action: Add a libFuzzer/AFL harness over the Plane mappers (part of `deeper-audit-harness-buildout`); fix any crash/over-read it finds. Effort S-M.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Resolution (2026-06-16 · PR #1344 test(security): lock tracker-mapper crash-safety vs malformed JSON): traced every hostile-input path through `MapPlaneWorkItemJsonToCachedTicket` + `MapPlaneWorkItemsArrayToCachedTickets` — no defect. Every nested access is guarded by `.contains()`/`.is_object()`/`.is_array()`, flat fields route through the tolerant `JsonFieldToString`, and the batch wrapper try/catches each row and drops empty-id rows. Locked the no-throw contract with `[high-risk]` CHECK_NOTHROW cases (non-object top-level, every flat field type-confused, wrong-typed nested array entries, batch run that skips hostile rows and keeps the one valid row) in `tests/Core/PlaneIssueMappingPure.test.cpp`. Deterministic doctest regression locks chosen over the heavier libFuzzer/AFL harness; the broader fuzz buildout stays tracked under `deeper-audit-harness-buildout`.
+  Status: fixed
+  Last-reviewed: 2026-06-16
 
 - 2026-06-13 · deep-audit-xref · [security] · P3 — GitHub GraphQL->REST issue-mapping parsers unhardened against malformed JSON (playbook target 12)
   Details: `Source/Core/include/Tracker/GitHubIssueSearchMapping.h` (`:38`/`:81`/`:96`) + `Source/Core/src/Tracker/GitHubIssueSearchMapping.cpp` map GitHub search responses with no fuzz coverage, same untested-surface class as the Plane mappers above. Candidate — untested-surface gap, no confirmed defect.
   Concrete next action: Add a fuzz harness over the GitHub mappers (part of `deeper-audit-harness-buildout`); fix any crash/over-read. Effort S-M.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Resolution (2026-06-16 · PR #1344 test(security): lock tracker-mapper crash-safety vs malformed JSON): traced every hostile-input path through the issue/PR mapper, the commit mapper, the two GraphQL→REST adapters, and `MapGraphQlNodesToTickets` — no defect. `JsonString`/`MaybeString`/`GitHubJsonInt`/`JsonNestedString`/`CollectLabels` all type-guard; the `kGitHubBodyMaxBytes` cap bounds body/message size; the nodes path guards `is_array` + per-node `is_object` and try/catches each mapping. Locked the no-throw contract with `[high-risk]` CHECK_NOTHROW cases (issue/PR, commit, both adapters, and the nodes batch — hostile/type-confused input, one well-formed node still maps through) in `tests/Core/GitHubIssueSearchMapping.test.cpp`. Deterministic doctest regression locks chosen over the heavier fuzz harness; the broader buildout stays tracked under `deeper-audit-harness-buildout`.
+  Status: fixed
+  Last-reviewed: 2026-06-16
 
 - 2026-06-13 · deep-audit · [security] · P2 — Command registry executes destructive commands with no ctx.Source authorization
   Details: Source/Core/src/Commands/CommandRegistry.cpp:298 gates only on (Destructive && !ConfirmedDestructive); no ctx.Source trust check, so MCP/Lua-sourced commands equal UI-sourced. Basis shared with MCP un-gated dispatch.
@@ -204,8 +206,9 @@
 - 2026-06-13 · deep-audit · [security] · P3 — Attachment proxy accepts URL userinfo component
   Details: Source/Plugins/Mcp/McpPlugin.cpp:275-352 accepts user:pass@ userinfo (verifier LOW→INFO).
   Concrete next action: Reject/strip userinfo before host validation. Effort S.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Resolution (2026-06-16 · PR #1342 fix(mcp): reject userinfo in attachment-proxy URLs (allow-list bypass)): the attachment proxy now refuses any URL whose authority carries an `@` userinfo component before host validation. `UrlHasUserinfo` (McpJsonRpcPure.h:30) gates the fetch — curl/cpr dial the host AFTER the last `@`, so a userinfo-prefixed allow-list bypass that would land the Basic-auth tracker credential on an attacker host is rejected outright. Merge commit 4d17ba2b.
+  Status: fixed
+  Last-reviewed: 2026-06-16
 
 - 2026-06-13 · deep-audit · [security] · P3 — DPAPI secret encryption uses user-scope with no entropy
   Details: Win32 CryptProtectData path uses user scope with no optional entropy; any same-user process can decrypt (same-user is in-scope for a single-user app — informational).

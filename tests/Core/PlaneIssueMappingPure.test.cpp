@@ -431,3 +431,76 @@ TEST_CASE("ExtractKeyFromPlaneQuery — non-string key member → empty") {
     CHECK(ExtractKeyFromPlaneQuery(R"({"key":42})").empty());
     CHECK(ExtractKeyFromPlaneQuery(R"({"key":null})").empty());
 }
+
+// security deep-audit target 11 — the Plane work-item mapper sits behind a
+// possibly-malicious tracker or a MITM, so every shape of hostile JSON must map
+// to a safe default rather than throw or over-read. nlohmann member access on a
+// type-confused node throws type_error, so any missing guard would surface as an
+// uncaught throw right here. The cases below lock the no-throw contract.
+
+TEST_CASE("MapPlaneWorkItemJsonToCachedTicket — non-object top-level never throws" *
+          doctest::test_suite("[high-risk]")) {
+    CHECK_NOTHROW(MapPlaneWorkItemJsonToCachedTicket(nlohmann::json(nullptr), "SMT", {}));
+    CHECK_NOTHROW(MapPlaneWorkItemJsonToCachedTicket(nlohmann::json::array(), "SMT", {}));
+    CHECK_NOTHROW(MapPlaneWorkItemJsonToCachedTicket(nlohmann::json(42), "SMT", {}));
+    CHECK_NOTHROW(MapPlaneWorkItemJsonToCachedTicket(nlohmann::json("scalar"), "SMT", {}));
+    CHECK_NOTHROW(MapPlaneWorkItemJsonToCachedTicket(nlohmann::json(true), "SMT", {}));
+}
+
+TEST_CASE("MapPlaneWorkItemJsonToCachedTicket — every flat field type-confused never throws" *
+          doctest::test_suite("[high-risk]")) {
+    nlohmann::json issue;
+    issue["id"] = 12345;                // number where a string is expected
+    issue["sequence_id"] = "not-a-int"; // string where a number is expected
+    issue["name"] = nlohmann::json::array({1, 2, 3});
+    issue["description_stripped"] = false;
+    issue["priority"] = nlohmann::json::object();
+    issue["state_detail"] = "scalar-not-object";
+    issue["assignee_details"] = 99;
+    issue["label_details"] = "scalar-not-array";
+    issue["cycle_details"] = nlohmann::json::array();
+    issue["type_detail"] = true;
+    issue["created_at"] = nlohmann::json::object();
+    CHECK_NOTHROW(MapPlaneWorkItemJsonToCachedTicket(issue, "SMT", {}));
+}
+
+TEST_CASE("MapPlaneWorkItemJsonToCachedTicket — wrong-typed nested array entries never throw" *
+          doctest::test_suite("[high-risk]")) {
+    nlohmann::json issue;
+    issue["id"] = "uuid-x";
+    issue["sequence_id"] = 7;
+    // assignee_details / label_details arrays whose ELEMENTS are the wrong type --
+    // the mapper reads front only after an emptiness guard, then reads members.
+    issue["assignee_details"] = nlohmann::json::array({42, "str", nullptr, true});
+    issue["label_details"] = nlohmann::json::array({nlohmann::json::array(), 1, "x"});
+    issue["assignees"] = nlohmann::json::array({nlohmann::json::object(), 5});
+    issue["labels"] = nlohmann::json::array({true, false});
+    CHECK_NOTHROW(MapPlaneWorkItemJsonToCachedTicket(issue, "SMT", {}));
+}
+
+TEST_CASE("MapPlaneWorkItemsArrayToCachedTickets — hostile entries skipped, valid row kept" *
+          doctest::test_suite("[high-risk]")) {
+    nlohmann::json results = nlohmann::json::array();
+    results.push_back(nlohmann::json(nullptr));
+    results.push_back(nlohmann::json(42));
+    results.push_back("scalar");
+    results.push_back(nlohmann::json::array());
+    nlohmann::json broken;
+    broken["state_detail"] = "scalar-not-object";
+    broken["assignee_details"] = 7;
+    results.push_back(broken);
+    nlohmann::json good;
+    good["id"] = "uuid-good";
+    good["sequence_id"] = 9;
+    good["name"] = "valid row";
+    results.push_back(good);
+
+    std::unordered_map<std::string, std::string> keyToId;
+    std::vector<CachedTicket> tickets;
+    CHECK_NOTHROW(tickets = MapPlaneWorkItemsArrayToCachedTickets(results, "SMT", {}, &keyToId));
+    // Only the one well-formed row survives — every hostile entry maps to an
+    // empty id and is dropped by the batch guard.
+    REQUIRE(tickets.size() == 1);
+    CHECK(tickets[0].id == "SMT-9");
+    CHECK(keyToId.count("SMT-9") == 1);
+}
