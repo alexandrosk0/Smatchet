@@ -452,3 +452,100 @@ TEST_CASE("AiPrefsValidator: bad AiBaseUrl issue carries FieldKey kAiBaseUrl") {
     }
     CHECK(sawBaseIssue);
 }
+
+// --- SSRF denylist at prefs time (security audit Item B) ---
+// CheckBaseUrls now routes every configured base URL through the shared
+// SanitizeAiEndpointUrl (EndpointPolicyForProvider), so Preferences rejects the
+// exact set of hosts the live request refuses — no looser. Previously a
+// cloud-metadata / private / alternate-encoding host saved clean here and was
+// only caught at request time. These [high-risk] cases lock the prefs-time
+// enforcement so a future refactor cannot silently re-loosen the gate. The
+// OllamaOpenAiCompat provider is unpinned (no host pin, http allowed), so ONLY
+// the SSRF denylist can produce the rejection — isolating the behaviour we test.
+
+TEST_CASE("[high-risk] AiPrefsValidator: cloud-metadata IP in AiBaseUrl is rejected at prefs time") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 2; // OllamaOpenAiCompat — unpinned, isolates the denylist
+    cfg.AiModelOpenAi = "local-model";
+    cfg.AiBaseUrl = "http://169.254.169.254/latest/meta-data/";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK_FALSE(v.IsOk());
+    CHECK(ContainsSubstring(v.Errors, "cloud-metadata"));
+    bool keyed = false;
+    for (const auto& iss : v.Issues) {
+        if (iss.FieldKey == smatchet::ai::PrefsFieldKey::kAiBaseUrl &&
+            iss.Severity == smatchet::ai::PrefsSeverity::Error) {
+            keyed = true;
+        }
+    }
+    CHECK(keyed);
+}
+
+TEST_CASE("[high-risk] AiPrefsValidator: decimal-encoded metadata IP in AiBaseUrl is rejected") {
+    // 2852039166 == 169.254.169.254. The canonicaliser must collapse the alternate
+    // encoding before the denylist compare, else the scheme-only check would pass it.
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 2;
+    cfg.AiModelOpenAi = "local-model";
+    cfg.AiBaseUrl = "http://2852039166/";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK_FALSE(v.IsOk());
+    CHECK(ContainsSubstring(v.Errors, "cloud-metadata"));
+}
+
+TEST_CASE("[high-risk] AiPrefsValidator: private-network IP in AiBaseUrl is rejected") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 2;
+    cfg.AiModelOpenAi = "local-model";
+    cfg.AiBaseUrl = "http://192.168.1.50:11434";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK_FALSE(v.IsOk());
+    CHECK(ContainsSubstring(v.Errors, "private-network"));
+}
+
+TEST_CASE("[high-risk] AiPrefsValidator: OpenAI non-provider host rejected without custom-endpoint consent") {
+    // Mirrors the request-time host pin: a config-write that repoints OpenAI's
+    // key-bearing request at an arbitrary host must be refused unless the user
+    // explicitly enabled the per-provider custom-endpoint toggle.
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 0; // OpenAi (pinned to api.openai.com)
+    cfg.AiApiKey = "sk-test";
+    cfg.AiModelOpenAi = "gpt-4o-mini";
+    cfg.AiBaseUrl = "https://gateway.evil.test/v1";
+    cfg.AiAllowCustomEndpointOpenAi = false;
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK_FALSE(v.IsOk());
+    CHECK(ContainsSubstring(v.Errors, "non-provider host"));
+}
+
+TEST_CASE("AiPrefsValidator: OpenAI custom host PASSES once custom-endpoint consent is granted") {
+    // Same shape as the rejection case, but with consent — must now validate clean,
+    // matching what the live request would accept.
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 0;
+    cfg.AiApiKey = "sk-test";
+    cfg.AiModelOpenAi = "gpt-4o-mini";
+    cfg.AiBaseUrl = "https://gateway.example.test/v1";
+    cfg.AiAllowCustomEndpointOpenAi = true;
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK(v.IsOk());
+    CHECK_FALSE(ContainsSubstring(v.Errors, "non-provider host"));
+}
+
+TEST_CASE("AiPrefsValidator: local Ollama http://localhost:11434 stays allowed (no false positive)") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 3; // OllamaNative
+    cfg.AiOllamaBaseUrl = "http://localhost:11434";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK(v.IsOk());
+    CHECK(v.Errors.empty());
+}
+
+TEST_CASE("AiPrefsValidator: local Ollama http://127.0.0.1:11434 stays allowed (loopback exempt)") {
+    TrackerConfig cfg = DefaultCfg();
+    cfg.AiProviderKind = 3; // OllamaNative
+    cfg.AiOllamaBaseUrl = "http://127.0.0.1:11434";
+    const auto v = smatchet::ai::ValidateAiPrefs(cfg);
+    CHECK(v.IsOk());
+    CHECK(v.Errors.empty());
+}

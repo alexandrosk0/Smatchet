@@ -707,6 +707,9 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AiClientFactory.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AiErrorRedact.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AiEndpointSanitize.cpp"
+    # AiPrefsValidator.cpp now routes base-URL checks through EndpointPolicyForProvider
+    # (security audit Item B); its TU lives here, so the doctest link needs it too.
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AiEndpointPolicy.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/OpenAiClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AnthropicClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/OllamaClient.cpp"
