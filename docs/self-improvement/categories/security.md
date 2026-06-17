@@ -182,8 +182,8 @@
 - 2026-06-13 · deep-audit · [security] · P3 — Crash-handler minidump may include sensitive process memory
   Details: Source/Standalone/SmatchetCrashHandler.cpp:53-55 writes a minidump with flags that can capture broad process memory (in-memory secrets).
   Concrete next action: Use MiniDumpNormal scope; scrub/avoid secret-bearing regions. Effort S.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Status: fixed (PR `feat/crash-minidump-normal`) — `WriteMiniDump` now passes `MiniDumpNormal` instead of `MiniDumpWithIndirectlyReferencedMemory | MiniDumpScanMemory`. The richer scopes walked the stack for pointers and pulled the referenced heap (config API tokens / GitHub PAT / MCP auth token / AI keys held in std::string) into the .dmp the bug-reporter auto-attaches to an off-host crash report; Normal keeps the faulting thread's stack (the triage essentials), and adds an exception record only on the SEH path where `WriteMiniDump` receives `exPtrs` — the `set_terminate`/signal paths pass `nullptr`, so those dumps carry no ExceptionStream. Standalone build green.
+  Last-reviewed: 2026-06-17
 
 - 2026-06-13 · deep-audit · [security] · P3 — Standalone main does not fully harden DLL search path
   Details: Source/Standalone/main.cpp:1001 — incomplete DLL search-order hardening at startup.
