@@ -18,15 +18,22 @@ bool SmatchetAndroidSecretBridge::Init(JavaVM* vm, jobject activity) {
     }
 
     activity_ = env->NewGlobalRef(activity);
+    if (activity_ == nullptr) {
+        // OOM creating the global ref. Passing a null jobject to GetObjectClass below is undefined
+        // (aborts under CheckJNI), so bail before that. activity_ stays null -> Shutdown is a no-op.
+        SLOGE("SecretBridge::Init: NewGlobalRef failed");
+        return false;
+    }
     jclass clazz = env->GetObjectClass(activity_);
     if (clazz == nullptr) {
         SLOGE("SecretBridge::Init: GetObjectClass failed");
+        env->DeleteGlobalRef(activity_);
+        activity_ = nullptr;
         return false;
     }
 
     protectSecret_ = env->GetMethodID(clazz, "protectSecret", "(Ljava/lang/String;)Ljava/lang/String;");
-    unprotectSecret_ =
-        env->GetMethodID(clazz, "unprotectSecret", "(Ljava/lang/String;)Ljava/lang/String;");
+    unprotectSecret_ = env->GetMethodID(clazz, "unprotectSecret", "(Ljava/lang/String;)Ljava/lang/String;");
     env->DeleteLocalRef(clazz);
 
     if (protectSecret_ == nullptr || unprotectSecret_ == nullptr) {
@@ -35,6 +42,9 @@ bool SmatchetAndroidSecretBridge::Init(JavaVM* vm, jobject activity) {
             env->ExceptionClear();
         }
         SLOGE("SecretBridge::Init: missing SmatchetActivity method(s) — Keystore secret store disabled");
+        // Release the global ref on this failure path so a later Shutdown can't double-free / leak it.
+        env->DeleteGlobalRef(activity_);
+        activity_ = nullptr;
         return false;
     }
 

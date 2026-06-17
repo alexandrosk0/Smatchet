@@ -45,10 +45,9 @@ TEST_CASE("IsLooseConfigFileMode: high file-type bits do not affect the decision
     CHECK(IsLooseConfigFileMode(0100644u));       // S_IFREG | rw-r--r--  -> loose
 }
 
-// ---------------------------------------------------------------------------------------------
 // Audit H2 — Android Keystore secret-at-rest seam (ApplyConfigSecretProvider). The JNI plumbing is
 // Android-only, but the routing/fail-safe DECISION is the platform-agnostic helper covered here on
-// every platform: empty input, provider-unset passthrough, provider transform, and fail-safe-empty.
+// every platform: empty input, provider-unset fail-closed, provider transform, and fail-safe-empty.
 
 TEST_CASE("ApplyConfigSecretProvider: empty input yields empty regardless of provider") {
     const std::function<std::string(const std::string&)> kNoProvider;
@@ -63,11 +62,12 @@ TEST_CASE("ApplyConfigSecretProvider: empty input yields empty regardless of pro
     CHECK_FALSE(called);
 }
 
-TEST_CASE("ApplyConfigSecretProvider: unset provider passes the value through verbatim") {
-    // Legacy plaintext fallback when no Keystore bridge is wired (pre-Keystore build / host init
-    // failure). The loud PLAINTEXT warning lives at the ProtectSecretForConfig call site.
+TEST_CASE("ApplyConfigSecretProvider: unset provider FAILS CLOSED (never passes the value through)") {
+    // No Keystore bridge wired (pre-Keystore build / host-init failure): the seam must NOT return the
+    // raw secret. On protect this drops the secret (never written cleartext); on unprotect it is
+    // treated as absent. The loud dropped-secret warning lives at the ProtectSecretForConfig call site.
     const std::function<std::string(const std::string&)> kNoProvider;
-    CHECK_EQ(ApplyConfigSecretProvider(kNoProvider, "sk-secret-123"), "sk-secret-123");
+    CHECK(ApplyConfigSecretProvider(kNoProvider, "sk-secret-123").empty());
 }
 
 TEST_CASE("ApplyConfigSecretProvider: installed provider transforms (round-trip)") {

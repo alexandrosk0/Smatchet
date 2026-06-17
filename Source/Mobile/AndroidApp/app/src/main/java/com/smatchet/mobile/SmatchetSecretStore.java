@@ -104,7 +104,11 @@ final class SmatchetSecretStore {
 
     // ---- AndroidKeyStore key management ----
 
-    private static SecretKey getOrCreateKey() throws Exception {
+    // synchronized: the secret provider is called from both the boot thread (first Load) and the
+    // native config-save worker. Without serialization, two threads could each observe a missing key
+    // and both generateKey() — the second call replaces the alias, so ciphertext sealed under the
+    // first key becomes permanently undecryptable. Locking makes the check-then-create atomic.
+    private static synchronized SecretKey getOrCreateKey() throws Exception {
         SecretKey existing = getKey();
         if (existing != null) {
             return existing;

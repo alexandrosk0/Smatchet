@@ -396,10 +396,12 @@ std::string ProtectSecretForConfig(const std::string& plainText) {
         provider = GetAndroidSecretProtectorRef();
     }
     if (!provider && !plainText.empty()) {
-        // No Keystore provider wired (host init failed, or a pre-Keystore build). Loud so a build
-        // that ships secrets on Android as plaintext cannot do so silently.
-        LOG_WARN("ConfigManager: Android config secret stored as PLAINTEXT — no Keystore provider "
-                 "installed (audit H2). Treat this device profile as untrusted for secrets.");
+        // No Keystore provider wired (host init failed, or a pre-Keystore build). FAIL CLOSED: the
+        // secret is dropped rather than persisted as cleartext (ApplyConfigSecretProvider returns
+        // empty below). Loud so the dropped secret is diagnosable; the user re-enters it once a
+        // Keystore provider is available.
+        LOG_WARN("ConfigManager: Android config secret DROPPED — no Keystore provider installed "
+                 "(audit H2 fail-closed). Re-enter the secret once Keystore is wired.");
     }
     return ApplyConfigSecretProvider(provider, plainText);
 #else
@@ -413,9 +415,10 @@ std::string UnprotectSecretFromConfig(const std::string& protectedBase64) {
         std::lock_guard<std::mutex> lk(GetAndroidSecretProviderMutexRef());
         provider = GetAndroidSecretUnprotectorRef();
     }
-    // Provider installed + decrypt failure -> empty (fail-safe: treat as no secret). This also
-    // covers a legacy plaintext value written before Keystore landed, or ciphertext minted by a
-    // different keystore/device — the user re-enters the secret rather than us surfacing garbage.
+    // Fail-safe to empty (treat as no secret) on either arm: a missing provider (fail closed — see
+    // ApplyConfigSecretProvider) or an installed-provider decrypt failure. The latter also covers a
+    // legacy plaintext value written before Keystore landed, or ciphertext minted by a different
+    // keystore/device — the user re-enters the secret rather than us surfacing garbage.
     return ApplyConfigSecretProvider(provider, protectedBase64);
 #else
     return protectedBase64;
@@ -439,7 +442,11 @@ std::string ApplyConfigSecretProvider(const std::function<std::string(const std:
         return std::string(); // protect("") and unprotect("") are both empty — nothing to do.
     }
     if (!provider) {
-        return value; // no host provider installed -> legacy passthrough.
+        // FAIL CLOSED (audit H2): no host Keystore provider wired means we cannot seal a secret at
+        // rest. Return empty rather than passing the raw value through — on protect the secret is
+        // dropped (never written cleartext to an Android profile whose file perms are not a reliable
+        // owner boundary); on unprotect a stored value is treated as absent. The caller re-prompts.
+        return std::string();
     }
     return provider(value); // provider owns fail-safe (returns empty on Keystore/JNI failure).
 }
@@ -497,7 +504,7 @@ std::string& GetPlatformSharedOverrideRef() {
 }
 
 // Host-installed Android Keystore secret providers (audit H2). See ConfigManager_Internal.h for the
-// install contract (set once at boot, before the first Load). Empty std::function = not installed.
+// install contract (set once at boot, before the first Load). An unset target means not installed.
 std::mutex& GetAndroidSecretProviderMutexRef() {
     static std::mutex s_mutex;
     return s_mutex;
