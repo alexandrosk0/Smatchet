@@ -127,6 +127,36 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # ConfigManager + std only).
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldValueParser.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldValueUtils.cpp"
+        # --- Offline-queue replay + config-save concurrency (debt P2 TSan-subset-expand,
+        #     #1339 follow-up). OfflineQueueService drains PendingCreate / PendingFieldEdit
+        #     on the sync/reconnect thread while a live backend swap can land mid-replay
+        #     (ADR-0012 atomic Backend slot — same race family as GridLiveContext above);
+        #     ConfigSaveWorker persists config off the UI thread (std::thread + mutex/cv).
+        #     Both are real ThreadSanitizer surfaces. All TUs cpr/ImGui/GL-free; the only new
+        #     ThirdParty link is md4c (pure stateless C Markdown parser — no threads).
+        Core/OfflineQueueServiceRuntime.test.cpp
+        Core/OfflineQueueBackendSwap.test.cpp
+        Core/ConfigSaveConcurrency.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/OfflineQueueService.cpp"
+        # OfflineQueueService link closure: the audit pair (BackendAuditTrail +
+        # FieldEditAuditSource), 3-way rich-text merge (TextMerge), markdown<->ADF/HTML for
+        # field-edit replay (MarkdownConvert -> md4c), and create-replay through the live
+        # pipeline (IssueCreatePipeline + Helpers + TrackerFieldPayload[Pure]). IssueDraft.cpp
+        # already linked above; the offline-queue conflict/replay policies are header-only.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/BackendAuditTrail.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/FieldEditAuditSource.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/TextMerge.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownConvert.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueCreatePipeline.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueCreatePipelineHelpers.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldPayload.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldPayloadPure.cpp"
+        # TrackerFieldPayloadPure date<->API formatting: the pure half of CompactDateFormat
+        # (TryParseJiraDateTime / FormatJiraDateOrDateTimeForApi), split out of the ImGui-bound
+        # CompactDateFormat.cpp so it links here without dragging <imgui.h>.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/CompactDateFormatPure.cpp"
+        # ConfigSaveConcurrency closure: ConfigSaveWorker (ConfigManager.cpp already linked).
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/ConfigSaveWorker.cpp"
     )
     target_include_directories(SmatchetTsanTests PRIVATE
         _helpers
@@ -151,6 +181,9 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         nlohmann_json::nlohmann_json
         SQLiteCpp
         ghc_filesystem
+        # md4c — MarkdownConvert (offline field-edit replay md<->ADF/HTML). Pure stateless
+        # C parser; its PUBLIC include dir propagates md4c.h. No threads (TSan-neutral).
+        md4c
     )
     target_compile_features(SmatchetTsanTests PRIVATE cxx_std_14)
     smatchet_apply_sanitizers(SmatchetTsanTests)
@@ -668,6 +701,10 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueCreatePipelineHelpers.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldPayload.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/CompactDateFormat.cpp"
+    # Pure half of CompactDateFormat (TryParseJiraDateTime / FormatJiraDateOrDateTimeForApi),
+    # split out for the ImGui-free TSan rig; this rig links both halves (CompactDateFormat.cpp
+    # above keeps the display path) and TrackerFieldPayloadPure.cpp calls the pure fns.
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/CompactDateFormatPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/UiPerfMonitor.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownConvert.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager.cpp"

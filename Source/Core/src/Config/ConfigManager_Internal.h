@@ -98,6 +98,12 @@ std::mutex& GetIoMutexRef();
 // WriteConfigJson never re-locks this — fixed lock order is RMW (outer) then IO (inner), never reversed.
 std::mutex& GetConfigRmwMutexRef();
 std::mutex& GetCacheMutexRef();
+// Guards the base-directory globals (runtime-asset + user-data dirs) so a background reader
+// — e.g. the BackendAuditTrail writer thread re-resolving its path per event, or the config-save
+// worker — never observes a torn/realloc'd std::string while a UI/test thread reassigns it via
+// SetUserDataDirectory/SetRuntimeAssetDirectory. The Get* accessors return BY VALUE under this
+// lock; callers must not hold a reference into the globals across a possible Set.
+std::mutex& GetBaseDirMutexRef();
 TrackerConfig& GetCachedConfigRef();
 bool& GetHasCachedConfigRef();
 std::string& GetRuntimeAssetDirectoryRef();

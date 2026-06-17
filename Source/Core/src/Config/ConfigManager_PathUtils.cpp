@@ -424,6 +424,11 @@ std::mutex& GetCacheMutexRef() {
     return s_mutex;
 }
 
+std::mutex& GetBaseDirMutexRef() {
+    static std::mutex s_mutex;
+    return s_mutex;
+}
+
 TrackerConfig& GetCachedConfigRef() {
     static TrackerConfig s_config;
     return s_config;
@@ -461,6 +466,7 @@ std::string& GetPlatformSharedOverrideRef() {
 
 using smatchet::config_detail::EnsureParentDirectoryForFile;
 using smatchet::config_detail::FileExists;
+using smatchet::config_detail::GetBaseDirMutexRef;
 using smatchet::config_detail::GetCacheMutexRef;
 using smatchet::config_detail::GetHasCachedConfigRef;
 using smatchet::config_detail::GetIoMutexRef;
@@ -472,25 +478,37 @@ using smatchet::config_detail::ScopedFileLock;
 
 void ConfigManager::SetBaseDirectoryForFiles(const std::string& baseDir) {
     const std::string normalized = NormalizeDirectoryPath(baseDir);
+    std::lock_guard<std::mutex> lk(GetBaseDirMutexRef());
     GetRuntimeAssetDirectoryRef() = normalized;
     GetUserDataDirectoryRef() = normalized;
 }
 
 void ConfigManager::SetRuntimeAssetDirectory(const std::string& baseDir) {
-    GetRuntimeAssetDirectoryRef() = NormalizeDirectoryPath(baseDir);
+    const std::string normalized = NormalizeDirectoryPath(baseDir);
+    std::lock_guard<std::mutex> lk(GetBaseDirMutexRef());
+    GetRuntimeAssetDirectoryRef() = normalized;
 }
 
 void ConfigManager::SetUserDataDirectory(const std::string& baseDir) {
-    GetUserDataDirectoryRef() = NormalizeDirectoryPath(baseDir);
+    const std::string normalized = NormalizeDirectoryPath(baseDir);
+    std::lock_guard<std::mutex> lk(GetBaseDirMutexRef());
+    GetUserDataDirectoryRef() = normalized;
 }
 
 void ConfigManager::SetPlatformSharedUserDataDirectoryOverride(const std::string& dir) {
     GetPlatformSharedOverrideRef() = dir.empty() ? std::string() : NormalizeDirectoryPath(dir);
 }
 
-const std::string& ConfigManager::GetFilesBaseDirectory() { return GetUserDataDirectory(); }
+// NOTE: these return BY VALUE (a snapshot copy taken under GetBaseDirMutexRef), NOT a reference
+// into the globals. Returning a reference would let a caller read the std::string buffer after the
+// lock is dropped, racing a concurrent SetUserDataDirectory that reassigns/reallocs it (the
+// BackendAuditTrail writer thread re-resolves its path per event; TSan flagged exactly this). The
+// copy is cheap relative to the I/O these paths gate. GetFilesBaseDirectory calls the public getter
+// (not under the lock), so there is no recursive lock.
+std::string ConfigManager::GetFilesBaseDirectory() { return GetUserDataDirectory(); }
 
-const std::string& ConfigManager::GetRuntimeAssetDirectory() {
+std::string ConfigManager::GetRuntimeAssetDirectory() {
+    std::lock_guard<std::mutex> lk(GetBaseDirMutexRef());
     const std::string& runtimeDir = GetRuntimeAssetDirectoryRef();
     if (!runtimeDir.empty()) {
         return runtimeDir;
@@ -498,7 +516,8 @@ const std::string& ConfigManager::GetRuntimeAssetDirectory() {
     return GetUserDataDirectoryRef();
 }
 
-const std::string& ConfigManager::GetUserDataDirectory() {
+std::string ConfigManager::GetUserDataDirectory() {
+    std::lock_guard<std::mutex> lk(GetBaseDirMutexRef());
     const std::string& userDataDir = GetUserDataDirectoryRef();
     if (!userDataDir.empty()) {
         return userDataDir;

@@ -37,7 +37,8 @@
 #if defined(_WIN32)
 #include <direct.h>
 #else
-#include <sys/stat.h>
+#include <sys/stat.h> // ::mkdir
+#include <unistd.h>   // ::rmdir
 #endif
 
 namespace smatchet_tests {
