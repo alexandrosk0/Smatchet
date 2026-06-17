@@ -4,6 +4,7 @@
 #include "Logger.h"
 
 #include <ghc/filesystem.hpp>
+#include <sqlite3.h> // SQLITE_NOTADB / SQLITE_CORRUPT result codes (corrupt-file classification)
 
 #include <chrono>
 #include <cstring>
@@ -29,46 +30,6 @@ void QuarantinePath(const std::string& from, const std::string& to) {
         LOG_WARN("LocalCacheManager: could not quarantine '%s' -> '%s': %s",
                  from.c_str(), to.c_str(), ec.message().c_str());
     }
-}
-
-/// If `dbPath` names a NON-EMPTY on-disk file that SQLite cannot read as a database
-/// (corrupt / truncated / not-a-DB), rename it + its `-wal`/`-shm` sidecars aside to
-/// `<path>.corrupt-<unixts>` so the caller's OPEN_CREATE makes a fresh cache instead of
-/// the ctor throwing an uncaught SQLITE_NOTADB (Quality Pillar 3 "never crash"). An EMPTY
-/// or missing file is a valid fresh DB to SQLite and is left untouched (empty != corrupt).
-/// The readability probe runs in a LOCAL read-only connection whose OS handle is released
-/// at scope exit BEFORE any rename — Windows cannot move an open file. Returns `dbPath`
-/// unchanged so it can wrap the ctor's `db`-member path argument inline.
-const std::string& QuarantineIfCorrupt(const std::string& dbPath) {
-    std::error_code ec;
-    if (!fs::exists(dbPath, ec) || ec) {
-        return dbPath;  // missing → OPEN_CREATE makes it fresh
-    }
-    const auto size = fs::file_size(dbPath, ec);
-    if (ec || size == 0) {
-        return dbPath;  // empty → SQLite opens it as a fresh blank DB (empty != corrupt)
-    }
-    bool readable = true;
-    try {
-        // PRAGMA schema_version forces the header + sqlite_master read, so a bad file
-        // raises SQLITE_NOTADB / SQLITE_CORRUPT here. OPEN_READONLY (no CREATE) keeps the
-        // probe side-effect-free; the local connection closes at scope exit.
-        SQLite::Database probe(dbPath, SQLite::OPEN_READONLY);
-        probe.exec("PRAGMA schema_version");
-    } catch (const SQLite::Exception&) {
-        readable = false;
-    }
-    if (!readable) {
-        const std::string suffix =
-            ".corrupt-" + std::to_string(static_cast<long long>(std::time(nullptr)));
-        LOG_ERROR("LocalCacheManager: cache file '%s' is unreadable/corrupt; quarantining to "
-                  "'%s' and rebuilding a fresh cache",
-                  dbPath.c_str(), (dbPath + suffix).c_str());
-        QuarantinePath(dbPath, dbPath + suffix);
-        QuarantinePath(dbPath + "-wal", dbPath + "-wal" + suffix);
-        QuarantinePath(dbPath + "-shm", dbPath + "-shm" + suffix);
-    }
-    return dbPath;
 }
 
 /// True if `table` has column `col` (identifier names only — must be fixed literals at call sites).
@@ -190,16 +151,46 @@ void InitTicketsV2Schema(SQLite::Database& db) {
 
 LocalCacheManager::LocalCacheManager(const std::string& dbPath)
     : dbPath_(dbPath),
-      db(QuarantineIfCorrupt(dbPath_),
-         SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE | SQLite::OPEN_FULLMUTEX) {
-    // QuarantineIfCorrupt (above, in the init list) has already moved an unreadable
-    // on-disk file aside, so by here `db` is open on either a healthy or a fresh-empty
-    // file — InitSchema runs clean on both. A genuinely broken environment (e.g. the
-    // freshly-created file still won't init) propagates, as before.
+      db(dbPath_, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE | SQLite::OPEN_FULLMUTEX) {
     LOG_INFO("LocalCacheManager: opening db path=%s", dbPath_.c_str());
     ApplyWalPragmas();
-    InitSchema();
+    // Schema-init is where a corrupt on-disk file first surfaces (the open is lazy). Catch it
+    // and rebuild — but ONLY for genuine on-disk corruption. A transient SQLITE_BUSY /
+    // SQLITE_CANTOPEN / SQLITE_IOERR (DB momentarily locked, a permission/ENOENT race) must
+    // NOT nuke a healthy cache, so re-throw anything that is not NOTADB / CORRUPT. (Empty and
+    // missing files are not corrupt — SQLite opens them as a fresh DB and InitSchema succeeds,
+    // so they never reach this catch.)
+    try {
+        InitSchema();
+    } catch (const SQLite::Exception& ex) {
+        const int code = ex.getErrorCode();
+        if (code != SQLITE_NOTADB && code != SQLITE_CORRUPT) {
+            throw;
+        }
+        RebuildFreshAfterCorruption(ex);
+    }
     LOG_INFO("LocalCacheManager: schema ready");
+}
+
+void LocalCacheManager::RebuildFreshAfterCorruption(const SQLite::Exception& ex) {
+    const std::string suffix =
+        ".corrupt-" + std::to_string(static_cast<long long>(std::time(nullptr)));
+    LOG_ERROR("LocalCacheManager: cache file '%s' is corrupt (%s); quarantining to '%s' and "
+              "rebuilding a fresh cache",
+              dbPath_.c_str(), ex.what(), (dbPath_ + suffix).c_str());
+    // Release the SQLite handle BEFORE renaming — Windows cannot move an open file. Move-assigning
+    // an in-memory DB closes the on-disk connection (SQLiteCpp Database is move-assignable).
+    db = SQLite::Database(":memory:");
+    // Quarantine the corrupt main DB AND its WAL sidecars — a stale -wal/-shm against a fresh main
+    // DB is itself a corruption hazard. Best-effort (QuarantinePath never throws).
+    QuarantinePath(dbPath_, dbPath_ + suffix);
+    QuarantinePath(dbPath_ + "-wal", dbPath_ + "-wal" + suffix);
+    QuarantinePath(dbPath_ + "-shm", dbPath_ + "-shm" + suffix);
+    // Reopen on the now-absent path → fresh empty DB, then re-init. A throw HERE is an
+    // unrecoverable environment fault (not a corrupt file) and propagates.
+    db = SQLite::Database(dbPath_, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE | SQLite::OPEN_FULLMUTEX);
+    ApplyWalPragmas();
+    InitSchema();
 }
 
 void LocalCacheManager::ApplyWalPragmas() {

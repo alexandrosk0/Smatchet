@@ -45,13 +45,16 @@ bad file to `<db>.corrupt-<ts>` (forensics), and rebuild a fresh cache. Flips ca
 Persistence strict-zone constraints apply (additive-only schema, off-UI-thread SQLite, append-only
 redacted audit). Owner: `offline-sync`.
 
-**Shipped approach (see § Implementation log):** rather than a try/catch-in-body + reopen (which would
-need `SQLite::Database` move-assignment + a Windows file-handle release dance), the ctor runs a
-**pre-open probe** in the init list — `QuarantineIfCorrupt(dbPath_)` opens a LOCAL read-only connection
-and `PRAGMA schema_version` forces the header read; on a non-empty unreadable file it quarantines the
-main DB + its `-wal`/`-shm` sidecars to `<db>.corrupt-<unixts>` (the probe's handle is released at scope
-exit, before the rename — Windows can't move an open file), so the member `db` then opens fresh. Empty
-and missing files are left untouched (empty = fresh DB).
+**Shipped approach (see § Implementation log):** the ctor opens `db` normally and runs `InitSchema()` in a
+`try`; on `SQLite::Exception` it inspects `getErrorCode()` and rebuilds **only** for genuine on-disk
+corruption (`SQLITE_NOTADB` / `SQLITE_CORRUPT`) — a transient `SQLITE_BUSY` / `SQLITE_CANTOPEN` / `SQLITE_IOERR`
+(DB momentarily locked, a permission/ENOENT race) is **re-thrown**, never quarantined (CodeRabbit #1352
+finding). `RebuildFreshAfterCorruption` then releases the handle (`db = SQLite::Database(":memory:")` —
+SQLiteCpp 3.3.1 `Database` is move-assignable, confirmed in the vendored header), quarantines the main DB +
+its `-wal`/`-shm` sidecars to `<db>.corrupt-<unixts>` (Windows can't move an open file, hence the release
+first), reopens fresh on the same path, and re-inits. Empty/missing files never reach the catch (SQLite
+opens them as a fresh DB and `InitSchema` succeeds). No per-open probe → zero extra work on the healthy
+startup path (this is the v1 double-open that regressed `Perf PR-fast`).
 
 ### Phase 3 → Slice G2 — `SQLITE_BUSY` contention (separate slice, NOT greenlit)
 
@@ -74,10 +77,10 @@ gate the Phase 1 safety net.
 - **Phase 1: N/A** — touched `tests/**` + `docs/**` only.
 - **Phase 2 (this PR): touches `Source/Core/src/Persistence/LocalCacheManager.cpp`** but only the
   **constructor** (a one-time startup cache-open path), not any steady-state per-frame / UI-thread path.
-  No `SMATCHET_UI_PERF_SCOPE` added. The added work is a single read-only `PRAGMA schema_version` probe on
-  open (and, only on the corrupt path, a file rename + rebuild) — off the render thread, off the hot path,
-  so no steady-state (144 Hz) regression. PR-fast CI fires automatically if the curated diff→scenario map
-  maps this path to a scenario; no baseline bump expected. `perf-out-of-band` not needed.
+  No `SMATCHET_UI_PERF_SCOPE` added. The healthy path is **unchanged** — open once + `InitSchema` as before,
+  zero extra work (the v1 pre-open probe that added a second open per construction regressed `Perf PR-fast`
+  and was removed). Extra work happens only on the genuinely-corrupt path (rename + rebuild), off the render
+  thread. PR-fast CI re-runs on the fix push.
 
 ## Verification
 
@@ -91,9 +94,9 @@ gate the Phase 1 safety net.
   Gap-6 doc status. Shipped #1327.
 - **Phase 2 (this PR):** `LocalCacheManager.cpp` — extracted the schema-init body into a re-runnable
   `InitSchema()` + the WAL pragmas into `ApplyWalPragmas()` (both new private members); added a `dbPath_`
-  member (declared before `db` so it inits first); added anon-namespace helpers `QuarantinePath` (no-throw
-  `fs::rename`) + `QuarantineIfCorrupt` (pre-open read-only probe → quarantine corrupt main DB + `-wal`/`-shm`
-  → return path) wired into the ctor init list. `LocalCacheManager.h` — `dbPath_` member + `InitSchema`/
+  member (declared before `db` so it inits first); the ctor catches `InitSchema`'s `SQLite::Exception`,
+  rebuilds via `RebuildFreshAfterCorruption` only on `SQLITE_NOTADB`/`SQLITE_CORRUPT` (re-throws transient
+  codes), using the no-throw anon-namespace helper `QuarantinePath` (`fs::rename`). `LocalCacheManager.h` — `dbPath_` member + `InitSchema`/
   `ApplyWalPragmas` decls. `LocalCacheManagerCorruption.test.cpp` — flipped cases 1–2 to `REQUIRE_NOTHROW`
   + fresh-empty-cache + a `<path>.corrupt-*` forensic-file assertion (new `QuarantineSiblingExists` helper
   via `ghc::filesystem`); kept cases 3–4; reworded the header block to the Phase-2 behaviour.
@@ -114,11 +117,14 @@ gate the Phase 1 safety net.
 
 ## Deviations
 
-- **Pre-open probe instead of try/catch-in-body + reopen.** The plan sketch implied catching the
-  schema-init throw and rebuilding in place. Shipped a pre-open `QuarantineIfCorrupt` probe in the ctor
-  init list instead: it avoids depending on `SQLite::Database` move-assignment (unconfirmed on the pinned
-  SQLiteCpp 3.3.1) and cleanly releases the probe's OS handle before the rename (Windows file-lock). Same
-  observable behaviour (corrupt → quarantine + fresh rebuild; empty/healthy untouched).
+- **v1 shipped a pre-open probe; revised to catch-in-body after CR + perf feedback.** The first cut
+  (PR #1352 initial) ran a read-only `PRAGMA schema_version` probe before opening `db`. CodeRabbit flagged
+  (Major) that catching *every* `SQLite::Exception` would quarantine a healthy-but-transiently-unreadable
+  DB (BUSY/CANTOPEN), and `Perf PR-fast` regressed on the per-construction double-open. Revised to the
+  catch-in-body design: open once, `try { InitSchema() }`, and rebuild **only** on `SQLITE_NOTADB`/
+  `SQLITE_CORRUPT` (re-throw transient codes). Handle release uses `SQLite::Database` move-assignment —
+  confirmed present in the vendored SQLiteCpp 3.3.1 header (`Database& operator=(Database&&) = default`).
+  Net: fixes the CR finding + removes the healthy-path perf cost; same corrupt-file behaviour.
 - **Quarantines the `-wal`/`-shm` sidecars too** (not just the main DB) — a stale WAL against a fresh main
   DB is itself a corruption hazard; the plan named only `<db>.corrupt-<ts>`.
 - **Phase 2 shipped against THIS doc, not a separate plan.** The doc's loop-mode note said Phases 2–3 ship

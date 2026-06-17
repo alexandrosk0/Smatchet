@@ -163,6 +163,11 @@ class LocalCacheManager : public ISyncCache {
     /// Create/upgrade every cache table (additive-only schema). Re-runnable on a fresh
     /// file — the ctor calls it after quarantining + reopening an unreadable cache.
     void InitSchema();
+    /// Recover from a genuinely-corrupt cache file (ctor caught SQLITE_NOTADB / SQLITE_CORRUPT
+    /// from InitSchema): release the handle, quarantine the bad file + its WAL sidecars to
+    /// `<db>.corrupt-<ts>`, reopen a fresh DB on the same path, and re-init. A throw here is an
+    /// unrecoverable environment fault and propagates.
+    void RebuildFreshAfterCorruption(const SQLite::Exception& ex);
 
     /// On-disk cache path, retained so the ctor's corrupt-file rebuild can reopen the
     /// same location after quarantining the bad file. Declared before `db` so it is
