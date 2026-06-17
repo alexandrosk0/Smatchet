@@ -2,7 +2,7 @@
 
 > **Slug**: `codeql-code-scanning` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — the machine-readable lifecycle marker. Values: `active` (driving in-flight work) · `shipped` (post-ship sections populated + all cited PRs merged — this file belongs in `docs/plans/shipped/`) · `blocked` / `deferred` (paused — one-line why). **Flip to `shipped` in the SAME post-ship PR that fills § Implementation log AND `git mv`s this file active → shipped** (see § Archive). `agents/scripts/core/plan-archival-owed.sh` nags at SessionStart if any `active/` plan is marked `shipped` but never moved.
+> **Status**: `shipped` — the machine-readable lifecycle marker. Values: `active` (driving in-flight work) · `shipped` (post-ship sections populated + all cited PRs merged — this file belongs in `docs/plans/shipped/`) · `blocked` / `deferred` (paused — one-line why). **Flip to `shipped` in the SAME post-ship PR that fills § Implementation log AND `git mv`s this file active → shipped** (see § Archive). `agents/scripts/core/plan-archival-owed.sh` nags at SessionStart if any `active/` plan is marked `shipped` but never moved.
 >
 > **Usage**: copy this template to `docs/plans/active/<slug>.md` as the first step of any new plan. Fill every section. Sections that genuinely don't apply get `N/A — <one-line reason>`, not deletion — the headings drive the "did you consider this?" forcing function for every author + reviewer agent.
 >
@@ -114,28 +114,18 @@ Per `AGENTS.md` § Verification automation — zero manual steps where physicall
 - **SARIF-as-required-check / PR annotations threshold** — configuring CodeQL to red a PR on new alerts. No-action: intentionally advisory until graduated.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+- `639846ee` (squash-merged to develop as `886d2d37`, PR #1346) · feat(ci): add CodeQL c-cpp advisory code scanning — two new files: `.github/workflows/codeql.yml` (Advanced setup, `build-mode: manual`, `ninja-iter-msvc` on `windows-2022`, `SMATCHET_NO_CCACHE=1`, hybrid `schedule` + `workflow_dispatch` + trust-boundary-`paths` `pull_request` triggers, advisory) and `.github/codeql/codeql-config.yml` (`paths: [Source]` scope + default security suite, escalation ladder documented as comments).
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+- **Checkout omits `ref:`** (§ Files-to-modify item 1 said "Cron checks out `ref: develop` (mirrors `sanitizer-nightly.yml:43`)"). `sanitizer-nightly` can hardcode `develop` because it is cron-only; this workflow also has a `pull_request` trigger, where `ref: develop` would scan `develop` instead of the PR head and defeat the PR trigger the hybrid cadence relies on. The repo default branch *is* `develop`, so omitting `ref:` satisfies the cron intent (schedule scans `develop`) **and** gives PR runs the PR-merge head — correct for all three triggers.
+- **`queries:` left unset rather than naming a `security` suite** (§ Approach / § Files-to-modify called v1 the "default `security`" suite). CodeQL has no bare `security` suite alias; the default suite — run when `queries:` is unset — *is* the high-confidence security set. The config documents the escalation ladder (→ `security-extended` → `security-and-quality`) as commented lines. No behavioural difference from the plan's intent.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
-
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-   > **Keep the literal `<slug>` placeholder in this committed step — do NOT
-   > expand it to this plan's real filename.** Writing the actual basename here
-   > manufactures a `docs/plans/shipped/<name>.md` path that points at a file
-   > still living in `active/` (the move hasn't happened yet), which
-   > `test-plan-ref-integrity.sh` reports as a dangling self-reference. The gate
-   > carves out the *placeholder* form on the Archive `git mv` line; the
-   > expanded form defeats that carve-out. Run the literal command with your
-   > slug substituted at the shell — never bake the expansion into the file.
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*No ref-sweep — references use the tier-less form `docs/plans/<slug>.md` (the gates resolve it against any tier; PR #890), so the move can't break them. Write new plan references tier-less.*
-
-*(Delete this `## Archive` block as part of step 2 — once moved to `shipped/`, the file is reference material and the checklist has served its purpose.)*
+- **CodeQL workflow self-ran on PR #1346** (the diff touched `.github/workflows/codeql.yml` + `.github/codeql/**`, both in the `paths:` filter) — **passed** (run 27664343557).
+  - Step timing: Configure (`ninja-iter-msvc`) ~5.3 min · Build `SmatchetStandalone` ~20.8 min · Perform CodeQL analysis ~7 min — all green.
+  - The ~21-min cold compile confirms `SMATCHET_NO_CCACHE=1` took effect (real compiler invocations traced, not an empty/no-op build) → the database is non-trivial.
+  - SARIF uploaded: tool=CodeQL, 58 rules (default security suite), **0 results** → clean baseline; 0 open `c-cpp` alerts in Security → Code scanning.
+- **Advisory confirmed**: `CodeQL analyze (c-cpp)` reported green/SUCCESS; not in `agents/scripts/core/merge-gates.sh` allow-list; did not block merge.
+- **doc-validation**: `scripts/dev/test-docs.sh` green (13/13) before push.
+- **Branch protection**: all 9 required checks on PR #1346 green or skipped; admin-squash-merged to `develop` as `886d2d37`.
+- **Not-run (observational, no action)**: the daily cron's first scheduled run (fires 05:00 UTC) and per-PR behaviour on a non-boundary-path code PR — both confirmable in CI over the coming days, no code change owed.
