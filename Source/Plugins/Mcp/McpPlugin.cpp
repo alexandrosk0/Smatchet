@@ -56,6 +56,7 @@ using ::smatchet::mcp::pure::IsMcpHostOriginAllowed;
 using ::smatchet::mcp::pure::LooksLikeHttpUrl;
 using ::smatchet::mcp::pure::NormalizeDomain;
 using ::smatchet::mcp::pure::TruncateOneLine;
+using ::smatchet::mcp::pure::UrlHasUserinfo;
 
 void AppendMcpActivityLine(AppController* app, const std::string& line) {
     if (app != nullptr) {
@@ -320,6 +321,15 @@ void McpPlugin::HandleAttachmentProxy(const httplib::Request& req, httplib::Resp
         res.set_content("Attachment proxy requires https URLs.", "text/plain");
         return;
     }
+    // Reject userinfo (`user:pass@host`) outright. cpr connects to the host after
+    // the last '@', so a `https://allowed.tracker:x@evil.com/` URL would otherwise
+    // pass the allow-list (keyed on the userinfo-looking prefix) while the fetch --
+    // carrying the Basic-auth tracker credential -- hits the attacker's host.
+    if (UrlHasUserinfo(targetUrl)) {
+        res.status = 400;
+        res.set_content("Attachment URL must not contain userinfo.", "text/plain");
+        return;
+    }
     const std::string targetHost = ExtractHostFromUrl(targetUrl);
     if (!IsAllowedAttachmentHost(targetHost, impl_->tracker_domain)) {
         res.status = 403;
@@ -502,8 +512,8 @@ void McpPlugin::HandleToolsCall(const httplib::Request& req, httplib::Response& 
             LOG_WARN("MCP: REST tools/call rejected malformed/oversized body remote=%s", remote.c_str());
             res.status = 400;
             res.set_content(nlohmann::json{{"isError", true}, {"error", parseErr}}.dump(), "application/json");
-            AppendMcpActivityLine(impl_->app, "MCP: REST tools/call FAIL remote=" + remote + " err=parse error: " +
-                                                  TruncateOneLine(parseErr, 200));
+            AppendMcpActivityLine(impl_->app, "MCP: REST tools/call FAIL remote=" + remote +
+                                                  " err=parse error: " + TruncateOneLine(parseErr, 200));
             return;
         }
         std::string name = body.value("name", "");
@@ -823,11 +833,11 @@ void McpPlugin::RegisterJsonRpcRoutes() {
             if (!parseErr.empty()) {
                 LOG_WARN("MCP: JSON-RPC rejected malformed/oversized body remote=%s", req.remote_addr.c_str());
                 res.status = 400;
-                res.set_content(nlohmann::json{{"jsonrpc", "2.0"},
-                                               {"error", {{"code", -32700}, {"message", std::string("Parse error: ") +
-                                                                                             parseErr}}}}
-                                    .dump(),
-                                "application/json");
+                res.set_content(
+                    nlohmann::json{{"jsonrpc", "2.0"},
+                                   {"error", {{"code", -32700}, {"message", std::string("Parse error: ") + parseErr}}}}
+                        .dump(),
+                    "application/json");
                 AppendMcpActivityLine(impl_->app, std::string("MCP: JSON-RPC parse FAIL remote=") + req.remote_addr +
                                                       " err=" + TruncateOneLine(parseErr, 200));
                 return;
