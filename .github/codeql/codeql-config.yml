@@ -1,0 +1,26 @@
+name: "Smatchet CodeQL config"
+
+# Scope CodeQL analysis + alerting to first-party code. FetchContent
+# dependencies are still COMPILED for a complete database, but excluded from
+# alerting so the Security tab shows only Smatchet code.
+paths:
+  - Source
+paths-ignore:
+  - ThirdParty
+  - build
+  - '**/_deps/**'
+
+# Query suite -- staged escalation ladder (plan:
+# docs/plans/codeql-code-scanning.md § Approach). v1 ships the DEFAULT suite
+# (high-confidence security queries): leaving `queries:` unset runs the
+# codeql/cpp-queries default code-scanning suite. There is no bare `security`
+# suite alias -- the default IS the high-confidence security set; the named
+# escalations are `security-extended` and `security-and-quality`.
+#
+# Escalate one rung at a time, each gated on the prior baseline being triaged
+# to zero open alerts. Each rung is a one-line change here:
+#   1. (current) default     -- `queries:` unset
+#   2. security-extended     -- uncomment the two lines below
+#   3. security-and-quality  -- swap `security-extended` -> `security-and-quality`
+# queries:
+#   - uses: security-extended
