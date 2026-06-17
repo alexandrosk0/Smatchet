@@ -430,8 +430,12 @@ void PurgeLegacyAgenticKeys(nlohmann::json& j) {
     j.erase("ci_react");
 }
 
-void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
+// WriteSecretFields is defined once per platform — the #if/#elif/#else below compiles exactly one
+// definition. Splitting the platform switch across three separate function bodies (rather than one
+// function with the switch inside it) keeps each arm under the function-length lint cap; the per-arm
+// secret/erase contract is unchanged. See each arm's inline notes.
 #if defined(_WIN32)
+void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
     j.erase("token");
     j.erase("plane_api_key");
     j["token_enc"] = ProtectSecretForConfig(config.ApiToken);
@@ -497,7 +501,9 @@ void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
     }
     j["whisper_api_key_enc"] = whisperApiKeyEnc;
 #endif
+}
 #elif defined(__ANDROID__)
+void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
     // SECURITY (audit H2 / CR #1357): Android seals EVERY secret at rest through the host
     // AndroidKeyStore AES-GCM provider. ProtectSecretForConfig routes to that provider and FAILS
     // CLOSED — it returns empty when no provider is wired or the JNI seal fails. Unlike the Win32
@@ -534,7 +540,9 @@ void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
 #if defined(SMATCHET_WITH_WHISPER)
     sealSecret("whisper_api_key", "whisper_api_key_enc", config.WhisperApiKey);
 #endif
+}
 #else
+void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
     j.erase("token_enc");
     j.erase("plane_api_key_enc");
     j.erase("github_pat_enc");
@@ -561,8 +569,8 @@ void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
     j.erase("whisper_api_key_enc");
     j["whisper_api_key"] = config.WhisperApiKey;
 #endif
-#endif
 }
+#endif
 
 // Purges legacy keys carried over from LoadMergedConfigJson() and writes the secret fields
 // (DPAPI-encrypted on Win32 with a plaintext fallback when protection fails; plaintext on other
