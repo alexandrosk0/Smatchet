@@ -12,6 +12,10 @@ namespace smatchet {
 namespace mcp {
 namespace pure {
 
+// codeql-path-filter test: no-op comment to confirm a PR touching a
+// trust-boundary path (Source/Plugins/Mcp/**) fires the CodeQL workflow's
+// pull_request trigger. To be reverted — this PR is a throwaway smoke test.
+
 namespace {
 
 std::string ToLowerAscii(std::string value) {
