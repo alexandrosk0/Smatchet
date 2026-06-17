@@ -17,7 +17,9 @@
 // Pure C++14, depends on stb_image (vendored at Source/Core/ThirdParty/stb/stb_image.h).
 // stb_image's PNG decoder rejects oversized dims via STBI_MAX_DIMENSIONS (1<<24
 // by default — we cap further at 16384x16384 for defense-in-depth against
-// crafted PNGs).
+// crafted PNGs). The cap is enforced from the header (stbi_info) BEFORE any
+// pixel allocation, so an oversize-dims header can't trigger a giant alloc
+// before the decode-time check would have caught it.
 //
 // Why header-only: the bash driver g++-compiles a tiny one-TU CLI helper that
 // includes this header; we don't want a CMake side-effect for a single
@@ -65,6 +67,26 @@ constexpr int kMaxGoldenImageDim = 16384;
 inline bool LoadImage(const std::string& path, GoldenImage& out, std::string& err) {
     out = GoldenImage();
     int w = 0, h = 0, channelsInFile = 0;
+
+    // Header-only pre-check BEFORE decode. stbi_info parses just the image
+    // header (dims + channel count) without allocating or decoding pixels.
+    // stbi_load, by contrast, allocates w*h*desired_channels and decodes the
+    // full raster before returning — so a crafted file whose header declares
+    // dims above our cap but below stb's STBI_MAX_DIMENSIONS (1<<24) turns into
+    // an allocation bomb (e.g. a header claiming 100000x100000 ≈ 30 GB) the
+    // post-decode dimension check below would never get a chance to stop.
+    // Reject oversize dims here so the giant allocation never happens.
+    int iw = 0, ih = 0, icomp = 0;
+    if (!stbi_info(path.c_str(), &iw, &ih, &icomp)) {
+        const char* reason = stbi_failure_reason();
+        err = std::string("stb_image header read failed: ") + (reason ? reason : "unknown") + " (" + path + ")";
+        return false;
+    }
+    if (iw <= 0 || ih <= 0 || iw > kMaxGoldenImageDim || ih > kMaxGoldenImageDim) {
+        err = "rejected dimensions: " + std::to_string(iw) + "x" + std::to_string(ih) + " (" + path + ")";
+        return false;
+    }
+
     // Request 3 channels (drop alpha if present). stb_image returns RGB row-major
     // top-left, matching our prior PPM-P6 byte layout.
     unsigned char* data = stbi_load(path.c_str(), &w, &h, &channelsInFile, 3);
@@ -73,7 +95,11 @@ inline bool LoadImage(const std::string& path, GoldenImage& out, std::string& er
         err = std::string("stb_image load failed: ") + (reason ? reason : "unknown") + " (" + path + ")";
         return false;
     }
-    if (w <= 0 || h <= 0 || w > kMaxGoldenImageDim || h > kMaxGoldenImageDim) {
+    // Post-decode consistency guard. The decoder's actual dims must match the
+    // header dims we validated above AND stay within the cap — defends against
+    // a header/body mismatch (lying header) or a decode path that ignores the
+    // declared dims.
+    if (w <= 0 || h <= 0 || w > kMaxGoldenImageDim || h > kMaxGoldenImageDim || w != iw || h != ih) {
         stbi_image_free(data);
         err = "rejected dimensions: " + std::to_string(w) + "x" + std::to_string(h) + " (" + path + ")";
         return false;
