@@ -157,6 +157,17 @@ class LocalCacheManager : public ISyncCache {
     /// and owns the enclosing SQLite::Transaction (SaveTicket / SaveTickets). See the .cpp.
     void writeTicketRows_(const std::string& backendKey, const CachedTicket& ticket);
 
+    /// Apply WAL + synchronous pragmas + busy-timeout (best-effort; logs on failure).
+    /// Re-runnable: called for the initial open and again after a corrupt-file rebuild.
+    void ApplyWalPragmas();
+    /// Create/upgrade every cache table (additive-only schema). Re-runnable on a fresh
+    /// file — the ctor calls it after quarantining + reopening an unreadable cache.
+    void InitSchema();
+
+    /// On-disk cache path, retained so the ctor's corrupt-file rebuild can reopen the
+    /// same location after quarantining the bad file. Declared before `db` so it is
+    /// initialised first (the `db` member's path argument reads it).
+    const std::string dbPath_;
     SQLite::Database db;
 
     // Cached prepared statements for the hot paths (SaveTicket / TryGetTicket).
