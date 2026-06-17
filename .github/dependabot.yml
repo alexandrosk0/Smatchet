@@ -1,0 +1,23 @@
+# Keeps the SHA-pinned GitHub Actions current. Every `uses:` in .github/workflows/
+# (and the composite action under .github/actions/) is pinned to a full commit SHA with
+# a trailing `# vX` comment for readability; SHA pinning closes the mutable-tag supply-chain
+# hole (a compromised maintainer re-pointing v4 at malicious code) but freezes us off
+# upstream security fixes. Dependabot reconciles the two: it bumps each pinned SHA — and the
+# `# vX` comment — when upstream ships a new release, so the pins stay both immutable and fresh.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    # "/" scans .github/workflows/*.yml plus any action.yml in the repo (the cr-finding-gate
+    # composite under .github/actions/). Dependabot resolves the comment tag, not the bare SHA.
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "ci"
+    open-pull-requests-limit: 5
+    # One consolidated PR per run instead of up to 11 — less review churn for a solo maintainer.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
