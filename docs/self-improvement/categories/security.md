@@ -63,9 +63,16 @@
        * #13 Automation-worker hook → shutdown deadlock / UI-thread starvation
          (Pillar 2 MEDIUM) — NOT addressed this campaign (orchestration miss);
          remains a real open MEDIUM.
-       * #2/#3 Command-registry / MCP-dispatch lack ctx.Source authz (+ the
-         Unreal-console partial #24) — a TRUST-MODEL DESIGN DECISION (deny
-         destructive / require-confirm / keep UI-parity), deferred for a human call.
+       * #2/#3 base gate — RESOLVED 2026-06-14 (PR #1246 "source-aware
+         destructive guard + close MCP/Lua confirm hole"). The trust-model call
+         was MADE and shipped, not deferred: CommandRegistry now denies/require-
+         confirms destructive commands from automation sources
+         (CommandRegistry.cpp:302-307 — IsAutomationSource + RequiresExplicitConfirm),
+         so MCP/Lua-sourced destructive ops no longer equal UI reach. The two
+         per-finding rows below (CommandRegistry no-authz, MCP dispatch un-gated)
+         are marked fixed. RESIDUAL still-open slice: only the Unreal-console embed
+         entry-point (#24) — its ctx.Source must be tagged = UnrealConsole so the
+         now-live gate fires for it (see the target-24 entry below).
        * The deeper-audit-playbook CANDIDATES (g_ui race, AiAssistant cancel race,
          FormatDateIfIso OOB, Plane/GitHub mapper hardening, JSON→Lua depth bound)
          are a SEPARATE deeper-audit track (not adversarially-confirmed), unchanged.
@@ -107,8 +114,9 @@
 - 2026-06-13 · deep-audit-xref · [security] · P2 — Unreal console / Blueprint exec reaches full CommandRegistry without ctx.Source authz (playbook target 24, partial)
   Details: `Source/UnrealPlugins/SmatchetImGuiPlugin/Source/SmatchetImGuiPlugin/Private/SmatchetImGuiConsoleCommands.cpp` exposes Smatchet commands to the Unreal console / Blueprint exec; `IsSafeConsoleCommandName` filters the command *name* but not arguments, and the dispatch reaches the same registry the `CommandRegistry.cpp:298` row notes has no `ctx.Source` trust gate. So an Unreal-embed console caller gets the same destructive reach as UI — the finding-bearing slice of the partial target-24 coverage (the existing CommandRegistry row tracks the gate, not this embed entry-point). Candidate — needs review of the actual argument-forwarding path + whether ship Unreal builds expose the console.
   Concrete next action: Route the Unreal console/Blueprint entry-point through the per-source trust gate proposed in the `CommandRegistry.cpp:298` row (tag ctx.Source = UnrealConsole, deny destructive without out-of-band confirm). Effort M.
+  Update (2026-06-16): the base per-source trust gate now EXISTS (PR #1246, CommandRegistry.cpp:302-307) — the #2/#3 rows are resolved. This entry NARROWS from "gate absent" to "entry-point not tagged": the Unreal console/Blueprint dispatch must set ctx.Source = UnrealConsole so the now-live gate actually fires for it (an untagged source currently defaults to UI-equivalent reach and bypasses the confirm). Stays OPEN for that embed-entry-point slice only.
   Status: open
-  Last-reviewed: 2026-06-13
+  Last-reviewed: 2026-06-16
 
 - 2026-06-13 · deep-audit-xref · [security] · P3 — Plane issue-mapping parsers unhardened against malformed tracker JSON (playbook target 11)
   Details: `Source/Core/include/Tracker/PlaneIssueMappingPure.h` (`:53`/`:60`/`:78`) + `Source/Core/src/Tracker/PlaneIssueMappingPure.cpp` map Plane API JSON into issue structs with no fuzz coverage; only the Jira ADF path has any hardening tracked. A malformed/hostile Plane response is an untested parse surface (type confusion, missing-key deref, deep nesting). Candidate — no confirmed defect, this is an untested-surface gap.
@@ -125,14 +133,16 @@
 - 2026-06-13 · deep-audit · [security] · P2 — Command registry executes destructive commands with no ctx.Source authorization
   Details: Source/Core/src/Commands/CommandRegistry.cpp:298 gates only on (Destructive && !ConfirmedDestructive); no ctx.Source trust check, so MCP/Lua-sourced commands equal UI-sourced. Basis shared with MCP un-gated dispatch.
   Concrete next action: Add a per-source trust enum; gate destructive/source-restricted commands and require out-of-band confirm for non-UI sources. Effort M.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Resolution (2026-06-14 · PR #1246 fix(commands): source-aware destructive guard + close MCP/Lua confirm hole): CommandRegistry now carries the ctx.Source trust check. `IsAutomationSource(ctx.Source)` audits a destructive automation-sourced command (CommandRegistry.cpp:302) and `RequiresExplicitConfirm(ctx.Source, snapshot.Destructive, ctx.ConfirmedDestructive, ctx.DryRun)` (CommandRegistry.cpp:307) denies it without an out-of-band confirm — so MCP/Lua-sourced destructive commands no longer equal UI reach. The audit's `CommandRegistry.cpp:298` line-cite is pre-fix; the live gate is at :302-307.
+  Status: fixed
+  Last-reviewed: 2026-06-16
 
 - 2026-06-13 · deep-audit · [security] · P2 — MCP registry dispatch un-gated after Authorize
   Details: Source/Plugins/Mcp/McpPlugin.cpp:426-445,625-642 — after loopback+token Authorize, dispatch reaches the full command registry with no per-command authorization (token possession == full reach).
   Concrete next action: Apply a command allowlist/capability scope to the MCP surface; route destructive commands through the source-aware gate. Effort M.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Resolution (2026-06-14 · PR #1246): the destructive-reach half is closed — MCP dispatch now flows through the same source-aware gate as the entry above (RequiresExplicitConfirm denies a destructive MCP/Lua command without an out-of-band confirm), so token possession no longer grants unconfirmed destructive reach. RESIDUAL (optional defense-in-depth, NOT a live hole): a positive capability allowlist scoping even non-destructive commands per MCP token is not implemented; the security-critical destructive-confirm gap is fixed.
+  Status: fixed
+  Last-reviewed: 2026-06-16
 
 - 2026-06-13 · deep-audit · [security] · P2 — MCP attachment proxy fetches caller-supplied URLs (SSRF surface)
   Details: Source/Plugins/Mcp/McpPlugin.cpp:275-352 fetches a caller URL; the mcp-lane coverage found it already HTTPS-only + host-allow-listed (tracker domain + api.media.atlassian.com) with redirects disabled, so this is a confirm-it-routes-through-the-shared-AiEndpointSanitize hardening rather than a live SSRF.
@@ -150,8 +160,9 @@
 - 2026-06-13 · deep-audit · [security] · P2 — POSIX secret writes plaintext with no 0600 mode (re-run: HIGH at-rest exposure; raise to P1 when POSIX ships)
   Details: Source/Core/src/Config/ConfigManager.cpp:473-496 and ConfigManager_PathUtils.cpp:719-761 write secrets as plaintext config with default umask; no chmod 0600. The re-run confirmed the underlying no-op ProtectSecretForConfig #else branch (ConfigManager_PathUtils.cpp:331-334) as HIGH plaintext-at-rest (token/plane_api_key/github_pat/mcp_auth_token/ai_*_api_key/whisper_api_key). Windows (DPAPI) unaffected; this is the non-Windows gap.
   Concrete next action: chmod 0600 on create, verify mode on read; document the platform crypto gap. Effort S.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Resolution (2026-06-14 · branch fix/posix-secret-at-rest-perms-h2): POSIX half fixed — `::chmod(tmp, S_IRUSR | S_IWUSR)` (0600) is applied to the temp file before the atomic rename (ConfigManager_PathUtils.cpp:837), and a loose-permission `LOG_WARN` fires on read via the unit-tested `IsLooseConfigFileMode` (ConfigManager_PathUtils.cpp:402). The Android half remains a SEPARATE still-open item (the Android passthrough entry below + the 2026-06-14 P2 Android Keystore entry above). This POSIX entry is closed.
+  Status: fixed
+  Last-reviewed: 2026-06-16
 
 - 2026-06-13 · deep-audit · [security] · P2 — Android secret passthrough stores credentials in plaintext (re-run: HIGH at-rest exposure; raise to P1 when Android ships)
   Details: Source/Core/src/Config/ConfigManager_PathUtils.cpp:331-334 passes secrets through with no Android Keystore encryption. Same no-op #else branch as the POSIX entry above; confirmed HIGH plaintext-at-rest by the re-run.

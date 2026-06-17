@@ -69,6 +69,11 @@ Read-only security reviewer for Smatchet. Adversarial mindset — assume the att
   3. **Toast text HTML-escaped** before render — prevents injection via the watcher's CR-finding bodies which contain markdown.
   4. **No subprocess execution from payload** — endpoint may only call dispatcher-posted toast append; never exec / shell-out.
   5. **Sanitizer build mandatory** for the endpoint code path per Pillar 3 (see watcher plan-doc § Risks).
+- **Intent-capture pipeline** (`docs/harness/claude-code/hooks/capture-intent.sh` → `agents/scripts/core/redact-intent.py` → gitignored `.session-intent/<branch>.log` → PR `## Intent`) — a raw user prompt flows toward an eventually-PUBLIC PR body. Four vectors; a change to either script must preserve all four:
+  1. **Secret exfil** — raw prompt → redactor → public PR. `redact-intent.py` is the boundary (greedy named-format + high-entropy + userinfo/username sweeps, fail-safe = over-redact-never-under, 60-case `--selftest`). A new value/authority class belongs IN the redactor, not bolted on at a call site.
+  2. **Path traversal via branch name** — log filename is `<branch>.log`; `capture-intent.sh` neutralises it with `tr -c 'A-Za-z0-9._-' '-'` (slashes → `-`) and git itself bans `..` refnames. New filename construction must keep that allow-list transform.
+  3. **Log/line injection** — appended line is `- $REDACTED`; the redactor collapses to a single line (`\s+` → space) so an embedded newline can't forge a second entry. A new emitter must keep the single-line guarantee.
+  4. **Fail-open** — interpreter-missing / redactor-crash MUST write nothing, never the raw prompt (`capture-intent.sh` emits only the redacted value, empty on any failure). Flag any path that could emit `$PROMPT` directly.
 
 **Known crash classes:**
 - `decode_json` (Lua) can leak a C++ `parse_error` past the sol2 protected call on certain malformed inputs — documented in `scripts/SmatchetHooks.lua`. New Lua bindings accepting raw strings must avoid `decode_json` on untrusted input or wrap defensively.
