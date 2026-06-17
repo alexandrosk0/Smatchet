@@ -61,6 +61,13 @@ run_selftest() {
     trap 'rm -rf "$tmp"' RETURN
     self="agents/scripts/core/fleet-preflight.sh"
 
+    # Pin the check-6 slot count so the selftest isolates the model-pin behavior
+    # it targets. Without this, check 6 falls back to min(16, nproc-2); on a host
+    # with <=3 cores the clean fixture's 2-wide pipeline tops the slot count, adds
+    # a fan-out-width WARN, and --strict exits non-zero — failing assert 3 on a
+    # small CI runner even though model pinning is correct (Cursor Bugbot, #1354).
+    export PREFLIGHT_SLOTS=16
+
     # Violating fixture: a 3-wide parallel() fan-out, every agent() unpinned.
     cat > "$tmp/violating.js" <<'EOF'
 await parallel([
