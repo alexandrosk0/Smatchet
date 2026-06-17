@@ -151,6 +151,10 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueCreatePipelineHelpers.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldPayload.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldPayloadPure.cpp"
+        # TrackerFieldPayloadPure date<->API formatting: the pure half of CompactDateFormat
+        # (TryParseJiraDateTime / FormatJiraDateOrDateTimeForApi), split out of the ImGui-bound
+        # CompactDateFormat.cpp so it links here without dragging <imgui.h>.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/CompactDateFormatPure.cpp"
         # ConfigSaveConcurrency closure: ConfigSaveWorker (ConfigManager.cpp already linked).
         "${CMAKE_SOURCE_DIR}/Source/Core/src/ConfigSaveWorker.cpp"
     )
