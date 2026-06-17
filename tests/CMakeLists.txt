@@ -23,14 +23,19 @@ FetchContent_MakeAvailable(doctest)
 # here (MSVC no-ops TSan in cmake/Sanitizers.cmake anyway).
 #
 # Scope rationale: this subset is the genuinely-decoupled threading surface —
-# each TU below pulls NO ImGui header. The GridLiveContext / TicketSyncService /
-# OfflineQueueService sync layer is intentionally DEFERRED: TicketSyncService.cpp
-# calls SmatchetToastManager::Push and SmatchetToast.h #includes <imgui.h>, so
-# that path is ImGui-header-coupled and cannot link without ImGuiLib (i.e. without
-# GLFW/X11 on the runner). Expanding to it requires decoupling Toast from the sync
-# layer (filed as debt) or building ImGuiLib on Linux — out of scope for this
-# pure-additive infra PR. See docs/plans/active/build-quality-velocity-hardening.md
-# § Verification (#10).
+# each TU below pulls NO ImGui and NO cpr header. The GridLiveContext /
+# TicketSyncService sync layer (ADR-0012 atomic backend-swap race, ADR-0020
+# ISyncCache seam) is now IN scope. Two prior blockers were cleared: (1) the ImGui
+# coupling (TicketSyncService → SmatchetToastManager::Push → SmatchetToast.h →
+# <imgui.h>) was decoupled in #1318; (2) the residual cpr coupling — TicketSyncService
+# classified transport errors via IsTrackerTransportErrorText declared in
+# TrackerHttpUtils.h, which #includes <cpr/cpr.h> at the header level — was cleared by
+# moving that pure function to TrackerHttpPure.h/.cpp (cpr-free) and swapping the
+# include. A BFS include-taint scan of the full post-swap compile closure confirmed it
+# reaches zero cpr/imgui/GLFW/glad/OpenGL headers. Tests construct via header-only
+# fakes (FakeTicketSyncDeps / FakeTrackerClient / FakeSyncCache) — no SQLite, no HTTP
+# at runtime. See docs/plans/active/build-quality-velocity-hardening.md § Verification
+# (#10) and the debt-ledger TSan-subset-expand entry.
 #
 # smatchet_apply_sanitizers() (cmake/Sanitizers.cmake, included at root) appends
 # -fsanitize=thread -fno-omit-frame-pointer (compile) + -fsanitize=thread (link)
@@ -79,6 +84,28 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # Logger.cpp now routes the file sink through RedactLogLine (audit
         # 2026-06-13 LOW) — link the pure redactor so the closure resolves.
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Privacy/TextRedaction.cpp"
+        # --- Sync layer: the ADR-0012 atomic backend-swap race + ADR-0020 ISyncCache
+        #     seam. GridLiveContext owns the live TicketSyncService (atomic Backend slot,
+        #     latched strong handles surviving live swaps); TicketSyncService drives the
+        #     sync state machine. Both carry real cross-thread state — the highest-value
+        #     TSan surface. cpr-free closure: TicketSyncService now classifies transport
+        #     errors via TrackerHttpPure.h (IsTrackerTransportErrorText moved there), so
+        #     no TU here pulls <cpr/cpr.h>. Tests construct via header-only fakes
+        #     (FakeTicketSyncDeps / FakeTrackerClient / FakeSyncCache) — no SQLite, no HTTP.
+        Core/GridLiveContext.test.cpp
+        Core/TicketSyncService.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/GridLiveContext.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/TicketSyncService.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpPure.cpp"
+        # ConfigManager closure (split across 4 TUs). TicketSyncService calls
+        # ConfigManager::Load / LoadViewsOrBootstrap / NormalizeViewsBackendKey, which
+        # reach across the split — link the TUs that own those symbols + ToolbarConfig
+        # (ConfigManager.cpp references ToolbarConfig::). All headless-Linux-clean
+        # (wincrypt is _WIN32-guarded; whisper/lua feature guards have OFF branches).
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Views.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ToolbarConfig.cpp"
     )
     target_include_directories(SmatchetTsanTests PRIVATE
         _helpers
@@ -89,8 +116,11 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/include/Config"
         "${CMAKE_SOURCE_DIR}/Source/Core/include/Ui"
         "${CMAKE_SOURCE_DIR}/Source/Core/include/Privacy"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Types"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Config"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync"
         "${CMAKE_SOURCE_DIR}/tests/support"
     )
     target_compile_definitions(SmatchetTsanTests PRIVATE

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ConfigManager.h"
+#include "TrackerHttpPure.h"
 
 #include <cpr/cpr.h>
 
@@ -48,17 +49,8 @@ cpr::Response TrackerPutLogged(const char* clientName, const std::string& url, c
                                const std::string& body);
 cpr::Response TrackerPatchLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                  const std::string& body);
-void LogTrackerHttpResult(const char* clientName, const char* method, const std::string& url, const cpr::Response& response);
+void LogTrackerHttpResult(const char* clientName, const char* method, const std::string& url,
+                          const cpr::Response& response);
 
-/**
- * True when `error` looks like a connectivity/transport failure (HTTP 0, timeouts, DNS, etc.).
- * False for missing auth/domain, typical HTTP 4xx validation/auth responses, and unknown strings
- * (conservative: callers should not treat unknown errors as offline/transport).
- */
-bool IsTrackerTransportErrorText(const std::string& error);
-
-
-
-
-
-
+// IsTrackerTransportErrorText moved to TrackerHttpPure.h (cpr-free) — still declared via the
+// include above, so existing includers of this header keep the decl transitively.

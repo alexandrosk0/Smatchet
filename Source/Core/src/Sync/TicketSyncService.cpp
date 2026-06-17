@@ -7,7 +7,7 @@
 #include "ISyncCache.h"
 #include "Logger.h"
 #include "StringUtil.h"
-#include "TrackerHttpUtils.h"
+#include "TrackerHttpPure.h"
 #include "Views.h"
 
 #include <algorithm>

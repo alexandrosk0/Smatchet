@@ -176,8 +176,8 @@ static cpr::Response ExecuteTrackerGet(const char* clientName, const std::string
         response = cpr::Get(cpr::Url{url}, headers, *params, redirect, cpr::ConnectTimeout{connectMs},
                             cpr::Timeout{overallMs}, MakeTrackerSslOptions());
     } else {
-        response = cpr::Get(cpr::Url{url}, headers, redirect, cpr::ConnectTimeout{connectMs},
-                            cpr::Timeout{overallMs}, MakeTrackerSslOptions());
+        response = cpr::Get(cpr::Url{url}, headers, redirect, cpr::ConnectTimeout{connectMs}, cpr::Timeout{overallMs},
+                            MakeTrackerSslOptions());
     }
     NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, NetworkUsageTracker::kEstimatedGetUploadBytes,
                                            response);
@@ -244,9 +244,9 @@ cpr::Response TrackerPutLogged(const char* clientName, const std::string& url, c
     // PUT is idempotent — safe to retry on Transport / 429 / 5xx (wrapper's default predicate).
     TrackerHttpResult result = TrackerHttpRequestWithRetry([&]() {
         cpr::Redirect redirect = MakeTrackerRedirectPolicy();
-        cpr::Response response = cpr::Put(cpr::Url{url}, headers, cpr::Body{body}, redirect,
-                                          cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
-                                          cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
+        cpr::Response response =
+            cpr::Put(cpr::Url{url}, headers, cpr::Body{body}, redirect, cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
+                     cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
         NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, static_cast<std::uint64_t>(body.size()),
                                                response);
         LogTrackerHttpResult(clientName, "PUT", url, response);
@@ -255,91 +255,17 @@ cpr::Response TrackerPutLogged(const char* clientName, const std::string& url, c
     return std::move(result.Response);
 }
 
-bool IsTrackerTransportErrorText(const std::string& error) {
-    if (error.empty()) {
-        return false;
-    }
-    const std::string s = ToLowerAsciiCopy(error);
-
-    // Client/config/auth/validation — never treat as transport.
-    static const char* kHard[] = {
-        "missing tracker domain",
-        "missing tracker",
-        "api token",
-        "tracker backend is not initialized",
-        "http 400",
-        "http 401",
-        "http 402",
-        "http 403",
-        "http 404",
-        "http 405",
-        "http 406",
-        "http 409",
-        "http 410",
-        "http 422",
-        "invalid credentials",
-        "bad request",
-        "unprocessable",
-        // Plane config errors
-        "plane is not configured",
-        "plane api key is missing",
-    };
-    for (const char* h : kHard) {
-        if (s.find(h) != std::string::npos) {
-            return false;
-        }
-    }
-
-    static const char* kTransport[] = {
-        "http 0",
-        "http 500",
-        "http 502",
-        "http 503",
-        "http 504",
-        "timeout",
-        "timed out",
-        "operation timed out",
-        "could not resolve host",
-        "couldn't resolve host",
-        "name or service not known",
-        "failed to connect",
-        "connection refused",
-        "connection reset",
-        "connection aborted",
-        "network is unreachable",
-        "host unreachable",
-        "ssl connect error",
-        "couldn't connect to server",
-        "eof occurred",
-        "offline",
-        "network error",
-        "resolve host",
-        "resolve proxy",
-        "connection closed",
-        "stream error",
-        "certificate verify failed",
-        "ssl peer certificate",
-        "schannel",
-        // Broad connectivity hints (aligned with legacy offline-create detection).
-        "network",
-        "connection",
-    };
-    for (const char* t : kTransport) {
-        if (s.find(t) != std::string::npos) {
-            return true;
-        }
-    }
-    return false;
-}
+// IsTrackerTransportErrorText moved to TrackerHttpPure.cpp (pure, cpr-free) so the Sync layer
+// and the TSan threading subset can classify transport errors without pulling in cpr.
 
 cpr::Response TrackerPatchLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                  const std::string& body) {
     // PATCH on tracker fields is idempotent (set-to-value, not delta) — safe to retry like PUT.
     TrackerHttpResult result = TrackerHttpRequestWithRetry([&]() {
         cpr::Redirect redirect = MakeTrackerRedirectPolicy();
-        cpr::Response response = cpr::Patch(cpr::Url{url}, headers, cpr::Body{body}, redirect,
-                                            cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
-                                            cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
+        cpr::Response response =
+            cpr::Patch(cpr::Url{url}, headers, cpr::Body{body}, redirect, cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
+                       cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
         NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, static_cast<std::uint64_t>(body.size()),
                                                response);
         LogTrackerHttpResult(clientName, "PATCH", url, response);
