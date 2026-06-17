@@ -24,6 +24,12 @@ setup() {
     # CR tests below flip SAFE_ADMIN_MERGE_CR_INSTALLED=true to exercise the gate.
     export SAFE_ADMIN_MERGE_CR_INSTALLED=false
 
+    # Pin the grace-backstop inputs too: an ambient SAFE_ADMIN_MERGE_CR_GRACE_EXPIRED=true
+    # would silently flip BLOCK-path tests to PASS, and a stray _GRACE_MINUTES would
+    # perturb the date math. Keep the host environment out of these tests.
+    export SAFE_ADMIN_MERGE_CR_GRACE_EXPIRED=false
+    unset SAFE_ADMIN_MERGE_CR_GRACE_MINUTES
+
     # Stub gh — records `gh pr merge ...` to $MERGE_SENTINEL so a test can assert
     # the merge fired (or did NOT). Any other gh call is a no-op success.
     STUB_BIN_DIR="$(mktemp -d)"

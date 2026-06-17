@@ -251,7 +251,11 @@ detect_cr_grace_expired() {
     if [ -z "$committed" ]; then printf 'false'; return 0; fi
     local now head_epoch
     now=$(date -u +%s 2>/dev/null) || { printf 'false'; return 0; }
-    head_epoch=$(date -u -d "$committed" +%s 2>/dev/null) || { printf 'false'; return 0; }
+    # GNU date parses ISO-8601 with -d; BSD date (macOS) needs -j -f. Try GNU
+    # first, fall back to BSD, then fail closed (cannot prove staleness → block).
+    head_epoch=$(date -u -d "$committed" +%s 2>/dev/null) \
+        || head_epoch=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$committed" +%s 2>/dev/null) \
+        || { printf 'false'; return 0; }
     if [ $(( (now - head_epoch) / 60 )) -ge "$grace_min" ]; then
         printf 'true'
     else
