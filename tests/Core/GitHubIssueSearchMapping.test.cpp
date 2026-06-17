@@ -770,3 +770,128 @@ TEST_CASE("MapGraphQlNodeToRestShape — absent comments does not crash; downstr
     const CachedTicket t = MapIssueOrPullRequestJsonToCachedTicket(rest, "", "");
     CHECK(GetField(t, "comments") == "0");
 }
+
+// security deep-audit target 12 — the GitHub issue/PR, commit, and GraphQL
+// mappers parse JSON straight off a possibly-malicious GitHub API or a MITM, so
+// every hostile or type-confused shape must map to a safe default rather than
+// throw or over-read. nlohmann member access on a type-confused node throws
+// type_error, so a missing guard would surface as an uncaught throw right here.
+// The cases below lock the no-throw contract across all four entry points.
+
+TEST_CASE("MapIssueOrPullRequestJsonToCachedTicket — hostile / type-confused input never throws" *
+          doctest::test_suite("[high-risk]")) {
+    CHECK_NOTHROW(MapIssueOrPullRequestJsonToCachedTicket(nlohmann::json(nullptr), "o", "r"));
+    CHECK_NOTHROW(MapIssueOrPullRequestJsonToCachedTicket(nlohmann::json::array(), "o", "r"));
+    CHECK_NOTHROW(MapIssueOrPullRequestJsonToCachedTicket(nlohmann::json(7), "o", "r"));
+
+    nlohmann::json issue;
+    issue["number"] = "not-a-number";
+    issue["title"] = nlohmann::json::array({1, 2});
+    issue["state"] = 99;
+    issue["body"] = nlohmann::json::object();
+    issue["repository_url"] = false;
+    issue["user"] = "scalar-not-object";
+    issue["assignee"] = 5;
+    issue["labels"] = "scalar-not-array";
+    issue["milestone"] = nlohmann::json::array();
+    issue["pull_request"] = 42;
+    issue["created_at"] = nlohmann::json::object();
+    issue["comments"] = nlohmann::json::array();
+    CHECK_NOTHROW(MapIssueOrPullRequestJsonToCachedTicket(issue, "o", "r"));
+
+    // labels array whose ELEMENTS are the wrong type -- the mapper reads each
+    // entry's name member only after a per-element object guard.
+    nlohmann::json badLabels;
+    badLabels["number"] = 3;
+    badLabels["labels"] = nlohmann::json::array({1, "str", nullptr, nlohmann::json::object()});
+    CHECK_NOTHROW(MapIssueOrPullRequestJsonToCachedTicket(badLabels, "o", "r"));
+}
+
+TEST_CASE("MapCommitJsonToCachedTicket — hostile / type-confused input never throws" *
+          doctest::test_suite("[high-risk]")) {
+    CHECK_NOTHROW(MapCommitJsonToCachedTicket(nlohmann::json(nullptr), "o", "r"));
+    CHECK_NOTHROW(MapCommitJsonToCachedTicket(nlohmann::json::array(), "o", "r"));
+    CHECK_NOTHROW(MapCommitJsonToCachedTicket(nlohmann::json("scalar"), "o", "r"));
+
+    nlohmann::json commit;
+    commit["sha"] = 12345;
+    commit["commit"] = "scalar-not-object";
+    commit["author"] = nlohmann::json::array();
+    commit["committer"] = 7;
+    commit["parents"] = "scalar-not-array";
+    commit["html_url"] = nlohmann::json::object();
+    CHECK_NOTHROW(MapCommitJsonToCachedTicket(commit, "o", "r"));
+
+    // Nested commit sub-objects with wrong-typed members and a parents array of
+    // scalars -- every read is type-guarded before the member access.
+    nlohmann::json nested;
+    nested["sha"] = "abc";
+    nested["commit"] = nlohmann::json::object();
+    nested["commit"]["message"] = nlohmann::json::array({1, 2});
+    nested["commit"]["author"] = 99;
+    nested["commit"]["verification"] = "scalar";
+    nested["parents"] = nlohmann::json::array({5, "str", nullptr});
+    CHECK_NOTHROW(MapCommitJsonToCachedTicket(nested, "o", "r"));
+}
+
+TEST_CASE("MapGraphQlNodeToRestShape / PrShape — hostile node never throws" * doctest::test_suite("[high-risk]")) {
+    nlohmann::json rest;
+    CHECK_NOTHROW(rest = MapGraphQlNodeToRestShape(nlohmann::json(nullptr)));
+    CHECK_NOTHROW(rest = MapGraphQlNodeToRestShape(nlohmann::json::array()));
+    CHECK_NOTHROW(rest = MapGraphQlNodeToRestShape(nlohmann::json(7)));
+
+    nlohmann::json node;
+    node["__typename"] = 42;
+    node["number"] = "not-a-number";
+    node["title"] = nlohmann::json::array();
+    node["state"] = nlohmann::json::object();
+    node["repository"] = "scalar-not-object";
+    node["author"] = 5;
+    node["assignees"] = "scalar-not-array";
+    node["labels"] = 9;
+    node["milestone"] = true;
+    node["comments"] = "scalar-not-object";
+    CHECK_NOTHROW(rest = MapGraphQlNodeToRestShape(node));
+
+    nlohmann::json prNode;
+    CHECK_NOTHROW(rest = MapGraphQlPullRequestNodeToRestPrShape(nlohmann::json(nullptr)));
+    prNode["__typename"] = "PullRequest";
+    prNode["headRefName"] = 1;
+    prNode["baseRefName"] = nlohmann::json::array();
+    prNode["mergeable"] = nlohmann::json::object();
+    prNode["isDraft"] = "not-a-bool";
+    CHECK_NOTHROW(rest = MapGraphQlPullRequestNodeToRestPrShape(prNode));
+}
+
+TEST_CASE("MapGraphQlNodesToTickets — hostile node array skips bad rows, never throws" *
+          doctest::test_suite("[high-risk]")) {
+    std::vector<CachedTicket> tickets;
+    CHECK_NOTHROW(tickets = MapGraphQlNodesToTickets(nlohmann::json(nullptr), "o", "r", true));
+    CHECK_NOTHROW(tickets = MapGraphQlNodesToTickets(nlohmann::json::object(), "o", "r", true));
+    CHECK_NOTHROW(tickets = MapGraphQlNodesToTickets(nlohmann::json("scalar"), "o", "r", true));
+
+    nlohmann::json nodes = nlohmann::json::array();
+    nodes.push_back(nlohmann::json(nullptr));
+    nodes.push_back(nlohmann::json(42));
+    nodes.push_back("scalar");
+    nodes.push_back(nlohmann::json::array());
+    nlohmann::json broken;
+    broken["__typename"] = 7;
+    broken["number"] = nlohmann::json::array();
+    nodes.push_back(broken);
+    nlohmann::json good;
+    good["__typename"] = "Issue";
+    good["number"] = 11;
+    good["title"] = "valid graphql row";
+    good["state"] = "OPEN";
+    good["repository"] = nlohmann::json::object();
+    good["repository"]["name"] = "Smatchet";
+    good["repository"]["owner"] = nlohmann::json::object();
+    good["repository"]["owner"]["login"] = "alexandrosk0";
+    nodes.push_back(good);
+
+    CHECK_NOTHROW(tickets = MapGraphQlNodesToTickets(nodes, "o", "r", true));
+    // The one well-formed Issue node maps through; every hostile node is skipped.
+    REQUIRE(tickets.size() == 1);
+    CHECK(tickets[0].id == "alexandrosk0/Smatchet#11");
+}
