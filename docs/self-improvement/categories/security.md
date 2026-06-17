@@ -200,8 +200,9 @@
 - 2026-06-13 · deep-audit · [security] · P3 — Legacy AiBaseUrl grandfather path narrows SSRF guard
   Details: AiEndpointSanitize legacy AiBaseUrl branch gets looser validation; cloud-metadata payloads still blocked (informational).
   Concrete next action: Fold the legacy path through the shared sanitizer; retire the grandfather branch. Effort S.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Resolution (2026-06-17 · PR #1347 fix(ai): route AI-prefs base-URL validation through shared SSRF sanitizer): verification corrected the Details — the request path (`AiAssistantController::BuildClientConfig`) and the Test-connection probe (`AiPrefsTestConnection`) already routed every base URL through `SanitizeAiEndpointUrl` + `EndpointPolicyForProvider`; the one looser site was Preferences **inline** validation. `CheckBaseUrls` (AiPrefsValidator.cpp) used a scheme-only `LooksLikeHttpUrl` check, so a config-written cloud-metadata / link-local / private-network / alternate-encoding host (e.g. `http://2852039166` == 169.254.169.254) saved clean in Prefs and was only refused at request time. `CheckBaseUrls` now resolves `EndpointPolicyForProvider(cfg, provider)` and runs each base URL through the same pure sanitizer, so all three validation sites enforce the identical policy per AiEndpointPolicy.h. Loopback (localhost / 127.0.0.1) stays Allowed via the unpinned-provider policy — no false positive on local Ollama. 7 new `[high-risk]`/regression cases in AiPrefsValidator.test.cpp lock prefs-time rejection of cloud-metadata IP, decimal-encoded metadata IP, private-network IP, and OpenAI non-provider host without consent; full suite 1930/1930.
+  Status: fixed
+  Last-reviewed: 2026-06-17
 
 - 2026-06-13 · deep-audit · [security] · P3 — Attachment proxy accepts URL userinfo component
   Details: Source/Plugins/Mcp/McpPlugin.cpp:275-352 accepts user:pass@ userinfo (verifier LOW→INFO).
