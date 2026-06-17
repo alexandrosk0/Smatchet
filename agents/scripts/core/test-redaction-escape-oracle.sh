@@ -22,10 +22,14 @@ cd "$(git rev-parse --show-toplevel)" || exit 2
 # Resolve a python interpreter by PROBE-EXECUTING each candidate — a bare
 # `command -v python3` on Windows finds the Microsoft Store alias stub that
 # errors on exec, so verify the interpreter actually runs (mirrors the
-# resolution in tests/bats/capture_intent.bats).
+# resolution in tests/bats/capture_intent.bats). The probe also REQUIRES Python
+# 3: the oracle is a `#!/usr/bin/env python3` module, and a bare `python` may be
+# a lingering Python 2 where `import sys` still succeeds — letting py2 through
+# would run the oracle under the wrong interpreter and mis-report.
 PY=""
 for cand in python3 python py; do
-    if command -v "$cand" >/dev/null 2>&1 && "$cand" -c "import sys" >/dev/null 2>&1; then
+    if command -v "$cand" >/dev/null 2>&1 \
+        && "$cand" -c "import sys; sys.exit(0 if sys.version_info[0] >= 3 else 1)" >/dev/null 2>&1; then
         PY="$cand"
         break
     fi

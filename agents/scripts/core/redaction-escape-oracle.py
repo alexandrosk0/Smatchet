@@ -48,17 +48,32 @@ _REDACTOR_PATH = os.path.join(_HERE, "redact-intent.py")
 def _load_redact():
     """Import redact() from the hyphenated redact-intent.py by file path.
 
-    Returns the callable, or None if the module cannot be loaded (treated as an
-    environment error, exit 2 — never as a passing redaction).
+    Fail-closed semantics, distinguishing two failure modes the caller must
+    treat differently:
+
+      * The redactor file is ABSENT (or exposes no callable redact) -> return
+        None. The caller maps that to exit 2 (environment problem, not a leak):
+        there is no security boundary present to exercise.
+      * The redactor file is PRESENT but raises on import (syntax error, broken
+        dependency, half-applied edit) -> raise RuntimeError. The caller maps
+        that to exit 1 (hard fail). A redactor that cannot even load is a BROKEN
+        security boundary; silently downgrading that to a soft skip would let a
+        CI gate wave through prompts the redactor never actually scrubbed.
     """
+    if not os.path.exists(_REDACTOR_PATH):
+        return None
     try:
         spec = importlib.util.spec_from_file_location("redact_intent", _REDACTOR_PATH)
         if spec is None or spec.loader is None:
             return None
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-    except Exception:
+    except FileNotFoundError:
+        # Raced away between the existence check and import — treat as absent.
         return None
+    except Exception as exc:
+        # Present but unloadable: broken boundary, not a clean skip.
+        raise RuntimeError("redact-intent.py present but failed to import: %r" % (exc,)) from exc
     fn = getattr(mod, "redact", None)
     return fn if callable(fn) else None
 
@@ -186,10 +201,14 @@ def _gitleaks_scan(redacted_lines):
         # `detect --no-git` is supported across gitleaks v8.x; a non-zero exit
         # with a written report means findings, a non-zero exit with no report
         # means the tool itself errored (treated as skip, not a leak).
+        # Bound the scan: a wedged/hung gitleaks must not stall the gate. A
+        # timeout surfaces as subprocess.TimeoutExpired, caught below and mapped
+        # to SKIP (tool problem, not a redaction leak) — never a silent hang.
         proc = subprocess.run(
             [exe, "detect", "--no-git", "--source", tmpdir,
              "--report-format", "json", "--report-path", report],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            timeout=120,
         )
         if proc.returncode == 0:
             return ("pass", "no findings")
@@ -240,7 +259,13 @@ def _selftest():
     absence test broken (a pass-only oracle — the class test-gate-selftests.sh
     guards), this assert fires. Then the real redactor must produce zero escapes.
     """
-    redact_fn = _load_redact()
+    try:
+        redact_fn = _load_redact()
+    except RuntimeError as exc:
+        sys.stderr.write(
+            "redaction-escape-oracle selftest: redactor present but unloadable — %s\n" % exc
+        )
+        return 1
     if redact_fn is None:
         sys.stderr.write("redaction-escape-oracle selftest: cannot load redact()\n")
         return 2
@@ -255,7 +280,7 @@ def _selftest():
         sys.stderr.write(
             "selftest meta-check FAIL: identity redactor leaked %d/%d but the "
             "oracle only flagged the survivors it could see\n"
-            % (len(CORPUS), len(leaked))
+            % (len(leaked), len(CORPUS))
         )
 
     # The real redactor must redact the whole corpus.
@@ -278,7 +303,13 @@ def _selftest():
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--selftest":
         return _selftest()
-    redact_fn = _load_redact()
+    try:
+        redact_fn = _load_redact()
+    except RuntimeError as exc:
+        sys.stderr.write(
+            "redaction-escape-oracle: redactor present but unloadable — %s\n" % exc
+        )
+        return 1
     if redact_fn is None:
         sys.stderr.write(
             "redaction-escape-oracle: cannot load redact() from %s\n" % _REDACTOR_PATH
