@@ -106,6 +106,18 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Views.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ToolbarConfig.cpp"
+        # ConfigManager's deeper closure: Load() round-trips the keybindings block
+        # (KeybindingsConfig::Defaults/SetBindingHotkey/FindBindingIndex + its
+        # to_json/from_json), and ConfigManager_Views/_PathUtils guard disk writes
+        # with UiThreadAffinity::WarnIfOnUiThread. Both are cpr/ImGui/GL-free.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/KeybindingsConfig.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/UiThreadAffinity.cpp"
+        # TicketSyncService.test scripts its backend through the header-only
+        # ScriptedTrackerBackendFactory, whose impl lives in JiraFakeTrackerFixture
+        # (builds a header-only FakeTrackerClient — no real JiraClient, no cpr). The
+        # fixture maps fixture JSON via JiraIssueMappingPure (pure mapper, cpr-free).
+        support/JiraFakeTrackerFixture.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraIssueMappingPure.cpp"
     )
     target_include_directories(SmatchetTsanTests PRIVATE
         _helpers
