@@ -1,6 +1,8 @@
 #include "AiPrefsValidator.h"
 
 #include "AiClientFactory.h"
+#include "AiEndpointPolicy.h"
+#include "AiEndpointSanitize.h"
 #include "AiModelCatalog.h"
 #include "AiTypes.h"
 
@@ -33,8 +35,6 @@ bool StartsWith(const std::string& s, const char* prefix) {
     }
     return s.compare(0, plen, prefix) == 0;
 }
-
-bool LooksLikeHttpUrl(const std::string& s) { return StartsWith(s, "http://") || StartsWith(s, "https://"); }
 
 void EmitError(PrefsValidation& v, const char* fieldKey, std::string message) {
     PrefsValidationIssue issue;
@@ -120,15 +120,33 @@ void CheckKeyPresence(PrefsValidation& v, const TrackerConfig& cfg, AiProvider p
     // OllamaOpenAiCompat + OllamaNative: API key optional (no error when empty).
 }
 
-// --- Base URL well-formedness ---
-void CheckBaseUrls(PrefsValidation& v, const TrackerConfig& cfg, AiProvider provider) {
-    if (!cfg.AiBaseUrl.empty() && !LooksLikeHttpUrl(cfg.AiBaseUrl)) {
-        EmitError(v, PrefsFieldKey::kAiBaseUrl, "Base URL must start with http:// or https://");
+// --- Base URL safety (scheme + SSRF denylist + per-provider host pin) ---
+// Route each configured base URL through the SAME pure validator the live
+// request (AiAssistantController) and the Test-connection probe use — see
+// AiEndpointPolicy.h, the single source of truth — so Preferences rejects
+// exactly what a real request would and no looser. The previous scheme-only
+// check let a cloud-metadata / link-local / private-network / alternate-encoding
+// host (e.g. http://2852039166 == 169.254.169.254) save clean here only for the
+// request path to refuse it. The SSRF denylist always fires; loopback (the local
+// http://localhost:11434 Ollama case) stays allowed via the unpinned-provider
+// policy, so the common local setups are unaffected.
+void CheckOneBaseUrl(PrefsValidation& v, const std::string& url, const char* fieldKey, const char* label,
+                     const pure::EndpointPolicy& policy) {
+    if (url.empty()) {
+        return;
     }
+    std::string normalized;
+    const pure::EndpointVerdict verdict = pure::SanitizeAiEndpointUrl(url, policy, normalized);
+    if (verdict != pure::EndpointVerdict::Allowed) {
+        EmitError(v, fieldKey, std::string(label) + ": " + pure::EndpointVerdictDescription(verdict));
+    }
+}
+
+void CheckBaseUrls(PrefsValidation& v, const TrackerConfig& cfg, AiProvider provider) {
+    const pure::EndpointPolicy policy = EndpointPolicyForProvider(cfg, provider);
+    CheckOneBaseUrl(v, cfg.AiBaseUrl, PrefsFieldKey::kAiBaseUrl, "Base URL", policy);
     if (provider == AiProvider::OllamaNative) {
-        if (!cfg.AiOllamaBaseUrl.empty() && !LooksLikeHttpUrl(cfg.AiOllamaBaseUrl)) {
-            EmitError(v, PrefsFieldKey::kAiOllamaBaseUrl, "Ollama base URL must start with http:// or https://");
-        }
+        CheckOneBaseUrl(v, cfg.AiOllamaBaseUrl, PrefsFieldKey::kAiOllamaBaseUrl, "Ollama base URL", policy);
     }
 }
 
