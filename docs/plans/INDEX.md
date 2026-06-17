@@ -160,6 +160,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`slice-e2-libfuzzer`](shipped/slice-e2-libfuzzer.md) | 2026-06-15 | Slice E2 — libFuzzer harness for the untrusted-byte parsers |
 | [`slice-e2b-libfuzzer`](shipped/slice-e2b-libfuzzer.md) | 2026-06-15 | Slice E2b — libFuzzer drivers for the 5 remaining untrusted-byte parsers (PR 2a + PR 2b) |
 | [`fuzz-smoke-gate-promotion`](shipped/fuzz-smoke-gate-promotion.md) | 2026-06-16 | Plan — promote `Fuzz smoke` deterministic build to a merge blocker |
+| [`codeql-code-scanning`](shipped/codeql-code-scanning.md) | 2026-06-17 | Plan — CodeQL c-cpp code scanning |
 <!-- END auto-plan-index -->
 
 ### Notes
