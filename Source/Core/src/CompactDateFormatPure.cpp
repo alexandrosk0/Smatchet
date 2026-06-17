@@ -1,5 +1,4 @@
 // CompactDateFormatPure — the cpr/ImGui-free half of CompactDateFormat.
-//
 // `TryParseJiraDateTime` + `FormatJiraDateOrDateTimeForApi` are pure string<->date
 // helpers used by the field-edit / create payload path (TrackerFieldPayloadPure).
 // They were split out of CompactDateFormat.cpp so they link into the headless Linux
