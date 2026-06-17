@@ -2,7 +2,7 @@
 
 > **Slug**: `jql-omnibox-search` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — Stream A (icon-Refresh sweep) **shipped** (#1257, merged 2026-06-15); Stream B (global omnibox) **not yet started** — no branch or PR open. Flip to `shipped` in the SAME post-ship PR that fills § Implementation log AND `git mv`s this file active → shipped (see § Archive).
+> **Status**: `shipped` — both streams merged: Stream A icon-Refresh sweep (#1257, 2026-06-15) + Stream B global omnibox (#1261, 2026-06-16). Plan archived retroactively (#1261 shipped the code but did not update/move this doc). See § Implementation log.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 
@@ -134,10 +134,15 @@ Per `AGENTS.md` § Verification automation — zero manual steps where physicall
 ## Implementation log
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
 
-**Stream A — icon-Refresh sweep (PR #1257, base `develop`) — SHIPPED.** Stream B still active (sections below cover Stream A only).
+**Stream A — icon-Refresh sweep (PR #1257, base `develop`) — SHIPPED.**
 - `161ebb37` · feat(ui): icon helpers (`SmatchetIconButton` icon-only + `SmatchetIconLeadingButton` icon-leading) + 6 call sites iconified + header-only pure-label test.
 - `1166df0b` · merge `origin/develop` forward (clean, no conflict; test entry survived at `tests/CMakeLists.txt:251`).
 - `2544ebf7` · style(ui): tighten `SmatchetIconButtons.h` doc comments (drop bare `//` blank-run, condense).
+
+**Stream B — global omnibox (PR #1261, merged 2026-06-16) — SHIPPED.** Squash-merged as `e6445a27`. Delivered all three slices in one PR:
+- **2a** — extracted `struct JqlEditorState` (`SmatchetUiSession.h`) with two instances (`viewJqlEditor` dashboard + `omniJqlEditor`); `DrawJqlQueryEditorEmbedded(app, d, JqlEditorState&, …)` re-signatured; the `TrackerQueryAcp*` autocomplete family (`SmatchetAutocompleteUi.{h,cpp}`) threads the per-instance `JqlEditorState*` so the two editors no longer share a request-id (the in-flight-future collision the recon flagged).
+- **2b** — new `SmatchetOmnibarUi.cpp` (`drawOmnibar`) drawn via **mechanism A** (`ImGui::BeginViewportSideBar(ImGuiDir_Up)` from inside `SmatchetUI::Draw` — no host/frame-loop edit); wired at `SmatchetUI.cpp:334`; `SMATCHET_UI_PERF_SCOPE("SmatchetUI::drawOmnibar")`.
+- **2c** — new pure `OmnibarInputClassifier.h` (`ClassifyOmnibarInput` → `Jql | TicketKey | TitleSearch` across `Jira | Plane | GitHub`; Plane degrades to Jql/TitleSearch) + ticket-jump via `SpreadsheetState::SetActiveIssue` on the focused pane; bucket-A test `tests/Core/OmnibarInputClassifier.test.cpp`.
 
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
@@ -145,6 +150,11 @@ Per `AGENTS.md` § Verification automation — zero manual steps where physicall
 **Stream A:**
 - **Files #7 — test rig: header-only split instead of listing the production `.cpp`.** The plan said register `Source/Core/src/Ui/SmatchetIconButtons.cpp` in the `SmatchetTests` source list. Instead the testable pure logic was extracted to a new header-only `Source/Core/include/Ui/SmatchetIconButtonLabel.h`, which the rig exercises directly. Rationale: the ImGui wrapper `.cpp` depends on `SmatchetAreFaIconsLoaded()` (in `SmatchetImGuiFonts.cpp`, not linked in the doctest rig) — listing it would drag ImGui/font deps into the pure-logic rig. Net coverage of the label-selection logic is unchanged (8 cases / 17 assertions). `tests/CMakeLists.txt` registers the test header-only (no extra `.cpp` link), which the `:910-928` glob-vs-list guard accepts.
 - **New helper split into two functions, not one.** Plan named a single `SmatchetIconButton(icon, fallbackLabel, tooltip)`. Shipped as that **plus** `SmatchetIconLeadingButton(icon, label, tooltip)` for the two "& Sync" commit buttons (icon-leading, label retained) — the plan's § Risks already called out that those two sites differ; a dedicated helper keeps their id-derivation rule (translate-then-pin-English-`##`) distinct from the icon-only path (defer to `LabelFromSource`).
+
+**Stream B:**
+- **Bar drawn via the PRIMARY mechanism A, not the fallback.** `BeginViewportSideBar(ImGuiDir_Up)` from inside `Draw` rode ImGui's one-frame-deferred work-area reservation as the grill predicted; the host-seam fallback B (and its `ui-host`/`architect` routing) was not needed.
+- **Ticket-jump v1 = select-in-focused-pane, not an async `FetchIssuesForKeys` round-trip.** The shipped 2c routes a recognised key to `SpreadsheetState::SetActiveIssue` on the focused pane (the plan's stated v1 scope: substring/loaded-row jump); the per-backend async fetch + browse-URL fallback remains the documented follow-up.
+- **Plan doc was NOT moved/updated by #1261 (process miss, corrected here).** #1261 shipped the full Stream B but left this plan in `active/` with the impl-log saying "Stream B still active." This archival PR reconciles it retroactively — hence the Implementation log / Verification entries below are evidence-based (PR #1261 file list + CI), not in-session.
 
 ## Verification (actual)
 *(populated post-ship — what was actually tested + result, passed / failed / not-run)*
@@ -156,13 +166,8 @@ Per `AGENTS.md` § Verification automation — zero manual steps where physicall
 - **pre-ship gate** — PASS (lint + doc-validation + code-review ack). comment-ratio + DRY-dup findings are WARN-only (calibration).
 - **Bucket E (ImGui Test Engine) + Bucket C (screenshot)** — NOT-RUN for Stream A. Stream A is a visual change touching `Smatchet*Ui*.cpp` with no bucket-C/E coverage → **visual-validation exception applies**: ship-loop paused at the post-ship menu for user visual verify (glyph renders, tooltips on hover, text fallback when `fa-solid-900.ttf` absent). Automated bucket-C/E coverage for the icon buttons is deferred to Stream B's harness work (the omnibar bucket-E suite in § Verification covers the same draw path).
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-   > **Keep the literal `<slug>` placeholder in this committed step — do NOT expand it to this plan's real filename.**
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*No ref-sweep — references use the tier-less form `docs/plans/<slug>.md`. Write new plan references tier-less.*
-
-*(Delete this `## Archive` block as part of step 2 — once moved to `shipped/`, the file is reference material and the checklist has served its purpose.)*
+**Stream B (PR #1261):**
+- **Bucket A (pure-logic doctest)** — PASS (via #1261's required `Coverage` CI, which builds + runs the doctest suite). `tests/Core/OmnibarInputClassifier.test.cpp` exercises JQL vs ticket-key vs title across Jira/GitHub/Plane.
+- **Build gate (dual-target) + full required CI** — PASS. #1261 merged green on every required check (`Windows + MSVC`, light build, `Coverage`, `Perf PR-fast`, sanitizers, `Doc anchors`, `Test-delta`), so the new `Ui/` TUs compile under both GL and DX12 and the perf path is within budget.
+- **Bucket C (screenshot) / Bucket E (ImGui Test Engine)** — NOT separately confirmed in this retroactive reconciliation; the omnibar is a visual change, so the visual-validation exception applied at #1261's own ship. Any residual bucket-E omnibar coverage tracked under the `b8-bucket-e-coverage` / `testing-surface-roadmap` plans.
+- **Reconciliation note** — this archival PR touches docs only; no code re-run. The Stream B verdicts above are taken from PR #1261's merge-gate state (all required checks SUCCESS at merge), not a fresh in-session build.
