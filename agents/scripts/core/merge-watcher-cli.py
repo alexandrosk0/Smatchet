@@ -294,6 +294,16 @@ def cmd_status(args: argparse.Namespace) -> int:
                 last_poll = time.strftime("%H:%M:%S", time.localtime(s.get("last_poll_unix", 0)))
             except json.JSONDecodeError:
                 last_state = "(state-file corrupt)"
+        # STUCK highlight — surface the wedge reason + streak the daemon's
+        # maybe_escalate_stuck_pr persisted, so a wedged PR is visible at a
+        # glance (not buried in a generic BLOCKED). Shown whenever the registry
+        # carries a non-empty stuck_reason with a positive streak.
+        stuck_reason = e.get("stuck_reason", "")
+        stuck_streak = int(e.get("stuck_streak", 0) or 0)
+        note = ""
+        if stuck_reason and stuck_streak > 0:
+            flag = "STUCK" if last_state == "STUCK_NEEDS_ATTENTION" else "wedge?"
+            note = f"{flag}[{stuck_reason} x{stuck_streak}]"
         rows.append(
             (
                 f"#{pr}",
@@ -301,14 +311,23 @@ def cmd_status(args: argparse.Namespace) -> int:
                 last_state,
                 last_poll,
                 str(e.get("triage_attempts", 0)),
+                note,
             )
         )
-    widths = [max(len(r[i]) for r in [("PR", "CLONE", "LAST_STATE", "LAST_POLL", "TRIAGE"), *rows]) for i in range(5)]
+    header = ("PR", "CLONE", "LAST_STATE", "LAST_POLL", "TRIAGE", "NOTE")
+    widths = [max(len(r[i]) for r in [header, *rows]) for i in range(len(header))]
     fmt = "  ".join(f"{{:<{w}}}" for w in widths)
-    print(fmt.format("PR", "CLONE", "LAST_STATE", "LAST_POLL", "TRIAGE"))
-    print("-" * (sum(widths) + 8))
+    print(fmt.format(*header))
+    print("-" * (sum(widths) + 2 * (len(header) - 1)))
     for r in rows:
         print(fmt.format(*r))
+    stuck_prs = [r[0] for r in rows if r[5].startswith("STUCK[")]
+    if stuck_prs:
+        print(
+            f"\n  WARNING: {len(stuck_prs)} PR(s) STUCK_NEEDS_ATTENTION "
+            f"({', '.join(stuck_prs)}) -- wedged and will NOT merge without a human "
+            f"action (rebase / fix CI / resolve threads), or `merge-watch unregister <pr>`."
+        )
     return 0
 
 

@@ -2046,3 +2046,116 @@ print('remaining:', sorted(int(e['pr']) for e in cli.read_registry()))
     [[ "$output" == *"would prune #901 (MERGED)"* ]]
     [[ "$output" == *"remaining: [901]"* ]]
 }
+
+# ---------- wedge escalation: STUCK_NEEDS_ATTENTION (merge-watcher-stuck-escalation.md) ----------
+
+@test "_parse_poll_ci_counts parses a real Poll line; None on non-Poll garbage" {
+    run python - <<'PY'
+import importlib.util, os, sys
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+sys.path.insert(0, sd)
+spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+line = "Poll 1/1 — CI: 28/29 pass (1 fail, 0 pending, 0 warn-downgraded, 2 req-missing) | CodeRabbit: APPROVED (0 open) | User: 3 | reviewDecision: APPROVED"
+assert m._parse_poll_ci_counts(line) == {"fail":1,"pending":0,"req_missing":2,"cr_open":0,"user":3}
+assert m._parse_poll_ci_counts("STDERR: gh down") is None
+assert m._parse_poll_ci_counts("") is None
+assert m._stuck_cycles() == 3
+print("OK")
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OK"* ]]
+}
+
+@test "_classify_pr_wedge returns the right reason per gh state; fail-closed None" {
+    run python - <<'PY'
+import importlib.util, os, sys
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+sys.path.insert(0, sd)
+spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+e = {"pr":1,"clone_path":"/x"}
+fail  = "Poll 1/1 — CI: 28/29 pass (1 fail, 0 pending, 0 warn-downgraded, 0 req-missing) | CodeRabbit: APPROVED (0 open) | User: 0 | reviewDecision: APPROVED"
+green = "Poll 1/1 — CI: 29/29 pass (0 fail, 0 pending, 0 warn-downgraded, 0 req-missing) | CodeRabbit: APPROVED (0 open) | User: 0 | reviewDecision: APPROVED"
+pend  = "Poll 1/1 — CI: 20/29 pass (0 fail, 5 pending, 0 warn-downgraded, 4 req-missing) | CodeRabbit: APPROVED (0 open) | User: 0 | reviewDecision: APPROVED"
+m._gh_json = lambda *a,**k: {"mergeStateStatus":"DIRTY","mergeable":"CONFLICTING","headRefOid":"abc"}
+assert m._classify_pr_wedge(e, {"last_status_line":fail,"last_state":"GATES_PASSED"}) == ("CONFLICT","abc")
+m._gh_json = lambda *a,**k: {"mergeStateStatus":"BLOCKED","mergeable":"MERGEABLE","headRefOid":"d"}
+assert m._classify_pr_wedge(e, {"last_status_line":pend,"last_state":"BLOCKED"}) == (None,"d")   # pending = transient
+assert m._classify_pr_wedge(e, {"last_status_line":fail,"last_state":"BLOCKED"}) == ("CI_FAILING","d")
+m._gh_owner_repo = lambda cp: ("o","r")
+m._fetch_unresolved_cr_threads = lambda *a,**k: ("d", ["T1"])
+assert m._classify_pr_wedge(e, {"last_status_line":green,"last_state":"BLOCKED"}) == ("UNRESOLVED_THREADS","d")
+m._fetch_unresolved_cr_threads = lambda *a,**k: ("d", [])
+assert m._classify_pr_wedge(e, {"last_status_line":green,"last_state":"BLOCKED"}) == ("REVIEW_REQUIRED","d")
+m._gh_json = lambda *a,**k: {"mergeStateStatus":"BEHIND","mergeable":"MERGEABLE","headRefOid":"bh"}
+assert m._classify_pr_wedge(e, {"last_status_line":green,"last_state":"BLOCKED"}) == ("BEHIND","bh")
+def boom(*a,**k): raise RuntimeError("gh down")
+m._gh_json = boom
+assert m._classify_pr_wedge(e, {"last_status_line":fail,"last_state":"BLOCKED"}) == (None,"")
+print("OK")
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OK"* ]]
+}
+
+@test "maybe_escalate_stuck_pr accrues a head-pinned streak; escalates at threshold; resets on progress/head-change" {
+    run python - <<'PY'
+import importlib.util, os, sys
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+sys.path.insert(0, sd)
+spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+m._bump_stuck_streak = lambda *a, **k: None   # isolate from registry I/O
+st = {"last_state":"BLOCKED","last_status_line":"Poll 1/1 — CI: 1/1 pass (0 fail, 0 pending, 0 warn-downgraded, 0 req-missing) | CodeRabbit: x (0 open) | User: 0 | reviewDecision: x"}
+# not BLOCKED / not dirty-pass -> no-op
+assert m.maybe_escalate_stuck_pr({"last_state":"GATES_PASSED","merge_action":"merged"}, {"pr":1,"clone_path":"/x"}) == {}
+# CR-finding block is owned by triage -> gated out
+m._classify_pr_wedge = lambda e,s: ("CI_FAILING","h")
+assert m.maybe_escalate_stuck_pr({"last_state":"BLOCKED","last_status_line":"COMMENTED (2 actionable — block)"}, {"pr":1,"clone_path":"/x"}) == {}
+# transient (None) with a prior streak -> reset
+m._classify_pr_wedge = lambda e,s: (None,"h")
+assert m.maybe_escalate_stuck_pr(dict(st), {"pr":1,"clone_path":"/x","stuck_streak":2})["stuck_streak"] == 0
+# threshold accrual (default 3)
+m._classify_pr_wedge = lambda e,s: ("CONFLICT","hZ")
+r1 = m.maybe_escalate_stuck_pr(dict(st), {"pr":9,"clone_path":"/x","stuck_streak":0,"stuck_head":""})
+assert r1["stuck_streak"] == 1 and "last_state" not in r1
+r2 = m.maybe_escalate_stuck_pr(dict(st), {"pr":9,"clone_path":"/x","stuck_streak":1,"stuck_head":"hZ"})
+assert r2["stuck_streak"] == 2 and "last_state" not in r2
+r3 = m.maybe_escalate_stuck_pr(dict(st), {"pr":9,"clone_path":"/x","stuck_streak":2,"stuck_head":"hZ"})
+assert r3["last_state"] == "STUCK_NEEDS_ATTENTION" and r3["stuck_reason"] == "CONFLICT"
+# head change restarts the streak even from a high prior
+assert m.maybe_escalate_stuck_pr(dict(st), {"pr":9,"clone_path":"/x","stuck_streak":9,"stuck_head":"OLD"})["stuck_streak"] == 1
+# resolve-threads made progress this cycle -> gated out
+st2 = dict(st); st2["resolve_action"] = "resolved 2/3 CR threads (failed=0) on head ab"
+assert m.maybe_escalate_stuck_pr(st2, {"pr":9,"clone_path":"/x","stuck_streak":2,"stuck_head":"hZ"}) == {}
+# DIRTY-pass (merge_failed) path is in scope
+r5 = m.maybe_escalate_stuck_pr(dict(st, last_state="GATES_PASSED", merge_action="merge_failed: dirty"), {"pr":9,"clone_path":"/x","stuck_streak":2,"stuck_head":"hZ"})
+assert r5["last_state"] == "STUCK_NEEDS_ATTENTION"
+print("OK")
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OK"* ]]
+}
+
+@test "merge-watcher-stuck-nudge.sh: silent on empty registry; emits a block for an escalated PR" {
+    # empty registry -> silent + exit 0
+    run bash "$SCRIPTS_DIR/merge-watcher-stuck-nudge.sh" --nudge
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    # seed a STUCK registry + state file via the CLI module's own paths
+    python - <<'PY'
+import importlib.util, os, json
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+spec = importlib.util.spec_from_file_location("cli", os.path.join(sd, "merge-watcher-cli.py"))
+cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(cli)
+sdir = cli.state_dir(); sdir.mkdir(parents=True, exist_ok=True)
+cli.write_registry([{"pr":42,"clone_path":"/c/clones/Smatchet","stuck_reason":"CONFLICT","stuck_streak":4,"stuck_head":"abc"}])
+(sdir/"42.json").write_text(json.dumps({"pr":42,"last_state":"STUCK_NEEDS_ATTENTION","last_poll_unix":0}), encoding="utf-8")
+PY
+    run bash "$SCRIPTS_DIR/merge-watcher-stuck-nudge.sh" --nudge
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"STUCK_NEEDS_ATTENTION"* ]]
+    [[ "$output" == *"PR #42"* ]]
+    [[ "$output" == *"CONFLICT"* ]]
+}

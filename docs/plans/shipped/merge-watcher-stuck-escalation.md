@@ -2,7 +2,7 @@
 
 > **Slug**: `merge-watcher-stuck-escalation` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — **not started** (no wedge-classifier / `STUCK_NEEDS_ATTENTION` state on develop).
+> **Status**: `shipped` — wedge classifier + `STUCK_NEEDS_ATTENTION` escalation + CLI highlight + SessionStart nudge landed; see § Implementation log.
 
 ## Context
 
@@ -173,15 +173,52 @@ agents docs; nothing to sweep.
   variant is redundant given the fixed cadence. No-action.
 
 ## Implementation log
-*(populated post-ship)*
+
+- `merge-watcher.py` — added `STUCK_NEEDS_ATTENTION` to `NOTIFY_STATES`; five new
+  module functions (`_stuck_cycles`, `_parse_poll_ci_counts`, `_classify_pr_wedge`,
+  `_bump_stuck_streak`, `maybe_escalate_stuck_pr`) modelled on the
+  `maybe_pass_cr_none_grace` / `_bump_cr_none_grace` family (head-pinned registry
+  streak, fail-closed gh, transient-vs-wedge split, N-cycle threshold); wired
+  `maybe_escalate_stuck_pr` into `process_registered_pr` between the resolve-threads
+  and notify steps so the flipped state fires one toast.
+- `merge-watcher-cli.py` — `cmd_status` gained a `NOTE` column (`STUCK[<reason> x<streak>]`)
+  + a footer WARNING line listing escalated PRs.
+- `agents/scripts/core/merge-watcher-stuck-nudge.sh` — **new** SessionStart nudge
+  (`--list` / `--nudge`, advisory exit 0) reading the watcher state via the CLI
+  module's own `state_dir()`/`read_registry()`; silent unless a PR's state file is
+  `STUCK_NEEDS_ATTENTION`.
+- `docs/harness/claude-code/settings.json.tmpl` — registered the nudge in the
+  SessionStart hooks array (after `plan-archival-owed`).
+- `tests/bats/merge_watcher.bats` — four function-level + nudge-smoke tests.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **`import re` step was a no-op** — already imported at `merge-watcher.py:61`; plan
+  predated that.
+- **No dedicated STUCK branch in `maybe_notify`** — the plan listed one, but the
+  existing generic `NOTIFY_STATES` path already composes the toast from
+  `last_status_line` (which `maybe_escalate_stuck_pr` rewrites to a descriptive
+  `STUCK_NEEDS_ATTENTION (<reason>) — …` line). Adding `STUCK_NEEDS_ATTENTION` to
+  `NOTIFY_STATES` was sufficient; a special branch would have duplicated the
+  generic path. Lower-risk, same surface.
+- **All plan line-numbers had drifted** (~140–300 lines; file grew 2148→2486) — the
+  named functions/patterns all still existed and were re-anchored by reading
+  current context rather than trusting the cited lines.
+- **Wedge-classify precedence: `fail>0` tested BEFORE pending/req-missing** — a
+  failing required check is a wedge regardless of other still-pending checks (it
+  won't self-heal without a push). The plan's prose listed pending/req-missing as
+  "transient" without specifying the order; a unit test surfaced the ambiguity.
+- **User-facing nudge/CLI strings are pure ASCII** (`--`, not `—`) so the nudge's
+  inline-python stdout can't `UnicodeEncodeError` on a cp1252 Windows console.
 
 ## Verification (actual)
-*(populated post-ship)*
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. flip the § Status header to `shipped`,
-2. `git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,
-3. regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.
+- `python -m py_compile` both modules — clean.
+- `tests/bats/merge_watcher.bats` — full suite green (exit 0); the 4 new cases
+  (`_parse_poll_ci_counts`, `_classify_pr_wedge` 7-way, `maybe_escalate_stuck_pr`
+  threshold/reset/head-change/gating, nudge silent-vs-block smoke) all PASS.
+- `shellcheck merge-watcher-stuck-nudge.sh` — clean.
+- Manual end-to-end: seeded a STUCK registry+state → `merge-watch status` shows the
+  `STUCK[CONFLICT x4]` NOTE + footer WARNING; `--nudge` emits the block; empty/cleared
+  state → silent exit 0.
+- `scripts/dev/test-docs.sh` — green (plan archived to `shipped/`, index regenerated).

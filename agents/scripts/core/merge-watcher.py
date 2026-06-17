@@ -919,6 +919,9 @@ NOTIFY_STATES = {
     "TIMEOUT",
     "TRIAGE_BUDGET_EXHAUSTED",
     "READY_FLIP_FAILED",
+    # Wedge escalation — set by maybe_escalate_stuck_pr after a PR sits in a
+    # non-progressing blocked state for >= MERGE_WATCH_STUCK_CYCLES cycles.
+    "STUCK_NEEDS_ATTENTION",
 }
 
 
@@ -1705,6 +1708,241 @@ def maybe_resolve_stuck_cr_threads(
     }
 
 
+# ---------------------------------------------------------------------------
+# Wedge escalation — STUCK_NEEDS_ATTENTION
+# (docs/plans/shipped/merge-watcher-stuck-escalation.md)
+# ---------------------------------------------------------------------------
+# A PR can sit in a non-progressing blocked state forever while the watcher just
+# re-logs BLOCKED every cycle. This driver classifies the wedge (conflict /
+# behind / CI-failing / blocked-all-green-but-unresolved-threads), counts a
+# head-pinned streak across real cycles, and on threshold flips the PR's state
+# to STUCK_NEEDS_ATTENTION so the existing maybe_notify toast + the CLI status
+# highlight + the SessionStart nudge raise a visible, one-shot signal.
+#
+# Strictly FAIL-CLOSED: any gh / parse failure, or CI still pending / a required
+# check not yet reported, yields reason None (skip — reset the streak), NEVER a
+# spurious escalation. A missed escalation self-heals next cycle; a false one
+# cries wolf and erodes trust in the nudge.
+
+# merge-gates.sh:929 Poll grammar:
+#   Poll N/M — CI: P/T pass (F fail, G pending, W warn-downgraded, R req-missing)
+#   | CodeRabbit: S (O open) | User: U | reviewDecision: D
+_POLL_CI_RE = re.compile(
+    r"CI:\s*\d+/\d+\s*pass\s*\((\d+)\s*fail,\s*(\d+)\s*pending,"
+    r"\s*\d+\s*warn-downgraded,\s*(\d+)\s*req-missing\)"
+)
+_POLL_CR_OPEN_RE = re.compile(r"CodeRabbit:[^|]*?\((\d+)\s*open\)")
+_POLL_USER_RE = re.compile(r"User:\s*(\d+)")
+
+_STUCK_REASON_TEXT = {
+    "CONFLICT": "merge conflict with base (develop advanced under the PR — needs a rebase)",
+    "BEHIND": "branch is behind base and cannot fast-forward (needs update-branch / rebase)",
+    "CI_FAILING": "a required CI check is failing (needs a fix push)",
+    "UNRESOLVED_THREADS": "all CI green but unresolved CodeRabbit review threads block the merge",
+    "REVIEW_REQUIRED": "all CI green but the PR is BLOCKED (missing required review or unresolved user comment)",
+}
+
+
+def _stuck_cycles() -> int:
+    """Consecutive non-progressing cycles before a wedge escalates.
+
+    Default 3 (cycles x MERGE_WATCH_POLL_INTERVAL ~= minutes). Floored at 1 so a
+    misconfigured 0 can't escalate on the very first cycle (a one-cycle
+    transient must never trip it). Override via MERGE_WATCH_STUCK_CYCLES.
+    """
+    try:
+        return max(1, int(os.environ.get("MERGE_WATCH_STUCK_CYCLES", "3")))
+    except ValueError:
+        return 3
+
+
+def _parse_poll_ci_counts(status_line: str) -> dict[str, int] | None:
+    """Parse the merge-gates Poll line's CI counts.
+
+    Returns {fail, pending, req_missing, cr_open, user} or None when the line is
+    not a parseable Poll line (transient gh-failed line / stderr surface / empty
+    / forced-state string). None is the fail-closed signal: a caller that can't
+    read the counts must not treat the PR as a CI wedge.
+    """
+    m = _POLL_CI_RE.search(status_line)
+    if not m:
+        return None
+    cr = _POLL_CR_OPEN_RE.search(status_line)
+    usr = _POLL_USER_RE.search(status_line)
+    return {
+        "fail": int(m.group(1)),
+        "pending": int(m.group(2)),
+        "req_missing": int(m.group(3)),
+        "cr_open": int(cr.group(1)) if cr else 0,
+        "user": int(usr.group(1)) if usr else 0,
+    }
+
+
+def _classify_pr_wedge(
+    entry: dict[str, Any], state: dict[str, Any]
+) -> tuple[str | None, str]:
+    """Classify whether a PR is genuinely WEDGED vs transiently in-flight.
+
+    Returns (reason, head_sha). `reason` is CONFLICT / BEHIND / CI_FAILING /
+    UNRESOLVED_THREADS / REVIEW_REQUIRED when wedged, else None (transient — the
+    caller resets the streak, does NOT escalate). `head_sha` is "" when it can't
+    be resolved (caller fail-closes).
+
+    The crux is the transient-vs-wedge split: a required check still pending or
+    not-yet-reported is NORMAL in-flight progress, never a wedge.
+    """
+    pr = int(entry["pr"])
+    clone_path = entry["clone_path"]
+    status_line = state.get("last_status_line", "")
+    counts = _parse_poll_ci_counts(status_line)
+    # Authoritative GitHub merge state — one gh view, fail-closed to (None, "").
+    try:
+        meta = _gh_json(
+            ["pr", "view", str(pr), "--json",
+             "mergeStateStatus,mergeable,headRefOid"],
+            cwd=clone_path,
+        )
+    except (RuntimeError, subprocess.TimeoutExpired, OSError):
+        return None, ""
+    if not isinstance(meta, dict):
+        return None, ""
+    head_sha = meta.get("headRefOid", "") or ""
+    merge_state = (meta.get("mergeStateStatus") or "").upper()
+    mergeable = (meta.get("mergeable") or "").upper()
+    # Conflict wedge (Case 1) — develop advanced under the PR; GitHub refuses
+    # the squash. mergeable=CONFLICTING is authoritative; DIRTY corroborates.
+    if mergeable == "CONFLICTING" or merge_state == "DIRTY":
+        return "CONFLICT", head_sha
+    # CI discrimination when the Poll line parsed. A failing required check is a
+    # wedge regardless of other still-pending checks (it won't self-heal without
+    # a push), so test fail FIRST; only then is a still-pending / not-yet-
+    # reported required check TRANSIENT (normal in-flight progress, not a wedge).
+    if counts is not None:
+        if counts["fail"] > 0:
+            return "CI_FAILING", head_sha
+        if counts["pending"] > 0 or counts["req_missing"] > 0:
+            return None, head_sha
+    # Behind base (no conflict). Only after CI is confirmed not-pending, else a
+    # normally-building PR reads BEHIND.
+    if merge_state == "BEHIND":
+        return "BEHIND", head_sha
+    # All CI green but still BLOCKED — the green-but-blocked wedge (Case 2):
+    # unresolved CR threads under require_conversation_resolution, or a missing
+    # required review / unresolved user comment. Distinguish for an actionable
+    # nudge.
+    if (
+        state.get("last_state") == "BLOCKED"
+        and counts is not None
+        and counts["fail"] == 0
+        and counts["pending"] == 0
+        and counts["req_missing"] == 0
+    ):
+        or_meta = _gh_owner_repo(clone_path)
+        if not or_meta:
+            return None, head_sha
+        owner, repo = or_meta
+        try:
+            _h, thread_ids = _fetch_unresolved_cr_threads(owner, repo, pr, clone_path)
+        except RuntimeError:
+            return None, head_sha
+        if thread_ids:
+            return "UNRESOLVED_THREADS", head_sha
+        return "REVIEW_REQUIRED", head_sha
+    return None, head_sha
+
+
+def _bump_stuck_streak(
+    pr: int, clone_path: str, new_count: int, head_sha: str, reason: str
+) -> None:
+    """Persist the per-(PR, head) wedge streak + reason in the registry.
+
+    Mirrors `_bump_cr_none_grace`. `stuck_head` pins the streak to a HEAD so a
+    fresh push (progress) restarts it; `stuck_reason` feeds the CLI status
+    highlight + the SessionStart nudge.
+    """
+    with _CLI.registry_lock():
+        entries = _CLI.read_registry()
+        for e in entries:
+            if int(e.get("pr", -1)) == pr and e.get("clone_path") == clone_path:
+                e["stuck_streak"] = new_count
+                e["stuck_head"] = head_sha
+                e["stuck_reason"] = reason
+                break
+        _CLI.write_registry(entries)
+
+
+def maybe_escalate_stuck_pr(
+    state: dict[str, Any], entry: dict[str, Any]
+) -> dict[str, Any]:
+    """Escalate a PR wedged in a non-progressing state for >= _stuck_cycles()
+    consecutive cycles by flipping its state to STUCK_NEEDS_ATTENTION — which the
+    following maybe_notify toasts once, the CLI status highlights, and the
+    SessionStart nudge surfaces.
+
+    Gated to states sibling drivers don't already own: runs only when the PR is
+    BLOCKED, or GATES_PASSED-but-merge_failed (the Case-1 DIRTY path where
+    handle_pass couldn't squash). Skips CR-finding blocks (triage owns them),
+    CR-NONE grace-waits (the grace driver is progressing), and any cycle where
+    the resolve-threads step just made progress.
+
+    Fail-closed throughout: a None classification or any gh error resets/holds
+    the streak, never escalates. Returns a state-delta dict.
+    """
+    last_state = state.get("last_state", "")
+    merge_action = str(state.get("merge_action", ""))
+    is_dirty_pass = last_state == "GATES_PASSED" and merge_action.startswith("merge_failed")
+    if last_state != "BLOCKED" and not is_dirty_pass:
+        return {}
+    pr = int(entry["pr"])
+    clone_path = entry["clone_path"]
+    status_line = state.get("last_status_line", "")
+    # Gate out states owned by sibling drivers — they ARE making progress.
+    if _looks_like_cr_finding_block(status_line) or _looks_like_cr_none_grace_wait(status_line):
+        return {}
+    resolve_action = str(state.get("resolve_action", ""))
+    if resolve_action.startswith("resolved ") and not resolve_action.startswith("resolved 0/"):
+        return {}
+    reason, head_sha = _classify_pr_wedge(entry, state)
+    if reason is None:
+        # Transient / unclassifiable — clear any stale streak so a real wedge
+        # later starts fresh.
+        if int(entry.get("stuck_streak", 0)) != 0:
+            _bump_stuck_streak(pr, clone_path, 0, "", "")
+            return {"stuck_streak": 0, "stuck_action": "reset (PR progressing / transient)"}
+        return {}
+    if not head_sha:
+        # Can't pin the streak to a head — hold without escalating (fail-closed).
+        return {"stuck_action": "HEAD unresolved; not escalating this cycle"}
+    prior = int(entry.get("stuck_streak", 0))
+    if entry.get("stuck_head", "") != head_sha:
+        prior = 0  # fresh push — progress; restart the streak
+    new_count = prior + 1
+    threshold = _stuck_cycles()
+    _bump_stuck_streak(pr, clone_path, new_count, head_sha, reason)
+    if new_count < threshold:
+        return {
+            "stuck_streak": new_count,
+            "stuck_reason": reason,
+            "stuck_action": f"wedge [{reason}] {new_count}/{threshold} cycles on {head_sha[:8]}",
+        }
+    # Threshold reached — escalate. Flip last_state so the following maybe_notify
+    # fires once (suppressed thereafter by notify_dispatched_for_state). Preserve
+    # a prefix of the original Poll line for forensics.
+    return {
+        "last_state": "STUCK_NEEDS_ATTENTION",
+        "stuck_streak": new_count,
+        "stuck_reason": reason,
+        "stuck_head": head_sha,
+        "stuck_action": (
+            f"ESCALATED after {new_count} cycles: {_STUCK_REASON_TEXT.get(reason, reason)}"
+        ),
+        "last_status_line": (
+            f"STUCK_NEEDS_ATTENTION ({reason}) — {_STUCK_REASON_TEXT.get(reason, reason)}; "
+            f"original: {status_line[:120]}"
+        ),
+    }
+
+
 # Single source of truth for the spawned Claude session's instructions.
 # Deliberately spare — no project rules pasted in; the spawned session reads
 # AGENTS.md + CLAUDE.md from the clone on its own. We only tell it WHAT to do
@@ -2339,6 +2577,15 @@ def process_registered_pr(entry: dict[str, Any]) -> dict[str, Any]:
             print(
                 f"    resolve-threads: {resolve_extras.get('resolve_action', '?')}"
             )
+    # Wedge escalation — flip a non-progressing BLOCKED / DIRTY-pass PR to
+    # STUCK_NEEDS_ATTENTION after _stuck_cycles() consecutive cycles. Runs AFTER
+    # resolve-threads (which may have just un-wedged the PR) and BEFORE notify
+    # (which consumes the flipped state to fire the one-shot toast).
+    stuck_extras = maybe_escalate_stuck_pr(state, entry)
+    if stuck_extras:
+        state.update(stuck_extras)
+        if stuck_extras.get("stuck_action"):
+            print(f"    stuck-watch: {stuck_extras.get('stuck_action')}")
     # Phase 4a — fire smatchet-notify on terminal states.
     notify_extras = maybe_notify(state, entry)
     if notify_extras:
