@@ -701,6 +701,10 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueCreatePipelineHelpers.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldPayload.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/CompactDateFormat.cpp"
+    # Pure half of CompactDateFormat (TryParseJiraDateTime / FormatJiraDateOrDateTimeForApi),
+    # split out for the ImGui-free TSan rig; this rig links both halves (CompactDateFormat.cpp
+    # above keeps the display path) and TrackerFieldPayloadPure.cpp calls the pure fns.
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/CompactDateFormatPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/UiPerfMonitor.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownConvert.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager.cpp"
