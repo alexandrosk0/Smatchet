@@ -1,0 +1,103 @@
+name: CodeQL
+
+# Advanced-setup CodeQL c-cpp code scanning (plan:
+# docs/plans/codeql-code-scanning.md). GitHub's Default setup uses autobuild,
+# which can't drive this repo's custom CMake presets + msvc-dev-cmd env, so we
+# use build-mode: manual and run the exact ninja-iter-msvc preset CI already
+# uses (build-and-test.yml windows-msvc).
+#
+# ADVISORY, not merge-blocking: the CodeQL check goes green on a successful
+# analysis regardless of alert count (findings land in Security -> Code
+# scanning, not as a check failure), and the check is deliberately NOT in
+# agents/scripts/core/merge-gates.sh's meant-to-block allow-list (WARN-first
+# calibration, mirroring the duplication / unused-symbol precedent). Graduation
+# to blocking is a separate post-calibration plan.
+#
+# Cadence is hybrid: a daily cron over the default branch (develop) +
+# workflow_dispatch, plus a PR trigger scoped to trust-boundary paths only.
+# The sccache-off cold compile is ~30-45 min, so per-PR-on-all-Source would tax
+# every code PR for no merge-decision change (findings are advisory) -- the same
+# reason sanitizer-nightly runs nightly-not-per-PR (sanitizer-nightly.yml:4-8).
+
+on:
+  schedule:
+    # 05:00 UTC daily -- offset 1 h from sanitizer-nightly's 04:00 so they don't
+    # contend for a runner.
+    - cron: '0 5 * * *'
+  workflow_dispatch: {}    # manual trigger for verification
+  pull_request:
+    branches: [develop]
+    # Trust-boundary paths only (security-review's surface map:
+    # MCP / CLI / Lua / HTTP / SQLite / AI). Ordinary code PRs stay fast; the
+    # daily cron covers the rest of develop.
+    paths:
+      - 'Source/Plugins/Mcp/**'
+      - 'Source/Plugins/LuaConsole/**'
+      - 'Source/Core/src/Tracker/**'
+      - 'Source/Core/src/Persistence/**'
+      - 'Source/Core/src/Sync/**'
+      - 'Source/Core/src/Commands/**'
+      - 'Source/Core/src/Config/**'
+      - 'Source/Core/src/Ai*.cpp'
+      - 'Source/Core/src/OpenAi*.cpp'
+      - '.github/workflows/codeql.yml'
+      - '.github/codeql/**'
+  # No merge_group trigger: advisory + this user-owned repo has no merge queue,
+  # so the check need not report on the synthetic queue ref (unlike the
+  # meant-to-block workflows that keep merge_group future-proofed).
+
+permissions:
+  contents: read
+  security-events: write   # SARIF upload to the code-scanning API
+  actions: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Force JS actions onto Node 24 (Node 20 deprecated 2026-06-16). Repo
+  # convention -- every workflow sets this.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  # CRITICAL: disable the ccache/sccache compiler wrap (CMakeLists.txt:154).
+  # CodeQL traces real compiler invocations to build its database; an sccache
+  # cache-hit serves a cached .obj with no compiler launch, so the tracer sees
+  # nothing and the DB is empty/incomplete. DO NOT remove this without reading
+  # docs/plans/codeql-code-scanning.md.
+  SMATCHET_NO_CCACHE: "1"
+
+jobs:
+  analyze:
+    name: CodeQL analyze (c-cpp)
+    runs-on: windows-2022
+    timeout-minutes: 90   # cold no-sccache full build + DB extraction + query
+    steps:
+      - name: Checkout
+        # No `ref:` on purpose -- default checkout scans the right tree for
+        # every trigger: the PR merge head on pull_request, the default branch
+        # (develop) on schedule, the dispatched branch on workflow_dispatch.
+        # Hardcoding `ref: develop` (as sanitizer-nightly does -- it is
+        # cron-only) would make PR runs scan develop instead of the PR diff,
+        # defeating the PR trigger.
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: c-cpp
+          build-mode: manual
+          config-file: ./.github/codeql/codeql-config.yml
+
+      - name: Configure (ninja-iter-msvc, sccache off via SMATCHET_NO_CCACHE)
+        run: cmake --preset ninja-iter-msvc
+
+      - name: Build SmatchetStandalone (traced by CodeQL)
+        run: cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
