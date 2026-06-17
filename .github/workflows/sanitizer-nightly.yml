@@ -38,13 +38,13 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout develop
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: develop
           persist-credentials: false
 
       - name: Setup MSVC dev environment
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
 
       - name: Put LLVM (clang-cl) on PATH
         shell: bash
@@ -58,7 +58,7 @@ jobs:
         run: clang-cl --version
 
       - name: Cache FetchContent _deps (clang-asan)
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             build/ninja-clang-asan/_deps

@@ -47,7 +47,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout develop
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: develop
           persist-credentials: false
@@ -56,7 +56,7 @@ jobs:
       # windows-msvc job). ninja-iter-msvc is an MSVC preset; no LLVM/clang-cl
       # needed (that is only for the clang-asan sanitizer presets).
       - name: Setup MSVC dev environment
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
 
       # DELIBERATELY NO `actions/cache` for FetchContent here. The whole point of
       # this job is a COLD cache: every git dep must clone from scratch. Caching
