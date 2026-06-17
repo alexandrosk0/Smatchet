@@ -652,10 +652,13 @@ class ConfigManager {
     static void SetRuntimeAssetDirectory(const std::string& baseDir);
     static void SetUserDataDirectory(const std::string& baseDir);
 
-    /** Directory used for writable config/views/cache files (trailing separator if set). Empty if unset. */
-    static const std::string& GetFilesBaseDirectory();
-    static const std::string& GetRuntimeAssetDirectory();
-    static const std::string& GetUserDataDirectory();
+    /** Directory used for writable config/views/cache files (trailing separator if set). Empty if unset.
+     *  Returned BY VALUE (a snapshot taken under an internal mutex) — these globals can be reassigned at
+     *  runtime via Set*Directory while a background thread reads them, so handing back a reference would
+     *  race. Bind to `const std::string&` (lifetime-extended) or copy; do not store the address. */
+    static std::string GetFilesBaseDirectory();
+    static std::string GetRuntimeAssetDirectory();
+    static std::string GetUserDataDirectory();
     static std::string GetDefaultSettingsPath();
 
     /** Where writable files (config / views / SQLite cache / imgui.ini) live.
