@@ -2,7 +2,7 @@
 
 > **Slug**: `subagent-eval-agentic-coverage` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — drives in-flight work. Phased; each phase ships as its own PR (prove-first ordering, § Approach).
+> **Status**: `active` — **not started**; only the parent #650 schemas exist on develop (Phases 0–4 of this plan unbuilt). Phased; each phase ships as its own PR (prove-first ordering, § Approach).
 >
 > **Scope clarifier**: evaluates the **development agents** (`agents/*.md` — the orchestrator + the ~30 delegated subagents), NOT the Smatchet product or any in-app AI-assistant surface. Same scope as the parent `subagent-eval-harness.md` (shipped) and the now-absorbed `subagent-eval-flywheel.md`.
 >

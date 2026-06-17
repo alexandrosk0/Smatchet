@@ -153,8 +153,12 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`keyboard-shortcuts-rebindable`](shipped/keyboard-shortcuts-rebindable.md) | 2026-06-14 | Plan — Rebindable keyboard shortcuts (unified, all shortcuts listed + changeable) |
 | [`appcontroller-fan-in`](shipped/appcontroller-fan-in.md) | 2026-06-15 | Plan — AppController god-header fan-in stabilization |
 | [`coverage-sanitizer-required-contexts`](shipped/coverage-sanitizer-required-contexts.md) | 2026-06-15 | Plan — Promote Coverage + ASAN + UBSan to branch-protection required contexts (testing-surface Slice C) |
+| [`keybindings-menu-shortcuts-fix`](shipped/keybindings-menu-shortcuts-fix.md) | 2026-06-15 | _(summary TODO)_ |
 | [`pr-intent-capture`](shipped/pr-intent-capture.md) | 2026-06-15 | Plan — PR intent capture (prompt → PR `## Intent`, redacted) |
 | [`sanitizer-required-context`](shipped/sanitizer-required-context.md) | 2026-06-15 | Plan — `sanitizer-required-context`: promote both Sanitizer PR lanes to required |
+| [`slice-e2-libfuzzer`](shipped/slice-e2-libfuzzer.md) | 2026-06-15 | Slice E2 — libFuzzer harness for the untrusted-byte parsers |
+| [`slice-e2b-libfuzzer`](shipped/slice-e2b-libfuzzer.md) | 2026-06-15 | Slice E2b — libFuzzer drivers for the 5 remaining untrusted-byte parsers (PR 2a + PR 2b) |
+| [`fuzz-smoke-gate-promotion`](shipped/fuzz-smoke-gate-promotion.md) | 2026-06-16 | Plan — promote `Fuzz smoke` deterministic build to a merge blocker |
 <!-- END auto-plan-index -->
 
 ### Notes

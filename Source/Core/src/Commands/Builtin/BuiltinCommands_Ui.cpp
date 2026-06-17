@@ -1,7 +1,7 @@
 // ui.* / grid.* interaction commands — font-size zoom, "open view" palette
 // shortcut, and grid selection clear. These are the app-global, rebindable
 // registry commands behind the menu-bar shortcuts (Zoom In/Out/Reset, Open
-// View, Clear Selection); see docs/plans/active/keybindings-menu-shortcuts-fix.md.
+// View, Clear Selection); see docs/plans/keybindings-menu-shortcuts-fix.md.
 // Like ViewToggleCommands.cpp the handlers mutate `g_ui` (UI-thread-owned), so
 // every effect hops to the UI thread via RunOnUiThreadAsCommandResult.
 // Strict-lint zone (Commands/): LOG_* only, no raw new/delete, obj["k"]=v.

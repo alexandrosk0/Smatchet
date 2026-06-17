@@ -1,6 +1,6 @@
 # Slice G — DB-corruption robustness for the local cache
 
-**Status:** Phase 1 in review (this PR). Phases 2–3 not yet greenlit.
+**Status:** Phase 1 **shipped** (#1327, merged 2026-06-16). Phases 2–3 not yet greenlit (ship under their own approved plans). Plan stays active to track those.
 **Source:** `docs/guides/testing-surface.md` §6 Gap 6 ("persistence corruption untested").
 **Routing:** `offline-sync` (owns `LocalCacheManager`); `test-rig` refuses SQLite surfaces.
 **Loop mode:** `in` (plan-gated). This plan covers Phase 1 only; Phases 2–3 ship under their own approved plans.

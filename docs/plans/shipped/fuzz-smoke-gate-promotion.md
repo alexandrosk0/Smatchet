@@ -1,6 +1,6 @@
 # Plan — promote `Fuzz smoke` deterministic build to a merge blocker
 
-Status: active · Owner: orchestrator · Slice: testing-surface.md §6 follow-up (fuzz-gate hardening)
+Status: `shipped` (#1323, merged 2026-06-16 — `Fuzz smoke` deterministic build added to the merge-gate block allow-list; stochastic run stays advisory) · Owner: orchestrator · Slice: testing-surface.md §6 follow-up (fuzz-gate hardening)
 Created: 2026-06-16
 
 ## Goal
