@@ -13,6 +13,7 @@
 #include "SmatchetAndroidEgl.h"
 #include "SmatchetAndroidImeBridge.h"
 #include "SmatchetAndroidPlatform.h"
+#include "SmatchetAndroidSecretBridge.h"
 
 #include "AppController.h"
 #include "Commands/Scenarios/IScenario.h"
@@ -281,6 +282,7 @@ void BootPanelGl::Destroy() {
 struct AndroidHostState {
     SmatchetAndroidEgl egl;
     smatchet::mobile::SmatchetAndroidImeBridge ime;
+    smatchet::mobile::SmatchetAndroidSecretBridge secret; // audit H2: Keystore secret-at-rest provider
     std::unique_ptr<AppController> app;
     std::unique_ptr<PluginHost> pluginHost;
     std::unique_ptr<SmatchetUI> mainWindow;
@@ -364,6 +366,23 @@ void BootCoreOnce(android_app* app, AndroidHostState& s) {
         } else {
             SLOGE("TLS CA bundle: certs/cacert.pem missing/empty in APK (HTTPS will fail cert verify)");
         }
+    }
+
+    // Audit H2: install the AndroidKeyStore secret-at-rest provider BEFORE the first ConfigManager::Load
+    // so config secret fields (API keys, MCP auth token) are sealed via the host's AES-GCM Keystore key
+    // rather than persisted as PLAINTEXT — the Android analogue of the Windows DPAPI seam. If the bridge
+    // fails to init (a build/Activity without protectSecret, or no usable KeyStore), the providers stay
+    // un-installed and Core falls back to the loud-plaintext passthrough (ProtectSecretForConfig warns).
+    // Both providers are fail-safe: they return EMPTY on any Keystore/JNI failure, so a secret is never
+    // persisted or surfaced in cleartext after a failed encrypt/decrypt.
+    if (app->activity != nullptr && s.secret.Init(app->activity->vm, app->activity->clazz)) {
+        smatchet::mobile::SmatchetAndroidSecretBridge* bridge = &s.secret;
+        ConfigManager::SetAndroidSecretProvider(
+            [bridge](const std::string& v) { return bridge->Protect(v); },
+            [bridge](const std::string& v) { return bridge->Unprotect(v); });
+        SLOG("Config secret provider installed (AndroidKeyStore AES-GCM)");
+    } else {
+        SLOGE("Config secret provider NOT installed — Android config secrets persist as PLAINTEXT (audit H2)");
     }
 
     TrackerConfig cfg = ConfigManager::Load();
@@ -586,6 +605,10 @@ void TeardownAll(AndroidHostState& s) {
         s.app->SetRuntimePluginHost(nullptr);
         s.pluginHost->OnStop();
     }
+    // Drop the Keystore bridge's global ref (idempotent). The installed ConfigManager provider holds a
+    // raw pointer to s.secret, which lives as long as this state object — past every config Save — so
+    // this runs only at final process teardown, never on a window-destroy/re-init cycle.
+    s.secret.Shutdown();
     s.mainWindow.reset();
     s.app.reset();
     s.pluginHost.reset();

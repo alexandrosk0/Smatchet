@@ -96,7 +96,7 @@
 - 2026-06-14 · build-doctor · [security] · P2 — Android config secrets stored PLAINTEXT at rest (audit H2 remainder; Keystore deferred)
   Details: Audit H2's POSIX half is now fixed (PR `fix/posix-secret-at-rest-perms-h2`: `chmod 0600` on the config file before the atomic rename + a loose-permission LOG_WARN on read, decision logic in the unit-tested `IsLooseConfigFileMode`). The **Android** half is NOT fixed: `ProtectSecretForConfig`'s `#else` branch still returns plaintext, so API tokens (`token`/`plane_api_key`/`github_pat`/`mcp_auth_token`/`ai_*_api_key`/`whisper_api_key`) land as cleartext in the app's filesDir JSON. Filesystem perms are not a reliable owner-isolation boundary on Android the way they are on a multi-user desktop, so the POSIX chmod mitigation does not transfer. The gap is now LOUD (a `LOG_WARN` fires on every Android secret write naming the gap) and Android is marked a known-unsupported platform for secret-at-rest in code + the H2 audit row, but the secret is still recoverable by anyone with filesystem access to the app sandbox (rooted device, ADB backup of a debuggable build, forensic image).
   Concrete next action: Implement Android Keystore-backed encryption-at-rest for the secret fields — generate/resolve an AES key in the AndroidKeyStore provider via JNI, wrap (GCM) the secret value before it reaches the config JSON, unwrap on load; gate behind the same `ProtectSecretForConfig`/`UnprotectSecretFromConfig` seam so the call sites are unchanged. Big JNI effort (host-injected JNIEnv plumbing through `Source/Core`); size L. MUST land before Android ships with real-account secrets (H2 raises P2->P1 the moment POSIX/Android ships).
-  Status: open
+  Status: fixed (PR `feat/android-keystore-secret`) — `ProtectSecretForConfig`/`UnprotectSecretFromConfig` route through a process-wide host provider (`ApplyConfigSecretProvider` + `ConfigManager::SetAndroidSecretProvider`, copy-then-call-unlocked); the mobile host installs an AndroidKeyStore AES-256-GCM bridge (`SmatchetAndroidSecretBridge` JNI ↔ Java `SmatchetSecretStore` via `SmatchetActivity.protectSecret`/`unprotectSecret`) at boot before the first `Load`. StrongBox-preferred, 12-byte IV prepended, base64 token. Fail-safe: every arm returns EMPTY on Keystore/JNI failure (never persists/surfaces cleartext). Call sites unchanged. The `#else` plaintext warning now fires only when no provider is wired.
   Last-reviewed: 2026-06-14
 
 - 2026-06-13 · deep-audit-xref · [security] · P2 — Candidate MCP/UI cross-thread g_ui data race (playbook target 3)
@@ -169,8 +169,8 @@
 - 2026-06-13 · deep-audit · [security] · P2 — Android secret passthrough stores credentials in plaintext (re-run: HIGH at-rest exposure; raise to P1 when Android ships)
   Details: Source/Core/src/Config/ConfigManager_PathUtils.cpp:331-334 passes secrets through with no Android Keystore encryption. Same no-op #else branch as the POSIX entry above; confirmed HIGH plaintext-at-rest by the re-run.
   Concrete next action: Back Android secrets with the Keystore or mark the platform unsupported for secret storage. Effort M.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Status: fixed (PR `feat/android-keystore-secret`) — AndroidKeyStore AES-256-GCM seam shipped; see the H2-remainder entry above for the full design. Duplicate of that item.
+  Last-reviewed: 2026-06-17
 
 - 2026-06-13 · deep-audit · [security] · P2 — Automation worker hook aggravates shutdown deadlock / UI-thread starvation
   Details: The instruction-count worker hook interacts with shutdown so a long automation can hold the process from exiting (verifier raised LOW→MEDIUM). Re-run located it at AppController_LuaBindings.cpp:1257 (LUA_MASKCOUNT, 50000, only checks shuttingDown_) chaining to blocking JiraIssueMutation.cpp:206 — also a UI-thread block (Pillar 2) since the count-hook does not cover blocking C++ glue.

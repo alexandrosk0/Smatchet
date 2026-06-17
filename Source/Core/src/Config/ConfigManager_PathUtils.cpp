@@ -22,9 +22,11 @@
 #include <cstring>
 #include <exception>
 #include <fstream>
+#include <functional>
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <utility>
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -385,16 +387,40 @@ std::string UnprotectSecretFieldFromConfig(const char* fieldName, const std::str
 //     out of scope for this change. Android is a known-UNSUPPORTED platform for secret-at-rest.
 std::string ProtectSecretForConfig(const std::string& plainText) {
 #if defined(__ANDROID__)
-    if (!plainText.empty()) {
-        // SECURITY: Android secret-at-rest is plaintext — Keystore integration is a tracked
-        // follow-up (audit H2). Loud so a build that ships secrets on Android cannot do so silently.
-        LOG_WARN("ConfigManager: Android stores config secrets as PLAINTEXT (no Keystore encryption "
-                 "— tracked follow-up, audit H2). Treat this device profile as untrusted for secrets.");
+    // Route through the host-installed Keystore provider when present (audit H2). Copy the
+    // std::function out under the lock, then call it UNLOCKED so a slow JNI round-trip never
+    // stalls an unrelated config writer holding the same mutex.
+    std::function<std::string(const std::string&)> provider;
+    {
+        std::lock_guard<std::mutex> lk(GetAndroidSecretProviderMutexRef());
+        provider = GetAndroidSecretProtectorRef();
     }
-#endif
+    if (!provider && !plainText.empty()) {
+        // No Keystore provider wired (host init failed, or a pre-Keystore build). Loud so a build
+        // that ships secrets on Android as plaintext cannot do so silently.
+        LOG_WARN("ConfigManager: Android config secret stored as PLAINTEXT — no Keystore provider "
+                 "installed (audit H2). Treat this device profile as untrusted for secrets.");
+    }
+    return ApplyConfigSecretProvider(provider, plainText);
+#else
     return plainText;
+#endif
 }
-std::string UnprotectSecretFromConfig(const std::string& protectedBase64) { return protectedBase64; }
+std::string UnprotectSecretFromConfig(const std::string& protectedBase64) {
+#if defined(__ANDROID__)
+    std::function<std::string(const std::string&)> provider;
+    {
+        std::lock_guard<std::mutex> lk(GetAndroidSecretProviderMutexRef());
+        provider = GetAndroidSecretUnprotectorRef();
+    }
+    // Provider installed + decrypt failure -> empty (fail-safe: treat as no secret). This also
+    // covers a legacy plaintext value written before Keystore landed, or ciphertext minted by a
+    // different keystore/device — the user re-enters the secret rather than us surfacing garbage.
+    return ApplyConfigSecretProvider(provider, protectedBase64);
+#else
+    return protectedBase64;
+#endif
+}
 #endif
 
 // Pure, platform-agnostic decision helper (audit H2). Declared in ConfigManager_Internal.h so the
@@ -403,6 +429,19 @@ bool IsLooseConfigFileMode(unsigned int mode) {
     // 0077 = group rwx | other rwx. Any of those bits set means the file is reachable by a
     // principal other than the owner — too loose for a secret-bearing config.
     return (mode & 0077u) != 0u;
+}
+
+// Pure seam for Android Keystore-backed secret-at-rest (audit H2). Declared in
+// ConfigManager_Internal.h so the Windows doctest rig can exercise all three arms without JNI.
+std::string ApplyConfigSecretProvider(const std::function<std::string(const std::string&)>& provider,
+                                      const std::string& value) {
+    if (value.empty()) {
+        return std::string(); // protect("") and unprotect("") are both empty — nothing to do.
+    }
+    if (!provider) {
+        return value; // no host provider installed -> legacy passthrough.
+    }
+    return provider(value); // provider owns fail-safe (returns empty on Keystore/JNI failure).
 }
 
 // Meyers singletons for cross-call state (process-wide IO + cache mutexes,
@@ -457,6 +496,21 @@ std::string& GetPlatformSharedOverrideRef() {
     return s;
 }
 
+// Host-installed Android Keystore secret providers (audit H2). See ConfigManager_Internal.h for the
+// install contract (set once at boot, before the first Load). Empty std::function = not installed.
+std::mutex& GetAndroidSecretProviderMutexRef() {
+    static std::mutex s_mutex;
+    return s_mutex;
+}
+std::function<std::string(const std::string&)>& GetAndroidSecretProtectorRef() {
+    static std::function<std::string(const std::string&)> s_protector;
+    return s_protector;
+}
+std::function<std::string(const std::string&)>& GetAndroidSecretUnprotectorRef() {
+    static std::function<std::string(const std::string&)> s_unprotector;
+    return s_unprotector;
+}
+
 } // namespace config_detail
 } // namespace smatchet
 
@@ -466,6 +520,9 @@ std::string& GetPlatformSharedOverrideRef() {
 
 using smatchet::config_detail::EnsureParentDirectoryForFile;
 using smatchet::config_detail::FileExists;
+using smatchet::config_detail::GetAndroidSecretProtectorRef;
+using smatchet::config_detail::GetAndroidSecretProviderMutexRef;
+using smatchet::config_detail::GetAndroidSecretUnprotectorRef;
 using smatchet::config_detail::GetBaseDirMutexRef;
 using smatchet::config_detail::GetCacheMutexRef;
 using smatchet::config_detail::GetHasCachedConfigRef;
@@ -497,6 +554,15 @@ void ConfigManager::SetUserDataDirectory(const std::string& baseDir) {
 
 void ConfigManager::SetPlatformSharedUserDataDirectoryOverride(const std::string& dir) {
     GetPlatformSharedOverrideRef() = dir.empty() ? std::string() : NormalizeDirectoryPath(dir);
+}
+
+void ConfigManager::SetAndroidSecretProvider(std::function<std::string(const std::string&)> protector,
+                                             std::function<std::string(const std::string&)> unprotector) {
+    // Installed once from the mobile host at boot, before the first Load. The lock orders the
+    // install against a background config Save/Load that reads the providers (copy-then-call).
+    std::lock_guard<std::mutex> lk(GetAndroidSecretProviderMutexRef());
+    GetAndroidSecretProtectorRef() = std::move(protector);
+    GetAndroidSecretUnprotectorRef() = std::move(unprotector);
 }
 
 // NOTE: these return BY VALUE (a snapshot copy taken under GetBaseDirMutexRef), NOT a reference

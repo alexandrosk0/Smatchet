@@ -9,6 +9,7 @@
 // segregated from any other "Utf8ToWide" / "FileExists" that the project may
 // grow elsewhere. The defining TU is `ConfigManager_PathUtils.cpp`.
 
+#include <functional>
 #include <mutex>
 #include <string>
 
@@ -75,6 +76,29 @@ class ScopedFileLock {
 
 std::string ProtectSecretForConfig(const std::string& plainText);
 std::string UnprotectSecretFromConfig(const std::string& protectedBase64);
+
+// Pure seam for Android Keystore-backed secret-at-rest (audit H2). Routes a config secret through an
+// optionally-installed host provider (the Keystore JNI bridge the mobile host wires at boot). All
+// three arms are covered by the Windows doctest rig (ConfigSecretFilePerms.test.cpp):
+//   * empty input            -> empty output (no secret to transform).
+//   * provider NOT installed -> input returned verbatim (legacy plaintext passthrough; the Android
+//                               ProtectSecretForConfig call site emits the loud PLAINTEXT warning).
+//   * provider installed     -> provider(input). The provider OWNS fail-safe: it returns an empty
+//                               string on any Keystore/JNI failure, and that empty result is
+//                               propagated as-is so Core never persists / surfaces a secret in
+//                               cleartext after a failed encrypt, nor yields a half-decrypted value.
+std::string ApplyConfigSecretProvider(const std::function<std::string(const std::string&)>& provider,
+                                      const std::string& value);
+
+// Process-wide host-installed Android secret providers (the Keystore JNI bridge). An empty
+// std::function means "not installed" — Core falls back to the loud plaintext passthrough. Installed
+// once via ConfigManager::SetAndroidSecretProvider from the mobile host at boot, BEFORE the first
+// ConfigManager::Load. GetAndroidSecretProviderMutexRef guards the (boot-time) install against a
+// background config Save/Load read; the accessors are copied-then-called under it (never invoked
+// while the lock is held), so a slow JNI round-trip cannot stall an unrelated config writer.
+std::mutex& GetAndroidSecretProviderMutexRef();
+std::function<std::string(const std::string&)>& GetAndroidSecretProtectorRef();
+std::function<std::string(const std::string&)>& GetAndroidSecretUnprotectorRef();
 
 // Pure decision helper for the POSIX secret-at-rest guard (audit H2): given a POSIX file mode
 // (the permission bits from stat::st_mode), returns true if any group/world bit is set, i.e. the
