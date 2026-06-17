@@ -20,9 +20,8 @@ hard fail — mirrors redact-intent.py's contract):
   SECONDARY (defense-in-depth, skipped cleanly when `gitleaks` is absent)
       All redactor outputs are concatenated and scanned with `gitleaks`. Because
       gitleaks ships its own ruleset, it can flag a survivor in a format the
-      planted corpus never anticipated. gitleaks is not yet on the dev image
-      (tracked in docs/plans/active/ai-assistant-side-panel.md) so its absence
-      is a SKIP, never a failure.
+      planted corpus never anticipated. gitleaks is not yet on the dev image, so
+      its absence is a SKIP, never a failure.
 
 Exit codes:
   0  all checks pass (gitleaks layer may have been skipped)
