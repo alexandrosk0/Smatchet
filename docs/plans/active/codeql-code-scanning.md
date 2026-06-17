@@ -14,22 +14,49 @@ No static-analysis / SAST gate covers the first-party C++ tree today. The 21 exi
 
 `alexandrosk0/Smatchet` is a **PUBLIC, user-owned** (non-org) repo, so CodeQL code scanning runs **free** — no GitHub Advanced Security license (GHAS gates private repos only). Language is C/C++14 → CodeQL `c-cpp` pack, fully supported.
 
-After this lands, every PR that touches `Source/**` (and a weekly cron over `develop`) runs a CodeQL `c-cpp` analysis whose findings surface as code-scanning **alerts** in the Security tab — **advisory**, not merge-blocking (WARN-first calibration, mirroring the `duplication` / `unused-symbol` precedent).
+After this lands, a daily cron over `develop` (plus a PR trigger scoped to **trust-boundary paths only** — MCP / Lua / HTTP / SQLite / CLI / AI) runs a CodeQL `c-cpp` analysis whose findings surface as code-scanning **alerts** in the Security tab — **advisory**, not merge-blocking (WARN-first calibration, mirroring the `duplication` / `unused-symbol` precedent).
 
 ## Approach
 
 Add an **Advanced-setup** CodeQL workflow (custom `.github/workflows/codeql.yml`), not GitHub's Default setup. Default setup's autobuild cannot drive this repo's custom CMake presets + `msvc-dev-cmd` environment + FetchContent dependency download; Advanced setup with `build-mode: manual` lets us run the exact preset CI already uses.
 
-Build on `windows-2022` (matches `build-and-test.yml`'s `windows-msvc` job): `ilammy/msvc-dev-cmd` → `cmake --preset ninja-iter-msvc` → `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone`. The full (non-light) feature set is deliberate — it pulls Core + Plugins (incl. MCP/AI/Lua) into the traced compile so CodeQL's DB covers the security-sensitive trust boundaries (`security-review`'s surface: MCP / CLI / Lua / HTTP / SQLite).
+Build on `windows-2022` (matches `build-and-test.yml`'s `windows-msvc` job): `ilammy/msvc-dev-cmd` → `cmake --preset ninja-iter-msvc` → `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone`. The full (non-light) feature set is deliberate — it pulls Core + Plugins (incl. MCP/AI/Lua) into the traced compile so CodeQL's DB covers the security-sensitive trust boundaries (`security-review`'s surface: MCP / CLI / Lua / HTTP / SQLite). **One build only** (Standalone) — code behind `#ifdef SMATCHET_EMBEDDED_IN_UNREAL` / the `SmatchetCore_DX12` target is rendering-backend glue (low taint-surface) and the Standalone target doesn't compile those branches, so CodeQL won't see them; a second DX12 trace is a deferred follow-up, not v1.
 
-**Critical trade-off — sccache must be OFF for the CodeQL build.** CodeQL traces real compiler invocations to build its database; an sccache cache-hit serves a cached `.obj` with no compiler launch, so the tracer sees nothing and the DB is incomplete/empty. Set `SMATCHET_NO_CCACHE=1` (honored at `CMakeLists.txt:154`, which gates the `find_program(... ccache sccache)` wrap on that env var being undefined). This means a cold full compile (~30–45 min) every run — acceptable because the workflow is **PR-path-gated on `Source/**` + weekly cron**, not run on every PR.
+**Cadence — hybrid (grill-resolved).** A **daily cron** over `develop` (`0 5 * * *`, offset 1 h from `sanitizer-nightly`'s `0 4` so they don't contend for the runner) + `workflow_dispatch`, plus a **PR trigger scoped to trust-boundary paths only** (the `paths:` filter in Files-to-modify item 1). Rationale: the no-sccache cold compile is ~30–45 min and findings are advisory (don't gate merge), so per-PR-on-all-`Source/**` would add that latency to nearly every code PR for no merge-decision change — the repo already runs its heavy ASan/UBSan analysis nightly-not-per-PR for this exact reason (`sanitizer-nightly.yml:4-8`). Scoping the PR trigger to the trust boundaries catches issues pre-merge on the diffs that matter while keeping ordinary code PRs fast.
+
+**Query suite — staged escalation ladder (grill-resolved).** Start at the **default `security`** suite (high-confidence security queries only), then escalate in two gated steps once each baseline is triaged-clean:
+1. **v1 — default `security`**: ship. Confirm signal:noise on the Security tab.
+2. **→ `security-extended`**: once the v1 alert backlog is triaged to zero open, switch the config `queries:` to `security-extended` (adds lower-precision security queries). One-line config PR.
+3. **→ `security-and-quality`**: once `security-extended` is likewise triaged-clean, add the maintainability/reliability pack. One-line config PR.
+
+Each rung is a one-line `codeql-config.yml` change; the ladder applies the same WARN-first calibration logic to *query volume* that the advisory/blocking decision applies to *enforcement* — avoid dumping a large low-precision backlog on the first run, which just trains the tab to be ignored.
+
+**Critical trade-off — sccache must be OFF for the CodeQL build.** CodeQL traces real compiler invocations to build its database; an sccache cache-hit serves a cached `.obj` with no compiler launch, so the tracer sees nothing and the DB is incomplete/empty. Set `SMATCHET_NO_CCACHE=1` (honored at `CMakeLists.txt:154`, which gates the `find_program(... ccache sccache)` wrap on that env var being undefined). This means a cold full compile (~30–45 min) every run — acceptable because the workflow is **daily-cron + PR-trigger scoped to trust-boundary paths**, not run on every code PR.
 
 Findings are inherently advisory: the `CodeQL` check goes **green on successful analysis** regardless of how many alerts it finds (alerts land in the Security tab, not as a check failure), and the check is **not** added to `agents/scripts/core/merge-gates.sh`'s meant-to-block allow-list. Graduation to blocking (allow-list + `AGENTS.md` § Merge gates) is a deliberate follow-up after a calibration window, not part of this plan.
 
 ## Files to modify
 
-1. `.github/workflows/codeql.yml` *(new)* — the CodeQL workflow. Triggers: `pull_request` filtered to `paths: ['Source/**', '.github/workflows/codeql.yml', '.github/codeql/**']`; `schedule` weekly cron; `workflow_dispatch` for manual runs. Single job on `windows-2022`: checkout → `msvc-dev-cmd` → `github/codeql-action/init@v3` (`languages: c-cpp`, `build-mode: manual`, `config-file: ./.github/codeql/codeql-config.yml`) → CMake configure+build with `SMATCHET_NO_CCACHE=1` in `env:` → `github/codeql-action/analyze@v3`. `permissions: { security-events: write, contents: read, actions: read }` (SARIF upload needs `security-events: write`).
-2. `.github/codeql/codeql-config.yml` *(new)* — scope + query selection. `paths: [Source]` and `paths-ignore: [ThirdParty, build, '**/_deps/**']` so analysis + alerts cover only first-party code (FetchContent deps are still *compiled* for a complete DB, but excluded from alerting). `queries: security-extended` start point (can dial to `security-and-quality` or back to default after calibration).
+1. `.github/workflows/codeql.yml` *(new)* — the CodeQL workflow.
+   - **Triggers**: `schedule` daily `cron: '0 5 * * *'`; `workflow_dispatch: {}`; `pull_request` (base `develop`) filtered to the trust-boundary `paths:` set —
+     ```yaml
+     paths:
+       - 'Source/Plugins/Mcp/**'
+       - 'Source/Plugins/LuaConsole/**'
+       - 'Source/Core/src/Tracker/**'
+       - 'Source/Core/src/Persistence/**'
+       - 'Source/Core/src/Sync/**'
+       - 'Source/Core/src/Commands/**'
+       - 'Source/Core/src/Config/**'
+       - 'Source/Core/src/Ai*.cpp'
+       - 'Source/Core/src/OpenAi*.cpp'
+       - '.github/workflows/codeql.yml'
+       - '.github/codeql/**'
+     ```
+     **No `merge_group` trigger** — advisory + no merge queue on this user-owned repo, so it need not report on the synthetic queue ref (unlike the meant-to-block workflows that keep it future-proofed).
+   - **Single job** on `windows-2022`, `timeout-minutes: 90` (cold no-sccache full build + DB extraction + query), `concurrency: { group: codeql-${{ github.ref }}, cancel-in-progress: true }`, `permissions: { security-events: write, contents: read, actions: read }` (SARIF upload needs `security-events: write`). Cron checks out `ref: develop` (mirrors `sanitizer-nightly.yml:43`).
+   - **Steps**: checkout → `ilammy/msvc-dev-cmd@v1` → `github/codeql-action/init@v3` (`languages: c-cpp`, `build-mode: manual`, `config-file: ./.github/codeql/codeql-config.yml`) → CMake configure+build with `SMATCHET_NO_CCACHE=1` in the job `env:` → `github/codeql-action/analyze@v3`. Set `env: FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"` (repo convention — Node 20 deprecated 2026-06-16; all workflows set it). Pin actions to `@v3`/`@v1` major tags per repo convention.
+2. `.github/codeql/codeql-config.yml` *(new)* — scope + query selection. `paths: [Source]` and `paths-ignore: [ThirdParty, build, '**/_deps/**']` so analysis + alerts cover only first-party code (FetchContent deps are still *compiled* for a complete DB, but excluded from alerting). `queries:` starts at the **default `security`** suite (v1); the staged ladder in § Approach escalates it to `security-extended` then `security-and-quality` via one-line config PRs once each baseline is triaged-clean.
 
 No product C++ / CMake / agentic-contract files change — this is a CI-config + plan-doc diff only. (Grep confirmed no pre-existing `codeql` workflow or `.github/codeql/` dir.)
 
@@ -54,9 +81,9 @@ Per `AGENTS.md` § UX Pillars. This change adds a CI workflow + config; it touch
 
 ## Risks / non-goals
 
-- **Build time / runner minutes** — sccache-off cold compile is ~30–45 min/run. Mitigation: PR-path-gated on `Source/**` + weekly cron (not every PR); public-repo Actions minutes are free.
+- **Build time / runner minutes** — sccache-off cold compile is ~30–45 min/run. Mitigation: daily cron + PR-trigger scoped to trust-boundary paths only (not every code PR); public-repo Actions minutes are free.
 - **Manual build-mode brittleness** — if the CMake configure/build step fails inside the CodeQL runner (FetchContent network, MSVC env drift), `analyze` produces an empty/partial DB. Mitigation: the build step fails loud (non-zero exit reds the workflow run) — a broken build can't silently green-wash an empty DB; investigate as a normal CI break.
-- **Alert noise on first run** — `security-extended` over a multi-MLOC tree may surface a large initial backlog. Mitigation: advisory-only (no merge block); triage/dismiss in the Security tab; dial query suite down if noise outweighs signal during calibration.
+- **Alert noise on first run** — even the default `security` suite over a multi-MLOC tree may surface a backlog. Mitigation: advisory-only (no merge block); start at the lowest-volume default suite (not `security-extended`); triage/dismiss in the Security tab; escalate the query ladder only after each baseline is clean (§ Approach).
 - **sccache-omission regression** — a future edit could drop `SMATCHET_NO_CCACHE=1` and silently gut the DB. Mitigation: an inline comment in the workflow citing this plan + `CMakeLists.txt:154`; accepted residual risk (no automated guard this round).
 - **Non-goal: merge-blocking.** This plan ships CodeQL advisory only — it does **not** add the check to `merge-gates.sh` allow-list or amend `AGENTS.md` § Merge gates. Graduation is a separate, post-calibration plan.
 - **Non-goal: Android/mobile + Lua-as-language.** `c-cpp` only this round; CodeQL also supports the repo's Lua? (no — CodeQL has no Lua pack) and Java/Kotlin (Android) — Android SAST stays with `mobile-security.yml`. No second language pack added here.
@@ -81,7 +108,9 @@ Per `AGENTS.md` § Verification automation — zero manual steps where physicall
 
 - **Merge-gate graduation** — adding `CodeQL` to `merge-gates.sh` allow-list + `AGENTS.md` § Merge gates so findings block. Follow-up plan after a calibration window proves signal:noise.
 - **Additional language packs** — Android Java/Kotlin CodeQL analysis. No-action: mobile SAST stays with `mobile-security.yml`; revisit if mobile C++/Java surface grows.
-- **Custom CodeQL queries** — repo-specific `.ql` packs for Smatchet invariants (e.g. sync-I/O-on-UI-thread as a query). No-action this round; the built-in `security-extended` suite is the starting baseline.
+- **DX12 / Unreal-embedded coverage** — a second traced build (`--target SmatchetCore_DX12`) to union the `#ifdef SMATCHET_EMBEDDED_IN_UNREAL` branches into the DB. Follow-up: low taint-surface (rendering glue) + doubles the cold compile; revisit if the DX12 path grows external-input handling.
+- **Query-suite escalation** — moving the ladder from default `security` → `security-extended` → `security-and-quality` (§ Approach). Each rung is its own one-line config PR, gated on the prior baseline being triaged-clean — intentionally NOT done in this plan's PR.
+- **Custom CodeQL queries** — repo-specific `.ql` packs for Smatchet invariants (e.g. sync-I/O-on-UI-thread as a query). No-action this round; the built-in suites are the starting baseline.
 - **SARIF-as-required-check / PR annotations threshold** — configuring CodeQL to red a PR on new alerts. No-action: intentionally advisory until graduated.
 
 ## Implementation log
