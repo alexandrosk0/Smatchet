@@ -6,10 +6,10 @@
 // ConfigManager user-data dir into a private temp dir, and writes a minimal config file
 // with `read_only_mode=false` (ConfigManager defaults that to true when no config exists).
 //
-// `OfflineQueueService.cpp` calls `IsTrackerTransportErrorText` from `TrackerHttpUtils.cpp`.
-// PR F added that TU to the test target's source list (alongside cpr link), so the production
-// definition resolves directly — no test-side mirror needed. Backlog entry C12 still tracks
-// the cpr-free TU split as the long-term clean-up.
+// `OfflineQueueService.cpp` calls `IsTrackerTransportErrorText`, now defined in the cpr-free
+// `TrackerHttpPure.cpp` (#1339 moved it off cpr so Sync + the TSan threading subset link it
+// without dragging cpr — backlog C12 closed). Both the full test target and the TSan subset
+// link that TU, so the production definition resolves directly — no test-side mirror needed.
 
 #include "../support/FakeOfflineQueueDeps.h"
 #include "../support/FakeTrackerClient.h"
@@ -20,7 +20,7 @@
 #include "IssueDraft.h"
 #include "OfflineQueueReplayPolicy.h"
 #include "OfflineQueueService.h"
-#include "TrackerHttpUtils.h"
+#include "TrackerHttpPure.h"
 
 #include <doctest/doctest.h>
 
