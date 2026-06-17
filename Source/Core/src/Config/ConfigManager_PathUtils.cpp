@@ -365,26 +365,19 @@ std::string UnprotectSecretFromConfig(const std::string& protectedBase64) {
     LocalFree(out.pbData);
     return plain;
 }
-
-std::string UnprotectSecretFieldFromConfig(const char* fieldName, const std::string& protectedBase64) {
-    const std::string plainText = UnprotectSecretFromConfig(protectedBase64);
-    if (!protectedBase64.empty() && plainText.empty()) {
-        LOG_WARN("ConfigManager: failed to decrypt protected config secret '%s'.", fieldName);
-    }
-    return plainText;
-}
 #else
-// SECURITY (audit H2): no OS-backed secret encryption-at-rest off Windows. On Windows the
-// CryptProtectData path above binds the ciphertext to the user/machine; here the secret value is
-// returned verbatim and lands as cleartext JSON. Two distinct mitigations cover the two
-// non-Windows families:
-//   * POSIX desktop (Linux/macOS): the config file is chmod 0600 (owner-only) by
-//     AtomicWriteTextFile below, and LoadJsonFile LOG_WARNs on a group/world-readable file. That
+// SECURITY (audit H2): no DPAPI off Windows. On Windows the CryptProtectData path above binds the
+// ciphertext to the user/machine; the two non-Windows families are covered differently:
+//   * POSIX desktop (Linux/macOS): no OS-backed encryption — the secret value is returned verbatim
+//     (passthrough below) and lands as cleartext JSON. Mitigation: AtomicWriteTextFile chmods the
+//     config file 0600 (owner-only) and LoadJsonFile LOG_WARNs on a group/world-readable file. That
 //     bounds exposure to the file owner; it is NOT encryption.
-//   * Android: secret-at-rest is plaintext AND filesystem perms are not a reliable owner-isolation
-//     boundary the way they are on a multi-user desktop. Keystore-backed encryption is a tracked
-//     follow-up (audit H2 / security backlog), NOT implemented here — JNI Keystore integration is
-//     out of scope for this change. Android is a known-UNSUPPORTED platform for secret-at-rest.
+//   * Android (audit H2 / CR #1357): secret-at-rest IS sealed — ProtectSecretForConfig /
+//     UnprotectSecretFromConfig below route every secret through the host-installed AndroidKeyStore
+//     AES-GCM provider, FAIL CLOSED (drop rather than persist cleartext) when no provider is wired.
+//     Filesystem perms are not a reliable owner-isolation boundary on Android, so the Keystore seal
+//     — not file mode — is the at-rest protection. ConfigManager Write/LoadSecretFields take a
+//     dedicated __ANDROID__ arm that persists only the sealed `_enc` keys.
 std::string ProtectSecretForConfig(const std::string& plainText) {
 #if defined(__ANDROID__)
     // Route through the host-installed Keystore provider when present (audit H2). Copy the
@@ -425,6 +418,18 @@ std::string UnprotectSecretFromConfig(const std::string& protectedBase64) {
 #endif
 }
 #endif
+
+// Field-name-logged wrapper around UnprotectSecretFromConfig, used by Load() to emit a single
+// warning per decrypt failure (audit H2 / CR #1357). Cross-platform: on Win32 it wraps the DPAPI
+// unprotect, on Android the Keystore unseal, on POSIX desktop a verbatim passthrough (so a
+// non-empty input always yields a non-empty result and never warns).
+std::string UnprotectSecretFieldFromConfig(const char* fieldName, const std::string& protectedBase64) {
+    const std::string plainText = UnprotectSecretFromConfig(protectedBase64);
+    if (!protectedBase64.empty() && plainText.empty()) {
+        LOG_WARN("ConfigManager: failed to decrypt protected config secret '%s'.", fieldName);
+    }
+    return plainText;
+}
 
 // Pure, platform-agnostic decision helper (audit H2). Declared in ConfigManager_Internal.h so the
 // Windows doctest rig can exercise the loose-permission decision without POSIX stat/chmod.

@@ -18,6 +18,7 @@
 
 #include <jni.h>
 
+#include <mutex>
 #include <string>
 
 namespace smatchet {
@@ -28,11 +29,13 @@ public:
     // Attach the calling thread to the JVM, cache a global ref to the activity, and resolve the
     // protectSecret / unprotectSecret method ids. `vm` = activity->vm, `activity` = activity->clazz.
     // Returns false + logs if any lookup fails (bridge then stays un-ready: Protect / Unprotect return
-    // empty, so Core falls back to the loud-plaintext passthrough rather than silently dropping data).
+    // empty, so Core FAILS CLOSED — the secret is dropped rather than persisted in cleartext).
     bool Init(JavaVM* vm, jobject activity);
 
-    // Drop the global ref. Idempotent. (The JVM thread attach is intentionally left in place — see the
-    // AcquireEnv note; the attached threads live for the process lifetime.)
+    // Drop the global ref and clear readiness. Idempotent and thread-safe: serialized via mutex_ against
+    // a concurrent Protect / Unprotect so an in-flight JNI call on the config-save worker finishes before
+    // the activity global ref is deleted (no use-after-delete during teardown). (The JVM thread attach is
+    // intentionally left in place — see the AcquireEnv note; the attached threads live for the process.)
     void Shutdown();
 
     // Seal a plaintext secret -> opaque base64 token (AES-GCM ciphertext, IV-prepended) for at-rest
@@ -52,6 +55,10 @@ private:
     // attached thread (the config-save worker) cannot accumulate them across repeated saves.
     std::string CallStringMethod(jmethodID method, const std::string& in);
 
+    // Serializes Protect / Unprotect against Shutdown so a teardown can't delete activity_ while a
+    // config-save-worker JNI round-trip is in flight (CR #1357 Shutdown-vs-Protect race). Init runs once
+    // at boot before the provider is installed, so it does not contend and is left unlocked.
+    std::mutex mutex_;
     JavaVM* vm_ = nullptr;
     jobject activity_ = nullptr; // global ref
     jmethodID protectSecret_ = nullptr;

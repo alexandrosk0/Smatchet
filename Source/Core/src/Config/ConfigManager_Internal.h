@@ -81,8 +81,10 @@ std::string UnprotectSecretFromConfig(const std::string& protectedBase64);
 // optionally-installed host provider (the Keystore JNI bridge the mobile host wires at boot). All
 // three arms are covered by the Windows doctest rig (ConfigSecretFilePerms.test.cpp):
 //   * empty input            -> empty output (no secret to transform).
-//   * provider NOT installed -> input returned verbatim (legacy plaintext passthrough; the Android
-//                               ProtectSecretForConfig call site emits the loud PLAINTEXT warning).
+//   * provider NOT installed -> empty output (FAIL CLOSED, audit H2 / CR #1357): a secret we cannot
+//                               seal is dropped rather than passed through as cleartext, and on
+//                               unseal a stored value is treated as absent. The Android
+//                               ProtectSecretForConfig call site emits the loud DROPPED warning.
 //   * provider installed     -> provider(input). The provider OWNS fail-safe: it returns an empty
 //                               string on any Keystore/JNI failure, and that empty result is
 //                               propagated as-is so Core never persists / surfaces a secret in
@@ -107,10 +109,11 @@ std::function<std::string(const std::string&)>& GetAndroidSecretUnprotectorRef()
 // ConfigManager_PathUtils.cpp. Mask is 0077 (group rwx + other rwx).
 bool IsLooseConfigFileMode(unsigned int mode);
 
-#if defined(_WIN32)
 // Helper used by Load() to surface a single warning per decrypt failure with the field name.
+// Cross-platform (audit H2 / CR #1357): the Win32 DPAPI path and the Android Keystore path both
+// route field-name-logged unseals through here; on POSIX desktop UnprotectSecretFromConfig is a
+// verbatim passthrough so this never warns.
 std::string UnprotectSecretFieldFromConfig(const char* fieldName, const std::string& protectedBase64);
-#endif
 
 // -------- Meyers-singleton process-wide state -----------------------------------------
 

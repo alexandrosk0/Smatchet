@@ -33,14 +33,19 @@ bool SmatchetAndroidSecretBridge::Init(JavaVM* vm, jobject activity) {
     }
 
     protectSecret_ = env->GetMethodID(clazz, "protectSecret", "(Ljava/lang/String;)Ljava/lang/String;");
+    // A failed GetMethodID raises a pending NoSuchMethodError. Clear it BEFORE the next JNI call so the
+    // second lookup (and the DeleteLocalRef below) never executes with a live exception — which aborts
+    // under CheckJNI. Check/clear after EACH lookup rather than once at the end.
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+    }
     unprotectSecret_ = env->GetMethodID(clazz, "unprotectSecret", "(Ljava/lang/String;)Ljava/lang/String;");
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+    }
     env->DeleteLocalRef(clazz);
 
     if (protectSecret_ == nullptr || unprotectSecret_ == nullptr) {
-        // A pending JNI exception (NoSuchMethodError) must be cleared or the next JNI call aborts.
-        if (env->ExceptionCheck()) {
-            env->ExceptionClear();
-        }
         SLOGE("SecretBridge::Init: missing SmatchetActivity method(s) — Keystore secret store disabled");
         // Release the global ref on this failure path so a later Shutdown can't double-free / leak it.
         env->DeleteGlobalRef(activity_);
@@ -54,6 +59,12 @@ bool SmatchetAndroidSecretBridge::Init(JavaVM* vm, jobject activity) {
 }
 
 void SmatchetAndroidSecretBridge::Shutdown() {
+    std::lock_guard<std::mutex> lk(mutex_);
+    // Clear readiness FIRST so any Protect / Unprotect that takes the lock after us early-outs instead
+    // of touching activity_. Holding mutex_ across the delete also makes an in-flight Protect /
+    // Unprotect (the config-save worker can call the provider off the main thread during teardown)
+    // complete before we drop the global ref — closing the use-after-delete race (CR #1357).
+    ready_ = false;
     if (vm_ != nullptr && activity_ != nullptr) {
         JNIEnv* env = AcquireEnv();
         if (env != nullptr) {
@@ -61,7 +72,6 @@ void SmatchetAndroidSecretBridge::Shutdown() {
         }
     }
     activity_ = nullptr;
-    ready_ = false;
 }
 
 JNIEnv* SmatchetAndroidSecretBridge::AcquireEnv() {
@@ -122,6 +132,10 @@ std::string SmatchetAndroidSecretBridge::CallStringMethod(jmethodID method, cons
         if (chars != nullptr) {
             out.assign(chars, static_cast<size_t>(len));
             env->ReleaseStringUTFChars(static_cast<jstring>(jresult), chars);
+        } else if (env->ExceptionCheck()) {
+            // OOM materializing the chars left a pending exception; clear it before the DeleteLocalRefs
+            // below and the return, honoring the JNI fail-safe contract -> empty.
+            env->ExceptionClear();
         }
         env->DeleteLocalRef(jresult);
     }
@@ -132,6 +146,8 @@ std::string SmatchetAndroidSecretBridge::CallStringMethod(jmethodID method, cons
 }
 
 std::string SmatchetAndroidSecretBridge::Protect(const std::string& plain) {
+    // Held across the whole JNI round-trip so Shutdown can't delete activity_ mid-call (CR #1357).
+    std::lock_guard<std::mutex> lk(mutex_);
     if (!ready_) {
         return std::string();
     }
@@ -139,6 +155,7 @@ std::string SmatchetAndroidSecretBridge::Protect(const std::string& plain) {
 }
 
 std::string SmatchetAndroidSecretBridge::Unprotect(const std::string& token) {
+    std::lock_guard<std::mutex> lk(mutex_);
     if (!ready_) {
         return std::string();
     }
