@@ -132,7 +132,16 @@ std::string ExtractHostFromUrl(const std::string& url) {
         return std::string();
     }
     size_t hostEnd = url.find_first_of("/?#", hostStart);
-    const std::string hostAndPort = url.substr(hostStart, hostEnd - hostStart);
+    std::string hostAndPort = url.substr(hostStart, hostEnd - hostStart);
+    // Strip a leading userinfo segment ending at '@' -- curl/cpr connect to the
+    // host AFTER the last '@', so the real connect-host is what must face the
+    // allow-list. The attachment proxy already rejects userinfo outright via
+    // UrlHasUserinfo, but stripping here keeps this helper honest for any other
+    // caller, so a userinfo-then-host authority cannot be read as the userinfo.
+    const size_t atPos = hostAndPort.rfind('@');
+    if (atPos != std::string::npos) {
+        hostAndPort = hostAndPort.substr(atPos + 1);
+    }
     if (hostAndPort.empty()) {
         return std::string();
     }
@@ -148,6 +157,18 @@ std::string ExtractHostFromUrl(const std::string& url) {
         return ToLowerAscii(hostAndPort.substr(0, colonPos));
     }
     return ToLowerAscii(hostAndPort);
+}
+
+bool UrlHasUserinfo(const std::string& url) {
+    const size_t schemeSep = url.find("://");
+    if (schemeSep == std::string::npos) {
+        return false;
+    }
+    const size_t authStart = schemeSep + 3;
+    const size_t authEnd = url.find_first_of("/?#", authStart);
+    const std::string authority =
+        (authEnd == std::string::npos) ? url.substr(authStart) : url.substr(authStart, authEnd - authStart);
+    return authority.find('@') != std::string::npos;
 }
 
 bool IsLoopbackAddress(const std::string& remoteAddr) {

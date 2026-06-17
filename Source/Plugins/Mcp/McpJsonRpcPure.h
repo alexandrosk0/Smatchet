@@ -22,6 +22,13 @@ std::string NormalizeDomain(const std::string& rawDomain);
 
 std::string ExtractHostFromUrl(const std::string& url);
 
+// True iff the authority (between `://` and the first `/?#`) carries userinfo,
+// i.e. contains an '@'. curl/cpr dial the host AFTER the last '@', so a naive
+// allow-list keyed on the userinfo-looking prefix would pass while the fetch --
+// with the Basic-auth tracker credential -- lands on the attacker host. The
+// attachment proxy rejects any such URL outright before host validation.
+bool UrlHasUserinfo(const std::string& url);
+
 bool IsLoopbackAddress(const std::string& remoteAddr);
 
 // DNS-rebinding defence (synthesis #4). A rebound browser connects to the
