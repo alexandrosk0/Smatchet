@@ -39,6 +39,8 @@
 #include "CppSyntaxHighlight.h"
 #include "SmatchetFieldRender.h"
 
+#include "BucketETooltip.h"
+
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "imgui_te_context.h"
@@ -74,6 +76,19 @@ CallstackHoverState g_state;
 const char* kCallstackValue = "Foo::Bar(int x) at file.cpp:42\n"
                               "Qux::Baz() at other.cpp:17\n"
                               "main() at main.cpp:8";
+
+// Content-identity sentinel for variant 4. Deliberately a token from the
+// SECOND line of kCallstackValue: it appears ONLY in the full multi-line
+// tooltip source, never in the single-line cell body. So a positive
+// TooltipContentMatches proves the assertion observed the TOOLTIP's content
+// (not the cell, and not some other window's tooltip).
+const char* kTooltipSentinel = "Qux::Baz";
+
+// Persistent payload slot for the variant-4 content marker. MUST be TU-stable
+// (not stack): BucketE uses the size==0 AddCallback form, so the drawlist holds
+// this pointer directly and TooltipContentMatches reads it a frame or two after
+// it is planted. See tests/ui/_helpers/BucketETooltip.h.
+BucketE::TooltipMarkerPayload g_tooltipMarkerPayload;
 
 // Returns the screen-space center along Y, at fractional X anchored against
 // the rendered TEXT (not the group bb). frac in [0,1] hits within the text.
@@ -156,6 +171,63 @@ void DrawHoverReplica_NoGroupWrap(CallstackHoverState& s) {
     const bool hovered = ImGui::IsItemHovered();
     const bool fire = tooltipsEnabled && (hasNewline || horizontallyClipped) && hovered;
     s.tooltipFiredThisFrame.store(fire, std::memory_order_release);
+}
+
+// Variant 4 — PRODUCTION-DRIVEN draw. Unlike the replicas above (which observe
+// a TU-local bool and never open a real tooltip), this drives the actual
+// production render path verbatim:
+//   - real cell tokenizer: DrawColoredCallstackLine (SmatchetFieldRender.cpp:53)
+//   - real BeginGroup/EndGroup wrap (the fix under test)
+//   - real (hasNewline || isCallstack) && IsItemHovered() guard
+//     (SmatchetFieldRender.cpp:66)
+//   - real BeginTooltip + DrawColoredCallstackText(tipSource)
+//     (SmatchetFieldRender.cpp:67-70)
+// then plants a content-identity marker inside the SAME tooltip block so the
+// assertion can confirm THIS cell's tooltip opened (not some other window's) by
+// substring-matching the full tooltip source. This is what the disabled variant
+// 4 lacked: content identity in the shared host ImGuiContext.
+//
+// KEEP IN LOCK-STEP with SmatchetFieldRender.cpp::RenderClippedFieldText's
+// callstack branch. availWidth is forced to 0.0f so the tooltip trigger is the
+// (isCallstack) clause, exercising the always-show-on-hover callstack rule.
+void DrawProductionTooltipCell(CallstackHoverState& s) {
+    const std::string raw(kCallstackValue);
+
+    ImGui::AlignTextToFramePadding();
+    std::string singleLine = raw;
+    bool hasNewline = false;
+    const size_t nl = singleLine.find_first_of("\r\n");
+    if (nl != std::string::npos) {
+        singleLine.erase(nl);
+        hasNewline = true;
+    }
+
+    // Group wrap = production fix under test (SmatchetFieldRender.cpp:48-57).
+    ImGui::BeginGroup();
+    DrawColoredCallstackLine(singleLine.c_str());
+    ImGui::EndGroup();
+
+    // Record the cell rect so the TestFunc can anchor its hover via PickHoverPos
+    // (same idiom as the replica variants).
+    s.groupMin = ImGui::GetItemRectMin();
+    s.groupMax = ImGui::GetItemRectMax();
+    s.textWidth = ImGui::CalcTextSize(singleLine.c_str()).x;
+    s.rectValid = (s.groupMax.x > s.groupMin.x) && (s.textWidth > 0.0f);
+
+    const bool tooltipsEnabled = true;
+    const bool isCallstack = true;            // mirrors IsCallstackField(fieldId)
+    const bool horizontallyClipped = false;   // availWidth forced to 0.0f
+    if (tooltipsEnabled && (hasNewline || horizontallyClipped || isCallstack) && ImGui::IsItemHovered()) {
+        ImGui::BeginTooltip();
+        // Real production tooltip body: the semantic callstack tokenizer over
+        // the FULL multi-line source (so kTooltipSentinel, on line 2, renders).
+        DrawColoredCallstackText(raw.c_str());
+        // Out-of-band content-identity sidecar (does not paint). Snapshots the
+        // full source so TooltipContentMatches can find kTooltipSentinel.
+        BucketE::FillTooltipMarkerPayload(g_tooltipMarkerPayload, raw.c_str());
+        BucketE::EmitTooltipContentMarker(g_tooltipMarkerPayload);
+        ImGui::EndTooltip();
+    }
 }
 
 void OpenTestWindow() {
@@ -297,32 +369,76 @@ void RegisterTests(ImGuiTestEngine* engine) {
             }
         };
     }
+
+    // Variant 4 — production-driven content-identity gate (RE-ENABLED, L3).
+    //
+    // This is the variant that was disabled (see the long comment that used to
+    // sit below `namespace`): a generic "is a tooltip open?" probe could not
+    // tell MY cell's tooltip from any other window's in the shared host
+    // ImGuiContext, so it gave a noisy oracle. The fix its own comment named —
+    // "tooltip-content-identity (parse tooltip drawlist for a sentinel string)"
+    // — is now provided by BucketE::TooltipContentMatches.
+    //
+    // Unlike variants 1-3 (replica + TU bool, no real tooltip), this drives the
+    // REAL production render path (DrawColoredCallstackLine cell +
+    // DrawColoredCallstackText tooltip body inside a real BeginTooltip) and
+    // asserts the OPEN tooltip carries kTooltipSentinel ("Qux::Baz", a token
+    // present only in the multi-line tooltip source, never in the single-line
+    // cell). Because the content marker lives in the tooltip window's own
+    // drawlist, any unrelated tooltip is ignored — content identity restored.
+    {
+        ImGuiTest* t =
+            IM_REGISTER_TEST(engine, "FieldRender", "CallstackTooltipHover_Production_ContentIdentity");
+        t->UserData = &g_state;
+        t->GuiFunc = [](ImGuiTestContext* ctx) {
+            auto* s = static_cast<CallstackHoverState*>(ctx->Test->UserData);
+            OpenTestWindow();
+            if (ImGui::Begin("SmatchetTest::CallstackTooltipHover", nullptr, kTestWindowFlags)) {
+                DrawProductionTooltipCell(*s);
+            }
+            ImGui::End();
+        };
+        t->TestFunc = [](ImGuiTestContext* ctx) {
+            auto* s = static_cast<CallstackHoverState*>(ctx->Test->UserData);
+            // The real production guard keys on the callstack field-id hint.
+            SetCallstackFieldIdHint("CSF_TEST_HOVER");
+            s->rectValid = false;
+            ctx->SetRef("SmatchetTest::CallstackTooltipHover");
+            YieldUntilRect(ctx, *s);
+            IM_CHECK(s->rectValid);
+
+            // Pre-hover: no tooltip open → no marked content. Guards against a
+            // false positive from a stale marker / unrelated open tooltip.
+            ctx->MouseMoveToPos(ImVec2(s->groupMax.x + 200.0f, s->groupMax.y + 200.0f));
+            ctx->Yield();
+            ctx->Yield();
+            IM_CHECK(!BucketE::TooltipContentMatches(ctx, kTooltipSentinel));
+
+            // Hover the cell at middle x (the hard pre-fix position) and assert
+            // the production tooltip opened WITH the sentinel content.
+            const ImVec2 midPos = PickHoverPos(*s, 0.50f);
+            HoverAndYield(ctx, midPos);
+            if (!BucketE::TooltipContentMatches(ctx, kTooltipSentinel)) {
+                ctx->LogError(
+                    "Production tooltip did not carry sentinel '%s' at middle x (hover=%.1f, "
+                    "group=[%.1f..%.1f], textWidth=%.1f) — tooltip not open on THIS cell, or "
+                    "BeginGroup/EndGroup wrap removed from RenderClippedFieldText?",
+                    kTooltipSentinel, midPos.x, s->groupMin.x, s->groupMax.x, s->textWidth);
+                IM_CHECK(false);
+            }
+        };
+    }
 }
 
-// Variant 4 — production-driven regression gate, currently disabled.
-//
-// What it tried: drive REAL SmatchetFieldRender.cpp::RenderClippedFieldText
-// inside a NoDocking test window, hover at middle x, count ##Tooltip_NN
-// active windows before/after and assert delta >= 1.
-//
-// Why it stayed disabled: even with WindowFocus + NoDocking + ImGuiCond_Always
-// position pinning, production's IsItemHovered() returns false on the test
-// window's cell rect when the live Smatchet host process has other windows
-// in the same ImGuiContext. The exact reason wasn't pinned down — leading
-// hypotheses are (a) HoveredWindow points at a different popup/dockspace
-// even after WindowFocus, or (b) the test window's cell rect ends up clipped
-// by an overlapping host window. The replica-based variants 1–3 work because
-// they evaluate IsItemHovered against MY window's CurrentWindow inline.
-//
-// Mitigation: variant 3 (NoGroupWrap replica) proves the methodology is
-// sensitive to the wrap's presence — if the wrap is removed from the SHARED
-// helper that production and the replica BOTH call, the replica catches it.
-// SmatchetFieldRender.cpp's BeginGroup/EndGroup wrap IS the helper-internal
-// state under test, so it's covered by the replica. The remaining gap is
-// SmatchetFieldRender.cpp drift that doesn't change the replica's call
-// sequence — flagged in agents/_shared/AGENT_SELF_IMPROVEMENT backlog as a
-// follow-up requiring tooltip-content-identity (parse tooltip drawlist for
-// a sentinel string).
+// Variant 4 was historically disabled because a generic "is a tooltip open?"
+// probe could not distinguish MY cell's tooltip from any other window's in the
+// shared host ImGuiContext. It is now RE-ENABLED above as
+// "CallstackTooltipHover_Production_ContentIdentity", using the content-identity
+// helper BucketE::TooltipContentMatches (tests/ui/_helpers/BucketETooltip.h) —
+// the exact fix the old disabled-comment named. It drives the real production
+// render path and asserts the open tooltip carries a sentinel token that only
+// appears in the multi-line tooltip source, so an unrelated tooltip can never
+// satisfy it.
 } // namespace
 
 extern "C" void SmatchetRegisterCallstackTooltipHoverTests(ImGuiTestEngine* engine) { RegisterTests(engine); }

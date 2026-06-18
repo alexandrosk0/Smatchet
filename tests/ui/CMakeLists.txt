@@ -79,6 +79,16 @@ if(MSVC)
     endif()
 endif()
 
+# Shared bucket-E header-only helpers (plan b8-bucket-e-coverage L3) live in
+# tests/ui/_helpers/. Header-only — no source-list entry; just put the dir on
+# the include path so TUs can `#include "BucketETooltip.h"`.
+target_include_directories(SmatchetStandalone PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/_helpers")
+if(TARGET SmatchetCore_DX12)
+    target_include_directories(SmatchetCore_DX12 PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/_helpers")
+endif()
+
 # Slice 3 of deterministic-jira-test-backend — fixture
 # support source + include path for the Jira backend injection hook in
 # StandaloneAppBootstrap.cpp. Also compiled into DX12 as a no-GL tripwire.
