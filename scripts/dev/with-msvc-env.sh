@@ -11,12 +11,18 @@
 #   bash scripts/dev/with-msvc-env.sh cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
 #   bash scripts/dev/with-msvc-env.sh cmake --version
 #   bash scripts/dev/with-msvc-env.sh cl                          # prints compiler banner
+#   SMATCHET_MSVC_ARCH=arm64 bash scripts/dev/with-msvc-env.sh cmake --build --preset ninja-publish-msvc-arm64
+#
+# Target arch: $SMATCHET_MSVC_ARCH selects the vcvars batch (default x64 →
+# vcvars64.bat; arm64 → vcvarsamd64_arm64.bat cross from an x64 host, or
+# vcvarsarm64.bat native on an ARM64 host) and the VC.Tools component vswhere
+# requires. cl.exe's target ISA follows from the sourced batch.
 #
 # How it works: `vswhere.exe -property installationPath` enumerates installed
 # VS editions (Community / Professional / Enterprise / BuildTools) without
 # hard-coding a glob; we pick the first that ships the pinned MSVC toolset
 # (build.msvc_toolset_pin in project.config.json, or $SMATCHET_VCVARS_VER) and
-# call vcvars64 with `-vcvars_ver=<pin>` so a newer side-by-side toolset can't
+# call the arch-appropriate vcvars batch with `-vcvars_ver=<pin>` so a newer side-by-side toolset can't
 # shadow it (the STL1001 failure mode on multi-VS boxes). We then invoke
 # `powershell.exe -c 'cmd.exe /c "call vcvars64 ... && set"'` — PowerShell
 # handles the quote / path escaping cleanly where Git Bash's direct `cmd.exe
@@ -66,6 +72,34 @@ if [ -z "$VCVARS_VER" ]; then
     exit 2
 fi
 
+# Target architecture (x64 default; arm64 for the Windows-on-ARM port). The arch
+# decides BOTH which vcvars batch we source (so cl.exe targets the right ISA) and
+# which VC.Tools component vswhere must require. Host arch comes from
+# PROCESSOR_ARCHITEW6432 (set when an emulated/32-bit process runs on a 64-bit
+# host) falling back to PROCESSOR_ARCHITECTURE: a cross build from an x64 host
+# picks the amd64_arm64 cross batch; a native ARM64 host picks the arm64 batch.
+# Normalise the requested arch to lowercase so ARM64/Arm64/X64 all resolve (the
+# PowerShell wrappers ToLower() theirs; keep parity).
+SMATCHET_MSVC_ARCH="$(printf '%s' "${SMATCHET_MSVC_ARCH:-x64}" | tr 'A-Z' 'a-z')"
+case "${PROCESSOR_ARCHITEW6432:-${PROCESSOR_ARCHITECTURE:-AMD64}}" in
+    [Aa][Rr][Mm]64) _host_arch="arm64" ;;
+    *)              _host_arch="x64" ;;
+esac
+case "$SMATCHET_MSVC_ARCH" in
+    x64)
+        VCVARS_REQUIRES="Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
+        if [ "$_host_arch" = "arm64" ]; then VCVARS_BAT="vcvarsarm64_amd64.bat"; else VCVARS_BAT="vcvars64.bat"; fi
+        ;;
+    arm64)
+        VCVARS_REQUIRES="Microsoft.VisualStudio.Component.VC.Tools.ARM64"
+        if [ "$_host_arch" = "arm64" ]; then VCVARS_BAT="vcvarsarm64.bat"; else VCVARS_BAT="vcvarsamd64_arm64.bat"; fi
+        ;;
+    *)
+        echo "with-msvc-env: invalid SMATCHET_MSVC_ARCH='$SMATCHET_MSVC_ARCH' (expected x64 or arm64)." >&2
+        exit 2
+        ;;
+esac
+
 # vswhere.exe ships with every VS 2017+ install at a stable path. Use it to
 # discover the install path without hard-coding edition / version globs.
 VSWHERE="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
@@ -75,10 +109,12 @@ if [ ! -x "$VSWHERE" ]; then
     exit 2
 fi
 
-# `-products *` covers BuildTools + IDE editions. `-requires
-# Microsoft.VisualStudio.Component.VC.Tools.x86.x64` filters out installs that
-# lack the VC toolchain (e.g. a VS instance with only the "ASP.NET and web
-# development" workload). We deliberately do NOT pass `-latest`: on a box with
+# `-products *` covers BuildTools + IDE editions. `-requires <VCVARS_REQUIRES>`
+# (the arch-selected VC.Tools component — x86.x64 for x64, ARM64 for the arm64
+# cross/native toolset) filters out installs that lack the needed VC toolchain
+# (e.g. a VS instance with only the "ASP.NET and web development" workload, or an
+# x64-only install when arm64 was requested). We deliberately do NOT pass
+# `-latest`: on a box with
 # VS2022 Community (carrying the pinned 14.38 toolset) plus a newer VS
 # BuildTools (14.50 only), `-latest` returns the BuildTools install, whose
 # vcvars loads 14.50 STL headers and breaks the cached 14.38 cl.exe (STL1001).
@@ -106,20 +142,20 @@ while IFS= read -r _cand; do
     done
     if [ -n "$VS_INSTALL" ]; then break; fi
 done < <("$VSWHERE" -products '*' \
-    -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 \
+    -requires "$VCVARS_REQUIRES" \
     -property installationPath 2>/dev/null | tr -d '\r')
 
 if [ -z "$VS_INSTALL" ]; then
-    echo "with-msvc-env: no Visual Studio install ships MSVC toolset $VCVARS_VER" >&2
-    echo "  Installs with VC tools (vswhere -products *):" >&2
+    echo "with-msvc-env: no Visual Studio install ships MSVC toolset $VCVARS_VER for arch $SMATCHET_MSVC_ARCH" >&2
+    echo "  Installs with the required VC tools ($VCVARS_REQUIRES):" >&2
     "$VSWHERE" -products '*' \
-        -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 \
+        -requires "$VCVARS_REQUIRES" \
         -property installationPath 2>/dev/null | tr -d '\r' | sed 's/^/    /' >&2
-    echo "  Install MSVC v$VCVARS_VER build tools, or set \$SMATCHET_VCVARS_VER to an installed toolset." >&2
+    echo "  Install MSVC v$VCVARS_VER build tools (with the ARM64 component for arm64), or set \$SMATCHET_VCVARS_VER to an installed toolset." >&2
     exit 2
 fi
 
-VCVARS_WIN="$VS_INSTALL\\VC\\Auxiliary\\Build\\vcvars64.bat"
+VCVARS_WIN="$VS_INSTALL\\VC\\Auxiliary\\Build\\$VCVARS_BAT"
 # Bash-side existence check — convert C:\... to /c/... for `[ -f ]`.
 VCVARS_BASH="${VCVARS_WIN//\\//}"
 case "$VCVARS_BASH" in
@@ -130,12 +166,13 @@ case "$VCVARS_BASH" in
         ;;
 esac
 if [ ! -f "$VCVARS_BASH" ]; then
-    echo "with-msvc-env: vcvars64.bat not found at: $VCVARS_WIN" >&2
+    echo "with-msvc-env: $VCVARS_BAT not found at: $VCVARS_WIN" >&2
+    echo "  (arch $SMATCHET_MSVC_ARCH on $_host_arch host — install the matching VC toolset component.)" >&2
     exit 2
 fi
 
 # Announce the resolved selection (stderr — never pollutes stdout pass-through).
-echo "with-msvc-env: $VS_INSTALL (MSVC toolset $VCVARS_VER)" >&2
+echo "with-msvc-env: $VS_INSTALL (MSVC toolset $VCVARS_VER, arch $SMATCHET_MSVC_ARCH via $VCVARS_BAT)" >&2
 
 # Wrap the cmd.exe vcvars64 call in PowerShell. PowerShell handles the
 # quote / path escaping cleanly. Direct `cmd.exe //c "..."` from Git Bash is

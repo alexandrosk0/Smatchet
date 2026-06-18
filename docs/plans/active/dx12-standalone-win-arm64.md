@@ -195,6 +195,9 @@ Diff touches `Source/Core/` (BugReportService) + the render path under it, so ga
 **Phase 1 — standalone DX12 renderer (PR pending):**
 - `4d7f3b41` · DX12 standalone renderer backend — `Dx12Bootstrap.{h,cpp}` pImpl D3D12 device/swapchain/RTV/fence + WARP fallback + SRV allocator + top-left backbuffer capture; renderer-conditional `StandaloneAppBootstrap`/`main.cpp` (init/render-loop/shutdown/screenshot); `Initialize` decomposed into `InitRendererBackend` + `TeardownPartialBoot`; CMake links `d3d12/dxgi/d3dcompiler` + compiles `imgui_impl_dx12.cpp` under `WIN32 AND MSVC`; `ResolveStandaloneRenderer` precedence `--renderer` > `SMATCHET_RENDERER` env > platform default; CI pins `SMATCHET_RENDERER=gl` workflow-wide.
 
+**Phase 2 — ARM64 toolchain + Release/installer (PR pending):**
+- (this PR) · Arch-parameterized the three MSVC env wrappers (`with-msvc-env.sh`, `with-msvc.ps1`, `local/build-msvc-asan.ps1`) on `SMATCHET_MSVC_ARCH` (x64 default; arm64 → `vcvarsamd64_arm64.bat` cross from an x64 host / `vcvarsarm64.bat` native, host detected via `PROCESSOR_ARCHITEW6432`→`PROCESSOR_ARCHITECTURE`) with arch-selected vswhere `-requires` (`VC.Tools.ARM64`). Added `ninja-iter-msvc-arm64` + `ninja-publish-msvc-arm64` configure+build presets (publish omits `SMATCHET_UNREAL_THIRDPARTY_DIR`, sets `SMATCHET_BUILD_TESTS=ON`, builds `SmatchetStandalone`+`SmatchetTests`; arch flows from the sourced vcvars env). Arch-suffixed the clang-cl ASan runtime lookup in `cmake/Sanitizers.cmake` (`-x86_64`→`-aarch64` from `CMAKE_SYSTEM_PROCESSOR`, both names). Parameterized the Inno installer (`MyArchitecturesAllowed`, default `x64compatible`) and added `-Arch arm64` to `release_github.ps1` (selects the arm64 publish preset, `-arm64` artifact token, `arm64` Inno arch; auto-skips Unreal + light).
+
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
 
@@ -209,6 +212,12 @@ Diff touches `Source/Core/` (BugReportService) + the render path under it, so ga
 - **DRY WARNs accepted (calibration phase, non-blocking)** — SRV allocator mirrors `SmatchetImGuiHost.cpp`; `PackRgbDropAlpha`/`CaptureFrameRgb` screenshot helpers duplicated across `StandaloneAppBootstrap.cpp` ↔ `main.cpp` (two standalone loops, one shape). Comment-ratio WARNs on the two scenario headers accepted (renderer-agnostic doc text).
 - **Plan kept `active`** — multi-phase (Phase 2 Unreal-side + Phase 3 WoA hardware validation pending); the `## Archive` `git mv` to `shipped/` is deferred to the final-phase PR, not executed here.
 - **Flagged debt** — `CMakeLists.txt` dead `if(SMATCHET_EMBEDDED_IN_UNREAL)` *variable* branch (plan § Out-of-scope) filed to `docs/self-improvement/categories/debt.md` this PR.
+
+**Phase 2:**
+- **Phase 4 row 12 (installer) + the release-script arch wiring pulled forward into the Phase 2 PR** — the request was to make Release + installation work for ARM64, not just the dev toolchain, so the `.iss` `MyArchitecturesAllowed` define + `release_github.ps1 -Arch arm64` ship here instead of a later Phase 4 PR. Phase 4 rows 11 (CI legs), 13 (perf-baseline arch key), 14 (Build.cs guard) and all of Phase 3 (hardware validation) still remain.
+- **x64 path is byte-identical** — the x64 branch still sources `vcvars64.bat` and emits `x64compatible` with no artifact arch token; the host-arm64→x64 cross batch (`vcvarsarm64_amd64.bat`) is wired but only reached on an ARM64 host, so existing x64 dev/CI/release behaviour is unchanged.
+- **arm64 publish build preset targets `SmatchetStandalone` + `SmatchetTests` only** (not `SmatchetLuaTests`) — the preset sets `SMATCHET_BUILD_TESTS=ON` but not `SMATCHET_BUILD_LUA_TESTS`, so the Lua test target isn't defined; dropping it avoids a missing-target build error. The doctest rig is the bucket-A atomics surface Phase 3 cares about.
+- **`-Arch arm64` auto-skips Unreal + light standalone** — neither has an arm64 preset this phase (Unreal descoped; no arm64 light preset), so the release run skips them to stay green end-to-end rather than erroring on a missing preset.
 
 ## Verification (actual)
 *(populated post-ship — what was actually tested + result, passed / failed / not-run)*
@@ -232,6 +241,18 @@ Diff touches `Source/Core/` (BugReportService) + the render path under it, so ga
 **NOT-RUN / deferred (not a Phase-1 regression — tracked to later phases):**
 - **DX12 runtime render smoke on physical Windows-on-ARM hardware** — Phase 3 residue; no WoA runner / device available this session. The build links DX12 + WARP fallback but no frame has been presented through the DX12 backend on real hardware.
 - **DX12 visual parity under bucket-C/E** — CI pins `SMATCHET_RENDERER=gl` to keep Mesa goldens byte-stable, so the bucket goldens never exercise the DX12 backbuffer-capture path. DX12 pixel output is therefore **unverified in CI**. Local manual smoke (`Smatchet.exe --renderer=dx12`) on x64 Windows is the only available check this session and is offered in the post-ship menu.
+
+**Phase 2 (PR pending) — authored on Linux; the change is Windows/MSVC-only (vcvars, clang-cl ASan, Inno Setup), so no compile/link happened this session:**
+
+| Gate | Command | Result |
+|---|---|---|
+| Shell syntax | `bash -n scripts/dev/with-msvc-env.sh` | **PASS** |
+| Presets parse + new presets present | `python3 -c "json.load(...)"` (4 new presets asserted) | **PASS** |
+| Docs | `scripts/dev/test-docs.sh` | see post-ship |
+
+**NOT-RUN / deferred (needs a Windows / Windows-on-ARM toolchain — Phase 3):**
+- Cross-configure+build `ninja-publish-msvc-arm64` from an x64 host (`SMATCHET_MSVC_ARCH=arm64`); run `SmatchetTests` on a `windows-11-arm` runner (atomics audit); build the ARM64 Inno installer (`-Arch arm64`) and smoke-install on WoA.
+- PowerShell wrappers (`with-msvc.ps1`, `build-msvc-asan.ps1`, `release_github.ps1`) are unparsed here — no `pwsh` on the Linux host; syntax to be confirmed on Windows.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*

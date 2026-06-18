@@ -290,6 +290,36 @@
             }
         },
         {
+            "name": "ninja-iter-msvc-arm64",
+            "inherits": [
+                "_smatchet-msvc-base"
+            ],
+            "displayName": "Ninja Iteration (MSVC, ARM64)",
+            "description": "Windows-on-ARM iteration build. Target arch comes from the sourced vcvars env (SMATCHET_MSVC_ARCH=arm64 -> vcvarsamd64_arm64.bat cross / vcvarsarm64.bat native, via scripts/dev/with-msvc-env.sh); cl.exe then targets ARM64. Distinct binaryDir so the x64 and arm64 caches never collide. Same env-driven-arch mechanism as the existing MSVC presets (android-ndk-arm64 is the arch-suffixed-name precedent).",
+            "binaryDir": "${sourceDir}/build/ninja-iter-msvc-arm64",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "ninja-publish-msvc-arm64",
+            "inherits": [
+                "_smatchet-msvc-base"
+            ],
+            "displayName": "Ninja Publish (MSVC, ARM64, LTO)",
+            "description": "Distributable Windows-on-ARM standalone with MSVC LTO + fully-static CRT. Target arch comes from the sourced vcvars env (SMATCHET_MSVC_ARCH=arm64). Omits SMATCHET_UNREAL_THIRDPARTY_DIR (Unreal is descoped on ARM64). SMATCHET_BUILD_TESTS=ON so the cross-built doctest rig rides along to a windows-11-arm runner for Phase 3 validation. Feeds the -Arch arm64 path of scripts/publish/release_github.ps1.",
+            "binaryDir": "${sourceDir}/build/ninja-publish-msvc-arm64",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "OFF",
+                "SMATCHET_USE_PCH": "OFF",
+                "SMATCHET_ENABLE_LTO": "ON",
+                "SMATCHET_WINDOWS_FULLY_STATIC_RUNTIME": "ON",
+                "SMATCHET_BUILD_TESTS": "ON"
+            }
+        },
+        {
             "name": "_smatchet-clang-linux-base",
             "hidden": true,
             "description": "Shared Linux Clang defaults (native clang++/clang + Ninja). Distinct from _smatchet-clang-base, which uses clang-cl for the Windows MSVC ABI. Install via: apt-get install -y clang lld.",
@@ -500,6 +530,23 @@
             "inheritConfigureEnvironment": true,
             "targets": [
                 "SmatchetStandalone"
+            ]
+        },
+        {
+            "name": "ninja-iter-msvc-arm64",
+            "configurePreset": "ninja-iter-msvc-arm64",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetStandalone"
+            ]
+        },
+        {
+            "name": "ninja-publish-msvc-arm64",
+            "configurePreset": "ninja-publish-msvc-arm64",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetStandalone",
+                "SmatchetTests"
             ]
         },
         {
