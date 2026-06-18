@@ -97,9 +97,11 @@ Mandatory on every `open` entry.
    the pre-push gate stays green by construction.
 4. When evidence accumulates (mentioned by ≥2 agents OR blocks the same
    workflow ≥3 times), apply: edit the relevant agent prompt(s) in `agents/`
-   or AGENTS.md; flip Status to `applied`; archive the entry — `git mv` the
-   per-entry file's body into the union-merged `applied.md` (then delete the
-   per-entry file), or for a legacy monolith entry move the block as before.
+   or AGENTS.md; flip Status to `applied`; archive the entry — **append** the
+   per-entry file's body to the union-merged `applied.md` then `git rm` the
+   per-entry file (`cat docs/self-improvement/categories/<cat>/<file>.md >> docs/self-improvement/categories/applied.md && git rm docs/self-improvement/categories/<cat>/<file>.md && git add docs/self-improvement/categories/applied.md`),
+   or for a legacy monolith entry move the block as before. (NOT `git mv` — that
+   renames the file, it cannot append one file's content into another.)
    **If the edited agent has eval coverage** (currently `code-review`), score
    the edit base-vs-head per § Optimize against evals before flipping to
    `applied` — attach the advisory delta to the PR.
