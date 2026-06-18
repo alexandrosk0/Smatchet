@@ -334,6 +334,75 @@ jobs:
           path: build/ninja-iter-msvc/Smatchet.exe
           if-no-files-found: ignore
 
+  windows-msvc-arm64:
+    name: Windows + MSVC (ARM64 cross-compile, advisory)
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' && needs.changes.outputs.android_only != 'true' }}
+    runs-on: windows-2022
+    # Advisory compile-only ARM64 cross leg (docs/plans/dx12-standalone-win-arm64.md
+    # Phase 4 row 11). msvc-dev-cmd `arch: amd64_arm64` sources the cross vcvars so
+    # cl.exe targets ARM64; ninja-iter-msvc-arm64 then builds SmatchetStandalone.
+    # The ARM64 binary cannot execute on the x64 runner, so this gate is compile +
+    # link only — test execution + runtime validation ride a windows-11-arm runner
+    # in Phase 3. continue-on-error keeps a brand-new-arch break advisory (the x64
+    # windows-msvc job above remains the blocking Windows gate).
+    continue-on-error: true
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup MSVC dev environment (ARM64 cross)
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        with:
+          arch: amd64_arm64
+
+      - name: Setup sccache (object cache)
+        uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
+
+      - name: Cache sccache objects (msvc-arm64)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ github.workspace }}\.sccache
+          key: ${{ runner.os }}-sccache-msvc-arm64-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-sccache-msvc-arm64-
+
+      - name: Cache FetchContent _deps (msvc-arm64)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .fetchcontent-src
+          # Sources are arch-independent; fall back to the shared prefix so this
+          # leg can restore the x64 job's already-fetched dependency sources.
+          key: ${{ runner.os }}-fetchcontent-msvc-arm64-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Fetch Font Awesome 6 Solid TTF (pinned + checksum-verified)
+        shell: bash
+        env:
+          FA_TAG: "6.7.2"
+          FA_SHA256: "af19d135d3a935b3ebfbd80320716ffe1202052c5f68dc2c5f1abc57005ac605"
+        run: |
+          set -euo pipefail
+          curl -fsSL \
+               "https://github.com/FortAwesome/Font-Awesome/raw/${FA_TAG}/webfonts/fa-solid-900.ttf" \
+               -o assets/fonts/fa-solid-900.ttf
+          echo "${FA_SHA256}  assets/fonts/fa-solid-900.ttf" | sha256sum -c -
+
+      - name: Configure ninja-iter-msvc-arm64
+        run: cmake --preset ninja-iter-msvc-arm64
+
+      - name: Build SmatchetStandalone (ARM64 cross-compile)
+        run: cmake --build --preset ninja-iter-msvc-arm64 --target SmatchetStandalone
+
+      - name: Report sccache stats
+        if: always()
+        run: sccache --show-stats
+
   windows-msvc-light:
     name: Windows + MSVC (Smatchet light — AI/Whisper/MCP off)
     needs: changes
