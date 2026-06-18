@@ -6,13 +6,20 @@
 #
 # Usage:
 #   fleet-preflight.sh <workflow-script> [fleet-dir] [--strict]
+#   fleet-preflight.sh --selftest
 #
 #   <workflow-script>  the JS passed to the Workflow tool (the agent() fan-out).
 #   [fleet-dir]        optional staged input/output dir (build/<slug>/); when
 #                      given, every file under it is size-checked.
-#   --strict           exit 1 if any WARN fired (gate mode). Default: advisory
-#                      (exit 0 regardless), per "WARN-first, gate after
-#                      calibration" — workflow-fleets.md line 87 backlog item.
+#   --strict           exit non-zero if any WARN fired (gate mode). Default:
+#                      advisory (exit 0 regardless). Per workflow-fleets.md
+#                      § Pre-launch checklist this is now a MANDATORY pre-launch
+#                      MUST for any fan-out above the documented agent-count
+#                      threshold — a hard violation (e.g. an unpinned fan-out
+#                      agent() — failure 2) makes --strict exit 1 and blocks the
+#                      launch.
+#   --selftest         run inline fixtures; assert a violating script exits
+#                      non-zero under --strict and a clean script exits 0.
 #
 # Checks (each cites the rule-doc section it enforces):
 #   1. model-pin       (§ Model pinning)        every agent() call carries model:
@@ -38,12 +45,71 @@
 set -euo pipefail
 cd "$(dirname "$0")/../../.."
 
-usage() { echo "usage: fleet-preflight.sh <workflow-script> [fleet-dir] [--strict]" >&2; }
+usage() { echo "usage: fleet-preflight.sh <workflow-script> [fleet-dir] [--strict] | --selftest" >&2; }
+
+# --- selftest ----------------------------------------------------------------
+# Proves the gate's contract from inline fixtures: the canonical hard violation
+# (a multi-agent fan-out with no model: pin — failure 2) must exit non-zero
+# under --strict, and a clean fan-out must exit 0. Synths the fixtures in a
+# temp dir and re-invokes this script via its repo-relative path (post-`cd` cwd
+# is repo-root), matching the sibling convention (plan-archival-owed.sh).
+# selftest: asserts-failure — the violating fixture MUST exit non-zero under
+# --strict; if it does not, the gate is inert and the selftest FAILs.
+run_selftest() {
+    local fail=0 tmp out rc
+    tmp="$(mktemp -d)" || { echo "fleet-preflight selftest: mktemp failed" >&2; return 2; }
+    trap 'rm -rf "$tmp"' RETURN
+    self="agents/scripts/core/fleet-preflight.sh"
+
+    # Pin the check-6 slot count so the selftest isolates the model-pin behavior
+    # it targets. Without this, check 6 falls back to min(16, nproc-2); on a host
+    # with <=3 cores the clean fixture's 2-wide pipeline tops the slot count, adds
+    # a fan-out-width WARN, and --strict exits non-zero — failing assert 3 on a
+    # small CI runner even though model pinning is correct (Cursor Bugbot, #1354).
+    export PREFLIGHT_SLOTS=16
+
+    # Violating fixture: a 3-wide parallel() fan-out, every agent() unpinned.
+    cat > "$tmp/violating.js" <<'EOF'
+await parallel([
+  agent({ prompt: 'read Source/Foo.cpp:10 offset 0 limit 50; write build/x/r.md' }),
+  agent({ prompt: 'read Source/Bar.cpp:10 offset 0 limit 50; write build/x/r.md' }),
+  agent({ prompt: 'read Source/Baz.cpp:10 offset 0 limit 50; write build/x/r.md' }),
+]);
+EOF
+    # Clean fixture: same fan-out, every agent() carries a model: pin.
+    cat > "$tmp/clean.js" <<'EOF'
+await pipeline([
+  agent({ model: 'sonnet', prompt: 'read Source/Foo.cpp:10 offset 0 limit 50; write build/x/r.md' }),
+  agent({ model: 'sonnet', prompt: 'read Source/Bar.cpp:10 offset 0 limit 50; write build/x/r.md' }),
+]);
+EOF
+
+    # Assert 1: violating + --strict → non-zero (the gate's whole point).
+    out="$(bash "$self" "$tmp/violating.js" --strict 2>&1)" && rc=0 || rc=$?
+    if [ "$rc" -eq 0 ]; then
+        echo "FAIL: violating fan-out passed --strict (rc=0) — gate is inert"; fail=1
+    fi
+    # Assert 2: violating WITHOUT --strict → exit 0 (advisory default holds).
+    out="$(bash "$self" "$tmp/violating.js" 2>&1)" && rc=0 || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "FAIL: violating fan-out without --strict exited ${rc}, expected 0 (advisory)"; fail=1
+    fi
+    # Assert 3: clean + --strict → exit 0 (no false positive blocks a good fleet).
+    out="$(bash "$self" "$tmp/clean.js" --strict 2>&1)" && rc=0 || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "FAIL: clean fan-out failed --strict (rc=${rc}) — false positive"
+        echo "$out"; fail=1
+    fi
+
+    if [ "$fail" = "0" ]; then echo "fleet-preflight --selftest: PASS (3/3)"; return 0; fi
+    echo "fleet-preflight --selftest: FAIL"; return 1
+}
 
 STRICT=0
 posargs=()
 for a in "$@"; do
     case "$a" in
+        --selftest) run_selftest; exit $? ;;
         --strict)  STRICT=1 ;;
         -h|--help) usage; exit 0 ;;
         *)         posargs+=("$a") ;;
@@ -277,8 +343,14 @@ while IFS=$'\t' read -r tag callbuf; do
 done <<< "$calls_out"
 
 # --- verdict -----------------------------------------------------------------
+# Under --strict any WARN is a hard violation that exits non-zero and BLOCKS the
+# launch (workflow-fleets.md § Pre-launch checklist makes --strict a MANDATORY
+# pre-launch MUST above the documented fan-out threshold). The canonical hard
+# violation — an unpinned multi-agent fan-out (check 1, failure 2) — is exercised
+# by --selftest. Advisory default still exits 0.
 echo "fleet-preflight: ${warn_count} warning(s) over ${agent_calls:-0} agent() call(s)."
 if [ "$STRICT" -eq 1 ] && [ "$warn_count" -gt 0 ]; then
+    echo "fleet-preflight: --strict — ${warn_count} hard violation(s); blocking launch." >&2
     exit 1
 fi
 exit 0

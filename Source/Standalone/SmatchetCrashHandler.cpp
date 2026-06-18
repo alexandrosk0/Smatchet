@@ -50,8 +50,14 @@ void WriteMiniDump(EXCEPTION_POINTERS* exPtrs) noexcept {
         mei.ClientPointers = FALSE;
         meiPtr = &mei;
     }
-    MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), file,
-                      static_cast<MINIDUMP_TYPE>(MiniDumpWithIndirectlyReferencedMemory | MiniDumpScanMemory), meiPtr,
+    // Audit 2026-06-13 synthesis #17: MiniDumpNormal (stack + thread context + module list only),
+    // NOT MiniDumpWithIndirectlyReferencedMemory|MiniDumpScanMemory. The richer scopes walk the
+    // stack for pointers and pull the referenced heap into the dump — which sweeps in-memory
+    // secrets (config API tokens, GitHub PAT, MCP auth token, AI keys held in std::string on the
+    // heap) into a .dmp the bug-reporter auto-attaches to an off-host crash report. Normal still
+    // carries the faulting thread's stack + the exception record (meiPtr), which is what the
+    // next-launch triage actually needs; the lost heap context is not worth the secret-spill risk.
+    MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), file, MiniDumpNormal, meiPtr,
                       nullptr, nullptr);
     CloseHandle(file);
     if (exPtrs != nullptr) {

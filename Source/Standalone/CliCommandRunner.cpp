@@ -1405,8 +1405,16 @@ bool RunCmdAttachHandleHelp(const ParsedArgs& pa, const std::string& host, int p
 /// Phase 3 of RunCmdAttach: POST the command to the MCP endpoint and extract the response envelope.
 /// On connection failure, delegates to SpawnAndRun if pa.spawn is set.
 /// Returns kExitOk with envelope filled; otherwise emits an error to stderr and returns exit code.
+/// `outSpawnHandled` is set true ONLY when the --spawn branch ran: SpawnAndRun is terminal — it
+/// emits its own result envelope to stdout and returns the FINAL process exit code. The caller must
+/// then return that code directly and must NOT post-process `outEnvelope` (which stays empty on this
+/// path); doing so re-maps a clean `ok:true` child into a spurious handler-error exit (kExitHandler/4).
+/// See infra `spawn-smoke-teardown-exit4`: the Mesa-GL launch-smoke booted fine, answered
+/// app.version ok:true, yet the parent exited 4 because the empty envelope fell through to the
+/// RunCmdAttachProcessResult error path.
 int RunCmdAttachDispatch(const ParsedArgs& pa, const std::string& host, int port, const std::string& toolName,
-                         const nlohmann::json& argsToSend, nlohmann::json& outEnvelope) {
+                         const nlohmann::json& argsToSend, nlohmann::json& outEnvelope, bool& outSpawnHandled) {
+    outSpawnHandled = false;
     const int envSpawnTimeout = EnvIntOr("SMATCHET_SPAWN_TIMEOUT_MS", 0);
     const int readTimeoutSec = (pa.timeoutMs > 0)      ? (pa.timeoutMs / 1000 + 5)
                                : (envSpawnTimeout > 0) ? (envSpawnTimeout / 1000 + 5)
@@ -1421,9 +1429,13 @@ int RunCmdAttachDispatch(const ParsedArgs& pa, const std::string& host, int port
 
     auto res = cli.Post("/mcp/tools/call", body.dump(), "application/json");
     if (!res) {
-        // --spawn: launch an ephemeral instance and retry in-process.
-        if (pa.spawn)
+        // --spawn: launch an ephemeral instance and retry in-process. SpawnAndRun is terminal —
+        // it emits the result envelope itself and returns the final exit code, so flag the caller
+        // to return that code directly instead of re-processing the (still-empty) outEnvelope.
+        if (pa.spawn) {
+            outSpawnHandled = true;
             return SpawnAndRun(pa, toolName, argsToSend);
+        }
         nlohmann::json env;
         env["ok"] = false;
         env["command"] = toolName;
@@ -1536,7 +1548,14 @@ int RunCmdAttach(int argc, char** argv) {
 
         // Phase 3: POST command and extract envelope.
         nlohmann::json envelope;
-        const int dispatchResult = RunCmdAttachDispatch(pa, host, port, toolName, argsToSend, envelope);
+        bool spawnHandled = false;
+        const int dispatchResult =
+            RunCmdAttachDispatch(pa, host, port, toolName, argsToSend, envelope, spawnHandled);
+        // --spawn is terminal: SpawnAndRun already emitted the result envelope and computed the
+        // final exit code. Return it directly — `envelope` is empty on this path, so feeding it to
+        // RunCmdAttachProcessResult would mis-map a clean ok:true child to kExitHandler (exit 4).
+        if (spawnHandled)
+            return dispatchResult;
         if (dispatchResult != kExitOk)
             return dispatchResult;
 

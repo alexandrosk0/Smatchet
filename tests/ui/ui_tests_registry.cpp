@@ -42,6 +42,7 @@ extern "C" void SmatchetRegisterAiAssistantPreferencesValidationBannerTests(ImGu
 extern "C" void SmatchetRegisterAiAssistantPreferencesSaveDiscardTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAiAssistantPreferencesTestConnectionTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAiAssistantPreferencesVerifyOnSaveTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterAiAssistantModelChangeStripTests(ImGuiTestEngine* engine);
 #endif
 #if defined(SMATCHET_WITH_AI) && defined(SMATCHET_WITH_WHISPER)
 extern "C" void SmatchetRegisterWhisperAiAssistantAutosendTests(ImGuiTestEngine* engine);
@@ -82,6 +83,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterAiAssistantPreferencesSaveDiscardTests(engine);
     SmatchetRegisterAiAssistantPreferencesTestConnectionTests(engine);
     SmatchetRegisterAiAssistantPreferencesVerifyOnSaveTests(engine);
+    SmatchetRegisterAiAssistantModelChangeStripTests(engine);
 #endif
 #if defined(SMATCHET_WITH_AI) && defined(SMATCHET_WITH_WHISPER)
     SmatchetRegisterWhisperAiAssistantAutosendTests(engine);
