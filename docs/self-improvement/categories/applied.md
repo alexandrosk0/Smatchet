@@ -9,6 +9,18 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-05-20 · handoff-implementer · [tooling] · P2 — Bucket-E coverage for DeepSeek auto-clear "[model changed - chat cleared]" strip (tooling-sweep #24)
+  Details: `docs/plans/shipped/deepseek-provider.md` § Verification flagged bucket-E as deferred. Pure-helper logic was covered by `tests/Core/AiModelSignature.test.cpp`; the gap was rendered-strip verification — after a Send-with-different-model the chat clears and `g_ui.assistantLastError` paints `"[model changed - chat cleared]"` in the assistant panel's orange strip.
+  Resolution (2026-06-18): shipped `tests/ui/ai_assistant_model_change_strip.test.cpp` + `scripts/dev/test-ui-ai-assistant-model-change.sh` (state-based oracle on `g_ui.assistantLastError`, stub `IAiClient` via `AiClientFactory::SetTestOverride`, deterministic `MainThreadDispatcher::Drain()`) — **PR #1372** (B8 L2 / slice-7 of `tooling-process-backlog-sweep`). Closes tooling-sweep item #24.
+  Status: applied
+  Last-reviewed: 2026-06-18
+
+- 2026-05-17 · test-author · [tooling] · P2 — Bucket-E tooltip-content-identity helper for production-driven hover tests (tooling-sweep #31)
+  Details: While writing `tests/ui/callstack_tooltip_hover.test.cpp` a production-driven variant 4 had to be dropped — a generic `##Tooltip_NN` probe cannot distinguish "my cell's tooltip" from concurrent host tooltips. The ask was a `BucketE::TooltipContentMatches(ctx, sentinel)` helper to assert content identity and re-enable the production-driven variant.
+  Resolution (2026-06-18): shipped `tests/ui/_helpers/BucketETooltip.h` (`BucketE::TooltipContentMatches` via a DrawList `UserCallback` sentinel marker — the plan's literal "walk CmdBuffer for text" is infeasible on ImGui 1.92.8, which retains only rasterised glyph geometry) and re-enabled the production-driven `CallstackTooltipHover_Production_ContentIdentity` variant — **PR #1364** (B8 L3 / slice-7 of `tooling-process-backlog-sweep`). Closes tooling-sweep item #31.
+  Status: applied
+  Last-reviewed: 2026-06-18
+
 - 2026-06-08 · build-doctor (via tracker-result-migration) · [process] · P2 — `head-drift-guard-literal-path`: `guard-head-drift.sh` rejects `git -C "$WT" commit` when `$WT` is a shell variable (parses the UN-expanded command string)
   Details: The head-drift guard inspects the raw pre-expansion `tool_input.command` text, so `git -C "$WT" commit …` is denied — the hook sees the literal string `"$WT"`, can't stat `"$WT"/.git`, and blocks. Only a LITERAL absolute worktree path passes. Recurred ≥3×: build-doctor 2026-06-08 (3 failed attempts), the orchestrator's first Slice-4 commit, and again 2026-06-18 (the #1374 session-learnings commit + rebase — variable `$WT` blocked, literal path passed) — which crossed the apply threshold.
   Resolution (2026-06-18): sharpened the deny message in `docs/harness/claude-code/hooks/guard-head-drift.sh:134` to state "pass a LITERAL absolute path, not a shell variable like `$WT` — this guard reads the un-expanded command text, so a `$VAR` is rejected"; added the rule to `docs/agent-rules/process-rules.md` § Git/p4 discipline and `agents/core/build-doctor.md` (operational tips), covering both the commit deny and the drifted-op (`rebase`/`checkout`/`merge`) deny, plus the `git -C <abs-path> config core.editor true` vs interposed `-c core.editor=…` note.
