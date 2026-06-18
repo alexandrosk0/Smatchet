@@ -135,25 +135,45 @@ def write_registry(entries: list[dict[str, Any]]) -> None:
 # Clone-path resolution (gh / git surfaces)
 # ---------------------------------------------------------------------------
 def resolve_clone_path(cwd: str | pathlib.Path | None = None) -> str:
-    """Find the git repo root for `cwd` (default: `os.getcwd()`).
+    """Find the PRIMARY clone root for `cwd` (default: `os.getcwd()`).
+
+    Canonicalizes a linked-worktree cwd (`.claude/worktrees/<slug>`) back to its
+    main checkout so a watcher entry registered from a worktree de-dupes onto the
+    stable main clone instead of binding to an ephemeral worktree path that
+    vanishes at teardown (tooling.md 2026-06-18 `merge-watcher-register-keyed-by-
+    cwd-clone` :28). `git rev-parse --git-common-dir` points at the PRIMARY
+    checkout's `.git` (absolute from a worktree, relative `.git` from the main
+    clone); the parent of that `.git` dir IS the main clone root. A genuinely
+    separate full clone has its OWN common-dir, so distinct clones stay distinct.
 
     Raises if not inside a git repo.
     """
     cwd_str = str(cwd or os.getcwd())
-    result = subprocess.run(
-        ["git", "-C", cwd_str, "rev-parse", "--show-toplevel"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"merge-watcher: cwd '{cwd_str}' is not inside a git repository "
-            f"(`git rev-parse --show-toplevel` exited {result.returncode}): "
-            f"{result.stderr.strip()}"
+
+    def _git(*rev_args: str) -> str:
+        r = subprocess.run(
+            ["git", "-C", cwd_str, "rev-parse", *rev_args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
-    return result.stdout.strip()
+        if r.returncode != 0:
+            raise RuntimeError(
+                f"merge-watcher: cwd '{cwd_str}' is not inside a git repository "
+                f"(`git rev-parse {' '.join(rev_args)}` exited {r.returncode}): "
+                f"{r.stderr.strip()}"
+            )
+        return r.stdout.strip()
+
+    toplevel = _git("--show-toplevel")
+    common = _git("--git-common-dir")
+    # --git-common-dir is relative (".git") when invoked from the main clone;
+    # resolve it against the toplevel so the parent-dir step works in both cases.
+    if not os.path.isabs(common):
+        common = os.path.join(toplevel, common)
+    main_root = os.path.dirname(os.path.normpath(common))
+    return main_root.replace(os.sep, "/")
 
 
 # ---------------------------------------------------------------------------

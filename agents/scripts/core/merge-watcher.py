@@ -1279,6 +1279,37 @@ def _atomic_reserve_auto_act(pr: int, clone_path: str, head_sha: str, budget: in
         return ("dedup", None)
 
 
+def _atomic_reserve_auto_update(pr: int, clone_path: str, head_sha: str, budget: int):
+    """Atomically check dedup + budget AND reserve an auto-update-branch slot.
+
+    Sibling of `_atomic_reserve_auto_act` for the BEHIND auto-advance path
+    (tooling.md 2026-06-18 `merge-watcher-no-update-branch-for-standalone-behind-
+    pr`). Dedup is keyed on `auto_update_for_head_sha` so a single update-branch
+    is dispatched per head; a successful update advances the head (restarting the
+    key) and a hot develop can't trigger whack-a-mole update-branch churn beyond
+    the per-PR-lifetime `budget`.
+
+    Returns ("ok", attempts_after) / ("dedup", None) / ("budget", attempts).
+    """
+    with _CLI.registry_lock():
+        entries = _CLI.read_registry()
+        for e in entries:
+            if int(e.get("pr", -1)) != pr or e.get("clone_path") != clone_path:
+                continue
+            if e.get("auto_update_for_head_sha") == head_sha:
+                return ("dedup", None)
+            attempts_before = int(e.get("auto_update_attempts", 0))
+            attempts_after = attempts_before + 1
+            if attempts_after > budget:
+                return ("budget", attempts_before)
+            e["auto_update_attempts"] = attempts_after
+            e["auto_update_for_head_sha"] = head_sha
+            e["auto_update_dispatched_at_unix"] = int(time.time())
+            _CLI.write_registry(entries)
+            return ("ok", attempts_after)
+        return ("dedup", None)
+
+
 def _cr_none_grace_cycles() -> int:
     """Watcher-side CR-NONE grace window, measured in poll CYCLES.
 
@@ -1736,7 +1767,11 @@ _POLL_USER_RE = re.compile(r"User:\s*(\d+)")
 
 _STUCK_REASON_TEXT = {
     "CONFLICT": "merge conflict with base (develop advanced under the PR — needs a rebase)",
-    "BEHIND": "branch is behind base and cannot fast-forward (needs update-branch / rebase)",
+    "BEHIND": (
+        "branch is behind base and cannot fast-forward — run `gh pr update-branch` "
+        "(or `safe-admin-merge.sh <pr>` for a BEHIND-all-green wedge), or set "
+        "MERGE_WATCH_AUTO_UPDATE_BEHIND=true so the watcher auto-advances it"
+    ),
     "CI_FAILING": "a required CI check is failing (needs a fix push)",
     "UNRESOLVED_THREADS": "all CI green but unresolved CodeRabbit review threads block the merge",
     "REVIEW_REQUIRED": "all CI green but the PR is BLOCKED (missing required review or unresolved user comment)",
@@ -1871,6 +1906,79 @@ def _bump_stuck_streak(
         _CLI.write_registry(entries)
 
 
+def maybe_auto_update_behind(
+    entry: dict[str, Any], status_line: str, head_sha: str
+) -> dict[str, Any]:
+    """Auto-advance a registered PR whose ONLY blocker is BEHIND base.
+
+    Closes the gap where a green + CR-cleared REGISTERED PR that drifts BEHIND a
+    busy develop was never advanced — the daemon's sole `update-branch` path was
+    the post-merge cascade for stacked CHILDREN, so a STANDALONE behind PR
+    starved until a manual `gh pr update-branch` (tooling.md / infra.md
+    2026-06-18 `merge-watcher-no-update-branch-for-standalone-behind-pr`; lived on
+    PR #1358).
+
+    Opt-in via `MERGE_WATCH_AUTO_UPDATE_BEHIND=true` (off by default — dispatching
+    update-branch has a real cost and a hot develop risks churn). Safeguards
+    mirror `maybe_auto_act`:
+      - ONLY when the rollup is green + CR-cleared (the Poll line parsed AND
+        fail/pending/req-missing/cr-open all 0) — never on an unparseable line.
+      - Single dispatch per (PR, head_sha); a successful update advances the head
+        and restarts the key. Per-PR-lifetime budget `MERGE_WATCH_AUTO_UPDATE_
+        BUDGET` (default 2) caps total dispatches so develop churn can't whack-a-
+        mole. Both reserved atomically under the registry lock.
+    Returns a state-delta dict ({} when it does not / cannot act, so the caller
+    falls through to the normal STUCK escalation — e.g. budget exhausted still
+    raises the human notify).
+    """
+    if os.environ.get("MERGE_WATCH_AUTO_UPDATE_BEHIND", "").strip().lower() not in {
+        "true", "1", "yes"
+    }:
+        return {}
+    # Green + CR-cleared gate — only advance a PR whose sole blocker is BEHIND.
+    counts = _parse_poll_ci_counts(status_line)
+    if counts is None:
+        return {}
+    if not (
+        counts["fail"] == 0
+        and counts["pending"] == 0
+        and counts["req_missing"] == 0
+        and counts["cr_open"] == 0
+    ):
+        return {}
+    pr = int(entry["pr"])
+    clone_path = entry["clone_path"]
+    or_meta = _gh_owner_repo(clone_path)
+    if not or_meta:
+        return {"stuck_action": "auto-update-behind skipped: gh repo view failed"}
+    owner, repo = or_meta
+    budget_raw = os.environ.get("MERGE_WATCH_AUTO_UPDATE_BUDGET", "2")
+    try:
+        budget = int(budget_raw)
+    except ValueError:
+        budget = 2
+    reserved, payload = _atomic_reserve_auto_update(pr, clone_path, head_sha, budget)
+    if reserved in ("dedup", "budget"):
+        # Already advanced this head, or out of budget — let the streak/escalate
+        # path raise the human signal instead.
+        return {}
+    attempts_after = payload  # int — reserved slot index
+    ok, msg = cascade_update_child(owner, repo, pr)
+    return {
+        "stuck_streak": 0,
+        "stuck_head": "",
+        "stuck_reason": "",
+        "auto_update_action": (
+            f"update-branch {'dispatched' if ok else 'FAILED'} for BEHIND "
+            f"#{pr} ({msg}) [{attempts_after}/{budget}]"
+        ),
+        "stuck_action": (
+            f"auto-update-branch ({'ok' if ok else 'failed'}) on BEHIND #{pr} "
+            f"head {head_sha[:8]}: {msg}"
+        ),
+    }
+
+
 def maybe_escalate_stuck_pr(
     state: dict[str, Any], entry: dict[str, Any]
 ) -> dict[str, Any]:
@@ -1913,6 +2021,14 @@ def maybe_escalate_stuck_pr(
     if not head_sha:
         # Can't pin the streak to a head — hold without escalating (fail-closed).
         return {"stuck_action": "HEAD unresolved; not escalating this cycle"}
+    # BEHIND-all-green auto-advance (opt-in): dispatch update-branch instead of
+    # only escalating, so a standalone registered PR behind a busy develop is not
+    # starved. Falls through to the streak/escalate path when disabled, not
+    # green, dedup'd, or out of budget.
+    if reason == "BEHIND":
+        au = maybe_auto_update_behind(entry, status_line, head_sha)
+        if au:
+            return au
     prior = int(entry.get("stuck_streak", 0))
     if entry.get("stuck_head", "") != head_sha:
         prior = 0  # fresh push — progress; restart the streak
