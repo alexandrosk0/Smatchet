@@ -49,8 +49,13 @@ class CellEditBurstScenario : public IScenario {
         // OnStart; the extra frames only let the post-burst UI render settle and
         // be measured cleanly. Both knobs are args so a CI calibration pass can
         // retune without a recompile.
-        warmup_ = (std::max)(0, args.value("warmup", 64));
-        steady_ = (std::max)(1, args.value("steady", 256));
+        // Clamp to a sane upper bound so warmup_ + steady_ cannot overflow a
+        // signed int in IsDone() even with absurd CLI args (CodeRabbit, #1385).
+        // The ring is kCapacity=256, so anything past a few hundred frames is
+        // already pointless; 1e6 is a generous headroom well below INT_MAX/2.
+        const int kMaxFrames = 1000000;
+        warmup_ = (std::min)(kMaxFrames, (std::max)(0, args.value("warmup", 64)));
+        steady_ = (std::min)(kMaxFrames, (std::max)(1, args.value("steady", 256)));
 
         nlohmann::json dispatchArgs;
         dispatchArgs["count"] = count;
