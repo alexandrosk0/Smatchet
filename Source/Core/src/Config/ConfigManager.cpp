@@ -268,6 +268,7 @@ const FieldDesc<bool> kBoolFields[] = {
     {"assistant_context_block_active_ticket", &TrackerConfig::AssistantContextBlockActiveTicket},
     {"assistant_context_block_active_view", &TrackerConfig::AssistantContextBlockActiveView},
     {"assistant_context_block_audit_trail", &TrackerConfig::AssistantContextBlockAuditTrail},
+    {"assistant_outbound_consent_shown", &TrackerConfig::AssistantOutboundConsentShown},
     {"ai_prefs_verify_on_save", &TrackerConfig::AiPrefsVerifyOnSave},
     {"ai_allow_custom_endpoint_openai", &TrackerConfig::AiAllowCustomEndpointOpenAi},
     {"ai_allow_custom_endpoint_anthropic", &TrackerConfig::AiAllowCustomEndpointAnthropic},

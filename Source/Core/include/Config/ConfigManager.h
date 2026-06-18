@@ -337,6 +337,13 @@ struct TrackerConfig {
     // opt-in explicitly via the Preferences > Assistant > Context tab. First-send consent modal
     // (per docs/self-improvement/categories/security.md 2026-05-17 P1) tracked separately.
     bool AssistantContextBlockAuditTrail = false;
+    // First-send outbound-context consent latch (security.md 2026-05-17 P2). Default false:
+    // before the very first AI turn of a fresh profile, the Assistant panel raises a one-time
+    // modal listing the `AssistantContextBlock*` blocks + their measured payload sizes so the
+    // user sees exactly what leaves the machine before any provider POST. The user's
+    // acknowledgement flips this to true (persisted) so the gate fires once, not per turn.
+    // The decision lives in the pure helper `smatchet::ai::ShouldRequireOutboundConsent`.
+    bool AssistantOutboundConsentShown = false;
     /// Hard cap on persisted chat-history rows (excluding pinned messages, which are
     /// exempt from trim). Drives `LocalCacheManager::TrimChatMessages` after every
     /// successful append + caps the initial hydration window on first frame. Default

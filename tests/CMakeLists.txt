@@ -503,6 +503,11 @@ add_executable(SmatchetTests
     Core/AiAssistantSystemPrompt.test.cpp
     Core/AiPrefsValidator.test.cpp
     Core/AiEndpointSanitize.test.cpp
+    # First-send outbound-context consent gate (security audit 2026-05-17 P2).
+    # Header-only pure logic in Source/Core/include/AiOutboundConsent.h — the
+    # consent predicate + modal-row builder; no extra .cpp linked (the ImGui
+    # modal that consumes the rows stays out of the cpr-free rig).
+    Core/AiOutboundConsent.test.cpp
     # Pure rate-limit decision for the ai.prompt Lua glue (security audit H5 /
     # E6). Header-only (Source/Core/include/AiLuaPromptRateLimit.h); no extra
     # .cpp source — the glue calls the helper, the helper is the testable unit.
