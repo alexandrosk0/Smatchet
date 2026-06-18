@@ -2,7 +2,7 @@
 
 > **Slug**: `concurrent-session-guard-hardening` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `shipped` — merged via PR #1388 (squash `9346fcf1c31e`).
 
 ## Context
 
@@ -74,15 +74,12 @@ N/A — diff touches only `docs/harness/**` shell hooks + `tests/bats/**` + docs
 - The unquoted-`echo`-arg and no-jq-sed-fallback residuals — left as documented edges (see Risks).
 
 ## Implementation log
-*(populated post-ship)*
+- PR #1388 (squash `9346fcf1c31e`) — `guard-shared-tree.sh`: `strip_heredoc` + command-position-only verb match (`:566`); per-op `-C <worktree>` exemption covering `$VAR`, command-position-anchored (`:10`); rewritten deny message (`:560`). `guard-head-drift.sh`: quoted-spaced-`-C` grammar (`:328`/`:175`); Edit/Write worktree-target exemption under drift (`:70`). `build.md`: `with-msvc-env.sh` + shared-tree edit-clobber note (`process.md:28`). `guard_shared_tree.bats` +ordering/cmd-position CASES, `guard_head_drift.bats` +spaced-`-C` + Edit-exemption CASES + 2 em-dash names ASCII'd.
 
 ## Deviations from plan
-*(populated post-ship)*
+- **Dropped the `cd`-based worktree exemption entirely** (plan proposed `cd <worktree>`-then-op as exempt). Cursor Bugbot showed it unsound across two review rounds (shell cwd not derivable from the raw string — a later op can re-target the shared tree). The sound model that shipped: exempt only when EVERY command-position mutating op carries its own `-C <worktree>`. Returns to develop's deny-behaviour for `cd && git …` (no regression). Filed as `process.md` `pretooluse-git-guard-cwd-not-derivable-from-raw-command`.
+- Used **command-position matching** for the shared-tree verb match instead of the originally-sketched `strip_noncode` (cleaner; kills quoted/echo/comment false-positives without quote-stripping). Head-drift's matching grammar left unchanged (preserve the last-net guarantee), only its two holes fixed.
+- The no-jq `json_field` sed-fallback truncation (`:175`) left as a documented residual (jq is present on every supported path; the bats suites require it).
 
 ## Verification (actual)
-*(populated post-ship)*
-
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. flip § Status to `shipped`,
-2. `git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,
-3. regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.
+- `guard_shared_tree.bats` 14/14 + `guard_head_drift.bats` all green; `shellcheck` clean (gated codes) on both hooks; `scripts/dev/test-docs.sh` 13/13; shell-lint gate exit 0. Every false-positive (FP1–FP4) confirmed flipped to ALLOW pre-fix→post-fix; every true positive (bare op, `-C`/`cd` at the integration tree, protected-branch worktree, subshell, spaced-`-C` at integration, ordering attacks) still DENIES. CodeRabbit + Cursor findings (plan/impl mismatch; cd/`-C` ordering; leading-cd unsoundness; per-op command-position) all addressed pre-merge.
