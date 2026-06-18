@@ -247,6 +247,20 @@ setup_claude_code() {
   copy_template "docs/harness/claude-code/hooks/resync-head-baseline.sh" ".claude/hooks/resync-head-baseline.sh"
   copy_template "docs/harness/claude-code/hooks/guard-shared-tree.sh"    ".claude/hooks/guard-shared-tree.sh"
   copy_template "docs/harness/claude-code/hooks/capture-intent.sh"       ".claude/hooks/capture-intent.sh"
+  # Wiring doctor (pr-intent-capture-hardening #1): confirm the capture hook is
+  # actually live — registered on UserPromptSubmit AND a python interpreter
+  # resolves — so a silently-unwired hook (the gap that left no evidence capture
+  # ever ran in a live session) surfaces once here instead of never.
+  if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1 || command -v py >/dev/null 2>&1; then
+    if grep -q '"UserPromptSubmit"' ".claude/settings.json" 2>/dev/null \
+       && grep -q 'capture-intent.sh' ".claude/settings.json" 2>/dev/null; then
+      echo "  prompt-intent capture: WIRED (UserPromptSubmit -> capture-intent.sh)"
+    else
+      echo "  prompt-intent capture: NOT WIRED — capture-intent.sh missing from .claude/settings.json UserPromptSubmit (re-run setup / check sync-settings-hooks.sh)"
+    fi
+  else
+    echo "  prompt-intent capture: INERT — no python3/python/py on PATH (hook fail-safes to writing nothing)"
+  fi
 
   link_agents
 

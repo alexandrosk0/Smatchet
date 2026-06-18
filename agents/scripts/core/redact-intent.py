@@ -26,9 +26,13 @@ Design contract — this is a SECURITY boundary, so it is deliberately fail-safe
     HKEY_USERS registry hive, connection-URL userinfo, and ssh-context user@host
     (ssh/scp/sftp/rsync/git remote). Windows machine/account SIDs (S-1-5-..) are
     redacted wholesale.
-  * Emails are intentionally NOT redacted (explicit scope decision). ssh-context
-    `user@host` IS redacted; a bare prose email is syntactically identical, so it
-    is distinguished only by a preceding ssh-family command / `scheme://`.
+  * Emails ARE redacted to [REDACTED-EMAIL] (pr-intent-capture-hardening #7 —
+    Intent lines land in a PUBLIC PR body, so a third-party email is PII that must
+    not leak; reverses the parent plan's preserve-emails decision). `_EMAIL` runs
+    LAST, after the username / connection-URL collapses, so a `[user]@host` or
+    `[REDACTED]@host` placeholder (ends in `]` immediately before `@`) is shielded
+    and only bare prose emails match. ssh-context `user@host` to a dotless host
+    (deployacct@host) still collapses to `[user]@host` via _SSH_USER first.
 
 Known accepted residuals (contrived / inherently ambiguous — documented in plan
 docs/plans/shipped/pr-intent-capture.md § Risks, not closed by design):
@@ -174,8 +178,9 @@ _SID = re.compile(r"\bS-1-(?:\d+-)*\d+\b")
 
 # --- Username collapse (run after secret stripping) ---
 # ssh-context user@host: an ssh-family command, then (skipping flags/args) the
-# first `user@`. Distinguishes an ssh login from a bare prose email (which has no
-# such command prefix and is intentionally preserved).
+# first `user@`. Runs before _EMAIL so an ssh login to a host WITHOUT a dotted TLD
+# (deployacct@host) still collapses to [user]@host; a bare prose email is redacted
+# wholesale by _EMAIL below.
 _SSH_USER = re.compile(r"(?i)\b(ssh|scp|sftp|rsync|git\s+remote)\b([^@\n]*?)[\w.\-]+@")
 # C:\Users\<name>, UNC \\host\Users\<name>, XP Documents and Settings\<name>,
 # /home|/Users/<name>, env-var home roots, HKEY_USERS\<name>, ~name / ~$name.
@@ -196,6 +201,11 @@ _HOME_SHENV = re.compile(r"(\$\{?HOME\}?[\\/])[^\\/\s\"']+")
 _HKEY_USERS = re.compile(r"(?i)((?:HKEY_USERS|HKU)[\\/])[^\\/\s\"']+")
 # ~username / ~$username shell shorthand (NOT ~/… which has no name).
 _HOME_TILDE = re.compile(r"(?<![\w./\\])~\$?([A-Za-z_][\w.\-]*)")
+# Email addresses -> [REDACTED-EMAIL]. Applied LAST in redact() (after the
+# username / connection-URL collapses) so the `[user]@host` / `[REDACTED]@host`
+# placeholders — which end in `]` immediately before `@` — cannot match; only a
+# bare prose `local@domain.tld` does. Intent lines are public, so emails are PII.
+_EMAIL = re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")
 
 
 def redact(text):
@@ -232,6 +242,9 @@ def redact(text):
     text = _HOME_SHENV.sub(lambda m: m.group(1) + "[user]", text)
     text = _HKEY_USERS.sub(lambda m: m.group(1) + "[user]", text)
     text = _HOME_TILDE.sub(r"~[user]", text)
+    # Emails LAST: the `]`-terminated placeholders above shield ssh/conn userinfo,
+    # so only bare prose emails (public-PR PII) match here.
+    text = _EMAIL.sub("[REDACTED-EMAIL]", text)
     # Collapse to a single line.
     text = re.sub(r"\s+", " ", text).strip()
     if len(text) > MAX_LEN:
@@ -265,7 +278,9 @@ def _selftest():
         ("unc \\\\fileserver\\Users\\alexk\\notes", ["alexk"], ["[user]"]),
         ("xp C:\\Documents and Settings\\alexk\\app", ["alexk"], ["[user]"]),
         ("path /home/alexk/.ssh/id", ["/home/alexk"], ["[user]"]),
-        ("contact alexkonstantonis@gmail.com please", ["[REDACTED"], ["alexkonstantonis@gmail.com"]),
+        # #7: emails are now REDACTED (public PR body is PII surface).
+        ("contact alexkonstantonis@gmail.com please", ["alexkonstantonis@gmail.com"], ["[REDACTED-EMAIL]"]),
+        ("ping jane.doe+tag@sub.example.co.uk now", ["jane.doe+tag@sub.example.co.uk"], ["[REDACTED-EMAIL]"]),
         ("line one\nline two\ttabbed", ["\n", "\t"], ["line one line two tabbed"]),
         # --- Post-red-team hardening (under-redaction is the vulnerability) ---
         # Connection URL with `/`-in-password + non-empty user: whole userinfo gone.

@@ -8,7 +8,8 @@
 # This is a SECURITY boundary (a leaked secret/credential or home-dir username
 # ends up in a public PR body), so the redactor cases are the load-bearing ones:
 # every high-confidence secret class is stripped, home-dir usernames collapse to
-# `[user]`, emails are deliberately preserved, output is always a single line.
+# `[user]`, emails are redacted to `[REDACTED-EMAIL]` (the Intent line is a public
+# PII surface — pr-intent-capture-hardening #7), output is always a single line.
 # The hook cases assert the two hard invariants: it writes a REDACTED line to a
 # branch-keyed capture file, and it prints NOTHING to stdout (UserPromptSubmit
 # stdout is injected into the model's context). Fail-safe: a missing/erroring
@@ -216,10 +217,16 @@ MIIEowIBAAKCAQEAabcdef
     [[ "$output" == *"[user]"* ]]
 }
 
-@test "email is NOT redacted (explicit scope decision)" {
+@test "#7: email IS redacted (public PR body is a PII surface)" {
     redact "ping alexkonstantonis@gmail.com about it"
-    [[ "$output" == *"alexkonstantonis@gmail.com"* ]]
-    [[ "$output" != *"[REDACTED"* ]]
+    [[ "$output" != *"alexkonstantonis@gmail.com"* ]]
+    [[ "$output" == *"[REDACTED-EMAIL]"* ]]
+}
+
+@test "#7: ssh-context user@host still collapses to [user] (not an email)" {
+    redact "deploy ssh -p 2222 deployacct@host:/srv"
+    [[ "$output" != *"deployacct"* ]]
+    [[ "$output" == *"[user]@host"* ]]
 }
 
 @test "multi-line prompt collapses to a single line" {
@@ -295,4 +302,38 @@ line two	tabbed"
     [ "$status" -eq 0 ]
     [ -z "$output" ]
     [[ "$(capture_body)" != *"ghp_"* ]]
+}
+
+# ----------------------------------------------------------------------------
+# pr-intent-capture-hardening — #2 branch fix, #1 provenance, #4 cap-on-append
+# ----------------------------------------------------------------------------
+
+@test "#2 branch fix: unborn branch resolves to its name, not HEAD-_unknown" {
+    # symbolic-ref --short returns the branch on an unborn branch; the old
+    # rev-parse --abbrev-ref printed HEAD + exited non-zero -> HEAD-_unknown.log.
+    git -C "$PROJ_DIR" init -q
+    git -C "$PROJ_DIR" checkout -q -b feature/foo
+    run_hook '{"prompt":"on an unborn branch"}'
+    [ "$status" -eq 0 ]
+    [ -f "$CAPTURE_DIR/feature-foo.log" ]
+    [ ! -e "$CAPTURE_DIR/HEAD-_unknown.log" ]
+}
+
+@test "#1 provenance: header present and excluded by the orchestrator '- ' filter" {
+    run_hook '{"prompt":"the actual ask"}'
+    [ "$status" -eq 0 ]
+    f="$(ls "$CAPTURE_DIR"/*.log)"
+    grep -q "^# capture-intent v" "$f"          # provenance header written
+    [ "$(grep -c '^- ' "$f")" -eq 1 ]           # exactly one bullet
+    [ "$(grep '^- ' "$f")" = "- the actual ask" ]  # header is not in the '- ' set
+}
+
+@test "#4 cap-on-append keeps the header + last N bullets" {
+    export SMATCHET_INTENT_CAP=2
+    for i in 1 2 3 4 5; do run_hook "{\"prompt\":\"p$i\"}"; done
+    f="$(ls "$CAPTURE_DIR"/*.log)"
+    grep -q "^# capture-intent v" "$f"          # header survives the trim
+    [ "$(grep -c '^- ' "$f")" -eq 2 ]           # capped to last 2 bullets
+    [[ "$(capture_body)" == *"- p5"* ]]         # most recent kept
+    [[ "$(capture_body)" != *"- p1"* ]]         # oldest dropped
 }
