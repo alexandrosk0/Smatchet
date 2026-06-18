@@ -216,6 +216,12 @@ jobs:
             mkdir -p mesa-tmp mesa-cache
             cd mesa-tmp
             curl -fL -o mesa.7z "https://github.com/pal1000/mesa-dist-win/releases/download/${MESA_VERSION}/mesa3d-${MESA_VERSION}-release-msvc.7z"
+            # Supply-chain integrity: pal1000/mesa-dist-win publishes no checksum
+            # (digest:null on every release asset), so this is a self-computed TOFU
+            # pin — it catches silent upstream tampering / corrupt transfer, not
+            # first-time trust. Keep in lockstep with MESA_VERSION; update on bump.
+            # security.md "Mesa archive integrity" entry.
+            echo "3f288b9d5d8b2d25ec0bd81dd82c6b8c77bc0ffad45cc467c37489170dd001ab  mesa.7z" | sha256sum -c -
             7z x mesa.7z -o./extracted >/dev/null 2>&1 || true
             for d in opengl32.dll libgallium_wgl.dll libglapi.dll; do
               if [ -f "extracted/x64/$d" ]; then cp "extracted/x64/$d" "../mesa-cache/$d"; fi
