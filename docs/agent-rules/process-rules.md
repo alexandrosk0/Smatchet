@@ -47,6 +47,8 @@ If either signal fires, archive the backlog entry into `applied.md` with a `Reso
 
 ## Git/p4 discipline
 
+**Committing to a worktree — pass a LITERAL `git -C <path>`, never a `$VAR`**: the head-drift guard (`docs/harness/claude-code/hooks/guard-head-drift.sh`) inspects the raw, **un-expanded** `tool_input.command` text, so `git -C "$WT" commit …` is denied — it sees the literal string `"$WT"`, can't stat `"$WT"/.git`, and blocks. Only a literal absolute worktree path passes (`git -C /c/Development/Smatchet/.claude/worktrees/<slug> commit …`). The same form is required for the drifted-op deny (a `rebase` / `checkout` / `merge` in a worktree under the integration tree): use the literal-path `git -C <abs-path> <op>`. Set a no-op editor first via `git -C <abs-path> config core.editor true` rather than an interposed `-c core.editor=…` flag.
+
 **Destructive git ops in shared worktrees**: before running any destructive git op (`reset --hard`, `checkout --`, `clean -f`, `branch -D`) against a worktree the orchestrator did not personally check out earlier in the same session, run a mandatory 5-step pre-flight via `git -C <path>` from the orchestrator's main worktree (do not `cd`). Parallel agents in other worktrees can — and do — switch the target worktree's HEAD to a different branch between sessions; a stale assumption about "the develop worktree" is what destroys uncommitted work.
 
 1. `git -C <path> branch --show-current` — verify the actual current branch matches the user-named target. If it doesn't, **stop**; the worktree has been reassigned.

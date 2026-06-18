@@ -20,10 +20,12 @@
 //   1. Autosave_DebouncesThenSaves (PRIMARY, deterministic) — replica drives
 //      MarkPrefsDirty + simulated time advance + the debounce-drain dispatch
 //      and asserts save-call count.
-//   2. VerifyOnSave_TestConnection_SetsResult (SECONDARY, informational) —
-//      drives the REAL Preferences UI against an unreachable loopback port
-//      (libcurl ECONNREFUSED returns immediately) and asserts the failure
-//      result line lands. Skip-with-log on host-coupling failure.
+//   2. VerifyOnSave_TestConnection_SetsResult (SECONDARY, deterministic) —
+//      drives the REAL AiPrefsTestConnection::TriggerProbe against a stub
+//      IAiClient (success), then waits on the dispatcher queue for the worker's
+//      post-back and Drains it to force the async chain to completion before
+//      asserting the "Verified" result line. No frame-budget poll, no host
+//      coupling — only the AppController-availability skip guard remains.
 //   3. VerifyOnSave_CancelOnClose_ShortCircuits (SECONDARY, informational) —
 //      kicks off the probe per V2 then closes Preferences mid-flight; asserts
 //      the in-flight flag clears and the result line stays empty per the
@@ -226,12 +228,46 @@ void RegisterVerifyOnSaveTestConnectionVariant(ImGuiTestEngine* engine) {
 
         AiPrefsTestConnection::TriggerProbe(g_ui, *app, AiProvider::OpenAi);
 
-        for (int i = 0; i < 240; ++i) {
-            if (!g_ui.assistantPrefsTestInFlight) {
-                break;
-            }
-            ctx->Yield();
+        // Deterministic completion (replaces the old 240-yield poll, which fired
+        // the asserts on incomplete state whenever the worker hadn't posted back
+        // within the yield budget). TriggerProbe's completion is a two-step async
+        // chain (AiPrefsTestConnection.cpp:231-236):
+        //   1. app.LaunchBackgroundTask runs RunProbe on a JOINED pool thread
+        //      (AppController.cpp:1099 — a real std::thread tracked in
+        //      backgroundWorkers_, never detached, exception-firewalled so the
+        //      worker body always runs to completion), whose LAST act is
+        //      dispatcher.PostToMainThread(PublishProbeResult).
+        //   2. PublishProbeResult only runs — and only then clears
+        //      assistantPrefsTestInFlight + sets the result fields — when
+        //      mainThreadDispatcher.Drain() executes the queued lambda
+        //      (SmatchetUI.cpp:645 is its sole production caller; the engine's
+        //      Yield does not drive that production Draw, which is why the old
+        //      poll raced).
+        // We collapse both steps with a hard synchronization, not a frame budget:
+        //   - Block on QueueLen() until the worker's PostToMainThread has landed.
+        //     This is a wait on the POST EVENT itself, not a bounded yield loop:
+        //     it cannot fall through on incomplete state the way the 240-yield
+        //     poll did. Termination is guaranteed — the worker is joined-not-
+        //     detached and firewalled, so it always reaches the post. With the
+        //     fully-synchronous MakeStubSuccess client the post is imminent; we
+        //     spin std::this_thread::yield() (not ctx->Yield(), which would pump
+        //     the engine frame loop) purely to relinquish the core to the worker.
+        //   - Drain() then runs the now-queued PublishProbeResult on this thread,
+        //     flipping assistantPrefsTestInFlight=false and setting "Verified".
+        // After the drain the post-conditions are provably established — there is
+        // nothing left in flight to race.
+        // A generous wall-clock deadline guards a FUTURE regression that breaks
+        // the post-back: the spin then fails cleanly via the assert below instead
+        // of hanging CI. It is a SAFETY bound, not a frame budget — 5s is enormous
+        // for the synchronous stub, so a healthy run never approaches it and it
+        // cannot reintroduce the flake the old 240-yield poll had.
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (app->mainThreadDispatcher.QueueLen() == 0 &&
+               std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::yield();
         }
+        IM_CHECK(app->mainThreadDispatcher.QueueLen() > 0);  // worker posted back
+        app->mainThreadDispatcher.Drain();
 
         AiClientFactory::SetTestOverride(nullptr);
         g_ui.showPreferences = false;

@@ -34,7 +34,7 @@ using smatchet::config_detail::GetConfigRmwMutexRef;
 using smatchet::config_detail::GetHasCachedConfigRef;
 using smatchet::config_detail::SanitizeConfigStringValue;
 
-#if defined(_WIN32)
+#if defined(_WIN32) || defined(__ANDROID__)
 using smatchet::config_detail::ProtectSecretForConfig;
 using smatchet::config_detail::UnprotectSecretFieldFromConfig;
 #endif
@@ -430,8 +430,12 @@ void PurgeLegacyAgenticKeys(nlohmann::json& j) {
     j.erase("ci_react");
 }
 
-void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
+// WriteSecretFields is defined once per platform — the #if/#elif/#else below compiles exactly one
+// definition. Splitting the platform switch across three separate function bodies (rather than one
+// function with the switch inside it) keeps each arm under the function-length lint cap; the per-arm
+// secret/erase contract is unchanged. See each arm's inline notes.
 #if defined(_WIN32)
+void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
     j.erase("token");
     j.erase("plane_api_key");
     j["token_enc"] = ProtectSecretForConfig(config.ApiToken);
@@ -497,7 +501,48 @@ void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
     }
     j["whisper_api_key_enc"] = whisperApiKeyEnc;
 #endif
+}
+#elif defined(__ANDROID__)
+void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
+    // SECURITY (audit H2 / CR #1357): Android seals EVERY secret at rest through the host
+    // AndroidKeyStore AES-GCM provider. ProtectSecretForConfig routes to that provider and FAILS
+    // CLOSED — it returns empty when no provider is wired or the JNI seal fails. Unlike the Win32
+    // DPAPI arm above there is NO plaintext fallback: an Android profile file is not a reliable
+    // owner-only boundary the way a chmod-0600 desktop file is, so a secret we cannot seal is
+    // DROPPED rather than written cleartext. Every plaintext key is erased unconditionally; only a
+    // non-empty Keystore ciphertext is persisted.
+    const auto sealSecret = [&j](const char* plainKey, const char* encKey, const std::string& value) {
+        j.erase(plainKey);
+        const std::string enc = ProtectSecretForConfig(value);
+        if (!enc.empty()) {
+            j[encKey] = enc;
+        } else {
+            j.erase(encKey); // empty input, or fail-closed Keystore miss — drop, never cleartext.
+        }
+    };
+    sealSecret("token", "token_enc", config.ApiToken);
+    sealSecret("plane_api_key", "plane_api_key_enc", config.PlaneApiKey);
+    sealSecret("github_pat", "github_pat_enc", config.GitHubPat);
+    // Bug-report PAT — persisted only on opt-in; otherwise both keys stay erased.
+    j.erase("bugreport_github_pat");
+    j.erase("bugreport_github_pat_enc");
+    if (config.BugReportPersistPat && !config.BugReportGitHubPat.empty()) {
+        const std::string bugPatEnc = ProtectSecretForConfig(config.BugReportGitHubPat);
+        if (!bugPatEnc.empty()) {
+            j["bugreport_github_pat_enc"] = bugPatEnc;
+        }
+    }
+    // Header-bound secrets: strip CR/LF/NUL before sealing (mirrors the Win32 arm).
+    sealSecret("mcp_auth_token", "mcp_auth_token_enc", SanitizeConfigStringValue(config.McpAuthToken));
+    sealSecret("ai_api_key", "ai_api_key_enc", SanitizeConfigStringValue(config.AiApiKey));
+    sealSecret("ai_anthropic_api_key", "ai_anthropic_api_key_enc", SanitizeConfigStringValue(config.AiAnthropicApiKey));
+    sealSecret("ai_deepseek_api_key", "ai_deepseek_api_key_enc", SanitizeConfigStringValue(config.AiDeepSeekApiKey));
+#if defined(SMATCHET_WITH_WHISPER)
+    sealSecret("whisper_api_key", "whisper_api_key_enc", config.WhisperApiKey);
+#endif
+}
 #else
+void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
     j.erase("token_enc");
     j.erase("plane_api_key_enc");
     j.erase("github_pat_enc");
@@ -524,8 +569,8 @@ void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
     j.erase("whisper_api_key_enc");
     j["whisper_api_key"] = config.WhisperApiKey;
 #endif
-#endif
 }
+#endif
 
 // Purges legacy keys carried over from LoadMergedConfigJson() and writes the secret fields
 // (DPAPI-encrypted on Win32 with a plaintext fallback when protection fails; plaintext on other
@@ -782,11 +827,21 @@ struct SecretMigrationFlags {
 #if defined(SMATCHET_WITH_WHISPER)
     bool WhisperApiKey = false;
 #endif
+#if defined(__ANDROID__)
+    // Android fail-closed migration (audit H2 / CR #1357): set when ANY secret fell back to a legacy
+    // plaintext key — including token/plane/github/bugreport, which have no per-field flag. Forces a
+    // one-shot re-Save so the plaintext is re-sealed via Keystore, or dropped fail-closed if no
+    // provider is wired. The goal is to get pre-fix plaintext OFF disk on first load after upgrade.
+    bool LegacyPlaintext = false;
+#endif
 
     bool Any() const {
         bool any = McpAuthToken || AiApiKey || AiAnthropicApiKey || AiDeepSeekApiKey;
 #if defined(SMATCHET_WITH_WHISPER)
         any = any || WhisperApiKey;
+#endif
+#if defined(__ANDROID__)
+        any = any || LegacyPlaintext;
 #endif
         return any;
     }
@@ -911,6 +966,43 @@ void LoadSecretFields(const nlohmann::json& j, TrackerConfig& cfg, SecretMigrati
         cfg.WhisperApiKey = j.value("whisper_api_key", std::string{});
         migrate.WhisperApiKey = !cfg.WhisperApiKey.empty();
     }
+#endif
+#elif defined(__ANDROID__)
+    // SECURITY (audit H2 / CR #1357): unseal every secret through the host Keystore provider.
+    // UnprotectSecretFieldFromConfig -> UnprotectSecretFromConfig FAILS SAFE to empty (no provider, a
+    // Keystore/JNI decrypt failure, or ciphertext minted on another device). Plaintext fallback is gated
+    // on the SEALED key being ABSENT — not on an empty unseal: a present-but-undecryptable `*_enc`
+    // (tamper, key rotation, foreign-device ciphertext) is DROPPED, never downgraded to a sibling
+    // plaintext an attacker could have injected. We fall back to legacy plaintext only when no sealed key
+    // exists (a pre-Keystore config), flagging a migration so Load() re-Saves — re-sealing via Keystore,
+    // or dropping fail-closed if no provider is wired. Either way pre-fix plaintext leaves disk on load.
+    const auto unsealSecret = [&j, &migrate](const char* encKey, const char* plainKey) -> std::string {
+        const std::string sealed = j.value(encKey, std::string{});
+        if (!sealed.empty()) {
+            // Sealed key present: trust ONLY a successful unseal. A failed unseal that coexists with a
+            // plaintext sibling still flags migration (purge on re-Save) but never surfaces it.
+            const std::string value = UnprotectSecretFieldFromConfig(encKey, sealed);
+            if (value.empty() && !j.value(plainKey, std::string{}).empty()) {
+                migrate.LegacyPlaintext = true; // purge stale plaintext on re-Save; do not trust it.
+            }
+            return value;
+        }
+        std::string value = j.value(plainKey, std::string{});
+        if (!value.empty()) {
+            migrate.LegacyPlaintext = true; // legacy plaintext, no sealed key — re-Save to seal/drop it.
+        }
+        return value;
+    };
+    cfg.ApiToken = unsealSecret("token_enc", "token");
+    cfg.PlaneApiKey = unsealSecret("plane_api_key_enc", "plane_api_key");
+    cfg.GitHubPat = unsealSecret("github_pat_enc", "github_pat");
+    cfg.BugReportGitHubPat = unsealSecret("bugreport_github_pat_enc", "bugreport_github_pat");
+    cfg.McpAuthToken = unsealSecret("mcp_auth_token_enc", "mcp_auth_token");
+    cfg.AiApiKey = unsealSecret("ai_api_key_enc", "ai_api_key");
+    cfg.AiAnthropicApiKey = unsealSecret("ai_anthropic_api_key_enc", "ai_anthropic_api_key");
+    cfg.AiDeepSeekApiKey = unsealSecret("ai_deepseek_api_key_enc", "ai_deepseek_api_key");
+#if defined(SMATCHET_WITH_WHISPER)
+    cfg.WhisperApiKey = unsealSecret("whisper_api_key_enc", "whisper_api_key");
 #endif
 #else
     cfg.ApiToken = j.value("token", std::string{});
@@ -1399,8 +1491,10 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
         }
     }
 
-#if defined(_WIN32)
-    // Only MCP gets an eager legacy cleanup here; older secrets keep their established lazy migration behavior.
+#if defined(_WIN32) || defined(__ANDROID__)
+    // Win32: only MCP gets an eager legacy cleanup here; older secrets keep their established lazy
+    // migration behavior. Android (audit H2 / CR #1357): migrate.LegacyPlaintext is set for ANY
+    // plaintext fallback, so this re-Save eagerly re-seals (or fail-closed drops) every legacy secret.
     // Ordering note, backlog #15: this migration re-save runs BEFORE the env/CLI override block below, by design.
     // - cfg here reflects what disk contained, with the legacy plaintext token already decoded into McpAuthToken.
     //   The re-save re-encrypts McpAuthToken into mcp_auth_token_enc on disk, which is the whole point of the
@@ -1413,7 +1507,10 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
     //   pre-split behavior. The standing limitation that any subsequent re-save with this cfg would write
     //   override values to disk is a pre-existing concern outside the scope of this migration.
     if (migrate.Any()) {
-#if defined(SMATCHET_WITH_WHISPER)
+#if defined(__ANDROID__)
+        LOG_INFO("ConfigManager: migrating legacy plaintext secret(s) to Keystore-protected storage "
+                 "(audit H2 fail-closed re-save: unseal-able secrets re-sealed, the rest dropped).");
+#elif defined(SMATCHET_WITH_WHISPER)
         LOG_INFO("ConfigManager: migrating legacy plaintext secret(s) to DPAPI-protected storage "
                  "(mcp=%d ai=%d anthropic=%d deepseek=%d whisper=%d)",
                  migrate.McpAuthToken ? 1 : 0, migrate.AiApiKey ? 1 : 0, migrate.AiAnthropicApiKey ? 1 : 0,
