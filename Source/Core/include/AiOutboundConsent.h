@@ -3,14 +3,12 @@
 
 // AiOutboundConsent — pure decision logic for the first-send outbound-context
 // consent modal (docs/self-improvement/categories/security.md 2026-05-17 P2).
-//
 // Before the very first AI turn of a fresh profile, the Assistant panel raises a
 // one-time modal that enumerates the `AssistantContextBlock*` blocks, their
 // enabled/disabled state, and their measured payload sizes so the user can see
 // exactly what leaves the machine before any provider POST. The acknowledgement
 // flips `TrackerConfig::AssistantOutboundConsentShown` to true (persisted), so
 // the gate fires once per profile, not per turn.
-//
 // Everything here is header-inline pure logic — no AppController / cpr / ImGui
 // coupling — so the doctest rig (tests/Core/AiOutboundConsent.test.cpp) can pin
 // every branch without the UI TU's dependency chain. Mirrors the extraction
