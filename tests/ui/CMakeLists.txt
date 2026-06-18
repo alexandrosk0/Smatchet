@@ -31,6 +31,7 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_preferences_save_discard.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_preferences_test_connection.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_preferences_verify_on_save.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_model_change_strip.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/description_tooltip_markdown_render.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/spawn_warmup_deterministic_gate.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/annotate_prefs_persist_flow.test.cpp"
