@@ -69,11 +69,12 @@ if [ "${1:-}" = "--list" ]; then
     for label in bug debt process tooling infra test security external applied; do
         f="$DIR/${FILES[$label]}.md"
         [ -f "$f" ] || { echo "missing category file: $f" >&2; exit 2; }
-        # grep -c prints "0" AND exits 1 on zero matches; `|| echo 0` would then
-        # double the line ("0\n0") and crash the arithmetic below. Take the first
-        # line only and default an empty/non-numeric result to 0 → always a clean
-        # integer safe for `$(( ))`.
-        mono="$(grep -c '^- 20' "$f" 2>/dev/null | head -1)"
+        # grep -c prints "0" AND exits 1 on zero matches. Under `set -euo pipefail`
+        # that nonzero exit aborts the script before the `case` below (so a category
+        # with only per-entry files / an empty monolith would crash `--list`), hence
+        # the trailing `|| true`. `head -1` guards any multi-line oddity, and the
+        # `case` defaults an empty/non-numeric result to 0 → a clean `$(( ))` integer.
+        mono="$(grep -c '^- 20' "$f" 2>/dev/null | head -1 || true)"
         case "$mono" in ''|*[!0-9]*) mono=0 ;; esac
         perfile="$(_perfile_count "${FILES[$label]}")"
         printf '%-10s %s\n' "$label" "$((mono + perfile))"
