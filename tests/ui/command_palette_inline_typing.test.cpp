@@ -1,6 +1,6 @@
 // command_palette_inline_typing.test.cpp — bucket-E (ImGui Test Engine) coverage
 // for the inline command-palette typing -> filter path (B8 Phase-1 L1 of
-// docs/plans/active/b8-bucket-e-coverage.md).
+// docs/plans/b8-bucket-e-coverage.md).
 //
 // WHAT THIS LOCKS IN — typing into the palette's filter input updates the live
 // filter buffer AND narrows the visible command set, observed PRE-Enter (no

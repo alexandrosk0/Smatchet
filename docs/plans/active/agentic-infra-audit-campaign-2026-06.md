@@ -245,7 +245,7 @@ These survived mining but the verifier found the root cause already tracked; lis
 | self-improvement-loop-03 | P1 | `docs/self-improvement/categories/tooling.md:149` — `mandatory-merge-snapshot-on-override-merge` (applied 2026-06-13, watcher path; admin path deferred) |
 | bats-coverage-03 | P1 | `docs/self-improvement/categories/test.md:29-33` — bats suites not auto-enrolled by `test-all.sh` (open) |
 | bats-coverage-04 | P1 | `docs/self-improvement/categories/test.md:29-33` — same entry (markdown_links no-wrapper half) |
-| project-prompts-skills-02 | P1 | `docs/plans/active/tooling-process-backlog-sweep.md` Slice 9, item #27 (parity script not wired into CI) |
+| project-prompts-skills-02 | P1 | `docs/plans/tooling-process-backlog-sweep.md` Slice 9, item #27 (parity script not wired into CI) |
 
 ## Provenance & salvage artifacts
 

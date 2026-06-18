@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-ui-command-palette-inline-typing.sh — bucket-E driver for the inline
 # command-palette typing -> filter path (B8 Phase-1 L1 of
-# docs/plans/active/b8-bucket-e-coverage.md). Invokes `ui_test.run` against an
+# docs/plans/b8-bucket-e-coverage.md). Invokes `ui_test.run` against an
 # ephemeral spawn, parses the JSON envelope, reports Passed / Failed.
 #
 # Exit codes:
