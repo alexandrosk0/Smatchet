@@ -262,11 +262,28 @@ setup_claude_code() {
     fi
   done
   if [ -n "$_intent_py" ]; then
-    if grep -q '"UserPromptSubmit"' ".claude/settings.json" 2>/dev/null \
-       && grep -q 'capture-intent.sh' ".claude/settings.json" 2>/dev/null; then
+    # Structural check (Bugbot e4c20652): capture-intent.sh must be registered as a
+    # command UNDER hooks.UserPromptSubmit — not merely present somewhere in the file
+    # next to the word "UserPromptSubmit". Two independent greps would false-WIRE a
+    # hand-edited / mis-synced settings.json where capture-intent.sh hangs off a
+    # DIFFERENT event (e.g. SessionStart). Parse the JSON and walk the actual list.
+    if "$_intent_py" - ".claude/settings.json" >/dev/null 2>&1 <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as _f:
+        _d = json.load(_f)
+except Exception:
+    sys.exit(1)
+for _grp in (_d.get("hooks") or {}).get("UserPromptSubmit") or []:
+    for _h in (_grp.get("hooks") or []):
+        if "capture-intent.sh" in (_h.get("command") or ""):
+            sys.exit(0)
+sys.exit(1)
+PY
+    then
       echo "  prompt-intent capture: WIRED (UserPromptSubmit -> capture-intent.sh)"
     else
-      echo "  prompt-intent capture: NOT WIRED — capture-intent.sh missing from .claude/settings.json UserPromptSubmit (re-run setup / check sync-settings-hooks.sh)"
+      echo "  prompt-intent capture: NOT WIRED — capture-intent.sh not registered under .claude/settings.json hooks.UserPromptSubmit (re-run setup / check sync-settings-hooks.sh)"
     fi
   else
     echo "  prompt-intent capture: INERT — no working python3/python/py on PATH (hook fail-safes to writing nothing)"
