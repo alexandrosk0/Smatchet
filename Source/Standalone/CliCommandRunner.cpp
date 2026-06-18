@@ -1405,7 +1405,6 @@ bool RunCmdAttachHandleHelp(const ParsedArgs& pa, const std::string& host, int p
 /// Phase 3 of RunCmdAttach: POST the command to the MCP endpoint and extract the response envelope.
 /// On connection failure, delegates to SpawnAndRun if pa.spawn is set.
 /// Returns kExitOk with envelope filled; otherwise emits an error to stderr and returns exit code.
-///
 /// `outSpawnHandled` is set true ONLY when the --spawn branch ran: SpawnAndRun is terminal — it
 /// emits its own result envelope to stdout and returns the FINAL process exit code. The caller must
 /// then return that code directly and must NOT post-process `outEnvelope` (which stays empty on this
