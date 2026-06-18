@@ -92,6 +92,8 @@
 #                                  cases from the CR-completion gate.
 #   SAFE_ADMIN_MERGE_CR_GRACE_MINUTES — head-age grace before a still-absent CR
 #                                  review degrades to a logged pass (default 20).
+#                                  0 DISABLES the backstop (never auto-passes a
+#                                  never-shown CR).
 #   SAFE_ADMIN_MERGE_CR_GRACE_EXPIRED — TEST-ONLY: force the grace verdict
 #                                  ("true"/"false"), bypassing the head-age math.
 #
@@ -233,6 +235,10 @@ detect_cr_installed() {
 # detect_cr_grace_expired <view_json> — "true" when the head commit is older
 # than the grace window (so a still-absent/stuck CR degrades to a logged pass),
 # else "false". SAFE_ADMIN_MERGE_CR_GRACE_EXPIRED overrides the math (tests).
+# Head staleness is read from the commit whose oid == .headRefOid (NOT merely the
+# newest committedDate, which a truncated `--json commits` page can mis-report).
+# SAFE_ADMIN_MERGE_CR_GRACE_MINUTES=0 DISABLES the backstop entirely (returns
+# "false" always) — a 0-minute window is "no grace", not "instant grace".
 # Fail-safe direction = "false" (cannot prove staleness → keep blocking) on any
 # missing date / unparseable timestamp / `date` failure: the backstop only fires
 # on a CONFIRMED-stale head, never on an unknown one.
@@ -245,9 +251,22 @@ detect_cr_grace_expired() {
     local view_json="$1"
     local grace_min="${SAFE_ADMIN_MERGE_CR_GRACE_MINUTES:-20}"
     [[ "$grace_min" =~ ^[0-9]+$ ]] || grace_min=20
+    # grace_min == 0 DISABLES the backstop. A 0-minute window would mark every
+    # past head instantly stale and let evaluate_cr PASS on a never-shown CR —
+    # re-opening the #1332 merge-beats-review race. Treat 0 as "no backstop;
+    # wait for a real CR verdict (or the cr-out-of-band label)".
+    if [ "$grace_min" -eq 0 ]; then printf 'false'; return 0; fi
     local committed
+    # Prefer the commit whose oid == headRefOid (the TRUE PR head): `gh pr view
+    # --json commits` is capped (~250), so sort-by-committedDate can omit the
+    # head on a large PR and mis-time the grace. Fall back to the newest
+    # committedDate only when headRefOid is absent or not in the returned page.
     committed=$(printf '%s' "$view_json" \
-        | jq -r '(.commits // []) | (sort_by(.committedDate) | last | .committedDate) // empty' 2>/dev/null) || committed=""
+        | jq -r '(.headRefOid // "") as $head
+                 | (.commits // []) as $c
+                 | (($c | map(select(.oid == $head)) | (.[0].committedDate // empty))
+                    // ($c | sort_by(.committedDate) | last | .committedDate)
+                    // empty)' 2>/dev/null) || committed=""
     if [ -z "$committed" ]; then printf 'false'; return 0; fi
     local now head_epoch
     now=$(date -u +%s 2>/dev/null) || { printf 'false'; return 0; }
@@ -271,7 +290,11 @@ detect_cr_grace_expired() {
 # on a successful eval; NON-ZERO only on a jq parse/runtime error (caller fails
 # closed). First-match-wins ordering mirrors poll_merge_gates' CR arms:
 #   cr-out-of-band override  >  not-installed  >  CR terminal-green  >
-#   grace-expired backstop   >  CR present-but-not-green  >  CR absent.
+#   CR present-but-not-green (BLOCK, ignores grace)  >  grace-expired backstop
+#   (CR absent + stale head → PASS)  >  CR absent (BLOCK).
+# The grace backstop deliberately sits AFTER the present-but-not-green arm: an
+# in-progress CR review must never be raced by the head-age backstop (that is
+# exactly the #1332 merge-beats-review hole); grace only rescues an ABSENT CR.
 # ----------------------------------------------------------------------------
 evaluate_cr() {
     local view_json="$1" cr_installed="$2" grace_expired="$3"
@@ -299,8 +322,8 @@ evaluate_cr() {
         | if $crOob then "PASS cr-out-of-band label waives the CodeRabbit wait"
           elif ($installed != "true") then "PASS CodeRabbit not installed for this repo"
           elif ($present and $green) then "PASS CodeRabbit review complete on head"
-          elif ($grace == "true") then "PASS CodeRabbit grace expired (head stale, CR never resolved — backstop pass)"
           elif $present then "BLOCK CodeRabbit review still in progress on head (context present, not yet green)"
+          elif ($grace == "true") then "PASS CodeRabbit grace expired (head stale, CR never showed — backstop pass)"
           else "BLOCK CodeRabbit has not reviewed this head yet"
           end
     '
@@ -459,8 +482,53 @@ run_selftest() {
         fails=$((fails + 1))
     fi
 
+    # CASE 13 — CR present-but-not-green with grace EXPIRED → still BLOCK.
+    # Regression guard for the #1358 High finding: the head-age backstop must NOT
+    # override an in-progress CR review (else admin-merge races CodeRabbit — the
+    # exact #1332 hole this gate closes). Grace rescues only an ABSENT CR.
+    verdict=$(evaluate_cr "$cr_pending_rollup" "true" "true")
+    if [[ "$verdict" == BLOCK* ]] && [[ "$verdict" == *"in progress"* ]]; then
+        echo "selftest CASE13 PASS — in-progress CR blocks even past grace"
+    else
+        echo "selftest CASE13 FAIL — pending CR past grace should BLOCK (got: '$verdict')" >&2
+        fails=$((fails + 1))
+    fi
+
+    # CASE 14 — SAFE_ADMIN_MERGE_CR_GRACE_MINUTES=0 DISABLES the backstop:
+    # detect_cr_grace_expired must read "false" even on an ancient head, so a
+    # 0-minute window cannot auto-pass a never-shown CR (#1358 zero-grace finding).
+    # These two cases exercise the real head-age MATH, so they must neutralize an
+    # ambient SAFE_ADMIN_MERGE_CR_GRACE_EXPIRED override (the bats harness sets it)
+    # that would otherwise short-circuit detect_cr_grace_expired before the math.
+    local stale_head_json grace_out
+    stale_head_json='{"headRefOid":"abc","commits":[{"oid":"abc","committedDate":"2020-01-01T00:00:00Z"}]}'
+    grace_out=$(unset SAFE_ADMIN_MERGE_CR_GRACE_EXPIRED; SAFE_ADMIN_MERGE_CR_GRACE_MINUTES=0 detect_cr_grace_expired "$stale_head_json")
+    if [ "$grace_out" = "false" ]; then
+        echo "selftest CASE14 PASS — grace_min=0 disables the stale-head backstop"
+    else
+        echo "selftest CASE14 FAIL — grace_min=0 should disable backstop (got: '$grace_out')" >&2
+        fails=$((fails + 1))
+    fi
+
+    # CASE 15 — staleness follows headRefOid, NOT the newest committedDate, so a
+    # truncated `--json commits` page can't mis-time the grace (#1358 truncation
+    # finding). headRefOid points at an ancient commit while a fresh "now" commit
+    # also appears: with the default 20-min window the head must read STALE.
+    local head_oid_json now_iso
+    now_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
+    head_oid_json='{"headRefOid":"old","commits":[
+      {"oid":"new","committedDate":"'"$now_iso"'"},
+      {"oid":"old","committedDate":"2020-01-01T00:00:00Z"}]}'
+    grace_out=$(unset SAFE_ADMIN_MERGE_CR_GRACE_EXPIRED SAFE_ADMIN_MERGE_CR_GRACE_MINUTES; detect_cr_grace_expired "$head_oid_json")
+    if [ "$grace_out" = "true" ]; then
+        echo "selftest CASE15 PASS — staleness uses headRefOid, not newest commit"
+    else
+        echo "selftest CASE15 FAIL — head oid (ancient) should read stale (got: '$grace_out')" >&2
+        fails=$((fails + 1))
+    fi
+
     if [ "$fails" -eq 0 ]; then
-        echo "PASS — safe-admin-merge --selftest (12/12)"
+        echo "PASS — safe-admin-merge --selftest (15/15)"
         return 0
     fi
     echo "FAIL — safe-admin-merge --selftest ($fails failing case(s))" >&2
@@ -489,7 +557,7 @@ main() {
         view_json="$SAFE_ADMIN_MERGE_STUB_ROLLUP"
     else
         command -v gh >/dev/null 2>&1 || { echo "safe-admin-merge: gh required" >&2; exit 2; }
-        if ! view_json=$(gh pr view "$pr" --json statusCheckRollup,state,labels,commits 2>&1); then
+        if ! view_json=$(gh pr view "$pr" --json statusCheckRollup,state,labels,commits,headRefOid 2>&1); then
             echo "safe-admin-merge: gh pr view failed: $view_json" >&2
             exit 2
         fi

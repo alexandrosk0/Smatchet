@@ -71,10 +71,10 @@ JSON
 
 # ----------------------------------------------------------------------------
 
-@test "--selftest passes (12/12) and dogfoods the gate" {
+@test "--selftest passes (15/15) and dogfoods the gate" {
     run bash "$SCRIPT" --selftest
     [ "$status" -eq 0 ]
-    [[ "$output" == *"PASS — safe-admin-merge --selftest (12/12)"* ]]
+    [[ "$output" == *"PASS — safe-admin-merge --selftest (15/15)"* ]]
 }
 
 @test "a RED Bucket-C does NOT block (Mesa-GL advisory-flip 2026-06-15, exit 0)" {
