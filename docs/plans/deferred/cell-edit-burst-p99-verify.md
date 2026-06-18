@@ -2,7 +2,7 @@
 
 > **Slug**: `cell-edit-burst-p99-verify` (matches this file's basename without `.md`).
 >
-> **Status**: `deferred` — parked on unavailable real-GPU (native-GL) hardware / self-hosted runner; the CI-only 15.0 ms p99 ceiling holds in the interim. Resume when a real-GPU box exists (issue #973 open).
+> **Status**: `resolved` (2026-06-18, #1385) — the premise was a misdiagnosis. The ~10.9 ms cell-edit-burst `SmatchetUI::Draw` p99 was **cold-start/warmup pollution, not a real edit-storm cost**: cell-edit-burst was a 1-frame scenario whose sample ring held only bootstrap frames (the edit burst dispatches once in `OnStart` and is non-blocking per PR #186; `drawEnsureCatalogAndInitialSync` is a one-time sync with steady max 0.0002 ms). The `p99-gate-warmup-frame-exclusion` fix (#1385) gives the scenario a steady-state measurement window where `SmatchetUI::Draw` p99 is ~0.3 ms — well under the global 10.0 ms floor — so the CI-only 15.0 ms override was **removed** from `regression-policy.json` and no real-GPU datapoint is needed. Issue #973 closed as not-a-product-bug. The phases below are retained as historical record of the verify-first protocol.
 
 ## Context
 
