@@ -39,7 +39,7 @@ setup() {
     export SNAPSHOT_LEDGER="$PM_DATA/snapshots.jsonl"
     : > "$SNAPSHOT_LEDGER"                         # empty → live fallback path
     export POSTMORTEM_REQUIRED_CONTEXTS="Test-delta gate,Windows + MSVC,Perf PR-fast (windows-2022)"
-    export POSTMORTEM_OVERRIDE_LABELS="tests-out-of-band perf-out-of-band cr-out-of-band coverage-out-of-band"
+    export POSTMORTEM_OVERRIDE_LABELS="tests-out-of-band perf-out-of-band cr-out-of-band coverage-out-of-band intent-out-of-band"
     export POSTMORTEM_DIRECTPUSH_SINCE="7 days ago"
 
     # --- fixture defaults (tests overwrite as needed) -----------------------
@@ -287,6 +287,27 @@ JSON
     echo '{"statusCheckRollup":[{"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}' > "$PM_DATA/rollup_3004.json"
     run_detector
     [[ "$output" != *"PR #3004"* ]]
+}
+
+@test "moot intent-out-of-band (Intent section SUCCESS) owes nothing" {
+    prlist <<'JSON'
+[{"number":3010,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"bi1"},"labels":[{"name":"intent-out-of-band"}],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Intent section","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    echo '{"statusCheckRollup":[{"__typename":"CheckRun","name":"Intent section","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}' > "$PM_DATA/rollup_3010.json"
+    run_detector
+    [[ "$output" != *"PR #3010"* ]]
+}
+
+@test "load-bearing intent-out-of-band (Intent section FAILURE) owes a postmortem" {
+    prlist <<'JSON'
+[{"number":3011,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"bi2"},"labels":[{"name":"intent-out-of-band"}],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Intent section","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    echo '{"statusCheckRollup":[{"__typename":"CheckRun","name":"Intent section","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}' > "$PM_DATA/rollup_3011.json"
+    run_detector
+    [[ "$output" == *"PR #3011"* ]]
+    [[ "$output" == *"override: intent-out-of-band"* || "$output" == *"red-check: Intent section"* ]]
 }
 
 # ============================================================================
