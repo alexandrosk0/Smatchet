@@ -131,7 +131,7 @@ case "$TOOL" in
     if printf '%s' "$CMD" | grep -qE "${GIT_INVOKE_RE}${GIT_OPTS_RE}[[:space:]]+commit(\$|[;&|)[:space:]])"; then
       if [ "$IS_INTEGRATION" = "1" ] && { [ "$CUR_BRANCH" = "develop" ] || [ "$CUR_BRANCH" = "main" ]; } \
          && ! all_git_ops_target_safe_worktree 'commit'; then
-        deny "No direct commit to ${CUR_BRANCH} in the integration tree (${PROJ}). Feature work belongs in a worktree: pwsh scripts/dev/worktree.ps1 new <slug> — then commit with an explicit \`git -C <worktree-path> commit\` (allowed from here). Override: SMATCHET_ACK_BRANCH_DRIFT=1 (must be exported before session launch)."
+        deny "No direct commit to ${CUR_BRANCH} in the integration tree (${PROJ}). Feature work belongs in a worktree: pwsh scripts/dev/worktree.ps1 new <slug> — then commit with an explicit \`git -C <worktree-path> commit\` (allowed from here). Pass a LITERAL absolute path, not a shell variable like \$WT — this guard reads the un-expanded command text, so a \$VAR is rejected. Override: SMATCHET_ACK_BRANCH_DRIFT=1 (must be exported before session launch)."
       fi
     fi
     # When already drifted, deny any further HEAD-moving git op so the PostToolUse
