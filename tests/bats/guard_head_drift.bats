@@ -138,7 +138,7 @@ assert_allowed() {
     assert_denied
 }
 
-@test "PowerShell: git.exe commit is denied (CR-953 review — previously failed open)" {
+@test "PowerShell: git.exe commit is denied (CR-953 review - previously failed open)" {
     run invoke_hook PowerShell "git.exe commit -m x"
     assert_denied
 }
@@ -148,7 +148,7 @@ assert_allowed() {
     assert_denied
 }
 
-@test "Bash: subshell-wrapped commit is denied (CR-953 review — previously failed open)" {
+@test "Bash: subshell-wrapped commit is denied (CR-953 review - previously failed open)" {
     run invoke_hook Bash "(git commit -m x)"
     assert_denied
     run invoke_hook Bash "echo \$(git commit -m x)"
@@ -171,6 +171,40 @@ assert_allowed() {
     run bash -c "jq -cn --arg sid \"$SID\" '{session_id:\$sid, tool_name:\"Edit\", tool_input:{file_path:\"x\"}}' | bash \"$HOOK\""
     [ "$status" -eq 0 ]
     echo "$output" | jq -e '.hookSpecificOutput.permissionDecision == "deny"' >/dev/null
+}
+
+# ---- quoted -C path WITH SPACES (tooling.md :328 / :175 fail-OPEN) ----------
+
+@test "Bash: git -C \"<spaced worktree>\" commit on a feature branch is allowed" {
+    WTSP="$SANDBOX/wt space"
+    git -C "$MAIN" worktree add --quiet -b feat/sp "$WTSP" >/dev/null 2>&1
+    run invoke_hook Bash "git -C \"$WTSP\" commit -m x"
+    assert_allowed
+}
+
+@test "Bash: git -C \"<spaced worktree on protected branch>\" commit stays DENIED (no fail-open)" {
+    # If the spaced quoted path failed to parse, the commit would slip past
+    # un-matched (fail-OPEN). It must be recognised AND blocked on a protected
+    # branch — proving the quoted-path grammar matches.
+    WTSP="$SANDBOX/wt space"
+    git -C "$MAIN" worktree add --quiet -b main2 "$WTSP" >/dev/null 2>&1
+    git -C "$WTSP" checkout --quiet -B main
+    run invoke_hook Bash "git -C \"$WTSP\" commit -m x"
+    assert_denied
+}
+
+# ---- Edit/Write worktree exemption under drift (tooling.md :70) --------------
+
+@test "Edit: drifted HEAD ALLOWS a write to a linked-worktree file" {
+    git -C "$MAIN" -c user.email=t@t -c user.name=t commit --allow-empty --quiet -m drift
+    run bash -c "jq -cn --arg sid \"$SID\" --arg f \"$WT/foo.txt\" '{session_id:\$sid, tool_name:\"Edit\", tool_input:{file_path:\$f}}' | bash \"$HOOK\""
+    assert_allowed
+}
+
+@test "Edit: drifted HEAD still DENIES a write to an integration-tree file" {
+    git -C "$MAIN" -c user.email=t@t -c user.name=t commit --allow-empty --quiet -m drift
+    run bash -c "jq -cn --arg sid \"$SID\" --arg f \"$MAIN/foo.txt\" '{session_id:\$sid, tool_name:\"Edit\", tool_input:{file_path:\$f}}' | bash \"$HOOK\""
+    assert_denied
 }
 
 @test "no session baseline entry -> allow (never false-block)" {

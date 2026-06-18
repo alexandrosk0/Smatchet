@@ -32,6 +32,26 @@ json_escape() {
   printf '%s' "$s"
 }
 
+# Drop heredoc BODIES from a command string so a git verb that only appears as
+# heredoc text (e.g. `cat <<EOF … git reset … EOF`) can't arm the mutating-op
+# match. grep is line-based, so a body line `git reset` otherwise matches `^git`.
+# The redirection line itself is kept (it carries no executable verb). Best-effort
+# (single nesting level, word delimiter); over-dropping only makes this advisory
+# guard MORE permissive, never falsely DENY. (tooling.md 2026-06-18 :566)
+strip_heredoc() {
+  local line state=0 delim="" out=""
+  local hdre='<<-?[[:space:]]*["'"'"']?([A-Za-z_][A-Za-z0-9_]*)'
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ "$state" = 1 ]; then
+      [[ "$line" =~ ^[[:space:]]*"$delim"[[:space:]]*$ ]] && state=0
+      continue
+    fi
+    [[ "$line" =~ $hdre ]] && { delim="${BASH_REMATCH[1]}"; state=1; }
+    out+="$line"$'\n'
+  done <<< "$1"
+  printf '%s' "$out"
+}
+
 [ "${SMATCHET_ALLOW_SHARED_SWITCH:-}" = "1" ] && exit 0
 
 PROJ="${CLAUDE_PROJECT_DIR:-$(pwd)}"
@@ -65,25 +85,57 @@ json_field() { # $1 = jq filter, $2 = sed key
 CMD="$(json_field '.tool_input.command' 'command')"
 [ -n "$CMD" ] || exit 0
 
-# Mutating git ops only.
-printf '%s' "$CMD" | grep -qE '(^|[;&|[:space:]])git([[:space:]]+(-C[[:space:]]+[^[:space:]]+|-c[[:space:]]+[^[:space:]]+|--[^[:space:]]+))*[[:space:]]+(checkout|switch|pull|reset|merge|rebase)($|[[:space:]])|(^|[;&|[:space:]])git[[:space:]]+stash[[:space:]]+pop($|[[:space:]])' || exit 0
+# Mutating git ops only. Match `git` ONLY at a command position — start of a
+# line (grep is line-based, so this also covers a `;`/`&&`/newline-separated op)
+# or right after a `;` `&` `|` `(` `&&` `||` separator — never after a bare word
+# (an argument) or a quote. This is what stops a verb that merely appears as an
+# echo/commit-message argument or a quoted string from arming the guard; heredoc
+# bodies are removed first by strip_heredoc. (tooling.md 2026-06-18 :566)
+STRIPPED="$(strip_heredoc "$CMD")"
+cmdpos='(^|[;&|(]|&&|\|\|)[[:space:]]*'
+gitopts='([[:space:]]+(-C[[:space:]]+("[^"]*"|[^[:space:]]+)|-c[[:space:]]+[^[:space:]]+|--[^[:space:]]+))*'
+printf '%s' "$STRIPPED" | grep -qE "${cmdpos}git${gitopts}[[:space:]]+(checkout|switch|pull|reset|merge|rebase)(\$|[[:space:]])|${cmdpos}git[[:space:]]+stash[[:space:]]+pop(\$|[[:space:]])" || exit 0
 
-# Linked-worktree exemption: a `git -C <path> …` whose target resolves to a
-# DIFFERENT git worktree than this integration tree moves THAT worktree's HEAD,
-# never the shared tree's — so it can't rug-pull a sibling session here. Exempt
-# it (this is the common cross-worktree integration-merge that previously forced
-# a `bash file.sh` wrapper dance — tooling self-improvement 2026-06-11). A `-C`
-# pointing back at the integration tree, or a bare git op in this tree, still
-# falls through to the liveness block. Fail-CLOSED: if the `-C` target cannot be
-# resolved as a worktree (missing/not-a-repo), do NOT exempt.
-cpath="$(printf '%s' "$CMD" | grep -oE '\-C[[:space:]]+("[^"]*"|[^[:space:]]+)' | tail -n1 | sed -E 's/^-C[[:space:]]+//; s/^"//; s/"$//')"
-if [ -n "$cpath" ]; then
-  _wt_top="$(git -C "$cpath" rev-parse --show-toplevel 2>/dev/null)"
-  _proj_top="$(git -C "$PROJ" rev-parse --show-toplevel 2>/dev/null)"
-  if [ -n "$_wt_top" ] && [ -n "$_proj_top" ] && [ "$_wt_top" != "$_proj_top" ]; then
-    exit 0
-  fi
-fi
+# Worktree-target exemption: an op that targets a DIFFERENT git worktree than
+# this integration tree moves THAT worktree's HEAD, never the shared tree's — so
+# it can't rug-pull a sibling here. EXEMPT only when EVERY mutating-op invocation
+# carries its own explicit `-C <worktree>`. We do NOT try to model `cd` — shell
+# cwd tracking across `&&`/`||`/`;`/subshells/`cd`-back is not reliably derivable
+# from the raw command string, so a `cd`-based exemption is unsound (a later op
+# can re-target the shared tree, e.g. `cd <wt> && git -C <integration> merge`);
+# the canonical cross-worktree form is `git -C <ABSOLUTE-worktree-path> <op>`,
+# and `-C` is verified PER-OP so a `-C` on a LATER op can't exempt an earlier
+# bare op that runs in the shared tree (Cursor #1388).
+# This guard is ADVISORY / bias-to-allow (the hard net is guard-head-drift.sh):
+#   - target resolves to a different worktree  -> safe
+#   - target is an UNEXPANDED $VAR (can't stat) -> safe (almost always a
+#     worktree; a `-C $VAR` is never the shared tree literally — :10)
+#   - target resolves to THIS integration tree, or a bare op -> NOT safe (block)
+_proj_top="$(git -C "$PROJ" rev-parse --show-toplevel 2>/dev/null)"
+wt_exempt() { # $1 = candidate path (raw, possibly quoted / $VAR)
+  local p="$1"
+  [ -n "$p" ] || return 1
+  case "$p" in *'$'*) return 0 ;; esac          # unexpanded var -> advisory allow
+  local top
+  top="$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)"
+  [ -n "$top" ] && [ -n "$_proj_top" ] && [ "$top" != "$_proj_top" ]
+}
+
+# Enumerate ONLY command-position mutating-op invocations (same ${cmdpos} prefix
+# as the detection grep, so a verb that merely appears as an argument — e.g.
+# `… && echo git reset` — is NOT picked up here and can't force a false block).
+# Each real invocation must carry its own worktree `-C`; one bare / integration-
+# targeted op keeps the block.
+opmatch="${cmdpos}git${gitopts}[[:space:]]+((checkout|switch|pull|reset|merge|rebase)|stash[[:space:]]+pop)"
+all_safe=1
+while IFS= read -r _m; do
+  [ -n "$_m" ] || continue
+  _tgt="$(printf '%s' "$_m" | grep -oE '\-C[[:space:]]+("[^"]*"|[^[:space:]]+)' | tail -n1 | sed -E 's/^-C[[:space:]]+//; s/^"//; s/"$//')"
+  wt_exempt "$_tgt" || { all_safe=0; break; }
+done <<OPMATCHES
+$(printf '%s' "$STRIPPED" | grep -oE "$opmatch")
+OPMATCHES
+[ "$all_safe" = 1 ] && exit 0
 
 SID="$(json_field '.session_id' 'session_id')"
 [ -n "$SID" ] || SID="${CLAUDE_SESSION_ID:-}"
@@ -95,7 +147,7 @@ NOW="$(date -u +%s)"
 live="$(sr_count_live_siblings "$REGDIR" "$SID" "$NOW")"
 
 if [ "$live" -gt 0 ]; then
-  reason="${live} concurrent session(s) share this integration tree (${PROJ}); this op would change HEAD/working-tree under them. Do feature work in a worktree: pwsh scripts/dev/worktree.ps1 new <slug>. Override: SMATCHET_ALLOW_SHARED_SWITCH=1."
+  reason="${live} concurrent session(s) share this integration tree (${PROJ}); this op would change HEAD/working-tree under them. Do feature work in a worktree: pwsh scripts/dev/worktree.ps1 new <slug>. To act on a worktree FROM here, target it explicitly — \`git -C <ABSOLUTE-worktree-path> <op>\` (a LITERAL path, not a \$VAR — this guard reads the un-expanded command text; a bare \`cd <wt> && git …\` is NOT exempt, the op must carry its own -C). Override: export SMATCHET_ALLOW_SHARED_SWITCH=1 in the session env BEFORE launch (an inline \`SMATCHET_ALLOW_SHARED_SWITCH=1 git …\` prefix does NOT work — the hook reads its own env before your command runs)."
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}' "$(json_escape "$reason")"
 fi
 exit 0
