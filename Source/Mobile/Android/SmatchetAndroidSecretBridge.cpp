@@ -19,13 +19,23 @@ bool SmatchetAndroidSecretBridge::Init(JavaVM* vm, jobject activity) {
 
     activity_ = env->NewGlobalRef(activity);
     if (activity_ == nullptr) {
-        // OOM creating the global ref. Passing a null jobject to GetObjectClass below is undefined
-        // (aborts under CheckJNI), so bail before that. activity_ stays null -> Shutdown is a no-op.
+        // OOM creating the global ref raises a pending OutOfMemoryError. Clear it before returning so a
+        // later JNI call on this thread isn't aborted by the stale exception (CheckJNI). Passing a null
+        // jobject to GetObjectClass below is also undefined, so bail before that. activity_ stays null ->
+        // Shutdown is a no-op.
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+        }
         SLOGE("SecretBridge::Init: NewGlobalRef failed");
         return false;
     }
     jclass clazz = env->GetObjectClass(activity_);
     if (clazz == nullptr) {
+        // A failed GetObjectClass can leave a pending exception; clear it before returning so it doesn't
+        // poison the next JNI call on this thread (CheckJNI abort). Matches the GetMethodID handling below.
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+        }
         SLOGE("SecretBridge::Init: GetObjectClass failed");
         env->DeleteGlobalRef(activity_);
         activity_ = nullptr;
