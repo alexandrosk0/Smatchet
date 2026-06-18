@@ -577,17 +577,32 @@ $assetPaths = New-Object System.Collections.Generic.List[string]
 
 # --- Architecture wiring ------------------------------------------------------
 # x64 (default) keeps every artifact name + Inno arch byte-identical to before.
-# arm64 packages the native Windows-on-ARM build: switch the publish preset (the
-# build dir derives from it at line ~601), tag artifacts -arm64, and pass the
-# arm64 Inno architecture so the installer targets the 64-bit view on WoA. Unreal
-# is descoped on ARM64 and there is no arm64 light preset yet, so both are skipped
-# for arm64 to keep the run green end-to-end (Phase 4 follow-up may add them).
+# arm64 packages the native Windows-on-ARM build: tag artifacts -arm64 and pass
+# the arm64 Inno architecture so the installer targets the 64-bit view on WoA.
+#
+# Reconcile -Arch with the (possibly custom) -StandalonePreset first: a *-arm64
+# preset must pair with -Arch arm64 and vice versa, or the build tree's arch and
+# the artifact/installer arch labels diverge silently. The default preset
+# auto-upgrades to the arm64 tree; any other mismatch is a hard error.
+$presetIsArm64 = $StandalonePreset -match '-arm64$'
+if ($Arch -eq "arm64" -and -not $presetIsArm64) {
+    if ($StandalonePreset -eq "ninja-publish-msvc") {
+        $StandalonePreset = "ninja-publish-msvc-arm64"
+    } else {
+        throw "-Arch arm64 requires an ARM64 standalone preset; got '$StandalonePreset'. Use ninja-publish-msvc-arm64 (or omit -StandalonePreset)."
+    }
+}
+elseif ($Arch -eq "x64" -and $presetIsArm64) {
+    throw "-StandalonePreset '$StandalonePreset' targets ARM64 but -Arch is x64. Pass -Arch arm64 so artifact names and the installer match the build."
+}
+
+# Unreal is descoped on ARM64 and there is no arm64 light preset yet, so both are
+# skipped for arm64 to keep the run green end-to-end (Phase 4 follow-up may add them).
 $archToken = ""
 $innoArch = "x64compatible"
 if ($Arch -eq "arm64") {
     $archToken = "-arm64"
     $innoArch = "arm64"
-    if ($StandalonePreset -eq "ninja-publish-msvc") { $StandalonePreset = "ninja-publish-msvc-arm64" }
     if (-not $SkipUnreal) { Write-Host "  -Arch arm64: skipping Unreal package (descoped on ARM64)."; $SkipUnreal = $true }
     if (-not $SkipLightStandalone) { Write-Host "  -Arch arm64: skipping light standalone (no arm64 light preset yet)."; $SkipLightStandalone = $true }
 }

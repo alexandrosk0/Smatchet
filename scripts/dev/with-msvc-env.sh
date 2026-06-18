@@ -78,7 +78,9 @@ fi
 # PROCESSOR_ARCHITEW6432 (set when an emulated/32-bit process runs on a 64-bit
 # host) falling back to PROCESSOR_ARCHITECTURE: a cross build from an x64 host
 # picks the amd64_arm64 cross batch; a native ARM64 host picks the arm64 batch.
-SMATCHET_MSVC_ARCH="${SMATCHET_MSVC_ARCH:-x64}"
+# Normalise the requested arch to lowercase so ARM64/Arm64/X64 all resolve (the
+# PowerShell wrappers ToLower() theirs; keep parity).
+SMATCHET_MSVC_ARCH="$(printf '%s' "${SMATCHET_MSVC_ARCH:-x64}" | tr 'A-Z' 'a-z')"
 case "${PROCESSOR_ARCHITEW6432:-${PROCESSOR_ARCHITECTURE:-AMD64}}" in
     [Aa][Rr][Mm]64) _host_arch="arm64" ;;
     *)              _host_arch="x64" ;;

@@ -69,7 +69,10 @@ switch ($Arch.ToLowerInvariant()) {
         $VcvarsBat = if ($HostIsArm64) { 'vcvarsarm64.bat' } else { 'vcvarsamd64_arm64.bat' }
     }
     default {
-        Write-Error "with-msvc: invalid SMATCHET_MSVC_ARCH='$Arch' (expected x64 or arm64)."
+        # [Console]::Error.WriteLine (not Write-Error): with $ErrorActionPreference
+        # = 'Stop', Write-Error is terminating and would exit 1 before `exit 2` runs,
+        # breaking the documented exit-code contract.
+        [Console]::Error.WriteLine("with-msvc: invalid SMATCHET_MSVC_ARCH='$Arch' (expected x64 or arm64).")
         exit 2
     }
 }
@@ -77,7 +80,7 @@ switch ($Arch.ToLowerInvariant()) {
 # --- Locate a VC-tools VS install via vswhere ---------------------------------
 $VsWhere = 'C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe'
 if (-not (Test-Path $VsWhere)) {
-    Write-Error "with-msvc: vswhere.exe not found at $VsWhere. Install Visual Studio 2017+ (Community is free)."
+    [Console]::Error.WriteLine("with-msvc: vswhere.exe not found at $VsWhere. Install Visual Studio 2017+ (Community is free).")
     exit 2
 }
 
@@ -89,7 +92,7 @@ $installs = & $VsWhere -products '*' `
     -requires $VcRequires `
     -property installationPath
 if (-not $installs) {
-    Write-Error "with-msvc: no VS install with the $VcRequires component found (vswhere returned nothing for arch $Arch)."
+    [Console]::Error.WriteLine("with-msvc: no VS install with the $VcRequires component found (vswhere returned nothing for arch $Arch).")
     exit 2
 }
 
@@ -104,7 +107,7 @@ foreach ($cand in @($installs)) {
 
 $Vcvars = Join-Path $VsInstall "VC\Auxiliary\Build\$VcvarsBat"
 if (-not (Test-Path $Vcvars)) {
-    Write-Error "with-msvc: $VcvarsBat not found under $VsInstall (arch $Arch; install the matching VC toolset component)."
+    [Console]::Error.WriteLine("with-msvc: $VcvarsBat not found under $VsInstall (arch $Arch; install the matching VC toolset component).")
     exit 2
 }
 
