@@ -1009,7 +1009,7 @@ endif()
 
 target_compile_features(SmatchetTests PRIVATE cxx_std_14)
 
-# B8 (/EHsc on SmatchetTests, docs/plans/active/b8-bucket-e-coverage.md) — force
+# B8 (/EHsc on SmatchetTests, docs/plans/b8-bucket-e-coverage.md) — force
 # C++ exception unwinding ON for the doctest rig, immune to flag clobbering. The
 # default /EHsc normally arrives via CMAKE_CXX_FLAGS, but two things can strip it
 # for the test build: (1) a partial/stale configure that leaves CMAKE_CXX_FLAGS

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-ui-attachment-thumbnail-loading-cue.sh — bucket-E driver for the S5
 # thumbnail decode→upload offload cue (B8 Phase-1 L5,
-# docs/plans/active/b8-bucket-e-coverage.md).
+# docs/plans/b8-bucket-e-coverage.md).
 #
 # Verifies the Pillar 2 "UI never defers work without a visible cue" invariant by
 # running tests/ui/attachment_thumbnail_loading_cue.test.cpp:

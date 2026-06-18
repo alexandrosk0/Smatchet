@@ -2,7 +2,7 @@
 
 > **Slug**: `session-friction-fixes`
 >
-> **Origin**: End-of-session retrospective on `docs/plans/active/tooling-process-backlog-sweep.md` (9 of 10 slices shipped 2026-05-27/28). User asked "any improvements?" — this plan addresses the 4 highest-leverage friction points surfaced across those 9 PRs.
+> **Origin**: End-of-session retrospective on `docs/plans/tooling-process-backlog-sweep.md` (9 of 10 slices shipped 2026-05-27/28). User asked "any improvements?" — this plan addresses the 4 highest-leverage friction points surfaced across those 9 PRs.
 
 ## Context
 
