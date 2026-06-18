@@ -45,6 +45,11 @@ run_hook() {
     printf '{"tool_input":{"command":"%s"},"session_id":"mysid"}' "$1" | bash "$HOOK"
 }
 
+# jq-built payload so commands containing quotes / $ / newlines stay valid JSON.
+run_hook_jq() {
+    jq -cn --arg c "$1" '{tool_input:{command:$c}, session_id:"mysid"}' | bash "$HOOK"
+}
+
 @test "git -C <linked-worktree> merge is EXEMPT (allowed) despite a live sibling" {
     run run_hook "git -C $WT merge origin/develop"
     [ "$status" -eq 0 ]
@@ -65,6 +70,50 @@ run_hook() {
 
 @test "exemption fails CLOSED: -C to a non-worktree path does NOT exempt" {
     run run_hook "git -C /no/such/path/xyz merge origin/develop"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"permissionDecision":"deny"'* ]]
+}
+
+# ---- false-positive hardening (tooling.md 2026-06-18 :566 / :10) -------------
+
+@test "FP: a git verb that only appears as an echo ARGUMENT is NOT denied" {
+    run run_hook_jq "echo remember to git checkout main"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "FP: a git verb inside a quoted string is NOT denied" {
+    run run_hook_jq 'echo "do git reset --hard now"'
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "FP: a git verb in a heredoc BODY is NOT denied" {
+    run run_hook_jq "$(printf 'cat <<EOF\ngit reset --hard\nEOF')"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "FP: git -C \$VAR (unexpanded) is treated as a worktree (allowed)" {
+    run run_hook_jq 'git -C "$WT" merge origin/develop'
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "cd <linked-worktree> && git merge is EXEMPT (cwd targets the worktree)" {
+    run run_hook_jq "cd $WT && git merge origin/develop"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "cd <integration-tree> && git merge stays BLOCKED" {
+    run run_hook_jq "cd $PROJ && git merge origin/develop"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"permissionDecision":"deny"'* ]]
+}
+
+@test "TP: a subshell-wrapped mutating op is still BLOCKED" {
+    run run_hook_jq "(git reset --hard)"
     [ "$status" -eq 0 ]
     [[ "$output" == *'"permissionDecision":"deny"'* ]]
 }

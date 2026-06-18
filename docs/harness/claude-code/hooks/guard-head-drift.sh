@@ -92,7 +92,11 @@ TOOL="$(json_field '.tool_name' 'tool_name')"
 # class includes `(` so subshell/substitution forms `(git …)` / `$(git …)`
 # can't slip past (CR-947 hardening — these previously failed OPEN).
 GIT_INVOKE_RE='(^|[;&|([:space:]"\\/])git(\.exe)?"?'
-GIT_OPTS_RE='([[:space:]]+(-C[[:space:]]+[^[:space:]]+|-c[[:space:]]+[^[:space:]]+|--[^[:space:]]+))*'
+# `-C`/`-c` accept a double-QUOTED value so a worktree path with spaces
+# (`-C "C:\my wt"`) doesn't truncate at the first space and drop the whole
+# invocation out of the match — that was a direct-commit-to-develop fail-OPEN
+# (tooling.md :328 / :175).
+GIT_OPTS_RE='([[:space:]]+(-C[[:space:]]+("[^"]*"|[^[:space:]]+)|-c[[:space:]]+("[^"]*"|[^[:space:]]+)|--[^[:space:]]+))*'
 
 # True (0) when EVERY git invocation in $CMD matching the op alternation carries
 # a `-C <path>` whose target is a linked worktree (.git is a FILE pointer, never
@@ -111,7 +115,7 @@ all_git_ops_target_safe_worktree() { # $1 = op alternation, e.g. 'commit'
     # Last -C wins (matches git's own behaviour for repeated -C... close enough:
     # git actually chains relative -C, but absolute-path duplicates are the only
     # realistic agent shape and the LAST one is the effective base there).
-    tgt="$(printf '%s' "$m" | sed -nE 's/.*-C[[:space:]]+([^[:space:]]+).*/\1/p')"
+    tgt="$(printf '%s' "$m" | sed -nE 's/.*-C[[:space:]]+("[^"]*"|[^[:space:]]+).*/\1/p')"
     tgt="${tgt%\"}"; tgt="${tgt#\"}"; tgt="${tgt%\'}"; tgt="${tgt#\'}"
     [ -n "$tgt" ] || return 1                       # no -C → targets this tree
     case "$tgt" in [A-Za-z]:*|/*|\\\\*) ;; *) tgt="$PROJ/$tgt" ;; esac
@@ -146,6 +150,31 @@ case "$TOOL" in
     ;;
   Edit|Write|MultiEdit|NotebookEdit)
     if [ "$drifted" = "1" ]; then
+      # Worktree exemption: the drift deny exists because a stale Read of an
+      # INTEGRATION-TREE file would write against the wrong branch. A write whose
+      # file_path resolves to a DIFFERENT git toplevel than the integration tree
+      # (a linked worktree under .claude/worktrees/<id>/ has its own toplevel, or
+      # a file outside this repo entirely) cannot land against this tree's drifted
+      # HEAD — so it's safe even while the integration HEAD has moved. Without this
+      # an integration-tree-rooted session was frozen out of editing its OWN
+      # worktree whenever a sibling moved the shared HEAD (tooling.md :70).
+      FP="$(json_field '.tool_input.file_path' 'file_path')"
+      # ABSOLUTE paths only — a relative path resolves against the hook's cwd,
+      # which is not reliably the integration tree, so it stays conservatively
+      # denied. (Claude Code's Edit/Write always pass an absolute file_path.)
+      case "$FP" in
+        /*|[A-Za-z]:[/\\]*|\\\\*)
+          PROJ_TOP="$(git -C "$PROJ" rev-parse --show-toplevel 2>/dev/null)"
+          # Walk up to the nearest EXISTING ancestor so a not-yet-created file
+          # (Write to a new subdir) still resolves to its owning tree — a new
+          # path under the integration tree must NOT be wrongly exempted.
+          _d="$(dirname "$FP")"
+          while [ -n "$_d" ] && [ ! -d "$_d" ]; do _d="$(dirname "$_d")"; done
+          FILE_TOP=""
+          [ -d "$_d" ] && FILE_TOP="$(git -C "$_d" rev-parse --show-toplevel 2>/dev/null)"
+          [ -n "$FILE_TOP" ] && [ "$FILE_TOP" != "$PROJ_TOP" ] && exit 0
+          ;;
+      esac
       deny "$drift_reason Your last Read is stale and this write would land against the wrong branch."
     fi
     exit 0
