@@ -22,9 +22,11 @@
 #include <cstring>
 #include <exception>
 #include <fstream>
+#include <functional>
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <utility>
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -363,7 +365,64 @@ std::string UnprotectSecretFromConfig(const std::string& protectedBase64) {
     LocalFree(out.pbData);
     return plain;
 }
+#else
+// SECURITY (audit H2): no DPAPI off Windows. On Windows the CryptProtectData path above binds the
+// ciphertext to the user/machine; the two non-Windows families are covered differently:
+//   * POSIX desktop (Linux/macOS): no OS-backed encryption — the secret value is returned verbatim
+//     (passthrough below) and lands as cleartext JSON. Mitigation: AtomicWriteTextFile chmods the
+//     config file 0600 (owner-only) and LoadJsonFile LOG_WARNs on a group/world-readable file. That
+//     bounds exposure to the file owner; it is NOT encryption.
+//   * Android (audit H2 / CR #1357): secret-at-rest IS sealed — ProtectSecretForConfig /
+//     UnprotectSecretFromConfig below route every secret through the host-installed AndroidKeyStore
+//     AES-GCM provider, FAIL CLOSED (drop rather than persist cleartext) when no provider is wired.
+//     Filesystem perms are not a reliable owner-isolation boundary on Android, so the Keystore seal
+//     — not file mode — is the at-rest protection. ConfigManager Write/LoadSecretFields take a
+//     dedicated __ANDROID__ arm that persists only the sealed `_enc` keys.
+std::string ProtectSecretForConfig(const std::string& plainText) {
+#if defined(__ANDROID__)
+    // Route through the host-installed Keystore provider when present (audit H2). Copy the
+    // std::function out under the lock, then call it UNLOCKED so a slow JNI round-trip never
+    // stalls an unrelated config writer holding the same mutex.
+    std::function<std::string(const std::string&)> provider;
+    {
+        std::lock_guard<std::mutex> lk(GetAndroidSecretProviderMutexRef());
+        provider = GetAndroidSecretProtectorRef();
+    }
+    if (!provider && !plainText.empty()) {
+        // No Keystore provider wired (host init failed, or a pre-Keystore build). FAIL CLOSED: the
+        // secret is dropped rather than persisted as cleartext (ApplyConfigSecretProvider returns
+        // empty below). Loud so the dropped secret is diagnosable; the user re-enters it once a
+        // Keystore provider is available.
+        LOG_WARN("ConfigManager: Android config secret DROPPED — no Keystore provider installed "
+                 "(audit H2 fail-closed). Re-enter the secret once Keystore is wired.");
+    }
+    return ApplyConfigSecretProvider(provider, plainText);
+#else
+    return plainText;
+#endif
+}
+std::string UnprotectSecretFromConfig(const std::string& protectedBase64) {
+#if defined(__ANDROID__)
+    std::function<std::string(const std::string&)> provider;
+    {
+        std::lock_guard<std::mutex> lk(GetAndroidSecretProviderMutexRef());
+        provider = GetAndroidSecretUnprotectorRef();
+    }
+    // Fail-safe to empty (treat as no secret) on either arm: a missing provider (fail closed — see
+    // ApplyConfigSecretProvider) or an installed-provider decrypt failure. The latter also covers a
+    // legacy plaintext value written before Keystore landed, or ciphertext minted by a different
+    // keystore/device — the user re-enters the secret rather than us surfacing garbage.
+    return ApplyConfigSecretProvider(provider, protectedBase64);
+#else
+    return protectedBase64;
+#endif
+}
+#endif
 
+// Field-name-logged wrapper around UnprotectSecretFromConfig, used by Load() to emit a single
+// warning per decrypt failure (audit H2 / CR #1357). Cross-platform: on Win32 it wraps the DPAPI
+// unprotect, on Android the Keystore unseal, on POSIX desktop a verbatim passthrough (so a
+// non-empty input always yields a non-empty result and never warns).
 std::string UnprotectSecretFieldFromConfig(const char* fieldName, const std::string& protectedBase64) {
     const std::string plainText = UnprotectSecretFromConfig(protectedBase64);
     if (!protectedBase64.empty() && plainText.empty()) {
@@ -371,31 +430,6 @@ std::string UnprotectSecretFieldFromConfig(const char* fieldName, const std::str
     }
     return plainText;
 }
-#else
-// SECURITY (audit H2): no OS-backed secret encryption-at-rest off Windows. On Windows the
-// CryptProtectData path above binds the ciphertext to the user/machine; here the secret value is
-// returned verbatim and lands as cleartext JSON. Two distinct mitigations cover the two
-// non-Windows families:
-//   * POSIX desktop (Linux/macOS): the config file is chmod 0600 (owner-only) by
-//     AtomicWriteTextFile below, and LoadJsonFile LOG_WARNs on a group/world-readable file. That
-//     bounds exposure to the file owner; it is NOT encryption.
-//   * Android: secret-at-rest is plaintext AND filesystem perms are not a reliable owner-isolation
-//     boundary the way they are on a multi-user desktop. Keystore-backed encryption is a tracked
-//     follow-up (audit H2 / security backlog), NOT implemented here — JNI Keystore integration is
-//     out of scope for this change. Android is a known-UNSUPPORTED platform for secret-at-rest.
-std::string ProtectSecretForConfig(const std::string& plainText) {
-#if defined(__ANDROID__)
-    if (!plainText.empty()) {
-        // SECURITY: Android secret-at-rest is plaintext — Keystore integration is a tracked
-        // follow-up (audit H2). Loud so a build that ships secrets on Android cannot do so silently.
-        LOG_WARN("ConfigManager: Android stores config secrets as PLAINTEXT (no Keystore encryption "
-                 "— tracked follow-up, audit H2). Treat this device profile as untrusted for secrets.");
-    }
-#endif
-    return plainText;
-}
-std::string UnprotectSecretFromConfig(const std::string& protectedBase64) { return protectedBase64; }
-#endif
 
 // Pure, platform-agnostic decision helper (audit H2). Declared in ConfigManager_Internal.h so the
 // Windows doctest rig can exercise the loose-permission decision without POSIX stat/chmod.
@@ -403,6 +437,23 @@ bool IsLooseConfigFileMode(unsigned int mode) {
     // 0077 = group rwx | other rwx. Any of those bits set means the file is reachable by a
     // principal other than the owner — too loose for a secret-bearing config.
     return (mode & 0077u) != 0u;
+}
+
+// Pure seam for Android Keystore-backed secret-at-rest (audit H2). Declared in
+// ConfigManager_Internal.h so the Windows doctest rig can exercise all three arms without JNI.
+std::string ApplyConfigSecretProvider(const std::function<std::string(const std::string&)>& provider,
+                                      const std::string& value) {
+    if (value.empty()) {
+        return std::string(); // protect("") and unprotect("") are both empty — nothing to do.
+    }
+    if (!provider) {
+        // FAIL CLOSED (audit H2): no host Keystore provider wired means we cannot seal a secret at
+        // rest. Return empty rather than passing the raw value through — on protect the secret is
+        // dropped (never written cleartext to an Android profile whose file perms are not a reliable
+        // owner boundary); on unprotect a stored value is treated as absent. The caller re-prompts.
+        return std::string();
+    }
+    return provider(value); // provider owns fail-safe (returns empty on Keystore/JNI failure).
 }
 
 // Meyers singletons for cross-call state (process-wide IO + cache mutexes,
@@ -457,6 +508,21 @@ std::string& GetPlatformSharedOverrideRef() {
     return s;
 }
 
+// Host-installed Android Keystore secret providers (audit H2). See ConfigManager_Internal.h for the
+// install contract (set once at boot, before the first Load). An unset target means not installed.
+std::mutex& GetAndroidSecretProviderMutexRef() {
+    static std::mutex s_mutex;
+    return s_mutex;
+}
+std::function<std::string(const std::string&)>& GetAndroidSecretProtectorRef() {
+    static std::function<std::string(const std::string&)> s_protector;
+    return s_protector;
+}
+std::function<std::string(const std::string&)>& GetAndroidSecretUnprotectorRef() {
+    static std::function<std::string(const std::string&)> s_unprotector;
+    return s_unprotector;
+}
+
 } // namespace config_detail
 } // namespace smatchet
 
@@ -466,6 +532,9 @@ std::string& GetPlatformSharedOverrideRef() {
 
 using smatchet::config_detail::EnsureParentDirectoryForFile;
 using smatchet::config_detail::FileExists;
+using smatchet::config_detail::GetAndroidSecretProtectorRef;
+using smatchet::config_detail::GetAndroidSecretProviderMutexRef;
+using smatchet::config_detail::GetAndroidSecretUnprotectorRef;
 using smatchet::config_detail::GetBaseDirMutexRef;
 using smatchet::config_detail::GetCacheMutexRef;
 using smatchet::config_detail::GetHasCachedConfigRef;
@@ -497,6 +566,15 @@ void ConfigManager::SetUserDataDirectory(const std::string& baseDir) {
 
 void ConfigManager::SetPlatformSharedUserDataDirectoryOverride(const std::string& dir) {
     GetPlatformSharedOverrideRef() = dir.empty() ? std::string() : NormalizeDirectoryPath(dir);
+}
+
+void ConfigManager::SetAndroidSecretProvider(std::function<std::string(const std::string&)> protector,
+                                             std::function<std::string(const std::string&)> unprotector) {
+    // Installed once from the mobile host at boot, before the first Load. The lock orders the
+    // install against a background config Save/Load that reads the providers (copy-then-call).
+    std::lock_guard<std::mutex> lk(GetAndroidSecretProviderMutexRef());
+    GetAndroidSecretProtectorRef() = std::move(protector);
+    GetAndroidSecretUnprotectorRef() = std::move(unprotector);
 }
 
 // NOTE: these return BY VALUE (a snapshot copy taken under GetBaseDirMutexRef), NOT a reference

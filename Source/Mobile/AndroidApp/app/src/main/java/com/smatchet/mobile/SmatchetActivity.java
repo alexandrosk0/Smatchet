@@ -28,6 +28,12 @@ import java.util.concurrent.LinkedBlockingQueue;
  * (see SmatchetAndroidImeBridge): {@code showSoftInput()V},
  * {@code hideSoftInput()V}, {@code pollUnicodeChar()I}. Keep those three
  * signatures exactly in sync with the native bridge.
+ *
+ * <p>It also exposes the AndroidKeyStore secret-at-rest bridge (audit H2) that
+ * SmatchetAndroidSecretBridge resolves by name:
+ * {@code protectSecret(Ljava/lang/String;)Ljava/lang/String;} and
+ * {@code unprotectSecret(Ljava/lang/String;)Ljava/lang/String;}, delegating to
+ * {@link SmatchetSecretStore}. Keep those two signatures in sync with that bridge.
  */
 public class SmatchetActivity extends NativeActivity {
 
@@ -210,6 +216,28 @@ public class SmatchetActivity extends NativeActivity {
     public int pollUnicodeChar() {
         Integer codePoint = unicodeQueue.poll();
         return codePoint != null ? codePoint : 0;
+    }
+
+    /**
+     * Called from native code (JNI) to seal a config secret at rest with the AndroidKeyStore AES-GCM
+     * key (see {@link SmatchetSecretStore}). Runs synchronously on the calling (native) thread — the
+     * caller needs the return value and KeyStore ops do not require the UI thread. Returns the empty
+     * string on any failure, which the native bridge treats as "do not persist" (fail-safe), so a
+     * secret is never written in cleartext.
+     */
+    @SuppressWarnings("unused")
+    public String protectSecret(String plain) {
+        return SmatchetSecretStore.protect(plain);
+    }
+
+    /**
+     * Called from native code (JNI) to recover a secret sealed by {@link #protectSecret}. Returns the
+     * empty string on any failure or if the token was not produced by this device's key (fail-safe:
+     * the native bridge / Core then treat the secret as absent rather than surfacing a partial value).
+     */
+    @SuppressWarnings("unused")
+    public String unprotectSecret(String token) {
+        return SmatchetSecretStore.unprotect(token);
     }
 
     @Override

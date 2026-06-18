@@ -700,6 +700,18 @@ class ConfigManager {
      *  Empty string clears the override (resume OS resolution). Stored normalized. */
     static void SetPlatformSharedUserDataDirectoryOverride(const std::string& dir);
 
+    /** Mobile-host hook for Android secret-at-rest (audit H2). Installs the Keystore-backed
+     *  protect / unprotect providers Core uses to encrypt config secrets (API keys, tokens) at rest
+     *  on Android, replacing the loud plaintext fallback. `protector` maps a plaintext secret to an
+     *  opaque storage token (base64 Keystore ciphertext); `unprotector` reverses it. BOTH MUST be
+     *  fail-safe — return an EMPTY string on ANY Keystore/JNI failure so Core never persists or
+     *  surfaces a secret in cleartext. Call ONCE from the mobile host at boot, BEFORE the first
+     *  ConfigManager::Load(); the providers are consulted on the config Save/Load paths. Passing
+     *  empty std::functions clears them (Core reverts to the plaintext passthrough + warning). Inert
+     *  on desktop builds — the Windows DPAPI and POSIX 0600 paths never consult these. */
+    static void SetAndroidSecretProvider(std::function<std::string(const std::string&)> protector,
+                                         std::function<std::string(const std::string&)> unprotector);
+
     static nlohmann::json LoadJsonFile(const std::string& path);
     static nlohmann::json LoadMergedConfigJson();
     static std::string NormalizeUiLanguageCode(const std::string& code);
