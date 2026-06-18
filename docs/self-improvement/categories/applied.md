@@ -9,6 +9,12 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-06-08 · build-doctor (via tracker-result-migration) · [process] · P2 — `head-drift-guard-literal-path`: `guard-head-drift.sh` rejects `git -C "$WT" commit` when `$WT` is a shell variable (parses the UN-expanded command string)
+  Details: The head-drift guard inspects the raw pre-expansion `tool_input.command` text, so `git -C "$WT" commit …` is denied — the hook sees the literal string `"$WT"`, can't stat `"$WT"/.git`, and blocks. Only a LITERAL absolute worktree path passes. Recurred ≥3×: build-doctor 2026-06-08 (3 failed attempts), the orchestrator's first Slice-4 commit, and again 2026-06-18 (the #1374 session-learnings commit + rebase — variable `$WT` blocked, literal path passed) — which crossed the apply threshold.
+  Resolution (2026-06-18): sharpened the deny message in `docs/harness/claude-code/hooks/guard-head-drift.sh:134` to state "pass a LITERAL absolute path, not a shell variable like `$WT` — this guard reads the un-expanded command text, so a `$VAR` is rejected"; added the rule to `docs/agent-rules/process-rules.md` § Git/p4 discipline and `agents/core/build-doctor.md` (operational tips), covering both the commit deny and the drifted-op (`rebase`/`checkout`/`merge`) deny, plus the `git -C <abs-path> config core.editor true` vs interposed `-c core.editor=…` note.
+  Status: applied
+  Last-reviewed: 2026-06-18
+
 > **Backlog archival drain (2026-06-16)** — 87 entries that carried `Status: applied`/`resolved` in the tooling/infra/test/security/process category files but were never moved. Archived here in one sweep (no new work; statuses verified, not re-litigated); sorted latest-first among themselves.
 
 - 2026-06-15 · orchestrator · [tooling] · P2 — `comment-noise-autofix-in-pre-ship`: the `comment-blank-run` / `comment-decorative-banner` gate re-tripped on **6 PRs in one session** (#1221, #1222, #1235, #1237, #1245, #1282), every time on a bare `//` paragraph separator (or a `::`/`()`-bearing prose comment) in a freshly-authored header doc-block — a recurring, purely-mechanical footgun the documented `pre-ship.sh` gate would have caught but authoring (sub)agents kept skipping pre-push

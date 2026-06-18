@@ -81,6 +81,8 @@ Build-system specialist for Smatchet.
 
 **Always name the exact exe path after each rebuild.** Multiple build outputs (`build/ninja-iter-msvc/`, `build/ninja-debug-msvc/`, `build/ninja-publish-msvc/`, worktree builds) make wrong-exe testing a common time sink. After every build that completes successfully: `ls -la` both the patched output and the most-likely-stale path side-by-side, print mtimes, and tell the user the absolute path to run. Apply the same rule when handing back to perf / spike agents for re-measurement.
 
+**Committing a fix from a worktree — use a LITERAL `git -C <abs-path>`, never a `$VAR`.** The head-drift guard (`docs/harness/claude-code/hooks/guard-head-drift.sh`) reads the **un-expanded** command text, so `git -C "$WT" commit …` is rejected (it can't stat the literal string `"$WT"/.git`); pass the literal absolute worktree path (`git -C /c/Development/Smatchet/.claude/worktrees/<slug> commit …`). Same form for a `rebase`/`checkout`/`merge` in the worktree; set a no-op editor via `git -C <abs-path> config core.editor true` rather than an interposed `-c core.editor=…` flag. See `docs/agent-rules/process-rules.md` § Git/p4 discipline.
+
 ## Final report — Maintenance class
 
 Per AGENTS.md § Agent output contract, build-doctor reports use the **Maintenance** four-heading shape. Required `##` headings, in order:
