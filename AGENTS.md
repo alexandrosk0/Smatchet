@@ -131,7 +131,7 @@ Default: stay in the orchestrator's primary model for routine work; delegate to 
 
 ## Self-improvement loop
 
-Every delegated agent ends with a `## Self-improvement` section — **empty is the common case and fine** (flag only real friction, never invent). Operational rules (format, categories, P0–P3, threshold, cadence) + index: [`docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`](docs/self-improvement/AGENT_SELF_IMPROVEMENT.md); entries split per category under [`docs/self-improvement/categories/`](docs/self-improvement/categories/), applied ones archive to `applied.md`.
+Every delegated agent ends with a `## Self-improvement` section — **empty is the common case and fine** (flag only real friction, never invent). Operational rules (format, categories, P0–P3, threshold, cadence) + index: [`docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`](docs/self-improvement/AGENT_SELF_IMPROVEMENT.md); **new entries are one file per entry** at `docs/self-improvement/categories/<cat>/<YYYY-MM-DD>-<slug>.md` (disjoint paths → no concurrent-add conflict; legacy monolith `categories/<cat>.md` still read in union), applied ones archive to `applied.md`.
 
 **Gate escapes owe a postmortem** — anything that shipped to `develop` a gate should have caught (non-SUCCESS check at merge, override label, `Revert`, overdue deviation) is the highest-signal "gate, don't trust" lesson. `agents/scripts/core/postmortem-owed.sh` raises a SessionStart nudge; the [`gate-escape-postmortem`](agents/_shared/skills/gate-escape-postmortem/SKILL.md) skill runs a blameless RCA whose **mandatory** `### Preventing gate` names a new gate, appended to the [`docs/self-improvement/postmortems.md`](docs/self-improvement/postmortems.md) ledger.
 

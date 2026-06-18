@@ -38,10 +38,11 @@ triage) is the **applier**. No second system.
    `### Preventing gate: none — override legitimate (<reason>)` — itself a
    recorded decision. **An entry cannot close without this field.**
 4. **File the gate into the existing loop.** Write the preventing-gate action as
-   a normal entry in the matching `docs/self-improvement/categories/{tooling,
-   process,test,infra,security}.md` (existing format + priority + threshold) — so
-   the established apply-loop applies it. Do NOT auto-apply the gate here;
-   suggestion-only.
+   a new one-entry-per-file note at `docs/self-improvement/categories/<cat>/<YYYY-MM-DD>-<slug>.md`
+   for the matching `<cat>` in `{tooling,process,test,infra,security}` (existing
+   format + priority + threshold; one entry per file — see `AGENT_SELF_IMPROVEMENT.md`
+   § Format) — so the established apply-loop applies it. Do NOT auto-apply the gate
+   here; suggestion-only.
 5. **Append to the ledger.** Add one entry to `docs/self-improvement/postmortems.md`
    (newest first) in the shape its header documents, with `### Filed as` linking
    the category entry from step 4. Reference every escaped `PR #N` so
