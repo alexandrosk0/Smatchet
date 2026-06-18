@@ -35,6 +35,28 @@ class CellEditBurstScenario : public IScenario {
         const std::string issueIdArg = args.value("issue", std::string());
         const std::string newValue = args.value("value", std::string("burst-edit"));
 
+        // Warmup + steady-frame budget (tooling.md `p99-gate-warmup-frame-
+        // exclusion`). Before this fix cell-edit-burst was a one-frame scenario:
+        // its sample ring held ONLY the cold-start frames that ran between
+        // perf.reset and the single measured frame, so the snapshot p99 was pure
+        // warmup (PR #963 CI: SmatchetUI::Draw p99 ~12 ms, drawEnsureCatalogAnd-
+        // InitialSync ~9 ms, with a 0.0002 ms steady max). WarmupFrames() now
+        // opts into the runner's one-time UiPerfMonitor::Reset() after `warmup_`
+        // frames, then the scenario keeps running `steady_` more frames so the
+        // ring re-fills with steady-state grid-draw samples. The full ring
+        // (kCapacity=256) is saturated with steady samples so ComputeP99 ranks a
+        // complete steady-state window. The burst itself still happens once in
+        // OnStart; the extra frames only let the post-burst UI render settle and
+        // be measured cleanly. Both knobs are args so a CI calibration pass can
+        // retune without a recompile.
+        // Clamp to a sane upper bound so warmup_ + steady_ cannot overflow a
+        // signed int in IsDone() even with absurd CLI args (CodeRabbit, #1385).
+        // The ring is kCapacity=256, so anything past a few hundred frames is
+        // already pointless; 1e6 is a generous headroom well below INT_MAX/2.
+        const int kMaxFrames = 1000000;
+        warmup_ = (std::min)(kMaxFrames, (std::max)(0, args.value("warmup", 64)));
+        steady_ = (std::min)(kMaxFrames, (std::max)(1, args.value("steady", 256)));
+
         nlohmann::json dispatchArgs;
         dispatchArgs["count"] = count;
         dispatchArgs["field"] = fieldId;
@@ -56,12 +78,16 @@ class CellEditBurstScenario : public IScenario {
 
     void OnFrame(AppController& /*app*/, int /*frameIndex*/) override {}
 
-    // One-frame scenario — the burst already completed in OnStart and the result
-    // is staged. Returning true from IsDone(0) here would skip OnFrame entirely
-    // (Tick increments frame_ before checking), so wait one frame so the runner
-    // writes the result file. Matches `priority-grid-scroll` shape but with a
-    // single-frame budget.
-    bool IsDone(int frameIndex) const override { return frameIndex >= 1; }
+    // Exclude the first `warmup_` frames from the snapshot p99 population: the
+    // runner Reset()s the perf monitor once after this many frames, dropping the
+    // cold-start spikes before they are ranked.
+    int WarmupFrames() const override { return warmup_; }
+
+    // Run warmup + steady frames so the post-reset ring is saturated with
+    // steady-state samples (was a single-frame budget — see OnStart). Tick
+    // increments frame_ before IsDone, so the scenario writes its result on the
+    // frame after the last steady frame is drawn.
+    bool IsDone(int frameIndex) const override { return frameIndex >= warmup_ + steady_; }
 
     nlohmann::json OnFinish(AppController& /*app*/) override {
         nlohmann::json out = result_;
@@ -89,6 +115,8 @@ class CellEditBurstScenario : public IScenario {
 
   private:
     nlohmann::json result_;
+    int warmup_ = 64;
+    int steady_ = 256;
 };
 
 } // namespace cmd
