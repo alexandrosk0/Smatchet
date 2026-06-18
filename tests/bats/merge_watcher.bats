@@ -279,6 +279,32 @@ PY
     [[ "$output" == *'"pr": 300'* ]]
 }
 
+@test "register from a linked worktree canonicalizes onto the main clone (no orphan dupe) (tooling.md :28)" {
+    # A throwaway main repo + a linked worktree off it.
+    local main="$SMATCHET_TEST_TMP/mainrepo"
+    git init -q -b develop "$main"
+    git -C "$main" -c user.email=t@t -c user.name=t commit --allow-empty -q -m seed
+    local wt="$SMATCHET_TEST_TMP/wt"
+    git -C "$main" worktree add -q -b feat "$wt" >/dev/null 2>&1
+
+    # Register from the WORKTREE cwd — must store the MAIN clone path.
+    run bash -c "cd '$wt' && python '$SCRIPTS_DIR/merge-watcher-cli.py' register 4242"
+    [ "$status" -eq 0 ]
+
+    # Registering the SAME PR from the MAIN clone is now a DUP (same canonical
+    # key) — proves the worktree registration landed on the main clone, not on
+    # the ephemeral worktree path.
+    run bash -c "cd '$main' && python '$SCRIPTS_DIR/merge-watcher-cli.py' register 4242"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"already registered"* ]]
+
+    # Exactly one entry, keyed at the main clone (basename mainrepo), not the wt.
+    run watch_cli list
+    [ "$status" -eq 0 ]
+    [ "$(printf '%s' "$output" | grep -c '"pr": 4242')" -eq 1 ]
+    [[ "$output" == *"mainrepo"* ]]
+}
+
 # ---------- unregister ----------
 
 @test "unregister removes the entry" {
@@ -2132,6 +2158,81 @@ assert m.maybe_escalate_stuck_pr(st2, {"pr":9,"clone_path":"/x","stuck_streak":2
 # DIRTY-pass (merge_failed) path is in scope
 r5 = m.maybe_escalate_stuck_pr(dict(st, last_state="GATES_PASSED", merge_action="merge_failed: dirty"), {"pr":9,"clone_path":"/x","stuck_streak":2,"stuck_head":"hZ"})
 assert r5["last_state"] == "STUCK_NEEDS_ATTENTION"
+print("OK")
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OK"* ]]
+}
+
+@test "maybe_auto_update_behind: opt-in + green-only; dispatches via cascade_update_child; dedups + budget-caps (infra.md :223)" {
+    run python - <<'PY'
+import importlib.util, os, sys
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+sys.path.insert(0, sd)
+spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+green    = "Poll 1/1 — CI: 5/5 pass (0 fail, 0 pending, 0 warn-downgraded, 0 req-missing) | CodeRabbit: APPROVED (0 open) | User: 0 | reviewDecision: APPROVED"
+notgreen = "Poll 1/1 — CI: 4/5 pass (1 fail, 0 pending, 0 warn-downgraded, 0 req-missing) | CodeRabbit: APPROVED (0 open) | User: 0 | reviewDecision: APPROVED"
+cropen   = "Poll 1/1 — CI: 5/5 pass (0 fail, 0 pending, 0 warn-downgraded, 0 req-missing) | CodeRabbit: COMMENTED (2 open) | User: 0 | reviewDecision: APPROVED"
+usercmt  = "Poll 1/1 — CI: 5/5 pass (0 fail, 0 pending, 0 warn-downgraded, 0 req-missing) | CodeRabbit: APPROVED (0 open) | User: 1 | reviewDecision: APPROVED"
+e = {"pr":7,"clone_path":"/x"}
+m._gh_owner_repo = lambda cp: ("o","r")
+m._bump_stuck_streak = lambda *a, **k: None   # isolate from registry I/O
+calls = []
+m.cascade_update_child = lambda o,r,pr: (calls.append(pr) or (True, "update-branch dispatched"))
+# disabled by default -> {}
+os.environ.pop("MERGE_WATCH_AUTO_UPDATE_BEHIND", None)
+assert m.maybe_auto_update_behind(e, green, "h1") == {}
+os.environ["MERGE_WATCH_AUTO_UPDATE_BEHIND"] = "true"
+# not-green / cr-open / unresolved-user-comment / unparseable -> {} (never a non-clean PR)
+assert m.maybe_auto_update_behind(e, notgreen, "h1") == {}
+assert m.maybe_auto_update_behind(e, cropen, "h1") == {}
+assert m.maybe_auto_update_behind(e, usercmt, "h1") == {}   # User: 1 blocks (Cursor #1393)
+assert m.maybe_auto_update_behind(e, "gh request failed", "h1") == {}
+assert calls == []
+# green + reserve OK -> dispatch once; streak reset in the returned delta
+m._atomic_reserve_auto_update = lambda pr,cp,h,b: ("ok", 1)
+d = m.maybe_auto_update_behind(e, green, "h1")
+assert "dispatched" in d["auto_update_action"] and d["stuck_streak"] == 0
+assert calls == [7]
+# dedup (same head already advanced) -> {} (no second dispatch)
+m._atomic_reserve_auto_update = lambda pr,cp,h,b: ("dedup", None)
+assert m.maybe_auto_update_behind(e, green, "h1") == {}
+# budget exhausted -> {} (falls through to the human STUCK escalation)
+m._atomic_reserve_auto_update = lambda pr,cp,h,b: ("budget", 2)
+assert m.maybe_auto_update_behind(e, green, "h2") == {}
+assert calls == [7]   # still exactly one dispatch
+# FAILURE PATHS must also return {} so escalation still fires (CodeRabbit #1393)
+m._atomic_reserve_auto_update = lambda pr,cp,h,b: ("ok", 1)
+m._gh_owner_repo = lambda cp: None                      # gh repo view fails
+assert m.maybe_auto_update_behind(e, green, "h3") == {}
+m._gh_owner_repo = lambda cp: ("o","r")
+m.cascade_update_child = lambda o,r,pr: (False, "update-branch failed")  # dispatch fails
+assert m.maybe_auto_update_behind(e, green, "h4") == {}
+print("OK")
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OK"* ]]
+}
+
+@test "maybe_escalate_stuck_pr: a BEHIND wedge short-circuits to auto-update-behind, else falls through to streak (infra.md :223)" {
+    run python - <<'PY'
+import importlib.util, os, sys
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+sys.path.insert(0, sd)
+spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+m._bump_stuck_streak = lambda *a, **k: None
+st = {"last_state":"BLOCKED","last_status_line":"Poll 1/1 — CI: 1/1 pass (0 fail, 0 pending, 0 warn-downgraded, 0 req-missing) | CodeRabbit: x (0 open) | User: 0 | reviewDecision: x"}
+m._classify_pr_wedge = lambda e,s: ("BEHIND","bh")
+# auto-update fires -> escalate returns the auto-update delta, NOT a streak/escalation
+m.maybe_auto_update_behind = lambda e,sl,h: {"auto_update_action":"update-branch dispatched","stuck_streak":0,"stuck_action":"auto-update ok"}
+r = m.maybe_escalate_stuck_pr(dict(st), {"pr":3,"clone_path":"/x","stuck_streak":0,"stuck_head":""})
+assert r.get("auto_update_action") and "last_state" not in r, r
+# auto-update declines ({}) -> normal streak accrual resumes
+m.maybe_auto_update_behind = lambda e,sl,h: {}
+r2 = m.maybe_escalate_stuck_pr(dict(st), {"pr":3,"clone_path":"/x","stuck_streak":0,"stuck_head":""})
+assert r2["stuck_streak"] == 1, r2
 print("OK")
 PY
     [ "$status" -eq 0 ]
