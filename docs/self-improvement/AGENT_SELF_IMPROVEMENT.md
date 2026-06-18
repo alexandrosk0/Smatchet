@@ -14,6 +14,21 @@ tooling gaps. Live entries split by category; this file is the index + spec.
   Last-reviewed: <YYYY-MM-DD>   # default = creation date; bump on each sweep
 ```
 
+**One file per entry (new entries).** Write each new entry as its OWN file at
+`docs/self-improvement/categories/<category>/<YYYY-MM-DD>-<slug>.md` — one entry's
+§ Format block per file, `<slug>` a short kebab-case of the title. Two concurrent
+PRs adding entries then touch disjoint paths, so adds can never merge-conflict (and
+archiving = removing/moving that one file, so deletes can't either). The ~135
+**legacy entries stay in the monolith `categories/<category>.md` files** untouched
+and are still read **in union** by every consumer (the count gate
+[`test-backlog-counts.sh`](../../agents/scripts/core/test-backlog-counts.sh) `--list`
+and the triggered-follow-up nudge
+[`followup-due-nudge.sh`](../../agents/scripts/core/followup-due-nudge.sh) both glob
+the monolith *and* the per-category subdir). This is the incremental, new-entries-only
+slice of the deferred [`self-improvement-one-entry-per-file`](../plans/deferred/self-improvement-one-entry-per-file.md)
+plan — the monolith files are **not** migrated. (`bug.md` is deprecated and takes no
+new entries; the `applied.md` archive stays a single union-merged file.)
+
 **Optional `Triggered-follow-up:` line** — for a follow-up GATED ON A FUTURE CONDITION ("re-measure after ~10 PRs", "after a date", "once a plan ships"). Add ONE line to the entry (after `Concrete next action:`); [`followup-due-nudge.sh`](../../agents/scripts/core/followup-due-nudge.sh) surfaces it at SessionStart when the condition is met. Lifecycle: [`process-rules.md`](../agent-rules/process-rules.md) § Triggered follow-ups.
 
 ```text
@@ -63,10 +78,11 @@ Mandatory on every `open` entry.
 ## Workflow
 
 1. Delegated agents end every report with `## Self-improvement`. Empty is fine.
-2. Orchestrator reads, dedupes, and **appends to the END of the matching category
-   file** (`docs/self-improvement/categories/<category>.md`) — **not** this index
-   file. Use the exact § Format block (date · agent · `[category]` · `P<0-3>` —
-   title; then Details / Concrete next action / Status / Last-reviewed).
+2. Orchestrator reads, dedupes, and **creates a new per-entry file** at
+   `docs/self-improvement/categories/<category>/<YYYY-MM-DD>-<slug>.md` (one entry,
+   the exact § Format block) — **not** this index file, and **not** the legacy
+   monolith `categories/<category>.md` (those stay as-is, read in union; see
+   § Format). Disjoint paths mean two concurrent adds can't conflict.
    **Claims about a file's behaviour must cite a verified line.** Before asserting in
    any backlog / self-improvement / plan entry that a specific file does or doesn't do
    X, verify it against the committed tree — `git show origin/<base>:<file>` (never the
@@ -74,15 +90,16 @@ Mandatory on every `open` entry.
    Entries written from assumption get caught downstream at a CI / CodeRabbit round; a
    5-second check at authoring time avoids the re-push. (This is the backlog/plan analogue
    of the CR-reply post-push verification in `docs/agent-rules/process-rules.md`.)
-3. **Immediately sync the count index in the SAME commit** —
-   `bash agents/scripts/core/test-backlog-counts.sh --fix` rewrites the § Index
-   table from actual file counts (or hand-bump the one row). The pre-push gate
-   `test-backlog-counts.sh` **rejects any drift**, so a skipped sync fails the
-   push. (This is the #1 trip-wire when adding an entry — do it before you commit.)
+3. **No count to sync.** Counts are on-demand and derive from a directory listing
+   — `bash agents/scripts/core/test-backlog-counts.sh --list` counts the monolith
+   entry-lines **plus** the per-entry files. There is no stored count column to
+   hand-edit (removed 2026-06-03), so a new per-entry file needs no index touch and
+   the pre-push gate stays green by construction.
 4. When evidence accumulates (mentioned by ≥2 agents OR blocks the same
    workflow ≥3 times), apply: edit the relevant agent prompt(s) in `agents/`
-   or AGENTS.md; flip Status to `applied`; move the entry to `applied.md` —
-   **then re-run `--fix`** (two counts changed: the category −1, `applied` +1).
+   or AGENTS.md; flip Status to `applied`; archive the entry — `git mv` the
+   per-entry file's body into the union-merged `applied.md` (then delete the
+   per-entry file), or for a legacy monolith entry move the block as before.
    **If the edited agent has eval coverage** (currently `code-review`), score
    the edit base-vs-head per § Optimize against evals before flipping to
    `applied` — attach the advisory delta to the PR.
@@ -108,10 +125,14 @@ Full contract, the two-worktree recipe, and case-authoring live in
 graduation are deferred (tracked in
 [`categories/tooling.md`](categories/tooling.md)).
 
-> **Common failures this prevents:** (a) appending to this index file instead of
-> a category file; (b) forgetting the count sync → pre-push `test-backlog-counts`
-> rejection; (c) on *archive*, bumping only the category count and not `applied`.
-> `--fix` handles all counts at once — run it after any add / archive / remove.
+> **Common failures this prevents:** (a) writing the entry into this index file or
+> the legacy monolith `categories/<cat>.md` instead of a new per-entry file
+> `categories/<cat>/<date>-<slug>.md`; (b) assuming a count must be hand-synced —
+> it doesn't (no stored count column; `--list` derives counts from monolith
+> entry-lines **plus** the per-entry files on demand); (c) applying `merge=union`
+> to a monolith `categories/<cat>.md` — **never** do this, it wrongly preserves
+> both blocks on a parallel-delete (see `.gitattributes`); the per-entry files
+> need no merge driver because distinct paths can't conflict.
 
 ## Triage cadence
 
@@ -148,4 +169,9 @@ auto-detected.
 | external    | [self-improvement/categories/external-blockers.md](categories/external-blockers.md) |
 | applied (archive) | [self-improvement/categories/applied.md](categories/applied.md) |
 
-> **Live counts are on-demand, not stored** — run `bash agents/scripts/core/test-backlog-counts.sh --list` for the current per-category counts (`grep -c '^- 20' <file>`). The count column was **removed 2026-06-03**: a hand-maintained count is edited by *every* entry-adding PR, so concurrent PRs conflicted on that single line on every add (the highest-frequency self-improvement merge conflict). Deriving it on demand removes the shared edit entirely. The gate (`test-backlog-counts.sh`, `test-all.sh` discovery) now **guards against re-introducing a stored numeric count column** rather than verifying one. The structural fix for the rarer *category-content* conflict (two adds to the same file) is the deferred [`self-improvement-one-entry-per-file`](../plans/deferred/self-improvement-one-entry-per-file.md) plan — only worth it if that conflict starts recurring often.
+The `File` column is the **legacy monolith** (existing ~135 entries, read in union).
+**New entries go in the per-category subdir** `categories/<category>/<YYYY-MM-DD>-<slug>.md`,
+one entry per file — see § Format. (`bug` takes no new entries; `applied` stays a
+single union-merged archive, no subdir.)
+
+> **Live counts are on-demand, not stored** — run `bash agents/scripts/core/test-backlog-counts.sh --list` for the current per-category counts. The count is the **union of both sources**: the monolith entry-lines (`grep -c '^- 20' <file>`) **plus** the per-entry files in `categories/<category>/` (one entry each). The count column was **removed 2026-06-03**: a hand-maintained count is edited by *every* entry-adding PR, so concurrent PRs conflicted on that single line on every add (the highest-frequency self-improvement merge conflict). Deriving it on demand removes the shared edit entirely. The gate (`test-backlog-counts.sh`, `test-all.sh` discovery) now **guards against re-introducing a stored numeric count column** rather than verifying one. The per-entry-file layout is the **incremental slice** (new entries only) of the deferred [`self-improvement-one-entry-per-file`](../plans/deferred/self-improvement-one-entry-per-file.md) plan; it kills the *category-content* add/delete conflict for new entries without the 135-entry migration.

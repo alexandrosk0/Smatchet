@@ -23,7 +23,7 @@ For **every** memory file in the inbox, decide one:
 | Verdict | Action |
 |---|---|
 | **Implement** | The item is a durable behavioral rule or project invariant. Migrate it into the agentic structure: a 1-liner-or-less rule into `AGENTS.md` § Project rules, a fuller rule into the matching `docs/agent-rules/<topic>.md`. Then delete the memory file. |
-| **Backlog** | The item is real follow-up work (a regression, a missing guard, a tooling gap) but not yet a rule. Add a dated entry to the right `docs/self-improvement/categories/<cat>.md` with a `Source: memory <slug> (drained <date>)` line. Then delete the memory file. |
+| **Backlog** | The item is real follow-up work (a regression, a missing guard, a tooling gap) but not yet a rule. Add a new per-entry file `docs/self-improvement/categories/<cat>/<YYYY-MM-DD>-<slug>.md` (one entry per file — see [`AGENT_SELF_IMPROVEMENT.md`](../self-improvement/AGENT_SELF_IMPROVEMENT.md) § Format) with a `Source: memory <slug> (drained <date>)` line. Then delete the memory file. |
 | **Toss** | The item is already guarded in code, machine-specific (not portable repo truth), or contradicted by the current tree. Delete the memory file. Note the reason in the drain summary. |
 
 ## Verify before trusting

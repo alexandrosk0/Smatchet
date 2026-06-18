@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # followup-due-nudge.sh — SessionStart nudge when a deferred, condition-gated
 # follow-up becomes DUE. Reads optional `Triggered-follow-up:` lines on backlog
-# entries in docs/self-improvement/categories/*.md, evaluates each `when=`
-# trigger, and emits a nudge listing every firing entry — exactly like the
+# entries in both self-improvement sources — the legacy monolith
+# docs/self-improvement/categories/*.md AND the new per-entry files
+# docs/self-improvement/categories/*/*.md — evaluates each `when=` trigger, and
+# emits a nudge listing every firing entry — exactly like the
 # memory-drain / postmortem-owed SessionStart nudges.
 #
 # Why: some backlog items are follow-ups GATED ON A FUTURE CONDITION ("re-measure
@@ -144,7 +146,13 @@ warns=()  # "<file>: MALFORMED Triggered-follow-up: <when>"
 
 scan() {
     local f pri line when action baseline fired verdict
-    for f in "$CAT_DIR"/*.md; do
+    # Two sources, read in union: the legacy monolith categories/<cat>.md (flat,
+    # *.md) PLUS the new per-entry files categories/<cat>/<date>-<slug>.md (one
+    # entry each, in a per-category subdir). The */*.md glob picks up the new
+    # layout so a Triggered-follow-up: on a new per-entry file is not silently
+    # invisible. Unmatched globs stay literal and are skipped by the [ -f ] guard
+    # (so a flat $CAT_DIR with no subdirs — the bats fixture — still works).
+    for f in "$CAT_DIR"/*.md "$CAT_DIR"/*/*.md; do
         [ -f "$f" ] || continue
         pri="P3"
         while IFS= read -r line || [ -n "$line" ]; do
