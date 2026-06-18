@@ -81,7 +81,8 @@ printf '%s\n' "- $REDACTED" >> "$CAPTURE_FILE" 2>/dev/null || true
 # branch's log can't grow unbounded (the file is per-container ephemeral in remote
 # sessions, but local branches persist). Best-effort; never blocks prompt submission.
 # CAP is env-overridable so the bats suite can exercise the trim cheaply.
-CAP="${SMATCHET_INTENT_CAP:-200}"
+# Neutral name (no project literal) — this template is portable across repos.
+CAP="${CAPTURE_INTENT_CAP:-200}"
 line_count="$(wc -l < "$CAPTURE_FILE" 2>/dev/null || echo 0)"
 if [[ "$line_count" -gt $((CAP + 1)) ]]; then
     _tmp="$CAPTURE_FILE.tmp"
