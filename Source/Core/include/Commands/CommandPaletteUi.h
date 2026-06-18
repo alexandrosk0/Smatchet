@@ -31,6 +31,11 @@ class CommandPaletteUi {
     /// so typing into the bar opens + pre-filters the palette.
     void SetFilterText(const char* query);
 
+    /// Read the current filter buffer (NUL-terminated). Test-observability accessor
+    /// for the inline typing -> filter path (bucket-E coverage); zero-cost inline,
+    /// not on any per-frame/render path. See tests/ui/command_palette_inline_typing.test.cpp.
+    const char* FilterText() const { return filterBuf_; }
+
     /// Call once per frame from SmatchetUI::Draw. Handles Ctrl+Shift+P detection,
     /// renders the BeginPopupModal, and dispatches the selected command.
     void Draw(AppController& app);

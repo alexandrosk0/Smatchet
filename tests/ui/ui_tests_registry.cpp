@@ -33,6 +33,7 @@ extern "C" void SmatchetRegisterResetLayoutDockingTests(ImGuiTestEngine* engine)
 extern "C" void SmatchetRegisterDurationInlineEditCommitTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterMobileViewsConfirmModalTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterKeybindingsEditorRebindTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterCommandPaletteInlineTypingTests(ImGuiTestEngine* engine);
 #if defined(SMATCHET_WITH_AI)
 extern "C" void SmatchetRegisterAiAssistantPanelDockSwapTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAiAssistantEnterSendTests(ImGuiTestEngine* engine);
@@ -75,6 +76,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterDurationInlineEditCommitTests(engine);
     SmatchetRegisterMobileViewsConfirmModalTests(engine);
     SmatchetRegisterKeybindingsEditorRebindTests(engine);
+    SmatchetRegisterCommandPaletteInlineTypingTests(engine);
 #if defined(SMATCHET_WITH_AI)
     SmatchetRegisterAiAssistantPanelDockSwapTests(engine);
     SmatchetRegisterAiAssistantEnterSendTests(engine);
