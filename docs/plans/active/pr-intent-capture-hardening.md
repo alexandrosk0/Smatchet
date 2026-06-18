@@ -65,8 +65,8 @@ The one non-obvious trade-off, recorded in **ADR-0022**: the gate is promoted to
 ## UX Pillar callouts
 
 - **Pillar 1 (perf, 144 Hz / 6.94 ms steady-state)**: no impact — no `Source/Core/` / UI-thread code; the hook runs out-of-process on prompt submit.
-- **Pillar 2 (UI-thread never blocks > 100 ms)**: no impact — same reason; no sync I/O reaches `ImGui::*`.
-- **Pillar 3 (never crash)**: no impact on the product binary. Hook robustness keeps the parent's fail-safe (errors/absent-python → write nothing, exit 0); the cap-on-append trim is best-effort and never blocks prompt submission.
+- **Pillar 2 (UI-thread never blocks > 100 ms)**: unaffected — same reason; no sync I/O reaches `ImGui::*`.
+- **Pillar 3 (never crash)**: product-binary stability unaffected. Hook robustness keeps the parent's fail-safe (errors/absent-python → write nothing, exit 0); the cap-on-append trim is best-effort and never blocks prompt submission.
 - **Pillar 4 (accessibility)**: N/A — no UI surface.
 
 ## Perf-review-system gates (mandatory when diff touches `Source/Core/`; else `N/A — <reason>`)

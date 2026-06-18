@@ -83,6 +83,9 @@ printf '%s\n' "- $REDACTED" >> "$CAPTURE_FILE" 2>/dev/null || true
 # CAP is env-overridable so the bats suite can exercise the trim cheaply.
 # Neutral name (no project literal) — this template is portable across repos.
 CAP="${CAPTURE_INTENT_CAP:-200}"
+# Guard: a non-numeric env override would make $((CAP + 1)) error/misbehave and
+# silently skip the trim (unbounded growth). Fall back to the default.
+[[ "$CAP" =~ ^[0-9]+$ ]] || CAP=200
 line_count="$(wc -l < "$CAPTURE_FILE" 2>/dev/null || echo 0)"
 if [[ "$line_count" -gt $((CAP + 1)) ]]; then
     _tmp="$CAPTURE_FILE.tmp"

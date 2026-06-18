@@ -330,7 +330,10 @@ line two	tabbed"
 
 @test "#4 cap-on-append keeps the header + last N bullets" {
     export CAPTURE_INTENT_CAP=2
-    for i in 1 2 3 4 5; do run_hook "{\"prompt\":\"p$i\"}"; done
+    for i in 1 2 3 4 5; do
+        run_hook "{\"prompt\":\"p$i\"}"
+        [ "$status" -eq 0 ]
+    done
     f="$(ls "$CAPTURE_DIR"/*.log)"
     grep -q "^# capture-intent v" "$f"          # header survives the trim
     [ "$(grep -c '^- ' "$f")" -eq 2 ]           # capped to last 2 bullets

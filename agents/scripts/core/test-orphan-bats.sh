@@ -14,7 +14,10 @@
 # Exit: 0 clean · 1 orphan(s) found · 2 cannot resolve repo root.
 set -uo pipefail
 
-ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || {
+    echo "test-orphan-bats: cannot resolve repo root" >&2
+    exit 2
+}
 cd "$ROOT" || { echo "test-orphan-bats: cannot cd to repo root" >&2; exit 2; }
 
 # Test roots scripts/dev/test-all.sh discovers wrappers from.
