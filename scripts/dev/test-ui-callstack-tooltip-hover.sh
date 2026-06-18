@@ -32,8 +32,16 @@ echo "[test-ui-callstack-tooltip-hover] launching ephemeral Smatchet (port $TEST
 # Hard timeout so a hung spawn / wedged test run can't block forever and stall CI
 # (CodeRabbit #1364). Override via UI_TEST_TIMEOUT. `timeout` exits 124 on expiry.
 RUN_TIMEOUT="${UI_TEST_TIMEOUT:-240}"
+# `timeout` (coreutils) ships in git-bash + the Linux CI shells, but guard anyway so a
+# shell that lacks it degrades to no-timeout instead of erroring out (CodeRabbit #1364).
+if command -v timeout >/dev/null 2>&1; then
+    TIMEOUT_PREFIX=(timeout "$RUN_TIMEOUT")
+else
+    echo "[test-ui-callstack-tooltip-hover] WARN: 'timeout' not found; running without a hard timeout." >&2
+    TIMEOUT_PREFIX=()
+fi
 set +e
-RAW_OUTPUT="$(timeout "$RUN_TIMEOUT" "$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
+RAW_OUTPUT="$("${TIMEOUT_PREFIX[@]}" "$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
     --mcp-port="$TEST_PORT" 2>&1)"
 RUN_RC=$?
 set -e
