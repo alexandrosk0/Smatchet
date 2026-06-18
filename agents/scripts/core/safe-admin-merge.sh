@@ -40,9 +40,33 @@
 # A non-gating red (e.g. an advisory check, or a non-required non-allow-listed
 # one) does NOT block — mirroring the merge-gates $failing contract exactly.
 #
+# CodeRabbit-completion gate (added 2026-06-17 — the #1332 "Review failed:
+# Pull request was closed or merged during review" race): a CI-green PR can be
+# admin-merged BEFORE CodeRabbit even starts its async review pass, so CR posts
+# "Review failed (merged during review)" after the fact. The CI-blocker check
+# above is blind to this — an ABSENT CR review reads as NONE, not "failing", so
+# it is not a gating row. This guard therefore ALSO waits for CodeRabbit when CR
+# is installed for the repo (a checked-in `.coderabbit.yaml`/`.yml`): it REFUSES
+# the admin-merge until CR's review has completed on the head, mirroring the
+# poll_merge_gates CR contract. The merge is allowed when ANY of:
+#   * CodeRabbit is not installed for the repo (NONE is the steady state); OR
+#   * the `CodeRabbit` rollup signal (StatusContext OR CheckRun) is terminal-
+#     green on the head — CR finished its pass (reviewed or skipped); OR
+#   * the `cr-out-of-band` label waives the wait (the explicit operator escape); OR
+#   * the head commit is older than the grace window and CR never resolved
+#     (SAFE_ADMIN_MERGE_CR_GRACE_MINUTES, default 20) — a stuck/disabled CR must
+#     not wedge the ship-loop forever, so this degrades to a logged pass.
+# Unlike poll_merge_gates (a polling loop with a poll-count grace + inline-thread
+# corroboration via raw GraphQL), this one-shot guard uses the terminal `CodeRabbit`
+# rollup state as the completion signal and a head-age grace as the backstop —
+# `gh pr view --json statusCheckRollup` exposes no StatusContext `description`, so
+# the size-skip / inline-evidence nuances stay in poll_merge_gates; `cr-out-of-band`
+# is the lever for those edge cases here.
+#
 # `*-out-of-band` PR labels downgrade the matching check, same as the poller:
 #   tests-out-of-band → "Test-delta gate"   ·  perf-out-of-band → "Perf PR-fast*"
-# (cr-out-of-band is a CodeRabbit-only override and does not apply to a CI check.)
+#   cr-out-of-band    → waives the CodeRabbit-completion wait above (it still does
+#                       NOT downgrade any CI check — CR is its only scope).
 #
 # Usage:
 #   agents/scripts/core/safe-admin-merge.sh <pr>
@@ -58,13 +82,25 @@
 #   SAFE_ADMIN_MERGE_CONFIG_FILE — override project.config.json path.
 #   SAFE_ADMIN_MERGE_STUB_ROLLUP — TEST-ONLY: a JSON blob used in place of the
 #                                  `gh pr view` call (the full --json object:
-#                                  {statusCheckRollup,state,labels}). Lets
+#                                  {statusCheckRollup,state,labels,commits}). Lets
 #                                  --selftest + bats feed a synthetic rollup with
 #                                  zero `gh` involvement.
+#   SAFE_ADMIN_MERGE_CR_INSTALLED — override the CodeRabbit-installed probe
+#                                  ("true"/"false"). When set, bypasses the
+#                                  checked-in `.coderabbit.yaml` file probe.
+#                                  Tests set "false" to isolate the CI-blocker
+#                                  cases from the CR-completion gate.
+#   SAFE_ADMIN_MERGE_CR_GRACE_MINUTES — head-age grace before a still-absent CR
+#                                  review degrades to a logged pass (default 20).
+#                                  0 DISABLES the backstop (never auto-passes a
+#                                  never-shown CR).
+#   SAFE_ADMIN_MERGE_CR_GRACE_EXPIRED — TEST-ONLY: force the grace verdict
+#                                  ("true"/"false"), bypassing the head-age math.
 #
 # Return codes:
 #   0 — guard passed; admin-merge performed (or dry-run printed)
-#   1 — REFUSED: a gating check is non-green (no merge performed)
+#   1 — REFUSED: a gating check is non-green, OR CodeRabbit has not completed its
+#       review on the head (no merge performed)
 #   2 — usage / dependency error (gh or jq missing, bad args)
 #   3 — PR not in a mergeable precondition (not OPEN)
 #
@@ -175,6 +211,124 @@ evaluate_rollup() {
     '
 }
 
+# ----------------------------------------------------------------------------
+# detect_cr_installed — "true" if CodeRabbit is configured for this repo, else
+# "false". SAFE_ADMIN_MERGE_CR_INSTALLED overrides the probe (tests). The probe
+# is a checked-in `.coderabbit.yaml`/`.yml` at the repo root: unlike the poller's
+# `gh api contents` probe (the poller may run detached), this guard always runs
+# inside the repo working tree, so a local file test is sufficient and offline.
+# ----------------------------------------------------------------------------
+detect_cr_installed() {
+    if [ -n "${SAFE_ADMIN_MERGE_CR_INSTALLED+x}" ]; then
+        printf '%s' "$SAFE_ADMIN_MERGE_CR_INSTALLED"
+        return 0
+    fi
+    local root="$SCRIPT_DIR/../../.."
+    if [ -f "$root/.coderabbit.yaml" ] || [ -f "$root/.coderabbit.yml" ]; then
+        printf 'true'
+    else
+        printf 'false'
+    fi
+}
+
+# ----------------------------------------------------------------------------
+# detect_cr_grace_expired <view_json> — "true" when the head commit is older
+# than the grace window (so a still-absent/stuck CR degrades to a logged pass),
+# else "false". SAFE_ADMIN_MERGE_CR_GRACE_EXPIRED overrides the math (tests).
+# Head staleness is read from the commit whose oid == .headRefOid (NOT merely the
+# newest committedDate, which a truncated `--json commits` page can mis-report).
+# SAFE_ADMIN_MERGE_CR_GRACE_MINUTES=0 DISABLES the backstop entirely (returns
+# "false" always) — a 0-minute window is "no grace", not "instant grace".
+# Fail-safe direction = "false" (cannot prove staleness → keep blocking) on any
+# missing date / unparseable timestamp / `date` failure: the backstop only fires
+# on a CONFIRMED-stale head, never on an unknown one.
+# ----------------------------------------------------------------------------
+detect_cr_grace_expired() {
+    if [ -n "${SAFE_ADMIN_MERGE_CR_GRACE_EXPIRED+x}" ]; then
+        printf '%s' "$SAFE_ADMIN_MERGE_CR_GRACE_EXPIRED"
+        return 0
+    fi
+    local view_json="$1"
+    local grace_min="${SAFE_ADMIN_MERGE_CR_GRACE_MINUTES:-20}"
+    [[ "$grace_min" =~ ^[0-9]+$ ]] || grace_min=20
+    # grace_min == 0 DISABLES the backstop. A 0-minute window would mark every
+    # past head instantly stale and let evaluate_cr PASS on a never-shown CR —
+    # re-opening the #1332 merge-beats-review race. Treat 0 as "no backstop;
+    # wait for a real CR verdict (or the cr-out-of-band label)".
+    if [ "$grace_min" -eq 0 ]; then printf 'false'; return 0; fi
+    local committed
+    # Prefer the commit whose oid == headRefOid (the TRUE PR head): `gh pr view
+    # --json commits` is capped (~250), so sort-by-committedDate can omit the
+    # head on a large PR and mis-time the grace. Fall back to the newest
+    # committedDate only when headRefOid is absent or not in the returned page.
+    committed=$(printf '%s' "$view_json" \
+        | jq -r '(.headRefOid // "") as $head
+                 | (.commits // []) as $c
+                 | (($c | map(select(.oid == $head)) | (.[0].committedDate // empty))
+                    // ($c | sort_by(.committedDate) | last | .committedDate)
+                    // empty)' 2>/dev/null) || committed=""
+    if [ -z "$committed" ]; then printf 'false'; return 0; fi
+    local now head_epoch
+    now=$(date -u +%s 2>/dev/null) || { printf 'false'; return 0; }
+    # GNU date parses ISO-8601 with -d; BSD date (macOS) needs -j -f. Try GNU
+    # first, fall back to BSD, then fail closed (cannot prove staleness → block).
+    head_epoch=$(date -u -d "$committed" +%s 2>/dev/null) \
+        || head_epoch=$(date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$committed" +%s 2>/dev/null) \
+        || { printf 'false'; return 0; }
+    if [ $(( (now - head_epoch) / 60 )) -ge "$grace_min" ]; then
+        printf 'true'
+    else
+        printf 'false'
+    fi
+}
+
+# ----------------------------------------------------------------------------
+# evaluate_cr <view_json> <cr_installed:true|false> <grace_expired:true|false>
+# — the PURE CodeRabbit-completion verdict, fully testable with no `gh`/`date`.
+# Emits ONE line: a "PASS <reason>" or "BLOCK <reason>" token. The caller reads
+# the leading token: PASS → continue to merge; BLOCK → refuse (exit 1). Exit 0
+# on a successful eval; NON-ZERO only on a jq parse/runtime error (caller fails
+# closed). First-match-wins ordering mirrors poll_merge_gates' CR arms:
+#   cr-out-of-band override  >  not-installed  >  CR terminal-green  >
+#   CR present-but-not-green (BLOCK, ignores grace)  >  grace-expired backstop
+#   (CR absent + stale head → PASS)  >  CR absent (BLOCK).
+# The grace backstop deliberately sits AFTER the present-but-not-green arm: an
+# in-progress CR review must never be raced by the head-age backstop (that is
+# exactly the #1332 merge-beats-review hole); grace only rescues an ABSENT CR.
+# ----------------------------------------------------------------------------
+evaluate_cr() {
+    local view_json="$1" cr_installed="$2" grace_expired="$3"
+    printf '%s' "$view_json" | jq -r \
+        --arg installed "$cr_installed" \
+        --arg grace "$grace_expired" '
+        ([.labels[]?.name] // []) as $labels
+        | ($labels | any(. == "cr-out-of-band")) as $crOob
+        # CodeRabbit rollup rows — StatusContext "CodeRabbit" OR CheckRun
+        # "CodeRabbit" / "CR findings (N actionable)" (both shapes CR emits).
+        | (((.statusCheckRollup) // [])
+            | map(select(
+                (if .__typename == "CheckRun" then (.name // "") else (.context // "") end)
+                | test("CodeRabbit|CR findings"; "i")))) as $cr
+        | ($cr | length > 0) as $present
+        # Terminal-green = CR finished its pass (reviewed or skipped): a CheckRun
+        # COMPLETED in {SUCCESS,NEUTRAL,SKIPPED}, or a StatusContext state SUCCESS.
+        | ([ $cr[] | select(
+                (.__typename == "CheckRun"
+                   and .status == "COMPLETED"
+                   and ((.conclusion // "") | ascii_upcase | IN("SUCCESS","NEUTRAL","SKIPPED")))
+                or (.__typename == "StatusContext"
+                   and (((.state // "") | ascii_upcase) == "SUCCESS"))) ]
+            | length > 0) as $green
+        | if $crOob then "PASS cr-out-of-band label waives the CodeRabbit wait"
+          elif ($installed != "true") then "PASS CodeRabbit not installed for this repo"
+          elif ($present and $green) then "PASS CodeRabbit review complete on head"
+          elif $present then "BLOCK CodeRabbit review still in progress on head (context present, not yet green)"
+          elif ($grace == "true") then "PASS CodeRabbit grace expired (head stale, CR never showed — backstop pass)"
+          else "BLOCK CodeRabbit has not reviewed this head yet"
+          end
+    '
+}
+
 run_selftest() {
     local fails=0
 
@@ -262,8 +416,119 @@ run_selftest() {
         echo "selftest CASE6 PASS — malformed rollup exits non-zero (caller fails closed)"
     fi
 
+    # ---- CodeRabbit-completion gate (evaluate_cr, pure) --------------------
+    local cr_green_rollup cr_absent_rollup cr_pending_rollup verdict
+    cr_green_rollup='{"state":"OPEN","labels":[],"statusCheckRollup":[
+      {"__typename":"StatusContext","context":"CodeRabbit","state":"SUCCESS"}]}'
+    cr_absent_rollup='{"state":"OPEN","labels":[],"statusCheckRollup":[
+      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"}]}'
+    cr_pending_rollup='{"state":"OPEN","labels":[],"statusCheckRollup":[
+      {"__typename":"StatusContext","context":"CodeRabbit","state":"PENDING"}]}'
+
+    # CASE 7 — CR installed but absent on the head → BLOCK (the #1332 race).
+    verdict=$(evaluate_cr "$cr_absent_rollup" "true" "false")
+    if [[ "$verdict" == BLOCK* ]] && [[ "$verdict" == *"has not reviewed"* ]]; then
+        echo "selftest CASE7 PASS — absent CR review blocks (#1332 race closed)"
+    else
+        echo "selftest CASE7 FAIL — absent CR should BLOCK (got: '$verdict')" >&2
+        fails=$((fails + 1))
+    fi
+
+    # CASE 8 — CR StatusContext terminal-SUCCESS → PASS (review complete).
+    verdict=$(evaluate_cr "$cr_green_rollup" "true" "false")
+    if [[ "$verdict" == PASS* ]] && [[ "$verdict" == *"review complete"* ]]; then
+        echo "selftest CASE8 PASS — terminal-green CR passes"
+    else
+        echo "selftest CASE8 FAIL — green CR should PASS (got: '$verdict')" >&2
+        fails=$((fails + 1))
+    fi
+
+    # CASE 9 — CR present but not yet green (still reviewing) → BLOCK.
+    verdict=$(evaluate_cr "$cr_pending_rollup" "true" "false")
+    if [[ "$verdict" == BLOCK* ]] && [[ "$verdict" == *"in progress"* ]]; then
+        echo "selftest CASE9 PASS — in-progress CR blocks"
+    else
+        echo "selftest CASE9 FAIL — pending CR should BLOCK (got: '$verdict')" >&2
+        fails=$((fails + 1))
+    fi
+
+    # CASE 10 — cr-out-of-band label waives the wait even with CR absent → PASS.
+    local cr_oob_rollup
+    cr_oob_rollup='{"state":"OPEN","labels":[{"name":"cr-out-of-band"}],"statusCheckRollup":[
+      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"}]}'
+    verdict=$(evaluate_cr "$cr_oob_rollup" "true" "false")
+    if [[ "$verdict" == PASS* ]] && [[ "$verdict" == *"cr-out-of-band"* ]]; then
+        echo "selftest CASE10 PASS — cr-out-of-band waives the CR wait"
+    else
+        echo "selftest CASE10 FAIL — cr-out-of-band should PASS (got: '$verdict')" >&2
+        fails=$((fails + 1))
+    fi
+
+    # CASE 11 — CR not installed for the repo → PASS (NONE is steady state).
+    verdict=$(evaluate_cr "$cr_absent_rollup" "false" "false")
+    if [[ "$verdict" == PASS* ]] && [[ "$verdict" == *"not installed"* ]]; then
+        echo "selftest CASE11 PASS — CR-not-installed passes"
+    else
+        echo "selftest CASE11 FAIL — not-installed should PASS (got: '$verdict')" >&2
+        fails=$((fails + 1))
+    fi
+
+    # CASE 12 — CR absent but head stale past grace → PASS (stuck-CR backstop).
+    verdict=$(evaluate_cr "$cr_absent_rollup" "true" "true")
+    if [[ "$verdict" == PASS* ]] && [[ "$verdict" == *"grace expired"* ]]; then
+        echo "selftest CASE12 PASS — grace-expired backstop passes"
+    else
+        echo "selftest CASE12 FAIL — grace-expired should PASS (got: '$verdict')" >&2
+        fails=$((fails + 1))
+    fi
+
+    # CASE 13 — CR present-but-not-green with grace EXPIRED → still BLOCK.
+    # Regression guard for the #1358 High finding: the head-age backstop must NOT
+    # override an in-progress CR review (else admin-merge races CodeRabbit — the
+    # exact #1332 hole this gate closes). Grace rescues only an ABSENT CR.
+    verdict=$(evaluate_cr "$cr_pending_rollup" "true" "true")
+    if [[ "$verdict" == BLOCK* ]] && [[ "$verdict" == *"in progress"* ]]; then
+        echo "selftest CASE13 PASS — in-progress CR blocks even past grace"
+    else
+        echo "selftest CASE13 FAIL — pending CR past grace should BLOCK (got: '$verdict')" >&2
+        fails=$((fails + 1))
+    fi
+
+    # CASE 14 — SAFE_ADMIN_MERGE_CR_GRACE_MINUTES=0 DISABLES the backstop:
+    # detect_cr_grace_expired must read "false" even on an ancient head, so a
+    # 0-minute window cannot auto-pass a never-shown CR (#1358 zero-grace finding).
+    # These two cases exercise the real head-age MATH, so they must neutralize an
+    # ambient SAFE_ADMIN_MERGE_CR_GRACE_EXPIRED override (the bats harness sets it)
+    # that would otherwise short-circuit detect_cr_grace_expired before the math.
+    local stale_head_json grace_out
+    stale_head_json='{"headRefOid":"abc","commits":[{"oid":"abc","committedDate":"2020-01-01T00:00:00Z"}]}'
+    grace_out=$(unset SAFE_ADMIN_MERGE_CR_GRACE_EXPIRED; SAFE_ADMIN_MERGE_CR_GRACE_MINUTES=0 detect_cr_grace_expired "$stale_head_json")
+    if [ "$grace_out" = "false" ]; then
+        echo "selftest CASE14 PASS — grace_min=0 disables the stale-head backstop"
+    else
+        echo "selftest CASE14 FAIL — grace_min=0 should disable backstop (got: '$grace_out')" >&2
+        fails=$((fails + 1))
+    fi
+
+    # CASE 15 — staleness follows headRefOid, NOT the newest committedDate, so a
+    # truncated `--json commits` page can't mis-time the grace (#1358 truncation
+    # finding). headRefOid points at an ancient commit while a fresh "now" commit
+    # also appears: with the default 20-min window the head must read STALE.
+    local head_oid_json now_iso
+    now_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
+    head_oid_json='{"headRefOid":"old","commits":[
+      {"oid":"new","committedDate":"'"$now_iso"'"},
+      {"oid":"old","committedDate":"2020-01-01T00:00:00Z"}]}'
+    grace_out=$(unset SAFE_ADMIN_MERGE_CR_GRACE_EXPIRED SAFE_ADMIN_MERGE_CR_GRACE_MINUTES; detect_cr_grace_expired "$head_oid_json")
+    if [ "$grace_out" = "true" ]; then
+        echo "selftest CASE15 PASS — staleness uses headRefOid, not newest commit"
+    else
+        echo "selftest CASE15 FAIL — head oid (ancient) should read stale (got: '$grace_out')" >&2
+        fails=$((fails + 1))
+    fi
+
     if [ "$fails" -eq 0 ]; then
-        echo "PASS — safe-admin-merge --selftest (6/6)"
+        echo "PASS — safe-admin-merge --selftest (15/15)"
         return 0
     fi
     echo "FAIL — safe-admin-merge --selftest ($fails failing case(s))" >&2
@@ -292,7 +557,7 @@ main() {
         view_json="$SAFE_ADMIN_MERGE_STUB_ROLLUP"
     else
         command -v gh >/dev/null 2>&1 || { echo "safe-admin-merge: gh required" >&2; exit 2; }
-        if ! view_json=$(gh pr view "$pr" --json statusCheckRollup,state,labels 2>&1); then
+        if ! view_json=$(gh pr view "$pr" --json statusCheckRollup,state,labels,commits,headRefOid 2>&1); then
             echo "safe-admin-merge: gh pr view failed: $view_json" >&2
             exit 2
         fi
@@ -321,6 +586,31 @@ main() {
         echo "A bare 'gh pr merge --admin' would have bypassed branch protection and shipped past these. Fix or use the named *-out-of-band override label." >&2
         exit 1
     fi
+
+    # CodeRabbit-completion gate — CI is green, but a CI-green PR can still be
+    # admin-merged before CR finishes its async review (the #1332 race). Refuse
+    # until CR has completed on the head (or is overridden/not-installed/stale).
+    local cr_installed cr_grace cr_verdict cr_rc cr_decision
+    cr_installed=$(detect_cr_installed)
+    cr_grace=$(detect_cr_grace_expired "$view_json")
+    cr_verdict=$(evaluate_cr "$view_json" "$cr_installed" "$cr_grace")
+    cr_rc=$?
+    if [ "$cr_rc" -ne 0 ] || [ -z "$cr_verdict" ]; then
+        echo "safe-admin-merge: CodeRabbit-gate evaluation failed (jq rc=$cr_rc) — refusing (fail-closed)." >&2
+        exit 2
+    fi
+    cr_decision=${cr_verdict%% *}
+    case "$cr_decision" in
+        PASS)
+            echo "CR-GATE PASS — ${cr_verdict#PASS }" ;;
+        BLOCK)
+            echo "REFUSED — PR #$pr: ${cr_verdict#BLOCK }; NOT admin-merging." >&2
+            echo "CodeRabbit's review has not completed on this head — merging now would race it (the #1332 'Review failed: merged during review'). Wait for CR to finish, or apply the 'cr-out-of-band' label to merge without it." >&2
+            exit 1 ;;
+        *)
+            echo "safe-admin-merge: unexpected CR verdict '$cr_verdict' — refusing (fail-closed)." >&2
+            exit 2 ;;
+    esac
 
     echo "GREEN — PR #$pr: every required-or-allow-listed check is green (genuine stale-BLOCKED carve-out)."
     if [ "${SAFE_ADMIN_MERGE_DRY_RUN:-}" = "true" ]; then
