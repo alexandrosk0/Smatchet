@@ -281,22 +281,29 @@ static void RegisterDebugDockResetCommand(CommandRegistry& reg, AppController& a
 // --- debug.window.resize ----------------------------------------------------
 // Sets a transient flag; the main loop polls and calls glfwSetWindowSize.
 // Standalone-only; on the Unreal/DX12 build the flag is set but never consumed (harmless).
-static void RegisterDebugWindowResizeCommand(CommandRegistry& reg, AppController& /*app*/) {
+static void RegisterDebugWindowResizeCommand(CommandRegistry& reg, AppController& app) {
     Command c = MakeCommand("debug.window.resize", "Resize the GLFW window (standalone only).",
-                            [](const nlohmann::json& args, const CommandContext& /*ctx*/) {
+                            [&app](const nlohmann::json& args, const CommandContext& /*ctx*/) {
                                 const int w = static_cast<int>(args.value("width", 0));
                                 const int h = static_cast<int>(args.value("height", 0));
                                 if (w <= 0 || h <= 0) {
                                     return CommandResult::Failure(ErrorCode::ValidationError,
                                                                   "width and height must be > 0");
                                 }
-                                g_ui.requestWindowWidth = w;
-                                g_ui.requestWindowHeight = h;
-                                g_ui.requestWindowResize = true;
-                                nlohmann::json out;
-                                out["width"] = w;
-                                out["height"] = h;
-                                return CommandResult::Success(std::move(out));
+                                // Marshal the g_ui request-flag writes to the UI thread. When this
+                                // command is dispatched from an MCP/Lua worker thread, writing the
+                                // non-atomic int/bool request fields would race the standalone main
+                                // loop that polls them each frame (data race / UB). The dock.* and
+                                // bug.report handlers in this TU follow the same seam.
+                                return RunOnUiThreadAsCommandResult(app, [w, h]() {
+                                    g_ui.requestWindowWidth = w;
+                                    g_ui.requestWindowHeight = h;
+                                    g_ui.requestWindowResize = true;
+                                    nlohmann::json out;
+                                    out["width"] = w;
+                                    out["height"] = h;
+                                    return CommandResult::Success(std::move(out));
+                                });
                             });
     c.Params = {
         PInt("width", "Window width in pixels.", 0),
@@ -311,18 +318,24 @@ static void RegisterDebugWindowResizeCommand(CommandRegistry& reg, AppController
 // --- debug.window.screenshot ------------------------------------------------
 // Sets a transient flag + path; the main loop polls and writes PNG/PPM.
 // Standalone-only; on Unreal/DX12 the flag is set but never consumed.
-static void RegisterDebugWindowScreenshotCommand(CommandRegistry& reg, AppController& /*app*/) {
+static void RegisterDebugWindowScreenshotCommand(CommandRegistry& reg, AppController& app) {
     Command c = MakeCommand("debug.window.screenshot", "Save a PNG screenshot of the current viewport.",
-                            [](const nlohmann::json& args, const CommandContext& /*ctx*/) {
+                            [&app](const nlohmann::json& args, const CommandContext& /*ctx*/) {
                                 const std::string path = args.value("path", std::string());
                                 if (path.empty()) {
                                     return CommandResult::Failure(ErrorCode::ValidationError, "path is required");
                                 }
-                                g_ui.requestScreenshotPath = path;
-                                g_ui.requestScreenshot = true;
-                                nlohmann::json out;
-                                out["path"] = path;
-                                return CommandResult::Success(std::move(out));
+                                // Marshal to the UI thread: requestScreenshotPath is a std::string
+                                // read by the standalone main loop each frame, so an unsynchronised
+                                // write from an MCP/Lua worker thread is a genuine data race (the
+                                // string buffer can reallocate under the reader — UB, not benign).
+                                return RunOnUiThreadAsCommandResult(app, [path]() {
+                                    g_ui.requestScreenshotPath = path;
+                                    g_ui.requestScreenshot = true;
+                                    nlohmann::json out;
+                                    out["path"] = path;
+                                    return CommandResult::Success(std::move(out));
+                                });
                             });
     c.Params = {
         PString("path", "Output file path (PNG if extension is .png, PPM otherwise).", /*required*/ true),
