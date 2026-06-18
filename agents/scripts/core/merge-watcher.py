@@ -1944,6 +1944,7 @@ def maybe_auto_update_behind(
         and counts["pending"] == 0
         and counts["req_missing"] == 0
         and counts["cr_open"] == 0
+        and counts["user"] == 0   # unresolved user comments also block — don't churn (Cursor #1393)
     ):
         return {}
     pr = int(entry["pr"])
@@ -1974,6 +1975,12 @@ def maybe_auto_update_behind(
         # so the wedge still accrues toward the human STUCK escalation. (The slot
         # is consumed + head dedup'd, so we won't whack-a-mole this same head.)
         return {}
+    # Clear the wedge streak in the REGISTRY (not just the returned state delta —
+    # maybe_escalate_stuck_pr reads the streak off the registry ENTRY next cycle;
+    # a delta-only reset would not actually clear it — Cursor #1393). The dispatch
+    # advances the head, but reset explicitly so a no-op "already up-to-date"
+    # update can't leave a stale streak latched.
+    _bump_stuck_streak(pr, clone_path, 0, "", "")
     return {
         "stuck_streak": 0,
         "stuck_head": "",

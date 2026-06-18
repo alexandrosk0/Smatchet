@@ -2174,17 +2174,20 @@ m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 green    = "Poll 1/1 — CI: 5/5 pass (0 fail, 0 pending, 0 warn-downgraded, 0 req-missing) | CodeRabbit: APPROVED (0 open) | User: 0 | reviewDecision: APPROVED"
 notgreen = "Poll 1/1 — CI: 4/5 pass (1 fail, 0 pending, 0 warn-downgraded, 0 req-missing) | CodeRabbit: APPROVED (0 open) | User: 0 | reviewDecision: APPROVED"
 cropen   = "Poll 1/1 — CI: 5/5 pass (0 fail, 0 pending, 0 warn-downgraded, 0 req-missing) | CodeRabbit: COMMENTED (2 open) | User: 0 | reviewDecision: APPROVED"
+usercmt  = "Poll 1/1 — CI: 5/5 pass (0 fail, 0 pending, 0 warn-downgraded, 0 req-missing) | CodeRabbit: APPROVED (0 open) | User: 1 | reviewDecision: APPROVED"
 e = {"pr":7,"clone_path":"/x"}
 m._gh_owner_repo = lambda cp: ("o","r")
+m._bump_stuck_streak = lambda *a, **k: None   # isolate from registry I/O
 calls = []
 m.cascade_update_child = lambda o,r,pr: (calls.append(pr) or (True, "update-branch dispatched"))
 # disabled by default -> {}
 os.environ.pop("MERGE_WATCH_AUTO_UPDATE_BEHIND", None)
 assert m.maybe_auto_update_behind(e, green, "h1") == {}
 os.environ["MERGE_WATCH_AUTO_UPDATE_BEHIND"] = "true"
-# not-green / cr-open / unparseable -> {} (never dispatch a non-clean PR)
+# not-green / cr-open / unresolved-user-comment / unparseable -> {} (never a non-clean PR)
 assert m.maybe_auto_update_behind(e, notgreen, "h1") == {}
 assert m.maybe_auto_update_behind(e, cropen, "h1") == {}
+assert m.maybe_auto_update_behind(e, usercmt, "h1") == {}   # User: 1 blocks (Cursor #1393)
 assert m.maybe_auto_update_behind(e, "gh request failed", "h1") == {}
 assert calls == []
 # green + reserve OK -> dispatch once; streak reset in the returned delta
