@@ -466,42 +466,11 @@ jobs:
             cp "mesa-cache/$d" "build/ninja-iter-msvc/$d"
           done
 
-      # Launch-smoke — the provisioned exe must boot once under the just-installed
-      # Mesa GL. Surfaces the bucket-C/E green-wash class (postmortems.md 2026-06-07:
-      # Passed:0 Failed:3 GREEN for 2 weeks because the thin opengl32.dll loader
-      # killed every exe at process start). A read-only `app.version` (no network,
-      # no file mutation) turns "exe can't start" into a VISIBLE failed step.
-      # Shared verbatim with bucket-E (keep in sync).
-      #
-      # ADVISORY (continue-on-error) — WARN-first calibration. When this shipped
-      # hard-blocking (#1180) it immediately fired: the exe still cannot boot under
-      # CI Mesa GL (it exits at ~26 s, NOT a timeout — the `timeout 45` hang-guard
-      # is not the issue; this is the genuine dead-harness / Mesa-boot condition the
-      # smoke is meant to catch, infra.md). Hard-blocking it red-walls bucket-C/E
-      # develop-wide on a PRE-EXISTING condition, so it ships VISIBLE-BUT-NON-BLOCKING
-      # (strictly better than the prior silent green-wash) until the Mesa exe-boot
-      # provisioning is fixed (infra.md `bucket-mesa-exe-boot`); graduate to
-      # hard-fail (drop continue-on-error) then. `--spawn` boots the full GUI+MCP;
-      # SMATCHET_SPAWN_READY_MS (30 s) is the app's ready window, the outer `timeout`
-      # is a hang-guard a margin above it.
-      - name: Launch-smoke — provisioned exe must boot (Mesa GL)
-        continue-on-error: true
-        shell: bash
-        env:
-          GALLIUM_DRIVER: llvmpipe
-          LIBGL_ALWAYS_SOFTWARE: "1"
-          SMATCHET_SPAWN_READY_MS: "30000"
-        run: |
-          set -euo pipefail
-          EXE=build/ninja-iter-msvc/Smatchet.exe
-          echo "launch-smoke: $EXE cmd app.version --spawn --yes (ready<=30s, hang-guard 45s)"
-          if ! timeout 45 "$EXE" cmd app.version --spawn --yes; then
-            echo "::error::launch-smoke FAILED — $EXE could not boot+become-reachable under Mesa GL within the spawn-ready window." >&2
-            echo "  This is the dead-harness class (thin opengl32.dll loader / missing GL dep)," >&2
-            echo "  NOT a flaky test. The advisory bucket lane below would green-wash it." >&2
-            exit 1
-          fi
-          echo "launch-smoke: OK — exe booted."
+      # Launch-smoke moved OUT of this advisory job into the dedicated, hard-fail
+      # `Bucket launch-smoke (Mesa GL)` job (graduated 2026-06-18). The dead-harness
+      # boot check now lives in its own blocking check-run; bucket-C stays advisory
+      # for its screenshot-diff purpose. The lane-integrity step below still
+      # fail-closes this job's broken-lane teeth (Passed==0 && Failed>0).
 
       - name: Run bucket-C screenshot diff
         continue-on-error: true
@@ -687,38 +656,11 @@ jobs:
             cp "mesa-cache/$d" "build/ninja-ui-test-msvc/$d"
           done
 
-      # Launch-smoke — ADVISORY (continue-on-error), WARN-first. See the bucket-C
-      # copy for the full rationale: the exe currently cannot boot under CI Mesa GL
-      # (exits ~26 s, a genuine dead-harness/Mesa-boot condition, NOT the timeout),
-      # so hard-blocking red-walls develop bucket-wide on a pre-existing condition.
-      # Ships visible-but-non-blocking (better than the prior silent green-wash)
-      # until the Mesa exe-boot provisioning is fixed (infra.md `bucket-mesa-exe-boot`);
-      # graduate to hard-fail then. Kept in sync with bucket-C.
-      - name: Launch-smoke — provisioned exe must boot (Mesa GL)
-        continue-on-error: true
-        shell: bash
-        env:
-          GALLIUM_DRIVER: llvmpipe
-          LIBGL_ALWAYS_SOFTWARE: "1"
-          SMATCHET_SPAWN_READY_MS: "30000"
-        working-directory: build/ninja-ui-test-msvc
-        run: |
-          set -euo pipefail
-          echo "launch-smoke: ./Smatchet.exe cmd app.version --spawn --yes (ready<=30s, hang-guard 45s)"
-          set +e
-          out="$(timeout 45 ./Smatchet.exe cmd app.version --spawn --yes 2>&1)"
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          if [ "$rc" -ne 0 ]; then
-            if printf '%s\n' "$out" | grep -Eq '^\{.*"command"[[:space:]]*:[[:space:]]*"app\.version".*"ok"[[:space:]]*:[[:space:]]*true.*\}$'; then
-              echo "::warning::launch-smoke saw app.version ok:true but the spawn wrapper exited $rc; treating as teardown false-red."
-            else
-              echo "::error::launch-smoke FAILED — bucket-E Smatchet.exe could not boot+become-reachable under Mesa GL within the spawn-ready window (dead harness, not a flaky test)." >&2
-              exit "$rc"
-            fi
-          fi
-          echo "launch-smoke: OK — exe booted."
+      # Launch-smoke moved OUT of this advisory job into the dedicated, hard-fail
+      # `Bucket launch-smoke (Mesa GL)` job (graduated 2026-06-18). bucket-E stays
+      # advisory for its flaky ImGui-Test-Engine purpose; the dead-harness boot
+      # check is now its own blocking check-run. The retry-on-collapse +
+      # lane-integrity teeth below still guard against a persistently broken lane.
 
       - name: Run bucket-E ImGui Test Engine scenario
         id: run-bucket-e
@@ -975,33 +917,12 @@ jobs:
             cp "mesa-cache/$d" "build/ninja-ui-test-msvc/$d"
           done
 
-      # NON-advisory launch-smoke: prove the freshly built Mesa-GL exe can actually
-      # start and serve a command before trusting the advisory scenario below. Without
-      # this, a silently-dead harness (broken Mesa DLLs, exe crash-at-launch) would make
-      # the continue-on-error scenario step pass vacuously — the 2-week false-green class.
-      # NO continue-on-error: a launch failure here REDS the job.
-      - name: Launch-smoke (exe starts + serves app.version <=10s)
-        shell: bash
-        timeout-minutes: 2
-        env:
-          GALLIUM_DRIVER: llvmpipe
-          LIBGL_ALWAYS_SOFTWARE: "1"
-        working-directory: build/ninja-ui-test-msvc
-        run: |
-          set -euo pipefail
-          set +e
-          out="$(./Smatchet.exe cmd app.version --spawn --yes 2>&1)"
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          if [ "$rc" -ne 0 ]; then
-            if printf '%s\n' "$out" | grep -Eq '^\{.*"command"[[:space:]]*:[[:space:]]*"app\.version".*"ok"[[:space:]]*:[[:space:]]*true.*\}$'; then
-              echo "::warning::launch-smoke saw app.version ok:true but the spawn wrapper exited $rc; treating as teardown false-red."
-            else
-              echo "::error::launch-smoke FAILED — texture-guard Smatchet.exe could not boot+become-reachable under Mesa GL within the spawn-ready window (dead harness, not a flaky test)." >&2
-              exit "$rc"
-            fi
-          fi
+      # Launch-smoke moved OUT into the dedicated, hard-fail `Bucket launch-smoke
+      # (Mesa GL)` job (graduated 2026-06-18). That job blocks on the iter-msvc
+      # artefact exe booting under Mesa GL — the same dead-harness class. This job
+      # stays advisory for the #1122 texture-fault scenario; its scenario step
+      # below still hard-asserts `passed==0 && failed>0` (dead-harness) via python,
+      # so a silently-dead texture-fault build cannot green-wash here either.
 
       - name: Run mobile-texture-guard scenario (advisory)
         id: run-texture-guard
@@ -1042,6 +963,127 @@ jobs:
           name: mobile-texture-guard-exe-${{ github.run_id }}
           path: build/ninja-ui-test-msvc/Smatchet.exe
           if-no-files-found: ignore
+
+  # Dedicated, HARD-FAIL launch-smoke for the Mesa-software-GL bucket exe.
+  # ---------------------------------------------------------------------------
+  # This is the graduated, BLOCKING form of the dead-harness smoke that used to
+  # live as an advisory STEP inside the continue-on-error bucket-C / bucket-E /
+  # mobile-texture-guard jobs (infra.md `bucket-mesa-exe-boot` P1). It exists as
+  # its OWN job — with a stable, allow-list-matchable check-run name — so the
+  # merge-gate can block on "the provisioned exe cannot boot under Mesa GL"
+  # WITHOUT re-coupling to the flaky screenshot-diff / UI-test runs those bucket
+  # jobs also carry. Those bucket jobs STAY advisory (continue-on-error) for
+  # their flaky-rendering purpose; THIS job is the blocking dead-harness gate.
+  #
+  # Graduated 2026-06-18 after #1370 fixed the `--spawn` teardown exit-code bug:
+  # the launch-smoke step has been reliably `success` across the last 6 runs, so
+  # the WARN-first advisory calibration (2026-06-15) is over. NO continue-on-error
+  # anywhere in this job — its check-run conclusion IS the launch-smoke verdict.
+  #
+  # Mirrors the bucket-C provisioning path: download the same `Smatchet.exe`
+  # artefact windows-msvc uploads, install the 3-DLL Mesa software-GL set beside
+  # it, then boot it once via the unified CLI. The Mesa cache+install pair is
+  # copied verbatim from bucket-C/E/texture-guard (the composite-action dedup is
+  # a separate tracked debt entry: `Mesa software-GL install block duplicated`).
+  bucket-launch-smoke-mesa-gl:
+    name: Bucket launch-smoke (Mesa GL)
+    needs: windows-msvc
+    runs-on: windows-2022
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false  # runs a PR-built binary; no git creds needed (artipacked / CodeRabbit #1375)
+
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+
+      - name: Download Smatchet.exe artefact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: smatchet-exe-${{ github.run_id }}
+          path: build/ninja-iter-msvc/
+
+      # Cache + install the Mesa software-GL DLLs — copied verbatim from
+      # bucket-C/E/texture-guard (same key so all four jobs share one cached set).
+      - name: Cache Mesa software-GL DLLs
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        # The Mesa DLL cache is a pure speed optimization — the install step below
+        # re-downloads on a miss. A transient cache-service error must NOT red this
+        # blocking job, so the CACHE step (not the install/smoke) is continue-on-error.
+        continue-on-error: true
+        with:
+          path: mesa-cache
+          key: mesa-dlls-24.2.5-v2
+
+      - name: Install Mesa software OpenGL ICD (opengl32sw.dll)
+        shell: bash
+        env:
+          MESA_VERSION: "24.2.5"
+        run: |
+          set -euo pipefail
+          # Mesa >= 22 splits the GL driver: opengl32.dll is only a thin loader
+          # that hard-requires libgallium_wgl.dll (the actual ~53 MB driver) +
+          # libglapi.dll beside it. Copying opengl32.dll alone makes EVERY exe
+          # in the target dir die at process start (STATUS_DLL_NOT_FOUND,
+          # silent) — exactly the dead-harness class this job exists to catch.
+          need_fetch=0
+          for d in opengl32.dll libgallium_wgl.dll libglapi.dll; do
+            if [ ! -f "mesa-cache/$d" ]; then need_fetch=1; fi
+          done
+          if [ "$need_fetch" = "1" ]; then
+            mkdir -p mesa-tmp mesa-cache
+            cd mesa-tmp
+            curl -fL -o mesa.7z "https://github.com/pal1000/mesa-dist-win/releases/download/${MESA_VERSION}/mesa3d-${MESA_VERSION}-release-msvc.7z"
+            7z x mesa.7z -o./extracted >/dev/null 2>&1 || true
+            for d in opengl32.dll libgallium_wgl.dll libglapi.dll; do
+              if [ -f "extracted/x64/$d" ]; then cp "extracted/x64/$d" "../mesa-cache/$d"; fi
+            done
+            cd ..
+            rm -rf mesa-tmp
+          fi
+          # Strict copy — a missing DLL here must fail LOUDLY, not reproduce
+          # the silent-loader-death class this block exists to prevent.
+          for d in opengl32.dll libgallium_wgl.dll libglapi.dll; do
+            cp "mesa-cache/$d" "build/ninja-iter-msvc/$d"
+          done
+
+      # The blocking smoke. NO continue-on-error: a launch failure REDS this job,
+      # and the `Bucket launch-smoke (Mesa GL)` check-run conclusion reflects it.
+      # `--spawn` boots the full GUI+MCP under Mesa GL; SMATCHET_SPAWN_READY_MS
+      # (30 s) is the app's ready window and the outer `timeout 45` is a hang-guard
+      # a margin above it. The teardown false-red guard (folded in from bucket-E /
+      # texture-guard) tolerates the historical case where app.version returns
+      # ok:true but the spawn wrapper exits nonzero on teardown — now fixed by
+      # #1370, but kept as defence-in-depth so a teardown regression does not red
+      # this blocking gate on an otherwise-healthy boot.
+      - name: Launch-smoke — provisioned exe must boot (Mesa GL)
+        shell: bash
+        env:
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          SMATCHET_SPAWN_READY_MS: "30000"
+        run: |
+          set -euo pipefail
+          EXE=build/ninja-iter-msvc/Smatchet.exe
+          echo "launch-smoke: $EXE cmd app.version --spawn --yes (ready<=30s, hang-guard 45s)"
+          set +e
+          out="$(timeout 45 "$EXE" cmd app.version --spawn --yes 2>&1)"
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          if [ "$rc" -ne 0 ]; then
+            if printf '%s\n' "$out" | grep -Eq '^\{.*"command"[[:space:]]*:[[:space:]]*"app\.version".*"ok"[[:space:]]*:[[:space:]]*true.*\}$'; then
+              echo "::warning::launch-smoke saw app.version ok:true but the spawn wrapper exited $rc; treating as teardown false-red (defence-in-depth; #1370 fixed the root cause)."
+            else
+              echo "::error::launch-smoke FAILED — $EXE could not boot+become-reachable under Mesa GL within the spawn-ready window." >&2
+              echo "  This is the dead-harness class (thin opengl32.dll loader / missing GL dep), NOT a flaky test." >&2
+              exit "$rc"
+            fi
+          fi
+          echo "launch-smoke: OK — exe booted."
 
   sanitizer-asan:
     name: Sanitizer (ASAN via MSVC)

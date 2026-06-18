@@ -116,15 +116,20 @@ DEFAULT_QUERY_FILE="$SCRIPT_DIR/merge-gates.graphql"
 #  reds on a real build break but NOT on stochastic crash discovery. Adding it
 #  here WITHOUT that step-guard would re-introduce the Bucket-style poller jam;
 #  the two ship together (see fuzz-smoke.yml + postmortems.md 2026-06-16 #1301);
-#  Bucket-* REMOVED 2026-06-15 — the Mesa-software-GL bucket-C/E lanes cannot
-#  boot the exe on the CI runner (infra.md `bucket-mesa-exe-boot` P1 /
-#  `ci-infra-flake-reds-masquerade-as-real-breakage` item (c)), so they are
-#  ~100% red regardless of code correctness and only jam the poller. Re-add
-#  `Bucket-|` to THIS constant the moment the boot is fixed and the bucket
-#  launch-smoke graduates back to hard-fail — that is the `bucket-mesa-exe-boot`
-#  P1 graduation step. postmortem-owed.sh sources this constant (no separate
-#  copy to keep in sync since the de-dup), so one edit here covers both.)
-MERGE_GATES_BLOCK_ALLOWLIST_RE="Coverage|Sanitizer|Perf PR-fast|Android security gate|Fuzz smoke"
+#  Bucket launch-smoke (Mesa GL) ADDED 2026-06-18 — the GRADUATED, DEDICATED form
+#  of the Mesa dead-harness gate. The broad `Bucket-` token is DELIBERATELY NOT
+#  here: the continue-on-error bucket-C / bucket-E jobs ALSO run flaky
+#  screenshot-diff / ImGui-Test-Engine lanes (infra.md `bucket-mesa-exe-boot` P1 /
+#  `ci-infra-flake-reds-masquerade-as-real-breakage` item (c)), so matching
+#  `Bucket-` would re-block merges on stochastic rendering flake — the exact jam
+#  the 2026-06-15 advisory-flip solved. Instead the dead-harness boot check now
+#  lives in its OWN hard-fail job named `Bucket launch-smoke (Mesa GL)` (see
+#  build-and-test.yml; NO continue-on-error), and ONLY that stable name is on the
+#  allow-list. bucket-C/E stay advisory; this one blocks. #1370 fixed the `--spawn`
+#  teardown exit-code that previously red-walled the smoke, so it is now reliably
+#  green and safe to block on. postmortem-owed.sh sources this constant (no
+#  separate copy to keep in sync since the de-dup), so one edit here covers both.)
+MERGE_GATES_BLOCK_ALLOWLIST_RE="Coverage|Sanitizer|Perf PR-fast|Android security gate|Fuzz smoke|Bucket launch-smoke [(]Mesa GL[)]"
 
 # Source prompt shim so `ask_user_question` is callable from the caller's
 # integration flow. Lazy — only if available.
