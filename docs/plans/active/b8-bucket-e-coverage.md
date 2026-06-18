@@ -107,6 +107,7 @@ Two phases, one PR each (or one combined PR if the live set stays small).
 ## Verification
 
 - **Bucket E**: each new/edited TU runs green via its `scripts/dev/test-ui-*.sh` on `ninja-ui-test-msvc`, ~4× back-to-back to confirm non-flaky.
+  - **L5** — `scripts/dev/test-ui-attachment-thumbnail-loading-cue.sh` drives `tests/ui/attachment_thumbnail_loading_cue.test.cpp` (`Attachment/ThumbnailLoadingCue_VisibleWhileLoading`).
 - **Bucket A**: none (no new pure helpers).
 - **Build gate**: `cmake --build --preset ninja-ui-test-msvc --target SmatchetStandalone` (bucket-E build). **L1 confirmed adds a `CommandPaletteUi.h` accessor → its PR runs dual-target** `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`. L2/L3/L4/L5 are test-only (no dual-target needed).
 - **Phase 0**: `test-backlog-counts.sh` 8/0; pure-docs.
@@ -121,6 +122,7 @@ Two phases, one PR each (or one combined PR if the live set stays small).
 
 - #711 · **Phase 0** — archived the 8 stale/moot bucket-E entries (3 infra "blockers" + 5 coverage dependents) to `applied.md` after re-verifying against current develop; count index synced (test 19→15, applied 173→181, 8/0). Pure-docs. Merged.
 - **Phase 1 L1** — `command_palette_inline_typing.test.cpp` authored + builds clean on `feat/b8-l1-command-palette-typing` (adds `CommandPaletteUi::FilterText()` getter). **Held, not shipped** — see Deviations.
+- **Phase 1 L5** — `tests/ui/attachment_thumbnail_loading_cue.test.cpp` + `scripts/dev/test-ui-attachment-thumbnail-loading-cue.sh` authored on `b8-l5-thumbnail-cue`. Drives the **real** production gate: seeds `smatchet::memtel::PendingThumbnailUploads()` (the live global atomic the production cue at `SmatchetAttachmentPreviewUi.cpp:653-659` reads) > 0, asserts the "loading thumbnails..." cue renders, then drains to 0 and asserts it clears. Macro pre-check: `SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS` is an unconditional `#define` (`:26`, inside `#if defined(_WIN32)`), so it IS live in the MSVC bucket-E build — the cue compiles in, not vacuously green. Test-only (no `Source/Core/` change). Built clean on `ninja-ui-test-msvc`; driver 4/4 green back-to-back (ports 58761/63/65/67), zero flake. Lint + shellcheck clean.
 
 ## Deviations from plan
 

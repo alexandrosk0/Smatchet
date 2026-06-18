@@ -18,6 +18,7 @@ extern "C" void SmatchetRegisterMcpLuaFreshStateRaceTests(ImGuiTestEngine* engin
 extern "C" void SmatchetRegisterSyncStallVisibleCueTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAnnotateBeforeClCueTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterToolbarAppendCacheCueTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterAttachmentThumbnailLoadingCueTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterDescriptionTooltipMarkdownRenderTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterSpawnWarmupDeterministicGateTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAnnotatePrefsPersistFlowTests(ImGuiTestEngine* engine);
@@ -59,6 +60,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterSyncStallVisibleCueTests(engine);
     SmatchetRegisterAnnotateBeforeClCueTests(engine);
     SmatchetRegisterToolbarAppendCacheCueTests(engine);
+    SmatchetRegisterAttachmentThumbnailLoadingCueTests(engine);
     SmatchetRegisterDescriptionTooltipMarkdownRenderTests(engine);
     SmatchetRegisterSpawnWarmupDeterministicGateTests(engine);
     SmatchetRegisterAnnotatePrefsPersistFlowTests(engine);
