@@ -51,6 +51,7 @@ STEPS=(
   "test-agent-discovery-fixture|bash $CORE/test-agent-discovery-fixture.sh"
   "test-agent-build-facts|bash $CORE/test-agent-build-facts.sh"
   "test-markdown-links|bash $CORE/test-markdown-links.sh"
+  "test-orphan-bats|bash $CORE/test-orphan-bats.sh --selftest && bash $CORE/test-orphan-bats.sh"
 )
 
 declare -a FAILED=()

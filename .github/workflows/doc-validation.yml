@@ -51,6 +51,7 @@ on:
       - 'agents/scripts/core/**'
       - 'agents/scripts/project/**'
       - 'scripts/dev/**'
+      - 'tests/bats/**'
       - 'CONTEXT-MAP.md'
       - 'Source/Core/src/**/AGENTS.md'
       - 'Source/Core/src/**/CONTEXT.md'
@@ -239,7 +240,7 @@ jobs:
           fi
           git fetch --no-tags origin "$BASE_REF" 2>/dev/null || true
           changed="$(git diff --name-only "origin/$BASE_REF...HEAD" 2>/dev/null || true)"
-          if printf '%s\n' "$changed" | grep -qE '(\.md$|^AGENTS\.md$|^agents/|^docs/|^project\.config\.(json|schema\.json)$|^CONTEXT-MAP\.md$|^scripts/dev/project-config\.sh$|^\.github/workflows/doc-validation\.yml$)'; then
+          if printf '%s\n' "$changed" | grep -qE '(\.md$|^AGENTS\.md$|^agents/|^docs/|^tests/bats/|^project\.config\.(json|schema\.json)$|^CONTEXT-MAP\.md$|^scripts/dev/project-config\.sh$|^\.github/workflows/doc-validation\.yml$)'; then
             echo "docs=true" >> "$GITHUB_OUTPUT"
             echo "doc-relevant changes detected — running full doc validation."
           else
@@ -341,6 +342,12 @@ jobs:
       - name: test-markdown-links — no dangling [label](href) targets
         if: steps.detect.outputs.docs == 'true'
         run: bash agents/scripts/core/test-markdown-links.sh
+
+      - name: test-orphan-bats — every tests/bats/*.bats has a runnable wrapper
+        if: steps.detect.outputs.docs == 'true'
+        run: |
+          bash agents/scripts/core/test-orphan-bats.sh --selftest
+          bash agents/scripts/core/test-orphan-bats.sh
 
       - name: test-agent-discovery-fixture — Gate #1 flat discovery from subdirs
         if: steps.detect.outputs.docs == 'true'
