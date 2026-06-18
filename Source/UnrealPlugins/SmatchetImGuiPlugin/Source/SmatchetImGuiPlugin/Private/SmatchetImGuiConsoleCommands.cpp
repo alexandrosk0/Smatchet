@@ -6,6 +6,7 @@
 #include "Dom/JsonObject.h"
 #include "HAL/CriticalSection.h"
 #include "HAL/IConsoleManager.h"
+#include "HAL/PlatformMisc.h"
 #include "Logging/LogMacros.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
@@ -90,9 +91,36 @@ FString JoinConsoleJsonArgs(const TArray<FString>& Args, int32 StartIndex, bool&
     return ArgsJson.IsEmpty() ? FString(TEXT("{}")) : ArgsJson;
 }
 
+// Out-of-band opt-in (an environment variable, NOT part of the in-band console string) that must be set
+// for a typed Unreal console / Blueprint-exec command to confirm a DESTRUCTIVE Smatchet command.
+//
+// Threat (security audit 2026-06-13): the Unreal console (`~`) and `exec` strings — which can be driven by
+// key bindings or level/asset content, not just a human typing — forward straight into the full Smatchet
+// CommandRegistry. A client-supplied `--yes` on that in-band string would let it self-confirm a destructive
+// op (e.g. a bulk delete) with none of the desktop UI's confirm-dialog friction. The registry has no
+// per-source (ctx.Source) trust gate, so the embed entry-point otherwise gets the same destructive reach as
+// the UI. Threading a real ctx.Source=UnrealConsole tag through the C ABI + native host + registry is the
+// deferred registry-wide trust-model redesign; this is the Unreal-side equivalent: `--yes` from the console
+// is honored ONLY when the developer has set this variable out-of-band. Programmatic callers that pass
+// bConfirmedDestructive=true to the EnqueueSmatchetCommand bridge node directly are unaffected — that boolean
+// is authored in Blueprint/C++ code, i.e. already out-of-band, not lifted from an in-band console string.
+bool IsUnrealConsoleDestructiveConfirmAllowed() {
+    const FString OptIn = FPlatformMisc::GetEnvironmentVariable(TEXT("SMATCHET_UNREAL_CONSOLE_ALLOW_DESTRUCTIVE"));
+    return OptIn.Equals(TEXT("1")) || OptIn.Equals(TEXT("true"), ESearchCase::IgnoreCase);
+}
+
 FParsedSmatchetConsoleArgs ParseSmatchetConsoleArgs(const TArray<FString>& Args, int32 StartIndex) {
     FParsedSmatchetConsoleArgs Parsed;
     Parsed.ArgsJson = JoinConsoleJsonArgs(Args, StartIndex, Parsed.bConfirmedDestructive, Parsed.bDryRun);
+    if (Parsed.bConfirmedDestructive && !IsUnrealConsoleDestructiveConfirmAllowed()) {
+        // Drop the in-band confirmation. With bConfirmedDestructive=false the native host's existing
+        // (Destructive && !ConfirmedDestructive) gate denies the command and returns an error result, so a
+        // destructive op typed/exec'd from the console fails closed instead of running unconfirmed.
+        LOG_WARN("Ignoring '--yes' from the Unreal console: destructive Smatchet commands cannot be confirmed from "
+                 "an in-band console/exec string. Set SMATCHET_UNREAL_CONSOLE_ALLOW_DESTRUCTIVE=1 out-of-band, or "
+                 "call the EnqueueSmatchetCommand Blueprint node with bConfirmedDestructive=true, to run one.");
+        Parsed.bConfirmedDestructive = false;
+    }
     return Parsed;
 }
 

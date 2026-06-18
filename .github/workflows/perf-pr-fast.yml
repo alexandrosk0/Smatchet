@@ -66,7 +66,7 @@ jobs:
       android_only: ${{ steps.detect.outputs.android_only }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -142,16 +142,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup MSVC dev environment
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
 
       - name: Setup sccache (object cache)
-        uses: mozilla-actions/sccache-action@v0.0.10
+        uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (perf-iter)
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ github.workspace }}\.sccache
           key: ${{ runner.os }}-sccache-perf-iter-${{ github.sha }}
@@ -160,7 +160,7 @@ jobs:
             ${{ runner.os }}-sccache-msvc-
 
       - name: Cache FetchContent _deps
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           # FETCHCONTENT_BASE_DIR defaults to .fetchcontent-src (CMakeLists.txt:280).
           # The previous path (build/ninja-iter-msvc/_deps) was wrong — that dir
@@ -190,7 +190,7 @@ jobs:
       # run_failure. Keep MESA_VERSION + cache key in lockstep with
       # build-and-test.yml. docs/plans/perf-gate-revival.md step 1.
       - name: Cache Mesa software-GL DLLs
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: mesa-cache
           key: mesa-dlls-24.2.5-v2
@@ -409,7 +409,7 @@ jobs:
 
       - name: Upload PR-fast snapshots
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: perf-pr-fast-snapshots
           path: |

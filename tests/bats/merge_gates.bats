@@ -287,14 +287,16 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "non-required Bucket-E FAILURE does NOT block (Mesa-GL advisory-flip 2026-06-15)" {
-    # `Bucket-` was DROPPED from the meant-to-block allow-list 2026-06-15: the
-    # Mesa-software-GL bucket-C/E lanes cannot boot the CI exe (infra.md
-    # `bucket-mesa-exe-boot` P1), so they are ~100% red regardless of code
-    # correctness and only jam the poller. A red bucket-C/E must therefore NOT
-    # block (it is now a non-allow-listed advisory lane). Required check kept
-    # green so the bucket failure is the sole non-required red. Re-arm this as a
-    # BLOCKS test (add `Bucket-|` back to the regex) when the boot graduates.
+@test "non-required Bucket-E FAILURE does NOT block (flaky screenshot/UI lane stays advisory)" {
+    # `Bucket-` was DROPPED from the meant-to-block allow-list 2026-06-15 and was
+    # DELIBERATELY NOT re-added at the 2026-06-18 graduation: the Mesa-software-GL
+    # bucket-C/E lanes ALSO run flaky screenshot-diff / ImGui-Test-Engine tests, so
+    # blocking on the broad `Bucket-` token would revive the stochastic-flake jam
+    # the advisory-flip solved. The dead-harness boot check graduated to its OWN
+    # dedicated blocking check instead (`Bucket launch-smoke (Mesa GL)`, see the
+    # BLOCKS test below). A red bucket-C/E must therefore STILL NOT block — it is a
+    # non-allow-listed advisory lane. Required check kept green so the bucket
+    # failure is the sole non-required red.
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
         "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
@@ -303,6 +305,28 @@ set_fixture() {
     run poll_merge_gates org repo 1
     [ "$status" -eq 0 ]
     [[ "$output" == *"GATES_PASSED"* ]]
+    rm -f "$f"
+}
+
+@test "non-required Bucket launch-smoke (Mesa GL) FAILURE blocks (dead-harness graduation 2026-06-18)" {
+    # The dedicated, hard-fail `Bucket launch-smoke (Mesa GL)` job graduated onto
+    # the meant-to-block allow-list 2026-06-18 (infra.md `bucket-mesa-exe-boot` P1):
+    # it boots the provisioned exe once under Mesa software-GL and is now reliably
+    # green after #1370 fixed the `--spawn` teardown exit-code. A red launch-smoke
+    # means the provisioned exe cannot boot (dead harness) and must BLOCK even
+    # though it is not a branch-protection-required context. Mirrors the
+    # Coverage/Sanitizer block tests above. This is the BLOCKING counterpart to the
+    # Bucket-E-does-NOT-block test above: the flaky bucket lanes stay advisory; only
+    # the dedicated boot check blocks. Required check kept green so the launch-smoke
+    # is the sole failure.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS","isRequired":true},{"__typename":"CheckRun","name":"Bucket launch-smoke (Mesa GL)","status":"COMPLETED","conclusion":"FAILURE","isRequired":false}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"1 fail"* ]]
     rm -f "$f"
 }
 

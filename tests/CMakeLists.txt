@@ -1003,6 +1003,18 @@ endif()
 
 target_compile_features(SmatchetTests PRIVATE cxx_std_14)
 
+# B8 (/EHsc on SmatchetTests, docs/plans/active/b8-bucket-e-coverage.md) — force
+# C++ exception unwinding ON for the doctest rig, immune to flag clobbering. The
+# default /EHsc normally arrives via CMAKE_CXX_FLAGS, but two things can strip it
+# for the test build: (1) a partial/stale configure that leaves CMAKE_CXX_FLAGS
+# empty (observed locally: the app build dir had `/DWIN32 /D_WINDOWS /EHsc`, the
+# test build dir had an EMPTY CMAKE_CXX_FLAGS), and (2) cpr 1.9.2 appending
+# `-Wall -Wextra -Wpedantic -Werror` to CMAKE_CXX_FLAGS mid-configure (CMakeLists.txt
+# ~L488), which turns the resulting C4530 "unwind semantics not enabled" into a fatal.
+# Without /EHsc, doctest's CHECK_THROWS* static_asserts fire C2338. PRIVATE + the
+# MSVC generator-expression guard keep Clang/Linux test presets untouched.
+target_compile_options(SmatchetTests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/EHsc>)
+
 # Pillar-3 sanitizer coverage of the doctest rig (infra: asan-doctest-rig-not-instrumented).
 # The ninja-msvc-asan preset historically instrumented only the app targets
 # (SmatchetStandalone / SmatchetCore_DX12), so heap UAF inside a test TU compiled

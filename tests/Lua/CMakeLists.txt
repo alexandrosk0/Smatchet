@@ -126,6 +126,13 @@ endif()
 
 target_compile_features(SmatchetLuaTests PRIVATE cxx_std_14)
 
+# B8 (/EHsc on SmatchetLuaTests) — same flag-clobbering guard as SmatchetTests
+# (tests/CMakeLists.txt). The Lua rig links sol2 (heavy templates + pcall/luaL_error
+# unwinding) and doctest CHECK_THROWS*, so a missing /EHsc surfaces the same
+# C2338/C4530 pair when CMAKE_CXX_FLAGS loses the MSVC default (stale-cache or cpr
+# -Werror pollution). PRIVATE + MSVC-guarded so non-MSVC test presets are unaffected.
+target_compile_options(SmatchetLuaTests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/EHsc>)
+
 # sol2 expects SOL_ALL_SAFETIES_ON when the host enables it (mirrors
 # AppController.h:10). Keeps the safety-rail set identical between production
 # and the test binary -- e.g. nil-checks on usertype accesses.
