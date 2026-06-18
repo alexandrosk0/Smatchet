@@ -117,3 +117,23 @@ run_hook_jq() {
     [ "$status" -eq 0 ]
     [[ "$output" == *'"permissionDecision":"deny"'* ]]
 }
+
+# ---- ordering: a later -C/cd must NOT exempt an earlier bare op (Cursor #1388) -
+
+@test "ordering: a bare shared-tree op BEFORE a cd-to-worktree is still BLOCKED" {
+    run run_hook_jq "git reset --hard && cd $WT && git merge origin/develop"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"permissionDecision":"deny"'* ]]
+}
+
+@test "ordering: a bare shared-tree op alongside a -C-worktree op is still BLOCKED" {
+    run run_hook_jq "git -C $WT merge origin/develop && git reset --hard"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"permissionDecision":"deny"'* ]]
+}
+
+@test "ordering: ALL ops -C-targeted at a worktree remains EXEMPT" {
+    run run_hook_jq "git -C $WT merge origin/develop && git -C $WT reset --hard"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}

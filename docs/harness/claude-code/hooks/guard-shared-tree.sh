@@ -99,14 +99,16 @@ printf '%s' "$STRIPPED" | grep -qE "${cmdpos}git${gitopts}[[:space:]]+(checkout|
 # Worktree-target exemption: an op that targets a DIFFERENT git worktree than
 # this integration tree moves THAT worktree's HEAD, never the shared tree's — so
 # it can't rug-pull a sibling here. Two forms are exempt:
-#   (a) `git -C <path> …`  (explicit working dir)
-#   (b) `cd <path> && git …` (cwd changed first)
+#   (a) the command LEADS with `cd <worktree> && …` (cwd governs every op), or
+#   (b) EVERY mutating-op invocation carries its own `-C <worktree>`.
+# Ordering matters: a `-C`/`cd` attached to a LATER op must NOT exempt an earlier
+# bare op that runs in the shared tree (it would still rug-pull a sibling). So we
+# verify per-op rather than grabbing any `-C`/`cd` in the string (Cursor #1388).
 # This guard is ADVISORY / bias-to-allow (the hard net is guard-head-drift.sh):
-#   - target resolves to a different worktree  -> EXEMPT
-#   - target is an UNEXPANDED $VAR (can't stat) -> EXEMPT (almost always a
+#   - target resolves to a different worktree  -> safe
+#   - target is an UNEXPANDED $VAR (can't stat) -> safe (almost always a
 #     worktree; a `-C $VAR` is never the shared tree literally — :10)
-#   - target resolves to THIS integration tree -> NOT exempt (keep the block)
-#   - bare op, no -C / no cd                    -> NOT exempt (keep the block)
+#   - target resolves to THIS integration tree, or a bare op -> NOT safe (block)
 _proj_top="$(git -C "$PROJ" rev-parse --show-toplevel 2>/dev/null)"
 wt_exempt() { # $1 = candidate path (raw, possibly quoted / $VAR)
   local p="$1"
@@ -116,10 +118,24 @@ wt_exempt() { # $1 = candidate path (raw, possibly quoted / $VAR)
   top="$(git -C "$p" rev-parse --show-toplevel 2>/dev/null)"
   [ -n "$top" ] && [ -n "$_proj_top" ] && [ "$top" != "$_proj_top" ]
 }
-cpath="$(printf '%s' "$CMD" | grep -oE '\-C[[:space:]]+("[^"]*"|[^[:space:]]+)' | tail -n1 | sed -E 's/^-C[[:space:]]+//; s/^"//; s/"$//')"
-wt_exempt "$cpath" && exit 0
-cdpath="$(printf '%s' "$CMD" | grep -oE '(^|[;&|]|&&)[[:space:]]*cd[[:space:]]+("[^"]*"|[^[:space:]&|;]+)' | tail -n1 | sed -E 's/.*cd[[:space:]]+//; s/^"//; s/"$//')"
+
+# (a) leading `cd <worktree>` — only a cd at the very START governs the whole
+# command; a cd that follows an earlier op cannot retroactively exempt it.
+cdpath="$(printf '%s' "$STRIPPED" | grep -oE '^[[:space:]]*cd[[:space:]]+("[^"]*"|[^[:space:]&|;]+)' | head -n1 | sed -E 's/^[[:space:]]*cd[[:space:]]+//; s/^"//; s/"$//')"
 wt_exempt "$cdpath" && exit 0
+
+# (b) every mutating-op invocation must carry its own worktree `-C`. Iterate the
+# matches; a single bare / integration-targeted op keeps the block.
+opmatch="git${gitopts}[[:space:]]+((checkout|switch|pull|reset|merge|rebase)|stash[[:space:]]+pop)"
+all_safe=1
+while IFS= read -r _m; do
+  [ -n "$_m" ] || continue
+  _tgt="$(printf '%s' "$_m" | grep -oE '\-C[[:space:]]+("[^"]*"|[^[:space:]]+)' | tail -n1 | sed -E 's/^-C[[:space:]]+//; s/^"//; s/"$//')"
+  wt_exempt "$_tgt" || { all_safe=0; break; }
+done <<OPMATCHES
+$(printf '%s' "$STRIPPED" | grep -oE "$opmatch")
+OPMATCHES
+[ "$all_safe" = 1 ] && exit 0
 
 SID="$(json_field '.session_id' 'session_id')"
 [ -n "$SID" ] || SID="${CLAUDE_SESSION_ID:-}"
