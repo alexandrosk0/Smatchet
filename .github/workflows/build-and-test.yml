@@ -994,6 +994,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false  # runs a PR-built binary; no git creds needed (artipacked / CodeRabbit #1375)
 
       - name: Setup MSVC dev environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1

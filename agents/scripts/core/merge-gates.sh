@@ -129,7 +129,7 @@ DEFAULT_QUERY_FILE="$SCRIPT_DIR/merge-gates.graphql"
 #  teardown exit-code that previously red-walled the smoke, so it is now reliably
 #  green and safe to block on. postmortem-owed.sh sources this constant (no
 #  separate copy to keep in sync since the de-dup), so one edit here covers both.)
-MERGE_GATES_BLOCK_ALLOWLIST_RE="Coverage|Sanitizer|Perf PR-fast|Android security gate|Fuzz smoke|Bucket launch-smoke"
+MERGE_GATES_BLOCK_ALLOWLIST_RE="Coverage|Sanitizer|Perf PR-fast|Android security gate|Fuzz smoke|Bucket launch-smoke [(]Mesa GL[)]"
 
 # Source prompt shim so `ask_user_question` is callable from the caller's
 # integration flow. Lazy — only if available.
