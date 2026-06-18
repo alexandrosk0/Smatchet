@@ -20,12 +20,18 @@ cd "$ROOT" || { echo "test-orphan-bats: cannot cd to repo root" >&2; exit 2; }
 # Test roots scripts/dev/test-all.sh discovers wrappers from.
 WRAPPER_ROOTS=(scripts/dev agents/scripts/core agents/scripts/project)
 
-# Is bats basename $1 referenced by any test-*.sh wrapper under the roots?
+# Is bats basename $1 RUN by any test-*.sh wrapper under the roots? A real wrapper
+# names the suite by its tests/bats/<name> PATH (BATS_FILE="tests/bats/<name>.bats";
+# bats "$BATS_FILE"). Match that path on a NON-comment line so a bare basename or a
+# path mention inside a comment — or a different suite whose name is a substring —
+# cannot false-pass an unwrapped suite (Bugbot #10044780: grep -F on the bare
+# basename matched comment mentions / partial filenames).
 _is_wrapped() {
     local base="$1" root
     for root in "${WRAPPER_ROOTS[@]}"; do
         [ -d "$root" ] || continue
-        if grep -rqF "$base" "$root" --include='test-*.sh' 2>/dev/null; then
+        if grep -rhF "tests/bats/$base" "$root" --include='test-*.sh' 2>/dev/null \
+             | grep -qvE '^[[:space:]]*#'; then
             return 0
         fi
     done
@@ -47,20 +53,25 @@ _check_dir() {
 }
 
 if [ "${1:-}" = "--selftest" ]; then
-    # selftest: asserts-failure — feeds a known-bad input (an unwrapped .bats) and
-    # asserts the checker flags it; a regression to pass-only trips this selftest.
+    # selftest: asserts-failure — feeds a known-bad input (an unwrapped .bats whose
+    # path appears ONLY in a wrapper COMMENT) and asserts the checker still flags
+    # it; a regression to comment/basename matching (Bugbot #10044780) trips this.
     tmp="$(mktemp -d)"
     trap 'rm -rf "$tmp"' EXIT
-    mkdir -p "$tmp/bats"
+    mkdir -p "$tmp/bats" "$tmp/wrappers"
     # Dynamic sentinel: its RESOLVED name must not appear literally in this file,
     # else _is_wrapped greps THIS test-*.sh and self-reports the sentinel as wrapped.
     sentinel="_orphan_$$_${RANDOM}.bats"
     : > "$tmp/bats/$sentinel"
+    # Decoy wrapper that only MENTIONS the suite path in a comment — must NOT count.
+    printf '#!/usr/bin/env bash\n# decoy: references tests/bats/%s in a comment only\n' \
+        "$sentinel" > "$tmp/wrappers/test-decoy-bats.sh"
+    WRAPPER_ROOTS=("$tmp/wrappers")
     if _check_dir "$tmp/bats" 2>/dev/null; then
-        echo "test-orphan-bats --selftest: FAIL — an unwrapped .bats was NOT flagged" >&2
+        echo "test-orphan-bats --selftest: FAIL — a comment-only mention counted as a wrapper" >&2
         echo "Passed: 0  Failed: 1"; exit 1
     fi
-    echo "test-orphan-bats --selftest: PASS — an unwrapped .bats is flagged."
+    echo "test-orphan-bats --selftest: PASS — unwrapped .bats flagged; comment mention ignored."
     echo "Passed: 1  Failed: 0"; exit 0
 fi
 
