@@ -2,7 +2,7 @@
 
 > **Slug**: `merge-watcher-clone-and-behind-hardening` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `shipped` — merged via PR #1393 (squash `5267b4569841`).
 
 ## Context
 
@@ -64,15 +64,11 @@ N/A — diff touches only `agents/scripts/core/*.py` + `tests/bats/**`; no `Sour
 - The remaining 7 Cluster-B robustness entries — separate.
 
 ## Implementation log
-*(populated post-ship)*
+- PR #1393 (squash `5267b4569841`) — `merge-watcher-cli.py`: `resolve_clone_path()` canonicalizes a linked-worktree cwd onto its primary clone via `git rev-parse --git-common-dir` (`:28`). `merge-watcher.py`: `_atomic_reserve_auto_update` + `maybe_auto_update_behind` dispatched from `maybe_escalate_stuck_pr` on a `BEHIND` wedge, opt-in `MERGE_WATCH_AUTO_UPDATE_BEHIND`, green+CR-cleared-only, dedup-per-head + `MERGE_WATCH_AUTO_UPDATE_BUDGET` (default 2); `BEHIND` STUCK reason-text names the operator remedies (`:223`). `merge_watcher.bats` +3 CASES.
+- Follow-up PR #1403 — decoupled the `merge_watcher.bats` `REPO_ROOT` conflation (`SCRIPTS_DIR` worktree vs `CLONE_PATH` canonical) so the suite passes from a linked worktree; also fixed a stale `NOTIFY_STATES` assertion + added a `_count_live_sessions` stub. (Resolves the `tooling.md` `merge-watcher-bats-repo-root-conflates-script-path-and-clone-path` debt this plan flagged in § Out-of-scope.)
 
 ## Deviations from plan
-*(populated post-ship)*
+- CodeRabbit caught a failure-path contract bug in `maybe_auto_update_behind` (non-empty return on `gh repo view`/dispatch failure suppressed the human STUCK escalation); fixed so EVERY non-acting path returns `{}` — only a successful dispatch returns the delta. Cursor added the `User`-count to the green gate and a registry-streak clear; both applied pre-merge.
 
 ## Verification (actual)
-*(populated post-ship)*
-
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. flip § Status to `shipped`,
-2. `git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,
-3. regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.
+- `merge_watcher.bats` register-canonicalization + 2 auto-update-behind CASES green from a primary clone (CI condition; verified via a throwaway plain-repo harness); `py_compile` clean; `scripts/dev/test-docs.sh` 13/13. The suite's `REPO_ROOT` script-path/clone-path conflation (flagged in § Out-of-scope) was the only worktree-only false-fail — resolved in follow-up #1403.
