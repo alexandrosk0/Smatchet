@@ -100,14 +100,10 @@ run_hook_jq() {
     [ -z "$output" ]
 }
 
-@test "cd <linked-worktree> && git merge is EXEMPT (cwd targets the worktree)" {
+@test "cd <linked-worktree> && git merge is BLOCKED (cd is not exemptable; use git -C)" {
+    # cd-based exemption was dropped as unsound (a later op can re-target the
+    # shared tree). The canonical cross-worktree form is git -C <abs-path>.
     run run_hook_jq "cd $WT && git merge origin/develop"
-    [ "$status" -eq 0 ]
-    [ -z "$output" ]
-}
-
-@test "cd <integration-tree> && git merge stays BLOCKED" {
-    run run_hook_jq "cd $PROJ && git merge origin/develop"
     [ "$status" -eq 0 ]
     [[ "$output" == *'"permissionDecision":"deny"'* ]]
 }
@@ -118,12 +114,21 @@ run_hook_jq() {
     [[ "$output" == *'"permissionDecision":"deny"'* ]]
 }
 
-# ---- ordering: a later -C/cd must NOT exempt an earlier bare op (Cursor #1388) -
+# ---- ordering / command-position: a later -C, or a verb appearing only as an
+# ---- argument, must NOT exempt an earlier real bare op (Cursor #1388) ---------
 
-@test "ordering: a bare shared-tree op BEFORE a cd-to-worktree is still BLOCKED" {
+@test "ordering: a bare shared-tree op alongside a cd-to-worktree is still BLOCKED" {
     run run_hook_jq "git reset --hard && cd $WT && git merge origin/develop"
     [ "$status" -eq 0 ]
     [[ "$output" == *'"permissionDecision":"deny"'* ]]
+}
+
+@test "cmd-position: a verb appearing only as an echo ARGUMENT does not force a deny" {
+    # `... && echo git reset` must not be treated as a real op; the only real op
+    # is the worktree-targeted merge, so the command stays EXEMPT.
+    run run_hook_jq "git -C $WT merge origin/develop && echo git reset"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
 }
 
 @test "ordering: a bare shared-tree op alongside a -C-worktree op is still BLOCKED" {

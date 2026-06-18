@@ -98,12 +98,14 @@ printf '%s' "$STRIPPED" | grep -qE "${cmdpos}git${gitopts}[[:space:]]+(checkout|
 
 # Worktree-target exemption: an op that targets a DIFFERENT git worktree than
 # this integration tree moves THAT worktree's HEAD, never the shared tree's — so
-# it can't rug-pull a sibling here. Two forms are exempt:
-#   (a) the command LEADS with `cd <worktree> && …` (cwd governs every op), or
-#   (b) EVERY mutating-op invocation carries its own `-C <worktree>`.
-# Ordering matters: a `-C`/`cd` attached to a LATER op must NOT exempt an earlier
-# bare op that runs in the shared tree (it would still rug-pull a sibling). So we
-# verify per-op rather than grabbing any `-C`/`cd` in the string (Cursor #1388).
+# it can't rug-pull a sibling here. EXEMPT only when EVERY mutating-op invocation
+# carries its own explicit `-C <worktree>`. We do NOT try to model `cd` — shell
+# cwd tracking across `&&`/`||`/`;`/subshells/`cd`-back is not reliably derivable
+# from the raw command string, so a `cd`-based exemption is unsound (a later op
+# can re-target the shared tree, e.g. `cd <wt> && git -C <integration> merge`);
+# the canonical cross-worktree form is `git -C <ABSOLUTE-worktree-path> <op>`,
+# and `-C` is verified PER-OP so a `-C` on a LATER op can't exempt an earlier
+# bare op that runs in the shared tree (Cursor #1388).
 # This guard is ADVISORY / bias-to-allow (the hard net is guard-head-drift.sh):
 #   - target resolves to a different worktree  -> safe
 #   - target is an UNEXPANDED $VAR (can't stat) -> safe (almost always a
@@ -119,14 +121,12 @@ wt_exempt() { # $1 = candidate path (raw, possibly quoted / $VAR)
   [ -n "$top" ] && [ -n "$_proj_top" ] && [ "$top" != "$_proj_top" ]
 }
 
-# (a) leading `cd <worktree>` — only a cd at the very START governs the whole
-# command; a cd that follows an earlier op cannot retroactively exempt it.
-cdpath="$(printf '%s' "$STRIPPED" | grep -oE '^[[:space:]]*cd[[:space:]]+("[^"]*"|[^[:space:]&|;]+)' | head -n1 | sed -E 's/^[[:space:]]*cd[[:space:]]+//; s/^"//; s/"$//')"
-wt_exempt "$cdpath" && exit 0
-
-# (b) every mutating-op invocation must carry its own worktree `-C`. Iterate the
-# matches; a single bare / integration-targeted op keeps the block.
-opmatch="git${gitopts}[[:space:]]+((checkout|switch|pull|reset|merge|rebase)|stash[[:space:]]+pop)"
+# Enumerate ONLY command-position mutating-op invocations (same ${cmdpos} prefix
+# as the detection grep, so a verb that merely appears as an argument — e.g.
+# `… && echo git reset` — is NOT picked up here and can't force a false block).
+# Each real invocation must carry its own worktree `-C`; one bare / integration-
+# targeted op keeps the block.
+opmatch="${cmdpos}git${gitopts}[[:space:]]+((checkout|switch|pull|reset|merge|rebase)|stash[[:space:]]+pop)"
 all_safe=1
 while IFS= read -r _m; do
   [ -n "$_m" ] || continue
@@ -147,7 +147,7 @@ NOW="$(date -u +%s)"
 live="$(sr_count_live_siblings "$REGDIR" "$SID" "$NOW")"
 
 if [ "$live" -gt 0 ]; then
-  reason="${live} concurrent session(s) share this integration tree (${PROJ}); this op would change HEAD/working-tree under them. Do feature work in a worktree: pwsh scripts/dev/worktree.ps1 new <slug>. To act on a worktree FROM here, target it explicitly — \`git -C <ABSOLUTE-worktree-path> <op>\` or \`cd <ABSOLUTE-worktree-path> && git <op>\` (a LITERAL path, not a \$VAR — this guard reads the un-expanded command text). Override: export SMATCHET_ALLOW_SHARED_SWITCH=1 in the session env BEFORE launch (an inline \`SMATCHET_ALLOW_SHARED_SWITCH=1 git …\` prefix does NOT work — the hook reads its own env before your command runs)."
+  reason="${live} concurrent session(s) share this integration tree (${PROJ}); this op would change HEAD/working-tree under them. Do feature work in a worktree: pwsh scripts/dev/worktree.ps1 new <slug>. To act on a worktree FROM here, target it explicitly — \`git -C <ABSOLUTE-worktree-path> <op>\` (a LITERAL path, not a \$VAR — this guard reads the un-expanded command text; a bare \`cd <wt> && git …\` is NOT exempt, the op must carry its own -C). Override: export SMATCHET_ALLOW_SHARED_SWITCH=1 in the session env BEFORE launch (an inline \`SMATCHET_ALLOW_SHARED_SWITCH=1 git …\` prefix does NOT work — the hook reads its own env before your command runs)."
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}' "$(json_escape "$reason")"
 fi
 exit 0
