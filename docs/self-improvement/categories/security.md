@@ -61,8 +61,15 @@
 
      STILL OPEN — needs action:
        * #13 Automation-worker hook → shutdown deadlock / UI-thread starvation
-         (Pillar 2 MEDIUM) — NOT addressed this campaign (orchestration miss);
-         remains a real open MEDIUM.
+         (Pillar 2 MEDIUM) — 2 of 3 sub-parts LANDED (PR #1271): cooperative
+         cancel (count-hook's pure abort policy observes automationWorkerShuttingDown_)
+         + bounded shutdown join (automationWorkerExited_ atomic + automationJobCv_
+         wait for kAutomationJoinWarnDeadline 5 s + LOG_WARN before join). RESIDUAL
+         still-open slice: part 3 only — the blocking synchronous tracker call at
+         JiraIssueMutation.cpp:206 (the UI-thread-starvation half) is DEFERRED to a
+         tracker-backend follow-up (cross-subsystem lift, not a clean Lua-host fix).
+         The per-finding entry below keeps Status: open for that residual; see its
+         Implementation note (2026-06-15) for detail.
        * #2/#3 base gate — RESOLVED 2026-06-14 (PR #1246 "source-aware
          destructive guard + close MCP/Lua confirm hole"). The trust-model call
          was MADE and shipped, not deferred: CommandRegistry now denies/require-
@@ -96,8 +103,9 @@
 - 2026-06-14 · build-doctor · [security] · P2 — Android config secrets stored PLAINTEXT at rest (audit H2 remainder; Keystore deferred)
   Details: Audit H2's POSIX half is now fixed (PR `fix/posix-secret-at-rest-perms-h2`: `chmod 0600` on the config file before the atomic rename + a loose-permission LOG_WARN on read, decision logic in the unit-tested `IsLooseConfigFileMode`). The **Android** half is NOT fixed: `ProtectSecretForConfig`'s `#else` branch still returns plaintext, so API tokens (`token`/`plane_api_key`/`github_pat`/`mcp_auth_token`/`ai_*_api_key`/`whisper_api_key`) land as cleartext in the app's filesDir JSON. Filesystem perms are not a reliable owner-isolation boundary on Android the way they are on a multi-user desktop, so the POSIX chmod mitigation does not transfer. The gap is now LOUD (a `LOG_WARN` fires on every Android secret write naming the gap) and Android is marked a known-unsupported platform for secret-at-rest in code + the H2 audit row, but the secret is still recoverable by anyone with filesystem access to the app sandbox (rooted device, ADB backup of a debuggable build, forensic image).
   Concrete next action: Implement Android Keystore-backed encryption-at-rest for the secret fields — generate/resolve an AES key in the AndroidKeyStore provider via JNI, wrap (GCM) the secret value before it reaches the config JSON, unwrap on load; gate behind the same `ProtectSecretForConfig`/`UnprotectSecretFromConfig` seam so the call sites are unchanged. Big JNI effort (host-injected JNIEnv plumbing through `Source/Core`); size L. MUST land before Android ships with real-account secrets (H2 raises P2->P1 the moment POSIX/Android ships).
+  Update (2026-06-18 · PR #1357 feat(android): seal config secrets at rest with AndroidKeyStore AES-GCM): the Keystore-backed encryption this entry asked for is IN-FLIGHT (branch feat/android-keystore-secret, NOT yet on develop). `ProtectSecretForConfig`/`UnprotectSecretFromConfig` now route through a host AndroidKeyStore AES-GCM seam (`SmatchetAndroidSecretBridge` JNI -> `SmatchetActivity.protectSecret/unprotectSecret`), fail-CLOSED (drops the secret rather than writing cleartext) when no provider is wired, and the provider returns empty on any JNI / AEAD-tag failure — so the cleartext-at-rest gap is closed at the seam. Status stays open until #1357 merges to develop; flips to fixed then.
   Status: open
-  Last-reviewed: 2026-06-14
+  Last-reviewed: 2026-06-18
 
 - 2026-06-13 · deep-audit-xref · [security] · P2 — Candidate MCP/UI cross-thread g_ui data race (playbook target 3)
   Details: MCP dispatch runs off the UI thread — `Source/Plugins/Mcp/McpPlugin.cpp:434` -> `Source/Core/src/Commands/CommandRegistry.cpp:317` -> command handlers that touch UI-owned globals, e.g. `BuiltinCommands_BugReport.cpp:62-64` and `BuiltinCommands_Debug.cpp:292-294` read/write `g_ui` with no synchronization vs the render thread. The existing MCP rows above cover *authorization* (un-gated dispatch, no Host/Origin), NOT this thread-safety gap. Candidate only — needs a TSan run to confirm a real race vs a benign single-writer pattern.
@@ -170,8 +178,9 @@
 - 2026-06-13 · deep-audit · [security] · P2 — Android secret passthrough stores credentials in plaintext (re-run: HIGH at-rest exposure; raise to P1 when Android ships)
   Details: Source/Core/src/Config/ConfigManager_PathUtils.cpp:331-334 passes secrets through with no Android Keystore encryption. Same no-op #else branch as the POSIX entry above; confirmed HIGH plaintext-at-rest by the re-run.
   Concrete next action: Back Android secrets with the Keystore or mark the platform unsupported for secret storage. Effort M.
+  Update (2026-06-18 · PR #1357): superseding fix IN-FLIGHT — the no-op `#else` passthrough is replaced by the AndroidKeyStore AES-GCM seal (fail-closed drop when no provider; see the 2026-06-14 build-doctor Android-Keystore entry above for the seam detail). Not yet on develop; flips to fixed on #1357 merge.
   Status: open
-  Last-reviewed: 2026-06-13
+  Last-reviewed: 2026-06-18
 
 - 2026-06-13 · deep-audit · [security] · P2 — Automation worker hook aggravates shutdown deadlock / UI-thread starvation
   Details: The instruction-count worker hook interacts with shutdown so a long automation can hold the process from exiting (verifier raised LOW→MEDIUM). Re-run located it at AppController_LuaBindings.cpp:1257 (LUA_MASKCOUNT, 50000, only checks shuttingDown_) chaining to blocking JiraIssueMutation.cpp:206 — also a UI-thread block (Pillar 2) since the count-hook does not cover blocking C++ glue.
