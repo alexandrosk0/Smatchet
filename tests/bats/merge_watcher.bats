@@ -2199,6 +2199,13 @@ assert m.maybe_auto_update_behind(e, green, "h1") == {}
 m._atomic_reserve_auto_update = lambda pr,cp,h,b: ("budget", 2)
 assert m.maybe_auto_update_behind(e, green, "h2") == {}
 assert calls == [7]   # still exactly one dispatch
+# FAILURE PATHS must also return {} so escalation still fires (CodeRabbit #1393)
+m._atomic_reserve_auto_update = lambda pr,cp,h,b: ("ok", 1)
+m._gh_owner_repo = lambda cp: None                      # gh repo view fails
+assert m.maybe_auto_update_behind(e, green, "h3") == {}
+m._gh_owner_repo = lambda cp: ("o","r")
+m.cascade_update_child = lambda o,r,pr: (False, "update-branch failed")  # dispatch fails
+assert m.maybe_auto_update_behind(e, green, "h4") == {}
 print("OK")
 PY
     [ "$status" -eq 0 ]

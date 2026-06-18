@@ -1948,9 +1948,14 @@ def maybe_auto_update_behind(
         return {}
     pr = int(entry["pr"])
     clone_path = entry["clone_path"]
+    # Strict contract: a NON-EMPTY return means "handled — caller short-circuits
+    # the STUCK escalation". So EVERY non-acting path (cannot resolve repo, dedup,
+    # over-budget, dispatch failure) MUST return {} so the human escalation still
+    # fires; only a SUCCESSFUL dispatch returns the non-empty delta (CodeRabbit
+    # #1393 — a non-empty failure return silently suppressed escalation).
     or_meta = _gh_owner_repo(clone_path)
     if not or_meta:
-        return {"stuck_action": "auto-update-behind skipped: gh repo view failed"}
+        return {}
     owner, repo = or_meta
     budget_raw = os.environ.get("MERGE_WATCH_AUTO_UPDATE_BUDGET", "2")
     try:
@@ -1964,17 +1969,21 @@ def maybe_auto_update_behind(
         return {}
     attempts_after = payload  # int — reserved slot index
     ok, msg = cascade_update_child(owner, repo, pr)
+    if not ok:
+        # Dispatch failed — do NOT reset the streak or short-circuit; fall through
+        # so the wedge still accrues toward the human STUCK escalation. (The slot
+        # is consumed + head dedup'd, so we won't whack-a-mole this same head.)
+        return {}
     return {
         "stuck_streak": 0,
         "stuck_head": "",
         "stuck_reason": "",
         "auto_update_action": (
-            f"update-branch {'dispatched' if ok else 'FAILED'} for BEHIND "
-            f"#{pr} ({msg}) [{attempts_after}/{budget}]"
+            f"update-branch dispatched for BEHIND #{pr} ({msg}) "
+            f"[{attempts_after}/{budget}]"
         ),
         "stuck_action": (
-            f"auto-update-branch ({'ok' if ok else 'failed'}) on BEHIND #{pr} "
-            f"head {head_sha[:8]}: {msg}"
+            f"auto-update-branch dispatched on BEHIND #{pr} head {head_sha[:8]}: {msg}"
         ),
     }
 
