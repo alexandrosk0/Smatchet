@@ -78,6 +78,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`tracker-interface-split`](shipped/tracker-interface-split.md) | 2026-05-26 | Plan — ITrackerClient Interface Split |
 | [`dock-slot-enforcement`](shipped/dock-slot-enforcement.md) | 2026-05-27 | Plan: Enforce dock-slot-only windows (no free-floating) |
 | [`policy-tighten-catch-all`](shipped/policy-tighten-catch-all.md) | 2026-05-27 | Plan: Tighten catch-all exception handling policy |
+| [`tooling-process-backlog-sweep`](shipped/tooling-process-backlog-sweep.md) | 2026-05-27 | Plan — Tooling + Process backlog sweep (P0-P2) |
 | [`decompose-top-20-monoliths`](shipped/decompose-top-20-monoliths.md) | 2026-05-28 | Plan — Decompose Top-20 Monolith Functions |
 | [`gate-enforcement-hardening`](shipped/gate-enforcement-hardening.md) | 2026-05-28 | Plan — Gate enforcement hardening (agent → GitHub promotion) |
 | [`github-commit-tracker-rows`](shipped/github-commit-tracker-rows.md) | 2026-05-28 | Plan - GitHub commit tracker rows |
@@ -103,6 +104,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`tracker-context-docs`](shipped/tracker-context-docs.md) | 2026-06-01 | Plan — Tracker subsystem context docs + multi-context scaffold |
 | [`agent-charter-altitude`](shipped/agent-charter-altitude.md) | 2026-06-02 | Plan — Agent charter altitude (operating-principle preamble + context budget) |
 | [`b10-docs-forcing-rules`](shipped/b10-docs-forcing-rules.md) | 2026-06-02 | Plan — B10: encode deferred process forcing-rules into the docs |
+| [`b8-bucket-e-coverage`](shipped/b8-bucket-e-coverage.md) | 2026-06-02 | Plan — B8: bucket-E coverage (post-verification re-scope) |
 | [`coverage-threshold-graduation`](shipped/coverage-threshold-graduation.md) | 2026-06-02 | Plan — Coverage threshold graduation (advisory → blocking) |
 | [`full-function-size-compliance`](shipped/full-function-size-compliance.md) | 2026-06-02 | Plan — Full Function-Size Compliance (zero grandfathered monoliths) |
 | [`gate-escape-postmortem`](shipped/gate-escape-postmortem.md) | 2026-06-02 | Plan — Gate-escape postmortem (incident → new gate) |
