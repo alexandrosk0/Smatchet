@@ -24,6 +24,7 @@
 # Per-PR label overrides (AGENTS.md § Merge gates § Per-PR overrides):
 #   tests-out-of-band → downgrades `Test-delta gate` FAIL → WARN
 #   perf-out-of-band  → downgrades `Perf PR-fast (...)` FAIL → WARN
+#   intent-out-of-band → downgrades `Intent section` FAIL → WARN
 #   cr-out-of-band    → downgrades a CodeRabbit block → WARN (CR gate only;
 #                       CI + user-comment gates still bind)
 # Downgraded failures are logged on stderr but do NOT contribute to ci_fail
@@ -107,7 +108,7 @@ DEFAULT_QUERY_FILE="$SCRIPT_DIR/merge-gates.graphql"
 # Other tooling that must apply the IDENTICAL allow-list (e.g.
 # safe-admin-merge.sh) sources this file and reads MERGE_GATES_BLOCK_ALLOWLIST_RE
 # rather than duplicating the regex — change it HERE and every consumer follows.
-#   Coverage / Sanitizer / Perf PR-fast / Android security gate / Fuzz smoke
+#   Coverage / Sanitizer / Perf PR-fast / Android security gate / Fuzz smoke / Intent section
 # (history: Perf PR-fast 2026-06-07; Android security gate 2026-06-09;
 #  Fuzz smoke 2026-06-16 — gates the #1301 class (a fuzz-relevant PR that breaks
 #  the DETERMINISTIC configure/build/ctest of the libFuzzer drivers). Only safe
@@ -129,7 +130,12 @@ DEFAULT_QUERY_FILE="$SCRIPT_DIR/merge-gates.graphql"
 #  teardown exit-code that previously red-walled the smoke, so it is now reliably
 #  green and safe to block on. postmortem-owed.sh sources this constant (no
 #  separate copy to keep in sync since the de-dup), so one edit here covers both.)
-MERGE_GATES_BLOCK_ALLOWLIST_RE="Coverage|Sanitizer|Perf PR-fast|Android security gate|Fuzz smoke|Bucket launch-smoke [(]Mesa GL[)]"
+#  "Intent section" added 2026-06-18 (pr-intent-capture-hardening #5, ADR-0022):
+#  the doc-validation Intent gate now exits non-zero on a missing/empty `## Intent`;
+#  routed onto the blocking path here rather than project.config.json
+#  branch_protection (which would need merge_group reporting or deadlock the queue).
+#  Override hatch: the `intent-out-of-band` label.
+MERGE_GATES_BLOCK_ALLOWLIST_RE="Coverage|Sanitizer|Perf PR-fast|Android security gate|Fuzz smoke|Bucket launch-smoke [(]Mesa GL[)]|Intent section"
 
 # Source prompt shim so `ask_user_question` is callable from the caller's
 # integration flow. Lazy — only if available.
@@ -372,6 +378,7 @@ poll_merge_gates() {
 | ([$pr.labels.nodes[]?.name]) as $labels
 | ($labels | any(. == "tests-out-of-band")) as $tests
 | ($labels | any(. == "perf-out-of-band")) as $perf
+| ($labels | any(. == "intent-out-of-band")) as $intent
 | ($labels | any(. == "cr-out-of-band")) as $cr
 | ((($pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes) // [])
    | map(. + {_k: (if .__typename == "CheckRun" then ["CheckRun", (.name // "")]
@@ -427,7 +434,8 @@ poll_merge_gates() {
               and (ascii_downcase | contains("advisory") | not)))))]) as $failing
 | ([$failing[] | select(
       ($tests and .__typename == "CheckRun" and .name == "Test-delta gate") or
-      ($perf  and .__typename == "CheckRun" and ((.name // "") | startswith("Perf PR-fast"))))]) as $downgraded
+      ($perf  and .__typename == "CheckRun" and ((.name // "") | startswith("Perf PR-fast"))) or
+      ($intent and .__typename == "CheckRun" and .name == "Intent section"))]) as $downgraded
 | ([$pr.reviews.nodes[] | select(.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")]) as $crall
 | (if ($crall | length) == 0 then "NONE"
    else (([$crall[] | select(.commit.oid == $sha)]) as $cur

@@ -354,16 +354,20 @@ jobs:
         if: steps.detect.outputs.docs == 'true'
         run: python3 agents/scripts/core/agent_size_audit.py --diff origin/develop
 
-  # Advisory (WARN-first, NON-required) PR-body lint: flag a PR whose body has
-  # no filled `## Intent` section (the one-line redacted statement of the
-  # originating human ask — see docs/agent-rules/ship-loops.md § Intent capture).
-  # PR-only (no push / merge_group), always exits 0 → emits a `::warning::`,
-  # never a red check, so it can NEVER block a merge (AGENTS.md § Merge gates:
-  # "Never merge past ANY red check"). Sibling-precedent: `autosync-plan-index`
-  # is the other PR-only non-required job in this workflow. Deliberately NOT in
-  # project.config.json § branch_protection → not a required context.
+  # PR-body lint: flag a PR whose body has no filled `## Intent` section (the
+  # one-line redacted statement of the originating human ask — see
+  # docs/agent-rules/ship-loops.md § Intent capture). PR-only (no push /
+  # merge_group). BLOCKING as of pr-intent-capture-hardening #5: exits non-zero on
+  # a missing/empty Intent. It is NOT a branch-protection required context
+  # (deliberately NOT in project.config.json § branch_protection, which would need
+  # merge_group reporting or it deadlocks the queue — ADR-0022); instead the check
+  # name `Intent section` is on the merge-gates.sh meant-to-block allow-list, so the
+  # poller treats its RED as a block exactly like Coverage / Sanitizer. The
+  # `intent-out-of-band` label downgrades it for fresh-worktree / non-Claude-Code
+  # fallback flows. The name must NOT contain "advisory" (the allow-list excludes
+  # advisory-named checks).
   pr-intent-lint:
-    name: Intent section (advisory)
+    name: Intent section
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -381,14 +385,16 @@ jobs:
           guide = "see docs/agent-rules/ship-loops.md § Intent capture"
           m = re.search(r'(?ms)^##\s+Intent\s*$(.*?)(?=^##\s|\Z)', body)
           if not m:
-              print("::warning title=Intent section missing::PR body has no `## Intent` "
-                    "section. Add a one-line redacted statement of the originating ask (%s)." % guide)
-              sys.exit(0)
+              print("::error title=Intent section missing::PR body has no `## Intent` "
+                    "section. Add a one-line redacted statement of the originating ask (%s). "
+                    "Override with the 'intent-out-of-band' label." % guide)
+              sys.exit(1)
           # Strip HTML-comment template placeholder before the empty check.
           section = re.sub(r'(?s)<!--.*?-->', '', m.group(1)).strip()
           if not section:
-              print("::warning title=Intent section empty::PR body `## Intent` is empty or "
-                    "only the template placeholder. Fill it with the originating ask (%s)." % guide)
-              sys.exit(0)
+              print("::error title=Intent section empty::PR body `## Intent` is empty or "
+                    "only the template placeholder. Fill it with the originating ask (%s). "
+                    "Override with the 'intent-out-of-band' label." % guide)
+              sys.exit(1)
           print("Intent section present and filled.")
           PY

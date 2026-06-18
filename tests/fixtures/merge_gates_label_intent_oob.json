@@ -1,0 +1,35 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "state": "OPEN",
+        "isDraft": false,
+        "reviewDecision": "APPROVED",
+        "headRefOid": "abc123",
+        "headRefName": "feature/intent-oob",
+        "labels": {
+          "pageInfo": {"hasNextPage": false},
+          "nodes": [{"name": "intent-out-of-band"}]
+        },
+        "commits": {
+          "nodes": [{
+            "commit": {
+              "statusCheckRollup": {
+                "contexts": {
+                  "pageInfo": {"hasNextPage": false},
+                  "nodes": [
+                    {"__typename": "CheckRun", "name": "Intent section", "conclusion": "FAILURE", "status": "COMPLETED", "startedAt": "2026-06-18T11:49:00Z", "isRequired": false},
+                    {"__typename": "CheckRun", "name": "build",          "conclusion": "SUCCESS", "status": "COMPLETED", "startedAt": "2026-06-18T11:50:00Z", "isRequired": true}
+                  ]
+                }
+              }
+            }
+          }]
+        },
+        "reviews": {"pageInfo": {"hasNextPage": false}, "nodes": []},
+        "reviewThreads": {"pageInfo": {"hasNextPage": false}, "nodes": []},
+        "comments": {"pageInfo": {"hasNextPage": false}, "nodes": []}
+      }
+    }
+  }
+}

@@ -914,6 +914,33 @@ set_fixture() {
     [[ "$output" == *"GATE_SNAPSHOT cr_override=0 downgraded=Perf PR-fast"* ]]
 }
 
+@test "non-required Intent section FAILURE blocks (pr-intent-capture-hardening #5)" {
+    # "Intent section" joined the meant-to-block allow-list (ADR-0022): the
+    # doc-validation Intent gate now exits non-zero on a missing/empty `## Intent`,
+    # so a red "Intent section" must block the poller even though it is not a
+    # branch-protection-required context. Required check kept green so Intent is the
+    # sole failure.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS","isRequired":true},{"__typename":"CheckRun","name":"Intent section","status":"COMPLETED","conclusion":"FAILURE","isRequired":false}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"1 fail"* ]]
+    rm -f "$f"
+}
+
+@test "intent-out-of-band label downgrades Intent section FAILURE → WARN, gates pass" {
+    set_fixture "$FIXTURES_DIR/merge_gates_label_intent_oob.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"1 warn-downgraded"* ]]
+    # GATE_SNAPSHOT names the bypassed Intent check (cr_override=0, no CR waiver).
+    [[ "$output" == *"GATE_SNAPSHOT cr_override=0 downgraded=Intent section"* ]]
+}
+
 @test "out-of-band label does NOT silence unrelated failing checks" {
     set_fixture "$FIXTURES_DIR/merge_gates_label_oob_other_fail_blocks.json"
     run poll_merge_gates org repo 1
