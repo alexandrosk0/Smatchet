@@ -969,18 +969,27 @@ void LoadSecretFields(const nlohmann::json& j, TrackerConfig& cfg, SecretMigrati
 #endif
 #elif defined(__ANDROID__)
     // SECURITY (audit H2 / CR #1357): unseal every secret through the host Keystore provider.
-    // UnprotectSecretFieldFromConfig -> UnprotectSecretFromConfig FAILS SAFE to empty (no provider,
-    // a Keystore/JNI decrypt failure, or ciphertext minted on another device). On an empty unseal we
-    // fall back to any legacy plaintext key a pre-Keystore build left on disk and flag a migration so
-    // Load() re-Saves — re-sealing it via Keystore, or dropping it fail-closed if no provider is
-    // wired. That gets pre-fix plaintext OFF disk on the first load after upgrade.
+    // UnprotectSecretFieldFromConfig -> UnprotectSecretFromConfig FAILS SAFE to empty (no provider, a
+    // Keystore/JNI decrypt failure, or ciphertext minted on another device). Plaintext fallback is gated
+    // on the SEALED key being ABSENT — not on an empty unseal: a present-but-undecryptable `*_enc`
+    // (tamper, key rotation, foreign-device ciphertext) is DROPPED, never downgraded to a sibling
+    // plaintext an attacker could have injected. We fall back to legacy plaintext only when no sealed key
+    // exists (a pre-Keystore config), flagging a migration so Load() re-Saves — re-sealing via Keystore,
+    // or dropping fail-closed if no provider is wired. Either way pre-fix plaintext leaves disk on load.
     const auto unsealSecret = [&j, &migrate](const char* encKey, const char* plainKey) -> std::string {
-        std::string value = UnprotectSecretFieldFromConfig(encKey, j.value(encKey, std::string{}));
-        if (value.empty()) {
-            value = j.value(plainKey, std::string{});
-            if (!value.empty()) {
-                migrate.LegacyPlaintext = true; // legacy plaintext present — re-Save to seal/drop it.
+        const std::string sealed = j.value(encKey, std::string{});
+        if (!sealed.empty()) {
+            // Sealed key present: trust ONLY a successful unseal. A failed unseal that coexists with a
+            // plaintext sibling still flags migration (purge on re-Save) but never surfaces it.
+            const std::string value = UnprotectSecretFieldFromConfig(encKey, sealed);
+            if (value.empty() && !j.value(plainKey, std::string{}).empty()) {
+                migrate.LegacyPlaintext = true; // purge stale plaintext on re-Save; do not trust it.
             }
+            return value;
+        }
+        std::string value = j.value(plainKey, std::string{});
+        if (!value.empty()) {
+            migrate.LegacyPlaintext = true; // legacy plaintext, no sealed key — re-Save to seal/drop it.
         }
         return value;
     };
