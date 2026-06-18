@@ -3,6 +3,7 @@
 #include "Commands/Command.h"
 #include "ConfigManager.h"
 #include "Logger.h"
+#include "UiPerfMonitor.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -53,6 +54,7 @@ CommandResult ScenarioRunner::Start(const std::string& name, const nlohmann::jso
     }
     outPath_ = std::move(outPath);
     frame_ = 0;
+    warmupResetDone_ = false;
 
     // Stale-file footgun fix: --spawn callers' WaitForFile poller treats any
     // non-empty file at outPath_ as "result ready". A stale file from the prior
@@ -86,6 +88,26 @@ void ScenarioRunner::Tick(AppController& app, bool& outScrollActive, int& outScr
     if (!active_)
         return;
 
+    // Uniform warmup-frame exclusion (tooling.md `p99-gate-warmup-frame-exclusion`).
+    // The perf scopes for frames 0..frame_-1 have already recorded into their
+    // sample rings by the time this Tick runs (Scenarios().Tick is the last call
+    // in SmatchetUI::Draw, after every measured scope). Once the scenario's
+    // declared warmup count has been driven, Reset() once — clearing the rings
+    // so the snapshot-time ComputeP99 that feeds the absolute p99 ceiling sees
+    // only steady-state samples, not the one-time cold-start spikes (font-atlas
+    // build, first-frame layout, initial catalog sync) that otherwise dominate
+    // p99 (PR #963: SmatchetUI::Draw p99 ~12 ms, drawEnsureCatalogAndInitialSync
+    // ~9 ms, both pure warmup). WarmupFrames() defaults to 0, so scenarios that
+    // do not opt in — including the ten that Reset() themselves in OnStart — are
+    // never touched here.
+    if (!warmupResetDone_) {
+        const int warmup = active_->WarmupFrames();
+        if (warmup > 0 && frame_ >= warmup) {
+            UiPerfMonitor::Instance().Reset();
+            warmupResetDone_ = true;
+        }
+    }
+
     active_->OnFrame(app, frame_);
 
     const int scrollY = active_->CurrentScrollY();
@@ -116,6 +138,7 @@ void ScenarioRunner::Tick(AppController& app, bool& outScrollActive, int& outScr
         active_.reset();
         app_ = nullptr;
         frame_ = 0;
+        warmupResetDone_ = false;
     }
 }
 
@@ -137,6 +160,7 @@ void ScenarioRunner::Cancel() {
         active_.reset();
         app_ = nullptr;
         frame_ = 0;
+        warmupResetDone_ = false;
     }
 }
 

@@ -223,6 +223,12 @@ add_executable(SmatchetTests
     # snapshot-time p99Ms row field (Pillar-1 p99 ceiling). Header-only
     # (Source/Core/include/Ui/PerfSampleRing.h); no production .cpp to link.
     Core/PerfSampleRing.test.cpp
+    # Warmup-frame exclusion (tooling.md p99-gate-warmup-frame-exclusion, PR #963):
+    # the Record/Reset/GetLastFrameRows(true) seam the runner's post-warmup
+    # UiPerfMonitor::Reset() drives — cold-start spikes dropped, a real
+    # steady-state regression still trips the ceiling. Links UiPerfMonitor.cpp
+    # (already in the SmatchetTests source list below).
+    Core/UiPerfMonitorWarmup.test.cpp
     # Worker-thread exception firewall (issue #1081 / PR #1080) — pure containment helper
     # behind AppController::LaunchBackgroundTask (Pillar-3 never-crash). Header-only
     # (Source/Core/include/BackgroundTaskFirewall.h); no production .cpp to link.

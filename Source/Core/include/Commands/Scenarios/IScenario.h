@@ -60,6 +60,16 @@ class IScenario {
     /// frame. Return -1 (default) to leave the grid alone. Scenarios that drive scroll
     /// override this; the runner reads it after each OnFrame call.
     virtual int CurrentScrollY() const { return -1; }
+
+    /// Leading frames whose perf samples are warmup and must be excluded from
+    /// the snapshot p99 population. Default 0 = no exclusion (unchanged for
+    /// scenarios that don't opt in, incl. the ten that Reset() in OnStart). When
+    /// > 0, ScenarioRunner::Tick calls UiPerfMonitor::Reset() once after this
+    /// many frames, so the rings feeding ComputeP99 hold only steady-state — the
+    /// one-time cold-start spikes (font-atlas, first-frame layout, initial sync)
+    /// that otherwise dominate p99 and trip the absolute ceiling are dropped.
+    /// See tooling.md `p99-gate-warmup-frame-exclusion` + PR #963.
+    virtual int WarmupFrames() const { return 0; }
 };
 
 /// Owns the active scenario instance, drives it from SmatchetUI::Draw, and
@@ -83,6 +93,11 @@ class ScenarioRunner {
   private:
     std::unique_ptr<IScenario> active_;
     int frame_ = 0;
+    /// Latched true once the runner has performed the one-time warmup-frame
+    /// UiPerfMonitor::Reset() for the active scenario (WarmupFrames() > 0).
+    /// Prevents re-clearing the ring every frame after the warmup boundary.
+    /// Reset to false on each Start()/finish/Cancel so the next run re-arms.
+    bool warmupResetDone_ = false;
     std::string outPath_;
     std::unordered_map<std::string, Factory> factories_;
     /// Stashed AppController pointer captured at Start() time so Cancel() can drive the
