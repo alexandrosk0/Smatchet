@@ -251,7 +251,17 @@ setup_claude_code() {
   # actually live — registered on UserPromptSubmit AND a python interpreter
   # resolves — so a silently-unwired hook (the gap that left no evidence capture
   # ever ran in a live session) surfaces once here instead of never.
-  if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1 || command -v py >/dev/null 2>&1; then
+  # Probe-EXECUTE each candidate (not just command -v): on Windows the python3
+  # Store app-execution-alias stub satisfies command -v but errors on run, so a
+  # name-only check would report WIRED while the hook fail-safes to writing
+  # nothing. Mirrors the interpreter resolver in capture-intent.sh.
+  _intent_py=""
+  for _cand in python3 python py; do
+    if command -v "$_cand" >/dev/null 2>&1 && "$_cand" -c "import sys" >/dev/null 2>&1; then
+      _intent_py="$_cand"; break
+    fi
+  done
+  if [ -n "$_intent_py" ]; then
     if grep -q '"UserPromptSubmit"' ".claude/settings.json" 2>/dev/null \
        && grep -q 'capture-intent.sh' ".claude/settings.json" 2>/dev/null; then
       echo "  prompt-intent capture: WIRED (UserPromptSubmit -> capture-intent.sh)"
@@ -259,7 +269,7 @@ setup_claude_code() {
       echo "  prompt-intent capture: NOT WIRED — capture-intent.sh missing from .claude/settings.json UserPromptSubmit (re-run setup / check sync-settings-hooks.sh)"
     fi
   else
-    echo "  prompt-intent capture: INERT — no python3/python/py on PATH (hook fail-safes to writing nothing)"
+    echo "  prompt-intent capture: INERT — no working python3/python/py on PATH (hook fail-safes to writing nothing)"
   fi
 
   link_agents

@@ -201,11 +201,13 @@ _HOME_SHENV = re.compile(r"(\$\{?HOME\}?[\\/])[^\\/\s\"']+")
 _HKEY_USERS = re.compile(r"(?i)((?:HKEY_USERS|HKU)[\\/])[^\\/\s\"']+")
 # ~username / ~$username shell shorthand (NOT ~/… which has no name).
 _HOME_TILDE = re.compile(r"(?<![\w./\\])~\$?([A-Za-z_][\w.\-]*)")
-# Email addresses -> [REDACTED-EMAIL]. Applied LAST in redact() (after the
-# username / connection-URL collapses) so the `[user]@host` / `[REDACTED]@host`
-# placeholders — which end in `]` immediately before `@` — cannot match; only a
-# bare prose `local@domain.tld` does. Intent lines are public, so emails are PII.
-_EMAIL = re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b")
+# Email / user@host identifiers -> [REDACTED-EMAIL]. The TLD-dot is OPTIONAL so a
+# dotless intranet form (alice@internal) is caught too — a third-party identifier
+# is PII regardless of TLD, and over-redaction is the safe direction (#7). Applied
+# LAST in redact() (after the username / connection-URL collapses) so the
+# `[user]@host` / `[REDACTED]@host` placeholders — which end in `]` immediately
+# before `@` — cannot match; only a bare prose `local@domain` does.
+_EMAIL = re.compile(r"\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9._\-]*[A-Za-z0-9]")
 
 
 def redact(text):
@@ -281,6 +283,8 @@ def _selftest():
         # #7: emails are now REDACTED (public PR body is PII surface).
         ("contact alexkonstantonis@gmail.com please", ["alexkonstantonis@gmail.com"], ["[REDACTED-EMAIL]"]),
         ("ping jane.doe+tag@sub.example.co.uk now", ["jane.doe+tag@sub.example.co.uk"], ["[REDACTED-EMAIL]"]),
+        # Dotless intranet domain must also be redacted (Bugbot: over-redact is safe).
+        ("reach me at alice@internal now", ["alice@internal"], ["[REDACTED-EMAIL]"]),
         ("line one\nline two\ttabbed", ["\n", "\t"], ["line one line two tabbed"]),
         # --- Post-red-team hardening (under-redaction is the vulnerability) ---
         # Connection URL with `/`-in-password + non-empty user: whole userinfo gone.
