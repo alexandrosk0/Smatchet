@@ -28,7 +28,7 @@ this skill is the invocation shortcut.
    | Verdict | Action |
    |---|---|
    | **Implement** | Durable rule → migrate into `AGENTS.md` § Project rules (1-liner) or the matching `docs/agent-rules/<topic>.md`. Delete the file. |
-   | **Backlog** | Real follow-up (regression / missing guard / tooling gap) → dated entry in `docs/self-improvement/categories/<cat>.md` with a `Source: memory <slug> (drained <date>)` line. Delete the file. |
+   | **Backlog** | Real follow-up (regression / missing guard / tooling gap) → new per-entry file `docs/self-improvement/categories/<cat>/<YYYY-MM-DD>-<slug>.md` (one entry per file — see `AGENT_SELF_IMPROVEMENT.md` § Format) with a `Source: memory <slug> (drained <date>)` line. Delete the memory file. |
    | **Toss** | Already code-guarded, machine-specific, or contradicted by the tree → delete the file; note the reason in the summary. |
 
    A memory that says "now wired into tooling" but whose guard has since
