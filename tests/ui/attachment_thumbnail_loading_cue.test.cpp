@@ -1,6 +1,6 @@
 // attachment_thumbnail_loading_cue.test.cpp — bucket-E visible-cue gate for the
 // S5 thumbnail decode→upload offload (docs/plans/shipped/memory-budget-and-lifetime-hardening.md,
-// pulled into B8 Phase-1 L5 per docs/plans/active/b8-bucket-e-coverage.md).
+// pulled into B8 Phase-1 L5 per docs/plans/b8-bucket-e-coverage.md).
 //
 // Invariant under test: while thumbnail decodes are in flight (the
 // `pendingThumbnailUploads` gauge > 0), the attachment preview surface renders a

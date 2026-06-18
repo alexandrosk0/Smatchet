@@ -1,8 +1,8 @@
 # Plan — B8: bucket-E coverage (post-verification re-scope)
 
-> **Slug**: `b8-bucket-e-coverage`. Sub-plan of [`agentic-backlog-campaign.md`](agentic-backlog-campaign.md) batch **B8**.
+> **Slug**: `b8-bucket-e-coverage`. Sub-plan of [`agentic-backlog-campaign.md`](../active/agentic-backlog-campaign.md) batch **B8**.
 >
-> **Status**: `active` — Phase 0 shipped (#711/#715); Phase 1 (L1-L5 TUs) not yet landed.
+> **Status**: `shipped` (2026-06-18) — Phase 0 (#711/#715) + Phase 1 all five TUs landed: **L1 #1383, L2 #1372, L3 #1364, L4 #1382, L5 #1384**. Campaign complete; no Phase 2.
 >
 > Mandatory cross-link: `AGENTS.md` § Project rules § Plan-doc family, § Verification automation.
 

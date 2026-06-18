@@ -2,9 +2,9 @@
 
 > **Slug**: `tooling-process-backlog-sweep` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — 9 of 10 slices shipped (#475-#487); slice 7 still open, so NOT yet archived.
+> **Status**: `shipped` (2026-06-18) — all 10 slices complete. Slices 1-9 merged via #475-#487; **slice 7 (the bucket-E batch) closed out 2026-06-18 via the B8 campaign** (`docs/plans/shipped/b8-bucket-e-coverage.md`).
 >
-> Stays active because slice 7 (items #13/#23/#24/#25/#31) is unshipped — specifically item #31 (the `BucketE::TooltipContentMatches` shared helper) is still an open P2 in `tooling.md` and the helper does not yet exist in the tree. The other 9 slices merged via PRs #475-#487.
+> Slice-7 disposition: **#24** (model-change strip) shipped **#1372** (B8 L2); **#31** (`BucketE::TooltipContentMatches` helper) shipped **#1364** (B8 L3); **#13** covered by the 10 shipped `tests/ui/ai_assistant_*` bucket-E TUs already on develop; **#23** moot (coderabbit-react-loop runtime deleted) and **#25** moot (Preferences Agentic tab removed). The two live `tooling.md` entries (#24/#31) are archived to `applied.md` in this PR.
 >
 > **Origin**: User request, 2026-05-27. Sweep all P0-P2 items from `docs/self-improvement/categories/process.md` and `tooling.md`.
 >
@@ -86,9 +86,10 @@ Extend `scripts/clear-session-context.sh` to detect `SMATCHET_AGENT_VCS=p4`, run
 - **#33**: Guard `shift 2` in `coverage.sh` under `set -euo pipefail`
 - **#34**: Add `CMakePresets.json` to `.github/workflows/coverage.yml` cache key
 
-### Slice 7 — Bucket-E test coverage batch
+### Slice 7 — Bucket-E test coverage batch  ✅ DONE (2026-06-18, via the B8 campaign)
 **Items**: #13, #23, #24, #25, #31 (all P2)
 **Est**: 8-10 h (largest slice)
+**Disposition**: #24 (model-change strip) shipped #1372 (B8 L2); #31 (`BucketE::TooltipContentMatches` helper) shipped #1364 (B8 L3); #13 covered by the 10 shipped `tests/ui/ai_assistant_*` TUs; #23 moot (coderabbit-react-loop runtime deleted); #25 moot (Preferences Agentic tab removed). The two live `tooling.md` entries (#24/#31) are archived to `applied.md` in the same PR.
 
 New ImGui Test Engine test files following `tests/ui/views_columns_reorder.test.cpp` pattern:
 - **#31** first: shared `BucketE::TooltipContentMatches` helper
