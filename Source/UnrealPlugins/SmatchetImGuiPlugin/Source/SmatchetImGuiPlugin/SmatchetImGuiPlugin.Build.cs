@@ -47,6 +47,24 @@ public class SmatchetImGuiPlugin : ModuleRules
 
         if (isWin64)
         {
+            // Defensive guard: the packaged ThirdParty/Smatchet/lib/Win64 libraries
+            // are x64-only. A Win64 ARM64 target would otherwise silently link the
+            // x64 import libs and produce a broken module. Native Windows-on-ARM
+            // Unreal is out of scope (docs/plans/dx12-standalone-win-arm64.md §
+            // Out of scope — UE has no native WoA editor; the x64 plugin runs under
+            // Prism emulation). Fail fast with a clear message instead. ToString()
+            // works whether Target.Architecture is an UnrealArch (UE 5.2+) or the
+            // legacy string; an empty/x64 value leaves the build untouched.
+            string archName = Target.Architecture.ToString();
+            if (archName.IndexOf("arm64", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                throw new BuildException(
+                    "SmatchetImGuiPlugin: Win64 ARM64 target detected (Architecture='" + archName + "'), " +
+                    "but the packaged ThirdParty/Smatchet/lib/Win64 libraries are x64-only. " +
+                    "Native Windows-on-ARM Unreal is out of scope; build the x64 plugin (runs under " +
+                    "Prism emulation), or repackage ARM64 libraries before targeting arm64.");
+            }
+
             // Helps MSVC drop unreferenced internal linkage / inline candidates (link-time hygiene).
             bVcRemoveUnreferencedComdat = true;
 
