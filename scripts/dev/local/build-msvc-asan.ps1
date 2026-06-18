@@ -35,6 +35,27 @@ if ([string]::IsNullOrWhiteSpace($vcvarsVer)) {
 }
 $vcvarsVer = $vcvarsVer.Trim()
 
+# Target arch (mirrors scripts/dev/with-msvc-env.sh): $env:SMATCHET_MSVC_ARCH
+# selects the vcvars batch + the VC.Tools component vswhere requires. NOTE: MSVC
+# ASan is x64-only at the pinned toolset (ARM64 ASan needs a 14.50-era toolset —
+# see docs/plans plan dx12-standalone-win-arm64 § Risks); arm64 here is allowed
+# for parity but warned, since the link will likely fail until the pin moves.
+$asanArch = $env:SMATCHET_MSVC_ARCH
+if ([string]::IsNullOrWhiteSpace($asanArch)) { $asanArch = 'x64' }
+$asanHostIsArm64 = ($env:PROCESSOR_ARCHITEW6432 -match '^(?i)arm64$') -or ($env:PROCESSOR_ARCHITECTURE -match '^(?i)arm64$')
+switch ($asanArch.ToLowerInvariant()) {
+    'x64' {
+        $asanVcRequires = 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64'
+        $asanVcvarsBat = if ($asanHostIsArm64) { 'vcvarsarm64_amd64.bat' } else { 'vcvars64.bat' }
+    }
+    'arm64' {
+        Write-Warning "SMATCHET_MSVC_ARCH=arm64: MSVC ASan is x64-only at the pinned toolset ($vcvarsVer); link may fail until the toolset pin moves to 14.50-era."
+        $asanVcRequires = 'Microsoft.VisualStudio.Component.VC.Tools.ARM64'
+        $asanVcvarsBat = if ($asanHostIsArm64) { 'vcvarsarm64.bat' } else { 'vcvarsamd64_arm64.bat' }
+    }
+    default { throw "invalid SMATCHET_MSVC_ARCH='$asanArch' (expected x64 or arm64)." }
+}
+
 # Pick the first VS install that actually ships the pinned toolset under
 # VC\Tools\MSVC\<ver>* — NOT `vswhere -latest`, which on a multi-VS box can
 # return a newer BuildTools install that lacks the pinned toolset.
@@ -44,7 +65,7 @@ if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) {
 }
 $vsInstall = $null
 $installs = & $vswhere -products * `
-    -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 `
+    -requires $asanVcRequires `
     -property installationPath 2>$null
 foreach ($install in $installs) {
     if ([string]::IsNullOrWhiteSpace($install)) { continue }
@@ -59,8 +80,8 @@ if (-not $vsInstall) {
     throw "No Visual Studio install ships MSVC toolset $vcvarsVer. Install it, or set `$env:SMATCHET_VCVARS_VER to an installed toolset."
 }
 
-$vcvarsBat = Join-Path $vsInstall "VC\Auxiliary\Build\vcvars64.bat"
-Write-Host "=== vcvars64 ($vsInstall, MSVC $vcvarsVer) ===" -ForegroundColor Cyan
+$vcvarsBat = Join-Path $vsInstall "VC\Auxiliary\Build\$asanVcvarsBat"
+Write-Host "=== $asanVcvarsBat ($vsInstall, MSVC $vcvarsVer, arch $asanArch) ===" -ForegroundColor Cyan
 
 # Load vcvars64 environment via cmd /c, pinned to the resolved toolset.
 $vcvarsResult = cmd /c "`"$vcvarsBat`" -vcvars_ver=$vcvarsVer && set" 2>&1

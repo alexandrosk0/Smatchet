@@ -13,6 +13,13 @@
       .\scripts\publish\release_github.ps1 -Tag v1.2.3 -Publish -Draft -NotesFile .\RELEASE_NOTES.md
       .\scripts\publish\release_github.ps1 -Tag v1.2.3 -Publish -Clobber
       .\scripts\publish\release_github.ps1 -Tag v1.2.3 -ForceConfigure
+      .\scripts\publish\release_github.ps1 -Tag v1.2.3 -Arch arm64   # native Windows-on-ARM standalone + installer
+
+    -Arch arm64 builds the ninja-publish-msvc-arm64 preset (run inside an arm64
+    MSVC env, e.g. SMATCHET_MSVC_ARCH=arm64 via scripts/dev/with-msvc.ps1),
+    tags artifacts with -arm64, and emits an ARM64 Inno installer. It skips the
+    Unreal package (descoped on ARM64) and the light standalone (no arm64 preset
+    yet).
 
     Skips cmake --preset when the preset build dir already has CMakeCache.txt (unless -ForceConfigure).
 #>
@@ -24,6 +31,8 @@ param(
     [string]$StandalonePreset = "ninja-publish-msvc",
     [string]$LightStandalonePreset = "ninja-publish-light-msvc",
     [string]$UnrealBuildPreset = "ninja-iter-unreal-msvc",
+    [ValidateSet("x64", "arm64")]
+    [string]$Arch = "x64",
     [string]$OutDir = "",
     [switch]$SkipBuild,
     [switch]$SkipInstaller,
@@ -566,6 +575,23 @@ $pluginStage = Join-Path $stagingDir "plugin"
 $fabStage = Join-Path $stagingDir "fab-submission"
 $assetPaths = New-Object System.Collections.Generic.List[string]
 
+# --- Architecture wiring ------------------------------------------------------
+# x64 (default) keeps every artifact name + Inno arch byte-identical to before.
+# arm64 packages the native Windows-on-ARM build: switch the publish preset (the
+# build dir derives from it at line ~601), tag artifacts -arm64, and pass the
+# arm64 Inno architecture so the installer targets the 64-bit view on WoA. Unreal
+# is descoped on ARM64 and there is no arm64 light preset yet, so both are skipped
+# for arm64 to keep the run green end-to-end (Phase 4 follow-up may add them).
+$archToken = ""
+$innoArch = "x64compatible"
+if ($Arch -eq "arm64") {
+    $archToken = "-arm64"
+    $innoArch = "arm64"
+    if ($StandalonePreset -eq "ninja-publish-msvc") { $StandalonePreset = "ninja-publish-msvc-arm64" }
+    if (-not $SkipUnreal) { Write-Host "  -Arch arm64: skipping Unreal package (descoped on ARM64)."; $SkipUnreal = $true }
+    if (-not $SkipLightStandalone) { Write-Host "  -Arch arm64: skipping light standalone (no arm64 light preset yet)."; $SkipLightStandalone = $true }
+}
+
 if (-not $SkipStandalone -and -not $SkipInstaller) {
     $isccExe = Resolve-InnoSetupCompiler
     if (-not $isccExe) {
@@ -649,7 +675,7 @@ if (-not $SkipBuild) {
 
 if (-not $SkipStandalone) {
     Write-Stage "Staging standalone artifact"
-    $standaloneZip = Join-Path $assetsDir "Smatchet-$effectiveTag-windows-portable.zip"
+    $standaloneZip = Join-Path $assetsDir "Smatchet-$effectiveTag-windows$archToken-portable.zip"
     New-StandalonePortableZip `
         -BuildDir $standaloneBuildDir `
         -StageDir $standaloneStage `
@@ -662,12 +688,13 @@ if (-not $SkipStandalone) {
 
     if (-not $SkipInstaller) {
         Write-Stage "Building Windows installer"
-        $installerBaseName = "Smatchet-$effectiveTag-windows-setup"
+        $installerBaseName = "Smatchet-$effectiveTag-windows$archToken-setup"
         Invoke-Checked -FilePath $isccExe -Arguments @(
             "/DMyAppVersion=$projectVersion",
             "/DMySourceDir=$standaloneStage",
             "/DMyOutputDir=$assetsDir",
             "/DMyOutputBaseFilename=$installerBaseName",
+            "/DMyArchitecturesAllowed=$innoArch",
             $(if ($signingConfig.Enabled) { "/DMyInnoSignTool=smatchetsigntool" }),
             $(if ($signingConfig.Enabled) { "/Ssmatchetsigntool=$(Get-InnoSignToolDefinition -Config $signingConfig -ProgramDescription 'Smatchet Installer')" }),
             $installerScript

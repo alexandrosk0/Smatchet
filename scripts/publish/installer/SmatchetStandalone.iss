@@ -17,6 +17,14 @@
   #define MyOutputBaseFilename "Smatchet-setup"
 #endif
 
+; Inno architecture identifier(s) for the staged payload. Default x64compatible
+; (also runs the x64 build under Prism emulation on ARM64). The release script
+; passes /DMyArchitecturesAllowed=arm64 when packaging a native ARM64 build so
+; it installs to the 64-bit program-files/registry view on Windows-on-ARM.
+#ifndef MyArchitecturesAllowed
+  #define MyArchitecturesAllowed "x64compatible"
+#endif
+
 #ifndef MyInnoSignTool
   #define MyInnoSignTool ""
 #endif
@@ -35,8 +43,8 @@ Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=lowest
-ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64compatible
+ArchitecturesAllowed={#MyArchitecturesAllowed}
+ArchitecturesInstallIn64BitMode={#MyArchitecturesAllowed}
 UninstallDisplayIcon={app}\{#MyAppExeName}
 SetupIconFile=..\..\..\SourceStandalone\smatchet.ico
 #if MyInnoSignTool != ""

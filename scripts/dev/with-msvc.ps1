@@ -17,9 +17,13 @@
 
 .NOTES
     Toolset pin resolution order: $env:SMATCHET_VCVARS_VER, then
-    build.msvc_toolset_pin in project.config.json. If neither resolves, vcvars64
+    build.msvc_toolset_pin in project.config.json. If neither resolves, vcvars
     is called unpinned (newest). Exit codes: 2 = vswhere/vcvars not found or no
     VC-tools install; otherwise the wrapped command's own exit code.
+
+    Target arch: $env:SMATCHET_MSVC_ARCH (default x64) selects the vcvars batch
+    (arm64 -> vcvarsamd64_arm64.bat cross from x64, vcvarsarm64.bat native) and
+    the VC.Tools component vswhere requires.
 #>
 [CmdletBinding()]
 param(
@@ -45,6 +49,31 @@ if (-not $VcvarsVer) {
     }
 }
 
+# --- Resolve the target architecture (mirrors with-msvc-env.sh) ---------------
+# $env:SMATCHET_MSVC_ARCH (default x64) selects the vcvars batch and the VC.Tools
+# component vswhere requires. Host arch from PROCESSOR_ARCHITEW6432 (set under
+# emulation/WOW64) falling back to PROCESSOR_ARCHITECTURE: cross from x64 picks
+# the amd64_arm64 batch; a native ARM64 host picks the arm64 batch.
+$Arch = $env:SMATCHET_MSVC_ARCH
+if ([string]::IsNullOrWhiteSpace($Arch)) { $Arch = 'x64' }
+$HostArch = $env:PROCESSOR_ARCHITEW6432
+if ([string]::IsNullOrWhiteSpace($HostArch)) { $HostArch = $env:PROCESSOR_ARCHITECTURE }
+$HostIsArm64 = ($HostArch -and $HostArch -match '^(?i)arm64$')
+switch ($Arch.ToLowerInvariant()) {
+    'x64' {
+        $VcRequires = 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64'
+        $VcvarsBat = if ($HostIsArm64) { 'vcvarsarm64_amd64.bat' } else { 'vcvars64.bat' }
+    }
+    'arm64' {
+        $VcRequires = 'Microsoft.VisualStudio.Component.VC.Tools.ARM64'
+        $VcvarsBat = if ($HostIsArm64) { 'vcvarsarm64.bat' } else { 'vcvarsamd64_arm64.bat' }
+    }
+    default {
+        Write-Error "with-msvc: invalid SMATCHET_MSVC_ARCH='$Arch' (expected x64 or arm64)."
+        exit 2
+    }
+}
+
 # --- Locate a VC-tools VS install via vswhere ---------------------------------
 $VsWhere = 'C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe'
 if (-not (Test-Path $VsWhere)) {
@@ -57,10 +86,10 @@ if (-not (Test-Path $VsWhere)) {
 # cl.exe. Enumerate every VC-tools install; if a pin is set, prefer the one that
 # actually ships VC\Tools\MSVC\<pin>*; else take the first.
 $installs = & $VsWhere -products '*' `
-    -requires 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' `
+    -requires $VcRequires `
     -property installationPath
 if (-not $installs) {
-    Write-Error 'with-msvc: no VS install with the VC toolchain found (vswhere returned nothing).'
+    Write-Error "with-msvc: no VS install with the $VcRequires component found (vswhere returned nothing for arch $Arch)."
     exit 2
 }
 
@@ -73,9 +102,9 @@ foreach ($cand in @($installs)) {
     if (-not $VsInstall) { $VsInstall = $cand }  # first VC-tools install as fallback
 }
 
-$Vcvars = Join-Path $VsInstall 'VC\Auxiliary\Build\vcvars64.bat'
+$Vcvars = Join-Path $VsInstall "VC\Auxiliary\Build\$VcvarsBat"
 if (-not (Test-Path $Vcvars)) {
-    Write-Error "with-msvc: vcvars64.bat not found under $VsInstall."
+    Write-Error "with-msvc: $VcvarsBat not found under $VsInstall (arch $Arch; install the matching VC toolset component)."
     exit 2
 }
 

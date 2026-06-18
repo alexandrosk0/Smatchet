@@ -80,12 +80,27 @@ function(smatchet_apply_sanitizers tgt)
                 if(_asan_glob)
                     list(APPEND _asan_hints ${_asan_glob})
                 endif()
+                # Runtime lib arch suffix: clang names these clang_rt.*-x86_64 vs
+                # clang_rt.*-aarch64. Derive from the target processor so an arm64
+                # clang-cl build links the aarch64 runtime instead of the x86_64
+                # one (which would never resolve under VC\Tools\...\arm64). The
+                # alternate-arch name stays in NAMES as a harmless fallback: only
+                # this toolchain's own arch dir is in _asan_hints, so it can't
+                # mis-resolve to the wrong arch.
+                set(_asan_arch_suffix "x86_64")
+                if(CMAKE_SYSTEM_PROCESSOR MATCHES "^([Aa][Rr][Mm]64|[Aa][Aa][Rr][Cc][Hh]64)$")
+                    set(_asan_arch_suffix "aarch64")
+                endif()
                 find_library(_clang_asan_lib
-                    NAMES clang_rt.asan_dynamic-x86_64
+                    NAMES clang_rt.asan_dynamic-${_asan_arch_suffix}
+                          clang_rt.asan_dynamic-x86_64
+                          clang_rt.asan_dynamic-aarch64
                     HINTS ${_asan_hints}
                     NO_DEFAULT_PATH)
                 find_library(_clang_asan_thunk
-                    NAMES clang_rt.asan_dynamic_runtime_thunk-x86_64
+                    NAMES clang_rt.asan_dynamic_runtime_thunk-${_asan_arch_suffix}
+                          clang_rt.asan_dynamic_runtime_thunk-x86_64
+                          clang_rt.asan_dynamic_runtime_thunk-aarch64
                     HINTS ${_asan_hints}
                     NO_DEFAULT_PATH)
                 if(_clang_asan_lib AND _clang_asan_thunk)
