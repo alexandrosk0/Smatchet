@@ -158,8 +158,8 @@
 - 2026-06-13 · deep-audit · [security] · P2 — MCP attachment proxy fetches caller-supplied URLs (SSRF surface)
   Details: Source/Plugins/Mcp/McpPlugin.cpp:275-352 fetches a caller URL; the mcp-lane coverage found it already HTTPS-only + host-allow-listed (tracker domain + api.media.atlassian.com) with redirects disabled, so this is a confirm-it-routes-through-the-shared-AiEndpointSanitize hardening rather than a live SSRF.
   Concrete next action: Route the fetch through the shared sanitizer; deny private/link-local/metadata targets and non-http(s) schemes. Effort S-M.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Status: deferred — per the 2026-06-14 campaign disposition block (DEFERRED: "MCP attachment-proxy SSRF (#5)"). Not a live SSRF: already HTTPS-only + host-allow-listed (tracker domain + api.media.atlassian.com) + redirects disabled. Shared-sanitizer routing is confirm-only hardening, tracked not coded this campaign.
+  Last-reviewed: 2026-06-18
 
 - 2026-06-13 · deep-audit · [security] · P2 — P4vLaunch argument injection via QuoteWinArgWide trailing-backslash bug
   Details: Source/Core/src/Ui/P4vLaunch.cpp:72-86,149,172,189-190 and P4Annotate.cpp:52-59 compose argv from changelist/file fields; QuoteWinArgWide mishandles trailing backslashes, allowing argument-boundary injection. Re-run confirmed MEDIUM and located the custom-command {file}/{cl} template path at P4vLaunch.cpp:172 (gated by AnnotateAllowCustomCommands).
@@ -205,8 +205,8 @@
 - 2026-06-13 · deep-audit · [security] · P3 — Gradle wrapper jar/properties lack sha256 verification
   Details: gradle/wrapper/gradle-wrapper.jar + .properties are not sha256-verified in CI.
   Concrete next action: Enable SHA-pinned gradle wrapper-validation-action; pin the distribution checksum. Effort S.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Status: accepted — per the 2026-06-14 campaign disposition block (ACCEPTED: "gradle-wrapper-jar sha (mobile pre-release, tracked)"). Android/mobile is compile-only/pre-release, not a shipping target; the wrapper-validation pin is tracked to land before mobile ships, not coded this campaign.
+  Last-reviewed: 2026-06-18
 
 - 2026-06-13 · deep-audit · [security] · P3 — Legacy AiBaseUrl grandfather path narrows SSRF guard
   Details: AiEndpointSanitize legacy AiBaseUrl branch gets looser validation; cloud-metadata payloads still blocked (informational).
@@ -225,8 +225,8 @@
 - 2026-06-13 · deep-audit · [security] · P3 — DPAPI secret encryption uses user-scope with no entropy
   Details: Win32 CryptProtectData path uses user scope with no optional entropy; any same-user process can decrypt (same-user is in-scope for a single-user app — informational).
   Concrete next action: Optionally add per-install entropy; document the model. Effort S.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Status: accepted — per the 2026-06-14 campaign disposition block (ACCEPTED: "DPAPI user-scope no-added-entropy (#24)"). Same-user is inside the trust boundary for a single-user local-first desktop app, so any-same-user-process-can-decrypt is in-scope by threat model §1; the optional per-install entropy adds little. Documented, not coded this campaign.
+  Last-reviewed: 2026-06-18
 
 <!-- --- 5-lane re-run NEW findings (not in the deep-audit block above) --- -->
 
@@ -240,8 +240,8 @@
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — SQLite local ticket cache stored unencrypted
   Details: `Source/Core/src/Persistence/LocalCacheManager.cpp:131` opens the local ticket cache DB with no encryption; cached ticket bodies/PII sit in cleartext in the per-user data dir. Confirmed LOW (same-user is in-scope; relevant if the file is synced/backed-up off-host). NEW.
   Concrete next action: document the at-rest model; optionally gate cache-at-rest behind SQLCipher or a no-cache mode for sensitive deployments. ~S-M.
-  Status: open
-  Last-reviewed: 2026-06-13
+  Status: accepted — per the 2026-06-14 campaign disposition block (ACCEPTED: "SQLite local cache at-rest unencrypted"). Same-user is inside the trust boundary; the cleartext cache only matters if the per-user data dir is synced/backed-up off-host, which is the user's own choice on a single-user local-first app. SQLCipher / no-cache mode tracked for sensitive deployments, not coded this campaign.
+  Last-reviewed: 2026-06-18
 
 - 2026-05-17 · security-review · [security] · P2 — First-send outbound-context consent modal (consent-tracking field + UX)
   Details: Default flip of `AssistantContextBlockAuditTrail` to `false` shipped (`ConfigManager.h:248`); remaining work from the original P1 entry is the one-time first-send consent modal. Modal should list the 5 `AssistantContextBlock*` block names + sample payload sizes + a "what gets sent" expander before the first turn. Drive via a new `cfg.AssistantOutboundConsentShown = false` field. Severity downgraded P1→P2 because the riskiest default (audit-trail PII auto-shipping) is now off.
@@ -281,5 +281,6 @@
 - 2026-06-15 · orchestrator · [security] · P2 — `intent-capture-pipeline-attack-surface`: the new prompt→PR `## Intent` pipeline (#1260) is an un-mapped trust boundary — `security-review`'s attack surface should enumerate it
   Details: #1260 added a data flow that crosses a trust boundary into a PUBLIC artifact: the `UserPromptSubmit` hook (`docs/harness/claude-code/hooks/capture-intent.sh`) reads the raw human prompt → `agents/scripts/core/redact-intent.py` → appends to gitignored `.session-intent/<branch>.log` (`.gitignore:81`) → the ship-loop (`docs/agent-rules/ship-loops.md` § Intent capture) fills the PR body `## Intent` → advisory gate `Intent section (advisory)` in `.github/workflows/doc-validation.yml`. The raw prompt may carry secrets / PII / home paths; the PR body is public. `security-review`'s description already claims an "AI-assistant / coding-harness-handoff" surface — this pipeline is exactly that and should be named so future trust-boundary diffs route to it. Surface to map: (a) **under-redaction** → secret/PII into a public PR body (the core risk; pattern-based redactor, residual classes documented — see the `gitleaks-over-redact-intent-output` entry above); (b) **branch-name → file path** — `.session-intent/<branch>.log` is built from the branch name; verify a crafted branch (`../`, absolute) cannot path-traverse out of the capture dir; (c) **stdout discipline** — the hook MUST print nothing to stdout (it is injected into model context; capture-intent.sh:10-11 guards this) — a regression is a context-injection vector; (d) **PR-body injection** — crafted prompt markdown / control bytes flowing into the rendered PR body. (a)+(c) are mitigated today (fail-safe redactor + `exit 0` at every hook step + stdout-silent), but none is enumerated in a security-review checklist.
   Concrete next action: add an "Intent-capture pipeline" surface bullet to `agents/core/security-review.md`'s attack-surface map (the 4 vectors above) so any future diff touching `redact-intent.py` / `capture-intent.sh` / the `## Intent` ship-loop step fires a security-review pass; verify (b) branch-name sanitization explicitly (a quick `redact-intent.py` / hook read). Elevate this entry to P1/P0 if a concrete under-redaction or path-traversal escape is found. ~30 min for the surface-map edit + the (b) check.
-  Status: open
-  Last-reviewed: 2026-06-15
+  Resolution (2026-06-18 · sec-ledger-intent — the surface is already mapped): `agents/core/security-review.md` already enumerates the "Intent-capture pipeline" trust boundary at lines 72-76 — an explicit surface bullet (`capture-intent.sh` → `redact-intent.py` → gitignored `.session-intent/<branch>.log` → PR `## Intent`) listing all four vectors this entry named: (1) secret exfil → `redact-intent.py` is the boundary (greedy named-format + high-entropy + userinfo/username sweeps, over-redact-never-under, 60-case `--selftest`); (2) path traversal via branch name → `capture-intent.sh` neutralises with `tr -c 'A-Za-z0-9._-' '-'` (slashes → `-`) and git bans `..` refnames — the (b) check is verified done in-doc; (3) log/line injection → redactor collapses `\s+`→space, single-line guarantee; (4) fail-open → emit-nothing on interpreter-missing/redactor-crash, never the raw prompt. The `version: 3` front-matter `description` also already claims the "coding-harness-handoff" surface so trust-boundary diffs route here. No new authoring needed — the requested map and the (b) verification both already exist. Pairs with the now-fixed `gitleaks-over-redact-intent-output` oracle entry above (PR #1361).
+  Status: fixed
+  Last-reviewed: 2026-06-18
