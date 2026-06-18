@@ -16,7 +16,9 @@ Originating entries: `tooling.md` :566 (P2), :560 (P3), :10 (P3), :70 (P2), :175
 
 ## Approach
 
-**One PR, two scripts + two bats suites + one doc note.** Add a shared preprocessing step to the *matching* decision in both guards: a `strip_noncode` helper that removes comments, single/double-quoted spans, and heredoc bodies before the mutating-op grep, so a git verb that only appears as text/argument no longer arms the guard. Because over-stripping can only make a match *less* likely (→ allow), this is philosophically safe for the advisory shared-tree guard; for the hard head-drift guard I apply stripping only to the *false-positive* direction and keep the existing conservative defaults everywhere else.
+**One PR, two scripts + two bats suites + one doc note.** Stop a git verb that only appears as text/argument from arming the *matching* decision in the **shared-tree guard** (the advisory one — bias-to-allow, where a missed match is safe). Two changes there: (a) a `strip_heredoc()` helper removes heredoc BODIES before the grep (a body line like `git reset` otherwise matches `^git` since grep is line-based); (b) the leading boundary is tightened to **command-position only** — `git` must follow start / `;` / `&` / `|` / `(` / `&&` / `||` (after optional whitespace), never a bare word or a quote — which kills the echo-argument, quoted-string, and comment false-positives without needing to strip quotes/comments. (A narrow whole-quote/comment `strip_noncode` was the first sketch; command-position matching turned out cleaner and is what shipped.)
+
+**The hard head-drift guard's verb-matching grammar is deliberately left UNCHANGED** — loosening it would weaken the last-net guarantee, and the `:566` false-positive is filed against the shared-tree guard, not head-drift. Head-drift gets only its two specific holes fixed (the spaced-`-C` fail-OPEN and the Edit/Write worktree exemption); no stripping is added there.
 
 For the shared-tree guard specifically (advisory, bias-to-allow on uncertainty): treat an unresolvable `-C "$VAR"` path and a `cd <worktree>`-then-op prefix as worktree-targeted (exempt), and rewrite the deny message to name the `git -C <ABSOLUTE-worktree-path>` exemption and stop advertising the inline `SMATCHET_ALLOW_SHARED_SWITCH=1` form that cannot work (the hook reads its own env before the command runs).
 
@@ -24,8 +26,8 @@ For the head-drift guard (hard net): fix the `-C` opt grammar to accept a quoted
 
 ## Files to modify
 
-1. `docs/harness/claude-code/hooks/guard-shared-tree.sh` — add `strip_noncode`; apply to the mutating-op match (line ~69); `$VAR`/`cd`-worktree exemptions (line ~79); rewrite deny reason (line ~98).
-2. `docs/harness/claude-code/hooks/guard-head-drift.sh` — extend `GIT_OPTS_RE` `-C`/`-c` to accept quoted spaced paths (line ~95); add `strip_noncode` to the false-positive direction; Edit/Write `file_path` worktree exemption (line ~147).
+1. `docs/harness/claude-code/hooks/guard-shared-tree.sh` — add `strip_heredoc()`; tighten the mutating-op match to command-position-only + run it on the heredoc-stripped command; `$VAR`/`cd`-worktree exemptions; rewrite deny reason.
+2. `docs/harness/claude-code/hooks/guard-head-drift.sh` — extend `GIT_OPTS_RE` `-C`/`-c` to accept quoted spaced paths (the spaced-`-C` fail-OPEN); Edit/Write `file_path` worktree exemption. **No stripping / no matching-grammar change** (preserve the hard-net guarantee).
 3. `tests/bats/guard_shared_tree.bats` — CASES for FP1–FP4 + true-positive regressions (bare op still blocks, `-C <integration>` still blocks).
 4. `tests/bats/guard_head_drift.bats` — CASES for spaced quoted `-C` commit (still denied), heredoc/quoted-verb no-false-deny, Edit-to-worktree-file allowed under drift, Edit-to-integration-file still denied under drift.
 5. `docs/agent-rules/build.md` (or `agents/core/build-doctor.md`) — short note for `process.md:28`: prefer `scripts/dev/with-msvc-env.sh` over the `.ps1` wrapper (bypass-flag auto-denied), and commit-immediately + on-disk-patch when a concurrent-session shared-tree warning has appeared.
