@@ -27,6 +27,63 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-19 · PR #1406, #1414, #1415 · red `Intent section` (block-allowlisted) merged via non-poller paths — bare `gh pr merge --auto` / direct REST bypass the poller-only gate
+
+### What escaped
+Three PRs merged to `develop` in one `07:55–07:58Z` batch while the **block-allowlisted** `Intent section`
+doc-validation check was non-green, **none** carrying the `intent-out-of-band` override label:
+- `docs(self-improvement): postmortem for #1390/#1409 tests-out-of-band escapes` (#1414, merge `96e79412`,
+  `2026-06-19T07:55:15Z`) — PR body has **no** `## Intent` section; armed via native `gh pr merge --auto`.
+- `docs(self-improvement): reconcile perf-gate-absolute-p99 entry …` (#1415, merge `f6bb3972`,
+  `2026-06-19T07:57:58Z`) — PR body has **no** `## Intent` section; merged by a **direct REST merge**
+  (`autoMergeRequest` was null — no `--auto` involved at all).
+- `feat(tooling): archive-plan.sh one-shot plan-archival helper` (#1406, merge `7bb77daa`,
+  `2026-06-19T07:55:33Z`) — body carries a **filled** `## Intent` now, but the failed `Intent section`
+  run executed against an earlier body revision lacking it (PR `updatedAt` `07:57:47Z` is **after**
+  `mergedAt` `07:55:33Z`), so its red is **stale**, not a content gap. Included because it merged on the
+  same non-green-block-allowlist-check-via-`--auto` path and `postmortem-owed.sh` nags it under the same
+  `red-check: Intent section` trigger — a ledger reference discharges it.
+
+`Intent section` is on the [`merge-gates.sh`](../../agents/scripts/core/merge-gates.sh)
+`MERGE_GATES_BLOCK_ALLOWLIST_RE` *meant-to-block* allow-list (added 2026-06-18, ADR-0022) yet is
+deliberately **not** a `develop` branch-protection required context — so only the merge-gates poller /
+watcher enforces it. The `intent-out-of-band` label is its override hatch; none was applied to any of the
+three. (This is **not** the `postmortem-owed` non-blocking/cancelled-twin over-report class — the failed
+runs are single `fail` conclusions on a genuinely block-allowlisted check, not advisory or cancelled.)
+
+### Root cause
+Blameless — a **merge-path hole**, not a defect in the gate or the PRs. The block-allowlist is enforced
+**only** by `merge-gates.sh`: the sanctioned watcher polls it and arms `--auto` *only on PASS*
+([`merge-gates.md`](../../docs/agent-rules/merge-gates.md):84). Any merge path that does **not** consult
+the poller honors only the branch-protection required contexts (`Test-delta gate`, `Windows + MSVC` ×2,
+`Shell lint`, `Doc anchors`, `Perf PR-fast`, `Coverage`, `Sanitizer` ×2 — `Intent section` is **not**
+among them), so it merges the instant those green, ignoring a red `Intent section`:
+- bare native `gh pr merge --auto` (#1414, #1406) — GitHub auto-merge waits only on *required* contexts;
+- direct REST `PUT …/merge` (#1415) — no gate poll at all.
+
+This is the documented sharp edge — `merge-gates.md`:84 and the 2026-06-11 `process.md` entry "authorized
+auto-merge armed via raw `gh pr merge --auto` … `--auto` only waits on the required status checks" (filed
+then for **CodeRabbit**, the other poller-only block-allowlist gate) — now recurring **3×** for the
+`Intent section` gate in a single batch. That 2026-06-11 entry's remedy was **advisory** ("DEFAULT to the
+merge-gates poller path rather than a bare `--auto`"); the triple recurrence is the signal that advisory is
+insufficient and the discipline must be **enforced**, not recommended.
+
+### Preventing gate
+A **non-admin poll-gated merge wrapper** made the *only* sanctioned agent merge entry-point — a sibling of
+the existing [`safe-admin-merge.sh`](../../agents/scripts/core/safe-admin-merge.sh) on the non-admin path:
+it runs `merge-gates.sh` (which blocks on the full block-allowlist **incl. `Intent section`**) and arms
+`gh pr merge --auto` **only after** a PASS; bare `gh pr merge --auto` and direct REST merge are forbidden
+in the ship-loop. Backed by a bats test asserting the wrapper **refuses** when a block-allowlist gate is
+red without its override label. ADR-0022 deliberately kept `Intent section` off branch-protection
+required-contexts (merge-queue-deadlock reversibility), so the enforcement must live on the **merge-actor**
+side, not branch-protection — this promotes the 2026-06-11 advisory "use the poller" into an enforced gate.
+
+### Filed as
+New process per-entry backlog file
+[`categories/process/2026-06-19-intent-gate-bypassed-via-non-poller-merge.md`](categories/process/2026-06-19-intent-gate-bypassed-via-non-poller-merge.md)
+(P2) — carries the non-admin poll-gated merge wrapper above as its `Concrete next action`, cross-ref'd to
+#1406 / #1414 / #1415 and the 2026-06-11 raw-`--auto` advisory entry it supersedes.
+
 ## 2026-06-19 · PR #1390, #1409 · override: tests-out-of-band (load-bearing) — behaviour-changing concurrency-correctness fix with no headless test home
 
 ### What escaped
