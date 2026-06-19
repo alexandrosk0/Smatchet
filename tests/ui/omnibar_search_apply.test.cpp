@@ -55,6 +55,8 @@ extern UiDrawSession g_ui;
 
 namespace {
 
+// Pump the test engine up to maxFrames, returning true as soon as pred() holds (false on timeout)
+// — the bucket-E idiom for waiting on async UI / session state without a fixed sleep.
 template <typename Pred> bool YieldUntil(ImGuiTestContext* ctx, Pred pred, int maxFrames = 300) {
     for (int i = 0; i < maxFrames; ++i) {
         ctx->Yield();
@@ -65,11 +67,14 @@ template <typename Pred> bool YieldUntil(ImGuiTestContext* ctx, Pred pred, int m
     return false;
 }
 
+// True when an ImGui window named `title` exists and is being drawn this frame (submitted + active).
 bool WindowIsLive(const char* title) {
     const ImGuiWindow* win = ImGui::FindWindowByName(title);
     return win != nullptr && win->Active;
 }
 
+// True when the deterministic Jira backend fixture is injected (SMATCHET_TEST_JIRA_BACKEND_FIXTURE).
+// Gates the suite so CI's fixture-less `--all` lane skip-passes these tests instead of failing.
 bool FixtureEnvSet() {
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -249,6 +254,8 @@ void RegisterTicketKeyJumpsToLoadedRow(ImGuiTestEngine* engine) {
 
 } // namespace
 
+// Registration entry point — called once from SmatchetRegisterAllUiTests (ui_tests_registry.cpp)
+// to enroll the three omnibar apply-path tests into the engine.
 extern "C" void SmatchetRegisterOmnibarSearchApplyTests(ImGuiTestEngine* engine) {
     RegisterTitleSearchFillsGridFilter(engine);
     RegisterJqlReplacesViewQuery(engine);
