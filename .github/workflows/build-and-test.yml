@@ -75,7 +75,7 @@ jobs:
       android_only: ${{ steps.detect.outputs.android_only }}
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -212,7 +212,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -223,7 +223,7 @@ jobs:
         uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (msvc)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ${{ github.workspace }}\.sccache
           key: ${{ runner.os }}-sccache-msvc-${{ github.sha }}
@@ -231,7 +231,7 @@ jobs:
             ${{ runner.os }}-sccache-msvc-
 
       - name: Cache FetchContent _deps (msvc)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-msvc-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
@@ -318,7 +318,7 @@ jobs:
         run: sccache --show-stats
 
       - name: Upload Smatchet.exe artefact (for bucket-C / bucket-E jobs)
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: smatchet-exe-${{ github.run_id }}
           path: |
@@ -328,7 +328,7 @@ jobs:
 
       - name: Upload Smatchet.exe on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: Smatchet-failure-${{ github.run_id }}
           path: build/ninja-iter-msvc/Smatchet.exe
@@ -351,7 +351,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -364,7 +364,7 @@ jobs:
         uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (msvc-arm64)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ${{ github.workspace }}\.sccache
           key: ${{ runner.os }}-sccache-msvc-arm64-${{ github.sha }}
@@ -372,7 +372,7 @@ jobs:
             ${{ runner.os }}-sccache-msvc-arm64-
 
       - name: Cache FetchContent _deps (msvc-arm64)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .fetchcontent-src
           # Sources are arch-independent; fall back to the shared prefix so this
@@ -414,7 +414,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -425,7 +425,7 @@ jobs:
         uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (msvc-light)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ${{ github.workspace }}\.sccache
           key: ${{ runner.os }}-sccache-msvc-light-${{ github.sha }}
@@ -433,7 +433,7 @@ jobs:
             ${{ runner.os }}-sccache-msvc-light-
 
       - name: Cache FetchContent _deps (msvc-light)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-msvc-light-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
@@ -474,13 +474,13 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Setup MSVC dev environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
 
       - name: Download Smatchet.exe artefact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: smatchet-exe-${{ github.run_id }}
           path: build/ninja-iter-msvc/
@@ -490,7 +490,7 @@ jobs:
       # Mesa version (keep in lockstep with MESA_VERSION below); a hit skips the
       # download entirely. docs/plans/ci-build-time-reduction.md Phase 2.
       - name: Cache Mesa software-GL DLLs
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         # The Mesa DLL cache is a pure speed optimization — the install step below
         # re-downloads on a miss. A transient cache-service error must NOT red the
         # whole screenshot-diff job (it once cascaded into skipped Mesa-install +
@@ -625,7 +625,7 @@ jobs:
 
       - name: Upload captured PNGs (for golden bootstrap)
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: bucket-c-captures-${{ github.run_id }}
           path: |
@@ -634,7 +634,7 @@ jobs:
 
       - name: Upload bucket-C spawned-child log
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: bucket-c-childlog-${{ github.run_id }}
           path: build/tmp/bucket-c-childlog/spawn-child.log
@@ -649,7 +649,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Setup MSVC dev environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
@@ -658,7 +658,7 @@ jobs:
         uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (ui-test)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ${{ github.workspace }}\.sccache
           key: ${{ runner.os }}-sccache-ui-test-${{ github.sha }}
@@ -666,7 +666,7 @@ jobs:
             ${{ runner.os }}-sccache-ui-test-
 
       - name: Cache FetchContent _deps (ui-test preset)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-ui-test-msvc-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
@@ -686,7 +686,7 @@ jobs:
       # Cache the extracted Mesa opengl32.dll (see bucket-C for rationale). Same
       # key as bucket-C so the two jobs share one cached dll across the repo.
       - name: Cache Mesa software-GL DLLs
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         # The Mesa DLL cache is a pure speed optimization — the install step below
         # re-downloads on a miss. A transient cache-service error must NOT red the
         # whole screenshot-diff job (it once cascaded into skipped Mesa-install +
@@ -879,7 +879,7 @@ jobs:
 
       - name: Upload bucket-E exe on failure
         if: ${{ steps.run-bucket-e.outcome == 'failure' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: bucket-e-exe-${{ github.run_id }}
           path: build/ninja-ui-test-msvc/Smatchet.exe
@@ -891,7 +891,7 @@ jobs:
       # the job — the whole point is post-mortem visibility on a broken lane.
       - name: Upload bucket-E spawned-child log
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: bucket-e-childlog-${{ github.run_id }}
           path: build/tmp/bucket-e-childlog/spawn-child.log
@@ -920,7 +920,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Setup MSVC dev environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
@@ -929,7 +929,7 @@ jobs:
         uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (texture-guard)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ${{ github.workspace }}\.sccache
           key: ${{ runner.os }}-sccache-ui-test-${{ github.sha }}
@@ -937,7 +937,7 @@ jobs:
             ${{ runner.os }}-sccache-ui-test-
 
       - name: Cache FetchContent _deps (ui-test preset)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-ui-test-msvc-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
@@ -958,7 +958,7 @@ jobs:
       # all three jobs share one cached DLL set across the repo. (Shared snippet: if it
       # drifts here vs bucket-C/E, extract to a composite action — tracked in test.md.)
       - name: Cache Mesa software-GL DLLs
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         # A transient cache-service error must NOT red this job (continue-on-error);
         # the install step below re-downloads on a miss. Same rationale as bucket-C/E.
         continue-on-error: true
@@ -1045,7 +1045,7 @@ jobs:
 
       - name: Upload texture-guard exe on failure
         if: ${{ steps.run-texture-guard.outcome == 'failure' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: mobile-texture-guard-exe-${{ github.run_id }}
           path: build/ninja-ui-test-msvc/Smatchet.exe
@@ -1080,7 +1080,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false  # runs a PR-built binary; no git creds needed (artipacked / CodeRabbit #1375)
 
@@ -1088,7 +1088,7 @@ jobs:
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
 
       - name: Download Smatchet.exe artefact
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: smatchet-exe-${{ github.run_id }}
           path: build/ninja-iter-msvc/
@@ -1096,7 +1096,7 @@ jobs:
       # Cache + install the Mesa software-GL DLLs — copied verbatim from
       # bucket-C/E/texture-guard (same key so all four jobs share one cached set).
       - name: Cache Mesa software-GL DLLs
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         # The Mesa DLL cache is a pure speed optimization — the install step below
         # re-downloads on a miss. A transient cache-service error must NOT red this
         # blocking job, so the CACHE step (not the install/smoke) is continue-on-error.
@@ -1194,7 +1194,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -1205,7 +1205,7 @@ jobs:
         uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (msvc-asan)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ${{ github.workspace }}\.sccache
           key: ${{ runner.os }}-sccache-msvc-asan-${{ github.sha }}
@@ -1213,7 +1213,7 @@ jobs:
             ${{ runner.os }}-sccache-msvc-asan-
 
       - name: Cache FetchContent _deps (msvc-asan)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-msvc-asan-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
@@ -1334,7 +1334,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -1356,7 +1356,7 @@ jobs:
         uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (clang-ubsan-pr)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ${{ github.workspace }}\.sccache
           key: ${{ runner.os }}-sccache-clang-ubsan-pr-${{ github.sha }}
@@ -1364,7 +1364,7 @@ jobs:
             ${{ runner.os }}-sccache-clang-ubsan-pr-
 
       - name: Cache FetchContent _deps (clang-ubsan-pr)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-clang-ubsan-pr-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
@@ -1448,7 +1448,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -1459,7 +1459,7 @@ jobs:
         uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (packaging-smoke)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ${{ github.workspace }}\.sccache
           key: ${{ runner.os }}-sccache-packaging-smoke-${{ github.sha }}
@@ -1467,7 +1467,7 @@ jobs:
             ${{ runner.os }}-sccache-packaging-smoke-
 
       - name: Cache FetchContent _deps (packaging-smoke)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-packaging-smoke-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
@@ -1517,7 +1517,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
       - name: Refresh baseline + assert no drift
@@ -1543,7 +1543,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -1601,7 +1601,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -1620,7 +1620,7 @@ jobs:
           sudo apt-get install -y clang lld xorg-dev libgl1-mesa-dev
 
       - name: Cache FetchContent _deps (posix-core-check)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-posixcheck-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
@@ -1662,7 +1662,7 @@ jobs:
       ANDROID_API: "24"
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -1698,7 +1698,7 @@ jobs:
 
       - name: Cache prebuilt OpenSSL (arm64-v8a)
         id: openssl-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ${{ runner.temp }}/openssl-android/arm64-v8a
           key: openssl-${{ env.OPENSSL_VERSION }}-ndk-${{ env.NDK_VERSION }}-arm64-v8a-api${{ env.ANDROID_API }}
@@ -1735,7 +1735,7 @@ jobs:
           ls -l "${OPENSSL_PREFIX}/lib"
 
       - name: Cache FetchContent _deps (android-ndk)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-android-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
@@ -1784,12 +1784,12 @@ jobs:
       ANDROID_API: "24"
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
       - name: Set up JDK 17 (AGP 8.5 toolchain)
-        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        uses: actions/setup-java@ad2b38190b15e4d6bdf0c97fb4fca8412226d287 # v5.3.0
         with:
           distribution: temurin
           java-version: "17"
@@ -1819,7 +1819,7 @@ jobs:
 
       - name: Cache prebuilt OpenSSL (arm64-v8a)
         id: openssl-cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ${{ runner.temp }}/openssl-android/arm64-v8a
           # Same key as mobile-android-ndk → this restores that job's build (needs: orders it first).
@@ -1851,7 +1851,7 @@ jobs:
           test -f "${OPENSSL_PREFIX}/lib/libcrypto.a" || { echo "::error::libcrypto.a missing"; exit 1; }
 
       - name: Cache FetchContent _deps (android-ndk)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-android-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
@@ -1903,7 +1903,7 @@ jobs:
 
       - name: Upload JVM unit-test report
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: smatchet-mobile-jvm-unit-test-report
           path: Source/Mobile/AndroidApp/app/build/reports/tests/testDebugUnitTest
@@ -1935,7 +1935,7 @@ jobs:
           echo "SMATCHET_APK_PATH=$APK" >> "$GITHUB_ENV"
 
       - name: Upload debug APK artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: smatchet-mobile-debug-apk-arm64-v8a
           path: ${{ env.SMATCHET_APK_PATH }}
@@ -1972,7 +1972,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           persist-credentials: false
