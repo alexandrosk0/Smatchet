@@ -62,7 +62,9 @@
 #   WATCHDOG_EXPECTED_AGENTS   logical fan-out width for the amplification check
 #                              (default 0 = disabled; --expected-agents N).
 #   WATCHDOG_AMPLIFICATION_PCT amplification trigger as a percent of EXPECTED_AGENTS
-#                              (default 200 = 2.0×; --amplification-pct P).
+#                              (default 200 = 2.0×; --amplification-pct P). A sub-100
+#                              value (incl. 0) is floored to 200 — below 1× it would
+#                              fire on a healthy fleet.
 #   WATCHDOG_STATE_FILE        cross-poll baseline (default build/<slug>/.watchdog-state).
 #   WATCHDOG_FRESH_SECS        progressing threshold (default 120).
 #   WATCHDOG_FROZEN_SECS       frozen threshold (default 600 = ~10 min).
@@ -110,6 +112,10 @@ done
 case "$MAX_CASCADE_VICTIMS" in ''|*[!0-9]*) MAX_CASCADE_VICTIMS=3 ;; esac
 case "$EXPECTED_AGENTS"    in ''|*[!0-9]*) EXPECTED_AGENTS=0 ;; esac
 case "$AMPLIFICATION_PCT"  in ''|*[!0-9]*) AMPLIFICATION_PCT=200 ;; esac
+# A percent below 100 (incl. 0) would fire cascade on a HEALTHY fleet — runs are
+# always ≥ a sub-1× fraction of the expected width (and `*0` is always-true) — so
+# floor any nonsensical sub-100 value back to the 2× default.
+[ "$AMPLIFICATION_PCT" -lt 100 ] && AMPLIFICATION_PCT=200
 
 RESULTS_DIR="${WATCHDOG_RESULTS_DIR:-build/$slug/results}"
 TRANSCRIPT_DIR="${WATCHDOG_TRANSCRIPT_DIR:-$HOME/.claude/projects}"

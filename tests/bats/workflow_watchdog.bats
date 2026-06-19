@@ -29,8 +29,11 @@ setup() {
 
     export WATCHDOG_NOW=1000000   # fixed clock
     # Hermetic cascade defaults: a value inherited from the runner env would
-    # silently shift the default-threshold / recency-window assertions.
-    unset WATCHDOG_MAX_CASCADE_VICTIMS WATCHDOG_CASCADE_WINDOW_SECS
+    # silently shift the default-threshold / recency-window / amplification
+    # assertions (e.g. a leaked WATCHDOG_SESSION_DIR + WATCHDOG_EXPECTED_AGENTS
+    # would flip an amplification-OFF case to a cascade).
+    unset WATCHDOG_MAX_CASCADE_VICTIMS WATCHDOG_CASCADE_WINDOW_SECS \
+          WATCHDOG_EXPECTED_AGENTS WATCHDOG_AMPLIFICATION_PCT WATCHDOG_SESSION_DIR
     # leave FRESH_SECS=120 / FROZEN_SECS=600 at their defaults
 }
 
@@ -243,6 +246,15 @@ plain_runs() {
     run bash "$SCRIPT" demo --session-dir "$WD_DATA/sess" --expected-agents 3 --amplification-pct 130
     [ "$status" -eq 0 ]
     [[ "$output" == *"]: cascade"* ]]
+}
+
+@test "--amplification-pct below 100 (incl 0) is floored to the 2x default (no always-on cascade)" {
+    make_results 1
+    transcript_at 999970
+    plain_runs "$WD_DATA/sess" 3               # 3 runs / 3 expected = 100% (< 200% default)
+    run bash "$SCRIPT" demo --session-dir "$WD_DATA/sess" --expected-agents 3 --amplification-pct 0
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"]: cascade"* ]]          # pct=0 floored to 200 → 100% < 200% → NOT always-on cascade
 }
 
 @test "--nudge cascade block names the amplification ratio" {
