@@ -249,6 +249,17 @@ if [ -f "$t3/docs/plans/shipped/clean.md" ] \
 else
     bad "happy path: move/rewrite incomplete"
 fi
+# Regression for Cursor Bugbot b7856a1b: the ref rewrite must be STAGED, so a
+# plain `git commit` (no -a) captures it — not left unstaged to be silently
+# dropped, reintroducing the CI failures the helper prevents.
+staged3="$(cd "$t3" && git diff --cached --name-only)"
+unstaged3="$(cd "$t3" && git diff --name-only)"
+if printf '%s\n' "$staged3" | grep -q 'notes.md' \
+   && ! printf '%s\n' "$unstaged3" | grep -q 'notes.md'; then
+    ok "happy path: ref rewrite staged (clean git commit captures it)"
+else
+    bad "happy path: rewrite left UNSTAGED (staged=[$(printf '%s' "$staged3" | tr '\n' ',')] unstaged=[$(printf '%s' "$unstaged3" | tr '\n' ',')])"
+fi
 rm -rf "$t3"
 
 # ---------------------------------------------------------------------------

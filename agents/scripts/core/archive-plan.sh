@@ -213,19 +213,31 @@ run_gate "test-plan-ref-integrity" "$REF"
 # Markdown links: diff-scope vs origin/develop. A dangling hyperlink here is the
 # wave-3 bug — a tier-ful relative link inside the moved (or referring) file that
 # the move broke. We DETECT and REPORT; we do NOT guess the fix.
+# test-markdown-links diff-scopes against origin/develop; if that ref is absent
+# (fresh clone / no fetch) the diff is empty and the gate would scan ZERO files
+# and false-pass (exit 0). Guard the base ref exists first. (Cursor Bugbot 177778fc.)
+if ! git rev-parse --verify --quiet origin/develop >/dev/null 2>&1; then
+    log "origin/develop missing — fetching it for the markdown-links diff scope"
+    git fetch --quiet origin develop || true
+fi
+MDL_OUT="$(mktemp)"
 log "gate: test-markdown-links (diff vs origin/develop)"
-if bash "$MDL" >/tmp/.archive-plan-mdl.$$ 2>&1; then
+if ! git rev-parse --verify --quiet origin/develop >/dev/null 2>&1; then
+    GATE_FAIL=1
+    err "gate FAILED: test-markdown-links — origin/develop unavailable, cannot diff-scope"
+    err "  (a missing base ref makes the gate scan zero files + false-pass; refusing)."
+elif bash "$MDL" >"$MDL_OUT" 2>&1; then
     log "gate OK: test-markdown-links"
 else
     GATE_FAIL=1
     err "gate FAILED: test-markdown-links — dangling markdown hyperlink(s) after the move:"
     # Surface the offending links (stderr lines carry 'BROKEN_LINK').
-    grep -E 'BROKEN_LINK|Failed:' /tmp/.archive-plan-mdl.$$ >&2 || cat /tmp/.archive-plan-mdl.$$ >&2
+    grep -E 'BROKEN_LINK|Failed:' "$MDL_OUT" >&2 || cat "$MDL_OUT" >&2
     err "  ^ Fix these context-dependent hyperlinks BY HAND: a markdown link's"
     err "    correct relative href depends on the REFERRING file's tier, so it"
     err "    cannot be rewritten safely here. Then re-run the gates."
 fi
-rm -f /tmp/.archive-plan-mdl.$$
+rm -f "$MDL_OUT"
 
 if [ "$GATE_FAIL" -ne 0 ]; then
     err "one or more gates failed — the tree is moved+staged but NOT clean."
@@ -233,6 +245,18 @@ if [ "$GATE_FAIL" -ne 0 ]; then
     exit 1
 fi
 
-log "DONE: $SLUG archived to '$TIER'. All gates green; changes staged for commit."
-log "Review with: git status / git diff --staged   (commit is YOURS to make)."
+# Stage EVERYTHING the archival touched. The git mv was already staged, but the
+# plain-text ref rewrites and the INDEX.md regen were left UNSTAGED — so a plain
+# `git commit` (no -a) would capture only the move and DROP the ref + INDEX
+# fixes, reintroducing the very CI failures this helper exists to prevent.
+# (Cursor Bugbot b7856a1b.) Done only after all gates are green.
+STAGE=( "$DST" "docs/plans/INDEX.md" )
+[ "${#HITS[@]}" -gt 0 ] && STAGE+=( "${HITS[@]}" )
+if ! git add -- "${STAGE[@]}"; then
+    err "git add (staging archival changes) failed — stage by hand before commit."
+    exit 1
+fi
+
+log "DONE: $SLUG archived to '$TIER'. All gates green; ALL changes staged for commit."
+log "Review with: git diff --staged   (commit is YOURS to make)."
 exit 0
