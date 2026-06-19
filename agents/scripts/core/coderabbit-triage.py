@@ -39,6 +39,36 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+# triage-rules-version: 4
+# Shared rules-version marker — MUST match agents/core/coderabbit-triage.md (the
+# end-of-CI sync doctest greps both files for this token and fails if they
+# disagree). Bump in BOTH whenever the login allow-list, override table, severity
+# parse, or noise filter changes. v4 (bugbot-merge-gate): PR-bot login allow-list
+# {coderabbitai[bot], cursor[bot]} + Bugbot body-shape severity parse +
+# couldn't-run / usage-limit noise filter.
+
+# PR-bot login allow-list (lower-cased substring match — covers both the REST
+# `[bot]` suffix and the GraphQL-stripped form). CodeRabbit + Cursor Bugbot are
+# live today; Greptile / Sweep join here as they appear (same routing rules).
+PR_BOT_LOGIN_TOKENS = ("coderabbit", "cursor")
+
+# Bugbot conversation-tab run-status notices ("### Bugbot couldn't run …",
+# "usage limit reached") are spend/availability status, NOT findings — they must
+# never enter the triage set (they are the merge-gate's no-wedge TERMINAL signal,
+# never a block). Mirrors merge-gates.sh $bbterminal.
+_BUGBOT_NOISE_RE = re.compile(r"couldn.t run|usage limit", re.IGNORECASE)
+
+
+def _is_pr_bot_login(login: str) -> bool:
+    """True when `login` is an allow-listed PR-bot (CodeRabbit or Cursor Bugbot)."""
+    low = (login or "").lower()
+    return any(tok in low for tok in PR_BOT_LOGIN_TOKENS)
+
+
+def _is_bugbot_noise(body: str) -> bool:
+    """True when a body is a Bugbot run-status notice (drop it from the triage set)."""
+    return bool(_BUGBOT_NOISE_RE.search(body or ""))
+
 
 class Verdict(str, Enum):
     VALID = "VALID"
@@ -124,9 +154,53 @@ FINDING_HEADER_RE = re.compile(
     re.MULTILINE,
 )
 
+# Cursor Bugbot inline-finding body shape (per the bugbot-merge-gate plan's wire
+# notes): a `### <title>` heading then a `**<Sev> Severity**` line then a
+# `<!-- DESCRIPTION START -->` marker. Bugbot anchors file/line via the comment
+# metadata, not the body, so a Bugbot body parses to {file: "", line_range: ""}
+# here — the caller supplies path/line from the inline-comment JSON.
+BUGBOT_SEVERITY_RE = re.compile(r"\*\*(High|Medium|Low)\s+Severity\*\*", re.IGNORECASE)
+BUGBOT_MARKERS_RE = re.compile(r"<!--\s*BUGBOT_(?:REVIEW|FIX_ALL)\s*-->|<!--\s*DESCRIPTION START\s*-->|\*\*(?:High|Medium|Low)\s+Severity\*\*", re.IGNORECASE)
+
+
+def looks_like_bugbot_body(body: str) -> bool:
+    """True when a body carries Cursor Bugbot's wire markers (vs CodeRabbit's shape)."""
+    return bool(BUGBOT_MARKERS_RE.search(body or ""))
+
+
+def parse_bugbot_findings(body: str) -> list[dict[str, str]]:
+    """Extract findings from a Cursor Bugbot finding/review body.
+
+    Bugbot opens each finding with a `### <title>` heading then a
+    `**<Sev> Severity**` line. Run-status notices (couldn't run / usage limit) are
+    dropped as noise. Returns list of {file, line_range, body} (file/line empty —
+    Bugbot line-anchors via the inline-comment metadata, not the body text).
+    """
+    if _is_bugbot_noise(body):
+        return []
+    findings: list[dict[str, str]] = []
+    # Split on `### ` headings; each block is one finding. Fall back to the whole
+    # body as a single finding when there are no headings (a bare inline comment).
+    blocks = re.split(r"(?:^|\n)###\s+", body)
+    candidates = blocks[1:] if len(blocks) > 1 else [body]
+    for block in candidates:
+        text = block.strip()
+        if not text or _is_bugbot_noise(text):
+            continue
+        sev = BUGBOT_SEVERITY_RE.search(text)
+        # Keep only blocks that actually look like a finding (carry a Severity
+        # line or a DESCRIPTION marker) so prose/marker-only blocks are skipped.
+        if not sev and "DESCRIPTION START" not in text.upper():
+            continue
+        findings.append({"file": "", "line_range": "", "body": text})
+    return findings
+
 
 def parse_findings(review_body: str) -> list[dict[str, str]]:
-    """Extract findings from CR's review body.
+    """Extract findings from a PR-bot review body.
+
+    Dispatches on body shape: Cursor Bugbot (`### <title>` + `**<Sev> Severity**`)
+    vs CodeRabbit (the `In `@<file>`: - Around line N-M:` enumeration below).
 
     CR's format (post-2026):
       In `@<file>`:
@@ -136,6 +210,8 @@ def parse_findings(review_body: str) -> list[dict[str, str]]:
 
     Returns list of {file, line_range, body}.
     """
+    if looks_like_bugbot_body(review_body):
+        return parse_bugbot_findings(review_body)
     findings = []
     # Split on per-file 'In `@...`:' headers, then scan each file-block for
     # '- Around line ...' bullets.
@@ -221,20 +297,23 @@ def fetch_cr_review_body(owner: str, repo: str, pr: int) -> str | None:
     data = json.loads(result.stdout)
     head = data.get("headRefOid", "")
     reviews = data.get("reviews", [])
-    cr_reviews = [
+    # Allow-list match (CodeRabbit + Cursor Bugbot); drop Bugbot run-status notices
+    # (couldn't run / usage limit) — those are not findings.
+    bot_reviews = [
         r
         for r in reviews
-        if "coderabbit" in (r.get("author", {}) or {}).get("login", "").lower()
+        if _is_pr_bot_login((r.get("author", {}) or {}).get("login", ""))
+        and not _is_bugbot_noise(r.get("body", ""))
     ]
-    if not cr_reviews:
+    if not bot_reviews:
         return None
-    # Latest CR review on current head; fall back to most-recent stale.
+    # Latest bot review on current head; fall back to most-recent stale.
     on_head = [
         r
-        for r in cr_reviews
+        for r in bot_reviews
         if (r.get("commit") or {}).get("oid") == head
     ]
-    pool = on_head if on_head else cr_reviews
+    pool = on_head if on_head else bot_reviews
     pool.sort(key=lambda r: r.get("submittedAt", ""))
     return pool[-1].get("body", "")
 

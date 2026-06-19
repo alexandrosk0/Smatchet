@@ -1,0 +1,50 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "state": "OPEN",
+        "isDraft": false,
+        "reviewDecision": "APPROVED",
+        "headRefOid": "bbHEAD111",
+        "headRefName": "feature/bb-findings",
+        "commits": {
+          "nodes": [{
+            "commit": {
+              "statusCheckRollup": {
+                "contexts": {
+                  "pageInfo": {"hasNextPage": false},
+                  "nodes": [
+                    {"__typename": "CheckRun", "name": "build", "conclusion": "SUCCESS", "status": "COMPLETED", "isRequired": true}
+                  ]
+                }
+              }
+            }
+          }]
+        },
+        "reviews": {
+          "pageInfo": {"hasNextPage": false},
+          "nodes": [
+            {
+              "author": {"login": "cursor[bot]", "__typename": "Bot"},
+              "state": "COMMENTED",
+              "submittedAt": "2026-06-18T10:00:00Z",
+              "commit": {"oid": "bbHEAD111"},
+              "body": "<!-- BUGBOT_REVIEW -->\nBugbot found 2 potential issues\n<!-- BUGBOT_FIX_ALL -->"
+            }
+          ]
+        },
+        "reviewThreads": {
+          "pageInfo": {"hasNextPage": false},
+          "nodes": [
+            {"isResolved": false, "isOutdated": false, "comments": {"pageInfo": {"hasNextPage": false}, "nodes": [{"author": {"login": "cursor[bot]", "__typename": "Bot"}, "commit": {"oid": "bbHEAD111"}}]}},
+            {"isResolved": false, "isOutdated": false, "comments": {"pageInfo": {"hasNextPage": false}, "nodes": [{"author": {"login": "cursor[bot]", "__typename": "Bot"}, "commit": {"oid": "bbHEAD111"}}]}}
+          ]
+        },
+        "comments": {
+          "pageInfo": {"hasNextPage": false},
+          "nodes": []
+        }
+      }
+    }
+  }
+}

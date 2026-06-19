@@ -3,7 +3,7 @@
 # ----------------------------------------------------------------------------
 # Merge-gates poller for the orchestrator + git-janitor ship-loop.
 #
-# Polls three conditions on a PR via one `gh api graphql` call:
+# Polls four conditions on a PR via one `gh api graphql` call:
 #   1. CI — every required check passes (CheckRun terminal SUCCESS/NEUTRAL/SKIPPED;
 #      StatusContext state == SUCCESS) PLUS any non-required check on the
 #      meant-to-block allow-list (name ~ Coverage|Sanitizer, non-advisory)
@@ -13,6 +13,11 @@
 #   3. User comments — zero unresolved non-outdated review threads with any
 #      non-bot non-self comment; zero conversation-tab comments from non-bot
 #      non-self authors
+#   4. Cursor Bugbot (cursor[bot]) — zero unresolved non-outdated review threads
+#      authored by cursor[bot] (its line-anchored findings). Bugbot summary
+#      reviews are always COMMENTED, so the gate guards on open findings only;
+#      a "couldn't run"/"usage limit" status comment, a silent Bugbot, or a
+#      stale prior-commit review never wedge merge (no-wedge + grace hatches).
 #
 # Plus: pullRequest.state == OPEN, reviewDecision in {APPROVED, null},
 # all connection pageInfo.hasNextPage == false.
@@ -27,8 +32,11 @@
 #   intent-out-of-band → downgrades `Intent section` FAIL → WARN
 #   cr-out-of-band    → downgrades a CodeRabbit block → WARN (CR gate only;
 #                       CI + user-comment gates still bind)
+#   bugbot-out-of-band → downgrades a Cursor Bugbot block → WARN (Bugbot gate
+#                       only; CI + CR + user-comment gates still bind)
 # Downgraded failures are logged on stderr but do NOT contribute to ci_fail
-# (CI downgrades) / do NOT block the CR gate (cr-out-of-band).
+# (CI downgrades) / do NOT block the CR gate (cr-out-of-band) / do NOT block
+# the Bugbot gate (bugbot-out-of-band).
 #
 # Usage:
 #   source agents/scripts/core/merge-gates.sh
@@ -59,6 +67,9 @@
 #                                  § Merge gates: a positively-confirmed STALE-BLOCKED
 #                                  PR where everything is actually green).
 #   MERGE_GATES_CR_GRACE_POLLS   — CR review grace window (default 10 polls)
+#   MERGE_GATES_BB_GRACE_POLLS   — Bugbot re-review grace window for a STALE
+#                                  (prior-commit-only) cursor[bot] review before
+#                                  grace-expiry pass (default 10 polls)
 #   MERGE_GATES_CR_INSTALLED     — override CR-installed auto-detection
 #   MERGE_GATES_STALE_REREVIEW_POLLS — consecutive STALE polls on same HEAD
 #                                  before auto-posting `@coderabbitai review`
@@ -219,6 +230,12 @@ poll_merge_gates() {
     # polls without a review or a `CodeRabbit` SUCCESS StatusContext, NONE falls back
     # to pass with a logged warning so the loop is never wedged by a stuck integration.
     local CR_GRACE_POLLS="${MERGE_GATES_CR_GRACE_POLLS:-10}"
+    # Bugbot (cursor[bot]) re-review grace: when Bugbot reviewed a PRIOR commit
+    # but has not reviewed the current head yet (bb_state == STALE), wait this
+    # many polls for it to re-review the new head before grace-expiry pass.
+    # Mirrors CR_GRACE_POLLS. A silent Bugbot with NO artefact (bb_state ABSENT)
+    # is never waited on — only a confirmed-engaged-but-stale Bugbot graces.
+    local BB_GRACE_POLLS="${MERGE_GATES_BB_GRACE_POLLS:-10}"
 
     if [ ! -f "$QUERY_FILE" ]; then
         echo "poll_merge_gates: query file not found: $QUERY_FILE" >&2
@@ -351,7 +368,7 @@ poll_merge_gates() {
     # Option B: parse the GraphQL response with gh's BUNDLED jq (`gh api --jq`)
     # — no standalone `jq` binary required (gh is the only dep). One filter
     # computes every gate field and emits them as a fixed-order, one-per-line
-    # stream (20 lines) that the poll loop reads with `mapfile`. The exact jq
+    # stream (27 lines) that the poll loop reads with `mapfile`. The exact jq
     # sub-expressions are the same ones the per-field `jq` calls used before;
     # they're just composed into one program. ORCH_USER is spliced in as a
     # string literal because `gh --jq` (unlike standalone jq) takes no --arg.
@@ -364,13 +381,19 @@ poll_merge_gates() {
     # 20 crContextPresent · 21 reqAbsentNames (", "-joined config-required
     # contexts absent from the head rollup) · 22 reqAbsentCount (their count) ·
     # 23 crReviewSkipped (bool: CR StatusContext SUCCESS + description "Review
-    # skipped" and NOT the too-many-files size-skip — a TERMINAL generic skip).
-    # crReviewSkipped is LAST because it is always a non-empty "true"/"false" —
-    # a trailing EMPTY field (reqAbsentNames is "" in the common case) would be
-    # stripped by the `data=$(gh …)` command substitution (trailing-newline
-    # collapse), deflating the 24-field count and tripping the fail-closed
-    # assertion. reqAbsentCount (22) is also non-empty (numeric) so it is safe
-    # in the middle now that crReviewSkipped trails it.
+    # skipped" and NOT the too-many-files size-skip — a TERMINAL generic skip) ·
+    # 24 bbState (latest cursor[bot] review state on head, e.g. COMMENTED;
+    # else TERMINAL = a "couldn't run"/"usage limit" conversation comment, else
+    # STALE = cursor[bot] reviewed a prior commit only, else ABSENT = no
+    # cursor[bot] review anywhere) · 25 bbOpen (count of unresolved non-outdated
+    # cursor[bot] inline-finding review threads — Bugbot gate #4) · 26 bbOob
+    # (bugbot-out-of-band label).
+    # bbOob is LAST because it is always a non-empty "true"/"false" — a trailing
+    # EMPTY field (reqAbsentNames is "" in the common case) would be stripped by
+    # the `data=$(gh …)` command substitution (trailing-newline collapse),
+    # deflating the 27-field count and tripping the fail-closed assertion.
+    # reqAbsentCount (22), crReviewSkipped (23), bbState (24, ABSENT-default) and
+    # bbOpen (25, numeric) are also non-empty so they are safe ahead of bbOob.
     local GATE_FILTER
     GATE_FILTER='
 .data.repository.pullRequest as $pr
@@ -380,6 +403,7 @@ poll_merge_gates() {
 | ($labels | any(. == "perf-out-of-band")) as $perf
 | ($labels | any(. == "intent-out-of-band")) as $intent
 | ($labels | any(. == "cr-out-of-band")) as $cr
+| ($labels | any(. == "bugbot-out-of-band")) as $bb
 | ((($pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes) // [])
    | map(. + {_k: (if .__typename == "CheckRun" then ["CheckRun", (.name // "")]
                    else ["StatusContext", (.context // "")] end)})
@@ -465,6 +489,27 @@ poll_merge_gates() {
     | (.description // "")]
    | any((test("review skipped"; "i"))
          and ((test("too many files"; "i")) | not))) as $crreviewskipped
+# Bugbot (cursor[bot]) — mirrors the $crall/$crstate machinery. $bball = all
+# reviews authored by cursor[bot] (its summary review, always state COMMENTED).
+# $bbterminal = TRUE when a cursor[bot] CONVERSATION (issue) comment body carries
+# a couldn.t-run / usage-limit status message. The regex uses couldn.t (a jq `.`
+# wildcard, NOT a literal apostrophe) so it (a) stays inside the bash
+# single-quoted filter — a literal apostrophe here would close the string — and
+# (b) tolerates a straight or unicode apostrophe. $bbstate folds the head-review
+# state, the terminal signal, the engaged-but-stale signal, and the no-activity
+# signal into one token — decision order is load-bearing (see the bash bucket):
+# a head review wins, else TERMINAL (no-wedge), else STALE (prior-commit review
+# → grace), else ABSENT (Bugbot-free / not engaged → never waited on).
+| ([$pr.reviews.nodes[] | select(.author.login == "cursor" or .author.login == "cursor[bot]")]) as $bball
+| ([$pr.comments.nodes[]?
+    | select(.author.login == "cursor" or .author.login == "cursor[bot]")
+    | (.body // "")]
+   | any(test("couldn.t run"; "i") or test("usage limit"; "i"))) as $bbterminal
+| (([$bball[] | select(.commit.oid == $sha)]) as $bbcur
+   | if ($bbcur | length) > 0 then ($bbcur | sort_by(.submittedAt) | .[-1].state)
+     elif $bbterminal then "TERMINAL"
+     elif ($bball | length) > 0 then "STALE"
+     else "ABSENT" end) as $bbstate
 | (
     ($pr.state // "UNKNOWN"),
     $sha,
@@ -510,7 +555,11 @@ poll_merge_gates() {
      then 1 else 0 end),
     ($reqAbsent | join(", ")),
     ($reqAbsent | length),
-    ($crreviewskipped | tostring)
+    ($crreviewskipped | tostring),
+    $bbstate,
+    ([$pr.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false
+        and any(.comments.nodes[]; .author.login == "cursor" or .author.login == "cursor[bot]"))] | length),
+    ($bb | tostring)
   )
 '
     GATE_FILTER="${GATE_FILTER//__ORCH_USER__/$ORCH_USER}"
@@ -554,7 +603,7 @@ poll_merge_gates() {
         fi
         gh_fails=0
 
-        # Parse the gh --jq field stream — 23 fixed-order lines (see GATE_FILTER
+        # Parse the gh --jq field stream — 27 fixed-order lines (see GATE_FILTER
         # field map above). gh --jq errors already routed through the gh-fail
         # path above; this guards a truncated/partial body → fail closed (retry).
         local fields
@@ -563,11 +612,11 @@ poll_merge_gates() {
         # "OPEN\r" != "OPEN" → spurious return-4).
         data="${data//$'\r'/}"
         mapfile -t fields <<<"$data"
-        if [ "${#fields[@]}" -ne 24 ]; then
-            # Exactly 24 expected. Any other count (a field value with an embedded
+        if [ "${#fields[@]}" -ne 27 ]; then
+            # Exactly 27 expected. Any other count (a field value with an embedded
             # newline would inflate it, misaligning fields[n]) → fail closed (CR #511).
             gh_fails=$((gh_fails+1))
-            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 24); transient ($gh_fails/3)"
+            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 27); transient ($gh_fails/3)"
             if [ "$gh_fails" -ge 3 ]; then echo "GH_API_DOWN"; return 3; fi
             local elapsed_short=$(( $(date +%s) - start ))
             if [ "$elapsed_short" -ge "$TIMEOUT_SECONDS" ]; then echo "GATES_TIMEOUT"; return 2; fi
@@ -700,6 +749,19 @@ poll_merge_gates() {
         # that command substitution would strip; names (index 21) precede it.
         local req_absent_names="${fields[21]}"
         local req_absent="${fields[22]:--1}"
+
+        # Bugbot (cursor[bot]) gate #4 inputs (fields 24-26). bb_state: a review
+        # state (e.g. COMMENTED) when Bugbot reviewed the current head; TERMINAL
+        # for a "couldn't run"/"usage limit" conversation comment (spend-cap
+        # no-verdict); STALE for a prior-commit-only review (mid-re-review);
+        # ABSENT for no cursor[bot] review anywhere (Bugbot-free / not engaged).
+        # bb_open: unresolved non-outdated cursor[bot] inline-finding threads
+        # (-1 = filter/parse miss, fails closed). has_bb_oob: the
+        # bugbot-out-of-band override label. Decision bucket is computed below,
+        # just before the Poll status line.
+        local bb_state="${fields[24]:-ABSENT}"
+        local bb_open="${fields[25]:--1}"
+        local has_bb_oob="${fields[26]:-false}"
 
         # User comments (non-bot, non-self) — -1 fails closed at `user -eq 0`.
         local user="${fields[15]:--1}"
@@ -939,10 +1001,65 @@ poll_merge_gates() {
             echo "WARN: required-context check returned ${req_absent} (filter/parse miss); failing closed on the required-absent gate this poll." >&2
         fi
 
-        printf 'Poll %d/%d — CI: %d/%d pass (%d fail, %d pending, %d warn-downgraded, %d req-missing) | CodeRabbit: %s (%d open) | User: %d | reviewDecision: %s\n' \
+        # ── Bugbot (cursor[bot]) gate #4 ──────────────────────────────────────
+        # Mirrors the CR machinery but guards on bb_open (unresolved cursor[bot]
+        # inline findings) ONLY — Bugbot summary reviews are always COMMENTED, so
+        # there is no review-state verdict to read. Decision ORDER is load-bearing:
+        # open findings BLOCK *before* the terminal-signal / out-of-band / grace
+        # escape hatches are consulted, so a "couldn't run"/"usage limit" comment
+        # can NEVER wave real findings through (plan Finding 1 — the no-wedge
+        # guarantee covers a *no-verdict* Bugbot, not findings-then-cap). The
+        # three no-wedge hatches (TERMINAL short-circuit, bugbot-out-of-band, and
+        # the BB_GRACE_POLLS-bounded STALE wait) guarantee a usage-capped or silent
+        # Bugbot can never block a merge longer than the grace window.
+        #   bb_block feeds the GATES_PASSED composite below (the actual consume
+        #   point — without that conjunct a Bugbot BLOCK is computed yet the
+        #   aggregate still passes when CI + CR are green; plan Finding 2).
+        # bb_open < 0 (filter/parse miss) fails closed. bb_state_print avoids the
+        # tokens the merge-watcher's Poll-line matchers key on ("block",
+        # "actionable", …) so a Bugbot cell never spoofs a CR-finding route.
+        local bb_block=false
+        local bb_state_print="$bb_state"
+        if [ "$bb_open" -lt 0 ]; then
+            bb_block=true
+            bb_state_print="parse-miss (bb_open=$bb_open — fail-closed)"
+        elif [ "$bb_open" -gt 0 ]; then
+            if [ "$has_bb_oob" = "true" ]; then
+                bb_state_print="${bb_state} (${bb_open} unresolved — bugbot-out-of-band → WARN)"
+                echo "WARN: bugbot-out-of-band label downgraded Bugbot block (${bb_open} unresolved cursor[bot] finding(s)) to WARN" >&2
+            else
+                bb_block=true
+                bb_state_print="${bb_state} (${bb_open} unresolved)"
+                echo "BLOCK: Cursor Bugbot has ${bb_open} unresolved finding(s) on the head; resolve the cursor[bot] review thread(s) or apply the 'bugbot-out-of-band' label to merge without Bugbot review." >&2
+            fi
+        elif [ "$bb_state" = "TERMINAL" ]; then
+            # Bugbot couldn't run / hit its usage limit and left no findings on the
+            # head — a spend-cap state must never wedge merge. No-wedge short-circuit
+            # (skips grace), mirroring the CR review-skipped fast-pass. Reached only
+            # when bb_open == 0, so it never overrides real findings (plan Finding 1).
+            bb_state_print="TERMINAL (Bugbot couldn't run / usage limit — no-wedge pass)"
+        elif [ "$has_bb_oob" = "true" ]; then
+            # Operator waiver with no open findings → pass + short-circuit grace.
+            bb_state_print="bugbot-out-of-band (pass)"
+        elif [ "$bb_state" = "STALE" ] && [ "$p" -lt "$BB_GRACE_POLLS" ]; then
+            # Bugbot reviewed a PRIOR commit but not the current head yet — wait a
+            # full CR-style grace window for it to re-review the new head.
+            bb_block=true
+            bb_state_print="STALE-grace (no Bugbot review on head — poll $((p+1))/$BB_GRACE_POLLS)"
+        else
+            # PASS: a clean on-head review (bb_open==0), STALE grace expired, or no
+            # cursor[bot] artefacts at all (Bugbot-free PR / not engaged → never wedge).
+            case "$bb_state" in
+                ABSENT) bb_state_print="ABSENT (no Bugbot activity)" ;;
+                STALE)  bb_state_print="STALE-grace-expired (pass)" ;;
+                *)      bb_state_print="${bb_state} (clean)" ;;
+            esac
+        fi
+
+        printf 'Poll %d/%d — CI: %d/%d pass (%d fail, %d pending, %d warn-downgraded, %d req-missing) | CodeRabbit: %s (%d open) | Bugbot: %s (%d open) | User: %d | reviewDecision: %s\n' \
             $((p+1)) "$MAX_POLLS" $((ci_total - ci_fail - ci_pend - ci_warn_downgraded)) "$ci_total" \
             "$ci_fail" "$ci_pend" "$ci_warn_downgraded" "$req_absent" \
-            "$cr_state_print" "$cr_open" "$user" "$review_decision"
+            "$cr_state_print" "$cr_open" "$bb_state_print" "$bb_open" "$user" "$review_decision"
 
         # H1: APPROVED CR review passes unconditionally per AGENTS.md § Merge
         # gates § CodeRabbit ("APPROVED → pass unconditionally (approval trumps
@@ -1000,6 +1117,7 @@ poll_merge_gates() {
         if [ "$ci_fail" -eq 0 ] && [ "$ci_pend" -eq 0 ] && \
            [ "$req_absent" -eq 0 ] && [ "$mergestate_blocks" = false ] && \
            [ "$cr_pass" = true ] && [ "$cr_open_blocks" = false ] && \
+           [ "$bb_block" = false ] && \
            [ "$user" -eq 0 ] && [ "$review_pass" = true ]; then
             # Diagnostic: surface GitHub's mergeStateStatus alongside our pass
             # decision so the operator can correlate when GH says BLOCKED while
