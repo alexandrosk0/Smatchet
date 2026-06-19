@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
 #include <string>
 #include <utility>
 
@@ -83,6 +84,68 @@ void AppendUiTestFailures(ImGuiTestEngine* engine, nlohmann::json& out) {
         }
     }
     out["failures"] = failures;
+}
+
+// Emit the per-test KO list + a pass/fail summary + each failing test's log
+// excerpt to STDOUT, then flush. The spawn driver
+// (CliCommandRunner.cpp::LaunchEphemeralInstance) redirects the ephemeral
+// child's stdout+stderr into the spawn-log; but the ImGui Test Engine's own
+// output channels do NOT reliably populate that log on a FAILING run:
+//   * ConfigLogToTTY (which this scenario sets) only writes per-log-line through
+//     ImGuiTestContext::LogEx while a test BODY executes — when the engine marks
+//     a test Error before / without the body running through the context (the
+//     settle/probe failure mode this scenario is tuned against), little or
+//     nothing routes to the TTY; and
+//   * ImGuiTestEngine_PrintResultSummary (the upstream one-shot summary that
+//     lists KO tests + a pass/fail line) is never called by this scenario —
+//     results travel only over the MCP wire into the JSON envelope.
+// So on a FAILING spawned run the child can write nothing to the spawn-log,
+// which is exactly the diagnosability blocker (docs/self-improvement infra:
+// "Bucket-E --spawn flake ... 0-byte child-log on failure"). This dump walks
+// the engine's recorded test STATUSES directly (no dependence on per-line TTY
+// routing), so it is robust to the timeout / kill / engine-marked-error paths.
+// stdout is used (not stderr) because the engine's own LogToTTY writes — which
+// DO reach the redirected spawn-log — go to stdout, confirming that channel is
+// wired through to the file in the GUI-subsystem child. fflush guarantees the
+// bytes hit the handle before the child is quit. Cheap one-shot at end-of-run.
+void DumpUiTestOutcomeToStdout(ImGuiTestEngine* engine, int tested, int passed, const char* filter, bool queued) {
+    std::fprintf(stdout, "[ui_test] run complete: filter='%s' tested=%d passed=%d failed=%d%s\n",
+                 (filter != nullptr && filter[0] != '\0') ? filter : "(all)", tested, passed,
+                 (std::max)(0, tested - passed), queued ? "" : " (no tests queued/registered)");
+
+    if (engine != nullptr) {
+        ImVector<ImGuiTest*> tests;
+        ImGuiTestEngine_GetTestList(engine, &tests);
+
+        bool anyFailure = false;
+        for (int i = 0; i < tests.Size; ++i) {
+            ImGuiTest* test = tests[i];
+            if (test == nullptr || test->Output.Status != ImGuiTestStatus_Error) {
+                continue;
+            }
+            anyFailure = true;
+            std::fprintf(stdout, "[ui_test] KO: %s/%s\n", test->Category ? test->Category : "",
+                         test->Name ? test->Name : "");
+
+            ImGuiTextBuffer log;
+            test->Output.Log.ExtractLinesForVerboseLevels(ImGuiTestVerboseLevel_Error, ImGuiTestVerboseLevel_Trace,
+                                                          &log);
+            const char* logText = log.empty() ? test->Output.Log.GetText() : log.c_str();
+            if (logText != nullptr && logText[0] != '\0') {
+                std::fprintf(stdout, "%s\n", logText);
+            }
+        }
+        if (!anyFailure && tested > passed) {
+            // Defensive: counts say a failure happened but no test carries an
+            // Error status (e.g. queued-but-undrained). Surface it rather than
+            // leave the log silent.
+            std::fprintf(stdout, "[ui_test] failure reported by counts but no Error-status test found\n");
+        }
+    }
+
+    std::fprintf(stdout, "[ui_test] Tests Result: %s (%d/%d passed)\n", (tested == passed) ? "OK" : "Errors", passed,
+                 tested);
+    std::fflush(stdout);
 }
 
 bool HasQueuedOrRunningUiTest(ImGuiTestEngine* engine) {
@@ -241,17 +304,30 @@ nlohmann::json UiTestScenario::OnFinish(AppController& /*app*/) {
         out["passed"] = 0;
         out["failed"] = 0;
         out["log"] = disabledReason_;
+        // Surface the disabled reason to the --spawn child-log too — otherwise a
+        // SMATCHET_BUILD_UI_TESTS=OFF spawn produces a silent 0-byte log.
+        std::fprintf(stdout, "[ui_test] disabled: %s\n", disabledReason_.c_str());
+        std::fflush(stdout);
         return out;
     }
 #if defined(SMATCHET_BUILD_UI_TESTS)
     if (engine_ != nullptr) {
         ImGuiTestEngine_GetResult(engine_, tested_, passed_);
         AppendUiTestFailures(engine_, out);
+        // Mirror the outcome to stdout (captured by the --spawn child-log) BEFORE
+        // tearing the engine down — see DumpUiTestOutcomeToStdout.
+        DumpUiTestOutcomeToStdout(engine_, tested_, passed_, filter_.empty() ? nullptr : filter_.c_str(),
+                                  startedQueue_);
         ImGuiTestEngine_Stop(engine_);
         g_active_engine.store(nullptr, std::memory_order_release);
         g_active_app.store(nullptr, std::memory_order_release);
         ImGuiTestEngine_DestroyContext(engine_);
         engine_ = nullptr;
+    } else {
+        // No engine at OnFinish (creation failed in OnStart, or already torn
+        // down). Without this the spawn-log stays empty on that failure path.
+        std::fprintf(stdout, "[ui_test] run complete: no active test engine at OnFinish (creation failed?)\n");
+        std::fflush(stdout);
     }
     out["passed"] = passed_;
     out["failed"] = (std::max)(0, tested_ - passed_);
@@ -270,6 +346,15 @@ nlohmann::json UiTestScenario::OnFinish(AppController& /*app*/) {
 void UiTestScenario::OnCancel(AppController& /*app*/) {
 #if defined(SMATCHET_BUILD_UI_TESTS)
     if (engine_ != nullptr) {
+        // Cancellation is the timeout / watchdog path — the most diagnostically
+        // important one for the flake hunt. Capture whatever the engine recorded
+        // (queued / running / partial errors) to the --spawn child-log before
+        // teardown, so a cancelled run is never a silent 0-byte log.
+        int tested = 0;
+        int passed = 0;
+        ImGuiTestEngine_GetResult(engine_, tested, passed);
+        std::fprintf(stdout, "[ui_test] CANCELLED (timeout/watchdog) — dumping partial results:\n");
+        DumpUiTestOutcomeToStdout(engine_, tested, passed, filter_.empty() ? nullptr : filter_.c_str(), startedQueue_);
         ImGuiTestEngine_Stop(engine_);
         g_active_engine.store(nullptr, std::memory_order_release);
         g_active_app.store(nullptr, std::memory_order_release);
