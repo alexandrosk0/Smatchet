@@ -64,7 +64,7 @@ victim_transcript() {
 JSONL
 }
 
-@test "fresh transcript (age ≤ FRESH) → progressing" {
+@test "fresh transcript (age <= FRESH) -> progressing" {
     make_results 2
     transcript_at 999970            # age 30 ≤ 120
     run bash "$SCRIPT" demo
@@ -72,7 +72,7 @@ JSONL
     [[ "$output" == *"progressing"* ]]
 }
 
-@test "mtime advanced vs baseline, not fresh → crawl (do NOT kill)" {
+@test "mtime advanced vs baseline, not fresh -> crawl (do NOT kill)" {
     make_results 2
     transcript_at 999700            # age 300 (between fresh and frozen)
     baseline 2 999600               # newest_mtime advanced 999600 → 999700
@@ -81,7 +81,7 @@ JSONL
     [[ "$output" == *"do NOT kill"* ]]
 }
 
-@test "result count grew vs baseline, mtime static → crawl" {
+@test "result count grew vs baseline, mtime static -> crawl" {
     make_results 3
     transcript_at 999700            # age 300
     baseline 1 999700               # same mtime, but count 1 → 3
@@ -89,7 +89,7 @@ JSONL
     [[ "$output" == *"crawl"* ]]
 }
 
-@test "static transcript ≥ FROZEN, nothing advanced → frozen" {
+@test "static transcript >= FROZEN, nothing advanced -> frozen" {
     make_results 2
     transcript_at 999300            # age 700 ≥ 600
     baseline 2 999300               # count + mtime both unchanged
@@ -198,6 +198,61 @@ JSONL
     [ "$status" -eq 0 ]
     [[ "$output" != *"]: cascade"* ]]
     [[ "$output" == *"0 cascade victim"* ]]
+}
+
+# --- run amplification (the aggregate convergence signal) --------------------
+# Drop N plain (non-victim) agent transcripts in a fleet-scoped session dir.
+plain_runs() {
+    local dir="$1" n="$2" i
+    mkdir -p "$dir"
+    for i in $(seq 1 "$n"); do printf '{}\n' > "$dir/agent-r$i.jsonl"; done
+}
+
+@test "run amplification at-or-above threshold fires cascade (with --session-dir + --expected-agents)" {
+    make_results 1
+    transcript_at 999970                       # fresh → would be progressing absent cascade
+    plain_runs "$WD_DATA/sess" 6               # 6 runs / 3 expected = 200% = default trigger
+    run bash "$SCRIPT" demo --session-dir "$WD_DATA/sess" --expected-agents 3
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"]: cascade"* ]]
+    [[ "$output" == *"6/3 agent run"* ]]
+}
+
+@test "amplification stays OFF without --session-dir (raw global count is meaningless, no false cascade)" {
+    make_results 1
+    transcript_at 999970
+    plain_runs "$WATCHDOG_TRANSCRIPT_DIR" 10   # many runs in the GLOBAL root, no session scope
+    run bash "$SCRIPT" demo --expected-agents 2
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"]: cascade"* ]]
+}
+
+@test "runs below the amplification threshold keep the normal verdict (counted, not cascade)" {
+    make_results 1
+    transcript_at 999970
+    plain_runs "$WD_DATA/sess" 3               # 3 runs / 3 expected = 100% < 200%
+    run bash "$SCRIPT" demo --session-dir "$WD_DATA/sess" --expected-agents 3
+    [[ "$output" != *"]: cascade"* ]]
+    [[ "$output" == *"3/3 agent run"* ]]
+}
+
+@test "--amplification-pct lowers the amplification trigger" {
+    make_results 1
+    transcript_at 999970
+    plain_runs "$WD_DATA/sess" 4               # 4 runs / 3 expected = 133%
+    run bash "$SCRIPT" demo --session-dir "$WD_DATA/sess" --expected-agents 3 --amplification-pct 130
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"]: cascade"* ]]
+}
+
+@test "--nudge cascade block names the amplification ratio" {
+    transcript_at 999970
+    plain_runs "$WD_DATA/sess" 6
+    run bash "$SCRIPT" demo --nudge --session-dir "$WD_DATA/sess" --expected-agents 3
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"restart-cascade: demo"* ]]
+    [[ "$output" == *"6 agent run(s) for 3 expected"* ]]
+    [[ "$output" == *"RE-SCOPE"* ]]
 }
 
 @test "no fleet-slug argument is a usage error (exit 2)" {
