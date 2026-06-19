@@ -73,18 +73,25 @@ SCRIPT_PATH="$(printf '%s' "$INPUT" | jq -r '.tool_input.scriptPath // empty' 2>
 # --- resolve the script to validate ------------------------------------------
 tmp=""
 target=""
-if [ -n "$SCRIPT_PATH" ] && [ -f "$SCRIPT_PATH" ]; then
-    target="$SCRIPT_PATH"
-elif [ -n "$SCRIPT_INLINE" ]; then
+if [ -n "$SCRIPT_PATH" ]; then
+    # scriptPath may be absolute OR repo-relative; resolve against ROOT when it is
+    # not found as-is so a valid relative path isn't mistaken for "missing" (which
+    # would skip enforcement, fail-open) — CodeRabbit, #1429.
+    if [ -f "$SCRIPT_PATH" ]; then
+        target="$SCRIPT_PATH"
+    elif [ -f "$ROOT/$SCRIPT_PATH" ]; then
+        target="$ROOT/$SCRIPT_PATH"
+    fi
+fi
+if [ -z "$target" ] && [ -n "$SCRIPT_INLINE" ]; then
     tmp="$(mktemp 2>/dev/null || true)"
     [ -z "$tmp" ] && exit 0          # mktemp failed → fail-open
     printf '%s' "$SCRIPT_INLINE" > "$tmp"
     target="$tmp"
-else
-    # name-only (a saved workflow, pre-vetted) or empty payload → nothing to
-    # statically validate here.
-    exit 0
 fi
+# name-only (a saved workflow, pre-vetted), an unresolvable scriptPath, or an
+# empty payload → nothing to statically validate here (fail-open).
+[ -z "$target" ] && exit 0
 
 # --- run the preflight gate --------------------------------------------------
 out="$(bash "$PREFLIGHT" "$target" --strict 2>&1)"; rc=$?

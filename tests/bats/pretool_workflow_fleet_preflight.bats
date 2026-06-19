@@ -60,6 +60,13 @@ run_hook_script() {
     printf '%s' "$payload" | bash "$HOOK"
 }
 
+# Pipe a Workflow tool_input (scriptPath) to the hook; sets $status/$output.
+run_hook_scriptpath() {
+    local payload
+    payload="$(jq -n --arg p "$1" '{tool_name:"Workflow", tool_input:{scriptPath:$p}}')"
+    printf '%s' "$payload" | bash "$HOOK"
+}
+
 @test "unpinned 3-agent fan-out is BLOCKED (exit 2)" {
     run run_hook_script "$VIOLATING_3"
     [ "$status" -eq 2 ]
@@ -76,6 +83,16 @@ run_hook_script() {
 @test "unpinned 2-agent fan-out is ALLOWED (at-or-below the >2 threshold)" {
     run run_hook_script "$VIOLATING_2"
     [ "$status" -eq 0 ]
+}
+
+@test "repo-relative scriptPath is resolved + enforced (not skipped fail-open)" {
+    mkdir -p "$REPO_ROOT/build"
+    local rel="build/.preflight-hook-scriptpath-test.js"
+    printf '%s' "$VIOLATING_3" > "$REPO_ROOT/$rel"
+    run run_hook_scriptpath "$rel"
+    rm -f "$REPO_ROOT/$rel"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"[fleet-preflight-hook] blocking launch"* ]]
 }
 
 @test "SMATCHET_FLEET_PREFLIGHT_HOOK_BLOCK=0 downgrades block to advisory (exit 0, still warns)" {
