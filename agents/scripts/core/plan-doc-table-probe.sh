@@ -147,7 +147,10 @@ while IFS=$'\t' read -r kind value; do
             # Multi-token cells (e.g. "FooBar.cpp"): grep the literal cell.
             if hits=$(git grep -nF -l -- "$value" 2>/dev/null); then
                 count=$(printf '%s\n' "$hits" | wc -l | tr -d ' ')
-                first=$(printf '%s\n' "$hits" | head -1)
+                # `|| true`: head -1 closes the pipe after the first line, which
+                # SIGPIPEs printf (141); under set -euo pipefail that 141 would
+                # otherwise abort this assignment (CI-only — msys ignores SIGPIPE).
+                first=$(printf '%s\n' "$hits" | head -1 || true)
                 printf '%s:SYMBOL\t%s\t%s\t%s\n' "$PLAN" "$value" "$count" "$first"
                 hit_count=$((hit_count + 1))
             else
@@ -158,7 +161,9 @@ while IFS=$'\t' read -r kind value; do
         VAR)
             if hits=$(grep -nE "(set|file\s*\(\s*GLOB).*${value}" CMakeLists.txt tests/CMakeLists.txt 2>/dev/null); then
                 count=$(printf '%s\n' "$hits" | wc -l | tr -d ' ')
-                first=$(printf '%s\n' "$hits" | head -1)
+                # `|| true`: see SYMBOL branch above — head -1 SIGPIPEs printf
+                # (141), which set -euo pipefail would otherwise treat as fatal.
+                first=$(printf '%s\n' "$hits" | head -1 || true)
                 printf '%s:VAR\t%s\t%s\t%s\n' "$PLAN" "$value" "$count" "$first"
                 hit_count=$((hit_count + 1))
             else

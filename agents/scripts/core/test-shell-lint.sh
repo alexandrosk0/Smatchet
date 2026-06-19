@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-shell-lint.sh — five-rule self-review lint for shell scripts.
+# test-shell-lint.sh — six-rule self-review lint for shell scripts.
 #
 # Closes docs/self-improvement/categories/process.md 2026-05-28 P1 entry
 # "Implementer-side self-review didn't catch real shell-script bugs".
@@ -12,6 +12,15 @@
 #   3. curl -f / --fail on every curl invocation.
 #   4. sha256 verify within 10 lines after `curl -o <path>` / `--output <path>`.
 #   5. --key=value ↔ --key value parity when the flag takes a value.
+#   6. pipefail SIGPIPE/truncation guard — in a script using `set -o pipefail`,
+#      a top-level command-substitution assignment `var=$(... | head ...)` whose
+#      pipeline ENDS in a truncating consumer (head / head -n / head -c). head
+#      closes the pipe early → the producer gets SIGPIPE (141) → under pipefail
+#      the `$(...)` RC is non-zero → with `set -e` the assignment aborts the
+#      script (CI-only: msys bash ignores SIGPIPE, so it passes locally). Demand
+#      an explicit mitigation (`|| true`, restructure). Closes the
+#      `pipefail-masked-pipe-exit-needs-class-guard` backlog entry (the dormant
+#      class behind the two #995 inline fixes — deps-rule + flag-parity pipes).
 #
 # Targets: scripts/dev/*.sh + agents/scripts/{core,project}/*.sh (post-#609
 # layout; maxdepth 1, so scripts/dev/local/ is excluded) + scripts/mobile/**
@@ -258,6 +267,50 @@ check_flag_parity() {
     done
 }
 
+# Rule 6 — pipefail var=$(... | head ...) SIGPIPE/truncation class guard.
+# Only fires when the script actually enables pipefail (otherwise an upstream
+# producer's non-zero/SIGPIPE exit is discarded by the shell and the risk is
+# absent). The dangerous shape is a top-level COMMAND-SUBSTITUTION assignment
+# whose pipeline ENDS in a truncating consumer (`head`, `head -n`, `head -c`):
+# head closes the pipe after N lines/bytes, the producer takes SIGPIPE (141),
+# and under pipefail the `$(...)` returns 141 — with `set -e` (the common
+# companion of pipefail) the plain assignment then aborts the whole script.
+# This was a CI-only break twice (#995) because msys bash ignores SIGPIPE, so it
+# kept passing locally while reddening every PR. Both prior instances were fixed
+# INLINE; this rule guards the class so it can't silently reappear.
+#
+# False-positive controls (keep noise low):
+#   * head must be the FINAL consumer — `… | head -1 | awk …` ends in awk, not
+#     head, so the producer is not the thing being SIGPIPE'd by head and the
+#     line is NOT flagged (matched by requiring `head[ flags] )` with no further
+#     `|` before the `$(` closer).
+#   * already-mitigated lines (`… | head …) || true` / `|| :`) are skipped — the
+#     author has explicitly accepted/handled the non-zero RC.
+check_pipefail_head() {
+    local script="$1"
+    local nc
+    nc=$(non_comment "$script")
+    # Gate on pipefail (set -o pipefail / set -euo pipefail / set -eo pipefail…).
+    if ! grep -qE '(^|[[:space:]])set[[:space:]]+(-[a-z]*o[[:space:]]+pipefail|-o[[:space:]]+pipefail)' <<<"$nc"; then
+        return
+    fi
+    # Held in a var (not inline in `[[ =~ ]]`): the `[^|)]` bracket trips bash's
+    # conditional parser if written literally. Top-level (optionally local/export)
+    # command-substitution assignment whose `$(...)` ends in a truncating head —
+    # `[^|)]*` between head's args and the `)` keeps head the LAST pipeline stage
+    # (a later `|` means head is not the consumer being SIGPIPE'd, so no flag).
+    local re='^[[:space:]]*(local[[:space:]]+|export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*=\$\(.*\|[[:space:]]*head([[:space:]]+[^|)]*)?\)'
+    while IFS=: read -r lno content; do
+        # Already-handled non-zero RC — author opted in.
+        case "$content" in
+            *'|| true'*|*'|| :'*) continue ;;
+        esac
+        if [[ "$content" =~ $re ]]; then
+            emit "$script" "$lno" "SHELL_LINT_PIPEFAIL_HEAD" "var=\$(... | head) under pipefail: head can SIGPIPE the producer (141) and abort the assignment; add '|| true' or restructure"
+        fi
+    done < <(printf '%s\n' "$nc" | grep -nE '=\$\(.*\|[[:space:]]*head([[:space:]]|\))' || true)
+}
+
 PASSED=0
 FAILED=0
 for script in "${TARGETS[@]}"; do
@@ -267,6 +320,7 @@ for script in "${TARGETS[@]}"; do
     check_curl_fail "$script"
     check_sha256 "$script"
     check_flag_parity "$script"
+    check_pipefail_head "$script"
     after="${#VIOLATIONS[@]}"
     if [ "$after" -gt "$before" ]; then
         FAILED=$((FAILED + 1))
