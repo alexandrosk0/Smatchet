@@ -19,6 +19,7 @@
 #include "SmatchetProjectPicker.h"
 #if defined(SMATCHET_WITH_AI)
 #include "AiTypes.h"
+#include "AiOutboundConsent.h"
 #endif
 
 #include "imgui.h"
@@ -359,6 +360,12 @@ struct UiDrawSession {
     /// aborts. Default-null; controller allocates a fresh atom per Submit.
     std::shared_ptr<std::atomic<bool>> assistantCancel;
     std::string assistantLastError;
+    /// Stashed per-block rows for the first-send outbound-context consent modal,
+    /// measured once when the gate fires (DispatchAiSend) and read each frame the
+    /// modal is open. Empty when the modal is not pending. Drives the disclosure
+    /// list + total-bytes line; the gate decision itself reads
+    /// `cfg.AssistantOutboundConsentShown` via `ShouldRequireOutboundConsent`.
+    std::vector<smatchet::ai::OutboundConsentBlockRow> assistantConsentRows;
     /// True while the history view is scrolled to the bottom — streaming new
     /// tokens auto-pin to tail; scrolling up releases the pin until the user
     /// scrolls back down.

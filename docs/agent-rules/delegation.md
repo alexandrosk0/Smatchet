@@ -267,7 +267,7 @@ When a delegated agent errors API-500 mid-run, the worktree state is usually com
    gh pr create --draft --title "..." --body "..."
    ```
 
-5. **Mark recovery in backlog** — add an entry to `docs/self-improvement/categories/process.md` with author = the failed agent, P3, summarising the recovery (which agent, what wave / packet, files-staged-via-`add -A`-vs-`<list>`, force-push-or-not). Reuses the existing self-improvement loop so accumulating evidence surfaces a "harness-level retry-on-API-500" fix when the rate justifies it.
+5. **Mark recovery in backlog** — add a new per-entry file `docs/self-improvement/categories/process/<YYYY-MM-DD>-<slug>.md` (one entry per file — see [`AGENT_SELF_IMPROVEMENT.md`](../self-improvement/AGENT_SELF_IMPROVEMENT.md) § Format) with author = the failed agent, P3, summarising the recovery (which agent, what wave / packet, files-staged-via-`add -A`-vs-`<list>`, force-push-or-not). Reuses the existing self-improvement loop so accumulating evidence surfaces a "harness-level retry-on-API-500" fix when the rate justifies it.
 
 If step 3's commit missed new files (symptom: PR diff is smaller than expected), `git add -A && git commit --amend --no-edit && git push --force-with-lease origin <branch>` recovers. `--force-with-lease` is safe here because the branch is the Claude Code SDK-spawned `claude/<id>` worktree — covered by AGENTS.md § Project rules § Force-push carve-out for Claude Code SDK-spawned recovery. The `agent/<id>` shape is GONE (per v1 of `docs/plans/shipped/github-tracker-backend.md` — that branch base came from the deleted `ClaudeCodeLocalRunner`). ADR 0005 is Withdrawn as historical; the `claude/<id>` rationale stands in AGENTS.md.
 

@@ -220,6 +220,10 @@ override_is_moot() {
             [ "$(gate_conclusion "$pr" 'Perf PR-fast')" = "SUCCESS" ] ;;
         coverage-out-of-band)
             [ "$(gate_conclusion "$pr" 'Coverage')" = "SUCCESS" ] ;;
+        intent-out-of-band)
+            # Moot iff the Intent section gate passed on its own (gate-specific,
+            # like Coverage/Perf). pr-intent-capture-hardening #5 / ADR-0022.
+            [ "$(gate_conclusion "$pr" 'Intent section')" = "SUCCESS" ] ;;
         *)
             # cr-out-of-band (advisory CR only — handled by core_scoped_only_trigger)
             # and any unknown label: never treated as moot here.

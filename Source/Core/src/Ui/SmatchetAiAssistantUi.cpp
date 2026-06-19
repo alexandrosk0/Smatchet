@@ -13,6 +13,7 @@
 #include "SelectableTextRun.h"
 #include "AiContextBuilder.h"
 #include "AiModelCatalog.h"
+#include "AiOutboundConsent.h"
 #include "AiTypes.h"
 #include "AppController.h"
 #include "CacheEvictionPolicy.h"
@@ -67,6 +68,11 @@ namespace {
 
 constexpr float kInputRowsTall = 4.0f;
 constexpr int kInputBufCap = 8 * 1024;
+
+// Single source of truth for the first-send outbound-context consent popup id.
+// Used by both the OpenPopup in DispatchAiSend's gate and the BeginPopupModal in
+// DrawOutboundConsentModal — a shared constant so the two can never drift apart.
+const char* const kOutboundConsentPopupId = "##AiOutboundConsent";
 
 // Process-static char buffer for the chat input. Hoisted to namespace scope
 // (originally a function-static inside DrawInputAndButtons) so the panel-level
@@ -890,6 +896,38 @@ void ProcessPendingDictationReload() {
     }
 }
 
+// Measure the context the next turn would send, mapping each block's real body
+// size into the pure consent inputs (security.md 2026-05-17 P2). Builds the same
+// snapshot as BuildSendContext (audit-trail fetch deferred), so the modal shows
+// the genuine byte counts that will leave the machine — not an estimate. The
+// audit-trail body is the deferred sentinel here; its row is flagged deferred by
+// BuildOutboundConsentRows and excluded from the displayed total.
+smatchet::ai::OutboundConsentInputs MeasureOutboundConsentInputs(AppController& app, const UiDrawSession& d,
+                                                                 const ViewDefinition* activeView) {
+    smatchet::ai::OutboundConsentInputs in;
+    in.EnableSelection = d.cfg.AssistantContextBlockSelection;
+    in.EnableVisibleRows = d.cfg.AssistantContextBlockVisibleRows;
+    in.EnableActiveTicket = d.cfg.AssistantContextBlockActiveTicket;
+    in.EnableActiveView = d.cfg.AssistantContextBlockActiveView;
+    in.EnableAuditTrail = d.cfg.AssistantContextBlockAuditTrail;
+    const std::vector<AiContextBlock> blocks = BuildSendContext(app, d, activeView);
+    for (std::vector<AiContextBlock>::const_iterator it = blocks.begin(); it != blocks.end(); ++it) {
+        const std::size_t n = it->Body.size();
+        if (it->Name == "selected_tickets") {
+            in.SelectionBytes = n;
+        } else if (it->Name == "visible_rows") {
+            in.VisibleRowsBytes = n;
+        } else if (it->Name == "active_ticket") {
+            in.ActiveTicketBytes = n;
+        } else if (it->Name == "active_view") {
+            in.ActiveViewBytes = n;
+        }
+        // "audit_trail" body is the deferred sentinel — size unknown until the
+        // worker fetches it at send time; shown as "fetched at send" in the modal.
+    }
+    return in;
+}
+
 // Dispatch a chat turn — snapshot the input + context, call Submit, and on a
 // successful ack append the user message to history + arm autoscroll. Extracted
 // verbatim from the former dispatchSend lambda in DrawInputAndButtons.
@@ -909,6 +947,19 @@ void DispatchAiSend(AppController& app, UiDrawSession& d, const ViewDefinition* 
         // the gate. Keep the early-out so the function is safe in
         // isolation.
         d.assistantLastError = "AI assistant unavailable — try again after restarting Smatchet.";
+        return;
+    }
+    // First-send outbound-context consent gate (security.md 2026-05-17 P2). On a
+    // fresh profile, before any provider POST, disclose exactly which workspace
+    // blocks (and how many bytes) are about to leave the machine. Measure the
+    // real context now, stash it for the modal, raise the modal, and return
+    // WITHOUT dispatching — the input buffer is left intact. The modal's accept
+    // button records consent (persisted) and re-enters DispatchAiSend, where the
+    // gate now passes and the turn sends with the user's text still in place.
+    if (smatchet::ai::ShouldRequireOutboundConsent(d.cfg.AssistantOutboundConsentShown)) {
+        d.assistantConsentRows =
+            smatchet::ai::BuildOutboundConsentRows(MeasureOutboundConsentInputs(app, d, activeView));
+        ImGui::OpenPopup(kOutboundConsentPopupId);
         return;
     }
     const uint64_t turnGen = ++d.assistantTurnGen;
@@ -973,6 +1024,61 @@ void DispatchAiSend(AppController& app, UiDrawSession& d, const ViewDefinition* 
     // point implies Submit returned true; nothing left to do other than
     // arm autoscroll.
     d.assistantAutoScrollAtTail = true;
+}
+
+// First-send outbound-context consent modal (security.md 2026-05-17 P2). Opened
+// by DispatchAiSend's gate on the first turn of a fresh profile; the per-block
+// rows were measured at open time and stashed in `d.assistantConsentRows`. The
+// popup is OpenPopup-modal so it can't race the Send/input row behind it. On
+// accept it records consent (persisted) and re-enters DispatchAiSend so the same
+// turn dispatches; on cancel it leaves consent unset (modal re-shows next
+// attempt) with the typed text intact.
+void DrawOutboundConsentModal(AppController& app, UiDrawSession& d, const ViewDefinition* activeView,
+                              AiAssistantController* ctrl) {
+    if (!ImGui::BeginPopupModal(kOutboundConsentPopupId, nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings)) {
+        return;
+    }
+    ImGui::TextUnformatted("Smatchet is about to send context from your workspace to the configured AI provider.");
+    ImGui::TextDisabled("This happens on every message. Toggle individual blocks with the context checkboxes.");
+    ImGui::Spacing();
+    ImGui::Separator();
+    for (std::vector<smatchet::ai::OutboundConsentBlockRow>::const_iterator it = d.assistantConsentRows.begin();
+         it != d.assistantConsentRows.end(); ++it) {
+        if (!it->Enabled) {
+            ImGui::TextDisabled("  [ ] %s  (off)", it->Name.c_str());
+        } else if (it->DeferredFetch) {
+            ImGui::Text("  [x] %s  (fetched at send)", it->Name.c_str());
+        } else {
+            ImGui::Text("  [x] %s  (~%zu bytes)", it->Name.c_str(), it->ApproxBytes);
+        }
+    }
+    ImGui::Separator();
+    const std::size_t total = smatchet::ai::SumOutboundConsentBytes(d.assistantConsentRows);
+    ImGui::Text("Approx %zu bytes of context this turn", total);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(audit-trail excluded; fetched on send if enabled)");
+    if (ImGui::TreeNode("What gets sent")) {
+        ImGui::TextWrapped(
+            "selected_tickets, visible_rows, active_ticket and active_view are pulled from the focused "
+            "grid pane — issue ids, summaries, statuses and field values already visible on screen. "
+            "audit_trail (off by default) additionally includes assignee emails and freeform comments. "
+            "Your global/project agents.md is prepended as the system prompt, and your typed message is "
+            "sent verbatim. Nothing else leaves this machine.");
+        ImGui::TreePop();
+    }
+    ImGui::Spacing();
+    if (ImGui::Button("Send and don't ask again", ImVec2(220, 0))) {
+        d.cfg.AssistantOutboundConsentShown = true;
+        ScheduleConfigSaveDetached(d.cfg);
+        ImGui::CloseCurrentPopup();
+        DispatchAiSend(app, d, activeView, ctrl);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
 }
 
 // Returns true when the user submitted (Enter pressed without Ctrl). Sends are dispatched here so
@@ -1060,6 +1166,11 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     // Compact help so the keybinding is discoverable on first view.
     ImGui::SameLine();
     ImGui::TextDisabled("Enter sends, Ctrl+Enter = newline");
+
+    // Render the first-send consent modal here so it shares this window's id
+    // stack with the OpenPopup raised inside DispatchAiSend's gate. No-op until
+    // the gate opens it.
+    DrawOutboundConsentModal(app, d, activeView, ctrl);
 
     return submittedByKey;
 }

@@ -23,6 +23,26 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
+# UTF-8 ctype locale for the bats runners. bats derives an internal function name
+# from each `@test` description; under a non-UTF-8 ctype (the default on the
+# Windows/MSYS dev box) bash can't parse a name containing non-ASCII (→, —) and
+# bats SILENTLY skips it as "unknown test name" — the skipped test emits no
+# ok/not-ok line, so the runner's Passed/Failed tally UNDER-REPORTS without
+# failing: a false-green (tooling.md windows-bats-silently-skips-unicode-test-
+# names; supersedes the 2026-05-28 merge_gates.bats LC_ALL note). CI runs no bats
+# (the windows runner lacks it), so this pre-push aggregator is the chokepoint.
+# Detect an available UTF-8 locale (name varies: C.UTF-8 on Linux, C.utf8 on
+# MSYS) and export it for every enrolled runner; -ix tolerates the case/dash
+# spelling differences. No-op when one is already set.
+if [ -z "${LC_ALL:-}" ]; then
+    for _u in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+        if locale -a 2>/dev/null | grep -qix "$_u"; then
+            export LC_ALL="$_u" LANG="$_u"
+            break
+        fi
+    done
+fi
+
 # Worktree detection: when running from a worktree under .claude/worktrees/<id>/,
 # some test scripts (lint-hook splits, ui-test scripts with batched PATH) report
 # false-positive failures that pass cleanly when re-run on main repo. Skip them

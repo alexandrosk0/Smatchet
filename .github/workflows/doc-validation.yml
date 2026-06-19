@@ -51,6 +51,7 @@ on:
       - 'agents/scripts/core/**'
       - 'agents/scripts/project/**'
       - 'scripts/dev/**'
+      - 'tests/bats/**'
       - 'CONTEXT-MAP.md'
       - 'Source/Core/src/**/AGENTS.md'
       - 'Source/Core/src/**/CONTEXT.md'
@@ -131,7 +132,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout PR head branch
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
@@ -143,7 +144,7 @@ jobs:
           token: ${{ secrets.PLAN_INDEX_PAT || github.token }}
           persist-credentials: true
       - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: '3.11'
       - name: Regenerate INDEX + commit if drifted
@@ -210,12 +211,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: '3.11'
 
@@ -239,7 +240,12 @@ jobs:
           fi
           git fetch --no-tags origin "$BASE_REF" 2>/dev/null || true
           changed="$(git diff --name-only "origin/$BASE_REF...HEAD" 2>/dev/null || true)"
-          if printf '%s\n' "$changed" | grep -qE '(\.md$|^AGENTS\.md$|^agents/|^docs/|^project\.config\.(json|schema\.json)$|^CONTEXT-MAP\.md$|^scripts/dev/project-config\.sh$|^\.github/workflows/doc-validation\.yml$)'; then
+          # scripts/dev/test-*.sh is the one bats-wrapper root the test-orphan-bats
+          # gate reads that `^agents/` doesn't already cover (Bugbot 793a0166): a
+          # wrapper-only edit/deletion there must set docs=true so the orphan check
+          # runs — else a suite can be un-wired by a scripts/dev-only PR while the
+          # required doc job stays green. Mirrors the gate's `--include=test-*.sh`.
+          if printf '%s\n' "$changed" | grep -qE '(\.md$|^AGENTS\.md$|^agents/|^docs/|^tests/bats/|^project\.config\.(json|schema\.json)$|^CONTEXT-MAP\.md$|^scripts/dev/project-config\.sh$|^scripts/dev/test-.*\.sh$|^\.github/workflows/doc-validation\.yml$)'; then
             echo "docs=true" >> "$GITHUB_OUTPUT"
             echo "doc-relevant changes detected — running full doc validation."
           else
@@ -342,6 +348,12 @@ jobs:
         if: steps.detect.outputs.docs == 'true'
         run: bash agents/scripts/core/test-markdown-links.sh
 
+      - name: test-orphan-bats — every tests/bats/*.bats has a runnable wrapper
+        if: steps.detect.outputs.docs == 'true'
+        run: |
+          bash agents/scripts/core/test-orphan-bats.sh --selftest
+          bash agents/scripts/core/test-orphan-bats.sh
+
       - name: test-agent-discovery-fixture — Gate #1 flat discovery from subdirs
         if: steps.detect.outputs.docs == 'true'
         run: bash agents/scripts/core/test-agent-discovery-fixture.sh
@@ -354,16 +366,20 @@ jobs:
         if: steps.detect.outputs.docs == 'true'
         run: python3 agents/scripts/core/agent_size_audit.py --diff origin/develop
 
-  # Advisory (WARN-first, NON-required) PR-body lint: flag a PR whose body has
-  # no filled `## Intent` section (the one-line redacted statement of the
-  # originating human ask — see docs/agent-rules/ship-loops.md § Intent capture).
-  # PR-only (no push / merge_group), always exits 0 → emits a `::warning::`,
-  # never a red check, so it can NEVER block a merge (AGENTS.md § Merge gates:
-  # "Never merge past ANY red check"). Sibling-precedent: `autosync-plan-index`
-  # is the other PR-only non-required job in this workflow. Deliberately NOT in
-  # project.config.json § branch_protection → not a required context.
+  # PR-body lint: flag a PR whose body has no filled `## Intent` section (the
+  # one-line redacted statement of the originating human ask — see
+  # docs/agent-rules/ship-loops.md § Intent capture). PR-only (no push /
+  # merge_group). BLOCKING as of pr-intent-capture-hardening #5: exits non-zero on
+  # a missing/empty Intent. It is NOT a branch-protection required context
+  # (deliberately NOT in project.config.json § branch_protection, which would need
+  # merge_group reporting or it deadlocks the queue — ADR-0022); instead the check
+  # name `Intent section` is on the merge-gates.sh meant-to-block allow-list, so the
+  # poller treats its RED as a block exactly like Coverage / Sanitizer. The
+  # `intent-out-of-band` label downgrades it for fresh-worktree / non-Claude-Code
+  # fallback flows. The name must NOT contain "advisory" (the allow-list excludes
+  # advisory-named checks).
   pr-intent-lint:
-    name: Intent section (advisory)
+    name: Intent section
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 3
@@ -381,14 +397,16 @@ jobs:
           guide = "see docs/agent-rules/ship-loops.md § Intent capture"
           m = re.search(r'(?ms)^##\s+Intent\s*$(.*?)(?=^##\s|\Z)', body)
           if not m:
-              print("::warning title=Intent section missing::PR body has no `## Intent` "
-                    "section. Add a one-line redacted statement of the originating ask (%s)." % guide)
-              sys.exit(0)
+              print("::error title=Intent section missing::PR body has no `## Intent` "
+                    "section. Add a one-line redacted statement of the originating ask (%s). "
+                    "Override with the 'intent-out-of-band' label." % guide)
+              sys.exit(1)
           # Strip HTML-comment template placeholder before the empty check.
           section = re.sub(r'(?s)<!--.*?-->', '', m.group(1)).strip()
           if not section:
-              print("::warning title=Intent section empty::PR body `## Intent` is empty or "
-                    "only the template placeholder. Fill it with the originating ask (%s)." % guide)
-              sys.exit(0)
+              print("::error title=Intent section empty::PR body `## Intent` is empty or "
+                    "only the template placeholder. Fill it with the originating ask (%s). "
+                    "Override with the 'intent-out-of-band' label." % guide)
+              sys.exit(1)
           print("Intent section present and filled.")
           PY

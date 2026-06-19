@@ -21,7 +21,24 @@
 setup() {
     REPO_ROOT="$(git rev-parse --show-toplevel)"
     export REPO_ROOT
+    # Scripts-under-test live in THIS checkout (a linked worktree during local
+    # dev) — load the modules from here.
     export SCRIPTS_DIR="$REPO_ROOT/agents/scripts/core"
+
+    # CLONE_PATH = the clone_path `register` stores, which resolve_clone_path()
+    # canonicalizes to the PRIMARY clone via `git rev-parse --git-common-dir`
+    # (its parent dir). Tests that hardcode a clone_path to match a registered
+    # entry MUST use CLONE_PATH, not REPO_ROOT: in a primary clone they're equal
+    # (show-toplevel == git-common-dir parent), but from a LINKED WORKTREE they
+    # diverge (REPO_ROOT = worktree, CLONE_PATH = main) — conflating them made
+    # ~4 tests false-fail only under worktree dispatch (tooling.md
+    # merge-watcher-bats-repo-root-conflates-script-path-and-clone-path). Derived
+    # in git's mixed C:/... form (dirname of --git-common-dir) so it matches the
+    # `replace(os.sep,"/")` form resolve_clone_path() writes.
+    _common="$(git rev-parse --git-common-dir)"
+    case "$_common" in /*|[A-Za-z]:/*) ;; *) _common="$REPO_ROOT/$_common" ;; esac
+    CLONE_PATH="$(dirname "$_common")"
+    export CLONE_PATH
 
     # Isolate per-user watcher state in a temp sandbox. watcher_root() in
     # merge-watcher-cli.py reads LOCALAPPDATA on Windows (os.name == "nt") and
@@ -144,7 +161,7 @@ mw.maybe_remove_from_registry = lambda pr, cp: None
 mw._gh_json = lambda args, **kw: {'headRefOid': 'head789', 'labels': [
     {'name': 'tests-out-of-band'}, {'name': 'cr-out-of-band'}, {'name': 'unrelated'}]}
 gs = {'downgraded': ['Test-delta gate'], 'cr_override': True}
-extras = mw.handle_pass({'pr': 999, 'clone_path': r'$REPO_ROOT'}, gate_snapshot=gs)
+extras = mw.handle_pass({'pr': 999, 'clone_path': r'$CLONE_PATH'}, gate_snapshot=gs)
 print('merge_action:', extras.get('merge_action'))
 print('snapshot:', extras.get('merge_snapshot'))
 "
@@ -180,8 +197,8 @@ mw.find_stacked_children = lambda o, r, b: []
 mw.maybe_remove_from_registry = lambda pr, cp: None
 # Clean merge: no override labels present.
 mw._gh_json = lambda args, **kw: {'headRefOid': 'head000', 'labels': []}
-e1 = mw.handle_pass({'pr': 999, 'clone_path': r'$REPO_ROOT'}, gate_snapshot=None)
-e2 = mw.handle_pass({'pr': 999, 'clone_path': r'$REPO_ROOT'}, gate_snapshot=None)
+e1 = mw.handle_pass({'pr': 999, 'clone_path': r'$CLONE_PATH'}, gate_snapshot=None)
+e2 = mw.handle_pass({'pr': 999, 'clone_path': r'$CLONE_PATH'}, gate_snapshot=None)
 print('s1:', e1.get('merge_snapshot'))
 print('s2:', e2.get('merge_snapshot'))
 "
@@ -471,7 +488,7 @@ import importlib.util
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 mw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mw)
-extras = mw.handle_pass({'pr': 999, 'clone_path': r'$REPO_ROOT'})
+extras = mw.handle_pass({'pr': 999, 'clone_path': r'$CLONE_PATH'})
 print('merge_action:', extras.get('merge_action'))
 "
     [ "$status" -eq 0 ]
@@ -514,7 +531,7 @@ import importlib.util
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 mw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mw)
-extras = mw.handle_pass({'pr': 999, 'clone_path': r'$REPO_ROOT'})
+extras = mw.handle_pass({'pr': 999, 'clone_path': r'$CLONE_PATH'})
 print('merge_action:', extras.get('merge_action'))
 print('merge_sha:', extras.get('merge_sha', '<none>'))
 "
@@ -553,7 +570,7 @@ import importlib.util
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 mw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mw)
-extras = mw.handle_pass({'pr': 999, 'clone_path': r'$REPO_ROOT'})
+extras = mw.handle_pass({'pr': 999, 'clone_path': r'$CLONE_PATH'})
 print('merge_action:', extras.get('merge_action'))
 print('merge_sha:', extras.get('merge_sha', '<none>'))
 "
@@ -634,7 +651,7 @@ mw.detect_merged_branch_name = lambda o, r, pr: 'feat/foo'
 def boom(*a, **k):
     raise subprocess.TimeoutExpired(cmd='gh pr merge', timeout=60)
 mw.subprocess.run = boom
-extras = mw.handle_pass({'pr': 999, 'clone_path': r'$REPO_ROOT'})
+extras = mw.handle_pass({'pr': 999, 'clone_path': r'$CLONE_PATH'})
 print('merge_action:', extras.get('merge_action'))
 "
     [ "$status" -eq 0 ]
@@ -905,7 +922,7 @@ spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher
 m = importlib.util.module_from_spec(spec)
 sys.modules['mw'] = m
 spec.loader.exec_module(m)
-m._bump_triage_attempts(999, r'$REPO_ROOT', 2)
+m._bump_triage_attempts(999, r'$CLONE_PATH', 2)
 "
     [ "$status" -eq 0 ]
     # Verify
@@ -921,7 +938,7 @@ m._bump_triage_attempts(999, r'$REPO_ROOT', 2)
 import sys, importlib.util
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
-m._bump_triage_attempts(999, r'$REPO_ROOT', 3, 'feedface1234567890abcdef0987654321deadbe')
+m._bump_triage_attempts(999, r'$CLONE_PATH', 3, 'feedface1234567890abcdef0987654321deadbe')
 "
     [ "$status" -eq 0 ]
     run watch_cli list
@@ -938,7 +955,7 @@ m._bump_triage_attempts(999, r'$REPO_ROOT', 3, 'feedface1234567890abcdef09876543
 import sys, importlib.util
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
-m._bump_triage_attempts(999, r'$REPO_ROOT', 5, 'oldheadaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+m._bump_triage_attempts(999, r'$CLONE_PATH', 5, 'oldheadaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
 "
     [ "$status" -eq 0 ]
     # Now call handle_blocked_cr_triage with a CR-finding status line +
@@ -957,7 +974,7 @@ class FakeResult:
     stdout = 'ok'
     stderr = ''
 subprocess.run = lambda *a, **kw: FakeResult()
-entry = {'pr': 999, 'clone_path': r'$REPO_ROOT',
+entry = {'pr': 999, 'clone_path': r'$CLONE_PATH',
          'triage_attempts': 5,
          'triage_for_head_sha': 'oldheadaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}
 status_line = 'Poll 1/1 CodeRabbit: COMMENTED (2 actionable - block)'
@@ -1166,9 +1183,12 @@ m._gh_owner_repo = lambda _p: ('alexandrosk0', 'Smatchet')
 # gh pr view returns a head_sha that differs from the seeded dedup head, so
 # the reserve reaches the budget branch instead of short-circuiting on dedup.
 m._gh_json = lambda args, **kw: {'headRefOid': 'feedfacefeedfacefeedfacefeedfacefeedface'}
-# maybe_auto_act gates on claude-on-PATH and a clean clone before the budget
-# check; stub both so the test is deterministic regardless of host PATH or the
-# working tree's git state (CI/Linux has no 'claude'; dev trees are dirty).
+# maybe_auto_act gates on claude-on-PATH, a clean clone, AND zero live sessions
+# in the clone tree before the budget check; stub all three so the test is
+# deterministic regardless of host PATH, the working tree's git state, or how
+# many real sessions are live in CLONE_PATH (which is the primary clone — a dev
+# box mid-session has live sessions there and the live-session gate would defer
+# before the budget branch is reached; CI/Linux has neither claude nor sessions).
 import shutil, subprocess
 shutil.which = lambda _n: '/fake/bin/claude'
 class _CleanGit:
@@ -1176,12 +1196,13 @@ class _CleanGit:
     stdout = ''
     stderr = ''
 subprocess.run = lambda *a, **kw: _CleanGit()
+m._count_live_sessions = lambda _p: 0
 # The budget counter is read from the REGISTRY entry (via the atomic reserve),
 # NOT from the passed-in entry dict — seed it to the budget on a PRIOR head so
 # this poll's (different) head is not deduped and trips the budget ceiling.
-# clone_path must equal the value `register` stored (drive-qualified) to match
+# clone_path must equal the value register stored (drive-qualified) to match
 # the registry key.
-clone = r'$REPO_ROOT'
+clone = r'$CLONE_PATH'
 m._bump_auto_act_state(999, clone, 'priorheadpriorheadpriorheadpriorhead0000', 2)
 entry = {'pr': 999, 'clone_path': clone, 'auto_act_attempts': 2}
 state = {'last_state': 'TRIAGE_BUDGET_EXHAUSTED',
@@ -1305,12 +1326,15 @@ print('budget default ok')
     [[ "$output" == *"ALL channels failed"* ]]
 }
 
-@test "NOTIFY_STATES contains the 7 expected terminal states (incl. READY_FLIP_FAILED from C4 prong 1)" {
+@test "NOTIFY_STATES contains the 8 expected terminal states (incl. READY_FLIP_FAILED + STUCK_NEEDS_ATTENTION)" {
     run python -c "
 import sys, importlib.util
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
-expected = {'CI_FAIL', 'GH_API_DOWN', 'PR_CLOSED_OR_MERGED', 'PAGINATION_OVERFLOW', 'TIMEOUT', 'TRIAGE_BUDGET_EXHAUSTED', 'READY_FLIP_FAILED'}
+# STUCK_NEEDS_ATTENTION joined when the wedge-escalation driver started flipping
+# last_state to it for the one-shot maybe_notify toast (the stuck-escalation
+# feature); the assertion was left at 7 and silently red until now.
+expected = {'CI_FAIL', 'GH_API_DOWN', 'PR_CLOSED_OR_MERGED', 'PAGINATION_OVERFLOW', 'TIMEOUT', 'TRIAGE_BUDGET_EXHAUSTED', 'READY_FLIP_FAILED', 'STUCK_NEEDS_ATTENTION'}
 assert m.NOTIFY_STATES == expected, f'got {m.NOTIFY_STATES}'
 print('ok')
 "
@@ -1983,7 +2007,7 @@ os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 mw = importlib.util.module_from_spec(spec); sys.modules['mw']=mw; spec.loader.exec_module(mw)
 mw._pr_lifecycle_state = lambda pr, clone_path: 'MERGED'
-state = mw.poll_one({'pr': 528, 'clone_path': r'$REPO_ROOT'})
+state = mw.poll_one({'pr': 528, 'clone_path': r'$CLONE_PATH'})
 print('last_state:', state.get('last_state'))
 print('rc:', state.get('gates_return_code'))
 print('line:', state.get('last_status_line'))
@@ -2001,7 +2025,7 @@ os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 mw = importlib.util.module_from_spec(spec); sys.modules['mw']=mw; spec.loader.exec_module(mw)
 mw._pr_lifecycle_state = lambda pr, clone_path: 'CLOSED'
-state = mw.poll_one({'pr': 777, 'clone_path': r'$REPO_ROOT'})
+state = mw.poll_one({'pr': 777, 'clone_path': r'$CLONE_PATH'})
 print('last_state:', state.get('last_state'))
 "
     [ "$status" -eq 0 ]
@@ -2020,7 +2044,7 @@ spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher
 mw = importlib.util.module_from_spec(spec); sys.modules['mw']=mw; spec.loader.exec_module(mw)
 mw._pr_lifecycle_state = lambda pr, clone_path: 'OPEN'
 mw.GH_BIN = 'smatchet-no-such-gh-binary-xyz'
-state = mw.poll_one({'pr': 999, 'clone_path': r'$REPO_ROOT'})
+state = mw.poll_one({'pr': 999, 'clone_path': r'$CLONE_PATH'})
 print('last_state:', state.get('last_state'))
 "
     [ "$status" -eq 0 ]
