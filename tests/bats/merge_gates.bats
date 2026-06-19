@@ -257,6 +257,17 @@ set_fixture() {
     [[ "$output" == *"freshness unverifiable"* ]]
 }
 
+@test "freshness INVALID value → return 3, never passes (reject typo) (#1428 CR)" {
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    # A typo'd mode previously fell through the "!= off" gate into warn-only,
+    # silently weakening enforcement; it must now fail loud instead.
+    export MERGE_GATES_FRESHNESS=blcok
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 3 ]
+    ! grep -qx 'GATES_PASSED' <<<"$output"
+    [[ "$output" == *"must be one of off|warn|block"* ]]
+}
+
 @test "CI StatusContext state ERROR → return 1" {
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_ci_fail.json" \

@@ -5,7 +5,7 @@
     2026-06-19 PR #1428. Unlike the #1406/#1414/#1415 poller-BYPASS escape, the poller WAS consulted
     (mergeActor:merge-watcher; snapshot row redChecks:[] / GATES_PASSED, merge-snapshots.jsonl line 105) —
     but the watcher daemon (merge-watcher.py, Scheduled Task SmatchetMergeWatcher, running since 2026-06-15)
-    executes MERGE_GATES_SCRIPT = _HERE/"merge-gates.sh" from its OWN host checkout (integration tree
+    executes `MERGE_GATES_SCRIPT = _HERE/"merge-gates.sh"` from its OWN host checkout (integration tree
     C:/Dev/Smatchet parked on feat/tsan-subset-sync-layer, predating #1391). `Intent section` was added to
     MERGE_GATES_BLOCK_ALLOWLIST_RE on 2026-06-18 (#1391/ADR-0022); the daemon's blob predated that, so the
     allow-list regex did not match → the non-required RED was treated as advisory → GATES_PASSED. A

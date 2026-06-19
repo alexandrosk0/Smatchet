@@ -73,7 +73,7 @@ New tooling per-entry backlog file
 [`categories/tooling/2026-06-19-merge-watcher-runs-stale-gate-logic.md`](categories/tooling/2026-06-19-merge-watcher-runs-stale-gate-logic.md)
 (P1) — carries the freshness self-guard (shipped here) plus the residual *restart-from-fresh-checkout* +
 *periodic daemon self-resync* operational gate, cross-ref'd to #1428 and distinguished from the
-#1406/#1414/#1415 poller-bypass entry.
+PRs #1406/#1414/#1415 poller-bypass entry.
 
 ## 2026-06-19 · PR #1406, #1414, #1415 · red `Intent section` (block-allowlisted) merged via non-poller paths — bare `gh pr merge --auto` / direct REST bypass the poller-only gate
 

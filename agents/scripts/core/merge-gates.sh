@@ -222,6 +222,15 @@ poll_merge_gates() {
     # Default off so existing callers + local dev are unaffected unless they opt in;
     # the watcher sets MERGE_GATES_FRESHNESS=block.
     local fresh_mode="${MERGE_GATES_FRESHNESS:-off}"
+    # Reject typos up front — an unrecognised value would otherwise fall through the
+    # "!= off" gate into warn-only handling, silently weakening enforcement (#1428 CR).
+    case "$fresh_mode" in
+        off|warn|block) ;;
+        *)
+            echo "poll_merge_gates: MERGE_GATES_FRESHNESS must be one of off|warn|block (got: '$fresh_mode')" >&2
+            return 3
+            ;;
+    esac
     local self_stale=false
     if [ "$fresh_mode" != "off" ]; then
         local _self_relpath="agents/scripts/core/merge-gates.sh"
@@ -235,12 +244,16 @@ poll_merge_gates() {
             local _root
             _root="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
             if [ -n "$_root" ]; then
-                # Best-effort ref refresh (bounded; ignore failure — a stale local
-                # origin/develop ref still catches a tree parked many commits back,
-                # which is the failure mode). Refs only; never touches the worktree.
-                git -C "$_root" fetch -q --no-tags origin develop >/dev/null 2>&1 || true
+                # Bounded ref refresh (refs only; never touches the worktree). A failed
+                # fetch must NOT silently compare against a stale local origin/develop —
+                # blank _dev_blob so the unverifiable branch below fails closed (#1428 CR).
+                local _fetch_ok=true
+                git -C "$_root" fetch -q --no-tags origin develop >/dev/null 2>&1 || _fetch_ok=false
                 _run_blob="$(git -C "$_root" hash-object "${BASH_SOURCE[0]}" 2>/dev/null)"
                 _dev_blob="$(git -C "$_root" rev-parse -q --verify "origin/develop:$_self_relpath" 2>/dev/null)"
+                if [ "$_fetch_ok" != true ]; then
+                    _dev_blob=""
+                fi
             else
                 _run_blob=""
                 _dev_blob=""
