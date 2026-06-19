@@ -104,6 +104,16 @@
             "timeout": 3000
           }
         ]
+      },
+      {
+        "matcher": "Workflow",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/pretool-workflow-fleet-preflight.sh\"",
+            "timeout": 15000
+          }
+        ]
       }
     ],
     "PostToolUse": [
