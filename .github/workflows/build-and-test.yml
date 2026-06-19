@@ -501,6 +501,94 @@ jobs:
         working-directory: build/ninja-publish-msvc-arm64
         run: ctest --output-on-failure
 
+      # DX12-on-WARP launch smoke (dx12-standalone-win-arm64 Phase 3 follow-on).
+      # The Mesa-GL "Bucket launch-smoke" proves the GL path boots; this proves the
+      # Windows-default DX12 renderer opens a D3D12 device and presents under WARP
+      # (in-box software D3D12) on a no-GPU ARM64 runner. SMATCHET_RENDERER=dx12
+      # overrides the workflow-level `gl` pin — the `--spawn` child inherits this env
+      # (CliCommandRunner CreateProcessA) and ResolveStandaloneRenderer selects DX12;
+      # a `--renderer` FLAG would NOT reach the child (spawned with only --ephemeral
+      # --mcp-port). DX12 falls back to the WARP adapter when no hardware D3D12 exists
+      # (Dx12Bootstrap SelectAdapterAndCreateDevice -> EnumWarpAdapter).
+      - name: DX12-on-WARP launch smoke (ARM64)
+        shell: bash
+        env:
+          SMATCHET_RENDERER: "dx12"
+          SMATCHET_SPAWN_READY_MS: "30000"
+        run: |
+          set -uo pipefail
+          EXE=build/ninja-publish-msvc-arm64/Smatchet.exe
+          echo "dx12-smoke: $EXE cmd app.version --spawn --yes (SMATCHET_RENDERER=dx12, hang-guard 60s)"
+          set +e
+          out="$(timeout 60 "$EXE" cmd app.version --spawn --yes 2>&1)"
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          # The DX12 init line ("DX12 renderer initialised (adapter: ..., WARP
+          # software)") goes to the spawned child's log, not the parent CLI stdout;
+          # the parent announces its path as "[spawn] child stdout/stderr -> <path>".
+          childlog="$(printf '%s\n' "$out" | grep -a 'child stdout/stderr' | tail -1 | sed 's/.*child stdout\/stderr[^A-Za-z]*//')"
+          if [ -n "$childlog" ] && [ -f "$childlog" ]; then
+            echo "===== DX12 spawned-child log ====="; cat "$childlog"; echo "===== end DX12 child log ====="
+            grep -aiE 'DX12 renderer initialised|WARP software' "$childlog" \
+              && echo "dx12-smoke: confirmed DX12 device-init line present." \
+              || echo "::warning::dx12-smoke: DX12 init line not found in child log (see above)."
+          else
+            echo "::warning::dx12-smoke: no spawned-child log path found in output."
+          fi
+          if [ "$rc" -ne 0 ]; then
+            if printf '%s\n' "$out" | grep -Eq '"command"[[:space:]]*:[[:space:]]*"app\.version".*"ok"[[:space:]]*:[[:space:]]*true'; then
+              echo "::warning::dx12-smoke: app.version ok:true but the spawn wrapper exited $rc (teardown false-red)."
+            else
+              echo "::error::dx12-smoke FAILED — DX12/WARP renderer could not boot+become-reachable on ARM64." >&2
+              exit "$rc"
+            fi
+          fi
+          echo "dx12-smoke: OK — DX12/WARP renderer booted."
+
+      # Perf PR-fast bootstrap (Phase 3 follow-on). First ARM64 perf run: bootstrap
+      # FRESH arch-keyed baselines docs/perf/baselines/<scen>.ci-windows-arm64.json —
+      # NEVER compared to the x64 ci-windows-latest set (a different host key means
+      # perf-compare.py is never invoked against them). Renders under DX12/WARP, NOT
+      # Mesa GL: the pinned Mesa archive ships only an x64 opengl32.dll, so the GL
+      # path has no ARM64 ICD; perf markers are CPU-side so WARP is fine. Baselines
+      # are produced as an ARTEFACT for a human to commit in a follow-up bootstrap PR
+      # (same flow as the ci-windows-latest set) — NOT auto-committed here.
+      - name: Perf PR-fast bootstrap (ci-windows-arm64, DX12/WARP)
+        shell: bash
+        env:
+          SMATCHET_RENDERER: "dx12"
+          SMATCHET_SPAWN_READY_MS: "30000"
+          SMATCHET_EXE: build/ninja-publish-msvc-arm64/Smatchet.exe
+        run: |
+          set -uo pipefail
+          host=ci-windows-arm64
+          mkdir -p docs/perf/baselines
+          scens=$(python -c "import json;print(' '.join(json.load(open('scripts/dev/perf-pr-fast-set.json'))['scenarios']))")
+          for scen in $scens; do
+            echo "::group::perf $scen (ARM64/WARP)"
+            result=$(bash scripts/dev/perf-run.sh "$scen" 2>&1 | tail -1)
+            if [ -f "$result" ]; then
+              python scripts/dev/perf-baseline-bootstrap.py "$result" \
+                "docs/perf/baselines/${scen}.${host}.json" "$scen" \
+                --host "$host" --runner-os "windows-arm64" \
+                --hardware-note "GitHub Actions windows-11-arm runner (DX12/WARP)" \
+                && echo "perf: bootstrapped ${scen}.${host}.json" \
+                || echo "::warning::perf: bootstrap step failed for $scen"
+            else
+              echo "::warning::perf: $scen produced no snapshot on ARM64 (first-run plumbing may need iteration)."
+            fi
+            echo "::endgroup::"
+          done
+
+      - name: Upload ARM64 perf baselines (for human bootstrap commit)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: perf-arm64-baselines-${{ github.run_id }}
+          path: docs/perf/baselines/*.ci-windows-arm64.json
+          if-no-files-found: ignore
+
       - name: Report sccache stats
         if: always()
         run: sccache --show-stats
