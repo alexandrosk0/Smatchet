@@ -73,7 +73,7 @@ class CellEditBurstScenario : public IScenario {
             outErr = "debug.grid.edit-burst failed: " + res.Error.Message;
             return;
         }
-        result_ = res.Data;
+        result_ = res.Data ? *res.Data : nlohmann::json{};
     }
 
     void OnFrame(AppController& /*app*/, int /*frameIndex*/) override {}

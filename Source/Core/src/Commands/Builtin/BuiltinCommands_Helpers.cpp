@@ -9,6 +9,8 @@
 #include <utility>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 namespace smatchet {
 namespace cmd {
 namespace builtin_detail {
@@ -121,7 +123,7 @@ ParamSpec PInt(std::string name, std::string desc, long long defaultVal) {
     p.Name = std::move(name);
     p.Description = std::move(desc);
     p.Type = ParamType::Int;
-    p.Default = defaultVal;
+    p.Default = std::make_shared<nlohmann::json>(defaultVal);
     return p;
 }
 

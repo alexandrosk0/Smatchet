@@ -210,7 +210,8 @@ sol::table LuaCommandsInvokeGlue(sol::this_state L, const std::string& cmdName, 
     smatchet::cmd::CommandResult cr = host->LuaCommands().Dispatch(cmdName, args, ctx);
     result["ok"] = cr.Ok;
     if (cr.Ok) {
-        result["data"] = JsonToLua(sv, cr.Data);
+        static const nlohmann::json kEmptyData;
+        result["data"] = JsonToLua(sv, cr.Data ? *cr.Data : kEmptyData);
     } else {
         sol::table errTbl = sv.create_table();
         errTbl["code"] = std::string(smatchet::cmd::ErrorCodeString(cr.Error.Code));

@@ -43,7 +43,7 @@ void RegisterUiTestCommands(CommandRegistry& reg, AppController& app) {
         allParam.Name = "all";
         allParam.Description = "Run every registered test (ignores --name).";
         allParam.Type = ParamType::Bool;
-        allParam.Default = false;
+        allParam.Default = std::make_shared<nlohmann::json>(false);
         c.Params = {
             PString(
                 "name",

@@ -12,6 +12,8 @@
 #include <string>
 #include <utility>
 
+#include <nlohmann/json.hpp>
+
 namespace smatchet {
 namespace cmd {
 

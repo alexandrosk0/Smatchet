@@ -13,10 +13,16 @@
 // (GCC MinGW UCRT) and SmatchetCore_DX12 (MSVC under Unreal).
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include <nlohmann/json.hpp>
+// json_fwd, not the full json.hpp: the three by-value json members below are
+// boxed behind a shared pointer, so this 42-includer header needs only the
+// forward declaration. The complete json type is required at the .cpp sites that
+// build or read them (Command.cpp plus the command-registration TUs), which
+// include nlohmann/json.hpp directly. See debt json-fwd-swap-by-value-carriers.
+#include <nlohmann/json_fwd.hpp>
 
 class AppController;
 
@@ -30,7 +36,7 @@ struct ParamSpec {
     ParamType Type = ParamType::String;
     bool Required = false;
     std::string Description;
-    nlohmann::json Default;        ///< null when no default
+    std::shared_ptr<nlohmann::json> Default; ///< null ptr when no default
     std::vector<std::string> Enum; ///< empty unless the param is enum-restricted
 };
 
@@ -58,7 +64,7 @@ struct CommandError {
     std::string Message;                  ///< human-readable
     std::string Hint;                     ///< actionable next step
     std::vector<std::string> Suggestions; ///< e.g. fuzzy did-you-mean
-    nlohmann::json Details;               ///< optional structured detail
+    std::shared_ptr<nlohmann::json> Details; ///< optional structured detail (null ptr when none)
 
     nlohmann::json ToJson() const;
 };
@@ -66,7 +72,7 @@ struct CommandError {
 struct CommandResult {
     bool Ok = true;
     CommandError Error;
-    nlohmann::json Data;
+    std::shared_ptr<nlohmann::json> Data;
 
     static CommandResult Success(nlohmann::json data);
     static CommandResult Failure(ErrorCode code, std::string message, std::string hint = std::string(),

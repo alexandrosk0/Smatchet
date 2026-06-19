@@ -3,6 +3,8 @@
 #include <sstream>
 #include <utility>
 
+#include <nlohmann/json.hpp>
+
 namespace smatchet {
 namespace cmd {
 
@@ -46,8 +48,8 @@ nlohmann::json CommandError::ToJson() const {
     if (!Suggestions.empty()) {
         j["suggestions"] = Suggestions;
     }
-    if (!Details.is_null()) {
-        j["details"] = Details;
+    if (Details && !Details->is_null()) {
+        j["details"] = *Details;
     }
     return j;
 }
@@ -55,7 +57,7 @@ nlohmann::json CommandError::ToJson() const {
 CommandResult CommandResult::Success(nlohmann::json data) {
     CommandResult r;
     r.Ok = true;
-    r.Data = std::move(data);
+    r.Data = std::make_shared<nlohmann::json>(std::move(data));
     return r;
 }
 
@@ -78,7 +80,7 @@ nlohmann::json CommandResult::ToWireJson(const std::string& commandName, bool dr
         j["dryRun"] = true;
     }
     if (Ok) {
-        j["data"] = Data.is_null() ? nlohmann::json::object() : Data;
+        j["data"] = (Data && !Data->is_null()) ? *Data : nlohmann::json::object();
     } else {
         j["error"] = Error.ToJson();
     }
@@ -110,8 +112,8 @@ nlohmann::json Command::BuildJsonSchema() const {
         if (!p.Description.empty()) {
             one["description"] = p.Description;
         }
-        if (!p.Default.is_null()) {
-            one["default"] = p.Default;
+        if (p.Default && !p.Default->is_null()) {
+            one["default"] = *p.Default;
         }
         if (!p.Enum.empty()) {
             one["enum"] = p.Enum;
@@ -198,8 +200,8 @@ std::string Command::BuildHelpText() const {
             if (p.Required)
                 continue;
             os << "  --" << p.Name << "=<" << ParamTypeHelpName(p.Type) << ">";
-            if (!p.Default.is_null())
-                os << " (default: " << p.Default.dump() << ")";
+            if (p.Default && !p.Default->is_null())
+                os << " (default: " << p.Default->dump() << ")";
             if (!p.Description.empty())
                 os << "  " << p.Description;
             os << "\n";

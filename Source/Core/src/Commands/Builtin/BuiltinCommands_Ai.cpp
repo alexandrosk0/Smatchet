@@ -253,7 +253,7 @@ void RegisterListModelsCommand(CommandRegistry& reg) {
                 return CommandResult::Success(std::move(out));
             });
         ParamSpec providerParam = PString("provider", "openai|anthropic|ollama-openai|ollama-native|deepseek");
-        providerParam.Default = "openai";
+        providerParam.Default = std::make_shared<nlohmann::json>("openai");
         providerParam.Enum = {"openai", "anthropic", "ollama-openai", "ollama-native", "deepseek"};
         c.Params = {std::move(providerParam)};
         c.Idempotent = true;

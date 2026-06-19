@@ -10,6 +10,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include <nlohmann/json.hpp>
+
 namespace smatchet {
 namespace cmd {
 
@@ -219,12 +221,12 @@ bool ValidateAndResolveArgs(const Command& snapshot, const nlohmann::json& args,
                     CommandResult::Failure(ErrorCode::MissingRequiredArg,
                                            "Missing required argument '" + p.Name + "' for '" + snapshot.Name + "'.",
                                            "Pass --" + p.Name + "=<value>.");
-                r.Error.Details = nlohmann::json{{"param", p.Name}};
+                r.Error.Details = std::make_shared<nlohmann::json>(nlohmann::json{{"param", p.Name}});
                 outFailure = std::move(r);
                 return false;
             }
-            if (!p.Default.is_null()) {
-                argsResolved[p.Name] = p.Default;
+            if (p.Default && !p.Default->is_null()) {
+                argsResolved[p.Name] = *p.Default;
             }
             continue;
         }
@@ -233,7 +235,7 @@ bool ValidateAndResolveArgs(const Command& snapshot, const nlohmann::json& args,
         if (!CoerceJsonValue(argsResolved[p.Name], p.Type, coerced, err)) {
             CommandResult r = CommandResult::Failure(ErrorCode::ValidationError, "Argument '" + p.Name + "' for '" +
                                                                                      snapshot.Name + "': " + err + ".");
-            r.Error.Details = nlohmann::json{{"param", p.Name}, {"reason", err}};
+            r.Error.Details = std::make_shared<nlohmann::json>(nlohmann::json{{"param", p.Name}, {"reason", err}});
             outFailure = std::move(r);
             return false;
         }
@@ -249,7 +251,7 @@ bool ValidateAndResolveArgs(const Command& snapshot, const nlohmann::json& args,
             if (!ok) {
                 CommandResult r = CommandResult::Failure(
                     ErrorCode::ValidationError, "Argument '" + p.Name + "' must be one of the allowed enum values.");
-                r.Error.Details = nlohmann::json{{"param", p.Name}, {"allowed", p.Enum}};
+                r.Error.Details = std::make_shared<nlohmann::json>(nlohmann::json{{"param", p.Name}, {"allowed", p.Enum}});
                 outFailure = std::move(r);
                 return false;
             }
