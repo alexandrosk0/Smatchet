@@ -704,16 +704,24 @@ if (-not $SkipStandalone) {
     if (-not $SkipInstaller) {
         Write-Stage "Building Windows installer"
         $installerBaseName = "Smatchet-$effectiveTag-windows$archToken-setup"
-        Invoke-Checked -FilePath $isccExe -Arguments @(
+        # Append the signing defines ONLY when signing is enabled. Emitting them
+        # via inline `$(if (...) { ... })` left $null array elements which the
+        # [string[]]$Arguments param coerces to empty "" args; iscc then aborts with
+        # "Unknown option:" on unsigned builds (e.g. the CI installer smoke — real
+        # releases always pass -Sign, so this path was previously unexercised).
+        $isccArgs = @(
             "/DMyAppVersion=$projectVersion",
             "/DMySourceDir=$standaloneStage",
             "/DMyOutputDir=$assetsDir",
             "/DMyOutputBaseFilename=$installerBaseName",
-            "/DMyArchitecturesAllowed=$innoArch",
-            $(if ($signingConfig.Enabled) { "/DMyInnoSignTool=smatchetsigntool" }),
-            $(if ($signingConfig.Enabled) { "/Ssmatchetsigntool=$(Get-InnoSignToolDefinition -Config $signingConfig -ProgramDescription 'Smatchet Installer')" }),
-            $installerScript
-        ) | Out-Null
+            "/DMyArchitecturesAllowed=$innoArch"
+        )
+        if ($signingConfig.Enabled) {
+            $isccArgs += "/DMyInnoSignTool=smatchetsigntool"
+            $isccArgs += "/Ssmatchetsigntool=$(Get-InnoSignToolDefinition -Config $signingConfig -ProgramDescription 'Smatchet Installer')"
+        }
+        $isccArgs += $installerScript
+        Invoke-Checked -FilePath $isccExe -Arguments $isccArgs | Out-Null
         $installerPath = Join-Path $assetsDir "$installerBaseName.exe"
         if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
             throw "Expected installer missing: $installerPath"
