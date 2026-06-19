@@ -7,8 +7,9 @@
 # docs/self-improvement/categories/process.md 2026-05-28 P1 entry
 # "Implementer-side self-review didn't catch real shell-script bugs".
 #
-# Six fixtures: one per rule plus one all-good. Each test asserts the lint
-# fires the expected rule id (or doesn't fire at all on known-good).
+# One fixture per rule plus one all-good. Each test asserts the lint fires the
+# expected rule id (or doesn't fire at all on known-good). Rule 6 (pipefail
+# var=$(...|head) SIGPIPE/truncation) adds a flagged + two negative fixtures.
 #
 # Requires: bash, bats, shellcheck (`npm install -g shellcheck`).
 # ----------------------------------------------------------------------------
@@ -126,9 +127,32 @@ setup() {
     [[ "$output" == *"--threshold"* ]]
 }
 
+# ---------- rule 6: pipefail var=$(...|head) SIGPIPE/truncation ----------
+
+@test "rule 6 (pipefail-head): fires on x=\$(cmd | head -5) under pipefail" {
+    run bash "$LINT" --target "$FIXTURE_DIR/known-bad-6-pipefail-head.sh"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"SHELL_LINT_PIPEFAIL_HEAD"* ]]
+    [[ "$output" == *"Passed: 0  Failed: 1"* ]]
+}
+
+@test "rule 6 (pipefail-head): does NOT fire when mitigated with '|| true' (nor on non-terminal head)" {
+    run bash "$LINT" --target "$FIXTURE_DIR/known-good-6-pipefail-head-mitigated.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"SHELL_LINT_PIPEFAIL_HEAD"* ]]
+    [[ "$output" == *"Passed: 1  Failed: 0"* ]]
+}
+
+@test "rule 6 (pipefail-head): does NOT fire when the script does not set pipefail" {
+    run bash "$LINT" --target "$FIXTURE_DIR/known-good-6-no-pipefail-head.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"SHELL_LINT_PIPEFAIL_HEAD"* ]]
+    [[ "$output" == *"Passed: 1  Failed: 0"* ]]
+}
+
 # ---------- known-good: all rules clean ----------
 
-@test "known-good fixture passes all 5 rules" {
+@test "known-good fixture passes all 6 rules" {
     run bash "$LINT" --target "$FIXTURE_DIR/known-good.sh"
     [ "$status" -eq 0 ]
     [[ "$output" == *"Passed: 1  Failed: 0"* ]]

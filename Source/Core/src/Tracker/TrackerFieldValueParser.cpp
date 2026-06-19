@@ -4,6 +4,8 @@
 #include "Logger.h"
 #include "StringUtil.h"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <cctype>
 #include <iomanip>
