@@ -187,6 +187,7 @@ docs/harness/claude-code/hooks/lint-syntax-both.py	SmatchetStandalone
 docs/harness/claude-code/hooks/lint-syntax-both.py	ninja-iter-msvc
 docs/harness/claude-code/hooks/pre-ship-stop-gate.sh	SMATCHET
 docs/harness/claude-code/hooks/pretool-edit-p4-lock-check.sh	SMATCHET
+docs/harness/claude-code/hooks/pretool-workflow-fleet-preflight.sh	SMATCHET
 docs/harness/codex/hooks-equivalent.md	Smatchet
 docs/harness/cursor/hooks-equivalent.md	Smatchet
 docs/harness/cursor/rules/agents.mdc	Smatchet
