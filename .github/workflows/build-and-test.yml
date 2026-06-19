@@ -593,6 +593,127 @@ jobs:
         if: always()
         run: sccache --show-stats
 
+  windows-arm64-installer:
+    name: Windows-on-ARM ARM64 installer smoke (advisory, runner-gated)
+    needs: changes
+    # Phase 3 follow-on (dx12-standalone-win-arm64): build the NATIVE ARM64 Inno
+    # installer (release_github.ps1 -Arch arm64 -> ninja-publish-msvc-arm64 LTO
+    # publish + iscc with ArchitecturesAllowed=arm64) and smoke it (silent install
+    # + launch under DX12/WARP). Kept SEPARATE from windows-arm64-native because it
+    # needs Inno Setup provisioning (choco) and a heavier LTO publish build; the
+    # atomics-gate job shouldn't carry that. Advisory + dormant behind
+    # ENABLE_WIN_ARM64_RUNNER like the other ARM64 legs.
+    if: ${{ vars.ENABLE_WIN_ARM64_RUNNER == 'true' && needs.changes.outputs.code == 'true' && needs.changes.outputs.android_only != 'true' }}
+    runs-on: windows-11-arm
+    continue-on-error: true
+    timeout-minutes: 75
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup MSVC dev environment (ARM64 native)
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        with:
+          arch: arm64
+
+      - name: Confirm native ARM64 host
+        shell: pwsh
+        run: |
+          $hostArch = $env:PROCESSOR_ARCHITEW6432
+          if ([string]::IsNullOrWhiteSpace($hostArch)) { $hostArch = $env:PROCESSOR_ARCHITECTURE }
+          Write-Host "host arch=$hostArch (PROCESSOR_ARCHITECTURE=$env:PROCESSOR_ARCHITECTURE, PROCESSOR_ARCHITEW6432=$env:PROCESSOR_ARCHITEW6432)"
+          if (-not ($hostArch -and $hostArch -match '^(?i)arm64$')) {
+            Write-Error "Expected a native ARM64 host but detected host arch='$hostArch'."
+            exit 1
+          }
+
+      - name: Setup sccache (object cache)
+        uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
+
+      - name: Cache sccache objects (msvc-arm64-installer)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ github.workspace }}\.sccache
+          # Share the native leg's object cache (same ninja-publish-msvc-arm64
+          # preset) so the LTO publish build is mostly cache hits.
+          key: ${{ runner.os }}-sccache-msvc-arm64-native-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-sccache-msvc-arm64-native-
+
+      - name: Cache FetchContent _deps (msvc-arm64-installer)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .fetchcontent-src
+          key: ${{ runner.os }}-fetchcontent-msvc-arm64-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Fetch Font Awesome 6 Solid TTF (pinned + checksum-verified)
+        shell: bash
+        env:
+          FA_TAG: "6.7.2"
+          FA_SHA256: "af19d135d3a935b3ebfbd80320716ffe1202052c5f68dc2c5f1abc57005ac605"
+        run: |
+          set -euo pipefail
+          curl -fsSL \
+               "https://github.com/FortAwesome/Font-Awesome/raw/${FA_TAG}/webfonts/fa-solid-900.ttf" \
+               -o assets/fonts/fa-solid-900.ttf
+          echo "${FA_SHA256}  assets/fonts/fa-solid-900.ttf" | sha256sum -c -
+
+      - name: Install Inno Setup 6 (ISCC.exe)
+        shell: pwsh
+        run: |
+          # release_github.ps1 requires Inno Setup's ISCC.exe (x86 binary, runs under
+          # emulation on ARM64). Not present on the windows-11-arm image by default.
+          choco install innosetup -y --no-progress
+          $iscc = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+          if ($iscc) { Write-Host "iscc: $($iscc.Source)" }
+          else { Write-Host "::warning::ISCC.exe not on PATH after choco; release_github.ps1 also searches fixed install dirs + the uninstall registry." }
+
+      - name: Build ARM64 installer (release_github.ps1 -Arch arm64)
+        shell: pwsh
+        run: |
+          # No -Publish (no gh/secrets) and no -Sign (no signing cert in CI). -Arch
+          # arm64 selects the ninja-publish-msvc-arm64 LTO preset, tags artifacts
+          # -arm64, sets the Inno arch to arm64, and force-skips Unreal + light.
+          # -AllowDirty: the Font Awesome fetch above dirties the worktree, which the
+          # script's Assert-CleanGitTree would otherwise reject.
+          ./scripts/publish/release_github.ps1 `
+            -Arch arm64 -Tag arm64-installer-smoke -AllowDirty -SkipSourceZip `
+            -OutDir out/arm64-installer
+
+      - name: Silent-install + launch smoke (DX12/WARP)
+        shell: pwsh
+        env:
+          SMATCHET_RENDERER: "dx12"
+          SMATCHET_SPAWN_READY_MS: "30000"
+        run: |
+          $setup = Get-ChildItem -Recurse -Path out/arm64-installer -Filter '*windows-arm64-setup.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $setup) { Write-Error "ARM64 installer .exe not produced under out/arm64-installer."; exit 1 }
+          Write-Host "Installing $($setup.FullName) /VERYSILENT ..."
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Write-Error "Silent install failed (exit $($p.ExitCode))."; exit 1 }
+          # DefaultDirName={localappdata}\Programs\Smatchet, PrivilegesRequired=lowest
+          # (SmatchetStandalone.iss) — no admin needed in CI.
+          $exe = Join-Path $env:LOCALAPPDATA 'Programs\Smatchet\Smatchet.exe'
+          if (-not (Test-Path $exe)) { Write-Error "Installed exe missing: $exe"; exit 1 }
+          Write-Host "Launch smoke: $exe cmd app.version --spawn --yes (SMATCHET_RENDERER=dx12)"
+          $out = & $exe cmd app.version --spawn --yes 2>&1 | Out-String
+          Write-Host $out
+          if ($out -notmatch '"ok"\s*:\s*true') { Write-Error "Installed ARM64 exe launch smoke failed."; exit 1 }
+          Write-Host "ARM64 installer smoke OK — installed + launched the native arm64 build."
+
+      - name: Upload ARM64 installer (for inspection)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: smatchet-arm64-installer-${{ github.run_id }}
+          path: out/arm64-installer/assets/*windows-arm64-setup.exe
+          if-no-files-found: ignore
+
   windows-msvc-light:
     name: Windows + MSVC (Smatchet light — AI/Whisper/MCP off)
     needs: changes
