@@ -7,6 +7,7 @@
 
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+#include "Commands/Scenarios/UiTestOutcomeFormat.h"
 #include "Logger.h"
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
@@ -17,8 +18,10 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace smatchet {
 namespace cmd {
@@ -27,32 +30,18 @@ namespace {
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
 // Number of consecutive frames with a non-zero ImGui DisplaySize that must
-// present before we queue the test bodies. The test engine only begins
-// executing queued tests from the PostSwap after the queueing frame, so by the
-// time the first item-probe runs the UI has rendered + presented this many
-// real frames and the windows are laid out at a genuine size. Chosen as a
-// small floor that tolerates Mesa llvmpipe's slow first frames in CI while
-// staying snappy on a real GPU (the engine itself drains the queue in a single
-// PostSwap once probing can succeed). Not a wall-clock sleep — a slower backend
-// just needs more frames to reach the floor.
+// present before we queue the test bodies. See header / settle-frame rationale.
 const int kUiTestSettleFrames = 3;
 
 // Active engine pointer surfaced to Source/Standalone/main.cpp via
-// SmatchetActiveUiTestEngine(). Atomic for the unlikely case where the swap
-// hook runs while the scenario is being torn down on the same thread (both
-// are UI thread today; defensive nevertheless).
+// SmatchetActiveUiTestEngine(). Atomic for the same-thread teardown race.
 std::atomic<ImGuiTestEngine*> g_active_engine{nullptr};
 
 // Active AppController pointer surfaced via SmatchetActiveUiTestAppController()
-// for bucket-E tests that need `app.mainThreadDispatcher` (e.g. the
-// ai_prefs_autosave_flow verify-on-save variants that drive
-// AiPrefsTestConnection::TriggerProbe). Same UI-thread semantics as g_active_engine.
+// for bucket-E tests that need app.mainThreadDispatcher.
 std::atomic<AppController*> g_active_app{nullptr};
 #endif
 
-// Per-feature registration entry point. Implemented in
-// tests/ui/ui_tests_registry.cpp when SMATCHET_BUILD_UI_TESTS is ON; the OFF
-// build provides a weak stub below so the link succeeds with zero tests.
 #if defined(SMATCHET_BUILD_UI_TESTS)
 extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine);
 #endif
@@ -85,6 +74,57 @@ void AppendUiTestFailures(ImGuiTestEngine* engine, nlohmann::json& out) {
     out["failures"] = failures;
 }
 
+// Walk the engine's recorded test STATUSES and build the POD failure rows the
+// pure FormatUiTestOutcome formatter consumes. ImGui-dependent (the only place
+// touching ImGuiTest / Output.Status / ExtractLinesForVerboseLevels); the text
+// shaping is delegated to the engine-free formatter so it stays unit-testable.
+// Walking statuses directly (not per-line TTY routing) makes the dump robust to
+// the timeout / kill / engine-marked-error paths the flake hunt cares about.
+std::vector<UiTestOutcomeRow> ExtractUiTestFailureRows(ImGuiTestEngine* engine) {
+    std::vector<UiTestOutcomeRow> rows;
+    if (engine == nullptr) {
+        return rows;
+    }
+    ImVector<ImGuiTest*> tests;
+    ImGuiTestEngine_GetTestList(engine, &tests);
+    for (int i = 0; i < tests.Size; ++i) {
+        ImGuiTest* test = tests[i];
+        if (test == nullptr || test->Output.Status != ImGuiTestStatus_Error) {
+            continue;
+        }
+        ImGuiTextBuffer log;
+        test->Output.Log.ExtractLinesForVerboseLevels(ImGuiTestVerboseLevel_Error, ImGuiTestVerboseLevel_Trace, &log);
+        const char* logText = log.empty() ? test->Output.Log.GetText() : log.c_str();
+        UiTestOutcomeRow row;
+        row.category = test->Category ? test->Category : "";
+        row.name = test->Name ? test->Name : "";
+        row.errorLog = (logText != nullptr) ? logText : "";
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
+#endif
+
+// Emit the formatted ui_test outcome to STDOUT with a SINGLE exempt write, then
+// flush. The spawn driver (CliCommandRunner.cpp::LaunchEphemeralInstance)
+// redirects the ephemeral child's stdout+stderr into the spawn-log; but the
+// ImGui Test Engine's own output channels do NOT reliably populate that log on a
+// FAILING run (ConfigLogToTTY only routes while a test BODY runs; the upstream
+// ImGuiTestEngine_PrintResultSummary is never called here). So a FAILING spawned
+// run can write nothing to the spawn-log: the diagnosability blocker. stdout is
+// used (not stderr) because the engine's own LogToTTY writes go to stdout and DO
+// reach the redirected spawn-log. fflush guarantees the bytes hit the handle
+// before the child quits. The text is built by the pure (engine-free)
+// FormatUiTestOutcome so the whole block is ONE write -- the single strict-zone
+// printf exemption site for this TU.
+void EmitUiTestOutcome(int tested, int passed, const std::string& filter, bool queued,
+                       const std::vector<UiTestOutcomeRow>& failures) {
+    const std::string text = FormatUiTestOutcome(tested, passed, filter, queued, failures);
+    std::fprintf(stdout, "%s", text.c_str()); // CLI stdout -- spawn-log diagnostic capture (LOG_* can't reach the spawn-redirected child stdout)
+    std::fflush(stdout);
+}
+
+#if defined(SMATCHET_BUILD_UI_TESTS)
 bool HasQueuedOrRunningUiTest(ImGuiTestEngine* engine) {
     if (engine == nullptr) {
         return false;
@@ -108,7 +148,7 @@ UiTestScenario::UiTestScenario() = default;
 UiTestScenario::~UiTestScenario() {
 #if defined(SMATCHET_BUILD_UI_TESTS)
     if (engine_ != nullptr) {
-        // Defensive — OnFinish / OnCancel should have torn down already.
+        // Defensive -- OnFinish / OnCancel should have torn down already.
         ImGuiTestEngine_Stop(engine_);
         ImGuiTestEngine_DestroyContext(engine_);
         engine_ = nullptr;
@@ -141,9 +181,6 @@ void UiTestScenario::OnStart(AppController& app, const nlohmann::json& args, std
         return;
     }
 
-    // Tune the engine for headless deterministic runs. We never plug a
-    // ScreenCaptureFunc, so capture-on-error is a no-op even if the test
-    // requests it.
     ImGuiTestEngineIO& io = ImGuiTestEngine_GetIO(engine_);
     io.ConfigRunSpeed = ImGuiTestRunSpeed_Fast;
     io.ConfigVerboseLevel = ImGuiTestVerboseLevel_Info;
@@ -152,9 +189,6 @@ void UiTestScenario::OnStart(AppController& app, const nlohmann::json& args, std
     io.ConfigCaptureOnError = false;
     io.ConfigStopOnError = false;
     io.ConfigNoThrottle = true;
-    // Surface engine errors (item-not-found, assertion text) to stderr so the
-    // bucket-E driver script can capture them. Negligible cost — each run is
-    // a one-shot ephemeral process.
     io.ConfigLogToTTY = true;
     io.ConfigLogToDebugger = false;
 
@@ -181,11 +215,6 @@ void UiTestScenario::OnFrame(AppController& /*app*/, int frameIndex) {
     if (frameIndex < 1) {
         return;
     }
-    // Only count frames that are actually rendering at a real size. Under Mesa
-    // llvmpipe the reported display extent can still be zero-by-zero on the
-    // earliest frames, so counting only DisplaySize-valid frames keeps the
-    // settle floor honest (a zero-area frame lays out nothing, so probing it
-    // would still fail).
     const ImGuiIO& io = ImGui::GetIO();
     if (io.DisplaySize.x <= 0.0f || io.DisplaySize.y <= 0.0f) {
         settledFrames_ = 0;
@@ -194,12 +223,6 @@ void UiTestScenario::OnFrame(AppController& /*app*/, int frameIndex) {
     if (++settledFrames_ < kUiTestSettleFrames) {
         return;
     }
-    // Queue after the engine's NewFrame hook has synchronized its frame counter
-    // AND a few real frames have presented. Queueing immediately in OnStart can
-    // run before that hook in a long-lived spawned app, and queueing on the
-    // first frame lets the engine probe items before the windows have laid out
-    // at a non-zero size under slow software GL — both make the engine mark
-    // tests as errors before any test body meaningfully executes.
     const char* filterArg = filter_.empty() ? nullptr : filter_.c_str();
     ImGuiTestEngine_QueueTests(engine_, ImGuiTestGroup_Tests, filterArg, ImGuiTestRunFlags_None);
     startedQueue_ = true;
@@ -221,7 +244,6 @@ bool UiTestScenario::IsDone(int frameIndex) const {
     if (!startedQueue_) {
         return false;
     }
-    // Give the engine at least one frame to dequeue before claiming "done".
     if (frameIndex < 1) {
         return false;
     }
@@ -241,17 +263,34 @@ nlohmann::json UiTestScenario::OnFinish(AppController& /*app*/) {
         out["passed"] = 0;
         out["failed"] = 0;
         out["log"] = disabledReason_;
+        // Surface the disabled reason to the --spawn child-log too -- otherwise a
+        // SMATCHET_BUILD_UI_TESTS=OFF spawn produces a silent 0-byte log. One
+        // exempt emit through the pure formatter; the disabled reason rides as a
+        // note row so it stays in the same single write.
+        std::vector<UiTestOutcomeRow> none;
+        none.push_back(UiTestOutcomeRow{"disabled", disabledReason_, ""});
+        EmitUiTestOutcome(0, 0, std::string(), false, none);
         return out;
     }
 #if defined(SMATCHET_BUILD_UI_TESTS)
     if (engine_ != nullptr) {
         ImGuiTestEngine_GetResult(engine_, tested_, passed_);
         AppendUiTestFailures(engine_, out);
+        // Mirror the outcome to stdout (captured by the --spawn child-log) BEFORE
+        // tearing the engine down. Extract the failure rows here (the only
+        // ImGui-touching step), then emit via the pure formatter with one write.
+        EmitUiTestOutcome(tested_, passed_, filter_, startedQueue_, ExtractUiTestFailureRows(engine_));
         ImGuiTestEngine_Stop(engine_);
         g_active_engine.store(nullptr, std::memory_order_release);
         g_active_app.store(nullptr, std::memory_order_release);
         ImGuiTestEngine_DestroyContext(engine_);
         engine_ = nullptr;
+    } else {
+        // No engine at OnFinish (creation failed in OnStart, or already torn
+        // down). Without this the spawn-log stays empty on that failure path.
+        std::vector<UiTestOutcomeRow> none;
+        none.push_back(UiTestOutcomeRow{"engine", "no active test engine at OnFinish (creation failed?)", ""});
+        EmitUiTestOutcome(0, 0, filter_, false, none);
     }
     out["passed"] = passed_;
     out["failed"] = (std::max)(0, tested_ - passed_);
@@ -270,6 +309,21 @@ nlohmann::json UiTestScenario::OnFinish(AppController& /*app*/) {
 void UiTestScenario::OnCancel(AppController& /*app*/) {
 #if defined(SMATCHET_BUILD_UI_TESTS)
     if (engine_ != nullptr) {
+        // Cancellation is the timeout / watchdog path -- the most diagnostically
+        // important one for the flake hunt. Capture whatever the engine recorded
+        // before teardown, so a cancelled run is never a silent 0-byte log. One
+        // exempt emit through the pure formatter; the CANCELLED marker rides as
+        // the first row so it stays in the same single write.
+        int tested = 0;
+        int passed = 0;
+        ImGuiTestEngine_GetResult(engine_, tested, passed);
+        std::vector<UiTestOutcomeRow> rows;
+        rows.push_back(UiTestOutcomeRow{"CANCELLED", "timeout/watchdog -- partial results", ""});
+        std::vector<UiTestOutcomeRow> failures = ExtractUiTestFailureRows(engine_);
+        for (UiTestOutcomeRow& r : failures) {
+            rows.push_back(std::move(r));
+        }
+        EmitUiTestOutcome(tested, passed, filter_, startedQueue_, rows);
         ImGuiTestEngine_Stop(engine_);
         g_active_engine.store(nullptr, std::memory_order_release);
         g_active_app.store(nullptr, std::memory_order_release);
@@ -298,8 +352,7 @@ AppController* SmatchetActiveUiTestAppController() {
 }
 
 // Weak default. When SMATCHET_BUILD_UI_TESTS is ON but no test sources are
-// linked (e.g. someone disabled tests/ui/CMakeLists.txt enrolment by hand),
-// the queue starts empty and IsDone returns true on frame 1. This stub
+// linked, the queue starts empty and IsDone returns true on frame 1. This stub
 // prevents an undefined-reference link error in that configuration.
 #if defined(__GNUC__) || defined(__clang__)
 extern "C" __attribute__((weak)) void SmatchetRegisterAllUiTests(ImGuiTestEngine* /*engine*/) {

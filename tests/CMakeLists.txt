@@ -871,6 +871,12 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/ImGuiHotkey.cpp"
     Core/KeybindingsConfig.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/KeybindingsConfig.cpp"
+    # bucket-E diagnosability (PR #1432) -- pure, engine-free formatter for the
+    # ui_test.run --spawn child-log outcome dump (KO list + pass/fail summary).
+    # The ImGui-dependent extraction stays in UiTestScenario.cpp; this rig links
+    # only the engine-free UiTestOutcomeFormat.cpp so it pulls no imgui/cpr/sqlite.
+    Core/UiTestOutcomeFormat.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Scenarios/UiTestOutcomeFormat.cpp"
 )
 
 # Whisper dictation router — link the production TU that matches the parent
