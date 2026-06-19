@@ -109,7 +109,12 @@ bool BootSyncFocusPrimary(ImGuiTestContext* ctx, AppController* app) {
     app->SyncWithBackend();
     const bool syncDone = YieldUntil(ctx, [&] { return !app->IsStreamingSyncActive(); });
     IM_CHECK_NO_RET(syncDone);
-    if (!syncDone || app->GetActiveTickets().empty()) {
+    // Past the fixture gate the deterministic backend MUST yield rows — a completed-but-empty
+    // sync is a real failure, not a silent skip. Hard-assert it (mirroring
+    // grid_pane_windows.test.cpp:85) so the three tests can't pass green while exercising nothing.
+    const bool haveTickets = syncDone && !app->GetActiveTickets().empty();
+    IM_CHECK_NO_RET(haveTickets);
+    if (!haveTickets) {
         return false;
     }
     const bool primaryLive = YieldUntil(ctx, [&] {
@@ -117,6 +122,7 @@ bool BootSyncFocusPrimary(ImGuiTestContext* ctx, AppController* app) {
         return WindowIsLive(kPrimaryWindow);
     });
     IM_CHECK_NO_RET(primaryLive);
+    IM_CHECK_NO_RET(g_ui.gridPanesLoaded); // a live primary should imply panes loaded — fail loudly if not
     return primaryLive && g_ui.gridPanesLoaded;
 }
 
@@ -197,6 +203,12 @@ void RegisterJqlReplacesViewQuery(ImGuiTestEngine* engine) {
         const char* kQuery = "summary ~ zqxomni"; // '~' marks a structured query → Jql
         SetOmnibarQuery(ctx, kQuery);
         IM_CHECK_STR_EQ(g_ui.omniJqlEditor.buf, kQuery);
+
+        // Reset both observed sinks to a non-matching state BEFORE Enter so neither assertion
+        // can pass vacuously on a same-process suite re-run (symmetric with the sibling tests,
+        // which zero their observed field first) — only the production apply can restore kQuery.
+        g_ui.cfg.JqlQuery.clear();
+        g_ui.viewJqlEditor.buf[0] = '\0';
 
         ctx->KeyPress(ImGuiKey_Enter);
         // applyQueryToPaneView (Ok path) mirrors the query into BOTH cfg.JqlQuery and the
