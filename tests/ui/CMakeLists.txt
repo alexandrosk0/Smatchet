@@ -47,6 +47,7 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/mobile_views_confirm_modal.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/keybindings_editor_rebind.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/command_palette_inline_typing.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/omnibar_search_apply.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/whisper_ai_assistant_autosend.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/sync_stall_visible_cue.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/annotate_before_cl_cue.test.cpp"
