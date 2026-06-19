@@ -1,6 +1,10 @@
 #pragma once
 
-#include <nlohmann/json.hpp>
+// Build-time win: json appears here only as a by-value return-type declaration
+// (MarkdownToAdf) and a by-const-reference parameter (AdfToMarkdown) — neither
+// needs the complete type in the header. MarkdownConvert.cpp includes the full
+// <nlohmann/json.hpp> to build/walk the ADF tree.
+#include <nlohmann/json_fwd.hpp>
 
 #include <string>
 #include <vector>
