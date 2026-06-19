@@ -247,6 +247,47 @@ setup_claude_code() {
   copy_template "docs/harness/claude-code/hooks/resync-head-baseline.sh" ".claude/hooks/resync-head-baseline.sh"
   copy_template "docs/harness/claude-code/hooks/guard-shared-tree.sh"    ".claude/hooks/guard-shared-tree.sh"
   copy_template "docs/harness/claude-code/hooks/capture-intent.sh"       ".claude/hooks/capture-intent.sh"
+  # Wiring doctor (pr-intent-capture-hardening #1): confirm the capture hook is
+  # actually live — registered on UserPromptSubmit AND a python interpreter
+  # resolves — so a silently-unwired hook (the gap that left no evidence capture
+  # ever ran in a live session) surfaces once here instead of never.
+  # Probe-EXECUTE each candidate (not just command -v): on Windows the python3
+  # Store app-execution-alias stub satisfies command -v but errors on run, so a
+  # name-only check would report WIRED while the hook fail-safes to writing
+  # nothing. Mirrors the interpreter resolver in capture-intent.sh.
+  _intent_py=""
+  for _cand in python3 python py; do
+    if command -v "$_cand" >/dev/null 2>&1 && "$_cand" -c "import sys" >/dev/null 2>&1; then
+      _intent_py="$_cand"; break
+    fi
+  done
+  if [ -n "$_intent_py" ]; then
+    # Structural check (Bugbot e4c20652): capture-intent.sh must be registered as a
+    # command UNDER hooks.UserPromptSubmit — not merely present somewhere in the file
+    # next to the word "UserPromptSubmit". Two independent greps would false-WIRE a
+    # hand-edited / mis-synced settings.json where capture-intent.sh hangs off a
+    # DIFFERENT event (e.g. SessionStart). Parse the JSON and walk the actual list.
+    if "$_intent_py" - ".claude/settings.json" >/dev/null 2>&1 <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as _f:
+        _d = json.load(_f)
+except Exception:
+    sys.exit(1)
+for _grp in (_d.get("hooks") or {}).get("UserPromptSubmit") or []:
+    for _h in (_grp.get("hooks") or []):
+        if "capture-intent.sh" in (_h.get("command") or ""):
+            sys.exit(0)
+sys.exit(1)
+PY
+    then
+      echo "  prompt-intent capture: WIRED (UserPromptSubmit -> capture-intent.sh)"
+    else
+      echo "  prompt-intent capture: NOT WIRED — capture-intent.sh not registered under .claude/settings.json hooks.UserPromptSubmit (re-run setup / check sync-settings-hooks.sh)"
+    fi
+  else
+    echo "  prompt-intent capture: INERT — no working python3/python/py on PATH (hook fail-safes to writing nothing)"
+  fi
 
   link_agents
 

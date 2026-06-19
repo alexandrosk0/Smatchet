@@ -52,13 +52,49 @@ REDACTED="$(printf '%s' "$PROMPT" | "$PY" "$REDACTOR" 2>/dev/null || true)"
 [[ -z "$REDACTED" ]] && exit 0
 
 # Branch-keyed capture file (batched feature -> one branch -> one PR -> one log).
-BRANCH="$(git -C "$PROJ_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo _unknown)"
+# symbolic-ref --short (not rev-parse --abbrev-ref): on an UNBORN branch rev-parse
+# prints "HEAD" to stdout AND exits non-zero, so `|| echo _unknown` appended both
+# -> "HEAD-_unknown.log"; symbolic-ref returns the real branch (exit 0) on an
+# unborn branch and fails cleanly (no stdout) on detached HEAD -> _unknown.
+BRANCH="$(git -C "$PROJ_DIR" symbolic-ref --short HEAD 2>/dev/null || echo _unknown)"
 SAFE_BRANCH="$(printf '%s' "$BRANCH" | tr -c 'A-Za-z0-9._-' '-')"
 [[ -z "$SAFE_BRANCH" ]] && SAFE_BRANCH="_unknown"
 
 CAPTURE_DIR="$PROJ_DIR/.session-intent"
 mkdir -p "$CAPTURE_DIR" 2>/dev/null || exit 0
-printf '%s\n' "- $REDACTED" >> "$CAPTURE_DIR/$SAFE_BRANCH.log" 2>/dev/null || true
+CAPTURE_FILE="$CAPTURE_DIR/$SAFE_BRANCH.log"
+
+# Provenance header on first create: marks the file as hook-produced (vs a
+# hand-authored fallback file), so the orchestrator / a debugger can confirm
+# capture actually ran in a live session. The orchestrator reads ONLY `- `-prefixed
+# lines, so this `#` header is inert to Intent synthesis (docs/agent-rules/ship-loops.md
+# § Intent capture). Best-effort; a missing date never blocks the append.
+if [[ ! -f "$CAPTURE_FILE" ]]; then
+    printf '# capture-intent v1 %s\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)" \
+        >> "$CAPTURE_FILE" 2>/dev/null || true
+fi
+
+printf '%s\n' "- $REDACTED" >> "$CAPTURE_FILE" 2>/dev/null || true
+
+# Cap-on-append: keep the provenance header + last CAP bullet lines so a long-lived
+# branch's log can't grow unbounded (the file is per-container ephemeral in remote
+# sessions, but local branches persist). Best-effort; never blocks prompt submission.
+# CAP is env-overridable so the bats suite can exercise the trim cheaply.
+# Neutral name (no project literal) — this template is portable across repos.
+CAP="${CAPTURE_INTENT_CAP:-200}"
+# Guard: a non-numeric env override would make $((CAP + 1)) error/misbehave and
+# silently skip the trim (unbounded growth). Fall back to the default.
+[[ "$CAP" =~ ^[0-9]+$ ]] || CAP=200
+line_count="$(wc -l < "$CAPTURE_FILE" 2>/dev/null || echo 0)"
+if [[ "$line_count" -gt $((CAP + 1)) ]]; then
+    _tmp="$CAPTURE_FILE.tmp"
+    {
+        grep -m1 '^# capture-intent ' "$CAPTURE_FILE" 2>/dev/null || true
+        grep '^- ' "$CAPTURE_FILE" 2>/dev/null | tail -n "$CAP" || true
+    } > "$_tmp" 2>/dev/null
+    mv "$_tmp" "$CAPTURE_FILE" 2>/dev/null || rm -f "$_tmp" 2>/dev/null
+fi
 
 # No stdout — UserPromptSubmit stdout would be injected into model context.
 exit 0
