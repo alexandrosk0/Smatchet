@@ -202,7 +202,7 @@ Verify build, open a fresh PR (title reflects what's *new* vs the merged PR), cl
 
 ## Stale-branch sweep
 
-> **Cherry / ahead-count trap.** Under squash-merge, `git rev-list develop..<branch>` and `git cherry develop <branch>` are **useless as merge-safety signals** — a fully-merged branch still reports "N ahead" and `+` for every commit (squash rewrote the patch-ids). The only reliable signals: (a) `gh pr list --head <b> --state all` returning `MERGED`, and (b) a content-in-develop spot-check (`git diff origin/develop <branch> -- <file>` byte-identical, or `git grep` for the commit's substance on `origin/develop`).
+> **Cherry / ahead-count trap.** Under squash-merge, `git rev-list develop..<branch>` and `git cherry develop <branch>` are **useless as merge-safety signals** — a fully-merged branch still reports "N ahead" and `+` for every commit (squash rewrote the patch-ids). The only reliable signals: (a) `gh pr list --head <b> --state all` returning `MERGED`, (b) a content-in-develop spot-check (`git diff origin/develop <branch> -- <file>` byte-identical, or `git grep` for the commit's substance on `origin/develop`), and (c) the squash sha itself reachable — `git merge-base --is-ancestor <PR mergeCommit.oid> origin/develop` (the squash commit, **never** the branch tip, which is never an ancestor after squash). Signal (c) is the strongest single check; the post-squash-merge fast-path below relies on it.
 
 Enumerate both spaces (local `git branch --format='%(refname:short)'` minus develop/main; remote `git branch -r ...` minus origin/HEAD,develop,main; de-dupe by short name). Classify by PR state:
 
