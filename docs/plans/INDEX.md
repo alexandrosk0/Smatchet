@@ -141,6 +141,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`mobile-mvp-completion`](shipped/mobile-mvp-completion.md) | 2026-06-09 | Plan — Mobile (Android) Phase-0 MVP completion |
 | [`ilocalcache-seam`](shipped/ilocalcache-seam.md) | 2026-06-10 | ISyncCache seam (ADR-0020) — 28-method sync-cache interface decouples OfflineQueueService/TicketSyncService/IssueCreatePipeline from SQLite; service tests run on a contract-suite-verified FakeSyncCache with a configure-time purity guard; PR1 #1112 (seam) + PR2 (test purity). |
 | [`ui-help-marker-tooltips`](shipped/ui-help-marker-tooltips.md) | 2026-06-10 | UI text shortening + (?) help-marker tooltip |
+| [`dx12-standalone-win-arm64`](shipped/dx12-standalone-win-arm64.md) | 2026-06-11 | Plan — DX12 standalone renderer + Windows ARM64 standalone port |
 | [`merge-watcher-stuck-escalation`](shipped/merge-watcher-stuck-escalation.md) | 2026-06-11 | Plan — smatchet-merge-watcher stuck-PR escalation |
 | [`pane-backend-picker`](shipped/pane-backend-picker.md) | 2026-06-11 | Plan — Per-pane backend picker (choose which tracker a new grid pane loads) |
 | [`build-infra-followups`](shipped/build-infra-followups.md) | 2026-06-12 | Plan — build-infra followups (6 backlog items) |
