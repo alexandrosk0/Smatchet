@@ -17,6 +17,10 @@
 
 #include "Commands/Scenarios/IScenario.h"
 
+// json named only by const-reference (OnStart) and as an out-of-line override
+// return-type declaration (OnFinish) — forward decl suffices (matches IScenario.h).
+#include <nlohmann/json_fwd.hpp>
+
 #include <memory>
 #include <string>
 

@@ -6,7 +6,10 @@
 // / cpr / ConfigManager into SmatchetTests.
 #include "TrackerFieldSchema.h"
 
-#include <nlohmann/json.hpp>
+// Build-time win: every declaration here takes nlohmann::json by const-reference
+// only (no by-value members, no inline bodies), so the forward-decl header is
+// enough. TrackerFieldValueParser.cpp includes the full <nlohmann/json.hpp>.
+#include <nlohmann/json_fwd.hpp>
 
 #include <string>
 #include <vector>

@@ -6,6 +6,8 @@ extern "C" {
 #include "md4c.h"
 }
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <cctype>
 #include <cstring>
