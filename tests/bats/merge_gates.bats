@@ -145,6 +145,7 @@ teardown() {
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS MERGE_GATES_STALE_REREVIEW_POLLS
     unset MERGE_GATES_NONE_NUDGE_POLLS MERGE_GATES_PRIOR_NONE_STREAK MERGE_GATES_PRIOR_NONE_HEAD
     unset MERGE_GATES_REQUIRED_CONTEXTS MERGE_GATES_CONFIG_FILE MERGE_GATES_IGNORE_MERGESTATE
+    unset MERGE_GATES_FRESHNESS MERGE_GATES_FRESH_RUN_BLOB MERGE_GATES_FRESH_DEV_BLOB
 }
 
 # ---------- helpers ----------
@@ -186,6 +187,74 @@ set_fixture() {
     run poll_merge_gates org repo 1
     [ "$status" -eq 1 ]
     [[ "$output" == *"1 fail"* ]]
+}
+
+# ---------- Gate-logic self-freshness guard (#1428) ----------
+# The watcher runs merge-gates.sh from its host checkout; if that tree is parked
+# behind origin/develop it enforces STALE gate logic. MERGE_GATES_FRESHNESS=block
+# refuses GATES_PASSED when this script's blob != origin/develop's blob. The
+# MERGE_GATES_FRESH_RUN_BLOB / _DEV_BLOB test overrides bypass git so the guard is
+# exercised deterministically (no git/network dependency in the bats sandbox).
+
+@test "freshness OFF by default → divergent blobs do NOT block (opt-in guard)" {
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    # Inject divergent blobs but leave MERGE_GATES_FRESHNESS unset (→ off): the
+    # guard must be inert so every legacy caller + local-dev run is unaffected.
+    export MERGE_GATES_FRESH_RUN_BLOB="aaaaaaaaaaaa1111"
+    export MERGE_GATES_FRESH_DEV_BLOB="bbbbbbbbbbbb2222"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" != *"STALE"* ]]
+    [[ "$output" != *"differs from origin/develop"* ]]
+}
+
+@test "freshness BLOCK + stale (run != develop) → refuses GATES_PASSED (#1428)" {
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    export MERGE_GATES_FRESHNESS=block
+    export MERGE_GATES_FRESH_RUN_BLOB="aaaaaaaaaaaa1111"
+    export MERGE_GATES_FRESH_DEV_BLOB="bbbbbbbbbbbb2222"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    # Bare `echo GATES_PASSED` emit must be ABSENT — whole-line match so the BLOCK
+    # message's own "Refusing GATES_PASSED" text doesn't false-trip this.
+    ! grep -qx 'GATES_PASSED' <<<"$output"
+    [[ "$output" == *"differs from origin/develop"* ]]
+    [[ "$output" == *"Refusing GATES_PASSED"* ]]
+}
+
+@test "freshness BLOCK + fresh (run == develop) → passes" {
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    export MERGE_GATES_FRESHNESS=block
+    export MERGE_GATES_FRESH_RUN_BLOB="cccccccccccc3333"
+    export MERGE_GATES_FRESH_DEV_BLOB="cccccccccccc3333"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" != *"differs from origin/develop"* ]]
+}
+
+@test "freshness WARN + divergent blobs → warns but still passes" {
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    export MERGE_GATES_FRESHNESS=warn
+    export MERGE_GATES_FRESH_RUN_BLOB="aaaaaaaaaaaa1111"
+    export MERGE_GATES_FRESH_DEV_BLOB="bbbbbbbbbbbb2222"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"WARN: merge-gates.sh differs from origin/develop"* ]]
+}
+
+@test "freshness BLOCK + unverifiable (no develop blob) → fail-closed block" {
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    export MERGE_GATES_FRESHNESS=block
+    export MERGE_GATES_FRESH_RUN_BLOB="aaaaaaaaaaaa1111"
+    export MERGE_GATES_FRESH_DEV_BLOB=""
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    # Whole-line match — the BLOCK message contains "refusing GATES_PASSED".
+    ! grep -qx 'GATES_PASSED' <<<"$output"
+    [[ "$output" == *"freshness unverifiable"* ]]
 }
 
 @test "CI StatusContext state ERROR → return 1" {
