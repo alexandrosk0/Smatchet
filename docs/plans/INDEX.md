@@ -166,6 +166,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`codeql-code-scanning`](shipped/codeql-code-scanning.md) | 2026-06-17 | Plan — CodeQL c-cpp code scanning |
 | [`concurrent-session-guard-hardening`](shipped/concurrent-session-guard-hardening.md) | 2026-06-18 | Plan — Concurrent-session guard hardening (Cluster A) |
 | [`merge-watcher-clone-and-behind-hardening`](shipped/merge-watcher-clone-and-behind-hardening.md) | 2026-06-18 | Plan — Merge-watcher clone-key + BEHIND-advance hardening (Cluster B) |
+| [`pr-intent-capture-hardening`](shipped/pr-intent-capture-hardening.md) | 2026-06-18 | Plan — PR intent capture hardening (observability + blocking gate + cross-harness) |
 <!-- END auto-plan-index -->
 
 ### Notes
