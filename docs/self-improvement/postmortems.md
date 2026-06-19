@@ -27,6 +27,63 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-19 · PR #1390, #1409 · override: tests-out-of-band (load-bearing) — behaviour-changing concurrency-correctness fix with no headless test home
+
+### What escaped
+Two PRs merged to `develop` with a `tests-out-of-band` label waving a `Test-delta gate` that passed
+**only because the label told it to**:
+- `fix(commands): marshal debug.window.* g_ui writes onto the UI thread (audit target 3)` (#1390, merge
+  `b546e125`, `2026-06-18T19:57:58Z`) — touched `Source/Core/src/Commands/Builtin/BuiltinCommands_Debug.cpp`
+  + `docs/self-improvement/categories/security.md`.
+- `ci(arm64): Windows-on-ARM native test leg + std::atomic audit (Phase 3)` (#1409, merge `ad0b34a1`,
+  `2026-06-19T01:15:40Z`) — touched `AnthropicClient.cpp` / `OllamaClient.cpp` / `OpenAiClient.cpp` (the
+  `std::atomic` audit), `.github/workflows/build-and-test.yml` (the new native leg), and docs.
+
+Both carried **zero** `tests/Core/*.test.cpp` delta. The deterministic load-bearing test in
+[`postmortem-owed.sh`](../../agents/scripts/core/postmortem-owed.sh) `override_is_moot` —
+`tests-out-of-band` is moot iff `Test-delta gate == SUCCESS` **AND** the diff touched a `.test.cpp` — is
+FALSE for both (gate green, no test file), so the override dismissed a real coverage requirement, not a
+no-op. (Distinct from #1317 / #1308 below, which also touched no test but were behaviour-**preserving**
+body relocations → "none — override legitimate". These two change behaviour.)
+
+### Root cause
+Not a defect in either fix — both are correct, genuinely behaviour-changing **concurrency-correctness**
+changes whose invariant is a *threading* property the headless pure-logic doctest rig cannot express:
+- #1390 wraps the `debug.window.resize` / `debug.window.screenshot` handlers' `g_ui` request-flag writes
+  (`requestWindowResize/Width/Height`, `requestScreenshot`, `requestScreenshotPath`) in
+  `RunOnUiThreadAsCommandResult(app, …)`. Pre-fix, an MCP/Lua **worker thread** dispatching the command
+  wrote those fields directly, racing the standalone main-loop poll (non-atomic `int`/`bool`; the
+  `std::string requestScreenshotPath` was genuine UB on a concurrent realloc). The invariant is "the write
+  lands on the **UI thread**, not the dispatching thread."
+- #1409's atomic audit converts racy plain reads/writes of shared cross-thread flags in the AI clients to
+  `std::atomic`. The invariant is "the shared flag is accessed **atomically**."
+
+Neither is assertable in the doctest TUs: the rig is headless and single-threaded — no UI thread, no
+`g_ui`, no second thread, no `AppController` command-queue marshalling — so a pure-logic test cannot
+observe "this write marshalled" or "this access is atomic." A behaviour-changing concurrency fix has **no
+in-rig test home** and is routed through `tests-out-of-band` by necessity. That the gate keeps firing on
+this exact class is the signal: the class needs a gate the pure-logic rig structurally cannot be.
+
+### Preventing gate
+Two concrete gates that catch the class **without** depending on the rig that can't host it:
+1. **#1390 class — a static strict-zone lint** (extend `test-lint-rules.sh`) forbidding direct writes to
+   the `g_ui` request-flag fields (`requestWindowResize`, `requestWindowWidth`, `requestWindowHeight`,
+   `requestScreenshot`, `requestScreenshotPath`) from command-dispatch TUs (`Source/Core/src/Commands/**`)
+   outside a `RunOnUiThread*` closure. Sibling handlers (`debug.dock.*`, `bug.report`) already conform, so
+   the rule is green on HEAD and fires only on a NEW off-thread-write regression — the #1390 pre-fix shape,
+   caught statically with zero test-infra dependency.
+2. **#1409 class — a runtime leg, not a unit test.** The Windows-on-ARM **native test leg** #1409 itself
+   added is the structural answer (atomics execute on real hardware threads there); extend it (or the
+   in-flight `feat/tsan-subset-sync-layer` TSan subset) to exercise the AI-client request paths so a
+   non-atomic shared-flag regression surfaces at runtime, plus a lint flagging plain (non-`std::atomic`)
+   shared mutable cross-thread flags in the AI-client TUs.
+
+### Filed as
+New tooling per-entry backlog file
+[`categories/tooling/2026-06-19-concurrency-correctness-no-headless-test-home.md`](categories/tooling/2026-06-19-concurrency-correctness-no-headless-test-home.md)
+(P2) — carries both concrete gates above as its `Concrete next action`, cross-ref'd to #1390 / #1409 and
+`feat/tsan-subset-sync-layer`.
+
 ## 2026-06-16 · PR #1328 · override: cr-out-of-band (CodeRabbit false-positive finding it later retracted in-thread)
 
 ### What escaped
