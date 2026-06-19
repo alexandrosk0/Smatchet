@@ -22,6 +22,8 @@ Layer A's trigger is a **repo-global** live-agent count, not a per-tree one. The
 
 The three layers are deliberately asymmetric in their fail-mode. A and B are **advisory / fail-open** local hooks (catch the mistake early, cheaply, but never hard-wedge a flaky-network session) — A at edit time inside Claude Code, B at `git push` time for any harness (the catch-all for non-Claude-Code agents, wired via `core.hooksPath`). C is the **fail-closed hard net**: a required GitHub Actions check that recomputes contention server-side (overlap between this PR's changed files and any **other-branch `refs/locks/*` write set** — the declared-write-set basis **only**, NOT raw other-open-PR changed-file sets; non-circular, since it does not require THIS PR to have filed a lock) and blocks merge — unbypassable except the `plan-lock-out-of-band` label that downgrades block→WARN, symmetric with the existing `cr-out-of-band` / `tests-out-of-band` / `perf-out-of-band` overrides in `merge-gates.sh`. This is the same advisory-pair-plus-hard-net shape the tree-guards already use (`guard-shared-tree.sh` advisory + `guard-head-drift.sh` hard net).
 
+**Lock seeding (adoption).** A lock must already exist when a *second* agent's first edit hits the guard — so seeding is **eager and decoupled from enforcement**: the ship-loop files a claim from the plan-doc's **§Files-to-modify** list at task start whenever a plan exists, reusing the declared write set verbatim (no separate discovery step). Eager seeding closes the race where agent A starts solo, files nothing, then agent B goes live and A is now contended with no lock filed — by always seeding from the plan, A's claim is present as the early-warning substrate the moment B arrives. *Seeding* is eager (file whenever a plan exists); *enforcement* (the deny) stays force-on-contention (≥2 live) — the two are independent. Plan-less tasks (small fixes, no plan-doc) have no auto-seed: they file on the first deny via the `lock-claim.sh` one-liner the guard hands them, and force-on-contention makes plan-less-AND-contended rare. `lock-claim-update.sh` expands the seeded set on mid-work discovery.
+
 The non-obvious trade-off that shaped the design: **filing a claim must never itself be blocked.** `lock-claim.sh` builds its orphan commit via `git hash-object` / `git mktree` / `git commit-tree` and pushes a ref — it writes **zero** working-tree files — so the edit-time guard can never create a chicken-and-egg deadlock where you can't claim because claiming requires an edit. Mid-work write-set discovery (an agent realises it must touch a file it didn't list) is handled by `lock-claim-update.sh` (holder-only scope expansion); the guard's deny message hands the agent the exact one-liner.
 
 ## Files to modify
@@ -39,9 +41,12 @@ The non-obvious trade-off that shaped the design: **filing a claim must never it
 6. `agents/scripts/core/merge-gates.sh` (header + override block) — document the new `plan-lock-out-of-band` per-PR override alongside the existing `cr-out-of-band` / `tests-out-of-band` / `perf-out-of-band` entries so the orchestrator poller text stays in sync with the required-check set.
 7. `AGENTS.md` § Merge gates § Per-PR overrides — register `plan-lock-out-of-band` in the canonical override-label table; cross-link § Concurrent interactive sessions to the new enforcement.
 
+**Adoption wiring — ship-loop lock seeding (eager, non-blocking):**
+8. `docs/agent-rules/ship-loops.md` (+ the autonomous ship-loop sequence in `AGENTS.md` § Autonomous ship-loop default) — add a "seed plan-lock from §Files-to-modify" step at ship-loop start when a plan-doc exists: `lock-claim.sh <slug> <file>…` built from the plan's declared write set. **Eager** (fires whenever a plan exists, independent of the live-count gate that drives *enforcement*); a single non-blocking ref push, never a deny path. Document the plan-less fallback (file on first deny via the guard's one-liner) so a small-fix task isn't expected to seed.
+
 **Tests (see § Verification):**
-8. `agents/scripts/core/test-guard-plan-lock-bats.sh` (new) — bats suite for Layer A, mirroring `agents/scripts/core/test-guard-shared-tree-bats.sh`.
-9. `agents/scripts/core/test-pre-push-bats.sh` (extend, or new if absent) — cases for the `(C)` stop.
+9. `agents/scripts/core/test-guard-plan-lock-bats.sh` (new) — bats suite for Layer A, mirroring `agents/scripts/core/test-guard-shared-tree-bats.sh`.
+10. `agents/scripts/core/test-pre-push-bats.sh` (extend, or new if absent) — cases for the `(C)` stop.
 
 ## Existing utilities reused
 
@@ -80,7 +85,7 @@ Per `AGENTS.md` § UX Pillars. This change touches only the agentic-shell (hooks
 - **Chicken-and-egg deadlock — NOT a risk (explicit non-risk).** `lock-claim.sh` touches no working-tree file, so claiming is never itself gated by the edit guard. Cited so a reviewer doesn't re-raise it.
 
 **Non-goals:**
-- Not making locks mandatory for solo/sequential work (force-on-contention only — that's the whole point).
+- Not *gating/blocking* solo/sequential work — enforcement (the deny) is force-on-contention only; a solo edit is never blocked. (Eager seeding still files a lock from the plan on a solo plan-task, but filing is a free, non-blocking ref push; the "no tax" guarantee is about *blocking*, not about whether a ref is pushed.)
 - Not changing the lock wire format, ref layout, or backend dispatch (`SMATCHET_LOCK_BACKEND=p4-counter` still works; see Out of scope).
 - Not building a lock dashboard / UI / live-contention visualiser.
 - Not rewriting the frozen `_plan-locks-archive.md` advisory protocol history (it stays frozen at the 2026-05-17 cutover).
