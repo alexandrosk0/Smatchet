@@ -39,6 +39,7 @@ ALLOW_RE='/(example|foo|bar|baz|agentic-coding-handoff|agentic-flow-implementati
 # untracked-but-not-ignored files (it honours .gitignore), matching CI scope.
 mapfile -t refs < <(git grep -hoE --untracked 'docs/plans/((active|shipped|deferred)/)?[A-Za-z0-9._-]+\.md' \
                       -- ':!.understand-anything/' ':!agents/scripts/core/test-plan-ref-integrity.sh' \
+                      ':!agents/scripts/core/archive-plan.sh' ':!agents/scripts/core/test-archive-plan.sh' \
                       2>/dev/null | sort -u)
 
 # resolves <ref> — true if the ref points at a real plan file. A tier-less
@@ -189,6 +190,8 @@ is_archive_self_ref() {
   occ="$(git grep -nF --untracked -- "$r" . \
            ':(exclude).understand-anything/' \
            ':(exclude)agents/scripts/core/test-plan-ref-integrity.sh' \
+           ':(exclude)agents/scripts/core/archive-plan.sh' \
+           ':(exclude)agents/scripts/core/test-archive-plan.sh' \
            2>/dev/null)" || return 1
   [ -n "$occ" ] || return 1
   # Reject unless every occurrence is in the owning active plan on an Archive
