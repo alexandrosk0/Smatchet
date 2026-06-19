@@ -2,7 +2,7 @@
 
 > **Slug**: `pr-intent-capture-hardening` (matches this file's basename without `.md`).
 >
-> **Status**: `active`.
+> **Status**: `shipped`.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 
