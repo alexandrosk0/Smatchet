@@ -198,6 +198,10 @@ Diff touches `Source/Core/` (BugReportService) + the render path under it, so ga
 **Phase 2 — ARM64 toolchain + Release/installer (PR pending):**
 - (this PR) · Arch-parameterized the three MSVC env wrappers (`with-msvc-env.sh`, `with-msvc.ps1`, `local/build-msvc-asan.ps1`) on `SMATCHET_MSVC_ARCH` (x64 default; arm64 → `vcvarsamd64_arm64.bat` cross from an x64 host / `vcvarsarm64.bat` native, host detected via `PROCESSOR_ARCHITEW6432`→`PROCESSOR_ARCHITECTURE`) with arch-selected vswhere `-requires` (`VC.Tools.ARM64`). Added `ninja-iter-msvc-arm64` + `ninja-publish-msvc-arm64` configure+build presets (publish omits `SMATCHET_UNREAL_THIRDPARTY_DIR`, sets `SMATCHET_BUILD_TESTS=ON`, builds `SmatchetStandalone`+`SmatchetTests`; arch flows from the sourced vcvars env). Arch-suffixed the clang-cl ASan runtime lookup in `cmake/Sanitizers.cmake` (`-x86_64`→`-aarch64` from `CMAKE_SYSTEM_PROCESSOR`, both names). Parameterized the Inno installer (`MyArchitecturesAllowed`, default `x64compatible`) and added `-Arch arm64` to `release_github.ps1` (selects the arm64 publish preset, `-arm64` artifact token, `arm64` Inno arch; auto-skips Unreal + light). Merged via PR #1389. Post-review hardening: lowercase-normalize `SMATCHET_MSVC_ARCH` in `with-msvc-env.sh`; `-Arch`↔preset-suffix cross-check in `release_github.ps1`; `with-msvc.ps1` uses `[Console]::Error.WriteLine` so `exit 2` is reached under `ErrorActionPreference=Stop`.
 
+**Phase 3 — ARM64 validation (PR pending):**
+- `36b5b297` · dormant `windows-arm64-native` CI leg — native `windows-11-arm` build of `ninja-publish-msvc-arm64` (`SmatchetStandalone`+`SmatchetTests`) then `ctest` (bucket-A doctest rig = the atomics surface); advisory (`continue-on-error`), gated behind repo variable `ENABLE_WIN_ARM64_RUNNER` so it never queues on a tier without the runner. `tooling.md` residue entry updated to "leg wired (dormant)".
+- (this PR) · `std::atomic` weak-memory audit — 316 explicit `memory_order` sites (73 relaxed / 99 acquire / 124 release / 20 acq_rel), 46 `memory_order` files + 66 declaring `std::atomic`. **Verdict CLEAN**: every relaxed site is a standalone counter/flag with no cross-variable invariant; every publish/gate of non-atomic data already uses paired acquire/release or a `std::mutex`; the new Windows-only `Dx12Bootstrap.cpp` carries **zero atomics** (fence + mutex only). One contract-fidelity fix applied: the AI streaming-cancel flag was *stored* with `release` (`AiAssistantController.cpp:159/222`) but *read* with `relaxed` in the three SSE clients — six loads `relaxed→acquire` (`AnthropicClient`/`OpenAiClient`/`OllamaClient`), pairing them with the release store and matching the already-correct acquire read at `AiAssistantController.cpp:241`.
+
 **Phase 4 — CI + packaging (PR pending):**
 - (this PR) · ARM64 advisory CI leg + Unreal ARM64 guard. `build-and-test.yml` gains `windows-msvc-arm64`: a compile-only `amd64_arm64` cross job (`msvc-dev-cmd` `arch: amd64_arm64` sources the cross vcvars → `ninja-iter-msvc-arm64` builds `SmatchetStandalone`), `continue-on-error` advisory, no `ctest` (the cross-built ARM64 binary can't execute on the x64 runner). `SmatchetImGuiPlugin.Build.cs` throws a `BuildException` when a Win64 target's architecture is ARM64 (packaged Win64 libs are x64-only). Row 12 (installer) already shipped in Phase 2; row 13 (perf arch key) deferred — see Deviations.
 
@@ -221,6 +225,11 @@ Diff touches `Source/Core/` (BugReportService) + the render path under it, so ga
 - **x64 path is byte-identical** — the x64 branch still sources `vcvars64.bat` and emits `x64compatible` with no artifact arch token; the host-arm64→x64 cross batch (`vcvarsarm64_amd64.bat`) is wired but only reached on an ARM64 host, so existing x64 dev/CI/release behaviour is unchanged.
 - **arm64 publish build preset targets `SmatchetStandalone` + `SmatchetTests` only** (not `SmatchetLuaTests`) — the preset sets `SMATCHET_BUILD_TESTS=ON` but not `SMATCHET_BUILD_LUA_TESTS`, so the Lua test target isn't defined; dropping it avoids a missing-target build error. The doctest rig is the bucket-A atomics surface Phase 3 cares about.
 - **`-Arch arm64` auto-skips Unreal + light standalone** — neither has an arm64 preset this phase (Unreal descoped; no arm64 light preset), so the release run skips them to stay green end-to-end rather than erroring on a missing preset.
+
+**Phase 3:**
+- **ARM64 execution shipped as a dormant CI leg, not run live** — no `windows-11-arm` runner is confirmed for this repo this session, so `windows-arm64-native` ships gated behind the `ENABLE_WIN_ARM64_RUNNER` repo variable (off by default) rather than as an active matrix job; flipping the variable activates it. The plan's stated Phase-3 risk mitigation — the `std::atomic` audit — is complete and CLEAN, so residual ARM64 risk is low even before the runtime run.
+- **The audit applied one fix beyond pure validation** — Phase 3 was scoped as validation, but the audit found a genuinely mis-paired acquire/release (the AI-client streaming-cancel flag: stored `release`, read `relaxed`) and corrected it in-scope (six `relaxed→acquire` loads). Strictly safer, cross-platform, zero behavioural change on x64; the rest of the ~310-site surface needed no change.
+- **DX12-on-WARP + `-Arch arm64` installer smokes deferred to the live leg** — both need real ARM64 execution; documented as follow-on steps on `windows-arm64-native` (tooling.md), not authored blind this session.
 
 **Phase 4:**
 - **Row 13 (perf-baseline arch key) deferred to Phase 3** — `perf-baseline.sh` already keys files `<scenario>.<host>.json` with a free-form `--host` label (`dev`, `ci-windows-latest`), so an arch-qualified key is a *naming* convention, not a code change: the future ARM64 perf job passes `--host=ci-windows-arm64` and bootstraps fresh baselines. No ARM64 perf run exists until a `windows-11-arm` runner lands (Phase 3), so wiring it now would be speculative + untestable. Documented; implemented alongside the first ARM64 perf run.
@@ -261,6 +270,19 @@ Diff touches `Source/Core/` (BugReportService) + the render path under it, so ga
 **NOT-RUN / deferred (needs a Windows / Windows-on-ARM toolchain — Phase 3):**
 - Cross-configure+build `ninja-publish-msvc-arm64` from an x64 host (`SMATCHET_MSVC_ARCH=arm64`); run `SmatchetTests` on a `windows-11-arm` runner (atomics audit); build the ARM64 Inno installer (`-Arch arm64`) and smoke-install on WoA.
 - PowerShell wrappers (`with-msvc.ps1`, `build-msvc-asan.ps1`, `release_github.ps1`) are unparsed here — no `pwsh` on the Linux host; syntax to be confirmed on Windows.
+
+**Phase 3 (PR pending) — the atomics audit is static analysis (complete); ARM64 *execution* is gated on a `windows-11-arm` runner, so the runtime half is NOT-RUN here:**
+
+| Gate | Command | Result |
+|---|---|---|
+| `std::atomic` weak-memory audit (full tree) | read of all 46 `memory_order` files + 66 `std::atomic` decls | **PASS — CLEAN**: no x86-TSO-dependent relaxed publish; `Dx12Bootstrap.cpp` has zero atomics; one `relaxed→acquire` fix applied (AI-client cancel reads) |
+| Workflow YAML parses + `windows-arm64-native` well-formed (`runs-on: windows-11-arm`, dormant gate, `continue-on-error`) | `python3 -c "yaml.safe_load(...)"` | **PASS** |
+| Lint (delta vs `origin/develop`) | `agents/scripts/project/test-lint-rules.sh --diff origin/develop` | **PASS** |
+| Doc validation | `scripts/dev/test-docs.sh` | **PASS** — 13/0 |
+
+**NOT-RUN / deferred (needs a `windows-11-arm` runner or physical WoA hardware):**
+- Native ARM64 `ctest` (bucket-A doctest rig) — runs once `ENABLE_WIN_ARM64_RUNNER=true` activates `windows-arm64-native`. The `relaxed→acquire` fix is in three **cross-platform** TUs (already built by the x64 + Android-arm64 legs), so the change itself is build-covered; only the end-to-end Windows-on-ARM doctest run remains.
+- DX12-on-WARP launch smoke + `-Arch arm64` Inno installer smoke — follow-on steps on the same leg (tooling.md).
 
 **Phase 4 (PR pending) — authored on Linux; YAML + C# changes, no GitHub Actions / UBT run available here:**
 

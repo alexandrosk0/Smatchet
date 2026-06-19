@@ -168,12 +168,12 @@ void OpenAiClient::SendStreaming(const AiClientConfig& cfg, const AiChatRequest&
     };
 
     cpr::WriteCallback wcb{[&](const std::string& chunk, intptr_t) -> bool {
-                               if (cancel && cancel->load(std::memory_order_relaxed)) {
+                               if (cancel && cancel->load(std::memory_order_acquire)) {
                                    cancelObserved = true;
                                    return false;
                                }
                                parser.Feed(chunk.data(), chunk.size(), translate);
-                               if (cancel && cancel->load(std::memory_order_relaxed)) {
+                               if (cancel && cancel->load(std::memory_order_acquire)) {
                                    cancelObserved = true;
                                    return false;
                                }
