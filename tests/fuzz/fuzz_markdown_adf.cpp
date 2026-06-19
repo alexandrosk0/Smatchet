@@ -10,6 +10,8 @@
 // exercised transitively.
 #include "Ui/MarkdownConvert.h"
 
+#include <nlohmann/json.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <string>

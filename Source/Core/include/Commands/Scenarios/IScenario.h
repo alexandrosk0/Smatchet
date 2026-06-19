@@ -19,7 +19,12 @@
 #include <unordered_map>
 #include <vector>
 
-#include <nlohmann/json.hpp>
+// Build-time win: this header names nlohmann::json only by const-reference
+// (OnStart/Start args) and as an out-of-line return-type declaration
+// (OnFinish) — never by value, never in an inline body — so the forward-decl
+// header suffices. Scenario .cpp implementations that build/return json values
+// include the full <nlohmann/json.hpp> directly.
+#include <nlohmann/json_fwd.hpp>
 
 class AppController;
 
