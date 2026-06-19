@@ -348,7 +348,10 @@ fi
 # without hardcoding a literal that the depot will eventually reach (CR
 # finding 2026-05-23 on #415: a hardcoded `99999999` makes this test
 # flaky once the counter passes that mark).
-latest_cl=$("$P4_BIN" changes -m1 //smatchet/... 2>/dev/null | sed -nE 's/^Change ([0-9]+).*/\1/p' | head -1)
+# `|| true`: head -1 closes the pipe after one line, SIGPIPEing the upstream
+# sed/p4 (141); under set -euo pipefail that 141 would otherwise abort this
+# assignment (CI-only — msys ignores SIGPIPE). latest_cl falls back to 0 below.
+latest_cl=$("$P4_BIN" changes -m1 //smatchet/... 2>/dev/null | sed -nE 's/^Change ([0-9]+).*/\1/p' | head -1 || true)
 nonexistent_cl=$(( ${latest_cl:-0} + 100000 ))
 if promote_missing_out=$(bash agents/scripts/project/p4-task-stream-to-pr.sh "$PROBE_PROMOTE_AGENT" "Phase 7 promote probe" --promote-reviewed-cl "$nonexistent_cl" 2>&1); then
     promote_missing_exit=0
