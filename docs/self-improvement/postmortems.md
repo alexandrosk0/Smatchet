@@ -27,6 +27,54 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-19 · PR #1428 · red `Intent section` (block-allowlisted) merged by the `merge-watcher` daemon running STALE gate logic — the poller *was* consulted, but its allow-list predated `Intent section`
+
+### What escaped
+`docs(skill): surface squash-sha ancestry as signal (c) in stale-branch cherry-trap` (#1428, merge
+`092b23480c5f429eb42c1349984976e5e81fffa7`, `2026-06-19T17:47:52Z`, head `4f6d6624`) merged to `develop`
+while the **block-allowlisted** `Intent section` doc-validation check was terminal `failure` (completed
+`17:46:44Z`, ~68 s before the merge) with **no** `intent-out-of-band` override label. Crucially — unlike the
+sibling #1406/#1414/#1415 escape below — this PR did **not** bypass the poller: `mergeActor:merge-watcher`,
+the sanctioned `smatchet-merge-watcher` daemon ran `merge-gates.sh`, which returned `GATES_PASSED` and armed
+the merge. The daemon's own audit row self-reported clean:
+`{"pr":1428,…,"gates":"GATES_PASSED","redChecks":[],"overrideLabels":[],"mergeActor":"merge-watcher"}`
+([`merge-snapshots.jsonl`](merge-snapshots.jsonl) line 105).
+
+### Root cause
+Blameless — a **long-running daemon enforcing out-of-date gate logic**, not a poller bypass and not a defect
+in the gate's *current* source. The watcher ([`merge-watcher.py`](../../agents/scripts/core/merge-watcher.py),
+Scheduled Task `SmatchetMergeWatcher`) runs `merge-gates.sh` from **its own host checkout** — the integration
+tree `C:/Dev/Smatchet`, parked on `feat/tsan-subset-sync-layer`, a branch predating #1391. `Intent section`
+was added to `MERGE_GATES_BLOCK_ALLOWLIST_RE` on **2026-06-18** (#1391, [ADR-0022](../adr/0022-intent-gate-promotion.md));
+the daemon's blob of `merge-gates.sh` predated that, so its allow-list regex did **not** match `Intent
+section`. A non-required RED check that is not on the allow-list is treated as advisory → not flagged →
+`GATES_PASSED`. The daemon had run continuously since 2026-06-15 and never re-synced, so it silently executed
+rules two days stale. This is **distinct** from the #1406/#1414/#1415 escape (the poller was *never*
+consulted; remedy = a poll-gated merge wrapper) — here the poller **was** consulted, so that wrapper would
+**not** have caught it: it would invoke the *same stale poller*. Compounding blind spot: the
+`merge-snapshots.jsonl` audit row is written *by the stale poller itself*, so it reports `redChecks:[]` — the
+audit trail cannot detect its own staleness.
+
+### Preventing gate
+A **gate-logic self-freshness guard** in [`merge-gates.sh`](../../agents/scripts/core/merge-gates.sh) (this
+PR): before emitting `GATES_PASSED` it compares the git blob of its own running file against
+`origin/develop`'s blob for the same path and, on divergence (or when unverifiable), **refuses
+`GATES_PASSED`, fail-closed**. Gated by `MERGE_GATES_FRESHNESS` ∈ `{off (default) | warn | block}`;
+`merge-watcher.py` sets `block`. Default `off` leaves every existing caller + local-dev run unaffected.
+Backed by 5 bats cases (off-inert, block+stale→refuse, block+fresh→pass, warn→warn-only,
+block+unverifiable→fail-closed). A self-guard **cannot** retro-protect a daemon *already running* the
+pre-guard file, so the operational complement is mandatory and was applied: the stale daemon was **stopped +
+its Scheduled Task disabled** (fail-safe), to be **restarted only from an up-to-date `develop` checkout**
+(deferred — cannot safely move the shared integration tree's HEAD this session; the daemon stays
+stopped+disabled until a develop-current checkout is available).
+
+### Filed as
+New tooling per-entry backlog file
+[`categories/tooling/2026-06-19-merge-watcher-runs-stale-gate-logic.md`](categories/tooling/2026-06-19-merge-watcher-runs-stale-gate-logic.md)
+(P1) — carries the freshness self-guard (shipped here) plus the residual *restart-from-fresh-checkout* +
+*periodic daemon self-resync* operational gate, cross-ref'd to #1428 and distinguished from the
+PRs #1406/#1414/#1415 poller-bypass entry.
+
 ## 2026-06-19 · PR #1406, #1414, #1415 · red `Intent section` (block-allowlisted) merged via non-poller paths — bare `gh pr merge --auto` / direct REST bypass the poller-only gate
 
 ### What escaped

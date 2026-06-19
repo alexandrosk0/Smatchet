@@ -66,6 +66,20 @@
 #                                  for the documented admin-merge escape (AGENTS.md
 #                                  § Merge gates: a positively-confirmed STALE-BLOCKED
 #                                  PR where everything is actually green).
+#   MERGE_GATES_FRESHNESS        — gate-logic self-freshness guard. off (default) |
+#                                  warn | block. When "block", refuse GATES_PASSED if
+#                                  THIS script's on-disk blob differs from
+#                                  origin/develop:agents/scripts/core/merge-gates.sh
+#                                  (fail-closed) — an unattended merger running a
+#                                  STALE checkout would otherwise enforce out-of-date
+#                                  gate logic (the #1428 gate escape: a host tree
+#                                  parked behind develop merged past a RED non-required
+#                                  "Intent section" its old allow-list lacked).
+#                                  smatchet-merge-watcher sets "block"; "warn" prints
+#                                  the divergence without blocking (local-dev default
+#                                  if opted in); "off" disables the check entirely.
+#                                  Test-only overrides MERGE_GATES_FRESH_RUN_BLOB /
+#                                  MERGE_GATES_FRESH_DEV_BLOB bypass the git compare.
 #   MERGE_GATES_CR_GRACE_POLLS   — CR review grace window (default 10 polls)
 #   MERGE_GATES_BB_GRACE_POLLS   — Bugbot re-review grace window for a STALE
 #                                  (prior-commit-only) cursor[bot] review before
@@ -196,6 +210,70 @@ poll_merge_gates() {
     if [ "${MERGE_GATES_FLIP_READY:-}" = "true" ]; then
         gh_pr_ready_idempotent "$prNumber" || \
             echo "WARN: gh_pr_ready_idempotent returned non-zero; PR may still be draft." >&2
+    fi
+
+    # Gate-logic self-freshness guard (#1428). An unattended merger (the watcher)
+    # runs THIS script from its host checkout; if that checkout is parked behind
+    # origin/develop, it enforces STALE gate logic — e.g. an old allow-list missing
+    # "Intent section" merged a PR past that RED non-required check. Compare this
+    # file's on-disk blob to origin/develop's blob; in block mode refuse a pass when
+    # they differ OR the comparison can't be made (fail-closed). Computed ONCE here
+    # (before the poll loop) and consulted in the GATES_PASSED conjunction below.
+    # Default off so existing callers + local dev are unaffected unless they opt in;
+    # the watcher sets MERGE_GATES_FRESHNESS=block.
+    local fresh_mode="${MERGE_GATES_FRESHNESS:-off}"
+    # Reject typos up front — an unrecognised value would otherwise fall through the
+    # "!= off" gate into warn-only handling, silently weakening enforcement (#1428 CR).
+    case "$fresh_mode" in
+        off|warn|block) ;;
+        *)
+            echo "poll_merge_gates: MERGE_GATES_FRESHNESS must be one of off|warn|block (got: '$fresh_mode')" >&2
+            return 3
+            ;;
+    esac
+    local self_stale=false
+    if [ "$fresh_mode" != "off" ]; then
+        local _self_relpath="agents/scripts/core/merge-gates.sh"
+        local _run_blob _dev_blob
+        if [ -n "${MERGE_GATES_FRESH_RUN_BLOB:-}" ]; then
+            # Test-only override — bypass git, use injected blobs so the bats suite
+            # exercises the guard deterministically without a git/network dependency.
+            _run_blob="$MERGE_GATES_FRESH_RUN_BLOB"
+            _dev_blob="${MERGE_GATES_FRESH_DEV_BLOB:-}"
+        else
+            local _root
+            _root="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
+            if [ -n "$_root" ]; then
+                # Bounded ref refresh (refs only; never touches the worktree). A failed
+                # fetch must NOT silently compare against a stale local origin/develop —
+                # blank _dev_blob so the unverifiable branch below fails closed (#1428 CR).
+                local _fetch_ok=true
+                git -C "$_root" fetch -q --no-tags origin develop >/dev/null 2>&1 || _fetch_ok=false
+                _run_blob="$(git -C "$_root" hash-object "${BASH_SOURCE[0]}" 2>/dev/null)"
+                _dev_blob="$(git -C "$_root" rev-parse -q --verify "origin/develop:$_self_relpath" 2>/dev/null)"
+                if [ "$_fetch_ok" != true ]; then
+                    _dev_blob=""
+                fi
+            else
+                _run_blob=""
+                _dev_blob=""
+            fi
+        fi
+        if [ -z "$_run_blob" ] || [ -z "$_dev_blob" ]; then
+            if [ "$fresh_mode" = "block" ]; then
+                echo "BLOCK: merge-gates freshness unverifiable (no git checkout / no origin/develop:$_self_relpath blob); refusing GATES_PASSED (MERGE_GATES_FRESHNESS=block, fail-closed). See postmortems.md #1428." >&2
+                self_stale=true
+            else
+                echo "WARN: merge-gates freshness unverifiable (no git checkout / no origin/develop:$_self_relpath blob); MERGE_GATES_FRESHNESS=warn — not blocking." >&2
+            fi
+        elif [ "$_run_blob" != "$_dev_blob" ]; then
+            if [ "$fresh_mode" = "block" ]; then
+                echo "BLOCK: merge-gates.sh differs from origin/develop (running ${_run_blob:0:12} != develop ${_dev_blob:0:12}) — this merger would enforce out-of-date gate logic. Refresh the checkout to origin/develop and restart. Refusing GATES_PASSED (fail-closed). See postmortems.md #1428." >&2
+                self_stale=true
+            else
+                echo "WARN: merge-gates.sh differs from origin/develop (running ${_run_blob:0:12} != develop ${_dev_blob:0:12}); gate logic may be out of date (MERGE_GATES_FRESHNESS=warn — not blocking)." >&2
+            fi
+        fi
     fi
 
     local POLL_INTERVAL="${MERGE_GATES_POLL_INTERVAL:-60}"
@@ -1117,7 +1195,7 @@ poll_merge_gates() {
         if [ "$ci_fail" -eq 0 ] && [ "$ci_pend" -eq 0 ] && \
            [ "$req_absent" -eq 0 ] && [ "$mergestate_blocks" = false ] && \
            [ "$cr_pass" = true ] && [ "$cr_open_blocks" = false ] && \
-           [ "$bb_block" = false ] && \
+           [ "$bb_block" = false ] && [ "$self_stale" = false ] && \
            [ "$user" -eq 0 ] && [ "$review_pass" = true ]; then
             # Diagnostic: surface GitHub's mergeStateStatus alongside our pass
             # decision so the operator can correlate when GH says BLOCKED while

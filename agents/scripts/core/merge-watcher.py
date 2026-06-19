@@ -463,6 +463,11 @@ def poll_one(
     env = os.environ.copy()
     env.setdefault("MERGE_GATES_MAX_POLLS", "1")
     env.setdefault("MERGE_GATES_POLL_INTERVAL", "0")
+    # Gate-logic self-freshness guard (#1428): refuse GATES_PASSED when this host
+    # checkout's merge-gates.sh is behind origin/develop, so an unattended daemon
+    # parked on a stale tree can't merge on out-of-date gate logic. setdefault so an
+    # operator can override (warn/off) via the inherited env if a refresh is pending.
+    env.setdefault("MERGE_GATES_FRESHNESS", "block")
     # ORCH_USER is required by merge-gates.sh but the Scheduled Task spawns
     # python with an inherited env that often lacks it (user-scope env vars
     # only flow through interactive shells). Resolve once and cache.
