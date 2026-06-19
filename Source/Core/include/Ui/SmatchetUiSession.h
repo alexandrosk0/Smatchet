@@ -6,7 +6,11 @@
 #include "SmatchetDefaults.h"
 #include "CancelToken.h"
 
-#include <nlohmann/json.hpp>
+// Use json_fwd here rather than the full json.hpp: the complete json type is
+// needed only at the few use sites and the out-of-line UiDrawSession destructor,
+// which include it directly. Keeps json off this 75-includer header. See debt
+// entry json-fwd-swap-by-value-carriers.
+#include <nlohmann/json_fwd.hpp>
 #include "IssueCreatePipeline.h"
 #include "IssueDraft.h"
 #include "IssueTableSerializer.h"

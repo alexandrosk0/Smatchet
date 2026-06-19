@@ -44,6 +44,8 @@
 
 #include <memory>
 
+#include <nlohmann/json.hpp> // heap UiDrawSession (below) needs complete json for its vector<json> members
+
 extern UiDrawSession g_ui;
 
 namespace {
