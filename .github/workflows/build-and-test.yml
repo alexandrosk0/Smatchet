@@ -472,6 +472,21 @@ jobs:
                -o assets/fonts/fa-solid-900.ttf
           echo "${FA_SHA256}  assets/fonts/fa-solid-900.ttf" | sha256sum -c -
 
+      - name: Confirm native ARM64 host (guard against an x64 fallback runner)
+        shell: pwsh
+        run: |
+          # The whole point of this leg is running the doctest rig on a real ARM
+          # core. A misprovisioned/x64 runner would silently build+ctest as x64 and
+          # green-wash the atomics validation, so assert the host arch before the
+          # expensive configure/build.
+          Write-Host "PROCESSOR_ARCHITECTURE=$env:PROCESSOR_ARCHITECTURE"
+          Write-Host "PROCESSOR_IDENTIFIER=$env:PROCESSOR_IDENTIFIER"
+          if ($env:PROCESSOR_ARCHITECTURE -ne 'ARM64') {
+            Write-Error "Expected a native ARM64 host but PROCESSOR_ARCHITECTURE='$env:PROCESSOR_ARCHITECTURE'."
+            exit 1
+          }
+          Write-Host 'Confirmed: native ARM64 host.'
+
       - name: Configure ninja-publish-msvc-arm64 (native)
         run: cmake --preset ninja-publish-msvc-arm64
 
