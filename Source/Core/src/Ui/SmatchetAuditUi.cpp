@@ -16,6 +16,9 @@
 #include <future>
 #include <string>
 #include <vector>
+
+#include <nlohmann/json.hpp>
+
 class AppController;
 /** Join/discard in-flight audit reload so shutdown and reopen don't rely on future destructor blocking. */
 void DrainAuditReloadFuture(UiDrawSession& d) {

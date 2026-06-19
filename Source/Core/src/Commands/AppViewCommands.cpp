@@ -15,6 +15,8 @@
 #include <string>
 #include <utility>
 
+#include <nlohmann/json.hpp>
+
 // Same singleton accessed by SmatchetUI.cpp — file-static definition lives there.
 extern UiDrawSession g_ui;
 

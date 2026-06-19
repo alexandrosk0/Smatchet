@@ -16,6 +16,8 @@
 #include <string>
 #include <utility>
 
+#include <nlohmann/json.hpp>
+
 // Same singleton ViewToggleCommands.cpp uses — file-static definition lives in
 // SmatchetUI.cpp, declared extern in SmatchetUiSession.h.
 

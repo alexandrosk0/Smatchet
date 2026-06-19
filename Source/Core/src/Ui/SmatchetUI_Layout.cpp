@@ -11,6 +11,8 @@
 #include <cstring>
 #include <future>
 
+#include <nlohmann/json.hpp>
+
 namespace {
 
 struct LayoutRect {

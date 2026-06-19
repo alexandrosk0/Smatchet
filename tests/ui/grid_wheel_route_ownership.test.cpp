@@ -20,6 +20,8 @@
 #include <cmath>
 #include <cstring>
 
+#include <nlohmann/json.hpp> // local UiDrawSession (below) needs complete json for its vector<json> members
+
 extern "C" void SmatchetUiTestRouteActiveProjectGridWheelForCurrentTable(UiDrawSession* d, GridPane* pane);
 
 namespace {

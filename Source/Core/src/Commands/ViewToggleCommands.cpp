@@ -15,6 +15,8 @@
 #include <string>
 #include <utility>
 
+#include <nlohmann/json.hpp>
+
 // Same singleton accessed by SmatchetUI.cpp — file-static definition lives
 // there. Pulling it in via extern avoids adding a getter on AppController for
 // what is essentially a bag of UI booleans.
