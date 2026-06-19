@@ -403,6 +403,89 @@ jobs:
         if: always()
         run: sccache --show-stats
 
+  windows-arm64-native:
+    name: Windows-on-ARM native build + ctest (atomics gate, advisory, runner-gated)
+    needs: changes
+    # Phase 3 of docs/plans/active/dx12-standalone-win-arm64.md. The plan's
+    # headline ARM64 risk is std::atomic memory-ordering: ~310 memory_order sites
+    # (~73 relaxed) written under x86-TSO, where loads are implicitly acquire and
+    # stores implicitly release — guarantees ARM64's weak model does NOT provide.
+    # The Phase 4 cross leg above proves ARM64 compile+link on windows-2022 but
+    # cannot EXECUTE the binary, so the bucket-A doctest rig (which is exactly the
+    # atomics surface) has never run on an ARM core for Windows-only TUs. This leg
+    # builds NATIVELY on a windows-11-arm runner and runs ctest there.
+    #
+    # Dormant by default. windows-11-arm GitHub-hosted runners are free for public
+    # repos but may be absent on some private tiers, and a job pinned to an
+    # unschedulable runner queues until timeout. Activate by setting the repository
+    # variable ENABLE_WIN_ARM64_RUNNER=true (Settings → Secrets and variables →
+    # Actions → Variables) once a windows-11-arm runner is confirmed available.
+    # continue-on-error keeps a first-run break advisory (matching the cross leg).
+    # Follow-on steps for the live leg (tracked in tooling.md): DX12-on-WARP launch
+    # smoke and the -Arch arm64 Inno installer smoke.
+    if: ${{ vars.ENABLE_WIN_ARM64_RUNNER == 'true' && needs.changes.outputs.code == 'true' && needs.changes.outputs.android_only != 'true' }}
+    runs-on: windows-11-arm
+    continue-on-error: true
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Setup MSVC dev environment (ARM64 native)
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        with:
+          arch: arm64
+
+      - name: Setup sccache (object cache)
+        uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
+
+      - name: Cache sccache objects (msvc-arm64-native)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ github.workspace }}\.sccache
+          key: ${{ runner.os }}-sccache-msvc-arm64-native-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-sccache-msvc-arm64-native-
+
+      - name: Cache FetchContent _deps (msvc-arm64-native)
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .fetchcontent-src
+          # Sources are arch-independent; fall back to the shared prefix to reuse
+          # any already-fetched dependency sources.
+          key: ${{ runner.os }}-fetchcontent-msvc-arm64-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Fetch Font Awesome 6 Solid TTF (pinned + checksum-verified)
+        shell: bash
+        env:
+          FA_TAG: "6.7.2"
+          FA_SHA256: "af19d135d3a935b3ebfbd80320716ffe1202052c5f68dc2c5f1abc57005ac605"
+        run: |
+          set -euo pipefail
+          curl -fsSL \
+               "https://github.com/FortAwesome/Font-Awesome/raw/${FA_TAG}/webfonts/fa-solid-900.ttf" \
+               -o assets/fonts/fa-solid-900.ttf
+          echo "${FA_SHA256}  assets/fonts/fa-solid-900.ttf" | sha256sum -c -
+
+      - name: Configure ninja-publish-msvc-arm64 (native)
+        run: cmake --preset ninja-publish-msvc-arm64
+
+      - name: Build SmatchetStandalone + SmatchetTests (ARM64 native)
+        run: cmake --build --preset ninja-publish-msvc-arm64
+
+      - name: Run ctest — bucket-A doctest rig on native ARM64 (atomics gate)
+        working-directory: build/ninja-publish-msvc-arm64
+        run: ctest --output-on-failure
+
+      - name: Report sccache stats
+        if: always()
+        run: sccache --show-stats
+
   windows-msvc-light:
     name: Windows + MSVC (Smatchet light — AI/Whisper/MCP off)
     needs: changes
