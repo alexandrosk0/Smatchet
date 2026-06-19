@@ -92,7 +92,7 @@ void RegisterBugReportCommands(CommandRegistry& reg, AppController& app) {
             ParamSpec p;
             p.Name = "screenshot";
             p.Type = ParamType::Bool;
-            p.Default = true;
+            p.Default = std::make_shared<nlohmann::json>(true);
             p.Description = "Modal only: attach a screenshot (always text-redacted; default true).";
             return p;
         }()},

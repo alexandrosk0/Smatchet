@@ -126,8 +126,8 @@ void CommandPaletteUi::dispatchSelected(AppController& app) {
             for (size_t i = 0; i < cmd.Params.size(); ++i) {
                 argFormBufs_.emplace_back(256, '\0');
                 // Seed from default if present.
-                if (!cmd.Params[i].Default.is_null() && cmd.Params[i].Default.is_string()) {
-                    const std::string def = cmd.Params[i].Default.get<std::string>();
+                if (cmd.Params[i].Default && !cmd.Params[i].Default->is_null() && cmd.Params[i].Default->is_string()) {
+                    const std::string def = cmd.Params[i].Default->get<std::string>();
                     const size_t len = (std::min)(def.size(), size_t(255));
                     std::memcpy(argFormBufs_.back().data(), def.c_str(), len);
                 }

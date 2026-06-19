@@ -62,7 +62,7 @@ static void RegisterDebugLogCommand(CommandRegistry& reg, AppController& /*app*/
                                 return CommandResult::Success(std::move(out));
                             });
     ParamSpec level = PString("level", "trace|debug|info|warn|error");
-    level.Default = "info";
+    level.Default = std::make_shared<nlohmann::json>("info");
     level.Enum = {"trace", "debug", "info", "warn", "error"};
     c.Params = {
         std::move(level),

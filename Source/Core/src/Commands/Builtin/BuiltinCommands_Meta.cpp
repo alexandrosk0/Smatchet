@@ -10,6 +10,8 @@
 #include <utility>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 namespace smatchet {
 namespace cmd {
 
@@ -71,8 +73,8 @@ void RegisterCommandsListCommand(CommandRegistry& reg) {
                                                 pj["required"] = p.Required;
                                                 if (!p.Description.empty())
                                                     pj["description"] = p.Description;
-                                                if (!p.Default.is_null())
-                                                    pj["default"] = p.Default;
+                                                if (p.Default && !p.Default->is_null())
+                                                    pj["default"] = *p.Default;
                                                 if (!p.Enum.empty())
                                                     pj["enum"] = p.Enum;
                                                 params.push_back(std::move(pj));
@@ -96,7 +98,7 @@ void RegisterCommandsListCommand(CommandRegistry& reg) {
                 ParamSpec p;
                 p.Name = "full";
                 p.Type = ParamType::Bool;
-                p.Default = false;
+                p.Default = std::make_shared<nlohmann::json>(false);
                 p.Description = "Include compact per-param schema per command.";
                 return p;
             }()},

@@ -518,6 +518,11 @@ add_executable(SmatchetTests
     # Source/Core/include/Commands/Command.h — no extra .cpp linked (the registry
     # TU + handlers stay out of the cpr-free rig).
     Core/CommandSourceTrust.test.cpp
+    # json-fwd-swap-by-value-carriers: pins the std::shared_ptr<nlohmann::json>
+    # boxing of Command.h's Default/Details/Data members + the readers' null-ptr
+    # guards (Success/ToWireJson/ToJson/BuildJsonSchema). Links Command.cpp, which
+    # is already pulled into this rig below for the scenario-registry tests.
+    Core/CommandResultBoxing.test.cpp
     Core/DictationInsertionRouter.test.cpp
     Core/AiAssistantInputSeedDecision.test.cpp
     Core/AiAssistantSendButton.test.cpp

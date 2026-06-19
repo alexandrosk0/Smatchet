@@ -11,6 +11,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include <nlohmann/json.hpp>
+
 #if defined(_WIN32)
 #include <ghc/filesystem.hpp>
 namespace fs = ghc::filesystem;

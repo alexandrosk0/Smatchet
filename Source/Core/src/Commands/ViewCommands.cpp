@@ -51,8 +51,8 @@ void RegisterViewListCommand(AppController& app, Views& views, CommandRegistry& 
     Command c;
     c.Name = "view.list"; c.Category = "view";
     c.Summary = "List all configured ticket-grid views.";
-    c.Params = {[]{ ParamSpec p; p.Name="limit"; p.Type=ParamType::Int; p.Default=50; return p; }(),
-                []{ ParamSpec p; p.Name="offset"; p.Type=ParamType::Int; p.Default=0; return p; }()};
+    c.Params = {[]{ ParamSpec p; p.Name="limit"; p.Type=ParamType::Int; p.Default=std::make_shared<nlohmann::json>(50); return p; }(),
+                []{ ParamSpec p; p.Name="offset"; p.Type=ParamType::Int; p.Default=std::make_shared<nlohmann::json>(0); return p; }()};
     // view.list reads ViewState.Slice_.Views — written by Views Dashboard window on
     // the UI thread without an internal mutex. Hop to UI thread for race-free read.
     c.Handler = [&app, &views](const nlohmann::json& args, const CommandContext&) {
@@ -165,7 +165,7 @@ void RegisterViewCreateCommand(AppController& app, Views& views, CommandRegistry
             p.Description="JQL filter (default: assignee=currentUser())."; return p; }(),
         []{ ParamSpec p; p.Name="fields"; p.Type=ParamType::Json;
             p.Description="JSON array of field ids to display (default: empty)."; return p; }(),
-        []{ ParamSpec p; p.Name="triggerSync"; p.Type=ParamType::Bool; p.Default=false;
+        []{ ParamSpec p; p.Name="triggerSync"; p.Type=ParamType::Bool; p.Default=std::make_shared<nlohmann::json>(false);
             p.Description="If true, also sync from tracker immediately after create."; return p; }(),
     };
     // view.create writes Views::Slice_ + persists to disk + may trigger a sync.

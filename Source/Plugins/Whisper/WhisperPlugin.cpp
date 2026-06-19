@@ -605,13 +605,13 @@ smatchet::cmd::Command BuildTranscribeOnceCommand() {
     secondsParam.Type = ParamType::Int;
     secondsParam.Required = false;
     secondsParam.Description = "Capture duration in seconds when --file is not used (default 5).";
-    secondsParam.Default = 5;
+    secondsParam.Default = std::make_shared<nlohmann::json>(5);
     ParamSpec modeParam;
     modeParam.Name = "mode";
     modeParam.Type = ParamType::String;
     modeParam.Required = false;
     modeParam.Description = "Backend selection. Phase B only honours 'cloud'; 'local' is rejected.";
-    modeParam.Default = "cloud";
+    modeParam.Default = std::make_shared<nlohmann::json>("cloud");
     modeParam.Enum = {"cloud", "auto", "local"};
     c.Params = {std::move(fileParam), std::move(secondsParam), std::move(modeParam)};
 

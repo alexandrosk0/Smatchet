@@ -259,7 +259,7 @@ static void RegisterCreateCommand(CommandRegistry& reg, AppController& app) {
             ParamSpec p;
             p.Name = "offline";
             p.Type = ParamType::Bool;
-            p.Default = false;
+            p.Default = std::make_shared<nlohmann::json>(false);
             p.Description = "Queue offline rather than creating live.";
             return p;
         }()},
