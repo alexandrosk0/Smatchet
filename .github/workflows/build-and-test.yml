@@ -203,6 +203,66 @@ jobs:
           echo "android-only diff (skip desktop builds): ${android_only}"
           echo "android_only=${android_only}" >> "$GITHUB_OUTPUT"
 
+  # High-integrity C++ delta gate (docs/plans/shipped/high-integrity-cpp-enforcement.md),
+  # broken out of the windows-msvc build job into its OWN required lane. WHY: the
+  # gate ran inside windows-msvc's "Run non-UI bucket-A tests" step, so a trivial
+  # comment-noise / style nit reds the REQUIRED windows-msvc job AND — because every
+  # downstream bucket job `needs: windows-msvc` (bucket-c-screenshot-diff,
+  # bucket-e-ui-tests, mobile-texture-guard-smoke, the hard-fail
+  # bucket-launch-smoke-mesa-gl) — SKIPS the entire real verification surface on a
+  # style nit. Decoupling it keeps windows-msvc green (so the buckets RUN) while the
+  # nit reds only THIS check. It stays a HARD GATE: NO continue-on-error — this is a
+  # required branch-protection context (project.config.json §
+  # branch_protection.required_contexts entry "Comment-noise + high-integrity gate")
+  # and the merge-gates poller's required-context ground truth, so a red here still
+  # blocks merge. We are NOT loosening merge policy, only stopping the nit from
+  # skipping the buckets.
+  #
+  # Runner: ubuntu-latest. test-lint-rules.sh is OS-portable — pure bash + git text
+  # analysis + python helpers (comment_audit.py / function_size_audit.py /
+  # agent_size_audit.py), no cl.exe / MSVC / PowerShell / Windows-path dependency
+  # (the only compiler-touching rule, narrowing-conversions, is OPT-IN behind
+  # SMATCHET_LINT_NARROWING and warn-skips without a clang compile_commands.json, so
+  # it is inert here). Ubuntu is cheaper + faster than a windows-2022 runner.
+  #
+  # Needs FULL HISTORY for `--diff origin/develop` (merge-base resolution), mirroring
+  # the unshallow + fetch-develop setup the build job used to carry.
+  comment-noise-gate:
+    name: Comment-noise + high-integrity gate
+    needs: changes
+    if: ${{ needs.changes.outputs.code == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: High-integrity C++ delta gate (test-lint-rules.sh --diff)
+        shell: bash
+        run: |
+          # The gate (function_size_audit / comment_audit --diff) diffs HEAD against
+          # `git merge-base origin/develop HEAD`, so it needs REAL HISTORY on both
+          # sides. fetch-depth:0 above gives full HEAD history; fetch develop with
+          # full history so merge-base resolves the real branch point (a depth-1
+          # develop fetch leaves merge-base empty → the script falls back to develop's
+          # TIP and false-flags any PR branched before a sibling change landed —
+          # tooling.md P1).
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            git fetch --no-tags --unshallow origin
+          fi
+          git fetch --no-tags origin develop
+          git rev-parse --verify --quiet origin/develop >/dev/null || {
+            echo "::error::origin/develop unavailable — cannot run high-integrity delta gate"; exit 1; }
+          bash agents/scripts/project/test-lint-rules.sh --diff origin/develop
+          # NB: the gate's bats (tests/bats/lint_rules.bats via test-lint-rules-bats.sh)
+          # run at the pre-push gate (test-all.sh, where bats is installed), NOT here.
+          # CI enforces the gate itself (--diff above); the bats are the gate's unit tests.
+
   windows-msvc:
     name: Windows + MSVC
     needs: changes
@@ -291,27 +351,16 @@ jobs:
           bash scripts/dev/test-cppcheck-path-detection.sh
           bash scripts/dev/test-build-warnings.sh
           bash scripts/dev/test-markdown-lang-tag.sh
-          # High-integrity C++ delta gate (docs/plans/shipped/high-integrity-cpp-enforcement.md):
-          # fail on any NEW strict-zone violation vs origin/develop, grandfathering
-          # existing. The gate (function_size_audit / comment_audit --diff) diffs HEAD
-          # against `git merge-base origin/develop HEAD`, so it needs REAL HISTORY on
-          # both sides. A shallow clone (default checkout depth 1) + a depth-1 develop
-          # fetch leaves merge-base empty → the script silently falls back to develop's
-          # TIP and false-flags any PR branched before a sibling decomposition landed
-          # (tooling.md P1 — this taxed the whole decompose-monoliths rollout). Unshallow
-          # HEAD and fetch develop with full history so merge-base resolves the real
-          # branch point; then existing over-cap functions grandfather correctly.
-          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
-            git fetch --no-tags --unshallow origin
-          fi
-          git fetch --no-tags origin develop
-          git rev-parse --verify --quiet origin/develop >/dev/null || {
-            echo "::error::origin/develop unavailable — cannot run high-integrity delta gate"; exit 1; }
-          bash agents/scripts/project/test-lint-rules.sh --diff origin/develop
-          # NB: the gate's bats (tests/bats/lint_rules.bats via test-lint-rules-bats.sh)
-          # run at the pre-push gate (test-all.sh, where bats is installed), NOT here —
-          # the Windows CI runner has no bats (the wrapper would exit 2 / "bats missing").
-          # CI enforces the gate itself (--diff above); the bats are the gate's unit tests.
+          # NB: the high-integrity C++ delta gate (test-lint-rules.sh --diff
+          # origin/develop) used to run HERE, inside this required build job. It was
+          # decoupled into its own required lane — the `comment-noise-gate` job below
+          # — so that a pure style/comment-noise nit reds ITS OWN check without
+          # red-walling this build job (which every downstream bucket job
+          # `needs: windows-msvc`). A nit here used to SKIP every bucket (the real
+          # verification: screenshot-diff, bucket-E, texture-guard, launch-smoke).
+          # The gate stays REQUIRED + BLOCKING (project.config.json §
+          # branch_protection.required_contexts), it just no longer gates the build.
+          # See docs/plans/shipped/high-integrity-cpp-enforcement.md.
 
       - name: Report sccache stats
         if: always()
