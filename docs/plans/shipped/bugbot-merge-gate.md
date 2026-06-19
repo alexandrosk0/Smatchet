@@ -2,7 +2,7 @@
 
 > **Slug**: `bugbot-merge-gate` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — the machine-readable lifecycle marker. Values: `active` (driving in-flight work) · `shipped` (post-ship sections populated + all cited PRs merged — this file belongs in `docs/plans/shipped/`) · `blocked` / `deferred` (paused — one-line why). **Flip to `shipped` in the SAME post-ship PR that fills § Implementation log AND `git mv`s this file active → shipped** (see § Archive). `agents/scripts/core/plan-archival-owed.sh` nags at SessionStart if any `active/` plan is marked `shipped` but never moved.
+> **Status**: `shipped` — the machine-readable lifecycle marker. Values: `active` (driving in-flight work) · `shipped` (post-ship sections populated + all cited PRs merged — this file belongs in `docs/plans/shipped/`) · `blocked` / `deferred` (paused — one-line why). **Flip to `shipped` in the SAME post-ship PR that fills § Implementation log AND `git mv`s this file active → shipped** (see § Archive). `agents/scripts/core/plan-archival-owed.sh` nags at SessionStart if any `active/` plan is marked `shipped` but never moved.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 
@@ -116,30 +116,27 @@ Per `AGENTS.md` § Verification automation — zero manual steps. Buckets:
 - **Auto-applying Bugbot "Fix all" suggestions** — follow-up plan if desired; this plan gates + triages only.
 - **Bugbot thread auto-resolution** — the CR path has `maybe_resolve_stuck_cr_threads` (`coderabbit-triage.md:166`); a Bugbot equivalent is a separate follow-up, not required for the gate to function (open threads simply block until a human/agent resolves or the `bugbot-out-of-band` override fires).
 - **Promoting `bugbot-out-of-band` into branch protection / required checks** — Bugbot stays PR-advisory like CR (custom poller only), not a GitHub-required check.
+- **`bb_override` in the merge-snapshot ledger** — a `bugbot-out-of-band` merge is not yet recorded in `GATE_SNAPSHOT` / the ADR-0017 ledger's `redChecks` (it emits an operator-visible stderr `WARN` only). Threading it through `merge-watcher.py`'s `_parse_gate_snapshot` + the ledger schema + `merge_watcher.bats` is the follow-up (see § Deviations).
+- **`.py` Bugbot inline-comment fetch** — `coderabbit-triage.py` is now bot-shape-aware (allow-list + Bugbot body parse + noise filter) but still fetches only summary-review bodies; pulling Bugbot's `pulls/$PR/comments` inline findings into the `.py` classifier is a follow-up (the `.md` agent already fetches them per § Process step 2).
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+*(branch `claude/admiring-ptolemy-qjsx8u`; squash sha filled at merge.)*
+- `merge-gates.sh` — Bugbot gate #4: GraphQL projection appends `$bbstate` (24), `bb_open` (25, unresolved non-outdated `cursor[bot]` inline-finding threads), `bb_oob` (26, `bugbot-out-of-band` label); field-count guard `-ne 24`→`-ne 27` + field-index inventory; `MERGE_GATES_BB_GRACE_POLLS` knob (default 10); the decision bucket (BLOCK on `bb_open>0` → TERMINAL no-wedge → out-of-band → STALE grace → PASS) with a `bb_block` conjunct folded into the `GATES_PASSED` composite; a Bugbot cell on the Poll line + stderr `BLOCK:`/`WARN:` lines; header contract updated (gate #4, override, knob).
+- `coderabbit-triage.md` + `.py` — generalised the bot-login filter to the `{coderabbitai[bot], cursor[bot]}` allow-list; Bugbot body-shape parse (`### <title>` + `**<Sev> Severity**`) + `couldn't run`/`usage limit` noise filter; shared `triage-rules-version: 4` marker added to both.
+- `docs/agent-rules/merge-gates.md` + `AGENTS.md` — gate #4 + `bugbot-out-of-band` override + the three no-wedge hatches + `BB_GRACE_POLLS` + status-line example (AGENTS.md edited in place to hold the 150-line cap).
+- `tests/bats/merge_gates.bats` (+12 Bugbot cases) + 4 `tests/fixtures/merge_gates_bb_*.json` fixtures.
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+- **Three appended tuple fields, not two (`-ne 27`, not `-ne 26`).** Faithfully mirroring the CodeRabbit machinery — which keeps `cr-out-of-band` as its **own** field (18), not folded into `crstate` — required a separate `bb_oob` field (26). Folding the label into `bb_state` makes the "open findings + override → WARN" case inexpressible (`bb_open` is a separate count). Fields = 24 existing + `bbState`(24) + `bbOpen`(25) + `bbOob`(26). `bbOob` is the new trailing always-non-empty (`true`/`false`) field, preserving the trailing-non-empty-strip invariant the plan named.
+- **`bb_state` is a 4-way enum (`ABSENT`/`STALE`/`TERMINAL`/`<review-state>`), no `bb_installed` probe.** The plan's "no `cursor[bot]` review on head → grace" needed the missing "Bugbot-free vs mid-re-review" distinction (case 8 pass vs case 4 PENDING). Grace is scoped to `STALE` (engaged-but-prior-commit); `ABSENT` (no `cursor[bot]` artefact anywhere) passes immediately, so a Bugbot-free / Bugbot-uninstalled repo is never waited on — no config-probe needed (Bugbot has no in-repo config file to probe, unlike CR's `.coderabbit.yaml`).
+- **`GATE_SNAPSHOT` not extended with `bb_override`.** Kept the `GATE_SNAPSHOT cr_override=N downgraded=…` line format unchanged — threading `bb_override` into the ledger means changing `merge-watcher.py`'s `_parse_gate_snapshot`, the ledger schema, and `merge_watcher.bats`, none of which are in § Files to modify. The `bugbot-out-of-band` override still emits an operator-visible stderr `WARN` line (mirroring `cr-out-of-band`); ledger attribution of a Bugbot override is a follow-up (see § Out of scope).
+- **Poll-line Bugbot cell omits the words `block`/`actionable`.** The watcher matches the Poll line with bare substring checks (`_looks_like_cr_finding_block`); the Bugbot block verdict is surfaced via a dedicated stderr `BLOCK:` line instead, so a Bugbot cell can never spoof the watcher's CR-finding route.
+- **`.py` fetch layer unchanged.** The classifier/parser is now bot-shape-aware, but `fetch_cr_review_body` still reads only *summary-review* bodies (Bugbot anchors findings in *inline* comments). Fetching Bugbot inline comments for the `.py` is a follow-up — the `.py` is the Phase-3-v1 mirror and even for CR parses the summary body only.
+- **Introduced, not "bumped", the shared rules-version marker.** Neither file previously carried one (the sync CI doctest itself does not yet exist — audit `core-agent-prompts-03`). Added `triage-rules-version: 4` to both so they agree; did not touch the agent frontmatter `version:` (separate concern — would churn the banner contract).
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
-
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-   > **Keep the literal `<slug>` placeholder in this committed step — do NOT
-   > expand it to this plan's real filename.** Writing the actual basename here
-   > manufactures a `docs/plans/shipped/<name>.md` path that points at a file
-   > still living in `active/` (the move hasn't happened yet), which
-   > `test-plan-ref-integrity.sh` reports as a dangling self-reference. The gate
-   > carves out the *placeholder* form on the Archive `git mv` line; the
-   > expanded form defeats that carve-out. Run the literal command with your
-   > slug substituted at the shell — never bake the expansion into the file.
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*No ref-sweep — references use the tier-less form `docs/plans/<slug>.md` (the gates resolve it against any tier; PR #890), so the move can't break them. Write new plan references tier-less.*
-
-*(Delete this `## Archive` block as part of step 2 — once moved to `shipped/`, the file is reference material and the checklist has served its purpose.)*
+- `bash agents/scripts/core/test-merge-gates.sh` → **Passed: 135 Failed: 0** (123 pre-existing CR/CI/user regression canaries stay green + 12 new Bugbot cases covering BLOCK, out-of-band WARN/pass, TERMINAL no-wedge, STALE grace PENDING + grace-expiry PASS, clean-on-head PASS, Bugbot-free PASS, the `-ne 27` field-count fail-closed canary, the decision-order canary (findings + usage-limit → still BLOCK), and the `bb_block` aggregate consume-point canary).
+- `shellcheck -S warning merge-gates.sh` → no new findings (only the two pre-existing SC2034 on `has_tests_oob`/`has_perf_oob`).
+- `coderabbit-triage.py` → `py_compile` clean + smoke checks pass (allow-list, noise filter, Bugbot body parse → VALID, CR body still parses via the CR path); `tests/bats/merge_watcher.bats` `parse_findings` cases stay green (the 7 failing watcher cases are pre-existing/environmental — identical with baseline `merge-gates.sh`).
+- `test-agent-contract.sh` 27/0 · `md_lint.py` (touched docs) exit 0 · `agent_size_audit.py --diff origin/develop` exit 0 (AGENTS.md held at 154 lines).
+- **Ops residue (manual, named)**: `gh label create bugbot-out-of-band --description "Downgrade Bugbot merge block to WARN" --color BFD4F2` must be run once on the repo before the override can fire — a one-time ops step, documented in `docs/agent-rules/merge-gates.md` § gate 4.

@@ -63,11 +63,12 @@ Ingest CodeRabbit (or any GitHub PR-bot) feedback on a pull request, classify ea
    ```
    If the installed `gh` predates `--slurp` (added in gh 2.40), fall back to `--paginate --jq '.[]' | jq -s '.'`.
 
-   Filter every result by `user.login == "coderabbitai[bot]"` (the standard install). The Pro / self-hosted variants may use a different login — confirm against the actual JSON before extending the allow-list. Future PR-bots (Cursor Bugbot, Greptile, Sweep) get added the same way as they appear in the wild — same routing rules apply once filtered in.
+   Filter every result by a PR-bot login **allow-list** — `{coderabbitai[bot], cursor[bot]}` today (CodeRabbit + Cursor Bugbot, both live on this repo). REST returns the `[bot]` suffix, GraphQL may strip it — match both bare + suffixed forms per login. The Pro / self-hosted variants may use a different login — confirm against the actual JSON before extending the allow-list. Other PR-bots (Greptile, Sweep) join the same allow-list as they appear in the wild — same routing + override rules apply once filtered in. **Noise filter (Bugbot):** drop any `cursor[bot]` `issues/$PR/comments` whose body is a run-status notice (`### Bugbot couldn't run …` / `usage limit reached`) — those are spend/availability status, NOT findings, and must never enter the triage set (they are also the gate's no-wedge TERMINAL signal, never a block).
 
 3. **Parse each finding.** For each surviving comment / review thread:
    - `file` + `line` / `start_line` / `original_line` (review comments are line-anchored).
    - `body` — extract: the prose summary, any ```suggestion``` block, severity icon (CodeRabbit uses 🛠️ actionable · ⚠️ caution · 💡 nit · 🧹 chore — read these literally), the `_Actionable comments posted: N_` / `_Nitpick comments (N)_` headers.
+   - **Bot body shapes differ.** CodeRabbit uses the emoji severities above. **Cursor Bugbot** opens each inline finding with a `### <title>` heading, then a `**<Sev> Severity**` line (e.g. `**Medium Severity**`), then a `<!-- DESCRIPTION START -->` marker; its summary review carries `<!-- BUGBOT_REVIEW -->` + "found N potential issues" + `<!-- BUGBOT_FIX_ALL -->`. Read the `**<Sev> Severity**` line as Bugbot's severity (High→High · Medium→Medium · Low→Low/Nit). The 19-rule override table + the routing table below are bot-agnostic and apply to Bugbot findings unchanged.
    - Thread state — already resolved / outdated threads are reported as `stale` (skipped from handoff but kept in the triage table for audit).
 
 4. **Validate against current branch state.** For each non-stale finding:
@@ -167,7 +168,14 @@ When invoked by `smatchet-merge-watcher` (per `docs/plans/shipped/smatchet-merge
 
 Per the Hand-back contract below, this agent itself is read-only — the file-edit step happens in the dispatched subsystem agents, and the commit + push happens in the spawned session orchestrator. C4 prong 3 (per `docs/reference/agentic-infrastructure-2026-05-23.md`) is what wires this multi-step dispatch into `AUTO_ACT_PROMPT`.
 
-The Phase 3 Python port (`agents/scripts/core/coderabbit-triage.py`) is the canonical implementation reference for the rule body; this `agents/core/coderabbit-triage.md` file remains the source-of-truth for the 19-rule override table + Smatchet-invariant rejection rules + subsystem-routing decisions. Keep the two in sync — a doctest-style bash check at end-of-CI greps both files for a shared "rules version" marker and fails if they disagree (per the watcher plan-doc § Risks).
+The Phase 3 Python port (`agents/scripts/core/coderabbit-triage.py`) is the canonical implementation reference for the rule body; this `agents/core/coderabbit-triage.md` file remains the source-of-truth for the 19-rule override table + Smatchet-invariant rejection rules + subsystem-routing decisions. Keep the two in sync — a doctest-style bash check at end-of-CI greps both files for the shared rules-version marker below and fails if they disagree (per the watcher plan-doc § Risks).
+
+<!-- triage-rules-version: 4 -->
+<!-- Bump in BOTH this file AND agents/scripts/core/coderabbit-triage.py whenever the
+     login allow-list, override table, severity parse, or noise filter changes. v4
+     (bugbot-merge-gate): allow-list {coderabbitai[bot], cursor[bot]} + Bugbot
+     body-shape severity parse + couldn't-run/usage-limit noise filter. -->
+
 
 ## Cleanup
 

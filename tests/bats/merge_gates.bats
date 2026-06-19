@@ -1947,3 +1947,156 @@ CFG
     [ "$status" -eq 2 ]
     [[ "$output" == *"GATES_TIMEOUT"* ]]
 }
+
+# ---------- Cursor Bugbot gate (#4) — docs/plans/.../bugbot-merge-gate.md ----------
+# Bugbot (cursor[bot]) posts line-anchored inline findings (→ reviewThreads) +
+# an always-COMMENTED summary review, and usage-cap status comments on the
+# conversation tab. The gate guards on unresolved cursor[bot] inline findings
+# (bb_open) only; three no-wedge hatches (TERMINAL short-circuit, the STALE
+# BB_GRACE_POLLS wait, and the bugbot-out-of-band label) keep a usage-capped or
+# silent Bugbot from ever wedging a merge. Decision ORDER is load-bearing: open
+# findings BLOCK before the terminal-signal hatch is consulted.
+
+@test "Bugbot (1) 2 open cursor[bot] threads on head → BLOCK" {
+    # bb_open=2 unresolved cursor[bot] threads + a COMMENTED Bugbot review on head.
+    # CI green, CR not installed (NONE→pass), reviewDecision APPROVED, user=0, so
+    # Bugbot is the SOLE blocker.
+    set_fixture "$FIXTURES_DIR/merge_gates_bb_findings.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Bugbot: COMMENTED (2 unresolved)"* ]]
+    [[ "$output" == *"BLOCK: Cursor Bugbot has 2 unresolved finding(s) on the head"* ]]
+    [[ "$output" != *"GATES_PASSED"* ]]
+}
+
+@test "Bugbot (2) 2 open threads + bugbot-out-of-band label → WARN/pass" {
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_bb_findings.json" \
+        "data.repository.pullRequest.labels" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"bugbot-out-of-band"}]}')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"bugbot-out-of-band label downgraded Bugbot block (2 unresolved cursor[bot] finding(s)) to WARN"* ]]
+    rm -f "$f"
+}
+
+@test "Bugbot (3) usage-limit conversation comment, no open threads → PASS (terminal short-circuit, skips grace)" {
+    # The spend-cap-no-wedge canary. Bugbot couldn't run → a status comment, no
+    # review, no findings. Must PASS immediately even with the default grace
+    # window in force (terminal short-circuit skips grace).
+    set_fixture "$FIXTURES_DIR/merge_gates_bb_terminal.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"Bugbot: TERMINAL (Bugbot couldn't run / usage limit — no-wedge pass)"* ]]
+}
+
+@test "Bugbot (4) no cursor[bot] review on head + poll < BB_GRACE_POLLS → PENDING (grace wait)" {
+    # STALE: Bugbot reviewed a PRIOR commit only. Within the grace window the
+    # gate waits (don't merge under a mid-re-review Bugbot).
+    set_fixture "$FIXTURES_DIR/merge_gates_bb_stale.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Bugbot: STALE-grace (no Bugbot review on head — poll 1/10)"* ]]
+    [[ "$output" != *"GATES_PASSED"* ]]
+}
+
+@test "Bugbot (5) no cursor[bot] review on head + grace expired (BB_GRACE_POLLS=0) → PASS (never wedge)" {
+    export MERGE_GATES_BB_GRACE_POLLS=0
+    set_fixture "$FIXTURES_DIR/merge_gates_bb_stale.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"Bugbot: STALE-grace-expired (pass)"* ]]
+    unset MERGE_GATES_BB_GRACE_POLLS
+}
+
+@test "Bugbot (6) clean cursor[bot] review on head, bb_open=0 → PASS" {
+    set_fixture "$FIXTURES_DIR/merge_gates_bb_clean.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"Bugbot: COMMENTED (clean)"* ]]
+}
+
+@test "Bugbot (7) bugbot-out-of-band label with no review on head yet → PASS (waiver short-circuits grace)" {
+    # STALE base would PENDING within grace; the label short-circuits it to PASS
+    # even with the default grace window (the oob check precedes the grace check).
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_bb_stale.json" \
+        "data.repository.pullRequest.labels" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"bugbot-out-of-band"}]}')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"Bugbot: bugbot-out-of-band (pass)"* ]]
+    rm -f "$f"
+}
+
+@test "Bugbot (8) no cursor[bot] artefacts at all → unchanged pass (Bugbot-free PR)" {
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"Bugbot: ABSENT (no Bugbot activity)"* ]]
+}
+
+@test "Bugbot (9) field-count guard fires on a mis-sized tuple (fail-closed canary)" {
+    # An embedded newline in a tuple field inflates the field count past 27; the
+    # -ne 27 fail-closed assertion must catch it (the tuple-order regression guard
+    # that the two appended Bugbot fields rely on).
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.headRefOid" \
+        '"abc\n123"')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"expected 27"* ]]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    rm -f "$f"
+}
+
+@test "Bugbot (10) existing CR-finding block still blocks with Bugbot ABSENT (no interference)" {
+    # Regression canary: a CR-finding block on a Bugbot-free PR must still block —
+    # the ABSENT Bugbot bucket computes a clean pass and never masks the CR gate.
+    set_fixture "$FIXTURES_DIR/merge_gates_cr_findings.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"actionable"* ]]
+    [[ "$output" == *"Bugbot: ABSENT"* ]]
+    [[ "$output" != *"GATES_PASSED"* ]]
+}
+
+@test "Bugbot (11) open findings + usage-limit comment on head → still BLOCK (terminal must NOT override findings)" {
+    # Decision-order canary (plan Finding 1): the terminal short-circuit sits
+    # BELOW the open-findings branch, so a usage-limit comment that coexists with
+    # real unresolved cursor[bot] threads must still BLOCK — a spend cap does not
+    # erase findings the user has not addressed.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_bb_findings.json" \
+        "data.repository.pullRequest.comments.nodes" \
+        '[{"author":{"login":"cursor[bot]","__typename":"Bot"},"body":"### Bugbot status - usage limit reached"}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"BLOCK: Cursor Bugbot has 2 unresolved finding(s) on the head"* ]]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    rm -f "$f"
+}
+
+@test "Bugbot (12) open findings withhold the AGGREGATE GATES_PASSED (bb_block consume-point canary)" {
+    # plan Finding 2: the bucket alone only emits a verdict; the bb_block conjunct
+    # in the GATES_PASSED predicate is what actually withholds the aggregate pass.
+    # Everything else is green (0 CI fail, reviewDecision APPROVED) yet the gate
+    # must NOT emit GATES_PASSED while Bugbot has open findings.
+    set_fixture "$FIXTURES_DIR/merge_gates_bb_findings.json"
+    run poll_merge_gates org repo 1
+    [[ "$output" == *"0 fail"* ]]
+    [[ "$output" == *"reviewDecision: APPROVED"* ]]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [ "$status" -ne 0 ]
+}

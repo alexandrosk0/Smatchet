@@ -1,0 +1,41 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "state": "OPEN",
+        "isDraft": false,
+        "reviewDecision": "APPROVED",
+        "headRefOid": "bbHEAD444",
+        "headRefName": "feature/bb-terminal",
+        "commits": {
+          "nodes": [{
+            "commit": {
+              "statusCheckRollup": {
+                "contexts": {
+                  "pageInfo": {"hasNextPage": false},
+                  "nodes": [
+                    {"__typename": "CheckRun", "name": "build", "conclusion": "SUCCESS", "status": "COMPLETED", "isRequired": true}
+                  ]
+                }
+              }
+            }
+          }]
+        },
+        "reviews": {
+          "pageInfo": {"hasNextPage": false},
+          "nodes": []
+        },
+        "reviewThreads": {
+          "pageInfo": {"hasNextPage": false},
+          "nodes": []
+        },
+        "comments": {
+          "pageInfo": {"hasNextPage": false},
+          "nodes": [
+            {"author": {"login": "cursor[bot]", "__typename": "Bot"}, "body": "### Bugbot couldn't run - usage limit reached\n\nYour team has reached its monthly Bugbot usage limit."}
+          ]
+        }
+      }
+    }
+  }
+}
