@@ -701,7 +701,21 @@ jobs:
           $exe = Join-Path $env:LOCALAPPDATA 'Programs\Smatchet\Smatchet.exe'
           if (-not (Test-Path $exe)) { Write-Error "Installed exe missing: $exe"; exit 1 }
           Write-Host "Launch smoke: $exe cmd app.version --spawn --yes (SMATCHET_RENDERER=dx12)"
-          $out = & $exe cmd app.version --spawn --yes 2>&1 | Out-String
+          # Watchdog: run the launch under a 60s cap (mirrors item 1's bash
+          # `timeout 60`) so a hung spawn fails fast instead of burning the job
+          # timeout. The Start-Job child inherits this step's env, so
+          # SMATCHET_RENDERER=dx12 still applies to the spawned exe.
+          $job = Start-Job -ScriptBlock {
+            param($exePath)
+            & $exePath cmd app.version --spawn --yes 2>&1 | Out-String
+          } -ArgumentList $exe
+          if (-not (Wait-Job -Job $job -Timeout 60)) {
+            Stop-Job -Job $job -Force; Remove-Job -Job $job -Force
+            Write-Error "Installed ARM64 exe smoke timed out after 60s (hang watchdog)."
+            exit 1
+          }
+          $out = Receive-Job -Job $job
+          Remove-Job -Job $job
           Write-Host $out
           if ($out -notmatch '"ok"\s*:\s*true') { Write-Error "Installed ARM64 exe launch smoke failed."; exit 1 }
           Write-Host "ARM64 installer smoke OK — installed + launched the native arm64 build."
