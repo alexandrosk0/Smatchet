@@ -47,6 +47,8 @@
 #include <cstring>
 #include <string>
 
+#include <nlohmann/json.hpp> // Command.h is json_fwd now; this TU constructs nlohmann::json::object()
+
 namespace {
 
 // Sentinel command names — unique enough that no real command collides, and a
