@@ -149,9 +149,16 @@ jobs:
             ${{ runner.os }}-fetchcontent-msvc-
             ${{ runner.os }}-fetchcontent-
 
+      # -DSMATCHET_COVERAGE marks this as the coverage capture build. The shared
+      # ninja-test-msvc preset is left untouched (it also drives build-and-test.yml
+      # and local iter), so the macro is appended here, scoped to the coverage lane
+      # only. Consumed by tests/support/StubAiClient.h to widen the internal
+      # cancel-ack budget under OpenCppCoverage's ~10x instrumentation slowdown
+      # (the normal build keeps the 100 ms budget). OpenCppCoverage sets no
+      # __SANITIZE_ADDRESS__ macro, so the existing ASan guard does not cover it.
       - name: Configure ninja-test-msvc
         if: steps.detect.outputs.run == 'true'
-        run: cmake --preset ninja-test-msvc
+        run: cmake --preset ninja-test-msvc -DCMAKE_CXX_FLAGS=-DSMATCHET_COVERAGE
 
       - name: Build SmatchetTests + SmatchetLuaTests
         if: steps.detect.outputs.run == 'true'

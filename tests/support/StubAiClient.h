@@ -123,7 +123,22 @@ class StubAiClient : public IAiClient {
                     const auto cancelAckAt = std::chrono::steady_clock::now();
                     const auto ackMs =
                         std::chrono::duration_cast<std::chrono::milliseconds>(cancelAckAt - pollStartedAt).count();
-                    if (ackMs > script_.CancelAcknowledgedWithinMs)
+                    // Internal ack budget. Under OpenCppCoverage the binary runs
+                    // instrumented (~10x slower) and the 100 ms poll-to-detect
+                    // budget can be exceeded purely from instrumentation overhead,
+                    // reddening the Coverage lane on a false positive. Widen the
+                    // budget ×8 there — mirroring the ASan wall-clock guard in
+                    // StubAiClientCancel.test.cpp (#1280). OpenCppCoverage sets NO
+                    // __SANITIZE_ADDRESS__ macro, so we key off the coverage build's
+                    // own -DSMATCHET_COVERAGE signal (wired in .github/workflows/
+                    // coverage.yml). The CONTENT/behaviour assertions (CancelObserved,
+                    // partial stream, error path) stay intact in every build.
+#if defined(SMATCHET_COVERAGE)
+                    const auto ackBudgetMs = script_.CancelAcknowledgedWithinMs * 8;
+#else
+                    const auto ackBudgetMs = script_.CancelAcknowledgedWithinMs;
+#endif
+                    if (ackMs > ackBudgetMs)
                         CancelBudgetExceeded = true;
                     return;
                 }
