@@ -169,9 +169,8 @@ AppController* PrepareOmnibar(ImGuiTestContext* ctx) {
     return app;
 }
 
-// ---------------------------------------------------------------------------
-// 1. TitleSearch — plain words fill the focused pane's grid filter box.
-// ---------------------------------------------------------------------------
+// Case 1/3 — TitleSearch: typing plain words + Enter must fill the focused pane's grid
+// filter box (gridFilterBuf) and never mutate a saved view.
 void RegisterTitleSearchFillsGridFilter(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "Omnibar", "TitleSearch_FillsFocusedPaneGridFilter");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -194,9 +193,8 @@ void RegisterTitleSearchFillsGridFilter(ImGuiTestEngine* engine) {
     };
 }
 
-// ---------------------------------------------------------------------------
-// 2. Jql — an operator-bearing query replaces the focused view's query.
-// ---------------------------------------------------------------------------
+// Case 2/3 — Jql: an operator-bearing query + Enter must replace the focused view's query,
+// mirrored into both cfg.JqlQuery and the dashboard editor buffer (applyQueryToPaneView).
 void RegisterJqlReplacesViewQuery(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "Omnibar", "Jql_ReplacesFocusedViewQuery");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -224,9 +222,8 @@ void RegisterJqlReplacesViewQuery(ImGuiTestEngine* engine) {
     };
 }
 
-// ---------------------------------------------------------------------------
-// 3. TicketKey — a bare backend key selects the loaded row in the focused pane.
-// ---------------------------------------------------------------------------
+// Case 3/3 — TicketKey: a bare backend key + Enter must select the already-loaded row in the
+// focused pane (gridState.ActiveIssueId) — the no-network in-grid jump.
 void RegisterTicketKeyJumpsToLoadedRow(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "Omnibar", "TicketKey_JumpsToLoadedRow");
     t->TestFunc = [](ImGuiTestContext* ctx) {
