@@ -455,7 +455,7 @@ jobs:
   windows-arm64-native:
     name: Windows-on-ARM native build + ctest (atomics gate, advisory, runner-gated)
     needs: changes
-    # Phase 3 of docs/plans/active/dx12-standalone-win-arm64.md. The plan's
+    # Phase 3 of docs/plans/dx12-standalone-win-arm64.md. The plan's
     # headline ARM64 risk is std::atomic memory-ordering: ~310 memory_order sites
     # (~73 relaxed) written under x86-TSO, where loads are implicitly acquire and
     # stores implicitly release — guarantees ARM64's weak model does NOT provide.
