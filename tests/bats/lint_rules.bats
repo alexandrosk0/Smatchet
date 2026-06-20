@@ -278,6 +278,140 @@ setup() {
     fi
 }
 
+# ---------- bare-json-parse-untrusted (PR-5; WARN-first, curated ingress TUs) ----------
+# A bare nlohmann::json::parse( on an untrusted-ingress TU not routed via ParseBounded
+# stack-overflows the recursive parser before any try/catch (#1271/#1287). WARN-first;
+# --scan-bare-json emits the detected set for the bats harness.
+
+@test "--scan-bare-json fires on a bare json::parse in an ingress TU (McpPlugin)" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Plugins/Mcp"
+    printf 'void f(const std::string& body) {\n    auto j = nlohmann::json::parse(body);\n    (void)j;\n}\n' \
+        > "$tmp/Source/Plugins/Mcp/McpPlugin.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-bare-json
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"bare-json-parse-untrusted"* ]]
+    [[ "$output" == *"McpPlugin.cpp"* ]]
+    rm -rf "$tmp"
+}
+
+@test "--scan-bare-json ignores a ParseBounded-routed ingress parse" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Plugins/Mcp"
+    printf 'void f(const std::string& body) {\n    std::string err;\n    auto j = smatchet::json_safe::ParseBounded(body, err);\n    (void)j;\n}\n' \
+        > "$tmp/Source/Plugins/Mcp/McpPlugin.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-bare-json
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-bare-json ignores a bare parse in a NON-ingress (non-curated) TU" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    printf 'void f(const std::string& s) {\n    auto j = nlohmann::json::parse(s);\n    (void)j;\n}\n' \
+        > "$tmp/Source/Core/src/SomeUnrelatedThing.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-bare-json
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-bare-json respects an in-window SMATCHET_DEVIATION" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Plugins/Mcp"
+    printf 'void f(const std::string& body) {\n    // SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; reason=test; owner=x; revisit=2099-01-01)\n    auto j = nlohmann::json::parse(body);\n    (void)j;\n}\n' \
+        > "$tmp/Source/Plugins/Mcp/McpPlugin.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-bare-json
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-bare-json runs clean (rc 0) on the real first-party tree" {
+    # WARN-first calibration: the real tree carries a KNOWN advisory residual (the curated
+    # ingress TUs whose ParseBounded migration is incremental). The scan mode must run to
+    # completion with rc 0; the diff gate only WARNs (never blocks) on CHANGED ingress TUs.
+    run bash "$LINT" --scan-bare-json
+    [ "$status" -eq 0 ]
+}
+
+# ---------- ui-request-flag-off-thread (PR-5; strict-zone, absolute-0) ----------
+# A g_ui request-flag write in a command-dispatch TU (Source/Core/src/Commands, excl.
+# Scenarios) outside a RunOnUiThread* closure races the main loop polling those non-atomic
+# fields (Pillar-3). --scan-ui-reqflag emits the detected set for the bats harness.
+
+@test "--scan-ui-reqflag fires on a request-flag write outside a RunOnUiThread closure" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src/Commands/Builtin"
+    printf 'void Handler() {\n    g_ui.requestScreenshotPath = path;\n    g_ui.requestScreenshot = true;\n}\n' \
+        > "$tmp/Source/Core/src/Commands/Builtin/BuiltinCommands_Bad.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-ui-reqflag
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ui-request-flag-off-thread"* ]]
+    [[ "$output" == *"BuiltinCommands_Bad.cpp"* ]]
+    rm -rf "$tmp"
+}
+
+@test "--scan-ui-reqflag ignores a write inside a RunOnUiThread closure" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src/Commands/Builtin"
+    printf 'CommandResult Handler(AppController& app) {\n    return RunOnUiThreadAsCommandResult(app, [path]() {\n        g_ui.requestScreenshotPath = path;\n        g_ui.requestScreenshot = true;\n        return CommandResult::Success();\n    });\n}\n' \
+        > "$tmp/Source/Core/src/Commands/Builtin/BuiltinCommands_Good.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-ui-reqflag
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-ui-reqflag exempts Scenarios (run on the UI thread by contract)" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src/Commands/Scenarios"
+    printf 'void OnStart() {\n    g_ui.requestWindowResize = true;\n}\n' \
+        > "$tmp/Source/Core/src/Commands/Scenarios/MyScenario.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-ui-reqflag
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-ui-reqflag ignores a read/compare of a request flag (not an assignment)" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src/Commands"
+    printf 'void Poll() {\n    if (g_ui.requestScreenshot) {\n        DoShot();\n    }\n}\n' \
+        > "$tmp/Source/Core/src/Commands/Reader.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-ui-reqflag
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-ui-reqflag respects an in-window SMATCHET_DEVIATION" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src/Commands/Builtin"
+    printf 'void Handler() {\n    // SMATCHET_DEVIATION(rule=ui-request-flag-off-thread; reason=test; owner=x; revisit=2099-01-01)\n    g_ui.requestScreenshot = true;\n}\n' \
+        > "$tmp/Source/Core/src/Commands/Builtin/BuiltinCommands_Dev.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-ui-reqflag
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-ui-reqflag is clean on the real first-party tree (handlers all marshal)" {
+    run bash "$LINT" --scan-ui-reqflag
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
 # ---------- SMATCHET_DEVIATION ----------
 
 @test "deviation-overdue fires when calendar revisit has passed" {

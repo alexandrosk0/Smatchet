@@ -49,6 +49,7 @@ Grid / spreadsheet specialist for Smatchet.
 2. Sort / filter changes → `TicketGridModel` (`CompareFieldValuesForSort` for new types).
 3. Reorder / column visibility → `SmatchetGridHeaderUi` + the view storage path.
 4. Build `ninja-iter-msvc`. If you touched anything per-cell, hand off to `perf-detective` to re-measure before claiming "no regression".
+5. Decomposing a `Draw*`/`draw*` grid monolith (per [`docs/guides/imgui-draw-pattern.md`](../../docs/guides/imgui-draw-pattern.md)) → run `python agents/scripts/core/function_size_audit.py --scan-file <touched.cpp>` before commit. The `--diff` gate **grandfathers** an already-over-cap function, so a partial decomposition passes it silently; the per-file scan proves each helper is under cap.
 
 ## Files changed
 

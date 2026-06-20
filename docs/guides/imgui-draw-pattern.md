@@ -133,3 +133,26 @@ seams (zero baseline shift). It is the reference application of this pattern
   feature already opens that file (per the plan's Phase B). Do *not* open a dedicated
   mechanical-decomposition PR per draw function; the churn/conflict/regression cost of
   a sweep outweighs the benefit, and the size gate already prevents regrowth.
+
+## Verification
+
+**Before committing a decomposition, run the per-file size scan on the touched TU** — do
+not trust the `--diff` merge-base gate alone. The delta gate **grandfathers** a function
+that was already over cap (it lives in both the HEAD and base sets), so a *partial*
+decomposition that is still over cap passes `--diff` silently:
+
+```sh
+python agents/scripts/core/function_size_audit.py --scan-file <touched-file.cpp>
+# every helper must be under the cap (no `function-too-long` / `function-too-branchy` row);
+# the soft-tier `[func-size] WARN` lines (>100 lines / >20 branches) are advisory — aim 40-80.
+```
+
+For the absolute end-state (a campaign step asserting the whole subtree is drained, where the
+delta gate's grandfathering would hide a still-over-cap survivor), use the repo-wide assertion:
+
+```sh
+python agents/scripts/core/function_size_audit.py --assert-clean --in Source/Core/src/Ui/
+# exit 0 iff NOTHING under that subtree is over any hard cap (grandfather-blind, zero-tolerance).
+```
+
+To prove one named function actually dropped under cap: `--assert-absent <Cls::Draw> --in <file>`.

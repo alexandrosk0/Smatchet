@@ -61,6 +61,7 @@ ImGui host / theme / docking / bootstrap specialist — the layer *below* the pa
 2. Dock-layout / ini-schema change → bump `ConfigManager::kCurrentLayoutSchemaVersion`, wire the migration in BOTH boot paths (`main.cpp` + `SmatchetImGuiHost::Initialize`) pre-`NewFrame`. A migration in only one target ships a broken DX12 layout.
 3. Host lifecycle / input change → keep `SmatchetImGuiHost.h` dual-target clean; build both targets.
 4. Build `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`. Any visual-path touch → confirm bucket-C/E coverage or surface the pause.
+5. Decomposing a `Draw*` monolith (per [`docs/guides/imgui-draw-pattern.md`](../../docs/guides/imgui-draw-pattern.md)) → run `python agents/scripts/core/function_size_audit.py --scan-file <touched.cpp>` before commit. The `--diff` gate **grandfathers** an already-over-cap function, so a partial decomposition passes it silently; the per-file scan is the only check that proves each helper is under cap.
 
 ## Files changed
 
