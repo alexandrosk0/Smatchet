@@ -57,6 +57,8 @@ inline EffectiveUiMode resolveEffectiveUiMode(UiMode persisted, bool hostPrefers
         return EffectiveUiMode::Mobile;
     case UiMode::Auto:
     default:
+        // Auto — and, defensively, any future/unknown enum value — falls through to the
+        // host-hint + width-hysteresis logic below.
         break;
     }
     if (hostPrefersDesktop) {

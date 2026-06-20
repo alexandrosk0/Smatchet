@@ -438,10 +438,6 @@ ImVec4 PollWorkAreaInsets(ImGuiViewport*) {
                   static_cast<float>(bottom));
 }
 
-// One-time ImGui setup on the first INIT_WINDOW (context already current). Font bytes are
-// injected from the APK BEFORE the first atlas build (seam #12); density scaling is applied
-// AFTER the style so it is not wiped (seam #13 — persisted across later ApplyStyle by
-// SmatchetTheme's ReapplyHostDensityScale).
 // Detect a ChromeOS / ARC host via SmatchetActivity.isChromeOS() (which checks the "org.chromium.arc"
 // system feature). On a Chromebook Smatchet runs keyboard + trackpad + resizable windows, so the
 // shared UI defaults to the desktop dockspace instead of the touch shell (A6). Safe on any device:
@@ -480,6 +476,10 @@ bool QueryIsChromeOS(android_app* app) {
     return isChromeOs;
 }
 
+// One-time ImGui setup on the first INIT_WINDOW (context already current). Font bytes are
+// injected from the APK BEFORE the first atlas build (seam #12); density scaling is applied
+// AFTER the style so it is not wiped (seam #13 — persisted across later ApplyStyle by
+// SmatchetTheme's ReapplyHostDensityScale).
 void InitImGuiFirstTime(android_app* app, AndroidHostState& s) {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
