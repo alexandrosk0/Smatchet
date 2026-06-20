@@ -208,6 +208,19 @@ void PollDetails() {
     }
     P4ClPreview::ReapDetached();
 
+    // Issue #1459 — reap day→CL resolve futures detached on calendar re-confirm. Drop only ready
+    // ones (wait_for(0) never blocks) so an unready scan's blocking destructor never runs here.
+    for (size_t i = 0; i < State().detachedBeforeClFuts.size();) {
+        if (!State().detachedBeforeClFuts[i].valid() ||
+            State().detachedBeforeClFuts[i].wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+            State().detachedBeforeClFuts.erase(
+                State().detachedBeforeClFuts.begin() +
+                static_cast<std::vector<std::shared_future<std::pair<std::string, std::string>>>::difference_type>(i));
+        } else {
+            ++i;
+        }
+    }
+
     std::lock_guard<std::mutex> lk(State().displayMutex);
     for (size_t i = 0; i < State().detailFuts.size(); ++i) {
         if (i >= State().detailPhase.size() || State().detailPhase[i] != 1) {

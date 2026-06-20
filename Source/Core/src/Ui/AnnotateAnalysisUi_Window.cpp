@@ -206,6 +206,14 @@ void DrawCallstackProcessControls(AnnotateDrawCtx& ctx) {
             const int d = parsed.Day;
             State().beforeClResolving = true;
             State().lastUiStatus = "Resolving first submitted changelist for that day...";
+            // Issue #1459 — detach a still-pending previous scan before overwriting beforeClFut.
+            // The future comes from std::async, so dropping the last reference to an unready state
+            // blocks until the scan finishes — a p4-changes-length UI stall (Pillar 2). The reaper
+            // in PollDetails drops it once ready, off the hot path (mirror P4ClPreview detach-reap).
+            if (State().beforeClFut.valid() &&
+                State().beforeClFut.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+                State().detachedBeforeClFuts.push_back(State().beforeClFut);
+            }
             State().beforeClFut = std::async(std::launch::async, [cfgCopy, y, mo, d]() {
                                       std::string cl;
                                       std::string err;
