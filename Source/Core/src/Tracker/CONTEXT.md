@@ -92,6 +92,18 @@ The translator that maps a JQL query into GitHub search qualifiers, since GitHub
 **Key clause**:
 The per-language query clause naming explicit issue keys. Jira JQL (`key in (…)`) filters server-side; Plane (`key:PROJ-123`) and GitHub (`key = "owner/repo#N"`) filter client-side as a post-fetch step — the **only** clauses Plane evaluates locally (see Flagged ambiguities).
 
+### Change monitoring
+
+**Salient field**:
+A tracker field whose change raises a ticket-change notification. The salient set is a fixed roster of canonical **roles** — Status, Assignee, Priority, Summary, DueDate, Sprint, Labels, Components — each resolved per-backend to its concrete field id(s). A change to a non-salient field (description, an arbitrary custom field, comment/watcher churn) does **not** notify.
+_Avoid_: "watched field" / "tracked field" (collides with **Tracked set**); "canonicalId" (no such concept — salience is a role roster, not a field-id namespace).
+
+**Tracked set**:
+The set of issue keys a pane's change-monitor currently treats as in-view — the pane's in-memory `ActiveTickets` keys at poll time. Per-pane and transient: never persisted, because the local cache is keyed per-backend (not per-view) and so cannot supply it. A pane whose `ActiveTickets` was evicted has no tracked set and is not monitored.
+
+**Since anchor**:
+The per-pane timestamp marking the last successful change-poll; the monitor asks the backend for issues updated at/after (anchor minus one interval) so a skipped or slept poll never silently drops a change. In-memory and session-only; the first poll establishes the baseline silently (no backfill notifications).
+
 ## Relationships
 
 - An **ITrackerBackend** aggregates exactly six **role interfaces**; `FieldCatalog`, `Mutations`, `Collaboration`, and `Activity` may be `nullptr` (capability unsupported).
@@ -100,6 +112,7 @@ The per-language query clause naming explicit issue keys. Jira JQL (`key in (…
 - **ITrackerIssueReader** returns **CachedTicket** rows (owned by Persistence, not Tracker).
 - Every write enqueues through **OfflineQueueService** (owned by Sync) and emits a **BackendAuditTrail** pair (owned by Persistence).
 - A **TrackerField**'s **TrackerFieldFamily** decides which **Field payload** builder runs; **set-replace** governs the multi-value ones.
+- A pane's change-monitor diffs its **tracked set** each poll (bounded by the **since anchor**); only a change to a **salient field** raises a notification.
 
 ## Example dialogue
 
