@@ -14,6 +14,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include "Json/BoundedJsonParse.h"
+
 namespace smatchet {
 namespace cmd {
 
@@ -146,11 +148,13 @@ CommandResult RunConfigSet(const nlohmann::json& args, const CommandContext& ctx
     // Parse the string value as JSON first (handles true/false/integers).
     // Fall back to a plain JSON string so bare values like debug work.
     const std::string rawVal = args.value("value", std::string());
-    nlohmann::json val;
-    try {
-        val = nlohmann::json::parse(rawVal);
-    } catch (...) {   // catch-all-ok: a bare value that is not valid JSON is intentionally kept as a plain string
-        val = rawVal; // treat as plain string
+    // Bounded parse: a config value is untrusted (CLI/MCP/Lua); a deeply-nested string
+    // must not stack-overflow the recursive parser. ParseBounded never throws — an
+    // oversized/too-deep or non-JSON value falls back to a plain string.
+    std::string parseErr;
+    nlohmann::json val = json_safe::ParseBounded(rawVal, parseErr);
+    if (!parseErr.empty()) {
+        val = rawVal; // not valid (or too large/deep) JSON — treat as a plain string
     }
     const CfgKey* found = nullptr;
     for (int i = 0; kKeys[i].cmd; ++i) {
