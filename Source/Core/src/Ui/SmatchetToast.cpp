@@ -9,13 +9,34 @@ SmatchetToastManager& SmatchetToastManager::Instance() {
 }
 
 void SmatchetToastManager::Push(const std::string& title, const std::string& message, ToastType type, int durationMs) {
+    Push(title, message, type, durationMs, ToastRowAction());
+}
+
+void SmatchetToastManager::Push(const std::string& title, const std::string& message, ToastType type, int durationMs,
+                                ToastRowAction rowAction) {
     ToastNotification toast;
     toast.Title = title;
     toast.Message = message;
     toast.Type = type;
     toast.Expiry = std::chrono::steady_clock::now() + std::chrono::milliseconds(durationMs);
     toast.FadeIn = 0.0f;
+    toast.RowAction = rowAction;
     m_toasts.push_back(std::move(toast));
+
+    // Every toast is retained in the bounded session history (the transient fades; this persists).
+    ToastHistoryEntry entry;
+    entry.CreatedAt = std::chrono::system_clock::now();
+    entry.Title = title;
+    entry.Message = message;
+    entry.Type = type;
+    entry.RowAction = std::move(rowAction);
+    PushBoundedHistory(m_history, std::move(entry), kHistoryCap);
+}
+
+bool SmatchetToastManager::ConsumeOpenCenterRequest() {
+    const bool requested = m_openCenterRequested;
+    m_openCenterRequested = false;
+    return requested;
 }
 
 void SmatchetToastManager::Render() {
@@ -60,6 +81,14 @@ void SmatchetToastManager::Render() {
         // Animation offset
         float offsetX = (1.0f - t.FadeIn) * 50.0f;
         pos.x += offsetX;
+
+        // Clicking any transient toast opens the Notification Center (history). clip=false:
+        // toasts draw on the foreground, outside any window's clip rect. Auto-dismiss/fade
+        // are unaffected — this only raises the open-center request the UI polls.
+        ImVec2 rectMax(pos.x + toastWidth, pos.y + toastHeight);
+        if (ImGui::IsMouseHoveringRect(pos, rectMax, false) && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            m_openCenterRequested = true;
+        }
 
         float alpha = t.FadeIn;
         auto timeRemaining = std::chrono::duration_cast<std::chrono::milliseconds>(t.Expiry - now).count();

@@ -893,6 +893,10 @@ add_executable(SmatchetTests
     # latter round-trips through ConfigManager, already linked in this pure block).
     Core/ShouldPollForChanges.test.cpp
     Core/TicketsMonitorCommand.test.cpp
+    # ticket-change-monitor S2 — toast-manager history ring (Ui/ToastHistoryPure.h, header-only):
+    # bounded oldest-first eviction + RowAction retention, the core of SmatchetToastManager::Push's
+    # new history record. Pure STL (no ImGui), so it links in this pure block.
+    Core/ToastHistoryPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/Views.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetToast.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SmatchetLocalization.cpp"

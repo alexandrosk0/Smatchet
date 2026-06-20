@@ -3,36 +3,43 @@
 #include <string>
 #include <vector>
 #include <chrono>
+#include <cstddef>
 #include "imgui.h"
-
-enum class ToastType {
-    Info,
-    Success,
-    Warning,
-    Error
-};
+#include "ToastHistoryPure.h" // ToastType, ToastRowAction, ToastHistoryEntry, PushBoundedHistory
 
 struct ToastNotification {
     std::string Title;
     std::string Message;
     ToastType Type = ToastType::Info;
     std::chrono::steady_clock::time_point Expiry;
-    float FadeIn = 0.0f; // 0..1
+    float FadeIn = 0.0f;      // 0..1
+    ToastRowAction RowAction; // optional; the history entry's action (transient click opens the center)
 };
 
 class SmatchetToastManager {
-public:
+  public:
     static SmatchetToastManager& Instance();
 
-    void Push(const std::string& title, const std::string& message, ToastType type = ToastType::Info, int durationMs = 4000);
+    void Push(const std::string& title, const std::string& message, ToastType type = ToastType::Info,
+              int durationMs = 4000);
+    // Overload carrying the per-entry Notification Center row action; otherwise identical.
+    void Push(const std::string& title, const std::string& message, ToastType type, int durationMs,
+              ToastRowAction rowAction);
     void Render();
 
-private:
+    // Bounded, session-only history of every toast raised (newest last). Drawn newest-first
+    // by the Notification Center (S3); each entry keeps its RowAction.
+    const std::vector<ToastHistoryEntry>& History() const { return m_history; }
+    void ClearHistory() { m_history.clear(); }
+
+    // Open-center request: set when a transient toast is clicked; the UI polls + consumes it
+    // once per open. Kept on the manager (not a global) so every Push surface shares it.
+    void RequestOpenCenter() { m_openCenterRequested = true; }
+    bool ConsumeOpenCenterRequest();
+
+  private:
     std::vector<ToastNotification> m_toasts;
+    std::vector<ToastHistoryEntry> m_history;
+    bool m_openCenterRequested = false;
+    static const std::size_t kHistoryCap = 200;
 };
-
-
-
-
-
-
