@@ -779,19 +779,19 @@ void AppController::TickChangeMonitors(const TrackerConfig& cfg) {
             std::vector<CachedTicket> fetched = std::move(res.value());
             // Membership reconcile (item 10): which cached rows does the view no longer list?
             // Off-thread, static — touches no instance state. See computeMembershipRemovals_.
-            std::vector<ChangeProbeRemoval> removals =
+            std::vector<smatchet::MembershipRemovalVerdict> verdicts =
                 computeMembershipRemovals_(backend->Reader(), cfgCopy, views, cachedKeys, paneId);
             mainThreadDispatcher.PostToMainThread([this, paneId, fetched = std::move(fetched),
-                                                   removals = std::move(removals), polledAt,
+                                                   verdicts = std::move(verdicts), polledAt,
                                                    capturedGeneration]() mutable {
-                applyChangeProbeOnMainThread_(paneId, std::move(fetched), std::move(removals), polledAt,
+                applyChangeProbeOnMainThread_(paneId, std::move(fetched), std::move(verdicts), polledAt,
                                               capturedGeneration);
             });
         });
     }
 }
 
-std::vector<AppController::ChangeProbeRemoval>
+std::vector<smatchet::MembershipRemovalVerdict>
 AppController::computeMembershipRemovals_(ITrackerIssueReader& reader, const TrackerConfig& cfg,
                                           const ViewsStore& views, const std::vector<std::string>& cachedKeys,
                                           const std::string& paneId) {
@@ -800,32 +800,32 @@ AppController::computeMembershipRemovals_(ITrackerIssueReader& reader, const Tra
     // LeftView) from "deleted" (404 → drop the row, toast Deleted). A keys-fetch soft failure skips
     // the reconcile this cycle (the changed-since detection toast still fires); a probe error is
     // non-destructive. Static — touches no AppController instance state, safe on the worker thread.
-    std::vector<ChangeProbeRemoval> removals;
+    std::vector<smatchet::MembershipRemovalVerdict> verdicts;
     auto keysRes = reader.FetchIssueKeysForView(cfg, views);
     if (!static_cast<bool>(keysRes)) {
         LOG_INFO("AppController::TickChangeMonitors keys-fetch skipped pane='%s': %s", paneId.c_str(),
                  keysRes.error().Detail.c_str());
-        return removals;
+        return verdicts;
     }
     const std::vector<std::string> removed = smatchet::RemovedKeys(cachedKeys, keysRes.value());
     const std::size_t kMaxProbesPerCycle = 25; // lightweight cap; remainder retried next cycle
     for (std::size_t i = 0; i < removed.size() && i < kMaxProbesPerCycle; ++i) {
         auto probe = reader.ProbeIssueExists(cfg, removed[i]);
-        ChangeProbeRemoval r;
-        r.issueKey = removed[i];
-        r.stillExists = static_cast<bool>(probe) ? probe.value() : true; // probe error → non-destructive
-        removals.push_back(r);
+        smatchet::MembershipRemovalVerdict v;
+        v.issueKey = removed[i];
+        v.stillExists = static_cast<bool>(probe) ? probe.value() : true; // probe error → non-destructive
+        verdicts.push_back(v);
     }
     if (removed.size() > kMaxProbesPerCycle) {
         LOG_INFO("AppController::TickChangeMonitors reconcile capped pane='%s': %zu vanished, "
                  "probing %zu this cycle",
                  paneId.c_str(), removed.size(), kMaxProbesPerCycle);
     }
-    return removals;
+    return verdicts;
 }
 
 void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std::vector<CachedTicket> fetched,
-                                                  std::vector<ChangeProbeRemoval> removals,
+                                                  std::vector<smatchet::MembershipRemovalVerdict> verdicts,
                                                   std::chrono::system_clock::time_point polledAt,
                                                   std::uint64_t capturedGeneration) {
     // UI thread. Re-find the context (retired mid-flight → drop) and re-check the backend
@@ -853,42 +853,44 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
     }
     std::vector<smatchet::TicketChangeSummary> changes = smatchet::DiffChangedTickets(prev, fetched, roster);
 
-    // Fold in the membership reconcile (item 10): for each row the view no longer lists, drop it
-    // from the pane's in-memory cache and — when ProbeIssueExists said deleted (404) — from the
-    // shared per-backend SQLite cache too, then emit one LeftView/Deleted summary per row that was
-    // actually resident. A removal whose key is no longer present (already evicted, swapped) is a
-    // silent no-op: no toast, no double-delete.
+    // Fold in the membership reconcile (item 10). Classify the probe verdicts against the pane's
+    // roster at apply time (residentIds = `prev`'s ids; UI thread, no mutation since the snapshot):
+    // resident keys are erased + toasted (LeftView/Deleted); every 404 verdict purges the shared
+    // per-backend cache row regardless of pane residency (the cache spans panes). A verdict for a
+    // key the pane no longer holds is a silent in-memory no-op. See ClassifyMembershipRemovals.
+    std::vector<std::string> residentIds;
+    residentIds.reserve(prev.size());
+    for (std::size_t i = 0; i < prev.size(); ++i) {
+        residentIds.push_back(prev[i].id);
+    }
+    const smatchet::MembershipReconcilePlan plan = smatchet::ClassifyMembershipRemovals(residentIds, verdicts);
     const std::string backendKey = ctx.CacheBackendKeyCopy();
-    bool inMemoryChanged = false;
-    for (std::size_t i = 0; i < removals.size(); ++i) {
-        const ChangeProbeRemoval& r = removals[i];
-        bool erased = false;
-        {
-            std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
-            const std::size_t before = ctx.ActiveTickets.size();
-            ctx.ActiveTickets.erase(std::remove_if(ctx.ActiveTickets.begin(), ctx.ActiveTickets.end(),
-                                                   [&r](const CachedTicket& t) { return t.id == r.issueKey; }),
-                                    ctx.ActiveTickets.end());
-            erased = ctx.ActiveTickets.size() != before;
-        }
-        if (!r.stillExists && Cache) {
-            Cache->DeleteTicket(backendKey, r.issueKey); // 404 → drop the shared per-backend cache row
-        }
-        if (erased) {
-            inMemoryChanged = true;
-            smatchet::TicketChangeSummary s;
-            s.kind = r.stillExists ? smatchet::TicketChangeKind::LeftView : smatchet::TicketChangeKind::Deleted;
-            s.issueId = r.issueKey;
-            changes.push_back(s);
+    if (Cache) {
+        for (std::size_t i = 0; i < plan.cacheDeleteKeys.size(); ++i) {
+            Cache->DeleteTicket(backendKey, plan.cacheDeleteKeys[i]); // 404 → drop the shared cache row
         }
     }
-    if (inMemoryChanged) {
-        // Republish the immutable snapshot + bump the revision once (same contract as the surgical
-        // removal in TicketSyncService::DrainStaleDeletionBudget) so readers see the shrunk roster.
+    if (!plan.residentRemovals.empty()) {
         {
+            // Erase every resident removal + republish the immutable snapshot + bump the revision
+            // once under one lock (same contract as TicketSyncService::DrainStaleDeletionBudget) so
+            // readers see the shrunk roster atomically.
             std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
+            for (std::size_t i = 0; i < plan.residentRemovals.size(); ++i) {
+                const std::string& key = plan.residentRemovals[i].issueKey;
+                ctx.ActiveTickets.erase(std::remove_if(ctx.ActiveTickets.begin(), ctx.ActiveTickets.end(),
+                                                       [&key](const CachedTicket& t) { return t.id == key; }),
+                                        ctx.ActiveTickets.end());
+            }
             ctx.activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ctx.ActiveTickets);
             ctx.ActiveTicketsRevision.fetch_add(1);
+        }
+        for (std::size_t i = 0; i < plan.residentRemovals.size(); ++i) {
+            const smatchet::MembershipRemovalVerdict& v = plan.residentRemovals[i];
+            smatchet::TicketChangeSummary s;
+            s.kind = v.stillExists ? smatchet::TicketChangeKind::LeftView : smatchet::TicketChangeKind::Deleted;
+            s.issueId = v.issueKey;
+            changes.push_back(s);
         }
         // Mark Lua cells for re-record (the visible roster shrank) — same one-shot signal the
         // stale-delete prune uses; no-op in the stub build. UI thread, cheap.

@@ -57,4 +57,43 @@ inline std::vector<std::string> AddedKeys(const std::vector<std::string>& cached
     return added;
 }
 
+/// One vanished key after the existence probe: `stillExists` is the ProbeIssueExists
+/// verdict — true (200, the conservative default) means "left the view", false (404)
+/// means "deleted server-side".
+struct MembershipRemovalVerdict {
+    std::string issueKey;
+    bool stillExists = true;
+};
+
+/// The apply-side decision for a batch of probe verdicts, separated from the side
+/// effects so it can be unit-tested without a pane or cache:
+///   - `residentRemovals` — verdicts whose key is currently in the pane's cache, in
+///     input order. These drive the in-memory erase and one LeftView/Deleted toast each
+///     (kind from `stillExists`). A verdict for a key the pane no longer holds (already
+///     evicted, never resident) is dropped here — no erase, no toast.
+///   - `cacheDeleteKeys` — every 404 verdict's key, in input order, REGARDLESS of pane
+///     residency: the shared per-backend cache spans panes, so a deleted issue is purged
+///     from it even if this pane never tracked it. A 200 verdict never deletes.
+struct MembershipReconcilePlan {
+    std::vector<MembershipRemovalVerdict> residentRemovals;
+    std::vector<std::string> cacheDeleteKeys;
+};
+
+/// Classify `verdicts` against `residentIds` (the pane's current cached ticket ids).
+/// Pure: see MembershipReconcilePlan for the residency vs cache-delete split.
+inline MembershipReconcilePlan ClassifyMembershipRemovals(const std::vector<std::string>& residentIds,
+                                                          const std::vector<MembershipRemovalVerdict>& verdicts) {
+    const std::unordered_set<std::string> resident(residentIds.begin(), residentIds.end());
+    MembershipReconcilePlan plan;
+    for (const MembershipRemovalVerdict& v : verdicts) {
+        if (!v.stillExists) {
+            plan.cacheDeleteKeys.push_back(v.issueKey);
+        }
+        if (resident.find(v.issueKey) != resident.end()) {
+            plan.residentRemovals.push_back(v);
+        }
+    }
+    return plan;
+}
+
 } // namespace smatchet

@@ -92,6 +92,9 @@ class AiAssistantController;
 // for the same reason; AppController re-exports them via using-aliases below so its
 // ~113 includers keep seeing `AppController::DeadLetterRestoreSummary` etc.
 #include "Sync/OfflineQueueTypes.h"
+// Leaf pure header (STL-only): supplies smatchet::MembershipRemovalVerdict, named
+// by-value in the membership-reconcile private method decls below (S1c-3, item 10).
+#include "Sync/MembershipDiffPure.h"
 // Fan-in Phase 3 (docs/plans/appcontroller-fan-in.md): AppUpdateAsset/AppUpdateInfo (global),
 // FieldEditResult, and TrackerConnectivityState (formerly nested) relocated to rank-0 leaf headers
 // under Types/ so editing them no longer recompiles the ~115 AppController.h includers. The two
@@ -1140,32 +1143,24 @@ class AppController : public IMainThreadPoster {
     void SetWindowFocused(bool focused);
 
   private:
-    /// One vanished key classified by the membership reconcile (S1c-3, item 10): a row in the
-    /// pane's cache that the changed-since fetch's view no longer lists. `stillExists` is the
-    /// ProbeIssueExists verdict — true (200, the conservative default) keeps the shared cache
-    /// row and toasts LeftView; false (404) drops the shared cache row and toasts Deleted.
-    struct ChangeProbeRemoval {
-        std::string issueKey;
-        bool stillExists = true;
-    };
     /// Off-thread (worker) half of the membership reconcile (S1c-3, item 10): fetch the view's
     /// current keys, diff against `cachedKeys` (the pane's cache keys snapshotted on the UI thread
-    /// at dispatch), and ProbeIssueExists each vanished key (capped per cycle). Static — touches no
-    /// AppController instance state, so it is safe on the background task thread; the verdicts are
-    /// applied on the UI thread by applyChangeProbeOnMainThread_. `paneId` is for logging only.
-    static std::vector<ChangeProbeRemoval> computeMembershipRemovals_(ITrackerIssueReader& reader,
-                                                                      const TrackerConfig& cfg, const ViewsStore& views,
-                                                                      const std::vector<std::string>& cachedKeys,
-                                                                      const std::string& paneId);
+    /// at dispatch), and ProbeIssueExists each vanished key (capped per cycle), returning one
+    /// smatchet::MembershipRemovalVerdict per probed key. Static — touches no AppController instance
+    /// state, so it is safe on the background task thread; the verdicts are applied on the UI thread
+    /// by applyChangeProbeOnMainThread_. `paneId` is for logging only.
+    static std::vector<smatchet::MembershipRemovalVerdict>
+    computeMembershipRemovals_(ITrackerIssueReader& reader, const TrackerConfig& cfg, const ViewsStore& views,
+                               const std::vector<std::string>& cachedKeys, const std::string& paneId);
     /// Main-thread completion of a change probe: re-find the pane context (dropped if retired)
     /// and re-check its backendGeneration_ against `capturedGeneration` (dropped if swapped
     /// mid-flight), diff the fetched rows against the pane's current ActiveTickets cache
-    /// (DiffChangedTickets over the resolved salient roster), fold in the membership `removals`
-    /// (erase from ActiveTickets, drop the cache row on Deleted, republish + bump revision),
-    /// notify on any salient delta, then advance changeSinceAnchor and re-stamp nextChangePollAt.
-    /// UI thread.
+    /// (DiffChangedTickets over the resolved salient roster), fold in the membership `verdicts`
+    /// (ClassifyMembershipRemovals → erase resident rows from ActiveTickets, drop the shared cache
+    /// row on each 404, republish + bump revision), notify on any salient delta, then advance
+    /// changeSinceAnchor and re-stamp nextChangePollAt. UI thread.
     void applyChangeProbeOnMainThread_(const std::string& paneId, std::vector<CachedTicket> fetched,
-                                       std::vector<ChangeProbeRemoval> removals,
+                                       std::vector<smatchet::MembershipRemovalVerdict> verdicts,
                                        std::chrono::system_clock::time_point polledAt,
                                        std::uint64_t capturedGeneration);
     /// OS window focus latch (plan item 17). Defaults true so targets without a focus signal
