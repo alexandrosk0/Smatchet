@@ -120,6 +120,80 @@ if [ -n "$req_ctx_raw" ] && command -v jq >/dev/null 2>&1; then
     REQ_CTX_JSON=$(printf '%s\n' "$req_ctx_raw" | jq -R . | jq -sc 'map(select(length>0))') || REQ_CTX_JSON='[]'
 fi
 
+# Expected-present allow-listed NON-required checks (merge-gate-absence-blind-
+# nonrequired-allowlist, PR-3). The poller's `$reqAbsent` covers only the
+# branch-protection REQUIRED contexts; an allow-listed NON-required check that is
+# simply ABSENT from a head's rollup is silently treated as pass — so a PR that
+# deletes/renames its own gating workflow makes the check absent and the gate
+# self-disables. This is the cross-check: every name here MUST appear on a merged
+# PR's rollup; if it is absent, flag it (fail-closed) as an owed escape. We do NOT
+# parse workflow `on:` triggers (brittle); the expected-present set is config/env-
+# driven and starts EMPTY (inert) — a name is added as each non-required gate is
+# trusted to always run on develop PRs. POSTMORTEM_EXPECTED_PRESENT (newline/comma)
+# overrides the config read entirely (even to "" — explicit inert opt-in).
+EXPECTED_PRESENT_JSON='[]'
+exp_present_raw=""
+if [ -n "${POSTMORTEM_EXPECTED_PRESENT+x}" ]; then
+    exp_present_raw="${POSTMORTEM_EXPECTED_PRESENT//,/$'\n'}"
+elif [ -f "$CONFIG_FILE" ] && command -v jq >/dev/null 2>&1; then
+    exp_present_raw=$(jq -r '.merge_gates.expected_present_contexts[]? // empty' "$CONFIG_FILE" 2>/dev/null) || exp_present_raw=""
+fi
+if [ -n "$exp_present_raw" ] && command -v jq >/dev/null 2>&1; then
+    EXPECTED_PRESENT_JSON=$(printf '%s\n' "$exp_present_raw" | jq -R . | jq -sc 'map(select(length>0))') || EXPECTED_PRESENT_JSON='[]'
+fi
+
+# Known broken-lane check-names (bucket-lane-status-broken-sentinel-auditable, PR-3).
+# A block-scope lane whose harness is dead reports a RED conclusion that is NOT a
+# product regression — its lane-integrity step wrote `status=broken passed=0
+# failed=N` (e.g. a Mesa software-GL collapse: "lane-integrity — bucket-E is
+# BROKEN … dead harness, not a regression"). When such a lane is (re-)promoted to
+# the block-list, its RED-because-BROKEN must NOT owe a gate-escape postmortem —
+# it is an auditable WARN (the harness needs fixing; nothing merged past a real
+# gate). This is the machine-readable registry of which lane names are in that
+# broken state; a red check matching a name here is downgraded to a WARN line on
+# stderr instead of an owed escape. POSTMORTEM_BROKEN_LANES (newline/comma)
+# overrides the config read; production starts EMPTY (no lane mis-classified).
+BROKEN_LANES_RAW=""
+if [ -n "${POSTMORTEM_BROKEN_LANES+x}" ]; then
+    BROKEN_LANES_RAW="${POSTMORTEM_BROKEN_LANES//,/$'\n'}"
+elif [ -f "$CONFIG_FILE" ] && command -v jq >/dev/null 2>&1; then
+    BROKEN_LANES_RAW=$(jq -r '.merge_gates.broken_lanes[]? // empty' "$CONFIG_FILE" 2>/dev/null) || BROKEN_LANES_RAW=""
+fi
+
+# is_broken_lane <red-check-trigger> — return 0 when EVERY red-check name in the
+# trigger is a known broken lane (so the whole trigger is a broken-harness WARN,
+# not an owed escape). A trigger mixing a broken lane with a genuine red check is
+# NOT downgraded (the real red still owes). Override parts are ignored here (they
+# are handled separately). Returns 1 when no broken-lanes are configured.
+is_broken_lane() {
+    local trig="$1" red_part name
+    [ -n "$BROKEN_LANES_RAW" ] || return 1
+    # Extract the "red-check: a, b, c" segment (if any) from the `; `-joined trigger.
+    case "$trig" in
+        *"red-check: "*) red_part="${trig#*red-check: }"; red_part="${red_part%%;*}" ;;
+        *) return 1 ;;   # no red-check part → nothing to downgrade
+    esac
+    # An override part alongside means a real bypass — never a pure broken-lane WARN.
+    case "$trig" in *"override: "*) return 1 ;; esac
+    # Every comma-separated red name must be a known broken lane.
+    local IFS=','
+    for name in $red_part; do
+        name="${name#"${name%%[![:space:]]*}"}"   # ltrim
+        name="${name%"${name##*[![:space:]]}"}"    # rtrim
+        [ -z "$name" ] && continue
+        local matched=0 lane
+        while IFS= read -r lane; do
+            lane="${lane%$'\r'}"   # strip a trailing CR (git-bash jq output on Windows)
+            [ -z "$lane" ] && continue
+            if printf '%s' "$name" | grep -qiF "$lane"; then matched=1; break; fi
+        done <<EOF
+$BROKEN_LANES_RAW
+EOF
+        [ "$matched" -eq 1 ] || return 1
+    done
+    return 0
+}
+
 # Already has a postmortem? (ledger references "PR #<n>")
 has_entry() {
     [ -f "$LEDGER" ] || return 1
@@ -298,6 +372,7 @@ has_snapshot() {
 }
 
 owed=()           # "PR #N — <trigger>"
+warns=()          # auditable WARN lines (broken-lane downgrades — not owed escapes)
 merged_commits="" # space-delimited set of mergeCommit oids seen this run (trigger 4 reuse)
 
 # --- Trigger 1 + 2: per merged PR (checks + labels), ONE batched gh call ------
@@ -362,22 +437,29 @@ JQ_ROWS='(sort_by(.mergedAt) | reverse | .[0:__SCAN_N__]) | .[] | [
               )
             )
           | $n
-        ] | unique | join(", ") )
+        ] | unique | join(", ") ),
+    ( [ ( (.statusCheckRollup // [])
+          | .[] )
+        | (if .__typename == "CheckRun" then (.name // "") else (.context // "") end)
+        | select(length > 0)
+      ] | unique | join("|||") )
   ] | @tsv'
 JQ_ROWS="${JQ_ROWS//__SCAN_N__/$SCAN_N}"
 JQ_ROWS="${JQ_ROWS//__REQ_CTX__/$REQ_CTX_JSON}"
 JQ_ROWS="${JQ_ROWS//__ALLOW__/$ALLOW_LIST_RE}"
 while IFS= read -r row; do
     [ -z "$row" ] && continue
-    # Split the 4-field @tsv row by tab MANUALLY (not `IFS=$'\t' read`): tab is
+    # Split the 5-field @tsv row by tab MANUALLY (not `IFS=$'\t' read`): tab is
     # IFS-whitespace, so `read` collapses consecutive tabs and DROPS empty middle
     # fields — a row with empty labels but a real red-check ("num⇥mc⇥⇥check")
     # would shift the check into `labels` and blank `redchecks`, silently missing
     # the single most common escape (red required check, no override label).
-    # Parameter expansion preserves empty fields. @tsv always emits 4 fields.
-    num="${row%%$'\t'*}";        row="${row#*$'\t'}"
+    # Parameter expansion preserves empty fields. @tsv always emits 5 fields
+    # (field 5 = the `|||`-joined PRESENT context names, for the absence check).
+    num="${row%%$'\t'*}";         row="${row#*$'\t'}"
     mergecommit="${row%%$'\t'*}"; row="${row#*$'\t'}"
-    labels="${row%%$'\t'*}";      redchecks="${row#*$'\t'}"
+    labels="${row%%$'\t'*}";      row="${row#*$'\t'}"
+    redchecks="${row%%$'\t'*}";   present_names="${row#*$'\t'}"
     [ -z "$num" ] && continue
     [ -n "$mergecommit" ] && merged_commits="$merged_commits $mergecommit"
     has_entry "$num" && continue
@@ -415,6 +497,39 @@ while IFS= read -r row; do
             done
         fi
         [ -n "$trigger" ] && trigger="$(filter_moot_overrides "$num" "$trigger")"
+    fi
+    # Broken-lane downgrade (bucket-lane-status-broken-sentinel-auditable, PR-3):
+    # a block-scope lane whose harness is DEAD reports RED but is not a regression
+    # (status=broken passed=0 failed=N). When the trigger's red-check part is
+    # ENTIRELY known-broken lanes (no real red, no override), it is an auditable
+    # WARN — the harness needs fixing; nothing merged past a real gate. Emit a WARN
+    # line (never silently dropped) and do NOT count it as an owed escape.
+    if [ -n "$trigger" ] && is_broken_lane "$trigger"; then
+        warns+=("PR #$num — broken-lane (auditable WARN, not an escape): $trigger")
+        trigger=""
+    fi
+    # Absence-present cross-check (merge-gate-absence-blind-nonrequired-allowlist,
+    # PR-3): an allow-listed NON-required check that is configured to always run on
+    # develop PRs but is ABSENT from this merged PR's rollup self-disabled the gate
+    # (e.g. a PR that deleted its own gating workflow). The live curated path is
+    # absence-BLIND for these (only $reqAbsent covers REQUIRED contexts). Cross-check
+    # each EXPECTED_PRESENT name against the PR's present-context list (field 5);
+    # flag any missing one fail-closed. Skipped on the snapshot path (a snapshot
+    # records the merge-instant verdict, not the live rollup membership).
+    if [ "$EXPECTED_PRESENT_JSON" != "[]" ] && command -v jq >/dev/null 2>&1; then
+        absent_names=""
+        while IFS= read -r exp; do
+            exp="${exp%$'\r'}"   # strip a trailing CR (git-bash jq output on Windows)
+            [ -z "$exp" ] && continue
+            # present_names is the `|||`-joined live rollup context names.
+            case "|||${present_names}|||" in
+                *"|||${exp}|||"*) ;;   # present
+                *) absent_names="${absent_names:+$absent_names, }$exp" ;;
+            esac
+        done < <(printf '%s\n' "$EXPECTED_PRESENT_JSON" | jq -r '.[]' 2>/dev/null || true)
+        if [ -n "$absent_names" ]; then
+            trigger="${trigger:+$trigger; }absent-allowlisted: ${absent_names}"
+        fi
     fi
     # De-noise: Core-cpp-scoped trigger(s) on a PR that touched no Core cpp = false escape.
     if [ -n "$trigger" ] && core_scoped_only_trigger "$trigger" && ! pr_touches_core_cpp "$num"; then
@@ -497,6 +612,15 @@ done < <(git log origin/develop --no-merges --since="$DIRECTPUSH_SINCE" \
             --format='%h%x09%s' 2>/dev/null | tr -d '\r' || true)
 
 # --- Emit --------------------------------------------------------------------
+# Auditable WARNs (broken-lane downgrades) go to stderr ALWAYS — they are never an
+# owed escape but must never be silently dropped (bucket-lane-status-broken-
+# sentinel-auditable). They do NOT affect the owed exit-state.
+if [ "${#warns[@]}" -gt 0 ]; then
+    for w in "${warns[@]}"; do
+        echo "postmortem-owed: WARN — $w" >&2
+    done
+fi
+
 if [ "${#owed[@]}" -eq 0 ]; then
     [ "$MODE" = "list" ] && echo "postmortem-owed: no gate escapes owed a postmortem (last $SCAN_N merges clean)."
     exit 0

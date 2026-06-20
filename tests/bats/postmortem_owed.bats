@@ -398,3 +398,87 @@ JSON
     [[ "$output" == *"PR #5002"* ]]
     [[ "$output" == *"override: perf-out-of-band"* ]]
 }
+
+# ============================================================================
+# PR-3 — bucket-lane-status-broken-sentinel-auditable (broken-lane → WARN)
+# ============================================================================
+
+@test "broken-lane: a block-scope red whose name is in POSTMORTEM_BROKEN_LANES is an auditable WARN, not an owed escape" {
+    # Coverage is allow-listed (would normally OWE on a terminal FAILURE — see the
+    # 'Coverage terminal FAILURE owes' case above). Register it as a known broken
+    # lane → its RED downgrades to a WARN (stderr) and owes NO postmortem.
+    export POSTMORTEM_BROKEN_LANES="Coverage (windows-2022 + OpenCppCoverage)"
+    prlist <<'JSON'
+[{"number":6001,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"d1"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Coverage (windows-2022 + OpenCppCoverage)","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    # Auditable WARN present (never silently dropped); NOT an owed escape.
+    [[ "$output" == *"WARN — PR #6001 — broken-lane"* ]]
+    [[ "$output" != *"postmortem owed: PR #6001"* ]]
+}
+
+@test "broken-lane downgrade does NOT apply when a real red rides alongside the broken lane" {
+    # Coverage (broken) + Windows + MSVC (genuine required red) → the real red
+    # still owes; the broken lane must not launder it.
+    export POSTMORTEM_BROKEN_LANES="Coverage (windows-2022 + OpenCppCoverage)"
+    prlist <<'JSON'
+[{"number":6002,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"d2"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Coverage (windows-2022 + OpenCppCoverage)","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" == *"postmortem owed: PR #6002"* ]]
+    [[ "$output" == *"Windows + MSVC"* ]]
+}
+
+@test "broken-lane registry empty (production default): a broken lane's red still owes (no silent laundering)" {
+    # No POSTMORTEM_BROKEN_LANES set → is_broken_lane never downgrades; Coverage red owes.
+    prlist <<'JSON'
+[{"number":6003,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"d3"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Coverage (windows-2022 + OpenCppCoverage)","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" == *"postmortem owed: PR #6003"* ]]
+}
+
+# ============================================================================
+# PR-3 — merge-gate-absence-blind-nonrequired-allowlist (present-assertion)
+# ============================================================================
+
+@test "absence-present: an expected-present allow-listed check ABSENT from the rollup owes a postmortem (fail-closed)" {
+    # Coverage is expected-present; the PR's rollup carries only a green Windows +
+    # MSVC (Coverage absent — the PR self-disabled the gate). Flag it.
+    export POSTMORTEM_EXPECTED_PRESENT="Coverage (windows-2022 + OpenCppCoverage)"
+    prlist <<'JSON'
+[{"number":7001,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"e1"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" == *"PR #7001"* ]]
+    [[ "$output" == *"absent-allowlisted: Coverage"* ]]
+}
+
+@test "absence-present: an expected-present check that IS in the rollup owes nothing" {
+    export POSTMORTEM_EXPECTED_PRESENT="Coverage (windows-2022 + OpenCppCoverage)"
+    prlist <<'JSON'
+[{"number":7002,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"e2"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Coverage (windows-2022 + OpenCppCoverage)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"PR #7002"* ]]
+}
+
+@test "absence-present: empty expected-present set (production default) is inert" {
+    # POSTMORTEM_EXPECTED_PRESENT unset → no absence flagging even with a sparse rollup.
+    prlist <<'JSON'
+[{"number":7003,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"e3"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"PR #7003"* ]]
+    [[ "$output" == *"no gate escapes owed"* ]]
+}
