@@ -782,6 +782,18 @@ add_executable(SmatchetTests
     Core/TrackerHttpFaults.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/NetworkUsageTracker.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/OfflineQueueService.cpp"
+    # ticket-change-monitor S1a (docs/plans/active/ticket-change-monitor.md) — three
+    # backend-agnostic pure helpers behind the per-pane change monitor, each unit-tested
+    # bucket-A with no backend / pane / toast manager. CachedTicketTypes.h-only (no
+    # cpr/SQLite/ImGui), so the doctest rig links the two .cpp directly:
+    #   * TicketChangeDiffPure — salient-field snapshot differ + toast formatter (has .cpp)
+    #   * JqlChangedSincePure  — relative-JQL window wrap + absolute ISO since (has .cpp)
+    #   * MembershipDiffPure   — tracked-set add/remove set-diff (header-only, no .cpp)
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/TicketChangeDiffPure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/JqlChangedSincePure.cpp"
+    Core/TicketChangeDiffPure.test.cpp
+    Core/JqlChangedSincePure.test.cpp
+    Core/MembershipDiffPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/Views.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetToast.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SmatchetLocalization.cpp"
