@@ -71,6 +71,14 @@ on:
   # filter below — post-merge develop runs gate nothing.)
   pull_request:
     branches: [develop]
+    # `edited` is added beyond GitHub's default [opened, synchronize, reopened] so a
+    # PR that adds or fixes its `## Intent` section via a body edit re-runs the
+    # `Intent section` job and self-heals the stale-red — no wasted empty-commit
+    # push (the gate reads `github.event.pull_request.body`, which a metadata-only
+    # body edit changes). The heavier jobs self-gate on `Detect doc-relevant
+    # changes` and `concurrency.cancel-in-progress` collapses rapid edits, so the
+    # extra trigger is cheap. See docs/agent-rules/ship-loops.md § Intent capture.
+    types: [opened, synchronize, reopened, edited]
   # Merge-queue readiness (docs/plans/active/build-quality-velocity-hardening.md
   # finding #14 path B): `Doc anchors + agent contract` is a branch-protection
   # REQUIRED check. When develop is behind a GitHub merge queue, required checks

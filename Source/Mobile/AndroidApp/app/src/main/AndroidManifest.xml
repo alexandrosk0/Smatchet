@@ -3,9 +3,22 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Chromebook (ARC) readiness: Smatchet is a keyboard + mouse/trackpad app, not a
+         touch-first one. Android assumes an app REQUIRES a touchscreen unless told otherwise,
+         which makes Google Play hide it from non-touch Chromebooks (and other large-screen
+         devices). Declaring the touch features not-required keeps phones/tablets unaffected
+         while making the app installable across the full Chromebook range. See
+         docs/mobile/CHROMEBOOK_PORT_INVESTIGATION.md - Path A (gap A8). -->
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen.multitouch" android:required="false" />
+
+    <!-- resizeableActivity=true: explicit large-screen / freeform / split-screen support.
+         It already defaults true at targetSdk 24+, but declaring it states intent and
+         future-proofs against the default changing; recommended for ChromeOS windowing. -->
     <application
         android:allowBackup="false"
         android:label="Smatchet"
+        android:resizeableActivity="true"
         android:hasCode="true">
         <!-- allowBackup=false (Issue #1067): the app's private files dir holds the
              extracted CA bundle and (once Keystore lands) credential material.

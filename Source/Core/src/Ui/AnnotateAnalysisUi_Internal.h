@@ -123,6 +123,11 @@ struct AnnotateAnalysisUi::AnnotateState {
     /// the UI thread.
     std::shared_future<std::pair<std::string, std::string>> beforeClFut; // {changelist, error}
     bool beforeClResolving = false;
+    /// Pillar 2 — issue #1459: re-confirming a calendar day while the first server-wide scan is
+    /// still in flight must not destroy the unready std::async future on the UI thread (its
+    /// destructor blocks until the task finishes). Detach the pending future here on overwrite and
+    /// reap ready ones off the hot path in PollDetails (mirrors P4ClPreview::DetachedHoverFuts).
+    std::vector<std::shared_future<std::pair<std::string, std::string>>> detachedBeforeClFuts;
 
     std::string assignTitle;
     std::string assignAccountId;

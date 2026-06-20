@@ -392,6 +392,11 @@ void AppController::SetFocusedPane(const std::string& paneId) {
 }
 
 GridLiveContext* AppController::EnsurePaneContextLive(const std::string& paneId, const std::string& backendKey) {
+    // Issue #1457: hold the map mutex across the resolve-or-emplace so the User Info worker's
+    // snapshot-find cannot observe a half-rebalanced tree. UI thread only, so the body is the
+    // sole writer; the lock only excludes the worker's brief snapshot read. O(log n) map ops plus
+    // a bounded same-backend catalog copy under the lock — no I/O, no Pillar-2 block.
+    std::lock_guard<std::mutex> mapLk(gridContextsMutex_);
     std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.find(paneId);
     if (it == gridContexts_.end()) {
         std::unique_ptr<GridLiveContext> ctx = std::make_unique<GridLiveContext>();
@@ -867,6 +872,13 @@ void AppController::evictHiddenPanesOverCap_() {
 }
 
 void AppController::retireExpiredHiddenContexts_(std::chrono::steady_clock::time_point now) {
+    // Issue #1457: hold the map mutex across the whole iterate + erase so the User Info worker's
+    // snapshot-find never traverses a tree this loop is restructuring. Lock ordering is map-mutex
+    // OUTERMOST then the per-context activeTicketsMutex_ / availableFieldsMutex_ taken below —
+    // consistent with the worker (map then, separately, a per-context mutex), so no inversion. The
+    // ticketSync_.reset() join here is idle-only (busy syncs postpone via the IsActive() continue),
+    // so the joined worker has already exited and cannot re-take this mutex during the join.
+    std::lock_guard<std::mutex> mapLk(gridContextsMutex_);
     std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.begin();
     while (it != gridContexts_.end()) {
         GridLiveContext& ctx = *it->second;

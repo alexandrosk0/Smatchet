@@ -77,6 +77,10 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # (header-only; no extra .cpp). No threads — proves the policy compiles +
         # links cleanly under -fsanitize=thread end-to-end on the runner.
         Core/GridPaneEvictionPolicy.test.cpp
+        # issue #1457 — gridContexts_ map-structure race (User Info worker snapshot-find
+        # vs UI-thread retire-erase / emplace). Seam-level fixture mirroring the map-mutex
+        # discipline; header-only (no product .cpp), highest-value being the TSan pass.
+        Core/GridContextsMapRace1457.test.cpp
         # --- LocalCacheManager: SQLite-backed ticket cache carrying std::mutex /
         #     std::atomic state — real ThreadSanitizer surface. ImGui-free closure:
         #     LocalCacheManager.cpp + IssueDraft.cpp + Logger.cpp (header deps only).
@@ -255,6 +259,9 @@ add_executable(SmatchetTests
     # multi-grid-tabs.md Slice 5a (plan item 21) — pure hidden-pane LRU eviction decision
     # (least-recently-visible first; visible + busy-sync never evicted). Header-only policy.
     Core/GridPaneEvictionPolicy.test.cpp
+    # issue #1457 — gridContexts_ map-structure race (worker snapshot-find vs UI
+    # retire-erase / emplace). Seam-level fixture; header-only, also in SmatchetTsanTests.
+    Core/GridContextsMapRace1457.test.cpp
     Core/MemoryTelemetry.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/MemoryTelemetry.cpp"
     # perf-p99-emitter — pure ring-buffer + percentile seam behind UiPerfMonitor's
@@ -634,6 +641,12 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearIssueMappingPure.cpp"
     Core/LinearQueryFromJql.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearQueryFromJql.cpp"
+    # linear-tracker-backend.md Slice 3 — pure write-path builders/parsers.
+    # Main rig only (not the TSan subset): BuildIssueCreateInput takes an
+    # IssueDraft, whose header pulls CachedTicket → SQLite, so the TU is not
+    # SQLite-free. No threading surface, so the TSan rig loses nothing.
+    Core/LinearMutationPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearMutationPure.cpp"
     # jql-omnibox plan Stream B slice 2c — pure omnibar input classifier
     # (Jql | TicketKey | TitleSearch). Header-only (Source/Core/include/Ui/
     # OmnibarInputClassifier.h); reuses ExtractIssueKeyPrefix (ProjectResolver.cpp)
@@ -965,8 +978,12 @@ add_executable(SmatchetTests
     # pane-backend-picker Slice 1 — PaneAddRequest struct + ApplyPaneAddAndCloseRequestsCore
     # extended for cross-backend: ResolveNewPaneView resolution order + cross-backend
     # branch (no snapshot inherit). The _detail TU is already linked above.
+    # Issue #1458 — DecidePaneAddRequest arm-only-on-success credential gate. The pure
+    # decision lives in PaneCommands_detail.cpp (ImGui/AppController-free); the handler
+    # half (PaneCommands.cpp) pulls the UI session + stays OUT of the rig.
     Core/PaneAddRequest.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetGridPaneWindows_detail.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/PaneCommands_detail.cpp"
     # multi-grid-tabs.md Slice 1a — per-pane GridLiveContext bundle: default state,
     # ADR-0012 Backend slot atomic store/load contract, active-ticket publish path.
     # TicketSyncService.cpp (needed by ~GridLiveContext) is already linked above.
