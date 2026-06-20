@@ -188,6 +188,18 @@ The change-detection reader surface and the Jira-private attributed-delta parser
 
 S1c (AppController trigger + config + commands) follows. The concrete Jira `FetchIssuesChangedSince` override that calls `DeltasFromIssueJson` over live `expand=changelog` HTTP is a deferred sub-slice after S1c.
 
+### S1c-1 — config, poll gate, and `tickets.monitor` command (2026-06-20)
+S1c is itself split into S1c-1 (pure scaffolding — config keys, the poll-decision gate, and the toggle command) and S1c-2 (the live AppController flow: `GridLiveContext` anchors, `TickChangeMonitors`, the window-focus signal, and the notifier). S1c-1 lands the static surface so it bakes ahead of the flow wiring and the diff stays under the CR file ceiling. No AppController / pane / HTTP wiring in this slice:
+
+- `Source/Core/include/Config/ConfigManager.h` + `src/Config/ConfigManager.cpp` *(modified)* — two persisted fields: `TicketChangeMonitorEnabled` (bool, default `true`) and `TicketChangeMonitorIntervalSec` (int, default `120`), wired into the `kBoolFields[]` / `kIntFields[]` descriptor tables and clamped to `[30, 3600]` s on load (below 30 hammers the backend; above 1 h defeats the near-real-time intent).
+- `Source/Core/include/PaneSyncKickPolicy.h` *(modified)* — `ShouldPollForChanges(now, monitorEnabled, backendReachable, windowFocused, paneRecentlyVisible, syncActive, nextChangePollAt)`: the pure conjunction gate `TickChangeMonitors` will consult per pane. Every input independently vetoes a probe (§ Grill outcomes #2 — an LRU-evicted pane has an empty baseline, so `paneRecentlyVisible=false` skips it rather than diffing against ∅).
+- `Source/Core/include/Commands/TicketsMonitorCommandPure.h` *(new)* — `DecideTicketsMonitor(action)` maps `on`/`off`/`status`/empty/unknown to a persist-or-query decision, decoupled from the registry + filesystem (CommandRegistry tests are out of bounds for the pure ctest rig).
+- `Source/Core/src/Commands/Builtin/BuiltinCommands_Config.cpp` *(modified)* — the `tickets.monitor [on|off|status]` command (thin handler over `DecideTicketsMonitor`, dry-run-aware, persists via `LoadMergedConfigJson`→set→`WriteConfigJson`→`InvalidateCache`); plus the two keys added to the `config.set` allowlist.
+- `Source/Core/src/Ui/SmatchetPreferencesUi_Local.cpp` *(modified)* — Appearance-tab "Ticket change monitor" section: enable checkbox + interval `SliderInt` (30–3600 s, greyed via `BeginDisabled` when off), both persisting through `MarkPrefsDirty`.
+- `tests/Core/ShouldPollForChanges.test.cpp` + `tests/Core/TicketsMonitorCommand.test.cpp` *(new)* — bucket-A: the gate truth-table (each veto independently) and the command decision + the config interval clamp round-trip (via `TestEnvGuard`); `tests/Core/ConfigManager.test.cpp` extended so the exhaustive Save/Load round-trip covers both new fields. Registered in `tests/CMakeLists.txt`.
+
+S1c-2 (GridLiveContext anchors + `TickChangeMonitors` + window-focus signal + plain-`Push` notifier) follows, then the deferred concrete Jira `expand=changelog` HTTP override.
+
 ## Deviations from plan
 *(populated per-slice as sub-PRs land)*
 

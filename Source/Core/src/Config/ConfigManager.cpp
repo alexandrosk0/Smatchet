@@ -283,6 +283,7 @@ const FieldDesc<bool> kBoolFields[] = {
     {"primary_side_bar_on_right", &TrackerConfig::PrimarySideBarOnRight},
     {"update_check_enabled", &TrackerConfig::UpdateCheckEnabled},
     {"update_include_prerelease", &TrackerConfig::UpdateIncludePrerelease},
+    {"ticket_change_monitor_enabled", &TrackerConfig::TicketChangeMonitorEnabled},
 };
 
 // Plain ints. Fields with a post-read clamp (ImportMaxConcurrent, GridEndWheel..., McpPort,
@@ -300,6 +301,7 @@ const FieldDesc<int> kIntFields[] = {
     {"grid_end_wheel_swallows_before_horizontal", &TrackerConfig::GridEndWheelSwallowsBeforeHorizontal},
     {"user_activity_day_window", &TrackerConfig::UserActivityDayWindow},
     {"max_user_changes", &TrackerConfig::MaxUserChanges},
+    {"ticket_change_monitor_interval_sec", &TrackerConfig::TicketChangeMonitorIntervalSec},
 };
 
 // Floats persist as JSON doubles; read via `static_cast<float>(j.value(key, double(member)))`
@@ -1097,6 +1099,14 @@ void LoadEnumAndClampedFields(const nlohmann::json& j, TrackerConfig& cfg) {
     }
     if (cfg.MaxUserChanges < 1) {
         cfg.MaxUserChanges = 1;
+    }
+    // Ticket-change monitor — clamp the poll interval to a sane band. Below 30 s the
+    // backend gets hammered; above 1 h the monitor is effectively off.
+    if (cfg.TicketChangeMonitorIntervalSec < 30) {
+        cfg.TicketChangeMonitorIntervalSec = 30;
+    }
+    if (cfg.TicketChangeMonitorIntervalSec > 3600) {
+        cfg.TicketChangeMonitorIntervalSec = 3600;
     }
     // Unknown / hand-edited layout values degrade to the fresh-install default.
     if (cfg.VcsFeedLayout != "unified" && cfg.VcsFeedLayout != "separate") {

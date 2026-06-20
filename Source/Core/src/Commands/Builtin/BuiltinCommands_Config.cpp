@@ -4,6 +4,7 @@
 
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
+#include "Commands/TicketsMonitorCommandPure.h"
 
 #include "ConfigManager.h"
 #include "Logger.h"
@@ -137,6 +138,12 @@ const CfgKey* ConfigSetKeyTable() {
         {"mcpPort", "mcp_port", "MCP plugin restart required"},
         {"mcpAllowRemote", "mcp_allow_remote", "MCP plugin restart required"},
         {"mcpAllowLuaExecution", "mcp_allow_lua_execution", "MCP plugin restart required"},
+        // Ticket-change monitor (docs/plans/active/ticket-change-monitor.md). The enabled flag
+        // is also flippable via the ergonomic `tickets.monitor on|off`; the interval is set
+        // here. Both take effect on the next monitor tick (no restart).
+        {"ticketChangeMonitorEnabled", "ticket_change_monitor_enabled", "applies on next poll"},
+        {"ticketChangeMonitorIntervalSec", "ticket_change_monitor_interval_sec",
+         "integer 30..3600; clamped on load; applies on next poll"},
         {nullptr, nullptr, nullptr},
     };
     return kKeys;
@@ -242,6 +249,63 @@ void RegisterConfigSetCommand(CommandRegistry& reg) {
     }
 }
 
+// tickets.monitor on|off|status — ergonomic toggle/read for the ticket-change monitor pref
+// (ticket-change-monitor plan, S1c). The on and off verbs persist the enabled flag, while
+// status (or no action) reports the current enabled flag plus the poll interval. The verb is
+// resolved by the pure DecideTicketsMonitor; persistence mirrors the config.set JSON path.
+CommandResult RunTicketsMonitor(const nlohmann::json& args, const CommandContext& ctx) {
+    const std::string action = args.value("action", std::string());
+    const TicketsMonitorDecision decision = DecideTicketsMonitor(action);
+    if (decision.Action == TicketsMonitorAction::Invalid) {
+        return CommandResult::Failure(ErrorCode::ValidationError, decision.Error);
+    }
+
+    const TrackerConfig cfg = ConfigManager::Load();
+    const bool currentEnabled = cfg.TicketChangeMonitorEnabled;
+    const int intervalSec = cfg.TicketChangeMonitorIntervalSec;
+
+    if (!decision.WriteEnabled) {
+        // status / no-arg — read-only projection.
+        nlohmann::json out;
+        out["action"] = "status";
+        out["enabled"] = currentEnabled;
+        out["intervalSec"] = intervalSec;
+        return CommandResult::Success(std::move(out));
+    }
+
+    if (ctx.DryRun) {
+        return CommandResult::Success(
+            {{"wouldDo", {{"key", "ticket_change_monitor_enabled"}, {"value", decision.EnabledValue}}}});
+    }
+
+    nlohmann::json cfgJson = ConfigManager::LoadMergedConfigJson();
+    cfgJson["ticket_change_monitor_enabled"] = decision.EnabledValue;
+    ConfigManager::WriteConfigJson(cfgJson);
+    ConfigManager::InvalidateCache();
+    LOG_DEBUG("tickets.monitor — change monitor %s", decision.EnabledValue ? "enabled" : "disabled");
+
+    nlohmann::json out;
+    out["action"] = decision.EnabledValue ? "on" : "off";
+    out["enabled"] = decision.EnabledValue;
+    out["intervalSec"] = intervalSec;
+    out["written"] = true;
+    return CommandResult::Success(std::move(out));
+}
+
+void RegisterTicketsMonitorCommand(CommandRegistry& reg) {
+    {
+        Command c = MakeCommand(
+            "tickets.monitor",
+            "Toggle or query the ticket-change monitor (on|off|status). Persists the enabled pref.",
+            &RunTicketsMonitor);
+        c.Destructive = false;
+        c.Idempotent = false;
+        c.DryRunSupported = true;
+        c.Params = {PString("action", "on, off, or status (default: status).")};
+        reg.Register(std::move(c));
+    }
+}
+
 } // namespace
 
 void RegisterConfigCommands(CommandRegistry& reg, AppController& /*app*/) {
@@ -249,6 +313,7 @@ void RegisterConfigCommands(CommandRegistry& reg, AppController& /*app*/) {
     RegisterConfigGetCommand(reg);
     RegisterConfigReloadCommand(reg);
     RegisterConfigSetCommand(reg);
+    RegisterTicketsMonitorCommand(reg);
 }
 
 } // namespace cmd

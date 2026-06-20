@@ -31,4 +31,18 @@ inline bool PaneSyncKickStillCurrent(bool contextAlive, std::uint64_t capturedGe
     return contextAlive && capturedGeneration == currentGeneration;
 }
 
+/// True when AppController::TickChangeMonitors should dispatch a change-probe for a pane
+/// (ticket-change-monitor plan, § Approach #1). Every gate independently blocks: the feature
+/// must be enabled, the backend reachable, the app window focused, the pane recently visible
+/// (an LRU-evicted pane has an empty ActiveTickets baseline — § Grill outcomes #2 — so it is
+/// skipped, never diffed against an empty set), no streaming sync already in flight for the
+/// pane, and the per-pane poll interval must have elapsed. Pure so the truth-table is
+/// unit-testable without instantiating AppController.
+inline bool ShouldPollForChanges(std::chrono::steady_clock::time_point now, bool monitorEnabled,
+                                 bool backendReachable, bool windowFocused, bool paneRecentlyVisible,
+                                 bool syncActive, std::chrono::steady_clock::time_point nextChangePollAt) {
+    return monitorEnabled && backendReachable && windowFocused && paneRecentlyVisible && !syncActive &&
+           now >= nextChangePollAt;
+}
+
 } // namespace smatchet

@@ -426,6 +426,28 @@ void DrawAppearanceUpdatesSection(AppController& app, UiDrawSession& d) {
     ImGui::TextDisabled("GitHub release repo: %s", d.cfg.UpdateGithubRepo.c_str());
 }
 
+// Ticket-change monitor section (docs/plans/active/ticket-change-monitor.md). Enable toggle +
+// poll-interval slider (greyed when the monitor is off). Both persist via MarkPrefsDirty like
+// the sibling Appearance toggles; the interval matches the [30, 3600] s load-clamp band.
+void DrawAppearanceNotificationsSection(UiDrawSession& d) {
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Ticket change monitor");
+    ImGui::Separator();
+    if (ImGui::Checkbox("Notify me when tracked tickets change", &d.cfg.TicketChangeMonitorEnabled)) {
+        MarkPrefsDirty(d);
+    }
+    ImGui::SetItemTooltip("Periodically poll the backend for changes to the open panes' tickets "
+                          "and raise an in-app toast.");
+    ImGui::BeginDisabled(!d.cfg.TicketChangeMonitorEnabled);
+    int interval = d.cfg.TicketChangeMonitorIntervalSec;
+    if (ImGui::SliderInt("Check interval (seconds)", &interval, 30, 3600, "%d s")) {
+        d.cfg.TicketChangeMonitorIntervalSec = interval;
+        MarkPrefsDirty(d);
+    }
+    ImGui::SetItemTooltip("How often to poll for changes. Lower = faster notice, more requests.");
+    ImGui::EndDisabled();
+}
+
 // Layout-mode section of the Appearance tab: Desktop / Mobile / Auto selector.
 // Auto resolves by viewport width per frame; Desktop/Mobile pin the mode. Saves
 // immediately via MarkPrefsDirty like the sibling Appearance toggles. The combo
@@ -570,6 +592,7 @@ void DrawAppearanceTab(AppController& app, UiDrawSession& d) {
         DrawAppearanceUiModeSection(d);
         DrawAppearanceMobileSection(d);
         DrawAppearanceUpdatesSection(app, d);
+        DrawAppearanceNotificationsSection(d);
         ImGui::EndTabItem();
     }
 }
