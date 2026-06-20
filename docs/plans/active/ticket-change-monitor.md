@@ -214,6 +214,7 @@ S1c (AppController trigger + config + commands) follows. The concrete Jira `Fetc
 ### S1b
 - **Bucket A**: 5 doctest cases / 24 assertions in `tests/Core/JiraChangelogDeltaPure.test.cpp` — salient-roster filter (non-salient items dropped), display-preferred from→to + raw fallback + `field`/`fieldId` match, self-author suppression, minute-prefix since-window, malformed/missing input — all green (`ninja-test-msvc`, `--source-file=*JiraChangelogDeltaPure*`). Lint gate `agents/scripts/project/test-lint-rules.sh --diff origin/develop` PASS (all 9 checks; no new strict-zone or comment-noise violations).
 - **Dual-target build**: deferred to CI's MSVC + DX12 lanes, same rationale as S1a. The three defaulted virtuals are header-only over the existing `FetchIssues` surface and `JiraChangelogDeltaPure` is pure (nlohmann/json + header-only structs only); both compiled clean in the test rig.
+- **Perf-gate (S1b)**: the feature-level gates at § Perf-review-system gates apply unchanged; S1b adds **no new reachable hot path** — the three virtuals are defaults that nothing calls yet (the monitor flow that consults them is S1c-2), and `DeltasFromIssueJson` runs only over a changed issue's `expand=changelog` JSON, not per frame. No new `SMATCHET_UI_PERF_SCOPE` marker, no index/cache/allocation on any steady-state path. PR-fast CI scenario stays the streaming-sync path named in § Perf-review-system gates #1.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 1. flip § Status to `shipped`,

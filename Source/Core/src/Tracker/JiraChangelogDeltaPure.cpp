@@ -41,10 +41,14 @@ const smatchet::SalientFieldRole* FindRole(const std::string& id,
 }
 
 /// Keep rule for a history `created` timestamp: leading-16-char "YYYY-MM-DDTHH:MM" compare.
-/// An empty `sinceIsoMinute` is the baseline (first) poll and keeps everything; a timestamp
-/// too short to carry a minute is kept (conservative — never silently drop a real change).
+/// An empty `sinceIsoMinute` is the baseline (first) poll and keeps everything; either side
+/// too short to carry a minute is kept (conservative — never silently drop a real change on a
+/// malformed anchor or a truncated `created`).
 bool CreatedSinceMinute(const std::string& created, const std::string& sinceIsoMinute) {
     if (sinceIsoMinute.empty()) {
+        return true;
+    }
+    if (sinceIsoMinute.size() < 16) {
         return true;
     }
     if (created.size() < 16) {
