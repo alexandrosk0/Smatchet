@@ -107,6 +107,19 @@ inline std::string ResolveChatModel(AiProvider provider, const std::string& mode
     }
 }
 
+/// Decide whether the worker-thread agents.md cache is still valid for a turn.
+/// Pure + `inline` (no I/O, no AppController coupling) so the test rig links it.
+/// Cache is reusable only when already populated AND every `LoadLayered` input is
+/// unchanged — both paths AND the auto-discover flag (omitting the flag served a
+/// stale blob on auto-discovery toggle — the CodeRabbit finding fixed here).
+inline bool AgentsMdCacheStillValid(bool cacheValid, const std::string& cachedGlobalPath,
+                                    const std::string& cachedProjectPath, bool cachedAutoDiscover,
+                                    const std::string& cfgGlobalPath, const std::string& cfgProjectPath,
+                                    bool cfgAutoDiscover) {
+    return cacheValid && cachedGlobalPath == cfgGlobalPath && cachedProjectPath == cfgProjectPath &&
+           cachedAutoDiscover == cfgAutoDiscover;
+}
+
 } // namespace pure
 } // namespace ai
 } // namespace smatchet
@@ -315,6 +328,10 @@ class AiAssistantController {
     std::string agentsMdCachedBody_;
     std::string agentsMdCachedGlobalPath_;
     std::string agentsMdCachedProjectPath_;
+    // Mirrors cfg.AgentsMdAutoDiscoverProject for the turn the cache was built on.
+    // Part of the cache key — toggling auto-discovery with paths unchanged must
+    // invalidate the cache (LoadLayered's output depends on this flag).
+    bool agentsMdCachedAutoDiscover_{false};
     std::atomic<bool> agentsMdCacheValid_{false};
 
     // F2 — model-change auto-clear. The worker thread caches the previous

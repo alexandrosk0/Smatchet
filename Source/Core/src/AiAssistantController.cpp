@@ -405,9 +405,11 @@ void AiAssistantController::BuildChatPayload(const TrackerConfig& cfg, const Req
         // configured paths change between turns. Reads the single per-turn
         // snapshot threaded from RunRequest.
         std::lock_guard<std::mutex> lk(agentsMdMutex_);
-        const bool pathsMatch = (agentsMdCachedGlobalPath_ == cfg.AgentsMdGlobalPath) &&
-                                (agentsMdCachedProjectPath_ == cfg.ProjectAgentsMdPath);
-        if (agentsMdCacheValid_.load(std::memory_order_acquire) && pathsMatch) {
+        const bool cacheUsable = smatchet::ai::pure::AgentsMdCacheStillValid(
+            agentsMdCacheValid_.load(std::memory_order_acquire), agentsMdCachedGlobalPath_,
+            agentsMdCachedProjectPath_, agentsMdCachedAutoDiscover_, cfg.AgentsMdGlobalPath,
+            cfg.ProjectAgentsMdPath, cfg.AgentsMdAutoDiscoverProject);
+        if (cacheUsable) {
             agentsMd = agentsMdCachedBody_;
         } else {
             agentsMd = AgentsMdLoader::LoadLayered(cfg.AgentsMdGlobalPath, cfg.ProjectAgentsMdPath,
@@ -415,6 +417,7 @@ void AiAssistantController::BuildChatPayload(const TrackerConfig& cfg, const Req
             agentsMdCachedBody_ = agentsMd;
             agentsMdCachedGlobalPath_ = cfg.AgentsMdGlobalPath;
             agentsMdCachedProjectPath_ = cfg.ProjectAgentsMdPath;
+            agentsMdCachedAutoDiscover_ = cfg.AgentsMdAutoDiscoverProject;
             agentsMdCacheValid_.store(true, std::memory_order_release);
         }
     }
