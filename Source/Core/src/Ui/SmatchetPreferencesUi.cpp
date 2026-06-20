@@ -272,11 +272,12 @@ int DrawTrackerBackendSelection(UiDrawSession& d) {
 // Per-backend credential/config inputs of the Tracker tab (Jira / Plane / GitHub / Linear). Extracted
 // from drawPreferencesTrackerTab during the over-100-line decomposition; behaviour-identical.
 void DrawTrackerBackendConfig(UiDrawSession& d, int currentItem) {
-#if !defined(_WIN32)
-    // #15 (Phase-0 mobile MVP): ConfigManager's DPAPI secret protection is Win32-only
-    // (ConfigManager_PathUtils.cpp ProtectSecretForConfig is a #else passthrough on every other
-    // platform), so on Android the tracker API token persists as plaintext in the app's private
-    // config file. Warn explicitly until a Keystore-backed secret store lands (Phase 1).
+#if !defined(_WIN32) && !defined(__ANDROID__)
+    // ConfigManager's DPAPI secret protection is Win32-only (ConfigManager_PathUtils.cpp
+    // ProtectSecretForConfig is a #else passthrough on every other platform), so on a desktop
+    // build without a platform secret store (Linux/macOS) the tracker API token persists as
+    // plaintext in the app's private config file. Warn explicitly there. Android is excluded:
+    // Phase-1 P1.0 seals the token via the Keystore-backed SetSecretCryptoOverride seam.
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.80f, 0.30f, 1.0f));
     ImGui::TextWrapped("Note: on this platform the API token is stored unencrypted in the app's private "
                        "storage. Use a scoped, revocable token.");
