@@ -309,10 +309,13 @@ TEST_CASE("CallstackParser::ParseCallstackText survives adversarial inputs" * do
         const std::vector<ParsedCallstackFrame> frames = ParseCallstackText(text);
         const auto t1 = std::chrono::steady_clock::now();
         const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
-#if defined(__SANITIZE_ADDRESS__)
+#if defined(__SANITIZE_ADDRESS__) || defined(SMATCHET_COVERAGE)
         // MSVC (+ GCC) define __SANITIZE_ADDRESS__ under /fsanitize=address — the rig
         // that flaked (Sanitizer ASAN via MSVC). Clang's ASan uses __has_feature, but
         // the Clang sanitizer lane here is UBSan, not ASan, so this guard suffices.
+        // SMATCHET_COVERAGE (the OpenCppCoverage capture build, coverage.yml) adds the same
+        // heavy per-line instrumentation overhead without defining __SANITIZE_ADDRESS__, so it
+        // hit the identical 2 s false-red on the coverage lane — the 10x ceiling covers both.
         CHECK(elapsedMs < 20000);
 #else
         CHECK(elapsedMs < 2000);
