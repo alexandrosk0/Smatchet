@@ -101,6 +101,7 @@ class AiAssistantController;
 #include "Types/FieldEditTypes.h"
 #include "Types/ConnectivityTypes.h"
 #include "Types/AttachmentTypes.h"
+#include "Types/HostCallbacks.h"
 
 class ITrackerBackendFactory;
 class LocalCacheManager; // fan-in Phase 1: fwd-decl (was a direct heavy include); `std::unique_ptr<LocalCacheManager>
@@ -1141,13 +1142,11 @@ class AppController : public IMainThreadPoster {
     /// Atomically set by the background automation worker on Lua error; consumed once per
     /// frame by LuaConsolePlugin::OnDraw to open + focus the Scripting window.
     std::atomic<bool> scriptingWindowOpenRequested_{false};
-    std::function<void(const std::string&)> OpenUrlHandler;
-    std::function<void()> CloseEmbeddedUiHandler;
-    std::function<void()> RequestAppQuitHandler;
-    AttachmentViewerHandler AttachmentViewerHandlerCallback;
-    AttachmentPreviewHandler AttachmentPreviewHandlerCallback;
-    AttachmentCollectionHandler AttachmentCollectionHandlerCallback;
-    OpenFilePathsHandler OpenFilePathsHandlerCallback;
+    // Phase 0 (appcontroller-god-object-decomposition): the 7 optional host callbacks are grouped
+    // into one HostCallbacks struct (Types/HostCallbacks.h). The 7 public setters above are
+    // unchanged and assign into this member; consumers read through it. Publish-once discipline
+    // (host sets once at setup on the UI thread; read on the UI thread) is unchanged.
+    HostCallbacks hostCallbacks_;
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     // Recorder + replay value types live in `AppController_LuaTypes.h`; the `AppController::`
