@@ -1,0 +1,76 @@
+name: Linear live smoke
+
+# Credential-gated LIVE end-to-end smoke for the Linear tracker backend — the one
+# path CI can't cover hermetically (the hermetic half is LinearMutationPure.test.cpp
+# + the deterministic fixture backend). Drives the REAL LinearClient against a real
+# Linear workspace: reachability -> fetch -> create -> update -> comment -> archive.
+#
+# NOT on the PR critical path: runs only on a nightly schedule + manual dispatch, so
+# the LINEAR_TEST_API_KEY secret is never exposed to fork PRs and the live API's
+# flakiness never reds a contributor's PR. When the secret is unset the smoke binary
+# self-SKIPs (exit 0), so this workflow is green on repos that haven't configured it.
+#
+# Configure (repo Settings):
+#   secret  LINEAR_TEST_API_KEY     a personal API key scoped to a SANDBOX workspace
+#   var     LINEAR_TEST_TEAM_ID     the sandbox team UUID (the create scope)
+#   var     LINEAR_TEST_TEAM_KEY    the sandbox team key, e.g. "ENG" (optional)
+# The smoke creates one throwaway "[smatchet-smoke]" issue per run and archives it.
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # 05:17 UTC daily — off-peak, odd minute to avoid the top-of-hour stampede.
+    - cron: "17 5 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linear-live-smoke
+  cancel-in-progress: false
+
+jobs:
+  linear-live-smoke:
+    name: Linear live smoke (Linux clang, sandbox)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install clang + X11/GL dev headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          # clang/lld: host Linux toolchain. xorg-dev + libgl1-mesa-dev: GLFW's
+          # add_subdirectory runs find_package(X11 REQUIRED) at configure time, and
+          # — unlike the compile-only posix-core gate — this target LINKS the core
+          # archive (which carries glfw on its PRIVATE link interface), so glfw is
+          # actually built + linked here. The smoke never opens a window.
+          sudo apt-get update
+          sudo apt-get install -y clang lld xorg-dev libgl1-mesa-dev
+
+      - name: Cache FetchContent _deps (posix-core-check)
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: .fetchcontent-src
+          key: ${{ runner.os }}-fetchcontent-posixcheck-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Configure posix-core-check
+        run: cmake --preset posix-core-check
+
+      - name: Build the live-smoke binary
+        # EXCLUDE_FROM_ALL target — built explicitly here and nowhere else, so it can
+        # never affect the gating build.
+        run: cmake --build --preset posix-core-check --target SmatchetLinearLiveSmoke -- -k 0
+
+      - name: Run Linear live smoke
+        env:
+          SMATCHET_LINEAR_LIVE_API_KEY: ${{ secrets.LINEAR_TEST_API_KEY }}
+          SMATCHET_LINEAR_LIVE_TEAM_ID: ${{ vars.LINEAR_TEST_TEAM_ID }}
+          SMATCHET_LINEAR_LIVE_TEAM_KEY: ${{ vars.LINEAR_TEST_TEAM_KEY }}
+        run: ./build/posix-core-check/SmatchetLinearLiveSmoke
