@@ -14,7 +14,13 @@
 #   1 — at least one bats test failed
 #   2 — bats binary missing (BUILD.md § Dev-script CLI tools)
 set -uo pipefail
-cd "$(git rev-parse --show-toplevel)" || exit 2
+# Resolve + verify the git root BEFORE cd: `cd "$(...)"` swallows an empty
+# command-substitution (cd "" returns 0, leaving $PWD wherever the caller was),
+# so a non-repo invocation would silently run against the wrong tree. Capture,
+# require non-empty AND git success, else exit 2.
+_GIT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 2
+[ -n "$_GIT_ROOT" ] || exit 2
+cd "$_GIT_ROOT" || exit 2
 
 if ! command -v bats >/dev/null 2>&1; then
     echo "test-plan-index-robustness-bats: bats not on PATH (npm i -g bats). See BUILD.md § Dev-script CLI tools." >&2

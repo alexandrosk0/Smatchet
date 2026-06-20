@@ -58,8 +58,20 @@ _make_shallow() {
 # ---------- guard: non-shallow is a no-op ----------
 
 @test "is_shallow_or_refuse: non-shallow repo returns 0 in both modes" {
-    # The live PR-7 repo is non-shallow; source the lib and call directly.
-    run bash -c ". '$GUARD_LIB'; is_shallow_or_refuse fix && is_shallow_or_refuse check && echo OK"
+    # Hermetic: run the guard inside an ISOLATED throwaway repo, never the live
+    # working tree. Calling `is_shallow_or_refuse fix` against the real repo on a
+    # shallow CI checkout would `git fetch --unshallow` and mutate the
+    # environment (non-hermetic). A fresh `git init` repo is guaranteed
+    # non-shallow, so the guard takes its no-op return-0 path with no network and
+    # no mutation of anything outside SANDBOX.
+    local iso="$SANDBOX/nonshallow"
+    git init --quiet -b develop "$iso"
+    git -C "$iso" config user.email t@t
+    git -C "$iso" config user.name t
+    printf '# seed\n' > "$iso/seed.md"
+    git -C "$iso" add -A && git -C "$iso" commit --quiet -m seed
+    [ "$(git -C "$iso" rev-parse --is-shallow-repository)" = "false" ]
+    run bash -c "cd '$iso' && . '$GUARD_LIB'; is_shallow_or_refuse fix && is_shallow_or_refuse check && echo OK"
     [ "$status" -eq 0 ]
     [[ "$output" == *"OK"* ]]
 }

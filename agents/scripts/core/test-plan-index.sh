@@ -24,6 +24,14 @@ set -uo pipefail
 # silently NO-OP (archive dir not found here) or index the WRONG tree. cd to the
 # toplevel so the live archive + INDEX are always THIS repo's
 # (plan-index-fix-wrong-cwd-silent-noop). Honour an explicit absolute override.
+#
+# Capture our OWN dir as an ABSOLUTE path BEFORE the cd: the later
+# `. "$_SCRIPT_DIR/lib/..."` source and the self-re-invocation (`"$_SCRIPT_PATH"
+# --check`) both rely on $0, which is relative for a relative invocation from a
+# subdir — after `cd "$_GIT_ROOT"` a relative $0 no longer resolves. Resolve
+# once here while $PWD is still the caller's dir.
+_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+_SCRIPT_PATH="$_SCRIPT_DIR/$(basename "$0")"
 _GIT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || _GIT_ROOT=""
 if [ -n "$_GIT_ROOT" ]; then
   cd "$_GIT_ROOT" || { echo "test-plan-index: cannot cd to git root '$_GIT_ROOT'" >&2; exit 2; }
@@ -39,7 +47,7 @@ END_MARK="<!-- END auto-plan-index -->"
 # the required check rejects. Sourced lib auto-unshallows under --fix (matching
 # CI) or refuses; WARNs under --check. See lib/plan-history-guard.sh header.
 # shellcheck source=lib/plan-history-guard.sh
-. "$(dirname "$0")/lib/plan-history-guard.sh"
+. "$_SCRIPT_DIR/lib/plan-history-guard.sh"
 
 MODE="check"
 for a in "$@"; do
@@ -81,7 +89,7 @@ if [ "$MODE" = "selftest" ]; then
   # succeed here. Re-invoke ourselves with the override so the real arg-parse +
   # archive-dir check runs end-to-end.
   if PLAN_INDEX_ARCHIVE_DIR="docs/plans/__no_such_archive_dir__$$" \
-       "$0" --check >/dev/null 2>&1; then
+       "$_SCRIPT_PATH" --check >/dev/null 2>&1; then
     echo "test-plan-index --selftest: FAIL — a missing archive dir did NOT fail (silent NO-OP)" >&2
     fail=1
   fi
