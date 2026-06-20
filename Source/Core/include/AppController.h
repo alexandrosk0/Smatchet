@@ -113,6 +113,7 @@ class TicketSyncService;
 class EditMetaCacheService;
 class FieldEditPipelineService;
 class ConnectivityMonitorService;
+class AttachmentAppUpdateService;
 class LuaAutomationHost;
 struct TrackerActivityEntry;
 struct TrackerActivityProgress;
@@ -1009,6 +1010,12 @@ class AppController : public IMainThreadPoster {
     /// into this one instance (N writers, one service). Public AppController connectivity methods are
     /// thin delegators forwarding here. See the god-object decomposition plan (Phase 3).
     std::unique_ptr<ConnectivityMonitorService> connectivity_;
+    /// Owns the attachment-open + GitHub app-update logic (ShowAttachmentCollection / OpenAttachment /
+    /// OpenAttachmentInSystemViewer / DownloadAttachmentForPreview + GetAppVersion /
+    /// GetGitHubReleaseRepo / CheckForAppUpdate / DownloadAndLaunchInstallerUpdate). Constructed
+    /// eagerly in `Initialize` after `depsAdapter_`. Public AppController methods are thin delegators
+    /// forwarding here. See the AppController god-object decomposition plan (Phase 4).
+    std::unique_ptr<AttachmentAppUpdateService> attachmentAppUpdate_;
     /// Default pane id ("main" — matches ConfigManager_Panes bootstrap). The default
     /// context is PERMANENT: created in the constructor, never retired (offlineQueue_
     /// holds a deps-adapter reference chain into it), so focusedContext() fallback and

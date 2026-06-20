@@ -286,3 +286,14 @@ void GridContextDepsAdapter::RestartReplayTimers(std::chrono::steady_clock::time
         app_.offlineQueue_->RestartReplayTimersNow(now);
     }
 }
+
+// ---- IAttachmentAppUpdateDeps (Phase 4) ----------------------------------------------
+// Global host state — these forward to app_ regardless of ctx_ (the host callbacks + URL-open +
+// app-quit are AppController-global, not per-pane). The adapter is a friend of AppController, so the
+// HostCallbacks struct read is direct. OpenUrl / RequestAppQuit are the existing public const methods
+// (scheme-allowlist + null-handler guard live inside them).
+const HostCallbacks& GridContextDepsAdapter::Host() const { return app_.hostCallbacks_; }
+
+void GridContextDepsAdapter::OpenUrl(const std::string& url) const { app_.OpenUrl(url); }
+
+void GridContextDepsAdapter::RequestAppQuit() const { app_.RequestAppQuit(); }

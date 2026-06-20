@@ -88,6 +88,7 @@
 #include "EditMetaCacheService.h"
 #include "FieldEditPipelineService.h"
 #include "ConnectivityMonitorService.h"
+#include "AttachmentAppUpdateService.h"
 
 #include "PaneSyncKickPolicy.h"
 
@@ -184,86 +185,6 @@ bool RemoveLocalCacheDbFiles(const std::string& dbPathUtf8, std::string& outErro
         }
     }
     return true;
-}
-
-std::string TrimAppUpdateText(std::string text) {
-    while (!text.empty() && (text.back() == '\r' || text.back() == '\n' || text.back() == ' ' || text.back() == '\t')) {
-        text.pop_back();
-    }
-    while (!text.empty() &&
-           (text.front() == '\r' || text.front() == '\n' || text.front() == ' ' || text.front() == '\t')) {
-        text.erase(text.begin());
-    }
-    return text;
-}
-
-struct SemanticVersion {
-    int Major = 0;
-    int Minor = 0;
-    int Patch = 0;
-    bool Valid = false;
-};
-
-SemanticVersion ParseSemanticVersion(const std::string& raw) {
-    SemanticVersion out;
-    std::string s = raw;
-    if (!s.empty() && s.front() == 'v') {
-        s.erase(s.begin());
-    }
-    const size_t dash = s.find('-');
-    if (dash != std::string::npos) {
-        s.resize(dash);
-    }
-
-    std::array<int, 3> parts{{0, 0, 0}};
-    size_t start = 0;
-    for (int i = 0; i < 3; ++i) {
-        const size_t dot = s.find('.', start);
-        const std::string token = (dot == std::string::npos) ? s.substr(start) : s.substr(start, dot - start);
-        if (token.empty() ||
-            !std::all_of(token.begin(), token.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) {
-            return out;
-        }
-        parts[static_cast<size_t>(i)] = std::atoi(token.c_str());
-        if (dot == std::string::npos) {
-            if (i != 2) {
-                return out;
-            }
-            start = s.size();
-        } else {
-            start = dot + 1;
-        }
-    }
-    if (start < s.size()) {
-        return out;
-    }
-
-    out.Major = parts[0];
-    out.Minor = parts[1];
-    out.Patch = parts[2];
-    out.Valid = true;
-    return out;
-}
-
-int CompareSemanticVersion(const SemanticVersion& a, const SemanticVersion& b) {
-    if (a.Major != b.Major) {
-        return a.Major < b.Major ? -1 : 1;
-    }
-    if (a.Minor != b.Minor) {
-        return a.Minor < b.Minor ? -1 : 1;
-    }
-    if (a.Patch != b.Patch) {
-        return a.Patch < b.Patch ? -1 : 1;
-    }
-    return 0;
-}
-
-std::string FileNameFromUrl(const std::string& url) {
-    const size_t slash = url.find_last_of('/');
-    if (slash == std::string::npos || slash + 1 >= url.size()) {
-        return std::string();
-    }
-    return url.substr(slash + 1);
 }
 
 } // namespace
@@ -1474,186 +1395,23 @@ void AppController::RequestOpenFilePaths(bool allowMultiple, const std::string& 
     onComplete({});
 }
 
-std::string AppController::GetAppVersion() const {
-#ifdef SMATCHET_APP_VERSION
-    return SMATCHET_APP_VERSION;
-#else
-    return "0.0.0";
-#endif
-}
+// App-update surface — thin delegators forwarding into AttachmentAppUpdateService (god-object
+// decomposition Phase 4). The full implementations (semantic-version parse/compare, the GitHub
+// releases query, the installer download + launch) moved verbatim into AttachmentAppUpdateService.cpp
+// along with their file-local helpers; the public signatures are preserved so the UI / command /
+// diagnostics call sites compile unchanged.
+std::string AppController::GetAppVersion() const { return attachmentAppUpdate_->GetAppVersion(); }
 
-std::string AppController::GetGitHubReleaseRepo() const {
-#ifdef SMATCHET_GITHUB_RELEASE_REPO
-    return SMATCHET_GITHUB_RELEASE_REPO;
-#else
-    return "alexandrosk0/Smatchet";
-#endif
-}
+std::string AppController::GetGitHubReleaseRepo() const { return attachmentAppUpdate_->GetGitHubReleaseRepo(); }
 
 AppUpdateInfo AppController::CheckForAppUpdate(bool includePrerelease) const {
-    AppUpdateInfo out;
-    out.CurrentVersion = GetAppVersion();
-
-    const TrackerConfig cfg = ConfigManager::Load();
-    const std::string repo = cfg.UpdateGithubRepo.empty() ? GetGitHubReleaseRepo() : cfg.UpdateGithubRepo;
-    if (repo.empty()) {
-        out.Error = "No GitHub release repository configured.";
-        return out;
-    }
-
-    const std::string url = "https://api.github.com/repos/" + repo + "/releases?per_page=10";
-    cpr::Header headers{{"Accept", "application/vnd.github+json"},
-                        {"User-Agent", "SmatchetUpdater/" + out.CurrentVersion}};
-    cpr::Response response =
-        cpr::Get(cpr::Url{url}, headers, cpr::Redirect{true, true}, cpr::ConnectTimeout{5000}, cpr::Timeout{15000});
-    if (response.error.code != cpr::ErrorCode::OK) {
-        out.Error = "Update check failed: " + response.error.message;
-        return out;
-    }
-    if (response.status_code < 200 || response.status_code >= 300) {
-        out.Error = "Update check failed: GitHub returned HTTP " + std::to_string(response.status_code);
-        return out;
-    }
-
-    nlohmann::json releases;
-    try {
-        releases = nlohmann::json::parse(response.text);
-    } catch (const std::exception& ex) {
-        out.Error = std::string("Update check failed to parse GitHub response: ") + ex.what();
-        return out;
-    }
-    if (!releases.is_array()) {
-        out.Error = "Update check failed: unexpected GitHub response shape.";
-        return out;
-    }
-
-    const SemanticVersion current = ParseSemanticVersion(out.CurrentVersion);
-    for (const auto& release : releases) {
-        if (!release.is_object()) {
-            continue;
-        }
-        if (release.value("draft", false)) {
-            continue;
-        }
-        if (!includePrerelease && release.value("prerelease", false)) {
-            continue;
-        }
-
-        const std::string tag = release.value("tag_name", std::string());
-        const SemanticVersion candidate = ParseSemanticVersion(tag);
-        if (!candidate.Valid) {
-            continue;
-        }
-
-        out.Ok = true;
-        out.ReleaseTag = tag;
-        out.LatestVersion = !tag.empty() && tag.front() == 'v' ? tag.substr(1) : tag;
-        out.ReleaseUrl = release.value("html_url", std::string());
-        out.ReleaseNotes = TrimAppUpdateText(release.value("body", std::string()));
-
-        if (release.contains("assets") && release["assets"].is_array()) {
-            for (const auto& asset : release["assets"]) {
-                if (!asset.is_object()) {
-                    continue;
-                }
-                const std::string assetName = asset.value("name", std::string());
-                if (assetName.find("-windows-setup.exe") != std::string::npos) {
-                    out.InstallerAsset.Name = assetName;
-                    out.InstallerAsset.DownloadUrl = asset.value("browser_download_url", std::string());
-                    break;
-                }
-            }
-        }
-
-        if (current.Valid && CompareSemanticVersion(candidate, current) <= 0) {
-            out.UpdateAvailable = false;
-            return out;
-        }
-
-        out.UpdateAvailable = !out.InstallerAsset.DownloadUrl.empty();
-        if (!out.UpdateAvailable && out.Error.empty()) {
-            out.Error = "A newer release exists, but no Windows installer asset was found.";
-        }
-        return out;
-    }
-
-    out.Ok = true;
-    out.UpdateAvailable = false;
-    return out;
+    return attachmentAppUpdate_->CheckForAppUpdate(includePrerelease);
 }
 
 bool AppController::DownloadAndLaunchInstallerUpdate(const std::string& downloadUrl, const std::string& assetName,
                                                      std::string& outError,
                                                      std::shared_ptr<std::atomic<bool>> cancelFlag) const {
-    outError.clear();
-    if (downloadUrl.empty()) {
-        outError = "Missing installer download URL.";
-        return false;
-    }
-#if defined(_WIN32)
-    char tempPathBuf[MAX_PATH] = {};
-    const DWORD tempPathLen = GetTempPathA(static_cast<DWORD>(sizeof(tempPathBuf)), tempPathBuf);
-    if (tempPathLen == 0 || tempPathLen >= sizeof(tempPathBuf)) {
-        outError = "Failed to resolve temp directory.";
-        return false;
-    }
-
-    std::string filename = assetName.empty() ? FileNameFromUrl(downloadUrl) : assetName;
-    if (filename.empty()) {
-        filename = "SmatchetUpdateSetup.exe";
-    }
-    const std::string localPath = std::string(tempPathBuf) + filename;
-    std::ofstream ofs(localPath, std::ios::binary | std::ios::trunc);
-    if (!ofs.is_open()) {
-        outError = "Failed to create installer download file: " + localPath;
-        return false;
-    }
-
-    cpr::Header headers{{"Accept", "application/octet-stream"}, {"User-Agent", "SmatchetUpdater/" + GetAppVersion()}};
-    cpr::Redirect redirect(true, true);
-    bool cancelled = false;
-    cpr::WriteCallback writeCb{[&](const std::string& data, intptr_t) -> bool {
-        if (cancelFlag && cancelFlag->load(std::memory_order_acquire)) {
-            cancelled = true;
-            return false;
-        }
-        ofs.write(data.data(), static_cast<std::streamsize>(data.size()));
-        return ofs.good();
-    }};
-    cpr::Response resp =
-        cpr::Get(cpr::Url{downloadUrl}, headers, redirect, writeCb, cpr::ConnectTimeout{5000}, cpr::Timeout{120000});
-    ofs.close();
-    if (cancelled) {
-        std::remove(localPath.c_str());
-        outError = "Download cancelled.";
-        return false;
-    }
-    if (resp.error.code != cpr::ErrorCode::OK || resp.status_code < 200 || resp.status_code >= 300) {
-        std::remove(localPath.c_str());
-        outError = "Failed to download installer.";
-        if (!resp.error.message.empty()) {
-            outError += " " + resp.error.message;
-        } else if (resp.status_code > 0) {
-            outError += " HTTP " + std::to_string(resp.status_code);
-        }
-        return false;
-    }
-
-    const HINSTANCE openResult = ShellExecuteA(nullptr, "open", localPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-    if (reinterpret_cast<intptr_t>(openResult) <= 32) {
-        outError = "Failed to launch downloaded installer.";
-        return false;
-    }
-
-    RequestAppQuit();
-    return true;
-#else
-    (void)assetName;
-    (void)downloadUrl;
-    (void)cancelFlag;
-    outError = "Installer updates are currently supported only on Windows.";
-    return false;
-#endif
+    return attachmentAppUpdate_->DownloadAndLaunchInstallerUpdate(downloadUrl, assetName, outError, cancelFlag);
 }
 
 bool AppController::IsOnUiThread() const {
@@ -1700,6 +1458,13 @@ void AppController::WireCoreServices() {
     // service). Holds the deps-adapter ref.
     if (!connectivity_) {
         connectivity_ = std::make_unique<ConnectivityMonitorService>(*depsAdapter_);
+    }
+    // AttachmentAppUpdateService — the attachment-open + GitHub app-update delegators (OpenAttachment,
+    // ShowAttachmentCollection, CheckForAppUpdate, DownloadAndLaunchInstallerUpdate, …) forward here.
+    // Holds the deps-adapter ref; no mutex, no per-context state, so construction order vs the other
+    // services is immaterial beyond depsAdapter_ existing (Phase 4).
+    if (!attachmentAppUpdate_) {
+        attachmentAppUpdate_ = std::make_unique<AttachmentAppUpdateService>(*depsAdapter_);
     }
     // EditMetaCacheService — every editmeta delegator (CanEditFieldForIssue, EnsureIssueEditMetaLoaded,
     // the warm-start path, …) needs a live target from the first tick (Phase 1). Holds the adapter ref.
