@@ -1,6 +1,6 @@
 # Build rules (load on-demand)
 
-Trigger: **building** Smatchet (configuring presets, the light build, the dual-target verify, or clearing the Unreal build). AGENTS.md § Project rules keeps a one-line build pointer here; this doc has the detail.
+Trigger: **building** the project (configuring presets, the light build, the dual-target verify, or clearing the Unreal build). AGENTS.md § Project rules keeps a one-line build pointer here; this doc has the detail.
 
 ## Presets + exe path
 
@@ -16,7 +16,7 @@ Default when the task is NOT an AI/Whisper/MCP feature — faster, fewer moving 
 
 ## MSYS2 retired
 
-**Never propose MSYS2 for building Smatchet** — the `*-msys2` presets are **retired** (use `ninja-iter-msvc` or `ninja-iter-clang`); the repo-owned PowerShell scripts (`scripts/dev/local/build_and_run.ps1` / `scripts/dev/local/build_standalone.ps1`) auto-bootstrap the MSVC env via `vswhere`→`vcvars64`, so no Developer Prompt or MSYS2 is required, and a `*-msys2` preset is rejected fast with that hint.
+**Never propose MSYS2 for building the project** — the `*-msys2` presets are **retired** (use `ninja-iter-msvc` or `ninja-iter-clang`); the repo-owned PowerShell scripts (`scripts/dev/local/build_and_run.ps1` / `scripts/dev/local/build_standalone.ps1`) auto-bootstrap the MSVC env via `vswhere`→`vcvars64`, so no Developer Prompt or MSYS2 is required, and a `*-msys2` preset is rejected fast with that hint.
 
 ## Dual-target verify
 

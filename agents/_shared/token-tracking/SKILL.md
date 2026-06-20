@@ -5,7 +5,7 @@ description: Report per-agent token usage for the current Claude Code session (d
 
 # /agent-tokens
 
-Print the per-agent token usage report for the current Smatchet project.
+Print the per-agent token usage report for the current project.
 
 ## How to invoke
 

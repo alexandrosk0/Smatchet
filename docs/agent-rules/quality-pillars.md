@@ -35,7 +35,7 @@ Five north-star quality invariants in two sub-groups. **UX Pillars** (1-4) are u
 
 ## 3. Never crash
 
-**Pillar 3**: Smatchet must terminate cleanly under all observed inputs. Crashes in dev block the next merge until fixed; crashes in shipped builds are P0 regressions.
+**Pillar 3**: the project must terminate cleanly under all observed inputs. Crashes in dev block the next merge until fixed; crashes in shipped builds are P0 regressions.
 
 **Enforceable invariants:**
 - **Pre-merge sanitizer build** mandatory on any PR that touches `Source/Core/` C++: `cmake --build --preset ninja-test-msvc` runs the doctest rig under ASan / UBSan (when toolchain supports it). `debug-detective` runs the sanitizer build for every crash-suspect investigation.

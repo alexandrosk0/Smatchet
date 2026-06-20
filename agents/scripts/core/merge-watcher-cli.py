@@ -151,13 +151,20 @@ def resolve_clone_path(cwd: str | pathlib.Path | None = None) -> str:
     cwd_str = str(cwd or os.getcwd())
 
     def _git(*rev_args: str) -> str:
-        r = subprocess.run(
-            ["git", "-C", cwd_str, "rev-parse", *rev_args],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
+        try:
+            r = subprocess.run(
+                ["git", "-C", cwd_str, "rev-parse", *rev_args],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=15,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"merge-watcher: `git rev-parse {' '.join(rev_args)}` in '{cwd_str}' "
+                "timed out — a hung git can't be allowed to wedge the caller."
+            ) from exc
         if r.returncode != 0:
             raise RuntimeError(
                 f"merge-watcher: cwd '{cwd_str}' is not inside a git repository "
@@ -513,10 +520,21 @@ def cmd_ledger_guard(args: argparse.Namespace) -> int:
     """
     clone_path = getattr(args, "clone_path", None) or os.getcwd()
     rel = "docs/self-improvement/merge-snapshots.jsonl"
-    r = subprocess.run(
-        ["git", "-C", clone_path, "status", "--porcelain", "--", rel],
-        capture_output=True, text=True, encoding="utf-8", errors="replace",
-    )
+    try:
+        r = subprocess.run(
+            ["git", "-C", clone_path, "status", "--porcelain", "--", rel],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired:
+        # Fail-closed: a hung `git status` can't verify ledger state -> refuse,
+        # same as a non-zero exit below (never greenlight a possibly-lossy reset).
+        print(
+            f"merge-watch ledger-guard: `git status` in '{clone_path}' timed out "
+            "— cannot verify ledger state; refusing.",
+            file=sys.stderr,
+        )
+        return 1
     if r.returncode != 0:
         # Fail-closed: cannot verify → refuse (don't greenlight a possibly-lossy reset).
         print(

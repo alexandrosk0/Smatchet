@@ -25,7 +25,7 @@ A **required** status check must report on **every** PR or the PR is wedged
 success for a workflow that was skipped by a path filter. So if a required
 check's workflow has a positive `on.pull_request.paths:` filter (e.g.
 `perf-pr-fast.yml` filters to `Source/Core/**`), a docs-only PR never triggers
-it → the required context never reports → the PR can never merge. Smatchet ships
+it → the required context never reports → the PR can never merge. The project ships
 docs-only PRs constantly, so any required check MUST report unconditionally.
 
 Note: `paths` / `paths-ignore` are **workflow-level** (`on.pull_request.*`), not

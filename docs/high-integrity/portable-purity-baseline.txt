@@ -36,8 +36,6 @@ agents/_shared/skills/test-authoring/SKILL.md	Source/Core
 agents/_shared/skills/test-authoring/SKILL.md	Source/Standalone
 agents/_shared/skills/test-authoring/SKILL.md	ninja-iter-msvc
 agents/_shared/skills/test-authoring/SKILL.md	ninja-msvc-asan
-agents/_shared/token-tracking/SKILL.md	Smatchet
-agents/_shared/token-tracking/agents-statusline.py	Smatchet
 agents/_shared/token-tracking/skill-load-log.py	Smatchet
 agents/core/architect.md	DX12
 agents/core/architect.md	SMATCHET
@@ -160,7 +158,6 @@ docs/agent-rules/process-rules.md	Source/Core
 docs/agent-rules/process-rules.md	ninja-iter-msvc
 docs/agent-rules/process-rules.md	ninja-test-msvc
 docs/agent-rules/quality-pillars.md	SMATCHET
-docs/agent-rules/quality-pillars.md	Smatchet
 docs/agent-rules/quality-pillars.md	Source/Core
 docs/agent-rules/quality-pillars.md	ninja-test-msvc
 docs/agent-rules/shell-script-self-review.md	SMATCHET
@@ -189,5 +186,4 @@ docs/harness/claude-code/hooks/lint-syntax-both.py	ninja-iter-msvc
 docs/harness/claude-code/hooks/pre-ship-stop-gate.sh	SMATCHET
 docs/harness/claude-code/hooks/pretool-edit-p4-lock-check.sh	SMATCHET
 docs/harness/claude-code/hooks/pretool-workflow-fleet-preflight.sh	SMATCHET
-docs/harness/cursor/hooks-equivalent.md	Smatchet
 docs/harness/cursor/rules/agents.mdc	Smatchet
