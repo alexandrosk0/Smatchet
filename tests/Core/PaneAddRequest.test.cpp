@@ -8,6 +8,7 @@
 //
 // Pure data-level tests — no ImGui, no UiDrawSession, no disk I/O.
 
+#include "Commands/PaneCommands.h"
 #include "Config/ConfigManager.h"
 #include "GridPane.h"
 #include "SmatchetGridPaneWindows.h"
@@ -22,6 +23,8 @@
 
 using SmatchetGridPaneWindows::detail::ApplyPaneAddAndCloseRequestsCore;
 using SmatchetGridPaneWindows::detail::ResolveNewPaneView;
+using smatchet::cmd::detail::DecidePaneAddRequest;
+using smatchet::cmd::detail::PaneAddDecision;
 
 namespace {
 
@@ -305,4 +308,58 @@ TEST_CASE("PaneAddRequest: backend + view fields round-trip") {
     CHECK(req.sourceId == "pane-1");
     CHECK(req.targetBackendKey == "GitHub");
     CHECK(req.targetViewId == "view-42");
+}
+
+// ---------------------------------------------------------------------------
+// DecidePaneAddRequest — arm-only-on-success (issue #1458 regression)
+//
+// A pane.new with an un-credentialed backend used to return Failure yet leave the
+// deferred-create latch armed (sourceId set), so the host spawned a spurious
+// same-backend duplicate pane next frame. The fix resolves the request into a local
+// and arms the latch ONLY on the success path; a failed decision yields a default
+// (un-armed) request — sourceId.empty() == the host's "no request" sentinel.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("DecidePaneAddRequest: un-credentialed backend → failure, request NOT armed") {
+    const TrackerConfig cfg = MakeCfg("", "", "", "", "", "", "", ""); // no creds for any backend
+    const PaneAddDecision decision =
+        DecidePaneAddRequest("main", /*acceptBackend=*/true, "Plane", "", cfg);
+    CHECK_FALSE(decision.Ok);
+    CHECK(decision.FailureMessage == "Backend 'Plane' has no credentials configured.");
+    // The crux of #1458: a failure must leave the latch un-armed so no pane is created.
+    CHECK(decision.Request.sourceId.empty());
+    CHECK(decision.Request.targetBackendKey.empty());
+    CHECK(decision.Request.targetViewId.empty());
+}
+
+TEST_CASE("DecidePaneAddRequest: credentialed backend → success, latch armed with backend/view") {
+    const TrackerConfig cfg = MakeCfg("", "", "https://plane.so", "plane_tok", "my-ws", "", "", "");
+    const PaneAddDecision decision =
+        DecidePaneAddRequest("main", /*acceptBackend=*/true, "Plane", "plane_default_view", cfg);
+    CHECK(decision.Ok);
+    CHECK(decision.FailureMessage.empty());
+    CHECK(decision.Request.sourceId == "main");
+    CHECK(decision.Request.targetBackendKey == "Plane");
+    CHECK(decision.Request.targetViewId == "plane_default_view");
+}
+
+TEST_CASE("DecidePaneAddRequest: no backend arg → same-backend duplicate, latch armed") {
+    const TrackerConfig cfg = MakeCfg("my.jira.net", "tok", "", "", "", "", "", "");
+    const PaneAddDecision decision =
+        DecidePaneAddRequest("main", /*acceptBackend=*/true, "", "", cfg);
+    CHECK(decision.Ok);
+    CHECK(decision.Request.sourceId == "main");
+    CHECK(decision.Request.targetBackendKey.empty()); // empty = duplicate source's backend
+    CHECK(decision.Request.targetViewId.empty());
+}
+
+TEST_CASE("DecidePaneAddRequest: acceptBackend false ignores backend arg, latch armed") {
+    // pane.duplicate / pane.split pass acceptBackend=false — backend arg must not be consumed.
+    const TrackerConfig cfg = MakeCfg("", "", "", "", "", "", "", ""); // no creds at all
+    const PaneAddDecision decision =
+        DecidePaneAddRequest("main", /*acceptBackend=*/false, "Plane", "v9", cfg);
+    CHECK(decision.Ok); // never checks creds when acceptBackend is false
+    CHECK(decision.Request.sourceId == "main");
+    CHECK(decision.Request.targetBackendKey.empty());
+    CHECK(decision.Request.targetViewId.empty());
 }

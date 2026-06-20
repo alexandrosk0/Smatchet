@@ -167,20 +167,17 @@ void RegisterPaneAddCommand(AppController& app, UiDrawSession& d, CommandRegistr
             if (d.gridPanes.empty()) {
                 return CommandResult::Failure(ErrorCode::HandlerError, "No grid panes are loaded yet.");
             }
-            d.paneAddRequest.sourceId = d.focusedPane().id;
-            if (acceptBackend) {
-                d.paneAddRequest.targetBackendKey.clear();
-                d.paneAddRequest.targetViewId.clear();
-                const std::string backend = args.value("backend", std::string());
-                if (!backend.empty()) {
-                    if (!ConfigManager::BackendCredentialsPresent(d.cfg, backend)) {
-                        return CommandResult::Failure(ErrorCode::HandlerError,
-                            "Backend '" + backend + "' has no credentials configured.");
-                    }
-                    d.paneAddRequest.targetBackendKey = backend;
-                    d.paneAddRequest.targetViewId     = args.value("view", std::string());
-                }
+            // Validate-first: resolve the whole request into a local and arm d.paneAddRequest
+            // ONLY on the success path. A failure return must not leave the latch armed, or the
+            // host's ApplyPaneAddAndCloseRequestsCore (keys on !sourceId.empty()) spawns a
+            // spurious duplicate pane next frame (issue #1458).
+            const detail::PaneAddDecision decision = detail::DecidePaneAddRequest(
+                d.focusedPane().id, acceptBackend, args.value("backend", std::string()),
+                args.value("view", std::string()), d.cfg);
+            if (!decision.Ok) {
+                return CommandResult::Failure(ErrorCode::HandlerError, decision.FailureMessage);
             }
+            d.paneAddRequest = decision.Request;
             nlohmann::json out;
             out["requested"] = true;
             out["sourceId"]  = d.paneAddRequest.sourceId;
