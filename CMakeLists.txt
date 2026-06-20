@@ -26,6 +26,57 @@ add_compile_definitions(
 )
 
 # ==============================================================================
+# MSVC base compile flags — bake them so a fresh CMake-4 configure can't drop them
+#
+# Background (docs/agent-rules/build.md § Fresh-worktree configure pitfalls #1/#2):
+# CMake's MSVC defaults seed CMAKE_CXX_FLAGS with "/DWIN32 /D_WINDOWS /EHsc" and
+# CMAKE_C_FLAGS with "/DWIN32 /D_WINDOWS". On a FRESH configure under CMake 4.x
+# those defaults were observed to be dropped, so the whole tree built with
+# exceptions OFF — doctest TUs failed `C2338: Exceptions are disabled!` and
+# product TUs failed `C4530` → (under /WX) `C2220`. Long-lived build dirs only
+# survived because their caches predated the CMake upgrade.
+#
+# Fix: ensure /EHsc + the WIN32 macros are present in the flag vars regardless of
+# what the generator's defaults did. We APPEND-IF-MISSING (never clobber): if
+# CMake already seeded them, this is a no-op; if a fresh CMake-4 configure dropped
+# them — or a poisoned cache (#2) left CMAKE_CXX_FLAGS empty — we restore them.
+# This is the single authoritative home; the per-pitfall `-DCMAKE_CXX_FLAGS=...`
+# workaround in build.md is no longer required for these presets.
+#
+# CACHE FORCE so the value persists into CMakeCache.txt and a later re-configure
+# (or a downstream consumer reading the cache) sees the corrected flags — this is
+# also what neutralises the poisoned-empty-flags cache class: a build dir whose
+# cached CMAKE_CXX_FLAGS is empty (a silently-failed first configure, #2) gets
+# /EHsc re-injected on the next configure instead of perpetually building with
+# exceptions off.
+if(MSVC)
+    # Detect + warn on the poisoned-empty-flags cache before we repair it, so the
+    # symptom (a "configured fine" dir that builds with exceptions off) is named.
+    if(DEFINED CMAKE_CXX_FLAGS AND CMAKE_CXX_FLAGS STREQUAL "" AND
+       NOT DEFINED ENV{CI})
+        message(STATUS
+            "Smatchet: cached CMAKE_CXX_FLAGS is empty (a silently-failed first "
+            "configure can poison it; build.md pitfall #2) — re-injecting the MSVC "
+            "base flags (/EHsc /DWIN32 /D_WINDOWS).")
+    endif()
+    foreach(_smatchet_msvc_flag "/DWIN32" "/D_WINDOWS" "/EHsc")
+        if(NOT CMAKE_CXX_FLAGS MATCHES "(^| )${_smatchet_msvc_flag}( |$)")
+            string(STRIP "${CMAKE_CXX_FLAGS} ${_smatchet_msvc_flag}" CMAKE_CXX_FLAGS)
+        endif()
+    endforeach()
+    # C has no /EHsc (C++-exceptions only); just the WIN32 platform macros.
+    foreach(_smatchet_msvc_cflag "/DWIN32" "/D_WINDOWS")
+        if(NOT CMAKE_C_FLAGS MATCHES "(^| )${_smatchet_msvc_cflag}( |$)")
+            string(STRIP "${CMAKE_C_FLAGS} ${_smatchet_msvc_cflag}" CMAKE_C_FLAGS)
+        endif()
+    endforeach()
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}" CACHE STRING "Flags used by the CXX compiler during all build types." FORCE)
+    set(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}"   CACHE STRING "Flags used by the C compiler during all build types."   FORCE)
+    unset(_smatchet_msvc_flag)
+    unset(_smatchet_msvc_cflag)
+endif()
+
+# ==============================================================================
 # MSVC toolset-consistency guard (configure-time, early — runs right after the
 # compiler is known so it fires before any heavy configure work or compile).
 #

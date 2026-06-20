@@ -351,6 +351,10 @@ jobs:
           bash scripts/dev/test-cppcheck-path-detection.sh
           bash scripts/dev/test-build-warnings.sh
           bash scripts/dev/test-markdown-lang-tag.sh
+          # Keep the CI FetchContent cache `path:` values in lockstep with the
+          # FETCHCONTENT_BASE_DIR default in CMakeLists.txt (PR-15). A silent drift
+          # makes every CI run a cold clone (cache never populated). Cheap text gate.
+          bash scripts/dev/test-fetchcontent-cache-path-drift.sh
           # NB: the high-integrity C++ delta gate (test-lint-rules.sh --diff
           # origin/develop) used to run HERE, inside this required build job. It was
           # decoupled into its own required lane — the `comment-noise-gate` job below
