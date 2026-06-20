@@ -22,7 +22,7 @@ A modern Chromebook can run an app three ways. Smatchet already has a runnable a
 
 | Surface | What it is | Smatchet artifact | Verdict |
 |---|---|---|---|
-| **ARC** (Android Runtime for Chrome) | Android apps in a ChromeOS VM; built-in + enabled by default on most consumer Chromebooks | **`SmatchetMobile` APK already builds** (`arm64-v8a` + `x86_64`) — [`ANDROID_BUILD.md`](ANDROID_BUILD.md) | ✅ **Viable — fastest path** |
+| **ARC** (Android Runtime for Chrome) | Android apps in the ChromeOS Android runtime (ARC++ **container** on older devices; **ARCVM** on newer, ~2022+); on by default on most consumer Chromebooks | **`SmatchetMobile` APK already builds** (`arm64-v8a` + `x86_64`) — [`ANDROID_BUILD.md`](ANDROID_BUILD.md) | ✅ **Viable — fastest path** |
 | **Crostini** (Linux dev environment) | Debian VM; runs native Linux GUI apps over Wayland (Sommelier) + Xwayland | The `SmatchetStandalone` GLFW/OpenGL3 host — **never built on Linux yet** (all Linux presets are headless, `SMATCHET_BUILD_APP=OFF`) | ✅ **Viable — best desktop UX, more work** |
 | **PWA / Web** | Browser/WASM | none | ❌ Non-goal (see § Path C) |
 
@@ -69,6 +69,11 @@ is untouched**.
 > the **Android security gate** (`mobile-security.yml` → `test-mobile-security.sh`) is a non-required-but
 > **blocking** merge check that fails on an `allowBackup` regression and on incomplete per-ABI OpenSSL.
 
+> **ChromeOS detection (A4–A6):** gate these desktop-input defaults on the standard ARC system feature —
+> `getPackageManager().hasSystemFeature("org.chromium.arc")` (Java) — and pass the result to the native
+> shell so it can enable the cursor (A5), default to **Desktop UI mode** (A6), and accept precise-pointer
+> input (A4) only on ChromeOS, leaving phone/tablet behaviour untouched.
+
 **Effort:** ~1–2 focused weeks, almost entirely in the Android input backend + a small key-event bridge +
 a one-line manifest `uses-feature` + a Chromebook-detection → Desktop-mode default. No `Source/Core`
 changes, so the dual-target (DX12/Unreal) purity and the strict-zone lint contract are unaffected.
@@ -110,7 +115,7 @@ gate that proves exactly this:
 
 | # | Gap | Where | Fix sketch |
 |---|---|---|---|
-| B1 | **No Linux *app* build exists** — every Linux preset is `SMATCHET_BUILD_APP=OFF`; GLFW/standalone is never compiled on Linux (the `generic-cmake` plan listed Linux app packaging as out of scope) | `CMakePresets.json` | Add a `SMATCHET_BUILD_APP=ON` Linux preset; install `xorg-dev libgl1-mesa-dev` (GLFW X11/GL); fix any first-build compile/link residue |
+| B1 | **No Linux *app* build exists** — every Linux preset is `SMATCHET_BUILD_APP=OFF`; GLFW/standalone is never compiled on Linux (the `generic-cmake` plan listed Linux app packaging as out of scope) | `CMakePresets.json` | Add a `SMATCHET_BUILD_APP=ON` Linux preset; install GLFW's X11/GL dev set (`xorg-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev`); fix any first-build compile/link residue |
 | B2 | **File picker is Windows-only** — non-Win32 returns `false` (no dialog) | `Win32PickFiles.cpp` (`#else` stub), host seam `HostCallbacks::OpenFilePaths` | Inject a Crostini picker via the existing host callback — `zenity --file-selection` / `kdialog` through the POSIX `SubprocessCapture`, or an in-app browser |
 | B3 | **Secrets are plaintext on Linux** (mode 0600 only) | `ConfigManager_PathUtils.cpp` POSIX branch | Optional libsecret / Secret Service seam for Crostini; keep the existing desktop-Linux plaintext warning honest |
 | B4 | **P4v launcher Windows-only** | `P4vLaunch.cpp` (`#else` returns false) | Low priority (P4 tooling rarely present in Crostini); stub or `p4v`-if-present |
