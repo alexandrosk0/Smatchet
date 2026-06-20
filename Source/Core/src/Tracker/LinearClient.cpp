@@ -202,7 +202,7 @@ std::string LinearClient::ExtractProjectFromQuery(const std::string& query) cons
     // Linear's draft scope anchor is the team key — best-effort extract from a
     // `team = X` clause in the JQL-shaped query. The translator owns the full
     // filter; here we only need the bare team key for project-resolution plumbing.
-    const smatchet::linear::JqlToLinearResult translated = smatchet::linear::TranslateJqlToLinearFilter(query);
+    const auto translated = smatchet::linear::TranslateJqlToLinearFilter(query);
     if (translated.HasFilter()) {
         nlohmann::json::const_iterator teamIt = translated.Filter.find("team");
         if (teamIt != translated.Filter.end() && teamIt->is_object()) {

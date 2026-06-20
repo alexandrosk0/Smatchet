@@ -18,8 +18,12 @@ namespace linear {
 
 struct JqlToLinearResult {
     /// The Linear `IssueFilter` object passed as the `filter` GraphQL variable.
-    /// An empty object means "no filter" (the caller lists the team's issues).
-    nlohmann::json Filter = nlohmann::json::object();
+    /// Default-null and populated lazily via operator[]; HasFilter() treats
+    /// null/empty as "no filter" (the caller then lists the team's issues). No
+    /// `= nlohmann::json::object()` NSDMI on purpose — a function-call default
+    /// member initializer tripped MSVC's cross-TU name lookup on this struct
+    /// (clang accepted it); null + lazy operator[] is equivalent.
+    nlohmann::json Filter;
     /// Free-text term for Linear's `issueSearch` query, set by a `text ~ "..."`
     /// clause. Empty when the query carried no text term.
     std::string SearchTerm;
