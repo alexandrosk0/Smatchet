@@ -25,6 +25,11 @@
 #   default — diff-scope: only check markdown files modified vs origin/develop.
 #             Grandfathers pre-existing broken refs; catches new regressions.
 #   --all   — repo-wide scan of every actively-maintained markdown.
+#   --merge-tree-warn — advisory (always exit 0): flag TIERED plan links
+#             (docs/plans/{active,shipped,deferred}/<slug>.md) in changed
+#             markdown that would 404 post-archive on CI though they pass the
+#             local existence check. Remedy: the tier-less docs/plans/<slug>.md
+#             form (markdown-links-local-passes-ci-fails-after-plan-archive).
 #
 # Exit codes:
 #   0 — every relative link in every scanned markdown resolves to an existing file
@@ -96,6 +101,82 @@ if [ "${1:-}" = "--selftest" ]; then
     fi
     echo "test-markdown-links --selftest: FAIL" >&2
     exit 1
+fi
+
+# --merge-tree-warn — synthetic-behind-develop WARN mode
+# (markdown-links-local-passes-ci-fails-after-plan-archive). A TIERED plan link
+# `[…](…/docs/plans/active/<slug>.md)` resolves locally while the plan still
+# lives in active/, but the SAME branch's archival `git mv active -> shipped`
+# (or a sibling PR's archival merged into develop) moves the target — so the
+# link 404s on CI/post-merge though it passed the local existence check. The
+# durable fix is the TIER-LESS form `docs/plans/<slug>.md` (the gates resolve it
+# against any tier — see plan_tierless_resolves below); this advisory mode flags
+# tiered plan links in CHANGED markdown so the author rewrites them tier-less
+# before they rot. WARN-only: always exits 0 (it never blocks a push).
+if [ "${1:-}" = "--merge-tree-warn" ]; then
+    "$PY" - <<'PY'
+import os
+import re
+import subprocess
+import sys
+
+REPO_ROOT = os.getcwd()
+
+# Markdown changed vs origin/develop (committed + working-tree + untracked),
+# mirroring the default diff-scope so the warning fires on exactly what a PR
+# would ship.
+def _changed():
+    cmds = (
+        ["git", "diff", "--name-only", "origin/develop...HEAD"],
+        ["git", "diff", "--name-only", "HEAD"],
+        ["git", "ls-files", "--others", "--exclude-standard"],
+    )
+    out = ""
+    for c in cmds:
+        try:
+            out += subprocess.run(c, capture_output=True, text=True, check=True).stdout
+        except subprocess.CalledProcessError:
+            pass
+    return sorted({ln.strip() for ln in out.splitlines() if ln.strip()})
+
+# A TIERED plan link: `docs/plans/<tier>/<slug>.md` with tier in active/shipped/
+# deferred. These are fragile across an archival move; the tier-less form is not.
+TIERED_RE = re.compile(
+    r'(?<!\!)\[[^\]]*\]\(([^)\s]*docs/plans/(?:active|shipped|deferred)/[A-Za-z0-9._-]+\.md)'
+    r'(?:#[^)\s]*)?(?:\s+"[^"]*")?\)'
+)
+
+warnings = []
+for rel in _changed():
+    if not rel.endswith(".md") or not os.path.exists(rel):
+        continue
+    try:
+        with open(rel, encoding="utf-8") as fh:
+            in_fence = False
+            for lineno, line in enumerate(fh, 1):
+                s = line.lstrip()
+                if s.startswith("```") or s.startswith("~~~"):
+                    in_fence = not in_fence
+                    continue
+                if in_fence:
+                    continue
+                for m in TIERED_RE.finditer(line):
+                    warnings.append(
+                        "%s:%d: TIERED_PLAN_LINK: '%s' — use the tier-less form "
+                        "'docs/plans/<slug>.md' so it survives an archival "
+                        "git mv (active->shipped)." % (rel, lineno, m.group(1))
+                    )
+    except (OSError, UnicodeDecodeError):
+        pass
+
+for w in warnings:
+    print("WARN: " + w, file=sys.stderr)
+
+# WARN-only: never block. Report count on stdout for the wrapper.
+print("Passed: 1  Failed: 0  (merge-tree-warn: %d tiered plan-link warning(s))" % len(warnings))
+sys.exit(0)
+PY
+    exit 0
 fi
 
 # Diff-scope by default; --all overrides for whole-repo audit.

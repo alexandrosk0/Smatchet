@@ -19,19 +19,84 @@
 # shipped, BACKLOG_PLANS.md -> plans/INDEX.md) is a two-line edit here.
 set -uo pipefail
 
+# Resolve paths against the git root, not $PWD. When --fix is invoked from a
+# subdir or a sibling worktree, a relative ARCHIVE_DIR/INDEX_FILE would either
+# silently NO-OP (archive dir not found here) or index the WRONG tree. cd to the
+# toplevel so the live archive + INDEX are always THIS repo's
+# (plan-index-fix-wrong-cwd-silent-noop). Honour an explicit absolute override.
+_GIT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || _GIT_ROOT=""
+if [ -n "$_GIT_ROOT" ]; then
+  cd "$_GIT_ROOT" || { echo "test-plan-index: cannot cd to git root '$_GIT_ROOT'" >&2; exit 2; }
+fi
+
 ARCHIVE_DIR="${PLAN_INDEX_ARCHIVE_DIR:-docs/plans/shipped}"
 INDEX_FILE="${PLAN_INDEX_FILE:-docs/plans/INDEX.md}"
 BEGIN_MARK="<!-- BEGIN auto-plan-index -->"
 END_MARK="<!-- END auto-plan-index -->"
+
+# Shared shallow-clone guard: on a shallow clone, git-log --follow dates drift
+# from CI (which runs on full history), so a local --fix would commit an INDEX
+# the required check rejects. Sourced lib auto-unshallows under --fix (matching
+# CI) or refuses; WARNs under --check. See lib/plan-history-guard.sh header.
+# shellcheck source=lib/plan-history-guard.sh
+. "$(dirname "$0")/lib/plan-history-guard.sh"
 
 MODE="check"
 for a in "$@"; do
   case "$a" in
     --fix) MODE="fix" ;;
     --check) MODE="check" ;;
-    *) echo "usage: $0 [--check|--fix]" >&2; exit 2 ;;
+    --selftest) MODE="selftest" ;;
+    *) echo "usage: $0 [--check|--fix|--selftest]" >&2; exit 2 ;;
   esac
 done
+
+# --selftest — prove (1) the script resolves paths against the git root (so a
+# subdir invocation can't silent-NO-OP), and (2) the shallow-clone guard's
+# check-mode WARN/refuse contract holds. No network; uses the live repo's own
+# non-shallow state for the guard smoke. Asserts-behaviour, not snapshots.
+if [ "$MODE" = "selftest" ]; then
+  fail=0
+  # (1) git-root resolution: ARCHIVE_DIR must resolve to an existing dir AFTER
+  # the cd above, regardless of where the selftest was launched from.
+  if [ ! -d "$ARCHIVE_DIR" ]; then
+    echo "test-plan-index --selftest: FAIL — ARCHIVE_DIR '$ARCHIVE_DIR' not found after git-root cd" >&2
+    fail=1
+  fi
+  # (2) guard contract: check-mode must NEVER exit non-zero on this (non-shallow)
+  # repo, and the function must be defined by the sourced lib.
+  if ! type is_shallow_or_refuse >/dev/null 2>&1; then
+    echo "test-plan-index --selftest: FAIL — is_shallow_or_refuse not sourced" >&2
+    fail=1
+  else
+    ( is_shallow_or_refuse check ) || {
+      echo "test-plan-index --selftest: FAIL — guard check-mode returned non-zero on non-shallow repo" >&2
+      fail=1
+    }
+  fi
+  # (3) negative case.
+  # selftest: asserts-failure — feed known-bad input (a non-existent archive
+  # dir) and require a NON-ZERO exit. A regression that makes the script silently
+  # NO-OP on a missing/wrong archive dir (the wrong-cwd class) would wrongly
+  # succeed here. Re-invoke ourselves with the override so the real arg-parse +
+  # archive-dir check runs end-to-end.
+  if PLAN_INDEX_ARCHIVE_DIR="docs/plans/__no_such_archive_dir__$$" \
+       "$0" --check >/dev/null 2>&1; then
+    echo "test-plan-index --selftest: FAIL — a missing archive dir did NOT fail (silent NO-OP)" >&2
+    fail=1
+  fi
+  if [ "$fail" = "0" ]; then
+    echo "test-plan-index --selftest: PASS (git-root path resolution + shallow guard + missing-archive refusal)"
+    echo "Passed: 1  Failed: 0"
+    exit 0
+  fi
+  echo "Passed: 0  Failed: 1"
+  exit 1
+fi
+
+# Guard the real run: shallow clones drift git-log dates from CI. Under --fix
+# this auto-unshallows (or hard-refuses, exit 2); under --check it WARNs.
+is_shallow_or_refuse "$MODE"
 
 # command -v alone is insufficient on Windows: the python3 Store-alias stub passes it
 # but exits 49 when run. Probe each candidate; take the first that actually executes.
@@ -84,13 +149,18 @@ def summary_for(path):
 if not os.path.isdir(archive_dir):
     print("test-plan-index: archive dir %s not found" % archive_dir, file=sys.stderr); sys.exit(2)
 
+PLACEHOLDER = "—"  # em-dash: emitted when no first-commit date resolves.
+
 rows = []
+placeholder_slugs = []
 for fn in sorted(os.listdir(archive_dir)):
     if not fn.endswith(".md") or fn.startswith("_"):
         continue
     slug = fn[:-3]
     path = os.path.join(archive_dir, fn)
     date = git_first_date(path)
+    if date == PLACEHOLDER:
+        placeholder_slugs.append(slug)
     summ = summary_for(path).replace("|", "\\|")
     # link relative to the index file's directory
     href = os.path.relpath(path, os.path.dirname(index_file)).replace(os.sep, "/")
@@ -125,6 +195,27 @@ if rebuilt == content:
     sys.exit(0)
 
 if mode == "fix":
+    # Deterministic-date guard (test-plan-index-fix-shipped-date-placeholder):
+    # CI's autosync runs this same script on FULL history, so every shipped plan
+    # there resolves a real git-log first-commit date. If a local --fix would
+    # write the "—" placeholder for any row, the resulting INDEX is NOT
+    # byte-identical to what CI regenerates — committing it drifts the required
+    # check on a date the author can't reproduce. REFUSE rather than emit the
+    # placeholder, with the same remedy the shallow guard names.
+    if placeholder_slugs:
+        print("test-plan-index: REFUSING --fix — no git-log first-commit date resolves for:",
+              file=sys.stderr)
+        for s in placeholder_slugs:
+            print("    - %s" % s, file=sys.stderr)
+        print("  CI derives these from FULL history; emitting the '—' placeholder here would",
+              file=sys.stderr)
+        print("  drift the committed INDEX from CI's regeneration. Likely a shallow clone or an",
+              file=sys.stderr)
+        print("  uncommitted plan file.", file=sys.stderr)
+        print("  Remedy: git fetch --unshallow  (or commit the plan), then re-run --fix.",
+              file=sys.stderr)
+        print("Passed: 0  Failed: 1")
+        sys.exit(2)
     with open(index_file, "w", encoding="utf-8", newline="\n") as f:
         f.write(rebuilt)
     print("test-plan-index: rewrote index (%d plans)" % len(rows))
