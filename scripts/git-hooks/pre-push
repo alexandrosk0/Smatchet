@@ -83,6 +83,71 @@ EOF
     fi
 fi
 
+# (C) UNLOCKED-CONTENDED-PUSH hard-stop (Layer B of plan-lock enforcement).
+#     Refuse a push when this branch's changed files overlap a refs/locks/*
+#     write set owned by a DIFFERENT branch — the cross-branch collision the
+#     lock exists to catch. Changed-file basis is branch-level + stdin-
+#     INDEPENDENT (`$(git merge-base origin/develop HEAD)..HEAD`): (A)'s
+#     `while read` already drained the ref-update stdin, so a second reader
+#     gets EOF. Identity is keyed on BRANCH (never owner/AGENT_ID). Honours a
+#     14-day staleness cutoff (symmetric with Layer C), so an aged orphan lock
+#     is non-blocking. Override: SMATCHET_ALLOW_UNLOCKED_PUSH=1.
+#
+#     Placed BETWEEN (A) and (B) on purpose: (B) `exit 0`s for the normal
+#     open-PR feature-branch case below, so a (C) after it is dead code for
+#     exactly the contended push it must guard.
+#
+#     ADVISORY / FAIL-OPEN: the script runs `set -euo pipefail` (fail-CLOSED),
+#     so the whole probe runs under a scoped `set +e` and ANY unknown (stale
+#     origin/develop, unreachable lock ref, missing lib, parse error) ALLOWS
+#     the push — it never rejects on uncertainty.
+_pl_slug=""; _pl_file=""
+if [ "${SMATCHET_ALLOW_UNLOCKED_PUSH:-0}" != "1" ]; then
+    _planlock_probe() {
+        [ -n "$repo_root" ] || return 0
+        [ -f "$repo_root/agents/scripts/core/lock-table-cache.sh" ] || return 0
+        local cur mb now cutoff f slug
+        cur="$(git -C "$repo_root" symbolic-ref --quiet --short HEAD 2>/dev/null)"
+        case "$cur" in ""|develop|main) return 0 ;; esac   # detached/protected -> skip
+        # shellcheck source=agents/scripts/core/lock-table-cache.sh
+        . "$repo_root/agents/scripts/core/lock-table-cache.sh" 2>/dev/null
+        command -v ltc_covering_slug >/dev/null 2>&1 || return 0
+        export LTC_PROJ="$repo_root"
+        mb="$(git -C "$repo_root" merge-base origin/develop HEAD 2>/dev/null)"
+        [ -n "$mb" ] || return 0
+        now="$(date -u +%s 2>/dev/null)"; [ -n "$now" ] || return 0
+        cutoff=$(( now - 14 * 24 * 3600 ))
+        # Heredoc (not a pipe) so the loop body runs in this shell and its
+        # assignments to _pl_* persist to the caller.
+        while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            slug="$(ltc_covering_slug "$f" other "$cur" "$cutoff" 2>/dev/null)"
+            if [ -n "$slug" ]; then _pl_slug="$slug"; _pl_file="$f"; return 0; fi
+        done <<PLPATHS
+$(git -C "$repo_root" diff --name-only "$mb"..HEAD 2>/dev/null)
+PLPATHS
+        return 0
+    }
+    set +e
+    _planlock_probe
+    set -e
+fi
+
+if [ -n "$_pl_slug" ]; then
+    cat >&2 <<EOF
+
+pre-push: REFUSING push — plan-lock collision.
+
+  Your change to '$_pl_file' overlaps the write set of plan-lock '$_pl_slug',
+  held by a DIFFERENT branch. Two branches editing the same files race. Either
+  coordinate, or if you legitimately own this file, extend that lock's set:
+    bash agents/scripts/core/lock-claim-update.sh <slug> <full-write-set-file>
+
+  Override (sanctioned, logged): SMATCHET_ALLOW_UNLOCKED_PUSH=1 git push ...
+EOF
+    exit 1
+fi
+
 branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")
 
 case "$branch" in

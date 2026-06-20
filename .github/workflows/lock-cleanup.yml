@@ -1,12 +1,16 @@
 name: Plan-lock cleanup
 
-# Auto-releases a refs/locks/<slug> ref when its associated PR is merged
-# to develop. The PR body must contain a single `lock-slug: <slug>` line
-# (typically pulled from the PR template). Without that line the workflow
-# is a no-op — the ref remains and will surface via the Phase 4 staleness
-# sweep eventually.
+# Auto-releases a refs/locks/<slug> ref when its associated PR CLOSES —
+# whether merged to develop OR closed unmerged (an abandoned seeded branch's
+# reservation is void; without this it would orphan-block later PRs that
+# overlap its write set, since the staleness sweep is Issue-only and never
+# deletes). The PR body must contain a single `lock-slug: <slug>` line
+# (typically pulled from the PR template). Without that line the workflow is a
+# no-op. Stacked intermediates carry `holds-lock:` (NOT matched here) so only
+# the final cutover PR's close releases.
 #
-# Phase 3 of docs/plans/shipped/git-ref-plan-locks.md.
+# Phase 3 of docs/plans/shipped/git-ref-plan-locks.md; closed-unmerged
+# extension per docs/plans/active/plan-lock-enforcement.md item 11.
 #
 # Token scope: the default GITHUB_TOKEN has repo-wide `contents: write`.
 # Narrowing to refs/locks/* only requires a fine-grained PAT or GitHub
@@ -26,8 +30,10 @@ permissions:
 
 jobs:
   release:
-    name: Release refs/locks/<slug> on merge
-    if: github.event.pull_request.merged == true
+    name: Release refs/locks/<slug> on PR close
+    # Fires on ANY close (merged or abandoned) — the parse step below gates on
+    # the `lock-slug:` line, so a no-slug PR is a clean no-op. Releasing on
+    # closed-unmerged frees an abandoned branch's reservation (item 11).
     runs-on: ubuntu-latest
     timeout-minutes: 3
 
@@ -78,13 +84,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          ref="refs/locks/${SLUG}"
+          ref="locks/${SLUG}"
           # Check existence via the REST API to avoid needing a checkout.
-          # `gh api` returns non-zero on 404.
-          if gh api "repos/${{ github.repository }}/git/${ref}" >/dev/null 2>&1; then
-            echo "::notice::Deleting ${ref}."
-            gh api -X DELETE "repos/${{ github.repository }}/git/${ref}"
-            echo "::notice::Deleted ${ref}."
+          # GET uses the SINGULAR single-ref endpoint /git/ref/{ref}; the plural
+          # /git/refs/{ref} GET was removed by GitHub and now 404s, which would
+          # make this check always fail and silently skip every deletion. DELETE
+          # uses the plural /git/refs/{ref}. `gh api` returns non-zero on 404.
+          if gh api "repos/${{ github.repository }}/git/ref/${ref}" >/dev/null 2>&1; then
+            echo "::notice::Deleting refs/${ref}."
+            gh api -X DELETE "repos/${{ github.repository }}/git/refs/${ref}"
+            echo "::notice::Deleted refs/${ref}."
           else
-            echo "::notice::${ref} already absent on origin; no-op."
+            echo "::notice::refs/${ref} already absent on origin; no-op."
           fi

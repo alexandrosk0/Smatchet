@@ -28,7 +28,7 @@ Visual-validation exception (Pillar 4): no bucket-C/E coverage for a visual chan
 Orchestrator runs each user task end-to-end in **one turn** without pausing per stage. Default sequence:
 
 ```
-diagnose → fix → build → commit → push → open PR → [gate-check] → squash-merge → git-janitor cleanup → backlog entry
+diagnose → [seed plan-lock] → fix → build → commit → push → open PR → [gate-check] → squash-merge → git-janitor cleanup → backlog entry
 ```
 
 Clarifications batched **once at start** via `AskUserQuestion`; after that the orchestrator **MUST NOT** pause until a defined exception or the post-ship menu (CR findings triaged autonomously; merge-gate polling starts at PR creation; squash-merge fires on `GATES_PASSED`). Pause ONLY for: (1) debug-detective triggers (pause-loop **overrides** ship-loop, [`delegation.md`](docs/agent-rules/delegation.md) § Debug-mode pause-loop), (2) destructive ops outside scope, (3) cross-repo / external-service mutations, (4) anything not durably authorised, (5) **visual-validation exception** (touches `SmatchetTheme.cpp` / `Smatchet*Ui*.cpp` / `Locales/*.json` / `ImVec4` + no bucket-C/E coverage → pause with launched exe, await verdict), (6) **cannot-validate / cost-unbounded → escalate** ([`AI_POLICY.md`](AI_POLICY.md) § Escalate, don't assume; **both** loop modes). In **human-in-the-loop** mode (prerelease default) also pause at any decision **not covered by the approved plan** ([`AI_POLICY.md`](AI_POLICY.md) § Two loop modes).

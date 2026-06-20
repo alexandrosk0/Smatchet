@@ -59,3 +59,76 @@ run_push() {
     run run_push "(delete) $ZERO refs/heads/develop $SHA"
     [ "$status" -eq 0 ]
 }
+
+# ---- (C) UNLOCKED-CONTENDED-PUSH (Layer B of plan-lock enforcement) ----------
+# Stand up the shared lib inside $TMP, an origin/develop base, a changed file on
+# the feature branch, and inject the lock table via LTC_ROWS_OVERRIDE.
+
+# $1 = lock branch for the row covering the changed file (feat/other = cross,
+#      feature = my own). Sets ROWS + advances HEAD with the changed file.
+planlock_fixture() {
+    mkdir -p "$TMP/agents/scripts/core"
+    for x in lock-table-cache.sh _lock-json.py session-registry-lib.sh locks-show.sh; do
+        cp "$REPO_ROOT/agents/scripts/core/$x" "$TMP/agents/scripts/core/$x"
+    done
+    git -C "$TMP" update-ref refs/remotes/origin/develop HEAD       # base = current commit
+    ( cd "$TMP" && mkdir -p Source/Core/src/Sync && echo y > Source/Core/src/Sync/Foo.cpp \
+        && git add -A && git commit -qm change )
+    ROWS="$TMP/rows"
+    # Dynamic "fresh" epoch (now) so the <14-day-cutoff cases never expire on
+    # calendar time — a hardcoded date would flip stale and break these tests.
+    printf '%s\t%s\totherslug\tSource/Core/src/Sync/Foo.cpp\n' "${1:-feat/other}" "$(date -u +%s)" > "$ROWS"
+}
+
+@test "(C) cross-branch overlap with a fresh lock is REFUSED" {
+    planlock_fixture feat/other
+    run run_push "refs/heads/feature $SHA refs/heads/feature $SHA" "LTC_ROWS_OVERRIDE=$ROWS"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"plan-lock collision"* ]]
+    [[ "$output" == *"otherslug"* ]]
+}
+
+@test "(C) a lock on MY OWN branch does not block (mode=other excludes self)" {
+    planlock_fixture feature
+    run run_push "refs/heads/feature $SHA refs/heads/feature $SHA" "LTC_ROWS_OVERRIDE=$ROWS"
+    [ "$status" -eq 0 ]
+}
+
+@test "(C) SMATCHET_ALLOW_UNLOCKED_PUSH=1 overrides the collision" {
+    planlock_fixture feat/other
+    run run_push "refs/heads/feature $SHA refs/heads/feature $SHA" "LTC_ROWS_OVERRIDE=$ROWS SMATCHET_ALLOW_UNLOCKED_PUSH=1"
+    [ "$status" -eq 0 ]
+}
+
+@test "(C) a STALE (>14d) cross-branch lock is non-blocking (F3 symmetry)" {
+    planlock_fixture feat/other
+    # epoch 1 = 1970 -> far older than the 14-day cutoff -> skipped.
+    printf 'feat/other\t1\toldslug\tSource/Core/src/Sync/Foo.cpp\n' > "$ROWS"
+    run run_push "refs/heads/feature $SHA refs/heads/feature $SHA" "LTC_ROWS_OVERRIDE=$ROWS"
+    [ "$status" -eq 0 ]
+}
+
+@test "(C) fails open when the lock table is unavailable (no override, no remote)" {
+    planlock_fixture feat/other
+    # No LTC_ROWS_OVERRIDE -> locks-show runs, finds no 'origin' remote URL ->
+    # exit 2 -> undetermined -> allow. (A cross-branch row exists but is unused.)
+    run run_push "refs/heads/feature $SHA refs/heads/feature $SHA"
+    [ "$status" -eq 0 ]
+}
+
+@test "(C) fails open when merge-base can't resolve (no origin/develop)" {
+    planlock_fixture feat/other
+    git -C "$TMP" update-ref -d refs/remotes/origin/develop
+    run run_push "refs/heads/feature $SHA refs/heads/feature $SHA" "LTC_ROWS_OVERRIDE=$ROWS"
+    [ "$status" -eq 0 ]
+}
+
+@test "(C) runs BEFORE (B): a collision blocks even with an OPEN-PR feature branch" {
+    # gh stub returns an OPEN PR state. (B) would exit 0 on OPEN; the collision
+    # must still block, proving (C) sits before (B)'s open-PR exit 0.
+    printf '#!/usr/bin/env bash\necho OPEN\nexit 0\n' > "$STUB/gh"; chmod +x "$STUB/gh"
+    planlock_fixture feat/other
+    run run_push "refs/heads/feature $SHA refs/heads/feature $SHA" "LTC_ROWS_OVERRIDE=$ROWS"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"plan-lock collision"* ]]
+}
