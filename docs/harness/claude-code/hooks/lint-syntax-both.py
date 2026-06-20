@@ -57,9 +57,75 @@ def _target_name(command: str) -> str:
     return m.group(1) if m else "unknown"
 
 
+# Lines matching these patterns are always false positives in the hook
+# environment: PCH built by a different toolchain / not present / version-drift,
+# or system headers unreachable without the VS Developer shell. cmake --build
+# catches real compile errors; this hook only surfaces first-party diagnostics.
+_FP_PATTERNS = re.compile(
+    r"(Cannot open precompiled header|"
+    r"PCH file .* not found|"
+    r"PCH file .* built from a different branch|"
+    # PCH version-drift diagnostics: the cached PCH was emitted by a different
+    # MSVC toolset than the one resolving on the hook's PATH (a side-by-side VS
+    # toolset bump). MSVC C1853 / "Version differs in precompiled file" and the
+    # clang/MSVC "was compiled for the target" message are toolchain-skew noise,
+    # never a first-party source error — cmake --build with the matching toolset
+    # is the authority.
+    r"Microsoft Visual C/C\+\+ Version differs in precompiled file|"
+    r"was compiled for the target|"
+    r"Cannot open include file: '(?:cstdint|algorithm|string|vector|memory|"
+    r"functional|utility|type_traits|cassert|cstring|cstdlib|cstdio|cmath|"
+    r"climits|cwchar|stdexcept|iostream|sstream|fstream|chrono|mutex|thread|"
+    r"atomic|tuple|array|map|set|unordered_map|unordered_set|deque|list|"
+    r"iterator|numeric|bitset|locale|codecvt|regex|random|complex|valarray)')"
+)
+
+
+def _selftest() -> int:
+    """Assert the FP-line filter classifies known toolchain-skew diagnostics as
+    false positives and real first-party errors as non-FP. Run via --selftest.
+    """
+    fp_lines = [
+        # PCH version-drift (the two patterns added by PR-6).
+        r"foo.cpp(1): fatal error C1853: 'x.pch' precompiled header file is "
+        r"from a previous version of the compiler, or the precompiled header "
+        r"is C++ and you are using it from C (Microsoft Visual C/C++ Version "
+        r"differs in precompiled file)",
+        r"error: PCH file 'x.pch' was compiled for the target "
+        r"'x86_64-pc-windows-msvc' but the current translation unit ...",
+        # Pre-existing FP classes (regression guard).
+        "fatal error: Cannot open precompiled header file: 'x.pch'",
+        "error: PCH file 'core.pch' not found",
+        "fatal error C1083: Cannot open include file: 'vector': No such file",
+    ]
+    real_lines = [
+        r"AppController.cpp(42): error C2065: 'undeclared_symbol': "
+        r"undeclared identifier",
+        r"Tracker.cpp:10:5: error: use of undeclared identifier 'foo'",
+        # A first-party header that is NOT in the system-header allow-list must
+        # remain a real error (don't over-broaden the include FP).
+        r"error: Cannot open include file: 'JiraClient.h'",
+    ]
+    rc = 0
+    for ln in fp_lines:
+        if not _FP_PATTERNS.search(ln):
+            sys.stderr.write(f"selftest FAIL — expected FP, not matched:\n  {ln}\n")
+            rc = 1
+    for ln in real_lines:
+        if _FP_PATTERNS.search(ln):
+            sys.stderr.write(f"selftest FAIL — real error wrongly matched as FP:\n  {ln}\n")
+            rc = 1
+    if rc == 0:
+        print("lint-syntax-both --selftest: PASS — "
+              f"{len(fp_lines)} FP + {len(real_lines)} real lines classified correctly.")
+    return rc
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         return 0
+    if sys.argv[1] == "--selftest":
+        return _selftest()
 
     src = Path(sys.argv[1]).resolve()
     if src.suffix.lower() != ".cpp":
@@ -87,21 +153,6 @@ def main() -> int:
         return 0  # file not in compile DB yet (e.g. just added) — skip
 
     env = _ensure_toolchain_on_path(os.environ.copy())
-
-    # Lines matching these patterns are always false positives in the hook
-    # environment: PCH built by a different toolchain / not present, or system
-    # headers unreachable without the VS Developer shell. cmake --build catches
-    # real compile errors; this hook only surfaces first-party diagnostics.
-    _FP_PATTERNS = re.compile(
-        r"(Cannot open precompiled header|"
-        r"PCH file .* not found|"
-        r"PCH file .* built from a different branch|"
-        r"Cannot open include file: '(?:cstdint|algorithm|string|vector|memory|"
-        r"functional|utility|type_traits|cassert|cstring|cstdlib|cstdio|cmath|"
-        r"climits|cwchar|stdexcept|iostream|sstream|fstream|chrono|mutex|thread|"
-        r"atomic|tuple|array|map|set|unordered_map|unordered_set|deque|list|"
-        r"iterator|numeric|bitset|locale|codecvt|regex|random|complex|valarray)')"
-    )
 
     failures: list[tuple[str, str]] = []
     for entry in matches:
