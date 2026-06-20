@@ -107,15 +107,23 @@ Already shipped / tracked — do not redo:
 
 ## Implementation log
 
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation)*
+- 2026-06-20 · #1438 — plan doc landed (this file).
+- 2026-06-20 · #1441 — Phase 0: `ParamType::Json` coercion + `config.set` value parse routed through `json_safe::ParseBounded`; `ParamSpec` gained opt-in `MinInt`/`MaxInt`/`MaxLen` enforced in `ValidateAndResolveArgs` via the new pure `ParamBoundsPure.h`; bucket-A test `tests/Core/ParamBoundsPure.test.cpp`. MSVC build + Coverage doctest rig went green.
+- 2026-06-20 · #1444 — Phases 1-3: CLI argv bounds (`--mcp-port` 1-65535, `--timeout` >= 0, non-empty `--mcp-host`) + `scenario.run --frames` overflow clamp at both driver sites, via new pure `CliArgCoercion` helpers (`IsValidMcpPort` / `ClampScenarioFrames` / `ScenarioFramesFromJson`, tested in `tests/Core/CliArgCoercion.test.cpp`); MCP `attachment_proxy` `url` length cap (8 KiB -> HTTP 414); Command Palette selection reset on empty filter.
 
 ## Deviations from plan
 
-*(populated post-ship)*
+- **Test strategy** — the new bounds checks were extracted into pure headers / helpers (`ParamBoundsPure.h`, `CliArgCoercion`) and bucket-A tested directly rather than via registry-linked integration tests, mirroring `CommandSourceTrust.test.cpp` (the doctest rig deliberately keeps the registry + handlers out of its link closure).
+- **Phase 3 doc item already satisfied** — the Lua instruction budgets the plan asked to document are already in `LUA_GUIDE.md`, so no doc edit shipped.
+- **Deferred (status stays `active` until these land):**
+  - **Phase 1.3 — CLI response / `instance.json` size cap.** Defensive OOM bound, lower value than the overflow/validation fixes. Follow-up.
+  - **`fuzz_command_args` driver.** `CoerceJsonValue` / `ValidateAndResolveArgs` are anonymous-namespace, so a driver must fuzz through `CommandRegistry::Dispatch` and link the registry closure; best authored where a local libFuzzer build exists (this session had no local toolchain). A lower-risk `fuzz_bounded_json` over the header-only `ParseBounded` is the recommended first cut. Follow-up.
 
 ## Verification (actual)
 
-*(populated post-ship)*
+- **Bucket A (doctest rig)** — `ParamBoundsPure.test.cpp` (#1441) and the new `CliArgCoercion.test.cpp` cases (#1444) built + passed under the Coverage (windows-2022 + OpenCppCoverage) lane, which also confirms MSVC compilation of the changed Core / Standalone / Mcp TUs.
+- **Strict-zone lint, comment-noise, Pillar-2, Test-delta, Fuzz-smoke, TSan** — green on both PRs (one comment-noise reword needed on #1441; the heuristic flagged a comment ending in `);`).
+- **Not run locally** — the implementing session had no Windows/MSVC toolchain, so CI was the sole build/test validator. Both PRs merged on green required checks; CodeRabbit + Cursor Bugbot were rate/usage-limited on #1444 and did not review it (both are PR-advisory, not required checks).
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 
