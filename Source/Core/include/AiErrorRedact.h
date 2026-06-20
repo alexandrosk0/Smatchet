@@ -34,10 +34,14 @@ constexpr std::size_t kMaxProviderErrorBodyChars = 240;
 constexpr bool kAiFollowRedirects = false;
 
 // Strip secrets / identifiers from a provider error body before it is surfaced
-// to UI. Heuristics covered:
-//   * Bearer <token>            -> Bearer [REDACTED]
-//   * "api_key" / "apiKey" / "Authorization" / "authorization" JSON values
-//   * sk-... / sk_... / org-... / proj_... / asst_... id prefixes
+// to UI OR written to a log line. Also the redactor for parse-error text
+// (e.what()), which nlohmann embeds the offending input window into — issue #1286.
+// Heuristics covered:
+//   * Bearer <token> / Basic <b64>  -> scheme preserved, credential [REDACTED]
+//   * "api_key" / "apiKey" / "Authorization" / "x-api-key" / ... JSON field values
+//   * raw "x-api-key: <key>" / "api-key: <key>" header lines (any prefix)
+//   * sk-... / sk_... / org-... / proj_... / asst_... / gh*_ id prefixes
+//     (matched case-insensitively, so an upper-cased reflection still redacts)
 // Length-capped to kMaxProviderErrorBodyChars after sanitisation (a "…" suffix
 // indicates truncation).
 std::string RedactProviderErrorBody(const std::string& body);

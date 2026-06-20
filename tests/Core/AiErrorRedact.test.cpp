@@ -244,3 +244,78 @@ TEST_CASE("Malformed SSE/NDJSON stream chunk redacts a reflected Authorization h
         CHECK(out.find("ndjsonleak") == std::string::npos);
     }
 }
+
+// issue #1286 — the AnthropicClient / OpenAiClient SSE parse-failure paths now route the
+// nlohmann parse_error::what() text through RedactProviderErrorBody before LOG_WARN, not
+// just the body excerpt. parse_error::what() embeds the offending input window
+// ("… last read: '<frag>'"); a truncated stream that splits an Authorization header
+// mid-token would otherwise write a live credential to the log verbatim. Pin the redaction
+// over the exact shape what() carries.
+TEST_CASE("RedactProviderErrorBody scrubs a credential embedded in nlohmann parse_error::what()" *
+          doctest::test_suite("[high-risk]")) {
+    SUBCASE("Bearer token inside a what() 'last read' window") {
+        const std::string what = "[json.exception.parse_error.101] parse error at line 1, column 64: "
+                                 "syntax error while parsing value - unexpected end of input; "
+                                 "last read: 'Authorization: Bearer sk-ant-leakedfromwhat1234567'";
+        const std::string out = RedactProviderErrorBody(what);
+        CHECK(out.find("leakedfromwhat") == std::string::npos);
+        CHECK(out.find("Bearer [REDACTED]") != std::string::npos);
+    }
+    SUBCASE("x-api-key header fragment inside a what() window") {
+        const std::string what = "parse error - invalid literal; last read: 'x-api-key: weirdshapedkeyvalue123'";
+        const std::string out = RedactProviderErrorBody(what);
+        CHECK(out.find("weirdshapedkeyvalue123") == std::string::npos);
+    }
+}
+
+// issue #1286 secondary — Basic-auth credentials and raw (unquoted) x-api-key header lines
+// must redact regardless of the `sk-` prefix sweep, and the prefix sweep itself must be
+// case-insensitive so an upper-cased reflection can't slip a token through.
+TEST_CASE("RedactProviderErrorBody strips Basic-auth and raw api-key header lines (issue #1286)" *
+          doctest::test_suite("[high-risk]")) {
+    SUBCASE("Authorization: Basic <b64> raw header echo") {
+        const std::string body = "upstream 502: Authorization: Basic dXNlcjpzdXBlcnNlY3JldHRva2Vu\r\n";
+        const std::string out = RedactProviderErrorBody(body);
+        CHECK(out.find("dXNlcjpzdXBlcnNlY3JldHRva2Vu") == std::string::npos);
+        CHECK(out.find("Basic [REDACTED]") != std::string::npos);
+    }
+    SUBCASE("Basic <b64> inside a JSON string value still fully redacts") {
+        const std::string body = R"({"echoed":"Basic dXNlcjpwYXNzd29yZGxlYWs="})";
+        const std::string out = RedactProviderErrorBody(body);
+        CHECK(out.find("dXNlcjpwYXNzd29yZGxlYWs") == std::string::npos);
+    }
+    SUBCASE("raw x-api-key header line with a non-sk- prefixed key (any-prefix scrub)") {
+        const std::string body = "X-Api-Key: zzqq-rotated-key-shape-99887766\nbody follows";
+        const std::string out = RedactProviderErrorBody(body);
+        CHECK(out.find("zzqq-rotated-key-shape-99887766") == std::string::npos);
+        CHECK(out.find("body follows") != std::string::npos); // value scrub stops at the newline
+    }
+    SUBCASE("quoted x-api-key field is left to the JSON scrubber (no double redaction)") {
+        const std::string body = R"({"x-api-key":"sk-ant-keepjsonshape1234567"})";
+        const std::string out = RedactProviderErrorBody(body);
+        CHECK(out.find("keepjsonshape") == std::string::npos);
+        CHECK(out.find("\"x-api-key\":\"[REDACTED]\"") != std::string::npos);
+    }
+    SUBCASE("upper-cased SK- prefix is still redacted (case-insensitive sweep)") {
+        const std::string out = RedactProviderErrorBody("token referenced SK-UPPERCASEDLEAK123456");
+        CHECK(out.find("UPPERCASEDLEAK123456") == std::string::npos);
+    }
+    SUBCASE("upper-cased GHP_ PAT prefix is still redacted") {
+        const std::string out = RedactProviderErrorBody("pat=GHP_UPPERCASEPATVALUE1234567");
+        CHECK(out.find("UPPERCASEPATVALUE1234567") == std::string::npos);
+    }
+    // Auth-scheme name matched case-insensitively (CodeRabbit #1439): a proxy may echo the
+    // scheme lowercased/upper-cased. A lower-cased `basic` is the load-bearing case — its
+    // base64 credential has no sk-/prefix shape the later sweeps could otherwise rescue.
+    SUBCASE("lower-cased 'basic' scheme echo still redacts the b64 credential") {
+        const std::string body = "x-fwd: authorization: basic bG93ZXJjYXNlc2NoZW1lbGVhazEy";
+        const std::string out = RedactProviderErrorBody(body);
+        CHECK(out.find("bG93ZXJjYXNlc2NoZW1lbGVhazEy") == std::string::npos);
+        CHECK(out.find("basic [REDACTED]") != std::string::npos);
+    }
+    SUBCASE("upper-cased 'BEARER' scheme echo with a non-sk- token still redacts") {
+        const std::string out = RedactProviderErrorBody("Proxy echoed: BEARER tok-not-prefixed-99887766xy");
+        CHECK(out.find("tok-not-prefixed-99887766xy") == std::string::npos);
+        CHECK(out.find("BEARER [REDACTED]") != std::string::npos);
+    }
+}
