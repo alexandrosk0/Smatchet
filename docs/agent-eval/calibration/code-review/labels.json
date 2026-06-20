@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "description": "Human-labelled calibration set for the code-review judge (item 2 of the subagent-eval-calibration backlog: 'a judge-vs-human calibration loop with BLOCK thresholds'). Each entry pins a recorded result JSON (the judge INPUT, frozen offline) plus the score a human assigned to each JUDGE-kind dimension on that exact output, in [0,1]. scripts/dev/agent-eval-calibrate.py runs the judge command over each entry's recorded trial output and BLOCKS (exit 1) when |judge - human| exceeds the calibration policy's max_divergence (mean or any-single, per policy). Objective dimensions are excluded — they are deterministic code checks with no judge to calibrate. Re-label off-CI by a human when a new smoke is recorded; keep the corpus small + real (anchored to real cases).",
+  "agent": "code-review",
+  "entries": [
+    {
+      "label": "cr-dpapi-secret-loss / strong run",
+      "result": "docs/agent-eval/calibration/code-review/cr-dpapi-secret-loss.smoke.json",
+      "trialIndex": 0,
+      "human": {
+        "correctness": 0.95
+      },
+      "rationale": "The run nails the unconditional erase-before-encrypt data-loss bug at the cited line AND contrasts it with the guarded mcp_auth_token pattern — exactly the referenceOutcome ground truth. A near-perfect correctness score; not 1.0 because it does not explicitly note the identical exposure on the token / plane_api_key siblings."
+    }
+  ]
+}

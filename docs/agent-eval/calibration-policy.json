@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "description": "Judge-vs-human calibration thresholds for scripts/dev/agent-eval-calibrate.py. The calibrator runs the configured judge over each human-labelled entry (docs/agent-eval/calibration/<agent>/labels.json) and BLOCKS (exit 1) when the judge diverges from the human label beyond these bounds. Two gates, both must hold: (1) mean absolute divergence across all (entry,dimension) pairs <= max_mean_divergence; (2) no single pair diverges by more than max_single_divergence. Precedence (later overlays earlier): default -> perAgent[agent] -> perDimension[dimension]. Unlike scoring-policy.json (advisory WARN), THIS gate BLOCKS: a judge that disagrees with humans beyond tolerance is not trustworthy enough to gate prompt-quality regressions, so calibration failing is a hard error. Tune ONLY with a documented rationale; loosening the bound is a trust decision.",
+  "default": {
+    "max_mean_divergence": 0.15,
+    "max_single_divergence": 0.25
+  },
+  "perAgent": {
+    "comment": "Override the default for a specific agent. Empty means inherit default."
+  },
+  "perDimension": {
+    "comment": "Override per judge-dimension key (most specific, applied last). e.g. tighten 'correctness' once the judge is well-calibrated, or relax a noisier rubric dimension with a documented rationale."
+  }
+}
