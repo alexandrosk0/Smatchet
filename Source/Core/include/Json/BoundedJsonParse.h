@@ -3,12 +3,15 @@
 // BoundedJsonParse.h — depth/node-bounded JSON parse for ATTACKER-CONTROLLED
 // input (Pillar 3 — Never crash).
 
-// nlohmann's recursive-descent `json::parse` recurses once per nesting level, so
-// a deeply-nested payload ("[[[[...]]]]") overflows the C++ stack BEFORE any
-// field is extracted — a remote crash, NOT a catchable C++ exception. A byte cap
-// alone does NOT bound depth: ~1M nested arrays fit in ~1 MiB. We therefore parse
-// through nlohmann's own DOM builder driven from `sax_parse` (iterative — no
-// recursion), aborting once a live-container depth or a total-node cap is hit.
+// An unbounded `json::parse` on a deeply-nested payload ("[[[[...]]]]") builds the
+// full DOM first: nlohmann's parser is iterative (it drives the DOM builder from
+// `sax_parse`, NOT a per-level recursion), so the stack does NOT overflow during the
+// parse. The danger is the resulting DOM — `~json` destroys nested containers
+// RECURSIVELY, so tearing down a deep tree overflows the C++ stack (a remote crash,
+// NOT a catchable C++ exception), and building it grows the heap unboundedly. A byte
+// cap alone does NOT bound depth: ~1M nested arrays fit in ~1 MiB. We therefore drive
+// nlohmann's own DOM builder from `sax_parse` and ABORT once a live-container depth or
+// a total-node cap is hit — before any deep / oversized DOM is ever constructed.
 
 // This is the single shared implementation. All bounded-parse ingress sites route
 // here (DRY / Pillar 5): the `decode_json` Lua sink, the MCP REST/JSON-RPC POST

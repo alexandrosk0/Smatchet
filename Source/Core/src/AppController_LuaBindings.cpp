@@ -16,6 +16,7 @@
 #include "SmatchetToast.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdio>
 #include <ctime>
@@ -752,10 +753,13 @@ std::tuple<sol::object, std::string> AppController::Impl::LuaGetTicketBind(sol::
 }
 
 // `decode_json` parses ATTACKER-CONTROLLED text (a Lua script can hand it any
-// string). nlohmann's recursive-descent parser builds the DOM by recursing once
-// per nesting level, so a deeply-nested payload ("[[[[...]]]]") overflows the
-// C++ stack BEFORE JsonToLua ever runs (Pillar 3 — Never crash). The 4 MB byte
-// cap in LuaDecodeJsonBind does NOT bound depth — ~2 M nested arrays fit easily.
+// string). nlohmann's DOM parser is iterative (it drives `json_sax_dom_parser`
+// from `sax_parse`, NOT a per-level recursion), so a deeply-nested payload
+// ("[[[[...]]]]") does NOT overflow while parsing — it builds the full DOM, and
+// THAT deep tree overflows the C++ stack when it is destroyed (`~json` recurses
+// per nesting level) and grows the heap unboundedly while it is built (Pillar 3 —
+// Never crash). The 4 MB byte cap in LuaDecodeJsonBind does NOT bound depth —
+// ~2 M nested arrays fit easily.
 // The depth/node-bounded parse lives in the shared smatchet::json_safe helper
 // (Source/Core/include/Json/BoundedJsonParse.h) so this sink, the MCP REST /
 // JSON-RPC ingress, and the Lua-MCP-tool params path all route through ONE
@@ -764,19 +768,23 @@ std::tuple<sol::object, std::string> AppController::Impl::LuaGetTicketBind(sol::
 // graceful degradation, NOT a C++ throw across the sol2 boundary.
 std::tuple<sol::object, std::string> AppController::Impl::LuaDecodeJsonBind(sol::state_view sv, const std::string& s) {
     // Marshal against the calling state `sv` (see LuaGetTicketBind).
-    // Depth/node-bounded parse via the shared json_safe helper (NOT json::parse,
-    // which recurses unbounded and stack-overflows on a hostile deep payload). On
-    // a cap hit ParseBounded returns null + a non-empty errOut: report it to Lua
-    // as a parse error string rather than crashing or throwing across the sol2
-    // boundary (Pillar 3). Keep the 4 MiB byte cap on top of the depth/node caps.
+    // Depth/node-bounded parse via the shared json_safe helper (NOT a bare
+    // json::parse, which would build the full DOM and then stack-overflow when that
+    // deep tree is torn down — see the recursive `~json` note above). On a cap hit
+    // ParseBounded returns null + a non-empty errOut: report it to Lua as a parse
+    // error string rather than crashing or throwing across the sol2 boundary
+    // (Pillar 3). Keep the 4 MiB byte cap on top of the depth/node caps.
     constexpr std::size_t kMaxDecodeBytes = 4u * 1024u * 1024u;
     std::string err;
     const nlohmann::json j = smatchet::json_safe::ParseBounded(s, err, kMaxDecodeBytes);
     if (!err.empty()) {
         if (err == smatchet::json_safe::OverflowError()) {
-            static bool warned = false;
-            if (!warned) {
-                warned = true;
+            // decode_json is reachable concurrently (Lua automation + MCP worker
+            // threads), so the once-only warn latch must be atomic — a plain `static
+            // bool` is a data race under concurrent overflow (issue #1287). exchange()
+            // makes exactly one thread observe the false→true edge.
+            static std::atomic<bool> warned{false};
+            if (!warned.exchange(true)) {
                 LOG_WARN("decode_json: input exceeded depth (%d) or node (%zu) cap; rejecting. "
                          "Possible hostile or malformed payload.",
                          smatchet::json_safe::kDefaultMaxDepth, smatchet::json_safe::kDefaultMaxNodes);
@@ -1111,10 +1119,20 @@ void AppController::Impl::ParseMcpToolDef(const sol::table& toolDef, smatchet::l
         out.parametersSchema = LuaToJson(params);
     } else {
         std::string schemaStr = toolDef.get_or<std::string>("parameters_json", "{}");
-        try {
-            out.parametersSchema = nlohmann::json::parse(schemaStr);
-        } catch (...) { // catch-all-ok: parse of Lua-provided schema string; fall back to empty schema
-            LOG_DEBUG("Lua MCP tool: parameters_json parse failed; using empty schema");
+        // Route through the shared depth/node-bounded parser, NOT a bare
+        // nlohmann::json::parse (issue #1287). The parser builds iteratively, so a
+        // deeply-nested schema string does not overflow while parsing — but the
+        // resulting deep DOM stack-overflows on destruction (`~json` recurses), and a
+        // try/catch around json::parse could NOT trap that overflow. ParseBounded
+        // aborts the bounded SAX build before such a DOM exists, degrading to an empty
+        // schema instead of crashing. schemaStr is same-user input (a setup .lua tool
+        // def), so this is defense-in-depth, not a remote-reachable sink.
+        std::string parseErr;
+        nlohmann::json parsed = smatchet::json_safe::ParseBounded(schemaStr, parseErr);
+        if (parseErr.empty()) {
+            out.parametersSchema = std::move(parsed);
+        } else {
+            LOG_DEBUG("Lua MCP tool: parameters_json rejected (%s); using empty schema", parseErr.c_str());
             out.parametersSchema = nlohmann::json::object();
         }
     }
