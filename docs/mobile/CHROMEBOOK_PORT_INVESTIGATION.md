@@ -68,7 +68,7 @@ is untouched**.
 > **Manifest gate note:** any manifest edit (A8) **must keep `android:allowBackup="false"`** (line 7) —
 > the **Android security gate** (`mobile-security.yml` → `test-mobile-security.sh`) is a non-required-but
 > **blocking** merge check that fails on an `allowBackup` regression and on incomplete per-ABI OpenSSL.
-
+>
 > **ChromeOS detection (A4–A6):** gate these desktop-input defaults on the standard ARC system feature —
 > `getPackageManager().hasSystemFeature("org.chromium.arc")` (Java) — and pass the result to the native
 > shell so it can enable the cursor (A5), default to **Desktop UI mode** (A6), and accept precise-pointer
