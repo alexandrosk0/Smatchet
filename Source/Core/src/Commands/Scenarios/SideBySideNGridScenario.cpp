@@ -15,8 +15,10 @@
 
 #include "Commands/Scenarios/IScenario.h"
 
+// clang-format off
 // SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=perf scenario drives AppController::EnsurePaneContextLive to spin a live GridLiveContext per pane — same unavoidable dependency as the grandfathered side-by-side-2-grid / concurrent-sync scenarios; no narrower interface exposes it; owner=perf-tooling; revisit=2026-12-31)
 #include "AppController.h"
+// clang-format on
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "SmatchetUiSession.h"
 #include "UiPerfMonitor.h"
@@ -32,7 +34,7 @@ namespace cmd {
 
 namespace {
 // Synthetic-pane id prefix. A crashed prior run leaves these behind; OnStart
-// reclaims any match so they are cleaned up rather than orphaned + re-added.
+// purges any match before sizing so the run observes exactly paneTarget_ panes.
 const char* const kPerfPaneIdPrefix = "perf-side-by-side-grid-";
 // Clamp the requested pane count to a sane band: >=2 (a "side-by-side" needs at
 // least two), <=64 (guards a fat-finger --panes=100000 from OOM-ing the box).
@@ -64,13 +66,11 @@ class SideBySideNGridScenario : public IScenario {
         const std::string baseViewId = base.viewId;
         const std::string baseTitle = base.title;
 
-        // Reclaim leftover synthetic panes from a crashed prior run so cleanup
-        // owns + erases them on finish (rather than leaving orphans behind).
-        for (const GridPane& pane : g_ui.gridPanes) {
-            if (HasPrefix(pane.id)) {
-                addedPaneIds_.push_back(pane.id);
-            }
-        }
+        // Purge synthetic panes left by a crashed prior run BEFORE sizing. Counting
+        // leftovers toward paneTarget_ would measure the wrong pane count — and when a
+        // crash left more than paneTarget_ of them the sizing loop below adds nothing,
+        // so the run would observe MORE than the requested N panes (CR review #1464).
+        PurgeSyntheticPanes();
 
         // Top the open-pane set up to paneTarget_ by cloning the base pane's
         // backend + view so every grid renders the same offline data set. `base`
@@ -80,7 +80,7 @@ class SideBySideNGridScenario : public IScenario {
             const std::string syntheticId = std::string(kPerfPaneIdPrefix) + std::to_string(idx);
             ++idx;
             if (FindGridPaneById(g_ui.gridPanes, syntheticId)) {
-                continue; // reclaimed above — don't double-add the same id.
+                continue; // defensive: never collide with an existing pane id.
             }
             GridPane clone;
             clone.id = syntheticId;
@@ -158,16 +158,23 @@ class SideBySideNGridScenario : public IScenario {
     }
 
   private:
-    void RemoveSyntheticPanes() {
-        // Erase every scenario-installed pane so the user's persisted pane set is
-        // untouched. Match by prefix (catches reclaimed strays too). The lingering
-        // GridLiveContexts self-retire (hidden grace window) via TickAllContexts.
-        addedPaneIds_.clear();
+    // Erase every synthetic (prefix-matched) pane from g_ui.gridPanes. Reverse
+    // iteration keeps the unvisited indices valid across each erase. Shared by the
+    // start-of-run purge (exact paneTarget_) and the on-finish cleanup.
+    void PurgeSyntheticPanes() {
         for (std::size_t i = g_ui.gridPanes.size(); i-- > 0;) {
             if (HasPrefix(g_ui.gridPanes[i].id)) {
                 g_ui.gridPanes.erase(g_ui.gridPanes.begin() + static_cast<std::ptrdiff_t>(i));
             }
         }
+    }
+
+    void RemoveSyntheticPanes() {
+        // Erase every scenario-installed pane so the user's persisted pane set is
+        // untouched. The lingering GridLiveContexts self-retire (hidden grace
+        // window) via TickAllContexts.
+        addedPaneIds_.clear();
+        PurgeSyntheticPanes();
     }
 
     int frames_ = 600;
