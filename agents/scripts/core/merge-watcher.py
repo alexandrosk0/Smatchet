@@ -1354,9 +1354,26 @@ def handle_blocked_cr_triage(entry: dict[str, Any], status_line: str) -> dict[st
         )
     else:
         attempts_before = int(entry.get("triage_attempts", 0))
+    # Clamp the bump (merge-watcher-triage-attempts-unbounded, PR-3): once the
+    # counter is already past budget on the SAME head_sha, every further same-head
+    # re-poll used to keep incrementing triage_attempts unbounded (the counter
+    # only resets on a HEAD move / CR-clear), so a wedged PR's registry entry grew
+    # without bound (observed triage_attempts up to 211 on stale zombies). The
+    # counter conveys exactly one fact past budget — "exhausted" — so it carries no
+    # information beyond budget+1. When the PR is already exhausted on this head,
+    # early-return the EXHAUSTED state WITHOUT persisting a further increment,
+    # leaving the registry clamped at budget+1. (A HEAD move above already reset
+    # attempts_before to 0, so a fresh push still gets its full budget.)
+    if attempts_before > budget:
+        extras["triage_attempts"] = attempts_before
+        extras["triage_budget"] = budget
+        extras["triage_action"] = "BUDGET_EXHAUSTED"
+        extras["last_state"] = "TRIAGE_BUDGET_EXHAUSTED"  # overrides BLOCKED for notify
+        return extras
     attempts_after = attempts_before + 1
     # Bump the registry entry's triage_attempts (registry-locked). Persist
-    # the head_sha so the next poll knows what HEAD this counter is for.
+    # the head_sha so the next poll knows what HEAD this counter is for. The
+    # clamp above guarantees attempts_after never exceeds budget+1.
     _bump_triage_attempts(pr, clone_path, attempts_after, head_sha)
     extras["triage_attempts"] = attempts_after
     extras["triage_budget"] = budget
@@ -2692,6 +2709,134 @@ def maybe_auto_act(state: dict[str, Any], entry: dict[str, Any]) -> dict[str, An
         return {"auto_act_action": f"spawn failed: {exc}"}
 
 
+# ---------------------------------------------------------------------------
+# Agent-reachable notify sink (merge-watcher-agent-notify, PR-3)
+# ---------------------------------------------------------------------------
+# maybe_notify() drives smatchet-notify.sh — an in-app toast + a Windows native
+# BurntToast fallback aimed at a HUMAN. An autonomous orchestrator that just
+# opened a PR has no way to consume that: it would have to poll `gh pr checks`.
+# This sink writes a machine-readable, append-only NDJSON event line per terminal
+# state transition that a SessionStart hook / the `merge-watcher-cli.py await`
+# subcommand can tail. It is purely additive: the human toast still fires.
+
+#: Terminal/actionable states an agent wants to wake on. Superset of NOTIFY_STATES
+#: plus GATES_PASSED (merged) so an `await --until=terminal` returns on a merge too.
+AGENT_EVENT_STATES = {
+    "GATES_PASSED",
+    "TRIAGE_BUDGET_EXHAUSTED",
+    "STUCK_NEEDS_ATTENTION",
+    "CI_FAIL",
+    "GH_API_DOWN",
+    "PR_CLOSED_OR_MERGED",
+    "PAGINATION_OVERFLOW",
+    "TIMEOUT",
+    "READY_FLIP_FAILED",
+}
+
+
+def agent_events_path() -> pathlib.Path:
+    """Per-user agent-event NDJSON sink. Lives under the watcher root (outside any
+    git clone, so a `git clean -fx` can't nuke it) next to the registry + state."""
+    return watcher_root() / "agent-events.jsonl"
+
+
+def append_agent_event(event: dict[str, Any]) -> None:
+    """Append one compact JSON event line to the agent-events sink. Best-effort:
+    NEVER raises (an event-sink write must not crash the daemon poll loop) and
+    never blocks a merge — a failed append degrades to a silent no-op."""
+    try:
+        watcher_root().mkdir(parents=True, exist_ok=True)
+        line = json.dumps(event, sort_keys=True, ensure_ascii=False)
+        with open(agent_events_path(), "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except (OSError, ValueError, TypeError):
+        pass
+
+
+def maybe_emit_agent_event(
+    state: dict[str, Any], entry: dict[str, Any]
+) -> dict[str, Any]:
+    """Emit an agent-reachable event line on a terminal/actionable state.
+
+    Mirrors maybe_notify's suppression (one event per distinct state per PR) by
+    comparing against the prior state file's `agent_event_emitted_for_state`.
+    Returns extras to merge into the state. Runs alongside maybe_notify (the
+    human toast); this is the agent-facing complement (merge-watcher-agent-notify).
+    """
+    cur_state = state.get("last_state", "")
+    if cur_state not in AGENT_EVENT_STATES:
+        return {}
+    pr = int(entry["pr"])
+    prior_state_file = state_dir() / f"{pr}.json"
+    prior_emitted_for = None
+    if prior_state_file.exists():
+        try:
+            prior = json.loads(prior_state_file.read_text(encoding="utf-8"))
+            prior_emitted_for = prior.get("agent_event_emitted_for_state")
+        except (json.JSONDecodeError, OSError):
+            pass
+    if prior_emitted_for == cur_state:
+        return {"agent_event_action": "suppressed (same state as last event)"}
+    event = {
+        "ts_unix": int(time.time()),
+        "pr": pr,
+        "clone_path": entry.get("clone_path", ""),
+        "state": cur_state,
+        "status_line": state.get("last_status_line", "")[:300],
+        "source": "merge-watcher",
+    }
+    # Carry the most actionable fields when present so a consumer doesn't re-query.
+    for k in ("merge_sha", "stuck_reason", "triage_attempts", "triage_budget"):
+        if k in state:
+            event[k] = state[k]
+    append_agent_event(event)
+    return {
+        "agent_event_action": f"emitted ({cur_state})",
+        "agent_event_emitted_for_state": cur_state,
+        "agent_event_emitted_at_unix": int(time.time()),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Durable-ledger pre-reset guard (merge-snapshot-ledger-uncommitted-loss-risk, PR-3)
+# ---------------------------------------------------------------------------
+# _append_merge_snapshot writes each merged-PR audit row to the WORKING COPY of
+# docs/self-improvement/merge-snapshots.jsonl on whatever branch the shared tree
+# has checked out, leaving the rows UNCOMMITTED — they only reach develop via an
+# irregular manual `chore(ledger)` harvest. So a `git reset`/`checkout`/`clean` of
+# that tree (which the concurrent-session rules actively encourage for a stale
+# shared tree) silently DESTROYS every un-harvested row.
+#
+# For an autonomous daemon the LOWER-RISK option (vs the daemon committing/pushing
+# to a ledger branch — which needs auth, branch management + conflict handling on a
+# live unattended process) is this purely-DEFENSIVE pre-reset guard: a function +
+# CLI subcommand (`merge-watcher-cli.py ledger-guard`) that a human / git-janitor
+# runs (or wires as a pre-reset hook) BEFORE any destructive op on the shared tree.
+# It refuses (exit non-zero) when the ledger has uncommitted rows, naming the
+# harvest command, so the rows are never silently lost. It mutates nothing.
+
+
+def _ledger_relpath() -> str:
+    return "docs/self-improvement/merge-snapshots.jsonl"
+
+
+def ledger_has_uncommitted_rows(root: str) -> "tuple[bool, str]":
+    """True iff the merge-snapshots.jsonl ledger in checkout `root` has uncommitted
+    changes (staged or unstaged) vs HEAD. Returns (dirty, detail). Fail-CLOSED: if
+    git can't be queried (missing git / not a checkout), report dirty=True with the
+    reason so a guard caller refuses rather than greenlighting a possibly-lossy
+    reset on an unverifiable tree. `git status --porcelain <path>` prints nothing
+    when the file is clean / untracked-but-unchanged-from-HEAD."""
+    rel = _ledger_relpath()
+    r = _git(["status", "--porcelain", "--", rel], cwd=root)
+    if r is None or r.returncode != 0:
+        return True, "git status failed (fail-closed: cannot verify ledger state)"
+    porcelain = r.stdout.strip()
+    if not porcelain:
+        return False, "ledger clean (no uncommitted rows)"
+    return True, porcelain
+
+
 def _configured_override_labels() -> list[str]:
     """Read project.config.json merge_gates.override_labels (config-sourced, not
     hardcoded — same set merge-gates.sh / postmortem-owed.sh use). Returns [] on
@@ -2984,13 +3129,25 @@ def process_registered_pr(entry: dict[str, Any]) -> dict[str, Any]:
         state.update(stuck_extras)
         if stuck_extras.get("stuck_action"):
             print(f"    stuck-watch: {stuck_extras.get('stuck_action')}")
-    # Phase 4a — fire smatchet-notify on terminal states.
+    # Phase 4a — fire smatchet-notify on terminal states (human-facing toast).
     notify_extras = maybe_notify(state, entry)
     if notify_extras:
         state.update(notify_extras)
         if "notify_action" in notify_extras and notify_extras["notify_action"] != "suppressed (same state as last notify)":
             print(
                 f"    notify: {notify_extras.get('notify_action', '?')}"
+            )
+    # Agent-reachable event sink — the machine-readable complement to the human
+    # toast (merge-watcher-agent-notify). Runs AFTER maybe_notify so the flipped
+    # terminal state (incl. STUCK_NEEDS_ATTENTION) is captured; an orchestrator's
+    # `merge-watcher-cli.py await` tails this NDJSON. Must run before write_state
+    # so agent_event_emitted_for_state lands in state/<pr>.json (the suppression key).
+    agent_event_extras = maybe_emit_agent_event(state, entry)
+    if agent_event_extras:
+        state.update(agent_event_extras)
+        if agent_event_extras.get("agent_event_action", "").startswith("emitted"):
+            print(
+                f"    agent-event: {agent_event_extras.get('agent_event_action', '?')}"
             )
     # Option A (opt-in) — spawn `claude -p` in the background
     # to address CR findings. Gated by MERGE_WATCH_AUTO_ACT.

@@ -964,6 +964,11 @@ jobs:
               ;;
           esac
           if [ "$status" = "broken" ]; then
+            # Machine-readable broken-lane marker (bucket-lane-status-broken-sentinel-
+            # auditable, PR-3) — see the bucket-E lane-integrity step for the rationale.
+            if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+              printf 'BROKEN-LANE: %s\n' "Bucket-C screenshot diff (Mesa headless GL)" >> "$GITHUB_STEP_SUMMARY"
+            fi
             echo "::error::lane-integrity — bucket-C is BROKEN (Passed:0 Failed>0). Every scenario failed: dead harness, not a regression." >&2
             exit 1
           fi
@@ -1247,6 +1252,13 @@ jobs:
               ;;
           esac
           if [ "$status" = "broken" ]; then
+            # Machine-readable broken-lane marker (bucket-lane-status-broken-sentinel-
+            # auditable, PR-3): surface the broken verdict beyond the log annotation so
+            # the audit layer (postmortem-owed.sh broken_lanes registry) can classify a
+            # RED-because-BROKEN lane as an auditable WARN, not an owed gate-escape.
+            if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+              printf 'BROKEN-LANE: %s\n' "Bucket-E UI tests (Mesa headless GL)" >> "$GITHUB_STEP_SUMMARY"
+            fi
             echo "::error::lane-integrity — bucket-E is BROKEN (Passed:0 Failed>0). Every UI test failed: dead harness, not a regression." >&2
             exit 1
           fi

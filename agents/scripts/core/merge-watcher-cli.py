@@ -428,6 +428,117 @@ def cmd_prune(args: argparse.Namespace) -> int:
     return 0
 
 
+def agent_events_path() -> pathlib.Path:
+    """Per-user agent-event NDJSON sink (merge-watcher-agent-notify, PR-3). Same
+    path the daemon's append_agent_event writes; under the watcher root so a
+    `git clean -fx` can't nuke it."""
+    return watcher_root() / "agent-events.jsonl"
+
+
+def cmd_await(args: argparse.Namespace) -> int:
+    """Block until the watcher emits a matching agent-event for `pr`, then print
+    it as JSON (merge-watcher-agent-notify, PR-3).
+
+    An orchestrator that just opened a PR runs this instead of an ad-hoc
+    `gh pr checks --watch` + thread-fetch dance: it tails the daemon's
+    agent-events NDJSON sink and returns on the next event for the PR whose state
+    matches `--until`. NO daemon change — the daemon already appends events.
+
+      --until blocking  : return on any actionable BLOCKED-class state
+                          (TRIAGE_BUDGET_EXHAUSTED / STUCK_NEEDS_ATTENTION /
+                          CI_FAIL / READY_FLIP_FAILED) — the orchestrator must act.
+      --until terminal  : also return on GATES_PASSED / PR_CLOSED_OR_MERGED (the
+                          PR reached an end state). Default.
+      --timeout N       : seconds to wait (default 0 = wait forever).
+
+    Only events APPENDED AFTER this command starts count (it records the sink's
+    byte offset at start), so a stale historical event for the PR doesn't return
+    instantly. Exit 0 on a matching event, 124 on timeout, 2 on bad args.
+    """
+    pr = int(args.pr)
+    until = getattr(args, "until", "terminal")
+    timeout = float(getattr(args, "timeout", 0) or 0)
+    blocking_states = {
+        "TRIAGE_BUDGET_EXHAUSTED", "STUCK_NEEDS_ATTENTION",
+        "CI_FAIL", "READY_FLIP_FAILED", "GH_API_DOWN",
+        "PAGINATION_OVERFLOW", "TIMEOUT",
+    }
+    terminal_states = blocking_states | {"GATES_PASSED", "PR_CLOSED_OR_MERGED"}
+    want = blocking_states if until == "blocking" else terminal_states
+    sink = agent_events_path()
+    # Start at the current end-of-file so only NEW events count.
+    start_offset = sink.stat().st_size if sink.exists() else 0
+    deadline = time.monotonic() + timeout if timeout > 0 else None
+    while True:
+        if sink.exists():
+            try:
+                with open(sink, encoding="utf-8") as fh:
+                    fh.seek(start_offset)
+                    for line in fh:
+                        start_offset += len(line.encode("utf-8"))
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            ev = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if int(ev.get("pr", -1)) == pr and ev.get("state") in want:
+                            print(json.dumps(ev, sort_keys=True))
+                            return 0
+            except OSError:
+                pass
+        if deadline is not None and time.monotonic() >= deadline:
+            print(
+                f"merge-watch await: timed out after {timeout:g}s waiting for "
+                f"PR #{pr} ({until})",
+                file=sys.stderr,
+            )
+            return 124
+        time.sleep(2.0)
+
+
+def cmd_ledger_guard(args: argparse.Namespace) -> int:
+    """Refuse a destructive git op when the merge-snapshots ledger has uncommitted
+    rows (merge-snapshot-ledger-uncommitted-loss-risk, PR-3).
+
+    The watcher appends each merged-PR audit row to the WORKING COPY of
+    docs/self-improvement/merge-snapshots.jsonl, uncommitted, on whatever branch
+    the shared tree has checked out. A `git reset`/`checkout`/`clean` of that tree
+    silently destroys every un-harvested row. Run this as a pre-reset hook (or by
+    hand before any destructive op on a shared tree): exit 1 if the ledger is dirty
+    so the rows are harvested first; exit 0 when clean.
+
+    Mutates nothing. Resolves the clone root from cwd (or --clone-path).
+    """
+    clone_path = getattr(args, "clone_path", None) or os.getcwd()
+    rel = "docs/self-improvement/merge-snapshots.jsonl"
+    r = subprocess.run(
+        ["git", "-C", clone_path, "status", "--porcelain", "--", rel],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
+    if r.returncode != 0:
+        # Fail-closed: cannot verify → refuse (don't greenlight a possibly-lossy reset).
+        print(
+            f"merge-watch ledger-guard: cannot verify ledger state in '{clone_path}' "
+            f"(git status exited {r.returncode}: {r.stderr.strip()[:160]}) — refusing.",
+            file=sys.stderr,
+        )
+        return 1
+    porcelain = r.stdout.strip()
+    if not porcelain:
+        print(f"merge-watch ledger-guard: ledger clean in '{clone_path}'.")
+        return 0
+    print(
+        f"merge-watch ledger-guard: REFUSING — {rel} has UNCOMMITTED rows in "
+        f"'{clone_path}':\n{porcelain}\n"
+        "Harvest them first (commit to a `chore(ledger)` PR) before any "
+        "reset/checkout/clean, or they are lost.",
+        file=sys.stderr,
+    )
+    return 1
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -466,6 +577,39 @@ def build_parser() -> argparse.ArgumentParser:
         help="report what would be pruned without mutating the registry",
     )
     pr.set_defaults(func=cmd_prune)
+
+    aw = sub.add_parser(
+        "await",
+        help="block until the watcher emits a matching agent-event for a PR "
+        "(merge-watcher-agent-notify)",
+    )
+    aw.add_argument("pr", help="PR number to await")
+    aw.add_argument(
+        "--until",
+        choices=("blocking", "terminal"),
+        default="terminal",
+        help="return on a BLOCKED-class state (blocking) or any end state "
+        "incl. GATES_PASSED/closed (terminal, default)",
+    )
+    aw.add_argument(
+        "--timeout",
+        type=float,
+        default=0,
+        help="seconds to wait before giving up (default 0 = forever)",
+    )
+    aw.set_defaults(func=cmd_await)
+
+    lg = sub.add_parser(
+        "ledger-guard",
+        help="refuse (exit 1) when the merge-snapshots ledger has uncommitted "
+        "rows — a pre-reset hook (merge-snapshot-ledger-uncommitted-loss-risk)",
+    )
+    lg.add_argument(
+        "--clone-path",
+        default=None,
+        help="checkout to inspect (default: cwd)",
+    )
+    lg.set_defaults(func=cmd_ledger_guard)
 
     return p
 
