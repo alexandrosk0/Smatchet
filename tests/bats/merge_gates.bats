@@ -2176,9 +2176,10 @@ CFG
 }
 
 @test "Bugbot (9) field-count guard fires on a mis-sized tuple (fail-closed canary)" {
-    # An embedded newline in a tuple field inflates the field count past 28; the
-    # -ne 28 fail-closed assertion must catch it (the tuple-order regression guard
-    # that the appended Bugbot + selfImpOnly fields rely on).
+    # An embedded newline in a tuple field inflates the field count past 31; the
+    # -ne 31 fail-closed assertion must catch it (the tuple-order regression guard
+    # that the appended Bugbot + selfImpOnly + pureDocs/crRateLimited/crDisposition
+    # fields rely on).
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
         "data.repository.pullRequest.headRefOid" \
@@ -2186,7 +2187,7 @@ CFG
     set_fixture "$f"
     run poll_merge_gates org repo 1
     [ "$status" -ne 0 ]
-    [[ "$output" == *"expected 28"* ]]
+    [[ "$output" == *"expected 31"* ]]
     [[ "$output" != *"GATES_PASSED"* ]]
     rm -f "$f"
 }
@@ -2345,4 +2346,136 @@ CFG
     [[ "$output" == *"GATE_SNAPSHOT cr_override=0 downgraded="* ]]
     [[ "$output" != *"auto-skipped"* ]]
     rm -f "$f"
+}
+
+# ---------- CR rate-limit handling (PR-2: cr-review-skipped-pure-docs-auto-downgrade
+#            + cr-rate-limit-code-pr-auto-pause) ----------
+# A CR rate-limit skip is TEMPORARY (CR re-reviews on quota recovery), distinct
+# from the terminal "Review skipped" pass. On a PURE-DOCS PR it auto-downgrades to
+# WARN with no label (markdown is never compiled). On a CODE PR it PAUSES the gate
+# (block) until CR re-reviews; cr-out-of-band alone will NOT waive it — the operator
+# must ALSO attest a `cr-disposition:` label. The rate-limit signal is read from CR
+# conversation-comment bodies (and the CodeRabbit StatusContext description). These
+# tests build on merge_gates_pass.json (all CI green, reviewDecision APPROVED) with
+# CR installed so the CR=NONE path is the realistic scenario, then layer a rate-limit
+# comment + a files list (pure-docs vs code) via chained fixture_override.
+
+@test "CR rate-limit + pure-docs PR PASS (auto-downgrade, no label)" {
+    local f1 f2
+    f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.comments.nodes" \
+        '[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"body":"> Review skipped\n\nCodeRabbit hit its rate limit. Please try again later."}]')"
+    f2="$(fixture_override "$f1" \
+        "data.repository.pullRequest.files" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"path":"docs/agent-rules/merge-gates.md"},{"path":"AGENTS.md"}]}')"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f2"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"rate-limited on a pure-docs PR"* ]]
+    [[ "$output" == *"pure-docs-auto-downgrade"* ]]
+    rm -f "$f1" "$f2"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
+@test "CR rate-limit + CODE PR BLOCK (pause for re-review)" {
+    local f1 f2
+    f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.comments.nodes" \
+        '[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"body":"> Review skipped\n\nCodeRabbit hit its rate limit. Please try again later."}]')"
+    f2="$(fixture_override "$f1" \
+        "data.repository.pullRequest.files" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"path":"Source/Core/src/Foo.cpp"}]}')"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f2"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [[ "$output" == *"rate-limited on a CODE PR"* ]]
+    [[ "$output" == *"CODE-PR-pause"* ]]
+    rm -f "$f1" "$f2"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
+@test "CR rate-limit + CODE PR + cr-out-of-band ALONE still BLOCKS (needs cr-disposition)" {
+    local f1 f2 f3
+    f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.comments.nodes" \
+        '[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"body":"Review skipped: CodeRabbit rate limit reached, try again later."}]')"
+    f2="$(fixture_override "$f1" \
+        "data.repository.pullRequest.files" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"path":"Source/Core/src/Foo.cpp"}]}')"
+    f3="$(fixture_override "$f2" \
+        "data.repository.pullRequest.labels.nodes" \
+        '[{"name":"cr-out-of-band"}]')"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f3"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [[ "$output" == *"NOT honoured"* ]]
+    [[ "$output" == *"cr-disposition"* ]]
+    rm -f "$f1" "$f2" "$f3"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
+@test "CR rate-limit + CODE PR + cr-out-of-band + cr-disposition PASS (honoured)" {
+    local f1 f2 f3
+    f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.comments.nodes" \
+        '[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"body":"Review skipped: CodeRabbit rate limit reached, try again later."}]')"
+    f2="$(fixture_override "$f1" \
+        "data.repository.pullRequest.files" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"path":"Source/Core/src/Foo.cpp"}]}')"
+    f3="$(fixture_override "$f2" \
+        "data.repository.pullRequest.labels.nodes" \
+        '[{"name":"cr-out-of-band"},{"name":"cr-disposition:rate-limit-acked"}]')"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f3"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"cr-out-of-band + cr-disposition"* ]]
+    [[ "$output" == *"GATE_SNAPSHOT cr_override=1"* ]]
+    rm -f "$f1" "$f2" "$f3"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
+@test "CR rate-limit parser: 'rate-limited' phrasing detected (CR-state parser fixture)" {
+    # Fixture around the CR-state parser: the crRateLimited derivation must match
+    # the hyphenated 'rate-limited' variant (not just 'rate limit'). Pure-docs so
+    # the match path is the auto-downgrade WARN (asserts the regex fired).
+    local f1 f2
+    f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.comments.nodes" \
+        '[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"body":"CodeRabbit is currently rate-limited; review deferred."}]')"
+    f2="$(fixture_override "$f1" \
+        "data.repository.pullRequest.files" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"path":"README.md"}]}')"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f2"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"pure-docs-auto-downgrade"* ]]
+    rm -f "$f1" "$f2"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
+@test "CR no rate-limit comment: rate-limit path inert (negative canary)" {
+    # No rate-limit signal anywhere → crRateLimited false → the rate-limit block is
+    # never entered, even on a CODE PR. merge_gates_pass.json is all-green + CR NONE
+    # (installed) so it passes the normal grace path; the rate-limit handling must
+    # not spuriously fire.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.files" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"path":"Source/Core/src/Foo.cpp"}]}')"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [[ "$output" != *"rate-limit"* ]]
+    [[ "$output" != *"CODE-PR-pause"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED
 }
