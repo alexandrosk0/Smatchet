@@ -28,10 +28,15 @@ they bracket the plan lifecycle: author → grill → ship → revise (PR-only).
 2. **Copy the template.** Start from `docs/plans/active/_plan-template.md` — never
    author from blank. Set the `> **Slug**:` line to the derived slug.
 3. **Fill every section.** Context, Approach, Files to modify, Existing utilities
-   reused, UX Pillar callouts, Perf gate, Risks / non-goals, Verification. A
-   section that does not apply gets `N/A — <one-line reason>` — **never delete a
-   section** (the empty section is the forcing function that catches a skipped
-   concern).
+   reused, Extraction sizing, UX Pillar callouts, Perf gate, Risks / non-goals,
+   Verification. A section that does not apply gets `N/A — <one-line reason>` —
+   **never delete a section** (the empty section is the forcing function that
+   catches a skipped concern).
+   - **Extraction sizing is mandatory when the plan EXTRACTS or SPLITS** an
+     over-cap file (whale agent prompt, `AGENTS.md` section, long TU) into a sink:
+     classify each chunk EXTRACT-vs-STAYS, state the projected post-extraction
+     line count, confirm it clears the cap (250 / 150). `N/A — <reason>` when the
+     plan extracts nothing.
    - **Three Verification/Out-of-scope items the template bakes in are MANDATORY —
      keep them in every plan** (they are the recurring plan-doc misses CodeRabbit
      flags via learned repo rules): (a) the **doc-validation** bullet enumerating

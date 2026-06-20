@@ -31,6 +31,13 @@
             "commandWindows": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/plan-archival-owed.sh\" --nudge'",
             "statusMessage": "Checking shipped active plans",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/historical-review-ledger-reconcile.sh\" --nudge'",
+            "commandWindows": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/historical-review-ledger-reconcile.sh\" --nudge'",
+            "statusMessage": "Checking historical-review ledger freshness",
+            "timeout": 30
           }
         ]
       }
