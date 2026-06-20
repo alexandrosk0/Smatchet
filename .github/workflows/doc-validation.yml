@@ -139,7 +139,11 @@ jobs:
       # an unrelated PR. Detect changed files via the REST API under the default
       # GITHUB_TOKEN (no checkout, no PAT); skip every later step when shipped/ is
       # untouched. A job whose steps all skip still reports success, so this
-      # non-required check goes green instead of failing.
+      # non-required check goes green instead of failing. A PR that DOES touch
+      # shipped/ still reaches the checkout — so that step is ALSO fail-open
+      # (continue-on-error, below): an expired PAT there degrades the auto-fix to
+      # a no-op rather than redding the PR, with the required test-plan-index
+      # check (validate mode, doc-anchors job) still hard-gating INDEX drift.
       - name: Detect shipped-plan changes
         id: shipped
         env:
@@ -167,7 +171,16 @@ jobs:
             echo "PR does not touch docs/plans/shipped/ — autosync skipped (nothing the INDEX tracks changed)."
           fi
       - name: Checkout PR head branch
+        id: checkout
         if: steps.shipped.outputs.changed == 'true'
+        # FAIL-OPEN: a set-but-EXPIRED PLAN_INDEX_PAT is truthy, so the `||` below
+        # keeps it (no GITHUB_TOKEN fallback) and the credentialed fetch dies with
+        # `could not read Username`. This advisory auto-FIXER must never red an
+        # unrelated PR for that, so the checkout is continue-on-error and every
+        # later step gates on steps.checkout.outcome == 'success'. INDEX drift is
+        # still hard-gated by the required test-plan-index check (validate mode);
+        # losing auto-fix on a broken PAT only means the author re-syncs by hand.
+        continue-on-error: true
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.event.pull_request.head.ref }}
@@ -179,13 +192,17 @@ jobs:
           # GITHUB_TOKEN silent-stale-failure.
           token: ${{ secrets.PLAN_INDEX_PAT || github.token }}
           persist-credentials: true
+      - name: Note autosync skipped (checkout could not authenticate)
+        if: steps.shipped.outputs.changed == 'true' && steps.checkout.outcome == 'failure'
+        run: |
+          echo "::warning::INDEX autosync skipped — credentialed checkout could not authenticate (PLAN_INDEX_PAT absent/expired). This advisory auto-fixer is a no-op here; INDEX correctness stays hard-gated by the required test-plan-index check. Restore the PAT (see job header) to re-enable auto-fix."
       - name: Set up Python
-        if: steps.shipped.outputs.changed == 'true'
+        if: steps.shipped.outputs.changed == 'true' && steps.checkout.outcome == 'success'
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: '3.11'
       - name: Regenerate INDEX + commit if drifted
-        if: steps.shipped.outputs.changed == 'true'
+        if: steps.shipped.outputs.changed == 'true' && steps.checkout.outcome == 'success'
         # Branch refs are untrusted input — a PR head branch name may contain
         # shell metacharacters ($(), backticks). Pass them through the env (not
         # inline ${{ }} template expansion into the script body) so the runner
