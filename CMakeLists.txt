@@ -1512,6 +1512,21 @@ if(SMATCHET_BUILD_POSIX_CORE_CHECK)
             ${imgui_SOURCE_DIR}/backends
             ${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/include)
     target_compile_definitions(SmatchetCore_PosixCheck PRIVATE IMGUI_USER_CONFIG="SmatchetImConfig.h")
+
+    # linear-tracker-backend.md — credential-gated LIVE end-to-end smoke for the
+    # Linear backend, driven by .github/workflows/linear-live-smoke.yml (nightly +
+    # manual dispatch, gated on the LINEAR_TEST_API_KEY secret). EXCLUDE_FROM_ALL:
+    # never part of the default/all target, so it can NEVER affect the gating
+    # build — only the live workflow builds + runs it. Links the core archive
+    # (which PUBLIC-links cpr/json/SQLiteCpp via SmatchetCoreInterface); glfw rides
+    # the core link interface but no window is ever opened by the smoke.
+    add_executable(SmatchetLinearLiveSmoke EXCLUDE_FROM_ALL
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/live/linear_live_smoke.cpp")
+    target_link_libraries(SmatchetLinearLiveSmoke PRIVATE SmatchetCore_PosixCheck)
+    target_include_directories(SmatchetLinearLiveSmoke PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/include"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/include/Tracker"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/include/Config")
 endif()
 
 # ==============================================================================
