@@ -44,6 +44,27 @@ inline EffectiveUiMode resolveAutoEffectiveUiMode(float logicalWidthPx, Effectiv
     return prev; // dead band (720 < w < 860) — hold the prior frame's decision.
 }
 
+// Full UiMode resolution used by drawResolveUiMode: an explicit Desktop/Mobile pin wins; otherwise a
+// host "prefers desktop" hint (A6 / ChromeOS — see the seam below) overrides Auto; otherwise the width
+// hysteresis decides. Pure — the caller passes SmatchetHostPrefersDesktopUi() + the logical width (raw
+// io.DisplaySize.x / host density). Header-only + ImGui-free so the doctest rig exercises it directly.
+inline EffectiveUiMode resolveEffectiveUiMode(UiMode persisted, bool hostPrefersDesktop,
+                                              float logicalWidthPx, EffectiveUiMode prev) {
+    switch (persisted) {
+    case UiMode::Desktop:
+        return EffectiveUiMode::Desktop;
+    case UiMode::Mobile:
+        return EffectiveUiMode::Mobile;
+    case UiMode::Auto:
+    default:
+        break;
+    }
+    if (hostPrefersDesktop) {
+        return EffectiveUiMode::Desktop;
+    }
+    return resolveAutoEffectiveUiMode(logicalWidthPx, prev);
+}
+
 // Host UI-mode policy hint (A6 / Chromebook). A host that runs keyboard + mouse + resizable windows
 // (ChromeOS / ARC) sets this true at startup so Auto resolves to Desktop instead of the width-based
 // mobile shell; an explicit Desktop/Mobile user choice still wins. Default false — phone/tablet and

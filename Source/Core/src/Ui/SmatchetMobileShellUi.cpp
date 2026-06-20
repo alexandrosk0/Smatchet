@@ -49,40 +49,18 @@ static bool s_hostPrefersDesktopUi = false;
 void SmatchetSetHostPrefersDesktopUi(bool prefers) { s_hostPrefersDesktopUi = prefers; }
 bool SmatchetHostPrefersDesktopUi() { return s_hostPrefersDesktopUi; }
 
-// Resolves cfg.UiMode -> d.effectiveUiMode once per frame. Manual Desktop/Mobile pin
-// directly; Auto applies width hysteresis on a DPI-independent LOGICAL width: enter Mobile
-// at <= 720, exit to Desktop at >= 860, holding the prior frame inside the dead band so a
-// window hovering near the breakpoint never flaps. The logical width is the raw
-// io.DisplaySize.x (physical surface pixels on the Android EGL host) divided by the host
-// density scale — without this divide a high-DPI phone's large pixel count (e.g. 1080 px at
-// 2.6x) reads as a wide desktop and Auto never resolves Mobile. Desktop's density is 1.0, so
-// logical == physical there and the behaviour is unchanged. d.effectiveUiMode is both the
-// output AND the cross-frame carry — it is seeded to Desktop in UiDrawSession.
+// Resolves cfg.UiMode -> d.effectiveUiMode once per frame, delegating the decision to the pure,
+// unit-tested resolveEffectiveUiMode (SmatchetUiModeIds.h): an explicit Desktop/Mobile pin wins; a
+// host "prefers desktop" hint (A6 / ChromeOS) overrides Auto; otherwise the width hysteresis decides.
+// The logical width is the raw io.DisplaySize.x (physical surface px on the Android EGL host) divided
+// by the host density scale — without this divide a high-DPI phone's large pixel count (e.g. 1080 px
+// at 2.6x) reads as a wide desktop and Auto never resolves Mobile. Desktop density is 1.0, so logical
+// == physical there. d.effectiveUiMode is both the output AND the cross-frame hysteresis carry.
 void SmatchetUI::drawResolveUiMode(UiDrawSession& d) {
-    switch (d.cfg.UiMode) {
-    case UiMode::Desktop:
-        d.effectiveUiMode = EffectiveUiMode::Desktop;
-        return;
-    case UiMode::Mobile:
-        d.effectiveUiMode = EffectiveUiMode::Mobile;
-        return;
-    case UiMode::Auto:
-    default:
-        break;
-    }
-
-    // A6 (Chromebook): a keyboard + mouse + resizable-window host (ChromeOS / ARC) prefers the desktop
-    // dockspace over the width-based mobile shell. Only reached for Auto — an explicit Desktop/Mobile
-    // choice returned above. Forcing Desktop also sidesteps the mobile touch-density scale (applied
-    // only in Mobile mode). Phones/tablets/desktop never set the hint, so their behaviour is unchanged.
-    if (SmatchetHostPrefersDesktopUi()) {
-        d.effectiveUiMode = EffectiveUiMode::Desktop;
-        return;
-    }
-
     const float density = SmatchetTheme::HostDensityScale();
     const float logicalWidth = ::ImGui::GetIO().DisplaySize.x / (density > 0.0f ? density : 1.0f);
-    d.effectiveUiMode = resolveAutoEffectiveUiMode(logicalWidth, d.effectiveUiMode);
+    d.effectiveUiMode = resolveEffectiveUiMode(d.cfg.UiMode, SmatchetHostPrefersDesktopUi(),
+                                               logicalWidth, d.effectiveUiMode);
 }
 
 // Fullscreen mobile shell: occludes the host viewport dockspace with one borderless
