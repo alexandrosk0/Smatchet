@@ -312,6 +312,11 @@ TrackerConfig MakeNonDefaultConfig() {
     c.GitHubBaseUrl = "https://gh.example/api/v3";
     c.GitHubOwner = "rt-owner";
     c.GitHubRepo = "rt-repo";
+    c.LinearApiKey = "rt-linear-key-zzz";
+    c.LinearBaseUrl = "https://linear.example/graphql";
+    c.LinearTeamId = "rt-team-uuid";
+    c.LinearTeamKey = "RTK";
+    c.LinearWorkspaceUrl = "https://linear.app/rt-workspace";
     c.BugReportRelayUrl = "https://relay.example";
     c.BugReportRelayKey = "rt-relay-key";
     c.BugReportGitHubOwner = "rt-bug-owner";
@@ -362,6 +367,7 @@ TrackerConfig MakeNonDefaultConfig() {
     c.NewIssueInheritFieldIds = {"issuetype", "labels", "priority"};
     c.NewIssueInheritFieldIdsPlane = {"issuetype", "state"};
     c.NewIssueInheritFieldIdsGitHub = {"issuetype", "assignees"};
+    c.NewIssueInheritFieldIdsLinear = {"priority", "labels"};
     c.MigratedInheritIssueTypeV1 = true; // avoid the one-shot issuetype injection on reload
     c.DurationSuggestions = {"5m", "45m"};
     c.WorkLogCommentTemplates = {"rt template one", "rt template two"};
@@ -436,6 +442,11 @@ TEST_CASE("ConfigManager Save/Load per-field round-trip preserves every persiste
     CHECK(out.GitHubBaseUrl == in.GitHubBaseUrl);
     CHECK(out.GitHubOwner == in.GitHubOwner);
     CHECK(out.GitHubRepo == in.GitHubRepo);
+    CHECK(out.LinearApiKey == in.LinearApiKey);
+    CHECK(out.LinearBaseUrl == in.LinearBaseUrl);
+    CHECK(out.LinearTeamId == in.LinearTeamId);
+    CHECK(out.LinearTeamKey == in.LinearTeamKey);
+    CHECK(out.LinearWorkspaceUrl == in.LinearWorkspaceUrl);
     CHECK(out.BugReportRelayUrl == in.BugReportRelayUrl);
     CHECK(out.BugReportRelayKey == in.BugReportRelayKey);
     CHECK(out.BugReportGitHubOwner == in.BugReportGitHubOwner);
@@ -542,6 +553,7 @@ TEST_CASE("ConfigManager Save/Load per-field round-trip preserves every persiste
     CHECK(out.NewIssueInheritFieldIds == in.NewIssueInheritFieldIds);
     CHECK(out.NewIssueInheritFieldIdsPlane == in.NewIssueInheritFieldIdsPlane);
     CHECK(out.NewIssueInheritFieldIdsGitHub == in.NewIssueInheritFieldIdsGitHub);
+    CHECK(out.NewIssueInheritFieldIdsLinear == in.NewIssueInheritFieldIdsLinear);
     CHECK(out.DurationSuggestions == in.DurationSuggestions);
     CHECK(out.WorkLogCommentTemplates == in.WorkLogCommentTemplates);
     CHECK(out.MigratedInheritIssueTypeV1 == in.MigratedInheritIssueTypeV1);
