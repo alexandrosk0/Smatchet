@@ -49,6 +49,7 @@ Lowercase-kebab for dirs and leaf-doc slugs; `_`-prefix reserved for templates/g
 2. Populate `## Implementation log` / `## Deviations` / `## Verification (actual)` post-ship.
 3. `git mv` to `docs/plans/shipped/<slug>.md`. Its row appears in `INDEX.md` automatically (`test-plan-index --fix`); curated one-liner via an `<!-- index-summary: … -->` comment in the plan.
 4. **`docs/plans/shipped/` is never renamed.** ~252 source/ADR/script references cite shipped plans by path; a rename would touch `Source/Core/**` comments for zero functional gain. Decision recorded here so no future reorg re-litigates it.
+5. **Reference plans tier-less: `docs/plans/<slug>.md`** (not `…/active/<slug>.md` or `…/shipped/<slug>.md`). `test-markdown-links` resolves the tier-less form against `active/`, `shipped/`, or `deferred/`, so a reference survives the archival `git mv active → shipped` with no ref-sweep. A **tiered** link passes the local existence check while the target is still in `active/` but 404s on CI after the move — the `markdown-links-local-passes-ci-fails-after-plan-archive` class; `test-markdown-links.sh --merge-tree-warn` flags tiered plan links in a diff before they rot.
 
 ## Decision tree — where does X go?
 
