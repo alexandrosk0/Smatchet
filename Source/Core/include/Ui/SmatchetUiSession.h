@@ -447,9 +447,15 @@ struct UiDrawSession {
     char githubPatBuf[512]{};
     char githubOwnerBuf[128]{};
     char githubRepoBuf[128]{};
+    char linearApiKeyBuf[512]{};
+    char linearBaseUrlBuf[256]{};
+    char linearTeamKeyBuf[128]{};
+    char linearTeamIdBuf[128]{};
+    char linearWorkspaceUrlBuf[256]{};
     char newIssueInheritFieldsBuf[512]{};
     char newIssueInheritFieldsPlaneBuf[512]{};
     char newIssueInheritFieldsGitHubBuf[512]{};
+    char newIssueInheritFieldsLinearBuf[512]{};
     // User Info window / VCS commit feed (docs/plans/user-info-window.md). Edited in the
     // Tracker tab; written immediately on change (MCP-style immediate-dirty, no Save button).
     char gitCommitReposBuf[256]{};

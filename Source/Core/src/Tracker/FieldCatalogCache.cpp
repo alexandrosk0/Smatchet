@@ -434,6 +434,10 @@ std::string BuildFieldCatalogCacheKey(const TrackerConfig& cfg, const std::strin
         return std::string("Plane|") + NormalizeEndpointForCache(cfg.PlaneUrl) + "|" + cfg.PlaneWorkspaceSlug + "|" +
                projectKey;
     }
+    if (bk == "Linear") {
+        return std::string("Linear|") + NormalizeEndpointForCache(cfg.LinearBaseUrl) + "|" + cfg.LinearTeamId + "|" +
+               projectKey;
+    }
     return std::string("Jira|") + NormalizeEndpointForCache(cfg.Domain) + "|" + projectKey;
 }
 

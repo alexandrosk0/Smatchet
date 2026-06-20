@@ -166,12 +166,32 @@ Key decisions:
 
 ## Implementation log
 
-*(populated post-ship per `AGENTS.md` plan-revision-after-implementation — one bullet per shipped commit: `<sha> · <one-line summary>`)*.
+Shipped on branch `claude/linear-tracker-slice1` (PR #1453). One bullet per commit, newest last:
+
+- `d21399e` · slice 1 — pure GraphQL/parse helpers (`LinearClientHelpers`): issue-key parse/format, API-URL normalize, GraphQL body build, raw auth-header (no Bearer), error + rate-limit header parse, request-auth resolution (#979).
+- `180d744` · slice 1 — pure `LinearIssueMappingPure`: null-safe `issues.nodes` → `CachedTicket` (summary/description/status/assignee/labels/author/created/updated/priority/project/team/cycle/url), priority-label fallback to the 0–4 map.
+- `656ceff` · slice 1 — `LinearQueryFromJql`: conservative JQL-subset → Linear `IssueFilter` translator (assignee/status/labels/priority/project/team/text), drops unsupported clauses with a Warning.
+- `46c2140` · slice 1 — `LinearClient` read-only shell contract (multiply-inherits the role interfaces; `GetTrackerType()=="Linear"`; per-request auth re-resolution).
+- `9b139d1` · slice 1 — clear comment-noise + decompose `ProcessClause` into `DetectOperator`/`Handle*` helpers under the 120-line / 30-branch caps.
+- `584dde8`…`246f2d3` · slice 2 — integration layer (config fields + DPAPI-encrypted key + registration-table persistence + env routing, factory branch, `TicketSyncService` swap branch, Preferences UI panel, FieldCatalog cache namespace, new-issue/picker/grid arms), decomposed and validated.
+- `5d5d78d` · slice 2 — MSVC build fix: drop the function-call NSDMI on `JqlToLinearResult::Filter` (cross-TU name-lookup); default-null + lazy `operator[]`.
+- `dec2ee8` · slice 2 — extend the ConfigManager Save/Load round-trip test to cover the Linear config fields.
+- `c6ea0ab` · slice 3 — writes: `issueUpdate` / `issueCreate` / `commentCreate` (`LinearIssueMutation.cpp`), with identifier→UUID resolution before each mutation; `Collaboration()` self-returns; Preferences UI + draft-inherit wiring.
+- `20f4069` · slice 4 — read-only `LinearFixtureBackend` + `SMATCHET_TEST_LINEAR_BACKEND_FIXTURE` AppController hook + `LinearDeterministic` bucket-E test + fixture + runner.
+- `ea3b46a` · bucket-A integration — factory swap-path carries live Linear creds; `LoadViewsOrBootstrap` Linear default field-set; `NormalizeViewsBackendKey` Linear cases.
 
 ## Deviations from plan
 
-*(populated post-ship — what changed, removed, or deferred relative to this plan, one-line rationale per item)*.
+- **`JqlToLinearResult.Filter` is default-null, not `= nlohmann::json::object()`** — the function-call default-member-initializer tripped MSVC's cross-TU name lookup (clang accepted it). Null + lazy `operator[]` is behaviourally equivalent; `HasFilter()` treats null/empty as "no filter".
+- **`ProcessClause` decomposed** into `DetectOperator` + `HandleAssignee/Status/Labels/Priority` to satisfy the 120-line / 30-branch caps (the monolithic version measured 130L / 43br once the base ratchet refreshed).
+- **`Activity()` stays `nullptr`** — the activity-feed role is out of MVP scope (the plan flagged it nullable). `Collaboration()` self-returns for `commentCreate`.
+- **`LinearFixtureBackend` uses a free-function factory** (`MakeLinearFixtureBackendFactory`, mirroring `PlaneFixtureBackend`) rather than GitHub's inline-class factory — keeps `AppController.cpp` thin, which matters while #1447 decomposes that TU.
+- **Bucket-E Preferences tracker-switch scenario folded into Bucket-A** — "save persists the profile" is pinned by the ConfigManager round-trip (`dec2ee8`); "backend-kind switch clears old active tickets" by the factory swap-path test (`ea3b46a`) + the existing `SwapBackendIfTrackerChanged` suite. The dedicated bucket-E coverage is the `LinearDeterministic` fixture replay; a separate Linear Preferences ImGui test would largely duplicate that Bucket-A coverage with a more brittle UI-driven assertion.
 
 ## Verification (actual)
 
-*(populated post-ship — what was actually tested + result: passed / failed / not-run)*.
+- **POSIX core compile gate** (`cmake --preset posix-core-check && cmake --build … --target SmatchetCore_PosixCheck`): **passed** locally on host clang 18 — all six cpr-bound Linear TUs (`LinearClient`, `LinearIssueSearch`, `LinearIssueMutation`, plus the three pure TUs), `LinearFixtureBackend.cpp`, and the edited `AppController.cpp` compile clean.
+- **Bucket A** (`SmatchetTests` doctest rig): `LinearClientHelpers`, `LinearIssueMappingPure`, `LinearQueryFromJql`, ConfigManager Linear round-trip, factory swap-path, and `LoadViewsOrBootstrap`/`NormalizeViewsBackendKey` Linear cases written + registered; `clang++ -std=c++14 -fsyntax-only` clean on the changed TUs. **Full ctest run: via CI** (links cpr/SQLite, not reproducible in this container).
+- **Bucket E** (`ninja-ui-test-msvc`): `LinearDeterministic` group (`Sync_LoadsIssuesIntoGrid`, `Sync_MapsLinearSpecificFields`) written + registered; runs in the MSVC UI-test CI. Driver: `scripts/dev/test-ui-linear-deterministic-backend.sh`.
+- **Lint / high-integrity gate**: **passed** (`test-lint-rules.sh --diff origin/develop`) — no new strict-zone, comment-noise, or oversized-function violations. Duplication clones vs the sibling GitHub/Jira/Plane backends are WARN-only (calibration phase) and carry `SMATCHET_DEVIATION(rule=duplication)` on the interface-mandated override symmetry.
+- **Live Linear smoke**: **NOT RUN** — no CI test credentials. Remains the manual residue called out above (configure a personal API key, fetch a team, sync, update an issue, add a comment, create a test issue). Automation tracked as a tooling follow-up if still manual at ship.

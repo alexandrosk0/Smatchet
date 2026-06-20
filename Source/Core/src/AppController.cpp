@@ -79,6 +79,8 @@
 
 #include "ITrackerBackendFactory.h"
 
+#include "LinearFixtureBackend.h"
+
 #include "PlaneFixtureBackend.h"
 
 #include "LuaAutomationHost.h"
@@ -1612,6 +1614,28 @@ std::string AppController::InitBackends(TrackerConfig& cfgOut) {
                      planeFixtureEnv);
             backendFactory_ = smatchet::plane::MakePlaneFixtureBackendFactory(std::string(planeFixtureEnv));
             activeTracker = "Plane";
+            cfg.TrackerType = activeTracker;
+        }
+    }
+
+    // Slice 4 of docs/plans/active/linear-tracker-backend.md — the Linear sibling
+    // of the Plane fixture hook above. SMATCHET_TEST_LINEAR_BACKEND_FIXTURE=<path>
+    // swaps in a fixture-driven Linear backend (no GraphQL, no API key) so the
+    // zero-credentials scenario replay covers the Linear read path too.
+    if (!backendFactory_) {
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4996) // getenv: cross-platform read-only; _dupenv_s is MSVC-only
+#endif
+        const char* linearFixtureEnv = std::getenv("SMATCHET_TEST_LINEAR_BACKEND_FIXTURE");
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+        if (linearFixtureEnv && linearFixtureEnv[0] != '\0') {
+            LOG_INFO("AppController: SMATCHET_TEST_LINEAR_BACKEND_FIXTURE=%s — installing LinearFixtureBackend factory.",
+                     linearFixtureEnv);
+            backendFactory_ = smatchet::linear::MakeLinearFixtureBackendFactory(std::string(linearFixtureEnv));
+            activeTracker = "Linear";
             cfg.TrackerType = activeTracker;
         }
     }

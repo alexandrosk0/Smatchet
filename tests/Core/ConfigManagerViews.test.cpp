@@ -62,6 +62,10 @@ TEST_CASE("ConfigManager::NormalizeViewsBackendKey maps tracker type case-insens
     CHECK(ConfigManager::NormalizeViewsBackendKey("jira") == "Jira");
     CHECK(ConfigManager::NormalizeViewsBackendKey("Jira") == "Jira");
 
+    CHECK(ConfigManager::NormalizeViewsBackendKey("linear") == "Linear");
+    CHECK(ConfigManager::NormalizeViewsBackendKey("Linear") == "Linear");
+    CHECK(ConfigManager::NormalizeViewsBackendKey("LINEAR") == "Linear");
+
     // Everything unrecognized falls back to the default backend bucket (Jira).
     CHECK(ConfigManager::NormalizeViewsBackendKey("") == "Jira");
     CHECK(ConfigManager::NormalizeViewsBackendKey("asana") == "Jira");
@@ -175,6 +179,46 @@ TEST_CASE("ConfigManager::LoadViewsOrBootstrap seeds the GitHub default field-se
     // GitHub seeds no `priority` / `issuetype` columns (absent from its catalog).
     CHECK_FALSE(HasColumn(v, "field:priority"));
     CHECK_FALSE(HasColumn(v, "field:issuetype"));
+}
+
+TEST_CASE("ConfigManager::LoadViewsOrBootstrap seeds the Linear default field-set") {
+    smatchet_tests::TestEnvGuard env;
+    ViewsFileCleanup cleanup;
+
+    TrackerConfig cfg;
+    cfg.TrackerType = "linear"; // lowercase, like LinearClient reports via the factory
+    cfg.JqlQuery = "assignee = currentUser()";
+
+    ViewsStore store = ConfigManager::LoadViewsOrBootstrap(cfg);
+    REQUIRE(store.Views.size() == 1);
+    const ViewDefinition& v = store.Views[0];
+    CHECK(store.ActiveViewId == "linear_default_view");
+    CHECK(v.Id == "linear_default_view");
+    CHECK(v.Name == "Default Linear View");
+    // Linear adopts the configured JQL (unlike Plane, which ignores it).
+    CHECK(v.Jql == "assignee = currentUser()");
+    const std::vector<std::string> expectedFields = {"summary",  "description", "status",  "assignee", "labels",
+                                                     "priority", "project",     "created", "updated"};
+    CHECK(v.Fields == expectedFields);
+    REQUIRE(v.ColumnOrder.size() == expectedFields.size() + 1);
+    CHECK(v.ColumnOrder[0] == "id");
+    CHECK(HasColumn(v, "field:priority"));
+    CHECK(HasColumn(v, "field:project"));
+    // Linear has no GitHub-style `author` column or Jira-style `issuetype`.
+    CHECK_FALSE(HasColumn(v, "field:issuetype"));
+    REQUIRE(v.ColumnWidths.count("id") == 1);
+    CHECK(v.ColumnWidths.at("id") == doctest::Approx(90.0f));
+
+    // Empty configured JQL falls back to the currentUser default.
+    SUBCASE("empty JqlQuery falls back to assignee=currentUser()") {
+        std::remove(ConfigManager::GetViewsPath().c_str());
+        TrackerConfig cfg2;
+        cfg2.TrackerType = "Linear";
+        cfg2.JqlQuery = "";
+        ViewsStore store2 = ConfigManager::LoadViewsOrBootstrap(cfg2);
+        REQUIRE(store2.Views.size() == 1);
+        CHECK(store2.Views[0].Jql == "assignee=currentUser()");
+    }
 }
 
 TEST_CASE("ConfigManager v2 backends map survives a save -> load round-trip") {

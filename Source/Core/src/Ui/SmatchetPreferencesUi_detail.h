@@ -62,6 +62,11 @@ inline void TrimTrackerCredentialFields(TrackerConfig& cfg) {
     cfg.GitHubPat = TrimCopyAsciiWhitespace(cfg.GitHubPat);
     cfg.GitHubOwner = TrimCopyAsciiWhitespace(cfg.GitHubOwner);
     cfg.GitHubRepo = TrimCopyAsciiWhitespace(cfg.GitHubRepo);
+    cfg.LinearApiKey = TrimCopyAsciiWhitespace(cfg.LinearApiKey);
+    cfg.LinearBaseUrl = TrimCopyAsciiWhitespace(cfg.LinearBaseUrl);
+    cfg.LinearTeamKey = TrimCopyAsciiWhitespace(cfg.LinearTeamKey);
+    cfg.LinearTeamId = TrimCopyAsciiWhitespace(cfg.LinearTeamId);
+    cfg.LinearWorkspaceUrl = TrimCopyAsciiWhitespace(cfg.LinearWorkspaceUrl);
 }
 
 } // namespace SmatchetPreferencesUiDetail

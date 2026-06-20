@@ -175,6 +175,22 @@ ViewWorkspaceState MakeDefaultViewWorkspaceForBackend(const std::string& backend
         ws.Views.push_back(std::move(v));
         return ws;
     }
+    if (backendKey == "Linear") {
+        ViewDefinition v;
+        v.Id = "linear_default_view";
+        v.Name = "Default Linear View";
+        v.Jql = cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery;
+        v.Fields = {"summary",  "description", "status",  "assignee", "labels",
+                    "priority", "project",     "created", "updated"};
+        v.ColumnOrder = {"id"};
+        for (const auto& fieldId : v.Fields) {
+            v.ColumnOrder.push_back("field:" + fieldId);
+        }
+        v.ColumnWidths["id"] = 90.0f;
+        ws.ActiveViewId = v.Id;
+        ws.Views.push_back(std::move(v));
+        return ws;
+    }
 
     ViewDefinition defaultView;
     defaultView.Id = "default_view";
@@ -237,6 +253,9 @@ std::string ConfigManager::NormalizeViewsBackendKey(const std::string& trackerTy
     if (t == "github") {
         return "GitHub";
     }
+    if (t == "linear") {
+        return "Linear";
+    }
     // Unknown tracker type collapses into the default bucket — meaning it SHARES the
     // default backend's views / tickets_v2 / pending-queue namespace, the exact
     // cross-backend collision per-backend keying exists to prevent. Warn (for a
@@ -257,7 +276,7 @@ std::string ConfigManager::NormalizeViewsBackendKey(const std::string& trackerTy
 }
 
 const std::vector<std::string>& ConfigManager::KnownBackendKeys() {
-    static const std::vector<std::string> keys = {"Jira", "Plane", "GitHub"};
+    static const std::vector<std::string> keys = {"Jira", "Plane", "GitHub", "Linear"};
     return keys;
 }
 
@@ -267,6 +286,9 @@ bool ConfigManager::BackendCredentialsPresent(const TrackerConfig& cfg, const st
     }
     if (backendKey == "GitHub") {
         return !cfg.GitHubPat.empty() && !cfg.GitHubOwner.empty() && !cfg.GitHubRepo.empty();
+    }
+    if (backendKey == "Linear") {
+        return !cfg.LinearApiKey.empty() && (!cfg.LinearTeamId.empty() || !cfg.LinearTeamKey.empty());
     }
     // "Jira" and any future default backend: Domain + ApiToken required.
     return !cfg.Domain.empty() && !cfg.ApiToken.empty();

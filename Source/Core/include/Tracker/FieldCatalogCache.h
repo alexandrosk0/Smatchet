@@ -11,18 +11,18 @@ struct TrackerConfig;
 /** JSON snapshot under ConfigManager::GetUserDataDirectory() (see .cpp for filename). */
 namespace FieldCatalogCache {
 
-/** Stable key for `schema_version` 3 entries: `Jira|<domain>|<project>` or `Plane|<url>|<ws>|<project>`.
- *  `projectKey` is the per-operation project (Jira key, e.g. "PROJ", or Plane project UUID). Confines
- *  the per-project axis to an explicit parameter so PR 4/6 can drop the global `cfg.ProjectKey` without
- *  touching this signature. */
+/** Stable key for `schema_version` 3 entries: `Jira|<domain>|<project>`, `Plane|<url>|<ws>|<project>`,
+ *  or `Linear|<baseUrl>|<teamId>|<project>`. `projectKey` is the per-operation project (Jira key, e.g.
+ *  "PROJ", Plane project UUID, or Linear team key). Confines the per-project axis to an explicit
+ *  parameter so PR 4/6 can drop the global `cfg.ProjectKey` without touching this signature. */
 std::string BuildFieldCatalogCacheKey(const TrackerConfig& cfg, const std::string& projectKey);
 
 /** PR 3: index entry tracking which (backend, endpoint, projectKey) tuples have a cached catalog
  *  on disk, plus an LRU timestamp. PR 6's Preferences readout consumes ListCachedProjects(). */
 struct CachedProjectEntry {
     std::string projectKey;
-    std::string backend; // "Jira" or "Plane"
-    std::string endpoint; // normalized — Jira domain or Plane API origin (+ workspace slug for Plane).
+    std::string backend; // "Jira", "Plane", or "Linear"
+    std::string endpoint; // normalized — Jira domain, Plane API origin (+ workspace slug), or Linear base URL (+ team id).
     std::int64_t lastUsedUnix = 0;
 };
 
