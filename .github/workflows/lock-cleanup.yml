@@ -10,7 +10,7 @@ name: Plan-lock cleanup
 # the final cutover PR's close releases.
 #
 # Phase 3 of docs/plans/shipped/git-ref-plan-locks.md; closed-unmerged
-# extension per docs/plans/active/plan-lock-enforcement.md item 11.
+# extension per docs/plans/plan-lock-enforcement.md item 11.
 #
 # Token scope: the default GITHUB_TOKEN has repo-wide `contents: write`.
 # Narrowing to refs/locks/* only requires a fine-grained PAT or GitHub

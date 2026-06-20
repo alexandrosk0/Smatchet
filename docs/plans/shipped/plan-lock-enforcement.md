@@ -2,7 +2,7 @@
 
 > **Slug**: `plan-lock-enforcement` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — the machine-readable lifecycle marker. Values: `active` (driving in-flight work) · `shipped` (post-ship sections populated + all cited PRs merged — this file belongs in `docs/plans/shipped/`) · `blocked` / `deferred` (paused — one-line why). **Flip to `shipped` in the SAME post-ship PR that fills § Implementation log AND `git mv`s this file active → shipped** (see § Archive). `agents/scripts/core/plan-archival-owed.sh` nags at SessionStart if any `active/` plan is marked `shipped` but never moved.
+> **Status**: `shipped` — the machine-readable lifecycle marker. Values: `active` (driving in-flight work) · `shipped` (post-ship sections populated + all cited PRs merged — this file belongs in `docs/plans/shipped/`) · `blocked` / `deferred` (paused — one-line why). **Flip to `shipped` in the SAME post-ship PR that fills § Implementation log AND `git mv`s this file active → shipped** (see § Archive). `agents/scripts/core/plan-archival-owed.sh` nags at SessionStart if any `active/` plan is marked `shipped` but never moved.
 >
 > **Usage**: copy this template to `docs/plans/active/<slug>.md` as the first step of any new plan. Fill every section. Sections that genuinely don't apply get `N/A — <one-line reason>`, not deletion — the headings drive the "did you consider this?" forcing function for every author + reviewer agent.
 >
@@ -168,25 +168,16 @@ Independent post-grill re-verification: every load-bearing substrate claim re-ch
 - **Increment 5 — eager-seed adoption (item 8; 2026-06-20).** `docs/agent-rules/ship-loops.md` (+ `AGENTS.md` § Autonomous ship-loop sequence) add the `[seed plan-lock]` step + a § Plan-lock seed subsection: the inline first-token-per-numbered-line extraction RULE (no script), the **F4** explicit-`LOCK_BRANCH`-from-worktree plumbing (+ skip-on-detached **F9**), branch-aware exit-1 classification, and the mandatory `lock-slug:` PR-body release-wiring. **F1** resolved as accept + non-goal (recorded in § Non-goals + § Risks). The whole plan lands in one PR (B/C/seed/lifecycle all depend on Layer A's `lock-table-cache.sh`).
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+- **Item 7's AGENTS.md registration was relocated to `merge-gates.sh` + `plan-lock-gate.yml`.** The plan directed registering `Plan-lock gate` (allow-list) + `plan-lock-out-of-band` (override) in AGENTS.md § Merge gates; the AGENTS.md-nav-only coding guideline (raised by CodeRabbit) keeps rule-detail out of AGENTS.md, so the registration lives in the implementation (`MERGE_GATES_BLOCK_ALLOWLIST_RE` + the `$downgraded` clause) + the workflow's label self-create. `oob-label-impl` still passes (the label is documented in the workflow corpus + implemented in `merge-gates.sh`).
+- **F6's `safe-admin-merge.sh --selftest` allow-list assertion was not added.** The block + downgrade behaviour is covered end-to-end by `tests/bats/merge_gates.bats` (+3 cases incl. the StatusContext-can't-downgrade inverse), which exercises the real poller filter; a standalone selftest case is a low-value follow-up.
+- **The whole plan shipped in one PR (#1454), not split per-layer.** B/C/seed/lifecycle all depend on Layer A's `lock-table-cache.sh`, so one cohesive (under-ceiling, CR-reviewed) PR was the robust path; the split-along-seams guidance applies only when the diff would exceed the file ceiling, which it did not.
+- **Layer C also fails closed on an undetermined lock table** (CR round, beyond the plan's fail-closed-on-unresolvable-base): `plan-lock-gate.sh` reds on `ltc_covering_slug` rc=2 — extending the hard-net "fail loud on unverifiable input" stance to the lock table (A/B stay advisory / fail-open).
+- **A pre-existing `lock-cleanup.yml` endpoint bug was fixed in passing** (CR round): the existence check used the removed plural `GET /git/refs/{ref}` (404 → check always failed → deletions silently skipped); corrected to the singular `GET /git/ref/{ref}` (DELETE stays plural). My closed-unmerged extension would have started exercising the broken path.
+- **No `lock-slug:` line on #1454 itself** — this PR builds the system rather than seeding a lock, so `lock-cleanup.yml` was a no-op on its merge, as expected.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
-
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-   > **Keep the literal `<slug>` placeholder in this committed step — do NOT
-   > expand it to this plan's real filename.** Writing the actual basename here
-   > manufactures a `docs/plans/shipped/<name>.md` path that points at a file
-   > still living in `active/` (the move hasn't happened yet), which
-   > `test-plan-ref-integrity.sh` reports as a dangling self-reference. The gate
-   > carves out the *placeholder* form on the Archive `git mv` line; the
-   > expanded form defeats that carve-out. Run the literal command with your
-   > slug substituted at the shell — never bake the expansion into the file.
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*No ref-sweep — references use the tier-less form `docs/plans/<slug>.md` (the gates resolve it against any tier; PR #890), so the move can't break them. Write new plan references tier-less.*
-
-*(Delete this `## Archive` block as part of step 2 — once moved to `shipped/`, the file is reference material and the checklist has served its purpose.)*
+All local gates + PR CI green at merge (head `99920b9a`, squash `7e3fe492`):
+- **bats**: `guard_plan_lock` 13 · `pre_push_guard` 13 (incl. Layer B `(C)`) · `plan_lock_gate` 11 (incl. fail-closed-base Q15, undetermined-table→fail-closed, three-dot↔merge-base symmetry) · `lock_cleanup` 7 (incl. GET/DELETE endpoint-shape contract) · `merge_gates` 146 (+3 Plan-lock) · `lock-table-cache --selftest` 10.
+- **gates**: shell-lint 223/0 · tiered lint-rules (no oversized fns) · gate-selftests 39 · orphan-bats 47/47 · oob-label-impl 9/9 · portable-purity · `test-docs` 14/14 · actionlint clean.
+- **PR CI**: every required + meant-to-block-allow-list check green — Doc anchors, Intent, **Plan-lock gate (dog-fooded green on its own PR)**, Coverage, Test-delta, Android security, Shell-lint, Pillar-2, Bucket launch-smoke, Windows+MSVC (main + light), Auto-sync INDEX. CodeRabbit: 0 actionable (3 review threads resolved). Bugbot: neutral (usage-cap → no-wedge).
+- **N/A / not-run**: no `Source/Core/` C++ touched → Bucket-A/E, sanitizers, Perf PR-fast skipped (agentic-shell-only diff, per § UX Pillar callouts).

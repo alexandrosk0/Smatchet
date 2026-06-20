@@ -25,7 +25,7 @@
 # Allow = exit 0 (no stdout). Deny = the PreToolUse permissionDecision JSON.
 # Override: export SMATCHET_REQUIRE_PLAN_LOCK=0 in the session env BEFORE launch.
 #
-# See docs/plans/active/plan-lock-enforcement.md (Layer A) +
+# See docs/plans/plan-lock-enforcement.md (Layer A) +
 #     docs/agent-rules/process-rules.md § Concurrent interactive sessions.
 
 set -u
