@@ -91,7 +91,10 @@ class FakeTrackerClient : public ITrackerBackend,
     // --- ITrackerBackend accessors -----------------------------------------------------------
     ITrackerIssueReader& Reader() override { return *this; }
     ITrackerConnectivity& Connectivity() override { return *this; }
-    ITrackerFieldCatalog* FieldCatalog() override { return nullptr; }
+    // EditMetaCacheService (#975 / AppController-decomp Phase 1) reaches the editmeta + per-project
+    // component surface through backend->FieldCatalog(). The fake implements ITrackerFieldCatalog
+    // itself, so hand back `this`; FetchIssueEditMeta / FetchProjectComponents below are scriptable.
+    ITrackerFieldCatalog* FieldCatalog() override { return this; }
     ITrackerIssueMutations* Mutations() override { return this; }
     ITrackerCollaboration* Collaboration() override { return nullptr; }
     ITrackerActivity* Activity() override { return nullptr; }
@@ -205,6 +208,51 @@ class FakeTrackerClient : public ITrackerBackend,
         return value;
     }
 
+    // --- ITrackerFieldCatalog editmeta + per-project component surface ------------------------
+    // Used by EditMetaCacheService (AppController-decomp Phase 1). FetchIssueEditMeta is keyed by
+    // issueId with a static fallback; FetchProjectComponents is keyed by projectKey. Both record
+    // every call so tests can assert "fetched once" warm-coalescing semantics.
+
+    Result<std::unordered_map<std::string, bool>, TrackerError>
+    FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string& issueKeyOrId) override {
+        ++fetchIssueEditMetaCalls_;
+        fetchIssueEditMetaKeys_.push_back(issueKeyOrId);
+        const auto perIssue = issueEditMetaByIssue_.find(issueKeyOrId);
+        if (perIssue != issueEditMetaByIssue_.end()) {
+            const ScriptedEditMeta& s = perIssue->second;
+            if (!s.Ok) {
+                return Result<std::unordered_map<std::string, bool>, TrackerError>::Err(
+                    TrackerErrorInvalidRequest(s.Error));
+            }
+            return Result<std::unordered_map<std::string, bool>, TrackerError>::Ok(s.FieldCanEdit);
+        }
+        if (!issueEditMetaDefault_.Ok) {
+            return Result<std::unordered_map<std::string, bool>, TrackerError>::Err(
+                TrackerErrorInvalidRequest(issueEditMetaDefault_.Error));
+        }
+        return Result<std::unordered_map<std::string, bool>, TrackerError>::Ok(issueEditMetaDefault_.FieldCanEdit);
+    }
+
+    Result<TrackerProjectComponents, TrackerError> FetchProjectComponents(const TrackerConfig& /*cfg*/,
+                                                                          const std::string& projectKey) override {
+        ++fetchProjectComponentsCalls_;
+        fetchProjectComponentsKeys_.push_back(projectKey);
+        const auto it = projectComponentsByKey_.find(projectKey);
+        if (it != projectComponentsByKey_.end()) {
+            const ScriptedComponents& s = it->second;
+            if (!s.Ok) {
+                return Result<TrackerProjectComponents, TrackerError>::Err(TrackerErrorInvalidRequest(s.Error));
+            }
+            return Result<TrackerProjectComponents, TrackerError>::Ok(s.Value);
+        }
+        if (!projectComponentsDefaultOk_) {
+            return Result<TrackerProjectComponents, TrackerError>::Err(
+                TrackerErrorInvalidRequest(projectComponentsDefaultError_));
+        }
+        return Result<TrackerProjectComponents, TrackerError>::Err(
+            TrackerErrorInvalidRequest("no scripted components for project"));
+    }
+
     Result<std::string, TrackerError> CreateIssue(const nlohmann::json& fields) override {
         CreateIssueCall call;
         call.Fields = fields;
@@ -257,6 +305,11 @@ class FakeTrackerClient : public ITrackerBackend,
 
     std::size_t AttachFilesCallCount() const { return attachFilesCalls_.size(); }
     const std::vector<AttachFilesCall>& AttachFilesCalls() const { return attachFilesCalls_; }
+
+    std::size_t FetchIssueEditMetaCallCount() const { return fetchIssueEditMetaCalls_; }
+    const std::vector<std::string>& FetchIssueEditMetaKeys() const { return fetchIssueEditMetaKeys_; }
+    std::size_t FetchProjectComponentsCallCount() const { return fetchProjectComponentsCalls_; }
+    const std::vector<std::string>& FetchProjectComponentsKeys() const { return fetchProjectComponentsKeys_; }
 
     std::size_t ProbeReachabilityCallCount() const { return probeReachabilityCalls_; }
     std::size_t FetchIssuesCallCount() const { return fetchIssuesCalls_; }
@@ -392,6 +445,47 @@ class FakeTrackerClient : public ITrackerBackend,
     }
     const std::vector<std::string>& FetchIssuesForKeysLastKeys() const { return fetchIssuesForKeysLastKeys_; }
 
+    // EditMetaCacheService scripting: per-issue + default editmeta (field id -> can-edit map).
+    void SetIssueEditMetaSuccess(const std::string& issueId, std::unordered_map<std::string, bool> fieldCanEdit) {
+        ScriptedEditMeta s;
+        s.Ok = true;
+        s.FieldCanEdit = std::move(fieldCanEdit);
+        issueEditMetaByIssue_[issueId] = std::move(s);
+    }
+    void SetIssueEditMetaFailure(const std::string& issueId, const std::string& error) {
+        ScriptedEditMeta s;
+        s.Ok = false;
+        s.Error = error;
+        issueEditMetaByIssue_[issueId] = std::move(s);
+    }
+    void SetDefaultIssueEditMetaSuccess(std::unordered_map<std::string, bool> fieldCanEdit) {
+        issueEditMetaDefault_.Ok = true;
+        issueEditMetaDefault_.FieldCanEdit = std::move(fieldCanEdit);
+        issueEditMetaDefault_.Error.clear();
+    }
+    void SetDefaultIssueEditMetaFailure(const std::string& error) {
+        issueEditMetaDefault_.Ok = false;
+        issueEditMetaDefault_.FieldCanEdit.clear();
+        issueEditMetaDefault_.Error = error;
+    }
+
+    // Per-project component scripting (Options is what EditMetaCacheService stores into
+    // GridContextFieldCatalog::projectComponentOptions_).
+    void SetProjectComponentsSuccess(const std::string& projectKey, std::vector<TrackerFieldOption> options,
+                                     std::vector<TrackerComponent> components = {}) {
+        ScriptedComponents s;
+        s.Ok = true;
+        s.Value.Options = std::move(options);
+        s.Value.Components = std::move(components);
+        projectComponentsByKey_[projectKey] = std::move(s);
+    }
+    void SetProjectComponentsFailure(const std::string& projectKey, const std::string& error) {
+        ScriptedComponents s;
+        s.Ok = false;
+        s.Error = error;
+        projectComponentsByKey_[projectKey] = std::move(s);
+    }
+
     void SetReachabilityResult(TrackerReachabilityProbeKind kind, const std::string& diagnostic = std::string()) {
         reachabilityResult_.Kind = kind;
         reachabilityResult_.Diagnostic = diagnostic;
@@ -483,6 +577,29 @@ class FakeTrackerClient : public ITrackerBackend,
     bool buildFieldPayloadOk_ = true;
     std::string buildFieldPayloadError_;
     std::size_t buildFieldPayloadCalls_ = 0;
+
+    // FetchIssueEditMeta — per-issue + default scripted maps (field id -> can-edit) + recording.
+    struct ScriptedEditMeta {
+        bool Ok = true;
+        std::unordered_map<std::string, bool> FieldCanEdit;
+        std::string Error;
+    };
+    std::unordered_map<std::string, ScriptedEditMeta> issueEditMetaByIssue_;
+    ScriptedEditMeta issueEditMetaDefault_{false, {}, "FetchIssueEditMeta not scripted"};
+    std::size_t fetchIssueEditMetaCalls_ = 0;
+    std::vector<std::string> fetchIssueEditMetaKeys_;
+
+    // FetchProjectComponents — per-project scripted result + recording.
+    struct ScriptedComponents {
+        bool Ok = true;
+        TrackerProjectComponents Value;
+        std::string Error;
+    };
+    std::unordered_map<std::string, ScriptedComponents> projectComponentsByKey_;
+    bool projectComponentsDefaultOk_ = false;
+    std::string projectComponentsDefaultError_ = "FetchProjectComponents not scripted";
+    std::size_t fetchProjectComponentsCalls_ = 0;
+    std::vector<std::string> fetchProjectComponentsKeys_;
 };
 
 } // namespace smatchet_tests

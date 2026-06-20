@@ -85,6 +85,8 @@
 
 #include "OfflineQueueService.h"
 
+#include "EditMetaCacheService.h"
+
 #include "PaneSyncKickPolicy.h"
 
 #include "TicketSyncService.h"
@@ -1729,6 +1731,12 @@ void AppController::InitConfig(const std::string& dbPath, const std::string& bac
     // destroyed, so the adapter is live for every `deps_.X` call).
     if (!depsAdapter_) {
         depsAdapter_ = std::make_unique<GridContextDepsAdapter>(*this, focusedContext());
+    }
+    // Construct EditMetaCacheService eagerly so every editmeta delegator (CanEditFieldForIssue,
+    // EnsureIssueEditMetaLoaded, the warm-start path, …) has a live target from the first tick
+    // (god-object decomposition Phase 1). The service holds the deps-adapter reference.
+    if (!editMeta_) {
+        editMeta_ = std::make_unique<EditMetaCacheService>(*depsAdapter_);
     }
     // Construct OfflineQueueService eagerly so the legacy-pending startup migration below
     // can write to `offlineQueue_->legacyPendingStartupBanner_` (item 12 extraction).

@@ -168,13 +168,16 @@ Plan was committed, then independently triple-checked before finalising:
 3. **Domain/ADR consistency** (grill): plan reconciled against ADR-0012 (atomic backend swap — latched-shared_ptr discipline preserved per phase), ADR-0018 (multi-grid per-context engine — drove the global-connectivity decision), ADR-0020 (SQLite-free sync seam — Phase 5 verification gate). No contradiction; the per-context/global distinction (ADR-0018) is the load-bearing one and is now decided.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+- Phase 0 (PR #1450, merged): `HostCallbacks` struct — grouped the 7 host-callback `std::function` members into `Types/HostCallbacks.h`; all 7 public setters preserved; 25 access sites migrated to `hostCallbacks_.*`. Pure member-grouping.
+- Phase 1 (this PR): `EditMetaCacheService` behind `IEditMetaDeps` — editmeta cluster (`editMetaMutex_` + 3 containers + `IssueEditMetaCache` + 9 methods) lifted into a new global service; `GridContextDepsAdapter` gained `IEditMetaDeps` as a 3rd base; AppController keeps thin delegators (public signatures unchanged, incl. `CanEditFieldForIssue` 4-arg const for the Lua call-site). #975 kick-time `catPtr` threaded via `IEditMetaDeps::KickTimeFieldCatalog()` (no completion-time `fieldCatalog()` re-resolve). `IsSprintField`/`IsEditableTimetrackingEstimateFieldId` copied (not moved) so `SubmitFieldEdit*` (Phase 2) keeps them.
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+- Phase 0: applied `tests-out-of-band` (pure member-grouping has no new testable surface — the documented test-delta carve-out).
+- Phase 1: `GridContextFieldCatalog` is defined in `GridLiveContext.h` (not a standalone header) — the service `.cpp` includes `GridLiveContext.h`; `IEditMetaDeps.h` forward-declares the struct. `FakeTrackerClient` was extended (scriptable `FetchIssueEditMeta`/`FetchProjectComponents`; `FieldCatalog()` now returns `this`) so the editmeta cases are assertable. `ProjectResolver.cpp` added to the `SmatchetTsanTests` link closure (`ExtractIssueKeyPrefix`). Adapter forwards `GetActiveTicketsSnapshot`/`FindFieldById` to `app_.*` (focused-context) for byte-for-byte behaviour preservation (per blueprint Open-Q (a)).
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+- Phase 0: dual-target build green (`SmatchetStandalone` + `SmatchetCore_DX12`); lint clean; CI full matrix green (sanitizers, perf, bucket-E, coverage) — merged.
+- Phase 1 (local, pre-push): dual-target production build clean (834/834); the 11 new `EditMetaCacheService` doctest cases pass (63 assertions); **full doctest suite 1975/1975 passed (17310 assertions, 0 regressions)**; comment-audit + lint gate clean. The mandatory 2-thread `editMetaMutex_` race case (`EditMetaCacheConcurrent.test.cpp`) is in `SmatchetTsanTests` — TSan instrumentation runs in CI (`tsan-linux-nightly`); ASan/UBSan via the required CI sanitizer lanes.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped. In the SAME PR that populates the three sections above —*

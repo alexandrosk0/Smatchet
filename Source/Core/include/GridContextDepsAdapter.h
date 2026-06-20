@@ -21,6 +21,7 @@
 
 #include "IOfflineQueueDeps.h"
 #include "ITicketSyncDeps.h"
+#include "IEditMetaDeps.h"
 
 #include <chrono>
 #include <cstdint>
@@ -39,9 +40,11 @@ class ITrackerIssueMutations;
 class ITrackerIssueReader;
 class ITrackerBackendFactory;
 struct GridLiveContext;
+struct GridContextFieldCatalog;
 struct TrackerConfig;
+struct TrackerField;
 
-class GridContextDepsAdapter : public IOfflineQueueDeps, public ITicketSyncDeps {
+class GridContextDepsAdapter : public IOfflineQueueDeps, public ITicketSyncDeps, public IEditMetaDeps {
   public:
     GridContextDepsAdapter(AppController& app, GridLiveContext& ctx);
 
@@ -99,6 +102,21 @@ class GridContextDepsAdapter : public IOfflineQueueDeps, public ITicketSyncDeps 
     void NotifyLuaTicketDataChanged() override;
     bool GetPendingLuaWindowBump() const override;
     void SetPendingLuaWindowBump(bool value) override;
+
+    // ---- IEditMetaDeps ----------------------------------------------------------------
+    // LaunchBackgroundTask is shared with IOfflineQueueDeps (same signature) — the override above
+    // satisfies this interface's method too.
+    std::shared_ptr<ITrackerBackend> BackendShared() const override;
+    bool IsShuttingDown() const override;
+    std::shared_ptr<const std::vector<CachedTicket>> GetActiveTicketsSnapshot() const override;
+    const TrackerField* FindFieldById(const std::string& fieldId) const override;
+    // CONST overload — distinct from the non-const RequestDeferredLiveTrackerBackendSuccessNotify()
+    // above (shared by IOfflineQueueDeps + ITicketSyncDeps). Both are needed; they forward to the
+    // same AppController method.
+    void RequestDeferredLiveTrackerBackendSuccessNotify() const override;
+    // #975: hand back THIS context's kick-time catalog so the warm worker writes the per-project
+    // component options under the catalog's own lock without a completion-time re-resolve.
+    GridContextFieldCatalog* KickTimeFieldCatalog() override;
 
   private:
     AppController& app_;   ///< Shared/global state (cache, connectivity, catalog, Lua).

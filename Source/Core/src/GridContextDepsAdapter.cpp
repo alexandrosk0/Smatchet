@@ -193,3 +193,33 @@ void GridContextDepsAdapter::NotifyLuaTicketDataChanged() { app_.NotifyLuaTicket
 bool GridContextDepsAdapter::GetPendingLuaWindowBump() const { return app_.pendingLuaWindowBump_; }
 
 void GridContextDepsAdapter::SetPendingLuaWindowBump(bool value) { app_.pendingLuaWindowBump_ = value; }
+
+// ---- IEditMetaDeps --------------------------------------------------------------------
+
+// Per-context latched backend (matches the ReaderShared/Backend discipline above): atomic_load so
+// the shared_ptr-instance read can't race a live SetBackend swap. The whole backend stays alive as
+// long as the warm worker holds the returned shared_ptr (ADR-0012).
+std::shared_ptr<ITrackerBackend> GridContextDepsAdapter::BackendShared() const {
+    return std::atomic_load(&ctx_.Backend);
+}
+
+bool GridContextDepsAdapter::IsShuttingDown() const { return app_.IsShuttingDown(); }
+
+std::shared_ptr<const std::vector<CachedTicket>> GridContextDepsAdapter::GetActiveTicketsSnapshot() const {
+    return app_.GetActiveTicketsSnapshot();
+}
+
+const TrackerField* GridContextDepsAdapter::FindFieldById(const std::string& fieldId) const {
+    return app_.FindFieldById(fieldId);
+}
+
+// CONST overload, distinct from the non-const RequestDeferredLiveTrackerBackendSuccessNotify above —
+// both forward to the same AppController method (which is itself const).
+void GridContextDepsAdapter::RequestDeferredLiveTrackerBackendSuccessNotify() const {
+    app_.requestDeferredLiveTrackerBackendSuccessNotify_();
+}
+
+// #975: THIS context's catalog, captured on the UI thread at kick time. The warm worker writes
+// projectComponentOptions_/InFlight_/RetryAfter_ under cat.availableFieldsMutex_ via this pointer —
+// never a completion-time fieldCatalog() re-resolve.
+GridContextFieldCatalog* GridContextDepsAdapter::KickTimeFieldCatalog() { return &ctx_.fieldCatalog; }

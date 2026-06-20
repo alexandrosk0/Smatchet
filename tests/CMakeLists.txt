@@ -97,6 +97,20 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/GridLiveContext.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/TicketSyncService.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpPure.cpp"
+        # --- EditMetaCacheService (AppController god-object decomposition Phase 1): per-issue +
+        #     per-issue-type editmeta cache (editMetaMutex_) loaded from BOTH the UI thread and
+        #     the background warm worker — a genuine cross-thread mutex, highest-value TSan
+        #     surface. EditMetaCacheConcurrent.test runs the warm worker on a real std::thread
+        #     against a concurrent CanEditFieldForIssue reader (sibling of TicketSyncService
+        #     above). Service .cpp pulls GridLiveContext / ConfigManager / TrackerFieldValueUtils
+        #     / TrackerFieldValueParser (all already linked above) + ProjectResolver
+        #     (ExtractIssueKeyPrefix) — add ProjectResolver here for the TSan-target closure
+        #     (it is in the SmatchetTests block but not this one). cpr/ImGui/SQLite-free; tests
+        #     construct via header-only fakes (FakeEditMetaDeps / FakeTrackerClient).
+        Core/EditMetaCacheService.test.cpp
+        Core/EditMetaCacheConcurrent.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/EditMetaCacheService.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/ProjectResolver.cpp"
         # ConfigManager closure (split across 4 TUs). TicketSyncService calls
         # ConfigManager::Load / LoadViewsOrBootstrap / NormalizeViewsBackendKey, which
         # reach across the split — link the TUs that own those symbols + ToolbarConfig
@@ -449,6 +463,14 @@ add_executable(SmatchetTests
     Core/TrackerFieldPayloadPure.test.cpp
     Core/TrackerFieldCatalogPure.test.cpp
     Core/TicketSyncService.test.cpp
+    # EditMetaCacheService (AppController god-object decomposition Phase 1) — per-issue +
+    # per-issue-type editmeta cache: optimistic-unloaded, status/priority/components carve-outs,
+    # sprint/timetracking, loaded-deny, issuetype fallback, Ensure success/failure, Refresh,
+    # Prune, and the #975 kick-time component-options warm. Drives a header-only FakeEditMetaDeps
+    # (shared_ptr<FakeTrackerClient> + GridContextFieldCatalog) — no AppController/ImGui/cpr/
+    # SQLite. Production TU added to the prod-src block below; ProjectResolver.cpp (its
+    # ExtractIssueKeyPrefix dep) is already linked in this target.
+    Core/EditMetaCacheService.test.cpp
     # Issue #979 — ITrackerBackendFactory::Create(trackerType, cfg) must receive the
     # caller's LIVE cfg (never a disk re-read racing the debounced prefs save).
     # Exercises the TicketSyncService swap path with a recording factory; no extra
@@ -737,6 +759,11 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/ConfigSaveWorker.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetTheme.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/TicketSyncService.cpp"
+    # EditMetaCacheService (AppController god-object decomposition Phase 1). Pulls
+    # GridLiveContext / ConfigManager / TrackerFieldValueUtils / TrackerFieldValueParser /
+    # ProjectResolver (ExtractIssueKeyPrefix) — all already linked into this target. cpr/ImGui/
+    # SQLite-free; Core/EditMetaCacheService.test.cpp drives it via header-only fakes.
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/EditMetaCacheService.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpUtils.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpPure.cpp"
     # Slice D of docs/plans/http-fault-injection.md — the retry+classify engine
@@ -1142,6 +1169,12 @@ set(_smatchet_pure_sync_test_files
     Core/TicketSyncService.test.cpp
     Core/TrackerBackendFactoryConfig.test.cpp
     Core/IssueCreatePipelineIntegration.test.cpp
+    # EditMetaCacheService (AppController god-object decomposition Phase 1) — the service-test
+    # TUs + FakeEditMetaDeps stay SQLite-free (run on header-only fakes; the editmeta cache is
+    # plain in-memory containers, no LocalCacheManager).
+    Core/EditMetaCacheService.test.cpp
+    Core/EditMetaCacheConcurrent.test.cpp
+    support/FakeEditMetaDeps.h
     support/FakeOfflineQueueDeps.h
     support/FakeTicketSyncDeps.h
     support/FakeSyncCache.h)
