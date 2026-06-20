@@ -111,6 +111,7 @@ class GridContextDepsAdapter;
 class OfflineQueueService;
 class TicketSyncService;
 class EditMetaCacheService;
+class FieldEditPipelineService;
 class LuaAutomationHost;
 struct TrackerActivityEntry;
 struct TrackerActivityProgress;
@@ -837,35 +838,18 @@ class AppController : public IMainThreadPoster {
                               const TrackerField* fieldMeta = nullptr,
                               const std::string* issueTypeKeyOverride = nullptr) const;
 
+    // Field-edit pipeline delegators — forward to `fieldEdit_` (FieldEditPipelineService, god-object
+    // decomposition Phase 2). Signatures preserved verbatim from the pre-extraction surface
+    // (SubmitFieldEdit's especially — the Lua forwarder + BuiltinCommands depend on it).
+    // ApplyFieldUpdateWithEditMetaRetry + SubmitSprint/TimetrackingFieldEditNetworkOnly had no
+    // external callers and are now service-private (not re-exposed here).
     bool SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
                          const std::vector<std::string>& rawValues, std::string& outError);
-    /// SubmitFieldEditNetworkOnly helper — push the built payload, retrying once after a 400 with
-    /// a refreshed editmeta + edit-permission re-check. Returns true on a successful update.
-    bool ApplyFieldUpdateWithEditMetaRetry(const std::string& issueId, const TrackerField& field,
-                                           const nlohmann::json& fieldsPayload, const std::string* issueTypeKeyOpt,
-                                           ITrackerIssueMutations& mutations, FieldEditResult& outResult);
     bool SubmitFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
                                     const std::vector<std::string>& rawValues,
                                     const std::string& originalEstimateSnapshot,
                                     const std::string& remainingEstimateSnapshot,
                                     const std::string& issueTypeKeySnapshot, FieldEditResult& outResult);
-
-    /// SubmitFieldEditNetworkOnly helper — apply a sprint-field edit (add-to-sprint
-    /// mutation + optimistic display value). `handled` is set true when the field is a
-    /// sprint field; the return value is the network result in that case.
-    bool SubmitSprintFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
-                                          const std::vector<std::string>& values, ITrackerIssueMutations& mutations,
-                                          FieldEditResult& outResult, bool& handled);
-
-    /// SubmitFieldEditNetworkOnly helper — apply a Jira timetracking-estimate edit.
-    /// `handled` is set true when the field is an editable timetracking estimate; the
-    /// return value is the network result in that case.
-    bool SubmitTimetrackingFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
-                                                const std::vector<std::string>& values,
-                                                const std::string& originalEstimateSnapshot,
-                                                const std::string& remainingEstimateSnapshot,
-                                                ITrackerIssueMutations& mutations, FieldEditResult& outResult,
-                                                bool& handled);
 
     /**
      * Build the Jira fields payload + optimistic display map without calling the network.
@@ -1002,6 +986,13 @@ class AppController : public IMainThreadPoster {
     /// `EnsureIssueEditMetaLoaded`, etc.) are thin delegators forwarding to this service. See the
     /// AppController god-object decomposition plan (Phase 1).
     std::unique_ptr<EditMetaCacheService> editMeta_;
+    /// Owns the field-edit network pipeline (SubmitFieldEdit / SubmitFieldEditNetworkOnly /
+    /// TryPrepareOfflineFieldEdit / ApplyFieldEditResult + their branch helpers). Constructed
+    /// eagerly in `Initialize` AFTER `editMeta_` (it holds an `EditMetaCacheService&` directly) so
+    /// it destructs before editMeta_ — the ref outlives it. Public AppController field-edit methods
+    /// are thin delegators forwarding to this service. See the AppController god-object
+    /// decomposition plan (Phase 2).
+    std::unique_ptr<FieldEditPipelineService> fieldEdit_;
     /// Default pane id ("main" — matches ConfigManager_Panes bootstrap). The default
     /// context is PERMANENT: created in the constructor, never retired (offlineQueue_
     /// holds a deps-adapter reference chain into it), so focusedContext() fallback and
@@ -1244,34 +1235,10 @@ class AppController : public IMainThreadPoster {
     // Same latched-catalog contract as the Ensure* helpers above. The blob survives in per-ticket
     // fieldValues["comment"] (Jira mapper, catalog-independent) for the Comments-cell hover tooltip.
     void EraseCatalogLegacyCommentField(GridContextFieldCatalog& cat);
-    bool TryBuildFieldEditPayloadForNetwork(const std::string& issueId, const TrackerField& field,
-                                            const std::vector<std::string>& rawValues,
-                                            const std::string& originalEstimateSnapshot,
-                                            const std::string& remainingEstimateSnapshot,
-                                            const std::string& issueTypeKeySnapshot, nlohmann::json& outFieldsPayload,
-                                            std::unordered_map<std::string, std::string>& outDisplayValues,
-                                            std::string& outError);
-
-    /// Shared context for the three SubmitFieldEdit branch helpers. Holds references only —
-    /// lifetime is bounded to the SubmitFieldEdit call frame that builds the ctx on the stack.
-    struct SubmitFieldEditCtx {
-        const std::string& issueId;
-        const TrackerField& field;
-        const std::vector<std::string>& rawValues; ///< original, unfiltered
-        const std::vector<std::string>& values;    ///< filtered (non-empty entries only)
-        ITrackerIssueMutations* mutations;
-        const std::shared_ptr<ITrackerBackend>& backend;
-        const std::shared_ptr<const std::vector<CachedTicket>>& ticketsSnap;
-        const std::string& fieldEditAuditOp;
-        const char* fieldEditAuditSource;
-    };
-
-    /// Sprint-field branch of SubmitFieldEdit (AddIssueToSprint + local-cache sync).
-    bool SubmitFieldEditSprint(const SubmitFieldEditCtx& ctx, std::string& outError);
-    /// Editable timetracking estimate branch of SubmitFieldEdit (UpdateIssueFields timetracking wrapper).
-    bool SubmitFieldEditTimetracking(const SubmitFieldEditCtx& ctx, std::string& outError);
-    /// Regular field branch of SubmitFieldEdit (editmeta check + UpdateIssueFields + 400-retry).
-    bool SubmitFieldEditRegular(const SubmitFieldEditCtx& ctx, std::string& outError);
+    // TryBuildFieldEditPayloadForNetwork + SubmitFieldEditCtx + the three SubmitFieldEdit branch
+    // helpers (Sprint/Timetracking/Regular) moved into FieldEditPipelineService (god-object
+    // decomposition Phase 2). Accessed via `fieldEdit_`; the public delegators above preserve the
+    // prior surface.
 
   public:
     /// Spawn `task` on a tracked background thread. Threads are joined either

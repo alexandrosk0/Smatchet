@@ -22,6 +22,7 @@
 #include "IOfflineQueueDeps.h"
 #include "ITicketSyncDeps.h"
 #include "IEditMetaDeps.h"
+#include "IFieldEditDeps.h"
 
 #include <chrono>
 #include <cstdint>
@@ -44,7 +45,10 @@ struct GridContextFieldCatalog;
 struct TrackerConfig;
 struct TrackerField;
 
-class GridContextDepsAdapter : public IOfflineQueueDeps, public ITicketSyncDeps, public IEditMetaDeps {
+class GridContextDepsAdapter : public IOfflineQueueDeps,
+                               public ITicketSyncDeps,
+                               public IEditMetaDeps,
+                               public IFieldEditDeps {
   public:
     GridContextDepsAdapter(AppController& app, GridLiveContext& ctx);
 
@@ -117,6 +121,14 @@ class GridContextDepsAdapter : public IOfflineQueueDeps, public ITicketSyncDeps,
     // #975: hand back THIS context's kick-time catalog so the warm worker writes the per-project
     // component options under the catalog's own lock without a completion-time re-resolve.
     GridContextFieldCatalog* KickTimeFieldCatalog() override;
+
+    // ---- IFieldEditDeps ---------------------------------------------------------------
+    // BackendShared() / GetActiveTicketsSnapshot() (IEditMetaDeps), RefreshLocalData()
+    // (IOfflineQueueDeps), and the CONST RequestDeferredLiveTrackerBackendSuccessNotify()
+    // (IEditMetaDeps) are all already declared above — the single override of each satisfies
+    // IFieldEditDeps too (do NOT redeclare them). Only these two are genuinely new:
+    bool HasCache() const override;
+    void UpdateTicket(const CachedTicket& ticket) override;
 
   private:
     AppController& app_;   ///< Shared/global state (cache, connectivity, catalog, Lua).

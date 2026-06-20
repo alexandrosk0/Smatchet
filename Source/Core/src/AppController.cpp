@@ -86,6 +86,7 @@
 #include "OfflineQueueService.h"
 
 #include "EditMetaCacheService.h"
+#include "FieldEditPipelineService.h"
 
 #include "PaneSyncKickPolicy.h"
 
@@ -1742,6 +1743,13 @@ void AppController::InitConfig(const std::string& dbPath, const std::string& bac
     // can write to `offlineQueue_->legacyPendingStartupBanner_` (item 12 extraction).
     if (!offlineQueue_) {
         offlineQueue_ = std::make_unique<OfflineQueueService>(*depsAdapter_);
+    }
+    // Construct FieldEditPipelineService eagerly so every field-edit delegator (SubmitFieldEdit,
+    // SubmitFieldEditNetworkOnly, TryPrepareOfflineFieldEdit, ApplyFieldEditResult) has a live
+    // target from the first tick (god-object decomposition Phase 2). Holds the deps adapter +
+    // EditMetaCacheService by reference — both constructed above, both outlive it.
+    if (!fieldEdit_) {
+        fieldEdit_ = std::make_unique<FieldEditPipelineService>(*depsAdapter_, *editMeta_);
     }
     // Construct TicketSyncService alongside — its `CancelAndJoinActiveStreamingSync` is called
     // by `RecreateLocalCacheDatabase` (which the legacy-pending cleanup below may trigger),
