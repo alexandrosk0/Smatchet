@@ -234,6 +234,8 @@ Once the cause is pinned, hand the implementation to the matching subsystem spec
 - Cross-cutting design (`ITrackerBackend` widening, save-format changes, schema versioning) → `architect`.
 - One symbol across many files, no judgement → `mechanic`.
 
+**Adversarial RCA pass before `propose-fix` (P0 / crash-class only).** For a P0 or crash-class root cause, do **not** hand off the fix until you have run one adversarial-verification pass that actively tries to *refute* the pinned cause — either a refute-hypothesis Workflow fan-out (parallel agents each argued the other surviving hypotheses) or, inline, an explicit **which-path-is-NOT-covered** self-check: name the code paths / inputs / orderings the cause does **not** explain, and confirm the reproducer's evidence rules each out. Record the refutation result in the handoff packet (`adversarial-RCA: <what was tried to break it, why it held>`). A cause that survives a genuine refutation attempt ships; one that doesn't returns to § 2 for a new hypothesis. (Non-P0 bugs use the normal reject-by-evidence loop; this extra gate is for the high-blast-radius classes.)
+
 **The 10-item handoff-packet template (target agent / concrete cause / files / write set / resolved interface decisions / invariants / repro / metric / build targets / instrumentation-removed) → [`debug-instrument` SKILL.md](../_shared/skills/debug-instrument/SKILL.md) § Handoff.**
 
 ### 11.5. Promote Useful Logs To Permanent
@@ -265,6 +267,7 @@ Four mandatory steps before reporting done: **12a** strip every `[temp-debug]` m
 - **Pause at every cycle boundary** (§ 7.5). Report status + propose next step + emit `AWAITING USER FEEDBACK` line. Do not auto-progress to commit / push / PR while the investigation is in flight — ship-loop is suspended for debug-mode.
 - **Branch on repro type** (§ 6). Auto-repro (CLI / scenario / Lua / doctest) is the only allowed path; if none exists, phase 1's reproducer-first contract requires scenario-add (no ask-user fallback). If `scenario.run` is missing for the bug, flag a `test-author` handoff in `## Self-improvement` in parallel with the scenario-add.
 - **Promote up to 3 high-value logs to permanent** (§ 11.5) before § 12 strips the rest. Zero promotions is valid; > 3 escalates to a subsystem-owned logging slice.
+- **Adversarial RCA before `propose-fix` on P0 / crash-class causes** (§ 11). Refute the pinned cause (refute-hypothesis fan-out or an explicit which-path-not-covered self-check) before handoff; record the result in the packet. Non-P0 bugs use the normal evidence loop.
 - Reproducer or concrete evidence first.
 - Semantic search before grep.
 - **Multiple hypotheses (≥ 2), ranked by distinguishing-evidence cost.** Single-hypothesis runs confirm what you already suspect.

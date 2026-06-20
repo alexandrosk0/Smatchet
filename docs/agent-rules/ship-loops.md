@@ -7,8 +7,10 @@
 **Rule**: orchestrator runs each user task end-to-end in **one turn** without pausing for confirmation at each stage. The default sequence:
 
 ```
-diagnose → [seed plan-lock] → fix → build → [pre-first-push gate] → commit → push → open PR → [gate-check] → squash-merge → git-janitor cleanup → backlog entry
+diagnose → [seed plan-lock] → fix → build → [code-review pass] → [pre-first-push gate] → commit → push → open PR → [gate-check] → squash-merge → git-janitor cleanup → backlog entry
 ```
+
+**`[code-review pass]` (mandatory between fix and commit — `process-rules.md` § Code-review before every commit).** A `code-review` agent pass runs on the staged diff BEFORE the commit lands (orchestrator-direct commits review the staged diff; agent-produced branches get the PR-diff review dispatched at `open PR`). Critical/High findings block the commit/merge until fixed or user-waived. **Optional enforcement**: a Stop-hook / pre-push reminder that flags a `git commit` with no preceding `code-review` dispatch this turn surfaces the skipped pass before push — advisory, never a hard block (the review verdict, not the hook, gates).
 
 **`[seed plan-lock]` (eager, non-blocking — when a plan-doc exists).** Before editing, file a `refs/locks/<slug>` from the plan's **§Files-to-modify** so the early-warning substrate is present the moment a sibling goes live (closing the race where a solo start files nothing, then contention arrives with no lock). See § Plan-lock seed below. *Seeding* is eager (fire whenever a plan exists); *enforcement* (the deny) stays force-on-contention (≥2 live sessions). Plan-less tasks skip the seed and file on the first Layer-A deny via the one-liner the guard hands them.
 
@@ -73,7 +75,13 @@ The post-ship 4-option `AskUserQuestion` is the **first** user-facing prompt aft
    - A change with no test coverage but no visual-path touch — that's a Pillar-3 "needs test coverage" problem, route via the test backlog.
    - A change that touches the visual paths AND has bucket-C/E coverage — coverage is the gate; ship-loop continues. If the user disagrees with the golden after merge, the bucket-C golden is re-bootstrapped per [`docs/agent-rules/process-rules.md`](process-rules.md).
 
+   **Exe auto-launch is the reflexive FIRST action of any user-validation handoff (diff-keyed).** Whenever the loop hands off to the user to validate AND the diff touches `Source/Core/src/Ui` (or the user says "let me validate" / "I'll check it"), the orchestrator's first move is to build + auto-launch `build/<preset>/Smatchet.exe` itself (single `bash` call, `run_in_background: true`) and report the task id + exe path inline — never ask "should I launch it?" or hand the user a run command to type. This generalises the always-auto-launch rule above beyond the strict visual-validation trigger: any UI-touching change the user is asked to eyeball ships with a live exe already running.
+
    Pillar anchor: see [`docs/agent-rules/quality-pillars.md`](quality-pillars.md) § 4 § Visual-validation acceptance for the cross-link from the pillar side.
+
+## Plan-time security review — new trust-boundary designs
+
+**Rule**: `security-review` is invoked at **PLAN time**, not only at pre-merge, when a plan introduces or widens a **trust boundary** — a new or changed MCP tool / CLI command / Lua binding / HTTP surface / SQLite path / p4 invocation / AI-assistant or coding-harness handoff (the attack surfaces in [`docs/agent-rules/delegation.md`](delegation.md) § Trigger auto-activation). Catching an injection / deserialization / sandbox-escape design flaw before code exists is far cheaper than refactoring it out at the pre-merge gate. The orchestrator routes the plan's § Approach (trust-boundary diff sketch) to `security-review` during `grill-with-docs`, surfaces its findings as plan callouts, then still runs the pre-merge `code-review` + `security-review` pass on the actual diff (this is additive, not a substitute). Plans with no new/changed trust boundary skip the plan-time pass.
 
 ## Intent capture — prompt → PR `## Intent`
 
@@ -183,6 +191,16 @@ Do **not** emit a free-form bulleted next-steps list — `AskUserQuestion` is a 
 2. **Keep the daemon up** — install the autostart Scheduled Task: `pwsh agents/scripts/core/merge-watcher-install-autostart.ps1` (starts `merge-watcher.py daemon` at logon, 60 s polls, log at `%LOCALAPPDATA%\Smatchet\merge-watch\daemon.log`). Registration is inert without a running poller.
 
 **This is a deliberate autonomy escalation, so the human applies it, not an agent.** Enabling it flips *every* green PR every session to auto-merge with no per-PR confirmation; an agent **must not** self-apply it (editing the harness startup-config to disable the approval gate is a self-modification the harness blocks — set it yourself). It still does not weaken the gates (CI + CodeRabbit + unresolved-user-comments bind), and it is revocable per-PR (`merge-watch unregister <n>`) or globally (unset the flag / `merge-watcher-uninstall-autostart`). It is **orthogonal to `SMATCHET_LOOP_MODE`** (`on`/`in`), which controls *plan-gating*, not auto-merge — for a fully hands-off posture you typically want `on` there too. A red PR still escalates (`STUCK_NEEDS_ATTENTION`, ~3 cycles) rather than self-fixing unless the opt-in `MERGE_WATCH_AUTO_ACT` / `MERGE_WATCH_AUTO_ACT_ON_SANITIZER` fix-spawns are also enabled.
+
+## High-contention-file pre-flight (CI-config `required_contexts` + any hot file/symbol)
+
+**Rule**: before editing a high-contention file or symbol — the canonical case is a CI-config **`required_contexts`** / branch-protection check list (`.github/workflows/*.yml`, the merge-gates allow-list, `project.config.json` `merge_gates`), but widened to **any** file/symbol many parallel sessions converge on (`AGENTS.md`, `merge-gates.sh`, the plan-lock generated file) — run a three-part pre-flight so you don't ship a duplicate or fight a concurrent change:
+
+1. `gh pr list --state open --search "<file-or-context>"` — grep for an open PR already editing the same surface (don't duplicate it; rebase onto it or coordinate).
+2. `git log -S '<context-string>' --oneline origin/develop` — confirm the change (e.g. adding a check name to the block allow-list) hasn't already landed on develop under an unrelated PR (§ Pre-implementation triage; absence-of-PR ≠ absence-of-code).
+3. **Live** `gh api repos/<owner>/<repo>/branches/develop/protection` (or the rulesets read) — read the *current* required-contexts set from GitHub, never a stale in-context copy: a sibling may have just added/removed a check, and editing against the wrong baseline desyncs the gate.
+
+Only after all three are clean do you edit the contention surface. This is the merge-gate-config analogue of the § Concurrent-worktree isolation rule — the cost of a wrong-baseline CI-config edit is a wedged or escaped merge gate, not just a conflict.
 
 ## Admin-merge discipline (never gate a merge on an `echo`)
 
