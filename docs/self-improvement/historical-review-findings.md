@@ -11,6 +11,67 @@
 > auto-fixed. User-visible product defects should be elevated to GitHub Issues
 > (ADR-0014); the rest is tech-debt. Newest batch on top.
 
+## Verification pass (2026-06-20)
+
+Fresh **live-tree re-verification** of every CRITICAL + HIGH finding (plus the
+user-visible MEDIUMs and the 2026-06-08 remediation-log "FIXED" claims) against
+`origin/develop` — because survivor batches are point-in-time snapshots and a
+week of merges silently closed most of the old priority list. Each verdict below
+comes from reading the cited code at HEAD, not the batch text. **Of 4 CRITICAL +
+22 HIGH: 15 DONE, 10 NOT DONE, 1 PARTIAL.** The 3 still-open **user-visible**
+defects were elevated to GitHub Issues per ADR-0014.
+
+**Fixed since logged (no longer actionable) — re-confirmed at develop:**
+- **CRITICAL (4/4):** #86 (`test-build-warnings.sh` now greps MSVC `C4101/4189/4505`
+  alongside the GCC `[-Wunused-]` tag), #565 (`PersistAnnotateCfg`), #611
+  (`LaunchBackgroundTask`), #761 (`std::async` + non-blocking poll).
+- **HIGH:** #892 / #767 (snapshot-on-open), #732 (`MarkPrefsDirty`), #854 (rebuild
+  via `BuildFieldPayload`), #671 (`PostAppQuitBestEffort`), #948 (migration moved
+  post-`InitBackends` with the resolved live key), #430 (`os.walk` recursion),
+  #834 (dir-anchored excludes), #918 (strip-and-classify; `--selftest` passes),
+  #519 (404-only → fail-closed), #513 (zero-test guard), #452 ×4 drivers (zero-test
+  guards added).
+- **MEDIUM:** #670 (global two-pass `FindJiraTransitionId`), #975 (kick-time
+  context captured by pointer), #524 (full-body actionable-count parse).
+
+**STILL OPEN (NOT DONE) — re-verified alive at develop 2026-06-20:**
+
+_Product / user-visible → filed as GitHub Issues (ADR-0014):_
+- **#1138** (HIGH) `AppController_CatalogAndFieldEdit.cpp:2052` — `gridContexts_`
+  map-container data race (worker `find` vs UI-thread `erase`; only per-context
+  mutexes, no map mutex) → **Issue #1457**.
+- **#1158** (HIGH) `PaneCommands.cpp:170` — `pane.new` arms the create latch
+  before the creds check and doesn't clear it on the `Failure` return → spawns a
+  duplicate pane despite "no credentials" → **Issue #1458**.
+- **#1049** (MEDIUM, user-visible) `AnnotateAnalysisUi_Window.cpp:209` — day→CL
+  re-fire unguarded; reassigning the in-flight `shared_future` blocks the UI
+  thread in its destructor → **Issue #1459**.
+
+_Internal tooling / gate fail-opens / test+doc debt (backlog, no Issue):_
+- **#329** (HIGH) `test-perf-marker-inventory.sh:30` — leak gate greps the stale
+  committed `MARKER_INVENTORY.md`, not regenerated content.
+- **#80** (HIGH) `test-theme-syntax-colors.sh:57` — no zero-assertion guard →
+  vanished suite passes green.
+- **#77** (HIGH) `test-ui-views-columns-reorder.sh:69` — no zero-test guard (+ dead
+  `extract()` helper still at :27).
+- **#1116** (HIGH) `pre-ship.sh:292` — strict-zone detection fails open on the
+  Windows `python3` stub (swallowed exit-49); review gate N/A-passes a strict-zone
+  diff.
+- **#789** (HIGH) `pre-ship.sh:239` (+:227) — markdown-lint / comment-audit
+  hardcode `python3`, ignoring the repo's `resolve_python` resolver.
+- **#919** (HIGH) `merge_watcher.bats:516,554` — `handle_pass` tests still use the
+  broken `case "$2 $3"` stub selector → zero working merge-queue-safety coverage.
+- **#807** (HIGH) `README.md:70,99,104` — stale `build_and_run.ps1` path (now under
+  `local/`) + false "auto-bootstraps vcvars" claim (`with-msvc.ps1` never invoked).
+- **#784** (HIGH, ⚠️ PARTIAL) `postmortem-owed.sh:133` — comma-joined PR trailers
+  now dedupe, but **slash-joined** (`#906/#907/#908`, the cited case) still
+  re-flags every SessionStart.
+
+**Not individually re-verified this pass:** the ~25 MEDIUM + ~60 LOW doc-drift /
+stale-line-pin findings across Batches 1–12 (advisory "no-fix"; the 2026-06-08
+remediation log already closed a doc-drift batch). Verify on demand before
+actioning — most predate many merges and may be stale like the priority list was.
+
 ## Remediation log (2026-06-08)
 
 Autonomous fix pass over the safe, deterministic findings (gate-false-pass +
@@ -101,14 +162,17 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   3. Append each batch's findings here (newest on top) + commit/push.
 - **Cost guide:** ~100–120 PRs/batch ≈ 4.9–7.0M output tokens, ~25–55 min wall-clock
   (Opus ≤6 pool; ~36 min for the 113-PR Batch 11, ~56 min for the 200-PR Batch 10).
-- **Top still-alive findings to act on first** (logged, NOT fixed per the
-  no-fix directive): **#86 (required CI warning gate 100% blind under MSVC — the
-  single most severe item in the whole sweep; `test-build-warnings.sh` greps GCC
-  warning tags but CI builds MSVC, so it always passes)**, #854 (offline edit
-  data-loss), #670 (wrong Jira status transition), #611/#761/#732/#892 (sync I/O
-  on UI render thread → freeze), #671 (orphaned subprocess), #834/#918/#329/#80/#77
-  (blocking gates measuring wrong / false-passing). User-visible ones → GitHub
-  Issues per ADR-0014 when actioned.
+- **Top still-alive findings to act on first** — ⚠️ **SUPERSEDED by the
+  § Verification pass (2026-06-20) at the top of this file.** 11 of the 14 items
+  in the original list were fixed by later merges (incl. #86, #854, #670,
+  #611/#761/#732/#892, #671, #834/#918). The genuinely-open set is now: the 3
+  user-visible defects #1138/#1158/#1049 (→ Issues #1457/#1458/#1459) plus
+  internal gate/tooling debt #329/#80/#77/#1116/#789/#919/#807/#784. _(Original
+  list kept for history: **#86** (CI warning gate blind under MSVC), #854 (offline
+  edit data-loss), #670 (wrong Jira status transition), #611/#761/#732/#892 (sync
+  I/O on UI render thread → freeze), #671 (orphaned subprocess),
+  #834/#918/#329/#80/#77 (blocking gates measuring wrong / false-passing).
+  User-visible ones → GitHub Issues per ADR-0014 when actioned.)_
 
 <!-- Batches appended at the top. -->
 
