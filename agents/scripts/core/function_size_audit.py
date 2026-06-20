@@ -32,6 +32,14 @@ Modes mirror comment_audit.py (the comment-regrowth sibling gate):
                                            #   genuinely under cap), exit 1 if it is STILL over cap.
                                            #   NAME matches the qualified name (`Cls::Foo`) or its
                                            #   simple tail (`Foo`). Scope with --in <path-substr>.
+  function_size_audit.py --assert-clean    # repo-wide end-of-program assertion: exit 0 iff the
+                                           #   ABSOLUTE oversized list is EMPTY (no function over any
+                                           #   hard cap anywhere in first-party C++), exit 1 listing
+                                           #   every offender otherwise. Unlike --diff (a merge-base
+                                           #   DELTA that grandfathers existing monoliths) this is an
+                                           #   absolute zero-tolerance check — used as a CI/campaign
+                                           #   end-state assertion once the decomposition backlog is
+                                           #   drained. --in <path-substr> scopes it to one subtree.
   function_size_audit.py --selftest        # assert the UI-classification rule matches AGENTS.md
 
 Delta semantics (grandfathering): a function is keyed by (rule, basename, qualified-name). The
@@ -638,6 +646,42 @@ def run_assert_absent(name, path_substr=None):
     return 0
 
 
+def _clean_hits(head, path_substr=None):
+    """Pure matcher (no git/IO — selftestable): given a scan_head()-shaped dict, return the list of
+    ALL oversized entries (optionally scoped to paths containing `path_substr`). Empty == repo is
+    clean (no function over any hard cap). This is the absolute companion to _absent_hits (which
+    matches a single named function); here we assert the WHOLE list is empty."""
+    hits = []
+    for (rule, bname, fname, arity), (path, line, ln, br) in sorted(head.items()):
+        if path_substr is not None and path_substr not in path.replace("\\", "/"):
+            continue
+        metric = ("%dL" % ln) if rule == RULE_LONG else ("%dbr" % br)
+        hits.append("%s\t%s:%d\t%s/%d (%dL/%dbr) over cap (%s)"
+                    % (rule, bname, line, fname, arity, ln, br, metric))
+    return hits
+
+
+def run_assert_clean(path_substr=None):
+    """Repo-wide end-of-program assertion (#PR-5 — grandfather-blind). Exit 0 iff the ABSOLUTE
+    oversized list is EMPTY (nothing over any hard cap anywhere in first-party C++), exit 1 listing
+    every offender otherwise. Distinct from run_diff (a merge-base DELTA that grandfathers existing
+    monoliths): this is the zero-tolerance end-state check a CI/campaign step runs once the
+    decomposition backlog is drained, so a regression that the delta gate grandfathers can still be
+    caught by an absolute assertion. Scope to a subtree with `--in <path-substr>`."""
+    head = scan_head()
+    hits = _clean_hits(head, path_substr)
+    if hits:
+        scope = (" (in '%s')" % path_substr) if path_substr else ""
+        print("ASSERT-CLEAN FAIL%s: %d function(s) STILL over a hard cap (the absolute oversized list "
+              "is not empty):" % (scope, len(hits)), file=sys.stderr)
+        for h in hits:
+            print("  " + h, file=sys.stderr)
+        return 1
+    scope = (" (in '%s')" % path_substr) if path_substr else ""
+    print("assert-clean%s: the absolute oversized list is empty (no function over any hard cap)" % scope)
+    return 0
+
+
 def run_list():
     head = scan_head()
     rows = []
@@ -766,6 +810,20 @@ def run_selftest():
         print("SELFTEST FAIL: assert-absent --in scoping matched outside the requested path",
               file=sys.stderr)
         miss = 1
+    # --assert-clean (#PR-5): a non-empty oversized list must report hits (assert-clean would FAIL);
+    # an empty list must report none (assert-clean PASSes); --in scoping must exclude other subtrees.
+    # selftest: asserts-failure — a non-empty oversized list must FAIL the absolute clean assertion.
+    if not _clean_hits(over_head):
+        print("SELFTEST FAIL: assert-clean reported empty for a non-empty oversized list "
+              "(should report the offender present)", file=sys.stderr)
+        miss = 1
+    if _clean_hits({}):
+        print("SELFTEST FAIL: assert-clean reported hits for an empty oversized list", file=sys.stderr)
+        miss = 1
+    if _clean_hits(over_head, path_substr="Source/Core/src/Tracker/"):
+        print("SELFTEST FAIL: assert-clean --in scoping matched outside the requested path",
+              file=sys.stderr)
+        miss = 1
     if miss:
         return 1
     print("selftest: tiered caps + UI-classification rule in sync with AGENTS.md")
@@ -787,8 +845,10 @@ def main():
     ap.add_argument("--scan-file", metavar="PATH")
     ap.add_argument("--assert-absent", metavar="NAME", dest="assert_absent",
                     help="exit 0 iff NAME is absent from the absolute oversized list (under cap)")
+    ap.add_argument("--assert-clean", action="store_true", dest="assert_clean",
+                    help="exit 0 iff the absolute oversized list is EMPTY repo-wide (end-of-program check)")
     ap.add_argument("--in", metavar="PATH_SUBSTR", dest="in_path",
-                    help="scope --assert-absent to paths containing this substring")
+                    help="scope --assert-absent / --assert-clean to paths containing this substring")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--baseline-md", action="store_true")
     ap.add_argument("--selftest", action="store_true")
@@ -798,6 +858,8 @@ def main():
             sys.exit(run_selftest())
         if args.assert_absent:
             sys.exit(run_assert_absent(args.assert_absent, args.in_path))
+        if args.assert_clean:
+            sys.exit(run_assert_clean(args.in_path))
         if args.diff:
             sys.exit(run_diff(args.diff))
         if args.scan_file:

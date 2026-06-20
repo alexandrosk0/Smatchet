@@ -182,6 +182,11 @@ INCLUDECYCLE_RULES=(include-cycle)
 # AGENTS.md § Tiered enforcement.
 FANIN_RULES=(app-controller-fan-in)
 
+# PR-5 — bare json::parse on untrusted ingress (WARN-first, curated ingress TUs) + g_ui request-flag
+# off-thread write (strict-zone, absolute-0). KEEP IN SYNC with AGENTS.md § Enforcement contract-card.
+BAREJSON_RULES=(bare-json-parse-untrusted)
+UIREQFLAG_RULES=(ui-request-flag-off-thread)
+
 ratio_warn_for() {
     # Advisory soft warning (never blocks): delegate to comment_audit.py --ratio-warn, which warns
     # per changed file whose comment ratio rises vs base AND exceeds 0.50. Always returns 0.
@@ -805,6 +810,154 @@ compute_unused_under_config_guard_violations() {
     for f in "${files[@]}"; do scan_unused_under_config_guard_file "$f"; done
 }
 
+# bare-json-parse-untrusted — WARN-first over UNTRUSTED-INGRESS first-party .cpp TUs.
+# A bare `nlohmann::json::parse(` (or `json::parse(`) on an UNTRUSTED ingress payload that does
+# NOT route through smatchet::json_safe::ParseBounded is a DoS vector: the recursive parser
+# stack-overflows on a deeply-nested payload ("[[[[...]]]]") BEFORE any try/catch can fire (issues
+# #1271 / #1287 / #1290). ParseBounded caps depth + node count + byte size and never throws, so it
+# is the mandated parse for any payload that crosses a CLI / MCP / Lua / HTTP / network-response
+# trust boundary. The cleanup that introduced ParseBounded already migrated the known ingress sites
+# (McpPlugin, CommandRegistry, BuiltinCommands_Config, the Lua bindings); this gate keeps a NEW
+# untrusted-ingress TU from re-introducing a bare parse.
+#
+# "Untrusted ingress" is identified by TU NAME (a curated allow-list of the files that handle a
+# trust boundary) rather than data-flow analysis (a bash linter cannot trace taint). The list is
+# the set of TUs that ALREADY call ParseBounded plus the obvious network/transport ingress clients
+# — i.e. the files where a bare parse is unambiguously parsing attacker-influenced bytes. A
+# `nlohmann::json::parse(..., nullptr, false)` (the non-throwing 3-arg form) STILL builds the full
+# DOM and STILL stack-overflows on depth, so the 3-arg form is NOT an escape — only ParseBounded is.
+#
+# WARN-FIRST / ADVISORY (calibration phase, mirrors the `duplication` + `unused-symbol-under-config-
+# guard` + `interface-doc` gates; never touches $rc) and scoped to the curated ingress set. A
+# `// SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; ...)` above the parse suppresses (e.g. a
+# parse of a value the program itself just serialised, not external bytes). Graduates to blocking
+# once the FP rate is calibrated low (same path as the DRY dup gate).
+#
+# The curated untrusted-ingress TU basename set. KEEP IN SYNC with the ParseBounded callers + the
+# transport ingress clients; extend when a NEW trust-boundary TU is added.
+BARE_JSON_INGRESS_TUS='McpPlugin|CommandRegistry|CliCommandRunner|AnthropicClient|OpenAiClient|AiNdjsonParser|SmatchetMergeWatchNotifyServer|AttachmentAppUpdateService|BugReportService'
+
+scan_bare_json_parse_file() {
+    # $1 = a first-party .cpp file whose basename is in the curated ingress set. Emits
+    # `bare-json-parse-untrusted\t<f>:<line>` per bare json::parse( not routed via ParseBounded.
+    # .cpp only — the ingress decode happens in a TU, not a header.
+    local f="$1"
+    [ -f "$f" ] || return 0
+    case "$f" in *.cpp) ;; *) return 0 ;; esac
+    local bn; bn="$(basename "$f" .cpp)"
+    # Curated ingress-TU basename match (portable — no extglob): exact whole-basename match
+    # against the pipe-delimited allow-list.
+    [[ "$bn" =~ ^($BARE_JSON_INGRESS_TUS)$ ]] || return 0
+    local lineno=0 prev_dev_rule=""
+    while IFS= read -r line || [ -n "$line" ]; do
+        lineno=$((lineno+1))
+        # Capture a SMATCHET_DEVIATION on the line ABOVE to suppress the next non-blank line.
+        if [[ "$line" =~ $DEV_RE ]]; then
+            local body="${BASH_REMATCH[1]}" kv
+            prev_dev_rule=""
+            IFS=';' read -ra kvs <<< "$body"
+            for kv in "${kvs[@]}"; do kv="${kv# }"; case "$kv" in rule=*) prev_dev_rule="${kv#rule=}" ;; esac; done
+            continue
+        fi
+        if [[ "$line" =~ ^[[:space:]]*$ ]]; then continue; fi
+        local suppress="$prev_dev_rule"; prev_dev_rule=""
+        # Skip pure-comment lines (prose mentions of json::parse don't fire).
+        if [[ "$line" =~ ^[[:space:]]*(//|\*|/\*) ]]; then continue; fi
+        # Match a bare json::parse( call. ParseBounded is the mandated form, so a line that already
+        # routes through it is clean (the `ParseBounded(` token is what discriminates).
+        case "$line" in
+            *ParseBounded*) continue ;;
+            *'"'*'json::parse'*'"'*) continue ;;   # `json::parse` inside a string literal
+        esac
+        if [[ "$line" =~ (^|[^A-Za-z_:])(nlohmann::)?json::parse[[:space:]]*\( ]]; then
+            if [ "$suppress" != "bare-json-parse-untrusted" ]; then
+                printf 'bare-json-parse-untrusted\t%s:%s\n' "$f" "$lineno"
+            fi
+        fi
+    done < "$f"
+}
+
+compute_bare_json_parse_violations() {
+    local files=() f
+    while IFS= read -r f; do files+=("$f"); done < <(
+        git ls-files \
+            'Source/Core/**' 'Source/Plugins/**' 'Source/Standalone/**' \
+            2>/dev/null \
+            | grep -E '\.cpp$' | grep -vE '(^|/)ThirdParty/' || true
+    )
+    [ "${#files[@]}" -gt 0 ] || return 0
+    for f in "${files[@]}"; do scan_bare_json_parse_file "$f"; done
+}
+
+# ui-request-flag-off-thread — strict-zone rule over command-dispatch TUs (Source/Core/src/Commands/
+# EXCEPT Scenarios/). A write to a g_ui request-flag field (requestWindowResize / requestWindowWidth
+# / requestWindowHeight / requestScreenshot / requestScreenshotPath) from a command handler races
+# the standalone main loop, which polls those non-atomic int/bool/std::string fields each frame: a
+# command dispatched from an MCP/Lua WORKER thread writing them unsynchronised is a genuine data race
+# (UB — the std::string buffer can reallocate under the reader; Pillar-3 never-crash). The conformant
+# seam is RunOnUiThreadAsCommandResult / RunOnUiThread<...>(app, [...]{ ...write... }) which marshals
+# the write onto the UI thread (see BuiltinCommands_Debug.cpp). So a request-flag WRITE in a command
+# TU must sit inside a RunOnUiThread* closure.
+#
+# Scenarios/ is EXEMPT: IScenario lifecycle methods (OnStart/OnFrame/OnFinish/IsDone) run ON the UI
+# thread by the scenario-runner contract, so their direct request-flag writes are correct (and would
+# false-positive without the carve-out). The rule is scoped to the command-handler TUs where the
+# off-thread risk is real.
+#
+# Heuristic (NOT an AST/thread-analysis — a text proxy): for each request-flag WRITE line (`X.field =`
+# where field is a request-flag and the line is an assignment, not a read/compare), scan BACKWARD
+# within a bounded window for an enclosing `RunOnUiThread` token. No enclosing RunOnUiThread in the
+# window -> the write is (heuristically) off the UI thread -> fire. The window is generous
+# ($SMATCHET_UI_REQFLAG_WINDOW lines) so a multi-statement closure body still sees its RunOnUiThread
+# head. A `// SMATCHET_DEVIATION(rule=ui-request-flag-off-thread; ...)` above the write escapes. The
+# tree's command handlers all marshal correctly today, so any unwrapped write is a regression
+# (absolute-0, no grandfathering — same model as no-glfw / cmake-local-gate-ci-scope).
+UI_REQFLAG_RE='requestWindowResize|requestWindowWidth|requestWindowHeight|requestScreenshotPath|requestScreenshot'
+UI_REQFLAG_WINDOW="${SMATCHET_UI_REQFLAG_WINDOW:-40}"
+
+scan_ui_request_flag_file() {
+    # $1 = a command-dispatch .cpp under Source/Core/src/Commands/ (NOT Scenarios/). Emits
+    # `ui-request-flag-off-thread\t<f>:<line>` per request-flag write with no enclosing RunOnUiThread.
+    local f="$1"
+    [ -f "$f" ] || return 0
+    case "$f" in *.cpp) ;; *) return 0 ;; esac
+    local -a lines=()
+    local line
+    while IFS= read -r line || [ -n "$line" ]; do lines+=("$line"); done < "$f"
+    local n=${#lines[@]} i j start
+    for ((i = 0; i < n; i++)); do
+        local raw="${lines[$i]}"
+        # Skip pure-comment lines.
+        local s="${raw#"${raw%%[![:space:]]*}"}"
+        case "$s" in '//'*|'*'*|'/*'*) continue ;; esac
+        # Must be an ASSIGNMENT to a request-flag field: `.<field> =` (single `=`, not `==`/`!=`/`>=`).
+        [[ "$raw" =~ \.($UI_REQFLAG_RE)[[:space:]]*=[^=] ]] || continue
+        # Scan backward for an enclosing RunOnUiThread (the conformant marshalling seam) OR an
+        # in-window SMATCHET_DEVIATION suppressing this rule.
+        start=$(( i - UI_REQFLAG_WINDOW )); [ "$start" -lt 0 ] && start=0
+        local marshalled=0 dev=0
+        for ((j = i; j >= start; j--)); do
+            case "${lines[$j]}" in *'RunOnUiThread'*) marshalled=1; break ;; esac
+            case "${lines[$j]}" in *'SMATCHET_DEVIATION(rule=ui-request-flag-off-thread'*) dev=1; break ;; esac
+        done
+        if [ "$marshalled" -eq 0 ] && [ "$dev" -eq 0 ]; then
+            printf 'ui-request-flag-off-thread\t%s:%s\n' "$f" "$((i + 1))"
+        fi
+    done
+}
+
+compute_ui_request_flag_violations() {
+    local files=() f
+    while IFS= read -r f; do files+=("$f"); done < <(
+        git ls-files \
+            'Source/Core/src/Commands/**' \
+            2>/dev/null \
+            | grep -E '\.cpp$' | grep -vE '(^|/)(ThirdParty|Commands/Scenarios)/' || true
+    )
+    [ "${#files[@]}" -gt 0 ] || return 0
+    for f in "${files[@]}"; do scan_ui_request_flag_file "$f"; done
+}
+
 # ---------------------------------------------------------------------------
 # Modes
 # ---------------------------------------------------------------------------
@@ -887,9 +1040,11 @@ case "${1:-}" in
     --scan-glfw)   MODE=scanglfw ;;
     --scan-cmake-ci) MODE=scancmakeci ;;
     --scan-unused-cfg) MODE=scanunusedcfg ;;
+    --scan-bare-json) MODE=scanbarejson ;;
+    --scan-ui-reqflag) MODE=scanuireqflag ;;
     --selftest)    MODE=selftest ;;
     "")            MODE=diff ;;
-    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--agentsize-baseline|--dup-baseline|--include-cycle-baseline|--scan-file[=]<f>|--full|--scan-wide|--scan-glfw|--scan-cmake-ci|--scan-unused-cfg|--selftest]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--agentsize-baseline|--dup-baseline|--include-cycle-baseline|--scan-file[=]<f>|--full|--scan-wide|--scan-glfw|--scan-cmake-ci|--scan-unused-cfg|--scan-bare-json|--scan-ui-reqflag|--selftest]" >&2; exit 2 ;;
 esac
 
 case "$MODE" in
@@ -925,6 +1080,10 @@ case "$MODE" in
     # Assert the AppController fan-in rule-id is documented in AGENTS.md (delta-gated, BLOCKING gate).
     for r in "${FANIN_RULES[@]}"; do
         if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: fan-in rule '$r' missing from AGENTS.md" >&2; miss=1; fi
+    done
+    # Assert the PR-5 rule-ids are documented in AGENTS.md (bare-json WARN-first; ui-reqflag absolute-0).
+    for r in "${BAREJSON_RULES[@]}" "${UIREQFLAG_RULES[@]}"; do
+        if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: PR-5 rule '$r' missing from AGENTS.md" >&2; miss=1; fi
     done
     # Delegate the tiered-cap + UI-classification in-sync assertion to the audit script's own
     # --selftest (single source of truth = function_size_audit.py is_ui_function() vs AGENTS.md).
@@ -973,6 +1132,53 @@ case "$MODE" in
     if [ -n "$(scan_unused_under_config_guard_file "$_uscg_tmp")" ]; then
         echo "SELFTEST FAIL: unused-symbol-under-config-guard fired despite an in-window SMATCHET_DEVIATION" >&2; miss=1; fi
     rm -f "$_uscg_tmp" 2>/dev/null || true
+    # --- bare-json-parse-untrusted (PR-5) — assert the rule is documented + fires on a bare parse in
+    # an ingress TU and stays quiet for a ParseBounded route / a non-ingress TU / a deviation. ---
+    if ! grep -qF "bare-json-parse-untrusted" AGENTS.md; then echo "SELFTEST FAIL: 'bare-json-parse-untrusted' rule missing from AGENTS.md" >&2; miss=1; fi
+    # selftest: asserts-failure — a bare json::parse in an ingress TU must fire; ParseBounded / a
+    # non-ingress basename / a deviation must not.
+    _bj_tmp="$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/bj_selftest.$$")"
+    _bj_ingress="$(dirname "$_bj_tmp")/McpPlugin.cpp"
+    printf 'void f(const std::string& body) {\n    auto j = nlohmann::json::parse(body);\n    (void)j;\n}\n' > "$_bj_ingress"
+    if [ -z "$(scan_bare_json_parse_file "$_bj_ingress")" ]; then
+        echo "SELFTEST FAIL: bare-json-parse-untrusted did not fire on a bare json::parse in an ingress TU (McpPlugin.cpp)" >&2; miss=1; fi
+    printf 'void f(const std::string& body) {\n    std::string err;\n    auto j = smatchet::json_safe::ParseBounded(body, err);\n    (void)j;\n}\n' > "$_bj_ingress"
+    if [ -n "$(scan_bare_json_parse_file "$_bj_ingress")" ]; then
+        echo "SELFTEST FAIL: bare-json-parse-untrusted fired on a ParseBounded-routed ingress parse" >&2; miss=1; fi
+    # A non-ingress basename (not in the curated set) must NOT fire even on a bare parse.
+    _bj_other="$(dirname "$_bj_tmp")/SomeUnrelatedThing.cpp"
+    printf 'void f(const std::string& s) {\n    auto j = nlohmann::json::parse(s);\n    (void)j;\n}\n' > "$_bj_other"
+    if [ -n "$(scan_bare_json_parse_file "$_bj_other")" ]; then
+        echo "SELFTEST FAIL: bare-json-parse-untrusted fired on a non-ingress (non-curated) TU" >&2; miss=1; fi
+    # An in-line SMATCHET_DEVIATION above the parse must escape.
+    printf 'void f(const std::string& body) {\n    // SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; reason=test; owner=x; revisit=2099-01-01)\n    auto j = nlohmann::json::parse(body);\n    (void)j;\n}\n' > "$_bj_ingress"
+    if [ -n "$(scan_bare_json_parse_file "$_bj_ingress")" ]; then
+        echo "SELFTEST FAIL: bare-json-parse-untrusted fired despite an in-window SMATCHET_DEVIATION" >&2; miss=1; fi
+    rm -f "$_bj_tmp" "$_bj_ingress" "$_bj_other" 2>/dev/null || true
+    # --- ui-request-flag-off-thread (PR-5) — assert the rule is documented + fires on an unwrapped
+    # request-flag write and stays quiet inside a RunOnUiThread closure / behind a deviation. ---
+    if ! grep -qF "ui-request-flag-off-thread" AGENTS.md; then echo "SELFTEST FAIL: 'ui-request-flag-off-thread' rule missing from AGENTS.md" >&2; miss=1; fi
+    # selftest: asserts-failure — a request-flag write outside RunOnUiThread must fire; inside it,
+    # and behind a deviation, must not. (.cpp-gated, so the fixture carries a .cpp extension.)
+    _ui_tmp="$(mktemp --suffix=.cpp 2>/dev/null || echo "${TMPDIR:-/tmp}/ui_selftest.$$.cpp")"
+    case "$_ui_tmp" in *.cpp) ;; *) mv -f "$_ui_tmp" "$_ui_tmp.cpp" 2>/dev/null && _ui_tmp="$_ui_tmp.cpp" ;; esac
+    # Positive: a direct off-thread write (no enclosing RunOnUiThread).
+    printf 'void Handler() {\n    g_ui.requestScreenshotPath = path;\n    g_ui.requestScreenshot = true;\n}\n' > "$_ui_tmp"
+    if [ -z "$(scan_ui_request_flag_file "$_ui_tmp")" ]; then
+        echo "SELFTEST FAIL: ui-request-flag-off-thread did not fire on a request-flag write outside a RunOnUiThread closure" >&2; miss=1; fi
+    # Negative: the same write inside a RunOnUiThread closure (the conformant marshalling seam).
+    printf 'CommandResult Handler(AppController& app) {\n    return RunOnUiThreadAsCommandResult(app, [path]() {\n        g_ui.requestScreenshotPath = path;\n        g_ui.requestScreenshot = true;\n        return CommandResult::Success();\n    });\n}\n' > "$_ui_tmp"
+    if [ -n "$(scan_ui_request_flag_file "$_ui_tmp")" ]; then
+        echo "SELFTEST FAIL: ui-request-flag-off-thread fired on a write inside a RunOnUiThread closure" >&2; miss=1; fi
+    # Negative: a READ / compare of a request flag (not an assignment) must NOT fire.
+    printf 'void Poll() {\n    if (g_ui.requestScreenshot) {\n        DoShot();\n    }\n}\n' > "$_ui_tmp"
+    if [ -n "$(scan_ui_request_flag_file "$_ui_tmp")" ]; then
+        echo "SELFTEST FAIL: ui-request-flag-off-thread fired on a read/compare (not an assignment)" >&2; miss=1; fi
+    # Negative: an in-window SMATCHET_DEVIATION above the write must escape.
+    printf 'void Handler() {\n    // SMATCHET_DEVIATION(rule=ui-request-flag-off-thread; reason=test; owner=x; revisit=2099-01-01)\n    g_ui.requestScreenshot = true;\n}\n' > "$_ui_tmp"
+    if [ -n "$(scan_ui_request_flag_file "$_ui_tmp")" ]; then
+        echo "SELFTEST FAIL: ui-request-flag-off-thread fired despite an in-window SMATCHET_DEVIATION" >&2; miss=1; fi
+    rm -f "$_ui_tmp" 2>/dev/null || true
     # --- interface-doc WARN (Gap B / Slice 2) — assert the rule WARNs on real drift, stays quiet
     # otherwise, and is documented. This exercises a FAILURE case (the pinned symbol changed without
     # a doc touch), satisfying both Slice 2's selftest contract and Slice 3's "assert-a-failure" rule.
@@ -1028,6 +1234,18 @@ case "$MODE" in
     # unused-symbol-under-config-guard absolute-0 set over first-party .cpp TUs (debug +
     # bats harness). `--root <dir>` (handled above) points this at an arbitrary tree.
     compute_unused_under_config_guard_violations
+    ;;
+
+  scanbarejson)
+    # bare-json-parse-untrusted set over the curated untrusted-ingress .cpp TUs (debug + bats
+    # harness). `--root <dir>` (handled above) points this at an arbitrary tree.
+    compute_bare_json_parse_violations
+    ;;
+
+  scanuireqflag)
+    # ui-request-flag-off-thread set over Source/Core/src/Commands (excl. Scenarios) .cpp TUs
+    # (debug + bats harness). `--root <dir>` (handled above) points this at an arbitrary tree.
+    compute_ui_request_flag_violations
     ;;
 
   catalog)
@@ -1249,6 +1467,26 @@ case "$MODE" in
         echo "[test-lint-rules] PASS — no un-CI-scoped local-knob CMake FATAL_ERROR"
     fi
 
+    # --- ui-request-flag-off-thread (Source/Core/src/Commands, excl. Scenarios; ABSOLUTE-0) ---
+    # A write to a g_ui request-flag field (requestWindow* / requestScreenshot*) from a command
+    # handler must be marshalled onto the UI thread via RunOnUiThread* — the standalone main loop
+    # polls those non-atomic fields each frame, so an unsynchronised write from an MCP/Lua worker
+    # thread is a data race (UB — Pillar-3 never-crash). The command handlers all marshal correctly
+    # today (BuiltinCommands_Debug.cpp), so any unwrapped write is a regression (absolute-0, no
+    # grandfathering — same model as no-glfw). Scenarios/ is exempt (IScenario lifecycle runs on the
+    # UI thread by contract). A SMATCHET_DEVIATION(rule=ui-request-flag-off-thread; ...) above escapes.
+    uireq_out="$(compute_ui_request_flag_violations)"
+    if [ -n "$uireq_out" ]; then
+        rc=1
+        echo
+        echo "FAIL: g_ui request-flag write outside a RunOnUiThread* closure in a command-dispatch TU (races the main loop that polls these non-atomic fields — Pillar-3 data race):"
+        printf '%s\n' "$uireq_out" | sed 's/^/  /'
+        echo "  Wrap the write in RunOnUiThreadAsCommandResult(app, [...]{ ...write... }) (see BuiltinCommands_Debug.cpp),"
+        echo "  or add SMATCHET_DEVIATION(rule=ui-request-flag-off-thread; reason=...; owner=...; revisit=...) above the write."
+    else
+        echo "[test-lint-rules] PASS — no off-UI-thread g_ui request-flag write in command-dispatch TUs"
+    fi
+
     # --- unused-symbol-under-config-guard (CHANGED first-party .cpp; WARN-first) ---
     # A free-function definition unguarded while ALL its references sit inside a
     # POSITIVE #if defined(SMATCHET_WITH_*) block is dead in the feature-OFF build and
@@ -1288,6 +1526,39 @@ case "$MODE" in
                 echo "  // SMATCHET_DEVIATION(rule=unused-symbol-under-config-guard; reason=...; owner=...; revisit=...) above the definition."
             } >&2
         fi
+    fi
+
+    # --- bare-json-parse-untrusted (curated untrusted-ingress .cpp TUs; WARN-first) ---
+    # A bare nlohmann::json::parse( on an untrusted ingress payload (CLI / MCP / Lua / HTTP / network
+    # response) that does NOT route through smatchet::json_safe::ParseBounded stack-overflows the
+    # recursive parser on a deeply-nested payload BEFORE any try/catch can fire (issues #1271/#1287).
+    # The 3-arg non-throwing form (..., nullptr, false) still builds the DOM and still overflows, so
+    # only ParseBounded escapes. WARN-FIRST / ADVISORY (calibration; never touches $rc), scoped to the
+    # curated ingress TU set (BARE_JSON_INGRESS_TUS). A SMATCHET_DEVIATION(rule=bare-json-parse-
+    # untrusted; ...) above the parse suppresses (e.g. parsing bytes the program itself serialised).
+    # Diff-scoped to the CHANGED ingress TUs (mirrors the unused-symbol WARN): the real tree carries
+    # a known residual of pre-existing bare-ingress parses (the ParseBounded migration is incremental);
+    # WARNing on the whole tree every diff would drown the signal, so the gate WARNs only on the files
+    # this diff touched. The whole-tree set is available via --scan-bare-json for a campaign sweep.
+    barejson_mb="$(git merge-base "$BASE" HEAD 2>/dev/null || echo "$BASE")"
+    barejson_changed="$(git diff --name-only --diff-filter=d "$barejson_mb" 2>/dev/null \
+        | grep -E '\.cpp$' | grep -vE '(^|/)ThirdParty/' || true)"
+    barejson_out=""
+    if [ -n "$barejson_changed" ]; then
+        while IFS= read -r barejson_f; do
+            [ -n "$barejson_f" ] || continue
+            barejson_out="$barejson_out$(scan_bare_json_parse_file "$barejson_f")"$'\n'
+        done <<< "$barejson_changed"
+        barejson_out="$(printf '%s' "$barejson_out" | grep -E . || true)"
+    fi
+    if [ -n "$barejson_out" ]; then
+        {
+            echo "[bare-json-parse-untrusted] WARN: a bare nlohmann::json::parse( appears in an untrusted-ingress TU without routing through smatchet::json_safe::ParseBounded — a deeply-nested payload stack-overflows the recursive parser before any try/catch can fire (#1271/#1287). Advisory (calibration); not blocking:"
+            printf '%s\n' "$barejson_out" | sed 's/^/  /'
+            echo "  Route the ingress decode through smatchet::json_safe::ParseBounded(text, errOut[, maxBytes]) (#include \"Json/BoundedJsonParse.h\")."
+            echo "  If the bytes are program-internal (not external input): add"
+            echo "  // SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; reason=...; owner=...; revisit=...) above the parse."
+        } >&2
     fi
 
     # --- function-size rules (repo-wide, delta-gated, TIERED; decompose-top-20-monoliths Slice 0) ---
