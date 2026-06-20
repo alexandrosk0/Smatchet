@@ -2284,3 +2284,234 @@ PY
     [[ "$output" == *"PR #42"* ]]
     [[ "$output" == *"CONFLICT"* ]]
 }
+
+# ---------- gate-logic self-resync (#1428 residual) ----------
+# The daemon's throughput-safe complement to merge-gates.sh's fail-closed freshness
+# guard: detect when this checkout drifted behind origin/develop on a gate-logic file
+# and, on a SAFE fast-forward, pull develop (+ re-exec on POSIX when the daemon's own
+# code changed). The security-critical drift-detection + safety gate run against REAL
+# git (a throwaway repo+remote); the orchestration branches run against mocked seams.
+
+@test "self-resync: detect_gate_logic_drift + _resync_safety vs real git (fresh/dirty/feature/diverged)" {
+    run python - <<'PY'
+import importlib.util, os, subprocess, tempfile, pathlib
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+tmp = tempfile.mkdtemp()
+def g(*a, cwd): subprocess.run(["git","-C",cwd,*a], check=True, capture_output=True, text=True)
+remote = os.path.join(tmp, "remote.git")
+subprocess.run(["git","init","--bare","-b","develop",remote], check=True, capture_output=True)
+work = os.path.join(tmp, "work")
+subprocess.run(["git","clone",remote,work], check=True, capture_output=True)
+g("config","user.email","t@t",cwd=work); g("config","user.name","t",cwd=work)
+rel = "agents/scripts/core/merge-gates.sh"
+p = pathlib.Path(work, rel); p.parent.mkdir(parents=True, exist_ok=True); p.write_text("v1\n")
+g("add","-A",cwd=work); g("commit","-m","init",cwd=work); g("push","origin","develop",cwd=work)
+# fresh + clean develop -> no drift, safe
+assert m._git_fetch_develop(work) is True
+assert m.detect_gate_logic_drift(work) == [], m.detect_gate_logic_drift(work)
+ok, why = m._resync_safety(work); assert ok, why
+# uncommitted on-disk drift -> detected + unsafe(dirty)
+p.write_text("v2-local\n")
+assert rel in m.detect_gate_logic_drift(work)
+ok, why = m._resync_safety(work); assert (not ok) and "dirty" in why, why
+# committed locally -> clean but AHEAD of origin/develop (not a fast-forward)
+g("add","-A",cwd=work); g("commit","-m","local v2",cwd=work)
+ok, why = m._resync_safety(work); assert (not ok) and "diverged" in why, why
+# feature branch -> unsafe(not on develop)
+g("checkout","-b","feat/x",cwd=work)
+ok, why = m._resync_safety(work); assert (not ok) and "not on develop" in why, why
+print("OK")
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OK"* ]]
+}
+
+@test "self-resync: _ff_pull_develop fast-forwards a behind develop, reports moved; re-pull no-move" {
+    run python - <<'PY'
+import importlib.util, os, subprocess, tempfile, pathlib
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+tmp = tempfile.mkdtemp()
+def g(*a, cwd): subprocess.run(["git","-C",cwd,*a], check=True, capture_output=True, text=True)
+remote = os.path.join(tmp, "remote.git")
+subprocess.run(["git","init","--bare","-b","develop",remote], check=True, capture_output=True)
+rel = "agents/scripts/core/merge-gates.sh"
+# work1 seeds v1, work2 advances origin to v2, work1 (behind) must fast-forward to v2.
+work = os.path.join(tmp, "work"); subprocess.run(["git","clone",remote,work], check=True, capture_output=True)
+g("config","user.email","t@t",cwd=work); g("config","user.name","t",cwd=work)
+p = pathlib.Path(work, rel); p.parent.mkdir(parents=True, exist_ok=True); p.write_text("v1\n")
+g("add","-A",cwd=work); g("commit","-m","init",cwd=work); g("push","origin","develop",cwd=work)
+work2 = os.path.join(tmp, "work2"); subprocess.run(["git","clone",remote,work2], check=True, capture_output=True)
+g("config","user.email","t2@t",cwd=work2); g("config","user.name","t2",cwd=work2)
+pathlib.Path(work2, rel).write_text("v2-remote\n")
+g("add","-A",cwd=work2); g("commit","-m","remote v2",cwd=work2); g("push","origin","develop",cwd=work2)
+# work is now behind origin/develop by one commit.
+assert m._git_fetch_develop(work) is True
+assert rel in m.detect_gate_logic_drift(work)
+ok, why = m._resync_safety(work); assert ok, why
+pulled, moved = m._ff_pull_develop(work)
+assert pulled and moved, (pulled, moved)
+assert pathlib.Path(work, rel).read_text() == "v2-remote\n", "file not refreshed by ff"
+assert m.detect_gate_logic_drift(work) == [], "post-pull should be fresh"
+pulled2, moved2 = m._ff_pull_develop(work)
+assert pulled2 and (not moved2), ("re-pull must be a no-op move", pulled2, moved2)
+print("OK")
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OK"* ]]
+}
+
+@test "self-resync: maybe_self_resync disabled / not-a-checkout / fetch-fail / fresh" {
+    run python - <<'PY'
+import importlib.util, os
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+os.environ["MERGE_WATCH_AUTO_RESYNC"] = "off"
+assert m.maybe_self_resync(0)["resync_action"].startswith("disabled"), m.maybe_self_resync(0)
+os.environ["MERGE_WATCH_AUTO_RESYNC"] = "on"
+m._repo_root = lambda: None
+assert "not in a git checkout" in m.maybe_self_resync(0)["resync_action"]
+m._repo_root = lambda: "/fake/root"
+m._git_fetch_develop = lambda root: False
+assert "git fetch origin develop failed" in m.maybe_self_resync(0)["resync_action"]
+m._git_fetch_develop = lambda root: True
+m.detect_gate_logic_drift = lambda root: []
+assert m.maybe_self_resync(0)["resync_action"] == "fresh"
+print("OK")
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OK"* ]]
+}
+
+@test "self-resync: unsafe drift → needs_human, never pulls or re-execs (#1428 feature-branch park)" {
+    run python - <<'PY'
+import importlib.util, os
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+os.environ["MERGE_WATCH_AUTO_RESYNC"] = "on"
+m._repo_root = lambda: "/fake/root"
+m._git_fetch_develop = lambda root: True
+m.detect_gate_logic_drift = lambda root: ["agents/scripts/core/merge-gates.sh"]
+m._resync_safety = lambda root: (False, "not on develop (on 'feat/tsan')")
+calls = {"pull": 0, "reexec": 0}
+m._ff_pull_develop = lambda root: (calls.__setitem__("pull", calls["pull"] + 1), (True, True))[1]
+m._reexec_daemon = lambda d: calls.__setitem__("reexec", calls["reexec"] + 1)
+r = m.maybe_self_resync(0)
+assert r.get("resync_needs_human") is True, r
+assert "unsafe to auto-resync" in r["resync_action"], r
+assert calls == {"pull": 0, "reexec": 0}, ("must not mutate", calls)
+print("OK")
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OK"* ]]
+}
+
+@test "self-resync: safe drift in merge-gates.sh only → resync on-disk, NO re-exec" {
+    run python - <<'PY'
+import importlib.util, os
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+os.environ["MERGE_WATCH_AUTO_RESYNC"] = "on"
+m._repo_root = lambda: "/fake/root"
+m._git_fetch_develop = lambda root: True
+m.detect_gate_logic_drift = lambda root: ["agents/scripts/core/merge-gates.sh"]
+m._resync_safety = lambda root: (True, "ok")
+m._ff_pull_develop = lambda root: (True, True)
+calls = {"reexec": 0}
+m._reexec_daemon = lambda d: calls.__setitem__("reexec", calls["reexec"] + 1)
+r = m.maybe_self_resync(0)
+assert "no restart needed" in r["resync_action"], r
+assert calls["reexec"] == 0, "merge-gates.sh is re-read live; no daemon restart"
+assert not r.get("resync_needs_restart") and not r.get("resync_needs_human"), r
+print("OK")
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OK"* ]]
+}
+
+@test "self-resync: safe daemon-code drift → re-exec on POSIX, restart-warn on Windows" {
+    run python - <<'PY'
+import importlib.util, os
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+os.environ["MERGE_WATCH_AUTO_RESYNC"] = "on"
+m._repo_root = lambda: "/fake/root"
+m._git_fetch_develop = lambda root: True
+m.detect_gate_logic_drift = lambda root: ["agents/scripts/core/merge-watcher.py"]
+m._resync_safety = lambda root: (True, "ok")
+m._ff_pull_develop = lambda root: (True, True)
+rec = {"reexec": 0, "drifted": None}
+m._reexec_daemon = lambda d: (rec.__setitem__("reexec", rec["reexec"] + 1), rec.__setitem__("drifted", d))
+# POSIX → re-exec invoked with the daemon-code drift list
+m.os.name = "posix"
+m.maybe_self_resync(0)
+assert rec["reexec"] == 1, rec
+assert rec["drifted"] == ["agents/scripts/core/merge-watcher.py"], rec
+# Windows → NO re-exec (would detach from the Scheduled Task); needs_restart flagged
+m.os.name = "nt"
+rec["reexec"] = 0
+r = m.maybe_self_resync(0)
+assert rec["reexec"] == 0, "must not os.execv on Windows"
+assert r.get("resync_needs_restart") is True, r
+assert "no auto-reexec on Windows" in r["resync_action"], r
+print("OK")
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OK"* ]]
+}
+
+@test "self-resync: ff-pull no-move → needs_human (re-exec loop guard); pull-fail → needs_human" {
+    run python - <<'PY'
+import importlib.util, os
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+os.environ["MERGE_WATCH_AUTO_RESYNC"] = "on"
+m._repo_root = lambda: "/fake/root"
+m._git_fetch_develop = lambda root: True
+m.detect_gate_logic_drift = lambda root: ["agents/scripts/core/merge-watcher.py"]
+m._resync_safety = lambda root: (True, "ok")
+calls = {"reexec": 0}
+m._reexec_daemon = lambda d: calls.__setitem__("reexec", calls["reexec"] + 1)
+# pulled but HEAD didn't move → would loop → refuse re-exec, flag human
+m._ff_pull_develop = lambda root: (True, False)
+r = m.maybe_self_resync(0)
+assert r.get("resync_needs_human") is True and "avoids loop" in r["resync_action"], r
+assert calls["reexec"] == 0
+# pull failed outright → flag human, no re-exec
+m._ff_pull_develop = lambda root: (False, False)
+r = m.maybe_self_resync(0)
+assert r.get("resync_needs_human") is True and "ff-pull failed" in r["resync_action"], r
+assert calls["reexec"] == 0
+print("OK")
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OK"* ]]
+}
+
+@test "self-resync: _resync_every_cycles default 30, env override, floor 1, invalid→default" {
+    run python - <<'PY'
+import importlib.util, os
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+os.environ.pop("MERGE_WATCH_RESYNC_EVERY_CYCLES", None)
+assert m._resync_every_cycles() == 30, m._resync_every_cycles()
+os.environ["MERGE_WATCH_RESYNC_EVERY_CYCLES"] = "5"
+assert m._resync_every_cycles() == 5
+os.environ["MERGE_WATCH_RESYNC_EVERY_CYCLES"] = "0"
+assert m._resync_every_cycles() == 1, "floored at 1"
+os.environ["MERGE_WATCH_RESYNC_EVERY_CYCLES"] = "not-an-int"
+assert m._resync_every_cycles() == 30, "invalid falls back to default"
+print("OK")
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OK"* ]]
+}
