@@ -112,6 +112,7 @@ class OfflineQueueService;
 class TicketSyncService;
 class EditMetaCacheService;
 class FieldEditPipelineService;
+class ConnectivityMonitorService;
 class LuaAutomationHost;
 struct TrackerActivityEntry;
 struct TrackerActivityProgress;
@@ -178,6 +179,12 @@ class AppController : public IMainThreadPoster {
     /// ticket-sync + Lua host, drain buffered log sinks, and run the one-time
     /// legacy-pending offline cleanup.
     void InitConfig(const std::string& dbPath, const std::string& backendType);
+    /// Eagerly construct the deps adapter + the owned single-responsibility services
+    /// (connectivity / editmeta / offline-queue / field-edit / per-context ticket-sync) so every
+    /// delegator + adapter override has a live target from the first frame tick. Called once from
+    /// InitConfig; idempotent (`if (!x)` guards). Extracted from InitConfig (god-object
+    /// decomposition) to keep that method under the function-size cap.
+    void WireCoreServices();
 
     /// Phase 2 — load TrackerConfig, resolve the tracker backend factory (honouring
     /// the SMATCHET_TEST_*_BACKEND_FIXTURE env hooks), instantiate the backend, and
@@ -612,8 +619,10 @@ class AppController : public IMainThreadPoster {
     const std::vector<TrackerUser>& GetAvailableUsers() const { return fieldCatalog().AvailableUsers; }
     const std::string& GetFieldCatalogError() const { return fieldCatalog().LastTrackerFieldCatalogError; }
     const std::string& GetFieldCatalogWarning() const { return fieldCatalog().LastTrackerFieldCatalogWarning; }
-    /** Set when a live JQL refresh failed with a transport-style error; UI may show cached tickets. */
-    const std::string& GetLastTicketSyncWarning() const { return LastTrackerTicketSyncWarning; }
+    /** Set when a live JQL refresh failed with a transport-style error; UI may show cached tickets.
+     *  Returns a const reference (callers bind a reference); delegates to ConnectivityMonitorService.
+     *  De-inlined (Phase 3) — the body lives in AppController.cpp where the service is a complete type. */
+    const std::string& GetLastTicketSyncWarning() const;
 
     /**
      * One banner for field-catalog error/warning, ticket-list cache warning, and optional session note
@@ -627,8 +636,9 @@ class AppController : public IMainThreadPoster {
     using TrackerConnectivityState = ::TrackerConnectivityState; // moved (fan-in Phase 3)
     /** Rate-limited background probe; updates connectivity state and recovery latch. */
     void TickTrackerConnectivityMonitor(const TrackerConfig& cfg);
-    /** Latest reachability from background probe (or after a successful live backend request). */
-    TrackerConnectivityState GetLastTrackerConnectivityState() const { return lastTrackerConnectivityState_; }
+    /** Latest reachability from background probe (or after a successful live backend request).
+     *  De-inlined (Phase 3) — delegates to ConnectivityMonitorService (a complete type only in the .cpp). */
+    TrackerConnectivityState GetLastTrackerConnectivityState() const;
     /**
      * One-shot: true when reachability improved to authenticated-reachable (including from
      * transport-down, service-unavailable, or auth/config errors, and cold-start when a catalog
@@ -993,6 +1003,12 @@ class AppController : public IMainThreadPoster {
     /// are thin delegators forwarding to this service. See the AppController god-object
     /// decomposition plan (Phase 2).
     std::unique_ptr<FieldEditPipelineService> fieldEdit_;
+    /// GLOBAL singleton owning the tracker connectivity-probe FSM (probe state + recovery latch +
+    /// the live ticket-sync warning + the per-frame offline banner formatter). Constructed eagerly
+    /// in `Initialize` after `depsAdapter_`; every per-pane adapter forwards its connectivity writes
+    /// into this one instance (N writers, one service). Public AppController connectivity methods are
+    /// thin delegators forwarding here. See the god-object decomposition plan (Phase 3).
+    std::unique_ptr<ConnectivityMonitorService> connectivity_;
     /// Default pane id ("main" — matches ConfigManager_Panes bootstrap). The default
     /// context is PERMANENT: created in the constructor, never retired (offlineQueue_
     /// holds a deps-adapter reference chain into it), so focusedContext() fallback and
@@ -1143,7 +1159,8 @@ class AppController : public IMainThreadPoster {
     // the rest of the engine state, ADR-0018).
     GridContextFieldCatalog& fieldCatalog() { return focusedContext().fieldCatalog; }
     const GridContextFieldCatalog& fieldCatalog() const { return focusedContext().fieldCatalog; }
-    std::string LastTrackerTicketSyncWarning;
+    // LastTrackerTicketSyncWarning moved into ConnectivityMonitorService (Phase 3) as its single
+    // owner; reached via `connectivity_->LastTicketSyncWarning()` / `SetLastTicketSyncWarning(...)`.
     // `AutomationLogSinks` moved to LuaAutomationHost in Phase 1A of the item 14 extraction.
     /// Log sinks registered via AddAutomationLogSink before luaHost_ is constructed
     /// (i.e. during OnEarlyInit which fires before Initialize). Drained into luaHost_ once
@@ -1263,24 +1280,20 @@ class AppController : public IMainThreadPoster {
     /// Caller MUST hold `backgroundWorkersMutex_`.
     void reapFinishedBackgroundWorkersLocked_();
 
-    void DrainTrackerConnectivityProbeFuture();
-    void ApplyTrackerConnectivityProbeResult(const std::chrono::steady_clock::time_point now,
-                                             const TrackerReachabilityProbeResult& r);
-    bool IsConnectivityDegradedForProbeInterval(TrackerConnectivityState nextProbeState) const;
-    void PushOfflineReplayTimersDuringTransportOutage(std::chrono::steady_clock::time_point now);
-    static TrackerConnectivityState MapReachabilityProbeKind(TrackerReachabilityProbeKind k);
+    // The connectivity-probe FSM (DrainProbeFuture / ApplyProbeResult / MapReachabilityProbeKind /
+    // IsConnectivityDegradedForProbeInterval / PushOfflineReplayTimersDuringTransportOutage /
+    // requestDeferred / applyLive) and its 9 state members were lifted into ConnectivityMonitorService
+    // (god-object decomposition Phase 3). They live on `connectivity_` below; the public connectivity
+    // methods above are thin delegators forwarding into that service.
 
+    // The deferred-success-notify forwarder kept on AppController so its many in-class callers (and
+    // the adapter's CONST RequestDeferredLiveTrackerBackendSuccessNotify override) stay one-line; it
+    // forwards into the global connectivity service.
     void requestDeferredLiveTrackerBackendSuccessNotify_() const;
-    void applyLiveTrackerReachabilityAfterSuccessfulBackendRequest_();
-
-    std::chrono::steady_clock::time_point nextTrackerConnectivityProbeAt_{};
-    bool trackerConnectivityProbeInFlight_ = false;
-    std::future<TrackerReachabilityProbeResult> trackerConnectivityProbeFuture_;
-    TrackerConnectivityState lastTrackerConnectivityState_ = TrackerConnectivityState::Unknown;
-    std::string lastTrackerConnectivityDiagnostic_;
-    bool trackerConnectivityRecoveryPending_ = false;
-    std::atomic<bool> fieldCatalogRefetchAfterLiveTicketSyncPending_{false};
-    mutable std::atomic<bool> deferredLiveTrackerBackendSuccessNotify_{false};
+    // Kept as a delegator: the adapter's ITicketSyncDeps::PushOfflineReplayTimersDuringTransportOutage
+    // override forwards here, and AppController routes it on into the connectivity service (which adds
+    // the transport-down delay + the null-queue-guarded deps push).
+    void PushOfflineReplayTimersDuringTransportOutage(std::chrono::steady_clock::time_point now);
 
     std::atomic<bool> shuttingDown_{false};
     /// One tracked background worker. `done` flips true when the task returns, so the pool can

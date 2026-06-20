@@ -87,6 +87,7 @@
 
 #include "EditMetaCacheService.h"
 #include "FieldEditPipelineService.h"
+#include "ConnectivityMonitorService.h"
 
 #include "PaneSyncKickPolicy.h"
 
@@ -933,7 +934,12 @@ AppController::~AppController() {
 
     shuttingDown_.store(true);
 
-    DrainTrackerConnectivityProbeFuture();
+    // Drain the in-flight connectivity probe future before joining the background pool — the FSM's
+    // std::async worker must not outlive the service (Phase 3 R7). Ordering preserved from the prior
+    // DrainTrackerConnectivityProbeFuture() site.
+    if (connectivity_) {
+        connectivity_->DrainProbeFuture();
+    }
 
     JoinBackgroundTasks();
 }
@@ -1678,6 +1684,46 @@ void AppController::Initialize(const std::string& dbPath, const std::string& bac
     InitCommands();
 }
 
+void AppController::WireCoreServices() {
+    // Construct the deps adapter eagerly so the owned services can capture an interface reference at
+    // construction time. The adapter is owned by this AppController and outlives every service (per
+    // the destructor ordering: ~AppController joins the streaming-sync worker via
+    // `CancelAndJoinActiveStreamingSync` before any member is destroyed, so the adapter is live for
+    // every `deps_.X` call). All constructions are idempotent (`if (!x)` guards).
+    if (!depsAdapter_) {
+        depsAdapter_ = std::make_unique<GridContextDepsAdapter>(*this, focusedContext());
+    }
+    // GLOBAL ConnectivityMonitorService — every connectivity delegator (TickTrackerConnectivityMonitor,
+    // the per-frame banner, the recovery/refetch latches) and the adapter's three re-pointed
+    // ITicketSyncDeps connectivity setters need a live target from the first frame tick (Phase 3).
+    // One instance; every per-pane adapter forwards its connectivity writes here (N writers, one
+    // service). Holds the deps-adapter ref.
+    if (!connectivity_) {
+        connectivity_ = std::make_unique<ConnectivityMonitorService>(*depsAdapter_);
+    }
+    // EditMetaCacheService — every editmeta delegator (CanEditFieldForIssue, EnsureIssueEditMetaLoaded,
+    // the warm-start path, …) needs a live target from the first tick (Phase 1). Holds the adapter ref.
+    if (!editMeta_) {
+        editMeta_ = std::make_unique<EditMetaCacheService>(*depsAdapter_);
+    }
+    // OfflineQueueService — the legacy-pending startup migration below writes to
+    // `offlineQueue_->legacyPendingStartupBanner_` (item 12 extraction).
+    if (!offlineQueue_) {
+        offlineQueue_ = std::make_unique<OfflineQueueService>(*depsAdapter_);
+    }
+    // FieldEditPipelineService — every field-edit delegator (SubmitFieldEdit, SubmitFieldEditNetworkOnly,
+    // TryPrepareOfflineFieldEdit, ApplyFieldEditResult) needs a live target from the first tick (Phase 2).
+    // Holds the deps adapter + EditMetaCacheService by reference — both constructed above, both outlive it.
+    if (!fieldEdit_) {
+        fieldEdit_ = std::make_unique<FieldEditPipelineService>(*depsAdapter_, *editMeta_);
+    }
+    // TicketSyncService — its `CancelAndJoinActiveStreamingSync` is called by RecreateLocalCacheDatabase
+    // (which the legacy-pending cleanup may trigger), so it must exist before that path runs (item 11).
+    if (!focusedContext().ticketSync_) {
+        focusedContext().ticketSync_ = std::make_unique<TicketSyncService>(*depsAdapter_);
+    }
+}
+
 void AppController::InitConfig(const std::string& dbPath, const std::string& backendType) {
     // Record the UI thread identity first. Initialize() is invoked from main() before any
     // background thread is spawned, so this happens-before any worker that could call
@@ -1725,38 +1771,9 @@ void AppController::InitConfig(const std::string& dbPath, const std::string& bac
     });
 #endif
 
-    // Construct the deps adapter eagerly so OfflineQueueService + TicketSyncService can capture
-    // an interface reference at construction time. The adapter is owned by this AppController
-    // and outlives both services (per the destructor ordering: ~AppController joins the
-    // streaming-sync worker via `CancelAndJoinActiveStreamingSync` before any member is
-    // destroyed, so the adapter is live for every `deps_.X` call).
-    if (!depsAdapter_) {
-        depsAdapter_ = std::make_unique<GridContextDepsAdapter>(*this, focusedContext());
-    }
-    // Construct EditMetaCacheService eagerly so every editmeta delegator (CanEditFieldForIssue,
-    // EnsureIssueEditMetaLoaded, the warm-start path, …) has a live target from the first tick
-    // (god-object decomposition Phase 1). The service holds the deps-adapter reference.
-    if (!editMeta_) {
-        editMeta_ = std::make_unique<EditMetaCacheService>(*depsAdapter_);
-    }
-    // Construct OfflineQueueService eagerly so the legacy-pending startup migration below
-    // can write to `offlineQueue_->legacyPendingStartupBanner_` (item 12 extraction).
-    if (!offlineQueue_) {
-        offlineQueue_ = std::make_unique<OfflineQueueService>(*depsAdapter_);
-    }
-    // Construct FieldEditPipelineService eagerly so every field-edit delegator (SubmitFieldEdit,
-    // SubmitFieldEditNetworkOnly, TryPrepareOfflineFieldEdit, ApplyFieldEditResult) has a live
-    // target from the first tick (god-object decomposition Phase 2). Holds the deps adapter +
-    // EditMetaCacheService by reference — both constructed above, both outlive it.
-    if (!fieldEdit_) {
-        fieldEdit_ = std::make_unique<FieldEditPipelineService>(*depsAdapter_, *editMeta_);
-    }
-    // Construct TicketSyncService alongside — its `CancelAndJoinActiveStreamingSync` is called
-    // by `RecreateLocalCacheDatabase` (which the legacy-pending cleanup below may trigger),
-    // so the service must exist before that path runs (item 11 extraction).
-    if (!focusedContext().ticketSync_) {
-        focusedContext().ticketSync_ = std::make_unique<TicketSyncService>(*depsAdapter_);
-    }
+    // Construct the deps adapter + owned single-responsibility services (extracted to keep
+    // InitConfig under the function-size cap — god-object decomposition).
+    WireCoreServices();
     // Construct LuaAutomationHost so `AddAutomationLogSink` calls from plugins'
     // OnEarlyInit have a target (item 14 extraction, Phase 1A).
     if (!impl_->luaHost_) {
@@ -2658,7 +2675,11 @@ bool AppController::RecreateLocalCacheDatabase(std::string& outError) {
     return true;
 }
 
-void AppController::ClearLastTrackerTicketSyncWarning() { LastTrackerTicketSyncWarning.clear(); }
+void AppController::ClearLastTrackerTicketSyncWarning() {
+    if (connectivity_) {
+        connectivity_->ClearLastTicketSyncWarning();
+    }
+}
 
 TrackerIssueFetchPack AppController::FetchIssuesForActiveView(const TrackerConfig* configOverride,
 

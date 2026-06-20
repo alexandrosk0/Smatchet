@@ -118,6 +118,15 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         #     FakeFieldEditDeps / FakeEditMetaDeps / FakeTrackerClient).
         Core/FieldEditPipelineService.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/FieldEditPipelineService.cpp"
+        # --- ConnectivityMonitorService (AppController god-object decomposition Phase 3): the
+        #     tracker connectivity-probe FSM. UI-thread-only by contract (no mutex) but it owns the
+        #     ONE cross-thread handle in the service — the std::async reachability probe future.
+        #     Include it here so the probe-future handoff (launch on one thread, get() on the FSM
+        #     thread) is TSan-instrumented. .cpp pulls ConfigManager / TrackerHttpUtils (already
+        #     linked above) + ITrackerConnectivity (header-only). cpr/ImGui/SQLite-free (header-only
+        #     FakeConnectivityDeps / FakeTrackerClient).
+        Core/ConnectivityMonitorService.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/ConnectivityMonitorService.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/ProjectResolver.cpp"
         # ConfigManager closure (split across 4 TUs). TicketSyncService calls
         # ConfigManager::Load / LoadViewsOrBootstrap / NormalizeViewsBackendKey, which
@@ -486,6 +495,14 @@ add_executable(SmatchetTests
     # AppController/ImGui/cpr/SQLite. Production TU added to the prod-src block below; the audit
     # pair (BackendAuditTrail + FieldEditAuditSource) it links is already in this target.
     Core/FieldEditPipelineService.test.cpp
+    # ConnectivityMonitorService (AppController god-object decomposition Phase 3) — the tracker
+    # connectivity-probe FSM: the banner-formatter matrix (error-priority / session-note / both-
+    # warnings / snapshot-catalog / suffix-dedup / truncation — first-ever banner coverage), the
+    # probe -> state mapping, a probe-down -> recovery sequence, two-writer banner reconciliation,
+    # and the deferred-success / refetch one-shot latches. Drives a header-only FakeConnectivityDeps
+    # + FakeTrackerClient — no AppController/ImGui/cpr/SQLite. Production TU added to the prod-src
+    # block below; IsTrackerTransportErrorText (TrackerHttpPure.cpp) already linked in this target.
+    Core/ConnectivityMonitorService.test.cpp
     # Issue #979 — ITrackerBackendFactory::Create(trackerType, cfg) must receive the
     # caller's LIVE cfg (never a disk re-read racing the debounced prefs save).
     # Exercises the TicketSyncService swap path with a recording factory; no extra
@@ -785,6 +802,11 @@ add_executable(SmatchetTests
     # TrackerFieldSchema — all already in this target. cpr/ImGui/SQLite-free;
     # Core/FieldEditPipelineService.test.cpp drives it via header-only fakes.
     "${CMAKE_SOURCE_DIR}/Source/Core/src/FieldEditPipelineService.cpp"
+    # ConnectivityMonitorService (AppController god-object decomposition Phase 3). Pulls
+    # ConfigManager + ITrackerConnectivity (header-only) + IsTrackerTransportErrorText
+    # (TrackerHttpPure.cpp / TrackerHttpUtils.cpp, both already linked into this target). cpr/ImGui/
+    # SQLite-free; Core/ConnectivityMonitorService.test.cpp drives it via header-only fakes.
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/ConnectivityMonitorService.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpUtils.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpPure.cpp"
     # Slice D of docs/plans/http-fault-injection.md — the retry+classify engine
@@ -1198,8 +1220,13 @@ set(_smatchet_pure_sync_test_files
     # FieldEditPipelineService (Phase 2) + its fake stay SQLite-free too (HasCache() is a
     # predicate, not the raw Cache* — ADR-0020 sync-cache purity).
     Core/FieldEditPipelineService.test.cpp
+    # ConnectivityMonitorService (Phase 3) + its fake stay SQLite-free — the FSM is plain in-memory
+    # state + a std::async probe future; no LocalCacheManager. Replay-timer pushes route through the
+    # deps interface (recorded in the fake), never a Cache*.
+    Core/ConnectivityMonitorService.test.cpp
     support/FakeEditMetaDeps.h
     support/FakeFieldEditDeps.h
+    support/FakeConnectivityDeps.h
     support/FakeOfflineQueueDeps.h
     support/FakeTicketSyncDeps.h
     support/FakeSyncCache.h)
