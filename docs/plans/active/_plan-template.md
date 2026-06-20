@@ -31,6 +31,16 @@ Before you add a row here:
 
 Bullet list. Each entry: `Class::method` or `function_name` + `file:line` + one-line reason. Prevents the "reinvented the wheel" review finding.
 
+## Extraction sizing (when this plan EXTRACTS or SPLITS code/docs)
+
+For any plan that moves bodies out of an over-cap file (a whale agent prompt, an `AGENTS.md` section, a long TU) into a sink (skill, `docs/agent-rules/*`, helper TU), do this one-pass sizing BEFORE writing the diff — `N/A — <reason>` when the plan extracts nothing:
+
+1. **Classify each chunk EXTRACT vs STAYS.** EXTRACT = procedure body / deterministic mechanics / reference detail a reader only needs when actively doing the thing. STAYS = the judgment, the trigger, the one-line "what + why" navigation, and the pointer to the extracted sink.
+2. **Compute the target.** `target ≈ Σ(STAYS) + pointer-overhead` (one cross-link line per extracted chunk). State the projected post-extraction line count and confirm it clears the cap (agent prompt ≤ 250 / `AGENTS.md` ≤ 150 — `AGENTS.md` § Enforcement contract-card).
+3. **Sink must net-shrink the source.** If the extraction doesn't drop the source under its cap (or meaningfully toward soft-warn), reconsider the seam — splitting along the wrong boundary just relocates bytes. Sinks are soft-warn-only, so the win is measured at the SOURCE.
+
+Keep this tight: one tag per chunk in § Files to modify is enough (`EXTRACT → <sink>` / `STAYS`); this section just states the target number + that it clears the cap.
+
 ## UX Pillar callouts
 
 Per `AGENTS.md` § UX Pillars (1 Performance, 2 UI-never-freezes, 3 Never-crash, 4 Accessibility-aspirational). For each, one sentence — either "no impact (reason)" or "impact + how it's mitigated."
