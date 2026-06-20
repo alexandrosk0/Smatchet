@@ -171,6 +171,24 @@ struct GridLiveContext {
     /// here (full ViewDefinition is heavy — see ConfigManager.h).
     std::shared_ptr<const ViewDefinition> resolvedOwnView;
 
+    // --- Ticket-change monitor anchors (ticket-change-monitor plan, S1c-2, item 8) --------
+    // UI-thread-only bookkeeping for the per-pane change probe, same single-thread discipline
+    // as syncRetryAfter / lastSyncedJql above (written/read only on the UI thread by
+    // AppController::TickChangeMonitors and its main-thread apply hop).
+    /// Earliest steady-clock instant the next change probe may be dispatched for this pane.
+    /// Stamped to now + interval at dispatch (the in-flight guard — a probe in flight keeps
+    /// this in the future so the per-frame tick does not re-dispatch) and re-advanced on apply.
+    /// Consulted by smatchet::ShouldPollForChanges (PaneSyncKickPolicy.h).
+    std::chrono::steady_clock::time_point nextChangePollAt{};
+    /// Wall-clock "changed since" anchor for the backend query. Advanced to now after each
+    /// successful poll; the probe asks for issues whose salient fields changed since roughly
+    /// one interval before it (window margin absorbs minute-granularity / clock skew).
+    std::chrono::system_clock::time_point changeSinceAnchor{};
+    /// False until the first poll establishes the silent baseline (seeds changeSinceAnchor
+    /// without fetching or toasting), so enabling the monitor on an already-populated pane
+    /// does not replay the whole view as "changes".
+    bool changeBaselineEstablished = false;
+
   private:
     /// Guarded by backendKeyMutex_ — see CacheBackendKeyCopy/SetCacheBackendKey above.
     std::string backendKey;

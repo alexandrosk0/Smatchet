@@ -1125,7 +1125,33 @@ class AppController : public IMainThreadPoster {
     /// hidden past the grace window whose sync is idle. See plan § Performance / item 18.
     void TickAllContexts();
 
+    // --- Ticket-change monitor (ticket-change-monitor plan, S1c-2, items 8/10/17) --------
+    /// UI thread, once per frame (hosted next to TickTrackerConnectivityMonitor in SmatchetUI).
+    /// For each recently-visible live pane whose change-poll gate is open
+    /// (smatchet::ShouldPollForChanges — monitor enabled, backend reachable, window focused,
+    /// pane recently visible, sync idle, interval elapsed), dispatch ONE off-thread change probe
+    /// (FetchIssuesChangedSince) and stamp nextChangePollAt forward as the in-flight guard. The
+    /// first poll per context establishes a silent baseline (seeds the anchor, no fetch/toast).
+    /// Results hop back to applyChangeProbeOnMainThread_. No-op when cfg disables the monitor.
+    void TickChangeMonitors(const TrackerConfig& cfg);
+    /// Any-thread setter for the OS window focus signal (plan item 17). The Standalone host
+    /// feeds GLFW_FOCUSED each frame; targets with no focus signal leave it true. Read by
+    /// TickChangeMonitors' poll gate so a backgrounded window stops polling.
+    void SetWindowFocused(bool focused);
+
   private:
+    /// Main-thread completion of a change probe: re-find the pane context (dropped if retired)
+    /// and re-check its backendGeneration_ against `capturedGeneration` (dropped if swapped
+    /// mid-flight), diff the fetched rows against the pane's current ActiveTickets cache
+    /// (DiffChangedTickets over the resolved salient roster), notify on any salient delta,
+    /// then advance changeSinceAnchor and re-stamp nextChangePollAt. UI thread.
+    void applyChangeProbeOnMainThread_(const std::string& paneId, std::vector<CachedTicket> fetched,
+                                       std::chrono::system_clock::time_point polledAt,
+                                       std::uint64_t capturedGeneration);
+    /// OS window focus latch (plan item 17). Defaults true so targets without a focus signal
+    /// always poll. Written by SetWindowFocused (any thread), read by TickChangeMonitors.
+    std::atomic<bool> windowFocused_{true};
+
     /// EnsurePaneLiveSyncStarted's main-thread completion: capture-then-check the backend
     /// generation (issue #1081 — stale kick dropped + latch re-armed), then kick the live
     /// fetch and seed the cleared ActiveTickets from the durable cache snapshot. UI thread.

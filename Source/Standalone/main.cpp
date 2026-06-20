@@ -1062,6 +1062,11 @@ static int RunFrameLoop(MainBootState& boot) {
         bool lastAppliedVsync = smatchet::vsync::Enabled();
 
         while (!glfwWindowShouldClose(window)) {
+            // Feed the OS window-focus signal to the ticket-change monitor (plan item 17): a
+            // backgrounded window stops polling for changes. GLFW_FOCUSED is cheap and valid
+            // every frame; the no-signal default on the AppController side is true.
+            smatchetApp.SetWindowFocused(glfwGetWindowAttrib(window, GLFW_FOCUSED) != 0);
+
             const bool liveVsync = smatchet::vsync::Enabled();
             const int syncInterval = liveVsync ? 1 : 0;
             // GL applies vsync via glfwSwapInterval on-change; DX12 takes syncInterval

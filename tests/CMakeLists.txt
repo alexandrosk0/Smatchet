@@ -877,6 +877,10 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/TicketChangeDiffPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/JqlChangedSincePure.cpp"
     Core/TicketChangeDiffPure.test.cpp
+    # ticket-change-monitor S1c-2 — ResolveSalientRoster (the item-1 residual: maps the fixed
+    # canonical salient roster onto a pane's field catalog by family -> SchemaSystem -> exact-name
+    # precedence). Lives in the already-listed TicketChangeDiffPure.cpp; pure (TrackerField only).
+    Core/ResolveSalientRoster.test.cpp
     Core/JqlChangedSincePure.test.cpp
     Core/MembershipDiffPure.test.cpp
     # ticket-change-monitor S1b — Jira-private changelog-delta parser (issue `expand=changelog`
