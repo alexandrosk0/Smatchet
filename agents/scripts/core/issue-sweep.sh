@@ -126,4 +126,23 @@ done <<< "$records"
 
 echo "issue-sweep: $relabeled relabel · $kept keep (repo $REPO) — $([ "$MODE" = apply ] && echo "applied $acted bot-only action(s)" || echo "dry-run; --apply acts on bot-authored only")"
 [ -n "$propose_line" ] && echo "$propose_line"
+
+# Self-elevation markers (docs/agent-rules/issue-triage.md § Self-elevation marker):
+# a `elevate-to-issue:` line in a backlog/plan file that owes a GitHub Issue but has
+# no `→ #<n>` backlink yet → WARN + an [issue-propose]-style nudge so the unfiled bug
+# is never silently parked in a backlog/plan line. Skips lines already linked (`→ #`).
+if command -v grep >/dev/null 2>&1; then
+    elev=0
+    while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        # skip lines that already carry a → #<n> backlink (considered linked)
+        case "$line" in *"$(printf '\342\206\222') #"*|*"-> #"*) continue ;; esac
+        file="${line%%:*}"
+        echo "  ELEVATE-OWED $line" >&2
+        echo "[issue-propose] unfiled bug marked in $file — file a GitHub Issue (gh issue create) or add a → #<n> backlink" >&2
+        elev=$((elev+1))
+    done < <(grep -rn --include='*.md' 'elevate-to-issue:' \
+                docs/self-improvement/categories docs/plans/active 2>/dev/null || true)
+    [ "$elev" -gt 0 ] && echo "issue-sweep: $elev unfiled self-elevation marker(s) — see [issue-propose] lines above" >&2
+fi
 exit 0

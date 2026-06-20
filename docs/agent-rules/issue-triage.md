@@ -68,6 +68,12 @@ Triage *tracks + labels* Issues; **fixing one is user-initiated and label-routed
 
 **Auto-propose, never auto-fix (the guardrail).** At ship-loop closeout the sweep, *after* triaging strays, **surfaces the highest-priority open bug as a proposal** — a `[issue-propose] #<n> <title> (P<k>, area:X) — elevate? gh issue develop <n>` line for the top open `P0` (then `P1`) — so the most urgent bug never sits unnoticed. It does **NOT** start a fix and does **NOT** pause the loop. The human elevates (`fix #<n>`); agents *propose* the next bug, the human *decides*. This keeps the never-silently-mutate-product-behaviour posture: the loop auto-files, auto-triages, and auto-*proposes*, but a product-code fix is always human-initiated.
 
+## Self-elevation marker — backlog/plan line → GitHub Issue
+
+When an agent writes a `docs/self-improvement/categories/*` or `docs/plans/active/*` line that it judges is *really* a user-observable product bug (per § The bug-vs-debt rule) but cannot file the Issue in-flow, it leaves a grep-parseable **`elevate-to-issue:`** marker on that line (e.g. `elevate-to-issue: crash on empty JQL — file as P1 area:tracker-backend`). The marker is the self-flag that the line owes a GitHub Issue. Once the Issue exists, replace the marker with the backlink `→ #<n>` (the § Issue ↔ backlog backlink convention). A marker with a `→ #<n>` already present is considered linked and is not re-surfaced.
+
+The ship-loop closeout `issue-sweep.sh` greps changed/added `categories/*` + `plans/active/*` lines for an unlinked `elevate-to-issue:` marker and, when found, WARNs + emits an `[issue-propose]`-style line so the unfiled bug never sits silently in a backlog/plan line.
+
 ## Labels
 
 Managed by [`agents/scripts/project/sync-issue-labels.sh`](../../agents/scripts/project/sync-issue-labels.sh) from a checked-in [manifest](../../agents/scripts/project/issue-labels.manifest) (so the set is reproducible + the `area:*` labels stay in parity with the `coderabbit-triage` subsystem map):
