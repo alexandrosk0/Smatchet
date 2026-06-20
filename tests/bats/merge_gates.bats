@@ -2379,22 +2379,57 @@ CFG
     unset MERGE_GATES_CR_INSTALLED
 }
 
-@test "CR rate-limit + CODE PR BLOCK (pause for re-review)" {
-    local f1 f2
+@test "CR rate-limit + CODE PR + NO current-head CR verdict BLOCK (pause for re-review)" {
+    # The rate-limit block on a CODE PR fires ONLY when cr_state == NONE (no CR
+    # review object exists on the current head) — the rate-limit comment is then
+    # the only CR signal, so pause for re-review. reviews.nodes empty => cr_state
+    # NONE; set explicitly here so this case keeps exercising the block after the
+    # finding fix gated the block on cr_state==NONE.
+    local f1 f2 f3
     f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
         "data.repository.pullRequest.comments.nodes" \
         '[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"body":"> Review skipped\n\nCodeRabbit hit its rate limit. Please try again later."}]')"
     f2="$(fixture_override "$f1" \
         "data.repository.pullRequest.files" \
         '{"pageInfo":{"hasNextPage":false},"nodes":[{"path":"Source/Core/src/Foo.cpp"}]}')"
+    f3="$(fixture_override "$f2" \
+        "data.repository.pullRequest.reviews" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[]}')"
     export MERGE_GATES_CR_INSTALLED=true
-    set_fixture "$f2"
+    set_fixture "$f3"
     run poll_merge_gates org repo 1
     [ "$status" -eq 1 ]
     [[ "$output" != *"GATES_PASSED"* ]]
     [[ "$output" == *"rate-limited on a CODE PR"* ]]
     [[ "$output" == *"CODE-PR-pause"* ]]
-    rm -f "$f1" "$f2"
+    rm -f "$f1" "$f2" "$f3"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
+@test "CR rate-limit + CODE PR + current-head APPROVED verdict does NOT block (stale rate-limit ignored)" {
+    # Regression for the PR-2 finding: a STALE rate-limit comment from a PRIOR
+    # push must NOT override a legitimate current-head CR verdict. With an
+    # APPROVED CR review on the head sha (abc123) the rate-limit block must NOT
+    # fire — the current-head verdict wins and the gate passes, while the print
+    # annotates the stale rate-limit as non-blocking.
+    local f1 f2 f3
+    f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.comments.nodes" \
+        '[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"body":"> Review skipped\n\nCodeRabbit hit its rate limit. Please try again later."}]')"
+    f2="$(fixture_override "$f1" \
+        "data.repository.pullRequest.files" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"path":"Source/Core/src/Foo.cpp"}]}')"
+    f3="$(fixture_override "$f2" \
+        "data.repository.pullRequest.reviews" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"author":{"login":"coderabbitai[bot]"},"state":"APPROVED","submittedAt":"2026-06-19T00:00:00Z","commit":{"oid":"abc123"},"body":"Approved."}]}')"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f3"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" != *"CODE-PR-pause"* ]]
+    [[ "$output" == *"rate-limit stale-on-prior-push"* ]]
+    rm -f "$f1" "$f2" "$f3"
     unset MERGE_GATES_CR_INSTALLED
 }
 

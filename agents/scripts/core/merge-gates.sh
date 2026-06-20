@@ -1296,11 +1296,22 @@ poll_merge_gates() {
                 cr_open_blocks=false
                 cr_state_print="${cr_state_print} +rate-limit pure-docs-auto-downgrade (WARN)"
                 echo "WARN: CodeRabbit rate-limited on a pure-docs PR (diff within docs/ / backlog/ / agents/scripts/ / *.md) — CR gate auto-downgraded to WARN (no label needed; markdown is never compiled). PR-2 cr-review-skipped-pure-docs-auto-downgrade." >&2
-            else
+            elif [ "$cr_state" = "NONE" ]; then
+                # CODE PR with NO current-head CR verdict: the rate-limit skip is
+                # the only CR signal for this head, so block (PAUSE/RETRY) until CR
+                # recovers + re-reviews within the grace window.
                 cr_pass=false
                 cr_rate_limit_block=true
                 cr_state_print="${cr_state_print} +rate-limit CODE-PR-pause (block; pending CR re-review)"
                 echo "BLOCK: CodeRabbit rate-limited on a CODE PR — pausing for CR to re-review on quota recovery. To merge before then, apply BOTH 'cr-out-of-band' AND a 'cr-disposition:<reason>' label (the disposition attests you consciously merged past an incomplete review). PR-2 cr-rate-limit-code-pr-auto-pause." >&2
+            else
+                # CODE PR that ALSO has a real current-head CR verdict
+                # (APPROVED / COMMENTED / CHANGES_REQUESTED / STALE*): a rate-limit
+                # comment is STALE — it survives from a PRIOR push and must NOT
+                # override the legitimate current-head review. Leave cr_pass /
+                # cr_open_blocks as the case-block computed them; only annotate the
+                # print so the operator sees the rate-limit signal was ignored.
+                cr_state_print="${cr_state_print} +rate-limit stale-on-prior-push (non-blocking; current-head ${cr_state} verdict wins)"
             fi
         fi
 
