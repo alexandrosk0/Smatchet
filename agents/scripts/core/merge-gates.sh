@@ -9,7 +9,11 @@
 #      meant-to-block allow-list (name ~ Coverage|Sanitizer, non-advisory)
 #      — see $failing below + postmortems.md 2026-06-06 "#923".
 #   2. CodeRabbit — latest review on current headRefOid is not CHANGES_REQUESTED;
-#      zero unresolved non-outdated review threads contain a CodeRabbit comment
+#      zero unresolved non-outdated review threads contain a CodeRabbit comment.
+#      A CR rate-limit skip (TEMPORARY, distinct from a terminal "Review skipped")
+#      auto-downgrades to WARN on a PURE-DOCS PR (no label) but PAUSES a CODE PR
+#      for CR re-review (PR-2). See the rate-limit handling block + the
+#      cr-disposition label note below.
 #   3. User comments — zero unresolved non-outdated review threads with any
 #      non-bot non-self comment; zero conversation-tab comments from non-bot
 #      non-self authors
@@ -32,7 +36,12 @@
 #   intent-out-of-band → downgrades `Intent section` FAIL → WARN
 #   plan-lock-out-of-band → downgrades `Plan-lock gate` FAIL → WARN
 #   cr-out-of-band    → downgrades a CodeRabbit block → WARN (CR gate only;
-#                       CI + user-comment gates still bind)
+#                       CI + user-comment gates still bind). EXCEPTION: a CR
+#                       rate-limit skip on a CODE PR is NOT waived by
+#                       cr-out-of-band alone — it ALSO needs a `cr-disposition:`
+#                       label (PR-2 cr-rate-limit-code-pr-auto-pause).
+#   cr-disposition:*  → operator attestation paired with cr-out-of-band to merge
+#                       past a CR rate-limit skip on a CODE PR.
 #   bugbot-out-of-band → downgrades a Cursor Bugbot block → WARN (Bugbot gate
 #                       only; CI + CR + user-comment gates still bind)
 # Downgraded failures are logged on stderr but do NOT contribute to ci_fail
@@ -460,7 +469,7 @@ poll_merge_gates() {
     # Option B: parse the GraphQL response with gh's BUNDLED jq (`gh api --jq`)
     # — no standalone `jq` binary required (gh is the only dep). One filter
     # computes every gate field and emits them as a fixed-order, one-per-line
-    # stream (27 lines) that the poll loop reads with `mapfile`. The exact jq
+    # stream (31 lines) that the poll loop reads with `mapfile`. The exact jq
     # sub-expressions are the same ones the per-field `jq` calls used before;
     # they're just composed into one program. ORCH_USER is spliced in as a
     # string literal because `gh --jq` (unlike standalone jq) takes no --arg.
@@ -480,14 +489,20 @@ poll_merge_gates() {
     # cursor[bot] review anywhere) · 25 bbOpen (count of unresolved non-outdated
     # cursor[bot] inline-finding review threads — Bugbot gate #4) · 26 bbOob
     # (bugbot-out-of-band label) · 27 selfImpOnly (bool: PR diff entirely under
-    # docs/self-improvement/** → auto-skip CR + Bugbot gates).
-    # selfImpOnly is LAST because it is always a non-empty "true"/"false" — a
-    # trailing EMPTY field (reqAbsentNames is "" in the common case) would be
-    # stripped by the `data=$(gh …)` command substitution (trailing-newline
-    # collapse), deflating the 28-field count and tripping the fail-closed
-    # assertion. reqAbsentCount (22), crReviewSkipped (23), bbState (24,
-    # ABSENT-default), bbOpen (25, numeric) and bbOob (26, "true"/"false") are
-    # also non-empty so they are safe ahead of selfImpOnly.
+    # docs/self-improvement/** → auto-skip CR + Bugbot gates) ·
+    # 28 pureDocs (bool: PR diff strictly within the is-pure-docs-diff.sh
+    # allow-list — docs/ / backlog/ / agents/scripts/ / *.md) ·
+    # 29 crRateLimited (bool: CR posted a rate-limit signal on a comment OR the
+    # CodeRabbit StatusContext description — a TEMPORARY skip, not a terminal pass) ·
+    # 30 crDisposition (bool: a `cr-disposition:` prefixed label is present — the
+    # explicit operator attestation required before `cr-out-of-band` waives a
+    # rate-limit skip on a CODE PR).
+    # The trailing fields must all be non-empty so the `data=$(gh …)` command
+    # substitution (trailing-newline collapse) never strips one and deflates the
+    # 31-field count (tripping the fail-closed assertion). reqAbsentCount (22),
+    # crReviewSkipped (23), bbState (24, ABSENT-default), bbOpen (25, numeric),
+    # bbOob (26), selfImpOnly (27), pureDocs (28), crRateLimited (29) and
+    # crDisposition (30) are all non-empty tokens, so they are safe at the tail.
     local GATE_FILTER
     GATE_FILTER='
 .data.repository.pullRequest as $pr
@@ -511,6 +526,13 @@ poll_merge_gates() {
 | ($labels | any(. == "intent-out-of-band")) as $intent
 | ($labels | any(. == "plan-lock-out-of-band")) as $planlock
 | ($labels | any(. == "cr-out-of-band")) as $cr
+# crDisposition — any label prefixed `cr-disposition:` (e.g.
+# `cr-disposition:rate-limit-acked`). On a CODE PR that CR rate-limit-skipped,
+# `cr-out-of-band` alone is NOT honoured — the operator must ALSO attest an
+# explicit disposition via this label, proving they consciously merged past an
+# incomplete CR review rather than letting a transient rate limit silently
+# bypass review (PR-2 cr-rate-limit-code-pr-auto-pause).
+| ($labels | any(startswith("cr-disposition:"))) as $crdisposition
 | ($labels | any(. == "bugbot-out-of-band")) as $bb
 | ((($pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes) // [])
    | map(. + {_k: (if .__typename == "CheckRun" then ["CheckRun", (.name // "")]
@@ -598,6 +620,34 @@ poll_merge_gates() {
     | (.description // "")]
    | any((test("review skipped"; "i"))
          and ((test("too many files"; "i")) | not))) as $crreviewskipped
+# crRateLimited — CR declined / deferred the review because it hit its rate
+# limit (PR-2 cr-review-skipped-pure-docs-auto-downgrade /
+# cr-rate-limit-code-pr-auto-pause). Distinct from $crreviewskipped (a clean
+# path-filtered/docs skip, a PASS) and $crskip (the too-many-files size skip):
+# a rate-limit skip is TEMPORARY — CR will re-review once its quota recovers, so
+# it must NOT be treated as a terminal pass on a CODE PR. Read from BOTH the CR
+# conversation-comment bodies AND the "CodeRabbit" StatusContext description
+# (CR surfaces the rate-limit on either surface). Regex tolerates "rate limit",
+# "rate-limited", "rate limited", and the common "try again later" phrasing.
+# (NB: no apostrophes in this single-quoted jq filter string.)
+| (([$pr.comments.nodes[]?
+     | select(.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
+     | (.body // "")]
+    + [$pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
+       | select(.__typename == "StatusContext" and .context == "CodeRabbit")
+       | (.description // "")])
+   | any(test("rate.?limit"; "i") or test("try again later"; "i"))) as $crratelimited
+# pureDocs — the PR diff is strictly within the is-pure-docs-diff.sh allow-list
+# (docs/ , backlog/ , agents/scripts/ , or any *.md ANYWHERE). Mirrors that
+# script over the PR file list so the poller can apply the IDENTICAL pure-docs
+# verdict without a local checkout. Used by the rate-limit auto-downgrade
+# (deliverable 1): a rate-limit skip on a pure-docs PR is harmless to fast-pass
+# (markdown is never compiled), while a rate-limit skip on a CODE PR must pause /
+# require an explicit disposition (deliverable 2). Fail-safe FALSE on an empty
+# file list, a >100-file page (cannot see every path), or absent files.
+| (($changedPaths | length) > 0
+   and ($filesOverflow | not)
+   and ($changedPaths | all(test("^(docs/|backlog/|agents/scripts/|.*[.]md$)")))) as $pureDocs
 # Bugbot (cursor[bot]) — mirrors the $crall/$crstate machinery. $bball = all
 # reviews authored by cursor[bot] (its summary review, always state COMMENTED).
 # $bbterminal = TRUE when a cursor[bot] CONVERSATION (issue) comment body carries
@@ -669,7 +719,10 @@ poll_merge_gates() {
     ([$pr.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false
         and any(.comments.nodes[]; .author.login == "cursor" or .author.login == "cursor[bot]"))] | length),
     ($bb | tostring),
-    ($selfImpOnly | tostring)
+    ($selfImpOnly | tostring),
+    ($pureDocs | tostring),
+    ($crratelimited | tostring),
+    ($crdisposition | tostring)
   )
 '
     GATE_FILTER="${GATE_FILTER//__ORCH_USER__/$ORCH_USER}"
@@ -713,7 +766,7 @@ poll_merge_gates() {
         fi
         gh_fails=0
 
-        # Parse the gh --jq field stream — 27 fixed-order lines (see GATE_FILTER
+        # Parse the gh --jq field stream — 31 fixed-order lines (see GATE_FILTER
         # field map above). gh --jq errors already routed through the gh-fail
         # path above; this guards a truncated/partial body → fail closed (retry).
         local fields
@@ -722,11 +775,11 @@ poll_merge_gates() {
         # "OPEN\r" != "OPEN" → spurious return-4).
         data="${data//$'\r'/}"
         mapfile -t fields <<<"$data"
-        if [ "${#fields[@]}" -ne 28 ]; then
-            # Exactly 28 expected. Any other count (a field value with an embedded
+        if [ "${#fields[@]}" -ne 31 ]; then
+            # Exactly 31 expected. Any other count (a field value with an embedded
             # newline would inflate it, misaligning fields[n]) → fail closed (CR #511).
             gh_fails=$((gh_fails+1))
-            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 28); transient ($gh_fails/3)"
+            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 31); transient ($gh_fails/3)"
             if [ "$gh_fails" -ge 3 ]; then echo "GH_API_DOWN"; return 3; fi
             local elapsed_short=$(( $(date +%s) - start ))
             if [ "$elapsed_short" -ge "$TIMEOUT_SECONDS" ]; then echo "GATES_TIMEOUT"; return 2; fi
@@ -882,6 +935,23 @@ poll_merge_gates() {
         # *blocking* — stopping it from *posting* needs a Cursor-dashboard
         # path-ignore (docs/agent-rules/merge-gates.md § Bugbot gate).
         local self_imp_only="${fields[27]:-false}"
+
+        # pure_docs — true iff the PR diff is strictly within the
+        # is-pure-docs-diff.sh allow-list (docs/ / backlog/ / agents/scripts/ /
+        # *.md). Field 28. Drives the rate-limit auto-downgrade (deliverable 1):
+        # a CR rate-limit skip on a pure-docs PR is harmless to fast-pass.
+        # Empty/parse-miss → false (fail-safe = NOT pure-docs → treated as code).
+        local pure_docs="${fields[28]:-false}"
+        # cr_rate_limited — true iff CR signalled a rate limit on a comment or its
+        # StatusContext description (field 29). A TEMPORARY skip (CR re-reviews on
+        # quota recovery), distinct from the terminal cr_review_skipped pass.
+        # Drives both the pure-docs auto-downgrade (deliverable 1) and the CODE-PR
+        # pause/disposition gate (deliverable 2). Empty/parse-miss → false.
+        local cr_rate_limited="${fields[29]:-false}"
+        # cr_disposition — a `cr-disposition:` prefixed label is present (field 30).
+        # Required ALONGSIDE cr-out-of-band to waive a rate-limit skip on a CODE
+        # PR (deliverable 2): cr-out-of-band alone is NOT honoured for that case.
+        local cr_disposition="${fields[30]:-false}"
 
         # User comments (non-bot, non-self) — -1 fails closed at `user -eq 0`.
         local user="${fields[15]:--1}"
@@ -1189,21 +1259,66 @@ poll_merge_gates() {
             esac
         fi
 
-        printf 'Poll %d/%d — CI: %d/%d pass (%d fail, %d pending, %d warn-downgraded, %d req-missing) | CodeRabbit: %s (%d open) | Bugbot: %s (%d open) | User: %d | reviewDecision: %s\n' \
-            $((p+1)) "$MAX_POLLS" $((ci_total - ci_fail - ci_pend - ci_warn_downgraded)) "$ci_total" \
-            "$ci_fail" "$ci_pend" "$ci_warn_downgraded" "$req_absent" \
-            "$cr_state_print" "$cr_open" "$bb_state_print" "$bb_open" "$user" "$review_decision"
-
         # H1: APPROVED CR review passes unconditionally per AGENTS.md § Merge
         # gates § CodeRabbit ("APPROVED → pass unconditionally (approval trumps
         # body)"). Previously the pass-check always required cr_open == 0, so
         # an APPROVED review on the current head + any unresolved non-outdated
         # CR thread (even one CR itself left for context) wedged the gate.
         # Decompose into an explicit `cr_open_blocks` so the intent is legible.
+        # Computed BEFORE the Poll status line so the rate-limit handling below
+        # (which may rewrite cr_state_print) is reflected on that line.
         local cr_open_blocks=false
         if [ "$cr_state" != "APPROVED" ] && [ "$cr_open" -ne 0 ]; then
             cr_open_blocks=true
         fi
+
+        # ── CR rate-limit handling (PR-2) ─────────────────────────────────────
+        # A CR rate-limit skip is TEMPORARY (CR re-reviews once its quota recovers),
+        # so it must override whatever PASS the case-block computed via the generic
+        # terminal cr_review_skipped path — otherwise a rate-limit "Review skipped"
+        # on a CODE PR would falsely fast-pass with zero review. Two outcomes:
+        #   • pure-docs PR  → auto-downgrade to WARN/pass, NO label needed. Markdown
+        #     is never compiled, so a deferred CR review on a docs-only diff is
+        #     harmless (deliverable 1: cr-review-skipped-pure-docs-auto-downgrade).
+        #   • CODE PR       → block this poll (PAUSE/RETRY): the merge-gate keeps
+        #     polling so CR recovers + re-reviews within the grace window.
+        #     cr-out-of-band ALONE will NOT waive this; the operator must ALSO
+        #     attest an explicit `cr-disposition:` label (enforced in the
+        #     cr-out-of-band downgrade below). (deliverable 2:
+        #     cr-rate-limit-code-pr-auto-pause.)
+        # $cr_rate_limit_block scopes the disposition requirement to exactly this
+        # case so a normal cr-out-of-band on a non-rate-limited block is unaffected.
+        # Runs BEFORE the Poll line so cr_state_print reflects the rate-limit verdict.
+        local cr_rate_limit_block=false
+        if [ "$cr_rate_limited" = "true" ]; then
+            if [ "$pure_docs" = "true" ]; then
+                cr_pass=true
+                cr_open_blocks=false
+                cr_state_print="${cr_state_print} +rate-limit pure-docs-auto-downgrade (WARN)"
+                echo "WARN: CodeRabbit rate-limited on a pure-docs PR (diff within docs/ / backlog/ / agents/scripts/ / *.md) — CR gate auto-downgraded to WARN (no label needed; markdown is never compiled). PR-2 cr-review-skipped-pure-docs-auto-downgrade." >&2
+            elif [ "$cr_state" = "NONE" ]; then
+                # CODE PR with NO current-head CR verdict: the rate-limit skip is
+                # the only CR signal for this head, so block (PAUSE/RETRY) until CR
+                # recovers + re-reviews within the grace window.
+                cr_pass=false
+                cr_rate_limit_block=true
+                cr_state_print="${cr_state_print} +rate-limit CODE-PR-pause (block; pending CR re-review)"
+                echo "BLOCK: CodeRabbit rate-limited on a CODE PR — pausing for CR to re-review on quota recovery. To merge before then, apply BOTH 'cr-out-of-band' AND a 'cr-disposition:<reason>' label (the disposition attests you consciously merged past an incomplete review). PR-2 cr-rate-limit-code-pr-auto-pause." >&2
+            else
+                # CODE PR that ALSO has a real current-head CR verdict
+                # (APPROVED / COMMENTED / CHANGES_REQUESTED / STALE*): a rate-limit
+                # comment is STALE — it survives from a PRIOR push and must NOT
+                # override the legitimate current-head review. Leave cr_pass /
+                # cr_open_blocks as the case-block computed them; only annotate the
+                # print so the operator sees the rate-limit signal was ignored.
+                cr_state_print="${cr_state_print} +rate-limit stale-on-prior-push (non-blocking; current-head ${cr_state} verdict wins)"
+            fi
+        fi
+
+        printf 'Poll %d/%d — CI: %d/%d pass (%d fail, %d pending, %d warn-downgraded, %d req-missing) | CodeRabbit: %s (%d open) | Bugbot: %s (%d open) | User: %d | reviewDecision: %s\n' \
+            $((p+1)) "$MAX_POLLS" $((ci_total - ci_fail - ci_pend - ci_warn_downgraded)) "$ci_total" \
+            "$ci_fail" "$ci_pend" "$ci_warn_downgraded" "$req_absent" \
+            "$cr_state_print" "$cr_open" "$bb_state_print" "$bb_open" "$user" "$review_decision"
 
         # cr-out-of-band label: when present, downgrade a CR block to a WARN
         # (pass) — mirrors the tests/perf-out-of-band CI-downgrade pattern but
@@ -1215,17 +1330,30 @@ poll_merge_gates() {
         # the label only waives CodeRabbit's own conditions. Like the other
         # out-of-band labels, it MUST NOT stay on the PR post-merge.
         if [ "$has_cr_oob" = "true" ] && { [ "$cr_pass" != true ] || [ "$cr_open_blocks" = true ]; }; then
-            if [ "$cr_size_skip_block" = true ]; then
-                # Tailored message for the size-skip block — names the actual
-                # cause (CR skipped review, too many files) rather than the
-                # generic "CR block" so the operator's log is unambiguous.
-                echo "WARN: cr-out-of-band — CR skipped review (too many files) overridden" >&2
+            if [ "$cr_rate_limit_block" = true ] && [ "$cr_disposition" != true ]; then
+                # Deliverable 2: a CR rate-limit skip on a CODE PR needs MORE than
+                # cr-out-of-band — the operator must ALSO attest an explicit
+                # `cr-disposition:` label. Without it, cr-out-of-band is NOT honoured
+                # here (the block stands → keep pausing for CR re-review). This stops
+                # a transient rate limit from being silently waved through on the
+                # strength of a generic out-of-band label alone.
+                echo "WARN: cr-out-of-band present but NOT honoured — a CR rate-limit skip on a CODE PR also requires a 'cr-disposition:<reason>' label. Add one to merge past the rate-limited review, or wait for CR to re-review. PR-2 cr-rate-limit-code-pr-auto-pause." >&2
             else
-                echo "WARN: cr-out-of-band label downgraded CR block (${cr_state_print}) to WARN" >&2
+                if [ "$cr_size_skip_block" = true ]; then
+                    # Tailored message for the size-skip block — names the actual
+                    # cause (CR skipped review, too many files) rather than the
+                    # generic "CR block" so the operator's log is unambiguous.
+                    echo "WARN: cr-out-of-band — CR skipped review (too many files) overridden" >&2
+                elif [ "$cr_rate_limit_block" = true ]; then
+                    # cr-out-of-band + cr-disposition both present → honoured.
+                    echo "WARN: cr-out-of-band + cr-disposition label downgraded CR rate-limit block (${cr_state_print}) to WARN" >&2
+                else
+                    echo "WARN: cr-out-of-band label downgraded CR block (${cr_state_print}) to WARN" >&2
+                fi
+                cr_pass=true
+                cr_open_blocks=false
+                cr_overridden=true
             fi
-            cr_pass=true
-            cr_open_blocks=false
-            cr_overridden=true
         fi
 
         # Self-improvement doc PR — belt-and-suspenders CR-gate auto-skip beside

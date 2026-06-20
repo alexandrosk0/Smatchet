@@ -142,6 +142,26 @@ reviews:
         Available FetchContent libs: nlohmann/json, cpr, SQLiteCpp,
         cpp-httplib, md4c, ImGui (docking), GLFW, Lua + sol2,
         ghc::filesystem — do NOT propose adding new dependencies.
+    - path: 'docs/plans/**'
+      instructions: |
+        Plan docs live in THREE tiers — `docs/plans/active/<slug>.md` (in
+        flight), `docs/plans/shipped/<slug>.md` (done), and
+        `docs/plans/deferred/<slug>.md` (parked). Cross-references between
+        docs use the TIER-LESS, MOVE-PROOF form `docs/plans/<slug>.md` (NO
+        `active/` / `shipped/` / `deferred/` segment): the link checkers
+        (`test-plan-ref-integrity`, `test-markdown-links`) resolve it against
+        whichever tier currently holds the file, so a `git mv` between tiers
+        can never break a reference. Do NOT suggest "fixing" a tier-less
+        `docs/plans/<slug>.md` reference by adding the tier segment, and do
+        NOT suggest converting a working tier-less link into an
+        `active/`-qualified one — that REINTRODUCES the move-fragility the
+        convention exists to avoid. The `docs/plans/INDEX.md` "Applied /
+        archived plans" table is AUTO-GENERATED from `docs/plans/shipped/` by
+        `agents/scripts/core/test-plan-index.sh` between the
+        `<!-- BEGIN auto-plan-index -->` / `<!-- END auto-plan-index -->`
+        markers — do NOT suggest hand-editing rows there; a summary change
+        goes in an `<!-- index-summary: ... -->` comment inside the plan file
+        and is regenerated with `test-plan-index.sh --fix`.
 
   ## CodeRabbit's static-analysis tools are mostly redundant with the
   ## deferred-lint pipeline (cppcheck + clang-tidy + clang-format run on
