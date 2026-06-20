@@ -130,8 +130,44 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
+      pull-requests: read
     steps:
+      # Pre-checkout scope gate. The INDEX only tracks docs/plans/shipped/, so a
+      # PR that does not touch shipped/ needs no autosync — and must NOT be redded
+      # by the credentialed checkout below, whose PLAN_INDEX_PAT can be
+      # absent/expired and then fails closed (`could not read Username`), failing
+      # an unrelated PR. Detect changed files via the REST API under the default
+      # GITHUB_TOKEN (no checkout, no PAT); skip every later step when shipped/ is
+      # untouched. A job whose steps all skip still reports success, so this
+      # non-required check goes green instead of failing.
+      - name: Detect shipped-plan changes
+        id: shipped
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Fail OPEN on a query error (run the autosync defensively) instead of
+          # silently skipping — this job exists to catch shipped-INDEX drift, so a
+          # `gh api` hiccup must not mask a real drift. Emit BOTH .filename and
+          # .previous_filename so a plan RENAMED OUT of docs/plans/shipped/ (a
+          # shipped->active un-ship, which test-plan-index.sh itself handles) is
+          # detected — not just files whose NEW path is under shipped/.
+          if ! files="$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files" \
+                 --jq '.[] | [.filename, (.previous_filename // "")] | @tsv')"; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Unable to query PR files — running INDEX autosync defensively."
+            exit 0
+          fi
+          if printf '%s\n' "$files" | grep -Eq '(^|[[:space:]])docs/plans/shipped/'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "PR touches docs/plans/shipped/ — running INDEX autosync."
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "PR does not touch docs/plans/shipped/ — autosync skipped (nothing the INDEX tracks changed)."
+          fi
       - name: Checkout PR head branch
+        if: steps.shipped.outputs.changed == 'true'
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.event.pull_request.head.ref }}
@@ -144,10 +180,12 @@ jobs:
           token: ${{ secrets.PLAN_INDEX_PAT || github.token }}
           persist-credentials: true
       - name: Set up Python
+        if: steps.shipped.outputs.changed == 'true'
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: '3.11'
       - name: Regenerate INDEX + commit if drifted
+        if: steps.shipped.outputs.changed == 'true'
         # Branch refs are untrusted input — a PR head branch name may contain
         # shell metacharacters ($(), backticks). Pass them through the env (not
         # inline ${{ }} template expansion into the script body) so the runner
