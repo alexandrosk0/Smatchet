@@ -87,20 +87,58 @@ git fetch --all --prune
 # Registry files are key=value lines (branch=/sha=/ppid=/ts=) named by session
 # id (session-tree-banner.sh). See docs/agent-rules/process-rules.md
 # § Concurrent interactive sessions.
+#
+# Liveness + pruning use the shared authoritative-pid primitives in
+# session-registry-lib.sh (sr_entry_is_live / sr_prune_dead_stale) — the same
+# real-pid liveness the banner + drift guard use, so the janitor agrees byte-for-
+# byte (DRY Quality Pillar) instead of re-deriving the now-superseded inline
+# ts-OR-kill-0 shim that over-blocked on a just-exited sibling. If the lib is
+# somehow absent the script degrades to a conservative fresh-ts-only count
+# (never false-prunes a live session, never false-allows a HEAD-moving op).
 JANITOR_TREE="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-SESS_REGDIR="$JANITOR_TREE/.claude/.active-sessions"
 SELF_SESSION="${SMATCHET_JANITOR_SELF_SESSION:-${CLAUDE_SESSION_ID:-}}"
+NOW_TS="$(date -u +%s)"
+
+_SR_LIB="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)/session-registry-lib.sh"
+[ -f "$_SR_LIB" ] || _SR_LIB="$JANITOR_TREE/agents/scripts/core/session-registry-lib.sh"
+if [ -f "$_SR_LIB" ]; then
+    # shellcheck source=agents/scripts/core/session-registry-lib.sh
+    . "$_SR_LIB"
+else
+    # Degraded fallbacks: fresh-ts-only liveness; prune is a no-op (never delete
+    # an entry we cannot prove dead via the authoritative-pid rule).
+    sr_entry_is_live() {
+        local fts; fts="$(sed -n 's/^ts=//p' "$1" 2>/dev/null | head -n1)"
+        case "$fts" in ''|*[!0-9]*) return 1 ;; esac
+        [ $(($2 - fts)) -lt "${SMATCHET_REGISTRY_FRESH_SECS:-1800}" ]
+    }
+    sr_prune_dead_stale() { :; }
+fi
+
+# Cross-worktree dead+stale prune: scan EVERY worktree's .active-sessions/, not
+# just this tree's. The registry writer's landing site is pwd-non-deterministic
+# (session-tree-banner.sh: CLAUDE_PROJECT_DIR unset -> $(pwd)), so dead entries
+# accrete across sibling worktrees and only this sweep clears them. Conservative:
+# sr_prune_dead_stale removes ONLY entries with an authoritative pid proven dead
+# AND ts-stale — never a live session, never the caller's own entry.
+git worktree list --porcelain 2>/dev/null | while IFS= read -r _wl_line; do
+    case "$_wl_line" in
+        "worktree "*)
+            _wt_regdir="${_wl_line#worktree }/.claude/.active-sessions"
+            [ -d "$_wt_regdir" ] || continue
+            sr_prune_dead_stale "$_wt_regdir" "$SELF_SESSION" "$NOW_TS"
+            ;;
+    esac
+done
+
+# Live-sibling count for THIS tree (the tree whose HEAD steps 4-5 will move).
+SESS_REGDIR="$JANITOR_TREE/.claude/.active-sessions"
 LIVE_SESSIONS=0
 if [ -d "$SESS_REGDIR" ]; then
-    NOW_TS="$(date -u +%s)"
     for f in "$SESS_REGDIR"/*; do
         [ -f "$f" ] || continue
         [ -n "$SELF_SESSION" ] && [ "$(basename "$f")" = "$SELF_SESSION" ] && continue
-        fts="$(sed -n 's/^ts=//p' "$f" | head -n1)"
-        fpid="$(sed -n 's/^ppid=//p' "$f" | head -n1)"
-        fresh=0; case "$fts" in ''|*[!0-9]*) : ;; *) [ $((NOW_TS - fts)) -lt 1800 ] && fresh=1 ;; esac
-        alive=0; case "$fpid" in ''|*[!0-9]*) : ;; *) kill -0 "$fpid" 2>/dev/null && alive=1 ;; esac
-        { [ "$fresh" = 1 ] || [ "$alive" = 1 ]; } && LIVE_SESSIONS=$((LIVE_SESSIONS + 1))
+        sr_entry_is_live "$f" "$NOW_TS" && LIVE_SESSIONS=$((LIVE_SESSIONS + 1))
     done
 fi
 if [ "$LIVE_SESSIONS" -gt 0 ]; then
