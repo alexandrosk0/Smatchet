@@ -20,7 +20,6 @@
 // `Create("linear")`. The ctor snapshots baseUrl + apiKey, but every request
 // re-resolves credentials from the live TrackerConfig (issue #979) so a key
 // entered/rotated in Preferences takes effect without recreating the client.
-//
 // Slice 1 is READ-ONLY: the mutation pure-virtuals are present (interface-
 // mandated) but return a "not yet supported" TrackerError until Slice 3 wires
 // issueUpdate/issueCreate/commentCreate. Collaboration()/Activity() are nullptr.

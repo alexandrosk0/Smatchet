@@ -95,18 +95,12 @@ bool PriorityNameToInt(const std::string& nameLower, int& out) {
     return true;
 }
 
-// Map one already-split `field OP value` clause into the result filter.
-void ProcessClause(const std::string& clauseRaw, JqlToLinearResult& r) {
-    const std::string clause = Trim(clauseRaw);
-    if (clause.empty()) {
-        return;
-    }
-    const std::string lower = ToLower(clause);
+enum ClauseOp { kEq, kNeq, kIn, kNotIn, kContains };
 
-    // Operator detection (checked in precedence order).
-    std::string field;
-    std::string valueRaw;
-    enum Op { kEq, kNeq, kIn, kNotIn, kContains } op = kEq;
+// Detect the operator in a clause and split it into field + raw value. Returns
+// false when no recognized operator is present.
+bool DetectOperator(const std::string& clause, const std::string& lower, ClauseOp& op, std::string& field,
+                    std::string& valueRaw) {
     std::string::size_type p;
     if ((p = lower.find(" not in ")) != std::string::npos) {
         op = kNotIn;
@@ -129,6 +123,95 @@ void ProcessClause(const std::string& clauseRaw, JqlToLinearResult& r) {
         field = clause.substr(0, p);
         valueRaw = clause.substr(p + 1);
     } else {
+        return false;
+    }
+    return true;
+}
+
+void HandleAssignee(ClauseOp op, const std::string& value, const std::string& valueLower, const char* relation,
+                    JqlToLinearResult& r) {
+    if (op == kEq && valueLower == "currentuser()") {
+        r.Filter[relation]["isMe"]["eq"] = true;
+    } else if (op == kEq) {
+        r.Filter[relation]["name"]["containsIgnoreCase"] = value;
+    } else {
+        AddWarning(r, std::string("unsupported ") + relation + " operator");
+    }
+}
+
+void HandleStatus(ClauseOp op, const std::string& value, const std::string& valueRaw, JqlToLinearResult& r) {
+    if (op == kEq) {
+        r.Filter["state"]["name"]["eq"] = value;
+    } else if (op == kNeq) {
+        r.Filter["state"]["name"]["neq"] = value;
+    } else if (op == kIn) {
+        std::vector<std::string> items;
+        ParseInList(valueRaw, items);
+        r.Filter["state"]["name"]["in"] = items;
+    } else {
+        AddWarning(r, "unsupported status operator");
+    }
+}
+
+void HandleLabels(ClauseOp op, const std::string& value, const std::string& valueRaw, JqlToLinearResult& r) {
+    if (op == kEq) {
+        r.Filter["labels"]["name"]["eq"] = value;
+    } else if (op == kIn) {
+        std::vector<std::string> items;
+        ParseInList(valueRaw, items);
+        r.Filter["labels"]["name"]["in"] = items;
+    } else {
+        AddWarning(r, "unsupported labels operator");
+    }
+}
+
+void HandlePriority(ClauseOp op, const std::string& value, const std::string& valueLower, const std::string& valueRaw,
+                    JqlToLinearResult& r) {
+    if (op == kEq) {
+        int pr = 0;
+        if (PriorityNameToInt(valueLower, pr)) {
+            r.Filter["priority"]["eq"] = pr;
+        } else {
+            AddWarning(r, "unknown priority '" + value + "'");
+        }
+    } else if (op == kIn) {
+        std::vector<std::string> items;
+        ParseInList(valueRaw, items);
+        std::vector<int> ints;
+        for (std::string::size_type i = 0; i < items.size(); ++i) {
+            int pr = 0;
+            if (PriorityNameToInt(ToLower(items[i]), pr)) {
+                ints.push_back(pr);
+            } else {
+                AddWarning(r, "unknown priority '" + items[i] + "'");
+            }
+        }
+        if (!ints.empty()) {
+            r.Filter["priority"]["in"] = ints;
+        }
+    } else {
+        AddWarning(r, "unsupported priority operator");
+    }
+}
+
+bool IsTextField(const std::string& field) {
+    return field == "text" || field == "summary" || field == "title" || field == "description";
+}
+
+// Map one already-split clause into the result filter. Operator detection +
+// per-field dispatch are kept thin (the heavy lifting lives in the Handle*
+// helpers) so this stays under the size/branch caps.
+void ProcessClause(const std::string& clauseRaw, JqlToLinearResult& r) {
+    const std::string clause = Trim(clauseRaw);
+    if (clause.empty()) {
+        return;
+    }
+    const std::string lower = ToLower(clause);
+
+    ClauseOp op = kEq;
+    std::string field;
+    std::string valueRaw;
+    if (!DetectOperator(clause, lower, op, field, valueRaw)) {
         AddWarning(r, "unsupported clause '" + clause + "'");
         return;
     }
@@ -144,69 +227,15 @@ void ProcessClause(const std::string& clauseRaw, JqlToLinearResult& r) {
     }
 
     if (field == "assignee") {
-        if (op == kEq && valueLower == "currentuser()") {
-            r.Filter["assignee"]["isMe"]["eq"] = true;
-        } else if (op == kEq) {
-            r.Filter["assignee"]["name"]["containsIgnoreCase"] = value;
-        } else {
-            AddWarning(r, "unsupported assignee operator");
-        }
+        HandleAssignee(op, value, valueLower, "assignee", r);
     } else if (field == "reporter" || field == "creator") {
-        if (op == kEq && valueLower == "currentuser()") {
-            r.Filter["creator"]["isMe"]["eq"] = true;
-        } else if (op == kEq) {
-            r.Filter["creator"]["name"]["containsIgnoreCase"] = value;
-        } else {
-            AddWarning(r, "unsupported reporter operator");
-        }
+        HandleAssignee(op, value, valueLower, "creator", r);
     } else if (field == "status" || field == "state") {
-        if (op == kEq) {
-            r.Filter["state"]["name"]["eq"] = value;
-        } else if (op == kNeq) {
-            r.Filter["state"]["name"]["neq"] = value;
-        } else if (op == kIn) {
-            std::vector<std::string> items;
-            ParseInList(valueRaw, items);
-            r.Filter["state"]["name"]["in"] = items;
-        } else {
-            AddWarning(r, "unsupported status operator");
-        }
+        HandleStatus(op, value, valueRaw, r);
     } else if (field == "labels" || field == "label") {
-        if (op == kEq) {
-            r.Filter["labels"]["name"]["eq"] = value;
-        } else if (op == kIn) {
-            std::vector<std::string> items;
-            ParseInList(valueRaw, items);
-            r.Filter["labels"]["name"]["in"] = items;
-        } else {
-            AddWarning(r, "unsupported labels operator");
-        }
+        HandleLabels(op, value, valueRaw, r);
     } else if (field == "priority") {
-        if (op == kEq) {
-            int pr = 0;
-            if (PriorityNameToInt(valueLower, pr)) {
-                r.Filter["priority"]["eq"] = pr;
-            } else {
-                AddWarning(r, "unknown priority '" + value + "'");
-            }
-        } else if (op == kIn) {
-            std::vector<std::string> items;
-            ParseInList(valueRaw, items);
-            std::vector<int> ints;
-            for (std::string::size_type i = 0; i < items.size(); ++i) {
-                int pr = 0;
-                if (PriorityNameToInt(ToLower(items[i]), pr)) {
-                    ints.push_back(pr);
-                } else {
-                    AddWarning(r, "unknown priority '" + items[i] + "'");
-                }
-            }
-            if (!ints.empty()) {
-                r.Filter["priority"]["in"] = ints;
-            }
-        } else {
-            AddWarning(r, "unsupported priority operator");
-        }
+        HandlePriority(op, value, valueLower, valueRaw, r);
     } else if (field == "project") {
         if (op == kEq) {
             r.Filter["project"]["name"]["eq"] = value;
@@ -219,8 +248,7 @@ void ProcessClause(const std::string& clauseRaw, JqlToLinearResult& r) {
         } else {
             AddWarning(r, "unsupported team operator");
         }
-    } else if (op == kContains &&
-               (field == "text" || field == "summary" || field == "title" || field == "description")) {
+    } else if (op == kContains && IsTextField(field)) {
         r.SearchTerm = value;
     } else {
         AddWarning(r, "unsupported field '" + field + "'");
