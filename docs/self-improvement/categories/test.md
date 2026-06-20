@@ -92,12 +92,6 @@
   Status: open
   Last-reviewed: 2026-05-24
 
-- 2026-05-23 · debug-detective · [test] · P3 — No unit test for IsDescriptionLikeFieldId predicate (planned extraction in description-tooltip-consolidation)
-  Details: `docs/plans/shipped/description-tooltip-consolidation.md` § Verification (Bucket A) calls for one test-rig case for `IsDescriptionLikeFieldId` covering `body`, `Body`, `description`, `customDescription`, `environment` (expected: true/true/true/true/false). The predicate does not yet exist as a named static helper — extraction is part of the consolidation plan (`Source/Core/src/TicketFieldEditor.cpp`). Without this test, the field-routing predicate can silently regress (e.g. losing the `body`/`Body` aliases used by GitHub tracker) after any rename or copy-paste.
-  Concrete next action: after `description-tooltip-consolidation` ships, add `tests/Core/IsDescriptionLikeFieldId.test.cpp` with 5 cases: `"body"` → true, `"Body"` → true, `"description"` → true, `"customDescription"` → true (contains "description"), `"environment"` → false. Wire in `tests/CMakeLists.txt`. ~15 min.
-  Status: open
-  Last-reviewed: 2026-05-23
-
 - 2026-05-23 · debug-detective · [test] · P2 — No automated gate prevents description tooltip "long thin strip" regression
   Details: Session 2026-05-23 `description-tooltip-consolidation` investigation. Adding `opts.wrapWidth = ImGui::GetFontSize() * 48.0f` to `RenderTextEditor`'s `BeginTooltip` block was confirmed only by hovering the description cell manually; no automated gate prevents the same regression. The symptom is severe: tooltip renders as an ultra-narrow vertical strip (~25 px wide) because `MarkdownPreviewRender::Render` samples `GetContentRegionAvail().x` internally, which is near-zero in a fresh `BeginTooltip()` window. The static grep gate (`scripts/dev/test-tooltip-wrapwidth.sh`, PR #430) catches missing `opts.wrapWidth` in source, but cannot verify the tooltip actually renders at the correct width at runtime.
   Concrete next action: add `tests/ui/grid_description_tooltip_markdown.test.cpp` (ImGui Test Engine, bucket-E) that (1) opens the active-project grid with a synthetic ticket whose `description` field contains multi-paragraph markdown (heading + code-fence + bullet list), (2) hovers the description cell via the test-engine cursor API to force `IsItemHovered() == true`, (3) waits one frame for the tooltip window to spawn, (4) asserts tooltip window width > `ImGui::GetFontSize() * 30.0f` (far from ultra-narrow), (5) asserts the tooltip child's `DrawList` contains more than one Y-distinct draw command (verifying multiple lines). Re-use the scaffold at `tests/ui/views_columns_reorder.test.cpp`. ~3 h once bucket-E gains stable column-hover support. Deferred-automation note carried from `docs/plans/shipped/description-tooltip-consolidation.md` § Verification.
@@ -134,12 +128,6 @@
   Status: open
   Last-reviewed: 2026-05-17
 
-- 2026-05-17 · code-review · [test] · P2 — No automated coverage of `AiSseParser` (split-frame, `[DONE]`, malformed JSON, mid-frame cancel, `\r\n\r\n`)
-  Details: Critical for Phase A' of the AI assistant work; deferral is in the originating commit message. The full SSE state machine has zero test surface.
-  Concrete next action: verify the doctest TU lands as part of Phase A'. Estimated cost 1 h. Surfaced by retrospective code-review sweep on PR #140.
-  Status: open
-  Last-reviewed: 2026-05-17
-
 - 2026-05-17 · code-review · [test] · P2 — `tests/Core/TicketSyncService.test.cpp:118-140` coverage gaps on empty-fetch guard
   Details: No test for the partial/error path (non-empty `FetchError` + `FullSyncCompleted=false` + empty `freshTickets`); no test asserting the guard is bypassed on legitimate non-empty diff.
   Concrete next action: add two cases covering the partial-error path and the bypass-on-non-empty-diff path. Surfaced by retrospective code-review sweep on PR #139.
@@ -149,12 +137,6 @@
 - 2026-05-17 · code-review · [test] · P3 — `Source/Plugins/Mcp/McpJsonRpcPure.cpp` anon-namespace helpers not exposed for Phase 5 dispatch tests
   Details: `BasenameForDisplay`, `TrimAsciiWhitespace`, `ToLowerAscii`, `AppendAllowlistedArgKvs` live in an anonymous namespace.
   Concrete next action: consider promoting to `pure::detail::` namespace so Phase 5 dispatch tests can reach them. Surfaced by retrospective code-review sweep on PR #141.
-  Status: open
-  Last-reviewed: 2026-05-17
-
-- 2026-05-15 · orchestrator · [test] · P3 — bucket-E coverage missing for inline Command Palette typing path
-  Details: PR #79 fixed a bug where typing into the menu-bar inline palette input did not update the modal filter until Enter (return value of `InputTextWithHint` was gated by `ImGuiInputTextFlags_EnterReturnsTrue`, so `IsItemEdited()` was needed alongside `IsItemActivated() / committed`). Verified only manually. Bucket-E (`tests/ui/views_columns_reorder.test.cpp` shape) is the right home, but the inline-palette path drags `AppController` + `CommandRegistry` + `CommandPaletteUi` modal state into the test harness — heavier than the columns-reorder replica which only re-creates the loop body.
-  Concrete next action: add `tests/ui/command_palette_inline_typing.test.cpp` that wraps a minimal `CommandRegistry` (one or two synthetic commands) and exercises the inline-input → modal-open → filter-applied path via `ItemInput` + assertion on `commandPalette_.FilterText()`. Surface a `FilterText()` accessor on `CommandPaletteUi` if not already present.
   Status: open
   Last-reviewed: 2026-05-17
 
