@@ -1,7 +1,9 @@
 #include "Commands/CommandRegistry.h"
 
 #include "Commands/FuzzyMatch.h"
+#include "Commands/ParamBoundsPure.h"
 #include "ConfigManager.h"
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 
 #include <cstdio>
@@ -193,13 +195,18 @@ bool CoerceJsonValue(const nlohmann::json& in, ParamType type, nlohmann::json& o
     }
     case ParamType::Json: {
         if (in.is_string()) {
-            try {
-                out = nlohmann::json::parse(in.get<std::string>());
-                return true;
-            } catch (const std::exception& e) {
-                outErr = std::string("expected JSON (parse failed: ") + e.what() + ")";
+            // Bounded SAX parse: a string-typed Json arg is untrusted — it reaches here from
+            // CLI, MCP, Lua, or the palette. The recursive json::parse stack-overflows on a
+            // deeply-nested string before any try/catch can fire; ParseBounded caps depth,
+            // nodes, and bytes, and never throws.
+            std::string perr;
+            nlohmann::json parsed = json_safe::ParseBounded(in.get<std::string>(), perr);
+            if (!perr.empty()) {
+                outErr = std::string("expected JSON (") + perr + ")";
                 return false;
             }
+            out = std::move(parsed);
+            return true;
         }
         out = in;
         return true;
@@ -255,6 +262,16 @@ bool ValidateAndResolveArgs(const Command& snapshot, const nlohmann::json& args,
                 outFailure = std::move(r);
                 return false;
             }
+        }
+        std::string boundsErr;
+        nlohmann::json boundsDetail = nlohmann::json::object();
+        if (!ParamValueWithinBounds(p, coerced, boundsErr, boundsDetail)) {
+            CommandResult r = CommandResult::Failure(
+                ErrorCode::ValidationError, "Argument '" + p.Name + "' for '" + snapshot.Name + "' " + boundsErr + ".");
+            boundsDetail["param"] = p.Name;
+            r.Error.Details = std::make_shared<nlohmann::json>(std::move(boundsDetail));
+            outFailure = std::move(r);
+            return false;
         }
         argsResolved[p.Name] = std::move(coerced);
     }

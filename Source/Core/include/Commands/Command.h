@@ -12,6 +12,7 @@
 // bindings / if constexpr — because it compiles into both SmatchetStandalone
 // (GCC MinGW UCRT) and SmatchetCore_DX12 (MSVC under Unreal).
 
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <string>
@@ -38,6 +39,12 @@ struct ParamSpec {
     std::string Description;
     std::shared_ptr<nlohmann::json> Default; ///< null ptr when no default
     std::vector<std::string> Enum; ///< empty unless the param is enum-restricted
+    /// Optional numeric bounds for Int/Number params (null ptr == unbounded). Enforced
+    /// in ValidateAndResolveArgs after coercion; out-of-range yields ValidationError.
+    std::shared_ptr<long long> MinInt;
+    std::shared_ptr<long long> MaxInt;
+    /// Optional max byte-length for String/Json string args (0 == unbounded).
+    std::size_t MaxLen = 0;
 };
 
 /// Stable enum — kebab-case strings cross the API boundary; renames are breaking.

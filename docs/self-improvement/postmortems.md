@@ -27,6 +27,20 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-20 · PR #1438 · red `Intent section` (block-allowlisted) merged — PR opened out-of-band via the GitHub API with no `## Intent` section
+
+### What escaped
+`docs(plan): command-input hardening (CLI · MCP · Palette · Lua)` (#1438, head `a6888573`) merged to `develop` while the **block-allowlisted** `Intent section` doc-validation check was terminal `failure`, with no `intent-out-of-band` override label. The PR was opened via the GitHub MCP `create_pull_request` API (Claude Code on the web) and its body never contained a `## Intent` section, so the check correctly red-flagged a missing intent — and the merge proceeded anyway (native GitHub auto-merge, squash; `Intent section` is deliberately NOT a branch-protection required context per [ADR-0022](../adr/0022-intent-gate-promotion.md), so native auto-merge does not consult the custom poller's block-allowlist).
+
+### Root cause
+Blameless — a **PR-creation path with no intent-capture step**, compounded by native auto-merge bypassing the custom poller. The ship-loop's intent capture (`capture-intent.sh` → `.session-intent/<branch>.log` → templated `## Intent`) runs only for PRs opened through the local ship-loop. A PR opened **out-of-band via the GitHub API** — the only path on a web session with no local git push to the live branch — has no mechanism to inject `## Intent`, so the body ships without it and `Intent section` reds. Native GitHub auto-merge then merged past the red because `Intent section` is intentionally non-required (ADR-0022, to avoid a merge_group deadlock); the custom `merge-gates.sh` block-allowlist that *would* treat it as blocking is not consulted by GitHub-native auto-merge. Distinct from #1428 below — there a stale daemon ran an out-of-date allow-list; here the body was simply never populated.
+
+### Preventing gate
+Make the out-of-band PR-creation contract require a hand-authored `## Intent`: a rule in [`ship-loops.md`](../agent-rules/ship-loops.md) § Intent capture that any agent calling the GitHub API/MCP `create_pull_request` (i.e. with no local ship-loop) MUST include a filled `## Intent` section in the PR `body`. This catches the *class* (API-created PRs lacking intent) at authoring time — the only point an agent controls when there is no local hook. Promoting `Intent section` to a branch-protection required context is explicitly NOT the fix — ADR-0022 keeps it off to avoid a merge_group deadlock.
+
+### Filed as
+[`docs/self-improvement/categories/process/2026-06-20-intent-section-api-created-pr.md`](categories/process/2026-06-20-intent-section-api-created-pr.md)
+
 ## 2026-06-19 · PR #1428 · red `Intent section` (block-allowlisted) merged by the `merge-watcher` daemon running STALE gate logic — the poller *was* consulted, but its allow-list predated `Intent section`
 
 ### What escaped

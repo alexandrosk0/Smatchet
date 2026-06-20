@@ -518,6 +518,9 @@ add_executable(SmatchetTests
     # Source/Core/include/Commands/Command.h — no extra .cpp linked (the registry
     # TU + handlers stay out of the cpr-free rig).
     Core/CommandSourceTrust.test.cpp
+    # command-input-hardening Phase 0 — pure opt-in numeric-range + max-length arg
+    # bounds (Source/Core/include/Commands/ParamBoundsPure.h); header-only, no .cpp link.
+    Core/ParamBoundsPure.test.cpp
     # json-fwd-swap-by-value-carriers: pins the std::shared_ptr<nlohmann::json>
     # boxing of Command.h's Default/Details/Data members + the readers' null-ptr
     # guards (Success/ToWireJson/ToJson/BuildJsonSchema). Links Command.cpp, which
