@@ -23,6 +23,7 @@
 #include <vector>
 
 class AppController;
+struct TrackerConfig;
 
 namespace smatchet {
 namespace ai {
@@ -225,12 +226,16 @@ class AiAssistantController {
     /// provider enum changed (or the prior client was null) and always rebuilds
     /// `clientConfig_` so a fresh key/URL takes effect next turn. Returns true
     /// when a live client is available for the turn, false to abort early.
-    bool RefreshProviderForTurn();
+    /// `cfg` is the single per-turn config snapshot taken at the top of
+    /// `RunRequest` (threaded through all three phase helpers so the worker
+    /// reads config once per turn instead of three times).
+    bool RefreshProviderForTurn(const TrackerConfig& cfg);
 
     /// Resolve the per-turn model + reasoning effort into `chatReq`, then run the
     /// F2 model-change auto-clear (posts a UI-side history clear when the
-    /// "provider|model" signature changed since the previous turn).
-    void ResolveModelAndEffort(const Request& req, AiChatRequest& chatReq);
+    /// "provider|model" signature changed since the previous turn). `cfg` is the
+    /// shared per-turn snapshot (see `RefreshProviderForTurn`).
+    void ResolveModelAndEffort(const TrackerConfig& cfg, const Request& req, AiChatRequest& chatReq);
 
     /// Resolve deferred context blocks (the worker-side audit-trail fetch) into a
     /// fully-materialised block list. Worker thread — performs the SQLite +
@@ -239,8 +244,8 @@ class AiAssistantController {
 
     /// Assemble `chatReq.SystemPrompt` (cached agents.md blob + resolved context
     /// section via the pure composer) and seed `chatReq.History` with the user
-    /// message.
-    void BuildChatPayload(const Request& req, AiChatRequest& chatReq);
+    /// message. `cfg` is the shared per-turn snapshot (see `RefreshProviderForTurn`).
+    void BuildChatPayload(const TrackerConfig& cfg, const Request& req, AiChatRequest& chatReq);
 
     /// Stream the request and dispatch deltas/errors back to the UI thread.
     /// Owns the onDelta/onError callbacks + the SendStreaming try/catch + the

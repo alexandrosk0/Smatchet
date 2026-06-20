@@ -251,14 +251,21 @@ void AiAssistantController::RunRequest(const Request& req, const AiCancelToken& 
     // Thin sequence over the worker-thread phases. First refresh the provider,
     // then build the chat payload with model, effort, system prompt and history,
     // then stream the request and dispatch deltas back to the UI thread.
-    if (!RefreshProviderForTurn()) {
+    //
+    // Single per-turn config snapshot: all three phase helpers below ran their
+    // own `ConfigManager::Load()` previously (3 reads per turn). They all run
+    // sequentially on this worker thread within one RunRequest, so a single
+    // snapshot taken here is identical to the prior back-to-back reads — same
+    // config values, loaded once — and is threaded through by const&.
+    const TrackerConfig cfg = ConfigManager::Load();
+    if (!RefreshProviderForTurn(cfg)) {
         state_.store(State::Errored, std::memory_order_release);
         return;
     }
 
     AiChatRequest chatReq;
-    ResolveModelAndEffort(req, chatReq);
-    BuildChatPayload(req, chatReq);
+    ResolveModelAndEffort(cfg, req, chatReq);
+    BuildChatPayload(cfg, req, chatReq);
 
     // Trust the cancel atom captured in WorkerLoop under the queueMutex_. The
     // earlier "re-acquire under lock; fallback to fresh atom if currentCancel_
@@ -273,14 +280,14 @@ void AiAssistantController::RunRequest(const Request& req, const AiCancelToken& 
     StreamAndDispatch(chatReq, liveCancel, req.TurnGen);
 }
 
-bool AiAssistantController::RefreshProviderForTurn() {
+bool AiAssistantController::RefreshProviderForTurn(const TrackerConfig& cfg) {
     // Worker-thread provider refresh. The user may have switched provider (and/or
     // its API key / base URL / model id) in Preferences between turns. Rebuild
     // `client_` only when the provider enum changed (avoids per-turn churn for
     // the common URL/key/model edit), but always rebuild `clientConfig_` so a
-    // fresh key or URL takes effect on the very next turn.
-    const TrackerConfig refreshCfg = ConfigManager::Load();
-    const AiProvider refreshProvider = ProviderFromConfig(refreshCfg);
+    // fresh key or URL takes effect on the very next turn. Reads the single
+    // per-turn snapshot taken in RunRequest.
+    const AiProvider refreshProvider = ProviderFromConfig(cfg);
     std::lock_guard<std::mutex> lk(providerStateMutex_);
     if (refreshProvider != cachedProvider_ || !client_) {
         std::unique_ptr<IAiClient> rebuilt = AiClientFactory::MakeAiClient(refreshProvider);
@@ -304,17 +311,15 @@ bool AiAssistantController::RefreshProviderForTurn() {
             cachedProviderName_.clear();
         }
     }
-    clientConfig_ = BuildClientConfig(refreshCfg, cachedProvider_);
+    clientConfig_ = BuildClientConfig(cfg, cachedProvider_);
     return static_cast<bool>(client_);
 }
 
-void AiAssistantController::ResolveModelAndEffort(const Request& req, AiChatRequest& chatReq) {
-    // Re-read model + reasoning effort each turn so a Preferences change while a
-    // turn is queued takes effect on the next Submit, without a per-turn config
-    // snapshot leaking into the request struct. Per-turn overrides (chat-window
-    // Model + Effort Combos) win when non-empty; otherwise the live Preferences
-    // value applies.
-    const TrackerConfig cfg = ConfigManager::Load();
+void AiAssistantController::ResolveModelAndEffort(const TrackerConfig& cfg, const Request& req,
+                                                 AiChatRequest& chatReq) {
+    // Model + reasoning effort for this turn come from the single per-turn config
+    // snapshot taken in RunRequest. Per-turn overrides (chat-window Model + Effort
+    // Combos) win when non-empty; otherwise the snapshot Preferences value applies.
     const AiProvider provider = ProviderFromConfig(cfg);
     chatReq.Model = smatchet::ai::pure::ResolveChatModel(provider, req.ModelOverride, cfg.AiModelOpenAi,
                                                          cfg.AiModelAnthropic, cfg.AiModelOllama, cfg.AiModelDeepSeek);
@@ -385,7 +390,7 @@ std::vector<AiContextBlock> AiAssistantController::ResolveDeferredContext(const 
     return resolvedContext;
 }
 
-void AiAssistantController::BuildChatPayload(const Request& req, AiChatRequest& chatReq) {
+void AiAssistantController::BuildChatPayload(const TrackerConfig& cfg, const Request& req, AiChatRequest& chatReq) {
     // System-prompt assembly: agents.md prefix + "## Current Smatchet context" header
     // (when any block has content) + each enabled block wrapped in
     // `<smatchet_context block="...">...</smatchet_context>` tags. File I/O for
@@ -397,19 +402,19 @@ void AiAssistantController::BuildChatPayload(const Request& req, AiChatRequest& 
         // agents.md cache: avoid re-reading the (up to 64 KB × 2 layers) blob on
         // every turn. Re-reads happen only when the cache is invalidated
         // (`InvalidateAgentsMdCache` from the Preferences UI) or when the
-        // configured paths change between turns.
-        const TrackerConfig agentsCfg = ConfigManager::Load();
+        // configured paths change between turns. Reads the single per-turn
+        // snapshot threaded from RunRequest.
         std::lock_guard<std::mutex> lk(agentsMdMutex_);
-        const bool pathsMatch = (agentsMdCachedGlobalPath_ == agentsCfg.AgentsMdGlobalPath) &&
-                                (agentsMdCachedProjectPath_ == agentsCfg.ProjectAgentsMdPath);
+        const bool pathsMatch = (agentsMdCachedGlobalPath_ == cfg.AgentsMdGlobalPath) &&
+                                (agentsMdCachedProjectPath_ == cfg.ProjectAgentsMdPath);
         if (agentsMdCacheValid_.load(std::memory_order_acquire) && pathsMatch) {
             agentsMd = agentsMdCachedBody_;
         } else {
-            agentsMd = AgentsMdLoader::LoadLayered(agentsCfg.AgentsMdGlobalPath, agentsCfg.ProjectAgentsMdPath,
-                                                   agentsCfg.AgentsMdAutoDiscoverProject);
+            agentsMd = AgentsMdLoader::LoadLayered(cfg.AgentsMdGlobalPath, cfg.ProjectAgentsMdPath,
+                                                   cfg.AgentsMdAutoDiscoverProject);
             agentsMdCachedBody_ = agentsMd;
-            agentsMdCachedGlobalPath_ = agentsCfg.AgentsMdGlobalPath;
-            agentsMdCachedProjectPath_ = agentsCfg.ProjectAgentsMdPath;
+            agentsMdCachedGlobalPath_ = cfg.AgentsMdGlobalPath;
+            agentsMdCachedProjectPath_ = cfg.ProjectAgentsMdPath;
             agentsMdCacheValid_.store(true, std::memory_order_release);
         }
     }
