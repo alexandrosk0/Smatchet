@@ -223,3 +223,13 @@ void GridContextDepsAdapter::RequestDeferredLiveTrackerBackendSuccessNotify() co
 // projectComponentOptions_/InFlight_/RetryAfter_ under cat.availableFieldsMutex_ via this pointer —
 // never a completion-time fieldCatalog() re-resolve.
 GridContextFieldCatalog* GridContextDepsAdapter::KickTimeFieldCatalog() { return &ctx_.fieldCatalog; }
+
+// ---- IFieldEditDeps -------------------------------------------------------------------
+// BackendShared / GetActiveTicketsSnapshot / RefreshLocalData / const-RequestDeferred are reused
+// from the IEditMetaDeps + IOfflineQueueDeps overrides above. Only these two are genuinely new.
+
+// HasCache() is a PREDICATE, not the raw Cache* — keeps FieldEditPipelineService SQLite-free
+// (ADR-0020 sync-cache purity). Global state, so reads app_ (matches Cache() above).
+bool GridContextDepsAdapter::HasCache() const { return app_.Cache != nullptr; }
+
+void GridContextDepsAdapter::UpdateTicket(const CachedTicket& ticket) { app_.UpdateTicket(ticket); }

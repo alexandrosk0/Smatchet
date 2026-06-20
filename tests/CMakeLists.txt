@@ -110,6 +110,14 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/EditMetaCacheService.test.cpp
         Core/EditMetaCacheConcurrent.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/EditMetaCacheService.cpp"
+        # --- FieldEditPipelineService (AppController god-object decomposition Phase 2): the
+        #     field-edit network pipeline. Holds NO long-lived mutex (call-frame-scoped ctx), so
+        #     it is TSan-neutral, but its .cpp calls EditMetaCacheService (above) on the same
+        #     thread + the audit pair (linked below for OfflineQueueService) — include it here so
+        #     the service-test TU links in the TSan rig too. cpr/ImGui/SQLite-free (header-only
+        #     FakeFieldEditDeps / FakeEditMetaDeps / FakeTrackerClient).
+        Core/FieldEditPipelineService.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/FieldEditPipelineService.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/ProjectResolver.cpp"
         # ConfigManager closure (split across 4 TUs). TicketSyncService calls
         # ConfigManager::Load / LoadViewsOrBootstrap / NormalizeViewsBackendKey, which
@@ -471,6 +479,13 @@ add_executable(SmatchetTests
     # SQLite. Production TU added to the prod-src block below; ProjectResolver.cpp (its
     # ExtractIssueKeyPrefix dep) is already linked in this target.
     Core/EditMetaCacheService.test.cpp
+    # FieldEditPipelineService (AppController god-object decomposition Phase 2) — the field-edit
+    # network pipeline: regular/sprint/timetracking success, read-only + editmeta-deny blocks,
+    # 400-retry editmeta refresh, offline-prepare contract, ApplyFieldEditResult. Drives a
+    # header-only FakeFieldEditDeps + FakeEditMetaDeps + real EditMetaCacheService — no
+    # AppController/ImGui/cpr/SQLite. Production TU added to the prod-src block below; the audit
+    # pair (BackendAuditTrail + FieldEditAuditSource) it links is already in this target.
+    Core/FieldEditPipelineService.test.cpp
     # Issue #979 — ITrackerBackendFactory::Create(trackerType, cfg) must receive the
     # caller's LIVE cfg (never a disk re-read racing the debounced prefs save).
     # Exercises the TicketSyncService swap path with a recording factory; no extra
@@ -764,6 +779,12 @@ add_executable(SmatchetTests
     # ProjectResolver (ExtractIssueKeyPrefix) — all already linked into this target. cpr/ImGui/
     # SQLite-free; Core/EditMetaCacheService.test.cpp drives it via header-only fakes.
     "${CMAKE_SOURCE_DIR}/Source/Core/src/EditMetaCacheService.cpp"
+    # FieldEditPipelineService (AppController god-object decomposition Phase 2). Pulls
+    # EditMetaCacheService (above) + the audit pair (BackendAuditTrail / FieldEditAuditSource,
+    # already linked above for OfflineQueueService) + ConfigManager + TrackerFieldValueUtils /
+    # TrackerFieldSchema — all already in this target. cpr/ImGui/SQLite-free;
+    # Core/FieldEditPipelineService.test.cpp drives it via header-only fakes.
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/FieldEditPipelineService.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpUtils.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpPure.cpp"
     # Slice D of docs/plans/http-fault-injection.md — the retry+classify engine
@@ -1174,7 +1195,11 @@ set(_smatchet_pure_sync_test_files
     # plain in-memory containers, no LocalCacheManager).
     Core/EditMetaCacheService.test.cpp
     Core/EditMetaCacheConcurrent.test.cpp
+    # FieldEditPipelineService (Phase 2) + its fake stay SQLite-free too (HasCache() is a
+    # predicate, not the raw Cache* — ADR-0020 sync-cache purity).
+    Core/FieldEditPipelineService.test.cpp
     support/FakeEditMetaDeps.h
+    support/FakeFieldEditDeps.h
     support/FakeOfflineQueueDeps.h
     support/FakeTicketSyncDeps.h
     support/FakeSyncCache.h)
