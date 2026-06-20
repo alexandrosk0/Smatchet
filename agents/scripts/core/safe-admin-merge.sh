@@ -64,9 +64,10 @@
 # is the lever for those edge cases here.
 #
 # `*-out-of-band` PR labels downgrade the matching check, same as the poller:
-#   tests-out-of-band → "Test-delta gate"   ·  perf-out-of-band → "Perf PR-fast*"
-#   cr-out-of-band    → waives the CodeRabbit-completion wait above (it still does
-#                       NOT downgrade any CI check — CR is its only scope).
+#   tests-out-of-band  → "Test-delta gate"   ·  perf-out-of-band → "Perf PR-fast*"
+#   intent-out-of-band → "Intent section" (mirrors poll_merge_gates $intent downgrade)
+#   cr-out-of-band     → waives the CodeRabbit-completion wait above (it still does
+#                        NOT downgrade any CI check — CR is its only scope).
 #
 # Usage:
 #   agents/scripts/core/safe-admin-merge.sh <pr>
@@ -170,6 +171,7 @@ evaluate_rollup() {
         ([.labels[]?.name] // []) as $labels
         | ($labels | any(. == "tests-out-of-band")) as $testsOob
         | ($labels | any(. == "perf-out-of-band")) as $perfOob
+        | ($labels | any(. == "intent-out-of-band")) as $intentOob
         # Resolve each rollup row to a (name, green?) pair; bind as $rows so the
         # absent-required cross-check below can see which names are present.
         | (((.statusCheckRollup) // [])
@@ -195,7 +197,8 @@ evaluate_rollup() {
              | ($g + {gating:
                  ($g.gating
                   and (($testsOob and $g.name == "Test-delta gate") | not)
-                  and (($perfOob and ($g.name | startswith("Perf PR-fast"))) | not))})
+                  and (($perfOob and ($g.name | startswith("Perf PR-fast"))) | not)
+                  and (($intentOob and $g.name == "Intent section") | not))})
              | select(.gating and (.green | not))
              | .name ]) as $rowBlockers
         # Absent-required cross-check (fail-closed): a required context missing
@@ -204,7 +207,8 @@ evaluate_rollup() {
         | ([ $req[]
              | select(. as $rn | ($present | any(. == $rn)) | not)
              | select(($testsOob and . == "Test-delta gate") | not)
-             | select(($perfOob and (. | startswith("Perf PR-fast"))) | not) ]) as $absentReq
+             | select(($perfOob and (. | startswith("Perf PR-fast"))) | not)
+             | select(($intentOob and . == "Intent section") | not) ]) as $absentReq
         | ($rowBlockers + $absentReq)
         | unique
         | .[]
@@ -391,6 +395,18 @@ run_selftest() {
         echo "selftest CASE4 PASS — perf-out-of-band downgrades RED Perf PR-fast"
     else
         echo "selftest CASE4 FAIL — perf-out-of-band check should not block (got: '$blockers')" >&2
+        fails=$((fails + 1))
+    fi
+
+    # CASE 4b — intent-out-of-band downgrades a RED allow-listed "Intent section".
+    local intent_oob_rollup
+    intent_oob_rollup='{"state":"OPEN","labels":[{"name":"intent-out-of-band"}],"statusCheckRollup":[
+      {"__typename":"CheckRun","name":"Intent section","status":"COMPLETED","conclusion":"FAILURE"}]}'
+    blockers=$(evaluate_rollup "$intent_oob_rollup" "")
+    if [ -z "$blockers" ]; then
+        echo "selftest CASE4b PASS — intent-out-of-band downgrades RED Intent section"
+    else
+        echo "selftest CASE4b FAIL — intent-out-of-band check should not block (got: '$blockers')" >&2
         fails=$((fails + 1))
     fi
 
