@@ -612,6 +612,11 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
         SMATCHET_UI_PERF_SCOPE("TickTrackerConnectivityMonitor");
         app.TickTrackerConnectivityMonitor(g_ui.cfg);
     }
+    // Per-pane ticket-change monitor (ticket-change-monitor plan, S1c-2). Hosted right after
+    // the connectivity tick so it reads the freshest reachability and the same g_ui.cfg
+    // (monitor enable + interval). Single per-frame site — TickAllContexts is called from two
+    // hosts, so the change poll is NOT nested inside it.
+    app.TickChangeMonitors(g_ui.cfg);
     // First-launch gate: unlock the main UI permanently once the backend has been
     // confirmed reachable. Latches true forever; never re-locks on later launches.
     if (!g_ui.cfg.BackendHasBeenReachable &&

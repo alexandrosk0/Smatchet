@@ -48,6 +48,10 @@ struct TicketChangeSummary {
     std::string author;            ///< Who made the change, if known (Modified only).
 };
 
+// ResolveSalientRoster (catalog -> roster) lives in the root-layer header SalientRosterResolve.h:
+// it consumes the layer-3 Tracker schema (TrackerField), which this layer-2 Sync header must not
+// reach up into. The differ below takes the already-resolved roster.
+
 /// True when `fieldId` is one of the salient roles in `roster`.
 bool IsSalientChangeField(const std::string& fieldId, const std::vector<SalientFieldRole>& roster);
 

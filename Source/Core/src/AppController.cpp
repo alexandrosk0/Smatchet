@@ -94,6 +94,10 @@
 
 #include "PaneSyncKickPolicy.h"
 
+#include "SalientRosterResolve.h"
+#include "Sync/TicketChangeDiffPure.h"
+#include "SmatchetTicketChangeNotifications.h"
+
 #include "TicketSyncService.h"
 
 #include "TrackerHttpUtils.h"
@@ -658,6 +662,146 @@ void AppController::TickAllContexts() {
     }
     retireExpiredHiddenContexts_(start);
     evictHiddenPanesOverCap_();
+}
+
+void AppController::SetWindowFocused(bool focused) {
+    // Any-thread (the Standalone host feeds GLFW_FOCUSED from its frame loop). Plain atomic
+    // store; TickChangeMonitors reads it once per frame to gate polling on window focus (item 17).
+    windowFocused_.store(focused);
+}
+
+void AppController::TickChangeMonitors(const TrackerConfig& cfg) {
+    SMATCHET_UI_PERF_SCOPE("AppController::TickChangeMonitors");
+    // Global gate first — the whole feature is off, so do no per-pane work.
+    if (!cfg.TicketChangeMonitorEnabled) {
+        return;
+    }
+    const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
+    const std::chrono::seconds interval(cfg.TicketChangeMonitorIntervalSec > 0 ? cfg.TicketChangeMonitorIntervalSec
+                                                                               : 120);
+    const bool backendReachable = GetLastTrackerConnectivityState() == TrackerConnectivityState::AuthenticatedReachable;
+    const bool windowFocused = windowFocused_.load();
+
+    for (std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.begin();
+         it != gridContexts_.end(); ++it) {
+        const std::string& paneId = it->first;
+        GridLiveContext& ctx = *it->second;
+        // Same recency rule as the LRU cap (default + focused always count; others by frame
+        // recency). A hidden/LRU-evicted pane has no reliable in-memory baseline, so it is
+        // skipped here — never diffed against an empty set (PaneSyncKickPolicy.h § grill #2).
+        const bool paneRecentlyVisible =
+            paneId == kDefaultPaneId || paneId == focusedPaneId_ || (paneFrameClock_ - ctx.lastVisibleFrame) <= 1;
+        const bool syncActive = ctx.ticketSync_ && ctx.ticketSync_->IsActive();
+        if (!smatchet::ShouldPollForChanges(now, /*monitorEnabled=*/true, backendReachable, windowFocused,
+                                            paneRecentlyVisible, syncActive, ctx.nextChangePollAt)) {
+            continue;
+        }
+        // First poll per context: establish a SILENT baseline (seed the anchor + next-poll time,
+        // no fetch, no toast) so enabling the monitor on an already-populated pane does not
+        // replay the whole view as "changes".
+        if (!ctx.changeBaselineEstablished) {
+            ctx.changeBaselineEstablished = true;
+            ctx.changeSinceAnchor = std::chrono::system_clock::now();
+            ctx.nextChangePollAt = now + interval;
+            continue;
+        }
+        // Resolve the salient roster from THIS pane's field catalog (UI thread, catalog mutex).
+        // No salient fields yet (catalog not loaded) → nothing to diff: push the next poll out
+        // and skip WITHOUT disturbing the anchor so the window is retried once the catalog lands.
+        std::vector<std::string> salientFieldIds;
+        {
+            std::lock_guard<std::mutex> lock(ctx.fieldCatalog.availableFieldsMutex_);
+            const std::vector<smatchet::SalientFieldRole> roster =
+                smatchet::ResolveSalientRoster(ctx.fieldCatalog.AvailableFields);
+            salientFieldIds.reserve(roster.size());
+            for (std::size_t i = 0; i < roster.size(); ++i) {
+                salientFieldIds.push_back(roster[i].fieldId);
+            }
+        }
+        if (salientFieldIds.empty()) {
+            ctx.nextChangePollAt = now + interval;
+            continue;
+        }
+        // Latch a strong backend handle ON THE UI THREAD (gridContexts_ / ctx.Backend must not be
+        // touched off-thread) — keeps the backend alive across a live swap for the fetch (ADR 0012).
+        std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&ctx.Backend);
+        if (!backend) {
+            ctx.nextChangePollAt = now + interval;
+            continue;
+        }
+        const std::uint64_t capturedGeneration = ctx.backendGeneration_.load();
+        const std::chrono::system_clock::time_point sinceAnchor = ctx.changeSinceAnchor;
+        // polledAt = the instant we ISSUE this poll; the next poll's anchor advances to it so a
+        // change landing DURING the fetch is caught next round (no gap).
+        const std::chrono::system_clock::time_point polledAt = std::chrono::system_clock::now();
+        // Window for the backend-native "updated >=" filter: time since the anchor plus a margin
+        // to absorb minute-granularity timestamps and clock skew.
+        const std::chrono::seconds window =
+            std::chrono::duration_cast<std::chrono::seconds>(polledAt - sinceAnchor) + std::chrono::seconds(60);
+        // In-flight guard: push nextChangePollAt out NOW so the per-frame tick does not
+        // re-dispatch while this probe runs.
+        ctx.nextChangePollAt = now + interval;
+
+        TrackerConfig cfgCopy = cfg;
+        const std::string paneJql = ctx.lastSyncedJql; // pane's own query (empty → cfg's focused query)
+        LaunchBackgroundTask(
+            [this, paneId, backend, cfgCopy, paneJql, salientFieldIds, window, polledAt, capturedGeneration]() mutable {
+                /* PILLAR2_WORKER_ONLY */ // est-latency: one view fetch — off the UI thread
+                ViewsStore views = ConfigManager::LoadViewsOrBootstrap(cfgCopy);
+                if (!paneJql.empty()) {
+                    cfgCopy.JqlQuery = paneJql;
+                }
+                auto res = backend->Reader().FetchIssuesChangedSince(cfgCopy, views, window, salientFieldIds);
+                if (!static_cast<bool>(res)) {
+                    // Soft failure (partial/warned fetch, transport): leave the anchor untouched so
+                    // the next interval retries the same window. Logged, never toasted.
+                    LOG_INFO("AppController::TickChangeMonitors probe skipped pane='%s': %s", paneId.c_str(),
+                             res.error().Detail.c_str());
+                    return;
+                }
+                std::vector<CachedTicket> fetched = std::move(res.value());
+                mainThreadDispatcher.PostToMainThread(
+                    [this, paneId, fetched = std::move(fetched), polledAt, capturedGeneration]() mutable {
+                        applyChangeProbeOnMainThread_(paneId, std::move(fetched), polledAt, capturedGeneration);
+                    });
+            });
+    }
+}
+
+void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std::vector<CachedTicket> fetched,
+                                                  std::chrono::system_clock::time_point polledAt,
+                                                  std::uint64_t capturedGeneration) {
+    // UI thread. Re-find the context (retired mid-flight → drop) and re-check the backend
+    // generation (swapped mid-flight → drop): a stale apply would diff new-backend rows against
+    // the old baseline (capture-then-check, issue #1081).
+    std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator ctxIt = gridContexts_.find(paneId);
+    if (!smatchet::PaneSyncKickStillCurrent(ctxIt != gridContexts_.end(), capturedGeneration,
+                                            ctxIt != gridContexts_.end() ? ctxIt->second->backendGeneration_.load()
+                                                                         : 0)) {
+        return;
+    }
+    GridLiveContext& ctx = *ctxIt->second;
+    // Re-resolve the roster on the UI thread (the catalog rarely moves within one fetch RTT) and
+    // snapshot the pane's CURRENT in-memory cache as the diff baseline (prev). Both under their
+    // own mutex; the diff itself is pure.
+    std::vector<smatchet::SalientFieldRole> roster;
+    {
+        std::lock_guard<std::mutex> lock(ctx.fieldCatalog.availableFieldsMutex_);
+        roster = smatchet::ResolveSalientRoster(ctx.fieldCatalog.AvailableFields);
+    }
+    std::vector<CachedTicket> prev;
+    {
+        std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
+        prev = ctx.ActiveTickets;
+    }
+    const std::vector<smatchet::TicketChangeSummary> changes = smatchet::DiffChangedTickets(prev, fetched, roster);
+    if (!changes.empty()) {
+        NotifyTicketChanges(changes);
+    }
+    // Advance the anchor to the poll-issue instant (no gap). nextChangePollAt was already pushed
+    // out at dispatch, so this slice does not re-stamp it here (item 10's membership reconcile +
+    // cache write land in S1c-3).
+    ctx.changeSinceAnchor = polledAt;
 }
 
 void AppController::evictHiddenPanesOverCap_() {

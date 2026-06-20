@@ -1,0 +1,19 @@
+#pragma once
+
+// SmatchetTicketChangeNotifications (ticket-change-monitor plan, S1c-2, item 12) — the
+// "plain Push" notifier sink for the per-pane change monitor. Given the salient changes a
+// poll detected (DiffChangedTickets / the membership reconcile), surface ONE summarised toast
+// rather than one per change. Sibling of SmatchetGridNotifications.cpp; the richer toast-history
+// ring + Notification Center (plan items 13/13a) land in S2/S3 and will route through here.
+// UI-thread only — SmatchetToastManager is not thread-safe; the monitor calls this from its
+// main-thread apply hop, never from the off-thread fetch.
+
+#include <vector>
+
+#include "Sync/TicketChangeDiffPure.h"
+
+/// Surface `changes` as a single summarised "Tickets" toast (FormatTicketChangeToast, cap 1 +
+/// "+N more"). Empty `changes` is a no-op. Consecutive calls carrying the identical change set
+/// are de-duplicated by a function-static last-signature guard, so an overlapping/retried poll
+/// that re-reports the same deltas does not double-toast. UI thread only.
+void NotifyTicketChanges(const std::vector<smatchet::TicketChangeSummary>& changes);
