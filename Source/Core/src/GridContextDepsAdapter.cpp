@@ -1,7 +1,9 @@
 #include "GridContextDepsAdapter.h"
 
 #include "AppController.h"
+#include "ConnectivityMonitorService.h"
 #include "GridLiveContext.h"
+#include "Sync/OfflineQueueService.h"
 #include "ITrackerBackendFactory.h"
 #include "ITrackerBackend.h"
 #include "ITrackerConnectivity.h"
@@ -110,16 +112,28 @@ ITrackerBackendFactory* GridContextDepsAdapter::BackendFactory() { return app_.b
 
 void GridContextDepsAdapter::SetCacheBackendKey(const std::string& key) { ctx_.SetCacheBackendKey(key); }
 
+// Re-pointed (Phase 3): the connectivity state moved into the GLOBAL ConnectivityMonitorService.
+// Every per-pane adapter forwards its connectivity writes into that one instance (N writers, one
+// service). The service is constructed eagerly in Initialize before the first tick, so these
+// runtime overrides always have a live target.
 void GridContextDepsAdapter::SetLastTrackerTicketSyncWarning(const std::string& message) {
-    app_.LastTrackerTicketSyncWarning = message;
+    if (app_.connectivity_) {
+        app_.connectivity_->SetLastTicketSyncWarning(message);
+    }
 }
 
 void GridContextDepsAdapter::SetLastTrackerConnectivityState(ITicketSyncDeps::ConnectivityState state) {
-    app_.lastTrackerConnectivityState_ = static_cast<AppController::TrackerConnectivityState>(state);
+    if (app_.connectivity_) {
+        // Lockstep cast (Phase 3 R5): the deps-side connectivity-state enum mirrors the global
+        // tracker connectivity-state enum, with values kept in sync and asserted by the fixture.
+        app_.connectivity_->SetLastState(static_cast<::TrackerConnectivityState>(state));
+    }
 }
 
 void GridContextDepsAdapter::SetNextTrackerConnectivityProbeAt(std::chrono::steady_clock::time_point at) {
-    app_.nextTrackerConnectivityProbeAt_ = at;
+    if (app_.connectivity_) {
+        app_.connectivity_->SetNextProbeAt(at);
+    }
 }
 
 void GridContextDepsAdapter::PushOfflineReplayTimersDuringTransportOutage(std::chrono::steady_clock::time_point now) {
@@ -233,3 +247,53 @@ GridContextFieldCatalog* GridContextDepsAdapter::KickTimeFieldCatalog() { return
 bool GridContextDepsAdapter::HasCache() const { return app_.Cache != nullptr; }
 
 void GridContextDepsAdapter::UpdateTicket(const CachedTicket& ticket) { app_.UpdateTicket(ticket); }
+
+// ---- IConnectivityDeps ----------------------------------------------------------------
+// DISTINCT from the frozen-ctx_ BackendShared() / catalog accessors above (Phase 3 R1): the
+// connectivity FSM re-resolves the FOCUSED context LIVE every call, so these forward to
+// app_.BackendShared() / app_.fieldCatalog() (focused-context routing), NOT ctx_. IsShuttingDown()
+// is reused from the IEditMetaDeps override above. Catalog reads/clears stay UNLOCKED — preserving
+// the UI-thread-only single-kick-time-latch discipline (no availableFieldsMutex_).
+
+std::shared_ptr<ITrackerBackend> GridContextDepsAdapter::FocusedBackendShared() const { return app_.BackendShared(); }
+
+const std::string& GridContextDepsAdapter::FocusedFieldCatalogError() const {
+    return app_.fieldCatalog().LastTrackerFieldCatalogError;
+}
+
+const std::string& GridContextDepsAdapter::FocusedFieldCatalogWarning() const {
+    return app_.fieldCatalog().LastTrackerFieldCatalogWarning;
+}
+
+void GridContextDepsAdapter::ClearFocusedFieldCatalogWarning() {
+    app_.fieldCatalog().LastTrackerFieldCatalogWarning.clear();
+}
+
+void GridContextDepsAdapter::BumpFocusedFieldCatalogRevision() {
+    app_.fieldCatalog().TrackerFieldCatalogRevision.fetch_add(1);
+}
+
+// Null-queue guard lives here (moved off the service per the plan) so the service stays unaware of
+// offlineQueue_ lifetime. Forwards to OfflineQueueService's replay-timer controls.
+void GridContextDepsAdapter::PushReplayTimers(std::chrono::steady_clock::time_point pushTo) {
+    if (app_.offlineQueue_) {
+        app_.offlineQueue_->PushReplayTimersForward(pushTo);
+    }
+}
+
+void GridContextDepsAdapter::RestartReplayTimers(std::chrono::steady_clock::time_point now) {
+    if (app_.offlineQueue_) {
+        app_.offlineQueue_->RestartReplayTimersNow(now);
+    }
+}
+
+// ---- IAttachmentAppUpdateDeps (Phase 4) ----------------------------------------------
+// Global host state — these forward to app_ regardless of ctx_ (the host callbacks + URL-open +
+// app-quit are AppController-global, not per-pane). The adapter is a friend of AppController, so the
+// HostCallbacks struct read is direct. OpenUrl / RequestAppQuit are the existing public const methods
+// (scheme-allowlist + null-handler guard live inside them).
+const HostCallbacks& GridContextDepsAdapter::Host() const { return app_.hostCallbacks_; }
+
+void GridContextDepsAdapter::OpenUrl(const std::string& url) const { app_.OpenUrl(url); }
+
+void GridContextDepsAdapter::RequestAppQuit() const { app_.RequestAppQuit(); }

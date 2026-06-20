@@ -23,6 +23,8 @@
 #include "ITicketSyncDeps.h"
 #include "IEditMetaDeps.h"
 #include "IFieldEditDeps.h"
+#include "IConnectivityDeps.h"
+#include "IAttachmentAppUpdateDeps.h"
 
 #include <chrono>
 #include <cstdint>
@@ -42,13 +44,16 @@ class ITrackerIssueReader;
 class ITrackerBackendFactory;
 struct GridLiveContext;
 struct GridContextFieldCatalog;
+struct HostCallbacks;
 struct TrackerConfig;
 struct TrackerField;
 
 class GridContextDepsAdapter : public IOfflineQueueDeps,
                                public ITicketSyncDeps,
                                public IEditMetaDeps,
-                               public IFieldEditDeps {
+                               public IFieldEditDeps,
+                               public IConnectivityDeps,
+                               public IAttachmentAppUpdateDeps {
   public:
     GridContextDepsAdapter(AppController& app, GridLiveContext& ctx);
 
@@ -129,6 +134,29 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
     // IFieldEditDeps too (do NOT redeclare them). Only these two are genuinely new:
     bool HasCache() const override;
     void UpdateTicket(const CachedTicket& ticket) override;
+
+    // ---- IConnectivityDeps ------------------------------------------------------------
+    // IsShuttingDown() is shared with IEditMetaDeps (same signature) — the override above
+    // satisfies this interface too. These accessors are deliberately DISTINCT from the frozen-ctx_
+    // BackendShared() / catalog overrides above: the connectivity FSM re-resolves the FOCUSED
+    // context LIVE on every call, so these forward to app_.BackendShared() / app_.fieldCatalog()
+    // (LIVE focus), NOT ctx_. Reusing the frozen-ctx_ bodies would silently break multi-pane
+    // behaviour after a focus switch (Phase 3 R1). Catalog reads/clears stay UNLOCKED, preserving
+    // the UI-thread-only single-kick-time-latch discipline (no availableFieldsMutex_).
+    std::shared_ptr<ITrackerBackend> FocusedBackendShared() const override;
+    const std::string& FocusedFieldCatalogError() const override;
+    const std::string& FocusedFieldCatalogWarning() const override;
+    void ClearFocusedFieldCatalogWarning() override;
+    void BumpFocusedFieldCatalogRevision() override;
+    void PushReplayTimers(std::chrono::steady_clock::time_point pushTo) override;
+    void RestartReplayTimers(std::chrono::steady_clock::time_point now) override;
+
+    // ---- IAttachmentAppUpdateDeps -----------------------------------------------------
+    // All three are genuinely-new signatures (no sibling interface declares them): the host-callback
+    // struct read + the const OpenUrl / RequestAppQuit forwards the attachment + installer paths use.
+    const HostCallbacks& Host() const override;
+    void OpenUrl(const std::string& url) const override;
+    void RequestAppQuit() const override;
 
   private:
     AppController& app_;   ///< Shared/global state (cache, connectivity, catalog, Lua).
