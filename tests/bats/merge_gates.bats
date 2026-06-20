@@ -1021,6 +1021,57 @@ set_fixture() {
     [[ "$output" == *"GATE_SNAPSHOT cr_override=0 downgraded=Intent section"* ]]
 }
 
+@test "non-required Plan-lock gate FAILURE blocks (plan-lock Layer C, items 5-7)" {
+    # "Plan-lock gate" joined the meant-to-block allow-list: the server-side
+    # cross-branch plan-lock collision net must block even though it is not a
+    # branch-protection-required context. Required check kept green so the
+    # Plan-lock gate is the sole failure.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS","isRequired":true},{"__typename":"CheckRun","name":"Plan-lock gate","status":"COMPLETED","conclusion":"FAILURE","isRequired":false}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"1 fail"* ]]
+    rm -f "$f"
+}
+
+@test "plan-lock-out-of-band label downgrades Plan-lock gate FAILURE → WARN, gates pass" {
+    local f1 f2
+    f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS","isRequired":true},{"__typename":"CheckRun","name":"Plan-lock gate","status":"COMPLETED","conclusion":"FAILURE","isRequired":false}]')"
+    f2="$(fixture_override "$f1" \
+        "data.repository.pullRequest.labels.nodes" '[{"name":"plan-lock-out-of-band"}]')"
+    set_fixture "$f2"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"1 warn-downgraded"* ]]
+    [[ "$output" == *"downgraded=Plan-lock gate"* ]]
+    rm -f "$f1" "$f2"
+}
+
+@test "Plan-lock gate as a StatusContext blocks but is NOT downgradable (locks in CheckRun)" {
+    # The $downgraded clause hard-codes .__typename == "CheckRun": a Plan-lock
+    # gate posted as a StatusContext would block yet the plan-lock-out-of-band
+    # label could NEVER downgrade it (a dead, un-overridable gate). This is why
+    # plan-lock-gate.yml emits a job-name CheckRun, not a StatusContext.
+    local f1 f2
+    f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS","isRequired":true},{"__typename":"StatusContext","context":"Plan-lock gate","state":"FAILURE"}]')"
+    f2="$(fixture_override "$f1" \
+        "data.repository.pullRequest.labels.nodes" '[{"name":"plan-lock-out-of-band"}]')"
+    set_fixture "$f2"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"1 fail"* ]]
+    [[ "$output" == *"0 warn-downgraded"* ]]
+    rm -f "$f1" "$f2"
+}
+
 @test "out-of-band label does NOT silence unrelated failing checks" {
     set_fixture "$FIXTURES_DIR/merge_gates_label_oob_other_fail_blocks.json"
     run poll_merge_gates org repo 1

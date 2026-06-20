@@ -7,8 +7,10 @@
 **Rule**: orchestrator runs each user task end-to-end in **one turn** without pausing for confirmation at each stage. The default sequence:
 
 ```
-diagnose → fix → build → [pre-first-push gate] → commit → push → open PR → [gate-check] → squash-merge → git-janitor cleanup → backlog entry
+diagnose → [seed plan-lock] → fix → build → [pre-first-push gate] → commit → push → open PR → [gate-check] → squash-merge → git-janitor cleanup → backlog entry
 ```
+
+**`[seed plan-lock]` (eager, non-blocking — when a plan-doc exists).** Before editing, file a `refs/locks/<slug>` from the plan's **§Files-to-modify** so the early-warning substrate is present the moment a sibling goes live (closing the race where a solo start files nothing, then contention arrives with no lock). See § Plan-lock seed below. *Seeding* is eager (fire whenever a plan exists); *enforcement* (the deny) stays force-on-contention (≥2 live sessions). Plan-less tasks skip the seed and file on the first Layer-A deny via the one-liner the guard hands them.
 
 **`[pre-first-push gate]` (mandatory before the FIRST push of a feature branch — `reduce-coderabbit-review-spend` Slice 1).** Before the branch ever reaches GitHub (where CodeRabbit's `auto_review` fires on every push), the implementer MUST have run, locally, the full pre-merge gate set + a subsystem self-review — never deferring locally-knowable findings to CI/CR. The gate is:
 
@@ -107,6 +109,28 @@ Logical-feature granularity is the band between the two: few enough PRs to respe
 **Interaction with the default sequence** — the `commit → push → open PR` stages still run, but `open PR` is reached once per logical feature. Earlier slices of the same feature stop at `commit` (+ `push` to the shared feature branch) and defer PR creation until the feature is whole.
 
 **P4-mode note** — the same logical-feature granularity governs the P4-gated loop: the single `gh pr create` at the end of the P4 flow covers the whole feature, and `code-review` is already dispatched once per task (cumulative diff), which aligns with one-PR-per-feature.
+
+## Plan-lock seed
+
+When a plan-doc exists, the `[seed plan-lock]` step files a `refs/locks/<slug>` from its **§Files-to-modify** at ship-loop start, BEFORE editing (so Layer A's contention guard finds the lock when a sibling is live). Eager + non-blocking; a single ref push, never a deny path.
+
+**Extraction is a RULE the orchestrator applies inline — do NOT build an extractor script** (an LLM reads freeform plan markdown more reliably than a brittle parser, and a new script would owe its own gate for a system that tolerates imperfect extraction). The rule: take the **first** backtick-delimited token on each **numbered (`N.`)** §Files-to-modify line → strip a trailing `:line-range`, ` (new)`, and ` — description`; skip non-numbered lines (bold `**…**` sub-headers, blanks). The "first token per numbered line" skips the cross-reference paths later in an item's prose (the plan-doc convention is that each item *leads* with its write target). Emit a bare path, or a `dir/` prefix (trailing slash) where the item targets a directory — the trailing slash is load-bearing for dir-prefix coverage. **Imperfection is safe**: an over-include is a harmless reservation, a miss self-heals via deny→file.
+
+**Plumbing.** `lock-claim.sh` ingests a real FILE (one repo-relative path/line; blank/`#` ignored), exactly 2 positional args. Write the extracted entries to a POSIX `mktemp` file (NOT `$CLAUDE_JOB_DIR` — this doc is harness-portable), then:
+
+```bash
+ws="$(mktemp)"; printf '%s\n' "${entries[@]}" > "$ws"
+LOCK_PLAN=docs/plans/active/<slug>.md \
+  LOCK_BRANCH="$(git -C "$WORKTREE" symbolic-ref --quiet --short HEAD)" \
+  bash agents/scripts/core/lock-claim.sh <slug> "$ws"
+rm -f "$ws"
+```
+
+**Pass `LOCK_BRANCH` EXPLICITLY from the worktree HEAD — do not rely on the cwd default.** `lock-claim.sh` defaults `LOCK_BRANCH` to the current HEAD symbolic ref, which is correct only if cwd is in the worktree; but the SessionStart-cwd evidence shows cwd resolves non-deterministically (sometimes the integration tree), and a seed attributed to `develop`/the integration HEAD would make Layer A deny the agent's OWN edits and Layer C block its OWN PR (self-denial — the F4 finding). Deriving `LOCK_BRANCH` from `git -C <worktree>` removes the dependency. Skip the seed entirely when HEAD is detached (an unattributable `branch=detached` lock self-denies in Layer A while passing Layer C — the F9 asymmetry).
+
+**Re-seed exit-1 is branch-aware, not an unconditional swallow.** A resumed/re-entered session re-runs the seed; `lock-claim.sh` exits 1 ("lock already held") printing only the held SHA — so read the held lock's `branch` (`locks-show.sh` / `_lock-json.py read-field branch`) once to classify: **`branch` == my HEAD → benign** (idempotent re-seed; log + continue), **`branch` != my HEAD → WARN** ("slug `<slug>` is held by branch `<other>`; your edits to its write_set WILL be blocked by Layer C — pick a distinct slug or coordinate"). Never blocking either way; exit 2 (arg/repo) / 3 (transient net) → log + continue. No check-then-claim (`locks-show` first) — that is a TOCTOU race the git-ref CAS already resolves atomically.
+
+**Release wiring (mandatory when a lock was seeded).** The `open PR` step MUST write a `lock-slug: <slug>` line into the PR body (populate `.github/pull_request_template.md`'s field if present, else append via `gh pr create --body`) — the exact line `lock-cleanup.yml` matches to delete `refs/locks/<slug>` on close (merged OR abandoned). Without it the merged PR orphans its lock and Layers B/C false-block later overlapping PRs. Stacked intermediates sharing one lock use `holds-lock:` (informational, NOT matched) so only the final cutover PR's close releases.
 
 ## P4-gated ship-loop
 

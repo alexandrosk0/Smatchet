@@ -1,0 +1,82 @@
+name: Plan-lock gate
+
+# Layer C of the plan-lock enforcement (plan-lock-enforcement.md items 5-7):
+# the fail-CLOSED server-side hard net. Reds when this PR's changed files
+# overlap a refs/locks/* write_set owned by a DIFFERENT branch.
+#
+# It emits a job-name CheckRun named exactly "Plan-lock gate" (a native Actions
+# job conclusion IS a CheckRun) — NOT a StatusContext. This matters: the merge
+# poller's CI-downgrade filter hard-codes `.__typename == "CheckRun"`
+# (merge-gates.sh), so a StatusContext would block yet be un-downgradable by the
+# plan-lock-out-of-band label (a dead, un-overridable gate). Driving the job red
+# via the script's exit code yields the correct node type for free — no
+# `statuses: write`, no API post (the cr-finding-gate.yml mechanism to AVOID).
+#
+# Blocking power comes from the meant-to-block allow-list in merge-gates.sh
+# (`MERGE_GATES_BLOCK_ALLOWLIST_RE`), NOT a new branch-protection required
+# check — zero out-of-repo branch-protection mutation (#923 mechanism).
+
+on:
+  pull_request:
+    branches: [develop]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  issues: write   # gh label create (labels are issue-scoped)
+
+concurrency:
+  group: plan-lock-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  plan-lock-gate:
+    name: Plan-lock gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout (full history — fetch-depth:0 is load-bearing)
+        uses: actions/checkout@v4
+        with:
+          # A shallow checkout breaks merge-base -> an EMPTY changed set -> the
+          # hard net silently blocks nothing (the dead-net failure class). 0 is
+          # mandatory.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Ensure `plan-lock-out-of-band` label exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Idempotent: create only if missing (`gh label create` errors on a
+          # duplicate). Verbatim shape of lock-staleness.yml's label step — the
+          # plan-lock subsystem self-provisions its own override label so an
+          # agent can `gh pr edit --add-label` it with zero manual setup.
+          if ! gh label list --repo "${{ github.repository }}" --limit 500 \
+              --json name --jq '.[].name' | grep -qx 'plan-lock-out-of-band'; then
+            gh label create plan-lock-out-of-band \
+              --repo "${{ github.repository }}" \
+              --color "bfd4f2" \
+              --description "Downgrade the Plan-lock gate RED to WARN (out-of-band; AGENTS.md § Merge gates)."
+          fi
+
+      - name: Fetch base + lock refs
+        run: |
+          set -uo pipefail
+          # NO --depth: a shallow base-ref fetch re-shallows develop after the
+          # fetch-depth:0 checkout and breaks merge-base for the three-dot diff
+          # (perf-pr-fast.yml #1227(b)). NO `|| true` on the base fetch — a hard
+          # net must fail LOUD if it can't even fetch its base (the gate script
+          # double-checks resolution + reds with a clear override hint).
+          git fetch --no-tags origin "${{ github.base_ref }}"
+          # Lock refs CAN be absent (no locks held); `|| true` — empty == no
+          # collision, the legitimate "nothing to block against" case.
+          git fetch --no-tags origin '+refs/locks/*:refs/locks/*' || true
+
+      - name: Evaluate plan-lock collision
+        env:
+          PLAN_LOCK_BASE_REF: ${{ github.base_ref }}
+          PLAN_LOCK_HEAD_REF: ${{ github.head_ref }}
+          LOCK_REMOTE: origin
+          SMATCHET_LOCK_BYPASS_REPO_CHECK: "1"
+        run: bash agents/scripts/core/plan-lock-gate.sh

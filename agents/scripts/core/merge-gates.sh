@@ -30,6 +30,7 @@
 #   tests-out-of-band → downgrades `Test-delta gate` FAIL → WARN
 #   perf-out-of-band  → downgrades `Perf PR-fast (...)` FAIL → WARN
 #   intent-out-of-band → downgrades `Intent section` FAIL → WARN
+#   plan-lock-out-of-band → downgrades `Plan-lock gate` FAIL → WARN
 #   cr-out-of-band    → downgrades a CodeRabbit block → WARN (CR gate only;
 #                       CI + user-comment gates still bind)
 #   bugbot-out-of-band → downgrades a Cursor Bugbot block → WARN (Bugbot gate
@@ -160,7 +161,11 @@ DEFAULT_QUERY_FILE="$SCRIPT_DIR/merge-gates.graphql"
 #  routed onto the blocking path here rather than project.config.json
 #  branch_protection (which would need merge_group reporting or deadlock the queue).
 #  Override hatch: the `intent-out-of-band` label.
-MERGE_GATES_BLOCK_ALLOWLIST_RE="Coverage|Sanitizer|Perf PR-fast|Android security gate|Fuzz smoke|Bucket launch-smoke [(]Mesa GL[)]|Intent section"
+#  "Plan-lock gate" added 2026-06-20 (plan-lock-enforcement Layer C, items 5-7):
+#  the server-side fail-closed hard net for cross-branch plan-lock collisions.
+#  Routed here (not branch_protection) via the #923 mechanism — zero
+#  branch-protection mutation. Override hatch: the `plan-lock-out-of-band` label.
+MERGE_GATES_BLOCK_ALLOWLIST_RE="Coverage|Sanitizer|Perf PR-fast|Android security gate|Fuzz smoke|Bucket launch-smoke [(]Mesa GL[)]|Intent section|Plan-lock gate"
 
 # Source prompt shim so `ask_user_question` is callable from the caller's
 # integration flow. Lazy — only if available.
@@ -480,6 +485,7 @@ poll_merge_gates() {
 | ($labels | any(. == "tests-out-of-band")) as $tests
 | ($labels | any(. == "perf-out-of-band")) as $perf
 | ($labels | any(. == "intent-out-of-band")) as $intent
+| ($labels | any(. == "plan-lock-out-of-band")) as $planlock
 | ($labels | any(. == "cr-out-of-band")) as $cr
 | ($labels | any(. == "bugbot-out-of-band")) as $bb
 | ((($pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes) // [])
@@ -537,7 +543,8 @@ poll_merge_gates() {
 | ([$failing[] | select(
       ($tests and .__typename == "CheckRun" and .name == "Test-delta gate") or
       ($perf  and .__typename == "CheckRun" and ((.name // "") | startswith("Perf PR-fast"))) or
-      ($intent and .__typename == "CheckRun" and .name == "Intent section"))]) as $downgraded
+      ($intent and .__typename == "CheckRun" and .name == "Intent section") or
+      ($planlock and .__typename == "CheckRun" and .name == "Plan-lock gate"))]) as $downgraded
 | ([$pr.reviews.nodes[] | select(.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")]) as $crall
 | (if ($crall | length) == 0 then "NONE"
    else (([$crall[] | select(.commit.oid == $sha)]) as $cur
