@@ -1,7 +1,9 @@
 // Bucket-A coverage for MembershipDiffPure (ticket-change-monitor plan, S1a) — the pure
 // set-difference the per-pane change monitor uses to reconcile its tracked set against the
 // view's freshly-fetched key list. RemovedKeys -> candidates for the left-view/deleted probe;
-// AddedKeys -> keys that newly entered the view. Header-only (no production .cpp to link).
+// AddedKeys -> keys that newly entered the view. ClassifyMembershipRemovals -> the apply-side
+// split of post-probe verdicts into pane-resident removals vs shared-cache deletes (S1c-3,
+// item 10). Header-only (no production .cpp to link).
 
 #include "Sync/MembershipDiffPure.h"
 
@@ -11,7 +13,21 @@
 #include <vector>
 
 using smatchet::AddedKeys;
+using smatchet::ClassifyMembershipRemovals;
+using smatchet::MembershipReconcilePlan;
+using smatchet::MembershipRemovalVerdict;
 using smatchet::RemovedKeys;
+
+namespace {
+
+MembershipRemovalVerdict Verdict(const std::string& key, bool stillExists) {
+    MembershipRemovalVerdict v;
+    v.issueKey = key;
+    v.stillExists = stillExists;
+    return v;
+}
+
+} // namespace
 
 TEST_CASE("RemovedKeys: keys in cached but not fetched, in cached order") {
     const std::vector<std::string> cached = {"A-1", "A-2", "A-3", "A-4"};
@@ -72,4 +88,62 @@ TEST_CASE("AddedKeys: duplicate fetched key emitted at most once") {
 TEST_CASE("AddedKeys: no change yields nothing") {
     const std::vector<std::string> same = {"A-1", "A-2"};
     CHECK(AddedKeys(same, same).empty());
+}
+
+TEST_CASE("ClassifyMembershipRemovals: resident + still-exists -> LeftView removal, no cache delete") {
+    const std::vector<std::string> resident = {"A-1", "A-2"};
+    const std::vector<MembershipRemovalVerdict> verdicts = {Verdict("A-1", true)};
+    const MembershipReconcilePlan plan = ClassifyMembershipRemovals(resident, verdicts);
+    REQUIRE(plan.residentRemovals.size() == 1);
+    CHECK(plan.residentRemovals[0].issueKey == "A-1");
+    CHECK(plan.residentRemovals[0].stillExists == true);
+    CHECK(plan.cacheDeleteKeys.empty());
+}
+
+TEST_CASE("ClassifyMembershipRemovals: resident + gone -> Deleted removal AND cache delete") {
+    const std::vector<std::string> resident = {"A-1", "A-2"};
+    const std::vector<MembershipRemovalVerdict> verdicts = {Verdict("A-2", false)};
+    const MembershipReconcilePlan plan = ClassifyMembershipRemovals(resident, verdicts);
+    REQUIRE(plan.residentRemovals.size() == 1);
+    CHECK(plan.residentRemovals[0].issueKey == "A-2");
+    CHECK(plan.residentRemovals[0].stillExists == false);
+    REQUIRE(plan.cacheDeleteKeys.size() == 1);
+    CHECK(plan.cacheDeleteKeys[0] == "A-2");
+}
+
+TEST_CASE("ClassifyMembershipRemovals: non-resident + gone -> cache delete only, no pane removal") {
+    const std::vector<std::string> resident = {"A-1"};
+    const std::vector<MembershipRemovalVerdict> verdicts = {Verdict("Z-9", false)};
+    const MembershipReconcilePlan plan = ClassifyMembershipRemovals(resident, verdicts);
+    CHECK(plan.residentRemovals.empty());
+    REQUIRE(plan.cacheDeleteKeys.size() == 1);
+    CHECK(plan.cacheDeleteKeys[0] == "Z-9");
+}
+
+TEST_CASE("ClassifyMembershipRemovals: non-resident + still-exists -> pure no-op") {
+    const std::vector<std::string> resident = {"A-1"};
+    const std::vector<MembershipRemovalVerdict> verdicts = {Verdict("Z-9", true)};
+    const MembershipReconcilePlan plan = ClassifyMembershipRemovals(resident, verdicts);
+    CHECK(plan.residentRemovals.empty());
+    CHECK(plan.cacheDeleteKeys.empty());
+}
+
+TEST_CASE("ClassifyMembershipRemovals: input order preserved across both output lists") {
+    const std::vector<std::string> resident = {"A-1", "A-2", "A-3"};
+    const std::vector<MembershipRemovalVerdict> verdicts = {Verdict("A-3", false), Verdict("A-1", true),
+                                                            Verdict("A-2", false)};
+    const MembershipReconcilePlan plan = ClassifyMembershipRemovals(resident, verdicts);
+    REQUIRE(plan.residentRemovals.size() == 3);
+    CHECK(plan.residentRemovals[0].issueKey == "A-3");
+    CHECK(plan.residentRemovals[1].issueKey == "A-1");
+    CHECK(plan.residentRemovals[2].issueKey == "A-2");
+    REQUIRE(plan.cacheDeleteKeys.size() == 2);
+    CHECK(plan.cacheDeleteKeys[0] == "A-3");
+    CHECK(plan.cacheDeleteKeys[1] == "A-2");
+}
+
+TEST_CASE("ClassifyMembershipRemovals: empty verdicts -> empty plan") {
+    const MembershipReconcilePlan plan = ClassifyMembershipRemovals({"A-1", "A-2"}, {});
+    CHECK(plan.residentRemovals.empty());
+    CHECK(plan.cacheDeleteKeys.empty());
 }
