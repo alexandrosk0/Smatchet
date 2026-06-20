@@ -48,6 +48,8 @@ std::set<std::string> ExpectedNames() {
     // Multi-grid-tabs Slice 5b — multi-grid concurrency perf scenarios.
     expected.insert("side-by-side-2-grid");
     expected.insert("concurrent-sync");
+    // Parametrised N-visible-pane render sweep (default 8).
+    expected.insert("side-by-side-grids");
     // Issue #1133 mobile CI smoke gate — always registered (no ifdef).
     expected.insert("mobile-texture-guard");
 #if defined(SMATCHET_WITH_AI)
