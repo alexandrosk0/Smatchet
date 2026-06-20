@@ -2176,9 +2176,9 @@ CFG
 }
 
 @test "Bugbot (9) field-count guard fires on a mis-sized tuple (fail-closed canary)" {
-    # An embedded newline in a tuple field inflates the field count past 27; the
-    # -ne 27 fail-closed assertion must catch it (the tuple-order regression guard
-    # that the two appended Bugbot fields rely on).
+    # An embedded newline in a tuple field inflates the field count past 28; the
+    # -ne 28 fail-closed assertion must catch it (the tuple-order regression guard
+    # that the appended Bugbot + selfImpOnly fields rely on).
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
         "data.repository.pullRequest.headRefOid" \
@@ -2186,7 +2186,7 @@ CFG
     set_fixture "$f"
     run poll_merge_gates org repo 1
     [ "$status" -ne 0 ]
-    [[ "$output" == *"expected 27"* ]]
+    [[ "$output" == *"expected 28"* ]]
     [[ "$output" != *"GATES_PASSED"* ]]
     rm -f "$f"
 }
@@ -2230,4 +2230,119 @@ CFG
     [[ "$output" == *"reviewDecision: APPROVED"* ]]
     [[ "$output" != *"GATES_PASSED"* ]]
     [ "$status" -ne 0 ]
+}
+
+# ---------- Self-improvement doc PR auto-exemption (plan: self-improvement-pr-review-exemption) ----------
+# A PR whose diff is ENTIRELY under docs/self-improvement/** auto-skips the CR + Bugbot
+# gates (no label). $selfImpOnly (tuple field 27) is derived from the PR's files list;
+# these cases inject a `files` node via fixture_override (legacy fixtures have none, so
+# selfImpOnly defaults false there — the Bugbot 1-12 cases above are the not-exempt baseline).
+
+@test "self-improvement (1) pure docs/self-improvement diff + open cursor[bot] finding → PASS (Bugbot auto-skip)" {
+    # bb_findings has 2 open cursor[bot] threads (Bugbot 1 → BLOCK). Tagging the diff
+    # as pure self-improvement auto-downgrades that block to WARN → GATES_PASSED.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_bb_findings.json" \
+        "data.repository.pullRequest.files" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"path":"docs/self-improvement/categories/tooling/2026-06-20-x.md"},{"path":"docs/self-improvement/postmortems.md"}]}')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"self-improvement doc PR"* ]]
+    [[ "$output" == *"Bugbot gate auto-skipped"* ]]
+    [[ "$output" == *"self-improvement doc PR → WARN"* ]]
+    rm -f "$f"
+}
+
+@test "self-improvement (2) mixed diff (self-improvement + one Source/ file) + open finding → BLOCK (scope canary)" {
+    # A single non-self-improvement path flips selfImpOnly false → the Bugbot block
+    # stands. Guards the 'no code rides along unreviewed' scope decision.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_bb_findings.json" \
+        "data.repository.pullRequest.files" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"path":"docs/self-improvement/postmortems.md"},{"path":"Source/Core/src/Foo.cpp"}]}')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"BLOCK: Cursor Bugbot has 2 unresolved finding(s) on the head"* ]]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    rm -f "$f"
+}
+
+@test "self-improvement (3) >100-file page (pageInfo.hasNextPage) → NOT exempt → BLOCK (fail-safe canary)" {
+    # Files overflow means we can't see every path, so selfImpOnly fails safe to
+    # false even though every visible path is self-improvement → full gates.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_bb_findings.json" \
+        "data.repository.pullRequest.files" \
+        '{"pageInfo":{"hasNextPage":true},"nodes":[{"path":"docs/self-improvement/x.md"}]}')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"BLOCK: Cursor Bugbot has 2 unresolved finding(s) on the head"* ]]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    rm -f "$f"
+}
+
+@test "self-improvement (4) empty files list → NOT exempt → BLOCK (vacuous-all guard)" {
+    # length 0 must NOT vacuously satisfy all() — an empty diff is not 'pure
+    # self-improvement'. selfImpOnly false → the Bugbot block stands.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_bb_findings.json" \
+        "data.repository.pullRequest.files" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[]}')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"BLOCK: Cursor Bugbot has 2 unresolved finding(s) on the head"* ]]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    rm -f "$f"
+}
+
+@test "self-improvement (5) STALE Bugbot (no review on head) + pure self-improvement → PASS (short-circuits grace)" {
+    # bb_stale would PENDING within the grace window (Bugbot 4). The self-improvement
+    # branch precedes the STALE-grace check → PASS without waiting.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_bb_stale.json" \
+        "data.repository.pullRequest.files" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"path":"docs/self-improvement/applied.md"}]}')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"self-improvement-doc-pr (Bugbot STALE grace auto-skipped)"* ]]
+    rm -f "$f"
+}
+
+@test "self-improvement (6) CR CHANGES_REQUESTED + pure self-improvement → PASS (CR belt-and-suspenders)" {
+    # cr_changes blocks on a CHANGES_REQUESTED review (CR test → return 1). The
+    # self-improvement CR auto-skip downgrades it (the path_filter normally makes CR
+    # 'Review skipped', but this covers a residual/stale CR block).
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_changes.json" \
+        "data.repository.pullRequest.files" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"path":"docs/self-improvement/categories/process/2026-06-20-y.md"}]}')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"self-improvement doc PR — CR gate auto-skipped"* ]]
+    rm -f "$f"
+}
+
+@test "self-improvement (7) already-green pass fixture + self-improvement files → PASS, exemption is moot (no spurious WARN)" {
+    # When nothing is blocking, the exemption is load-bearing-only: it must NOT emit
+    # an auto-skip WARN or set cr_override (the GATE_SNAPSHOT clean-merge contract).
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.files" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"path":"docs/self-improvement/AGENT_SELF_IMPROVEMENT.md"}]}')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"GATE_SNAPSHOT cr_override=0 downgraded="* ]]
+    [[ "$output" != *"auto-skipped"* ]]
+    rm -f "$f"
 }
