@@ -2,7 +2,7 @@
 
 > **Slug**: `perf-interactive-grid-stress` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — the machine-readable lifecycle marker. Values: `active` (driving in-flight work) · `shipped` (post-ship sections populated + all cited PRs merged — this file belongs in `docs/plans/shipped/`) · `blocked` / `deferred` (paused — one-line why). **Flip to `shipped` in the SAME post-ship PR that fills § Implementation log AND `git mv`s this file active → shipped** (see § Archive). `agents/scripts/core/plan-archival-owed.sh` nags at SessionStart if any `active/` plan is marked `shipped` but never moved.
+> **Status**: `shipped` — the machine-readable lifecycle marker. Values: `active` (driving in-flight work) · `shipped` (post-ship sections populated + all cited PRs merged — this file belongs in `docs/plans/shipped/`) · `blocked` / `deferred` (paused — one-line why). **Flip to `shipped` in the SAME post-ship PR that fills § Implementation log AND `git mv`s this file active → shipped** (see § Archive). `agents/scripts/core/plan-archival-owed.sh` nags at SessionStart if any `active/` plan is marked `shipped` but never moved.
 >
 > **Usage**: copy this template to `docs/plans/active/<slug>.md` as the first step of any new plan. Fill every section. Sections that genuinely don't apply get `N/A — <one-line reason>`, not deletion — the headings drive the "did you consider this?" forcing function for every author + reviewer agent.
 >
@@ -91,28 +91,17 @@ Per `AGENTS.md` § Verification automation — zero manual steps. Buckets:
 - **Adding `interactive-grid-stress` to a CI baseline** — intentionally excluded (variable-N). No follow-up planned.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+- `6a0d3d4b` · wip(plan): committed this plan doc before coding (template-conformant).
+- `be16611c` · scenario + 4 product edits + 2 test edits — new `InteractiveGridStressScenario.cpp`; `scenarioScrollTargetX` session field + mirrored `ImGui::SetScrollX` grid hook; `SMATCHET_AUTORUN_SCENARIO` one-shot in `main.cpp` (extracted `MaybeStartAutorunScenario` helper); registry extern + `RegisterFactory`; lock-step stub + exact-set snapshot entry.
+- `5f0db76b` · squash-merged to develop as PR #1492 (8 files, +416/-2).
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+- **`RunFrameLoop` over the 120-line cap.** Adding the autorun block inline pushed `main.cpp`'s `RunFrameLoop` to 136 lines (`function-too-long`). Extracted the autorun logic into a free `MaybeStartAutorunScenario(app, started)` helper above the loop (no behaviour change) → in-loop footprint = one call, back under cap. Same file as planned, finer shape.
+- **Deviation comments needed single-line + `clang-format off` wrap.** clang-format wraps long `//` lines, which breaks the `SMATCHET_DEVIATION` escape parser. Two `duplication` WARNs (deliberate ACTIVE-load sibling of the side-by-side-grids perf family, kept byte-identical per ADR-0015 calibration) and one `app-controller-fan-in` escape were each written as one physical line fenced in `// clang-format off/on`.
+- **PR opened without `## Intent`.** The `Intent section` doc-gate went red on `opened`; self-healed by adding the section (the `edited` re-run trigger shipped in #1483). No code impact.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
-
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-   > **Keep the literal `<slug>` placeholder in this committed step — do NOT
-   > expand it to this plan's real filename.** Writing the actual basename here
-   > manufactures a `docs/plans/shipped/<name>.md` path that points at a file
-   > still living in `active/` (the move hasn't happened yet), which
-   > `test-plan-ref-integrity.sh` reports as a dangling self-reference. The gate
-   > carves out the *placeholder* form on the Archive `git mv` line; the
-   > expanded form defeats that carve-out. Run the literal command with your
-   > slug substituted at the shell — never bake the expansion into the file.
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*No ref-sweep — references use the tier-less form `docs/plans/<slug>.md` (the gates resolve it against any tier; PR #890), so the move can't break them. Write new plan references tier-less.*
-
-*(Delete this `## Archive` block as part of step 2 — once moved to `shipped/`, the file is reference material and the checklist has served its purpose.)*
+- **Bucket A (ctest snapshot)**: registry↔stub↔test↔factory lock-step verified; exact-set snapshot includes `interactive-grid-stress`. Authoritative compile = CI `Windows + MSVC` + Coverage lanes.
+- **Lint gate** (`test-lint-rules.sh --diff origin/develop`): PASS after the three fixes above (function-length extraction, comment-noise reword, single-line deviation wrap).
+- **CI on #1492**: 36 pass / 3 skip / **0 fail** (Windows MSVC dual-target, Coverage, Perf PR-fast, CodeQL, Android, doc-validation). Merged 2026-06-20, squash `5f0db76b`.
+- **Operator FPS run** (manual by design — variable wall-clock, no golden): `SMATCHET_AUTORUN_SCENARIO=interactive-grid-stress SMATCHET_FPS_MEASURE_SECONDS=12 Smatchet.exe`. First run: avg ~3.0–3.5 ms (within the 6.94 ms steady budget) but reproducible **p99 10.8–13.2 ms breaching the 10.0 ms / 100 Hz floor**, driven by the synchronous cross-backend `ConfigManager::Save`. Tail-fix deferred to a `spike-hunter` follow-up (§ Out of scope).
