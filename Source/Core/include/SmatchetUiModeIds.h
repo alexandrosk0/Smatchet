@@ -44,6 +44,15 @@ inline EffectiveUiMode resolveAutoEffectiveUiMode(float logicalWidthPx, Effectiv
     return prev; // dead band (720 < w < 860) — hold the prior frame's decision.
 }
 
+// Host UI-mode policy hint (A6 / Chromebook). A host that runs keyboard + mouse + resizable windows
+// (ChromeOS / ARC) sets this true at startup so Auto resolves to Desktop instead of the width-based
+// mobile shell; an explicit Desktop/Mobile user choice still wins. Default false — phone/tablet and
+// desktop hosts never set it, so their behaviour is unchanged. Not inline: the flag's storage +
+// getter/setter live in SmatchetMobileShellUi.cpp, the one TU that consumes it (drawResolveUiMode).
+// Mirrors the SmatchetSetInjectedFontBytes host-injection seam.
+void SmatchetSetHostPrefersDesktopUi(bool prefers);
+bool SmatchetHostPrefersDesktopUi();
+
 // --- Inline string converters (round-trip through ConfigManager JSON keys). ---
 
 inline const char* uiModeToString(UiMode m) {

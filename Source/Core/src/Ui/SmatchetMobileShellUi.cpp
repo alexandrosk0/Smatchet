@@ -41,6 +41,14 @@ constexpr float kBottomNavBaseHeightPx = 48.0f;
 
 } // namespace
 
+// A6 (Chromebook) host UI-mode hint — declared in SmatchetUiModeIds.h. TU-local storage so it lives
+// in the one place that reads it (drawResolveUiMode below). The host sets it once at startup; it is
+// read once per frame. External-linkage functions (no -Wunused-function risk); the flag is only ever
+// set true by the ChromeOS/ARC host, so phone/tablet/desktop behaviour is unchanged.
+static bool s_hostPrefersDesktopUi = false;
+void SmatchetSetHostPrefersDesktopUi(bool prefers) { s_hostPrefersDesktopUi = prefers; }
+bool SmatchetHostPrefersDesktopUi() { return s_hostPrefersDesktopUi; }
+
 // Resolves cfg.UiMode -> d.effectiveUiMode once per frame. Manual Desktop/Mobile pin
 // directly; Auto applies width hysteresis on a DPI-independent LOGICAL width: enter Mobile
 // at <= 720, exit to Desktop at >= 860, holding the prior frame inside the dead band so a
@@ -61,6 +69,15 @@ void SmatchetUI::drawResolveUiMode(UiDrawSession& d) {
     case UiMode::Auto:
     default:
         break;
+    }
+
+    // A6 (Chromebook): a keyboard + mouse + resizable-window host (ChromeOS / ARC) prefers the desktop
+    // dockspace over the width-based mobile shell. Only reached for Auto — an explicit Desktop/Mobile
+    // choice returned above. Forcing Desktop also sidesteps the mobile touch-density scale (applied
+    // only in Mobile mode). Phones/tablets/desktop never set the hint, so their behaviour is unchanged.
+    if (SmatchetHostPrefersDesktopUi()) {
+        d.effectiveUiMode = EffectiveUiMode::Desktop;
+        return;
     }
 
     const float density = SmatchetTheme::HostDensityScale();
