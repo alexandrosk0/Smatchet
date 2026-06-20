@@ -52,6 +52,7 @@ std::unique_ptr<smatchet::cmd::IScenario> MakeMobileTextureGuardScenario() { ret
 #if defined(SMATCHET_WITH_AI)
 std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreamingHappyPathScenario() { return NullScenario(); }
 std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreamingTransportDownScenario() { return NullScenario(); }
+std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantSendScenario() { return NullScenario(); }
 #endif
 #if defined(SMATCHET_WITH_WHISPER)
 std::unique_ptr<smatchet::cmd::IScenario> MakeWhisperDictationScenario() { return NullScenario(); }

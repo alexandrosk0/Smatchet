@@ -567,6 +567,14 @@ add_executable(SmatchetTests
     Core/AiNdjsonParser.test.cpp
     Core/AiContextBuilder.test.cpp
     Core/AiErrorRedact.test.cpp
+    # PR-12 — per-client cancel + error-body redaction regressions driving the
+    # REAL OpenAiClient / AnthropicClient / OllamaClient (CORE sources below) over
+    # a real cpr HTTP round-trip at an in-process httplib loopback server
+    # (tests/support/AiHttpFixture.h). cpr + httplib bound — these belong in this
+    # cpr-bearing rig, NOT the cpr-free TSan / SQLite-free rigs (the AI clients
+    # pull <cpr/cpr.h>; the fixture pulls <httplib.h>, both already linked below).
+    Core/AiClientCancel.test.cpp
+    Core/AiClientErrorRedact.test.cpp
     # PR #991 — pure Ollama stream-error message formatting (transport + non-2xx
     # HTTP) extracted from OllamaClient::SendStreaming. OllamaStreamError.cpp is
     # cpr-free (delegates body redaction to AiErrorRedact), linked in the CORE
