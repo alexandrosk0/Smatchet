@@ -22,11 +22,34 @@
     watcher cannot drift in the first place — the freshness guard fails CLOSED, but a wedged-stopped daemon
     means zero auto-merge throughput until a human restarts it, so the resync path is the throughput-safe
     complement. Est ~0.5d for (2).
+  Update 2026-06-20: (2) SHIPPED — merge-watcher.py now has a gate-logic self-resync (`maybe_self_resync`,
+    `MERGE_WATCH_AUTO_RESYNC` default on; cadence `MERGE_WATCH_RESYNC_EVERY_CYCLES` default 30 + a startup
+    check in daemon_loop). It fetches origin/develop, compares the on-disk blob of every gate-logic file
+    (`detect_gate_logic_drift` over merge-gates.sh / .graphql / merge-watcher*.py — same hash-object-vs-
+    origin/develop compare the freshness guard uses), and on a SAFE fast-forward (`_resync_safety`: clean
+    tree + on develop + HEAD an ancestor of origin/develop) `git pull --ff-only`s develop so the on-disk
+    merge-gates.sh goes fresh → the next poll re-reads it → the fail-closed guard passes again (throughput
+    restored). When the daemon's OWN code (merge-watcher.py / -cli.py) drifted it re-execs to reload — POSIX
+    only (`os.execv` is a clean same-PID replace); on Windows it logs a restart-needed WARN instead because
+    os.execv there is emulated as spawn-new-PID + terminate-self, which would DETACH the daemon from its
+    Scheduled Task (orphan + double-instance-at-next-login risk). The UNSAFE-tree case (the #1428 feature-
+    branch park / dirty / diverged) is never auto-mutated — warns + waits for a human, the fail-closed guard
+    still blocking. A `moved`-guard (HEAD must advance) prevents a re-exec loop on a no-op ff. 8 bats cases
+    (`tests/bats/merge_watcher.bats` "self-resync" — real-git drift/safety/ff + mocked orchestration).
+    REMAINING: (1) the literal ops restart of the host daemon from a develop-current checkout is still a
+    human action on the Windows box (can't be done from a Linux agent session) — but it is now self-healing
+    on restart (the startup check resyncs/flags before the first poll). MINOR follow-up: full Windows
+    daemon-CODE auto-refresh (without a manual restart) would need a launcher restart-loop + sentinel exit
+    code instead of os.execv; deferred (the gate SCRIPTS — what actually decides merges — already self-heal
+    on Windows via the ff-pull; only orchestrator-code improvements wait for the next restart).
   Cross-ref: postmortems.md 2026-06-19 PR #1428; merge-gates.sh MERGE_GATES_BLOCK_ALLOWLIST_RE + freshness
-    guard (MERGE_GATES_FRESHNESS / MERGE_GATES_FRESH_RUN_BLOB / _DEV_BLOB); merge-watcher.py _poll_run_gates
+    guard (MERGE_GATES_FRESHNESS / MERGE_GATES_FRESH_RUN_BLOB / _DEV_BLOB); merge-watcher.py maybe_self_resync
+    / detect_gate_logic_drift / _resync_safety / _ff_pull_develop / _reexec_daemon + daemon_loop startup +
+    periodic hooks (MERGE_WATCH_AUTO_RESYNC / MERGE_WATCH_RESYNC_EVERY_CYCLES); merge-watcher.py _poll_run_gates
     env setdefault; Scheduled Task SmatchetMergeWatcher / run-merge-watcher.bat; merge-snapshots.jsonl:105;
-    #1391 / docs/adr/0022-intent-gate-promotion.md;
+    #1391 / docs/adr/0022-intent-gate-promotion.md; docs/agent-rules/merge-gates.md § Env knobs
+    (MERGE_GATES_FRESHNESS + watcher-side complement);
     docs/self-improvement/categories/process/2026-06-19-intent-gate-bypassed-via-non-poller-merge.md (the
     sibling poller-bypass escape this is distinct from).
-  Status: open
-  Last-reviewed: 2026-06-19
+  Status: open (residual (1) = human ops restart on the Windows host; (2) shipped 2026-06-20)
+  Last-reviewed: 2026-06-20

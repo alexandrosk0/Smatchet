@@ -48,6 +48,27 @@ Env knobs:
                                       bypass CR or branch protection — only collapses a
                                       wait that exists for code diffs. See
                                       `maybe_pass_cr_none_grace`.
+  MERGE_WATCH_AUTO_RESYNC           — gate-logic self-resync (default "on"; #1428
+                                      residual). At startup + every
+                                      MERGE_WATCH_RESYNC_EVERY_CYCLES cycles the daemon
+                                      checks whether its long-lived host checkout has
+                                      drifted behind origin/develop on any gate-logic file
+                                      (merge-gates.sh / its .graphql / merge-watcher*.py);
+                                      on a SAFE fast-forward (clean tree, on develop, no
+                                      divergence) it pulls develop so the on-disk gate
+                                      scripts go fresh again — the throughput-safe
+                                      complement to merge-gates.sh's FAIL-CLOSED
+                                      MERGE_GATES_FRESHNESS guard (which preserves
+                                      correctness but wedges a stale daemon at zero merge
+                                      throughput). When the daemon's OWN code drifted it
+                                      re-execs (POSIX) to load it. "off" disables the
+                                      resync, leaving only the fail-closed guard. The
+                                      unsafe-tree case (the #1428 feature-branch park) is
+                                      never auto-mutated — it warns + waits for a human.
+                                      See `maybe_self_resync`.
+  MERGE_WATCH_RESYNC_EVERY_CYCLES   — poll cycles between periodic self-resync checks
+                                      (default 30; floored at 1). A startup check always
+                                      runs regardless of this cadence.
 """
 
 from __future__ import annotations
@@ -137,6 +158,16 @@ if _bash_lower.endswith(r"system32\bash.exe") or "\\windowsapps\\" in _bash_lowe
         if os.path.exists(candidate):
             BASH_BIN = candidate
             break
+
+# merge-gates.sh's freshness guard shells out to `git` from bash, and the daemon's
+# own gate-logic self-resync (maybe_self_resync) drives `git` directly from Python.
+# The Scheduled-Task PATH is minimal, so resolve git the same way as gh/jq/bash.
+GIT_BIN = _resolve_bin(
+    "git",
+    r"C:\Program Files\Git\cmd\git.exe",
+    r"C:\Program Files\Git\bin\git.exe",
+    r"C:\Program Files (x86)\Git\cmd\git.exe",
+)
 
 # Import shared helpers from the CLI module (in the same directory).
 _HERE = pathlib.Path(__file__).resolve().parent
@@ -881,6 +912,236 @@ def maybe_remove_from_registry(pr: int, clone_path: str) -> None:
         ]
         if len(entries) != before:
             _CLI.write_registry(entries)
+
+
+# ---------------------------------------------------------------------------
+# Gate-logic self-resync (#1428 residual — throughput-safe complement of the
+# merge-gates.sh fail-closed freshness guard)
+# ---------------------------------------------------------------------------
+# The watcher runs as a LONG-LIVED daemon from its own host checkout. merge-gates.sh
+# (the actual merge-eligibility logic) is re-read from disk as a fresh subprocess on
+# every poll, so a checkout parked behind origin/develop silently enforces STALE gate
+# rules — the #1428 escape (an old block-allow-list merged a PR past a RED "Intent
+# section"). The shipped fix is a FAIL-CLOSED freshness guard inside merge-gates.sh
+# (MERGE_GATES_FRESHNESS=block): it refuses GATES_PASSED when its on-disk blob differs
+# from origin/develop's. That preserves correctness but WEDGES throughput — a stale
+# daemon merges nothing until a human refreshes the checkout. This self-resync is the
+# throughput-safe complement: detect the drift, fast-forward-pull develop so the on-disk
+# gate scripts go fresh again (which un-wedges the freshness guard), and — only when the
+# daemon's OWN code drifted — re-exec to load it. SAFE-ONLY: it never pulls over a dirty
+# tree or switches a branch (the banned shared-tree rug-pull, AGENTS.md § Concurrent
+# sessions); the #1428 "parked on a feature branch" tree is left to a human with a loud
+# warning, the fail-closed guard still blocking any stale merge in the meantime.
+
+#: Gate-logic files whose staleness changes a MERGE decision — the drift TRIGGER set.
+_GATE_LOGIC_RELPATHS = (
+    "agents/scripts/core/merge-gates.sh",
+    "agents/scripts/core/merge-gates.graphql",
+    "agents/scripts/core/merge-watcher.py",
+    "agents/scripts/core/merge-watcher-cli.py",
+)
+
+#: The subset whose change only takes effect on a PROCESS RESTART (it's THIS running
+#: daemon's own code / its imported CLI module, loaded once at start). Drift confined to
+#: the other gate-logic files (merge-gates.sh, its query) is fixed by the ff-pull alone —
+#: the next poll re-reads the fresh merge-gates.sh from disk, no re-exec needed.
+_DAEMON_CODE_RELPATHS = (
+    "agents/scripts/core/merge-watcher.py",
+    "agents/scripts/core/merge-watcher-cli.py",
+)
+
+
+def _git(args: list[str], cwd: str, timeout: int = 30) -> "subprocess.CompletedProcess | None":
+    """Run `git -C <cwd> <args>`; return the CompletedProcess, or None on a launch/
+    timeout failure (git missing, bad cwd). Never raises — the self-resync path must
+    degrade to 'skip + rely on the fail-closed guard', never crash the daemon (mirrors
+    _gh_json's normalize-launch-failure contract)."""
+    try:
+        return subprocess.run(
+            [GIT_BIN, "-C", cwd, *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _git_ok(args: list[str], cwd: str, timeout: int = 30) -> "str | None":
+    """_git wrapper returning stripped stdout on exit 0, else None."""
+    r = _git(args, cwd, timeout=timeout)
+    if r is not None and r.returncode == 0:
+        return r.stdout.strip()
+    return None
+
+
+def _repo_root() -> "str | None":
+    """Resolve this checkout's repo root from the daemon's own location. None when the
+    daemon isn't running inside a git checkout (nothing to resync)."""
+    return _git_ok(["rev-parse", "--show-toplevel"], cwd=str(_HERE))
+
+
+def _git_fetch_develop(root: str) -> bool:
+    """Bounded, refs-only `git fetch origin develop` (never touches the worktree).
+    Returns True on success. A failed fetch means origin/develop can't be trusted, so
+    the caller must NOT resync against a possibly-stale local ref (it skips)."""
+    r = _git(["fetch", "--no-tags", "-q", "origin", "develop"], cwd=root, timeout=60)
+    return r is not None and r.returncode == 0
+
+
+def detect_gate_logic_drift(root: str) -> list[str]:
+    """Return the gate-logic relpaths whose ON-DISK blob differs from origin/develop's —
+    the same comparison the merge-gates.sh freshness guard makes (git hash-object vs
+    origin/develop:<path>), extended across the whole gate-logic surface. Only POSITIVE,
+    verifiable drift counts: a path whose local OR develop blob can't be resolved is
+    skipped (the fail-closed freshness guard covers the unverifiable case for
+    correctness; self-resync acts only on a definite signal). Assumes a prior fetch."""
+    drifted: list[str] = []
+    for rel in _GATE_LOGIC_RELPATHS:
+        run_blob = _git_ok(["hash-object", os.path.join(root, rel)], cwd=root)
+        dev_blob = _git_ok(["rev-parse", "-q", "--verify", f"origin/develop:{rel}"], cwd=root)
+        if run_blob and dev_blob and run_blob != dev_blob:
+            drifted.append(rel)
+    return drifted
+
+
+def _resync_safety(root: str) -> "tuple[bool, str]":
+    """Decide whether a fast-forward resync to origin/develop is SAFE on this tree.
+    Safe iff (1) clean worktree — never pull over uncommitted work; (2) on `develop` —
+    switching a shared tree's branch is the banned rug-pull; (3) local HEAD is an
+    ANCESTOR of origin/develop — a true fast-forward with no divergent local commits to
+    merge/rebase. Returns (ok, reason). The #1428 'parked on a feature branch' tree
+    fails (2) → left untouched for a human, the freshness guard still blocking."""
+    porcelain = _git(["status", "--porcelain"], cwd=root)
+    if porcelain is None or porcelain.returncode != 0:
+        return False, "git status failed"
+    if porcelain.stdout.strip():
+        return False, "working tree dirty"
+    branch = _git_ok(["rev-parse", "--abbrev-ref", "HEAD"], cwd=root)
+    if branch is None:
+        return False, "git rev-parse HEAD failed"
+    if branch != "develop":
+        return False, f"not on develop (on '{branch}')"
+    anc = _git(["merge-base", "--is-ancestor", "HEAD", "origin/develop"], cwd=root)
+    if anc is None:
+        return False, "git merge-base failed"
+    if anc.returncode != 0:
+        return False, "local HEAD diverged from origin/develop (not a fast-forward)"
+    return True, "clean develop checkout, fast-forwardable"
+
+
+def _ff_pull_develop(root: str) -> "tuple[bool, bool]":
+    """Fast-forward-only merge of origin/develop (== `git pull --ff-only`). Returns
+    (ok, head_moved). head_moved guards a re-exec loop: a no-op 'Already up to date' ff
+    leaves HEAD put, so the caller must NOT re-exec on it (a residual blob-vs-HEAD
+    divergence the clean-check missed — e.g. an eol filter — would otherwise loop)."""
+    before = _git_ok(["rev-parse", "HEAD"], cwd=root)
+    merged = _git(["merge", "--ff-only", "origin/develop"], cwd=root, timeout=60)
+    if merged is None or merged.returncode != 0:
+        return False, False
+    after = _git_ok(["rev-parse", "HEAD"], cwd=root)
+    return True, bool(before and after and before != after)
+
+
+def _reexec_daemon(drifted: list[str]) -> None:
+    """Replace this process image with a fresh interpreter on the just-pulled code,
+    preserving argv. POSIX os.execv is a true same-PID replace (transparent to any
+    supervisor + the existing pid file). NOT used on Windows — there os.execv is
+    emulated as spawn-new-PID + terminate-self, which would DETACH the daemon from its
+    Scheduled Task (orphaning it + risking a second instance at next login); the caller
+    takes the Windows branch instead, relying on the already-fresh on-disk merge-gates.sh
+    for correctness until the task restarts. Flushes stdio so the log captures the banner
+    before the exec; clears the pid file (the re-exec'd process writes a fresh one)."""
+    print(
+        "merge-watcher: gate-logic drift resynced from origin/develop "
+        f"({', '.join(drifted)}); re-execing to load fresh daemon code.",
+        flush=True,
+    )
+    sys.stdout.flush()
+    sys.stderr.flush()
+    clear_pid_file()
+    os.execv(sys.executable, [sys.executable, os.path.abspath(__file__), *sys.argv[1:]])
+
+
+def _resync_every_cycles() -> int:
+    """Periodic self-resync cadence in poll cycles (default 30 ≈ 30 min at the 60 s
+    default interval). Floored at 1; an invalid value falls back to the default."""
+    try:
+        n = int(os.environ.get("MERGE_WATCH_RESYNC_EVERY_CYCLES", "30"))
+    except (TypeError, ValueError):
+        n = 30
+    return max(1, n)
+
+
+def maybe_self_resync(cycle: int) -> dict[str, Any]:
+    """Gate-logic self-resync — the #1428 residual. Detect whether this daemon's
+    checkout has drifted behind origin/develop on any gate-logic file; if so AND a
+    fast-forward is SAFE, pull develop (re-freshing the on-disk gate scripts the
+    freshness guard checks) and — when the daemon's OWN code changed — re-exec (POSIX)
+    to load it. Returns a dict describing the outcome for logging/tests; on a successful
+    POSIX re-exec it does NOT return (the process is replaced).
+
+    Default ON (the watcher self-heals); MERGE_WATCH_AUTO_RESYNC=off disables it, leaving
+    only the fail-closed freshness guard. Every failure mode degrades to a described
+    no-op + that guard — this path must never crash the daemon. `cycle` is informational
+    (0 = startup check)."""
+    mode = os.environ.get("MERGE_WATCH_AUTO_RESYNC", "on").strip().lower()
+    if mode == "off":
+        return {"resync_action": "disabled (MERGE_WATCH_AUTO_RESYNC=off)"}
+    root = _repo_root()
+    if not root:
+        return {"resync_action": "skipped: daemon not in a git checkout"}
+    if not _git_fetch_develop(root):
+        return {"resync_action": "skipped: git fetch origin develop failed"}
+    drifted = detect_gate_logic_drift(root)
+    if not drifted:
+        return {"resync_action": "fresh"}
+    ok, reason = _resync_safety(root)
+    if not ok:
+        # #1428 shape (feature-branch / dirty / diverged tree): do NOT mutate a shared
+        # tree. Warn loudly; the fail-closed freshness guard still blocks any stale
+        # merge, so this is throughput-stopped-but-SAFE until a human refreshes.
+        return {
+            "resync_action": f"DRIFT but unsafe to auto-resync ({reason}) — refresh the checkout manually",
+            "resync_drifted": drifted,
+            "resync_needs_human": True,
+        }
+    pulled, moved = _ff_pull_develop(root)
+    if not pulled:
+        return {
+            "resync_action": "DRIFT; ff-pull failed — staying on fail-closed guard",
+            "resync_drifted": drifted,
+            "resync_needs_human": True,
+        }
+    if not moved:
+        # ff was a no-op yet a blob still diverged (an eol/filter edge the clean-check
+        # missed): re-execing here would loop, so stop and flag a human instead.
+        return {
+            "resync_action": "DRIFT but ff-pull moved no commit — not re-execing (avoids loop)",
+            "resync_drifted": drifted,
+            "resync_needs_human": True,
+        }
+    needs_restart = any(p in _DAEMON_CODE_RELPATHS for p in drifted)
+    if not needs_restart:
+        # Only merge-gates.sh / its query drifted — the pull refreshed them on disk and
+        # the next poll re-reads them as a fresh subprocess. No process restart needed.
+        return {
+            "resync_action": f"resynced on-disk gate scripts, no restart needed ({', '.join(drifted)})",
+            "resync_drifted": drifted,
+        }
+    if os.name == "posix":
+        _reexec_daemon(drifted)  # does not return on success
+        return {"resync_action": "re-exec failed (os.execv returned)", "resync_drifted": drifted}
+    # Windows: a re-exec would detach the daemon from its Scheduled Task (see
+    # _reexec_daemon). The on-disk gate scripts are already fresh (correctness held by
+    # them + the freshness guard); the daemon's own code loads on the next task restart.
+    return {
+        "resync_action": "resynced; daemon code changed — restart SmatchetMergeWatcher to load it (no auto-reexec on Windows)",
+        "resync_drifted": drifted,
+        "resync_needs_restart": True,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -2757,10 +3018,32 @@ def daemon_loop(poll_interval: int) -> int:
         f"  Press Ctrl-C to stop."
     )
     write_pid_file()
+    # Startup gate-logic self-freshness check (#1428 residual): before the first poll,
+    # make sure this checkout isn't about to enforce STALE gate logic. On a safe drift
+    # this pulls develop (and may re-exec on POSIX, replacing this process).
+    _startup_resync = maybe_self_resync(0)
+    print(f"  self-resync (startup): {_startup_resync.get('resync_action', '?')}")
+    if _startup_resync.get("resync_needs_human") or _startup_resync.get("resync_needs_restart"):
+        print(
+            f"  WARN: stale gate logic — {_startup_resync.get('resync_action')} "
+            f"(drifted: {', '.join(_startup_resync.get('resync_drifted', []))})"
+        )
     cycle = 0
     try:
         while True:
             cycle += 1
+            # Periodic self-resync — re-check drift every N cycles so a days-old daemon
+            # picks up gate-logic changes (or flags an unsafe stale tree) without a human
+            # restart. Cheap: one bounded fetch + a few hash-objects per N cycles. May
+            # re-exec on POSIX when the daemon's own code drifted.
+            if cycle % _resync_every_cycles() == 0:
+                _resync = maybe_self_resync(cycle)
+                print(f"[cycle {cycle}] self-resync: {_resync.get('resync_action', '?')}")
+                if _resync.get("resync_needs_human") or _resync.get("resync_needs_restart"):
+                    print(
+                        f"[cycle {cycle}] WARN: stale gate logic — {_resync.get('resync_action')} "
+                        f"(drifted: {', '.join(_resync.get('resync_drifted', []))})"
+                    )
             try:
                 entries = read_registry()
                 if not entries:
