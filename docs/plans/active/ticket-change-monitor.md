@@ -179,6 +179,15 @@ The S1 change-detection engine ships as three sub-PRs (S1a/S1b/S1c) rather than 
 
 S1b (backend reader virtuals + `JiraChangelogDeltaPure`) and S1c (AppController trigger + config + commands) follow.
 
+### S1b — backend reader surface + Jira changelog-delta parser (2026-06-20)
+The change-detection reader surface and the Jira-private attributed-delta parser, still decoupled from any pane / AppController wiring. The concrete Jira network override (real `expand=changelog` HTTP) is deliberately deferred to a later slice — it needs live `JiraIssueSearch` plumbing plus fixture tests and would break this slice's purity + file ceiling:
+
+- `Source/Core/include/ITrackerIssueReader.h` *(modified)* — three defaulted virtuals + `<chrono>`: `FetchIssuesChangedSince(cfg, views, window, salientFields)`, `FetchIssueKeysForView(cfg, views)`, `ProbeIssueExists(cfg, issueKey)`. Each ships a safe default over the existing `FetchIssues` surface so every backend inherits working behaviour with no concrete override (build stays green); `ProbeIssueExists` defaults to `Ok(true)` (conservative — assume the issue still exists, so a non-probing backend reconciles to LeftView, never a destructive Deleted).
+- `Source/Core/src/Tracker/JiraChangelogDeltaPure.{h,cpp}` *(new)* — `DeltasFromIssueJson(issue, sinceIsoMinute, roster, selfAccountId)` maps one issue's `expand=changelog` JSON to attributed salient `TicketChangeSummary` deltas (kind=Modified, roster-label, display-preferred from→to, author), each carrying `changelogEntryId` + `createdAt` for the monitor's per-pane `(issueKey, changelogEntryId)` seen-set. Pure: only nlohmann/json + the header-only `TicketChangeDiffPure` structs — no JiraClient/cpr, so it links in the pure test block.
+- `tests/Core/JiraChangelogDeltaPure.test.cpp` *(new)* — 5 doctest cases / 24 assertions (bucket A), all green; registered in `tests/CMakeLists.txt`.
+
+S1c (AppController trigger + config + commands) follows. The concrete Jira `FetchIssuesChangedSince` override that calls `DeltasFromIssueJson` over live `expand=changelog` HTTP is a deferred sub-slice after S1c.
+
 ## Deviations from plan
 *(populated per-slice as sub-PRs land)*
 
@@ -189,12 +198,23 @@ S1b (backend reader virtuals + `JiraChangelogDeltaPure`) and S1c (AppController 
 - **`MembershipDiffPure` adds `AddedKeys` alongside `RemovedKeys`.** § Files-to-modify #3 listed only `RemovedKeys`; the symmetric `AddedKeys` feeds the `TicketChangeKind::Added` summaries § Approach already calls for.
 - **`IsoSinceFromWindow` is self-contained** (Hinnant civil-from-days) rather than wrapping `IsoZuluFromUnixSec` as § Files-to-modify #3 suggested, keeping the pure helper free of any GitHub-client dependency so it builds in the bare test rig. A later slice may swap to the shared formatter.
 
+### S1b
+- **Detection rides `ITrackerIssueReader`, not a new role.** § Grill outcomes #1 — three defaulted virtuals on the existing reader interface reuse the pure changelog parser; no `ITrackerActivity` dependency and no 7th backend role.
+- **Concrete Jira `expand=changelog` HTTP override deferred to a post-S1c sub-slice.** § Files-to-modify #5 nominally lands the Jira network override alongside `JiraChangelogDeltaPure` in S1b. It is split out: the parser is pure + bucket-A tested now, while the live `JiraIssueSearch` wiring (which needs fixture/integration tests and pulls cpr into the slice) lands after S1c. The defaulted virtual keeps every backend building until then.
+- **`JiraChangelogDelta` wraps `TicketChangeSummary` rather than emitting it bare.** The parser returns `{summary, changelogEntryId, createdAt}` so the seen-set dedup key `(issueKey, changelogEntryId)` and the since-window compare have the changelog metadata the backend-agnostic `TicketChangeSummary` does not carry.
+- **`ProbeIssueExists(cfg, issueKey)` default is `Ok(true)`.** § Grill outcomes #3 distinguishes 404→Deleted from 200→LeftView; a backend that cannot probe defaults to "still exists" so reconcile picks the non-destructive LeftView path and never deletes cache rows on a probe it could not actually perform.
+
 ## Verification (actual)
 *(populated per-slice as sub-PRs land)*
 
 ### S1a
 - **Bucket A**: 35 doctest cases / 71 assertions across the three new `tests/Core/*.test.cpp`, all green (`ninja-test-msvc`). clang-format clean; lint gate `agents/scripts/project/test-lint-rules.sh --diff origin/develop` PASS (no new strict-zone or comment-noise violations).
 - **Dual-target build**: deferred to CI's MSVC + DX12 lanes. S1a is pure C++14 (no platform / UI / HTTP / ImGui headers) and compiled clean in the test rig; the cold standalone+DX12 local build was skipped per the build/test-cadence rule for a pure-helper slice — CI's dual-target lanes gate the PR.
+
+### S1b
+- **Bucket A**: 5 doctest cases / 24 assertions in `tests/Core/JiraChangelogDeltaPure.test.cpp` — salient-roster filter (non-salient items dropped), display-preferred from→to + raw fallback + `field`/`fieldId` match, self-author suppression, minute-prefix since-window, malformed/missing input — all green (`ninja-test-msvc`, `--source-file=*JiraChangelogDeltaPure*`). Lint gate `agents/scripts/project/test-lint-rules.sh --diff origin/develop` PASS (all 9 checks; no new strict-zone or comment-noise violations).
+- **Dual-target build**: deferred to CI's MSVC + DX12 lanes, same rationale as S1a. The three defaulted virtuals are header-only over the existing `FetchIssues` surface and `JiraChangelogDeltaPure` is pure (nlohmann/json + header-only structs only); both compiled clean in the test rig.
+- **Perf-gate (S1b)**: the feature-level gates at § Perf-review-system gates apply unchanged; S1b adds **no new reachable hot path** — the three virtuals are defaults that nothing calls yet (the monitor flow that consults them is S1c-2), and `DeltasFromIssueJson` runs only over a changed issue's `expand=changelog` JSON, not per frame. No new `SMATCHET_UI_PERF_SCOPE` marker, no index/cache/allocation on any steady-state path. PR-fast CI scenario stays the streaming-sync path named in § Perf-review-system gates #1.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 1. flip § Status to `shipped`,

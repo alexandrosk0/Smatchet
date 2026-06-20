@@ -852,6 +852,11 @@ add_executable(SmatchetTests
     Core/TicketChangeDiffPure.test.cpp
     Core/JqlChangedSincePure.test.cpp
     Core/MembershipDiffPure.test.cpp
+    # ticket-change-monitor S1b — Jira-private changelog-delta parser (issue `expand=changelog`
+    # JSON -> attributed salient TicketChangeSummary). Pure: only nlohmann/json + the header-only
+    # TicketChangeDiffPure structs (no JiraClient/cpr), so it links in this pure block.
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraChangelogDeltaPure.cpp"
+    Core/JiraChangelogDeltaPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/Views.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetToast.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SmatchetLocalization.cpp"
