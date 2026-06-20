@@ -142,6 +142,36 @@ def classify_comment(stripped, raw_line):
 CUT_BUCKETS = ("cut-blank", "cut-decorative")  # mechanically strippable (Wave 1)
 
 
+def _is_textual_comment_line(raw_line):
+    """True if `raw_line` is a full-line comment carrying actual text (not bare `//`/`*`,
+    not a decorative divider, not blank, not code). The neighbor test for an allowed
+    single intra-block separator."""
+    if raw_line is None:
+        return False
+    kinds = cl.classify_line_kinds(raw_line + "\n")
+    if not kinds or kinds[0] != "full_comment":
+        return False
+    stripped = raw_line.strip()
+    if BLANK_COMMENT_RE.match(raw_line) or DECORATIVE_RE.match(raw_line):
+        return False
+    return bool(stripped)
+
+
+def is_allowed_blank_separator(lines, line_no):
+    """True when the bare-comment (`cut-blank`) line at 1-based `line_no` is a SINGLE intra-block
+    paragraph separator — a lone bare `//` between two textual comment lines of the same block.
+    A run of 2+ bare `//` is NOT allowed (each such line has a bare neighbor, so this returns
+    False for every line in the run), and a bare `//` not flanked by comment text on BOTH sides
+    (e.g. against code or a blank line, or at file edge) is NOT allowed either. `lines` is the
+    new-side file content split on '\\n'; `line_no` is 1-based."""
+    idx = line_no - 1  # 0-based
+    if idx <= 0 or idx >= len(lines) - 1:
+        return False  # need a real neighbor on each side (not at file edge)
+    prev_line = lines[idx - 1]
+    next_line = lines[idx + 1]
+    return _is_textual_comment_line(prev_line) and _is_textual_comment_line(next_line)
+
+
 def _git(args):
     """Run a git command, raising on non-zero exit (silent git failures would corrupt the
     baseline count or the regrowth diff into a false-clean result)."""
@@ -288,14 +318,25 @@ def _scan_added_noise(ref):
     hits = []
     file_cache = {}
 
+    def _file_lines(path):
+        if path not in file_cache:
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                file_cache[path] = fh.read().split("\n")
+        return file_cache[path]
+
+    def allowed_separator(path, line_no):
+        # A lone bare `//` between two textual comment lines of the same block is an allowed
+        # intra-block paragraph separator (NOT a strippable blank-run). Runs of 2+ still flag.
+        try:
+            return is_allowed_blank_separator(_file_lines(path), line_no)
+        except OSError:
+            return False
+
     def suppressed(path, line_no, rule_id):
         # Escape hatch: a `// SMATCHET_DEVIATION(rule=<rule_id>; ...)` on the line ABOVE the
         # flagged line suppresses it (the existing forward-only deviation grammar; no new syntax).
         try:
-            if path not in file_cache:
-                with open(path, "r", encoding="utf-8", errors="replace") as fh:
-                    file_cache[path] = fh.read().split("\n")
-            lines = file_cache[path]
+            lines = _file_lines(path)
             # Walk upward past blank lines to the nearest non-blank line, honoring the forward-only
             # deviation contract (a marker separated from its target by blank lines still suppresses).
             idx = line_no - 2
@@ -324,7 +365,8 @@ def _scan_added_noise(ref):
                 kinds = cl.classify_line_kinds(body + "\n")
                 if kinds and kinds[0] == "full_comment":
                     b = classify_comment(body.strip(), body)
-                    if b in rule_for and not suppressed(cur_file, cur_line, rule_for[b]):
+                    if b in rule_for and not suppressed(cur_file, cur_line, rule_for[b]) \
+                            and not (b == "cut-blank" and allowed_separator(cur_file, cur_line)):
                         hits.append((cur_file, cur_line, b, rule_for[b], body))
             cur_line += 1
     return hits
@@ -464,10 +506,35 @@ def run_selftest():
     if _strip_line_numbers(["a", "b", "c", "d"], [2, 4, 99]) != ["a", "c"]:
         print("FAIL: _strip_line_numbers removed the wrong lines")
         fails += 1
+
+    # Single intra-block separator vs blank-run discriminator (PR-4). A lone bare `//` between
+    # two textual comment lines of the SAME block is an ALLOWED paragraph separator; a run of
+    # 2+ bare `//` still flags every line in the run; a bare `//` not flanked by comment text
+    # on both sides still flags. `is_allowed_blank_separator` takes file lines + a 1-based no.
+    sep_ok = [
+        # (lines, line_no, expected-allowed)
+        (["// first paragraph of the block", "//", "// second paragraph of the block"], 2, True),
+        (["// doc line one", "//", "// doc line two", "//", "// doc line three"], 2, True),
+        # A 2+ bare run: BOTH bare lines must still flag (neither is an allowed separator).
+        (["// text above", "//", "//", "// text below"], 2, False),
+        (["// text above", "//", "//", "// text below"], 3, False),
+        # Not inside a block: bare `//` against code / blank / file edge still flags.
+        (["int x = 0;", "//", "int y = 1;"], 2, False),
+        (["// only comment above", "//", ""], 2, False),
+        (["//", "// text below"], 1, False),  # file-edge: no neighbor above
+    ]
+    for lines, line_no, expected in sep_ok:
+        got = is_allowed_blank_separator(lines, line_no)
+        if got != expected:
+            print("FAIL: is_allowed_blank_separator expected %s got %s for line %d of %r"
+                  % (expected, got, line_no, lines))
+            fails += 1
+
     if fails:
         print("comment_audit --selftest: FAIL (%d)" % fails)
         return 1
-    print("comment_audit --selftest: PASS (%d flag + %d prose fixtures + strip-helper)" % (len(flag), len(prose)))
+    print("comment_audit --selftest: PASS (%d flag + %d prose fixtures + strip-helper + %d separator)"
+          % (len(flag), len(prose), len(sep_ok)))
     return 0
 
 
