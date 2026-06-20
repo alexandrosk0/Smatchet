@@ -1569,3 +1569,48 @@
   Status: applied (2026-06-20 backlog deep-triage — verified resolved: PRs #1318 (ImGui decouple) + #1339 (cpr decouple) + #1343 (3 TSan tests wired) all MERGED)
   Last-reviewed: 2026-06-16
 
+
+<!-- archived 3 verified-resolved entries (backlog reconciliation 2026-06-20) -->
+
+- 2026-06-20 · claude-code · [process] · P2 — Out-of-band (GitHub-API) PR creation skips intent-capture → red `Intent section`
+
+  Details: PR #1438 was opened via the GitHub MCP API (`create_pull_request`) on Claude Code on the web, where the local ship-loop intent-capture step (`docs/harness/claude-code/hooks/capture-intent.sh` → `.session-intent/<branch>.log` → templated `## Intent` in the PR body) never runs. The PR body therefore had no `## Intent` section, so the block-allowlisted `Intent section` doc-validation check went terminal RED. Same escaped class as the 2026-06-19 #1428 postmortem (red `Intent section` reaching `develop`) but a DISTINCT root cause: #1428 was a stale merge-watcher daemon running an out-of-date allow-list; #1438 is a PR-creation path that has no intent-capture hook at all.
+
+  Concrete next action: Add an `## Intent` requirement to the out-of-band PR-creation contract in `docs/agent-rules/ship-loops.md` § Intent capture — any agent opening a PR via the GitHub API/MCP (i.e. with no local ship-loop) MUST hand-author a filled `## Intent` section in the PR `body` before calling `create_pull_request`. Optionally back it with a pre-create reminder in the harness PR-creation helper. Cheap (~30 min, doc rule).
+
+  Status: open
+  Last-reviewed: 2026-06-20
+
+- 2026-06-20 · orchestrator · [process] · P2 — MCP-created PRs bypass the `## Intent` template → required gate fails, not self-healing
+  Details: ship-loops.md § Intent capture says fill the PR body's `## Intent` at "`gh pr create` time" from `.github/pull_request_template.md`. But the remote/web harness opens PRs via the GitHub MCP `create_pull_request` tool, which sets `body` verbatim and does NOT apply the repo PR template (template auto-fill is a web-UI / interactive `gh pr create` behaviour only). So an MCP-opened PR starts with no `## Intent` and the REQUIRED "Intent section" check (`doc-validation.yml`) fails on `opened`. Worse: that workflow's `pull_request:` trigger declares no `types:`, so it defaults to `[opened, synchronize, reopened]` — editing the PR body does NOT re-run it; the red required check only clears on a NEW push (`synchronize`). Hit this session on PR #1460 (the check cleared only because a later commit re-triggered the workflow against the corrected body).
+  Concrete next action: in ship-loops.md § Intent capture (+ the orchestrator PR-create packet), state that a PR created via the GitHub MCP `create_pull_request` MUST include the `## Intent` section in the `body` argument explicitly (the template is not auto-applied), and that a missing-Intent PR needs a follow-up commit to clear the gate (a body edit alone won't, since it doesn't fire on `edited`). Optional belt-and-braces: add `edited` to `doc-validation.yml`'s `pull_request: types:` so body-only fixes self-heal.
+  Status: open
+  Last-reviewed: 2026-06-20
+
+- 2026-06-20 · orchestrator · [tooling] · P2 — the `intent-out-of-band` override hatch from ADR-0022 (#1391) shipped only HALF-wired: the doc-validation gate + `poll_merge_gates` referenced the label by exact name, but (a) the GitHub label was never created in the repo, and (b) `safe-admin-merge.sh` never honored it — so a data/docs PR that tripped the `Intent section` block-allowlist check had NO working override on either merge path
+  Details: Discovered while landing PR #1435 (pure-data merge-watcher ledger flush). The PR's body
+    omitted `## Intent` → `Intent section` doc-validation check went RED; that check is on
+    `MERGE_GATES_BLOCK_ALLOWLIST_RE`, so it gated both the poller and `safe-admin-merge`. Two gaps surfaced:
+    (1) `gh pr edit --add-label intent-out-of-band` failed with "label not found" — the label documented in
+    doc-validation.yml's error message ("Override with the 'intent-out-of-band' label.") and recognised by
+    `merge-gates.sh` ($intent downgrade, lines ~482/540) was never `gh label create`d. Created this session
+    (#BFD4F2, matching the other *-out-of-band labels).
+    (2) `safe-admin-merge.sh` honored `tests-out-of-band` / `perf-out-of-band` in its `evaluate_rollup` jq
+    filter but NOT `intent-out-of-band`, so it REFUSED #1435 ("RED/PENDING: Intent section") even with the
+    label applied — diverging from `poll_merge_gates`, which correctly downgraded it. The two gate paths are
+    supposed to mirror each other (the allow-list is single-sourced); the label-downgrade set was not.
+  Concrete next action: BOTH FIXED. (a) label created in the repo (one-time). (b) SHIPPED in this PR
+    (feat/safe-admin-intent-oob): added `$intentOob` binding + `Intent section` downgrade in both the
+    rowBlockers and absentReq branches of `evaluate_rollup`, a header-doc line, and selftest CASE4b
+    (15/15 pass). RESIDUAL: ADR-0022's rollout checklist should have included "create the label" +
+    "wire every gate path that reads the allow-list" — consider a parity test asserting the *-out-of-band
+    label set in `merge-gates.sh` $downgraded == the set honored in `safe-admin-merge.sh` evaluate_rollup,
+    so a future allow-list addition can't half-wire again. Est ~0.5d for the parity test.
+  Cross-ref: #1391 / docs/adr/0022-intent-gate-promotion.md; .github/workflows/doc-validation.yml
+    (Intent section gate); agents/scripts/core/merge-gates.sh (MERGE_GATES_BLOCK_ALLOWLIST_RE + $intent
+    downgrade); agents/scripts/core/safe-admin-merge.sh (evaluate_rollup $intentOob, CASE4b); PR #1435
+    (the data PR that surfaced it);
+    docs/self-improvement/categories/tooling/2026-06-19-merge-watcher-runs-stale-gate-logic.md (sibling
+    Intent-section escape — distinct: that was stale daemon logic, this is incomplete label/tool wiring).
+  Status: applied (2026-06-20 backlog reconciliation — both concrete gaps verified live on develop: the intent-out-of-band label exists in the repo, and safe-admin-merge.sh honors it via the intentOob downgrade in both evaluate_rollup branches plus selftest CASE4b. The remaining "consider a parity test" residual is carved into its own P3 entry, tooling/2026-06-20-deps-override-label-parity-test.md, so the nice-to-have survives this archival.)
+  Last-reviewed: 2026-06-20
