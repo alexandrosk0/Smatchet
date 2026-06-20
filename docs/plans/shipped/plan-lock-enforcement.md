@@ -1,5 +1,5 @@
 # Plan — Force plan-lock filing before file edits (force-on-contention, 3-layer)
-<!-- index-summary: PLAN_INDEX_PAT autosync write-path test (PR to be closed unmerged) -->
+<!-- index-summary: PLAN_INDEX_PAT autosync write-path RE-TEST after write-scope fix (close unmerged) -->
 
 > **Slug**: `plan-lock-enforcement` (matches this file's basename without `.md`).
 >
