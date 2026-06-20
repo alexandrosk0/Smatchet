@@ -34,8 +34,8 @@
 - 2026-06-11 · orchestrator (salvage-2026-06-11) · [test] · P2 — several deterministic `tests/bats/*.bats` suites are not auto-enrolled by `scripts/dev/test-all.sh`, so agent-infra regressions can rot silently
   Details: Lightweight mining of `C:\Dev\salvage-2026-06-11\evidence\bats-coverage.transcript.slim.md` found Bats suites with no `test-*.sh` wrapper under `scripts/dev/` or `agents/scripts/{core,project}/`, and `scripts/dev/test-all.sh` only discovers those wrappers. Current grep confirms at least `agent_eval_run.bats`, `agent_eval_score.bats`, `agent_size.bats`, `function_size.bats`, `historical_review_survivors.bats`, `markdown_links.bats`, `shell_lint.bats`, and `p4_mirror_healthcheck.bats` have no direct wrapper reference (while `lock_*.bats`, merge gates/watcher, issue/subsystem/sync suites, and `android_openssl_failfast.bats` are covered). The salvage transcript also showed `markdown_links.bats` red at the time, and this shell cannot currently run Bats because the resolved npm shim points at a malformed Windows path (`C:UsersalexkAppDataRoamingnpm/node_modules/bats/bin/bats`), so enrolling them blindly would risk making `test-all.sh` fail for an environment/tooling reason rather than a repo regression.
   Concrete next action: first fix/standardize Bats resolution on Windows Git Bash (document the supported install path or add a wrapper that rejects the malformed npm shim with a clear install hint). Then add focused wrappers or one explicit meta-wrapper for the deterministic un-enrolled suites, run them locally, and fix any real red tests before auto-enrolling through `test-all.sh`. Keep live-token/manual eval smoke out of this gate; the `agent_eval_*` Bats files are the fake-runner/fake-judge deterministic path only.
-  Status: open
-  Last-reviewed: 2026-06-11
+  Status: applied (2026-06-20 trap-sweep — PR #1391)
+  Last-reviewed: 2026-06-20
 
 - 2026-06-10 · orchestrator (ui-help-marker-tooltips) · [test] · P2 — no bucket-E hover coverage for the new `SmatchetHelpMarker` (?) tooltips; keyboard-only reachability regressed by design
   Details: The help-marker feature (`feat/help-marker`, plan `docs/plans/ui-help-marker-tooltips.md`) moved ~38 long-form UI explanations from always-visible inline text into hover-only tooltips behind a `(?)` glyph (`Source/Core/src/Ui/SmatchetHelpMarker.cpp`). Two gaps: (a) **no automated coverage** — ImGui Test Engine has no hover-surface tests today, so the `AllowWhenDisabled` contract (tooltip must fire inside `BeginDisabled` blocks, e.g. the Assistant custom-endpoint group), wrap-pos behaviour, and FA-glyph/`"(?)"` fallback are all eye-test-only; (b) **keyboard-only users lost access** to the long-form text entirely (was visible inline, now mouse-hover-only) — a Pillar-4 accessibility regression, accepted as a known deviation at ship time. At ship, the keyboard-access regression should be elevated to a GitHub Issue (user-observable, per issue-triage.md) — this entry owns only the test-coverage half.
@@ -89,8 +89,8 @@
 - 2026-05-24 · test-author · [test] · P2 — `VerifyOnSave_TestConnection_SetsResult` bucket-E test fails under `--spawn` ephemeral runner (slice-9 ship-loop observation)
   Details: Slice 9 of `docs/plans/shipped/autonomous-debugging-no-creds.md` aggregate UI-test run (34/35 pass) revealed a single pre-existing failure: `VerifyOnSave_TestConnection_SetsResult` from `tests/ui/ai_prefs_autosave_flow.test.cpp:215`. The variant depends on `SmatchetActiveUiTestAppController()` returning a non-null `AppController*` so it can call `AiPrefsTestConnection::TriggerProbe`. Under `--spawn --ephemeral` the AppController seam is wired (other variants in the same TU pass), but the worker-thread `ProbeReachability` succeeds, then the result-callback dispatched to the main thread doesn't always run before the test budget (240 yields) expires. Sibling variant `VerifyOnSave_CancelOnClose_ShortCircuits` passes consistently because cancel-then-yield is deterministic. Not a slice-9 regression — slice-9's own 18 new variants all pass.
   Concrete next action: replace the 240-yield poll loop with a deterministic wait — either (a) drive the dispatcher tick from inside the test via `app.MainThreadDispatcher().DrainOnce()` after the worker join, or (b) gate `assistantPrefsTestInFlight=false` via a deterministic post-condition the test arms before TriggerProbe rather than waiting for the dispatched callback. ~1 h.
-  Status: open
-  Last-reviewed: 2026-05-24
+  Status: applied (2026-06-20 trap-sweep — PR #1382)
+  Last-reviewed: 2026-06-20
 
 - 2026-05-23 · debug-detective · [test] · P2 — No automated gate prevents description tooltip "long thin strip" regression
   Details: Session 2026-05-23 `description-tooltip-consolidation` investigation. Adding `opts.wrapWidth = ImGui::GetFontSize() * 48.0f` to `RenderTextEditor`'s `BeginTooltip` block was confirmed only by hovering the description cell manually; no automated gate prevents the same regression. The symptom is severe: tooltip renders as an ultra-narrow vertical strip (~25 px wide) because `MarkdownPreviewRender::Render` samples `GetContentRegionAvail().x` internally, which is near-zero in a fresh `BeginTooltip()` window. The static grep gate (`scripts/dev/test-tooltip-wrapwidth.sh`, PR #430) catches missing `opts.wrapWidth` in source, but cannot verify the tooltip actually renders at the correct width at runtime.
@@ -131,8 +131,8 @@
 - 2026-05-17 · code-review · [test] · P2 — `tests/Core/TicketSyncService.test.cpp:118-140` coverage gaps on empty-fetch guard
   Details: No test for the partial/error path (non-empty `FetchError` + `FullSyncCompleted=false` + empty `freshTickets`); no test asserting the guard is bypassed on legitimate non-empty diff.
   Concrete next action: add two cases covering the partial-error path and the bypass-on-non-empty-diff path. Surfaced by retrospective code-review sweep on PR #139.
-  Status: open
-  Last-reviewed: 2026-05-17
+  Status: partially applied (2026-06-20 trap-sweep — shipped: TicketSyncService.test.cpp rewritten to 20-case suite (PR #1120) covering the non-empty-diff guard-bypass case; remaining: the non-empty FetchError + empty freshTickets exact combo absent)
+  Last-reviewed: 2026-06-20
 
 - 2026-05-17 · code-review · [test] · P3 — `Source/Plugins/Mcp/McpJsonRpcPure.cpp` anon-namespace helpers not exposed for Phase 5 dispatch tests
   Details: `BasenameForDisplay`, `TrimAsciiWhitespace`, `ToLowerAscii`, `AppendAllowlistedArgKvs` live in an anonymous namespace.
@@ -149,8 +149,8 @@
 - 2026-06-04 · orchestrator · [test] · P3 — `scripts/dev/test-docs.sh` local mirror is stale vs `doc-validation.yml`
   Details: surfaced during `reduce-agent-prompt-bloat` Slice 5. `test-docs.sh` (header claims "Steps mirror doc-validation.yml 1:1") OMITS `test-markdown-links` AND `md_lint` from its STEPS — both run in `doc-validation.yml`. A doc author pre-validating locally with `test-docs.sh` won't catch a dangling Markdown link (broken `href` target) or an `md_lint` (MD028) issue; those surface only on push.
   Concrete next action: add `test-markdown-links` (diff-scoped) + `md_lint.py --all` to `scripts/dev/test-docs.sh` STEPS so the local mirror matches CI — or wire a `scripts/dev/pre-ship.sh --docs` mode that runs the whole `doc-validation.yml` step set in one command (see the sibling process entry). Touch only `scripts/dev/test-docs.sh` (+ optionally `scripts/dev/pre-ship.sh`).
-  Status: open
-  Last-reviewed: 2026-06-04
+  Status: partially applied (2026-06-20 trap-sweep — shipped: test-docs.sh now includes test-markdown-links in STEPS; remaining: md_lint not in the STEPS array, and no pre-ship.sh --docs single-mode)
+  Last-reviewed: 2026-06-20
 
 - 2026-06-11 · code-review · [test] · P2 — no bucket-E coverage for the Views-editor field-selection lifecycle (the #views-field-uncheck bug class)
   Details: The #1143 fix is pinned by a pure serialize round-trip test, but the lifecycle that CARRIED the bug — seed-on-activate, reseed-on-view-switch, toggle-a-field-in-a->1023-byte-catalog → switch view → switch back → checkbox still checked, and clear-all → Apply persists empty Fields — has no automated coverage (it needed a live interactive repro to find). A bucket-E ImGui Test Engine flow (or a scenario asserting `view.Fields` membership after a toggle+frame advance) would make this class auto-reproducible and guard the set-authority invariant.
