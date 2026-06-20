@@ -2,7 +2,7 @@
 
 > **Slug**: `appcontroller-god-object-decomposition` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `shipped`
 >
 > **Mandatory rules cross-link**: `AGENTS.md` § Project rules § Plan location / § Plan-doc safety / § Plan revision after implementation / § Plan stress-test / § Plan template / § Plan-doc perf-gate section. Per § Plan revision after implementation, each shipped phase appends its `<sha> · summary` to § Implementation log, its scope-deltas to § Deviations, and its tested-result to § Verification (actual) — the **implementing agent** edits those sections, never the architect.
 
@@ -188,11 +188,8 @@ Plan was committed, then independently triple-checked before finalising:
 - Phase 2 (local, pre-push): dual-target production build clean (836/836); the 10 new `FieldEditPipelineService` doctest cases pass (47 assertions); **full doctest suite 1985/1985 passed (17357 assertions, 0 regressions)**; lint gate clean. CI covers required ASan/UBSan + perf + bucket-E.
 - Phase 3 (local, pre-push): dual-target production build clean (838/838); the 10 new `ConnectivityMonitorService` doctest cases pass (39 assertions) — incl. the first-ever banner-formatter coverage + a probe-down→recovery sequence + two-writer reconciliation; **full doctest suite 1995/1995 passed (17396 assertions, 0 regressions)**; lint gate clean. (One round-trip: 2 probe-sequence cases initially red on the probe rate-limit gate — fixed in the test pump helper, no production change.) CI covers required ASan/UBSan + perf + bucket-E + the `std::async` probe-future under the TSan lane.
 - Phase 4 (local, pre-push): dual-target production build clean (844/844); the 9 new `AttachmentAppUpdateService` doctest cases pass; **full doctest suite 17485 assertions, 0 failed (0 regressions)**; comment-audit + lint gate clean (one round-trip: a decorative-banner comment in the service `.cpp` — removed). CI covers required ASan/UBSan + perf + bucket-E.
+- Phase 5 (verification-only — SQLite-purity closure): **VERIFIED, effectively N/A.** All six `*Deps` interface headers (`IOfflineQueueDeps`/`ITicketSyncDeps`/`IEditMetaDeps`/`IFieldEditDeps`/`IConnectivityDeps`/`IAttachmentAppUpdateDeps`) and all five new service headers are SQLite-free — none `#include` `LocalCacheManager.h`, SQLiteCpp, or `AppController.h`. `TicketSyncService.h` pulls only the SQLite-free leaf headers `Sync/SyncTypes.h` + `Config/ConfigManager.h` + `CachedTicketTypes.h` (ADR-0020). The `_smatchet_pure_sync_test_files` purity-guard test enforces this ongoing and the new service test files pass under it. No residual SQLite conduit remains — the debt entry's original "services include AppController.h → LocalCacheManager.h → SQLiteCpp" concern is fully closed.
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped. In the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+## Outcome
 
-*(Delete this `## Archive` block as part of step 2.)*
+The AppController god-object is decomposed: `HostCallbacks` (Phase 0) + five single-responsibility services — `EditMetaCacheService`, `FieldEditPipelineService`, `ConnectivityMonitorService`, `AttachmentAppUpdateService`, alongside the pre-existing `OfflineQueueService`/`TicketSyncService`/`LuaAutomationHost` — each behind a narrow ISP `*Deps` interface with header-only fakes + doctest units, wired through the single `GridContextDepsAdapter` and constructed in `AppController::WireCoreServices()`. AppController is now a thin facade delegating to owned services; every extraction was behavior-preserving (full doctest suite green at each phase, 0 regressions). Remaining concerns (further Lua/MCP decomposition, `Initialize`-time `HostCallbacks` injection) are tracked in § Out of scope / `debt.md`.
