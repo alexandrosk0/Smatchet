@@ -4,6 +4,11 @@
 **Owner:** orchestrator. **Created:** 2026-06-14. **Drives:** execution of the
 [`testing-surface.md`](../../guides/testing-surface.md) §6 roadmap (8 items, P0–P3).
 
+**Progress (2026-06-20):** shipped — **H, A, D, E1, C** (both phases), **E2**, **G**
+(Phases 1–2). Blocked — **B** (Mesa bucket-lane exe-boot prerequisite broken).
+Remaining — **G** Phase 3 / G2, **J, F, I**. Detail in § Implementation log +
+§ Deviations. NB: E2 + G shipped *ahead of* B (reorder forced by B's blocker).
+
 ## Purpose
 
 `testing-surface.md` §6 lists 8 improvement items but does not order them into
@@ -219,6 +224,27 @@ Each lands in the slice that resolves it (don't batch into a separate PR):
   sanitizers (ASan/UBSan) promoted to required contexts via Pattern A — they always
   report and now join `required_contexts` so a direct REST merge can no longer bypass
   them.
+- 2026-06-16 — **Slice C complete** (Phase 2). After #1253 merged (2026-06-15) and
+  `develop` went green on all three contexts, the live `develop` branch-protection
+  ruleset was flipped 6 → 9 via `setup-branch-protection.sh` (repo-admin action, no
+  PR), making `Coverage` + `Sanitizer (ASAN via MSVC)` + `Sanitizer (UBSan via Clang)`
+  required. Slice C fully shipped; plan archived to
+  `docs/plans/shipped/coverage-sanitizer-required-contexts.md`.
+- 2026-06-16 — **Slice E2 done** (#1296 → #1301 → #1307; ran *ahead of* B — see
+  Deviations). libFuzzer harness over the 6 untrusted-byte parsers. E2a (#1296) landed
+  the `ninja-fuzzer-linux` preset + `tests/fuzz/` scaffold + `smatchet_add_fuzz_target`
+  helper + advisory `fuzz-smoke.yml` + `fuzz_image_dims`; E2b shipped the remaining 5
+  drivers as PR 2a (#1301 — `fuzz_cpp_lex` / `fuzz_callstack` / `fuzz_markdown_adf`) +
+  PR 2b (#1307 — `fuzz_ai_sse` / `fuzz_ai_ndjson`). Surface complete; plans archived to
+  `docs/plans/shipped/slice-e2-libfuzzer.md` + `slice-e2b-libfuzzer.md`.
+- 2026-06-17 — **Slice G Phases 1–2 done** (#1327, #1352; ran *ahead of* B — see
+  Deviations). Phase 1 (#1327) characterization-pinned the `LocalCacheManager`
+  corrupt-file-on-open crash (uncaught ctor `SQLite::Exception` — Pillar 3); Phase 2
+  (#1352) made the ctor survive it (pre-open `PRAGMA schema_version` probe → quarantine
+  `.corrupt-*` + `-wal`/`-shm` sidecars → rebuild fresh), flipping the Phase-1 cases to
+  expect graceful rebuild. **Phase 3 / G2** (`SQLITE_BUSY` contention + config open
+  path) not yet greenlit — plan stays active
+  (`docs/plans/active/slice-g-db-corruption.md`).
 
 ## Deviations
 
@@ -230,6 +256,19 @@ Each lands in the slice that resolves it (don't batch into a separate PR):
   loopback-fixture extension with D2/D3 (real transport seam) deferred; in practice
   wiring `TrackerHttpRequestWithRetry` into the live paths shipped together with the
   fault-injection tests in one PR.
+- **Sequence reordered — E2 + G shipped ahead of B.** The approved order
+  (`…C→B→E2→G…`) put B before E2 and G, but B is **blocked** (next bullet), so the
+  additive, zero-merge-risk slices E2 (#1296/#1301/#1307) and G (#1327/#1352) were
+  pulled forward rather than stall the roadmap behind B's prerequisite. Leverage-per-
+  cost ordering otherwise preserved; only B's position changed.
+- **Slice B — blocked, not started.** Making bucket-E/C merge-gating (enumerate
+  scenarios + quarantine lane + drop blanket `continue-on-error`) requires the Mesa
+  software-GL bucket-C/E lanes to boot the CI exe — and they currently **can't**, so
+  `Bucket-` was *dropped* from the merge-poller meant-to-block allow-list on 2026-06-15
+  (`infra.md` `bucket-mesa-exe-boot` P1; both lanes are now fully advisory until a
+  boot-fix graduates). B's enumeration + quarantine work stays unstarted behind that
+  boot-fix. Slice A's launch-smoke — since graduated to a dedicated BLOCKING check
+  (#1375) — is the partial stand-in (catches dead-harness) until B can land.
 
 ## Verification
 
