@@ -167,13 +167,34 @@ Only **GitHub** is partial (timeline events cover state/assignee/label transitio
 - **Cross-restart notification persistence** — the Notification Center is session-only for now; persisting history across restarts is a follow-up (needs SQLite/config storage).
 
 ## Implementation log
-*(populated post-ship)*
+*(populated per-slice as sub-PRs land)*
+
+### S1a — backend-agnostic pure diff/query helpers (2026-06-20)
+The S1 change-detection engine ships as three sub-PRs (S1a/S1b/S1c) rather than the single S1 PR in § Approach, so the fully-decoupled pure layer lands and bakes first and each diff stays inside the CR file ceiling. S1a is that pure layer — no backend, no pane, no AppController wiring:
+
+- `Source/Core/include/Sync/TicketChangeDiffPure.{h,cpp}` *(new)* — `SalientFieldRole`, `TicketChangeKind`, `TicketChangeSummary`, `IsSalientChangeField`, `DiffChangedTickets`, `FormatTicketChangeToast`.
+- `Source/Core/include/Sync/JqlChangedSincePure.{h,cpp}` *(new)* — `WrapJqlChangedWithin`, `IsoSinceFromWindow`.
+- `Source/Core/include/Sync/MembershipDiffPure.h` *(new, header-only)* — `RemovedKeys` + `AddedKeys`.
+- `tests/Core/{TicketChangeDiffPure,JqlChangedSincePure,MembershipDiffPure}.test.cpp` *(new)* — 35 doctest cases / 71 assertions (bucket A), all green; registered in `tests/CMakeLists.txt`.
+
+S1b (backend reader virtuals + `JiraChangelogDeltaPure`) and S1c (AppController trigger + config + commands) follow.
 
 ## Deviations from plan
-*(populated post-ship)*
+*(populated per-slice as sub-PRs land)*
+
+### S1a
+- **S1 split into S1a/S1b/S1c sub-PRs.** § Approach nominally ships the change-detection engine as one S1 PR; it is split so the fully-decoupled pure helpers land first and each diff stays under the CR file ceiling. S1a = pure layer only.
+- **`SalientFieldRole{fieldId,label}` roster replaces the plan's flat `resolvedSalientIds`.** § Files-to-modify #1 typed the salient set as a bare id list with `IsSalientChangeField(fieldId, resolvedSalientIds)`. S1a carries `{fieldId, label}` pairs so the toast shows the canonical role label ("Status") rather than the raw backend id ("customfield_10020"); `IsSalientChangeField` / `DiffChangedTickets` take the roster. No `canonicalId` namespace is introduced — the label is display-only, so § Grill outcomes #4 still holds.
+- **`DiffChangedTickets` takes the roster argument.** The plan signature `DiffChangedTickets(prev, next)` omitted the salient set; the impl needs it to know which fields are salient and their labels, so the shipped signature is `DiffChangedTickets(prev, next, roster)`.
+- **`MembershipDiffPure` adds `AddedKeys` alongside `RemovedKeys`.** § Files-to-modify #3 listed only `RemovedKeys`; the symmetric `AddedKeys` feeds the `TicketChangeKind::Added` summaries § Approach already calls for.
+- **`IsoSinceFromWindow` is self-contained** (Hinnant civil-from-days) rather than wrapping `IsoZuluFromUnixSec` as § Files-to-modify #3 suggested, keeping the pure helper free of any GitHub-client dependency so it builds in the bare test rig. A later slice may swap to the shared formatter.
 
 ## Verification (actual)
-*(populated post-ship)*
+*(populated per-slice as sub-PRs land)*
+
+### S1a
+- **Bucket A**: 35 doctest cases / 71 assertions across the three new `tests/Core/*.test.cpp`, all green (`ninja-test-msvc`). clang-format clean; lint gate `agents/scripts/project/test-lint-rules.sh --diff origin/develop` PASS (no new strict-zone or comment-noise violations).
+- **Dual-target build**: deferred to CI's MSVC + DX12 lanes. S1a is pure C++14 (no platform / UI / HTTP / ImGui headers) and compiled clean in the test rig; the cold standalone+DX12 local build was skipped per the build/test-cadence rule for a pure-helper slice — CI's dual-target lanes gate the PR.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 1. flip § Status to `shipped`,
