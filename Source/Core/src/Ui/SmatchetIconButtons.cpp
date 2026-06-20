@@ -44,14 +44,18 @@ bool SmatchetIconLeadingButton(const char* icon, const char* label, const char* 
     const bool fa = SmatchetAreFaIconsLoaded();
     // Translate the text FIRST: a composed "<glyph> <text>" string would never match
     // the dictionary (the glyph is part of the lookup key), so we cannot route it
-    // through LabelFromSource. Then pin the English text as a stable hidden id so the
-    // ImGui id is independent of both the UI language and the leading glyph.
+    // through LabelFromSource. The id is then pinned to the English label (see below).
     // NB: this differs from SmatchetIconButton, which defers id derivation to
     // LabelFromSource; the two helpers build ids by different rules on purpose
     // (each is internally id-stable + unique) — do not "unify" them.
     const char* translated = SmatchetLocalization::TranslateSource(label ? label : "");
     std::string composed = SmatchetIconLeadingLabel(fa, icon, translated);
-    composed += "##";
+    // "###" (not "##"): only the triple form RESTARTS the ImGui id hash, so the id
+    // is derived from the English label alone — independent of both the UI language
+    // (translated visible text) and the leading glyph (which appears only once the
+    // FA font finishes loading async). A "##" suffix would fold the glyph + visible
+    // text into the id, flipping it across the font-load frame and dropping focus.
+    composed += "###";
     composed += (label ? label : "");
     const bool clicked = ::ImGui::Button(composed.c_str(), size);
     TooltipForLastItem(tooltip);
