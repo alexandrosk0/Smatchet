@@ -29,6 +29,21 @@ namespace cli {
 /// syntax if/when that path lands.
 nlohmann::json CoerceCliArgValue(const std::string& raw);
 
+/// True when `port` is a usable TCP port (1..65535). The CLI rejects an
+/// out-of-range --mcp-port up front instead of handing httplib a port it can
+/// never reach.
+bool IsValidMcpPort(long long port);
+
+/// Clamp a scenario frame count to a non-negative, overflow-safe range: negative
+/// becomes 0, and a huge count is capped so the scenario driver's frame-count to
+/// wait-ms arithmetic cannot overflow int.
+int ClampScenarioFrames(long long frames);
+
+/// Read a scenario `frames` argument from its coerced JSON value, clamped via
+/// ClampScenarioFrames. Non-numeric or unparseable values fall back to
+/// `defaultFrames`. Shared by the --spawn and in-process scenario drivers.
+int ScenarioFramesFromJson(const nlohmann::json& framesValue, int defaultFrames);
+
 } // namespace cli
 } // namespace smatchet
 

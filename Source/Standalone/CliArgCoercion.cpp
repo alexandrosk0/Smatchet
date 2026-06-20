@@ -83,5 +83,38 @@ nlohmann::json CoerceCliArgValue(const std::string& raw) {
     return nlohmann::json(raw);
 }
 
+bool IsValidMcpPort(long long port) { return port >= 1 && port <= 65535; }
+
+int ClampScenarioFrames(long long frames) {
+    if (frames < 0) {
+        return 0;
+    }
+    // The downstream wait-ms arithmetic must stay within int; cap well below the
+    // overflow point. Two million frames is about 33 million ms, and an absurdly
+    // long run of roughly 9 hours at 60 fps.
+    constexpr long long kMaxScenarioFrames = 2000000;
+    if (frames > kMaxScenarioFrames) {
+        return static_cast<int>(kMaxScenarioFrames);
+    }
+    return static_cast<int>(frames);
+}
+
+int ScenarioFramesFromJson(const nlohmann::json& framesValue, int defaultFrames) {
+    if (framesValue.is_number_integer()) {
+        return ClampScenarioFrames(framesValue.get<long long>());
+    }
+    if (framesValue.is_number_float()) {
+        return ClampScenarioFrames(static_cast<long long>(framesValue.get<double>()));
+    }
+    if (framesValue.is_string()) {
+        try {
+            return ClampScenarioFrames(std::stoll(framesValue.get<std::string>()));
+        } catch (...) { // catch-all-ok: a malformed frames string falls back to the default
+            return defaultFrames;
+        }
+    }
+    return defaultFrames;
+}
+
 } // namespace cli
 } // namespace smatchet
