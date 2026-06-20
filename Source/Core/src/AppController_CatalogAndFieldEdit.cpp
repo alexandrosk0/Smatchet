@@ -1006,9 +1006,17 @@ bool AppController::FetchPaneUserActivity(const std::string& paneId, const std::
                                           const std::string& dayFrom, const std::string& dayTo,
                                           const std::string& projectScope, TrackerActivityProgress& progress,
                                           std::vector<TrackerActivityEntry>& outEntries, std::string& outError) const {
-    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &paneContextOrFocused_(paneId)
-             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+    // Issue #1457: this runs on the User Info activity std::async worker, so resolve the context
+    // under the map mutex (exact-id, fallback to the permanent focused context) and latch the
+    // backend shared_ptr inside the critical section. The latch (ADR-0012) is the only thing
+    // carried across the blocking fetch; the map mutex is released the moment the pointer is read.
+    std::shared_ptr<ITrackerBackend> backend;
+    {
+        std::lock_guard<std::mutex> mapLk(gridContextsMutex_);
+        std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.find(paneId);
+        const GridLiveContext* ctx = (it != gridContexts_.end()) ? it->second.get() : focusedContextPtr_.load();
+        backend = std::atomic_load(&ctx->Backend);
+    }
     outEntries.clear();
     outError.clear();
     if (!backend) {
@@ -1049,20 +1057,28 @@ bool AppController::FetchPaneGroupMembers(const std::string& paneId, const std::
     outError.clear();
     std::shared_ptr<ITrackerBackend> backend;
     {
-        // Scope the context reference: it must NOT be held across the blocking fetch below —
-        // a hidden-pane retirement mid-fetch would dangle it. The latched backend shared_ptr
-        // is the only thing carried across (ADR 0012).
-        GridLiveContext& ctx = paneContextOrFocused_(paneId);
+        // Issue #1457: this runs on a User Info std::async worker, so snapshot the context pointer
+        // under the map mutex (the worker MUST NOT traverse gridContexts_ unguarded while the UI
+        // thread retire-erases / emplaces). Resolve exact-id, falling back to the permanent focused
+        // context, mirroring paneContextOrFocused_. Release the map mutex BEFORE the per-context
+        // roster mutex so the worker never holds both. The husk stays alive (ADR-0012 graveyard)
+        // even if retired mid-flight, so the latched pointer cannot dangle.
+        GridLiveContext* ctx = nullptr;
         {
-            std::lock_guard<std::mutex> lock(ctx.groupRoster.rosterMutex_);
+            std::lock_guard<std::mutex> mapLk(gridContextsMutex_);
+            std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.find(paneId);
+            ctx = (it != gridContexts_.end()) ? it->second.get() : focusedContextPtr_.load();
+        }
+        {
+            std::lock_guard<std::mutex> lock(ctx->groupRoster.rosterMutex_);
             std::unordered_map<std::string, std::vector<TrackerUser>>::const_iterator hit =
-                ctx.groupRoster.MembersByGroup.find(groupName);
-            if (hit != ctx.groupRoster.MembersByGroup.end()) {
+                ctx->groupRoster.MembersByGroup.find(groupName);
+            if (hit != ctx->groupRoster.MembersByGroup.end()) {
                 outMembers = hit->second;
                 return true;
             }
         }
-        backend = std::atomic_load(&ctx.Backend);
+        backend = std::atomic_load(&ctx->Backend);
     }
     if (!backend) {
         outError = "Tracker backend is not initialized.";
@@ -1086,14 +1102,22 @@ bool AppController::FetchPaneGroupMembers(const std::string& paneId, const std::
     // Re-resolve for the write-back — the context may have been retired during the fetch.
     // Exact-id only: caching a fallback pane's roster into the focused context would mix
     // backends (the per-context invariant GridContextGroupRoster exists to keep).
-    std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.find(paneId);
-    if (it != gridContexts_.end()) {
-        std::lock_guard<std::mutex> lock(it->second->groupRoster.rosterMutex_);
+    // Issue #1457: snapshot the pointer under the map mutex (worker thread), then release it
+    // BEFORE the per-context roster mutex so the worker never holds map-mutex + roster-mutex
+    // together. Writing into a retired husk's roster is a harmless no-op (nobody reads it).
+    GridLiveContext* ctx = nullptr;
+    {
+        std::lock_guard<std::mutex> mapLk(gridContextsMutex_);
+        std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.find(paneId);
+        ctx = (it != gridContexts_.end()) ? it->second.get() : nullptr;
+    }
+    if (ctx) {
+        std::lock_guard<std::mutex> lock(ctx->groupRoster.rosterMutex_);
         if (ok) {
-            it->second->groupRoster.MembersByGroup[groupName] = outMembers;
-            it->second->groupRoster.LastGroupRosterError.clear();
+            ctx->groupRoster.MembersByGroup[groupName] = outMembers;
+            ctx->groupRoster.LastGroupRosterError.clear();
         } else {
-            it->second->groupRoster.LastGroupRosterError = outError;
+            ctx->groupRoster.LastGroupRosterError = outError;
         }
     }
     return ok;

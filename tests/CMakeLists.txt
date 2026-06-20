@@ -77,6 +77,10 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # (header-only; no extra .cpp). No threads — proves the policy compiles +
         # links cleanly under -fsanitize=thread end-to-end on the runner.
         Core/GridPaneEvictionPolicy.test.cpp
+        # issue #1457 — gridContexts_ map-structure race (User Info worker snapshot-find
+        # vs UI-thread retire-erase / emplace). Seam-level fixture mirroring the map-mutex
+        # discipline; header-only (no product .cpp), highest-value being the TSan pass.
+        Core/GridContextsMapRace1457.test.cpp
         # --- LocalCacheManager: SQLite-backed ticket cache carrying std::mutex /
         #     std::atomic state — real ThreadSanitizer surface. ImGui-free closure:
         #     LocalCacheManager.cpp + IssueDraft.cpp + Logger.cpp (header deps only).
@@ -255,6 +259,9 @@ add_executable(SmatchetTests
     # multi-grid-tabs.md Slice 5a (plan item 21) — pure hidden-pane LRU eviction decision
     # (least-recently-visible first; visible + busy-sync never evicted). Header-only policy.
     Core/GridPaneEvictionPolicy.test.cpp
+    # issue #1457 — gridContexts_ map-structure race (worker snapshot-find vs UI
+    # retire-erase / emplace). Seam-level fixture; header-only, also in SmatchetTsanTests.
+    Core/GridContextsMapRace1457.test.cpp
     Core/MemoryTelemetry.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/MemoryTelemetry.cpp"
     # perf-p99-emitter — pure ring-buffer + percentile seam behind UiPerfMonitor's
