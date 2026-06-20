@@ -53,4 +53,28 @@
 # - AGENT_SELF_IMPROVEMENT.md: parallel branches MODIFY the same count line with
 #   different values. Union would garble the count.
 docs/self-improvement/categories/applied.md merge=union
+
+# Union merge for high-conflict APPEND-ONLY shared files written by parallel
+# sibling PRs in a campaign / decomposition (PR-16: campaign-sibling-prs-edit-
+# shared-plan-doc-thrash + decomposition-prs-serial-conflict-shared-files).
+#
+# tests/CMakeLists.txt: every new tests/Core/<Unit>.test.cpp PR APPENDS its TU +
+# curated link-closure block to the hand-maintained add_executable(SmatchetTests …)
+# source list. Parallel test PRs therefore append to the SAME region; without
+# union each second-to-merge needs a manual conflict resolution (~5 min × N).
+# Union concatenates both sides on conflict — correct for append-only growth.
+# CAVEAT: union can interleave two unrelated additions or duplicate a line if both
+# sides added the identical entry; the configure-time glob-vs-list guard at the
+# bottom of tests/CMakeLists.txt catches a DROPPED test (false-green), and a build
+# catches a duplicate/garbled entry — so a union artifact fails loudly, it never
+# ships silently. Re-run the build after any union auto-merge of this file.
+tests/CMakeLists.txt merge=union
+
+# Plan docs: parallel slices of one plan each APPEND to the § Implementation log /
+# § Deviations / § Verification sections (post-ship update, process-rules.md
+# § Plan-doc family). Union resolves the append-collision; date/slice interleave
+# is cosmetic and acceptable. Scoped to active plans (the churning set); shipped/
+# archived plans are stable and keep the default 3-way merge.
+docs/plans/active/**/*.md merge=union
+
 docs/high-integrity/portable-purity-baseline.txt text eol=lf
