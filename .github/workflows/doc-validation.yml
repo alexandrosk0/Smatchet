@@ -147,8 +147,19 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          files="$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files" --jq '.[].filename' || true)"
-          if printf '%s\n' "$files" | grep -q '^docs/plans/shipped/'; then
+          # Fail OPEN on a query error (run the autosync defensively) instead of
+          # silently skipping — this job exists to catch shipped-INDEX drift, so a
+          # `gh api` hiccup must not mask a real drift. Emit BOTH .filename and
+          # .previous_filename so a plan RENAMED OUT of docs/plans/shipped/ (a
+          # shipped->active un-ship, which test-plan-index.sh itself handles) is
+          # detected — not just files whose NEW path is under shipped/.
+          if ! files="$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files" \
+                 --jq '.[] | [.filename, (.previous_filename // "")] | @tsv')"; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Unable to query PR files — running INDEX autosync defensively."
+            exit 0
+          fi
+          if printf '%s\n' "$files" | grep -Eq '(^|[[:space:]])docs/plans/shipped/'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "PR touches docs/plans/shipped/ — running INDEX autosync."
           else
