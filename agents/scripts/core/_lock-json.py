@@ -20,6 +20,12 @@ Subcommands:
   format-table  — read a JSON array of claim records from stdin, print as
                   a fixed-width table.
   format-json   — read a JSON array, pretty-print to stdout.
+  lock-rows     — read a JSON array of claim records from stdin, emit one
+                  TSV row per (lock, write_set path):
+                  `branch <TAB> latest_epoch <TAB> slug <TAB> path`.
+                  latest_epoch = max(started, updated) as epoch seconds.
+                  Pure parsing for the shared bash coverage primitive in
+                  lock-table-cache.sh (Layers A/B/C); does NO coverage match.
 
 Pure stdlib. Targets Python 3.7+ (datetime.utcnow available everywhere).
 Underscore-prefixed name marks the file as internal-helper to the lock
@@ -108,6 +114,22 @@ def latest_ts():
         sys.stdout.write("\n")
 
 
+def _iso_to_epoch_str(s):
+    """ISO-8601 string -> integer epoch seconds as a string; '' on error.
+
+    Accepts both 'Z' and '+00:00' tz suffixes. Shared by iso-to-epoch and
+    lock-rows so the two never diverge on timestamp parsing.
+    """
+    if not s:
+        return ""
+    try:
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        return str(int(datetime.datetime.fromisoformat(s).timestamp()))
+    except (ValueError, TypeError):
+        return ""
+
+
 def iso_to_epoch():
     """Read ISO-8601 timestamp from LATEST_TS env, print integer epoch seconds.
 
@@ -117,17 +139,7 @@ def iso_to_epoch():
     source interpolation (see Phase 4 security fix recorded in the
     plan doc).
     """
-    s = os.environ.get("LATEST_TS", "") or ""
-    if not s:
-        sys.stdout.write("\n")
-        return
-    try:
-        if s.endswith("Z"):
-            s = s[:-1] + "+00:00"
-        dt = datetime.datetime.fromisoformat(s)
-        sys.stdout.write(str(int(dt.timestamp())) + "\n")
-    except (ValueError, TypeError):
-        sys.stdout.write("\n")
+    sys.stdout.write(_iso_to_epoch_str(os.environ.get("LATEST_TS", "") or "") + "\n")
 
 
 def format_table():
@@ -185,10 +197,44 @@ def format_json():
     sys.stdout.write("\n")
 
 
+def lock_rows():
+    """Flatten a lock-table JSON array into TSV rows, one per (lock, path).
+
+    Columns (tab-separated): branch <TAB> latest_epoch <TAB> slug <TAB> path.
+    latest_epoch is max(started, updated) as integer epoch seconds ('' when
+    unparseable). This is the shared-parser half of the three-layer coverage
+    check — the exact-path / dir-prefix / branch / staleness decisions all live
+    in the one bash primitive (lock-table-cache.sh), so A/B/C match byte-for-byte
+    by construction. Fail-soft: a malformed array prints nothing (caller treats
+    an empty row set as "no covering lock").
+    """
+    try:
+        records = json.load(sys.stdin)
+    except (json.JSONDecodeError, ValueError):
+        return
+    if not isinstance(records, list):
+        return
+    for r in records:
+        if not isinstance(r, dict):
+            continue
+        branch = r.get("branch") or ""
+        slug = r.get("_slug") or r.get("slug") or ""
+        started = r.get("started") or ""
+        updated = r.get("updated") or ""
+        ts = updated if (updated and (not started or updated >= started)) else (started or "")
+        epoch = _iso_to_epoch_str(ts)
+        for p in (r.get("write_set") or []):
+            # Repo-relative paths never contain a tab/newline; skip any that do
+            # so a crafted write_set can't smuggle extra TSV columns/rows.
+            if not isinstance(p, str) or "\t" in p or "\n" in p:
+                continue
+            sys.stdout.write("%s\t%s\t%s\t%s\n" % (branch, epoch, slug, p))
+
+
 def main():
     if len(sys.argv) < 2:
         print(
-            "usage: _lock-json.py <build-claim|read-field|latest-ts|iso-to-epoch|format-table|format-json>",
+            "usage: _lock-json.py <build-claim|read-field|latest-ts|iso-to-epoch|format-table|format-json|lock-rows>",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -205,6 +251,8 @@ def main():
         format_table()
     elif cmd == "format-json":
         format_json()
+    elif cmd == "lock-rows":
+        lock_rows()
     else:
         print("unknown subcommand: " + cmd, file=sys.stderr)
         sys.exit(2)

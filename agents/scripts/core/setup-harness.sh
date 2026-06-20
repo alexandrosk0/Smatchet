@@ -244,6 +244,7 @@ setup_claude_code() {
   copy_template "docs/harness/claude-code/hooks/lint-syntax-both.py" ".claude/hooks/lint-syntax-both.py"
   copy_template "docs/harness/claude-code/hooks/autoregister-pr.sh"  ".claude/hooks/autoregister-pr.sh"
   copy_template "docs/harness/claude-code/hooks/guard-head-drift.sh"     ".claude/hooks/guard-head-drift.sh"
+  copy_template "docs/harness/claude-code/hooks/guard-plan-lock.sh"      ".claude/hooks/guard-plan-lock.sh"
   copy_template "docs/harness/claude-code/hooks/resync-head-baseline.sh" ".claude/hooks/resync-head-baseline.sh"
   copy_template "docs/harness/claude-code/hooks/guard-shared-tree.sh"    ".claude/hooks/guard-shared-tree.sh"
   copy_template "docs/harness/claude-code/hooks/capture-intent.sh"       ".claude/hooks/capture-intent.sh"
