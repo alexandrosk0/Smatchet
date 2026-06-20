@@ -492,6 +492,7 @@ void TicketSyncService::SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy
     const bool isCurrentlyJira = (currentLower == "jira");
     const bool isCurrentlyPlane = (currentLower == "plane");
     const bool isCurrentlyGitHub = (currentLower == "github");
+    const bool isCurrentlyLinear = (currentLower == "linear");
 
     // Issue #979: pass the live cfgCopy into every Create — the factory must build the
     // new client from the caller's in-memory config, not a disk re-read that races the
@@ -508,6 +509,10 @@ void TicketSyncService::SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy
     } else if (trackerLower == "github" && !isCurrentlyGitHub) {
         deps_.SetBackend(deps_.BackendFactory()->Create("GitHub", cfgCopy));
         LOG_INFO("TicketSyncService: Switched backend to GitHub.");
+        backendSwapped = true;
+    } else if (trackerLower == "linear" && !isCurrentlyLinear) {
+        deps_.SetBackend(deps_.BackendFactory()->Create("Linear", cfgCopy));
+        LOG_INFO("TicketSyncService: Switched backend to Linear.");
         backendSwapped = true;
     }
 

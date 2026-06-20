@@ -207,6 +207,10 @@ const FieldDesc<std::string> kStringFields[] = {
     {"github_base_url", &TrackerConfig::GitHubBaseUrl},
     {"github_owner", &TrackerConfig::GitHubOwner},
     {"github_repo", &TrackerConfig::GitHubRepo},
+    {"linear_base_url", &TrackerConfig::LinearBaseUrl},
+    {"linear_team_id", &TrackerConfig::LinearTeamId},
+    {"linear_team_key", &TrackerConfig::LinearTeamKey},
+    {"linear_workspace_url", &TrackerConfig::LinearWorkspaceUrl},
     {"bugreport_relay_url", &TrackerConfig::BugReportRelayUrl},
     {"bugreport_relay_key", &TrackerConfig::BugReportRelayKey},
     {"bugreport_github_owner", &TrackerConfig::BugReportGitHubOwner},
@@ -393,11 +397,12 @@ void SaveEnumFields(nlohmann::json& j, const TrackerConfig& config) {
 // The three inherit-id lists (each filtered to drop the implicit "summary" entry) + the
 // one-shot migration marker. Inverse of LoadInheritFieldIds / LoadListFields.
 void SaveInheritFieldIds(nlohmann::json& j, const TrackerConfig& config) {
-    const std::vector<std::string>* lists[3] = {&config.NewIssueInheritFieldIds, &config.NewIssueInheritFieldIdsPlane,
-                                                &config.NewIssueInheritFieldIdsGitHub};
-    const char* keys[3] = {"new_issue_inherit_field_ids", "new_issue_inherit_field_ids_plane",
-                           "new_issue_inherit_field_ids_github"};
-    for (int i = 0; i < 3; ++i) {
+    const std::vector<std::string>* lists[4] = {&config.NewIssueInheritFieldIds, &config.NewIssueInheritFieldIdsPlane,
+                                                &config.NewIssueInheritFieldIdsGitHub,
+                                                &config.NewIssueInheritFieldIdsLinear};
+    const char* keys[4] = {"new_issue_inherit_field_ids", "new_issue_inherit_field_ids_plane",
+                           "new_issue_inherit_field_ids_github", "new_issue_inherit_field_ids_linear"};
+    for (int i = 0; i < 4; ++i) {
         nlohmann::json inheritIds = nlohmann::json::array();
         std::copy_if(lists[i]->begin(), lists[i]->end(), std::back_inserter(inheritIds),
                      [](const std::string& id) { return id != "summary"; });
@@ -412,6 +417,8 @@ void SaveInheritFieldIds(nlohmann::json& j, const TrackerConfig& config) {
 void PurgeLegacyAgenticKeys(nlohmann::json& j) {
     j.erase("github_pat");
     j.erase("github_pat_enc");
+    j.erase("linear_api_key");
+    j.erase("linear_api_key_enc");
     j.erase("agentic_poll_enabled");
     j.erase("agentic_poll_interval_sec");
     j.erase("agentic_poll_source");
@@ -449,6 +456,12 @@ void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
         j.erase("github_pat");
     }
     j["github_pat_enc"] = githubPatEnc;
+    // Linear API key — same DPAPI + plaintext-fallback pattern as GitHubPat above.
+    const std::string linearApiKeyEnc = ProtectSecretForConfig(config.LinearApiKey);
+    if (config.LinearApiKey.empty() || !linearApiKeyEnc.empty()) {
+        j.erase("linear_api_key");
+    }
+    j["linear_api_key_enc"] = linearApiKeyEnc;
     // Bug-report PAT — persisted ONLY when the user opted in (BugReportPersistPat);
     // secret, so DPAPI-encrypted with a plaintext fallback if protection fails.
     // When opt-out, both keys are erased so no token is ever written to config.
@@ -524,6 +537,7 @@ void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
     sealSecret("token", "token_enc", config.ApiToken);
     sealSecret("plane_api_key", "plane_api_key_enc", config.PlaneApiKey);
     sealSecret("github_pat", "github_pat_enc", config.GitHubPat);
+    sealSecret("linear_api_key", "linear_api_key_enc", config.LinearApiKey);
     // Bug-report PAT — persisted only on opt-in; otherwise both keys stay erased.
     j.erase("bugreport_github_pat");
     j.erase("bugreport_github_pat_enc");
@@ -547,6 +561,7 @@ void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
     j.erase("token_enc");
     j.erase("plane_api_key_enc");
     j.erase("github_pat_enc");
+    j.erase("linear_api_key_enc");
     j.erase("bugreport_github_pat_enc");
     j.erase("mcp_auth_token_enc");
     j.erase("ai_api_key_enc");
@@ -555,6 +570,7 @@ void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
     j["token"] = config.ApiToken;
     j["plane_api_key"] = config.PlaneApiKey;
     j["github_pat"] = config.GitHubPat;
+    j["linear_api_key"] = config.LinearApiKey;
     j.erase("bugreport_github_pat");
     if (config.BugReportPersistPat && !config.BugReportGitHubPat.empty()) {
         j["bugreport_github_pat"] = config.BugReportGitHubPat;
@@ -931,6 +947,11 @@ void LoadSecretFields(const nlohmann::json& j, TrackerConfig& cfg, SecretMigrati
     if (cfg.GitHubPat.empty()) {
         cfg.GitHubPat = j.value("github_pat", std::string{});
     }
+    // Linear API key — same DPAPI + legacy-plaintext shape as GitHubPat.
+    cfg.LinearApiKey = UnprotectSecretFieldFromConfig("linear_api_key_enc", j.value("linear_api_key_enc", std::string{}));
+    if (cfg.LinearApiKey.empty()) {
+        cfg.LinearApiKey = j.value("linear_api_key", std::string{});
+    }
     // Bug-report PAT — DPAPI + legacy-plaintext, same shape as GitHubPat.
     cfg.BugReportGitHubPat =
         UnprotectSecretFieldFromConfig("bugreport_github_pat_enc", j.value("bugreport_github_pat_enc", std::string{}));
@@ -997,6 +1018,7 @@ void LoadSecretFields(const nlohmann::json& j, TrackerConfig& cfg, SecretMigrati
     cfg.ApiToken = unsealSecret("token_enc", "token");
     cfg.PlaneApiKey = unsealSecret("plane_api_key_enc", "plane_api_key");
     cfg.GitHubPat = unsealSecret("github_pat_enc", "github_pat");
+    cfg.LinearApiKey = unsealSecret("linear_api_key_enc", "linear_api_key");
     cfg.BugReportGitHubPat = unsealSecret("bugreport_github_pat_enc", "bugreport_github_pat");
     cfg.McpAuthToken = unsealSecret("mcp_auth_token_enc", "mcp_auth_token");
     cfg.AiApiKey = unsealSecret("ai_api_key_enc", "ai_api_key");
@@ -1009,6 +1031,7 @@ void LoadSecretFields(const nlohmann::json& j, TrackerConfig& cfg, SecretMigrati
     cfg.ApiToken = j.value("token", std::string{});
     cfg.PlaneApiKey = j.value("plane_api_key", std::string{});
     cfg.GitHubPat = j.value("github_pat", std::string{});
+    cfg.LinearApiKey = j.value("linear_api_key", std::string{});
     cfg.BugReportGitHubPat = j.value("bugreport_github_pat", std::string{});
     cfg.McpAuthToken = j.value("mcp_auth_token", std::string{});
     cfg.AiApiKey = j.value("ai_api_key", std::string{});
@@ -1334,6 +1357,7 @@ void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
     LoadInheritFieldIds(j, "new_issue_inherit_field_ids", cfg.NewIssueInheritFieldIds);
     LoadInheritFieldIds(j, "new_issue_inherit_field_ids_plane", cfg.NewIssueInheritFieldIdsPlane);
     LoadInheritFieldIds(j, "new_issue_inherit_field_ids_github", cfg.NewIssueInheritFieldIdsGitHub);
+    LoadInheritFieldIds(j, "new_issue_inherit_field_ids_linear", cfg.NewIssueInheritFieldIdsLinear);
 
     // One-shot migration: inject "issuetype" into the front of all inherit lists if absent.
     cfg.MigratedInheritIssueTypeV1 = j.value("migrated_inherit_issuetype_v1", false);
@@ -1346,6 +1370,7 @@ void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
         injectIfMissing(cfg.NewIssueInheritFieldIds);
         injectIfMissing(cfg.NewIssueInheritFieldIdsPlane);
         injectIfMissing(cfg.NewIssueInheritFieldIdsGitHub);
+        injectIfMissing(cfg.NewIssueInheritFieldIdsLinear);
         cfg.MigratedInheritIssueTypeV1 = true;
     }
 
@@ -1374,7 +1399,14 @@ void ApplyOverridesAndClamps(const ConfigManager::CliOverrides& cli, TrackerConf
         cfg.McpAllowRemote = (s == "true" || s == "1");
     }
 
-    // SMATCHET_TRACKER_TOKEN — tracker API credential (Jira ApiToken / Plane ApiKey / GitHub PAT).
+    // Linear's GetTrackerType() reports PascalCase "Linear" while the legacy GitHub/Plane env
+    // arms compare against raw casing ("github" / "Plane"). Route Linear off a case-insensitive
+    // copy so both "Linear" and "linear" in cfg.TrackerType hit the Linear credential/url slots.
+    std::string trackerTypeLower = cfg.TrackerType;
+    std::transform(trackerTypeLower.begin(), trackerTypeLower.end(), trackerTypeLower.begin(),
+                   [](char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; });
+
+    // SMATCHET_TRACKER_TOKEN — tracker API credential (Jira ApiToken / Plane ApiKey / GitHub PAT / Linear key).
     // Never stored in argv; always passed as an env var for CI/agent runs.
     if (const char* envToken = std::getenv("SMATCHET_TRACKER_TOKEN")) {
         if (envToken[0] != '\0') {
@@ -1382,19 +1414,24 @@ void ApplyOverridesAndClamps(const ConfigManager::CliOverrides& cli, TrackerConf
                 cfg.PlaneApiKey = envToken;
             } else if (cfg.TrackerType == "github") {
                 cfg.GitHubPat = envToken;
+            } else if (trackerTypeLower == "linear") {
+                cfg.LinearApiKey = envToken;
             } else {
                 cfg.ApiToken = envToken;
             }
         }
     }
 
-    // SMATCHET_TRACKER_BASE_URL — tracker origin URL. Jira→Domain, Plane→PlaneUrl, GitHub→GitHubBaseUrl.
+    // SMATCHET_TRACKER_BASE_URL — tracker origin URL. Jira→Domain, Plane→PlaneUrl, GitHub→GitHubBaseUrl,
+    // Linear→LinearBaseUrl.
     if (const char* envBase = std::getenv("SMATCHET_TRACKER_BASE_URL")) {
         if (envBase[0] != '\0') {
             if (cfg.TrackerType == "Plane") {
                 cfg.PlaneUrl = envBase;
             } else if (cfg.TrackerType == "github") {
                 cfg.GitHubBaseUrl = envBase;
+            } else if (trackerTypeLower == "linear") {
+                cfg.LinearBaseUrl = envBase;
             } else {
                 cfg.Domain = envBase;
             }
