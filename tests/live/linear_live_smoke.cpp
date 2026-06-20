@@ -78,6 +78,9 @@ std::string ResolveTeamIdByKey(const std::string& apiUrl, const std::string& api
     const cpr::Response resp = cpr::Post(
         cpr::Url{apiUrl}, header,
         cpr::Body{smatchet::linear::BuildGraphQLBody("{ teams { nodes { id key } } }", nlohmann::json::object())});
+    if (resp.status_code != 200) {
+        return "";
+    }
     const nlohmann::json parsed = nlohmann::json::parse(resp.text, nullptr, false);
     if (parsed.is_discarded() || !parsed.contains("data") || !parsed["data"].is_object() ||
         !parsed["data"].contains("teams") || !parsed["data"]["teams"].is_object()) {
@@ -136,7 +139,8 @@ int main() {
     const std::string teamKey = EnvOr("SMATCHET_LINEAR_LIVE_TEAM_KEY", "");
 
     // Operator convenience: when only the human-readable key is configured, resolve
-    // the team UUID (the create scope) from it so no UUID lookup is needed.
+    // the team UUID (the create scope) from it automatically, so the operator never
+    // has to look the UUID up by hand.
     if (teamId.empty() && !teamKey.empty()) {
         teamId = ResolveTeamIdByKey(apiUrl, apiKey, teamKey);
         if (teamId.empty()) {

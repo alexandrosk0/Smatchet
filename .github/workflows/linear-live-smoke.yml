@@ -13,7 +13,7 @@ name: Linear live smoke
 # Configure (repo Settings):
 #   secret  LINEAR_TEST_API_KEY     a personal API key scoped to a SANDBOX workspace
 #   var     LINEAR_TEST_TEAM_KEY    the sandbox team key, e.g. "ENG" — the smoke
-#                                   resolves the team UUID from it (no lookup needed)
+#                                   resolves the team UUID from it automatically
 #   var     LINEAR_TEST_TEAM_ID     the team UUID; optional when TEAM_KEY is set
 # The smoke creates one throwaway "[smatchet-smoke]" issue per run and archives it.
 
