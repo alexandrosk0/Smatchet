@@ -1287,6 +1287,157 @@ jobs:
           path: build/tmp/bucket-e-childlog/spawn-child.log
           if-no-files-found: ignore
 
+  # ---------------------------------------------------------------------------
+  # Dedicated, HARD-FAIL deterministic-backend fixture gate.
+  # ---------------------------------------------------------------------------
+  # The flaky `bucket-e-ui-tests` job above is continue-on-error (advisory) for
+  # the whole ImGui-Test-Engine suite. The deterministic Jira backend fixture
+  # path (tests/ui/jira_deterministic_backend.test.cpp, driven by
+  # scripts/dev/test-ui-jira-deterministic-backend.sh) is the part we DO want to
+  # gate: a regression in the fixture-backed sync/grid path is a real product
+  # break, not a render flake. So it lives in its own job with NO job-level
+  # continue-on-error — its check-run conclusion blocks merge.
+  #
+  # Modeled on bucket-launch-smoke-mesa-gl (the dedicated hard gate decoupled
+  # from the flaky advisory bucket jobs). Builds the ninja-ui-test-msvc exe (the
+  # smatchet-exe artefact windows-msvc uploads is built WITHOUT
+  # SMATCHET_BUILD_UI_TESTS, so it cannot be reused here) and installs the Mesa
+  # software-GL DLL set. A single retry absorbs the known Mesa first-frame
+  # collapse; a persistent failure reds the job (and thus the merge gate).
+  bucket-e-jira-fixture-mesa-gl:
+    name: Bucket-E Jira fixture-backend (Mesa GL, hard)
+    needs: windows-msvc
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+
+      - name: Setup sccache (object cache)
+        uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
+
+      - name: Cache sccache objects (jira-fixture ui-test)
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ${{ github.workspace }}\.sccache
+          key: ${{ runner.os }}-sccache-ui-test-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-sccache-ui-test-
+
+      - name: Cache FetchContent _deps (ui-test preset)
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: .fetchcontent-src
+          key: ${{ runner.os }}-fetchcontent-ui-test-msvc-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Configure ninja-ui-test-msvc
+        run: cmake --preset ninja-ui-test-msvc
+
+      - name: Build SmatchetStandalone (UI tests on)
+        run: cmake --build --preset ninja-ui-test-msvc
+
+      - name: Cache Mesa software-GL DLLs
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        # Pure speed optimization — the install step re-downloads on a miss; a
+        # cache hiccup must not red this blocking job.
+        continue-on-error: true
+        with:
+          path: mesa-cache
+          key: mesa-dlls-24.2.5-v2
+
+      - name: Install Mesa software OpenGL ICD (opengl32sw.dll)
+        shell: bash
+        env:
+          MESA_VERSION: "24.2.5"
+        run: |
+          set -euo pipefail
+          # Mesa >= 22 splits the GL driver (see bucket-C/E for the full rationale):
+          # opengl32.dll is a thin loader needing libgallium_wgl.dll + libglapi.dll
+          # beside it, or every exe in the dir dies silently at process start.
+          need_fetch=0
+          for d in opengl32.dll libgallium_wgl.dll libglapi.dll; do
+            if [ ! -f "mesa-cache/$d" ]; then need_fetch=1; fi
+          done
+          if [ "$need_fetch" = "1" ]; then
+            mkdir -p mesa-tmp mesa-cache
+            cd mesa-tmp
+            curl -fL -o mesa.7z "https://github.com/pal1000/mesa-dist-win/releases/download/${MESA_VERSION}/mesa3d-${MESA_VERSION}-release-msvc.7z"
+            echo "3f288b9d5d8b2d25ec0bd81dd82c6b8c77bc0ffad45cc467c37489170dd001ab  mesa.7z" | sha256sum -c -
+            7z x mesa.7z -o./extracted >/dev/null 2>&1 || true
+            for d in opengl32.dll libgallium_wgl.dll libglapi.dll; do
+              if [ -f "extracted/x64/$d" ]; then cp "extracted/x64/$d" "../mesa-cache/$d"; fi
+            done
+            cd ..
+            rm -rf mesa-tmp
+          fi
+          for d in opengl32.dll libgallium_wgl.dll libglapi.dll; do
+            cp "mesa-cache/$d" "build/ninja-ui-test-msvc/$d"
+          done
+
+      # The HARD gate. NO continue-on-error: a persistent fixture-backend failure
+      # reds this job's check-run and blocks merge. SMATCHET_TEST_JIRA_BACKEND_FIXTURE
+      # is exported here (the driver also defaults it, but the explicit export is the
+      # deliverable's contract). --outLog captures every test's verbose log; on
+      # failure we cat it into the CI log for diagnosis. A single retry absorbs the
+      # known Mesa first-frame collapse without masking a real regression.
+      - name: Run deterministic Jira fixture-backend bucket-E (hard)
+        shell: bash
+        env:
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          SMATCHET_EXE: build/ninja-ui-test-msvc/Smatchet.exe
+          SMATCHET_TEST_JIRA_BACKEND_FIXTURE: tests/fixtures/jira_backend/basic-grid.json
+          SMATCHET_UI_TEST_OUTLOG: ${{ github.workspace }}/build/tmp/jira-fixture-outlog.txt
+        run: |
+          set -uo pipefail
+          mkdir -p "${{ github.workspace }}/build/tmp"
+          attempts=2
+          rc=1
+          for attempt in $(seq 1 "$attempts"); do
+            echo "jira-fixture: attempt ${attempt}/${attempts}"
+            set +e
+            bash scripts/dev/test-ui-jira-deterministic-backend.sh
+            rc=$?
+            set -e
+            if [ "$rc" -eq 0 ]; then
+              echo "jira-fixture: attempt ${attempt}/${attempts} PASSED."
+              break
+            fi
+            # exit 2 = binary missing / build OFF — a hard config error, never retried.
+            if [ "$rc" -eq 2 ]; then
+              echo "::error::jira-fixture: exit 2 (binary missing or SMATCHET_BUILD_UI_TESTS=OFF) — config error, not a flake." >&2
+              break
+            fi
+            if [ "$attempt" -lt "$attempts" ]; then
+              echo "::warning::jira-fixture: attempt ${attempt}/${attempts} failed (rc=$rc), retrying (Mesa first-frame flake absorber)."
+            fi
+          done
+          if [ "$rc" -ne 0 ]; then
+            if [ -f "$SMATCHET_UI_TEST_OUTLOG" ]; then
+              echo "===== deterministic Jira fixture-backend per-test log ====="
+              cat "$SMATCHET_UI_TEST_OUTLOG"
+              echo "===== end per-test log ====="
+            else
+              echo "::warning::jira-fixture: per-test outLog not found at $SMATCHET_UI_TEST_OUTLOG"
+            fi
+            echo "::error::jira-fixture: deterministic Jira backend bucket-E FAILED after ${attempts} attempt(s). This is a fixture-backend regression, not a render flake." >&2
+            exit "$rc"
+          fi
+
+      - name: Upload jira-fixture per-test log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: jira-fixture-outlog-${{ github.run_id }}
+          path: build/tmp/jira-fixture-outlog.txt
+          if-no-files-found: ignore
+
   mobile-texture-guard-smoke:
     name: Mobile texture-guard smoke (Mesa headless GL)
     # Issue #1133 — advisory headless gate for the #1122 dynamic-texture crash class.

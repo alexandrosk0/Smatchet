@@ -19,6 +19,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
+#include <fstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -103,6 +105,40 @@ std::vector<UiTestOutcomeRow> ExtractUiTestFailureRows(ImGuiTestEngine* engine) 
     }
     return rows;
 }
+
+// Dump EVERY registered test's verbose Output.Log (not only failures) to `path`.
+// Unlike the stdout summary (failures-only, truncated to 2000 chars) this is the
+// full per-test trace the bucket-E bash drivers `cat` on failure. Best-effort:
+// a write failure is logged but never fails the run (diagnostics, not a gate).
+void DumpAllUiTestLogs(ImGuiTestEngine* engine, const std::string& path) {
+    if (engine == nullptr || path.empty()) {
+        return;
+    }
+    std::ofstream out(path.c_str(), std::ios::out | std::ios::trunc);
+    if (!out.is_open()) {
+        LOG_WARN("ui_test.run: --outLog could not open '%s' for writing", path.c_str());
+        return;
+    }
+    ImVector<ImGuiTest*> tests;
+    ImGuiTestEngine_GetTestList(engine, &tests);
+    for (int i = 0; i < tests.Size; ++i) {
+        ImGuiTest* test = tests[i];
+        if (test == nullptr) {
+            continue;
+        }
+        const char* category = test->Category ? test->Category : "";
+        const char* name = test->Name ? test->Name : "";
+        const bool failed = test->Output.Status == ImGuiTestStatus_Error;
+        out << "=== " << category << " / " << name << " [" << (failed ? "ERROR" : "ok") << "] ===\n";
+        const char* logText = test->Output.Log.GetText();
+        if (logText != nullptr && logText[0] != '\0') {
+            out << logText;
+            out << '\n';
+        }
+    }
+    out.flush();
+    LOG_INFO("ui_test.run: wrote per-test log dump to '%s'", path.c_str());
+}
 #endif
 
 // Emit the formatted ui_test outcome to STDOUT with a SINGLE exempt write, then
@@ -120,7 +156,8 @@ std::vector<UiTestOutcomeRow> ExtractUiTestFailureRows(ImGuiTestEngine* engine) 
 void EmitUiTestOutcome(int tested, int passed, const std::string& filter, bool queued,
                        const std::vector<UiTestOutcomeRow>& failures) {
     const std::string text = FormatUiTestOutcome(tested, passed, filter, queued, failures);
-    std::fprintf(stdout, "%s", text.c_str()); // CLI stdout -- spawn-log diagnostic capture (LOG_* can't reach the spawn-redirected child stdout)
+    std::fprintf(stdout, "%s", text.c_str()); // CLI stdout -- spawn-log diagnostic capture (LOG_* can't reach the
+                                              // spawn-redirected child stdout)
     std::fflush(stdout);
 }
 
@@ -158,12 +195,39 @@ UiTestScenario::~UiTestScenario() {
 #endif
 }
 
+namespace {
+// Opt-in: when SMATCHET_UITEST_WITH_LOCAL_CACHE=1, stand up a throwaway in-memory
+// LocalCacheManager so the offline-queue service constructs and the offline-queue
+// UI's populated path (DataDependentWindowsSmoke case 8) self-activates. Default
+// OFF — existing scenarios see no behaviour change.
+bool UiTestWantsLocalCache() {
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
+#endif
+    const char* v = std::getenv("SMATCHET_UITEST_WITH_LOCAL_CACHE");
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+    return v != nullptr && v[0] == '1' && v[1] == '\0';
+}
+} // namespace
+
 void UiTestScenario::OnStart(AppController& app, const nlohmann::json& args, std::string& outErr) {
     filter_ = args.value("name", std::string());
     outPath_ = args.value("outPath", std::string());
+    outLog_ = args.value("outLog", std::string());
     const bool all = args.value("all", false);
     if (all) {
         filter_.clear();
+    }
+
+    if (UiTestWantsLocalCache()) {
+        if (app.EnsureLocalCacheForUiTest()) {
+            LOG_INFO("ui_test.run: SMATCHET_UITEST_WITH_LOCAL_CACHE=1 — live local cache ensured");
+        } else {
+            LOG_WARN("ui_test.run: SMATCHET_UITEST_WITH_LOCAL_CACHE=1 but cache init failed");
+        }
     }
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
@@ -276,6 +340,9 @@ nlohmann::json UiTestScenario::OnFinish(AppController& /*app*/) {
     if (engine_ != nullptr) {
         ImGuiTestEngine_GetResult(engine_, tested_, passed_);
         AppendUiTestFailures(engine_, out);
+        // --outLog: full per-test verbose log to disk (before teardown) so the
+        // bucket-E bash drivers can `cat` it on failure.
+        DumpAllUiTestLogs(engine_, outLog_);
         // Mirror the outcome to stdout (captured by the --spawn child-log) BEFORE
         // tearing the engine down. Extract the failure rows here (the only
         // ImGui-touching step), then emit via the pure formatter with one write.

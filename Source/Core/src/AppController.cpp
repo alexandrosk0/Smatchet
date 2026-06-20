@@ -1883,8 +1883,9 @@ std::string AppController::InitBackends(TrackerConfig& cfgOut) {
 #pragma warning(pop)
 #endif
         if (linearFixtureEnv && linearFixtureEnv[0] != '\0') {
-            LOG_INFO("AppController: SMATCHET_TEST_LINEAR_BACKEND_FIXTURE=%s — installing LinearFixtureBackend factory.",
-                     linearFixtureEnv);
+            LOG_INFO(
+                "AppController: SMATCHET_TEST_LINEAR_BACKEND_FIXTURE=%s — installing LinearFixtureBackend factory.",
+                linearFixtureEnv);
             backendFactory_ = smatchet::linear::MakeLinearFixtureBackendFactory(std::string(linearFixtureEnv));
             activeTracker = "Linear";
             cfg.TrackerType = activeTracker;
@@ -2713,6 +2714,27 @@ bool AppController::RecreateLocalCacheDatabase(std::string& outError) {
     }
     RefreshLocalData();
     return true;
+}
+
+bool AppController::EnsureLocalCacheForUiTest() {
+    // Bucket-E opt-in (SMATCHET_UITEST_WITH_LOCAL_CACHE=1). A normal boot already
+    // opened a file-backed cache in InitConfig; only stand one up when it is unset
+    // so this is a true no-op in the common case. The in-memory db lives for the
+    // AppController's lifetime (torn down with `Cache`), so the scenario's offline
+    // writes never touch the developer profile or any file.
+    if (!Cache) {
+        try {
+            Cache = std::make_unique<LocalCacheManager>(":memory:");
+            LOG_INFO("EnsureLocalCacheForUiTest: opened throwaway in-memory LocalCacheManager");
+        } catch (const std::exception& ex) {
+            LOG_ERROR("EnsureLocalCacheForUiTest: failed to open in-memory cache: %s", ex.what());
+            return false;
+        }
+    }
+    // Idempotent (`if (!x)` guards inside) — guarantees offlineQueue_ exists so
+    // QueueCreateOffline routes to a live cache instead of returning 0.
+    WireCoreServices();
+    return Cache != nullptr;
 }
 
 void AppController::ClearLastTrackerTicketSyncWarning() {

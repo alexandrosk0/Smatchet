@@ -50,6 +50,9 @@ void RegisterUiTestCommands(CommandRegistry& reg, AppController& app) {
                 "Test filter (wildcard, e.g. 'Views/ColumnsReorder_*'). Empty + all=true runs every registered test."),
             allParam,
             PString("outPath", "Output JSON file path (default: auto-generated in <userData>/ui-test/)."),
+            PString("outLog", "Per-test verbose-log dump file path (every test's Output.Log, not just "
+                              "failures). Empty = no dump. Used by the bucket-E bash drivers for failure "
+                              "diagnosis."),
         };
         reg.Register(std::move(c));
     }

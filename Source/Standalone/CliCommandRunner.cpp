@@ -540,8 +540,8 @@ bool LaunchEphemeralInstance(const std::string& exePath, int port, std::string* 
     // CREATE_NEW fails if the path already exists, so a pre-planted file or
     // symlink at the (now random) path cannot be hijacked (audit #19). The
     // random suffix makes a spurious collision negligible.
-    HANDLE hLog = CreateFileA(logPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_NEW,
-                              FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE hLog =
+        CreateFileA(logPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (hLog == INVALID_HANDLE_VALUE) {
         // Log capture failure is non-fatal — fall back to inheriting parent
         // handles so the spawn still works, just with no captured diagnostics.
@@ -756,23 +756,31 @@ void PostAppQuitBestEffort(const std::string& host, int port) {
     }
 }
 
-/// Normalize a relative outPath argument to an absolute path resolved against the CLI's CWD,
-/// since the spawned instance may have a different working directory. Pass-through for absolute paths.
-nlohmann::json NormalizeOutPath(const nlohmann::json& argsToSend) {
-    nlohmann::json out = argsToSend;
-    if (!out.contains("outPath") || !out["outPath"].is_string())
-        return out;
-    const std::string p = out["outPath"].get<std::string>();
+/// Resolve one relative path-valued arg to an absolute path against the CLI's CWD,
+/// in place. Pass-through for absent/non-string/empty/already-absolute values.
+void NormalizePathArgInPlace(nlohmann::json& out, const char* key) {
+    if (!out.contains(key) || !out[key].is_string())
+        return;
+    const std::string p = out[key].get<std::string>();
     if (p.empty())
-        return out;
+        return;
     fs::path path(p);
     if (path.is_absolute())
-        return out;
+        return;
     std::error_code ec;
     fs::path abs = fs::absolute(path, ec);
     if (!ec) {
-        out["outPath"] = abs.string();
+        out[key] = abs.string();
     }
+}
+
+/// Normalize relative file-path arguments to absolute paths resolved against the CLI's CWD,
+/// since the spawned instance may have a different working directory. Covers both the scenario
+/// result file (`outPath`) and the bucket-E per-test log dump (`outLog`).
+nlohmann::json NormalizeOutPath(const nlohmann::json& argsToSend) {
+    nlohmann::json out = argsToSend;
+    NormalizePathArgInPlace(out, "outPath");
+    NormalizePathArgInPlace(out, "outLog");
     return out;
 }
 
@@ -1545,8 +1553,7 @@ int RunCmdAttach(int argc, char** argv) {
         // Phase 3: POST command and extract envelope.
         nlohmann::json envelope;
         bool spawnHandled = false;
-        const int dispatchResult =
-            RunCmdAttachDispatch(pa, host, port, toolName, argsToSend, envelope, spawnHandled);
+        const int dispatchResult = RunCmdAttachDispatch(pa, host, port, toolName, argsToSend, envelope, spawnHandled);
         // --spawn is terminal: SpawnAndRun already emitted the result envelope and computed the
         // final exit code. Return it directly — `envelope` is empty on this path, so feeding it to
         // RunCmdAttachProcessResult would mis-map a clean ok:true child to kExitHandler (exit 4).

@@ -20,6 +20,10 @@ TEST_PORT="${SMATCHET_TEST_PORT:-58736}"
 FILTER="${UI_TEST_FILTER:-JiraDeterministic}"
 FIXTURE_DIR="${SMATCHET_FIXTURE_DIR:-tests/fixtures/jira_backend}"
 FIXTURE="${SMATCHET_TEST_JIRA_BACKEND_FIXTURE:-$FIXTURE_DIR/basic-grid.json}"
+# Per-test verbose-log dump. When SMATCHET_UI_TEST_OUTLOG is set, pass it through
+# to `ui_test.run --outLog=` so every test's Output.Log lands on disk; we `cat` it
+# on failure for diagnosis (the --spawn parent only prints pass/fail counts).
+OUTLOG="${SMATCHET_UI_TEST_OUTLOG:-}"
 
 if [ ! -f "$EXE" ]; then
     echo "FAIL: $EXE not found. Build with: cmake --build --preset ninja-ui-test-msvc --target SmatchetStandalone" >&2
@@ -38,17 +42,35 @@ trap 'rm -rf "$TMPDIR_DATA"' EXIT
 echo "[test-ui-jira-deterministic-backend] launching ephemeral Smatchet (port $TEST_PORT)..."
 echo "  fixture: $FIXTURE"
 
+OUTLOG_ARG=()
+if [ -n "$OUTLOG" ]; then
+    OUTLOG_ARG=(--outLog="$OUTLOG")
+    echo "  outLog: $OUTLOG"
+fi
+
 RAW_OUTPUT="$(SMATCHET_USER_DATA="$TMPDIR_DATA" \
     SMATCHET_TEST_JIRA_BACKEND_FIXTURE="$FIXTURE" \
     "$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
+    "${OUTLOG_ARG[@]}" \
     --mcp-port="$TEST_PORT" 2>&1 || true)"
 
 echo "$RAW_OUTPUT" | tail -40
+
+# Best-effort: on any non-clean run, surface the per-test verbose log if present.
+cat_outlog_on_failure() {
+    if [ -n "$OUTLOG" ] && [ -f "$OUTLOG" ]; then
+        echo
+        echo "===== ui_test per-test verbose log ($OUTLOG) ====="
+        cat "$OUTLOG"
+        echo "===== end per-test verbose log ====="
+    fi
+}
 
 # Extract the JSON envelope (the `cmd` runner emits `{...}` as the last line).
 JSON_LINE="$(echo "$RAW_OUTPUT" | grep -oE '\{.*\}' | tail -1 || true)"
 if [ -z "$JSON_LINE" ]; then
     echo "FAIL: could not extract JSON envelope from ui_test.run output" >&2
+    cat_outlog_on_failure
     echo "Passed: 0  Failed: 1"
     exit 1
 fi
@@ -67,12 +89,14 @@ if [ "$LOG" = "build had SMATCHET_BUILD_UI_TESTS=OFF" ]; then
 fi
 
 if [ "$PASSED" = "?" ] || [ "$FAILED" = "?" ]; then
+    cat_outlog_on_failure
     echo "Passed: 0  Failed: 1"
     exit 1
 fi
 
 echo "Passed: $PASSED  Failed: $FAILED"
 if [ "$FAILED" != "0" ]; then
+    cat_outlog_on_failure
     exit 1
 fi
 exit 0
