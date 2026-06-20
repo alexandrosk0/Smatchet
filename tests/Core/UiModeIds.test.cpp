@@ -97,6 +97,29 @@ TEST_CASE("resolveAutoEffectiveUiMode — width thresholds + hysteresis dead ban
     CHECK(resolveAutoEffectiveUiMode(800.0f, EffectiveUiMode::Desktop) == EffectiveUiMode::Desktop);
 }
 
+TEST_CASE("resolveEffectiveUiMode — explicit pin > host desktop hint > width auto") {
+    // Explicit Desktop/Mobile pins win regardless of the host hint or viewport width.
+    CHECK(resolveEffectiveUiMode(UiMode::Desktop, false, 400.0f, EffectiveUiMode::Mobile) ==
+          EffectiveUiMode::Desktop);
+    // The host "prefers desktop" hint does NOT override an explicit Mobile pin.
+    CHECK(resolveEffectiveUiMode(UiMode::Mobile, true, 1920.0f, EffectiveUiMode::Desktop) ==
+          EffectiveUiMode::Mobile);
+
+    // A6: on Auto, a host that prefers desktop (ChromeOS / ARC) resolves Desktop even at a
+    // mobile-width viewport — the width auto is bypassed.
+    CHECK(resolveEffectiveUiMode(UiMode::Auto, true, 400.0f, EffectiveUiMode::Mobile) ==
+          EffectiveUiMode::Desktop);
+
+    // Auto WITHOUT the host hint falls through to the width hysteresis (phones / tablets / desktop).
+    CHECK(resolveEffectiveUiMode(UiMode::Auto, false, 400.0f, EffectiveUiMode::Desktop) ==
+          EffectiveUiMode::Mobile);
+    CHECK(resolveEffectiveUiMode(UiMode::Auto, false, 1920.0f, EffectiveUiMode::Mobile) ==
+          EffectiveUiMode::Desktop);
+    // Dead band still holds the prior decision when the hint is off.
+    CHECK(resolveEffectiveUiMode(UiMode::Auto, false, 800.0f, EffectiveUiMode::Mobile) ==
+          EffectiveUiMode::Mobile);
+}
+
 TEST_CASE("mobileTouchDensity <-> string + scale factors") {
     CHECK(std::string(mobileTouchDensityToString(MobileTouchDensity::Compact)) == "compact");
     CHECK(std::string(mobileTouchDensityToString(MobileTouchDensity::Comfortable)) == "comfortable");

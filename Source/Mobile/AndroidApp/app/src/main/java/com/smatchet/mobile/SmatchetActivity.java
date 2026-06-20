@@ -219,6 +219,17 @@ public class SmatchetActivity extends NativeActivity {
     }
 
     /**
+     * Called from native code (JNI) once at ImGui init to detect a ChromeOS / ARC host. On a
+     * Chromebook the app runs with a keyboard + trackpad and resizable windows, so the native shell
+     * defaults the shared UI to the desktop layout instead of the touch mobile shell (A6). Returns
+     * false on phones/tablets. {@code "org.chromium.arc"} is the standard ARC system feature.
+     */
+    @SuppressWarnings("unused")
+    public boolean isChromeOS() {
+        return getPackageManager().hasSystemFeature("org.chromium.arc");
+    }
+
+    /**
      * Called from native code (JNI) to seal a config secret at rest with the AndroidKeyStore AES-GCM
      * key (see {@link SmatchetSecretStore}). Runs synchronously on the calling (native) thread — the
      * caller needs the return value and KeyStore ops do not require the UI thread. Returns the empty

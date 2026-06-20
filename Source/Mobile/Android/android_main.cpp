@@ -23,6 +23,7 @@
 #include "SmatchetImGuiFonts.h"
 #include "SmatchetTheme.h"
 #include "SmatchetUI.h"
+#include "SmatchetUiModeIds.h"
 #include "Tracker/TrackerHttpPure.h"
 #include "Ui/SmatchetImGuiTextureGuardRuntime.h"
 
@@ -437,6 +438,44 @@ ImVec4 PollWorkAreaInsets(ImGuiViewport*) {
                   static_cast<float>(bottom));
 }
 
+// Detect a ChromeOS / ARC host via SmatchetActivity.isChromeOS() (which checks the "org.chromium.arc"
+// system feature). On a Chromebook Smatchet runs keyboard + trackpad + resizable windows, so the
+// shared UI defaults to the desktop dockspace instead of the touch shell (A6). Safe on any device:
+// returns false if the method is missing or the JVM is unreachable. Mirrors SmatchetAndroidImeBridge's
+// env-acquire and likewise leaves the render thread attached (the bridge never detaches it either).
+bool QueryIsChromeOS(android_app* app) {
+    if (app == nullptr || app->activity == nullptr || app->activity->vm == nullptr) {
+        return false;
+    }
+    JavaVM* vm = app->activity->vm;
+    JNIEnv* env = nullptr;
+    const jint getResult = vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+    if (getResult == JNI_EDETACHED) {
+        if (vm->AttachCurrentThread(&env, nullptr) != JNI_OK) {
+            return false;
+        }
+    } else if (getResult != JNI_OK || env == nullptr) {
+        return false;
+    }
+    jclass clazz = env->GetObjectClass(app->activity->clazz);
+    if (clazz == nullptr) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+        }
+        return false;
+    }
+    bool isChromeOs = false;
+    const jmethodID method = env->GetMethodID(clazz, "isChromeOS", "()Z");
+    if (method != nullptr) {
+        isChromeOs = (env->CallBooleanMethod(app->activity->clazz, method) == JNI_TRUE);
+    } else if (env->ExceptionCheck()) {
+        // Older Activity without the method: clear the pending NoSuchMethodError, treat as non-ARC.
+        env->ExceptionClear();
+    }
+    env->DeleteLocalRef(clazz);
+    return isChromeOs;
+}
+
 // One-time ImGui setup on the first INIT_WINDOW (context already current). Font bytes are
 // injected from the APK BEFORE the first atlas build (seam #12); density scaling is applied
 // AFTER the style so it is not wiped (seam #13 — persisted across later ApplyStyle by
@@ -472,6 +511,13 @@ void InitImGuiFirstTime(android_app* app, AndroidHostState& s) {
     }
     SmatchetApplyImGuiDefaultFontWithExtendedGlyphs(io);
     SmatchetTheme::ApplyUiDensityScale(s.densityScale);
+
+    // A6: on a Chromebook (ARC) default the shared UI to the desktop dockspace (keyboard + mouse +
+    // resizable windows) instead of the width-based mobile shell. Set before the first frame so the
+    // first drawResolveUiMode honours it; an explicit user UiMode choice still wins. No-op elsewhere.
+    const bool onChromeOS = QueryIsChromeOS(app);
+    SmatchetSetHostPrefersDesktopUi(onChromeOS);
+    SLOG("Chromebook (ARC) host detected: %s", onChromeOS ? "yes (UI defaults to Desktop)" : "no");
 
     ImGui_ImplAndroid_Init(app->window);
     ImGui_ImplOpenGL3_Init("#version 300 es");
