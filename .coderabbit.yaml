@@ -29,7 +29,13 @@ reviews:
       - main
 
   ## Skip vendored / generated / lock-render artefacts — reviewing them is
-  ## pure noise.
+  ## pure noise. `docs/self-improvement/**` (the agent system's own backlog /
+  ## postmortem ledger — per-entry backlog files, postmortems.md, applied.md)
+  ## is excluded too: a PR whose diff is entirely under it has nothing
+  ## reviewable, so CR posts its terminal "Review skipped" status, which the
+  ## merge-gate fast-passes via crReviewSkipped (see merge-gates.sh + plan
+  ## docs/plans/self-improvement-pr-review-exemption.md). Bugbot's
+  ## symmetric auto-skip lives in merge-gates.sh ($selfImpOnly).
   path_filters:
     - '!build/**'
     - '!**/.fetchcontent-src/**'
@@ -37,6 +43,7 @@ reviews:
     - '!Source/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/**'
     - '!docs/plans/active/_plan-locks.generated.md'
     - '!docs/plans/active/_plan-locks-archive.md'
+    - '!docs/self-improvement/**'
     - '!.session-context*'
     - '!.claude/**'
     - '!.codex/**'

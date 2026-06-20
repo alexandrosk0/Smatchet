@@ -11,6 +11,16 @@ query($owner: String!, $repo: String!, $pr: Int!) {
         pageInfo { hasNextPage }
         nodes { name }
       }
+      # Changed-file paths — load-bearing for the $selfImpOnly auto-exemption
+      # (merge-gates.sh): a PR whose diff is ENTIRELY under docs/self-improvement/**
+      # auto-skips the CR + Bugbot gates. first:100 is ample (a self-improvement PR
+      # is 1-3 files); a >100-file PR sets pageInfo.hasNextPage, and the filter
+      # treats overflow as NOT-exempt (fail-safe → full gates), so it is NOT folded
+      # into the global pagination-overflow OR (which would wedge the poll).
+      files(first: 100) {
+        pageInfo { hasNextPage }
+        nodes { path }
+      }
       commits(last: 1) {
         nodes {
           commit {

@@ -39,6 +39,15 @@
 # (CI downgrades) / do NOT block the CR gate (cr-out-of-band) / do NOT block
 # the Bugbot gate (bugbot-out-of-band).
 #
+# Auto-exemption (NO label): a PR whose diff is ENTIRELY under
+# docs/self-improvement/** (the agent system's own backlog / postmortem ledger)
+# auto-skips the CR (#2) + Bugbot (#4) gates — CR via the .coderabbit.yaml
+# path_filter ("Review skipped" fast-pass) plus a belt-and-suspenders downgrade
+# here, Bugbot via the $selfImpOnly tuple field (27). CI (#1) + user-comment (#3)
+# gates still bind. This stops the bots *blocking* merge; stopping Bugbot from
+# *posting* needs a Cursor-dashboard path-ignore (no in-repo Bugbot config). See
+# plan docs/plans/self-improvement-pr-review-exemption.md.
+#
 # Usage:
 #   source agents/scripts/core/merge-gates.sh
 #   poll_merge_gates <owner> <repo> <pr_number>
@@ -470,18 +479,33 @@ poll_merge_gates() {
     # STALE = cursor[bot] reviewed a prior commit only, else ABSENT = no
     # cursor[bot] review anywhere) · 25 bbOpen (count of unresolved non-outdated
     # cursor[bot] inline-finding review threads — Bugbot gate #4) · 26 bbOob
-    # (bugbot-out-of-band label).
-    # bbOob is LAST because it is always a non-empty "true"/"false" — a trailing
-    # EMPTY field (reqAbsentNames is "" in the common case) would be stripped by
-    # the `data=$(gh …)` command substitution (trailing-newline collapse),
-    # deflating the 27-field count and tripping the fail-closed assertion.
-    # reqAbsentCount (22), crReviewSkipped (23), bbState (24, ABSENT-default) and
-    # bbOpen (25, numeric) are also non-empty so they are safe ahead of bbOob.
+    # (bugbot-out-of-band label) · 27 selfImpOnly (bool: PR diff entirely under
+    # docs/self-improvement/** → auto-skip CR + Bugbot gates).
+    # selfImpOnly is LAST because it is always a non-empty "true"/"false" — a
+    # trailing EMPTY field (reqAbsentNames is "" in the common case) would be
+    # stripped by the `data=$(gh …)` command substitution (trailing-newline
+    # collapse), deflating the 28-field count and tripping the fail-closed
+    # assertion. reqAbsentCount (22), crReviewSkipped (23), bbState (24,
+    # ABSENT-default), bbOpen (25, numeric) and bbOob (26, "true"/"false") are
+    # also non-empty so they are safe ahead of selfImpOnly.
     local GATE_FILTER
     GATE_FILTER='
 .data.repository.pullRequest as $pr
 | ($pr.headRefOid // "") as $sha
 | ([$pr.labels.nodes[]?.name]) as $labels
+# selfImpOnly — TRUE iff the PR diff is ENTIRELY under docs/self-improvement/**
+# (the self-improvement backlog / postmortem ledger). Such a PR auto-skips the
+# CR + Bugbot gates (user ask 2026-06-20; plan self-improvement-pr-review-exemption).
+# Fail-safe to FALSE on any uncertainty: an empty file list (length 0, the vacuous
+# all() guarded out), a >100-file page (pageInfo.hasNextPage, cannot see every
+# path), or absent files (legacy fixtures) all yield FALSE for full gates. Computed
+# here; consumed by the Bugbot bucket + the CR belt-and-suspenders downgrade below.
+# (NB: no apostrophes in this single-quoted jq filter string.)
+| (($pr.files.nodes // []) | map(.path)) as $changedPaths
+| (($pr.files.pageInfo.hasNextPage // false)) as $filesOverflow
+| (($changedPaths | length) > 0
+   and ($filesOverflow | not)
+   and ($changedPaths | all(startswith("docs/self-improvement/")))) as $selfImpOnly
 | ($labels | any(. == "tests-out-of-band")) as $tests
 | ($labels | any(. == "perf-out-of-band")) as $perf
 | ($labels | any(. == "intent-out-of-band")) as $intent
@@ -644,7 +668,8 @@ poll_merge_gates() {
     $bbstate,
     ([$pr.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false
         and any(.comments.nodes[]; .author.login == "cursor" or .author.login == "cursor[bot]"))] | length),
-    ($bb | tostring)
+    ($bb | tostring),
+    ($selfImpOnly | tostring)
   )
 '
     GATE_FILTER="${GATE_FILTER//__ORCH_USER__/$ORCH_USER}"
@@ -697,11 +722,11 @@ poll_merge_gates() {
         # "OPEN\r" != "OPEN" → spurious return-4).
         data="${data//$'\r'/}"
         mapfile -t fields <<<"$data"
-        if [ "${#fields[@]}" -ne 27 ]; then
-            # Exactly 27 expected. Any other count (a field value with an embedded
+        if [ "${#fields[@]}" -ne 28 ]; then
+            # Exactly 28 expected. Any other count (a field value with an embedded
             # newline would inflate it, misaligning fields[n]) → fail closed (CR #511).
             gh_fails=$((gh_fails+1))
-            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 27); transient ($gh_fails/3)"
+            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 28); transient ($gh_fails/3)"
             if [ "$gh_fails" -ge 3 ]; then echo "GH_API_DOWN"; return 3; fi
             local elapsed_short=$(( $(date +%s) - start ))
             if [ "$elapsed_short" -ge "$TIMEOUT_SECONDS" ]; then echo "GATES_TIMEOUT"; return 2; fi
@@ -847,6 +872,16 @@ poll_merge_gates() {
         local bb_state="${fields[24]:-ABSENT}"
         local bb_open="${fields[25]:--1}"
         local has_bb_oob="${fields[26]:-false}"
+
+        # self_imp_only — true iff the PR diff is entirely under
+        # docs/self-improvement/** (field 27). Drives the CR + Bugbot auto-skip
+        # (user ask 2026-06-20; plan self-improvement-pr-review-exemption): these
+        # PRs are low-risk, never-compiled ledger edits that shouldn't be
+        # code-reviewed or block on a review bot. Empty/parse-miss → false
+        # (fail-safe = NOT exempt → full gates). NOTE: this only stops Bugbot from
+        # *blocking* — stopping it from *posting* needs a Cursor-dashboard
+        # path-ignore (docs/agent-rules/merge-gates.md § Bugbot gate).
+        local self_imp_only="${fields[27]:-false}"
 
         # User comments (non-bot, non-self) — -1 fails closed at `user -eq 0`.
         local user="${fields[15]:--1}"
@@ -1112,6 +1147,11 @@ poll_merge_gates() {
             if [ "$has_bb_oob" = "true" ]; then
                 bb_state_print="${bb_state} (${bb_open} unresolved — bugbot-out-of-band → WARN)"
                 echo "WARN: bugbot-out-of-band label downgraded Bugbot block (${bb_open} unresolved cursor[bot] finding(s)) to WARN" >&2
+            elif [ "$self_imp_only" = "true" ]; then
+                # Self-improvement doc PR — auto-downgrade the Bugbot block to WARN
+                # (mirrors bugbot-out-of-band, but keyed on detection, no label).
+                bb_state_print="${bb_state} (${bb_open} unresolved — self-improvement doc PR → WARN)"
+                echo "WARN: self-improvement doc PR (diff entirely under docs/self-improvement/**) — Bugbot gate auto-skipped (${bb_open} unresolved cursor[bot] finding(s) downgraded to WARN)" >&2
             else
                 bb_block=true
                 bb_state_print="${bb_state} (${bb_open} unresolved)"
@@ -1126,6 +1166,14 @@ poll_merge_gates() {
         elif [ "$has_bb_oob" = "true" ]; then
             # Operator waiver with no open findings → pass + short-circuit grace.
             bb_state_print="bugbot-out-of-band (pass)"
+        elif [ "$self_imp_only" = "true" ] && [ "$bb_state" = "STALE" ]; then
+            # Self-improvement doc PR whose only Bugbot review is on a PRIOR commit:
+            # short-circuit the grace wait — these PRs never wait on a Bugbot
+            # re-review (ordered before the STALE-grace branch). ABSENT / clean-on-head
+            # self-improvement PRs need no skip; they fall through to the normal
+            # clean-pass print below, so the auto-skip label only appears when it is
+            # actually load-bearing.
+            bb_state_print="self-improvement-doc-pr (Bugbot STALE grace auto-skipped)"
         elif [ "$bb_state" = "STALE" ] && [ "$p" -lt "$BB_GRACE_POLLS" ]; then
             # Bugbot reviewed a PRIOR commit but not the current head yet — wait a
             # full CR-style grace window for it to re-review the new head.
@@ -1178,6 +1226,19 @@ poll_merge_gates() {
             cr_pass=true
             cr_open_blocks=false
             cr_overridden=true
+        fi
+
+        # Self-improvement doc PR — belt-and-suspenders CR-gate auto-skip beside
+        # the .coderabbit.yaml path_filter that already makes CR post "Review
+        # skipped" (the NONE+review-skipped fast-pass). Covers the rare residual CR
+        # block (e.g. a STALE review left from before the path_filter landed).
+        # Does NOT set cr_overridden — this is a documented auto-exemption, not a
+        # label override; GATE_SNAPSHOT ledger attribution is deferred (see plan
+        # § Out of scope). CI + user-comment gates are untouched, same as cr-oob.
+        if [ "$self_imp_only" = "true" ] && { [ "$cr_pass" != true ] || [ "$cr_open_blocks" = true ]; }; then
+            echo "WARN: self-improvement doc PR — CR gate auto-skipped (CR block '${cr_state_print}' downgraded to WARN)" >&2
+            cr_pass=true
+            cr_open_blocks=false
         fi
 
         # mergeStateStatus guard (secondary P1 fix). GitHub's own mergeability
