@@ -236,12 +236,13 @@ std::string GetTempDir() {
 
 std::string SanitizeFilename(const std::string& name) {
     std::string out = name;
-    std::replace_if(out.begin(), out.end(),
-                    [](char ch) {
-                        return ch == '/' || ch == '\\' || ch == ':' || ch == '*' || ch == '?' || ch == '\"' ||
-                               ch == '<' || ch == '>' || ch == '|';
-                    },
-                    '_');
+    std::replace_if(
+        out.begin(), out.end(),
+        [](char ch) {
+            return ch == '/' || ch == '\\' || ch == ':' || ch == '*' || ch == '?' || ch == '\"' || ch == '<' ||
+                   ch == '>' || ch == '|';
+        },
+        '_');
     if (out.empty())
         return std::string("attachment");
     return out;
@@ -253,9 +254,8 @@ std::string MakeUniqueTempFilePath(const std::string& filename, const std::strin
     static std::atomic<std::uint64_t> s_counter{0};
     const auto now = std::chrono::system_clock::now().time_since_epoch().count();
     const std::size_t tid = std::hash<std::thread::id>{}(std::this_thread::get_id());
-    const std::uint64_t unique =
-        static_cast<std::uint64_t>(now) ^ (static_cast<std::uint64_t>(tid) << 16) ^
-        s_counter.fetch_add(1, std::memory_order_relaxed);
+    const std::uint64_t unique = static_cast<std::uint64_t>(now) ^ (static_cast<std::uint64_t>(tid) << 16) ^
+                                 s_counter.fetch_add(1, std::memory_order_relaxed);
     const std::string safe = SanitizeFilename(filename);
     std::string base = safe;
 
@@ -280,8 +280,8 @@ void AppController::ShowAttachmentCollection(const std::vector<AttachmentDescrip
     if (attachments.empty()) {
         return;
     }
-    if (AttachmentCollectionHandlerCallback) {
-        AttachmentCollectionHandlerCallback(attachments);
+    if (hostCallbacks_.AttachmentCollection) {
+        hostCallbacks_.AttachmentCollection(attachments);
         return;
     }
 
@@ -297,7 +297,7 @@ void AppController::OpenAttachment(const std::string& url, const std::string& fi
     }
 
     // If no file-based path exists, fall back to regular URL opening.
-    if (!AttachmentViewerHandlerCallback && !AttachmentPreviewHandlerCallback) {
+    if (!hostCallbacks_.AttachmentViewer && !hostCallbacks_.AttachmentPreview) {
         LOG_INFO("OpenAttachment: no attachment handler, opening URL directly.");
         OpenUrl(url);
         return;
@@ -311,14 +311,14 @@ void AppController::OpenAttachment(const std::string& url, const std::string& fi
         OpenUrl(url);
         return;
     }
-    if (AttachmentViewerHandlerCallback) {
+    if (hostCallbacks_.AttachmentViewer) {
         LOG_INFO("OpenAttachment: dispatching to host attachment viewer.");
-        AttachmentViewerHandlerCallback(outFilePath, outMime, filename);
+        hostCallbacks_.AttachmentViewer(outFilePath, outMime, filename);
         return;
     }
 
-    if (AttachmentPreviewHandlerCallback && IsSupportedImageMime(outMime)) {
-        if (AttachmentPreviewHandlerCallback(outFilePath, outMime, filename, url)) {
+    if (hostCallbacks_.AttachmentPreview && IsSupportedImageMime(outMime)) {
+        if (hostCallbacks_.AttachmentPreview(outFilePath, outMime, filename, url)) {
             LOG_INFO("OpenAttachment: queued in-app image preview.");
             return;
         }
@@ -371,8 +371,8 @@ bool AppController::DownloadAttachmentForPreview(const std::string& url, const s
         }
         return false;
     };
-    if (!AttachmentPreviewHandlerCallback || !IsSupportedImageMime(mimeType)) {
-        return fail(!AttachmentPreviewHandlerCallback ? std::string("Preview handler is unavailable.")
+    if (!hostCallbacks_.AttachmentPreview || !IsSupportedImageMime(mimeType)) {
+        return fail(!hostCallbacks_.AttachmentPreview ? std::string("Preview handler is unavailable.")
                                                       : std::string("Attachment is not a supported image type."));
     }
     std::string outFilePath;
@@ -382,7 +382,7 @@ bool AppController::DownloadAttachmentForPreview(const std::string& url, const s
         LOG_WARN("DownloadAttachmentForPreview: %s", downloadError.c_str());
         return fail(downloadError);
     }
-    if (!AttachmentPreviewHandlerCallback(outFilePath, outMime, filename, url)) {
+    if (!hostCallbacks_.AttachmentPreview(outFilePath, outMime, filename, url)) {
         LOG_WARN("DownloadAttachmentForPreview: preview handler rejected file=%s mime=%s", filename.c_str(),
                  outMime.c_str());
         return fail("Preview handler rejected the attachment.");
@@ -392,9 +392,3 @@ bool AppController::DownloadAttachmentForPreview(const std::string& url, const s
     }
     return true;
 }
-
-
-
-
-
-

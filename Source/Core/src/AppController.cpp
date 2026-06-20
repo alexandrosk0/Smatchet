@@ -1201,31 +1201,31 @@ void AppController::JoinBackgroundTasks() {
 
 void AppController::SetOpenUrlHandler(std::function<void(const std::string&)> handler) {
 
-    OpenUrlHandler = std::move(handler);
+    hostCallbacks_.OpenUrl = std::move(handler);
 }
 
 void AppController::SetCloseEmbeddedUiHandler(std::function<void()> handler) {
 
-    CloseEmbeddedUiHandler = std::move(handler);
+    hostCallbacks_.CloseEmbeddedUi = std::move(handler);
 }
 
 void AppController::CloseEmbeddedUi() {
 
-    if (CloseEmbeddedUiHandler) {
+    if (hostCallbacks_.CloseEmbeddedUi) {
 
-        CloseEmbeddedUiHandler();
+        hostCallbacks_.CloseEmbeddedUi();
     }
 }
 
 void AppController::SetRequestAppQuitHandler(std::function<void()> handler) {
-    RequestAppQuitHandler = std::move(handler);
+    hostCallbacks_.RequestAppQuit = std::move(handler);
 }
 
 void AppController::RequestAppQuit() const {
 
-    if (RequestAppQuitHandler) {
+    if (hostCallbacks_.RequestAppQuit) {
 
-        RequestAppQuitHandler();
+        hostCallbacks_.RequestAppQuit();
     }
 }
 
@@ -1366,9 +1366,9 @@ void AppController::OpenUrl(const std::string& url) const {
         }
     }
 
-    if (OpenUrlHandler) {
+    if (hostCallbacks_.OpenUrl) {
 
-        OpenUrlHandler(url);
+        hostCallbacks_.OpenUrl(url);
 
         return;
     }
@@ -1428,22 +1428,22 @@ bool AppController::ConsumeScriptingWindowRequest() { return scriptingWindowOpen
 
 void AppController::SetAttachmentViewerHandler(AttachmentViewerHandler handler) {
 
-    AttachmentViewerHandlerCallback = std::move(handler);
+    hostCallbacks_.AttachmentViewer = std::move(handler);
 }
 
 void AppController::SetAttachmentPreviewHandler(AttachmentPreviewHandler handler) {
 
-    AttachmentPreviewHandlerCallback = std::move(handler);
+    hostCallbacks_.AttachmentPreview = std::move(handler);
 }
 
 void AppController::SetAttachmentCollectionHandler(AttachmentCollectionHandler handler) {
 
-    AttachmentCollectionHandlerCallback = std::move(handler);
+    hostCallbacks_.AttachmentCollection = std::move(handler);
 }
 
 void AppController::SetOpenFilePathsHandler(OpenFilePathsHandler handler) {
 
-    OpenFilePathsHandlerCallback = std::move(handler);
+    hostCallbacks_.OpenFilePaths = std::move(handler);
 }
 
 void AppController::RequestOpenFilePaths(bool allowMultiple, const std::string& initialDirectoryUtf8,
@@ -1455,9 +1455,9 @@ void AppController::RequestOpenFilePaths(bool allowMultiple, const std::string& 
         return;
     }
 
-    if (OpenFilePathsHandlerCallback) {
+    if (hostCallbacks_.OpenFilePaths) {
 
-        OpenFilePathsHandlerCallback(allowMultiple, initialDirectoryUtf8, std::move(onComplete));
+        hostCallbacks_.OpenFilePaths(allowMultiple, initialDirectoryUtf8, std::move(onComplete));
 
         return;
     }
