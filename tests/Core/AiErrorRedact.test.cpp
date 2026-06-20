@@ -304,4 +304,18 @@ TEST_CASE("RedactProviderErrorBody strips Basic-auth and raw api-key header line
         const std::string out = RedactProviderErrorBody("pat=GHP_UPPERCASEPATVALUE1234567");
         CHECK(out.find("UPPERCASEPATVALUE1234567") == std::string::npos);
     }
+    // Auth-scheme name matched case-insensitively (CodeRabbit #1439): a proxy may echo the
+    // scheme lowercased/upper-cased. A lower-cased `basic` is the load-bearing case — its
+    // base64 credential has no sk-/prefix shape the later sweeps could otherwise rescue.
+    SUBCASE("lower-cased 'basic' scheme echo still redacts the b64 credential") {
+        const std::string body = "x-fwd: authorization: basic bG93ZXJjYXNlc2NoZW1lbGVhazEy";
+        const std::string out = RedactProviderErrorBody(body);
+        CHECK(out.find("bG93ZXJjYXNlc2NoZW1lbGVhazEy") == std::string::npos);
+        CHECK(out.find("basic [REDACTED]") != std::string::npos);
+    }
+    SUBCASE("upper-cased 'BEARER' scheme echo with a non-sk- token still redacts") {
+        const std::string out = RedactProviderErrorBody("Proxy echoed: BEARER tok-not-prefixed-99887766xy");
+        CHECK(out.find("tok-not-prefixed-99887766xy") == std::string::npos);
+        CHECK(out.find("BEARER [REDACTED]") != std::string::npos);
+    }
 }

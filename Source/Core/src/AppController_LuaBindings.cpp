@@ -1127,6 +1127,9 @@ void AppController::Impl::ParseMcpToolDef(const sol::table& toolDef, smatchet::l
         // aborts the bounded SAX build before such a DOM exists, degrading to an empty
         // schema instead of crashing. schemaStr is same-user input (a setup .lua tool
         // def), so this is defense-in-depth, not a remote-reachable sink.
+        // Default 4 MiB byte cap (json_safe::ParseBounded) is intentionally accepted here —
+        // it mirrors kMaxDecodeBytes at the decode_json site, and a tool-def schema string is
+        // never anywhere near that large.
         std::string parseErr;
         nlohmann::json parsed = smatchet::json_safe::ParseBounded(schemaStr, parseErr);
         if (parseErr.empty()) {

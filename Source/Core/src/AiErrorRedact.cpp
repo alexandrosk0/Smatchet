@@ -36,11 +36,13 @@ std::size_t FindCaseInsensitive(const std::string& hay, const char* needle, std:
 // quote / comma / brace. The scheme word is preserved so a redacted line still reads
 // "<scheme> [REDACTED]"; only the credential is replaced. Covers a reflected
 // `Authorization: Bearer …` / `Authorization: Basic …` header echo whether the body is a
-// raw header line or a JSON string value.
+// raw header line or a JSON string value. The scheme is matched case-INsensitively (issue
+// #1286): a proxy may echo "basic <b64>" lowercased, and a Basic credential has none of the
+// `sk-` / prefix shapes the later sweeps could otherwise rescue.
 void RedactAuthScheme(std::string& s, const char* scheme) {
     const std::string needle = std::string(scheme) + " ";
     size_t i = 0;
-    while ((i = s.find(needle, i)) != std::string::npos) {
+    while ((i = FindCaseInsensitive(s, needle.c_str(), i)) != std::string::npos) {
         const size_t valStart = i + needle.size();
         size_t valEnd = valStart;
         while (valEnd < s.size() && !std::isspace(static_cast<unsigned char>(s[valEnd])) && s[valEnd] != '"' &&
