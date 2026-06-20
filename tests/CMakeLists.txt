@@ -567,6 +567,14 @@ add_executable(SmatchetTests
     Core/AiNdjsonParser.test.cpp
     Core/AiContextBuilder.test.cpp
     Core/AiErrorRedact.test.cpp
+    # PR-12 — per-client cancel + error-body redaction regressions driving the
+    # REAL OpenAiClient / AnthropicClient / OllamaClient (CORE sources below) over
+    # a real cpr HTTP round-trip at an in-process httplib loopback server
+    # (tests/support/AiHttpFixture.h). cpr + httplib bound — these belong in this
+    # cpr-bearing rig, NOT the cpr-free TSan / SQLite-free rigs (the AI clients
+    # pull <cpr/cpr.h>; the fixture pulls <httplib.h>, both already linked below).
+    Core/AiClientCancel.test.cpp
+    Core/AiClientErrorRedact.test.cpp
     # PR #991 — pure Ollama stream-error message formatting (transport + non-2xx
     # HTTP) extracted from OllamaClient::SendStreaming. OllamaStreamError.cpp is
     # cpr-free (delegates body redaction to AiErrorRedact), linked in the CORE
@@ -865,6 +873,14 @@ add_executable(SmatchetTests
     # GET/PUT retry-on-5xx while POST is single-shot (Transport-only). Needs only
     # TrackerHttpUtils.cpp + TrackerHttpClient.cpp + cpr + fixture (all already linked).
     Core/TrackerHttpFaults.test.cpp
+    # PR-20 (backlog-pr-roadmap) — tracker-redirect-no-follow-regression-test. SECURITY
+    # regression for MakeTrackerRedirectPolicy (TrackerHttpUtils.cpp, H4/E2): asserts the
+    # policy object is configured follow=false / cont_send_cred=false AND drives a real
+    # tracker GET against an in-process loopback server that 302s to a DIFFERENT host:port,
+    # proving the redirect is NOT followed and the Authorization header (API token) never
+    # reaches the cross-host target. Needs only TrackerHttpUtils.cpp + TrackerHttpClient.cpp
+    # + cpr + httplib (all already linked); the recording loopback server is in-file.
+    Core/TrackerRedirectNoFollow.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/NetworkUsageTracker.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/OfflineQueueService.cpp"
     # ticket-change-monitor S1a (docs/plans/active/ticket-change-monitor.md) — three

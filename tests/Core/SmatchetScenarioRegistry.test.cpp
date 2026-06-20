@@ -57,6 +57,8 @@ std::set<std::string> ExpectedNames() {
 #if defined(SMATCHET_WITH_AI)
     expected.insert("ai-assistant-streaming-happy-path");
     expected.insert("ai-assistant-streaming-transport-down-within-5s");
+    // PR-12 — real-client S2/S4/S5 streaming scenario.
+    expected.insert("ai-assistant-send-s2-s4-s5");
 #endif
 #if defined(SMATCHET_WITH_WHISPER)
     expected.insert("whisper-dictation-roundtrip");

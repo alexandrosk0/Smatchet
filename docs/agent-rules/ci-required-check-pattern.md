@@ -25,7 +25,7 @@ A **required** status check must report on **every** PR or the PR is wedged
 success for a workflow that was skipped by a path filter. So if a required
 check's workflow has a positive `on.pull_request.paths:` filter (e.g.
 `perf-pr-fast.yml` filters to `Source/Core/**`), a docs-only PR never triggers
-it → the required context never reports → the PR can never merge. Smatchet ships
+it → the required context never reports → the PR can never merge. The project ships
 docs-only PRs constantly, so any required check MUST report unconditionally.
 
 Note: `paths` / `paths-ignore` are **workflow-level** (`on.pull_request.*`), not
@@ -126,6 +126,98 @@ is **FALSE** (run the full desktop suite) on any uncertainty or any non-android,
 non-docs path. The two workflows compute `android_only` independently with the
 same tolerated set, so they agree on what counts as android-only.
 
+## Pattern D — advisory job (step-level `continue-on-error`, not job-level)
+
+An **advisory** job (NOT a required branch-protection context; NOT on the
+merge-gate poller's meant-to-block allow-list) should keep its *real* signal
+visible while not red-walling the merge. The naive way — `continue-on-error:
+true` at the **job** level — masks **every** step, so even a broken harness /
+infra failure / "the lane ran nothing" goes green. Prefer **step-level**
+`continue-on-error` on the genuinely-flaky/advisory step **plus** an unmasked
+hard-fail step that catches the broken-lane class, plus artifact upload keyed on
+the step `outcome`/`always()` so the evidence survives a masked failure.
+
+Canonical snippet (this is exactly the shape `sanitizer-ubsan-pr` +
+`bucket-c-screenshot-diff` already use):
+
+```yaml
+jobs:
+  advisory-thing:
+    name: Advisory thing (not required)
+    runs-on: windows-2022
+    # NO job-level `continue-on-error: true` — that would mask the lane-integrity
+    # step below too. Keep the mask at the step that is genuinely advisory.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run the advisory thing
+        id: run                       # ← step id so later steps read its outcome
+        continue-on-error: true       # ← STEP-level: a per-scenario regression is advisory
+        run: bash scripts/dev/<advisory>.sh   # writes a lane-status sentinel
+
+      # Hard-fail teeth OUTSIDE the mask: "passed nothing / harness died" is a
+      # broken lane, not an advisory regression. A missing sentinel also fails closed.
+      - name: Lane-integrity — did not pass-nothing
+        run: |
+          set -euo pipefail
+          test -f "$SENTINEL" || { echo "::error::harness wrote no sentinel — dead lane"; exit 1; }
+          # ... assert NOT (Passed==0 && Failed>0) ...
+
+      - name: Upload evidence
+        if: always()                  # ← survives a masked failure (or: ${{ steps.run.outcome == 'failure' }})
+        uses: actions/upload-artifact@v4
+        with: { name: advisory-evidence-${{ github.run_id }}, path: out/, if-no-files-found: ignore }
+```
+
+Job-level `continue-on-error: true` is correct ONLY when the **entire** job is
+advisory with no broken-lane class worth catching — e.g. the runner-gated /
+brand-new-arch legs (`windows-msvc-arm64`, `windows-arm64-native`,
+`windows-arm64-installer`) and the static-analysis debt job, which are wholly
+non-blocking by design. The out-of-band-label valve (`continue-on-error: ${{
+steps.<oob>.outputs.oob == '1' }}` on a required check's run step) is a third,
+distinct shape — a *required* check whose mask is conditional on a named escape
+label, NOT an advisory job.
+
+**Audit (2026-06, PR-15):** every `continue-on-error` in `build-and-test.yml`
+was checked against this. The job-level uses are the wholly-advisory
+runner-gated ARM64 legs + the static-analysis debt job (correct — no broken-lane
+class to protect); `bucket-c`/`bucket-e` pair job-level advisory with an unmasked
+lane-integrity hard-fail step (the hybrid above — correct); the
+ASan/UBSan jobs use the conditional out-of-band-label valve (correct). No job was
+found using job-level masking where a step-level mask + lane-integrity guard was
+the right shape, so no gating semantics were changed.
+
+## Invariant — a path-gated job must run on its OWN PR before merge
+
+A check gated to run only on certain paths (e.g. `sanitizer-ubsan-pr` /
+`sanitizer-asan` gate on `changes.outputs.source_core_cpp == 'true'` — only when
+`Source/Core/**` or `Source/Plugins/**` C++ changed) must actually **execute**
+(not merely SKIP-as-success) on the PR that changes that surface, **before** that
+PR merges. The failure class (PR-15 / ubsan-merged-without-executing-validation):
+a Core change rides in on a PR whose detect-changes step mis-classified the diff,
+the sanitizer job SKIPs, the skip counts as success for branch protection, and the
+UB validation never ran on the code it was supposed to cover — merged green
+without ever executing.
+
+Convention:
+- The detect-changes gate (`source_core_cpp`) is **fail-safe = TRUE on
+  uncertainty** (empty/failed diff → run the sanitizer), so the only way to wrongly
+  skip is a *non-empty* diff that genuinely matched no Core/Plugins C++ path —
+  which is the intended skip. Keep it that way; never make it fail-safe-false.
+- On a PR you know touches `Source/Core/**`, **confirm the sanitizer check
+  reports a real verdict (green/red), not "Skipped"**, before merging. A
+  SKIPPED sanitizer on a Core PR is the smell — treat it as the gate not having
+  run, investigate the detect-changes classification, don't merge past it.
+
+Cheap assertion (optional, if a Core-PR self-check is wanted): the
+detect-changes job already echoes `source_core_cpp=<bool>` to its log and
+`$GITHUB_OUTPUT`. A reviewer/agent can read it from the run
+(`gh run view <id> --json jobs` → the `Detect code changes` job log) and assert
+it is `true` whenever the PR diff includes a `Source/Core/**` or
+`Source/Plugins/**` `.cpp/.h/.hpp` file — i.e. the sanitizer **was** scheduled
+to execute, not skipped. This stays a convention (read-and-confirm) rather than a
+forced heavy gate; the structural protection is the fail-safe-TRUE default above.
+
 ## Invariant
 
 For any context in `required_status_checks`, a job emitting that context name
@@ -133,5 +225,6 @@ must **report** on **every** PR regardless of changed paths — either by runnin
 (real verdict) or by being `if:`-skipped (success), never by being
 path-filtered out of existence (perpetual "Expected"). Pattern A guarantees it
 with one always-on job; Pattern B with a real+skip pair; Pattern C with a
-detect-changes gate. Verify by opening a docs-only PR and confirming the check
+detect-changes gate; Pattern D keeps an advisory job's broken-lane teeth via a
+step-level mask. Verify by opening a docs-only PR and confirming the check
 reports (not "Expected").

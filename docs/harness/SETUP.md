@@ -1,6 +1,6 @@
 # Harness setup
 
-Smatchet ships **harness-agnostic** agent definitions:
+The project ships **harness-agnostic** agent definitions:
 
 - [`AGENTS.md`](../../AGENTS.md) at the repo root — project rules, delegation table, capability map.
 - [`agents/*.md`](../../agents/) — one file per delegated agent (per the [agents.md spec](https://agents.md/)).
@@ -99,7 +99,7 @@ Eager-load caveat: if a harness ever eager-loads *all* nested memory at session 
 
 ## Optional: coverage tooling (`OpenCppCoverage`)
 
-`OpenCppCoverage` is **Windows-only** and **not required** for normal Smatchet development — `scripts/dev/coverage.sh` exits 2 with a clean install hint when the binary is absent, and CI runners install it via Chocolatey (`choco install opencppcoverage`). Install locally only if you're working on coverage gates / threshold tuning or want to inspect line-coverage in `coverage/coverage-html/index.html`.
+`OpenCppCoverage` is **Windows-only** and **not required** for normal development of the project — `scripts/dev/coverage.sh` exits 2 with a clean install hint when the binary is absent, and CI runners install it via Chocolatey (`choco install opencppcoverage`). Install locally only if you're working on coverage gates / threshold tuning or want to inspect line-coverage in `coverage/coverage-html/index.html`.
 
 Local install options:
 
