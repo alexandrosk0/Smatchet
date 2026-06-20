@@ -11,8 +11,10 @@
 //
 // Env contract (all but the key are optional):
 //   SMATCHET_LINEAR_LIVE_API_KEY   personal API key (REQUIRED; absent → SKIP, exit 0)
-//   SMATCHET_LINEAR_LIVE_TEAM_KEY  team key, e.g. "ENG" (for issue identifiers)
-//   SMATCHET_LINEAR_LIVE_TEAM_ID   team UUID (REQUIRED for create; the create scope)
+//   SMATCHET_LINEAR_LIVE_TEAM_KEY  team key, e.g. "ENG" — resolves the team UUID
+//                                  (the create scope) when TEAM_ID is unset
+//   SMATCHET_LINEAR_LIVE_TEAM_ID   team UUID; optional when TEAM_KEY is set (it is
+//                                  then resolved from the key via the teams query)
 //   SMATCHET_LINEAR_LIVE_BASE_URL  defaults to https://api.linear.app/graphql
 //
 // Exit codes: 0 = pass (or SKIP when no key), 1 = a step failed. Creates a single
@@ -28,6 +30,7 @@
 #include <cpr/cpr.h>
 #include <nlohmann/json.hpp>
 
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -50,6 +53,43 @@ void Step(const char* name, bool ok, const std::string& detail) {
     if (!ok) {
         ++g_failures;
     }
+}
+
+// Case-insensitive string equality (Linear team keys are upper-case, but accept
+// whatever case the operator configured).
+bool IEquals(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (std::string::size_type i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Resolve a team UUID from its human-readable key via the `teams` query so the
+// operator only has to configure the key, not hunt for the UUID. Direct cpr (not
+// LinearClient — team listing is not part of the tested mutation surface). Returns
+// empty on any failure / no match.
+std::string ResolveTeamIdByKey(const std::string& apiUrl, const std::string& apiKey, const std::string& teamKey) {
+    const cpr::Header header{{"Content-Type", "application/json"}, {"Authorization", apiKey}};
+    const cpr::Response resp = cpr::Post(
+        cpr::Url{apiUrl}, header,
+        cpr::Body{smatchet::linear::BuildGraphQLBody("{ teams { nodes { id key } } }", nlohmann::json::object())});
+    const nlohmann::json parsed = nlohmann::json::parse(resp.text, nullptr, false);
+    if (parsed.is_discarded() || !parsed.contains("data") || !parsed["data"].is_object() ||
+        !parsed["data"].contains("teams") || !parsed["data"]["teams"].is_object()) {
+        return "";
+    }
+    const nlohmann::json nodes = parsed["data"]["teams"].value("nodes", nlohmann::json::array());
+    for (const auto& node : nodes) {
+        if (node.is_object() && IEquals(node.value("key", std::string()), teamKey)) {
+            return node.value("id", std::string());
+        }
+    }
+    return "";
 }
 
 // Best-effort cleanup: resolve the created issue's UUID then issueArchive it.
@@ -92,8 +132,19 @@ int main() {
         return 0;
     }
     const std::string apiUrl = EnvOr("SMATCHET_LINEAR_LIVE_BASE_URL", "https://api.linear.app/graphql");
-    const std::string teamId = EnvOr("SMATCHET_LINEAR_LIVE_TEAM_ID", "");
+    std::string teamId = EnvOr("SMATCHET_LINEAR_LIVE_TEAM_ID", "");
     const std::string teamKey = EnvOr("SMATCHET_LINEAR_LIVE_TEAM_KEY", "");
+
+    // Operator convenience: when only the human-readable key is configured, resolve
+    // the team UUID (the create scope) from it so no UUID lookup is needed.
+    if (teamId.empty() && !teamKey.empty()) {
+        teamId = ResolveTeamIdByKey(apiUrl, apiKey, teamKey);
+        if (teamId.empty()) {
+            std::printf("[WARN] could not resolve team key '%s' to a UUID\n", teamKey.c_str());
+        } else {
+            std::printf("[INFO] resolved team key '%s' -> %s\n", teamKey.c_str(), teamId.c_str());
+        }
+    }
 
     // Isolated profile dir so the smoke never writes a developer/runner's real
     // config, and so the cfg-less mutation paths (ResolveAuth(nullptr) →
@@ -135,7 +186,8 @@ int main() {
     // 3) Create a throwaway issue (requires a configured team).
     std::string createdIdentifier;
     if (teamId.empty()) {
-        Step("create", false, "SMATCHET_LINEAR_LIVE_TEAM_ID not set — cannot scope a create");
+        Step("create", false,
+             "no team scope — set SMATCHET_LINEAR_LIVE_TEAM_ID or a resolvable SMATCHET_LINEAR_LIVE_TEAM_KEY");
     } else {
         IssueDraft draft;
         const std::string title = std::string("[smatchet-smoke] ") + std::to_string(static_cast<long>(std::time(nullptr)));
