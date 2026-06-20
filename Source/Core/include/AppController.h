@@ -1032,6 +1032,15 @@ class AppController : public IMainThreadPoster {
     /// pane not drawn → no new syncs; hidden past the grace window → retired (backend to the
     /// ADR-0012 graveyard) by TickAllContexts. The kDefaultPaneId entry is permanent.
     std::map<std::string, std::unique_ptr<GridLiveContext>> gridContexts_;
+    /// Guards the STRUCTURE of gridContexts_ (find / emplace / erase / iterate), distinct from
+    /// the per-context content mutexes (groupRoster.rosterMutex_, activeTicketsMutex_,
+    /// fieldCatalog.availableFieldsMutex_) which guard a single context's payload. Issue #1457:
+    /// the User Info worker (FetchPaneGroupMembers / FetchPaneUserActivity off std::async) resolves
+    /// a context by id concurrently with the UI thread's retire-erase / EnsurePaneContextLive
+    /// emplace, so every off-UI-thread map access takes this mutex. Lock ordering is map-mutex
+    /// OUTERMOST then a per-context mutex; the worker snapshots the raw pointer under this mutex and
+    /// releases it BEFORE taking the per-context mutex, so it never holds both at once.
+    mutable std::mutex gridContextsMutex_;
 
     /// The context global actions target (permanent focused-pane semantics, ADR-0018).
     /// Cached raw pointer (focused-pane lookups sit under per-frame delegators — keep O(1));
