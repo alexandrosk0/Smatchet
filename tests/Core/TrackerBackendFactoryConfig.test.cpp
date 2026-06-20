@@ -95,7 +95,7 @@ TEST_CASE("issue #979: factory Create receives the caller's live cfg — GitHub 
     svc.CancelAndJoinActiveStreamingSync();
 }
 
-TEST_CASE("issue #979: factory Create carries live Jira + Plane credentials through the swap path") {
+TEST_CASE("issue #979: factory Create carries live Jira + Plane + Linear credentials through the swap path") {
     smatchet_tests::TestEnvGuard env;
 
     FakeTicketSyncDeps deps;
@@ -123,6 +123,16 @@ TEST_CASE("issue #979: factory Create carries live Jira + Plane credentials thro
     CHECK(factory->LastTrackerType == "Jira");
     CHECK(factory->LastCfg.Email == "dev@example.com");
     CHECK(factory->LastCfg.ApiToken == "jira-token");
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive(); }));
+
+    cfg.TrackerType = "Linear";
+    cfg.LinearApiKey = "lin_api_xyz";
+    cfg.LinearTeamKey = "ENG";
+    svc.SyncWithBackend(&cfg, &views);
+    REQUIRE(factory->CreateCalls == 3);
+    CHECK(factory->LastTrackerType == "Linear");
+    CHECK(factory->LastCfg.LinearApiKey == "lin_api_xyz");
+    CHECK(factory->LastCfg.LinearTeamKey == "ENG");
 
     svc.CancelAndJoinActiveStreamingSync();
 }
