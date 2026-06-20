@@ -105,7 +105,9 @@ void CommandPaletteUi::rebuildFiltered(AppController& app) {
     // Clamp selection.
     if (selected_ < 0)
         selected_ = 0;
-    if (!filtered_.empty() && selected_ >= static_cast<int>(filtered_.size())) {
+    if (filtered_.empty()) {
+        selected_ = 0;
+    } else if (selected_ >= static_cast<int>(filtered_.size())) {
         selected_ = static_cast<int>(filtered_.size()) - 1;
     }
 }

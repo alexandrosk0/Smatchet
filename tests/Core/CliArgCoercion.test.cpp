@@ -115,3 +115,37 @@ TEST_CASE("CoerceCliArgValue falls back to string for out-of-range integers") {
     CHECK(overflow.is_string());
     CHECK(overflow.get<std::string>() == "99999999999999999999");
 }
+
+TEST_CASE("IsValidMcpPort accepts 1..65535, rejects out-of-range") {
+    using smatchet::cli::IsValidMcpPort;
+    CHECK(IsValidMcpPort(1));
+    CHECK(IsValidMcpPort(42360));
+    CHECK(IsValidMcpPort(65535));
+    CHECK_FALSE(IsValidMcpPort(0));
+    CHECK_FALSE(IsValidMcpPort(-1));
+    CHECK_FALSE(IsValidMcpPort(65536));
+    CHECK_FALSE(IsValidMcpPort(99999));
+}
+
+TEST_CASE("ClampScenarioFrames is non-negative and overflow-safe") {
+    using smatchet::cli::ClampScenarioFrames;
+    CHECK(ClampScenarioFrames(600) == 600);
+    CHECK(ClampScenarioFrames(0) == 0);
+    CHECK(ClampScenarioFrames(-100) == 0);
+    // A near-INT_MAX request would overflow the wait-ms arithmetic; the clamp
+    // keeps the downstream computation inside int.
+    const int clamped = ClampScenarioFrames(2147483647LL);
+    CHECK(clamped > 0);
+    const long long waitMs = (static_cast<long long>(clamped) / 60 + 30) * 1000;
+    CHECK(waitMs <= 2147483647LL);
+}
+
+TEST_CASE("ScenarioFramesFromJson reads + clamps, falling back on bad input") {
+    using smatchet::cli::ScenarioFramesFromJson;
+    CHECK(ScenarioFramesFromJson(json(300), 600) == 300);
+    CHECK(ScenarioFramesFromJson(json("450"), 600) == 450);
+    CHECK(ScenarioFramesFromJson(json(-5), 600) == 0);
+    CHECK(ScenarioFramesFromJson(json("not-a-number"), 600) == 600);
+    CHECK(ScenarioFramesFromJson(json(true), 600) == 600);
+    CHECK(ScenarioFramesFromJson(json(2147483647LL), 600) <= 2000000);
+}

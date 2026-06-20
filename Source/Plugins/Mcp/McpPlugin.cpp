@@ -311,6 +311,15 @@ void McpPlugin::HandleAttachmentProxy(const httplib::Request& req, httplib::Resp
         res.set_content("Missing `url` query parameter.", "text/plain");
         return;
     }
+    // Cap the URL length before any further work: the 1 MiB payload limit does
+    // not bound query-string params, so an over-long url would otherwise buffer
+    // unbounded. A real tracker attachment URL is well under 8 KiB.
+    constexpr size_t kMaxAttachmentUrlBytes = 8u * 1024u;
+    if (targetUrl.size() > kMaxAttachmentUrlBytes) {
+        res.status = 414;
+        res.set_content("`url` query parameter is too long.", "text/plain");
+        return;
+    }
     if (!LooksLikeHttpUrl(targetUrl)) {
         res.status = 400;
         res.set_content("Invalid `url` parameter (expected http/https).", "text/plain");

@@ -374,6 +374,10 @@ bool ParseArgs(int argc, char** argv, ParsedArgs& out, std::string& outError) {
 #if defined(SMATCHET_WITH_MCP)
         if (a.rfind("--mcp-host=", 0) == 0) {
             out.mcpHost = a.substr(11);
+            if (out.mcpHost.empty()) {
+                outError = "invalid --mcp-host value (must not be empty)";
+                return false;
+            }
             continue;
         }
         if (a.rfind("--mcp-port=", 0) == 0) {
@@ -381,6 +385,10 @@ bool ParseArgs(int argc, char** argv, ParsedArgs& out, std::string& outError) {
                 out.mcpPort = std::stoi(a.substr(11));
             } catch (...) { // catch-all-ok: non-integer --mcp-port -> validation error returned to caller below
                 outError = "invalid --mcp-port value";
+                return false;
+            }
+            if (!IsValidMcpPort(out.mcpPort)) {
+                outError = "invalid --mcp-port value (out of range 1-65535)";
                 return false;
             }
             continue;
@@ -391,6 +399,10 @@ bool ParseArgs(int argc, char** argv, ParsedArgs& out, std::string& outError) {
                 out.timeoutMs = std::stoi(a.substr(10));
             } catch (...) { // catch-all-ok: non-integer --timeout -> validation error returned to caller below
                 outError = "invalid --timeout value (expected integer ms)";
+                return false;
+            }
+            if (out.timeoutMs < 0) {
+                outError = "invalid --timeout value (must be >= 0)";
                 return false;
             }
             continue;
@@ -1002,15 +1014,7 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
         // ParseArgs stores --key=value pairs as strings; coerce defensively.
         int frames = 600;
         if (argsToSend.contains("frames")) {
-            const auto& v = argsToSend["frames"];
-            if (v.is_number()) {
-                frames = v.get<int>();
-            } else if (v.is_string()) {
-                try {
-                    frames = std::stoi(v.get<std::string>());
-                } catch (...) { // catch-all-ok: malformed frames string falls back to the default.
-                }
-            }
+            frames = ScenarioFramesFromJson(argsToSend["frames"], 600);
         }
         const int scenarioWaitMs = (frames / 60 + 30) * 1000;
 
@@ -1108,15 +1112,7 @@ static int RunAsyncScenarioInProcess(standalone::BootstrapContext& boot, const s
     const std::string outPath = SafeString(envData, "outPath");
     int frames = 600;
     if (argsToSend.contains("frames")) {
-        const auto& v = argsToSend["frames"];
-        if (v.is_number()) {
-            frames = v.get<int>();
-        } else if (v.is_string()) {
-            try {
-                frames = std::stoi(v.get<std::string>());
-            } catch (...) { // catch-all-ok: non-numeric frames string falls back to the default
-            }
-        }
+        frames = ScenarioFramesFromJson(argsToSend["frames"], 600);
     }
     const int scenarioWaitMs = (pa.timeoutMs > 0) ? pa.timeoutMs : ((frames / 60 + 30) * 1000);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(scenarioWaitMs);
