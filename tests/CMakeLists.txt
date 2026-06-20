@@ -873,6 +873,14 @@ add_executable(SmatchetTests
     # GET/PUT retry-on-5xx while POST is single-shot (Transport-only). Needs only
     # TrackerHttpUtils.cpp + TrackerHttpClient.cpp + cpr + fixture (all already linked).
     Core/TrackerHttpFaults.test.cpp
+    # PR-20 (backlog-pr-roadmap) — tracker-redirect-no-follow-regression-test. SECURITY
+    # regression for MakeTrackerRedirectPolicy (TrackerHttpUtils.cpp, H4/E2): asserts the
+    # policy object is configured follow=false / cont_send_cred=false AND drives a real
+    # tracker GET against an in-process loopback server that 302s to a DIFFERENT host:port,
+    # proving the redirect is NOT followed and the Authorization header (API token) never
+    # reaches the cross-host target. Needs only TrackerHttpUtils.cpp + TrackerHttpClient.cpp
+    # + cpr + httplib (all already linked); the recording loopback server is in-file.
+    Core/TrackerRedirectNoFollow.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/NetworkUsageTracker.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/OfflineQueueService.cpp"
     # ticket-change-monitor S1a (docs/plans/active/ticket-change-monitor.md) — three
