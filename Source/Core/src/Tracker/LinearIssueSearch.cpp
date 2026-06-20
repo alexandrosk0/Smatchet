@@ -339,9 +339,15 @@ FetchIssuesForKeysViaGraphQl(const std::string& apiUrl, const std::string& apiKe
     nlohmann::json filter = nlohmann::json::object();
     filter["or"] = orClauses;
 
+    // `first` covers the disjunction in one page; clamp to Linear's 250/page
+    // ceiling so an oversized key list (well past any real use) isn't rejected.
+    int firstCount = static_cast<int>(issueKeys.size());
+    if (firstCount > 250) {
+        firstCount = 250;
+    }
     nlohmann::json variables = nlohmann::json::object();
     variables["filter"] = filter;
-    variables["first"] = static_cast<int>(issueKeys.size());
+    variables["first"] = firstCount;
     variables["after"] = nullptr;
     const std::string body = BuildGraphQLBody(kIssuesQuery, variables);
 

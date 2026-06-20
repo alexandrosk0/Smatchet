@@ -1378,6 +1378,47 @@ void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
     MigrateMenuShortcutKeybindingsV1(j, cfg);
 }
 
+// Route SMATCHET_TRACKER_TOKEN / SMATCHET_TRACKER_BASE_URL to the active backend's
+// credential + origin-URL slots. Linear reports PascalCase "Linear" while the legacy
+// Plane/GitHub arms compare raw casing, so Linear routes off a lowercased copy (both
+// "Linear" and "linear" match). Extracted from ApplyOverridesAndClamps to keep that
+// function under the branch cap.
+static void RouteTrackerEnvCredentials(TrackerConfig& cfg) {
+    std::string trackerTypeLower = cfg.TrackerType;
+    std::transform(trackerTypeLower.begin(), trackerTypeLower.end(), trackerTypeLower.begin(),
+                   [](char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; });
+
+    // SMATCHET_TRACKER_TOKEN — tracker API credential (Jira ApiToken / Plane ApiKey / GitHub PAT / Linear key).
+    if (const char* envToken = std::getenv("SMATCHET_TRACKER_TOKEN")) {
+        if (envToken[0] != '\0') {
+            if (cfg.TrackerType == "Plane") {
+                cfg.PlaneApiKey = envToken;
+            } else if (cfg.TrackerType == "github") {
+                cfg.GitHubPat = envToken;
+            } else if (trackerTypeLower == "linear") {
+                cfg.LinearApiKey = envToken;
+            } else {
+                cfg.ApiToken = envToken;
+            }
+        }
+    }
+
+    // SMATCHET_TRACKER_BASE_URL — tracker origin URL (Jira→Domain / Plane→PlaneUrl / GitHub→GitHubBaseUrl / Linear→LinearBaseUrl).
+    if (const char* envBase = std::getenv("SMATCHET_TRACKER_BASE_URL")) {
+        if (envBase[0] != '\0') {
+            if (cfg.TrackerType == "Plane") {
+                cfg.PlaneUrl = envBase;
+            } else if (cfg.TrackerType == "github") {
+                cfg.GitHubBaseUrl = envBase;
+            } else if (trackerTypeLower == "linear") {
+                cfg.LinearBaseUrl = envBase;
+            } else {
+                cfg.Domain = envBase;
+            }
+        }
+    }
+}
+
 // Env-var + CLI overrides applied post-disk-read, plus the final post-override safety clamps.
 void ApplyOverridesAndClamps(const ConfigManager::CliOverrides& cli, TrackerConfig& cfg) {
     if (const char* envDbPath = std::getenv("SMATCHET_DB_PATH")) {
@@ -1399,44 +1440,8 @@ void ApplyOverridesAndClamps(const ConfigManager::CliOverrides& cli, TrackerConf
         cfg.McpAllowRemote = (s == "true" || s == "1");
     }
 
-    // Linear's GetTrackerType() reports PascalCase "Linear" while the legacy GitHub/Plane env
-    // arms compare against raw casing ("github" / "Plane"). Route Linear off a case-insensitive
-    // copy so both "Linear" and "linear" in cfg.TrackerType hit the Linear credential/url slots.
-    std::string trackerTypeLower = cfg.TrackerType;
-    std::transform(trackerTypeLower.begin(), trackerTypeLower.end(), trackerTypeLower.begin(),
-                   [](char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; });
-
-    // SMATCHET_TRACKER_TOKEN — tracker API credential (Jira ApiToken / Plane ApiKey / GitHub PAT / Linear key).
-    // Never stored in argv; always passed as an env var for CI/agent runs.
-    if (const char* envToken = std::getenv("SMATCHET_TRACKER_TOKEN")) {
-        if (envToken[0] != '\0') {
-            if (cfg.TrackerType == "Plane") {
-                cfg.PlaneApiKey = envToken;
-            } else if (cfg.TrackerType == "github") {
-                cfg.GitHubPat = envToken;
-            } else if (trackerTypeLower == "linear") {
-                cfg.LinearApiKey = envToken;
-            } else {
-                cfg.ApiToken = envToken;
-            }
-        }
-    }
-
-    // SMATCHET_TRACKER_BASE_URL — tracker origin URL. Jira→Domain, Plane→PlaneUrl, GitHub→GitHubBaseUrl,
-    // Linear→LinearBaseUrl.
-    if (const char* envBase = std::getenv("SMATCHET_TRACKER_BASE_URL")) {
-        if (envBase[0] != '\0') {
-            if (cfg.TrackerType == "Plane") {
-                cfg.PlaneUrl = envBase;
-            } else if (cfg.TrackerType == "github") {
-                cfg.GitHubBaseUrl = envBase;
-            } else if (trackerTypeLower == "linear") {
-                cfg.LinearBaseUrl = envBase;
-            } else {
-                cfg.Domain = envBase;
-            }
-        }
-    }
+    // Route SMATCHET_TRACKER_TOKEN / SMATCHET_TRACKER_BASE_URL to the active backend's cfg slots.
+    RouteTrackerEnvCredentials(cfg);
 
     // SMATCHET_LOG_LEVEL — minimum log verbosity: trace|debug|info|warn|error.
     if (const char* envLog = std::getenv("SMATCHET_LOG_LEVEL")) {
