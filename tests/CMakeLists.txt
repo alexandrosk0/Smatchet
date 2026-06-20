@@ -634,6 +634,12 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearIssueMappingPure.cpp"
     Core/LinearQueryFromJql.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearQueryFromJql.cpp"
+    # linear-tracker-backend.md Slice 3 — pure write-path builders/parsers.
+    # Main rig only (not the TSan subset): BuildIssueCreateInput takes an
+    # IssueDraft, whose header pulls CachedTicket → SQLite, so the TU is not
+    # SQLite-free. No threading surface, so the TSan rig loses nothing.
+    Core/LinearMutationPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearMutationPure.cpp"
     # jql-omnibox plan Stream B slice 2c — pure omnibar input classifier
     # (Jql | TicketKey | TitleSearch). Header-only (Source/Core/include/Ui/
     # OmnibarInputClassifier.h); reuses ExtractIssueKeyPrefix (ProjectResolver.cpp)
