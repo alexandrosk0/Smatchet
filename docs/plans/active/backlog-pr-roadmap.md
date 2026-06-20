@@ -6,64 +6,73 @@
 
 ## Context
 
-A full **multi-agent trap-sweep** (18 verifier agents, every verdict git-cited) over all 205 open/partial self-improvement backlog entries reconciled 37 stale-status rows (PRs #1493/#1494/#1496) and left **151 genuinely-open entries** verified accurate. This doc groups those 151 into coherent, owner-aligned PRs so the backlog becomes an actionable roadmap instead of a flat pile. Intended outcome: *after this lands, every open backlog item has a named home PR + owner, ordered so infrastructure ships before its dependents.*
+A full **multi-agent trap-sweep** (18 verifier agents, every verdict git-cited) over all 205 open/partial self-improvement backlog entries reconciled 37 stale-status rows (PRs #1493/#1494/#1496) and left **151 genuinely-open entries** verified accurate. This doc groups those 151 into coherent, owner-aligned PRs so the backlog becomes an actionable roadmap instead of a flat pile. Intended outcome: *after this lands, every open backlog item has a named home PR + owner + concrete files-to-touch, ordered so infrastructure ships before its dependents.*
 
-Source data: the trap-sweep run (`wux8jz521`, run `wf_ca0057a0-57d`). Reconciliation PRs: #1493, #1494, #1496.
+Source data: the trap-sweep run (`wux8jz521`, run `wf_ca0057a0-57d`). Reconciliation PRs: #1493, #1494, #1496. First roadmap revision: #1497.
+
+### Roadmap triple-check (2026-06-20)
+
+This revision was verified before publish:
+
+1. **Slug validity** — every member slug cross-checked against the trap-sweep `OPEN` verdict set; 0 stale/shipped/typo slugs (the only non-matches were the doc's own slug + status tokens).
+2. **Completeness** — every P2 `OPEN` entry traced to a PR group; the first pass had **3 gaps**, now slotted: `out-of-band-on-trust-boundary-owes-tracked-test` → PR-1, `lint-hook-deferred-drain-4-tests` → PR-6, `subagent-eval-calibration` → new PR-23.
+3. **Implementation seed** — each PR group's detail is drawn from the member entries' own git-cited "Concrete next action" fields (file paths verified to exist on develop @ the trap-sweep tree).
 
 ## Approach
 
 Cluster the open entries by **subsystem + owning specialist** (per the delegation tables in `docs/agent-rules/delegation.md`), not by category file — entries that touch the same code/scripts ship and review together. Sequence so shared infrastructure precedes its consumers: the bucket-E harness fixes (PR-9) before the bucket-E scenario PRs (PR-10/11); the sanctioned merge wrapper (PR-1) before the rest of the merge-gate hardening. P3 entries are siblings of P2 clusters and fold into the matching PR rather than spawning their own.
 
-This is a **batching map**, not an implementation design — each PR group gets its own plan doc (or a lightweight ship-loop) when picked up. Rows carry the entry's backlog slug so the owning agent can pull full detail + git-cited evidence from `docs/self-improvement/categories/`.
+This is a **batching map with per-group implementation seeds** — each PR group still gets its own plan doc (or a lightweight ship-loop) when picked up, but the § Implementation detail block below gives the owning agent the files-to-touch, approach, and verification hook so it starts from a concrete spec, not a slug. Rows carry the backlog slug so the owner can pull full git-cited evidence from `docs/self-improvement/categories/`.
 
 ## Files to modify
 
-This roadmap doc only (`docs/plans/active/backlog-pr-roadmap.md`). Each PR group below names its own target files when picked up; they are not pre-listed here (a batching map, not a design).
+This roadmap doc only (`docs/plans/active/backlog-pr-roadmap.md`). Each PR group's own target files are listed per-group in § Implementation detail.
 
 ## Existing utilities reused
 
 - `docs/agent-rules/delegation.md` — the subsystem-specialist → owner mapping each PR row cites.
 - `docs/self-improvement/categories/*.md` — the open-entry source rows (slug-referenced per PR group).
+- `agents/scripts/project/test-lint-rules.sh`, `agents/scripts/core/comment_audit.py`, `agents/scripts/core/test-plan-index.sh`, `agents/scripts/core/merge-gates.sh`, `agents/scripts/core/merge-watcher.py` — the most-touched scripts across the merge/lint/plan clusters.
 
-## PR groups (P2 — actionable tier)
+## PR groups — overview
 
-### Merge-gate / ship-loop tooling
+### Merge-gate / ship-loop tooling (owner: agentic-infra)
 
-| PR | Members (backlog slug) | Owner | Status |
-|---|---|---|---|
-| PR-1 Sanctioned merge wrapper + gate visibility | `intent-gate-safe-merge-wrapper`, `green-pr-blocked-no-merge-signal`, `auto-merge-poller-default`, `auto-merge-armed-before-final-push-orphans-commit`, `verify-unresolved-review-threads-vs-head` | agentic-infra | proposed |
-| PR-2 CodeRabbit handling | `cr-review-skipped-pure-docs-auto-downgrade`, `cr-rate-limit-code-pr-auto-pause`, `coderabbit-current-head-helper`, `coderabbit-plan-ref-convention-path-instruction` | agentic-infra | proposed |
-| PR-3 Merge-watcher robustness | `merge-snapshot-ledger-uncommitted-loss-risk`, `merge-watcher-triage-attempts-unbounded`, `merge-watcher-agent-notify`, `merge-gate-absence-blind-nonrequired-allowlist`, `bucket-lane-status-broken-sentinel-auditable` | agentic-infra | proposed |
+| PR | Members (backlog slug) | Status |
+|---|---|---|
+| PR-1 Sanctioned merge wrapper + gate visibility | `intent-gate-safe-merge-wrapper`, `green-pr-blocked-no-merge-signal`, `auto-merge-poller-default`, `auto-merge-armed-before-final-push-orphans-commit`, `verify-unresolved-review-threads-vs-head`, `out-of-band-on-trust-boundary-owes-tracked-test` | proposed |
+| PR-2 CodeRabbit handling | `cr-review-skipped-pure-docs-auto-downgrade`, `cr-rate-limit-code-pr-auto-pause`, `coderabbit-current-head-helper`, `coderabbit-plan-ref-convention-path-instruction` | proposed |
+| PR-3 Merge-watcher robustness | `merge-snapshot-ledger-uncommitted-loss-risk`, `merge-watcher-triage-attempts-unbounded`, `merge-watcher-agent-notify`, `merge-gate-absence-blind-nonrequired-allowlist`, `bucket-lane-status-broken-sentinel-auditable` | proposed |
 
-### Lint / gate authoring
+### Lint / gate authoring (owner: build-doctor)
 
-| PR | Members | Owner | Status |
-|---|---|---|---|
-| PR-4 Comment-noise + new-file lint reflex | `comment-blank-run-flags-single-doc-paragraph-separator`, `agent-headers-trip-comment-noise-gate`, `comment-noise-gate-reds-required-build`, `new-file-delta-lint-reflex`, `build-verify-shortcut-bypasses-lint-gate` | build-doctor | proposed |
-| PR-5 New strict-zone lint rules | `ban-bare-json-parse-on-untrusted-ingress`, `concurrency-correctness-no-headless-test-home` (g_ui write rule), `function-size-audit-grandfather-blind`, `fail-open-meta-gate-authoring-check` | build-doctor | proposed |
-| PR-6 Gate false-positive fixes | `lint-syntax-both-pch-version-drift-fp`, `fuzz-target-include-closure-unresolved-invisible` | build-doctor | proposed |
+| PR | Members | Status |
+|---|---|---|
+| PR-4 Comment-noise + new-file lint reflex | `comment-blank-run-flags-single-doc-paragraph-separator`, `agent-headers-trip-comment-noise-gate`, `comment-noise-gate-reds-required-build`, `new-file-delta-lint-reflex`, `build-verify-shortcut-bypasses-lint-gate` | proposed |
+| PR-5 New strict-zone lint rules | `ban-bare-json-parse-on-untrusted-ingress`, `concurrency-correctness-no-headless-test-home`, `function-size-audit-grandfather-blind`, `fail-open-meta-gate-authoring-check` | proposed |
+| PR-6 Gate FP fixes + lint-hook tests | `lint-syntax-both-pch-version-drift-fp`, `fuzz-target-include-closure-unresolved-invisible`, `lint-hook-deferred-drain-4-tests` | proposed |
 
-### Plan-doc / index tooling
+### Plan-doc / index tooling (owner: mechanic)
 
-| PR | Members | Owner | Status |
-|---|---|---|---|
-| PR-7 plan-index robustness | `shallow-clone-corrupts-git-log-date-generators`, `test-plan-index-shallow-clone-corrupts-date-sort`, `plan-index-fix-wrong-cwd-silent-noop`, `test-plan-index-fix-shipped-date-placeholder`, `markdown-links-local-passes-ci-fails-after-plan-archive` | mechanic | proposed |
-| PR-8 Plan-staleness gates | `archive-staleness-check`, `plan-doc-postship-closeout-stale-active-gate`, `extraction-sizing-step`, `historical-review-ledger-staleness` | mechanic | proposed |
+| PR | Members | Status |
+|---|---|---|
+| PR-7 plan-index robustness | `shallow-clone-corrupts-git-log-date-generators`, `test-plan-index-shallow-clone-corrupts-date-sort`, `plan-index-fix-wrong-cwd-silent-noop`, `test-plan-index-fix-shipped-date-placeholder`, `markdown-links-local-passes-ci-fails-after-plan-archive` | proposed |
+| PR-8 Plan-staleness gates | `archive-staleness-check`, `plan-doc-postship-closeout-stale-active-gate`, `extraction-sizing-step`, `historical-review-ledger-staleness` | proposed |
 
-### Bucket-E test coverage
+### Bucket-E test coverage (owner: test-rig / subsystem)
 
-| PR | Members | Owner | Status |
-|---|---|---|---|
-| PR-9 Bucket-E harness fixes *(unblocks PR-10/11)* | `bucket-e-uitestscenario-no-live-local-cache`, `bucket-e-failures-blind-stdout`, `faketrackerclient-fetch-queue-auto-sticky`, `bucket-e-ci-fixture-env-export`, `fakep4runner-spawn-fail-vs-timeout` | test-rig | proposed |
-| PR-10 Bucket-E: grid / views | `multigrid-slice3-lifecycle-bucket-e`, `data-dependent-windows-bucket-e-render`, `grid-description-tooltip-bucket-e`, `views-editor-field-selection-bucket-e`, `user-info-window-bucket-e-coverage`, `keybindings-editor-rebind-bucketE-residue`, `help-marker-hover-fallback-bucket-e` | grid-engine / ui-host | proposed |
-| PR-11 Bucket-E: AI chat | `ai-chat-bucket-e-coverage` (5 scenarios) | test-rig | proposed |
+| PR | Members | Status |
+|---|---|---|
+| PR-9 Bucket-E harness fixes *(unblocks PR-10/11)* | `bucket-e-uitestscenario-no-live-local-cache`, `bucket-e-failures-blind-stdout`, `faketrackerclient-fetch-queue-auto-sticky`, `bucket-e-ci-fixture-env-export`, `fakep4runner-spawn-fail-vs-timeout` | proposed |
+| PR-10 Bucket-E: grid / views / UI | `multigrid-slice3-lifecycle-bucket-e`, `data-dependent-windows-bucket-e-render`, `grid-description-tooltip-bucket-e`, `views-editor-field-selection-bucket-e`, `user-info-window-bucket-e-coverage`, `keybindings-editor-rebind-bucketE-residue`, `help-marker-hover-fallback-bucket-e` | proposed |
+| PR-11 Bucket-E: AI chat | `ai-chat-bucket-e-coverage` | proposed |
 
-### AI / assistant subsystem
+### AI / assistant subsystem (owner: tracker-backend / test-rig)
 
-| PR | Members | Owner | Status |
-|---|---|---|---|
-| PR-12 AI client tests | `aiclientcancel-per-client-regression`, `per-client-error-body-redaction-gate`, `aiassistant-streaming-scenarios-s2-s4-s5` | tracker-backend / test-rig | proposed |
-| PR-13 AI prefs/controller bug fixes | `assistant-prefs-3-bugs`, `aiassistantcontroller-3-loads`, `whisper-prefs-4-bugs`, `imgui-define-macro`, `whisper-local-backend-default-flip-decision` | tracker-backend | proposed |
+| PR | Members | Status |
+|---|---|---|
+| PR-12 AI client tests | `aiclientcancel-per-client-regression`, `per-client-error-body-redaction-gate`, `aiassistant-streaming-scenarios-s2-s4-s5` | proposed |
+| PR-13 AI prefs/controller bug fixes | `assistant-prefs-3-bugs`, `aiassistantcontroller-3-loads`, `whisper-prefs-4-bugs`, `imgui-define-macro`, `whisper-local-backend-default-flip-decision` | proposed |
 
 ### Coverage / build / hygiene / infra
 
@@ -82,7 +91,105 @@ This roadmap doc only (`docs/plans/active/backlog-pr-roadmap.md`). Each PR group
 | PR-19 DX12 backbuffer readback screenshot | `dx12-backbuffer-readback-screenshot-diff` | unreal-bridge | proposed |
 | PR-20 Tracker redirect no-follow regression | `tracker-redirect-no-follow-regression-test` | tracker-backend / security | proposed |
 | PR-21 Per-pane catalog value-read routing | `per-pane-catalog-value-read-routing` | grid-engine | proposed |
-| PR-22 Portable-layer + daemon hardening | `de-smatchetify-portable-layer`, `daemon-loop-per-iteration-backstop-audit`, `cr-rate-limit-code-pr-auto-pause` (infra half) | build-doctor / agentic-infra | proposed |
+| PR-22 Portable-layer + daemon hardening | `de-smatchetify-portable-layer`, `daemon-loop-per-iteration-backstop-audit` | build-doctor / agentic-infra | proposed |
+| PR-23 Subagent-eval calibration | `subagent-eval-calibration` | agentic-infra | proposed |
+
+## Implementation detail (per PR group)
+
+Each block: **Files** (the scripts/TUs to touch) · **Approach** · **Verify** · **Depends**. Detail is the member entries' own git-cited next-actions; the owning agent should still grep-confirm line numbers (the tree moves).
+
+### PR-1 — Sanctioned merge wrapper + gate visibility
+- **Files**: new `agents/scripts/core/safe-merge.sh` + `tests/bats/safe_merge.bats`; new `scripts/dev/pr-blocked-why.sh`; edits to `docs/agent-rules/ship-loops.md` + `docs/agent-rules/merge-gates.md`; `agents/scripts/core/merge-gates.sh` (override-time obligation hook).
+- **Approach**: `safe-merge.sh` is a non-admin sibling of `safe-admin-merge.sh` — runs `merge-gates.sh`, arms `gh pr merge --squash --auto` only on PASS, refuses any red block-allowlist gate lacking its `*-out-of-band` label. `pr-blocked-why.sh <pr>` reports the precise blocker (unresolved reviewThreads / skipped-required / reviews shortfall) for MERGEABLE+BLOCKED PRs. `verify-unresolved-review-threads-vs-head` + `auto-merge-poller-default` + `auto-merge-armed-before-final-push` are doc rules in those two `.md`s. `out-of-band-on-trust-boundary-owes-tracked-test`: at override-merge time, when a `tests/perf-out-of-band` label rides a strict-zone diff, auto-file a tracked `test.md` obligation (or Issue).
+- **Verify**: bats — refuse-when-red-without-label, arm-when-green, obligation-filed-on-override. **Depends**: none (anchor PR).
+
+### PR-2 — CodeRabbit handling
+- **Files**: `agents/scripts/core/merge-gates.sh` + `tests/bats/merge_gates.bats`; new `scripts/dev/coderabbit-current-head.sh`; `.coderabbit.yaml`.
+- **Approach**: in `merge-gates.sh` detect CR review-skipped caused by rate-limit AND `is-pure-docs-diff.sh` true → auto-downgrade to WARN. CR-rate-limit handler: pause/retry on cooldown or require a `cr-disposition:` marker before honoring `cr-out-of-band`. `coderabbit-current-head.sh <pr>` prints current head SHA + latest CR check/review for that head + "historical comments ignored". `.coderabbit.yaml` gains a `docs/plans/**` `path_instructions` teaching the tier-less ref convention.
+- **Verify**: bats — rate-limit+pure-docs→pass, rate-limit+code→block; CR-state-parser fixture. **Depends**: none.
+
+### PR-3 — Merge-watcher robustness
+- **Files**: `agents/scripts/core/merge-watcher.py` + `tests/bats/` (or its pytest); `agents/scripts/core/postmortem-owed.sh`.
+- **Approach**: durable ledger — commit/push each appended `merge-snapshots.jsonl` row to a ledger branch/PR, OR a pre-reset guard refusing `reset`/`checkout`/`clean` on a tree with uncommitted ledger rows. Triage cap — once `attempts_after > budget` on the SAME `head_sha`, early-return without persisting a further increment (clamp at budget+1). Agent-notify sink `.agent-events.jsonl` + a `merge-watcher-cli.py await` subcommand. Present-assertion for allow-listed non-required checks (fail-closed if configured-to-run but absent). Surface lane `status=broken` as a machine-readable artifact; teach `postmortem-owed.sh` to treat block-scope RED-because-BROKEN as auditable WARN, not an owed escape.
+- **Verify**: bats — same-head re-poll while exhausted doesn't increment; broken-lane→WARN fixture. **Depends**: none.
+
+### PR-4 — Comment-noise + new-file lint reflex
+- **Files**: `agents/scripts/core/comment_audit.py`; `build_and_run.ps1` (or new `verify.ps1`); `docs/agent-rules/process-rules.md`; C++-writing subagent prompts (`agents/core/offline-sync.md`, `test-rig.md`, `build-doctor.md`, `mechanic.md`, `debug-detective.md`); optional `docs/harness/claude-code/hooks/` per-edit hook.
+- **Approach**: relax `comment_audit.py` cut-blank so a single bare `//` between two non-blank comment lines of the same block is an allowed intra-block separator (+ `--selftest` fixture). `build_and_run.ps1 -BuildOnly` (or a `verify.ps1` wrapper) runs `comment_audit.py --diff` + `test-lint-rules.sh --diff` after a successful build. Add "run `test-lint-rules.sh --diff origin/develop` before push" to the subagent prompts + a new-file delta-lint reflex in `process-rules.md` § Cadence (or a pre-ship new-file detector). Residual `agent-headers` (a)+(c): comment-noise gotchas in the prompts + a per-edit hook running `comment_audit.py` on just-written files.
+- **Verify**: `comment_audit.py --selftest` green on the new intra-block fixture; bats on the wrapper. **Depends**: none.
+
+### PR-5 — New strict-zone lint rules
+- **Files**: `agents/scripts/project/test-lint-rules.sh` + matching bats fixtures; (TSan leg) a CI workflow + native test leg.
+- **Approach**: WARN-first delta-gated `bare-json-parse-untrusted` grep rule flagging bare `nlohmann::json::parse` on untrusted ingress not via `ParseBounded`. `concurrency-correctness`: a strict-zone rule forbidding off-UI-thread writes to g_ui request-flag fields from `Source/Core/src/Commands/**` outside a `RunOnUiThread*` closure, plus a TSan/native leg exercising AI-client request paths + a non-atomic shared-flag lint. `function-size-audit-grandfather-blind`: mandate `function_size_audit.py --scan-file` in decompose prompts + an end-of-program repo-wide `--list-empty` assertion + a CI scan-file regression mode. `fail-open-meta-gate-authoring-check`: extend `test-gate-selftests.sh` with greps for fail-open shapes B/C/D/E + a synthetic-driver fixture.
+- **Verify**: each rule green on HEAD, red on a planted regression fixture (delta-gated). **Depends**: none (but coordinate with PR-4 on `test-lint-rules.sh` to avoid serial conflict — see PR-16).
+
+### PR-6 — Gate FP fixes + lint-hook tests
+- **Files**: `docs/harness/claude-code/hooks/lint-syntax-both.py`; a fuzz-closure gate or code-review checklist; `agents/scripts/core/test-lint-hook-split.sh` (or wherever the deferred tests live).
+- **Approach**: add `Microsoft Visual C/C++ Version differs in precompiled file` + `was compiled for the target` to `_FP_PATTERNS` in `lint-syntax-both.py` (PCH version-drift FP). Static gate resolving each fuzz target's closure `.cpp` first-hop quote-includes against its `INCLUDES` (WARN), or a checklist item. Implement the 4 deferred lint-hook tests: 4 (fault-injection cppcheck), 5 (chunked drain), 6 (per-PID isolation), 10 (lockfile serialisation).
+- **Verify**: PCH-drift line no longer flagged; the 4 hook tests pass. **Depends**: none.
+
+### PR-7 — plan-index robustness
+- **Files**: `agents/scripts/core/test-plan-index.sh` + sibling history-dependent generators; bats with a shallow-clone fixture.
+- **Approach**: shared `is_shallow_or_refuse()` helper — `git rev-parse --is-shallow-repository` → auto-`fetch --unshallow` OR refuse `--fix` (exit 2) + WARN under `--check`. `cd "$(git rev-parse --show-toplevel)"` (or resolve `ARCHIVE_DIR`/`INDEX_FILE` against git root) so `--fix` can't index the wrong tree. Derive shipped-date deterministically (same as CI auto-sync) so local `--fix` is byte-identical, or refuse with a remedy instead of a placeholder. `markdown-links`: tier-ful plan-link convention in the template + `docs/STRUCTURE.md`, plus a synthetic merge-tree / behind-develop mode in `test-markdown-links.sh`.
+- **Verify**: bats shallow-fixture (refuse + WARN); `--fix` byte-identical local vs CI. **Depends**: none.
+
+### PR-8 — Plan-staleness gates
+- **Files**: new `agents/scripts/project/test-plan-staleness.sh` (auto-enrolled by `test-all.sh`); `agents/scripts/core/test-plan-index.sh` (or a new check); `docs/plans/active/_plan-template.md`; new historical-review reconcile pass + SessionStart nudge.
+- **Approach**: advisory WARN classifying active plans by Implementation-log stub-vs-populated + `gh pr state` (+ a git-janitor hook). A gate FLAGGING any active plan whose PRs are all-merged but post-ship sections are still the stub. An extraction-sizing step (classify EXTRACT vs STAYS) in the plan template / `grill-with-docs`. `historical-review-ledger-staleness`: a reconcile pass running `historical-review-survivors.sh`/`finding-already-fixed.sh` over each still-open priority finding + a freshness nudge when the ledger ages past N days.
+- **Verify**: staleness WARN fires on a stub-but-merged fixture plan. **Depends**: PR-7 (shares `test-plan-index.sh`).
+
+### PR-9 — Bucket-E harness fixes *(unblocks PR-10/11)*
+- **Files**: `tests/support/UiTestScenario.*`, `tests/support/FakeTrackerClient.h`, `tests/support/FakeP4Runner.h`; the `ui_test.run` command; bucket-E bash drivers; a CI step.
+- **Approach**: `UiTestScenario::OnStart` opt-in (`SMATCHET_UITEST_WITH_LOCAL_CACHE=1`) initialising a throwaway SQLite LCM so `offlineQueue_` constructs and the populated path self-activates. `ui_test.run --outLog=<path>` dumping `ctx->Test->Output.Log` per test; bash drivers pass + `cat` on failure. `FakeTrackerClient::EnqueueFetchResult` auto-sticky on last entry (or default `fetchFullSyncCompleted_=false` on drain) so unscripted re-fetch can't trigger stale-pruning. Reshape `FakeP4Runner.h` so spawn-fail vs non-zero-exit are distinguishable. CI step exporting `SMATCHET_TEST_JIRA_BACKEND_FIXTURE` + running `test-ui-jira-deterministic-backend.sh` as a hard check.
+- **Verify**: existing bucket-E suites still green; new fixtures exercise the seams. **Depends**: none — **blocks PR-10, PR-11**.
+
+### PR-10 — Bucket-E: grid / views / UI
+- **Files**: new `tests/ui/*.test.cpp` per window (grid header, views dashboard, offline queues, new-issue draft, attachment preview, annotate, JQL, ticket-field editor, calendar, user-info, keybindings editor); driven via `UiDrawSession` latches.
+- **Approach**: boot-open-assert smoke per data-dependent window; `multigrid-slice3` two cases (non-focused-visible pane live sync + hidden-pane retirement/regeneration, PR #975 fixture); `grid-description-tooltip` width regression; `views-editor-field-selection` (near-full catalog, toggle late-sorting field, assert persist + view-switch non-leak); `user-info-window` via `userInfoRequestPending` latch (7 behaviours + 4 baselines); `keybindings-editor-rebind` via test-only dirty-flag shim or replica window; `help-marker-hover` ItemHover inside `BeginDisabled`.
+- **Verify**: bucket-E (`ninja-ui-test-msvc`) + screenshot baselines. **Depends**: **PR-9** (harness fixes).
+
+### PR-11 — Bucket-E: AI chat
+- **Files**: 5 new `tests/ui/ai_chat_*.test.cpp` scenarios.
+- **Approach**: `ai_chat_pin_bookmark`, `ai_chat_copy_clipboard`, `ai_chat_history_persist`, `ai_chat_clear_confirm`, `ai_chat_keyboard_nav` as ImGui-Test-Engine bucket-E cases.
+- **Verify**: bucket-E green. **Depends**: **PR-9**.
+
+### PR-12 — AI client tests
+- **Files**: new `tests/Core/AiClientCancel.test.cpp` + `AiClientErrorRedact.test.cpp` (or extend); new `tests/support/AiHttpFixture.h`; `Source/Core/src/Commands/Scenarios/AiAssistantSendScenario.cpp`; `scripts/dev/test-ai-assistant.sh`.
+- **Approach**: parameterise cancel test across OpenAi/Anthropic/Ollama (fake httplib server, cancel mid-stream, assert `WasCancelled` within K chunks). Per-client error-body redaction gate: drive each `IAiClient` against a fake 401 echoing the key, assert `AiStreamError::Message` lacks the literal key. Headless streaming S2/S4/S5 scenarios via the new fixture + bash driver.
+- **Verify**: Bucket-A ctest + `test-ai-assistant.sh`. **Depends**: none (pure-logic + fixture).
+
+### PR-13 — AI prefs/controller bug fixes
+- **Files**: `Source/Core/src/Ui/SmatchetPreferencesUi_Whisper.cpp`, `SmatchetPreferencesUi_Assistant.cpp`, the AiAssistantController TU, the AI Assistant TU (`#define ImGui` site).
+- **Approach**: whisper 4 fixes (auto-mode prefer-local/reword, seed `WhisperModel` default, hotkey fallback text, conditional E2E hint). assistant 3 fixes (Anthropic base-URL field, probe-generation-gated commit, persist `cfgField` to `catalog[0]`). controller: ONE `TrackerConfig` snapshot at turn start threaded through `RefreshProviderForTurn`/`ResolveModelAndEffort`/`BuildChatPayload`. Replace `#define ImGui SmatchetLocalizedImGui` with `using namespace SmatchetLocalizedImGui;` + sweep all macro-trick TUs.
+- **Verify**: dual-target build + any bucket-E prefs coverage; manual prefs pass if no harness. **Depends**: none.
+
+### PR-14 — Raise core coverage 65→70
+- **Files**: new `tests/Core/*.test.cpp` on lowest-covered strict-zone units; `tests/support/JiraCatalogHttpFixture.h`; `project.config.json` (`coverage.threshold`), `.github/workflows/coverage.yml` (`--threshold`).
+- **Approach**: add unit tests until measured rate clears 70 with headroom, then bump threshold 65→70 in both places. `backend-impl-coverage-recovery`: extend the `JiraCatalogHttpFixture` pattern to search/mutation/user-meta paths of `JiraClient` (+ Plane/GitHub later); remove `coverage-out-of-band` once clear.
+- **Verify**: Coverage CI green at the raised threshold. **Depends**: lands after the bucket-E/test PRs add coverage (sequence late).
+
+### PR-15 — CMake / CI robustness
+- **Files**: `CMakePresets.json` (`_smatchet-msvc-base`), `CMakeLists.txt`, `.github/workflows/build-and-test.yml`, `docs/agent-rules/build.md`, a lint/bats assertion.
+- **Approach**: set `/EHsc` + `/DWIN32 /D_WINDOWS` in the MSVC base preset (or `CMAKE_CXX_FLAGS_INIT`) + detect/wipe poisoned empty-flags cache + a build.md note. CI assertion grepping `build-and-test.yml` cache `path:` vs the `FETCHCONTENT_BASE_DIR` default, failing on mismatch. A shared advisory-job snippet (step id + step-level `continue-on-error` + artifact upload keyed on `steps.<id>.outcome`); audit existing advisory jobs. Validate the UBSan job runs green on the next Source/Core PR.
+- **Verify**: fresh-configure smoke + the cache-path assertion red on a planted drift. **Depends**: none.
+
+### PR-16 — Worktree / session-registry + branch-edit guards
+- **Files**: `agents/core/git-janitor.md` + its registry-sweep script; `docs/agent-rules/process-rules.md`; `.gitattributes`; tests/CMakeLists glob registration.
+- **Approach**: wire the git-janitor registry sweep to call `sr_prune_dead_stale` over EVERY worktree's `.active-sessions/` + port-forward authoritative-pid liveness into the planned `guard.mjs`. Pre-Edit check (process-rules) confirming the checked-out branch isn't a merged-PR / behind-develop on the target file. `.gitattributes` `tests/CMakeLists.txt merge=union` + GLOB auto-registration (new test needs no CMakeLists edit) + prefer free fns over `SmatchetUI` members + one-PR-per-worktree discipline.
+- **Verify**: bats on the registry sweep; `.gitattributes` union verified on a synthetic conflict. **Depends**: none.
+
+### PR-17 — Ship-loop discipline rules (docs)
+- **Files**: `docs/agent-rules/ship-loops.md`, `merge-gates.md`, `process-rules.md`, `issue-triage.md`, `agents/core/debug-detective.md`; `issue-sweep.sh`.
+- **Approach**: a batch of doc rules — verify status against merged code before claiming not-started/shipped/stale; explicit code-review-pass step between fix and commit (+ Stop-hook reminder); adversarial RCA pass before committing P0/crash fixes (debug-detective); security-review at PLAN time on trust-boundary designs; ship-time Issue-elevation marker grep in `issue-sweep.sh`; exe-auto-launch diff trigger on `Source/Core/src/Ui` touch; CI-config-slice dup-preflight checklist.
+- **Verify**: doc-validation; bats on the `issue-sweep.sh` elevation grep. **Depends**: none (pure docs; ship in slices if the diff is large).
+
+### PR-18..23 — Standalone
+- **PR-18 pink-clear**: `requestClearColor{R,G,B,A}` on `UiDrawSession` + restore-after-frame consumer in `main.cpp`; extend `DockGapSentinelScenario` + a bash `CountPixels(img,255,0,255,8)==0` hard assertion. *(ui-host)*
+- **PR-19 DX12 readback**: `CopyResource` backbuffer→readback heap + memcpy to a PPM writer in `Source/UnrealPlugins/SmatchetImGuiPlugin/`. *(unreal-bridge)*
+- **PR-20 redirect no-follow**: doctest/integration — tracker request vs an in-process server issuing cross-host 30x; assert `MakeTrackerRedirectPolicy` no-follow AND Authorization not re-sent cross-host. *(tracker-backend / security)*
+- **PR-21 per-pane catalog**: populate each pane context's `fieldCatalog` independently (seed cross-backend from `FieldCatalogCache` at `EnsurePaneContextLive` + per-pane first-sync into the CONTEXT), then re-land `resolvePaneCatalog` + `ChoosePaneCatalogSource` read routing. *(grid-engine)*
+- **PR-22 portable + daemon**: rewrite `agents/core/*` + `docs/agent-rules/*` prose to reference `project.config.json` keys (shrink `portable-purity-baseline.txt` toward zero); audit other daemons (issue-janitor/p4-janitor/while-True pollers) for unguarded per-iteration bodies + `subprocess.run(timeout=)` sites with no guard. *(build-doctor / agentic-infra)*
+- **PR-23 subagent-eval calibration**: live code-review smoke result JSON + a judge-vs-human calibration loop with BLOCK thresholds. *(agentic-infra)*
 
 ## P3 entries (73) — fold into matching P2 PR
 
@@ -90,7 +197,7 @@ The 73 P3 opens are smaller siblings of the clusters above (more bucket-E scenar
 
 ## UX Pillar callouts
 
-- **Pillar 1 (perf)**: no impact — this is a docs-only roadmap; perf belongs to each PR when picked up.
+- **Pillar 1 (perf)**: no impact — this is a docs-only roadmap; perf belongs to each member PR when picked up.
 - **Pillar 2 (UI-thread)**: no impact (docs only).
 - **Pillar 3 (never crash)**: no impact (docs only).
 - **Pillar 4 (accessibility)**: no impact (docs only).
@@ -102,7 +209,8 @@ The 73 P3 opens are smaller siblings of the clusters above (more bucket-E scenar
 ## Risks / non-goals
 
 - **Risk: roadmap rots as PRs land.** Mitigation: each PR's ship-loop flips its row to `shipped (#N)`; a periodic re-sweep (the same trap-sweep harness) re-verifies open rows.
-- **Non-goal: implementing any member PR.** This doc only groups + sequences; design lives in each member's own plan/ship-loop.
+- **Risk: per-group file paths drift.** Mitigation: § Implementation detail says "grep-confirm line numbers"; paths are seeds, not pinned line refs.
+- **Non-goal: implementing any member PR.** This doc only groups + sequences + seeds; design lives in each member's own plan/ship-loop.
 - **Non-goal: re-litigating priorities.** P2/P3 tiers are inherited from the backlog entries as-verified, not re-scored here.
 
 ## Verification
@@ -112,7 +220,7 @@ Per `AGENTS.md` § Project rules — this is a pure-docs roadmap; no build/test 
 - **Bucket A / E / scenario**: N/A — docs only.
 - **Build gate**: N/A — no C++ diff.
 - **Doc validation (blocks plan-doc PRs — keep this bullet)**: the canonical `scripts/dev/test-docs.sh` suite green (anchors / agent-contract / plan-index / ref-integrity / portable-purity / md_lint).
-- **Plan stress-test — `grill-with-docs` (keep this bullet)**: roadmap stress-tested against the live backlog — every PR row traces to a verified-open entry from the trap-sweep; no row references a reconciled/shipped slug.
+- **Plan stress-test — `grill-with-docs` (keep this bullet)**: roadmap triple-checked against the live backlog — every PR row traces to a verified-open entry; 3 completeness gaps found + closed; no row references a reconciled/shipped slug; per-group file paths drawn from the entries' own git-cited next-actions.
 - **Manual residue**: none.
 
 ## Out of scope (flagged, not designed)
