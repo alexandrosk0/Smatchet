@@ -12,6 +12,7 @@
 #include "IssueDraft.h"
 #include "ProjectResolver.h"
 #include "Ui/SmatchetIconButtons.h"
+#include "SmatchetImGuiFonts.h"
 
 #include "IconsFontAwesome6.h"
 #include "imgui.h"
@@ -467,7 +468,7 @@ void StartNewIssueDraft(AppController& app, UiDrawSession& d, ViewDefinition* ac
 
 namespace { // reopened — see the external-linkage note above StartNewIssueDraft
 
-// Right-aligned cluster: tracker chip, READ ONLY chip, MCP chip, "+ New Issue" button.
+// Right-aligned cluster: tracker chip, READ ONLY chip, MCP chip, compose-new-issue icon button.
 void DrawHeaderRightChips(AppController& app, UiDrawSession& d, ViewDefinition* activeViewForGrid,
                           const std::vector<CachedTicket>& tickets, bool readOnlyMode,
                           std::chrono::steady_clock::time_point nowChip, const GridHeaderRightChips& c) {
@@ -539,7 +540,11 @@ void DrawHeaderRightChips(AppController& app, UiDrawSession& d, ViewDefinition* 
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.48f, 0.88f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.28f, 0.58f, 0.98f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.08f, 0.38f, 0.78f, 1.0f));
-        if (ImGui::Button("+ New Issue")) {
+        // Icon-only "compose new issue" button (FA pen-to-square). Falls back to the
+        // "+ New Issue" text label when the FA font is missing and keeps the hover
+        // tooltip in both paths (Pillar 4 — never a naked unlabelled glyph).
+        if (SmatchetIconButton(ICON_FA_PEN_TO_SQUARE, "+ New Issue",
+                               "Create a new issue draft and scroll grid to bottom")) {
             const GridPane& clickPane = d.pane();
             if (clickPane.focused) {
                 StartNewIssueDraft(app, d, activeViewForGrid, tickets);
@@ -553,9 +558,6 @@ void DrawHeaderRightChips(AppController& app, UiDrawSession& d, ViewDefinition* 
             }
         }
         ImGui::PopStyleColor(3);
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Create a new issue draft and scroll grid to bottom");
-        }
     }
 }
 } // namespace
@@ -583,7 +585,10 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
     chips.showReadOnlyChip = d.cfg.ReadOnlyMode;
     chips.readOnlyW = chips.showReadOnlyChip ? ImGui::CalcTextSize(chips.readOnlyLabel).x : 0.0f;
 
-    chips.btnW = ImGui::CalcTextSize("+ New Issue").x + ImGui::GetStyle().FramePadding.x * 2.0f;
+    // Mirror the icon-only button's rendered width: the FA glyph when the icon font
+    // is loaded, else the "+ New Issue" text fallback (see DrawHeaderRightChips).
+    const char* newIssueBtnVisible = SmatchetAreFaIconsLoaded() ? ICON_FA_PEN_TO_SQUARE : "+ New Issue";
+    chips.btnW = ImGui::CalcTextSize(newIssueBtnVisible).x + ImGui::GetStyle().FramePadding.x * 2.0f;
     chips.between = ImGui::GetStyle().ItemSpacing.x * 2.5f;
 
     DrawHeaderRightChips(app, d, activeViewForGrid, tickets, readOnlyMode, nowChip, chips);
