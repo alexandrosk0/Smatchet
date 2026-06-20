@@ -1,6 +1,6 @@
 # Cursor — Pillar 2 static scanner invocation
 
-Smatchet's Pillar 2 static gate ships as a canonical bash script at
+The project's Pillar 2 static gate ships as a canonical bash script at
 `scripts/dev/pillar2-scan.sh` (see `docs/plans/shipped/pillar-1-2-perf-review-system.md`
 § Slice 2). The script is fully harness-agnostic — no Cursor-specific glue is
 required to invoke it.

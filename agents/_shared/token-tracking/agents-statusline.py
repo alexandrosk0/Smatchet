@@ -9,7 +9,7 @@ Wiring (per-user, in ~/.claude/settings.json):
     }
 
 If caveman is installed, this script also invokes its statusline first so
-both badges appear (caveman compression badge + Smatchet agent-token badge).
+both badges appear (caveman compression badge + the project's agent-token badge).
 
 Reads:
     $CLAUDE_PROJECT_DIR/.claude/.agent-tokens.jsonl  (tail-only; fast)
