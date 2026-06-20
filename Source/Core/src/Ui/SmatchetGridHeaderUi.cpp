@@ -435,7 +435,9 @@ void StartNewIssueDraft(AppController& app, UiDrawSession& d, ViewDefinition* ac
         }
 
         const std::vector<std::string>& inheritIds =
-            (d.cfg.TrackerType == "Plane") ? d.cfg.NewIssueInheritFieldIdsPlane : d.cfg.NewIssueInheritFieldIds;
+            (d.cfg.TrackerType == "Plane")
+                ? d.cfg.NewIssueInheritFieldIdsPlane
+                : (d.cfg.TrackerType == "Linear") ? d.cfg.NewIssueInheritFieldIdsLinear : d.cfg.NewIssueInheritFieldIds;
         if (lastVisibleTicket) {
             const std::string activeViewQuery = activeViewForGrid ? activeViewForGrid->Jql : std::string();
             // PR 6: legacy global cfg.ProjectKey removed — pass "" as the legacy fallback.

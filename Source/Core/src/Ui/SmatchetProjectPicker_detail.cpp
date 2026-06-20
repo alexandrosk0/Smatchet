@@ -15,7 +15,9 @@ bool ContainsCi(const std::string& haystack, const std::string& needle) {
 }
 
 std::string MakeRowLabel(const RemoteProject& p, const std::string& backendKind) {
-    // Jira: "KEY — DisplayName". Plane: key is empty, display name only.
+    // Jira: "KEY — DisplayName". Plane: key is empty, display name only. Linear's draft scope is the
+    // Team, which carries a real key (the TEAM-123 prefix) + a name, so it reads like a Jira project:
+    // "KEY — Team name".
     if (backendKind == "Plane" || p.key.empty()) {
         return p.displayName.empty() ? p.id : p.displayName;
     }

@@ -15,8 +15,8 @@ namespace detail {
 /** Case-insensitive substring test. Empty needle always matches. */
 bool ContainsCi(const std::string& haystack, const std::string& needle);
 
-/** Display label for an "All projects" row. Jira: "KEY — DisplayName"; Plane (or empty key):
- *  display name (or id fallback). */
+/** Display label for an "All projects" row. Jira / Linear (Team): "KEY — DisplayName"; Plane (or
+ *  empty key): display name (or id fallback). */
 std::string MakeRowLabel(const RemoteProject& p, const std::string& backendKind);
 
 /** True iff a recently-used cache entry survives the backend/endpoint/search filter and should

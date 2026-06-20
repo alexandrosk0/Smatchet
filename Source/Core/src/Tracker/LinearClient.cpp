@@ -18,8 +18,9 @@
 #include <utility>
 
 // LinearClient — fourth tracker backend (docs/plans/active/linear-tracker-backend.md).
-// Slice 1 (READ-ONLY): GraphQL transport + connectivity + field catalog + read
-// sync; mutations return a "not yet supported" TrackerError until Slice 3.
+// This TU holds the read shell: GraphQL transport + connectivity + field catalog +
+// read sync. The mutation surface (issueUpdate/issueCreate/commentCreate) lives in
+// LinearIssueMutation.cpp (slice 3), split out like JiraIssueMutation.cpp.
 // Mirrors GitHubClient's shell precisely (per-request #979 credential resolution,
 // thin-adapter/pure-TU split, role self-returns). All GraphQL POSTs route through
 // the shared TrackerPostLogged helper — GraphQL is POST-only.
@@ -29,7 +30,6 @@ using smatchet::linear::BuildLinearHeaders;
 namespace {
 
 const char* const kApiKeyMissingError = "Linear API key not configured (set Preferences > Tracker > Linear API key)";
-const char* const kWritesUnsupportedError = "Linear writes not yet supported (slice 3)";
 
 // Fixed Linear priority scale (Int 0–4). Stable IDs; the field catalog reuses
 // these for the read-only priority column (plan § Approach: priority is the
@@ -106,9 +106,11 @@ ITrackerIssueReader& LinearClient::Reader() { return *this; }
 ITrackerConnectivity& LinearClient::Connectivity() { return *this; }
 ITrackerFieldCatalog* LinearClient::FieldCatalog() { return this; }
 ITrackerIssueMutations* LinearClient::Mutations() { return this; }
-// Collaboration (comments) + Activity (feed) are out of scope for slice 1 — the
-// facade contract is "nullptr if unsupported" (ITrackerBackend.h).
-ITrackerCollaboration* LinearClient::Collaboration() { return nullptr; }
+// Collaboration (comment posting) self-returns as of slice 3 (AddIssueCommentPlain
+// in LinearIssueMutation.cpp). Activity (feed) stays nullptr — the activity-feed
+// role is out of MVP scope (facade contract is "nullptr if unsupported",
+// ITrackerBackend.h).
+ITrackerCollaboration* LinearClient::Collaboration() { return this; }
 ITrackerActivity* LinearClient::Activity() { return nullptr; }
 
 LinearClient::LinearClient(const std::string& baseUrl, const std::string& apiKey)
@@ -548,17 +550,7 @@ LinearClient::FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& /*
     return EditMetaResult::Ok(std::move(outFieldIdCanEdit));
 }
 
-TrackerError LinearClient::UpdateIssueFields(const std::string& /*issueId*/, const nlohmann::json& /*fields*/) {
-    // Slice 1 is READ-ONLY — issueUpdate lands in slice 3.
-    return TrackerErrorInvalidRequest(kWritesUnsupportedError);
-}
-
-TrackerError LinearClient::UpdateField(const std::string& /*issueId*/, const TrackerField& /*field*/,
-                                       const std::vector<std::string>& /*values*/) {
-    return TrackerErrorInvalidRequest(kWritesUnsupportedError);
-}
-
-Result<nlohmann::json, TrackerError> LinearClient::BuildFieldPayload(const TrackerField& /*field*/,
-                                                                     const std::vector<std::string>& /*values*/) {
-    return Result<nlohmann::json, TrackerError>::Err(TrackerErrorInvalidRequest(kWritesUnsupportedError));
-}
+// UpdateIssueFields / UpdateField / BuildFieldPayload / BuildCreatePayload /
+// CreateIssue (ITrackerIssueMutations) + AddIssueCommentPlain (ITrackerCollaboration)
+// live in LinearIssueMutation.cpp — the GraphQL mutation surface is split out of
+// this read shell exactly like JiraIssueMutation.cpp / PlaneIssueMutation.cpp.

@@ -196,9 +196,17 @@ void SmatchetUI::loadPreferencesBuffers(UiDrawSession& d) {
     CopyStringToBuffer(d.githubPatBuf, d.cfg.GitHubPat);
     CopyStringToBuffer(d.githubOwnerBuf, d.cfg.GitHubOwner);
     CopyStringToBuffer(d.githubRepoBuf, d.cfg.GitHubRepo);
+    CopyStringToBuffer(d.linearApiKeyBuf, d.cfg.LinearApiKey);
+    CopyStringToBuffer(d.linearBaseUrlBuf, d.cfg.LinearBaseUrl.empty()
+                                               ? std::string("https://api.linear.app/graphql")
+                                               : d.cfg.LinearBaseUrl);
+    CopyStringToBuffer(d.linearTeamKeyBuf, d.cfg.LinearTeamKey);
+    CopyStringToBuffer(d.linearTeamIdBuf, d.cfg.LinearTeamId);
+    CopyStringToBuffer(d.linearWorkspaceUrlBuf, d.cfg.LinearWorkspaceUrl);
     CopyStringToBuffer(d.newIssueInheritFieldsBuf, JoinCsv(d.cfg.NewIssueInheritFieldIds));
     CopyStringToBuffer(d.newIssueInheritFieldsPlaneBuf, JoinCsv(d.cfg.NewIssueInheritFieldIdsPlane));
     CopyStringToBuffer(d.newIssueInheritFieldsGitHubBuf, JoinCsv(d.cfg.NewIssueInheritFieldIdsGitHub));
+    CopyStringToBuffer(d.newIssueInheritFieldsLinearBuf, JoinCsv(d.cfg.NewIssueInheritFieldIdsLinear));
     CopyStringToBuffer(d.gitCommitReposBuf, d.cfg.GitCommitRepos);
     CopyStringToBuffer(d.productionGroupKeywordBuf, d.cfg.ProductionGroupKeyword);
     d.userActivityDayWindow = d.cfg.UserActivityDayWindow;
@@ -216,8 +224,8 @@ void SmatchetUI::loadPreferencesBuffers(UiDrawSession& d) {
 
 namespace {
 
-// Backend-selection section of the Tracker tab: read-only toggle + the Jira/Plane/GitHub combo.
-// Returns the selected backend index (0=Jira, 1=Plane, 2=GitHub). Extracted from
+// Backend-selection section of the Tracker tab: read-only toggle + the Jira/Plane/GitHub/Linear combo.
+// Returns the selected backend index (0=Jira, 1=Plane, 2=GitHub, 3=Linear). Extracted from
 // drawPreferencesTrackerTab during the over-100-line decomposition; behaviour-identical.
 int DrawTrackerBackendSelection(UiDrawSession& d) {
     ImGui::TextUnformatted("Backend Selection");
@@ -235,12 +243,12 @@ int DrawTrackerBackendSelection(UiDrawSession& d) {
                                "launch before setup.");
     ImGui::Spacing();
 
-    const char* items[] = {"Jira", "Plane", "GitHub"};
+    const char* items[] = {"Jira", "Plane", "GitHub", "Linear"};
     int currentItem = 0;
     {
         // Defensive case-insensitive match against persisted config —
         // smatchet_config.json could be hand-edited with lowercase
-        // "plane"/"github" values; the combo writer below always
+        // "plane"/"github"/"linear" values; the combo writer below always
         // emits canonical PascalCase, but the load path doesn't
         // canonicalize. CR finding on PR #386/#387.
         const std::string trackerTypeStr(d.trackerTypeBuf);
@@ -248,6 +256,8 @@ int DrawTrackerBackendSelection(UiDrawSession& d) {
             currentItem = 1;
         } else if (trackerTypeStr == "GitHub" || trackerTypeStr == "github") {
             currentItem = 2;
+        } else if (trackerTypeStr == "Linear" || trackerTypeStr == "linear") {
+            currentItem = 3;
         }
     }
     if (ImGui::Combo("Tracker Backend", &currentItem, items, IM_ARRAYSIZE(items))) {
@@ -259,8 +269,8 @@ int DrawTrackerBackendSelection(UiDrawSession& d) {
     return currentItem;
 }
 
-// Per-backend credential/config inputs of the Tracker tab (Jira / Plane / GitHub). Extracted from
-// drawPreferencesTrackerTab during the over-100-line decomposition; behaviour-identical.
+// Per-backend credential/config inputs of the Tracker tab (Jira / Plane / GitHub / Linear). Extracted
+// from drawPreferencesTrackerTab during the over-100-line decomposition; behaviour-identical.
 void DrawTrackerBackendConfig(UiDrawSession& d, int currentItem) {
 #if !defined(_WIN32)
     // #15 (Phase-0 mobile MVP): ConfigManager's DPAPI secret protection is Win32-only
@@ -308,7 +318,7 @@ void DrawTrackerBackendConfig(UiDrawSession& d, int currentItem) {
         SmatchetHelpMarker::Render("prefs.tracker.inherit_plane.help",
                                    "Comma-separated Plane field ids copied from the last grid row when you "
                                    "click + New issue (e.g. description, priority, assignee, labels).");
-    } else {
+    } else if (currentItem == 2) {
         // GitHub-as-tracker — PR3 of docs/plans/shipped/github-tracker-backend.md.
         ImGui::TextUnformatted("GitHub Configuration (github.com or Enterprise)");
         ImGui::InputText("Base URL", d.githubBaseUrlBuf, sizeof(d.githubBaseUrlBuf), ImGuiInputTextFlags_CharsNoBlank);
@@ -332,6 +342,29 @@ void DrawTrackerBackendConfig(UiDrawSession& d, int currentItem) {
         SmatchetHelpMarker::Render("prefs.tracker.inherit_github.help",
                                    "Comma-separated GitHub field ids copied from the last grid row when you "
                                    "click + New issue (e.g. body, labels, assignees, milestone).");
+    } else {
+        // Linear-as-tracker — Slice 1 of docs/plans/active/linear-tracker-backend.md. Draft scope is
+        // the Team, so identity is the Team Key / Team Id pair (mirrors GitHub's Owner/Repo shape).
+        ImGui::TextUnformatted("Linear Configuration (linear.app)");
+        ImGui::InputText("API Key", d.linearApiKeyBuf, sizeof(d.linearApiKeyBuf), ImGuiInputTextFlags_Password);
+        ImGui::SetItemTooltip("Personal API Key from Linear Settings -> API.");
+        ImGui::InputText("Team Key", d.linearTeamKeyBuf, sizeof(d.linearTeamKeyBuf), ImGuiInputTextFlags_CharsNoBlank);
+        ImGui::SetItemTooltip("Team key, e.g. \"ENG\" (the TEAM-123 issue prefix).");
+        ImGui::InputText("Team", d.linearTeamIdBuf, sizeof(d.linearTeamIdBuf), ImGuiInputTextFlags_CharsNoBlank);
+        ImGui::SetItemTooltip("Linear team UUID. Optional — resolved from Team Key when empty.");
+        ImGui::InputText("Base URL", d.linearBaseUrlBuf, sizeof(d.linearBaseUrlBuf), ImGuiInputTextFlags_CharsNoBlank);
+        ImGui::SetItemTooltip("e.g. https://api.linear.app/graphql");
+        ImGui::InputText("Workspace URL", d.linearWorkspaceUrlBuf, sizeof(d.linearWorkspaceUrlBuf),
+                         ImGuiInputTextFlags_CharsNoBlank);
+        ImGui::SetItemTooltip("Optional workspace URL / display hint.");
+        ImGui::Spacing();
+        ImGui::InputText("New issue: inherit fields from last row (Linear)", d.newIssueInheritFieldsLinearBuf,
+                         sizeof(d.newIssueInheritFieldsLinearBuf));
+        ImGui::SetItemTooltip("Comma-separated Linear field ids.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.tracker.inherit_linear.help",
+                                   "Comma-separated Linear field ids copied from the last grid row when you "
+                                   "click + New issue (e.g. description, priority, assignee, labels).");
     }
     ImGui::Spacing();
 }
@@ -354,6 +387,9 @@ void DrawTrackerRecentProjects(UiDrawSession& d, int currentItem) {
         backendKind = "GitHub";
         endpoint = std::string(d.githubBaseUrlBuf) + std::string("|") + std::string(d.githubOwnerBuf) +
                    std::string("/") + std::string(d.githubRepoBuf);
+    } else if (currentItem == 3) {
+        backendKind = "Linear";
+        endpoint = std::string(d.linearBaseUrlBuf) + std::string("|") + std::string(d.linearTeamIdBuf);
     } else {
         backendKind = "Jira";
         endpoint = std::string(d.domainBuf);
@@ -598,6 +634,11 @@ void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) 
     d.cfg.GitHubPat = d.githubPatBuf;
     d.cfg.GitHubOwner = d.githubOwnerBuf;
     d.cfg.GitHubRepo = d.githubRepoBuf;
+    d.cfg.LinearApiKey = d.linearApiKeyBuf;
+    d.cfg.LinearBaseUrl = d.linearBaseUrlBuf;
+    d.cfg.LinearTeamKey = d.linearTeamKeyBuf;
+    d.cfg.LinearTeamId = d.linearTeamIdBuf;
+    d.cfg.LinearWorkspaceUrl = d.linearWorkspaceUrlBuf;
     // Issue #979 — trim leading/trailing whitespace on every credential/identity field
     // BEFORE the base-URL empty-default below, so a whitespace-only buffer still gets the
     // default. A trailing space in the Jira email made Atlassian 401 every request.
@@ -605,9 +646,13 @@ void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) 
     if (d.cfg.GitHubBaseUrl.empty()) {
         d.cfg.GitHubBaseUrl = "https://api.github.com";
     }
+    if (d.cfg.LinearBaseUrl.empty()) {
+        d.cfg.LinearBaseUrl = "https://api.linear.app/graphql";
+    }
     ApplyInheritFieldsBuf(d.newIssueInheritFieldsBuf, d.cfg.NewIssueInheritFieldIds);
     ApplyInheritFieldsBuf(d.newIssueInheritFieldsPlaneBuf, d.cfg.NewIssueInheritFieldIdsPlane);
     ApplyInheritFieldsBuf(d.newIssueInheritFieldsGitHubBuf, d.cfg.NewIssueInheritFieldIdsGitHub);
+    ApplyInheritFieldsBuf(d.newIssueInheritFieldsLinearBuf, d.cfg.NewIssueInheritFieldIdsLinear);
 #if defined(SMATCHET_WITH_MCP)
     d.cfg.McpEnabled = d.mcpEnabled;
     d.cfg.McpPort = d.mcpPort;
@@ -632,6 +677,10 @@ void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) 
         LOG_INFO("Updated tracker config (GitHub). BaseUrl='%s' Owner='%s' Repo='%s' (PAT length=%zu)",
                  d.cfg.GitHubBaseUrl.c_str(), d.cfg.GitHubOwner.c_str(), d.cfg.GitHubRepo.c_str(),
                  d.cfg.GitHubPat.size());
+    } else if (d.cfg.TrackerType == "Linear") {
+        LOG_INFO("Updated tracker config (Linear). BaseUrl='%s' TeamKey='%s' TeamId='%s' (API key length=%zu)",
+                 d.cfg.LinearBaseUrl.c_str(), d.cfg.LinearTeamKey.c_str(), d.cfg.LinearTeamId.c_str(),
+                 d.cfg.LinearApiKey.size());
     } else {
         LOG_INFO("Updated tracker config (Jira). Domain='%s', Email='%s'", d.cfg.Domain.c_str(),
                  smatchet::logging::pure::MaskEmailForLog(d.cfg.Email).c_str());

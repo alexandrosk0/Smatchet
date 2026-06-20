@@ -2,6 +2,7 @@
 #define SMATCHET_LINEAR_CLIENT_H
 
 #include "ITrackerBackend.h"
+#include "ITrackerCollaboration.h"
 #include "ITrackerConnectivity.h"
 #include "ITrackerFieldCatalog.h"
 #include "ITrackerIssueMutations.h"
@@ -20,9 +21,9 @@
 // `Create("linear")`. The ctor snapshots baseUrl + apiKey, but every request
 // re-resolves credentials from the live TrackerConfig (issue #979) so a key
 // entered/rotated in Preferences takes effect without recreating the client.
-// Slice 1 is READ-ONLY: the mutation pure-virtuals are present (interface-
-// mandated) but return a "not yet supported" TrackerError until Slice 3 wires
-// issueUpdate/issueCreate/commentCreate. Collaboration()/Activity() are nullptr.
+// Slice 3 wires the mutation surface: issueUpdate/issueCreate/commentCreate are
+// live (LinearIssueMutation.cpp). Collaboration() now self-returns (comment
+// posting); Activity() stays nullptr (the activity-feed role is out of MVP scope).
 
 // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent backend
 // clients; owner=tracker-backend; revisit=2026-12-31)
@@ -30,14 +31,15 @@ class LinearClient : public ITrackerBackend,
                      public ITrackerIssueReader,
                      public ITrackerConnectivity,
                      public ITrackerFieldCatalog,
-                     public ITrackerIssueMutations {
+                     public ITrackerIssueMutations,
+                     public ITrackerCollaboration {
   public:
     ITrackerIssueReader& Reader() override;
     ITrackerConnectivity& Connectivity() override;
     ITrackerFieldCatalog* FieldCatalog() override;
     ITrackerIssueMutations* Mutations() override;
-    ITrackerCollaboration* Collaboration() override; // nullptr in slice 1
-    ITrackerActivity* Activity() override;            // nullptr in slice 1
+    ITrackerCollaboration* Collaboration() override; // comment posting (slice 3)
+    ITrackerActivity* Activity() override;            // nullptr — activity feed out of MVP scope
     LinearClient(const std::string& baseUrl, const std::string& apiKey);
     ~LinearClient() override = default;
 
@@ -72,7 +74,7 @@ class LinearClient : public ITrackerBackend,
     Result<std::unordered_map<std::string, bool>, TrackerError>
     FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issueKeyOrId) override;
 
-    // === ITrackerIssueMutations (slice 1: stubbed "not yet supported") ===
+    // === ITrackerIssueMutations (slice 3: issueUpdate / issueCreate — LinearIssueMutation.cpp) ===
     TrackerError UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) override;
     TrackerError UpdateField(const std::string& issueId, const TrackerField& field,
                              const std::vector<std::string>& values) override;
@@ -80,6 +82,17 @@ class LinearClient : public ITrackerBackend,
     // backend clients; owner=tracker-backend; revisit=2026-12-31)
     Result<nlohmann::json, TrackerError> BuildFieldPayload(const TrackerField& field,
                                                            const std::vector<std::string>& values) override;
+    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent
+    // backend clients; owner=tracker-backend; revisit=2026-12-31)
+    Result<nlohmann::json, TrackerError> BuildCreatePayload(const IssueDraft& draft,
+                                                            const std::vector<TrackerField>& catalog) override;
+    Result<std::string, TrackerError> CreateIssue(const nlohmann::json& fields) override;
+
+    // === ITrackerCollaboration overrides (slice 3: commentCreate) ===
+    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent
+    // backend clients; owner=tracker-backend; revisit=2026-12-31)
+    TrackerError AddIssueCommentPlain(const TrackerConfig& cfg, const std::string& issueKey,
+                                      const std::string& plainText) override;
 
   private:
     /// Issue #979 — resolve apiUrl + apiKey for one request. `configOverride`

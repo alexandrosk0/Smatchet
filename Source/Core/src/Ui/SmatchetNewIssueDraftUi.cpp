@@ -201,7 +201,9 @@ void DrawNewIssueInactiveCell(AppController& app, UiDrawSession& d, const Tracke
     if (ImGui::SmallButton("+ New issue")) {
         if (lastVisibleTicket) {
             const std::vector<std::string>& inheritIds =
-                (cfg.TrackerType == "Plane") ? cfg.NewIssueInheritFieldIdsPlane : cfg.NewIssueInheritFieldIds;
+                (cfg.TrackerType == "Plane")
+                    ? cfg.NewIssueInheritFieldIdsPlane
+                    : (cfg.TrackerType == "Linear") ? cfg.NewIssueInheritFieldIdsLinear : cfg.NewIssueInheritFieldIds;
             // PR 6: legacy global cfg.ProjectKey removed — pass "" as the legacy fallback.
             const ITrackerBackend* b = app.GetTrackerBackend();
             const std::string resolvedProject = smatchet::ResolveProjectForDraft(
@@ -579,9 +581,13 @@ void DrawDraftFieldColumnCell(AppController& app, UiDrawSession& d, const std::v
 
     // PR 4b: Project gets the dedicated hybrid picker (Recently used + lazy "All projects").
     if (fieldId == "project") {
-        const std::string backendKind = (cfg.TrackerType == "Plane") ? std::string("Plane") : std::string("Jira");
+        const std::string backendKind = (cfg.TrackerType == "Plane")
+                                             ? std::string("Plane")
+                                             : (cfg.TrackerType == "Linear") ? std::string("Linear") : std::string("Jira");
         const std::string endpoint =
-            (cfg.TrackerType == "Plane") ? (cfg.PlaneUrl + std::string("|") + cfg.PlaneWorkspaceSlug) : cfg.Domain;
+            (cfg.TrackerType == "Plane")
+                ? (cfg.PlaneUrl + std::string("|") + cfg.PlaneWorkspaceSlug)
+                : (cfg.TrackerType == "Linear") ? (cfg.LinearBaseUrl + std::string("|") + cfg.LinearTeamId) : cfg.Domain;
         std::string sel = d.newIssueDraft.ProjectKey;
         if (SmatchetProjectPicker::Draw("draft_project", d.newIssueProjectPickerState, app, backendKind, endpoint,
                                         sel)) {
