@@ -5,17 +5,18 @@
 #   1. Inline hook produces .lint-queue.<pid> + .tree-dirty, exits 0, fast.
 #   2. Multi-edit dedup: same path written 3× still drains as 1 file.
 #   3. Multi-file drain: distinct paths each visited once.
+#   4. Fault injection: a real cppcheck violation surfaces from the drain.
+#   5. Chunked drain across > SMATCHET_LINT_DRAIN_CHUNK files (remainder requeued).
+#   6. Per-PID queue isolation: distinct .lint-queue.<pid> files both consumed.
 #   7. SMATCHET_LINT_INLINE=1 escape hatch skips the queue (and runs inline).
 #   8. agents/scripts/core/lint-flush.sh delegates to the drain script.
 #   9. PreToolUse:Bash on `cmake --build …` clears .tree-dirty.
+#  10. Lockfile serialises concurrent Stop events (flock-gated; skips if no flock).
 #  11. SessionStart cleanup removes orphaned queue / lock / tree-dirty.
+#  12. lint-syntax-both.py --selftest (PCH-drift FP classification, PR-6).
 #
-# Deferred (require real C++ fault injection or process orchestration):
-#   - Test 4 (issue surfacing with a real cppcheck violation)
-#   - Test 5 (chunked drain across > SMATCHET_LINT_DRAIN_CHUNK files)
-#   - Test 6 (parallel-subagent per-PID queue isolation across live PIDs)
-#   - Test 10 (lockfile serialises concurrent Stop events)
-# Filed in docs/self-improvement/AGENT_SELF_IMPROVEMENT.md as a follow-up sweep.
+# Tests 4/5/6/10 were the deferred sweep filed in
+# docs/self-improvement/AGENT_SELF_IMPROVEMENT.md — implemented in PR-6.
 #
 # Auto-enrolled by scripts/dev/test-all.sh.
 
@@ -34,6 +35,7 @@ declare -a FAILURES=()
 note() { echo "[lint-hook-split] $*"; }
 ok()   { PASS=$((PASS + 1)); echo "  PASS  $1"; }
 nope() { FAIL=$((FAIL + 1)); FAILURES+=("$1"); echo "  FAIL  $1"; }
+skip() { echo "  SKIP  $1"; }
 
 cleanup() {
     rm -f "$CLAUDE_DIR"/.lint-queue.* 2>/dev/null || true
@@ -42,6 +44,9 @@ cleanup() {
     # Synthesised Test 3 fixture copies — canonical lint_hook_probe.cpp stays.
     rm -f "$PROJ_DIR/tests/fixtures/lint_hook_probe_b.cpp" 2>/dev/null || true
     rm -f "$PROJ_DIR/tests/fixtures/lint_hook_probe_c.cpp" 2>/dev/null || true
+    # Synthesised Test 4/5/6 fault + chunk fixtures.
+    rm -f "$PROJ_DIR/tests/fixtures/lint_hook_fault.cpp" 2>/dev/null || true
+    rm -f "$PROJ_DIR"/tests/fixtures/lint_hook_chunk_*.cpp 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -166,6 +171,100 @@ else
     nope "drain left ${#QUEUE_REAL[@]} queue files (rc=$drain_rc)"
 fi
 
+# -------------------------------------------------------------------- Test 4
+note "Test 4 — fault injection: a real cppcheck violation surfaces from the drain"
+cleanup
+# A first-party fixture with a genuine cppcheck defect (out-of-bounds + uninit).
+# Queue it via the inline hook, then drain and assert the drain reports it.
+# The drain delta-filters findings to lines changed vs origin/develop; an
+# untracked fixture has no diff hunks, which would drop every finding. Force the
+# delta baseline to a non-existent ref so lint_filter_delta fails OPEN (the
+# documented non-git / unresolvable-baseline behaviour) and real findings pass.
+FAULT_FILE="$PROJ_DIR/tests/fixtures/lint_hook_fault.cpp"
+mkdir -p "$PROJ_DIR/tests/fixtures"
+cat > "$FAULT_FILE" <<'CPP'
+namespace smatchet_lint_fault {
+int OutOfBounds() {
+    int arr[3];
+    return arr[5];
+}
+} // namespace smatchet_lint_fault
+CPP
+
+if ! command -v cppcheck >/dev/null 2>&1; then
+    skip "Test 4 — cppcheck not on PATH"
+else
+    echo '{"tool_input": {"file_path": "'"$FAULT_FILE"'"}}' | bash "$HOOKS_DIR/lint-cpp.sh"
+    # Drain with the delta baseline forced unresolvable (fail-open) so the
+    # finding on the untracked fixture is not delta-filtered away.
+    DRAIN_OUT="$(LINT_DELTA_BASE="__no_such_ref_pr6__" bash "$HOOKS_DIR/lint-cpp-drain.sh" 2>&1)"
+    drain_rc=$?
+    if printf '%s' "$DRAIN_OUT" | grep -qiE 'arrayIndexOutOfBounds|uninitvar|cppcheck:'; then
+        ok "drain surfaced the injected cppcheck violation (rc=$drain_rc)"
+    else
+        nope "drain did not surface the injected violation (rc=$drain_rc): $DRAIN_OUT"
+    fi
+fi
+
+# -------------------------------------------------------------------- Test 5
+note "Test 5 — chunked drain across > SMATCHET_LINT_DRAIN_CHUNK files"
+cleanup
+# Stage 3 distinct clean fixtures and drain with a chunk size of 2: the first
+# drain must consume 2 and requeue 1 (a single new queue file); the second drain
+# must consume the remainder, leaving the queue empty.
+declare -a CHUNKS=()
+for n in 1 2 3; do
+    cf="$PROJ_DIR/tests/fixtures/lint_hook_chunk_${n}.cpp"
+    cp -f "$PROBE_FILE" "$cf"
+    sed -i "s/smatchet_lint_probe/smatchet_lint_probe_chunk${n}/" "$cf"
+    CHUNKS+=("$cf")
+    echo '{"tool_input": {"file_path": "'"$cf"'"}}' | bash "$HOOKS_DIR/lint-cpp.sh"
+done
+
+SMATCHET_LINT_DRAIN_CHUNK=2 bash "$HOOKS_DIR/lint-cpp-drain.sh" >/dev/null 2>&1
+shopt -s nullglob
+QUEUE_REAL=("$CLAUDE_DIR"/.lint-queue.*)
+shopt -u nullglob
+# Exactly one queue file should remain, holding the 1-file remainder.
+REMAIN_LINES=$(cat "${QUEUE_REAL[@]}" 2>/dev/null | wc -l | tr -d ' ')
+if [[ ${#QUEUE_REAL[@]} -eq 1 && $REMAIN_LINES -eq 1 ]]; then
+    ok "first chunked drain requeued the 1-file remainder"
+else
+    nope "expected 1 remainder file with 1 line; got ${#QUEUE_REAL[@]} files / $REMAIN_LINES lines"
+fi
+
+SMATCHET_LINT_DRAIN_CHUNK=2 bash "$HOOKS_DIR/lint-cpp-drain.sh" >/dev/null 2>&1
+shopt -s nullglob
+QUEUE_REAL=("$CLAUDE_DIR"/.lint-queue.*)
+shopt -u nullglob
+if [[ ${#QUEUE_REAL[@]} -eq 0 ]]; then
+    ok "second chunked drain consumed the remainder (queue empty)"
+else
+    nope "second chunked drain left ${#QUEUE_REAL[@]} queue file(s)"
+fi
+
+# -------------------------------------------------------------------- Test 6
+note "Test 6 — per-PID queue isolation: distinct .lint-queue.<pid> both consumed"
+cleanup
+# Simulate two parallel agents by hand-writing two per-PID queue files (the
+# inline hook keys the queue off $PPID, so two live PIDs map to two files). The
+# drain globs .lint-queue.* so it must consume BOTH regardless of owner PID.
+printf '%s\n' "$PROBE_FILE" > "$CLAUDE_DIR/.lint-queue.111111"
+cp -f "$PROBE_FILE" "$PROJ_DIR/tests/fixtures/lint_hook_chunk_1.cpp"
+sed -i 's/smatchet_lint_probe/smatchet_lint_probe_pid6/' "$PROJ_DIR/tests/fixtures/lint_hook_chunk_1.cpp"
+printf '%s\n' "$PROJ_DIR/tests/fixtures/lint_hook_chunk_1.cpp" > "$CLAUDE_DIR/.lint-queue.222222"
+
+bash "$HOOKS_DIR/lint-cpp-drain.sh" >/dev/null 2>&1
+drain_rc=$?
+shopt -s nullglob
+QUEUE_REAL=("$CLAUDE_DIR"/.lint-queue.*)
+shopt -u nullglob
+if [[ ${#QUEUE_REAL[@]} -eq 0 ]]; then
+    ok "drain consumed both per-PID queue files (rc=$drain_rc)"
+else
+    nope "drain left ${#QUEUE_REAL[@]} per-PID queue file(s) (rc=$drain_rc)"
+fi
+
 # -------------------------------------------------------------------- Test 7
 note "Test 7 — SMATCHET_LINT_INLINE=1 escape hatch skips the queue"
 cleanup
@@ -230,6 +329,48 @@ else
     nope ".tree-dirty not cleared with env-var prefix"
 fi
 
+# ------------------------------------------------------------------- Test 10
+note "Test 10 — lockfile serialises concurrent drains (flock-gated)"
+cleanup
+if ! command -v flock >/dev/null 2>&1; then
+    # The drain's serialisation is implemented with flock on .lint-queue.lock;
+    # where flock is absent (e.g. this project's Git-Bash hosts) the drain
+    # degrades to no locking by design, so there is nothing to serialise-test.
+    skip "Test 10 — flock not on PATH (drain runs lock-free by design)"
+else
+    # Hold the lock in a background process, then fire a drain that has work
+    # queued: the contending drain must take the non-blocking lock path and exit
+    # 0 WITHOUT consuming the queue (the holder will, or a later Stop event).
+    echo '{"tool_input": {"file_path": "'"$PROBE_FILE"'"}}' | bash "$HOOKS_DIR/lint-cpp.sh"
+    LOCK_FILE="$CLAUDE_DIR/.lint-queue.lock"
+    # Background holder: grab the exclusive lock and sleep, holding it.
+    ( exec 201>"$LOCK_FILE"; flock 201; sleep 3 ) &
+    HOLDER_PID=$!
+    sleep 0.4   # give the holder time to acquire
+    bash "$HOOKS_DIR/lint-cpp-drain.sh" >/dev/null 2>&1
+    contend_rc=$?
+    shopt -s nullglob
+    QUEUE_REAL=("$CLAUDE_DIR"/.lint-queue.*)
+    shopt -u nullglob
+    # The contended drain must NOT have consumed the queued work (lock held).
+    if [[ $contend_rc -eq 0 ]] && grep -q "lint_hook_probe.cpp" "$CLAUDE_DIR"/.lint-queue.* 2>/dev/null; then
+        ok "contended drain exited 0 and left the queue for the lock holder"
+    else
+        nope "contended drain mis-handled the held lock (rc=$contend_rc, files=${#QUEUE_REAL[@]})"
+    fi
+    wait "$HOLDER_PID" 2>/dev/null || true
+    # After the holder releases, a fresh drain must consume the queue.
+    bash "$HOOKS_DIR/lint-cpp-drain.sh" >/dev/null 2>&1
+    shopt -s nullglob
+    QUEUE_REAL=("$CLAUDE_DIR"/.lint-queue.*)
+    shopt -u nullglob
+    if [[ ${#QUEUE_REAL[@]} -eq 0 ]]; then
+        ok "post-release drain consumed the queue"
+    else
+        nope "post-release drain left ${#QUEUE_REAL[@]} queue file(s)"
+    fi
+fi
+
 # ------------------------------------------------------------------- Test 11
 note "Test 11 — SessionStart clears orphaned queue / lock / tree-dirty"
 cleanup
@@ -252,6 +393,23 @@ if [[ ${#ORPHANS[@]} -eq 0 && $LOCK_PRESENT -eq 0 && $DIRTY_PRESENT -eq 0 ]]; th
     ok "SessionStart removed all orphan markers"
 else
     nope "SessionStart left state (queue=${#ORPHANS[@]} lock=$LOCK_PRESENT dirty=$DIRTY_PRESENT)"
+fi
+
+# ------------------------------------------------------------------- Test 12
+# The dual-target syntax checker (lint_run_dual_target -> lint-syntax-both.py)
+# is part of this pipeline; its FP-line filter carries a --selftest. Run it here
+# so the PCH version-drift FP patterns (PR-6) stay enrolled in CI.
+note "Test 12 — lint-syntax-both.py --selftest (PCH-drift FP classification)"
+cleanup
+SYNTAX_HOOK="$PROJ_DIR/docs/harness/claude-code/hooks/lint-syntax-both.py"
+if ! command -v python >/dev/null 2>&1; then
+    skip "Test 12 — python not on PATH"
+elif [[ ! -f "$SYNTAX_HOOK" ]]; then
+    nope "lint-syntax-both.py missing at $SYNTAX_HOOK"
+elif python "$SYNTAX_HOOK" --selftest >/dev/null 2>&1; then
+    ok "lint-syntax-both selftest passed"
+else
+    nope "lint-syntax-both selftest failed"
 fi
 
 # -------------------------------------------------------------------- Report
