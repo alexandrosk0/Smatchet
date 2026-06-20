@@ -1,8 +1,42 @@
 # Mobile app — fuller integration (Phase 1)
 
 > **Slug**: `mobile-app-fuller-integration`
-> **Status**: `active` — Phase-0 shipped; **no Phase-1 slices started yet** (P1.0–P1.6 all pending).
+> **Status**: `active` — **reconciled 2026-06-20**: the original "no Phase-1 slices started" status was **stale**. P1.0 / P1.1 / P1.4 are shipped, P1.2 / P1.5 partial, **P1.6 ships in this PR** (research doc); **P1.3** (touch editors — spike-first) is the main unstarted slice. Per-slice evidence in § Current state. The `d8ea206c` "Today" analyses below are **historical** (that commit is no longer in `develop`'s history — re-verify per anchor).
 > <!-- index-summary: Phase-1 Android app: Keystore-encrypted token, offline-cache replay on device, touch cell editors + explicit-commit interaction model, attachments, multi-backend, a11y research. -->
+
+## Current state (verified 2026-06-20 @ `develop` HEAD)
+
+**This plan was authored at Phase-0 close; its per-slice "Today" analyses are anchored to `d8ea206c`,
+which is no longer in `develop`'s history.** A fresh code audit on 2026-06-20 found the original
+"no Phase-1 slices started" status materially wrong — **four of the seven slices are wholly or largely
+done**. Corrected per-slice status (evidence = current-tree `file:line`):
+
+| Slice | Status | Evidence (current tree) |
+|---|---|---|
+| **P1.0** Keystore token | ✅ **Shipped** (audit H2 / CR #1357) | `Source/Mobile/Android/SmatchetAndroidSecretBridge.{h,cpp}` (JNI AES-GCM Keystore bridge, fail-closed, StrongBox, Shutdown-vs-Protect race fix); `ConfigManager.cpp:506–544` (`__ANDROID__` `WriteSecretFields` seals every secret, **no plaintext fallback**) + `:971–1007` (`__ANDROID__` `LoadSecretFields` `unsealSecret` + `migrate.LegacyPlaintext` scrub); installed at boot `android_main.cpp:285,379–386`. The migration scrub the plan called "mandatory/missing" exists. |
+| **P1.1** Offline replay | ✅ **Shipped** | The replay/sync drive runs every frame in the **shared Core loop** (not a separate Android hook): `SmatchetUI.cpp:470–473` calls `TickOfflineCreates` / `TickOfflineFieldEdits` / `SyncWithBackend`; reachability transitions `AppController_Connectivity.cpp:72–78,118–120`; dead-letter surface `SmatchetOfflineQueueUi.cpp`. Runs on Android because the loop is shared. |
+| **P1.2** Saved views + touch switcher | 🟡 **Partial** | View commands exist + reachable (`ViewCommands.cpp:151–282`); mobile drawer + modals shipped (`SmatchetViewsDashboardUi.cpp` `buildMobileViewsCtx` / `drawMobileDrawerViews` / `drawMobileViewsModals`). **Missing:** a dedicated touch tab-strip / bottom-sheet quick-switcher in the grid area. |
+| **P1.3** Touch cell editors | ❌ **Not started** (the spike-first, highest-risk slice) | `kMobileInlineEditBuild=true` on Android (`TicketFieldEditor.cpp:71–73`) + `SingleClickToEditGridCells` default-on exist, but **no long-press detector** (`SmatchetAndroidImeBridge.cpp`) and **no touch Save/Cancel affordance** for the four combo/modal editors. |
+| **P1.4** Attachments | ✅ **Shipped** (decode cross-platform) | `SmatchetImageTextureCache.cpp:139–157` (`DecodeWithStb`, no `_WIN32` guard) + renderer-agnostic `RegisterUserTexture`; thumbnails enabled globally. **Residual:** the *optional* Win32-only bitmap thumbnail-to-file at `SmatchetAttachmentPreviewUi.cpp:112` (low priority). |
+| **P1.5** Multi-backend | 🟡 **Infra ready** | `ITrackerBackend` abstraction + Jira / Plane / GitHub all in Core; backend selection lives in the Preferences combo (`SmatchetPreferencesUi.cpp:253`). **Missing:** a touch-first backend-selection UI (depends on P1.3 chrome). |
+| **P1.6** Accessibility | ✅ **Shipped this PR** (research) | [`docs/mobile/PHASE1_ACCESSIBILITY_RESEARCH.md`](../../mobile/PHASE1_ACCESSIBILITY_RESEARCH.md) + Pillar-4 backlog [`debt/2026-06-20-mobile-accessibility-pillar4.md`](../../self-improvement/categories/debt/2026-06-20-mobile-accessibility-pillar4.md). |
+
+**Residual P1.0 finding (now-false security message — ready-to-apply, not yet shipped):** the Android
+plaintext-token warning at `SmatchetPreferencesUi.cpp:265–275` is guarded `#if !defined(_WIN32)`, so it
+still tells **Android** users "the API token is stored unencrypted" even though P1.0 now Keystore-seals
+it. Correct fix = tighten the guard to `#if !defined(_WIN32) && !defined(__ANDROID__)` (keep the warning
+for desktop-Linux, which genuinely is plaintext; drop the false claim on Android). **Not shipped here**
+because no C++ is buildable in the cloud authoring environment (no Android NDK; the desktop preset fails
+on missing X11 dev headers — `libxrandr`), so the change cannot be compile-verified.
+
+**Validation blocker (why the remaining code slices are not shipped autonomously):** the authoring
+environment has **no Android NDK/SDK, no `adb`, no emulator**, and cannot build even the desktop Core
+(missing X11 dev headers). Every remaining slice (P1.2 tab-strip, **P1.3** touch redesign, P1.5 touch
+backend UI, the P1.0 warning fix) is validatable **only on an Android device/emulator** — and P1.3 is
+explicitly *spike-first* and falls under the `AGENTS.md` visual-validation exception (pause with launched
+exe, await verdict). Per [`AI_POLICY.md`](../../../AI_POLICY.md) *escalate-when-unvalidatable*, these are
+**escalated**, not blind-shipped. Recommended order once a device is available: P1.0 warning fix (trivial)
+→ P1.3 spike → P1.2 / P1.5 → P1.4 residual.
 
 ## Context
 
@@ -120,10 +154,33 @@ Per [`docs/guides/perf-workflow.md`](../../guides/perf-workflow.md), each Source
 
 _(per-slice; appended as each PR ships)_
 
+- **2026-06-20 — reconciliation + P1.6 (this PR).** Audited the tree against the stale `d8ea206c`
+  anchors (see § Current state). Recorded P1.0 / P1.1 / P1.4 as already-shipped with evidence and
+  P1.2 / P1.5 as partial — **no re-implementation attempted** (the original status was stale, not the
+  code). **Shipped P1.6** (research-only slice): [`docs/mobile/PHASE1_ACCESSIBILITY_RESEARCH.md`](../../mobile/PHASE1_ACCESSIBILITY_RESEARCH.md)
+  + Pillar-4 backlog `debt/2026-06-20-mobile-accessibility-pillar4.md` (TalkBack/`AccessibilityNodeProvider`
+  gap, `Configuration.fontScale` seam gap, WCAG contrast audit incl. the **2.90:1 white-on-accent** fail,
+  48 dp touch targets). Pure-docs PR.
+
 ## Deviations from plan
 
 _(per-slice)_
 
+- **Status correction (2026-06-20).** The plan's "no Phase-1 slices started" status was stale; P1.0,
+  P1.1, P1.4 were already shipped (and P1.2 / P1.5 partially) before this plan was re-opened. See
+  § Current state — the deviation is in the *plan's bookkeeping*, not the code.
+- **P1.0 residual deferred.** The now-false Android plaintext warning (`SmatchetPreferencesUi.cpp:265–275`)
+  fix is recorded as ready-to-apply but not shipped: no buildable C++ environment here to verify it.
+- **Remaining code slices escalated, not implemented.** P1.2 / P1.3 / P1.5 require an Android
+  device/emulator absent from the cloud authoring environment; P1.3 is additionally spike-first +
+  visual-validation-gated. Escalated per `AI_POLICY.md` rather than shipping unvalidated native/touch code.
+
 ## Verification (actual)
 
 _(per-slice)_
+
+- **P1.6 (this PR):** pure-docs slice — validated with `bash scripts/dev/test-docs.sh` (the local mirror
+  of the `doc-validation.yml` gate: anchor resolution, plan-ref integrity, kebab/naming, agent contract).
+  The findings doc's WCAG contrast ratios are computed from the source palette values (deterministic,
+  device-independent). On-device TalkBack / touch-target confirmation is a documented follow-up — no
+  Android device/emulator in the authoring environment.
