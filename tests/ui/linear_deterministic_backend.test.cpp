@@ -15,6 +15,7 @@
 #if defined(SMATCHET_BUILD_UI_TESTS)
 
 #include "AppController.h"
+#include "Commands/Scenarios/UiTestScenario.h" // SmatchetActiveUiTestAppController
 
 #include "imgui.h"
 #include "imgui_te_context.h"
