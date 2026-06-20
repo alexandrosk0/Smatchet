@@ -42,6 +42,9 @@ extern std::unique_ptr<smatchet::cmd::IScenario> MakeDescriptionTooltipMarkdownR
 // Multi-grid-tabs Slice 5b — two multi-grid concurrency / registration perf scenarios.
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeSideBySide2GridScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeConcurrentSyncScenario();
+// Parametrised N-visible-pane sweep (default 8) — the operator-driven "how many
+// grids before the budget blows" probe the multi-grid plan § Performance left open.
+extern std::unique_ptr<smatchet::cmd::IScenario> MakeSideBySideNGridScenario();
 // Issue #1133 mobile CI smoke gate — drives the dynamic-texture guard's
 // [P0 #1122] repoint path end-to-end. Always registered (the fault-injector /
 // guard symbols are no-ops when SMATCHET_ENABLE_TEXTURE_FAULT_INJECTION is OFF).
@@ -107,6 +110,10 @@ void RegisterAllScenarios(ScenarioRunner& runner) {
     // covers multi-grid on every Core PR.
     runner.RegisterFactory("side-by-side-2-grid", []() { return ::MakeSideBySide2GridScenario(); });
     runner.RegisterFactory("concurrent-sync", []() { return ::MakeConcurrentSyncScenario(); });
+    // side-by-side-grids — parametrised N-visible-pane render sweep (default 8,
+    // override with --panes=N). Not in the PR-fast gate set: it is an operator
+    // probe (variable N → no fixed baseline), not a regression guard.
+    runner.RegisterFactory("side-by-side-grids", []() { return ::MakeSideBySideNGridScenario(); });
     // Issue #1133 mobile CI smoke gate — no ifdef: the TU compiles on every
     // preset and the guard/injector calls are no-ops when the fault-injection
     // macro is OFF (recoveryLogSeen stays false, which is expected off-preset).
