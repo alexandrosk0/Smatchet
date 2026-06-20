@@ -97,6 +97,8 @@ Poll: count of `build/<fleet-slug>/results/*` + newest agent-transcript mtime + 
 
 Cascade has two triggers. The default is the **victim signature** (≥ `--max-cascade-victims`, default 3, transcripts carrying both `isCompactSummary:true` and `[Request interrupted by user]`). The second is **run amplification** — total agent runs ≥ `--amplification-pct` (default 200 = 2×) of the launch's `--expected-agents` fan-out width, the metric that named this failure (run `wf_62807bcd-dc8`: 74 runs for ~28 logical agents = 2.6×). Amplification catches churn the victim signature misses (a restart that compacts without the literal interrupt marker), but it is **off unless you pass both `--expected-agents N` AND `--session-dir <session>/subagents/`** — the only robust agent-run count is fleet-scoped, since the default transcript root spans every concurrent session. Passing `--session-dir` also tightens the victim count + mtime signals to the one fleet. Per-lane attribution (which lane to re-scope) is NOT available — a compacted restart begins from a continuation summary, not its original lane prompt, so victims carry no restart-stable lane id; the aggregate count/ratio is the convergence signal, and the per-lane abort is orchestrator judgment.
 
+On a confirmed cascade, [`fleet-rescope.sh`](../../agents/scripts/core/fleet-rescope.sh) (`<fleet-slug> (--lanes <manifest> | --lanes-csv a,b,c) [--list-unfinished] [--force] [--session-dir …]`) computes the **abort + re-scope plan** the nudge calls for: the precise relaunch set = the launch's expected-lane manifest **minus** the lanes that produced a completed deliverable in `build/<slug>/results/` (a non-empty `results/<lane>.md`). Since per-lane attribution from the transcripts is impossible, it answers "which lanes are still churning?" from the *deliverable* side instead. It is **read-only like the watchdog — it never kills**; it gates on the watchdog's cascade verdict (reusing the detection; `--force` overrides, a missing watchdog is fail-open-with-WARN) and prints the unfinished lanes plus the re-scope reminder (smaller model / tighter file list / windowed reads). The actual abort (TaskStop / killing the bash fleet) stays orchestrator-executed; `--list-unfinished` pipes the relaunch set straight into the new launch's `args`.
+
 ## Salvage runbook — when a fleet dies with transcripts intact
 
 Transcripts under the session dir usually survive even when the run dir is destroyed. Recovery at ~⅓ the original cost:
@@ -105,6 +107,8 @@ Transcripts under the session dir usually survive even when the run dir is destr
 2. **Pre-flight the slim files** (§ Input-size pre-flight: each ≤ ⅓ window; split if not).
 3. **Run miner agents over the slim files** — one miner per dead agent's evidence, pinned model, tight prompt ("re-extract the deliverable from this evidence; do not re-explore the repo").
 4. Miners obey the § Checkpoint contract from minute one — a salvage wave that dies must itself be salvageable.
+
+For a **cascade** death specifically (not a clean transcript-intact death), the recovery is to *relaunch* the unfinished lanes with a tighter scope rather than mine the churned transcripts — run [`fleet-rescope.sh`](../../agents/scripts/core/fleet-rescope.sh) (§ Stall watchdog) to get the exact relaunch set (expected manifest − completed deliverables), abort the churning run, then relaunch only those lanes with a smaller model / windowed reads.
 
 ## Pre-launch checklist
 
