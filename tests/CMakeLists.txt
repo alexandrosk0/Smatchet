@@ -586,6 +586,11 @@ add_executable(SmatchetTests
     # decomposition). Header-only — the helpers are `inline` in
     # AiAssistantController.h; no extra .cpp source.
     Core/AiAssistantSystemPrompt.test.cpp
+    # Pure agents.md cache-validity decision (AgentsMdCacheStillValid) extracted
+    # from AiAssistantController::BuildChatPayload. Regression cover for the #1xxx
+    # CodeRabbit finding (auto-discover toggle must invalidate the cache).
+    # Header-only — the helper is `inline` in AiAssistantController.h; no .cpp.
+    Core/AiAgentsMdCacheValidity.test.cpp
     Core/AiPrefsValidator.test.cpp
     Core/AiEndpointSanitize.test.cpp
     # First-send outbound-context consent gate (security audit 2026-05-17 P2).

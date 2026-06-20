@@ -23,6 +23,7 @@
 #include <vector>
 
 class AppController;
+struct TrackerConfig;
 
 namespace smatchet {
 namespace ai {
@@ -104,6 +105,19 @@ inline std::string ResolveChatModel(AiProvider provider, const std::string& mode
     default:
         return modelOpenAi;
     }
+}
+
+/// Decide whether the worker-thread agents.md cache is still valid for a turn.
+/// Pure + `inline` (no I/O, no AppController coupling) so the test rig links it.
+/// Cache is reusable only when already populated AND every `LoadLayered` input is
+/// unchanged — both paths AND the auto-discover flag (omitting the flag served a
+/// stale blob on auto-discovery toggle — the CodeRabbit finding fixed here).
+inline bool AgentsMdCacheStillValid(bool cacheValid, const std::string& cachedGlobalPath,
+                                    const std::string& cachedProjectPath, bool cachedAutoDiscover,
+                                    const std::string& cfgGlobalPath, const std::string& cfgProjectPath,
+                                    bool cfgAutoDiscover) {
+    return cacheValid && cachedGlobalPath == cfgGlobalPath && cachedProjectPath == cfgProjectPath &&
+           cachedAutoDiscover == cfgAutoDiscover;
 }
 
 } // namespace pure
@@ -225,12 +239,16 @@ class AiAssistantController {
     /// provider enum changed (or the prior client was null) and always rebuilds
     /// `clientConfig_` so a fresh key/URL takes effect next turn. Returns true
     /// when a live client is available for the turn, false to abort early.
-    bool RefreshProviderForTurn();
+    /// `cfg` is the single per-turn config snapshot taken at the top of
+    /// `RunRequest` (threaded through all three phase helpers so the worker
+    /// reads config once per turn instead of three times).
+    bool RefreshProviderForTurn(const TrackerConfig& cfg);
 
     /// Resolve the per-turn model + reasoning effort into `chatReq`, then run the
     /// F2 model-change auto-clear (posts a UI-side history clear when the
-    /// "provider|model" signature changed since the previous turn).
-    void ResolveModelAndEffort(const Request& req, AiChatRequest& chatReq);
+    /// "provider|model" signature changed since the previous turn). `cfg` is the
+    /// shared per-turn snapshot (see `RefreshProviderForTurn`).
+    void ResolveModelAndEffort(const TrackerConfig& cfg, const Request& req, AiChatRequest& chatReq);
 
     /// Resolve deferred context blocks (the worker-side audit-trail fetch) into a
     /// fully-materialised block list. Worker thread — performs the SQLite +
@@ -239,8 +257,8 @@ class AiAssistantController {
 
     /// Assemble `chatReq.SystemPrompt` (cached agents.md blob + resolved context
     /// section via the pure composer) and seed `chatReq.History` with the user
-    /// message.
-    void BuildChatPayload(const Request& req, AiChatRequest& chatReq);
+    /// message. `cfg` is the shared per-turn snapshot (see `RefreshProviderForTurn`).
+    void BuildChatPayload(const TrackerConfig& cfg, const Request& req, AiChatRequest& chatReq);
 
     /// Stream the request and dispatch deltas/errors back to the UI thread.
     /// Owns the onDelta/onError callbacks + the SendStreaming try/catch + the
@@ -310,6 +328,10 @@ class AiAssistantController {
     std::string agentsMdCachedBody_;
     std::string agentsMdCachedGlobalPath_;
     std::string agentsMdCachedProjectPath_;
+    // Mirrors cfg.AgentsMdAutoDiscoverProject for the turn the cache was built on.
+    // Part of the cache key — toggling auto-discovery with paths unchanged must
+    // invalidate the cache (LoadLayered's output depends on this flag).
+    bool agentsMdCachedAutoDiscover_{false};
     std::atomic<bool> agentsMdCacheValid_{false};
 
     // F2 — model-change auto-clear. The worker thread caches the previous
