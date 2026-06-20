@@ -41,3 +41,14 @@ setup() {
 @test "the workflow still triggers on pull_request: closed" {
     grep -qE "types:[[:space:]]*\[closed\]" "$WF"
 }
+
+@test "ref existence check uses the SINGULAR GET endpoint (/git/ref/), not the removed plural" {
+    # GET /git/refs/{ref} (plural) was removed by GitHub and 404s, which would
+    # make the existence check always fail and silently skip every deletion.
+    grep -qE 'git/ref/\$\{ref\}' "$WF"
+    ! grep -qE 'gh api "repos/[^"]*/git/refs/\$\{ref\}"[[:space:]]*>/dev/null' "$WF"
+}
+
+@test "ref delete uses the PLURAL endpoint (/git/refs/)" {
+    grep -qE '\-X DELETE "repos/[^"]*/git/refs/\$\{ref\}"' "$WF"
+}

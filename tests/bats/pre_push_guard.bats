@@ -75,7 +75,9 @@ planlock_fixture() {
     ( cd "$TMP" && mkdir -p Source/Core/src/Sync && echo y > Source/Core/src/Sync/Foo.cpp \
         && git add -A && git commit -qm change )
     ROWS="$TMP/rows"
-    printf '%s\t1781049600\totherslug\tSource/Core/src/Sync/Foo.cpp\n' "${1:-feat/other}" > "$ROWS"
+    # Dynamic "fresh" epoch (now) so the <14-day-cutoff cases never expire on
+    # calendar time — a hardcoded date would flip stale and break these tests.
+    printf '%s\t%s\totherslug\tSource/Core/src/Sync/Foo.cpp\n' "${1:-feat/other}" "$(date -u +%s)" > "$ROWS"
 }
 
 @test "(C) cross-branch overlap with a fresh lock is REFUSED" {

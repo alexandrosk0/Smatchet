@@ -12,10 +12,12 @@ setup() {
     GATE="$REPO_ROOT/agents/scripts/core/plan-lock-gate.sh"
     LIB="$REPO_ROOT/agents/scripts/core/lock-table-cache.sh"
     ROWS="$(mktemp)"
-    # A feat/other (cross) lock + a develop (self, for a develop PR) lock.
+    # Dynamic "fresh" epoch (now) so the <14-day-cutoff collision cases never
+    # expire on calendar time. A feat/other (cross) lock covering two paths.
+    FRESH="$(date -u +%s)"
     {
-        printf 'feat/other\t1781049600\totherslug\tSource/Core/src/Sync/Foo.cpp\n'
-        printf 'feat/other\t1781049600\totherslug\tSource/Core/src/Persistence/\n'
+        printf 'feat/other\t%s\totherslug\tSource/Core/src/Sync/Foo.cpp\n' "$FRESH"
+        printf 'feat/other\t%s\totherslug\tSource/Core/src/Persistence/\n' "$FRESH"
     } > "$ROWS"
     export LTC_ROWS_OVERRIDE="$ROWS"
     export LTC_PROJ="$REPO_ROOT"
@@ -59,9 +61,19 @@ run_decide() { # $1 = head ref, $2 = newline-separated changed paths
 }
 
 @test "decide: an empty/detached lock branch is unattributable (non-blocking)" {
-    printf '\t1781049600\tnobr\tSource/Core/src/Sync/Foo.cpp\n' > "$ROWS"
+    printf '\t%s\tnobr\tSource/Core/src/Sync/Foo.cpp\n' "$(date -u +%s)" > "$ROWS"
     run run_decide my-feature "Source/Core/src/Sync/Foo.cpp"
     [ "$status" -eq 0 ]
+}
+
+@test "decide: an UNDETERMINED lock table (rc=2) FAILS CLOSED (hard-net contract)" {
+    # Unlike Layers A/B (advisory, fail-open), the Layer C hard net must red on
+    # an unverifiable lock state, not silently pass. Force rc=2 via a stub.
+    run bash -c ". '$LIB' >/dev/null 2>&1; . '$GATE' >/dev/null 2>&1
+        ltc_covering_slug() { return 2; }
+        printf 'Source/Core/src/Sync/Foo.cpp\n' | plan_lock_gate_decide my-feature"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"undetermined"* ]]
 }
 
 # ---- fail-CLOSED base + three-dot symmetry (against a throwaway git fixture) --

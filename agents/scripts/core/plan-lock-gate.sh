@@ -24,7 +24,7 @@ set -uo pipefail
 # return 0 = clean, 1 = collision (one ::error per colliding file). Requires
 # lock-table-cache.sh already sourced (ltc_covering_slug) + LTC_PROJ set.
 plan_lock_gate_decide() { # $1 = head ref (this PR's branch)
-  local head="$1" now cutoff f slug hit=0
+  local head="$1" now cutoff f slug rc hit=0
   if ! command -v ltc_covering_slug >/dev/null 2>&1; then
     echo "::error::plan-lock-gate: lock-table-cache.sh not sourced (ltc_covering_slug missing)."
     return 1
@@ -33,7 +33,19 @@ plan_lock_gate_decide() { # $1 = head ref (this PR's branch)
   cutoff=$(( now - 14 * 24 * 3600 ))
   while IFS= read -r f; do
     [ -n "$f" ] || continue
-    slug="$(ltc_covering_slug "$f" other "$head" "$cutoff" 2>/dev/null || true)"
+    slug="$(ltc_covering_slug "$f" other "$head" "$cutoff" 2>/dev/null)"; rc=$?
+    case "$rc" in
+      0) ;;            # covered -> slug is the colliding lock (handled below)
+      1) slug="" ;;    # table available, no covering lock -> clean
+      *)               # 2 (undetermined) / unexpected -> FAIL CLOSED.
+        # Layer C is the fail-closed hard net: unlike Layers A/B (advisory,
+        # fail-open), an unverifiable lock state here must red, not silently
+        # pass — a net that can't evaluate its input must fail loud.
+        echo "::error file=$f::plan-lock-gate: lock table unavailable/undetermined (rc=$rc) while evaluating '$f'; the fail-closed gate refuses to pass on an unverifiable lock state. Fix the refs/locks fetch, or apply the 'plan-lock-out-of-band' label."
+        hit=1
+        continue
+        ;;
+    esac
     if [ -n "$slug" ]; then
       echo "::error file=$f::plan-lock-gate: '$f' overlaps the write set of plan-lock '$slug', held by a different branch. File or extend a lock (agents/scripts/core/lock-claim-update.sh <slug> <write-set-file>) or coordinate. Override: apply the 'plan-lock-out-of-band' label."
       hit=1
