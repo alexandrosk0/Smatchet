@@ -64,7 +64,11 @@ smatchet_field_catalog_cache.json
 # See docs/harness/SETUP.md for per-harness instructions.
 .claude/
 .codex/
-.cursor/
+# .cursor/ stays local EXCEPT .cursor/BUGBOT.md, which is shared Cursor Bugbot
+# review config (like the committed .coderabbit.yaml) and must be tracked so
+# Bugbot reads it on every PR. `.cursor/*` keeps the rest (rules/, etc.) ignored.
+.cursor/*
+!.cursor/BUGBOT.md
 .pi/
 
 # caveman (https://github.com/JuliusBrussee/caveman) — user-installed; see AGENTS.md
