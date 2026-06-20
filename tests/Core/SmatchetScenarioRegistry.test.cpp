@@ -50,6 +50,8 @@ std::set<std::string> ExpectedNames() {
     expected.insert("concurrent-sync");
     // Parametrised N-visible-pane render sweep (default 8).
     expected.insert("side-by-side-grids");
+    // ACTIVE-load mixed-backend variant of side-by-side-grids.
+    expected.insert("interactive-grid-stress");
     // Issue #1133 mobile CI smoke gate — always registered (no ifdef).
     expected.insert("mobile-texture-guard");
 #if defined(SMATCHET_WITH_AI)

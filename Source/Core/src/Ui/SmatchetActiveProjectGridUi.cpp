@@ -774,6 +774,12 @@ void SmatchetUI::drawActiveProjectTable(ActiveProjectDrawCtx& ctx) {
         if (d.scenarioScrollActive && d.scenarioScrollTarget >= 0 && ctx.pane.focused) {
             ImGui::SetScrollY(static_cast<float>(d.scenarioScrollTarget));
         }
+        // Sibling horizontal hook for interaction-injection scenarios. The table inner
+        // window (current after BeginTable with ScrollX) is the X-scroll target, mirroring
+        // the SetScrollY path above. Gated on the focused pane only.
+        if (d.scenarioScrollTargetX >= 0 && ctx.pane.focused) {
+            ImGui::SetScrollX(static_cast<float>(d.scenarioScrollTargetX));
+        }
         drawActiveProjectGridSetup(ctx);
 
         drawActiveProjectGridSort(ctx);

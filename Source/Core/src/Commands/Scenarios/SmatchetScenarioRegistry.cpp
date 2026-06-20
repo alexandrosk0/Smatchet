@@ -45,6 +45,10 @@ extern std::unique_ptr<smatchet::cmd::IScenario> MakeConcurrentSyncScenario();
 // Parametrised N-visible-pane sweep (default 8) — the operator-driven "how many
 // grids before the budget blows" probe the multi-grid plan § Performance left open.
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeSideBySideNGridScenario();
+// ACTIVE-load variant of the N-pane sweep: mixed backends (4 Jira / 2 GitHub /
+// 2 Plane) under per-frame scroll + pane-focus + view switching. Operator probe
+// for the "does 8 panes hold budget while a user USES it" question.
+extern std::unique_ptr<smatchet::cmd::IScenario> MakeInteractiveGridStressScenario();
 // Issue #1133 mobile CI smoke gate — drives the dynamic-texture guard's
 // [P0 #1122] repoint path end-to-end. Always registered (the fault-injector /
 // guard symbols are no-ops when SMATCHET_ENABLE_TEXTURE_FAULT_INJECTION is OFF).
@@ -114,6 +118,7 @@ void RegisterAllScenarios(ScenarioRunner& runner) {
     // override with --panes=N). Not in the PR-fast gate set: it is an operator
     // probe (variable N → no fixed baseline), not a regression guard.
     runner.RegisterFactory("side-by-side-grids", []() { return ::MakeSideBySideNGridScenario(); });
+    runner.RegisterFactory("interactive-grid-stress", []() { return ::MakeInteractiveGridStressScenario(); });
     // Issue #1133 mobile CI smoke gate — no ifdef: the TU compiles on every
     // preset and the guard/injector calls are no-ops when the fault-injection
     // macro is OFF (recoveryLogSeen stays false, which is expected off-preset).

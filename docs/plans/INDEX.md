@@ -171,6 +171,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`pr-intent-capture-hardening`](shipped/pr-intent-capture-hardening.md) | 2026-06-18 | Plan — PR intent capture hardening (observability + blocking gate + cross-harness) |
 | [`appcontroller-god-object-decomposition`](shipped/appcontroller-god-object-decomposition.md) | 2026-06-19 | Plan — AppController god-object decomposition |
 | [`plan-lock-enforcement`](shipped/plan-lock-enforcement.md) | 2026-06-19 | Plan — Force plan-lock filing before file edits (force-on-contention, 3-layer) |
+| [`perf-interactive-grid-stress`](shipped/perf-interactive-grid-stress.md) | 2026-06-20 | Plan — interactive-grid-stress (active 8-pane mixed-backend perf probe) |
 <!-- END auto-plan-index -->
 
 ### Notes
