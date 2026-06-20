@@ -35,9 +35,12 @@
 # transcripts ended compacted+interrupted, 9/14 lanes done in 40 min). Its remedy
 # is OPPOSITE to crawl/frozen: not "reduce concurrency", not "kill+salvage", but
 # ABORT + RE-SCOPE the churning lane (smaller model / tighter file list / windowed
-# reads) so it stops re-crossing the compact threshold. Cascade can co-occur with
-# progressing (some lanes land while others churn), so it OVERRIDES the verdict —
-# it is the actionable signal. Cascade has TWO independent triggers:
+# reads) so it stops re-crossing the compact threshold. The companion
+# fleet-rescope.sh computes the exact relaunch set for that re-scope (expected-lane
+# manifest MINUS the lanes that already produced a deliverable) — this watchdog
+# stays read-only + detects; that script turns the verdict into the abort plan.
+# Cascade can co-occur with progressing (some lanes land while others churn), so it
+# OVERRIDES the verdict — it is the actionable signal. Cascade has TWO triggers:
 #   (1) VICTIM count — agent-*.jsonl carrying BOTH `"isCompactSummary":true` AND a
 #       "[Request interrupted by user]" marker (the compact→interrupt→restart
 #       signature) — reaches MAX_CASCADE_VICTIMS.
