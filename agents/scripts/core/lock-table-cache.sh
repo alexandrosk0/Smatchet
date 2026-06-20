@@ -28,7 +28,7 @@
 #
 # Identity is keyed on BRANCH, never owner/AGENT_ID (unprovisioned in prod —
 # every real lock is owner=orchestrator, so an owner check is a no-op). See
-# docs/plans/active/plan-lock-enforcement.md § Approach (identity note).
+# docs/plans/plan-lock-enforcement.md § Approach (identity note).
 #
 # Test/override seams (read-only):
 #   LTC_PROJ           force the repo root (default CLAUDE_PROJECT_DIR | $PWD)

@@ -169,6 +169,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`concurrent-session-guard-hardening`](shipped/concurrent-session-guard-hardening.md) | 2026-06-18 | Plan — Concurrent-session guard hardening (Cluster A) |
 | [`merge-watcher-clone-and-behind-hardening`](shipped/merge-watcher-clone-and-behind-hardening.md) | 2026-06-18 | Plan — Merge-watcher clone-key + BEHIND-advance hardening (Cluster B) |
 | [`pr-intent-capture-hardening`](shipped/pr-intent-capture-hardening.md) | 2026-06-18 | Plan — PR intent capture hardening (observability + blocking gate + cross-harness) |
+| [`plan-lock-enforcement`](shipped/plan-lock-enforcement.md) | 2026-06-19 | Plan — Force plan-lock filing before file edits (force-on-contention, 3-layer) |
 <!-- END auto-plan-index -->
 
 ### Notes
