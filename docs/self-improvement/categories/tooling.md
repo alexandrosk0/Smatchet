@@ -155,12 +155,6 @@
   Status: open
   Last-reviewed: 2026-06-08
 
-- 2026-06-08 · orchestrator · [tooling] · P2 — shell self-lint should flag SIGPIPE-fragile `<producer> | head` in a bare assignment under `pipefail` (preventing gate from postmortems.md 2026-06-08 shell-lint SIGPIPE)
-  Details: `test-shell-lint.sh` exit-141'd on CI (default SIGPIPE) but passed on msys (SIG_IGN) because `lno=$(printf … | head -1 | cut …)` SIGPIPEs the producer once the upstream exceeds the 64 KB pipe buffer; under `set -euo pipefail` the plain assignment returns 141 and `set -e` aborts. Fixed for that one line in #995 (pure param expansion) + a bats regression, but the *class* (`producer | head` in a `set -e`-exposed assignment) is unguarded repo-wide and data-dependent (only trips past 64 KB), so the next instance lies dormant until a big-enough input appears.
-  Concrete next action: add a 6th rule to `test-shell-lint.sh` (or a shellcheck-driven check) flagging a top-level `var=$(... | head ...)` / `var=$(... | head ...)` assignment in a script that sets `pipefail` — recommend the pure-param-expansion or `{ producer || true; } | head` idiom. Lint itself + the existing scripts (grandfather current clean state). Est ~1-1.5 h incl. a fixture + bats case. Cross-ref: postmortems.md 2026-06-08, PR #995.
-  Status: open
-  Last-reviewed: 2026-06-08
-
 - 2026-06-07 · test-author (Slice-2 agent) · [tooling] · P2 — bucket-E failures are blind: spawned-child stdout is reliably 0 bytes on Windows, so a failing UI test reports nothing
   Details: When a bucket-E run fails under the spawned-child runner on Windows, the child's stdout reliably comes back 0 bytes — the test engine's per-test log (which names the failing step/assertion) never reaches the caller, so every failure triage starts blind. The per-test output already exists in memory in the engine (`ctx->Test->Output.Log`); it just has no file egress. The `ui_test.run` command (`Source/Core/src/Commands/Builtin/BuiltinCommands_UiTest.cpp:27`) currently exposes no output-log parameter.
   Concrete next action: add a `ui_test.run --outLog=<path>` parameter that dumps `ctx->Test->Output.Log` per test to the given file, so a failed bucket-E run leaves a readable per-test log regardless of spawned-child stdout loss; wire the bucket-E bash drivers to pass it and cat it on failure. Est ~1-2 h.
@@ -306,13 +300,6 @@
   Concrete next action: delete the two orphans in a baseline-janitor sweep (or fold into the next perf-baseline bump PR); optionally teach `perf-baseline.sh` to flag baselines whose scenarioId is absent from `scenario.list`. Est ~15 min.
   Status: open
   Last-reviewed: 2026-06-07
-
-- 2026-06-07 · orchestrator · [tooling] · P3 — `test-shell-lint.sh` SIGPIPE flake: CI job died exit 141 with zero findings (PR #938), green on plain rerun
-  Details: The shell-lint job failed with exit 141 (= 128+SIGPIPE) printing no rule output — almost certainly a `head`/`grep -m`-style early-exit closing a pipe the script writes to under `set -o pipefail`. Cost a full gate round-trip on #938.
-  Concrete next action: audit `agents/scripts/core/test-shell-lint.sh` for pipelines into `head`/early-exit consumers; guard with `|| [ $? -eq 141 ]`, restructure to `awk 'NR<=N'`, or drop pipefail around the known-benign pipes. Est ~30 min.
-  Update (2026-06-19, Cluster-C reconcile): SUPERSEDED. The specific #938 instance + sibling were fixed inline by PR #995. The general class is now caught by `test-shell-lint.sh` Rule 6 (`pipefail var=$(...|head)` SIGPIPE/truncation guard) added in PR #1420 (this session), which also swept + fixed 3 remaining latent in-tree instances. This P3 audit-remaining entry folds into that rule. Cross-ref: PR #995, #1420.
-  Status: open
-  Last-reviewed: 2026-06-19
 
 - 2026-06-04 · offline-sync · [tooling] · P3 — no bucket-E ImGui-Test coverage for the offline-conflict modal's scalar / unverified panes (ADR-0016)
   Details: `feat(offline): ask the user on offline-replay conflict for all field edits` added two new conflict-modal branches in `DrawOfflineConflictModal` (`SmatchetOfflineQueueUi.cpp`) — `DrawConflictPaneScalar` (Use Mine / Use Theirs / editable value) and `DrawConflictPaneUnverified` (Force Mine / Discard). The kind-dispatch + resolve plumbing is covered by bucket-A runtime tests (`OfflineQueueServiceRuntime.test.cpp`: scalar suspends, permanent/transient fetch-fail → unverified, discard hard-deletes + audits, resolve clears both bases) and the pure classifier (`OfflineFieldConflictPolicy.test.cpp`). What's NOT automated is the widget-level assertion that each pane renders the right buttons and each button routes to the correct `ResolveFieldEditConflict(kind=...)` / `DeletePendingFieldEdits` call — the plan's bucket-E item. Deferred this round: no existing ImGui-Test-Engine harness drives `DrawOfflineConflictModal`, so wiring one is net-new scaffolding beyond this feature's scope.

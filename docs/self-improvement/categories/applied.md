@@ -1517,3 +1517,55 @@
   Status: applied (2026-06-16 — option (a) shipped in PR #1354: `--strict` now hard-fails on a hard violation, documented as a MANDATORY pre-launch MUST in workflow-fleets.md, `--selftest` covers it. **option (b) PreToolUse-hook enforcement shipped 2026-06-19 (feat/fleet-preflight-pretool-hook):** `docs/harness/claude-code/hooks/pretool-workflow-fleet-preflight.sh` + a `Workflow` PreToolUse matcher in `settings.json.tmpl` run `fleet-preflight.sh --strict` on the Workflow tool's inline `script`/`scriptPath` and BLOCK (exit 2) a hard violation in an above-threshold (`>SMATCHET_FLEET_PREFLIGHT_HOOK_MIN_AGENTS`, default 2) fan-out — so a 1–2 agent helper is never blocked. Fail-open (no jq / no preflight / no inline script → allow), downgradable (`SMATCHET_FLEET_PREFLIGHT_HOOK_BLOCK=0` → advisory, `SMATCHET_FLEET_PREFLIGHT_HOOK=0` → off). 9 bats (`tests/bats/pretool_workflow_fleet_preflight.bats` + wrapper). Takes effect once `settings.json.tmpl` is re-applied via the harness setup. Fully closes this entry.)
   Last-reviewed: 2026-06-16
 
+
+<!-- archived 7 deep-triage-verified resolved-but-open entries (2026-06-20) -->
+
+- 2026-06-08 · orchestrator · [tooling] · P2 — shell self-lint should flag SIGPIPE-fragile `<producer> | head` in a bare assignment under `pipefail` (preventing gate from postmortems.md 2026-06-08 shell-lint SIGPIPE)
+  Details: `test-shell-lint.sh` exit-141'd on CI (default SIGPIPE) but passed on msys (SIG_IGN) because `lno=$(printf … | head -1 | cut …)` SIGPIPEs the producer once the upstream exceeds the 64 KB pipe buffer; under `set -euo pipefail` the plain assignment returns 141 and `set -e` aborts. Fixed for that one line in #995 (pure param expansion) + a bats regression, but the *class* (`producer | head` in a `set -e`-exposed assignment) is unguarded repo-wide and data-dependent (only trips past 64 KB), so the next instance lies dormant until a big-enough input appears.
+  Concrete next action: add a 6th rule to `test-shell-lint.sh` (or a shellcheck-driven check) flagging a top-level `var=$(... | head ...)` / `var=$(... | head ...)` assignment in a script that sets `pipefail` — recommend the pure-param-expansion or `{ producer || true; } | head` idiom. Lint itself + the existing scripts (grandfather current clean state). Est ~1-1.5 h incl. a fixture + bats case. Cross-ref: postmortems.md 2026-06-08, PR #995.
+  Status: applied (2026-06-20 backlog deep-triage — verified resolved: PR #1420 — Rule 6 (SHELL_LINT_PIPEFAIL_HEAD) live in test-shell-lint.sh, invoked in run loop)
+  Last-reviewed: 2026-06-08
+
+
+- 2026-06-07 · orchestrator · [tooling] · P3 — `test-shell-lint.sh` SIGPIPE flake: CI job died exit 141 with zero findings (PR #938), green on plain rerun
+  Details: The shell-lint job failed with exit 141 (= 128+SIGPIPE) printing no rule output — almost certainly a `head`/`grep -m`-style early-exit closing a pipe the script writes to under `set -o pipefail`. Cost a full gate round-trip on #938.
+  Concrete next action: audit `agents/scripts/core/test-shell-lint.sh` for pipelines into `head`/early-exit consumers; guard with `|| [ $? -eq 141 ]`, restructure to `awk 'NR<=N'`, or drop pipefail around the known-benign pipes. Est ~30 min.
+  Update (2026-06-19, Cluster-C reconcile): SUPERSEDED. The specific #938 instance + sibling were fixed inline by PR #995. The general class is now caught by `test-shell-lint.sh` Rule 6 (`pipefail var=$(...|head)` SIGPIPE/truncation guard) added in PR #1420 (this session), which also swept + fixed 3 remaining latent in-tree instances. This P3 audit-remaining entry folds into that rule. Cross-ref: PR #995, #1420.
+  Status: applied (2026-06-20 backlog deep-triage — verified resolved: PR #1420 — superseded by Rule 6 (entry's own Update self-declared SUPERSEDED))
+  Last-reviewed: 2026-06-19
+
+
+- 2026-06-06 · orchestrator · [infra] · P2 — ADR-0017 merge-snapshot ledger is committed-EMPTY: appends never reach develop
+  Details: `docs/self-improvement/merge-snapshots.jsonl` is 0 bytes on `develop` despite ADR-0017 + `agents/scripts/core/merge-snapshot-append.sh` being live since #879. Root cause (verified by a triple-check this session): the append helper only `>>`-appends one JSON line to the **working-tree** file (its header says so), and BOTH merge actors that call it write the line into a local clone but never `git commit`+`push` it to `develop` — the watcher's `merge-watcher.py` `_append_merge_snapshot()` returns `"snapshot_appended"` right after the bare `>>`, and the in-session orchestrator (ship-loops.md tells it to run the helper, but the result is an un-pushable working-tree change on `develop`; this session's manual appends for #880/#884/#888/#889 were all discarded as strays). A direct push to `develop` is branch-protected, so there is no committed path at all. Net: `postmortem-owed.sh` has run **entirely on its degraded live-`statusCheckRollup` fallback** since #879 — the lossless primary ADR-0017 promised has never had a single row. The append helper itself is correct (a manual test-append wrote one valid line, reverted).
+  Concrete next action: pick a commit path for an append-only ledger that respects branch protection — (a) the `git-janitor` end-of-session step batches accumulated working-tree snapshot lines into one small PR (cheap, periodic, keeps the file committed); (b) a dedicated low-friction push to a relaxed-protection ledger ref, merged on a schedule; or (c) if neither is worth it, downgrade ADR-0017 to "live-fallback-only" and delete the empty file + the `merge-snapshot-append.sh` write-site so the design matches reality. Decide (a)/(b)/(c) before re-asserting the ledger is authoritative anywhere. Est ~1-2 h for (a). Non-blocking — the fallback covers it.
+  Status: applied (2026-06-20 backlog deep-triage — verified resolved: ledger now 115 rows on develop; git-janitor flush mechanism operating (PR #1435 et al.))
+  Last-reviewed: 2026-06-06
+
+
+- 2026-05-23 · debug-detective · [test] · P3 — No unit test for IsDescriptionLikeFieldId predicate (planned extraction in description-tooltip-consolidation)
+  Details: `docs/plans/shipped/description-tooltip-consolidation.md` § Verification (Bucket A) calls for one test-rig case for `IsDescriptionLikeFieldId` covering `body`, `Body`, `description`, `customDescription`, `environment` (expected: true/true/true/true/false). The predicate does not yet exist as a named static helper — extraction is part of the consolidation plan (`Source/Core/src/TicketFieldEditor.cpp`). Without this test, the field-routing predicate can silently regress (e.g. losing the `body`/`Body` aliases used by GitHub tracker) after any rename or copy-paste.
+  Concrete next action: after `description-tooltip-consolidation` ships, add `tests/Core/IsDescriptionLikeFieldId.test.cpp` with 5 cases: `"body"` → true, `"Body"` → true, `"description"` → true, `"customDescription"` → true (contains "description"), `"environment"` → false. Wire in `tests/CMakeLists.txt`. ~15 min.
+  Status: applied (2026-06-20 backlog deep-triage — verified resolved: tests/Core/IsDescriptionLikeFieldId.test.cpp exists (5 specified cases), wired in tests/CMakeLists.txt)
+  Last-reviewed: 2026-05-23
+
+
+- 2026-05-17 · code-review · [test] · P2 — No automated coverage of `AiSseParser` (split-frame, `[DONE]`, malformed JSON, mid-frame cancel, `\r\n\r\n`)
+  Details: Critical for Phase A' of the AI assistant work; deferral is in the originating commit message. The full SSE state machine has zero test surface.
+  Concrete next action: verify the doctest TU lands as part of Phase A'. Estimated cost 1 h. Surfaced by retrospective code-review sweep on PR #140.
+  Status: applied (2026-06-20 backlog deep-triage — verified resolved: tests/Core/AiSseParser.test.cpp covers all named cases; wired in tests/CMakeLists.txt)
+  Last-reviewed: 2026-05-17
+
+
+- 2026-05-15 · orchestrator · [test] · P3 — bucket-E coverage missing for inline Command Palette typing path
+  Details: PR #79 fixed a bug where typing into the menu-bar inline palette input did not update the modal filter until Enter (return value of `InputTextWithHint` was gated by `ImGuiInputTextFlags_EnterReturnsTrue`, so `IsItemEdited()` was needed alongside `IsItemActivated() / committed`). Verified only manually. Bucket-E (`tests/ui/views_columns_reorder.test.cpp` shape) is the right home, but the inline-palette path drags `AppController` + `CommandRegistry` + `CommandPaletteUi` modal state into the test harness — heavier than the columns-reorder replica which only re-creates the loop body.
+  Concrete next action: add `tests/ui/command_palette_inline_typing.test.cpp` that wraps a minimal `CommandRegistry` (one or two synthetic commands) and exercises the inline-input → modal-open → filter-applied path via `ItemInput` + assertion on `commandPalette_.FilterText()`. Surface a `FilterText()` accessor on `CommandPaletteUi` if not already present.
+  Status: applied (2026-06-20 backlog deep-triage — verified resolved: tests/ui/command_palette_inline_typing.test.cpp exists; wired in tests/ui/CMakeLists.txt)
+  Last-reviewed: 2026-05-17
+
+
+- 2026-06-08 · build-doctor · [debt] · P2 — Sync layer is ImGui-header-coupled, blocking it from the Linux TSan subset (layering smell)
+  Details: `Source/Core/src/Sync/TicketSyncService.cpp` calls `SmatchetToastManager::Instance().Push(...)` directly (lines 380-549), and `Source/Core/include/Ui/SmatchetToast.h` `#include`s `<imgui.h>`. So a background sync/threading TU transitively requires ImGui at both compile (header) and link (Toast's `Render()` pulls `ImGui::*` symbols). Surfaced standing up hardening #10's TSan Linux subset (ninja-tsan-linux / `SmatchetTsanTests`): the `GridLiveContext` → `TicketSyncService` path — the richest real-race surface (atomic `Backend` slot swaps, latched strong handles) — cannot link into the headless ImGui-free TSan target without dragging `ImGuiLib` (→ GLFW/X11/OpenGL on the Linux runner). The MVP subset shipped only the decoupled threading TUs (LocalCacheManager SQLite cache + Pure units). Architecture smell independent of TSan: a worker thread reaching into a UI singleton inverts the UI→service dependency direction.
+  Concrete next action: decouple notification emission from the sync layer — inject an `ISyncNotifier` (or a `std::function<void(level,title,msg)>` callback) into `TicketSyncService`, with the ImGui-backed `SmatchetToastManager` as the production impl wired at bootstrap and a no-op/recording fake in tests. Then expand the TSan subset (`tests/CMakeLists.txt` tsan branch) to `GridLiveContext.test.cpp` + the sync threading tests (`TicketSyncService.test.cpp`, `OfflineQueueServiceRuntime.test.cpp`, `OfflineQueueBackendSwap.test.cpp`, `ConfigSaveConcurrency.test.cpp`). ~2-3 h; unblocks the high-value half of hardening #10.
+  Status: applied (2026-06-20 backlog deep-triage — verified resolved: PRs #1318 (ImGui decouple) + #1339 (cpr decouple) + #1343 (3 TSan tests wired) all MERGED)
+  Last-reviewed: 2026-06-16
+
