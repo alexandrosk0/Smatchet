@@ -21,22 +21,20 @@ done**. Corrected per-slice status (evidence = current-tree `file:line`):
 | **P1.5** Multi-backend | 🟡 **Infra ready** | `ITrackerBackend` abstraction + Jira / Plane / GitHub all in Core; backend selection lives in the Preferences combo (`SmatchetPreferencesUi.cpp:253`). **Missing:** a touch-first backend-selection UI (depends on P1.3 chrome). |
 | **P1.6** Accessibility | ✅ **Shipped this PR** (research) | [`docs/mobile/PHASE1_ACCESSIBILITY_RESEARCH.md`](../../mobile/PHASE1_ACCESSIBILITY_RESEARCH.md) + Pillar-4 backlog [`debt/2026-06-20-mobile-accessibility-pillar4.md`](../../self-improvement/categories/debt/2026-06-20-mobile-accessibility-pillar4.md). |
 
-**Residual P1.0 finding (now-false security message — ready-to-apply, not yet shipped):** the Android
-plaintext-token warning at `SmatchetPreferencesUi.cpp:265–275` is guarded `#if !defined(_WIN32)`, so it
-still tells **Android** users "the API token is stored unencrypted" even though P1.0 now Keystore-seals
-it. Correct fix = tighten the guard to `#if !defined(_WIN32) && !defined(__ANDROID__)` (keep the warning
-for desktop-Linux, which genuinely is plaintext; drop the false claim on Android). **Not shipped here**
-because no C++ is buildable in the cloud authoring environment (no Android NDK; the desktop preset fails
-on missing X11 dev headers — `libxrandr`), so the change cannot be compile-verified.
+**Residual P1.0 finding — ✅ SHIPPED 2026-06-20:** the Android plaintext-token warning at
+`SmatchetPreferencesUi.cpp` (now line 275) was guarded `#if !defined(_WIN32)`, so it still told
+**Android** users "the API token is stored unencrypted" even though P1.0 Keystore-seals it. Fixed by
+tightening the guard to `#if !defined(_WIN32) && !defined(__ANDROID__)` (warning kept for desktop
+Linux/macOS, which genuinely is plaintext; dropped on Android). Verified on an x86_64 API-34 emulator —
+Settings ▸ Tracker renders with no warning banner; desktop dual-target + Android x86_64 `.so` both build
+clean. The Windows TU is byte-identical (block was already excluded under `_WIN32`).
 
-**Validation blocker (why the remaining code slices are not shipped autonomously):** the authoring
-environment has **no Android NDK/SDK, no `adb`, no emulator**, and cannot build even the desktop Core
-(missing X11 dev headers). Every remaining slice (P1.2 tab-strip, **P1.3** touch redesign, P1.5 touch
-backend UI, the P1.0 warning fix) is validatable **only on an Android device/emulator** — and P1.3 is
-explicitly *spike-first* and falls under the `AGENTS.md` visual-validation exception (pause with launched
-exe, await verdict). Per [`AI_POLICY.md`](../../../AI_POLICY.md) *escalate-when-unvalidatable*, these are
-**escalated**, not blind-shipped. Recommended order once a device is available: P1.0 warning fix (trivial)
-→ P1.3 spike → P1.2 / P1.5 → P1.4 residual.
+**Validation blocker — LIFTED 2026-06-20.** The earlier "no Android NDK/SDK/adb/emulator" blocker
+referred to the *cloud authoring* environment. Work now runs on a local Windows box with the full Android
+toolchain (NDK 26.3, SDK, `adb`, an x86_64 API-34 AVD `smatchet_pixel`) **and** a working desktop MSVC
+dual-target build, so every remaining slice is now buildable + emulator-verifiable here. P1.3 remains
+*spike-first* + under the visual-validation exception. Execution order: P1.0 warning fix (✅ done) →
+P1.3 spike → P1.2 / P1.5 → P1.4 residual → P1.6 follow-ups.
 
 ## Context
 
@@ -154,6 +152,12 @@ Per [`docs/guides/perf-workflow.md`](../../guides/perf-workflow.md), each Source
 
 _(per-slice; appended as each PR ships)_
 
+- **2026-06-20 — P1.0 residual: false Android plaintext warning (own PR).** Tightened the Tracker-tab
+  preferences guard in `SmatchetPreferencesUi.cpp` from `#if !defined(_WIN32)` to
+  `#if !defined(_WIN32) && !defined(__ANDROID__)` and refreshed the now-stale comment (Keystore landed in
+  P1.0). 1 file, +6/−5. Built desktop dual-target (light) + Android x86_64; installed + launched on the
+  `smatchet_pixel` emulator and screenshot-confirmed the warning is gone on Settings ▸ Tracker. First
+  slice shipped after the local Android toolchain came online (validation blocker lifted).
 - **2026-06-20 — reconciliation + P1.6 (this PR).** Audited the tree against the stale `d8ea206c`
   anchors (see § Current state). Recorded P1.0 / P1.1 / P1.4 as already-shipped with evidence and
   P1.2 / P1.5 as partial — **no re-implementation attempted** (the original status was stale, not the
@@ -169,16 +173,23 @@ _(per-slice)_
 - **Status correction (2026-06-20).** The plan's "no Phase-1 slices started" status was stale; P1.0,
   P1.1, P1.4 were already shipped (and P1.2 / P1.5 partially) before this plan was re-opened. See
   § Current state — the deviation is in the *plan's bookkeeping*, not the code.
-- **P1.0 residual deferred.** The now-false Android plaintext warning (`SmatchetPreferencesUi.cpp:265–275`)
-  fix is recorded as ready-to-apply but not shipped: no buildable C++ environment here to verify it.
-- **Remaining code slices escalated, not implemented.** P1.2 / P1.3 / P1.5 require an Android
-  device/emulator absent from the cloud authoring environment; P1.3 is additionally spike-first +
-  visual-validation-gated. Escalated per `AI_POLICY.md` rather than shipping unvalidated native/touch code.
+- **P1.0 residual — resolved 2026-06-20** (was: "deferred, no buildable C++ environment"). Shipped once
+  the local Android toolchain + emulator came online; the guard fix is now compile- and emulator-verified.
+- **Remaining code slices — un-escalated 2026-06-20** (was: escalated for lack of a device). The Android
+  emulator + NDK + desktop MSVC build are now available locally, so P1.2 / P1.3 / P1.5 are being executed
+  + emulator-verified per slice instead of escalated. P1.3 stays spike-first + visual-validation-gated.
 
 ## Verification (actual)
 
 _(per-slice)_
 
+- **P1.0 residual (2026-06-20):** desktop dual-target build (`cmake --build --preset ninja-iter-msvc
+  --target SmatchetStandalone SmatchetCore_DX12`, light features) → both link clean. Android x86_64
+  `assembleDebug` → `app-debug.apk` (27 MB). Installed `-r -t` on the `smatchet_pixel` x86_64 API-34
+  emulator, launched `com.smatchet.mobile/.SmatchetActivity`, clean boot (no logcat FATAL). Navigated
+  Settings ▸ Tracker and screenshot-confirmed the "API token is stored unencrypted" banner is **absent**
+  (pre-fix it rendered between the backend combo and "Jira Configuration"). Windows TU byte-identical by
+  construction (the warning block stays excluded under `_WIN32`).
 - **P1.6 (this PR):** pure-docs slice — validated with `bash scripts/dev/test-docs.sh` (the local mirror
   of the `doc-validation.yml` gate: anchor resolution, plan-ref integrity, kebab/naming, agent contract).
   The findings doc's WCAG contrast ratios are computed from the source palette values (deterministic,
