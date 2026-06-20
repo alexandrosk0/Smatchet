@@ -411,6 +411,8 @@ TrackerConfig MakeNonDefaultConfig() {
     c.UpdateIncludePrerelease = true;
     c.UpdateSkipVersion = "9.9.9";
     c.UpdateGithubRepo = "rt-owner/rt-fork";
+    c.TicketChangeMonitorEnabled = false; // default true — flip to prove the round-trip
+    c.TicketChangeMonitorIntervalSec = 300; // inside the [30, 3600] clamp band
     return c;
 }
 
@@ -508,6 +510,7 @@ TEST_CASE("ConfigManager Save/Load per-field round-trip preserves every persiste
     CHECK(out.PrimarySideBarOnRight == in.PrimarySideBarOnRight);
     CHECK(out.UpdateCheckEnabled == in.UpdateCheckEnabled);
     CHECK(out.UpdateIncludePrerelease == in.UpdateIncludePrerelease);
+    CHECK(out.TicketChangeMonitorEnabled == in.TicketChangeMonitorEnabled);
 
     // Ints.
     CHECK(out.GridEndWheelSwallowsBeforeHorizontal == in.GridEndWheelSwallowsBeforeHorizontal);
@@ -523,6 +526,7 @@ TEST_CASE("ConfigManager Save/Load per-field round-trip preserves every persiste
     CHECK(out.AssistantHistoryMaxRows == in.AssistantHistoryMaxRows);
     CHECK(out.LayoutSchemaVersion == in.LayoutSchemaVersion);
     CHECK(out.FontSizePt == in.FontSizePt);
+    CHECK(out.TicketChangeMonitorIntervalSec == in.TicketChangeMonitorIntervalSec);
 
     // Floats.
     CHECK(out.McpServerInfoPanelHeightPx == doctest::Approx(in.McpServerInfoPanelHeightPx));

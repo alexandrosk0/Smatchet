@@ -820,6 +820,11 @@ add_executable(SmatchetTests
     # TicketChangeDiffPure structs (no JiraClient/cpr), so it links in this pure block.
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraChangelogDeltaPure.cpp"
     Core/JiraChangelogDeltaPure.test.cpp
+    # ticket-change-monitor S1c-1 — pure poll gate (PaneSyncKickPolicy.h ShouldPollForChanges,
+    # header-only) + the tickets.monitor decision helper and its config interval clamp (the
+    # latter round-trips through ConfigManager, already linked in this pure block).
+    Core/ShouldPollForChanges.test.cpp
+    Core/TicketsMonitorCommand.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/Views.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetToast.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SmatchetLocalization.cpp"

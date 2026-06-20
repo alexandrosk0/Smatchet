@@ -481,6 +481,14 @@ struct TrackerConfig {
     // VCS feed layout: "unified" (merged newest-first) or "separate" (per-source
     // sections). Normalized to one of the two at load.
     std::string VcsFeedLayout = "unified";
+
+    // --- Ticket-change monitor (docs/plans/active/ticket-change-monitor.md) ---
+    // Periodically poll the backend for salient changes to the open panes' tracked
+    // tickets and raise an in-app toast. On by default; opt-out here.
+    bool TicketChangeMonitorEnabled = true;
+    // Poll interval in seconds. Clamped to [30, 3600] at load (too-frequent polling
+    // is wasteful; too-rare defeats the "near-real-time" intent).
+    int TicketChangeMonitorIntervalSec = 120;
 };
 
 struct ViewSortSpec {
