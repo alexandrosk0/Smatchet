@@ -72,9 +72,16 @@ class ITrackerIssueReader {
                             const std::vector<std::string>& /*salientFields*/) {
         bool full = false;
         std::string err;
-        std::vector<CachedTicket> tickets = FetchIssues(&full, &cfg, &views, &err);
+        std::string warn;
+        std::vector<CachedTicket> tickets = FetchIssues(&full, &cfg, &views, &err, &warn);
         if (!err.empty()) {
             return Result<std::vector<CachedTicket>, TrackerError>::Err(TrackerErrorUnknown(err));
+        }
+        // A capped/partial or warned fetch is NOT an authoritative view snapshot; treating it as
+        // one would let the membership reconcile raise spurious LeftView removals. Bail instead.
+        if (!full || !warn.empty()) {
+            return Result<std::vector<CachedTicket>, TrackerError>::Err(
+                TrackerErrorUnknown("FetchIssuesChangedSince default received a partial/warned fetch"));
         }
         return Result<std::vector<CachedTicket>, TrackerError>::Ok(std::move(tickets));
     }
@@ -86,9 +93,16 @@ class ITrackerIssueReader {
     FetchIssueKeysForView(const TrackerConfig& cfg, const ViewsStore& views) {
         bool full = false;
         std::string err;
-        std::vector<CachedTicket> tickets = FetchIssues(&full, &cfg, &views, &err);
+        std::string warn;
+        std::vector<CachedTicket> tickets = FetchIssues(&full, &cfg, &views, &err, &warn);
         if (!err.empty()) {
             return Result<std::vector<std::string>, TrackerError>::Err(TrackerErrorUnknown(err));
+        }
+        // Partial/warned fetch → not an authoritative membership set; refuse rather than feed the
+        // reconcile a truncated key list that would look like tickets having left the view.
+        if (!full || !warn.empty()) {
+            return Result<std::vector<std::string>, TrackerError>::Err(
+                TrackerErrorUnknown("FetchIssueKeysForView default received a partial/warned fetch"));
         }
         std::vector<std::string> keys;
         keys.reserve(tickets.size());
