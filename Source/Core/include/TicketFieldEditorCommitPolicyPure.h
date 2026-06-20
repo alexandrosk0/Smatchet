@@ -44,4 +44,22 @@ inline bool ShouldEndInlineEdit(bool escapePressed, bool explicitSubmit, bool de
     return escapePressed || explicitSubmit || deactivated;
 }
 
+// P1.3 mobile interaction model (#1018 item 23): the TOUCH-build open-gate for a grid cell editor.
+// Touch has no double-click and no hover, so tap-to-select, scroll-fling and edit-open would all
+// collapse onto the single tap. Long-press is the standard Android disambiguator: a quick tap
+// selects the cell / scrolls; a stationary hold past longPressThresholdSeconds over the cell opens
+// the editor; a hold that drifts past the drag threshold is a scroll, not an edit-open. Split out
+// here so the gesture rule is unit-tested rather than re-derived in the ImGui glue — the caller
+// (TicketFieldEditor.cpp, only when kMobileInlineEditBuild) feeds ImGui state in:
+//   cellHovered  - ImGui::IsItemHovered() for the cell Selectable drawn immediately before.
+//   primaryDown  - io.MouseDown[0] (the touch contact, mapped to the primary button on Android).
+//   heldSeconds  - io.MouseDownDuration[0], ImGui's own per-frame hold timer (no custom clock).
+//   dragging     - ImGui::IsMouseDragging(0): held + moved past the drag threshold = scroll.
+// Desktop never calls this — it keeps its own click/double-click expression inline so its codegen
+// stays byte-identical; this models ONLY the new touch branch.
+inline bool ShouldOpenCellEditorByLongPress(bool cellHovered, bool primaryDown, float heldSeconds,
+                                            bool dragging, float longPressThresholdSeconds) {
+    return cellHovered && primaryDown && heldSeconds >= longPressThresholdSeconds && !dragging;
+}
+
 } // namespace TicketFieldEditorCommitPolicyPure

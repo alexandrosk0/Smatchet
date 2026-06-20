@@ -4,6 +4,7 @@
 
 using TicketFieldEditorCommitPolicyPure::ShouldCommitInlineFieldEdit;
 using TicketFieldEditorCommitPolicyPure::ShouldEndInlineEdit;
+using TicketFieldEditorCommitPolicyPure::ShouldOpenCellEditorByLongPress;
 
 // WS4 item 16 (stray-PUT-on-Escape): on the mobile/touch build an inline field edit must commit
 // ONLY on an explicit submit; any focus-loss deactivation cancels with no PUT to the real tracker.
@@ -99,4 +100,40 @@ TEST_CASE("inline-edit policy: click away after changing the value -> commits AN
     const bool valueChanged = true;
     CHECK(ShouldCommitInlineFieldEdit(explicitSubmit, deactivated, isMobile, valueChanged));
     CHECK(ShouldEndInlineEdit(escape, explicitSubmit, deactivated));
+}
+
+// --- P1.3 touch open-gate: long-press opens, quick tap / drag do not (#1018 item 23) --------------
+// Args are (cellHovered, primaryDown, heldSeconds, dragging, longPressThresholdSeconds). The mobile
+// build defaults the threshold to 0.5 s (Android ViewConfiguration long-press timeout).
+
+TEST_CASE("ShouldOpenCellEditorByLongPress: a stationary hold past the threshold opens the editor") {
+    CHECK(ShouldOpenCellEditorByLongPress(/*cellHovered=*/true, /*primaryDown=*/true, /*heldSeconds=*/0.6f,
+                                          /*dragging=*/false, /*longPressThresholdSeconds=*/0.5f));
+}
+
+TEST_CASE("ShouldOpenCellEditorByLongPress: a quick tap (held < threshold) selects, never opens") {
+    // Tap-to-select / scroll-fling must not open the editor — the core touch disambiguation.
+    CHECK_FALSE(ShouldOpenCellEditorByLongPress(/*cellHovered=*/true, /*primaryDown=*/true, /*heldSeconds=*/0.1f,
+                                                /*dragging=*/false, /*longPressThresholdSeconds=*/0.5f));
+}
+
+TEST_CASE("ShouldOpenCellEditorByLongPress: a hold that drifts into a drag (scroll) never opens") {
+    // Held past the threshold but moved past the drag slop = a scroll gesture, not an edit-open.
+    CHECK_FALSE(ShouldOpenCellEditorByLongPress(/*cellHovered=*/true, /*primaryDown=*/true, /*heldSeconds=*/0.9f,
+                                                /*dragging=*/true, /*longPressThresholdSeconds=*/0.5f));
+}
+
+TEST_CASE("ShouldOpenCellEditorByLongPress: a hold that left the cell (not hovered) never opens") {
+    CHECK_FALSE(ShouldOpenCellEditorByLongPress(/*cellHovered=*/false, /*primaryDown=*/true, /*heldSeconds=*/0.9f,
+                                                /*dragging=*/false, /*longPressThresholdSeconds=*/0.5f));
+}
+
+TEST_CASE("ShouldOpenCellEditorByLongPress: no contact (released / hovering only) never opens") {
+    CHECK_FALSE(ShouldOpenCellEditorByLongPress(/*cellHovered=*/true, /*primaryDown=*/false, /*heldSeconds=*/0.9f,
+                                                /*dragging=*/false, /*longPressThresholdSeconds=*/0.5f));
+}
+
+TEST_CASE("ShouldOpenCellEditorByLongPress: the threshold boundary is inclusive (>=)") {
+    CHECK(ShouldOpenCellEditorByLongPress(/*cellHovered=*/true, /*primaryDown=*/true, /*heldSeconds=*/0.5f,
+                                          /*dragging=*/false, /*longPressThresholdSeconds=*/0.5f));
 }

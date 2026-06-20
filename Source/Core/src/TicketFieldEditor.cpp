@@ -73,6 +73,28 @@ constexpr bool kMobileInlineEditBuild = true;
 constexpr bool kMobileInlineEditBuild = false;
 #endif
 
+// P1.3 mobile interaction model (#1018 item 23). On a touch build a quick tap selects the cell /
+// scrolls the grid; a cell editor opens only on a *long-press* — a stationary hold past
+// kCellLongPressOpenSeconds over the cell (the standard Android disambiguator, since touch has no
+// double-click). The long-press rule itself lives in TicketFieldEditorCommitPolicyPure.h
+// (ShouldOpenCellEditorByLongPress) so it is unit-tested without ImGui or __ANDROID__. Desktop is
+// unchanged: kMobileInlineEditBuild is constexpr-false there, so the touch branch is dead-eliminated
+// and the gate collapses to the exact pre-existing `clicked && (singleClickToEdit ||
+// IsMouseDoubleClicked(0))` expression with its identical short-circuit (IsMouseDoubleClicked is
+// still only probed when the cell was clicked) — byte-identical desktop codegen.
+constexpr float kCellLongPressOpenSeconds = 0.5f;
+
+bool ShouldOpenCellEditorOnGesture(bool cellSelectableClicked, bool singleClickToEdit) {
+    if (kMobileInlineEditBuild) {
+        // IsItemHovered() refers to the cell Selectable drawn immediately before this call.
+        const ImGuiIO& io = ImGui::GetIO();
+        return TicketFieldEditorCommitPolicyPure::ShouldOpenCellEditorByLongPress(
+            ImGui::IsItemHovered(), io.MouseDown[0], io.MouseDownDuration[0], ImGui::IsMouseDragging(0),
+            kCellLongPressOpenSeconds);
+    }
+    return cellSelectableClicked && (singleClickToEdit || ImGui::IsMouseDoubleClicked(0));
+}
+
 std::string GetCurrentJiraDateTimeString() {
     auto now = std::chrono::system_clock::now();
     std::time_t tt = std::chrono::system_clock::to_time_t(now);
@@ -614,10 +636,9 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
     }
     const std::string& display = singleLine;
     const float regionAvail = (availWidth > 0.0f) ? availWidth : ImGui::GetContentRegionAvail().x;
-    if (ImGui::Selectable(display.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
-        if (singleClickToEdit || ImGui::IsMouseDoubleClicked(0)) {
-            state.StartEditingField(ticket.id, field.Id, currentValue);
-        }
+    const bool textCellClicked = ImGui::Selectable(display.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick);
+    if (ShouldOpenCellEditorOnGesture(textCellClicked, singleClickToEdit)) {
+        state.StartEditingField(ticket.id, field.Id, currentValue);
     }
     const ImVec2 textSize = ImGui::CalcTextSize(display.c_str());
     const bool horizontallyClipped = (regionAvail > 0.0f && textSize.x > regionAvail + 1.0f);
