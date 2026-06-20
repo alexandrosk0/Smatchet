@@ -45,6 +45,8 @@ std::unique_ptr<smatchet::cmd::IScenario> MakeSideBySide2GridScenario() { return
 std::unique_ptr<smatchet::cmd::IScenario> MakeConcurrentSyncScenario() { return NullScenario(); }
 // Parametrised N-visible-pane render sweep (default 8).
 std::unique_ptr<smatchet::cmd::IScenario> MakeSideBySideNGridScenario() { return NullScenario(); }
+// ACTIVE-load mixed-backend variant of side-by-side-grids.
+std::unique_ptr<smatchet::cmd::IScenario> MakeInteractiveGridStressScenario() { return NullScenario(); }
 // Issue #1133 mobile CI smoke gate — always registered (no ifdef).
 std::unique_ptr<smatchet::cmd::IScenario> MakeMobileTextureGuardScenario() { return NullScenario(); }
 #if defined(SMATCHET_WITH_AI)

@@ -105,6 +105,7 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 #include "LuaAutomationHost.h"
 #include "OfflineQueueService.h"
 #include "TicketSyncService.h"
+#include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 #include "Commands/Scenarios/IScenario.h"
 #include "PluginHost.h"
@@ -1022,6 +1023,30 @@ struct FpsMeasure {
     }
 };
 
+// Env-gated one-shot scenario autostart: SMATCHET_AUTORUN_SCENARIO=<name> runs a
+// registered scenario on the REAL GL window (vs --spawn, which is headless and
+// defeats wall-clock FPS). Paired with SMATCHET_FPS_MEASURE_SECONDS the scenario
+// injects interaction while FpsMeasure captures real FPS, then closes the window.
+// Called once per loop with a latch — fires AFTER the first frame so the host pane
+// machinery + live contexts exist. Direct Start() is safe: this IS the UI thread,
+// between frames, so there is no race with ScenarioRunner::Tick (inside RenderOneFrame).
+static void MaybeStartAutorunScenario(AppController& app, bool& started) {
+    if (started) {
+        return;
+    }
+    started = true;
+    const char* autorunName = std::getenv("SMATCHET_AUTORUN_SCENARIO");
+    if (!autorunName || autorunName[0] == '\0') {
+        return;
+    }
+    smatchet::cmd::CommandContext autorunCtx;
+    autorunCtx.App = &app;
+    const smatchet::cmd::CommandResult autorunRes =
+        app.Scenarios().Start(autorunName, nlohmann::json::object(), autorunCtx);
+    ::fprintf(stderr, "[autorun-scenario] start name=%s ok=%d\n", autorunName, autorunRes.Ok ? 1 : 0);
+    ::fflush(stderr);
+}
+
 static int RunFrameLoop(MainBootState& boot) {
     BootstrapContext& bootCtx = boot.bootCtx;
     GLFWwindow* window = bootCtx.window;
@@ -1056,6 +1081,9 @@ static int RunFrameLoop(MainBootState& boot) {
         FpsMeasure fpsMeasure;
         fpsMeasure.Begin(window);
 
+        // Latch for the one-shot SMATCHET_AUTORUN_SCENARIO start (see MaybeStartAutorunScenario).
+        bool autorunScenarioStarted = false;
+
         // Live vsync apply — mirrors the SmatchetUI lastAppliedTheme_ pattern:
         // one atomic load + compare per frame; glfwSwapInterval only on change
         // (Preferences checkbox / config.set vsync flip the hub at runtime).
@@ -1067,14 +1095,16 @@ static int RunFrameLoop(MainBootState& boot) {
             // GL applies vsync via glfwSwapInterval on-change; DX12 takes syncInterval
             // per-frame into Present() (inside RenderOneFrame), so only the GL path
             // touches the GL context here.
-            if (boot.renderer == smatchet::standalone::StandaloneRenderer::OpenGL &&
-                liveVsync != lastAppliedVsync) {
+            if (boot.renderer == smatchet::standalone::StandaloneRenderer::OpenGL && liveVsync != lastAppliedVsync) {
                 glfwSwapInterval(liveVsync ? 1 : 0);
                 lastAppliedVsync = liveVsync;
             }
 
             const bool redactThisFrame =
                 RenderOneFrame(window, mainWindow, smatchetApp, pluginHost, clear_color, boot, syncInterval);
+
+            // Fire the env-gated autostart scenario once, after the first frame.
+            MaybeStartAutorunScenario(smatchetApp, autorunScenarioStarted);
 
             fpsMeasure.Sample(window);
 

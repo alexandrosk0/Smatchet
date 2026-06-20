@@ -836,6 +836,10 @@ struct UiDrawSession {
     /// Pixel Y to set via ImGui::SetScrollY each frame while scenarioScrollActive=true.
     /// -1 = inactive (redundant guard; check scenarioScrollActive).
     int scenarioScrollTarget = -1;
+    /// Pixel X to set via ImGui::SetScrollX on the focused pane each frame. -1 = inactive.
+    /// Written directly by interaction-injection scenarios (no ScenarioRunner out-param —
+    /// horizontal scroll has no CurrentScrollX runner hook); read by SmatchetActiveProjectGridUi.
+    int scenarioScrollTargetX = -1;
 
     /// Transient flag — standalone target toggles OS fullscreen; Unreal target ignores.
     bool requestFullScreenToggle = false;
