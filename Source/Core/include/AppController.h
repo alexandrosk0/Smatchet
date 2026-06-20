@@ -110,6 +110,7 @@ class LocalCacheManager; // fan-in Phase 1: fwd-decl (was a direct heavy include
 class GridContextDepsAdapter;
 class OfflineQueueService;
 class TicketSyncService;
+class EditMetaCacheService;
 class LuaAutomationHost;
 struct TrackerActivityEntry;
 struct TrackerActivityProgress;
@@ -880,6 +881,25 @@ class AppController : public IMainThreadPoster {
     /** Best-effort async warmup so edit controls can reflect per-issue permissions sooner. */
     void WarmIssueEditMetaAsync(const std::string& issueId);
 
+    // Editmeta-cache delegators — forward to `editMeta_` (EditMetaCacheService, god-object
+    // decomposition Phase 1). Signatures preserved verbatim from the pre-extraction surface.
+    /**
+     * @param issueTypeKeyOverride if non-null and non-empty, used instead of scanning `ActiveTickets`
+     *        for issuetype (safe for background threads that captured the key on the UI thread).
+     * @param configSnapshot if non-null, used instead of ConfigManager::Load() (e.g. snapshot from main thread
+     *        or loaded before InitLua to avoid parsing smatchet_config.json after Lua init in release builds).
+     */
+    bool EnsureIssueEditMetaLoaded(const std::string& issueId, std::string* outError = nullptr,
+                                   const std::string* issueTypeKeyOverride = nullptr,
+                                   const TrackerConfig* configSnapshot = nullptr);
+    bool RefreshIssueEditMeta(const std::string& issueId, std::string* outError = nullptr,
+                              const std::string* issueTypeKeyOverride = nullptr);
+    void InvalidateIssueEditMeta(const std::string& issueId);
+    void PruneEditMetaCacheToActiveTickets();
+    /** @param trackerCfgForWorker credentials/settings copy for background fetch (never ConfigManager::Load inside
+     * worker). */
+    void WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker);
+
     bool FetchIssueWatchers(const std::string& issueKey, std::vector<TrackerUser>& outWatchers,
                             std::string& outError) const;
 
@@ -976,6 +996,12 @@ class AppController : public IMainThreadPoster {
     /// `GetPendingCreates`, etc.) are thin delegators that forward to this service. See
     /// BACKLOG_CODE_REVIEW.md §1.7 / §7 item 12.
     std::unique_ptr<OfflineQueueService> offlineQueue_;
+    /// Owns the per-issue + per-issue-type editmeta cache (`editMetaMutex_` + its three
+    /// containers) and the load/refresh/invalidate/prune/warm methods. Constructed eagerly in
+    /// `Initialize` after `depsAdapter_`. Public AppController methods (`CanEditFieldForIssue`,
+    /// `EnsureIssueEditMetaLoaded`, etc.) are thin delegators forwarding to this service. See the
+    /// AppController god-object decomposition plan (Phase 1).
+    std::unique_ptr<EditMetaCacheService> editMeta_;
     /// Default pane id ("main" — matches ConfigManager_Panes bootstrap). The default
     /// context is PERMANENT: created in the constructor, never retired (offlineQueue_
     /// holds a deps-adapter reference chain into it), so focusedContext() fallback and
@@ -1203,41 +1229,11 @@ class AppController : public IMainThreadPoster {
     static constexpr std::size_t kFieldIconAssetPathCacheCap = 256;
     mutable std::unordered_map<std::string, std::string> fieldIconAssetPathCache_;
 
-    struct IssueEditMetaCache {
-        bool loaded = false;
-        /** Field id -> backend allows an update operation (set/add/remove). */
-        std::unordered_map<std::string, bool> fieldCanEdit;
-    };
+    // The IssueEditMetaCache struct + editMetaMutex_ + its three containers + the editmeta
+    // load/refresh/invalidate/prune/warm methods + ResolveIssueTypeKeyForIssue +
+    // WarmIssueTypeEditMetaWorker moved into EditMetaCacheService (god-object decomposition
+    // Phase 1). Accessed via `editMeta_`; the public delegators below preserve the prior surface.
 
-    mutable std::mutex editMetaMutex_;
-    std::unordered_map<std::string, IssueEditMetaCache> issueEditMeta_;
-    std::unordered_map<std::string, IssueEditMetaCache> issueTypeEditMeta_;
-    std::unordered_set<std::string> issueEditMetaWarmupInFlight_;
-
-    /**
-     * @param issueTypeKeyOverride if non-null and non-empty, used instead of scanning `ActiveTickets`
-     *        for issuetype (safe for background threads that captured the key on the UI thread).
-     * @param configSnapshot if non-null, used instead of ConfigManager::Load() (e.g. snapshot from main thread
-     *        or loaded before InitLua to avoid parsing smatchet_config.json after Lua init in release builds).
-     */
-    bool EnsureIssueEditMetaLoaded(const std::string& issueId, std::string* outError = nullptr,
-                                   const std::string* issueTypeKeyOverride = nullptr,
-                                   const TrackerConfig* configSnapshot = nullptr);
-    bool RefreshIssueEditMeta(const std::string& issueId, std::string* outError = nullptr,
-                              const std::string* issueTypeKeyOverride = nullptr);
-    void InvalidateIssueEditMeta(const std::string& issueId);
-    void PruneEditMetaCacheToActiveTickets();
-    /** @param trackerCfgForWorker credentials/settings copy for background fetch (never ConfigManager::Load inside
-     * worker). */
-    void WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker);
-    /// Background-task body of WarmIssueTypeEditMetaAtStartAsync: load editmeta for the
-    /// representative issues, then warm per-project component options. Runs off the UI thread.
-    /// `catPtr` is the KICK-TIME context catalog captured by the caller (#975) — the worker must
-    /// mutate THAT context's projectComponentsInFlight_ markers, not a completion-time re-resolve.
-    void WarmIssueTypeEditMetaWorker(const std::vector<std::pair<std::string, std::string>>& representatives,
-                                     const std::vector<std::string>& componentProjectKeys,
-                                     const std::shared_ptr<ITrackerBackend>& backend, GridContextFieldCatalog* catPtr,
-                                     TrackerConfig trackerCfgForWorker);
     // Take the caller's already-latched catalog (#823 / CR PR#1218): fieldCatalog() re-resolves
     // focusedContextPtr_ per call, so re-resolving inside the helper could insert the synthetic
     // field into a different context than the caller populated. Caller passes its latch.
@@ -1255,7 +1251,6 @@ class AppController : public IMainThreadPoster {
                                             const std::string& issueTypeKeySnapshot, nlohmann::json& outFieldsPayload,
                                             std::unordered_map<std::string, std::string>& outDisplayValues,
                                             std::string& outError);
-    std::string ResolveIssueTypeKeyForIssue(const std::string& issueId) const;
 
     /// Shared context for the three SubmitFieldEdit branch helpers. Holds references only —
     /// lifetime is bounded to the SubmitFieldEdit call frame that builds the ctx on the stack.
@@ -1287,6 +1282,10 @@ class AppController : public IMainThreadPoster {
     /// dispatch HTTP / SQLite work off the UI thread without re-implementing
     /// thread-bookkeeping.
     void LaunchBackgroundTask(std::function<void()> task);
+
+    /// True once shutdown has begun. Public so `EditMetaCacheService` (via the deps adapter) can
+    /// poll it from its warm worker to bail out of long loops (god-object decomposition Phase 1).
+    bool IsShuttingDown() const { return shuttingDown_.load(); }
 
   private:
     void JoinBackgroundTasks();
