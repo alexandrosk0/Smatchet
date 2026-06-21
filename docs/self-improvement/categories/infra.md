@@ -45,7 +45,7 @@
 - 2026-06-07 · debug-detective · [infra] · P3 — `SmatchetCrashHandler` terminate-path dumps carry no ExceptionStream (`TerminateHandler` passes `exPtrs=nullptr` to MiniDumpWriteDump)
   Details: `Source/Standalone/SmatchetCrashHandler.cpp:56-62` — `TerminateHandler()` calls `WriteMiniDump(nullptr)`, and `WriteMiniDump` (`:25-42`) only attaches a `MINIDUMP_EXCEPTION_INFORMATION` when `exPtrs != nullptr`. So a dump written on the `std::terminate` path (unhandled C++ exception) has no ExceptionStream — `!analyze`-style triage can't see the faulting context, and this session's terminate-path dump triage had to reconstruct the failure from the marker string alone. The SEH path (`TopLevelExceptionFilter`, `:48`) is fine.
   Concrete next action: capture exception pointers via a vectored-exception-handler stash — a first-chance VEH records the most recent `EXCEPTION_POINTERS` (thread-local or atomic) and `TerminateHandler` passes the stashed pointers to `WriteMiniDump` when available — so the next terminate-path dump is self-describing. Est ~1-2 h incl. a forced-terminate smoke.
-  Status: open
+  Status: applied (2026-06-21 final autonomous batch — shipped #1533)
   Last-reviewed: 2026-06-07
 
 - 2026-06-07 · test-author (Slice-2 agent) · [infra] · P3 — local Mesa parity broken: d3d12 gallium driver crashes any Smatchet build at boot on this box; llvmpipe boots but click-driven bucket-E fails under it
