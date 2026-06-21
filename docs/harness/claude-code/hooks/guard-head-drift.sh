@@ -98,15 +98,37 @@ GIT_INVOKE_RE='(^|[;&|([:space:]"\\/])git(\.exe)?"?'
 # (tooling.md :328 / :175).
 GIT_OPTS_RE='([[:space:]]+(-C[[:space:]]+("[^"]*"|[^[:space:]]+)|-c[[:space:]]+("[^"]*"|[^[:space:]]+)|--[^[:space:]]+))*'
 
+# Absolute, separator-normalised git-common-dir of a git dir/worktree, or empty
+# if $1 is not inside a git repo. Two paths sharing a common-dir belong to the
+# SAME repository (the integration tree and its linked worktrees all resolve to
+# the integration tree's `.git`); a path with a DIFFERENT common-dir is a wholly
+# separate repo (a mktemp throwaway, a sibling clone) that cannot move this
+# session's HEAD.
+git_common_dir_abs() { # $1 = path inside a git repo
+  local d="$1" c
+  c="$(git -C "$d" rev-parse --git-common-dir 2>/dev/null)" || return 1
+  [ -n "$c" ] || return 1
+  case "$c" in [A-Za-z]:*|/*|\\\\*) ;; *) c="$d/$c" ;; esac
+  ( cd "$c" 2>/dev/null && pwd ) || printf '%s' "$c"
+}
+
+# Common-dir of THIS session's protected integration tree, computed once.
+PROJ_COMMON="$(git_common_dir_abs "$PROJ")"
+
 # True (0) when EVERY git invocation in $CMD matching the op alternation carries
-# a `-C <path>` whose target is a linked worktree (.git is a FILE pointer, never
-# the integration tree's .git directory) on a non-protected branch. Such an op
-# never touches this session's tree, so the denies below don't apply — this is
+# a `-C <path>` whose target cannot touch this session's protected tree — either
+# (a) a SEPARATE repository (its git-common-dir differs from the integration
+# tree's: a mktemp throwaway repo, a sibling clone — these are unrelated to the
+# protected develop/main tree and were previously false-DENIED because their
+# `.git` is a DIRECTORY, not a worktree file pointer), or (b) a linked worktree
+# of THIS repo (.git is a FILE pointer) sitting on a non-protected branch. Such
+# ops never move the protected HEAD, so the denies below don't apply — this is
 # what lets an integration-tree-rooted session ship from a worktree it created
-# (tooling.md P2; the PR #916/#936 friction). Any -C-less invocation, integration
-# -C target, or protected-branch target keeps the deny (conservative).
+# (tooling.md P2; the PR #916/#936 friction) AND run unrelated tmp-repo git in a
+# bats fixture. Any -C-less invocation, an integration-tree -C target, or a
+# same-repo worktree on a protected branch keeps the deny (conservative).
 all_git_ops_target_safe_worktree() { # $1 = op alternation, e.g. 'commit'
-  local ops="$1" m tgt branch
+  local ops="$1" m tgt branch tgt_common
   local matches
   matches="$(printf '%s' "$CMD" | grep -oE "${GIT_INVOKE_RE}${GIT_OPTS_RE}[[:space:]]+(${ops})(\$|[;&|)[:space:]])")"
   [ -n "$matches" ] || return 1
@@ -119,6 +141,19 @@ all_git_ops_target_safe_worktree() { # $1 = op alternation, e.g. 'commit'
     tgt="${tgt%\"}"; tgt="${tgt#\"}"; tgt="${tgt%\'}"; tgt="${tgt#\'}"
     [ -n "$tgt" ] || return 1                       # no -C → targets this tree
     case "$tgt" in [A-Za-z]:*|/*|\\\\*) ;; *) tgt="$PROJ/$tgt" ;; esac
+    # Separate-repository exemption: a -C target whose git-common-dir differs
+    # from the protected tree's is a wholly distinct repo and cannot move this
+    # session's HEAD — allow it regardless of its branch (a throwaway test repo
+    # may legitimately sit on develop/main). Requires BOTH common-dirs to
+    # resolve; if EITHER is empty (target not a repo, or PROJ unreadable) we
+    # fall through to the conservative same-repo checks below.
+    tgt_common="$(git_common_dir_abs "$tgt")"
+    if [ -n "$tgt_common" ] && [ -n "$PROJ_COMMON" ] && [ "$tgt_common" != "$PROJ_COMMON" ]; then
+      continue                                       # different repo → safe
+    fi
+    # Same repository (or undeterminable): only a linked worktree (.git is a
+    # FILE pointer, never the integration tree's .git directory) on a
+    # non-protected branch is exempt.
     [ -f "$tgt/.git" ] || return 1                  # not a linked worktree
     branch="$(git -C "$tgt" symbolic-ref --short HEAD 2>/dev/null)" || return 1
     case "$branch" in develop|main|"") return 1 ;; esac
