@@ -578,5 +578,87 @@
                 "SmatchetCore_PosixCheck"
             ]
         }
+    ],
+    "testPresets": [
+        {
+            "name": "ninja-test-msvc",
+            "configurePreset": "ninja-test-msvc",
+            "inheritConfigureEnvironment": true,
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "ninja-test-clang",
+            "configurePreset": "ninja-test-clang",
+            "inheritConfigureEnvironment": true,
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "ninja-debug-msvc",
+            "configurePreset": "ninja-debug-msvc",
+            "inheritConfigureEnvironment": true,
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "ninja-debug-clang",
+            "configurePreset": "ninja-debug-clang",
+            "inheritConfigureEnvironment": true,
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "ninja-msvc-asan",
+            "configurePreset": "ninja-msvc-asan",
+            "inheritConfigureEnvironment": true,
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "ninja-clang-asan",
+            "configurePreset": "ninja-clang-asan",
+            "inheritConfigureEnvironment": true,
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "ninja-publish-msvc",
+            "configurePreset": "ninja-publish-msvc",
+            "inheritConfigureEnvironment": true,
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "ninja-publish-msvc-arm64",
+            "configurePreset": "ninja-publish-msvc-arm64",
+            "inheritConfigureEnvironment": true,
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "ninja-tsan-linux",
+            "configurePreset": "ninja-tsan-linux",
+            "inheritConfigureEnvironment": true,
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "ninja-fuzzer-linux",
+            "configurePreset": "ninja-fuzzer-linux",
+            "inheritConfigureEnvironment": true,
+            "output": {
+                "outputOnFailure": true
+            }
+        }
     ]
 }

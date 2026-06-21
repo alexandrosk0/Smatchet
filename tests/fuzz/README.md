@@ -25,6 +25,8 @@ sudo apt-get install -y clang lld ninja-build
 cmake --preset ninja-fuzzer-linux
 cmake --build --preset ninja-fuzzer-linux        # builds every fuzz_* driver
 ctest --preset ninja-fuzzer-linux                # -runs=0 smoke (loads seeds, exits 0)
+# Equivalent non-preset form fuzz-smoke.yml uses (cd into the build dir):
+#   ( cd build/ninja-fuzzer-linux && ctest --output-on-failure )
 
 # Real time-boxed run of one driver:
 ./build/ninja-fuzzer-linux/tests/fuzz/fuzz_image_dims \
