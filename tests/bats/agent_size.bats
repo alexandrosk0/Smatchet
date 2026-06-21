@@ -69,7 +69,7 @@ _mk_md() {
     [[ "$output" == *"contract"* ]]
 }
 
-@test "skill SKILL.md over 400 lines WARNS only — sink never blocks" {
+@test "skill SKILL.md over 400 lines WARNS only - sink never blocks" {
     cd "$BATS_TEST_TMPDIR"
     mkdir -p agents/_shared/skills/fake
     _mk_md agents/_shared/skills/fake/SKILL.md 450

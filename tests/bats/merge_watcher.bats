@@ -238,13 +238,13 @@ PY
 
 # ---------- empty-state ----------
 
-@test "status on empty registry → 'registry empty'" {
+@test "status on empty registry -> 'registry empty'" {
     run watch_cli status
     [ "$status" -eq 0 ]
     [[ "$output" == *"registry empty"* ]]
 }
 
-@test "list on empty registry → empty JSON array" {
+@test "list on empty registry -> empty JSON array" {
     run watch_cli list
     [ "$status" -eq 0 ]
     [[ "$output" == "[]" ]]
@@ -274,7 +274,7 @@ PY
     [[ "$output" == *"orchestrator must check this registry"* ]]
 }
 
-@test "register dup → exit 1 + already-registered message" {
+@test "register dup -> exit 1 + already-registered message" {
     run watch_cli register 999
     [ "$status" -eq 0 ]
     run watch_cli register 999
@@ -282,7 +282,7 @@ PY
     [[ "$output" == *"already registered"* ]]
 }
 
-@test "register multiple PRs → all visible in list" {
+@test "register multiple PRs -> all visible in list" {
     run watch_cli register 100
     [ "$status" -eq 0 ]
     run watch_cli register 200
@@ -336,7 +336,7 @@ PY
     [[ "$output" == "[]" ]]
 }
 
-@test "unregister non-existent PR → exit 1 + nothing-to-do message" {
+@test "unregister non-existent PR -> exit 1 + nothing-to-do message" {
     run watch_cli unregister 9999
     [ "$status" -eq 1 ]
     [[ "$output" == *"not registered"* ]]
@@ -367,7 +367,7 @@ PY
     [[ "$output" != *"#200"* ]]
 }
 
-@test "status with non-existent PR filter → 'not registered'" {
+@test "status with non-existent PR filter -> 'not registered'" {
     run watch_cli status 9999
     [ "$status" -eq 0 ]
     [[ "$output" == *"not registered"* ]]
@@ -446,7 +446,7 @@ print('after:', (locks_dir / 'cascade-feat__my-child.lock').exists())
     [[ "$output" == *"after: False"* ]]
 }
 
-@test "cascade_lock branch-name sanitization (/ → __)" {
+@test "cascade_lock branch-name sanitization (/ -> __)" {
     run python -c "
 import os
 os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
@@ -463,7 +463,7 @@ with mw.cascade_lock('chore/v2-agentic-ripout-doc-cleanup'):
     [[ "$output" == *"found: True"* ]]
 }
 
-@test "handle_pass on PR-already-merged (gh pr merge fails) → merge_failed" {
+@test "handle_pass on PR-already-merged (gh pr merge fails) -> merge_failed" {
     # Stub gh on PATH to fail the `gh pr merge --auto` call. Verifies the error
     # path doesn't crash the daemon — just records merge_failed in state.
     # (squash_merge_pr now enables auto-merge via `gh pr merge --squash --auto`
@@ -496,7 +496,7 @@ print('merge_action:', extras.get('merge_action'))
     rm -rf "$STUB_BIN"
 }
 
-@test "handle_pass enqueues on a merge queue (state OPEN after --auto) → merge_action: enqueued" {
+@test "handle_pass enqueues on a merge queue (state OPEN after --auto) -> merge_action: enqueued" {
     # Windows: the gh stub below is an extensionless bash script; merge-watcher's
     # _resolve_bin() uses shutil.which("gh"), which on Windows skips a name with
     # no PATHEXT extension and resolves the REAL gh.exe instead → the stub is
@@ -541,7 +541,7 @@ print('merge_sha:', extras.get('merge_sha', '<none>'))
     rm -rf "$STUB_BIN"
 }
 
-@test "handle_pass merges immediately when no queue (state MERGED after --auto) → merge_action: merged" {
+@test "handle_pass merges immediately when no queue (state MERGED after --auto) -> merge_action: merged" {
     # Windows-skip — same root cause as the enqueued test above: the extensionless
     # gh bash stub is bypassed by shutil.which on Windows. Pre-existing on develop.
     case "$OSTYPE" in msys*|cygwin*|win*) skip "gh bash-script stub unresolvable by Windows _resolve_bin; pre-existing on develop (see backlog merge-watcher-gh-stub-windows)" ;; esac
@@ -608,7 +608,7 @@ print('owner_repo:', mw._gh_owner_repo(bad))
 
 # ---------- daemon-crash resilience: squash timeout + per-PR backstop ----------
 
-@test "squash_merge_pr normalizes a gh launch/timeout into RuntimeError (not TimeoutExpired) — daemon-crash guard" {
+@test "squash_merge_pr normalizes a gh launch/timeout into RuntimeError (not TimeoutExpired) - daemon-crash guard" {
     # Regression (infra-outage): the `gh pr merge --auto` subprocess.run carries
     # timeout=60. A bare subprocess.TimeoutExpired is NOT a RuntimeError, so it
     # would escape handle_pass (`except RuntimeError`), unwind daemon_loop's
@@ -1449,7 +1449,7 @@ PY
 
 # ---------- Triage budget default (option C: fast notify on CR findings) ----------
 
-@test "MERGE_WATCH_TRIAGE_BUDGET default is 1 (was 3 — option C)" {
+@test "MERGE_WATCH_TRIAGE_BUDGET default is 1 (was 3 - option C)" {
     # Triage retries don't fix code; they re-classify. Default lowered so the
     # notify surface fires on the next poll after CR posts findings, not three
     # polls later. Test reads the literal default from the source so a stray
@@ -1475,19 +1475,19 @@ print('budget default ok')
     [[ "$output" == *"CI_FAIL"* ]]
 }
 
-@test "smatchet-notify.sh missing --pr → exit 2" {
+@test "smatchet-notify.sh missing --pr -> exit 2" {
     run bash "$SCRIPTS_DIR/smatchet-notify.sh" --state CI_FAIL --message "test"
     [ "$status" -eq 2 ]
     [[ "$output" == *"required"* ]]
 }
 
-@test "smatchet-notify.sh unknown arg → exit 2" {
+@test "smatchet-notify.sh unknown arg -> exit 2" {
     run bash "$SCRIPTS_DIR/smatchet-notify.sh" --bogus
     [ "$status" -eq 2 ]
     [[ "$output" == *"unknown arg"* ]]
 }
 
-@test "smatchet-notify.sh with no writable channel → exit 1 + 'ALL channels failed'" {
+@test "smatchet-notify.sh with no writable channel -> exit 1 + 'ALL channels failed'" {
     # Channel 3 (file log) is a guaranteed fallback whenever LOCALAPPDATA /
     # XDG_STATE_HOME / HOME point somewhere writable — and setup() always sets
     # LOCALAPPDATA. So the all-channels-failed exit is only reachable with all
@@ -2568,7 +2568,7 @@ PY
     [[ "$output" == *"OK"* ]]
 }
 
-@test "self-resync: unsafe drift → needs_human, never pulls or re-execs (#1428 feature-branch park)" {
+@test "self-resync: unsafe drift -> needs_human, never pulls or re-execs (#1428 feature-branch park)" {
     run python - <<'PY'
 import importlib.util, os
 sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
@@ -2592,7 +2592,7 @@ PY
     [[ "$output" == *"OK"* ]]
 }
 
-@test "self-resync: safe drift in merge-gates.sh only → resync on-disk, NO re-exec" {
+@test "self-resync: safe drift in merge-gates.sh only -> resync on-disk, NO re-exec" {
     run python - <<'PY'
 import importlib.util, os
 sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
@@ -2616,7 +2616,7 @@ PY
     [[ "$output" == *"OK"* ]]
 }
 
-@test "self-resync: safe daemon-code drift → re-exec on POSIX, restart-warn on Windows" {
+@test "self-resync: safe daemon-code drift -> re-exec on POSIX, restart-warn on Windows" {
     run python - <<'PY'
 import importlib.util, os
 sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
@@ -2648,7 +2648,7 @@ PY
     [[ "$output" == *"OK"* ]]
 }
 
-@test "self-resync: ff-pull no-move → needs_human (re-exec loop guard); pull-fail → needs_human" {
+@test "self-resync: ff-pull no-move -> needs_human (re-exec loop guard); pull-fail -> needs_human" {
     run python - <<'PY'
 import importlib.util, os
 sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
@@ -2677,7 +2677,7 @@ PY
     [[ "$output" == *"OK"* ]]
 }
 
-@test "self-resync: _resync_every_cycles default 30, env override, floor 1, invalid→default" {
+@test "self-resync: _resync_every_cycles default 30, env override, floor 1, invalid->default" {
     run python - <<'PY'
 import importlib.util, os
 sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
