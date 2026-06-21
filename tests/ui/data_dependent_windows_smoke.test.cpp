@@ -160,6 +160,23 @@ bool FixtureEnvSet() {
     return set;
 }
 
+// True when the bucket-E spawn child opted into a live local cache via
+// SMATCHET_UITEST_WITH_LOCAL_CACHE=1 (mirrors UiTestScenario::UiTestWantsLocalCache).
+// Under this opt-in EnsureLocalCacheForUiTest() stands up a live cache AND clears the
+// first-run ReadOnlyMode default, so the case-8 offline-create populated path MUST
+// activate — its skip becomes a hard failure (locks the #1521 fix against regression).
+bool UiTestWithLocalCache() {
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
+#endif
+    const char* v = std::getenv("SMATCHET_UITEST_WITH_LOCAL_CACHE");
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+    return v != nullptr && v[0] == '1' && v[1] == '\0';
+}
+
 // Shared body for the standard docked-window smoke recipe:
 //   open via flag pair → re-arm focus latch each frame → wait for Active →
 //   assert child widget → close.
@@ -635,13 +652,32 @@ void RegisterOfflineQueuePanelRenderSmoke(ImGuiTestEngine* engine) {
         draft.IssueTypeName = "Task";
         draft.FieldValues["summary"] = "Offline queue panel render smoke";
         const std::int64_t queuedId = app->QueueCreateOffline(draft);
+        const bool withLocalCache = UiTestWithLocalCache();
         if (queuedId <= 0) {
+            if (withLocalCache) {
+                // Opt-in is set: EnsureLocalCacheForUiTest() stood up a live cache AND
+                // cleared the first-run ReadOnlyMode default, so QueueCreateOffline MUST
+                // have returned a real pending-create id. A 0/negative return here means
+                // a guard re-fired (read-only default crept back, or the cache is dead) —
+                // the exact #1521 regression. Hard-fail so it can never silently SKIP back.
+                ctx->LogError("OfflineQueue populated path FAILED to activate under "
+                              "SMATCHET_UITEST_WITH_LOCAL_CACHE=1: QueueCreateOffline returned %lld "
+                              "(expected a positive pending-create id). Regression of #1521.",
+                              static_cast<long long>(queuedId));
+                IM_CHECK_NO_RET(queuedId > 0);
+                return;
+            }
             ctx->LogInfo("OfflineQueue populated path SKIPPED: QueueCreateOffline returned %lld "
                          "(OfflineQueueService not constructed — no live local cache under this harness). "
                          "Empty-guard path covered above.",
                          static_cast<long long>(queuedId));
             return;
         }
+        // Populated path activated: a real pending-create exists, so the panel body must
+        // render past the total==0 guard. Under the opt-in this is the locked assertion.
+        ctx->LogInfo("OfflineQueue populated path ACTIVATED: QueueCreateOffline returned id=%lld "
+                     "(withLocalCache=%d)",
+                     static_cast<long long>(queuedId), withLocalCache ? 1 : 0);
         // Precondition for the panel body: total>0, so it must render past the guard.
         IM_CHECK_NO_RET(!app->GetPendingCreates().empty());
         const bool stillVisible = YieldUntil(ctx, [&] {
