@@ -29,16 +29,26 @@ The canonical instrumentation tool. Writes one JSON object per call to a uniquel
 
 Pick one random 6-hex per investigation, e.g. `61b011`. Reuse across every helper + log file this session. Do **not** reuse a previous hex even when revisiting the same bug — that conflates logs from different runs.
 
-Write the helper to `tests/_debug/SmatchetAgentDebug.h` (gitignored) by copying [`agents/_shared/templates/SmatchetAgentDebug.h.tmpl`](../../templates/SmatchetAgentDebug.h.tmpl) and replacing every `__SMATCHET_AGENT_DEBUG_ID__` placeholder with the rolled hex.
+**FIRST check whether `tests/_debug/SmatchetAgentDebug.h` is a tracked, committed product file** — it is NOT always a throwaway scratch path. There is a production-resident, tracked helper at that exact path (slice 7 of `docs/plans/shipped/autonomous-debugging-no-creds.md`) with a *different* API (`SMATCHET_AGENT_DEBUG_LOG(category, json_obj)`, closed-set categories, `<userData>/agent-debug/<session>.ndjson` sink). Rolling the per-investigation template over it `sed > file` would CLOBBER a committed file and silently change product behaviour:
 
 ```bash
-mkdir -p tests/_debug
-sed 's/__SMATCHET_AGENT_DEBUG_ID__/<hex>/g' \
-    agents/_shared/templates/SmatchetAgentDebug.h.tmpl \
-    > tests/_debug/SmatchetAgentDebug.h
+git ls-files tests/_debug/SmatchetAgentDebug.h
 ```
 
-Public API the template exposes:
+- **If that prints the path (tracked)** → do NOT overwrite it and do NOT delete it at cleanup. Use the in-repo surface directly: `#include "../../tests/_debug/SmatchetAgentDebug.h" // [temp-debug]` then `SMATCHET_AGENT_DEBUG_LOG("temp-debug", nlohmann::json{{"loc", __FUNCTION__}, {"h", "h1"}, {"i", rowIndex}})` at the suspect site (the `"temp-debug"` category is a closed-set member reserved for exactly this; build with `SMATCHET_AGENT_DEBUG` defined — debug/asan/ui-test presets). The only `[temp-debug]` residue is your include + call lines, stripped at § Cleanup — the tracked file itself is left untouched.
+- **Only if `git ls-files` prints nothing (path absent/untracked)** → roll the generic template into a scratch copy and replace every `__SMATCHET_AGENT_DEBUG_ID__` placeholder with the rolled hex:
+
+```bash
+# only when tests/_debug/SmatchetAgentDebug.h is ABSENT / untracked
+git ls-files tests/_debug/SmatchetAgentDebug.h | grep -q . || {
+  mkdir -p tests/_debug
+  sed 's/__SMATCHET_AGENT_DEBUG_ID__/<hex>/g' \
+      agents/_shared/templates/SmatchetAgentDebug.h.tmpl \
+      > tests/_debug/SmatchetAgentDebug.h
+}
+```
+
+Public API the template exposes (untracked-path branch only):
 
 - `SmatchetAgentNdjsonLog(location, hypothesisId, message, dataInt)` — one NDJSON line per call.
 - `SmatchetAgentDebugLogPath()` — repo-root drop (walks ≤ 12 parents for `.git`).
@@ -202,8 +212,11 @@ Do all four before reporting done.
 # 12a. Strip [temp-debug] markers (expect zero hits) — use the harness text-search tool
 rg -n "\[temp-debug\]" Source/Core/ Source/Plugins/ Source/Standalone/
 
-# 12b. Delete the per-investigation helper
-rm -f tests/_debug/SmatchetAgentDebug.h
+# 12b. Delete the per-investigation helper — ONLY if you rolled the template.
+#      NEVER delete a TRACKED tests/_debug/SmatchetAgentDebug.h (the committed
+#      production helper); if you used that surface directly there is no scratch
+#      file to remove. Guard the rm on untracked-ness:
+git ls-files tests/_debug/SmatchetAgentDebug.h | grep -q . || rm -f tests/_debug/SmatchetAgentDebug.h
 rmdir tests/_debug 2>/dev/null || true
 
 # 12c. Delete the NDJSON log (use the rolled hex)

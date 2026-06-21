@@ -73,6 +73,16 @@ A fan-out's per-item work-list (PR numbers, file paths, ticket ids) belongs in *
 
 A Verify-stage `agent()` (the adversarial-verify / confirm-or-refute pass) returns a `StructuredOutput` schema. Any field that exists **only** to *downgrade* a verdict — `correctedLocation`, `revisedSeverity`, `refutationEvidence`, `actualLineRange` — MUST be **optional** in that schema, never required. A required downgrade-only field forces the verifier to invent a value on a **clean** verdict (the finding held, nothing to correct), which either fabricates a bogus correction or makes the agent fail schema validation on its happy path. The Verify stage's common case is "the upstream finding is confirmed as-is" — the schema's required set is the confirm-path fields (verdict, confidence); the correction fields ride along only when the verdict actually changes. Mark them optional so a clean verdict serialises without inventing them.
 
+## Reconciliation locators — emit a deterministic exact-match key, not a slug
+
+A classification / sweep agent whose structured output will feed a later **backlog-status reconciliation** (e.g. a fan-out that triages entries, then a downstream pass that flips each triaged entry's `Status:`) MUST emit a **distinctive per-entry locator** for every item — the entry's **date + a verbatim headline substring** (copied byte-for-byte from the entry, not paraphrased), or a `file:line`. NOT a shorthand slug or a re-worded summary.
+
+The downstream status-flip is then a deterministic **exact-match** (grep the verbatim substring / open the `file:line`) instead of a fuzzy semantic match that has to guess which entry a slug meant. Both reconciliations this session hit the slug-only failure mode: the status pass matched most entries but left stragglers whose slug didn't uniquely resolve, each needing a manual cleanup pass. A verbatim locator makes "did this entry get flipped?" a zero-ambiguity string compare and eliminates the straggler tail.
+
+- Locator = `<YYYY-MM-DD>` + `"<verbatim ≥6-word headline substring>"`, or `<repo-relative path>:<line>`.
+- The producing agent's schema makes the locator **required** (a row without it is unreconcilable downstream — fail loud, don't emit a slug-only row).
+- The reconciler matches on the verbatim substring / `file:line` only; it never falls back to fuzzy slug matching (a fuzzy fallback is what leaves stragglers).
+
 ## In-workspace staging — everything a background agent touches lives in the repo
 
 Background agents hit permission walls on out-of-workspace paths (failure 4). Stage **all** fleet inputs and outputs under the repo workspace in a gitignored scratch dir — convention: `build/<fleet-slug>/` (e.g. `build/salvage/`). Never point an agent at `~/.claude/**` session dirs, `%TEMP%`, or any absolute path outside the worktree.
