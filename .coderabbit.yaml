@@ -142,6 +142,21 @@ reviews:
         Available FetchContent libs: nlohmann/json, cpr, SQLiteCpp,
         cpp-httplib, md4c, ImGui (docking), GLFW, Lua + sol2,
         ghc::filesystem — do NOT propose adding new dependencies.
+    - path: 'agents/**/*.md'
+      instructions: |
+        Agent definitions (`agents/core/*.md`, `agents/project/*.md`) carry a
+        YAML frontmatter block whose capability list is spelled `capabilities:`
+        (a YAML list) — NOT `capability-tags`, `capability_tags`, or `tags`. Do
+        NOT flag the frontmatter as "missing a capabilities/capability-tags
+        field" when `capabilities:` is present under a different-but-correct
+        name; the field IS there. The capability set is CLOSED (the
+        capability-tag → tool mapping lives in
+        `docs/harness/capability-adapter.md`) — do NOT suggest adding new
+        capability tags, renaming the field, or "standardising" it to
+        `capability-tags`. The optional `harness-hints.<harness>:` blocks
+        (e.g. `harness-hints.claude:`) are INTENTIONAL per-harness routing
+        metadata (model selection, MCP tool lists) — harnesses ignore unknown
+        blocks, so do NOT flag them as unknown/unsupported keys.
     - path: 'docs/plans/**'
       instructions: |
         Plan docs live in THREE tiers — `docs/plans/active/<slug>.md` (in
