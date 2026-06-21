@@ -165,7 +165,7 @@ void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
     // session-global cfg.TrackerType (+ Save + ViewState reload + the
     // lastViewsBackendKey session reset); that global churn perturbs which split
     // window holds ImGui nav focus, flipping the report to the sibling next frame and
-    // re-triggering adoption — an infinite cross-backend ping-pong (PR #986). Requiring
+    // re-triggering adoption — an infinite cross-backend ping-pong. Requiring
     // the same pane to report focus on two frames in a row drops single-frame nav
     // bounces while a genuine click (focus held for many frames) still switches with
     // only one frame of latency.

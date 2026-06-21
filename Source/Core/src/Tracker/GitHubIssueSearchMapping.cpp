@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-// PR12 — pure-logic JSON → CachedTicket mapping. Extracted out of
+// Pure-logic JSON → CachedTicket mapping. Extracted out of
 // GitHubIssueSearch.cpp so doctest can exercise it without cpr.
 
 namespace smatchet {
@@ -152,7 +152,7 @@ CachedTicket MapIssueOrPullRequestJsonToCachedTicket(const nlohmann::json& issue
     // router can distinguish issues / PRs / commits without re-parsing the id.
     ticket.fieldValues["github.kind"] = isPr ? std::string("pull_request") : std::string("issue");
 
-    // PR12 — visible `[PR] ` summary prefix so users can tell PRs apart at a
+    // Visible `[PR] ` summary prefix so users can tell PRs apart at a
     // glance even when the four pr.* columns aren't selected in the view.
     std::string title = JsonString(issue, "title");
     if (isPr) {
@@ -160,7 +160,7 @@ CachedTicket MapIssueOrPullRequestJsonToCachedTicket(const nlohmann::json& issue
     }
     ticket.fieldValues["summary"] = title;
 
-    // PR12 — status encodes the merge state for PRs (open / closed /
+    // Status encodes the merge state for PRs (open / closed /
     // merged-PR). For plain issues, pass through the raw GitHub state.
     const std::string state = JsonString(issue, "state");
     if (isPr) {
@@ -539,7 +539,7 @@ std::vector<CachedTicket> MapGraphQlNodesToTickets(const nlohmann::json& nodes, 
         }
         // Reject nodes missing required identity fields before mapping. Without
         // these guards, GitHub objects lacking __typename or a positive integer
-        // `number` would produce bogus tickets (e.g. `#0`). CR PR #399.
+        // `number` would produce bogus tickets (e.g. `#0`).
         const auto tnIt = node.find("__typename");
         const bool hasType = (tnIt != node.end() && tnIt->is_string());
         if (!hasType) {

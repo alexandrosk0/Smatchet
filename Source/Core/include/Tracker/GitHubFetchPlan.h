@@ -1,7 +1,7 @@
 #ifndef SMATCHET_GITHUB_FETCH_PLAN_H
 #define SMATCHET_GITHUB_FETCH_PLAN_H
 
-// PR4 follow-up of docs/plans/shipped/github-tracker-backend.md.
+// Follow-up of docs/plans/shipped/github-tracker-backend.md.
 // Pure helper deciding which GitHub REST endpoint to hit (cross-repo
 // /search/issues vs repo-scoped /repos/{o}/{r}/issues) and what `q=` to send,
 // given the user's Preferences (Owner, Repo) + the JQL-translator output.
@@ -24,7 +24,7 @@ struct GitHubFetchPlan {
     /// (owner+repo+jql all empty) this is "is:issue is:open".
     std::string effectiveQuery;
 
-    /// PR12 — true when the source JQL contained `type:pr`. Both endpoints
+    /// True when the source JQL contained `type:pr`. Both endpoints
     /// need this signal: the repo-scoped path uses it to keep PR items in
     /// the response (the default filter drops them), and the cross-repo
     /// path has already had `is:pr` injected into the effective query but
@@ -56,7 +56,7 @@ struct GitHubFetchPlan {
 ///                     didn't scope the search.
 ///   translatedQuery — the JQL → GitHub-search translator's output Query
 ///                     field (may be empty).
-///   includePullRequests — PR12 / github-commit-tracker-rows: whether PR rows
+///   includePullRequests — github-commit-tracker-rows: whether PR rows
 ///                     are kept in the node mapping (translator
 ///                     `IncludePullRequests`). Forwarded onto
 ///                     `plan.includePullRequests` unchanged.

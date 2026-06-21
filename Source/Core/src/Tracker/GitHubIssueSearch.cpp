@@ -15,8 +15,8 @@
 #include <utility>
 #include <vector>
 
-// PR4 of docs/plans/shipped/github-tracker-backend.md — paginated fetcher.
-// PR12 (Strategy C revision) — replaced REST N+1 (paginated /search/issues +
+// docs/plans/shipped/github-tracker-backend.md — paginated fetcher.
+// Strategy C revision — replaced REST N+1 (paginated /search/issues +
 // per-PR GET /pulls/{n}) with one GraphQL query per page. Same 10-page cap;
 // PR-only fields arrive inline in the same response via PullRequest fragment.
 
@@ -52,8 +52,8 @@ std::string ResolveGraphQlEndpoint(const std::string& baseUrl) {
 }
 
 // The GraphQL document. Inline `search()` so we get both Issues and PRs in
-// one round-trip. PullRequest fragment carries the 4 PR-only fields PR12
-// surfaces in the grid (headRefName, baseRefName, mergeable, isDraft) plus
+// one round-trip. PullRequest fragment carries the 4 PR-only fields
+// surfaced in the grid (headRefName, baseRefName, mergeable, isDraft) plus
 // mergedAt for the merged-PR status discriminator.
 const char* const kGraphQlSearchQuery = R"GQL(
 query($q: String!, $first: Int!, $after: String) {
@@ -429,8 +429,8 @@ GitHubFetchSetup BuildGitHubFetchSetup(const std::string& owner, const std::stri
     // fall back to `plan.effectiveQuery` for the cross-repo no-JQL case where
     // it carries the "is:issue is:open" fallback.
     // Repo-scoped JQL is honoured here (GraphQL search accepts the qualifiers
-    // REST /repos/{o}/{r}/issues couldn't). Strategy C deviation from PR12
-    // plan, documented in the plan-doc § Deviations.
+    // REST /repos/{o}/{r}/issues couldn't). Strategy C deviation from the
+    // original plan, documented in the plan-doc § Deviations.
     std::string graphQlQuery = translated.Query.empty() ? plan.effectiveQuery : translated.Query;
     if (graphQlQuery.empty()) {
         graphQlQuery = "is:issue is:open";

@@ -1,11 +1,11 @@
 #pragma once
 
 // LuaAutomationHost — fan-out hub for plugin-registered Lua-log sinks.
-// Scope (post-PR #144): this class owns the plugin-registered log-sink list
+// Scope: this class owns the plugin-registered log-sink list
 // for the Lua automation surface and nothing else. Ownership of sol2 state,
 // every Lua binding, and the automation worker thread sits on AppController
 // (expressed through the `ILuaBindingHost` interface that AppController
-// implements; see `Source/Core/include/ILuaBindingHost.h`). The PR #144 TU
+// implements; see `Source/Core/include/ILuaBindingHost.h`). The TU
 // lift fixed the "tests cannot link binding code without ImGui" pain point
 // without migrating ownership across the AppController boundary, so this
 // class stays a thin coordinator rather than the heavyweight owner the

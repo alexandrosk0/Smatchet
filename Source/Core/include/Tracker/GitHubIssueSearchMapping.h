@@ -1,7 +1,7 @@
 #ifndef SMATCHET_GITHUB_ISSUE_SEARCH_MAPPING_H
 #define SMATCHET_GITHUB_ISSUE_SEARCH_MAPPING_H
 
-// PR12 of docs/plans/shipped/github-tracker-backend.md — pure-logic JSON → CachedTicket
+// docs/plans/shipped/github-tracker-backend.md — pure-logic JSON → CachedTicket
 // mapping helpers extracted out of GitHubIssueSearch.cpp (which pulls cpr) so
 // the doctest rig can exercise them without HTTP.
 // Two surfaces:
@@ -30,7 +30,7 @@ namespace github {
 /// detection without coupling to the `[PR] ` summary prefix.
 constexpr const char* kIsPullRequestSentinel = "_smatchet_is_pr";
 
-/// PR12 — entry point used by `FetchIssuesViaRestApi` + the doctest rig.
+/// Entry point used by `FetchIssuesViaRestApi` + the doctest rig.
 /// `ownerHint` / `repoHint` are used when the issue payload doesn't carry
 /// `repository_url` (single-issue endpoint shape).
 /// github-commit-tracker-rows — also stamps `github.kind` = "issue" |
@@ -49,14 +49,14 @@ CachedTicket MapIssueOrPullRequestJsonToCachedTicket(const nlohmann::json& issue
 CachedTicket MapCommitJsonToCachedTicket(const nlohmann::json& commit, const std::string& owner,
                                          const std::string& repo);
 
-/// PR12 — enrich a ticket already mapped from a list/search response with the
+/// Enrich a ticket already mapped from a list/search response with the
 /// 4 PR-only fields (pr.head, pr.base, pr.mergeable, pr.draft) extracted from
 /// a per-PR `/repos/{o}/{r}/pulls/{n}` payload. Tolerant of missing/null
 /// fields — leaves the corresponding entry as the empty string when the
 /// source payload doesn't carry it.
 void EnrichPullRequestFieldsFromJson(CachedTicket& ticket, const nlohmann::json& prDetail);
 
-/// PR12 (Strategy C) — adapt a GraphQL `search.nodes[i]` node (Issue or
+/// Strategy C — adapt a GraphQL `search.nodes[i]` node (Issue or
 /// PullRequest fragment) to the REST `/issues` JSON shape that
 /// `MapIssueOrPullRequestJsonToCachedTicket` consumes. Keeps the existing
 /// mapper pure-logic-tested instead of duplicating its branching for camelCase
@@ -80,14 +80,14 @@ void EnrichPullRequestFieldsFromJson(CachedTicket& ticket, const nlohmann::json&
 /// that knows about GraphQL shape.
 nlohmann::json MapGraphQlNodeToRestShape(const nlohmann::json& node);
 
-/// PR12 (Strategy C) — adapt a GraphQL PullRequest node's PR-only fields
+/// Strategy C — adapt a GraphQL PullRequest node's PR-only fields
 /// (`headRefName`, `baseRefName`, `mergeable`, `isDraft`) to the REST
 /// `/pulls/{n}` JSON shape. Output is suitable for direct hand-off to
 /// `EnrichPullRequestFieldsFromJson`. Returns `null` JSON when the node is
 /// not a PR or is malformed (the caller treats null as "skip enrichment").
 nlohmann::json MapGraphQlPullRequestNodeToRestPrShape(const nlohmann::json& node);
 
-/// PR12 latency fix — pure-logic helper exposed for doctest coverage. Maps a
+/// Latency fix — pure-logic helper exposed for doctest coverage. Maps a
 /// GraphQL `search.nodes` array into a vector of CachedTicket, applying the
 /// `includePullRequests` filter and stripping the `kIsPullRequestSentinel`
 /// before return. Malformed nodes (mapping throws) are silently skipped so

@@ -19,7 +19,7 @@ std::unique_ptr<ITrackerBackend> DefaultTrackerBackendFactory::Create(const std:
         return std::make_unique<PlaneClient>();
     }
     if (lower == "github") {
-        // PR2 of docs/plans/shipped/github-tracker-backend.md — GitHub as third tracker.
+        // docs/plans/shipped/github-tracker-backend.md — GitHub as third tracker.
         // Built from the CALLER's live cfg, never a ConfigManager::Load() disk re-read —
         // the prefs "Save & Sync" path reaches here while the debounced config save is
         // still pending, so a disk read would latch a stale/empty PAT (issue #979).

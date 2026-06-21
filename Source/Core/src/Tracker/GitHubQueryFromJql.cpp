@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-// PR5 — pure helper. Tokenizer + small pattern matcher; no regex, no I/O,
+// Pure helper. Tokenizer + small pattern matcher; no regex, no I/O,
 // no globals. C++14 compatible.
 
 namespace smatchet {
@@ -140,7 +140,7 @@ bool Tokenize(const std::string& src, std::vector<Tok>& out, std::string& error)
             continue;
         }
         if (c == '=' || c == '~' || c == ':') {
-            // PR12 — accept `:` as an operator so the JQL-shorthand `type:pr`
+            // Accept `:` as an operator so the JQL-shorthand `type:pr`
             // tokenizes as Word("type") + Op(":") + Word("pr"). Only the
             // `type` field handler treats `:` as equivalent to `=`; all other
             // handlers reject `:` as an unsupported operator.
@@ -237,7 +237,7 @@ std::string MaybeQuote(const std::string& v) {
 // Token-aware ORDER BY clause stripping. JQL allows `ORDER BY <field> <dir>`
 // at the end of the query; GitHub `/search/issues` uses a separate `&sort=`
 // parameter so we drop the clause + emit a warning.
-// CR finding on PR #387: the prior pre-tokenize `lower.find("order by")`
+// The prior pre-tokenize `lower.find("order by")`
 // was context-blind and corrupted any quoted string containing the
 // substring (e.g. `text ~ "work order by priority"`). Walking the token
 // stream and matching only on bare `Word` tokens fixes that — quoted-
@@ -273,7 +273,7 @@ void HandleStatusClause(const std::string& op, const std::string& value, std::st
     }
 }
 
-// PR12 / github-commit-tracker-rows — `type:` handling. op is already
+// github-commit-tracker-rows — `type:` handling. op is already
 // normalized from ":" to "=" by the caller, so only "=" reaches here for the
 // shorthand + full-JQL forms alike.
 void HandleTypeClause(const std::string& op, const std::string& value, std::string& body, JqlToGitHubResult& result) {

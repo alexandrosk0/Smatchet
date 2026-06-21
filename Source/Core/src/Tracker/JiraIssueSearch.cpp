@@ -341,7 +341,9 @@ TrackerIssueFetchSummary JiraClient::FetchIssuesStreamed(const BatchCallback& on
         }
         LOG_DEBUG("JiraClient: fetching issues page %d from URL: %s", page, pageUrl.c_str());
 
-        auto response = TrackerGetLogged("JiraClient", pageUrl, headers);
+        // Thread the sync worker's cancellation token into the retry loop so an abort during a
+        // backoff/retry window is honoured immediately, not only at the next page boundary.
+        auto response = TrackerGetLogged("JiraClient", pageUrl, headers, shouldCancel);
         const std::string lastResponseBody = response.text;
         if (response.status_code != 200) {
             summary.FetchError = LogAndBuildPageFetchError(page, response);

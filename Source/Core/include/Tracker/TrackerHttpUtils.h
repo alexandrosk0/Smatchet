@@ -5,6 +5,7 @@
 
 #include <cpr/cpr.h>
 
+#include <functional>
 #include <string>
 
 constexpr long kTrackerConnectTimeoutMs = 5000;
@@ -38,9 +39,13 @@ std::string BuildTrackerBasicAuthHeader(const TrackerConfig& cfg);
  * already routed through the Tracker*Logged helpers (e.g. multipart attachment upload).
  */
 cpr::Redirect MakeTrackerRedirectPolicy();
-cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, const cpr::Header& headers);
+// `cancelled` (optional): polled by the retry wrapper before each attempt and after each backoff,
+// so a sync worker aborting mid-fetch is observed during the retry/backoff window (not only between
+// page GETs). When null, behaves exactly as before (no cancellation polling inside the retry loop).
 cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
-                               const cpr::Parameters& params);
+                               const std::function<bool()>& cancelled = nullptr);
+cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
+                               const cpr::Parameters& params, const std::function<bool()>& cancelled = nullptr);
 cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                long connectTimeoutMs, long overallTimeoutMs);
 cpr::Response TrackerPostLogged(const char* clientName, const std::string& url, const cpr::Header& headers,

@@ -13,7 +13,7 @@
 
 namespace {
 // FieldCatalogCache exposes free functions and reads/writes a single JSON file under the user data
-// directory. PR 3 adds an `entries` index and per-read lastUsedUnix touches; we serialize all
+// directory. An `entries` index and per-read lastUsedUnix touches exist; we serialize all
 // file-modifying paths so concurrent UI/HTTP/offline-replay threads don't race on read-modify-write.
 std::mutex& FieldCatalogCacheFileMutex() {
     static std::mutex m;
@@ -270,7 +270,7 @@ bool ParseCatalogEntryObject(const nlohmann::json& entryRoot, std::vector<Tracke
     return true;
 }
 
-// PR 3: split parse/normalize of the on-disk root so Save/Load/List/Forget share migration logic.
+// Split parse/normalize of the on-disk root so Save/Load/List/Forget share migration logic.
 // Schema 1: flat top-level "fields"/"components"/"issue_type_meta" (Jira only, pre-multi-backend).
 // Schema 2: { "schema_version": 2, "entries": { "<cacheKey>": { fields, components, issue_type_meta } } }.
 // Schema 3: { "schema_version": 3, "entries": [ { cacheKey, projectKey, backend, endpoint, lastUsedUnix } ... ],
@@ -350,7 +350,7 @@ nlohmann::json MigrateOnDiskRootToV3(const nlohmann::json& rootOnDisk) {
 }
 
 // Load the on-disk JSON, migrate to v3 in memory. On parse failure returns a fresh empty v3 root
-// and logs a WARN — matches the corrupt-cache wipe pattern described in PR 3 deliverable §1.
+// and logs a WARN — matches the corrupt-cache wipe pattern.
 nlohmann::json LoadAndMigrateRootLocked() {
     const std::string path = FieldCatalogCachePath();
     nlohmann::json rootOnDisk = nlohmann::json::object();

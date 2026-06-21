@@ -412,6 +412,67 @@ setup() {
     [ -z "$output" ]
 }
 
+# ---------- pr-numbered-temporal-comments (WARN-first; comment-regrowth guard) ----------
+# A comment pinning a DEV pull-request number (// PR 5 / PR #1104 / PR#1218 / PR12) is a temporal
+# scaffold that rots once the PR squash-merges. --scan-pr-comments emits the detected set for bats.
+
+@test "--scan-pr-comments fires on dev-PR-number comment shapes" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src/Tracker"
+    printf '// PR 6: legacy key removed.\n// PR #1104 review.\n// CR PR#1218.\n// PR12 latency fix.\n' \
+        > "$tmp/Source/Core/src/Tracker/Thing.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-pr-comments
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"pr-numbered-temporal-comments"* ]]
+    [[ "$output" == *"Thing.cpp"* ]]
+    # all four shapes detected
+    [ "$(printf '%s\n' "$output" | grep -c 'pr-numbered-temporal-comments')" -eq 4 ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-pr-comments ignores product-domain PR usage (no number)" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src/Tracker"
+    printf '// GitHub PR-only columns from the per-PR enrichment loop.\n// the JQL shorthand type:pr maps to is:pr.\n// a [PR] prefix so users tell PRs apart.\n' \
+        > "$tmp/Source/Core/src/Tracker/GitHubThing.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-pr-comments
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-pr-comments ignores GitHub Issue / ADR refs and non-comment code lines" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src/Tracker"
+    printf '// capture-then-check (issue #1081); see ADR-0012.\nconst int kPR12Threshold = 5;\n' \
+        > "$tmp/Source/Core/src/Tracker/Refs.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-pr-comments
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-pr-comments respects an in-window SMATCHET_DEVIATION" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src/Tracker"
+    printf '// SMATCHET_DEVIATION(rule=pr-numbered-temporal-comments; reason=test; owner=x; revisit=2099-01-01)\n// PR 6: cited for the audit trail.\n' \
+        > "$tmp/Source/Core/src/Tracker/Dev.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-pr-comments
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-pr-comments is clean on the real first-party tree (post-sweep)" {
+    run bash "$LINT" --scan-pr-comments
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
 # ---------- SMATCHET_DEVIATION ----------
 
 @test "deviation-overdue fires when calendar revisit has passed" {

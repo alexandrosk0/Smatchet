@@ -213,7 +213,8 @@ struct PlaneIssuePageFetch {
 // inline non-200 / empty / HTML / invalid-JSON / no-results-array error paths byte-for-byte.
 PlaneIssuePageFetch FetchPlaneIssuePage(const std::string& planeApi, const std::string& workspaceSlug,
                                         const std::string& planeProjectId, const cpr::Header& headers, int pageSize,
-                                        const std::string& listCursor) {
+                                        const std::string& listCursor,
+                                        const PlaneClient::CancelCallback& shouldCancel) {
     PlaneIssuePageFetch out;
     const std::string listBase =
         planeApi + "/api/v1/workspaces/" + workspaceSlug + "/projects/" + planeProjectId + "/work-items/";
@@ -224,7 +225,9 @@ PlaneIssuePageFetch FetchPlaneIssuePage(const std::string& planeApi, const std::
         params.Add({"cursor", listCursor});
     }
 
-    auto response = TrackerGetLogged("PlaneClient", listBase, headers, params);
+    // Thread the sync worker's cancellation token into the retry loop so an abort during a
+    // backoff/retry window is honoured immediately, not only at the next page boundary.
+    auto response = TrackerGetLogged("PlaneClient", listBase, headers, params, shouldCancel);
 
     if (response.status_code != 200) {
         const std::string urlHint = SanitizeAsciiSnippet(listBase, 200);
@@ -352,7 +355,7 @@ RunPlanePageLoop(const std::string& planeApi, const std::string& workspaceSlug, 
 
         // Phase 4: fetch + classify one page. Any hard failure carries a ready error string.
         PlaneIssuePageFetch page =
-            FetchPlaneIssuePage(planeApi, workspaceSlug, planeProjectId, headers, pageSize, listCursor);
+            FetchPlaneIssuePage(planeApi, workspaceSlug, planeProjectId, headers, pageSize, listCursor, shouldCancel);
         if (!page.Ok) {
             LOG_ERROR("PlaneClient::FetchIssuesStreamed %s", page.Error.c_str());
             summary.FetchError = page.Error;

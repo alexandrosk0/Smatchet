@@ -15,7 +15,7 @@ namespace AiPrefsTestConnection {
 // lets bucket-E tests drive the probe without traversing
 // `Preferences -> Assistant tab -> Test connection click`, which is not
 // reachable through the engine's `ItemClick` path in the current bucket-E
-// harness (PR #214 hot-lead).
+// harness.
 // Behaviour, verbatim from the original runProbe:
 //   - Snapshots `d.cfg` field values by value (so concurrent UI edits during
 //     the probe don't corrupt the worker's view).

@@ -1012,11 +1012,17 @@ struct FpsMeasure {
         const size_t n = frameMs.size();
         const double avgMs = sum / static_cast<double>(n);
         const size_t p99i = (n * 99) / 100 >= n ? n - 1 : (n * 99) / 100;
+        // Re-read the live vsync state at report time: the Preferences checkbox /
+        // config.set can flip the hub mid-run, so the Begin snapshot may be stale.
+        // Report "changed-mid-run" rather than a label that no longer reflects the
+        // sampled window when the boot snapshot and the final state disagree.
+        const bool vsyncOffNow = !smatchet::vsync::Enabled();
+        const char* vsyncLabel = (vsyncOffNow != vsyncOff) ? "changed-mid-run" : (vsyncOff ? "off" : "on");
         ::fprintf(stderr,
                   "[fps-measure] frames=%zu vsync=%s | avg=%.2fms (%.0f fps) | best=%.2fms (%.0f fps) | "
                   "p99=%.2fms (%.0f fps) | worst=%.2fms (%.0f fps)\n",
-                  n, vsyncOff ? "off" : "on", avgMs, 1000.0 / avgMs, frameMs.front(), 1000.0 / frameMs.front(),
-                  frameMs[p99i], 1000.0 / frameMs[p99i], frameMs.back(), 1000.0 / frameMs.back());
+                  n, vsyncLabel, avgMs, 1000.0 / avgMs, frameMs.front(), 1000.0 / frameMs.front(), frameMs[p99i],
+                  1000.0 / frameMs[p99i], frameMs.back(), 1000.0 / frameMs.back());
         ::fflush(stderr);
         done = true;
         glfwSetWindowShouldClose(window, 1);

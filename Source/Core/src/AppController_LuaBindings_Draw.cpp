@@ -44,6 +44,7 @@
 
 #include "imgui.h"
 #include "Logger.h"
+#include "LuaImagePathPolicyPure.h"
 #include "SmatchetFieldIconRender.h"
 #include "StringUtil.h"
 #include "TicketGridModel.h"
@@ -99,6 +100,17 @@ void LuaDrawList::Image(std::string path, float w, float h) {
     RequireActive("image");
     if (path.empty())
         return;
+    // SECURITY: a Lua-console script must not be able to drive an arbitrary outbound HTTP GET
+    // (SSRF / exfil via crafted URL / tracking pixel). The replay path (DrawImagePathOrUrl ->
+    // ResolveFieldIconAssetPath) passes http(s) URLs straight to HttpGetBinary, so explicitly
+    // refuse http(s) here at the binding boundary. Only non-http(s) local asset paths are allowed
+    // for imgui.image; internal field-icon-map / priority-icon URL fetches are unaffected (they
+    // never route through this Lua binding). Refusal is explicit + logged, not a silent drop.
+    if (!LuaImagePathPolicyPure::IsAllowedLuaImagePath(path.c_str())) {
+        LOG_WARN("Lua imgui.image: refused http(s) URL '%s' — only local asset paths are permitted from scripts.",
+                 path.c_str());
+        return;
+    }
     if (!IsFiniteF(w) || !IsFiniteF(h) || w < 0.0f || h < 0.0f || w > kRecorderSizeCap || h > kRecorderSizeCap)
         return;
     smatchet::lua::ImCmd c;

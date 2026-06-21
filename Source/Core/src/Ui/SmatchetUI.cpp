@@ -765,7 +765,7 @@ void SmatchetUI::drawChromeAndModeToggles(AppController& app, UiDrawSession& d) 
 // string once, drops disabled / unparseable entries, and keeps ArgsJson as text (parsed
 // lazily at dispatch — only when a hotkey actually fires). Cleared + rebuilt whenever
 // keybindingCacheDirty_ is set: once after config load (drawInitConfigOnce) and on any
-// future editor save (PR2). Runs on the UI thread.
+// future editor save. Runs on the UI thread.
 void SmatchetUI::rebuildKeybindingCache(UiDrawSession& d) {
     keybindingCache_.clear();
     keybindingCache_.reserve(d.cfg.Keybindings.Bindings.size());

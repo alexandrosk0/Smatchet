@@ -74,7 +74,7 @@ class LocalCacheManager : public ISyncCache {
     void DeletePendingCreate(std::int64_t id) override;
     void ArchivePendingCreate(std::int64_t id, const std::string& terminalReason,
                               const std::string& terminalError) override;
-    /** PR 5 legacy-project sweep: replace the stored `payload` JSON for an active pending row. */
+    /** Legacy-project sweep: replace the stored `payload` JSON for an active pending row. */
     void UpdatePendingCreatePayload(std::int64_t id, const std::string& payload) override;
 
     /** One-time stamp migration for the pending-queue `backend_key` columns (multi-grid

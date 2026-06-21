@@ -10,8 +10,8 @@
 // (whisper.transcribe-once) is fine because CLI commands run on a non-UI
 // thread; the Phase E hotkey path wraps Transcribe in
 // `AppController::LaunchBackgroundTask` and posts the result back via
-// `MainThreadDispatcher::PostToMainThread` (Pattern A, mirror of PR #186 /
-// #191). Documented here so future callers don't relearn the rule.
+// `MainThreadDispatcher::PostToMainThread` (Pattern A, mirror of the
+// attachment-download-off-UI-thread pattern). Documented here so future callers don't relearn the rule.
 // Pure-helper split: response-body parsing (nlohmann::json -> text) is its
 // own static function so the doctest rig can validate the parse without
 // linking cpr. Only Transcribe() itself reaches the network.

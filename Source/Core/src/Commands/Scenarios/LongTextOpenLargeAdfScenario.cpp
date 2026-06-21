@@ -1,5 +1,5 @@
-// LongTextOpenLargeAdfScenario — regression guard for PR #196.
-// PR #196 added `kAsyncRichSeedThresholdBytes = 32 * 1024` to
+// LongTextOpenLargeAdfScenario — regression guard for the async-rich-seed
+// threshold, which added `kAsyncRichSeedThresholdBytes = 32 * 1024` to
 // `TicketFieldEditor.cpp::OpenLongTextEditor`: when the raw rich payload is
 // larger than the threshold, the ADF → Markdown seed compute moves to a worker
 // thread via `LaunchBackgroundTask` and the UI shows "Loading description…"
@@ -8,9 +8,9 @@
 // This scenario reaches the production code only via the already-extracted
 // pure helper `TicketFieldEditorLongTextPure::ComputeLongTextSeed`. We build a
 // synthetic > 32 KB ADF, time the seed compute once on the UI thread (the
-// "what would have happened pre-PR" measurement), then run N frames and emit
-// the steady-state per-frame stats. The two numbers together tell us the
-// threshold is worth keeping — pre-regression of PR #196 would set
+// "what would have happened without the threshold" measurement), then run N
+// frames and emit the steady-state per-frame stats. The two numbers together
+// tell us the threshold is worth keeping — pre-regression would set
 // `seedComputeMs > frame_budget` while leaving `meanFrameMs` near baseline.
 // Note: this scenario does NOT drive `OpenLongTextEditor` directly because
 // production UI files (`TicketFieldEditor.cpp`, etc.) are out of scope for
@@ -33,7 +33,7 @@ namespace cmd {
 
 namespace {
 
-// Threshold guarded by PR #196 in TicketFieldEditor.cpp. Kept in sync via the
+// Threshold guarded in TicketFieldEditor.cpp. Kept in sync via the
 // scenario assertion below.
 constexpr std::size_t kAsyncRichSeedThresholdBytes = 32 * 1024;
 
@@ -69,7 +69,7 @@ class LongTextOpenLargeAdfScenario : public IScenario {
         UiPerfMonitor::Instance().Reset();
 
         // One-shot seed compute timing on the UI thread. This is the cost the
-        // PR #196 worker dispatch saves the user from paying inline.
+        // worker dispatch saves the user from paying inline.
         const std::string adf = BuildLargeAdf();
         adfBytes_ = adf.size();
         crossesThreshold_ = adfBytes_ > kAsyncRichSeedThresholdBytes;

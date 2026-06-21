@@ -329,7 +329,7 @@ void DrawBulkImportSourceToolbar(AppController& app, UiDrawSession& d) {
 /** Parse-preview button + the target-project modal it opens when the view has no project scope. */
 void DrawBulkImportParseControls(AppController& app, UiDrawSession& d) {
     if (ImGui::Button("Parse preview")) {
-        // PR 4b: if the active view has no project scope, ask the user before parsing — the parser
+        // If the active view has no project scope, ask the user before parsing — the parser
         // needs a fallbackProjectKey for "create" rows that don't carry their own project column.
         const ITrackerBackend* backend = app.GetTrackerBackend();
         const std::string scopeProj =
@@ -342,7 +342,7 @@ void DrawBulkImportParseControls(AppController& app, UiDrawSession& d) {
         }
     }
 
-    // PR 4b: target-project modal. Opened above when the active view has no project clause; the
+    // Target-project modal. Opened above when the active view has no project clause; the
     // user must pick a project before parse can run.
     if (d.bulkImportProjectModalOpen) {
         ImGui::OpenPopup("##BulkImportProjectModal");

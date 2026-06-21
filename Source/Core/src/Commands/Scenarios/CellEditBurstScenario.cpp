@@ -1,5 +1,5 @@
 // CellEditBurstScenario — exposes `debug.grid.edit-burst` as a scenario.
-// Verifies PR #186 (grid-cell-edit-perf): grid cell commit must NOT block the
+// Verifies grid-cell-edit-perf: grid cell commit must NOT block the
 // UI thread on an HTTP roundtrip — the dispatch hops to a worker via
 // `MainThreadDispatcher`. This scenario lets `scenario.run --name=cell-edit-burst`
 // drive the same headless harness used by
@@ -39,7 +39,7 @@ class CellEditBurstScenario : public IScenario {
         // exclusion`). Before this fix cell-edit-burst was a one-frame scenario:
         // its sample ring held ONLY the cold-start frames that ran between
         // perf.reset and the single measured frame, so the snapshot p99 was pure
-        // warmup (PR #963 CI: SmatchetUI::Draw p99 ~12 ms, drawEnsureCatalogAnd-
+        // warmup (observed in CI: SmatchetUI::Draw p99 ~12 ms, drawEnsureCatalogAnd-
         // InitialSync ~9 ms, with a 0.0002 ms steady max). WarmupFrames() now
         // opts into the runner's one-time UiPerfMonitor::Reset() after `warmup_`
         // frames, then the scenario keeps running `steady_` more frames so the

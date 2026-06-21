@@ -239,7 +239,7 @@ void TickDragDropAutoScroll() {
 }
 
 namespace {
-// PR 4b project pill: clickable label under the query bar whose popup clamps the active view to
+// Project pill: clickable label under the query bar whose popup clamps the active view to
 // a single project. Jira uses JQL `project = …`; Plane stores `project_id` in structured JSON.
 void DrawJqlProjectPill(AppController& app, UiDrawSession& d) {
     const std::string currentJql(d.viewJqlEditor.buf);
@@ -381,7 +381,7 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorS
     }
     TrackerQueryAcp_FlushPendingReplace(st);
 
-    // PR 4b: project pill beneath the query bar — pick a single project scope for the active view.
+    // Project pill beneath the query bar — pick a single project scope for the active view.
     // Dashboard-only: the pill is hard-bound to d.viewJqlEditor, so the omnibar opts out.
     if (drawProjectPill) {
         DrawJqlProjectPill(app, d);

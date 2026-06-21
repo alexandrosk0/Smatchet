@@ -5,7 +5,7 @@
 // reset-to-defaults. A read-only section lists the special-cased system shortcuts
 // that stay non-rebindable (Zen chord, palette nav). Mutations mark the dispatch
 // cache dirty + arm the debounced ConfigManager::Save via MarkPrefsDirty.
-// See docs/plans/shipped/keyboard-shortcuts-rebindable.md (PR2, item 10).
+// See docs/plans/shipped/keyboard-shortcuts-rebindable.md (item 10).
 // Localization idiom: this TU uses plain ImGui + explicit SmatchetLocalization::T()
 // (NOT the `#define ImGui SmatchetLocalizedImGui` macro the other prefs TUs use) so
 // it can include the shared capture header (which pulls imgui.h) without tripping the
@@ -93,6 +93,23 @@ bool CommandHasRow(const std::vector<Keybinding>& binds, const std::string& comm
 // (InputTextWithHint filter + scrollable child + Selectable). The popup must be drawn
 // every frame (BeginPopup) for OpenPopup to keep it open.
 bool DrawAddCommandPopup(AppController& app, std::vector<Keybinding>& binds) {
+    // Snapshot the full command registry ONCE per popup-open, not every frame the popup is drawn:
+    // App.Commands().All() copies the whole command vector, and BeginPopup returns true on every
+    // frame while open. We detect the closed->open transition (prevOpen latch) and refresh the
+    // cached snapshot only then; the per-row CommandHasRow(binds) filter still runs live (binds
+    // only changes on a pick, which closes the popup). The cache is cleared on close so a reopened
+    // popup re-snapshots any commands registered in the interim.
+    static std::vector<smatchet::cmd::Command> cachedAll;
+    static bool prevOpen = false;
+    const bool isOpen = ImGui::IsPopupOpen("###kbAddCommandPopup");
+    if (isOpen && !prevOpen) {
+        cachedAll = app.Commands().All();
+    } else if (!isOpen && prevOpen) {
+        cachedAll.clear();
+        cachedAll.shrink_to_fit();
+    }
+    prevOpen = isOpen;
+
     if (!ImGui::BeginPopup("###kbAddCommandPopup")) {
         return false;
     }
@@ -109,7 +126,7 @@ bool DrawAddCommandPopup(AppController& app, std::vector<Keybinding>& binds) {
 
     bool added = false;
     ImGui::BeginChild("###kbAddList", ImVec2(360.0f, 280.0f), true);
-    const std::vector<smatchet::cmd::Command> all = app.Commands().All();
+    const std::vector<smatchet::cmd::Command>& all = cachedAll;
     bool anyShown = false;
     for (const smatchet::cmd::Command& c : all) {
         if (CommandHasRow(binds, c.Name)) {

@@ -436,7 +436,7 @@ struct UiDrawSession {
     char domainBuf[128]{};
     char emailBuf[128]{};
     char tokenBuf[512]{};
-    // PR 6: projectKeyBuf / planeProjectBuf removed — project is per-operation, not a saved
+    // No projectKeyBuf / planeProjectBuf — project is per-operation, not a saved
     // preference. The Preferences "Recently used projects" listbox reads
     // FieldCatalogCache::ListCachedProjects() directly (no edit buffer needed).
     char trackerTypeBuf[32]{};
@@ -596,7 +596,7 @@ struct UiDrawSession {
     /// SyncWithBackend kick would be a redundant network re-fetch of data the
     /// pane's context already holds — the kick consumes this flag and skips it.
     bool suppressNextBackendSwitchInitialSync = false;
-    /// Backend key the suppress latch above was set FOR (PR #986 review LOW): the
+    /// Backend key the suppress latch above was set FOR: the
     /// consume site honours the latch only while the session tracker still matches,
     /// so a same-frame Preferences backend switch can't have its legitimate initial
     /// sync swallowed by a stale pane-focus suppression.
@@ -627,8 +627,8 @@ struct UiDrawSession {
     /// to detect focus switches (drives the Slice-2 focused-pane live-context swap).
     std::string paneWindowFocusedThisFrame;
     /// Previous frame's `paneWindowFocusedThisFrame`. A focus switch is only committed
-    /// once the SAME pane has reported focus on two consecutive frames (PR #986
-    /// ping-pong guard): adopting a focused pane rewrites the session-global
+    /// once the SAME pane has reported focus on two consecutive frames
+    /// (ping-pong guard): adopting a focused pane rewrites the session-global
     /// cfg.TrackerType, and with two simultaneously-visible split panes on different
     /// backends that global churn perturbs ImGui nav focus, flipping the report to the
     /// sibling next frame — an infinite re-adopt loop. A genuine click holds focus for
@@ -767,11 +767,11 @@ struct UiDrawSession {
     std::vector<std::string> newIssueMissingFieldIds;
     bool newIssueQueueFallbackVisible = false;
     std::string newIssueQueueFallbackError;
-    // PR 3: when the draft's ProjectKey diverges from this guard, the new-issue draft UI kicks an
+    // When the draft's ProjectKey diverges from this guard, the new-issue draft UI kicks an
     // async RefreshFieldCatalog so per-project required-fields/create-meta land before submit.
     std::string newIssueDraftLastFetchedProjectKey;
 
-    // PR 4b: project-picker state for the new-issue draft combo and the bulk-import modal.
+    // Project-picker state for the new-issue draft combo and the bulk-import modal.
     // Each has its own State because the lazy "All projects" fetch caches per call site.
     SmatchetProjectPicker::State newIssueProjectPickerState;
     SmatchetProjectPicker::State bulkImportProjectPickerState;
@@ -906,7 +906,7 @@ struct UiDrawSession {
     /// debounced fire in SmatchetUI::Draw drains the dirty flag and persists
     /// once per ~100 ms window. Eliminates the per-frame Save cascade documented
     /// in docs/plans/shipped/pillar-1-2-audit-2026-05-17.md § H11 + § Pillar 1 P1.
-    /// AI Assistant tab keeps its explicit Save flow (PR #181 / #184) and does
+    /// AI Assistant tab keeps its explicit Save flow and does
     /// NOT route through this flag.
     bool prefsDirty = false;
     std::chrono::steady_clock::time_point prefsSaveDueAt{};

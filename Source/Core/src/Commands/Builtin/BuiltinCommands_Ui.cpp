@@ -34,16 +34,18 @@ namespace {
 
 // Per-frame zoom: the renderer derives ImGui's FontGlobalScale from
 // cfg.FontSizePt (no atlas rebuild), so a zoom command only needs to set the
-// field and persist it. `reset` snaps to the TrackerConfig default; otherwise
-// `delta` nudges the current value. Clamped to a legible 8..32 pt range.
+// field and persist it. `reset` snaps to the shared default; otherwise `delta`
+// nudges the current value. Clamped to the legible range via the single
+// SmatchetDefaults::kFontSize*Pt source of truth (shared with config load +
+// the menu enable-gates).
 CommandResult AdjustFontSize(AppController& app, int delta, bool reset) {
     return RunOnUiThreadAsCommandResult(app, [delta, reset]() {
-        int pt = reset ? 16 : g_ui.cfg.FontSizePt + delta; // 16 = TrackerConfig default FontSizePt
-        if (pt < 8) {
-            pt = 8;
+        int pt = reset ? SmatchetDefaults::kFontSizeDefaultPt : g_ui.cfg.FontSizePt + delta;
+        if (pt < SmatchetDefaults::kFontSizeMinPt) {
+            pt = SmatchetDefaults::kFontSizeMinPt;
         }
-        if (pt > 32) {
-            pt = 32;
+        if (pt > SmatchetDefaults::kFontSizeMaxPt) {
+            pt = SmatchetDefaults::kFontSizeMaxPt;
         }
         g_ui.cfg.FontSizePt = pt;
         ConfigManager::Save(g_ui.cfg);

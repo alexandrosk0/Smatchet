@@ -204,7 +204,7 @@ void DrawNewIssueInactiveCell(AppController& app, UiDrawSession& d, const Tracke
                 (cfg.TrackerType == "Plane")
                     ? cfg.NewIssueInheritFieldIdsPlane
                     : (cfg.TrackerType == "Linear") ? cfg.NewIssueInheritFieldIdsLinear : cfg.NewIssueInheritFieldIds;
-            // PR 6: legacy global cfg.ProjectKey removed — pass "" as the legacy fallback.
+            // No global cfg.ProjectKey exists — pass "" as the legacy fallback.
             const ITrackerBackend* b = app.GetTrackerBackend();
             const std::string resolvedProject = smatchet::ResolveProjectForDraft(
                 b ? &b->Connectivity() : nullptr, cfg.JqlQuery, lastVisibleTicket->id, std::string());
@@ -226,19 +226,19 @@ void DrawNewIssueInactiveCell(AppController& app, UiDrawSession& d, const Tracke
         d.newIssueQueueFallbackError.clear();
         d.gridEditError.clear();
         d.gridEditSuccess.clear();
-        // PR 3: seed the project-change guard with the draft's initial project so the first
+        // Seed the project-change guard with the draft's initial project so the first
         // render doesn't redundantly refetch a catalog AppController already loaded at startup.
         d.newIssueDraftLastFetchedProjectKey = d.newIssueDraft.ProjectKey;
     }
 }
 
-// PR 3: when the draft's project changed mid-session, kick a per-project catalog refresh on the
+// When the draft's project changed mid-session, kick a per-project catalog refresh on the
 // joined background-task pool so the next submit sees per-project required-fields.
 void MaybeRefetchCatalogForProjectChange(AppController& app, UiDrawSession& d, const TrackerConfig& cfg) {
     if (!d.newIssueDraft.ProjectKey.empty() && d.newIssueDraft.ProjectKey != d.newIssueDraftLastFetchedProjectKey) {
         d.newIssueDraftLastFetchedProjectKey = d.newIssueDraft.ProjectKey;
-        // PR 6: project is plumbed as an explicit per-call argument; legacy cfg.ProjectKey /
-        // cfg.PlaneProjectId have been removed.
+        // Project is plumbed as an explicit per-call argument; no global cfg.ProjectKey /
+        // cfg.PlaneProjectId exist.
         const TrackerConfig refetchCfg = cfg;
         const std::string projectKey = d.newIssueDraft.ProjectKey;
         // Fire-and-forget on the joined pool (not a raw detached thread — forbidden by the
@@ -334,7 +334,7 @@ void DrawDraftIdColumnCell(AppController& app, UiDrawSession& d) {
     const ImVec2 draftActionBtn(ImGui::GetContentRegionAvail().x, 0.0f);
     if (disabled)
         ImGui::BeginDisabled();
-    // PR 4b: submit requires an explicit project pick. Disable + tooltip when empty.
+    // Submit requires an explicit project pick. Disable + tooltip when empty.
     const bool projectMissing = d.newIssueDraft.ProjectKey.empty();
     if (projectMissing) {
         ImGui::BeginDisabled();
@@ -579,7 +579,7 @@ void DrawDraftFieldColumnCell(AppController& app, UiDrawSession& d, const std::v
 
     const std::string& current = d.newIssueDraft.FieldValues[fieldId];
 
-    // PR 4b: Project gets the dedicated hybrid picker (Recently used + lazy "All projects").
+    // Project gets the dedicated hybrid picker (Recently used + lazy "All projects").
     if (fieldId == "project") {
         const std::string backendKind = (cfg.TrackerType == "Plane")
                                              ? std::string("Plane")
@@ -643,7 +643,7 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
         return;
     }
 
-    // PR 3: if the user changed the draft's project mid-session, kick a per-project catalog refresh
+    // If the user changed the draft's project mid-session, kick a per-project catalog refresh
     // on a worker thread so the returned create-meta becomes per-project required-fields for the next
     // submit attempt — the UI thread cannot block on HTTP.
     MaybeRefetchCatalogForProjectChange(app, d, cfg);

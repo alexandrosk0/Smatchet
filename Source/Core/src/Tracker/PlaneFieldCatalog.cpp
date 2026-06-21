@@ -393,9 +393,9 @@ Result<TrackerFieldCatalogResult, TrackerError> PlaneClient::FetchFieldCatalog(c
     std::string outError;
     std::vector<std::string> warns;
 
-    // PR 6: project is now an explicit per-call argument (legacy cfg.PlaneProjectId removed).
+    // Project is an explicit per-call argument (no global cfg.PlaneProjectId).
     // Empty ≡ unscoped: caller didn't pin a project, so refuse rather than silently fetching
-    // a stale catalog. See remove-global-project-key.md §2.5 / §7 PR 6.
+    // a stale catalog. See remove-global-project-key.md §2.5 / §7.
     const std::string projectKey = projectKeyArg;
 
     if (cfg.PlaneUrl.empty() || cfg.PlaneWorkspaceSlug.empty() || projectKey.empty()) {

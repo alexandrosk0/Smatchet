@@ -31,7 +31,7 @@ std::string NormalizeDirectoryPath(const std::string& baseDir);
 // fields (API keys, base URLs, MCP auth token) so a value that round-trips through disk — e.g. one
 // injected via the MCP `config.set` or Lua-config write paths — can never carry the control
 // characters used to smuggle extra HTTP headers when the value is later spliced into a request
-// (behind the use-site strip in AiAssistantController::BuildClientConfig, PR #176).
+// (behind the use-site strip in AiAssistantController::BuildClientConfig).
 std::string SanitizeConfigStringValue(const std::string& value);
 
 // Defense-in-depth (security backlog 2026-06-15): apply SanitizeConfigStringValue to every present

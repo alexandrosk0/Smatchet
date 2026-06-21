@@ -843,7 +843,7 @@ void OfflineQueueService::TickOfflineFieldEdits() {
             if (depsRef.BackendGeneration() == capturedGeneration) {
                 // Pre-check above is only a cheap skip of the full-table cache read; the
                 // checked overload re-checks the generation under activeTicketsMutex_
-                // immediately before the swap-in (TOCTOU close, PR #1104 review HIGH).
+                // immediately before the swap-in (TOCTOU close).
                 depsRef.RefreshLocalData(capturedGeneration);
             } else {
                 LOG_INFO("OfflineQueueService::TickOfflineFieldEdits skipped RefreshLocalData — backend "
@@ -1402,7 +1402,7 @@ void OfflineQueueService::TickOfflineCreates() {
                 if (depsRef.BackendGeneration() == capturedGeneration) {
                     // Pre-check above is only a cheap skip of the full-table cache read; the
                     // checked overload re-checks the generation under activeTicketsMutex_
-                    // immediately before the swap-in (TOCTOU close, PR #1104 review HIGH).
+                    // immediately before the swap-in (TOCTOU close).
                     depsRef.RefreshLocalData(capturedGeneration);
                 } else {
                     LOG_INFO("OfflineQueueService::TickOfflineCreates skipped RefreshLocalData — backend "

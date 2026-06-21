@@ -441,7 +441,7 @@ void StartNewIssueDraft(AppController& app, UiDrawSession& d, ViewDefinition* ac
                 : (d.cfg.TrackerType == "Linear") ? d.cfg.NewIssueInheritFieldIdsLinear : d.cfg.NewIssueInheritFieldIds;
         if (lastVisibleTicket) {
             const std::string activeViewQuery = activeViewForGrid ? activeViewForGrid->Jql : std::string();
-            // PR 6: legacy global cfg.ProjectKey removed — pass "" as the legacy fallback.
+            // No global cfg.ProjectKey exists — pass "" as the legacy fallback.
             const ITrackerBackend* gb = app.GetTrackerBackend();
             const std::string resolvedProject = smatchet::ResolveProjectForDraft(
                 gb ? &gb->Connectivity() : nullptr, activeViewQuery, lastVisibleTicket->id, std::string());

@@ -121,12 +121,12 @@ const CfgKey* ConfigSetKeyTable() {
         {"jqlQuery", "jql", "takes effect on next sync"},
         {"domain", "domain", "restart required to reconnect"},
         {"email", "email", "restart required to reconnect"},
-        // PR 6: projectKey / planeProjectId writable keys removed. Project is now
+        // projectKey / planeProjectId writable keys no longer exist. Project is now
         // per-operation. Pass it on ticket.create (required) or pick via the in-app picker.
         {"trackerType", "tracker_type", "restart required"},
         {"planeUrl", "plane_url", "restart required to reconnect"},
         {"planeWorkspaceSlug", "plane_workspace_slug", "restart required to reconnect"},
-        // User Info window keys (PR #1145) — previously UI-only-settable; this closes the
+        // User Info window keys — previously UI-only-settable; this closes the
         // CLI/MCP/Lua parity gap. String + int fields read back through ConfigManager's
         // kStringFields / kIntFields tables; values take effect on the next config load / sync.
         {"gitCommitRepos", "git_commit_repos", "comma-separated owner/repo list; next sync"},

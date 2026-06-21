@@ -1,5 +1,5 @@
 // WhisperAiAssistantAutosendScenario — end-to-end regression gate for the
-// PR #249 fix at bf9ce67f (`ReloadUserBuf so ImGui rereads spliced buffer`).
+// fix at bf9ce67f (`ReloadUserBuf so ImGui rereads spliced buffer`).
 // The fix lives across the router + AI Assistant TU pair: the router records
 // the focused widget's ItemId in `pendingReloadItemId_` whenever a splice lands
 // while the widget is active, and the AI Assistant draw drains that and calls

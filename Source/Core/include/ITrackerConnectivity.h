@@ -31,7 +31,7 @@ class ITrackerConnectivity {
     // (sentinel for the "ambiguous" case — callers must surface a picker).
     virtual std::string ExtractProjectFromQuery(const std::string& /*query*/) const { return ""; }
 
-    // List projects visible to the current credentials. Default empty;
-    // real impls land in PR 4 of the remove-global-project-key rollout.
+    // List projects visible to the current credentials. Default empty; backends that support
+    // project enumeration (Jira / Plane / GitHub) override this to drive the project picker.
     virtual std::vector<RemoteProject> ListProjects() { return {}; }
 };
