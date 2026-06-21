@@ -134,6 +134,11 @@
             "type": "command",
             "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/lint-cpp.sh",
             "timeout": 60000
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/lint-portable-purity.sh\"",
+            "timeout": 30000
           }
         ]
       },

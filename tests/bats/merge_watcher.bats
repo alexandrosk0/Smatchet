@@ -523,40 +523,31 @@ print('merge_action:', extras.get('merge_action'))
 }
 
 @test "handle_pass enqueues on a merge queue (state OPEN after --auto) -> merge_action: enqueued" {
-    # Windows: the gh stub below is an extensionless bash script; merge-watcher's
-    # _resolve_bin() uses shutil.which("gh"), which on Windows skips a name with
-    # no PATHEXT extension and resolves the REAL gh.exe instead → the stub is
-    # bypassed, handle_pass hits live GitHub, and PR#999 doesn't exist. A shebang
-    # script also can't be subprocess.run() directly on Windows even by explicit
-    # path, so a same-PR fix isn't viable. Pre-existing on develop (identical
-    # failure); runs cleanly on Linux/macOS. Backlog: merge-watcher-gh-stub-windows.
-    case "$OSTYPE" in msys*|cygwin*|win*) skip "gh bash-script stub unresolvable by Windows _resolve_bin; pre-existing on develop (see backlog merge-watcher-gh-stub-windows)" ;; esac
-    # Merge-queue-safe path: `gh pr merge --auto` succeeds (enqueue) but the PR
-    # is still OPEN afterwards (queue will merge it once merge_group checks pass).
-    # squash_merge_pr returns ENQUEUED_SENTINEL → handle_pass records `enqueued`,
-    # does NOT cascade / snapshot / drop-from-registry (a later cycle catches the
-    # real merge). docs/plans/active/build-quality-velocity-hardening.md #14 path B.
-    STUB_BIN=$(mktemp -d)
-    cat > "$STUB_BIN/gh" <<'STUB'
-#!/usr/bin/env bash
-case "$2 $3" in
-    "repo view") echo '{"owner":{"login":"o"},"name":"r"}'; exit 0 ;;
-    "api repos/o/r/pulls/999")          # detect_merged_branch_name
-        echo '{"head":{"ref":"feat/foo"}}'; exit 0 ;;
-    "pr merge") exit 0 ;;                # auto-merge enable succeeds (enqueued)
-    "pr view")                          # state read: still OPEN → enqueued
-        echo '{"state":"OPEN","mergeCommit":null}'; exit 0 ;;
-esac
-exit 0
-STUB
-    chmod +x "$STUB_BIN/gh"
-    PATH="$STUB_BIN:$PATH" run python -c "
-import os, sys
-os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
+    # Cross-platform: monkeypatch the Python gh-seams directly (same idiom as the
+    # passing handle_pass override/clean tests above) instead of an extensionless
+    # bash `gh` stub on PATH. The stub approach was Windows-unresolvable —
+    # _resolve_bin()'s shutil.which("gh") skips a name with no PATHEXT extension
+    # and a shebang script can't be subprocess.run() directly on Windows — so the
+    # two queue tests were Windows-skipped (backlog merge-watcher-gh-stub-windows).
+    # Patching squash_merge_pr to return ENQUEUED_SENTINEL exercises the same
+    # handle_pass decision path (enqueued → no cascade/snapshot/registry-drop) on
+    # every host, launching no subprocess. Backlog item resolved.
+    # docs/plans/active/build-quality-velocity-hardening.md #14 path B.
+    run python -c "
 import importlib.util
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 mw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mw)
+mw._gh_owner_repo = lambda clone_path: ('o', 'r')
+mw.ensure_pr_ready_for_review = lambda o, r, pr: True
+mw.detect_merged_branch_name = lambda o, r, pr: 'feat/foo'
+# Merge-queue-safe path: gh pr merge --auto enqueues, PR stays OPEN →
+# squash_merge_pr returns ENQUEUED_SENTINEL → handle_pass records 'enqueued'.
+mw.squash_merge_pr = lambda o, r, pr: mw.ENQUEUED_SENTINEL
+# These must NOT be reached on the enqueued early-return; trip loudly if they are.
+mw.find_stacked_children = lambda o, r, b: (_ for _ in ()).throw(AssertionError('cascade reached on enqueue'))
+mw._append_merge_snapshot = lambda *a, **k: (_ for _ in ()).throw(AssertionError('snapshot reached on enqueue'))
+mw.maybe_remove_from_registry = lambda pr, cp: (_ for _ in ()).throw(AssertionError('registry-drop reached on enqueue'))
 extras = mw.handle_pass({'pr': 999, 'clone_path': r'$CLONE_PATH'})
 print('merge_action:', extras.get('merge_action'))
 print('merge_sha:', extras.get('merge_sha', '<none>'))
@@ -564,38 +555,28 @@ print('merge_sha:', extras.get('merge_sha', '<none>'))
     [ "$status" -eq 0 ]
     [[ "$output" == *"merge_action: enqueued"* ]]
     [[ "$output" == *"merge_sha: <none>"* ]]
-    rm -rf "$STUB_BIN"
 }
 
 @test "handle_pass merges immediately when no queue (state MERGED after --auto) -> merge_action: merged" {
-    # Windows-skip — same root cause as the enqueued test above: the extensionless
-    # gh bash stub is bypassed by shutil.which on Windows. Pre-existing on develop.
-    case "$OSTYPE" in msys*|cygwin*|win*) skip "gh bash-script stub unresolvable by Windows _resolve_bin; pre-existing on develop (see backlog merge-watcher-gh-stub-windows)" ;; esac
-    # No merge queue configured: `gh pr merge --auto` merges immediately; the PR
-    # state reads MERGED with a mergeCommit oid → squash_merge_pr returns the SHA
-    # → handle_pass proceeds to merged + cascade (prior behaviour preserved).
-    STUB_BIN=$(mktemp -d)
-    cat > "$STUB_BIN/gh" <<'STUB'
-#!/usr/bin/env bash
-case "$2 $3" in
-    "repo view") echo '{"owner":{"login":"o"},"name":"r"}'; exit 0 ;;
-    "api repos/o/r/pulls/999")          # detect_merged_branch_name
-        echo '{"head":{"ref":"feat/foo"}}'; exit 0 ;;
-    "pr merge") exit 0 ;;                # auto-merge enable succeeds (immediate)
-    "pr view")                          # state read: MERGED → return SHA
-        echo '{"state":"MERGED","mergeCommit":{"oid":"abc123def456"}}'; exit 0 ;;
-    "pr list") echo '[]'; exit 0 ;;     # find_stacked_children → none
-esac
-exit 0
-STUB
-    chmod +x "$STUB_BIN/gh"
-    PATH="$STUB_BIN:$PATH" run python -c "
-import os, sys
-os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
+    # Cross-platform — same monkeypatch idiom as the enqueued test above (was
+    # Windows-skipped under the unresolvable extensionless gh bash stub; backlog
+    # merge-watcher-gh-stub-windows). No merge queue: squash_merge_pr returns a
+    # real SHA → handle_pass proceeds to merged + snapshot + cascade. Patch
+    # _append_merge_snapshot + find_stacked_children so no gh subprocess launches
+    # (mirrors the line-822 cascade test); the merged decision path is exercised.
+    run python -c "
 import importlib.util
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 mw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mw)
+mw._gh_owner_repo = lambda clone_path: ('o', 'r')
+mw.ensure_pr_ready_for_review = lambda o, r, pr: True
+mw.detect_merged_branch_name = lambda o, r, pr: 'feat/foo'
+# No queue: immediate merge → squash_merge_pr returns the merge-commit SHA.
+mw.squash_merge_pr = lambda o, r, pr: 'abc123def456'
+mw._append_merge_snapshot = lambda o, r, pr, sha, gate_snapshot=None: 'snapshot_skipped'
+mw.maybe_remove_from_registry = lambda pr, cp: None
+mw.find_stacked_children = lambda o, r, b: []
 extras = mw.handle_pass({'pr': 999, 'clone_path': r'$CLONE_PATH'})
 print('merge_action:', extras.get('merge_action'))
 print('merge_sha:', extras.get('merge_sha', '<none>'))
@@ -603,7 +584,6 @@ print('merge_sha:', extras.get('merge_sha', '<none>'))
     [ "$status" -eq 0 ]
     [[ "$output" == *"merge_action: merged"* ]]
     [[ "$output" == *"merge_sha: abc123def456"* ]]
-    rm -rf "$STUB_BIN"
 }
 
 @test "gh-json: invalid cwd raises RuntimeError (not OSError) so _gh_owner_repo degrades to None" {
