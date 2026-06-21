@@ -27,11 +27,27 @@
 
 namespace smatchet_tests {
 
+// Exit-code conventions for the runner-seam fake (mirrors P4Annotate.cpp's contract):
+//   * 0            — p4 ran and exited cleanly (callback returns true).
+//   * >0 (e.g. 2)  — p4 ran and exited NON-ZERO (callback returns true; the
+//                    production parser then surfaces a "non-zero exit" error).
+//   * 124          — TIMEOUT: the watchdog killed p4 (callback returns false, the
+//                    same "failed to run" shape, but with a distinct, inspectable
+//                    exit so a test can tell timeout from a clean spawn-fail).
+//   * -1           — spawn failure (callback returns false; legacy sentinel).
+// `SimulateSpawnFail` is the explicit, self-documenting alternative to encoding a
+// spawn failure as exit -1 — when true the callback returns false with outExit=-1.
+constexpr int kFakeP4TimeoutExit = 124;
+constexpr int kFakeP4SpawnFailExit = -1;
+
 struct FakeP4Response {
     std::string ArgvPrefix;
     int ExitCode = 0;
     std::string Stdout;
     std::string Stderr;
+    /// When true, model a spawn failure (process never launched): callback returns
+    /// false with outExit = kFakeP4SpawnFailExit, ExitCode/Stdout ignored.
+    bool SimulateSpawnFail = false;
 };
 
 /// Header-only loader + matcher. Construct from a fixture path; install via
@@ -61,6 +77,7 @@ class FakeP4Runner {
             r.ExitCode = entry.value("exit_code", 0);
             r.Stdout = entry.value("stdout", std::string());
             r.Stderr = entry.value("stderr", std::string());
+            r.SimulateSpawnFail = entry.value("simulate_spawn_fail", false);
             responses_.push_back(std::move(r));
         }
     }
@@ -86,12 +103,24 @@ class FakeP4Runner {
             std::lock_guard<std::mutex> lock(mutex_);
             for (const auto& r : responses_) {
                 if (PrefixMatches(joined, r.ArgvPrefix)) {
+                    // Explicit spawn failure: process never launched. Returns false
+                    // with the spawn-fail sentinel; ExitCode/Stdout are ignored.
+                    if (r.SimulateSpawnFail) {
+                        outExit = kFakeP4SpawnFailExit;
+                        outStdout.clear();
+                        outStderr =
+                            r.Stderr.empty() ? ("FakeP4Runner: simulated spawn failure for argv: " + joined) : r.Stderr;
+                        return false;
+                    }
                     outExit = r.ExitCode;
                     outStdout = r.Stdout;
                     outStderr = r.Stderr;
-                    // exit_code = -1 sentinel encodes spawn-failed / timeout
-                    // (matches P4RunCommand's `return false` shape).
-                    if (r.ExitCode == -1) {
+                    // Both -1 (spawn-fail) and 124 (timeout) map to P4RunCommand's
+                    // `return false` ("failed to run") shape — but the distinct
+                    // outExit is preserved so a test can tell timeout from spawn-fail.
+                    // Any other non-zero exit is a COMPLETED p4 run (return true) so
+                    // the production non-zero-exit error path is exercised.
+                    if (r.ExitCode == kFakeP4SpawnFailExit || r.ExitCode == kFakeP4TimeoutExit) {
                         return false;
                     }
                     return true;
@@ -99,7 +128,7 @@ class FakeP4Runner {
             }
             // Unmatched call — model as spawn failure with diagnostic stderr so
             // tests that hit an un-scripted argv produce a recognizable error.
-            outExit = -1;
+            outExit = kFakeP4SpawnFailExit;
             outStdout.clear();
             outStderr = "FakeP4Runner: no scripted response for argv: " + joined;
             return false;

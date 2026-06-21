@@ -266,6 +266,18 @@ class AppController : public IMainThreadPoster {
      */
     bool RecreateLocalCacheDatabase(std::string& outError);
 
+    /// Bucket-E (ImGui Test Engine) opt-in: ensure a live LocalCacheManager + the
+    /// owned offline-queue service exist so test scenarios that exercise the
+    /// offline-queue UI (e.g. DataDependentWindowsSmoke case 8) can drive a real
+    /// `QueueCreateOffline` write instead of falling back to the empty-guard path.
+    /// Opens a throwaway in-memory SQLite cache only when `Cache` is currently unset
+    /// (a normal boot already has a live file-backed cache, in which case this is a
+    /// no-op beyond ensuring `WireCoreServices()` ran). UI-thread only; intended to
+    /// be called from UiTestScenario::OnStart under the
+    /// SMATCHET_UITEST_WITH_LOCAL_CACHE=1 env opt-in. Returns true if a live cache is
+    /// present on return.
+    bool EnsureLocalCacheForUiTest();
+
 #if defined(SMATCHET_WITH_AI)
     /// Phase 3 of ai-chat-claude-desktop-parity. Thin pass-through to
     /// `LocalCacheManager::LoadChatMessages` so the AI panel's UI-side hydration path

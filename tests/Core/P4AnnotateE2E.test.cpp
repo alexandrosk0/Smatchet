@@ -91,3 +91,42 @@ TEST_CASE("P4AnnotateFile: timeout (override returns false) surfaces failed-to-r
     CHECK_FALSE(err.empty());
     CHECK(rows.empty());
 }
+
+// The fake distinguishes a TIMEOUT (process launched, watchdog killed it: exit 124)
+// from a SPAWN FAILURE (process never launched: simulate_spawn_fail / exit -1). Both
+// collapse to P4RunCommand's `return false` "failed to run" shape at the production
+// layer, so assert the distinction directly on the runner-seam callback.
+TEST_CASE("FakeP4Runner: timeout vs spawn-fail are distinguishable at the callback seam") {
+    smatchet_tests::FakeP4Runner runner;
+    AnnotateAnalysisConfig cfg = MakeCfgFromFixture(runner, "annotate_happy.json");
+    const AnnotateAnalysisConfig::P4RunCommandFn& cb = cfg.P4RunOverride;
+
+    // Timeout: returns false, but preserves the distinct 124 exit code.
+    {
+        int exit = 999;
+        std::string out, errOut;
+        const bool ran = cb({"annotate", "-u", "-c", "-q", "//depot/timeout.cpp"}, exit, out, errOut);
+        CHECK_FALSE(ran);
+        CHECK(exit == smatchet_tests::kFakeP4TimeoutExit);
+        CHECK_FALSE(errOut.empty());
+    }
+    // Spawn failure: returns false with the spawn-fail sentinel (-1), NOT 124.
+    {
+        int exit = 999;
+        std::string out, errOut;
+        const bool ran = cb({"annotate", "-u", "-c", "-q", "//depot/spawnfail.cpp"}, exit, out, errOut);
+        CHECK_FALSE(ran);
+        CHECK(exit == smatchet_tests::kFakeP4SpawnFailExit);
+        CHECK(exit != smatchet_tests::kFakeP4TimeoutExit);
+        CHECK_FALSE(errOut.empty());
+    }
+    // Non-zero COMPLETED exit (missing.cpp → exit 1): returns true so the production
+    // non-zero-exit error path runs — must NOT be mistaken for a spawn-fail/timeout.
+    {
+        int exit = 999;
+        std::string out, errOut;
+        const bool ran = cb({"annotate", "-u", "-c", "-q", "//depot/missing.cpp"}, exit, out, errOut);
+        CHECK(ran);
+        CHECK(exit == 1);
+    }
+}

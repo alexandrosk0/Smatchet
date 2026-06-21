@@ -27,9 +27,14 @@
     },
     {
       "argv_prefix": "annotate -u -c -q //depot/timeout.cpp",
-      "exit_code": -1,
+      "exit_code": 124,
       "stdout": "",
-      "stderr": "p4 process timed out"
+      "stderr": "p4 process timed out after 120000 ms"
+    },
+    {
+      "argv_prefix": "annotate -u -c -q //depot/spawnfail.cpp",
+      "simulate_spawn_fail": true,
+      "stderr": "CreateProcess: p4 executable not found on PATH"
     }
   ]
 }

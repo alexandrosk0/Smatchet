@@ -68,6 +68,10 @@ class UiTestScenario : public IScenario {
     std::string disabledReason_;
     std::string filter_;
     std::string outPath_;
+    // --outLog=<path>: when non-empty, OnFinish writes EVERY test's verbose
+    // Output.Log (not just failures) to this file so the bucket-E bash drivers can
+    // `cat` it on failure. Empty = no dump (default).
+    std::string outLog_;
 };
 
 } // namespace cmd

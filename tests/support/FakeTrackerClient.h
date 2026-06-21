@@ -427,13 +427,27 @@ class FakeTrackerClient : public ITrackerBackend,
     // Enqueue a sequenced fetch result consumed FIFO; once the queue is drained FetchIssues
     // falls back to the static SetFetchIssuesResult values. Lets fixture-backed scenarios
     // script "first fetch succeeds, second returns transport error" without resetting state.
+    //
+    // AUTO-STICKY: each enqueue also mirrors its values into the static fallback, so the LAST
+    // enqueued result is re-served verbatim once the queue drains. Without this, an unscripted
+    // re-fetch (one more FetchIssues than the test enqueued) fell back to the default
+    // fetchTickets_={} + fetchFullSyncCompleted_=true pair — an empty FULL sync, which the
+    // streaming-sync stale-pruner reads as "the server has zero tickets" and deletes the
+    // grid the previous scripted fetch just populated. Sticky-on-last keeps that re-fetch
+    // idempotent (same tickets, same full-sync flag) so it can never trigger stale-pruning.
     void EnqueueFetchResult(std::vector<CachedTicket> tickets, bool fullSyncCompleted = true,
                             const std::string& fetchError = std::string(), const std::string& warning = std::string()) {
         ScriptedFetchResult r;
-        r.Tickets = std::move(tickets);
+        r.Tickets = tickets;
         r.FullSyncCompleted = fullSyncCompleted;
         r.FetchError = fetchError;
         r.Warning = warning;
+        // Mirror into the static fallback BEFORE moving into the queue so the post-drain
+        // re-fetch returns this (the latest) scripted result rather than the cold default.
+        fetchTickets_ = std::move(tickets);
+        fetchFullSyncCompleted_ = fullSyncCompleted;
+        fetchError_ = fetchError;
+        fetchWarning_ = warning;
         fetchQueue_.push_back(std::move(r));
     }
 
