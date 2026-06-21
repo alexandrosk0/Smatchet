@@ -49,6 +49,7 @@ Gotchas the wire-up hit (record once, save the next agent):
 - `IMGUI_DEFINE_MATH_OPERATORS` must be defined BEFORE `imgui.h`. Setting it in `SmatchetImConfig.h` (read at `imgui.h` start via `IMGUI_USER_CONFIG`) is the right hook point.
 - The engine's filter language is substring + `^` / `$` / `,` modifiers, NOT shell glob. Don't write `Views/*` — write `Views` or `^Views/`.
 - Fresh-profile drivers MUST seed `whisper_setup_completed=true` (and ideally `backend_has_been_reachable=true`) in the test config — otherwise the first-launch `##WhisperSetupBanner` overlays the UI and silently swallows `ItemClick`s, failing click-driven tests with no obvious cause.
+- Any bucket-E test that performs a queue/field-edit WRITE MUST use `BucketE::UiTestWriteScope` (`tests/ui/_helpers/UiTestWriteScope.h`) to flip the fresh-profile `ReadOnlyMode=true` default OFF, and MUST HARD-FAIL — not skip — on a write failure once its env gates are met. A fresh profile defaults read-only, so an unscoped write is silently rejected and the test goes vacuously green.
 
 If a future bucket-E test needs synthetic input that the existing engine doesn't cover, the fallback is a recorded one-shot (mouse / key event log replayed via `ImGuiIO`) — but record the recipe so the next bucket-E item stays cheap.
 
