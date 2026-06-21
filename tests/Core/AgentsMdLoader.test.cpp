@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cstdio>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -125,6 +126,13 @@ TEST_CASE("AgentsMdLoader::ClampReadLen — read-cap sizing decision (pure, no I
     // Unknown size (stat failed): fall back to cap+1 regardless of the size arg.
     CHECK(AgentsMdLoader::ClampReadLen(1024u, 0u, /*fileSizeKnown=*/false) == 1025u);
     CHECK(AgentsMdLoader::ClampReadLen(1024u, 64u, /*fileSizeKnown=*/false) == 1025u);
+    // SIZE_MAX cap: the `+1` would wrap to 0 and break over-cap detection. The read
+    // length must NOT wrap — it stays maxBytes (capped at fileSize when known), never 0.
+    const std::size_t kMax = (std::numeric_limits<std::size_t>::max)();
+    CHECK(AgentsMdLoader::ClampReadLen(kMax, 64u, /*fileSizeKnown=*/true) == 64u);
+    CHECK(AgentsMdLoader::ClampReadLen(kMax, 0u, /*fileSizeKnown=*/false) == kMax);
+    CHECK(AgentsMdLoader::ClampReadLen(kMax, static_cast<std::uintmax_t>(kMax),
+                                       /*fileSizeKnown=*/true) == kMax);
 }
 
 // SECURITY (audit 2026-06-13 H1, P1): a config-write attacker repointing an

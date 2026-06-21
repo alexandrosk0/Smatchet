@@ -212,8 +212,8 @@ TEST_CASE("AiContextBuilder::BuildAll — disabled flags zero-out matching block
 }
 
 TEST_CASE("AiContextBuilder::BuildAll — ActiveTicket fast path validates pre-resolved id [high-risk]") {
-    // CR #1527: the O(1) PreResolvedActiveTicket fast path must verify the pointer's
-    // id matches ActiveIssueId. A STALE pre-resolved pointer (id != ActiveIssueId)
+    // The O(1) PreResolvedActiveTicket fast path must verify the pointer's id
+    // matches ActiveIssueId. A STALE pre-resolved pointer (id != ActiveIssueId)
     // must NOT surface the wrong ticket — BuildAll must fall back to the scan and
     // resolve ActiveIssueId from the snapshot.
     auto tickets = MakeTickets(5); // SMA-100 .. SMA-104

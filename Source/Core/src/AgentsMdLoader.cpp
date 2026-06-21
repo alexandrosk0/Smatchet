@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -128,6 +129,15 @@ std::size_t ClampReadLen(std::size_t maxBytes, std::uintmax_t fileSize, bool fil
     // detected (got > maxBytes), but never over-allocate maxBytes+1 for a small
     // file. A failed stat (fileSizeKnown == false) falls back to maxBytes+1 so
     // behaviour is unchanged from the pre-stat read.
+    // Guard the +1 against unsigned overflow: at maxBytes == SIZE_MAX there is no
+    // representable cap+1, so the read length is just maxBytes (capped at fileSize
+    // when known) — the +1 over-cap probe is moot since nothing can exceed SIZE_MAX.
+    if (maxBytes == (std::numeric_limits<std::size_t>::max)()) {
+        if (fileSizeKnown && fileSize < static_cast<std::uintmax_t>(maxBytes)) {
+            return static_cast<std::size_t>(fileSize);
+        }
+        return maxBytes;
+    }
     const std::size_t readCap = maxBytes + 1;
     if (fileSizeKnown && fileSize < static_cast<std::uintmax_t>(readCap)) {
         return static_cast<std::size_t>(fileSize);
