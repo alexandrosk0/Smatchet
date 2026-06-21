@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -60,7 +61,16 @@ std::unique_ptr<IScenario> MakeProbeScenario(std::string name, ProbeFrameFn onFr
 }
 
 ProbeScope::ProbeScope(ScenarioRunner& runner, std::string name, ProbeFrameFn onFrame, ProbeSetupFn setup, int frames)
-    : runner_(runner), name_(std::move(name)) {
+    : runner_(runner), name_(std::move(name)), registered_(false) {
+    // Name-collision safety: if a factory under name_ already exists, this scope
+    // must NOT overwrite it (RegisterFactory does factories_[name] = ..., which
+    // would clobber the prior entry) and must NOT claim ownership — otherwise the
+    // dtor's UnregisterFactory would erase a factory this scope did not create.
+    const std::vector<std::string> existing = runner_.ListNames();
+    if (std::find(existing.begin(), existing.end(), name_) != existing.end()) {
+        return; // registered_ stays false; dtor leaves the pre-existing factory intact.
+    }
+
     // Capture the lambdas + frame count by value into the factory so each Start()
     // within the scope builds a fresh ProbeScenario. The factory itself out-lives
     // every Start because it lives in runner_.factories_ until this scope's dtor.
@@ -70,9 +80,16 @@ ProbeScope::ProbeScope(ScenarioRunner& runner, std::string name, ProbeFrameFn on
     runner_.RegisterFactory(name_, [factoryName, frameFn, setupFn, frames]() -> std::unique_ptr<IScenario> {
         return MakeProbeScenario(factoryName, frameFn, setupFn, frames);
     });
+    registered_ = true;
 }
 
-ProbeScope::~ProbeScope() { runner_.UnregisterFactory(name_); }
+ProbeScope::~ProbeScope() {
+    // Only unregister the factory THIS scope installed. A scope that hit a name
+    // collision (registered_ == false) never owned the entry and must leave it.
+    if (registered_) {
+        runner_.UnregisterFactory(name_);
+    }
+}
 
 } // namespace cmd
 } // namespace smatchet

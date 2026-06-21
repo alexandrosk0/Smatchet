@@ -77,6 +77,32 @@ TEST_CASE("ProbeScope nested scopes register independently") {
     CHECK_FALSE(Contains(runner.ListNames(), "probe-a"));
 }
 
+TEST_CASE("ProbeScope with a colliding name leaves the pre-existing factory intact on destruction") {
+    ScenarioRunner runner;
+
+    // A factory installed by someone else (not a ProbeScope) under the same name.
+    runner.RegisterFactory("collide", []() -> std::unique_ptr<IScenario> {
+        return MakeProbeScenario("pre-existing", nullptr, nullptr, 1);
+    });
+    REQUIRE(Contains(runner.ListNames(), "collide"));
+
+    {
+        // ProbeScope hits the name collision: it must NOT take ownership of the
+        // entry, so its dtor must NOT erase the pre-existing factory.
+        ProbeScope scope(runner, "collide", [](int) {}, nullptr, 5);
+        CHECK(scope.Name() == "collide");
+        CHECK(Contains(runner.ListNames(), "collide"));
+    }
+
+    // Regression guard for the RAII bug: an unconditional dtor UnregisterFactory
+    // would have erased the factory this scope never created.
+    CHECK(Contains(runner.ListNames(), "collide"));
+    // And it is still erasable exactly once — proving a single live entry remains
+    // (no double-register, no double-erase).
+    CHECK(runner.UnregisterFactory("collide") == 1u);
+    CHECK_FALSE(Contains(runner.ListNames(), "collide"));
+}
+
 TEST_CASE("ScenarioRunner::UnregisterFactory returns the erased count") {
     ScenarioRunner runner;
     runner.RegisterFactory(

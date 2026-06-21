@@ -18,7 +18,7 @@ namespace detail {
 // SMATCHET_DEVIATION ubiquitous idiom repeated across subsystems and pre-dates this
 // SMATCHET_DEVIATION anon-ns to detail promotion, so folding it into a shared
 // SMATCHET_DEVIATION Core StringUtil helper is out of scope for the testability work;
-// owner=build-doctor; revisit=when a canonical Core ascii-lower-trim helper is adopted)
+// owner=build-doctor; revisit=2026-12-31)
 std::string ToLowerAscii(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });

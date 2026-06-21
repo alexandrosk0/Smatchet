@@ -47,6 +47,10 @@ std::unique_ptr<IScenario> MakeProbeScenario(std::string name, ProbeFrameFn onFr
 /// starts it, so the captured lambdas must out-live every Start within the scope
 /// (they do — they live in this object). Non-copyable; move is not needed for the
 /// stack-scoped usage and is therefore deleted to keep ownership obvious.
+/// Name-collision safety: if a factory with `name` is already registered when the
+/// scope is constructed, this scope does NOT overwrite or take ownership of it —
+/// the dtor then leaves the pre-existing factory untouched. Only a scope that
+/// actually installed the factory (registered_ == true) removes it on exit.
 class ProbeScope {
   public:
     ProbeScope(ScenarioRunner& runner, std::string name, ProbeFrameFn onFrame, ProbeSetupFn setup = ProbeSetupFn(),
@@ -64,6 +68,10 @@ class ProbeScope {
   private:
     ScenarioRunner& runner_;
     std::string name_;
+    /// True iff THIS scope's ctor installed the factory (i.e. no factory under
+    /// `name_` pre-existed). Guards the dtor so a name collision never erases a
+    /// factory this scope did not create.
+    bool registered_;
 };
 
 } // namespace cmd
