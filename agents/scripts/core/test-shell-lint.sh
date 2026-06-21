@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-shell-lint.sh — six-rule self-review lint for shell scripts.
+# test-shell-lint.sh — seven-rule self-review lint for shell scripts.
 #
 # Closes docs/self-improvement/categories/process.md 2026-05-28 P1 entry
 # "Implementer-side self-review didn't catch real shell-script bugs".
@@ -21,6 +21,11 @@
 #      an explicit mitigation (`|| true`, restructure). Closes the
 #      `pipefail-masked-pipe-exit-needs-class-guard` backlog entry (the dormant
 #      class behind the two #995 inline fixes — deps-rule + flag-parity pipes).
+#   7. NUL-byte guard — fail any tracked first-party *.sh containing a NUL byte
+#      (\x00). bash truncates a string at a NUL, so an embedded NUL silently
+#      drops the rest of the script at execution while the file looks intact in
+#      most editors. Catches corruption / mis-encoding (UTF-16, truncated write)
+#      at lint time.
 #
 # Targets: scripts/dev/*.sh + agents/scripts/{core,project}/*.sh (post-#609
 # layout; maxdepth 1, so scripts/dev/local/ is excluded) + scripts/mobile/**
@@ -311,10 +316,33 @@ check_pipefail_head() {
     done < <(printf '%s\n' "$nc" | grep -nE '=\$\(.*\|[[:space:]]*head([[:space:]]|\))' || true)
 }
 
+# Rule 7 — NUL-byte guard. A tracked first-party `*.sh` is a text file; an embedded NUL
+# (`\x00`) means it was corrupted / partially-binary-written / mis-encoded (UTF-16 with BOM,
+# a truncated write, an accidental binary paste). bash treats a NUL as a string terminator, so
+# a NUL silently truncates the script at the byte — the tail never executes, yet the file looks
+# fine in most editors. Fail any script carrying a NUL so the corruption is caught at lint time
+# rather than as a baffling "rest of the script didn't run" at execution.
+check_nul_byte() {
+    local script="$1"
+    # LC_ALL=C + -a treat the file as binary so grep doesn't bail on the NUL; -P \x00 matches
+    # the NUL byte. -q: presence-only.
+    if LC_ALL=C grep -qaP '\x00' "$script" 2>/dev/null; then
+        emit "$script" "1" "SHELL_LINT_NUL_BYTE" "script contains a NUL byte (\\x00) — corrupted / mis-encoded; bash truncates at the NUL"
+    fi
+}
+
 PASSED=0
 FAILED=0
 for script in "${TARGETS[@]}"; do
     before="${#VIOLATIONS[@]}"
+    # NUL guard runs FIRST and short-circuits: a NUL-bearing file is binary/corrupt, so the
+    # text-oriented rules below would only emit "ignored null byte" command-substitution
+    # warnings and unreliable matches. One NUL finding is enough.
+    check_nul_byte "$script"
+    if [ "${#VIOLATIONS[@]}" -gt "$before" ]; then
+        FAILED=$((FAILED + 1))
+        continue
+    fi
     check_deps "$script"
     check_shellcheck "$script"
     check_curl_fail "$script"

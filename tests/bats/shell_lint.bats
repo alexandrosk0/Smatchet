@@ -150,9 +150,36 @@ setup() {
     [[ "$output" == *"Passed: 1  Failed: 0"* ]]
 }
 
+# ---------- rule 7: NUL-byte guard ----------
+
+@test "rule 7 (nul-byte): fires on a script containing an embedded NUL byte" {
+    # Synthesize the NUL-bearing script at runtime (printf '\0') so the repo never
+    # commits a binary fixture. A NUL truncates the script at execution under bash;
+    # the guard must flag it as corruption.
+    tmp="$(mktemp -d)"
+    bad="$tmp/known-bad-7-nul.sh"
+    printf '#!/usr/bin/env bash\necho before\0echo after\n' > "$bad"
+    run bash "$LINT" --target "$bad"
+    rm -rf "$tmp"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"SHELL_LINT_NUL_BYTE"* ]]
+    [[ "$output" == *"Passed: 0  Failed: 1"* ]]
+}
+
+@test "rule 7 (nul-byte): does NOT fire on a clean ASCII script" {
+    tmp="$(mktemp -d)"
+    good="$tmp/known-good-7-clean.sh"
+    printf '#!/usr/bin/env bash\nset -euo pipefail\necho ok\n' > "$good"
+    run bash "$LINT" --target "$good"
+    rm -rf "$tmp"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"SHELL_LINT_NUL_BYTE"* ]]
+    [[ "$output" == *"Passed: 1  Failed: 0"* ]]
+}
+
 # ---------- known-good: all rules clean ----------
 
-@test "known-good fixture passes all 6 rules" {
+@test "known-good fixture passes all 7 rules" {
     run bash "$LINT" --target "$FIXTURE_DIR/known-good.sh"
     [ "$status" -eq 0 ]
     [[ "$output" == *"Passed: 1  Failed: 0"* ]]

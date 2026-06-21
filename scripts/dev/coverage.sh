@@ -42,6 +42,62 @@
 
 set -euo pipefail
 
+# classify_capture_failure <label> <rc> <bin-path>
+# Distinguish a TEST-BINARY failure (the doctest child returned non-zero — a real test
+# regression OpenCppCoverage faithfully forwarded; the .bin intermediate WAS written) from
+# an OpenCppCoverage TOOLING failure (the tool could not attach / produced no coverage data;
+# no .bin intermediate exists). The two demand different operator action: a test failure means
+# "fix the failing test"; a tooling failure means "fix the coverage harness / install". A
+# non-empty .bin proves the child executed under the debugger, so its non-zero RC is a test
+# exit; a missing/empty .bin means the tool never produced data -> tooling failure.
+# Returns 0 on success (rc 0), 1 on a test-binary failure, 2 on a tooling failure.
+classify_capture_failure() {
+    local label="$1" rc="$2" bin="$3"
+    if [ "$rc" -eq 0 ]; then return 0; fi
+    if [ -s "$bin" ]; then
+        echo "FAIL($label): the test binary returned non-zero exit $rc (real test failure — the" >&2
+        echo "  coverage capture itself succeeded; .bin written). Fix the failing $label test(s)." >&2
+        return 1
+    fi
+    echo "FAIL($label): OpenCppCoverage tooling failure (exit $rc, no coverage .bin produced — the" >&2
+    echo "  tool could not attach / capture). Check the OpenCppCoverage install + the $label exe path." >&2
+    return 2
+}
+
+# --selftest — exercise classify_capture_failure with synthetic inputs (no build/exe needed).
+# selftest: asserts-failure — feeds known-bad (non-zero) RCs and asserts the test-vs-tooling
+# split returns the distinct exit codes (1 = test failure with .bin present, 2 = tooling failure
+# with no .bin). Kept BEFORE the cd / build-dir resolution so it runs in any CWD.
+if [ "${1:-}" = "--selftest" ]; then
+    st_tmp="$(mktemp -d)" || { echo "coverage.sh selftest: mktemp failed" >&2; exit 2; }
+    trap 'rm -rf "$st_tmp"' EXIT
+    st_fail=0
+    st_rc=0
+    # `set -e` would abort on a non-zero return, so disable it around the probes.
+    set +e
+    # RC 0 -> success regardless of bin.
+    classify_capture_failure "X" 0 "$st_tmp/absent.bin" 2>/dev/null; st_rc=$?
+    [ "$st_rc" -eq 0 ] || { echo "selftest FAIL: rc0 not success (got $st_rc)" >&2; st_fail=1; }
+    # Non-zero RC with a non-empty .bin -> TEST-binary failure (return 1).
+    printf 'data' > "$st_tmp/present.bin"
+    classify_capture_failure "X" 5 "$st_tmp/present.bin" 2>/dev/null; st_rc=$?
+    [ "$st_rc" -eq 1 ] || { echo "selftest FAIL: test-failure not classified as 1 (got $st_rc)" >&2; st_fail=1; }
+    # Non-zero RC with NO .bin -> TOOLING failure (return 2).
+    classify_capture_failure "X" 5 "$st_tmp/absent.bin" 2>/dev/null; st_rc=$?
+    [ "$st_rc" -eq 2 ] || { echo "selftest FAIL: tooling-failure not classified as 2 (got $st_rc)" >&2; st_fail=1; }
+    # Non-zero RC with an EMPTY .bin -> tooling failure (return 2) — empty file is no data.
+    : > "$st_tmp/empty.bin"
+    classify_capture_failure "X" 5 "$st_tmp/empty.bin" 2>/dev/null; st_rc=$?
+    [ "$st_rc" -eq 2 ] || { echo "selftest FAIL: empty-bin not classified as tooling (2) (got $st_rc)" >&2; st_fail=1; }
+    set -e
+    if [ "$st_fail" -eq 0 ]; then
+        echo "coverage.sh --selftest: PASS — test-binary vs OpenCppCoverage tooling exit split OK"
+        exit 0
+    fi
+    echo "coverage.sh --selftest: FAIL"
+    exit 1
+fi
+
 cd "$(dirname "$0")/../.."
 
 XML_ONLY=0
@@ -153,6 +209,14 @@ rm -f "$BIN_TESTS" "$BIN_LUA" "$XML_OUT"
 SOURCE_INCLUDE="Source*Core"
 MODULE_INCLUDE="Smatchet"  # matches both SmatchetTests.exe and SmatchetLuaTests.exe
 
+# Quarantined doctest cases (tagged with a `[quarantined:...]` subtag) are known-flaky
+# and excluded from the authoritative run elsewhere; they must not flake the coverage
+# capture either. doctest's --test-case-exclude takes a wildcard against the case NAME;
+# the bracketed-tag convention surfaces in the name as `[quarantined:...]`, so the
+# `*[quarantined:*]*` glob drops every quarantined case. Passed AFTER the `--` so it goes
+# to the doctest child, not to OpenCppCoverage.
+DOCTEST_EXCLUDE_QUARANTINED='--test-case-exclude=*[quarantined:*]*'
+
 OCC_FILTER_ARGS=(
     --sources "$SOURCE_INCLUDE"
     --modules "$MODULE_INCLUDE"
@@ -183,18 +247,27 @@ OCC_FILTER_ARGS=(
 # (Surfaced by the flaky-quarantine self-test's intentional WARN-on-false.)
 echo "[coverage] capturing SmatchetTests via $OCC..."
 set +e
-"$OCC" "${OCC_FILTER_ARGS[@]}" --export_type "binary:$BIN_TESTS" -- "$TEST_EXE" --no-intro --no-version --no-breaks
+"$OCC" "${OCC_FILTER_ARGS[@]}" --export_type "binary:$BIN_TESTS" -- "$TEST_EXE" --no-intro --no-version --no-breaks "$DOCTEST_EXCLUDE_QUARANTINED"
 RC_TESTS=$?
 set -e
 
 echo "[coverage] capturing SmatchetLuaTests..."
 set +e
-"$OCC" "${OCC_FILTER_ARGS[@]}" --export_type "binary:$BIN_LUA" -- "$LUA_TEST_EXE" --no-intro --no-version --no-breaks
+"$OCC" "${OCC_FILTER_ARGS[@]}" --export_type "binary:$BIN_LUA" -- "$LUA_TEST_EXE" --no-intro --no-version --no-breaks "$DOCTEST_EXCLUDE_QUARANTINED"
 RC_LUA=$?
 set -e
 
-if [ "$RC_TESTS" -ne 0 ] || [ "$RC_LUA" -ne 0 ]; then
-    echo "FAIL: OpenCppCoverage returned non-zero (SmatchetTests=$RC_TESTS, SmatchetLuaTests=$RC_LUA)" >&2
+# Distinguish a TEST-BINARY failure (the doctest child returned non-zero — a real test
+# regression OpenCppCoverage faithfully forwarded; the .bin intermediate WAS written) from
+# an OpenCppCoverage TOOLING failure (the tool could not attach / produced no coverage data;
+# no .bin intermediate exists). The two demand different operator action: a test failure means
+# "fix the failing test"; a tooling failure means "fix the coverage harness / install". A
+# non-empty .bin proves the child executed under the debugger, so its non-zero RC is a test
+# exit; a missing/empty .bin means the tool never produced data → tooling failure.
+CAPTURE_FAILED=0
+if ! classify_capture_failure "SmatchetTests" "$RC_TESTS" "$BIN_TESTS"; then CAPTURE_FAILED=1; fi
+if ! classify_capture_failure "SmatchetLuaTests" "$RC_LUA" "$BIN_LUA"; then CAPTURE_FAILED=1; fi
+if [ "$CAPTURE_FAILED" -ne 0 ]; then
     exit 1
 fi
 

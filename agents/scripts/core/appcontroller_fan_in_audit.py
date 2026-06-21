@@ -180,11 +180,15 @@ def _merge_base_or_ref(ref):
 
 def regression(base_paths, head_map):
     """Pure core (no git): given the set of base includer paths and the HEAD {path -> (text, linenos)}
-    map, return the sorted list of NEW, UN-suppressed includer paths that push the count UP.
-    Empty list => pass (flat / ratcheted-down / all-new-suppressed). Shared by run_diff + selftest."""
+    map, return the sorted list of NEW, UN-suppressed includer paths (those in HEAD's set but not
+    base's), regardless of total count. Empty list => pass (no new includer / all-new-suppressed).
+    Shared by run_diff + selftest.
+
+    NOTE: this is a SET-DIFFERENCE check, NOT a count compare. A count-based early return
+    (`if len(head) <= len(base): return []`) let an equal-cardinality SWAP evade the gate — remove
+    one includer + add a different one => same count => false-clean even though a NEW TU now depends
+    on the god-header. The ratchet is "no NEW includer" (per-path), not "count must not rise"."""
     head_paths = set(head_map.keys())
-    if len(head_paths) <= len(base_paths):
-        return []  # ratchet down or flat — never a regression by count
     offenders = []
     for path in sorted(head_paths - base_paths):
         text, lns = head_map[path]
@@ -263,6 +267,16 @@ def run_selftest():
     if regression({"Source/a.cpp", "Source/b.cpp"},
                   {"Source/a.cpp": ('#include "AppController.h"\n', [1])}) != []:
         print("SELFTEST FAIL: a ratchet-down was wrongly flagged as a regression", file=sys.stderr)
+        miss = 1
+
+    # selftest: asserts-failure — equal-cardinality SWAP must FAIL. base={A.cpp}, head={B.cpp}:
+    # one includer removed + a DIFFERENT one added => same count, but B.cpp is a NEW includer. The
+    # old count short-circuit (len(head) <= len(base) -> []) let this evade the gate; the set-diff
+    # check catches it.
+    if regression({"Source/Core/src/A.cpp"},
+                  {"Source/Core/src/B.cpp": ('#include "AppController.h"\n', [1])}) \
+            != ["Source/Core/src/B.cpp"]:
+        print("SELFTEST FAIL: an equal-cardinality includer swap was not flagged", file=sys.stderr)
         miss = 1
 
     # basename matcher: AppControllerImpl.h is NOT a match; bare + path-qualified AppController.h are.
