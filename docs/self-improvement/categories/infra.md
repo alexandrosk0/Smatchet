@@ -39,8 +39,8 @@
 - 2026-06-13 · build-doctor (#863 wrap-up) · [infra] · P3 — the Sanitizer-nightly auto-Issue mislabels a **compile** failure as a "runtime AddressSanitizer / UBSan report" (#863 body pointed at a sanitizer finding; the binary never linked)
   Details: #863's auto-filed Issue body said "the AddressSanitizer / UBSan report", but the CI log shows the build stopped at `error: unused function … [-Werror,-Wunused-function]` — a compile break, no sanitized binary, no runtime finding. The mislabel cost diagnosis time (debug-detective had to read the raw log to see it was a compile error). Flagged by debug-detective during the #863 investigation; filed here, NOT implemented this PR.
   Concrete next action: teach the "Sanitizer nightly" workflow's auto-Issue step to classify the failing stage — if the failure is in the `Building CXX object`/`FAILED:`/`ninja: build stopped` phase, title/body it as a **build/compile** failure (and route to build-doctor), not a runtime sanitizer finding. Est ~30-45 min (workflow YAML + a log-phase grep). Distinct from the lint above (that prevents the compile break; this fixes the report when ANY compile break trips the nightly).
-  Status: open
-  Last-reviewed: 2026-06-13
+  Status: applied (2026-06-21 P3 sweep — shipped #1523)
+  Last-reviewed: 2026-06-21
 
 - 2026-06-07 · debug-detective · [infra] · P3 — `SmatchetCrashHandler` terminate-path dumps carry no ExceptionStream (`TerminateHandler` passes `exPtrs=nullptr` to MiniDumpWriteDump)
   Details: `Source/Standalone/SmatchetCrashHandler.cpp:56-62` — `TerminateHandler()` calls `WriteMiniDump(nullptr)`, and `WriteMiniDump` (`:25-42`) only attaches a `MINIDUMP_EXCEPTION_INFORMATION` when `exPtrs != nullptr`. So a dump written on the `std::terminate` path (unhandled C++ exception) has no ExceptionStream — `!analyze`-style triage can't see the faulting context, and this session's terminate-path dump triage had to reconstruct the failure from the marker string alone. The SEH path (`TopLevelExceptionFilter`, `:48`) is fine.
@@ -142,14 +142,14 @@
 - 2026-05-17 · code-review · [infra] · P3 — `AiContextBuilder::BuildActiveTicketBody` O(N) ticket scan
   Details: Linear scan over `tickets` to find the active id at [`AiContextBuilder.cpp:151-153`](../../../Source/Core/src/AiContextBuilder.cpp). For 10 K-ticket views the Send button blocks proportionally. `IdIndex` map already exists elsewhere in the codebase; pass through `Inputs` or accept a pre-resolved `const CachedTicket*`.
   Concrete next action: extend `AiContextBuilder::Inputs` with `const CachedTicket* PreResolvedActiveTicket = nullptr`; populate from the UI side via `IdIndex` lookup. Fall back to the existing scan when null. ~30 min.
-  Status: open
-  Last-reviewed: 2026-05-17
+  Status: applied (2026-06-21 P3 sweep — shipped #1527)
+  Last-reviewed: 2026-06-21
 
 - 2026-05-17 · code-review · [infra] · P3 — `AgentsMdLoader` reads `maxBytes + 1` even when file is smaller
   Details: [`AgentsMdLoader.cpp:45-46`](../../../Source/Core/src/AgentsMdLoader.cpp) `out.resize(maxBytes + 1)` then reads `maxBytes + 1` bytes regardless of actual file size. Functionally correct (over-cap detection works), but each load reads up to 64 KB+1 even for a 1 KB agents.md. Trivial waste; matters only when invalidation happens on a hot Preferences-change loop.
   Concrete next action: stat the file first; cap the read at `min(maxBytes + 1, file_size)`. ~15 min.
-  Status: open
-  Last-reviewed: 2026-05-17
+  Status: applied (2026-06-21 P3 sweep — shipped #1527)
+  Last-reviewed: 2026-06-21
 
 - 2026-05-17 · code-review · [infra] · P3 — `SmatchetAiAssistantUi` silently truncates 8 KiB paste
   Details: `InputTextMultiline` is sized to `s_inputCharBuf.size()` (8 KiB). User pasting 9 KiB has the suffix silently dropped with no toast.
