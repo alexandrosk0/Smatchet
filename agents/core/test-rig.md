@@ -60,7 +60,7 @@ Own the doctest rig under `tests/`. Scope is **pure C++14 logic** that lives in 
 
 ## What NOT to test here
 
-- UI rendering, dock layout, ImGui state — bucket E (`docs/plans/shipped/imgui-test-engine-bucket-e.md`), not this rig.
+- UI rendering, dock layout, ImGui state — bucket E (`docs/plans/shipped/imgui-test-engine-bucket-e.md`), not this rig. A bucket-E test that performs a queue/field-edit WRITE MUST use `BucketE::UiTestWriteScope` (flip the fresh-profile `ReadOnlyMode` off) and HARD-FAIL — not skip — on a write failure once env gates are met, else the test is vacuously green (see the test-authoring skill).
 - HTTP / cpr calls — needs network mocking, separate plan.
 - SQLite-backed code paths (`LocalCacheManager`, `OfflineQueueService`) — needs an on-disk DB fixture, separate plan. NOTE — the **pure decision logic** inside those subsystems (e.g. `OfflineCreateQueue::kMaxReplayAttempts` cap arithmetic, conflict-resolution priority) is in-scope if it can be lifted into a free function or tested without opening a DB.
 - AppController, main loop, anything that needs `MainState` constructed.

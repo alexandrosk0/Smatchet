@@ -32,8 +32,8 @@
 
 #include "AppController.h"
 #include "Commands/Scenarios/UiTestScenario.h"
-#include "Config/ConfigManager.h" // disable fresh-install read-only mode so the queue write lands
 #include "SmatchetUiSession.h"
+#include "UiTestWriteScope.h" // BucketE::UiTestWriteScope — disable fresh-install read-only so the write lands
 
 #include "imgui.h"
 #include "imgui_internal.h" // ImGuiWindow, FindWindowByName — real-window probe
@@ -147,17 +147,12 @@ void RunPerKindModalTest(ImGuiTestContext* ctx) {
 
     // The harness boots a fresh profile in the isolated SMATCHET_USER_DATA dir,
     // and ConfigManager defaults fresh installs to read-only (no config file →
-    // ReadOnlyMode=true), which would reject the queue write below. Persist
-    // read-only=false for the duration of the test, then restore it. We hard-flip
-    // (not skip) because with both env gates satisfied the queue write MUST land —
-    // a silent skip here would hide a real regression in the offline path.
-    const bool prevReadOnly = ConfigManager::Load().ReadOnlyMode;
-    {
-        TrackerConfig cfg = ConfigManager::Load();
-        cfg.ReadOnlyMode = false;
-        ConfigManager::Save(cfg);
-        ConfigManager::InvalidateCache();
-    }
+    // ReadOnlyMode=true), which would reject the queue write below. The RAII
+    // scope flips read-only=false for the duration of the test and restores it on
+    // teardown. We hard-flip (not skip) because with both env gates satisfied the
+    // queue write MUST land — a silent skip here would hide a real regression in
+    // the offline path. See tests/ui/_helpers/UiTestWriteScope.h.
+    BucketE::UiTestWriteScope writeScope;
 
     // Populate the queue so total>0 forces the panel body (and the modal call
     // site) to render. A pure local-SQLite write — no backend round-trip.
@@ -173,10 +168,7 @@ void RunPerKindModalTest(ImGuiTestContext* ctx) {
     IM_CHECK_NO_RET(editId > 0);
     IM_CHECK_NO_RET(!app->GetPendingFieldEdits().empty());
     if (editId <= 0) {
-        TrackerConfig cfg = ConfigManager::Load();
-        cfg.ReadOnlyMode = prevReadOnly;
-        ConfigManager::Save(cfg);
-        ConfigManager::InvalidateCache();
+        // ~UiTestWriteScope restores the prior ReadOnlyMode on return.
         return;
     }
 
@@ -218,15 +210,9 @@ void RunPerKindModalTest(ImGuiTestContext* ctx) {
     }
     CancelConflictModal(ctx);
 
-    // Restore: drop the synthetic queue row so it never leaks into a later test,
-    // and put read-only mode back to where the harness had it.
+    // Restore: drop the synthetic queue row so it never leaks into a later test.
+    // (~UiTestWriteScope restores the prior ReadOnlyMode at end of scope.)
     app->DeletePendingFieldEdits({editId});
-    {
-        TrackerConfig cfg = ConfigManager::Load();
-        cfg.ReadOnlyMode = prevReadOnly;
-        ConfigManager::Save(cfg);
-        ConfigManager::InvalidateCache();
-    }
     g_ui.requestActiveProjectFocus = false;
     ctx->Yield();
 }

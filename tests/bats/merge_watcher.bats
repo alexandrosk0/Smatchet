@@ -1051,6 +1051,12 @@ m._bump_triage_attempts(999, r'$(pwd)', 2, 'oldhead22222222222222222222222222222
 import sys, importlib.util
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+import os
+# Pin budget > pre-populated count so the same-head clamp (attempts_before > budget)
+# does NOT fire — this test exercises the legacy fall-back INCREMENT path (2 -> 3
+# when gh returns no head_sha), not the BUDGET_EXHAUSTED early-return. The default
+# budget is 1, which would exhaust at 2 and short-circuit before the legacy path.
+os.environ['MERGE_WATCH_TRIAGE_BUDGET'] = '3'
 m._gh_owner_repo = lambda _p: ('alexandrosk0', 'Smatchet')
 def _failing_gh_json(args, **kw):
     raise RuntimeError('gh down')
