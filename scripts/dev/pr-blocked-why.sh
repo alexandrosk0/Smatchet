@@ -72,20 +72,73 @@ read_required_contexts() {
 }
 
 # ----------------------------------------------------------------------------
+# read_conversation_resolution_required <owner> <repo> <base_branch> — echo
+# "true" / "false" / "unknown" for the base branch's
+# required_conversation_resolution branch-protection setting. "unknown" on any
+# read failure (no gh, fork, API error, missing field) — the classifier treats
+# unknown as fail-safe (still surfaces unresolved threads as the likely cause).
+# Override with PR_BLOCKED_WHY_CONV_RES_REQUIRED (true/false/unknown) for tests.
+# Tries the rulesets-aware classic branch-protection endpoint first, then the
+# GraphQL branchProtectionRule as a fallback.
+# ----------------------------------------------------------------------------
+read_conversation_resolution_required() {
+    if [ -n "${PR_BLOCKED_WHY_CONV_RES_REQUIRED+x}" ]; then
+        printf '%s' "${PR_BLOCKED_WHY_CONV_RES_REQUIRED:-unknown}"
+        return 0
+    fi
+    local owner="$1" repo="$2" base="$3"
+    command -v gh >/dev/null 2>&1 || { printf 'unknown'; return 0; }
+    [ -n "$base" ] || { printf 'unknown'; return 0; }
+    local val
+    # Classic branch-protection REST: required_conversation_resolution.enabled.
+    val=$(gh_rest "repos/$owner/$repo/branches/$base/protection" \
+              --jq '.required_conversation_resolution.enabled' 2>/dev/null) || val=""
+    case "$val" in
+        true)  printf 'true';  return 0 ;;
+        false) printf 'false'; return 0 ;;
+    esac
+    # Fallback: GraphQL branchProtectionRule.requiresConversationResolution.
+    val=$(gh api graphql -f owner="$owner" -f repo="$repo" -f base="$base" \
+              -f query='query($owner:String!,$repo:String!,$base:String!){repository(owner:$owner,name:$repo){branchProtectionRules(first:50){nodes{pattern requiresConversationResolution}}}}' \
+              --jq ".data.repository.branchProtectionRules.nodes[] | select(.pattern == \"$base\") | .requiresConversationResolution" 2>/dev/null) || val=""
+    case "$val" in
+        true)  printf 'true' ;;
+        false) printf 'false' ;;
+        *)     printf 'unknown' ;;
+    esac
+}
+
+# ----------------------------------------------------------------------------
 # classify_blockers <pr_json> <req-newline-list> <orch_user> — the PURE core,
 # fully testable with no `gh`. Reads the pullRequest object and emits a
 # human-readable, multi-line blocker report on stdout. Exit 0 always (a parse
 # failure prints a fail-closed "could not evaluate" line, never a silent pass).
 #
 # Classes (each printed when present):
+#   CONVERSATION — branch protection requires conversation resolution AND the PR
+#                  has unresolved review threads. This is a COMMON silent BLOCKED
+#                  cause: every CI check is green, reviewDecision is APPROVED, yet
+#                  GitHub holds the merge purely because require_conversation_-
+#                  resolution is on and one thread is open. Promoted to a TOP-LEVEL
+#                  class (not just a THREADS sub-detail) because it is the precise
+#                  reason a green-looking PR will not merge — resolve the threads
+#                  (or, for a confirmed CR false positive, the cr-out-of-band +
+#                  cr-disposition + resolveReviewThread flow in merge-gates.md).
 #   THREADS  — unresolved, non-outdated review threads (path + first author)
 #   CHECKS   — required-or-allow-listed checks that are FAILING or PENDING
 #   ABSENT   — required contexts absent from the head rollup (never ran)
 #   REVIEW   — reviewDecision is not APPROVED/null (a required review is owed)
 #   STATE    — mergeStateStatus / state (context line, always printed)
+#
+# require_conversation_resolution ground truth: read from the branch-protection
+# rule on the PR's base branch and threaded in as the $convResReq jq arg
+# ("true"/"false"/"unknown"). When the live rule cannot be read (no gh / fork /
+# API error) it is "unknown" → the classifier still reports unresolved threads as
+# a CONVERSATION blocker (fail-safe: an unresolved thread on a BLOCKED PR is the
+# likely cause regardless), just without asserting the rule as confirmed-on.
 # ----------------------------------------------------------------------------
 classify_blockers() {
-    local pr_json="$1" req_list="$2" orch="$3"
+    local pr_json="$1" req_list="$2" orch="$3" conv_res_req="${4:-unknown}"
     local req_json='[]'
     if [ -n "$req_list" ]; then
         req_json=$(printf '%s\n' "$req_list" | jq -R . | jq -sc 'map(select(length > 0))') || req_json='[]'
@@ -95,7 +148,8 @@ classify_blockers() {
     if ! out=$(printf '%s' "$pr_json" | jq -r \
         --argjson req "$req_json" \
         --arg allow "$ALLOW_RE" \
-        --arg orch "$orch" '
+        --arg orch "$orch" \
+        --arg convResReq "$conv_res_req" '
         . as $pr
         | ($pr.mergeStateStatus // "UNKNOWN") as $mss
         | ($pr.state // "UNKNOWN") as $state
@@ -123,6 +177,14 @@ classify_blockers() {
                  author: ((.comments.nodes // []) | (.[0].author.login // "?")),
                  isBot: ((.comments.nodes // []) | any(.author.__typename == "Bot")) }]) as $threads
         | "STATE   — state=\($state) mergeStateStatus=\($mss) reviewDecision=\($rd)",
+          (if ($threads | length) > 0
+             then "CONVERSATION — \($threads | length) unresolved review thread(s)"
+                  + (if $convResReq == "true"
+                       then " AND branch protection requires conversation resolution: this BLOCKS merge even with every check green. Resolve the thread(s) (or, for a confirmed CR false positive, use the cr-out-of-band + cr-disposition + resolveReviewThread flow in merge-gates.md)."
+                     elif $convResReq == "unknown"
+                       then " present; require_conversation_resolution could not be confirmed (no gh / fork / API error) but an unresolved thread is the likely BLOCKED cause. Resolve the thread(s) or confirm the rule."
+                     else " present; require_conversation_resolution is OFF on the base branch, so these do NOT by themselves block merge — but a human/bot still expects a reply." end)
+             else empty end),
           (if ($failing | length) > 0
              then "CHECKS  — \($failing | length) gating check(s) FAILING: \($failing | join(", "))"
              else empty end),
@@ -161,6 +223,7 @@ query($owner:String!, $repo:String!, $pr:Int!) {
       state
       mergeStateStatus
       reviewDecision
+      baseRefName
       commits(last:1) { nodes { commit { statusCheckRollup { contexts(first:100) { nodes {
         __typename
         ... on CheckRun { name status conclusion isRequired(pullRequestNumber:$pr) }
@@ -298,8 +361,50 @@ STUB
         fails=$((fails + 1))
     fi
 
+    # CASE 9 — CONVERSATION class: unresolved threads + require_conversation_-
+    # resolution ON is reported as a top-level CONVERSATION blocker that names the
+    # rule (the common silent-BLOCKED cause with every check green + APPROVED).
+    local j9
+    j9='{"state":"OPEN","mergeStateStatus":"BLOCKED","reviewDecision":"APPROVED","baseRefName":"develop",
+      "commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[
+        {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS","isRequired":true}]}}}}]},
+      "reviewThreads":{"nodes":[
+        {"isResolved":false,"isOutdated":false,"path":"src/foo.cpp",
+         "comments":{"nodes":[{"author":{"login":"coderabbitai","__typename":"Bot"}}]}}]}}'
+    out=$(classify_blockers "$j9" "Windows + MSVC" orch true)
+    if printf '%s' "$out" | grep -q 'CONVERSATION' \
+       && printf '%s' "$out" | grep -q 'requires conversation resolution'; then
+        echo "selftest CASE9 PASS — CONVERSATION blocker named when rule is ON"
+    else
+        echo "selftest CASE9 FAIL — should name the CONVERSATION blocker (got: '$out')" >&2
+        fails=$((fails + 1))
+    fi
+
+    # CASE 10 — require_conversation_resolution UNKNOWN (rule unreadable): still
+    # surfaces a CONVERSATION line (fail-safe) but does NOT assert the rule is on.
+    out=$(classify_blockers "$j9" "Windows + MSVC" orch unknown)
+    if printf '%s' "$out" | grep -q 'CONVERSATION' \
+       && printf '%s' "$out" | grep -q 'could not be confirmed' \
+       && ! printf '%s' "$out" | grep -q 'requires conversation resolution'; then
+        echo "selftest CASE10 PASS — CONVERSATION fail-safe when rule unknown"
+    else
+        echo "selftest CASE10 FAIL — unknown rule should fail-safe (got: '$out')" >&2
+        fails=$((fails + 1))
+    fi
+
+    # CASE 11 — require_conversation_resolution OFF: unresolved threads do NOT by
+    # themselves block; the CONVERSATION line says so (no false BLOCKED claim).
+    out=$(classify_blockers "$j9" "Windows + MSVC" orch false)
+    if printf '%s' "$out" | grep -q 'CONVERSATION' \
+       && printf '%s' "$out" | grep -q 'is OFF'; then
+        echo "selftest CASE11 PASS — CONVERSATION notes rule OFF (non-blocking)"
+    else
+        echo "selftest CASE11 FAIL — OFF rule should not claim a block (got: '$out')" >&2
+        fails=$((fails + 1))
+    fi
+
     if [ "$fails" -eq 0 ]; then
-        echo "PASS — pr-blocked-why --selftest (8/8)"
+        echo "PASS — pr-blocked-why --selftest (11/11)"
         return 0
     fi
     echo "FAIL — pr-blocked-why --selftest ($fails failing case(s))" >&2
@@ -372,7 +477,17 @@ EOF
     echo "PR #$pr — blocker analysis:"
     local req_list
     req_list=$(read_required_contexts)
-    classify_blockers "$pr_json" "$req_list" "$orch"
+    # require_conversation_resolution ground truth for the CONVERSATION class —
+    # read from the PR's base-branch protection rule. "unknown" when unreadable
+    # (stub-JSON path with no base / no gh / fork) → classifier fail-safe.
+    local base conv_res
+    base=$(printf '%s' "$pr_json" | jq -r '.baseRefName // ""' 2>/dev/null) || base=""
+    if [ -n "${PR_BLOCKED_WHY_STUB_JSON:-}" ]; then
+        conv_res="${PR_BLOCKED_WHY_CONV_RES_REQUIRED:-unknown}"
+    else
+        conv_res=$(read_conversation_resolution_required "$owner" "$repo" "$base")
+    fi
+    classify_blockers "$pr_json" "$req_list" "$orch" "$conv_res"
 }
 
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then

@@ -172,9 +172,26 @@ evaluate_rollup() {
         | ($labels | any(. == "tests-out-of-band")) as $testsOob
         | ($labels | any(. == "perf-out-of-band")) as $perfOob
         | ($labels | any(. == "intent-out-of-band")) as $intentOob
-        # Resolve each rollup row to a (name, green?) pair; bind as $rows so the
-        # absent-required cross-check below can see which names are present.
+        # Dedup-to-latest-run BEFORE judging green/red (mirrors merge-gates.sh
+        # $ctx). A check name can appear MULTIPLE times in statusCheckRollup when a
+        # job is re-run / superseded: an older CANCELLED / FAILURE run plus a newer
+        # SUCCESS run. Judging every raw row would let the stale non-green run veto
+        # a check whose LATEST run is green — a false REFUSAL (e.g. a doc-validation
+        # CANCELLED by a body-edit re-trigger that then re-ran green). Group by
+        # (typename, name/context) and keep only the latest run per group — latest =
+        # max completedAt, then max startedAt as a tie-break (a still-running rerun
+        # of a finished job has no completedAt; startedAt still orders it newest).
+        # StatusContexts have neither timestamp, but GitHub already overwrites a
+        # StatusContext in place by context, so each appears once and the group is a
+        # singleton (the sort is a harmless no-op).
         | (((.statusCheckRollup) // [])
+            | map(. + {_k: (if .__typename == "CheckRun" then ["CheckRun", (.name // "")]
+                            else ["StatusContext", (.context // "")] end)})
+            | group_by(._k)
+            | map(sort_by((.completedAt // ""), (.startedAt // "")) | .[-1] | del(._k))) as $latest
+        # Resolve each deduped rollup row to a (name, green?) pair; bind as $rows so
+        # the absent-required cross-check below can see which names are present.
+        | ($latest
             | map(
                 (if .__typename == "CheckRun" then (.name // "")
                  else (.context // "") end) as $name
@@ -543,8 +560,41 @@ run_selftest() {
         fails=$((fails + 1))
     fi
 
+    # CASE 16 — dedup-to-latest: a check with an OLDER CANCELLED run plus a NEWER
+    # SUCCESS run is judged GREEN (the latest run wins), NOT refused on the stale
+    # CANCELLED row. Regression guard for the false-refusal where a doc-validation
+    # run cancelled by a body-edit re-trigger vetoed a check whose re-run was green.
+    local dedup_rollup
+    dedup_rollup='{"state":"OPEN","labels":[],"statusCheckRollup":[
+      {"__typename":"CheckRun","name":"Coverage","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-06-20T10:00:00Z","completedAt":"2026-06-20T10:05:00Z"},
+      {"__typename":"CheckRun","name":"Coverage","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-20T11:00:00Z","completedAt":"2026-06-20T11:05:00Z"},
+      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"}]}'
+    blockers=$(evaluate_rollup "$dedup_rollup" "Windows + MSVC")
+    if [ -z "$blockers" ]; then
+        echo "selftest CASE16 PASS — older CANCELLED run deduped; latest SUCCESS reads GREEN"
+    else
+        echo "selftest CASE16 FAIL — latest SUCCESS Coverage should not block (got: '$blockers')" >&2
+        fails=$((fails + 1))
+    fi
+
+    # CASE 16b — dedup direction is correct: an OLDER SUCCESS plus a NEWER FAILURE
+    # must still BLOCK (the latest run is red — dedup must not flip a real failure
+    # green by picking the wrong run).
+    local dedup_red_rollup
+    dedup_red_rollup='{"state":"OPEN","labels":[],"statusCheckRollup":[
+      {"__typename":"CheckRun","name":"Coverage","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-20T10:00:00Z","completedAt":"2026-06-20T10:05:00Z"},
+      {"__typename":"CheckRun","name":"Coverage","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-20T11:00:00Z","completedAt":"2026-06-20T11:05:00Z"},
+      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"}]}'
+    blockers=$(evaluate_rollup "$dedup_red_rollup" "Windows + MSVC")
+    if printf '%s' "$blockers" | grep -q 'Coverage'; then
+        echo "selftest CASE16b PASS — latest FAILURE still blocks (dedup keeps the newest run)"
+    else
+        echo "selftest CASE16b FAIL — latest FAILURE Coverage should block (got: '$blockers')" >&2
+        fails=$((fails + 1))
+    fi
+
     if [ "$fails" -eq 0 ]; then
-        echo "PASS — safe-admin-merge --selftest (15/15)"
+        echo "PASS — safe-admin-merge --selftest (17/17)"
         return 0
     fi
     echo "FAIL — safe-admin-merge --selftest ($fails failing case(s))" >&2

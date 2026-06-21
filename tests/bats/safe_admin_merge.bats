@@ -71,10 +71,40 @@ JSON
 
 # ----------------------------------------------------------------------------
 
-@test "--selftest passes (15/15) and dogfoods the gate" {
+@test "--selftest passes (17/17) and dogfoods the gate" {
     run bash "$SCRIPT" --selftest
     [ "$status" -eq 0 ]
-    [[ "$output" == *"PASS — safe-admin-merge --selftest (15/15)"* ]]
+    [[ "$output" == *"PASS — safe-admin-merge --selftest (17/17)"* ]]
+}
+
+@test "dedup-to-latest: older CANCELLED run with a newer SUCCESS run reads GREEN (exit 0, merge fires)" {
+    # A check name can appear twice when a job is re-run: an older CANCELLED run
+    # (e.g. doc-validation cancelled by a body-edit re-trigger) plus a newer
+    # SUCCESS run. The guard must dedup to the latest run BEFORE judging red/green,
+    # so the stale CANCELLED row does not falsely veto a check whose re-run is
+    # green. Required + allow-listed checks all green on their LATEST run.
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","labels":[],"statusCheckRollup":[
+      {"__typename":"CheckRun","name":"Coverage","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-06-20T10:00:00Z","completedAt":"2026-06-20T10:05:00Z"},
+      {"__typename":"CheckRun","name":"Coverage","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-20T11:00:00Z","completedAt":"2026-06-20T11:05:00Z"},
+      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"},
+      {"__typename":"StatusContext","context":"Test-delta gate","state":"SUCCESS"}]}'
+    run bash "$SCRIPT" 1180
+    [ "$status" -eq 0 ]
+    [ -f "$MERGE_SENTINEL" ]
+}
+
+@test "dedup-to-latest: older SUCCESS with a newer FAILURE still REFUSES (exit 1, no merge)" {
+    # Dedup must keep the NEWEST run, not flip a real failure green by picking the
+    # wrong one: an older SUCCESS plus a newer FAILURE on the same check blocks.
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","labels":[],"statusCheckRollup":[
+      {"__typename":"CheckRun","name":"Coverage","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-20T10:00:00Z","completedAt":"2026-06-20T10:05:00Z"},
+      {"__typename":"CheckRun","name":"Coverage","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-20T11:00:00Z","completedAt":"2026-06-20T11:05:00Z"},
+      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"},
+      {"__typename":"StatusContext","context":"Test-delta gate","state":"SUCCESS"}]}'
+    run bash "$SCRIPT" 1180
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Coverage"* ]]
+    [ ! -f "$MERGE_SENTINEL" ]
 }
 
 @test "a RED Bucket-C does NOT block (Mesa-GL advisory-flip 2026-06-15, exit 0)" {
