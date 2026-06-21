@@ -271,6 +271,7 @@ Four mandatory steps before reporting done: **12a** strip every `[temp-debug]` m
 - **Promote up to 3 high-value logs to permanent** (§ 11.5) before § 12 strips the rest. Zero promotions is valid; > 3 escalates to a subsystem-owned logging slice.
 - **Adversarial RCA before `propose-fix` on P0 / crash-class causes** (§ 11). Refute the pinned cause (refute-hypothesis fan-out or an explicit which-path-not-covered self-check) before handoff; record the result in the packet. Non-P0 bugs use the normal evidence loop.
 - Reproducer or concrete evidence first.
+- **Re-confirm a CI-symptom backlog entry still reproduces before investigating it.** For a CI-sourced symptom (a named check red, a sanitizer report from CI), pull the failing step's log from the most recent run that executed it and confirm it reproduces on current develop before instrumenting — CI symptoms decay (`docs/agent-rules/process-rules.md` § Cadence and verification).
 - Semantic search before grep.
 - **Multiple hypotheses (≥ 2), ranked by distinguishing-evidence cost.** Single-hypothesis runs confirm what you already suspect.
 - **Concrete metric, recorded before instrumenting and re-checked after the fix.** Never accept "I think it's fixed."

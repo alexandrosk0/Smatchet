@@ -101,6 +101,8 @@ If the change introduces an intermittent-stall risk, hand off to `spike-hunter` 
 
 If perf risk is the dominant concern, hand off to `perf-detective` for measurement instead of guessing.
 
+**Execution-ordering claims — verify against scheduler / frame-phase position, not lexical source order**: when a finding (or a fix you propose) hinges on "A runs before B", do **not** infer the order from where the two statements sit in the source. C++ execution order is governed by the scheduler, the dispatcher drain, the ImGui frame-phase the call sits in, callback registration order, and static-init order — none of which track lexical position. Confirm the real ordering by tracing the frame-phase / scheduler entry point, then flag a genuine ordering bug; a "B is below A so it runs later" claim is unfounded. Pre-dispatch freshness note: before raising an ordering finding, grep the suspect symbols for an intervening `Post*` / `Dispatch` / `Enqueue` / `OnTick` hop that re-sequences them across a frame boundary.
+
 **Verification automation gate**: scan the diff's test-plan / PR-body / linked plan `## Verification` for any item that reads "user opens X and observes Y", "click and check", "visually verify", or otherwise needs human eyes. **Flag every such item as Critical** under "Manual verification residue" — the change is not mergeable until `test-author` converts it (per AGENTS.md § Verification automation). Exception: an explicit bucket-E entry already tracked in `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`.
 
 ## Output format
