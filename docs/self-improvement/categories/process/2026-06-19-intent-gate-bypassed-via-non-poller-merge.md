@@ -30,5 +30,5 @@
   Cross-ref: postmortems.md 2026-06-19 PR #1406, #1414, #1415; merge commits 96e79412 (#1414),
     7bb77daa (#1406), f6bb3972 (#1415); merge-gates.sh `MERGE_GATES_BLOCK_ALLOWLIST_RE`;
     docs/agent-rules/merge-gates.md:84; docs/adr/0022-intent-gate-promotion.md; safe-admin-merge.sh.
-  Status: open
-  Last-reviewed: 2026-06-19
+  Status: applied (2026-06-20 roadmap campaign — shipped #1503)
+  Last-reviewed: 2026-06-20
