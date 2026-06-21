@@ -1,0 +1,73 @@
+name: Install Mesa software GL
+description: >-
+  Fetches (cached) the pinned Mesa software-GL DLL trio
+  (opengl32.dll + libgallium_wgl.dll + libglapi.dll) and copies them beside the
+  exe in the given build dir, so headless GL launches render through Mesa's
+  llvmpipe software rasterizer. Mesa >= 22 splits the GL driver: opengl32.dll is
+  a thin loader that hard-requires libgallium_wgl.dll + libglapi.dll beside it,
+  or every exe in the dir dies silently at process start (STATUS_DLL_NOT_FOUND).
+  Single source of the cache + install step pair that bucket-C, bucket-E, the
+  Jira fixture-backend lane, and the launch-smoke job all share.
+
+inputs:
+  target-dir:
+    description: >-
+      Build dir to copy the Mesa DLLs into (the dir holding the exe under test),
+      e.g. build/ninja-iter-msvc or build/ninja-ui-test-msvc.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # The Mesa DLL cache is a pure speed optimization — the install step below
+    # re-downloads on a miss. A transient cache-service error must NOT red the
+    # consuming job (it once cascaded into skipped Mesa-install + skipped diff and
+    # blocked an unrelated PR's merge), so the CACHE step is continue-on-error;
+    # the install/smoke step downstream stays the real signal.
+    - name: Cache Mesa software-GL DLLs
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      continue-on-error: true
+      with:
+        path: mesa-cache
+        key: mesa-dlls-24.2.5-v2
+
+    - name: Install Mesa software OpenGL ICD (opengl32sw.dll)
+      shell: bash
+      env:
+        MESA_VERSION: "24.2.5"
+        TARGET_DIR: ${{ inputs.target-dir }}
+      run: |
+        set -euo pipefail
+        # Mesa >= 22 splits the GL driver: opengl32.dll is only a thin loader
+        # that hard-requires libgallium_wgl.dll (the actual ~53 MB driver) +
+        # libglapi.dll beside it. Copying opengl32.dll alone makes EVERY exe
+        # in the target dir die at process start (STATUS_DLL_NOT_FOUND,
+        # silent) — exactly how the bucket-C/E + perf headless runs were
+        # broken-but-masked until the perf-gate-revival step-3 investigation
+        # (2026-06-06; reproduced + fixed locally against Smatchet.exe).
+        need_fetch=0
+        for d in opengl32.dll libgallium_wgl.dll libglapi.dll; do
+          if [ ! -f "mesa-cache/$d" ]; then need_fetch=1; fi
+        done
+        if [ "$need_fetch" = "1" ]; then
+          mkdir -p mesa-tmp mesa-cache
+          cd mesa-tmp
+          curl -fL -o mesa.7z "https://github.com/pal1000/mesa-dist-win/releases/download/${MESA_VERSION}/mesa3d-${MESA_VERSION}-release-msvc.7z"
+          # Supply-chain integrity: pal1000/mesa-dist-win publishes no checksum
+          # (digest:null on every release asset), so this is a self-computed TOFU
+          # pin — it catches silent upstream tampering / corrupt transfer, not
+          # first-time trust. Keep in lockstep with MESA_VERSION; update on bump.
+          # security.md "Mesa archive integrity" entry.
+          echo "3f288b9d5d8b2d25ec0bd81dd82c6b8c77bc0ffad45cc467c37489170dd001ab  mesa.7z" | sha256sum -c -
+          7z x mesa.7z -o./extracted >/dev/null 2>&1 || true
+          for d in opengl32.dll libgallium_wgl.dll libglapi.dll; do
+            if [ -f "extracted/x64/$d" ]; then cp "extracted/x64/$d" "../mesa-cache/$d"; fi
+          done
+          cd ..
+          rm -rf mesa-tmp
+        fi
+        # Strict copy — a missing DLL here must fail LOUDLY, not reproduce
+        # the silent-loader-death class this block exists to prevent.
+        for d in opengl32.dll libgallium_wgl.dll libglapi.dll; do
+          cp "mesa-cache/$d" "${TARGET_DIR}/$d"
+        done

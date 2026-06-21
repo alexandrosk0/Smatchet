@@ -6,6 +6,10 @@ Trigger: **building** the project (configuring presets, the light build, the dua
 
 `cmake --build --preset ninja-iter-msvc` (iter), `ninja-debug-msvc` (debug), `ninja-publish-msvc` (publish). Clang equivalents: `ninja-iter-clang`, `ninja-debug-clang`. Exe at `build/<preset>/Smatchet.exe` (the CMake target is `SmatchetStandalone` but `OUTPUT_NAME` ships as `Smatchet`).
 
+## ctest presets
+
+`CMakePresets.json` carries a `testPresets` section so `ctest --preset <name>` resolves for every test-bearing configure preset (`ninja-test-{msvc,clang}`, `ninja-debug-{msvc,clang}`, `ninja-{msvc,clang}-asan`, `ninja-publish-msvc`, `ninja-publish-msvc-arm64`, `ninja-tsan-linux`, `ninja-fuzzer-linux`); each sets `output.outputOnFailure: true` to match the bare `ctest --output-on-failure` the CI workflows run. The two forms are equivalent: `ctest --preset <name>` from the repo root, or `cd build/<preset> && ctest --output-on-failure` (the `working-directory` form the CI YAMLs use). Verify a preset resolves without running anything via `ctest --preset <name> -N` (list-only). `tests/fuzz/README.md` documents both forms for the fuzzer lane.
+
 ## Warnings as errors
 
 **First-party warnings are errors** (`/WX` MSVC, `-Werror` clang) — force-ON via `SMATCHET_WARNINGS_AS_ERRORS=ON` in the `_smatchet-msvc-base` / `_smatchet-clang-base` presets, so every dev + CI + light build enforces it; the CMake option itself defaults OFF for external/raw-cmake/Unreal (`vs-unreal-msvc`) consumers. FetchContent deps + vendored object libs are never passed through the strict-warning helper, so third-party warnings can't break the build.

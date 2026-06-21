@@ -70,7 +70,14 @@ jobs:
         run: cmake --preset ninja-clang-asan -DSMATCHET_WITH_WHISPER=OFF -DSMATCHET_WITH_LUA_AUTOMATION=OFF
 
       - name: Build (Clang ASan+UBSan)
-        run: cmake --build --preset ninja-clang-asan
+        shell: bash
+        # Tee the build output so the auto-Issue step can tell a COMPILE-phase
+        # failure (a build break) apart from a sanitizer FINDING at test time —
+        # the two want different Issue titles/labels. pipefail keeps the real
+        # cmake exit code despite the tee.
+        run: |
+          set -o pipefail
+          cmake --build --preset ninja-clang-asan 2>&1 | tee build-clang-asan.log
 
       - name: Run ctest under ASan+UBSan
         working-directory: build/ninja-clang-asan
@@ -97,19 +104,49 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -uo pipefail
-          title="Sanitizer nightly failed (ASan+UBSan)"
-          # De-dup: reuse the single open nightly-sanitizer bug issue if present.
-          existing=$(gh issue list --state open --label bug --search "$title in:title" \
-                       --json number --jq '.[0].number' 2>/dev/null || true)
-          body="The nightly Clang ASan+UBSan build/test on \`develop\` failed.
+          # Distinguish a COMPILE-phase break (the build never produced an exe to
+          # sanitize) from a genuine sanitizer FINDING at test time. A build break
+          # is NOT a sanitizer regression — mislabeling it sends a build-fix to the
+          # wrong owner and pollutes the sanitizer-finding history. The build step
+          # tees its output to build-clang-asan.log; these markers are emitted by
+          # CMake/Ninja/Clang on a compile failure (and never by an ASan/UBSan
+          # runtime report). NOTE: match only Ninja's FAILURE markers — `FAILED:`
+          # and `ninja: build stopped` appear ONLY on a compile break, whereas
+          # `Building CXX object` prints on every SUCCESSFUL TU too, so matching it
+          # would false-positive a test-time sanitizer finding as a build break.
+          build_log="build-clang-asan.log"
+          is_compile_fail=0
+          if [ -f "$build_log" ] && \
+             grep -qE '^FAILED:|ninja: build stopped' "$build_log"; then
+            is_compile_fail=1
+          fi
+          if [ "$is_compile_fail" = "1" ]; then
+            title="Sanitizer nightly BUILD BREAK (compile failure, not a sanitizer finding)"
+            label="build-break"
+            body="The nightly Clang ASan+UBSan job on \`develop\` failed during the
+          COMPILE phase — the build never produced an instrumented binary, so this
+          is a BUILD BREAK, not a sanitizer finding.
+
+          Run: ${RUN_URL}
+
+          See the build log (\`build-clang-asan.log\`) in the run for the failing TU.
+          Route to build-doctor, not a sanitizer-finding owner."
+          else
+            title="Sanitizer nightly failed (ASan+UBSan)"
+            label="bug"
+            body="The nightly Clang ASan+UBSan build/test on \`develop\` failed.
 
           Run: ${RUN_URL}
 
           See the job summary for the AddressSanitizer / UBSan report. This is the
           safety-net gate from gate-enforcement-hardening § Slice 4 —
           a sanitizer regression has landed on develop."
+          fi
+          # De-dup: reuse the single open issue with this exact title if present.
+          existing=$(gh issue list --state open --label "$label" --search "$title in:title" \
+                       --json number --jq '.[0].number' 2>/dev/null || true)
           if [ -n "$existing" ] && [ "$existing" != "null" ]; then
             gh issue comment "$existing" --body "Recurred: ${RUN_URL}" || true
           else
-            gh issue create --title "$title" --label bug --body "$body" || true
+            gh issue create --title "$title" --label "$label" --body "$body" || true
           fi

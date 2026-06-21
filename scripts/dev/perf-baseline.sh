@@ -4,6 +4,9 @@
 # Three subcommands:
 #
 #   list                                 — show all checked-in baselines
+#   check                                — flag any baseline whose scenarioId
+#                                          has no registered scenario emitter
+#                                          (orphan baseline → exit 1)
 #   init <scenario> [--host=dev]         — capture a fresh baseline (fails if
 #                                          one already exists for the pair)
 #   bump <scenario> [--host=dev] [--yes] — re-capture an existing baseline +
@@ -24,11 +27,13 @@ usage() {
     cat >&2 <<'USAGE'
 Usage:
   bash scripts/dev/perf-baseline.sh list
+  bash scripts/dev/perf-baseline.sh check
   bash scripts/dev/perf-baseline.sh init <scenario> [--host=<host>]
   bash scripts/dev/perf-baseline.sh bump <scenario> [--host=<host>] [--yes]
 
 Examples:
   bash scripts/dev/perf-baseline.sh list
+  bash scripts/dev/perf-baseline.sh check
   bash scripts/dev/perf-baseline.sh init idle
   bash scripts/dev/perf-baseline.sh bump idle --host=ci-windows-latest --yes
 USAGE
@@ -165,6 +170,40 @@ case "$CMD" in
             date="$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['captureDate'])" "$f" 2>/dev/null || echo "?")"
             printf '%-40s %-22s %s\n' "$f" "$base" "$date"
         done
+        ;;
+    check)
+        # Flag orphan baselines: a checked-in baseline whose scenarioId no
+        # longer has a registered scenario emitter. Scenarios declare their id
+        # via `std::string Name() const override { return "<id>"; }` in
+        # Source/Core/src/Commands/Scenarios/*.cpp — that set is the source of
+        # truth. (Orphans last bit us when the agentic ripout removed
+        # agent-handoff-roundtrip / agent-triage-roundtrip but left their
+        # baselines behind — tooling backlog 2026-06-07.)
+        registered="$(grep -rhoE 'std::string Name\(\) const override \{ return "[a-z0-9-]+"' \
+                        Source/Core/src/Commands/Scenarios/*.cpp 2>/dev/null \
+                        | grep -oE '"[a-z0-9-]+"' | tr -d '"' | sort -u)"
+        if [[ -z "$registered" ]]; then
+            echo "WARN: found no registered scenarios under Source/Core/src/Commands/Scenarios/ — skipping orphan check." >&2
+            exit 0
+        fi
+        shopt -s nullglob
+        orphans=0
+        for f in docs/perf/baselines/*.json; do
+            sid="$(python -c "import json,sys; print(json.load(open(sys.argv[1])).get('scenarioId',''))" "$f" 2>/dev/null || echo "")"
+            if [[ -z "$sid" ]]; then
+                echo "WARN: $f has no scenarioId field — skipping." >&2
+                continue
+            fi
+            if ! grep -qxF "$sid" <<<"$registered"; then
+                echo "ORPHAN: $f references scenarioId '$sid' with no registered scenario emitter." >&2
+                orphans=$((orphans + 1))
+            fi
+        done
+        if [[ $orphans -gt 0 ]]; then
+            echo "FAIL: $orphans orphan baseline(s) — delete them or restore the scenario." >&2
+            exit 1
+        fi
+        echo "OK: every checked-in baseline maps to a registered scenario."
         ;;
     init)
         if [[ -z "$SCENARIO" ]]; then usage; fi
