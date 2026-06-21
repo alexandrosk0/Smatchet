@@ -1296,8 +1296,9 @@ case "$MODE" in
         if ! "$st_py" "$REPO_ROOT/agents/scripts/core/agent_size_audit.py" --selftest; then miss=1; fi
         if ! "$st_py" "$REPO_ROOT/agents/scripts/core/include_cycle_audit.py" --selftest; then miss=1; fi
         if ! "$st_py" "$REPO_ROOT/agents/scripts/core/appcontroller_fan_in_audit.py" --selftest; then miss=1; fi
+        if ! "$st_py" "$REPO_ROOT/agents/scripts/core/daemon_subprocess_timeout_audit.py" --selftest; then miss=1; fi
     else
-        echo "test-lint-rules: WARN: no python interpreter; skipped function_size_audit.py / dup_audit.py / agent_size_audit.py / include_cycle_audit.py --selftest" >&2
+        echo "test-lint-rules: WARN: no python interpreter; skipped function_size_audit.py / dup_audit.py / agent_size_audit.py / include_cycle_audit.py / appcontroller_fan_in_audit.py / daemon_subprocess_timeout_audit.py --selftest" >&2
     fi
     [ "$miss" -eq 0 ] && echo "selftest: AGENTS.md zone globs + comment + function-size + duplication rules in sync" || exit 1
     ;;

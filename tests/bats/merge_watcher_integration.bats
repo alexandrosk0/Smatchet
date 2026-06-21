@@ -25,7 +25,7 @@
 setup() {
     REPO_ROOT="$(git rev-parse --show-toplevel)"
     export REPO_ROOT
-    export SCRIPTS_DIR="$REPO_ROOT/scripts/dev"
+    export SCRIPTS_DIR="$REPO_ROOT/agents/scripts/core"
 
     # Isolate per-user watcher state in a temp sandbox. The watcher root reads
     # LOCALAPPDATA on Windows; cygpath -m converts the git-bash mktemp path to a
