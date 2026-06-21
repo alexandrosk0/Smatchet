@@ -60,6 +60,24 @@ gh_rest() {
     gh api "$path" "$@"
 }
 
+# urlencode_segment <s> — percent-encode a single REST path SEGMENT so a value
+# containing `/` (a branch name like `claude/foo/bar`) does not split the path
+# into extra segments. Encodes every char outside the unreserved set
+# (A-Z a-z 0-9 - . _ ~) — crucially `/` → %2F — so the encoded value stays one
+# path segment. Pure bash (no jq/python dependency); used for branch names that
+# interpolate into a REST URL path.
+urlencode_segment() {
+    local s="$1" out="" i c
+    for (( i = 0; i < ${#s}; i++ )); do
+        c="${s:i:1}"
+        case "$c" in
+            [a-zA-Z0-9.~_-]) out+="$c" ;;
+            *) printf -v c '%%%02X' "'$c"; out+="$c" ;;
+        esac
+    done
+    printf '%s' "$out"
+}
+
 read_required_contexts() {
     if [ -n "${PR_BLOCKED_WHY_REQUIRED_CONTEXTS+x}" ]; then
         printf '%s\n' "${PR_BLOCKED_WHY_REQUIRED_CONTEXTS//,/$'\n'}"
@@ -89,18 +107,30 @@ read_conversation_resolution_required() {
     local owner="$1" repo="$2" base="$3"
     command -v gh >/dev/null 2>&1 || { printf 'unknown'; return 0; }
     [ -n "$base" ] || { printf 'unknown'; return 0; }
-    local val
+    local val base_enc
+    # URL-encode the branch name as a single path SEGMENT before interpolating it
+    # into the REST path: a name with `/` (e.g. `claude/foo/bar`) would otherwise
+    # split into extra segments and 404 the wrong URL (`.../branches/claude/foo/
+    # bar/protection`). owner/repo come from `gh repo view` (no slashes), so only
+    # $base needs encoding.
+    base_enc=$(urlencode_segment "$base")
     # Classic branch-protection REST: required_conversation_resolution.enabled.
-    val=$(gh_rest "repos/$owner/$repo/branches/$base/protection" \
+    val=$(gh_rest "repos/$owner/$repo/branches/$base_enc/protection" \
               --jq '.required_conversation_resolution.enabled' 2>/dev/null) || val=""
     case "$val" in
         true)  printf 'true';  return 0 ;;
         false) printf 'false'; return 0 ;;
     esac
     # Fallback: GraphQL branchProtectionRule.requiresConversationResolution.
+    # $base is a typed GraphQL variable (-f base=) so the query is parametrized;
+    # the rule match is done with a separate standalone-jq pass keyed on a --arg
+    # (NOT shell-interpolated into the jq program) so a branch name containing a
+    # quote / backslash / slash cannot break the filter. `gh api --jq` does not
+    # forward --arg, so the filtering jq runs as its own pipeline stage.
     val=$(gh api graphql -f owner="$owner" -f repo="$repo" -f base="$base" \
               -f query='query($owner:String!,$repo:String!,$base:String!){repository(owner:$owner,name:$repo){branchProtectionRules(first:50){nodes{pattern requiresConversationResolution}}}}' \
-              --jq ".data.repository.branchProtectionRules.nodes[] | select(.pattern == \"$base\") | .requiresConversationResolution" 2>/dev/null) || val=""
+              --jq '.data.repository.branchProtectionRules.nodes' 2>/dev/null \
+            | jq -r --arg base "$base" '(. // [])[] | select(.pattern == $base) | .requiresConversationResolution' 2>/dev/null) || val=""
     case "$val" in
         true)  printf 'true' ;;
         false) printf 'false' ;;
@@ -403,8 +433,45 @@ STUB
         fails=$((fails + 1))
     fi
 
+    # CASE 12 — urlencode_segment percent-encodes `/` (and reserved chars) so a
+    # branch name like `claude/foo/bar` stays a SINGLE REST path segment. Without
+    # this, `repos/o/r/branches/claude/foo/bar/protection` 404s the wrong URL.
+    local enc
+    enc=$(urlencode_segment "claude/foo/bar")
+    if [ "$enc" = "claude%2Ffoo%2Fbar" ]; then
+        echo "selftest CASE12 PASS — urlencode_segment encodes slashes to %2F"
+    else
+        echo "selftest CASE12 FAIL — slashes should encode to %2F (got: '$enc')" >&2
+        fails=$((fails + 1))
+    fi
+
+    # CASE 13 — end-to-end: read_conversation_resolution_required builds the REST
+    # path with the ENCODED branch (single segment). Stub gh to LOG every REST path
+    # it received to a file (so both the classic + graphql invocations are visible);
+    # assert the classic-protection path carried the slashes as %2F.
+    local gh_stub_dir2 stub_log captured_path
+    gh_stub_dir2=$(mktemp -d "${TMPDIR:-/tmp}/pr-blocked-why-ghstub2.XXXXXX")
+    stub_log="$gh_stub_dir2/calls.log"
+    cat > "$gh_stub_dir2/gh" <<STUB
+#!/usr/bin/env bash
+# Stub gh: log the REST path so the caller can assert branch URL-encoding.
+[ "\$1" = "api" ] && echo "REST_PATH=\$2" >> "$stub_log"
+exit 0
+STUB
+    chmod +x "$gh_stub_dir2/gh"
+    ( unset PR_BLOCKED_WHY_CONV_RES_REQUIRED
+      PATH="$gh_stub_dir2:$PATH" read_conversation_resolution_required owner repo "claude/foo/bar" ) >/dev/null 2>&1
+    captured_path=$(cat "$stub_log" 2>/dev/null)
+    rm -rf "$gh_stub_dir2"
+    if printf '%s' "$captured_path" | grep -q 'branches/claude%2Ffoo%2Fbar/protection'; then
+        echo "selftest CASE13 PASS — slashed branch URL-encoded into the REST path"
+    else
+        echo "selftest CASE13 FAIL — branch should be %2F-encoded in REST path (got: '$captured_path')" >&2
+        fails=$((fails + 1))
+    fi
+
     if [ "$fails" -eq 0 ]; then
-        echo "PASS — pr-blocked-why --selftest (11/11)"
+        echo "PASS — pr-blocked-why --selftest (13/13)"
         return 0
     fi
     echo "FAIL — pr-blocked-why --selftest ($fails failing case(s))" >&2

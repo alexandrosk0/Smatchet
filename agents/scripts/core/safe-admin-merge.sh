@@ -184,11 +184,21 @@ evaluate_rollup() {
         # StatusContexts have neither timestamp, but GitHub already overwrites a
         # StatusContext in place by context, so each appears once and the group is a
         # singleton (the sort is a harmless no-op).
+        #
+        # The missing-timestamp default is a FAR-FUTURE sentinel ("9999-..."), NOT
+        # "": a null completedAt means the run is still IN PROGRESS (a re-trigger of
+        # a finished job), and a still-running re-trigger is genuinely the NEWEST
+        # run — so it must sort LAST (win as the latest), not first. With a ""
+        # default the in-progress row sorted FIRST lexicographically and a completed
+        # older SUCCESS could be wrongly picked as "latest" over the live re-run.
+        # The same far-future sentinel is used for both completedAt and startedAt so
+        # the tie-break stays consistent (an in-progress run with neither timestamp
+        # still sorts newest).
         | (((.statusCheckRollup) // [])
             | map(. + {_k: (if .__typename == "CheckRun" then ["CheckRun", (.name // "")]
                             else ["StatusContext", (.context // "")] end)})
             | group_by(._k)
-            | map(sort_by((.completedAt // ""), (.startedAt // "")) | .[-1] | del(._k))) as $latest
+            | map(sort_by((.completedAt // "9999-12-31T23:59:59Z"), (.startedAt // "9999-12-31T23:59:59Z")) | .[-1] | del(._k))) as $latest
         # Resolve each deduped rollup row to a (name, green?) pair; bind as $rows so
         # the absent-required cross-check below can see which names are present.
         | ($latest
@@ -593,8 +603,29 @@ run_selftest() {
         fails=$((fails + 1))
     fi
 
+    # CASE 16c — null-completedAt-in-progress + older-SUCCESS dedup direction:
+    # an OLDER COMPLETED/SUCCESS run plus a NEWER still-running re-trigger (null
+    # completedAt, IN_PROGRESS) must keep the LIVE re-run as the latest — so the
+    # check reads non-green (pending) and BLOCKS. Regression guard for the CR
+    # #1537 finding: with a "" fallback the null-completedAt in-progress row sorted
+    # FIRST lexicographically, the older SUCCESS was wrongly picked as "latest",
+    # and an admin-merge raced a re-running gate. The far-future sentinel sorts the
+    # in-progress run LAST (newest), correctly preserving the block.
+    local inprog_rollup
+    inprog_rollup='{"state":"OPEN","labels":[],"statusCheckRollup":[
+      {"__typename":"CheckRun","name":"Coverage","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-20T10:00:00Z","completedAt":"2026-06-20T10:05:00Z"},
+      {"__typename":"CheckRun","name":"Coverage","status":"IN_PROGRESS","conclusion":null,"startedAt":"2026-06-20T11:00:00Z","completedAt":null},
+      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"}]}'
+    blockers=$(evaluate_rollup "$inprog_rollup" "Windows + MSVC")
+    if printf '%s' "$blockers" | grep -q 'Coverage'; then
+        echo "selftest CASE16c PASS — null-completedAt in-progress re-run sorts newest; pending Coverage blocks"
+    else
+        echo "selftest CASE16c FAIL — live re-running Coverage should block over older SUCCESS (got: '$blockers')" >&2
+        fails=$((fails + 1))
+    fi
+
     if [ "$fails" -eq 0 ]; then
-        echo "PASS — safe-admin-merge --selftest (17/17)"
+        echo "PASS — safe-admin-merge --selftest (18/18)"
         return 0
     fi
     echo "FAIL — safe-admin-merge --selftest ($fails failing case(s))" >&2
