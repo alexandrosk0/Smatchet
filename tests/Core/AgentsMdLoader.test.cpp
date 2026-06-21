@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cstdio>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -104,12 +105,42 @@ TEST_CASE("AgentsMdLoader::LoadOneCapped — explicit cap honoured (mutation-san
     CHECK(!Contains(full, "[truncated"));
 }
 
+// Read-cap sizing decision is unit-tested PURELY via ClampReadLen — no disk I/O.
+// Contract: min(maxBytes+1, file_size) when the size is known (read one byte past
+// the cap so an exactly-at-cap or over-cap file is still detected as `> maxBytes`,
+// without over-allocating maxBytes+1 for a tiny file); maxBytes+1 when the size
+// could not be stat'd. The end-to-end truncation/sentinel behaviour stays covered
+// by the on-disk LoadOneCapped over-cap / explicit-cap cases above.
+TEST_CASE("AgentsMdLoader::ClampReadLen — read-cap sizing decision (pure, no I/O) [high-risk]") {
+    // Small (well under cap): read exactly the file size, never over-allocate.
+    CHECK(AgentsMdLoader::ClampReadLen(1024u, 64u, /*fileSizeKnown=*/true) == 64u);
+    // Exactly at cap: still read the full file (cap+1 only kicks in when the file
+    // is at least cap+1; an at-cap file is read verbatim so it is NOT flagged over).
+    CHECK(AgentsMdLoader::ClampReadLen(1024u, 1024u, /*fileSizeKnown=*/true) == 1024u);
+    // One byte over cap: clamp to cap+1 (the +1 lets the caller detect `> maxBytes`).
+    CHECK(AgentsMdLoader::ClampReadLen(1024u, 1025u, /*fileSizeKnown=*/true) == 1025u);
+    // Much larger than cap: still only cap+1 (bounded allocation).
+    CHECK(AgentsMdLoader::ClampReadLen(1024u, 1024u * 1024u, /*fileSizeKnown=*/true) == 1025u);
+    // Empty file: read length 0.
+    CHECK(AgentsMdLoader::ClampReadLen(1024u, 0u, /*fileSizeKnown=*/true) == 0u);
+    // Unknown size (stat failed): fall back to cap+1 regardless of the size arg.
+    CHECK(AgentsMdLoader::ClampReadLen(1024u, 0u, /*fileSizeKnown=*/false) == 1025u);
+    CHECK(AgentsMdLoader::ClampReadLen(1024u, 64u, /*fileSizeKnown=*/false) == 1025u);
+    // SIZE_MAX cap: the `+1` would wrap to 0 and break over-cap detection. The read
+    // length must NOT wrap — it stays maxBytes (capped at fileSize when known), never 0.
+    const std::size_t kMax = (std::numeric_limits<std::size_t>::max)();
+    CHECK(AgentsMdLoader::ClampReadLen(kMax, 64u, /*fileSizeKnown=*/true) == 64u);
+    CHECK(AgentsMdLoader::ClampReadLen(kMax, 0u, /*fileSizeKnown=*/false) == kMax);
+    CHECK(AgentsMdLoader::ClampReadLen(kMax, static_cast<std::uintmax_t>(kMax),
+                                       /*fileSizeKnown=*/true) == kMax);
+}
+
 // SECURITY (audit 2026-06-13 H1, P1): a config-write attacker repointing an
 // AgentsMd override at a credential file (no `.md` extension) must NOT have its
 // bytes loaded — they would be injected verbatim into the outbound LLM prompt.
 TEST_CASE("AgentsMdLoader — refuses a non-.md override file (H1 exfil containment) [high-risk]") {
     TempDir tmp;
-    const fs::path secret = tmp.path() / "id_rsa";   // a stand-in for any credential file
+    const fs::path secret = tmp.path() / "id_rsa"; // a stand-in for any credential file
     WriteFile(secret, "-----BEGIN OPENSSH PRIVATE KEY-----\nSECRETBYTES\n");
     // Direct + via the layered entry point (the real prompt-assembly path).
     CHECK(AgentsMdLoader::LoadOneCapped(secret.generic_string()).empty());
@@ -287,8 +318,7 @@ TEST_CASE("[high-risk] AgentsMdLoader::LoadLayered — default does NOT walk up 
     // We can't easily set process cwd here, but the same code path is exercised:
     // empty global + empty project + autoDiscoverProject=false short-circuits
     // before FindProjectAgentsMd is called.
-    const std::string out =
-        AgentsMdLoader::LoadLayered(std::string(), std::string(), /*autoDiscoverProject=*/false);
+    const std::string out = AgentsMdLoader::LoadLayered(std::string(), std::string(), /*autoDiscoverProject=*/false);
     CHECK(out.empty());
 }
 
@@ -299,8 +329,7 @@ TEST_CASE("AgentsMdLoader::LoadLayered — autoDiscoverProject=true re-enables w
     // successfully (no UB) and that the empty-everything case still degrades
     // to empty; the FindProjectAgentsMd-positive cases above prove walk-up
     // works once enabled.
-    const std::string out =
-        AgentsMdLoader::LoadLayered(std::string(), std::string(), /*autoDiscoverProject=*/true);
+    const std::string out = AgentsMdLoader::LoadLayered(std::string(), std::string(), /*autoDiscoverProject=*/true);
     // We don't assert on `out` content because cwd depends on the test runner;
     // the requirement here is that the path doesn't crash or deadlock.
     CHECK((out.empty() || !out.empty()));

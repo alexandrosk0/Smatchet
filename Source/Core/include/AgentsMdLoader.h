@@ -2,6 +2,7 @@
 #define SMATCHET_AGENTS_MD_LOADER_H
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 /// Layered `agents.md` loader for the Smatchet Assistant system prompt.
@@ -29,6 +30,17 @@ constexpr std::size_t kDefaultLayerCapBytes = 64u * 1024u;
 
 /// Default walk-up depth cap for project agents.md discovery.
 constexpr std::size_t kDefaultWalkUpMaxDepth = 16u;
+
+/// Pure read-cap sizing decision (no I/O). Returns the number of bytes the loader
+/// should read for a file of `fileSize` bytes given a per-layer cap of `maxBytes`:
+/// `min(maxBytes + 1, fileSize)` when `fileSizeKnown` is true (read one byte past
+/// the cap so an exactly-at-cap or over-cap file is still detected as `> maxBytes`,
+/// but never over-allocate `maxBytes + 1` for a small file), or `maxBytes + 1` when
+/// the size could not be stat'd. When `maxBytes == SIZE_MAX` the `+ 1` would wrap to
+/// 0, so the read length is just `maxBytes` (capped at `fileSize` when known) — the
+/// over-cap probe is moot because nothing can exceed SIZE_MAX. Exposed for pure unit
+/// tests of the cap logic.
+std::size_t ClampReadLen(std::size_t maxBytes, std::uintmax_t fileSize, bool fileSizeKnown);
 
 /// Load + cap one layer. Empty `path` or missing file returns empty string.
 /// Over-cap input is truncated to `capBytes` and gets a sentinel suffix referencing

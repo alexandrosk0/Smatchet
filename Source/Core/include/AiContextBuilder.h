@@ -53,6 +53,12 @@ struct Inputs {
     /// Currently-active ticket id (one of the `CachedTicket::id` values). Empty means
     /// "no ticket focused" — the ActiveTicket block emits an empty body in that case.
     std::string ActiveIssueId;
+    /// Optional pre-resolved active ticket. When non-null the ActiveTicket block uses
+    /// it directly, skipping the O(n) linear scan of `Tickets` by `ActiveIssueId`. The
+    /// UI caller can populate this from its existing id→index map (IdIndex) in O(1);
+    /// when null the builder falls back to the linear scan over `Tickets`. Must point
+    /// into a snapshot that outlives the BuildAll/MergeEnabled call.
+    const CachedTicket* PreResolvedActiveTicket = nullptr;
     /// Snapshot of the currently-active view. May be null when no view is active.
     const ViewDefinition* ActiveView = nullptr;
     /// First N rows of the visible-rows cap mapped to the same sort-order indices.
@@ -98,7 +104,13 @@ std::string BuildSelectionBody(const std::vector<CachedTicket>& tickets, const s
 std::string BuildVisibleRowsBody(const std::vector<CachedTicket>& tickets, const std::vector<std::size_t>& visibleRows);
 
 /// Render the ActiveTicket block body. Empty `activeIssueId` returns empty string.
+/// This overload performs an O(n) linear scan of `tickets` for `activeIssueId`.
 std::string BuildActiveTicketBody(const std::vector<CachedTicket>& tickets, const std::string& activeIssueId);
+
+/// Render the ActiveTicket block body from an already-resolved ticket pointer
+/// (O(1) — no scan). Null pointer returns empty string. Used when the caller
+/// resolved the active ticket via its id→index map.
+std::string BuildActiveTicketBody(const CachedTicket* activeTicket);
 
 /// Render the ActiveView block body. Null view returns empty string.
 std::string BuildActiveViewBody(const ViewDefinition* view);

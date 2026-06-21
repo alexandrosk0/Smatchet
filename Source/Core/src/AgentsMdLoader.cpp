@@ -4,8 +4,10 @@
 
 #include <ghc/filesystem.hpp>
 
+#include <cstdint>
 #include <cstdio>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -96,10 +98,16 @@ bool ReadFileBytes(const std::string& path, std::string& out, std::size_t maxByt
     if (!in.is_open()) {
         return false;
     }
-    // Read up to maxBytes+1 to detect over-cap inputs cheaply without scanning
-    // the full file size via filesystem (symlink resolution differences across
-    // platforms make `file_size` brittle for this).
-    out.resize(maxBytes + 1);
+    // Cap the read at min(maxBytes + 1, file_size): we still want one byte past
+    // the cap so an exactly-at-cap or over-cap file is detected (got > maxBytes),
+    // but never over-allocate maxBytes+1 (e.g. 64 KiB+1) for a small file. The
+    // caller has already canonicalized + contained the path, so we stat the
+    // resolved file (`path` here is the canonical path from LoadOneCapped); a
+    // failed stat falls back to the maxBytes+1 read so behaviour is unchanged.
+    std::error_code sizeEc;
+    const std::uintmax_t fileSize = fs::file_size(path, sizeEc);
+    const std::size_t readCap = ClampReadLen(maxBytes, fileSize, !sizeEc);
+    out.resize(readCap);
     in.read(&out[0], static_cast<std::streamsize>(out.size()));
     const std::streamsize got = in.gcount();
     if (got <= 0) {
@@ -115,6 +123,27 @@ bool ReadFileBytes(const std::string& path, std::string& out, std::size_t maxByt
 }
 
 } // namespace
+
+std::size_t ClampReadLen(std::size_t maxBytes, std::uintmax_t fileSize, bool fileSizeKnown) {
+    // Read one byte past the cap so an exactly-at-cap or over-cap file is still
+    // detected (got > maxBytes), but never over-allocate maxBytes+1 for a small
+    // file. A failed stat (fileSizeKnown == false) falls back to maxBytes+1 so
+    // behaviour is unchanged from the pre-stat read.
+    // Guard the +1 against unsigned overflow: at maxBytes == SIZE_MAX there is no
+    // representable cap+1, so the read length is just maxBytes (capped at fileSize
+    // when known) — the +1 over-cap probe is moot since nothing can exceed SIZE_MAX.
+    if (maxBytes == (std::numeric_limits<std::size_t>::max)()) {
+        if (fileSizeKnown && fileSize < static_cast<std::uintmax_t>(maxBytes)) {
+            return static_cast<std::size_t>(fileSize);
+        }
+        return maxBytes;
+    }
+    const std::size_t readCap = maxBytes + 1;
+    if (fileSizeKnown && fileSize < static_cast<std::uintmax_t>(readCap)) {
+        return static_cast<std::size_t>(fileSize);
+    }
+    return readCap;
+}
 
 std::string LoadOneCapped(const std::string& path, std::size_t capBytes) {
     // SECURITY (audit H1): contain the path BEFORE reading — refuse anything that

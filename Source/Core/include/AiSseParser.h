@@ -32,7 +32,11 @@ class AiSseParser {
     /// Append `len` bytes of stream data, emitting completed frames via onEvent.
     void Feed(const char* data, std::size_t len, const EventCallback& onEvent);
 
-    /// Flush any in-progress frame as a final event. Call once after EOF/abort.
+    /// Drop any in-progress (incomplete) trailing frame. Call once after
+    /// EOF/abort. A residual buffer means the server never terminated the final
+    /// frame with a blank line; that partial frame is discarded rather than
+    /// synthesized into a (truncated) final event. `onEvent` is accepted for API
+    /// symmetry but never invoked — Flush emits nothing.
     void Flush(const EventCallback& onEvent);
 
     void Reset();

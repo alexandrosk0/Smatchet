@@ -79,6 +79,15 @@ TEST_CASE("StubAiClient: cancel mid-stream stops onDelta within 100 ms") {
 #if defined(__SANITIZE_ADDRESS__)
     CHECK(postCancelMs < 2000); // ASAN ~3-10x wall-clock overhead; budget loosened (#1215 pattern)
     CHECK(totalMs < 4000);
+#elif defined(SMATCHET_COVERAGE)
+    // OpenCppCoverage (coverage.yml) runs the binary instrumented (~10x slower)
+    // and defines NO __SANITIZE_ADDRESS__, so these wall-clock budgets flake on
+    // the Coverage lane purely from instrumentation overhead. Scale x8 — same
+    // ratio the CallstackParser ReDoS-timing guard uses for SMATCHET_COVERAGE,
+    // and matching the stub's internal ack budget (#1280). Behaviour assertions
+    // (CancelObserved, partial stream, error path) below stay intact.
+    CHECK(postCancelMs < 1600);
+    CHECK(totalMs < 3200);
 #else
     CHECK(postCancelMs < 200);
     CHECK(totalMs < 400);

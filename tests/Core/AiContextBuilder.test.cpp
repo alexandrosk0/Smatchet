@@ -211,6 +211,46 @@ TEST_CASE("AiContextBuilder::BuildAll — disabled flags zero-out matching block
     CHECK(blocks[4].Body.empty()); // AuditTrail — disabled
 }
 
+TEST_CASE("AiContextBuilder::BuildAll — ActiveTicket fast path validates pre-resolved id [high-risk]") {
+    // The O(1) PreResolvedActiveTicket fast path must verify the pointer's id
+    // matches ActiveIssueId. A STALE pre-resolved pointer (id != ActiveIssueId)
+    // must NOT surface the wrong ticket — BuildAll must fall back to the scan and
+    // resolve ActiveIssueId from the snapshot.
+    auto tickets = MakeTickets(5); // SMA-100 .. SMA-104
+
+    // Matched: pre-resolved pointer whose id equals ActiveIssueId is used directly.
+    {
+        AiContextBuilder::Inputs in;
+        in.Tickets = tickets;
+        in.ActiveIssueId = "SMA-102";
+        in.PreResolvedActiveTicket = &(*tickets)[2]; // SMA-102 — matches
+        in.EnableSelection = false;
+        in.EnableVisibleRows = false;
+        in.EnableActiveView = false;
+        in.EnableAuditTrail = false;
+        const auto blocks = AiContextBuilder::BuildAll(in);
+        REQUIRE(blocks.size() == 5);
+        CHECK(Contains(blocks[2].Body, "id: SMA-102"));
+    }
+
+    // Mismatched: pre-resolved pointer is SMA-104 but ActiveIssueId is SMA-101.
+    // The guard rejects the stale pointer and the scan resolves SMA-101 instead.
+    {
+        AiContextBuilder::Inputs in;
+        in.Tickets = tickets;
+        in.ActiveIssueId = "SMA-101";
+        in.PreResolvedActiveTicket = &(*tickets)[4]; // SMA-104 — mismatch
+        in.EnableSelection = false;
+        in.EnableVisibleRows = false;
+        in.EnableActiveView = false;
+        in.EnableAuditTrail = false;
+        const auto blocks = AiContextBuilder::BuildAll(in);
+        REQUIRE(blocks.size() == 5);
+        CHECK(Contains(blocks[2].Body, "id: SMA-101"));
+        CHECK_FALSE(Contains(blocks[2].Body, "id: SMA-104"));
+    }
+}
+
 TEST_CASE("AiContextBuilder::MergeEnabled — wraps non-empty blocks in <smatchet_context> tags") {
     auto tickets = MakeTickets(3);
     const auto sortedIdx = IdentitySort(tickets->size());

@@ -144,13 +144,7 @@ std::string BuildVisibleRowsBody(const std::vector<CachedTicket>& tickets,
     return out;
 }
 
-std::string BuildActiveTicketBody(const std::vector<CachedTicket>& tickets, const std::string& activeIssueId) {
-    if (activeIssueId.empty() || tickets.empty()) {
-        return std::string();
-    }
-    const auto it =
-        std::find_if(tickets.begin(), tickets.end(), [&](const CachedTicket& t) { return t.id == activeIssueId; });
-    const CachedTicket* found = (it == tickets.end()) ? nullptr : &(*it);
+std::string BuildActiveTicketBody(const CachedTicket* found) {
     if (!found) {
         return std::string();
     }
@@ -169,6 +163,18 @@ std::string BuildActiveTicketBody(const std::vector<CachedTicket>& tickets, cons
         out.push_back('\n');
     }
     return out;
+}
+
+std::string BuildActiveTicketBody(const std::vector<CachedTicket>& tickets, const std::string& activeIssueId) {
+    if (activeIssueId.empty() || tickets.empty()) {
+        return std::string();
+    }
+    // O(n) fallback path: linear scan by id. Callers with an id→index map should
+    // resolve the pointer themselves and use the pointer overload to skip this.
+    const auto it =
+        std::find_if(tickets.begin(), tickets.end(), [&](const CachedTicket& t) { return t.id == activeIssueId; });
+    const CachedTicket* found = (it == tickets.end()) ? nullptr : &(*it);
+    return BuildActiveTicketBody(found);
 }
 
 std::string BuildActiveViewBody(const ViewDefinition* view) {
@@ -244,7 +250,14 @@ std::vector<AiContextBlock> BuildAll(const Inputs& in) {
     {
         std::string body;
         if (in.EnableActiveTicket) {
-            body = BuildActiveTicketBody(tickets, in.ActiveIssueId);
+            if (in.PreResolvedActiveTicket && in.PreResolvedActiveTicket->id == in.ActiveIssueId) {
+                // O(1) fast path: caller resolved the active ticket via its IdIndex.
+                // Guarded so a stale pre-resolved pointer (id != ActiveIssueId) never
+                // surfaces the wrong ticket — on mismatch fall back to the scan.
+                body = BuildActiveTicketBody(in.PreResolvedActiveTicket);
+            } else {
+                body = BuildActiveTicketBody(tickets, in.ActiveIssueId);
+            }
         }
         out.push_back(MakeBlock(AiContextBlockKind::ActiveTicket, std::move(body)));
     }
