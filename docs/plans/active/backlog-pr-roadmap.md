@@ -2,7 +2,7 @@
 
 > **Slug**: `backlog-pr-roadmap` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — a living tracker, not a single-feature plan. Each PR group below is `proposed` until a branch opens; flip its row to `in-flight` / `shipped (#N)` as work lands. This file flips to `shipped` and moves to `docs/plans/shipped/` only once the roadmap is exhausted or explicitly retired.
+> **Status**: `active` — a living tracker, not a single-feature plan. **Substantially shipped** as of the 2026-06-20 campaign: 17 of 23 PR groups landed (#1502-1518); 6 remain `deferred` (visual / hardware / decision-gated), so the doc stays `active` until those are resolved or retired. Each PR group's row carries its `shipped #N` / `deferred — <reason>` status. This file flips to `shipped` and moves to `docs/plans/shipped/` only once the roadmap is exhausted or explicitly retired.
 
 ## Context
 
@@ -11,6 +11,8 @@ A full **multi-agent trap-sweep** (18 verifier agents, every verdict git-cited) 
 Source data: the trap-sweep run (`wux8jz521`, run `wf_ca0057a0-57d`). Reconciliation PRs: #1493, #1494, #1496. First roadmap revision: #1497.
 
 ### Roadmap triple-check (2026-06-20)
+
+2026-06-20 campaign: 17 of 23 groups shipped (#1502-1518); 6 deferred (visual/hardware/decision). See per-row status.
 
 This revision was verified before publish:
 
@@ -40,59 +42,59 @@ This roadmap doc only (`docs/plans/active/backlog-pr-roadmap.md`). Each PR group
 
 | PR | Members (backlog slug) | Status |
 |---|---|---|
-| PR-1 Sanctioned merge wrapper + gate visibility | `intent-gate-safe-merge-wrapper`, `green-pr-blocked-no-merge-signal`, `auto-merge-poller-default`, `auto-merge-armed-before-final-push-orphans-commit`, `verify-unresolved-review-threads-vs-head`, `out-of-band-on-trust-boundary-owes-tracked-test` | proposed |
-| PR-2 CodeRabbit handling | `cr-review-skipped-pure-docs-auto-downgrade`, `cr-rate-limit-code-pr-auto-pause`, `coderabbit-current-head-helper`, `coderabbit-plan-ref-convention-path-instruction` | proposed |
-| PR-3 Merge-watcher robustness | `merge-snapshot-ledger-uncommitted-loss-risk`, `merge-watcher-triage-attempts-unbounded`, `merge-watcher-agent-notify`, `merge-gate-absence-blind-nonrequired-allowlist`, `bucket-lane-status-broken-sentinel-auditable` | proposed |
+| PR-1 Sanctioned merge wrapper + gate visibility | `intent-gate-safe-merge-wrapper`, `green-pr-blocked-no-merge-signal`, `auto-merge-poller-default`, `auto-merge-armed-before-final-push-orphans-commit`, `verify-unresolved-review-threads-vs-head`, `out-of-band-on-trust-boundary-owes-tracked-test` | shipped #1503 |
+| PR-2 CodeRabbit handling | `cr-review-skipped-pure-docs-auto-downgrade`, `cr-rate-limit-code-pr-auto-pause`, `coderabbit-current-head-helper`, `coderabbit-plan-ref-convention-path-instruction` | shipped #1504 |
+| PR-3 Merge-watcher robustness | `merge-snapshot-ledger-uncommitted-loss-risk`, `merge-watcher-triage-attempts-unbounded`, `merge-watcher-agent-notify`, `merge-gate-absence-blind-nonrequired-allowlist`, `bucket-lane-status-broken-sentinel-auditable` | shipped #1505 |
 
 ### Lint / gate authoring (owner: build-doctor)
 
 | PR | Members | Status |
 |---|---|---|
-| PR-4 Comment-noise + new-file lint reflex | `comment-blank-run-flags-single-doc-paragraph-separator`, `agent-headers-trip-comment-noise-gate`, `comment-noise-gate-reds-required-build`, `new-file-delta-lint-reflex`, `build-verify-shortcut-bypasses-lint-gate` | proposed |
-| PR-5 New strict-zone lint rules | `ban-bare-json-parse-on-untrusted-ingress`, `concurrency-correctness-no-headless-test-home`, `function-size-audit-grandfather-blind`, `fail-open-meta-gate-authoring-check` | proposed |
-| PR-6 Gate FP fixes + lint-hook tests | `lint-syntax-both-pch-version-drift-fp`, `fuzz-target-include-closure-unresolved-invisible`, `lint-hook-deferred-drain-4-tests` | proposed |
+| PR-4 Comment-noise + new-file lint reflex | `comment-blank-run-flags-single-doc-paragraph-separator`, `agent-headers-trip-comment-noise-gate`, `comment-noise-gate-reds-required-build`, `new-file-delta-lint-reflex`, `build-verify-shortcut-bypasses-lint-gate` | shipped #1509 |
+| PR-5 New strict-zone lint rules | `ban-bare-json-parse-on-untrusted-ingress`, `concurrency-correctness-no-headless-test-home`, `function-size-audit-grandfather-blind`, `fail-open-meta-gate-authoring-check` | shipped #1510 (TSan leg deferred) |
+| PR-6 Gate FP fixes + lint-hook tests | `lint-syntax-both-pch-version-drift-fp`, `fuzz-target-include-closure-unresolved-invisible`, `lint-hook-deferred-drain-4-tests` | shipped #1506 |
 
 ### Plan-doc / index tooling (owner: mechanic)
 
 | PR | Members | Status |
 |---|---|---|
-| PR-7 plan-index robustness | `shallow-clone-corrupts-git-log-date-generators`, `test-plan-index-shallow-clone-corrupts-date-sort`, `plan-index-fix-wrong-cwd-silent-noop`, `test-plan-index-fix-shipped-date-placeholder`, `markdown-links-local-passes-ci-fails-after-plan-archive` | proposed |
-| PR-8 Plan-staleness gates | `archive-staleness-check`, `plan-doc-postship-closeout-stale-active-gate`, `extraction-sizing-step`, `historical-review-ledger-staleness` | proposed |
+| PR-7 plan-index robustness | `shallow-clone-corrupts-git-log-date-generators`, `test-plan-index-shallow-clone-corrupts-date-sort`, `plan-index-fix-wrong-cwd-silent-noop`, `test-plan-index-fix-shipped-date-placeholder`, `markdown-links-local-passes-ci-fails-after-plan-archive` | shipped #1502 |
+| PR-8 Plan-staleness gates | `archive-staleness-check`, `plan-doc-postship-closeout-stale-active-gate`, `extraction-sizing-step`, `historical-review-ledger-staleness` | shipped #1511 |
 
 ### Bucket-E test coverage (owner: test-rig / subsystem)
 
 | PR | Members | Status |
 |---|---|---|
-| PR-9 Bucket-E harness fixes *(unblocks PR-10/11)* | `bucket-e-uitestscenario-no-live-local-cache`, `bucket-e-failures-blind-stdout`, `faketrackerclient-fetch-queue-auto-sticky`, `bucket-e-ci-fixture-env-export`, `fakep4runner-spawn-fail-vs-timeout` | proposed |
-| PR-10 Bucket-E: grid / views / UI | `multigrid-slice3-lifecycle-bucket-e`, `data-dependent-windows-bucket-e-render`, `grid-description-tooltip-bucket-e`, `views-editor-field-selection-bucket-e`, `user-info-window-bucket-e-coverage`, `keybindings-editor-rebind-bucketE-residue`, `help-marker-hover-fallback-bucket-e` | proposed |
-| PR-11 Bucket-E: AI chat | `ai-chat-bucket-e-coverage` | proposed |
+| PR-9 Bucket-E harness fixes *(unblocks PR-10/11)* | `bucket-e-uitestscenario-no-live-local-cache`, `bucket-e-failures-blind-stdout`, `faketrackerclient-fetch-queue-auto-sticky`, `bucket-e-ci-fixture-env-export`, `fakep4runner-spawn-fail-vs-timeout` | shipped #1518 (case-8 self-activation = follow-up) |
+| PR-10 Bucket-E: grid / views / UI | `multigrid-slice3-lifecycle-bucket-e`, `data-dependent-windows-bucket-e-render`, `grid-description-tooltip-bucket-e`, `views-editor-field-selection-bucket-e`, `user-info-window-bucket-e-coverage`, `keybindings-editor-rebind-bucketE-residue`, `help-marker-hover-fallback-bucket-e` | deferred — screenshot baselines need golden-image approval (user) |
+| PR-11 Bucket-E: AI chat | `ai-chat-bucket-e-coverage` | deferred — screenshot baselines need golden-image approval (user) |
 
 ### AI / assistant subsystem (owner: tracker-backend / test-rig)
 
 | PR | Members | Status |
 |---|---|---|
-| PR-12 AI client tests | `aiclientcancel-per-client-regression`, `per-client-error-body-redaction-gate`, `aiassistant-streaming-scenarios-s2-s4-s5` | proposed |
-| PR-13 AI prefs/controller bug fixes | `assistant-prefs-3-bugs`, `aiassistantcontroller-3-loads`, `whisper-prefs-4-bugs`, `imgui-define-macro`, `whisper-local-backend-default-flip-decision` | proposed |
+| PR-12 AI client tests | `aiclientcancel-per-client-regression`, `per-client-error-body-redaction-gate`, `aiassistant-streaming-scenarios-s2-s4-s5` | shipped #1513 |
+| PR-13 AI prefs/controller bug fixes | `assistant-prefs-3-bugs`, `aiassistantcontroller-3-loads`, `whisper-prefs-4-bugs`, `imgui-define-macro`, `whisper-local-backend-default-flip-decision` | PR-13a shipped #1515; PR-13b (prefs-UI) deferred-visual; PR-13c (imgui-macro) deferred-respec |
 
 ### Coverage / build / hygiene / infra
 
 | PR | Members | Owner | Status |
 |---|---|---|---|
-| PR-14 Raise core coverage 65→70 | `raise-core-coverage-67-to-70`, `backend-impl-coverage-recovery` | test-rig | proposed |
-| PR-15 CMake / CI robustness | `cmake4-fresh-configure-drops-ehsc`, `fetchcontent-cache-path-drift`, `advisory-ci-step-level-template`, `ubsan-merged-without-executing-validation` | build-doctor | proposed |
-| PR-16 Worktree / session-registry + branch-edit guards | `session-registry-liveness-followups`, `edit-on-merged-pr-branch-reverts-develop`, `campaign-sibling-prs-edit-shared-plan-doc-thrash`, `decomposition-prs-serial-conflict-shared-files` | git-janitor | proposed |
-| PR-17 Ship-loop discipline rules (docs) | `not-started-status-verified-against-merged-code`, `review-before-commit-hardening`, `adversarial-rca-before-coding`, `security-review-plan-time-trust-boundary`, `ship-time-issue-elevation-check`, `exe-auto-launch-diff-trigger`, `ci-config-slice-dup-preflight` | docs | proposed |
+| PR-14 Raise core coverage 65→70 | `raise-core-coverage-67-to-70`, `backend-impl-coverage-recovery` | test-rig | deferred — coverage-65→70 flip needs measured headroom; tests not added this campaign |
+| PR-15 CMake / CI robustness | `cmake4-fresh-configure-drops-ehsc`, `fetchcontent-cache-path-drift`, `advisory-ci-step-level-template`, `ubsan-merged-without-executing-validation` | build-doctor | shipped #1516 |
+| PR-16 Worktree / session-registry + branch-edit guards | `session-registry-liveness-followups`, `edit-on-merged-pr-branch-reverts-develop`, `campaign-sibling-prs-edit-shared-plan-doc-thrash`, `decomposition-prs-serial-conflict-shared-files` | git-janitor | shipped #1512 |
+| PR-17 Ship-loop discipline rules (docs) | `not-started-status-verified-against-merged-code`, `review-before-commit-hardening`, `adversarial-rca-before-coding`, `security-review-plan-time-trust-boundary`, `ship-time-issue-elevation-check`, `exe-auto-launch-diff-trigger`, `ci-config-slice-dup-preflight` | docs | shipped #1508 |
 
 ### Standalone subsystem items
 
 | PR | Member | Owner | Status |
 |---|---|---|---|
-| PR-18 Pink-clear dock-gap scan | `pink-clear-dock-gap-scan` | ui-host | proposed |
-| PR-19 DX12 backbuffer readback screenshot | `dx12-backbuffer-readback-screenshot-diff` | unreal-bridge | proposed |
-| PR-20 Tracker redirect no-follow regression | `tracker-redirect-no-follow-regression-test` | tracker-backend / security | proposed |
-| PR-21 Per-pane catalog value-read routing | `per-pane-catalog-value-read-routing` | grid-engine | proposed |
-| PR-22 Portable-layer + daemon hardening | `de-smatchetify-portable-layer`, `daemon-loop-per-iteration-backstop-audit` | build-doctor / agentic-infra | proposed |
-| PR-23 Subagent-eval calibration | `subagent-eval-calibration` | agentic-infra | proposed |
+| PR-18 Pink-clear dock-gap scan | `pink-clear-dock-gap-scan` | ui-host | deferred — touches main.cpp clear-color/rendering (visual) |
+| PR-19 DX12 backbuffer readback screenshot | `dx12-backbuffer-readback-screenshot-diff` | unreal-bridge | deferred — needs Unreal/DX12 build environment (visual) |
+| PR-20 Tracker redirect no-follow regression | `tracker-redirect-no-follow-regression-test` | tracker-backend / security | shipped #1517 |
+| PR-21 Per-pane catalog value-read routing | `per-pane-catalog-value-read-routing` | grid-engine | deferred — grid behavior change (visual validation) |
+| PR-22 Portable-layer + daemon hardening | `de-smatchetify-portable-layer`, `daemon-loop-per-iteration-backstop-audit` | build-doctor / agentic-infra | shipped #1514 (bounded de-smatchetify) |
+| PR-23 Subagent-eval calibration | `subagent-eval-calibration` | agentic-infra | shipped #1507 |
 
 ## Implementation detail (per PR group)
 

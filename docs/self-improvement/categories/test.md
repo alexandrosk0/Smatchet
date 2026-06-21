@@ -16,8 +16,8 @@
 - 2026-06-14 · orchestrator (gate-escape-postmortem) · [test] · P2 — `tracker-redirect-no-follow-regression-test`: the security redirect-disable fix (`MakeTrackerRedirectPolicy`, #1212) shipped under `tests-out-of-band` with zero regression coverage of the trust-boundary property (preventing gate from postmortems.md 2026-06-14 PR #1212)
   Details: PR #1212 disabled redirect-following on every tracker request so an attacker-controlled cross-host redirect can't carry the API token (`TrackerHttpUtils.h:27` `cpr::Redirect MakeTrackerRedirectPolicy()` — "redirect-following DISABLED (security H4 / E2)" — applied at `JiraIssueMutation.cpp:593`). It merged with a `tests-out-of-band` label and NO `*.test.cpp` delta; a recursive search of `tests/` confirms no redirect-policy regression test exists (every `redirect` hit is unrelated `TestEnvGuard` directory-redirect noise). So the security property is untested — a future refactor re-enabling redirect-following (or applying the policy at the wrong call site) would red no gate. The override may be legitimate (the test needs an HTTP-redirect fixture that didn't exist) but the deferred test must be tracked, not evaporate (#1124 class).
   Concrete next action: add a doctest/integration regression driving a tracker request against an in-process `httplib::Server` (or cpr test double) that issues a 30x redirect to a DIFFERENT host; assert (a) `MakeTrackerRedirectPolicy()` yields a no-follow policy (`cpr::Redirect` with follow disabled / 0 max-redirects), and (b) the client does NOT re-send the `Authorization` / API-token header to the redirect target (the security property — token not leaked cross-host). The redirect fixture is reusable for the broader tracker-HTTP coverage gap (the `TrackerHttpErrorText` TU-split test entry in infra.md). Est ~1.5-2 h incl. fixture. Cross-ref: postmortems.md 2026-06-14 #1212; tooling `out-of-band-on-trust-boundary-owes-tracked-test`; the #1124 untested-security-override class.
-  Status: open
-  Last-reviewed: 2026-06-14
+  Status: applied (2026-06-20 roadmap campaign — shipped #1517)
+  Last-reviewed: 2026-06-20
 
 - 2026-06-13 · build-doctor · [test] · P2 — booted-Android-emulator lane deferred for the #1122 texture-guard class (headless gate shipped)
   Details: Issue #1133 shipped the headless `mobile-texture-guard` Mesa-GL smoke gate (advisory job `mobile-texture-guard-smoke` in `build-and-test.yml`), which covers the SHARED ImTextureData state-machine crash class via the promoted `GuardImGuiDynamicTextures` + the compile-gated `SmatchetTextureFaultInjector`. The fault hooks were left wired into `Source/Mobile/Android/android_main.cpp` precisely so a future emulator lane reuses the same injector. NOT covered: a bug that manifests ONLY through the real Android EGL surface lifecycle (not the shared texture state machine) would escape the headless gate. A booted KVM-accelerated emulator driving `am broadcast` rotation against a real APK is the follow-up — blocked on a hardware-accelerated mobile CI runner (none exists today).
@@ -77,14 +77,14 @@
 - 2026-06-02 · debug-detective · [test] · P2 — `FakeTrackerClient` finite fetch-queue silently degrades to an empty `fullSyncCompleted=true` fallback (footgun that masquerades as a server-side mass-delete)
   Details: Root cause of the "deterministic backend broken" P1 below, found + fixed via #728. `JiraFakeTrackerFixture::Configure()` enqueued a finite fetch queue (`EnqueueFetchResult`) but never set the static fallback; production streaming-sync fires more often than the fixture scripts (deferred initial auto-sync on first `SmatchetUI::Draw` + each bucket-E test's explicit `SyncWithBackend()`, all sharing one backend), so once the queue drains `FakeTrackerClient::FetchIssues` returns empty with `fetchFullSyncCompleted_=true` — which the **correct** real sync worker reads as "every issue deleted server-side" and stale-prunes the grid. It was a test-fixture wiring bug, NOT product code. #728 fixed it per-fixture (set the static fallback to the last scripted fetch); the durable fix is in the fake itself.
   Concrete next action: make `EnqueueFetchResult` auto-sticky on its last entry, OR default `fetchFullSyncCompleted_=false` when the queue empties with no explicit static result, so an unscripted re-fetch can't trigger stale-pruning. ~30min in `FakeTrackerClient`.
-  Status: open
-  Last-reviewed: 2026-06-02
+  Status: applied (2026-06-20 roadmap campaign — shipped #1518)
+  Last-reviewed: 2026-06-20
 
 - 2026-06-02 · test-author · [test] · P2 — CI bucket-E job never sets `SMATCHET_TEST_JIRA_BACKEND_FIXTURE`, so the deterministic-backend suite silently skips
   Details: `.github/workflows/build-and-test.yml` Bucket-E job runs `Smatchet.exe scenario.run --name=ui-test --yes` (all registered tests) but does NOT export `SMATCHET_TEST_JIRA_BACKEND_FIXTURE`, so every fixture-gated test hits its `FixtureEnvSet()` skip — and the step is `continue-on-error: true` anyway. The #663 deterministic suite has thus been invisible to CI; its breakage (entry above) surfaced only via a manual local run. The driver `test-ui-jira-deterministic-backend.sh` is also absent from `test-all.sh`'s `WORKTREE_INCOMPATIBLE_RE`.
   Concrete next action: add a CI step (or extend the bucket-E job) that exports the fixture path + runs the deterministic-backend driver as a hard check, so fixture-backend regressions fail CI immediately. ~30min.
-  Status: open
-  Last-reviewed: 2026-06-02
+  Status: applied (2026-06-20 roadmap campaign — shipped #1518)
+  Last-reviewed: 2026-06-20
 
 - 2026-05-24 · test-author · [test] · P2 — `VerifyOnSave_TestConnection_SetsResult` bucket-E test fails under `--spawn` ephemeral runner (slice-9 ship-loop observation)
   Details: Slice 9 of `docs/plans/shipped/autonomous-debugging-no-creds.md` aggregate UI-test run (34/35 pass) revealed a single pre-existing failure: `VerifyOnSave_TestConnection_SetsResult` from `tests/ui/ai_prefs_autosave_flow.test.cpp:215`. The variant depends on `SmatchetActiveUiTestAppController()` returning a non-null `AppController*` so it can call `AiPrefsTestConnection::TriggerProbe`. Under `--spawn --ephemeral` the AppController seam is wired (other variants in the same TU pass), but the worker-thread `ProbeReachability` succeeds, then the result-callback dispatched to the main thread doesn't always run before the test budget (240 yields) expires. Sibling variant `VerifyOnSave_CancelOnClose_ShortCircuits` passes consistently because cancel-then-yield is deterministic. Not a slice-9 regression — slice-9's own 18 new variants all pass.
@@ -113,20 +113,20 @@
 - 2026-05-17 · security-review · [test] · P2 — Per-client cancel-abort-within-N-chunks regression test
   Details: PR #176's parser caps + `liveCancel` trust depend on the cpr WriteCallback contract (returning `false` aborts the in-flight request). If a future cpr / curl bump changes that semantic, cancel breaks silently with no test failure. Need a doctest per client (`OpenAi` / `Anthropic` / `Ollama`) that drives a fake HTTP server (cpp-httplib already linked) emitting a slow chunked stream, sets the cancel atom mid-stream, and asserts the client returns within K chunks with `WasCancelled = true`.
   Concrete next action: add `tests/Core/AiClientCancel.test.cpp` parameterised across the 3 clients; reuse the cpp-httplib server pattern from existing `MCP` tests. Estimated 2-3 h.
-  Status: open
-  Last-reviewed: 2026-05-17
+  Status: applied (2026-06-20 roadmap campaign — shipped #1513)
+  Last-reviewed: 2026-06-20
 
 - 2026-05-17 · code-review · [test] · P2 — Per-client error-body redaction regression test
   Details: 26d3b6f and PR #176 both fixed sibling-client redaction misses. The fix is per-client manual wiring with no test enforcing every `IAiClient` implementation routes through `RedactProviderErrorBody`. Need a regression gate: a doctest that drives each client against a fake server returning a 401 with an echoed `x-api-key` / `Authorization` header in the body, asserts the resulting `AiStreamError::Message` does not contain the literal key.
   Concrete next action: extend `AiClientCancel.test.cpp` (above) or new `AiClientErrorRedact.test.cpp` with one subcase per client. ~1.5 h on top of the cancel-test fixture.
-  Status: open
-  Last-reviewed: 2026-05-17
+  Status: applied (2026-06-20 roadmap campaign — shipped #1513)
+  Last-reviewed: 2026-06-20
 
 - 2026-05-17 · test-author · [test] · P2 — Headless AiAssistant streaming scenarios (Scenarios 2/4/5) not yet covered
   Details: Phase B (PR #163) shipped the assistant panel + worker + Cancel but live-API verification scenarios from `docs/plans/shipped/ai-assistant-side-panel.md` § Verification — happy-path streaming (S2), 401 bad-key error path (S4), transport-down within 5s (S5) — are deferred to a `test-author` follow-up. The mechanism is a canned `httplib::Server` fixture (same scaffold as `DockGapSentinelScenario` from PR #146) driving `IAiClient::SendStreaming` directly + asserting on `g_ui.assistantHistory` + `g_ui.assistantLastError` + the cancel-atom poll cadence. Estimated 4 h (fixture + 3 scenario classes + bash driver + golden-event assertions). Same scaffold is reusable for Phase D (Anthropic + Ollama clients) verification.
   Concrete next action: add `tests/support/AiHttpFixture.h` + `Source/Core/src/Commands/Scenarios/AiAssistantSendScenario.cpp` against an in-process `httplib::Server` that emits canned SSE frames + 401 + transient-disconnect. Auto-enrol via `scripts/dev/test-ai-assistant.sh`.
-  Status: open
-  Last-reviewed: 2026-05-17
+  Status: applied (2026-06-20 roadmap campaign — shipped #1513)
+  Last-reviewed: 2026-06-20
 
 - 2026-05-17 · code-review · [test] · P2 — `tests/Core/TicketSyncService.test.cpp:118-140` coverage gaps on empty-fetch guard
   Details: No test for the partial/error path (non-empty `FetchError` + `FullSyncCompleted=false` + empty `freshTickets`); no test asserting the guard is bypassed on legitimate non-empty diff.
@@ -143,8 +143,8 @@
 - 2026-05-24 · coderabbit-triage · [test] · P2 — FakeP4Runner timeout vs spawn-fail fixture semantics conflated
   Details: Slice 3 of `autonomous-debugging-no-creds.md` (PR #443) introduced `tests/support/FakeP4Runner.h` + fixture `tests/fixtures/p4/annotate_happy.json`. The fixture uses `exit_code = -1` as a *spawn-fail sentinel* (drives `P4RunCommand` to `return false`), but the same sentinel is reused for a `//depot/timeout.cpp` entry meant to model a p4 timeout. Real timeout behaviour in `Source/Core/src/P4Blame.cpp:65-80` populates stderr + exits via `return true` with non-zero `cap.exitCode` — i.e. completed-non-zero-exit, NOT spawn-fail. The test in `tests/Core/P4BlameAnnotateE2E.test.cpp:85` asserts the loose shape `err non-empty + rows empty`, which is satisfied by either path, so V3.1–V3.3 PASS even with the semantic conflation. Production P4Blame.cpp is correct; the bug is purely in the test fake.
   Concrete next action: route to `test-author`. Reshape `tests/support/FakeP4Runner.h` so spawn-fail vs completed-non-zero-exit are distinguishable in the fixture schema (e.g. add explicit `simulate: spawn_fail` boolean OR rewrite the timeout fixture to use a non-(-1) non-zero exit code like 124 + tighten the timeout test to assert stderr-contains-"timed out"). Touch only `tests/support/FakeP4Runner.h`, `tests/fixtures/p4/annotate_happy.json`, `tests/Core/P4BlameAnnotateE2E.test.cpp`. C++14 hard; no std::optional / std::variant. CR thread at https://github.com/alexandrosk0/Smatchet/pull/443#discussion_r3294396615 has the full triage notes.
-  Status: open
-  Last-reviewed: 2026-05-24
+  Status: applied (2026-06-20 roadmap campaign — shipped #1518)
+  Last-reviewed: 2026-06-20
 
 - 2026-06-04 · orchestrator · [test] · P3 — `scripts/dev/test-docs.sh` local mirror is stale vs `doc-validation.yml`
   Details: surfaced during `reduce-agent-prompt-bloat` Slice 5. `test-docs.sh` (header claims "Steps mirror doc-validation.yml 1:1") OMITS `test-markdown-links` AND `md_lint` from its STEPS — both run in `doc-validation.yml`. A doc author pre-validating locally with `test-docs.sh` won't catch a dangling Markdown link (broken `href` target) or an `md_lint` (MD028) issue; those surface only on push.

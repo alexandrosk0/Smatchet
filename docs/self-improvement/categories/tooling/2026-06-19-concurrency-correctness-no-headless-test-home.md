@@ -25,5 +25,5 @@
   Cross-ref: postmortems.md 2026-06-19 PR #1390, #1409; commits b546e125 (#1390), ad0b34a1 (#1409);
     branch feat/tsan-subset-sync-layer; prior tests-out-of-band residue #1317 / #1308 are distinct
     (behaviour-preserving relocations, owe nothing).
-  Status: open
-  Last-reviewed: 2026-06-19
+  Status: partially applied (2026-06-20 roadmap campaign — core shipped #1510; residual remains)
+  Last-reviewed: 2026-06-20
