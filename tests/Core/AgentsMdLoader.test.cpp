@@ -104,42 +104,27 @@ TEST_CASE("AgentsMdLoader::LoadOneCapped — explicit cap honoured (mutation-san
     CHECK(!Contains(full, "[truncated"));
 }
 
-// Read-cap sizing (min(maxBytes+1, file_size)): a file SMALLER than the cap is
-// returned verbatim with no truncation sentinel (the read must not over-allocate
-// maxBytes+1 for a tiny file), a file EXACTLY at the cap is returned verbatim
-// (not flagged over-cap), and a file ONE BYTE over the cap IS truncated + flagged.
-TEST_CASE("AgentsMdLoader::LoadOneCapped — read-cap sizing: small / exact-cap / over-cap [high-risk]") {
-    TempDir tmp;
-    // Small (well under cap): full content, no sentinel.
-    {
-        const fs::path p = tmp.path() / "small.md";
-        const std::string payload(64, 's');
-        WriteFile(p, payload);
-        const std::string out = AgentsMdLoader::LoadOneCapped(p.generic_string(), 1024);
-        CHECK(out == payload);
-        CHECK(!Contains(out, "[truncated"));
-    }
-    // Exactly at cap: full content, NOT flagged over-cap (over-cap detection is
-    // strictly `> cap`, preserved by the min(cap+1, file_size) read).
-    {
-        const fs::path p = tmp.path() / "exact.md";
-        const std::string payload(1024, 'e');
-        WriteFile(p, payload);
-        const std::string out = AgentsMdLoader::LoadOneCapped(p.generic_string(), 1024);
-        CHECK(out == payload);
-        CHECK(out.size() == 1024u);
-        CHECK(!Contains(out, "[truncated"));
-    }
-    // One byte over cap: truncated to cap + sentinel appended.
-    {
-        const fs::path p = tmp.path() / "over.md";
-        const std::string payload(1025, 'o');
-        WriteFile(p, payload);
-        const std::string out = AgentsMdLoader::LoadOneCapped(p.generic_string(), 1024);
-        REQUIRE(out.size() > 1024u);
-        CHECK(out.substr(0, 1024) == std::string(1024, 'o'));
-        CHECK(Contains(out, "[truncated at 64 KB"));
-    }
+// Read-cap sizing decision is unit-tested PURELY via ClampReadLen — no disk I/O.
+// Contract: min(maxBytes+1, file_size) when the size is known (read one byte past
+// the cap so an exactly-at-cap or over-cap file is still detected as `> maxBytes`,
+// without over-allocating maxBytes+1 for a tiny file); maxBytes+1 when the size
+// could not be stat'd. The end-to-end truncation/sentinel behaviour stays covered
+// by the on-disk LoadOneCapped over-cap / explicit-cap cases above.
+TEST_CASE("AgentsMdLoader::ClampReadLen — read-cap sizing decision (pure, no I/O) [high-risk]") {
+    // Small (well under cap): read exactly the file size, never over-allocate.
+    CHECK(AgentsMdLoader::ClampReadLen(1024u, 64u, /*fileSizeKnown=*/true) == 64u);
+    // Exactly at cap: still read the full file (cap+1 only kicks in when the file
+    // is at least cap+1; an at-cap file is read verbatim so it is NOT flagged over).
+    CHECK(AgentsMdLoader::ClampReadLen(1024u, 1024u, /*fileSizeKnown=*/true) == 1024u);
+    // One byte over cap: clamp to cap+1 (the +1 lets the caller detect `> maxBytes`).
+    CHECK(AgentsMdLoader::ClampReadLen(1024u, 1025u, /*fileSizeKnown=*/true) == 1025u);
+    // Much larger than cap: still only cap+1 (bounded allocation).
+    CHECK(AgentsMdLoader::ClampReadLen(1024u, 1024u * 1024u, /*fileSizeKnown=*/true) == 1025u);
+    // Empty file: read length 0.
+    CHECK(AgentsMdLoader::ClampReadLen(1024u, 0u, /*fileSizeKnown=*/true) == 0u);
+    // Unknown size (stat failed): fall back to cap+1 regardless of the size arg.
+    CHECK(AgentsMdLoader::ClampReadLen(1024u, 0u, /*fileSizeKnown=*/false) == 1025u);
+    CHECK(AgentsMdLoader::ClampReadLen(1024u, 64u, /*fileSizeKnown=*/false) == 1025u);
 }
 
 // SECURITY (audit 2026-06-13 H1, P1): a config-write attacker repointing an

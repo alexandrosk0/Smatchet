@@ -250,8 +250,10 @@ std::vector<AiContextBlock> BuildAll(const Inputs& in) {
     {
         std::string body;
         if (in.EnableActiveTicket) {
-            if (in.PreResolvedActiveTicket) {
+            if (in.PreResolvedActiveTicket && in.PreResolvedActiveTicket->id == in.ActiveIssueId) {
                 // O(1) fast path: caller resolved the active ticket via its IdIndex.
+                // Guarded so a stale pre-resolved pointer (id != ActiveIssueId) never
+                // surfaces the wrong ticket — on mismatch fall back to the scan.
                 body = BuildActiveTicketBody(in.PreResolvedActiveTicket);
             } else {
                 body = BuildActiveTicketBody(tickets, in.ActiveIssueId);

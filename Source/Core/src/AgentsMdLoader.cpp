@@ -105,10 +105,7 @@ bool ReadFileBytes(const std::string& path, std::string& out, std::size_t maxByt
     // failed stat falls back to the maxBytes+1 read so behaviour is unchanged.
     std::error_code sizeEc;
     const std::uintmax_t fileSize = fs::file_size(path, sizeEc);
-    std::size_t readCap = maxBytes + 1;
-    if (!sizeEc && fileSize < static_cast<std::uintmax_t>(readCap)) {
-        readCap = static_cast<std::size_t>(fileSize);
-    }
+    const std::size_t readCap = ClampReadLen(maxBytes, fileSize, !sizeEc);
     out.resize(readCap);
     in.read(&out[0], static_cast<std::streamsize>(out.size()));
     const std::streamsize got = in.gcount();
@@ -125,6 +122,18 @@ bool ReadFileBytes(const std::string& path, std::string& out, std::size_t maxByt
 }
 
 } // namespace
+
+std::size_t ClampReadLen(std::size_t maxBytes, std::uintmax_t fileSize, bool fileSizeKnown) {
+    // Read one byte past the cap so an exactly-at-cap or over-cap file is still
+    // detected (got > maxBytes), but never over-allocate maxBytes+1 for a small
+    // file. A failed stat (fileSizeKnown == false) falls back to maxBytes+1 so
+    // behaviour is unchanged from the pre-stat read.
+    const std::size_t readCap = maxBytes + 1;
+    if (fileSizeKnown && fileSize < static_cast<std::uintmax_t>(readCap)) {
+        return static_cast<std::size_t>(fileSize);
+    }
+    return readCap;
+}
 
 std::string LoadOneCapped(const std::string& path, std::size_t capBytes) {
     // SECURITY (audit H1): contain the path BEFORE reading — refuse anything that
