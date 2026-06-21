@@ -350,13 +350,17 @@ option(SMATCHET_WITH_LUA_AUTOMATION "Build with Lua/sol2 field automation and Lu
 option(SMATCHET_WITH_MCP "Build with MCP plugin (Model Context Protocol server)" ON)
 option(SMATCHET_WITH_AI "Build with AI assistant side panel (provider-pluggable IAiClient)" ON)
 option(SMATCHET_WITH_WHISPER "Build with Whisper dictation plugin (push-to-talk; Phase A shell)" ON)
-# Sub-option — flip ON to fetch whisper.cpp v1.7.4 and link it into
-# SmatchetPlugin_Whisper. Default OFF gates the binary-size + MinGW UCRT build
-# risk away from the Phase C release; the WhisperLocal API surface still
-# compiles, but Transcribe() returns "local backend not built". See
+# Sub-option — fetch whisper.cpp v1.7.4 and link it into SmatchetPlugin_Whisper.
+# Default ON: the locked dictation UX is "local default, cloud fallback" and the
+# measured static-link delta is only ~1.37 MB (Smatchet.exe 16.78 MB OFF -> 18.15 MB
+# ON; whisper.cpp + ggml link fully static, no extra DLLs), far under the 50 MB
+# threshold from the plan's open question #1 — so default ON makes the shipped
+# build match the locked UX with negligible footprint. Flip OFF to skip the
+# fetch/link (WhisperLocal API still compiles; Transcribe() returns "local backend
+# not built" and the mode router falls back to cloud). See
 # docs/design/whisper-dictation.md § Deviations for the multi-PR rationale.
 option(SMATCHET_WHISPER_LOCAL_BACKEND
-    "Fetch + link whisper.cpp for on-device Whisper inference (large binary impact)" OFF)
+    "Fetch + link whisper.cpp for on-device Whisper inference (~1.37 MB static delta)" ON)
 # Unreal-packaged DX12 artifacts intentionally ship without Whisper (WASAPI / whisper.cpp /
 # global-hotkey hook would pollute the Unreal header path). The DX12/Unreal exclusion is keyed
 # on the SMATCHET_EMBEDDED_IN_UNREAL *compile-define* (target_compile_definitions on the DX12
