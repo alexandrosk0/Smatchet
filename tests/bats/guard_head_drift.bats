@@ -114,6 +114,36 @@ assert_allowed() {
     assert_allowed
 }
 
+# ---- separate-repo (-C <unrelated tmprepo>) exemption -----------------------
+# A `git -C <path>` whose target is a wholly SEPARATE repository (its
+# git-common-dir differs from the integration tree's) cannot move this session's
+# HEAD, so it must be ALLOWED even when that throwaway repo sits on develop/main.
+# Previously DENIED because a freshly `git init`-ed repo has a `.git` DIRECTORY
+# (not a worktree file pointer), tripping the linked-worktree-only test and
+# false-blocking bats fixtures that drive an unrelated mktemp repo.
+
+@test "Bash: git -C <unrelated tmprepo on develop> commit is allowed (separate repo)" {
+    THROWAWAY="$BATS_TMPDIR/throwaway-$$"
+    rm -rf "$THROWAWAY"
+    git init --quiet -b develop "$THROWAWAY"
+    run invoke_hook Bash "git -C $THROWAWAY commit -m x"
+    rm -rf "$THROWAWAY"
+    assert_allowed
+}
+
+@test "Bash: bare commit on develop still DENIED while an unrelated tmprepo commit is allowed" {
+    # The same protected-tree bare commit that the false-positive report is about
+    # must remain GUARDED — only the unrelated -C target is newly allowed.
+    THROWAWAY="$BATS_TMPDIR/throwaway2-$$"
+    rm -rf "$THROWAWAY"
+    git init --quiet -b main "$THROWAWAY"
+    run invoke_hook Bash "git -C $THROWAWAY commit -m x"
+    assert_allowed
+    run invoke_hook Bash "git commit -m y"
+    rm -rf "$THROWAWAY"
+    assert_denied
+}
+
 @test "Bash: drifted HEAD denies an in-tree HEAD-moving op" {
     git -C "$MAIN" -c user.email=t@t -c user.name=t commit --allow-empty --quiet -m drift
     run invoke_hook Bash "git pull"
