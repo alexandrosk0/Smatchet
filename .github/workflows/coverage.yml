@@ -193,6 +193,23 @@ jobs:
             bash scripts/dev/coverage.sh --xml-only --threshold 65
           fi
 
+      # Per-file >=90% floor on the NAMED high-risk units (SSRF endpoint sanitizer,
+      # credential redaction, JQL escaper, tracker HTTP pure classifier). Runs on the
+      # coverage.xml the step above produced. Fails-OPEN on a missing XML / a unit
+      # absent from the build, so it never wedges a docs-only PR or a feature-gated-out
+      # unit. A per-unit `coverage-perfile-<unit>-out-of-band` PR label downgrades that
+      # unit's below-floor failure to a WARN (parallel to coverage-out-of-band). The
+      # named units are already comprehensively tested, so this is GREEN on HEAD.
+      - name: Per-file high-risk coverage gate (>=90%)
+        if: steps.detect.outputs.run == 'true'
+        shell: bash
+        env:
+          PR_LABELS: ${{ toJson(github.event.pull_request.labels) }}
+        run: |
+          # Map any coverage-perfile-<unit>-out-of-band label onto the gate's env var.
+          oob=$(printf '%s' "${PR_LABELS:-[]}" | python -c "import json,sys; d=json.load(sys.stdin) or []; print(','.join(l['name'][len('coverage-perfile-'):-len('-out-of-band')] for l in d if l.get('name','').startswith('coverage-perfile-') and l.get('name','').endswith('-out-of-band')))")
+          SMATCHET_PERFILE_OOB="$oob" bash scripts/dev/coverage-perfile-gate.sh --xml coverage/coverage.xml
+
       - name: Upload coverage.xml artifact
         if: always() && steps.detect.outputs.run == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

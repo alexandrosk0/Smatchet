@@ -4,10 +4,12 @@
 # Bucket A (CLI) per AGENTS.md § Verification automation. Zero manual steps.
 # Auto-enrolled by scripts/dev/test-all.sh via the test-*.sh glob.
 #
-# Wraps the bats suite that runs the hermetic --selftest of scripts/dev/coverage.sh
-# (test-binary-vs-tooling exit split) and scripts/dev/coverage-delta-gate.sh (the
-# test-light exemption classifier incl. the multi-line wrapped LOG_* join) + emits
-# the canonical `Passed: N  Failed: M` line that test-all.sh greps for.
+# Wraps the bats suites that run the hermetic --selftest of scripts/dev/coverage.sh
+# (test-binary-vs-tooling exit split), scripts/dev/coverage-delta-gate.sh (the
+# test-light exemption classifier incl. the multi-line wrapped LOG_* join), and
+# scripts/dev/coverage-perfile-gate.sh (the per-file >=90% high-risk floor incl.
+# its below-floor FAIL + escape/at-floor/fail-open PASS paths) + emits the
+# canonical `Passed: N  Failed: M` line that test-all.sh greps for.
 #
 # Exit codes follow the test-author convention:
 #   0 — every bats test passed
@@ -30,15 +32,19 @@ EOF
     exit 2
 fi
 
-BATS_FILE="tests/bats/coverage_gate.bats"
-if [ ! -f "$BATS_FILE" ]; then
-    echo "test-coverage-gate-bats: $BATS_FILE not found" >&2
-    echo "Passed: 0  Failed: 1"
-    exit 1
-fi
+# Both coverage-gate bats suites (named by PATH so test-orphan-bats.sh counts each
+# as wrapped). coverage_perfile_gate.bats wraps the per-file >=90% high-risk gate.
+BATS_FILES=("tests/bats/coverage_gate.bats" "tests/bats/coverage_perfile_gate.bats")
+for f in "${BATS_FILES[@]}"; do
+    if [ ! -f "$f" ]; then
+        echo "test-coverage-gate-bats: $f not found" >&2
+        echo "Passed: 0  Failed: 1"
+        exit 1
+    fi
+done
 
 # TAP mode so we can parse `ok N` / `not ok N` without depending on reporter shape.
-OUT="$(bats --tap "$BATS_FILE" 2>&1)"
+OUT="$(bats --tap "${BATS_FILES[@]}" 2>&1)"
 RC=$?
 
 echo "$OUT"
