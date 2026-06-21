@@ -2734,6 +2734,24 @@ bool AppController::EnsureLocalCacheForUiTest() {
     // Idempotent (`if (!x)` guards inside) — guarantees offlineQueue_ exists so
     // QueueCreateOffline routes to a live cache instead of returning 0.
     WireCoreServices();
+    // A fresh bucket-E spawn child has no setup config file, so ConfigManager::Load()
+    // applies the first-run safety default ReadOnlyMode=true (ConfigManager.cpp). That
+    // default trips the very first guard in OfflineQueueService::QueueCreateOffline
+    // (return 0 under read-only), which would keep the case-8 offline-create populated
+    // path SKIPping even with a live cache. This opt-in seam already means "this UI test
+    // wants to exercise offline writes", so clear read-only + persist + invalidate so the
+    // next ConfigManager::Load() inside the guard observes it. Throwaway profile only
+    // (SMATCHET_USER_DATA tmpdir under the harness) — never the developer's real config.
+    {
+        TrackerConfig cfg = ConfigManager::Load();
+        if (cfg.ReadOnlyMode) {
+            cfg.ReadOnlyMode = false;
+            ConfigManager::Save(cfg);
+            ConfigManager::InvalidateCache();
+            LOG_INFO("EnsureLocalCacheForUiTest: cleared first-run ReadOnlyMode default so "
+                     "offline-create populated path can activate");
+        }
+    }
     return Cache != nullptr;
 }
 
