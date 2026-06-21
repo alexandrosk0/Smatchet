@@ -51,8 +51,8 @@
 - 2026-06-07 · test-author (Slice-2 agent) · [infra] · P3 — local Mesa parity broken: d3d12 gallium driver crashes any Smatchet build at boot on this box; llvmpipe boots but click-driven bucket-E fails under it
   Details: Attempting to reproduce the CI Mesa lane locally: the d3d12 gallium driver crashes every Smatchet build at process boot on this dev box; falling back to llvmpipe boots fine, but click-driven bucket-E tests fail under llvmpipe at develop tip (clicks don't land / items not hit). Net: there is no working local software-GL path that mirrors the CI bucket-E lane, so Mesa-lane failures can't be reproduced locally and native-GL is the only locally-working bucket-E path.
   Concrete next action: either document native-GL as the supported local bucket-E path (a line in `docs/agent-rules/build.md` or the test-authoring skill: "local bucket-E runs use the native GPU; Mesa/llvmpipe is CI-only") or root-cause the llvmpipe click failures (hit-testing under software raster) so local Mesa parity exists. Est ~30 min for the doc path.
-  Status: open
-  Last-reviewed: 2026-06-07
+  Status: applied (2026-06-21 decision — native-GL declared supported local bucket-E path; doc note added to `docs/agent-rules/debug-techniques.md`. The Mesa software-GL llvmpipe/d3d12-gallium path is CI-headless-only and is NOT a supported local config.)
+  Last-reviewed: 2026-06-21
 
 - 2026-06-07 · build-fix agent (Slice-2) · [infra] · P3 — parallel preset builds collide on shared `.fetchcontent-*/curl-build` PDB paths → C1041
   Details: Two presets building in parallel (after deps are already fetched) collided with `C1041` (cannot open program database) on the shared FetchContent curl build dir — the `.fetchcontent-*` base dir is shared across presets, so two MSVC compilations of the same dep TU race on one PDB. `docs/agent-rules/build.md` (Fresh-worktree pitfalls #4) already mandates serial *configures* and asserts "once the dep sources exist, parallel builds are fine" — this session's C1041 shows the build-phase collision also exists, so that line under-promises.
