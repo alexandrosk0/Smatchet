@@ -62,6 +62,12 @@ BASELINE_FAN_IN = 115
 _INCLUDE_RE = re.compile(r'^\s*#\s*include\s*"([^"]+)"')
 
 
+def _repo_root():
+    # core -> scripts -> agents -> repo root (mirrors agent_size_audit._repo_root).
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.dirname(os.path.dirname(os.path.dirname(here)))
+
+
 def _is_target_include(spec):
     return os.path.basename(spec.replace("\\", "/")) == TARGET_BASENAME
 
@@ -289,14 +295,19 @@ def run_selftest():
         print("appcontroller_fan_in_audit: selftest WARN: could not count live fan-in (%s)" % e,
               file=sys.stderr)
 
-    # AGENTS.md must document the rule row (delta-gated contract-card).
+    # AGENTS.md must document the rule row (delta-gated contract-card). Resolve
+    # the path from the script location (not CWD) and fail CLOSED if it cannot be
+    # read — an unverifiable contract-card is the gate-escape this selftest exists
+    # to prevent (a CWD-dependent WARN let the row be deleted with a green pass).
+    agents_md = os.path.join(_repo_root(), "AGENTS.md")
     try:
-        with open("AGENTS.md", "r", encoding="utf-8", errors="replace") as fh:
+        with open(agents_md, "r", encoding="utf-8", errors="replace") as fh:
             if RULE not in fh.read():
                 print("SELFTEST FAIL: rule '%s' missing from AGENTS.md" % RULE, file=sys.stderr)
                 miss = 1
-    except OSError:
-        print("appcontroller_fan_in_audit: selftest WARN: AGENTS.md not readable from CWD", file=sys.stderr)
+    except OSError as e:
+        print("SELFTEST FAIL: AGENTS.md not readable at %s (%s)" % (agents_md, e), file=sys.stderr)
+        miss = 1
 
     if miss:
         return 1

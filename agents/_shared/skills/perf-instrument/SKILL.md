@@ -24,7 +24,7 @@ Mechanical perf-marker editor for Smatchet. Same procedure as `agents/core/perf-
 
 ## The macro
 
-`SMATCHET_UI_PERF_SCOPE("perf_temp:<area>")` from `Source/Core/include/UiPerfMonitor.h`. Per-call overhead ~200–500 ns (two `steady_clock::now()`, a mutex lock, an O(N) linear scan).
+`SMATCHET_UI_PERF_SCOPE("perf_temp:<area>")` from `Source/Core/include/Ui/UiPerfMonitor.h`. Per-call overhead ~200–500 ns (two `steady_clock::now()`, a mutex lock, an O(N) linear scan).
 
 ## Hard rules
 

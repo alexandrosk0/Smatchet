@@ -91,10 +91,18 @@ def _extract_agent_name(stdin_obj: dict) -> str:
 def _agent_version(agent_name: str, project_dir: Path) -> int:
     """Read the `version:` field from the canonical agent file's frontmatter.
 
-    Returns 1 when the field is absent or the file cannot be read.
+    Probes the post-reorg layout (agents/core, agents/project) then the legacy
+    flat path. Returns 1 when the field is absent or no file is found. (The flat
+    `agents/<name>.md` lookup alone was dead after the core/project split, so this
+    telemetry always returned the fallback 1.)
     """
-    candidate = project_dir / "agents" / f"{agent_name}.md"
-    if not candidate.is_file():
+    candidate = None
+    for sub in ("core", "project", ""):
+        cand = project_dir / "agents" / sub / f"{agent_name}.md"
+        if cand.is_file():
+            candidate = cand
+            break
+    if candidate is None:
         return 1
     try:
         with candidate.open("r", encoding="utf-8") as handle:
@@ -388,7 +396,12 @@ def main() -> int:
         "cache_create": 0,
         "cache_read": 0,
         "duration_ms": None,
-        "outcome": "applied",
+        # Default to "partial", NOT "applied": a row with no transcript / no
+        # explicit `## Outcome:` tag has zero evidence of success, so green-washing
+        # it as applied is wrong (matches the missing-tag inference rule in
+        # docs/plans/shipped/agent-contract-alignment.md). _infer_outcome overwrites
+        # this when a transcript is present.
+        "outcome": "partial",
         "halt_reason": None,
         "agent_version": 1,
         "delegation_chain": [],

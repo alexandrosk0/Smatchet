@@ -43,6 +43,7 @@ SKILL_ONLY_HELPERS=(
     git-cleanup-procedures
     test-authoring
     coderabbit-handoff
+    historical-code-review
 )
 
 is_skill_only() {

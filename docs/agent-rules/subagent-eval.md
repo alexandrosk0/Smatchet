@@ -2,7 +2,7 @@
 
 Eval-driven development for the **development agents** (`agents/*.md` — the orchestrator + the delegated subagents), NOT the product under development or any in-app AI-assistant surface. Mirrors the perf pipeline one level up the stack: instead of frame latency, it scores agent **decision quality** base-vs-head so a prompt edit ships on data, not judgment.
 
-Plan: [`../plans/shipped/subagent-eval-harness.md`](../plans/shipped/subagent-eval-harness.md). Phase-1 MVP — `code-review` only, **advisory**. The forward roadmap — judge calibration (WARN→BLOCK graduation), the trace flywheel (auto-grown golden set), and the three Snorkel eval-gap dimensions (output-complexity rubrics, autonomy-horizon trajectories, multi-agent / tool-fault environments) — is the unified [`../plans/subagent-eval-agentic-coverage.md`](../plans/subagent-eval-agentic-coverage.md) plan (which absorbs the former standalone trace-flywheel plan as its Phase 2).
+Plan: [`../plans/shipped/subagent-eval-harness.md`](../plans/shipped/subagent-eval-harness.md). Phase-1 MVP — `code-review` only, **advisory**. The forward roadmap — judge calibration (WARN→BLOCK graduation), the trace flywheel (auto-grown golden set), and the three Snorkel eval-gap dimensions (output-complexity rubrics, autonomy-horizon trajectories, multi-agent / tool-fault environments) — is the unified [`../plans/active/subagent-eval-agentic-coverage.md`](../plans/active/subagent-eval-agentic-coverage.md) plan (which absorbs the former standalone trace-flywheel plan as its Phase 2).
 
 ## Pieces
 
