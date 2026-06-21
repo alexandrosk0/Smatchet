@@ -356,6 +356,11 @@ add_executable(SmatchetTests
     # (trailing-space Jira email → persistent 401). Inline in the same _detail
     # header; no extra .cpp link.
     Core/PreferencesCredentialTrim.test.cpp
+    # feat/dec-savediscard — pure working-copy helpers (CopyAssistantAiFields /
+    # AssistantAiFieldsDiffer) behind the Assistant tab's explicit Save/Discard +
+    # dirty-tab flow. Inline in the same _detail header (guarded by
+    # SMATCHET_WITH_AI, which this target defines); no extra .cpp link.
+    Core/PreferencesAssistantWorkingCopy.test.cpp
     # Function-size decomposition (feat/funcsize-annotate-analysis) — pure
     # display-classification helpers extracted from AnnotateAnalysisUi::DrawContent
     # (the largest function in the tree) to cut its branch count. The _detail TU is
