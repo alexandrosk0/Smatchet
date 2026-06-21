@@ -180,14 +180,85 @@ _line_is_no_runtime_surface() {
 # C++) are ignored for the purposes of this classifier — they carry no runtime
 # surface the gate enforces, so they neither block nor force a fallthrough.
 # Net paren balance of a string: count of '(' minus count of ')'. Used to know when a
-# wrapped LOG_*( ... ) statement has closed. Conservative: counts raw parens (a stray paren
-# inside a string literal is rare in a LOG format arg and would only DELAY the close by one
-# more accumulated line, never falsely exempt real surface — a non-LOG token still breaks).
+# wrapped LOG_*( ... ) statement has closed. Parens INSIDE a double-quoted string literal
+# (e.g. a LOG format arg `LOG_ERROR("x (", y);`) must NOT count — otherwise the accumulator
+# stays open past a balanced statement and swallows the next real-surface line. We strip
+# quoted spans (honouring backslash-escaped quotes) before counting; an unterminated quote
+# on the line leaves its tail stripped, which is the safe direction (a wrapped string literal
+# carries no parens we care about and the close `);` arrives on a later line).
 _paren_delta() {
-    local s="$1" opens closes
-    opens="${s//[^(]/}"
-    closes="${s//[^)]/}"
+    local s="$1" out="" i=0 n ch in_str=0 esc=0
+    local bslash=$'\\'   # single literal backslash via ANSI-C quoting (avoids SC1003)
+    n=${#s}
+    while [ "$i" -lt "$n" ]; do
+        ch="${s:i:1}"
+        if [ "$in_str" -eq 1 ]; then
+            if [ "$esc" -eq 1 ]; then
+                esc=0
+            elif [ "$ch" = "$bslash" ]; then
+                esc=1
+            elif [ "$ch" = '"' ]; then
+                in_str=0
+            fi
+        else
+            if [ "$ch" = '"' ]; then
+                in_str=1
+            else
+                out="$out$ch"
+            fi
+        fi
+        i=$(( i + 1 ))
+    done
+    local opens closes
+    opens="${out//[^(]/}"
+    closes="${out//[^)]/}"
     echo $(( ${#opens} - ${#closes} ))
+}
+
+# Given a line and the paren depth on ENTRY (>=1, the unbalanced opener carried over), find
+# where the LOG_*( ... ) statement closes on this line and echo any trailing code that follows
+# the closing `)` (and an immediately-following `;`/`,`). Parens inside string literals are
+# ignored (same quote-tracking as _paren_delta). Echoes the empty string when the statement
+# does NOT close on this line, or when nothing but whitespace trails the close. The caller
+# re-classifies the returned tail as its own statement so `LOG_x(...); realStmt();` is not
+# blanket-skipped.
+_tail_after_log_close() {
+    local s="$1" depth="$2" i=0 n ch in_str=0 esc=0 tail=""
+    local bslash=$'\\'   # single literal backslash via ANSI-C quoting (avoids SC1003)
+    n=${#s}
+    while [ "$i" -lt "$n" ]; do
+        ch="${s:i:1}"
+        if [ "$in_str" -eq 1 ]; then
+            if [ "$esc" -eq 1 ]; then
+                esc=0
+            elif [ "$ch" = "$bslash" ]; then
+                esc=1
+            elif [ "$ch" = '"' ]; then
+                in_str=0
+            fi
+        else
+            if [ "$ch" = '"' ]; then
+                in_str=1
+            elif [ "$ch" = '(' ]; then
+                depth=$(( depth + 1 ))
+            elif [ "$ch" = ')' ]; then
+                depth=$(( depth - 1 ))
+                if [ "$depth" -le 0 ]; then
+                    # statement closes here; the tail is whatever follows, minus a leading
+                    # statement terminator/separator that belongs to the LOG call.
+                    tail="${s:i+1}"
+                    tail="${tail#;}"
+                    tail="${tail#,}"
+                    # Trim leading whitespace.
+                    tail="${tail#"${tail%%[![:space:]]*}"}"
+                    echo "$tail"
+                    return 0
+                fi
+            fi
+        fi
+        i=$(( i + 1 ))
+    done
+    echo ""
 }
 
 _classify_diff() {
@@ -257,28 +328,53 @@ _classify_diff() {
         # Mid-LOG-statement continuation: keep consuming until parens balance. The whole
         # multi-line LOG_*( ... ) is one logging-only-exempt unit — its continuation lines
         # (format-string fragments, arg lists, the closing `);`) carry no runtime surface.
+        # When the statement closes, any real code trailing the close paren on the same line
+        # must still be classified — don't blanket-continue past it.
         if [ "$in_log_stmt" -eq 1 ]; then
-            log_depth=$(( log_depth + $(_paren_delta "$line") ))
-            if [ "$log_depth" -le 0 ]; then
+            local _new_depth _tail
+            _new_depth=$(( log_depth + $(_paren_delta "$line") ))
+            if [ "$_new_depth" -le 0 ]; then
+                _tail="$(_tail_after_log_close "$line" "$log_depth")"
                 in_log_stmt=0
                 log_depth=0
+                if [ -n "$_tail" ]; then
+                    line="$_tail"
+                    # fall through to classify the trailing code below.
+                else
+                    continue
+                fi
+            else
+                log_depth="$_new_depth"
+                continue
             fi
-            continue
         fi
 
         # A LOG_*( opener: if its parens are NOT balanced on this line, enter the multi-line
         # accumulation state (the statement wraps across 2-3 lines). A single-line LOG_*(...);
-        # is already handled by _line_is_no_runtime_surface below.
-        case "$line" in
-            'LOG_DEBUG('*|'LOG_INFO('*|'LOG_WARN('*|'LOG_ERROR('*|'LOG_TRACE('*)
-                log_depth=$(_paren_delta "$line")
-                if [ "$log_depth" -gt 0 ]; then
-                    in_log_stmt=1
-                    continue
-                fi
-                # balanced on one line — exempt logging, fall through to confirm below.
-                ;;
-        esac
+        # is already handled by _line_is_no_runtime_surface below. If real code trails the
+        # closing paren on the SAME line (`LOG_x(...); realStmt();`), classify that tail.
+        if [ "$in_log_stmt" -eq 0 ]; then
+            case "$line" in
+                'LOG_DEBUG('*|'LOG_INFO('*|'LOG_WARN('*|'LOG_ERROR('*|'LOG_TRACE('*)
+                    log_depth=$(_paren_delta "$line")
+                    if [ "$log_depth" -gt 0 ]; then
+                        in_log_stmt=1
+                        continue
+                    fi
+                    # balanced on one line: check for trailing real code after the close.
+                    # Entry depth 0 — this line contains the opener's own `(`.
+                    local _otail
+                    _otail="$(_tail_after_log_close "$line" 0)"
+                    log_depth=0
+                    if [ -n "$_otail" ]; then
+                        line="$_otail"
+                        # fall through to classify the trailing code below.
+                    fi
+                    # else: pure logging line — fall through to _line_is_no_runtime_surface,
+                    # which exempts it.
+                    ;;
+            esac
+        fi
 
         if ! _line_is_no_runtime_surface "$line"; then
             saw_real_surface=1
@@ -375,6 +471,37 @@ diff --git a/Source/Core/src/Sync/WrapMix.cpp b/Source/Core/src/Sync/WrapMix.cpp
 +    LOG_ERROR("partial: %s",
 +              detail.c_str());
 +    retries = retries + 1;
+EOF
+
+    # A balanced single-line LOG_ERROR whose format string contains a literal `(` must NOT
+    # keep the accumulator open — the paren is inside a string literal and carries no surface.
+    # Before the _paren_delta string-literal fix this stayed open and swallowed the next line.
+    _expect EXEMPT "LOG_ with literal paren in format string (string-literal paren fix)" <<'EOF'
+diff --git a/Source/Core/src/Sync/WrapLit.cpp b/Source/Core/src/Sync/WrapLit.cpp
+--- a/Source/Core/src/Sync/WrapLit.cpp
++++ b/Source/Core/src/Sync/WrapLit.cpp
+@@ -40,0 +41,1 @@
++    LOG_ERROR("x (", y);
+EOF
+
+    # A LOG_ statement closing mid-line followed by REAL code on the same line must fall through:
+    # the trailing statement is classified on its own merits, not blanket-skipped by the close.
+    _expect FALLTHROUGH "LOG_ then trailing real code same line (trailing-code fix)" <<'EOF'
+diff --git a/Source/Core/src/Sync/WrapTrail.cpp b/Source/Core/src/Sync/WrapTrail.cpp
+--- a/Source/Core/src/Sync/WrapTrail.cpp
++++ b/Source/Core/src/Sync/WrapTrail.cpp
+@@ -50,0 +51,1 @@
++    LOG_ERROR("partial: %s", detail.c_str()); retries = retries + 1;
+EOF
+
+    # The string-literal paren AND trailing-code fixes combined: a literal `)` inside the format
+    # string must not be mistaken for the statement close, and the real trailing stmt must show.
+    _expect FALLTHROUGH "LOG_ literal paren + trailing real code same line" <<'EOF'
+diff --git a/Source/Core/src/Sync/WrapLitTrail.cpp b/Source/Core/src/Sync/WrapLitTrail.cpp
+--- a/Source/Core/src/Sync/WrapLitTrail.cpp
++++ b/Source/Core/src/Sync/WrapLitTrail.cpp
+@@ -60,0 +61,1 @@
++    LOG_ERROR("done )", n); count = count + 1;
 EOF
 
     # LOG_WARN added inside an existing catch (no new clause).

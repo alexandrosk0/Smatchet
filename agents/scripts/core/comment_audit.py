@@ -102,7 +102,7 @@ def is_prose_not_code(raw_line):
     body = _comment_body(raw_line)
     if not body or _CODE_TERMINATOR_RE.search(body) or _CODE_OPERATOR_RE.search(body):
         return False
-    # A line-leading identifier-call with NO trailing `;`/`{`/`}` is prose mentioning a function,
+    # An identifier-call anywhere in the line with NO trailing `;`/`{`/`}` is prose mentioning a function,
     # not a commented-out statement (those close with a terminator). Demote it directly — the
     # terminator + operator guards above already rule out genuine code, so a bare unterminated call
     # ("foo() does X", "note bar()") is safe to treat as rationale.
