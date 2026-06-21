@@ -100,11 +100,13 @@ void AiSseParser::Feed(const char* data, std::size_t len, const EventCallback& o
 }
 
 void AiSseParser::Flush(const EventCallback& onEvent) {
-    if (buffer_.empty())
-        return;
-    // Treat any trailing buffered content as a final partial frame by appending the boundary.
-    buffer_.append("\n\n");
-    Feed(nullptr, 0, onEvent);
+    (void)onEvent;
+    // A residual buffer at Flush time is an incomplete trailing SSE frame: the
+    // server never emitted its terminating blank line. Synthesizing a `\n\n`
+    // boundary here would deliver a half-received frame as a real token, which
+    // for streaming LLM responses means emitting a truncated/garbled final
+    // chunk. Drop the partial frame instead — a well-formed stream always ends
+    // on a frame boundary, so there is nothing legitimate to flush.
     buffer_.clear();
 }
 

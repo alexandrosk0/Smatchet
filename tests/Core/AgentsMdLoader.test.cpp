@@ -104,12 +104,50 @@ TEST_CASE("AgentsMdLoader::LoadOneCapped — explicit cap honoured (mutation-san
     CHECK(!Contains(full, "[truncated"));
 }
 
+// Read-cap sizing (min(maxBytes+1, file_size)): a file SMALLER than the cap is
+// returned verbatim with no truncation sentinel (the read must not over-allocate
+// maxBytes+1 for a tiny file), a file EXACTLY at the cap is returned verbatim
+// (not flagged over-cap), and a file ONE BYTE over the cap IS truncated + flagged.
+TEST_CASE("AgentsMdLoader::LoadOneCapped — read-cap sizing: small / exact-cap / over-cap [high-risk]") {
+    TempDir tmp;
+    // Small (well under cap): full content, no sentinel.
+    {
+        const fs::path p = tmp.path() / "small.md";
+        const std::string payload(64, 's');
+        WriteFile(p, payload);
+        const std::string out = AgentsMdLoader::LoadOneCapped(p.generic_string(), 1024);
+        CHECK(out == payload);
+        CHECK(!Contains(out, "[truncated"));
+    }
+    // Exactly at cap: full content, NOT flagged over-cap (over-cap detection is
+    // strictly `> cap`, preserved by the min(cap+1, file_size) read).
+    {
+        const fs::path p = tmp.path() / "exact.md";
+        const std::string payload(1024, 'e');
+        WriteFile(p, payload);
+        const std::string out = AgentsMdLoader::LoadOneCapped(p.generic_string(), 1024);
+        CHECK(out == payload);
+        CHECK(out.size() == 1024u);
+        CHECK(!Contains(out, "[truncated"));
+    }
+    // One byte over cap: truncated to cap + sentinel appended.
+    {
+        const fs::path p = tmp.path() / "over.md";
+        const std::string payload(1025, 'o');
+        WriteFile(p, payload);
+        const std::string out = AgentsMdLoader::LoadOneCapped(p.generic_string(), 1024);
+        REQUIRE(out.size() > 1024u);
+        CHECK(out.substr(0, 1024) == std::string(1024, 'o'));
+        CHECK(Contains(out, "[truncated at 64 KB"));
+    }
+}
+
 // SECURITY (audit 2026-06-13 H1, P1): a config-write attacker repointing an
 // AgentsMd override at a credential file (no `.md` extension) must NOT have its
 // bytes loaded — they would be injected verbatim into the outbound LLM prompt.
 TEST_CASE("AgentsMdLoader — refuses a non-.md override file (H1 exfil containment) [high-risk]") {
     TempDir tmp;
-    const fs::path secret = tmp.path() / "id_rsa";   // a stand-in for any credential file
+    const fs::path secret = tmp.path() / "id_rsa"; // a stand-in for any credential file
     WriteFile(secret, "-----BEGIN OPENSSH PRIVATE KEY-----\nSECRETBYTES\n");
     // Direct + via the layered entry point (the real prompt-assembly path).
     CHECK(AgentsMdLoader::LoadOneCapped(secret.generic_string()).empty());
@@ -287,8 +325,7 @@ TEST_CASE("[high-risk] AgentsMdLoader::LoadLayered — default does NOT walk up 
     // We can't easily set process cwd here, but the same code path is exercised:
     // empty global + empty project + autoDiscoverProject=false short-circuits
     // before FindProjectAgentsMd is called.
-    const std::string out =
-        AgentsMdLoader::LoadLayered(std::string(), std::string(), /*autoDiscoverProject=*/false);
+    const std::string out = AgentsMdLoader::LoadLayered(std::string(), std::string(), /*autoDiscoverProject=*/false);
     CHECK(out.empty());
 }
 
@@ -299,8 +336,7 @@ TEST_CASE("AgentsMdLoader::LoadLayered — autoDiscoverProject=true re-enables w
     // successfully (no UB) and that the empty-everything case still degrades
     // to empty; the FindProjectAgentsMd-positive cases above prove walk-up
     // works once enabled.
-    const std::string out =
-        AgentsMdLoader::LoadLayered(std::string(), std::string(), /*autoDiscoverProject=*/true);
+    const std::string out = AgentsMdLoader::LoadLayered(std::string(), std::string(), /*autoDiscoverProject=*/true);
     // We don't assert on `out` content because cwd depends on the test runner;
     // the requirement here is that the path doesn't crash or deadlock.
     CHECK((out.empty() || !out.empty()));

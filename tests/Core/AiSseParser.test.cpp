@@ -183,15 +183,24 @@ TEST_CASE("AiSseParser: Reset clears buffered partial frame") {
     CHECK(c.events[0].Data == "after-reset");
 }
 
-TEST_CASE("AiSseParser: Flush surfaces trailing partial frame as final event") {
+TEST_CASE("AiSseParser: Flush DROPS an incomplete trailing partial frame [high-risk]") {
+    // A residual buffer at Flush means the server never terminated the final
+    // frame with a blank line. Synthesizing a boundary would deliver a truncated
+    // half-frame as a real token — wrong for a streamed LLM response. Flush must
+    // discard the partial frame and emit nothing.
     AiSseParser p;
     EventCollector c;
     Feed(p, "data: trailing-no-boundary", c);
     CHECK(c.events.empty());
 
     p.Flush(c.callback());
+    CHECK(c.events.empty()); // partial frame dropped, NOT surfaced
+
+    // Buffer is cleared: a subsequent well-formed frame parses cleanly with no
+    // leakage from the dropped partial.
+    Feed(p, "data: after-flush\n\n", c);
     REQUIRE(c.events.size() == 1);
-    CHECK(c.events[0].Data == "trailing-no-boundary");
+    CHECK(c.events[0].Data == "after-flush");
 }
 
 TEST_CASE("AiSseParser: empty Feed is a no-op") {

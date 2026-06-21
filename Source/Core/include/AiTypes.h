@@ -24,7 +24,7 @@ struct AiMessage {
     /// OpenAiClient / AnthropicClient / OllamaClient build the provider JSON
     /// per-field (`role` + `content` only) so these new members never leak
     /// to the upstream LLM API.
-    std::int64_t CreatedAtUnixMs = 0;
+    std::int64_t CreatedAtUnixMs = 0; // sentinel 0 = unset/unstamped timestamp.
     /// True when the user has pinned this message via the hover action row.
     /// Survives across runs via the SQLite chat-history persistence layer.
     bool Pinned = false;
@@ -33,12 +33,12 @@ struct AiMessage {
 struct AiStreamDelta {
     std::string TokenChunk;
     bool IsFinal;
-    std::string FinishReason;
+    std::string FinishReason; // sentinel empty = no finish reason (only set when IsFinal).
     AiStreamDelta() : IsFinal(false) {}
 };
 
 struct AiStreamError {
-    int HttpStatus;
+    int HttpStatus; // sentinel 0 = no HTTP status (local/transport error, not a server reply).
     std::string Message;
     bool WasCancelled;
     AiStreamError() : HttpStatus(0), WasCancelled(false) {}
@@ -48,8 +48,8 @@ struct AiChatRequest {
     std::string Model;
     std::string SystemPrompt;
     std::vector<AiMessage> History;
-    float Temperature;
-    int MaxTokens;
+    float Temperature; // sentinel < 0 = unset (omit wire param, server default).
+    int MaxTokens;     // sentinel 0 = unset (omit wire param, server default).
     /// Reasoning effort for o-series / reasoning-tuned models. Empty or "auto"
     /// = omit the wire parameter (server picks). Recognised values: "low",
     /// "medium", "high". Providers that don't understand the param will ignore
