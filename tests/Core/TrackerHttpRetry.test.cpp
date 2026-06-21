@@ -10,7 +10,9 @@
 
 #include <doctest/doctest.h>
 
+#include <atomic>
 #include <functional>
+#include <memory>
 #include <string>
 
 namespace {
@@ -202,4 +204,24 @@ TEST_CASE("A first-try success returns immediately") {
         3);
     CHECK(calls == 1);
     CHECK(r.IsOk());
+}
+
+TEST_CASE("shared_ptr<atomic<bool>> shutdown token raised mid-loop aborts the mutation retry path") {
+    // Mutation-path cancel wiring (automation-shutdown): JiraClient/PlaneClient::UpdateIssueFields wrap
+    // the AppController-owned `shared_ptr<atomic<bool>>` shutdown token in exactly this `cancelled`
+    // lambda shape and forward it to TrackerPut/Patch/PostLogged. This asserts the token shape drives
+    // the retry wrapper to Cancelled WITHOUT a second request, mirroring shutdown flipping the token on
+    // an automation worker blocked in a tracker mutation so its bounded join completes (no .detach).
+    auto shutdownToken = std::make_shared<std::atomic<bool>>(false);
+    std::function<bool()> cancelled = [shutdownToken]() { return shutdownToken->load(); };
+    int calls = 0;
+    const TrackerHttpResult r = TrackerHttpRequestWithRetry(
+        [&calls, &shutdownToken]() {
+            ++calls;
+            shutdownToken->store(true);   // shutdown raises the token during the first attempt's backoff.
+            return ResultFromStatus(503); // retryable 5xx → schedules a retry the cancel poll cuts off.
+        },
+        3, cancelled);
+    CHECK(calls == 1); // first attempt ran; the token poll before attempt 2 short-circuits.
+    CHECK(r.Error.Kind == TrackerErrorKind::Cancelled);
 }

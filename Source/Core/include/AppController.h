@@ -988,6 +988,14 @@ class AppController : public IMainThreadPoster {
     std::mutex retiredBackendsMutex_;
     std::vector<std::shared_ptr<ITrackerBackend>> retiredBackends_;
 
+    /// Shutdown/abort cancel token handed to each backend's Mutations() at create time
+    /// (ITrackerIssueMutations::SetMutationCancelToken). Raised in `~AppController` BEFORE the bounded
+    /// automation-worker join so an in-flight blocking tracker mutation (UpdateIssueFields) inside an
+    /// automation job aborts promptly — the worker unwinds and the unconditional join() completes fast
+    /// (no .detach). Mutation-path twin of the search-path cancel plumbing (#1529). Allocated once in
+    /// the ctor; a single shared_ptr<atomic<bool>> shared across backend swaps.
+    std::shared_ptr<std::atomic<bool>> automationShutdownCancel_;
+
   public:
     /// Retire a swapped-out backend into the defer-free graveyard (see `retiredBackends_`).
     /// Called by `GridContextDepsAdapter::SetBackend`. Thread-safe.

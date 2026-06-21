@@ -1,4 +1,6 @@
 #pragma once
+#include <atomic>
+#include <memory>
 #include <nlohmann/json.hpp>
 #include <string>
 #include <utility>
@@ -13,6 +15,17 @@ struct IssueDraft;
 class ITrackerIssueMutations {
   public:
     virtual ~ITrackerIssueMutations() = default;
+
+    /**
+     * Install a shutdown/abort cancel token observed by the blocking mutation HTTP calls
+     * (UpdateIssueFields and friends). When the token's atomic<bool> is set to true, an
+     * in-flight TrackerPut/Patch/PostLogged retry/backoff loop aborts promptly (same per-attempt
+     * cancel check the search path already uses via TrackerGetLogged, #1529). This lets a
+     * synchronous tracker mutation running inside an automation worker unwind on shutdown so the
+     * bounded join completes fast (no .detach). Default no-op: backends without a cancellable
+     * mutation path (Linear/GitHub/fixtures) need no change.
+     */
+    virtual void SetMutationCancelToken(std::shared_ptr<std::atomic<bool>> /*token*/) {}
 
     virtual TrackerError UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) = 0;
 

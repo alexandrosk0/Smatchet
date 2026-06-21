@@ -9,6 +9,8 @@
 #include "ITrackerIssueReader.h"
 #include "ConfigManager.h"
 #include <atomic>
+#include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 #include <cstdint>
@@ -56,6 +58,8 @@ class PlaneClient : public ITrackerBackend,
                                                                       const std::string& projectKey) override;
 
     std::string BuildBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const override;
+
+    void SetMutationCancelToken(std::shared_ptr<std::atomic<bool>> token) override;
 
     // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent
     // backend clients; owner=tracker-backend; revisit=2026-12-31)
@@ -155,6 +159,11 @@ class PlaneClient : public ITrackerBackend,
     // Cancel flag for the in-flight FetchUserActivity run (checked inside the discovery
     // + per-issue activity loops; raised by ClearUserActivity from any thread).
     std::atomic<bool> activityCancel_{false};
+
+    // Shutdown/abort cancel token shared with AppController (set via SetMutationCancelToken). When
+    // raised, an in-flight UpdateIssueFields PATCH retry loop aborts promptly so an automation worker
+    // blocked in a mutation unwinds at shutdown (mutation-path twin of the search-path cancel, #1529).
+    std::shared_ptr<std::atomic<bool>> mutationCancel_;
 
     static std::unordered_map<std::string, std::string> BuildPlaneHeaders(const TrackerConfig& cfg);
 };

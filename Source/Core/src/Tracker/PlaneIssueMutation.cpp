@@ -42,15 +42,27 @@ bool LooksLikeUuid(const std::string& s) {
 
 } // namespace
 
+void PlaneClient::SetMutationCancelToken(std::shared_ptr<std::atomic<bool>> token) {
+    // Single-writer (AppController, before any worker spawns / during backend create) — plain store.
+    mutationCancel_ = std::move(token);
+}
+
 TrackerError PlaneClient::UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) {
     std::string outError;
+    // Observe the shutdown/abort token (if installed) on every retry attempt + backoff of the
+    // blocking PATCH below, so an automation worker blocked here unwinds promptly when shutdown raises
+    // it (mutation-path twin of the search-path cancel plumbing, #1529). Captured by value: the
+    // shared_ptr keeps the token alive for the call even across a concurrent backend swap.
+    std::shared_ptr<std::atomic<bool>> cancelTok = mutationCancel_;
+    std::function<bool()> cancelled =
+        cancelTok ? std::function<bool()>([cancelTok]() { return cancelTok->load(); }) : std::function<bool()>();
     // Resolve config + headers + project + UUID under the cache lock, then drop the lock before
     // the HTTP PATCH so UI thread calls to ResolveDisplayValue / display-name lookups are not
     // blocked for the duration of the round trip.
     TrackerConfig cfg = ConfigManager::Load();
     // No global cfg.PlaneProjectId. Resolve via the active view query (filled by the
-    // current view; legacy installs swept by the one-shot startup migration). UpdateIssueFields is invoked from grid edits
-    // which are scoped to the current view → its query carries the project.
+    // current view; legacy installs swept by the one-shot startup migration). UpdateIssueFields is invoked from grid
+    // edits which are scoped to the current view → its query carries the project.
     const std::string projectKey = ExtractProjectFromQuery(cfg.JqlQuery);
     const std::string planeApi = NormalizePlaneApiBase(cfg.PlaneUrl);
     cpr::Header headers;
@@ -93,7 +105,7 @@ TrackerError PlaneClient::UpdateIssueFields(const std::string& issueId, const nl
     const std::string url = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" +
                             resolvedProjectId + "/work-items/" + targetUuid + "/";
 
-    auto response = TrackerPatchLogged("PlaneClient", url, headers, fields.dump());
+    auto response = TrackerPatchLogged("PlaneClient", url, headers, fields.dump(), cancelled);
     LogTrackerHttpResult("PlaneClient", "PATCH", url, response);
 
     if (response.status_code != 200 && response.status_code != 204) {
@@ -472,8 +484,7 @@ TrackerError ResolvePlaneCommentsUrl(PlaneClient& client, const TrackerConfig& c
 
 } // namespace
 
-Result<std::vector<TrackerIssueComment>, TrackerError>
-PlaneClient::FetchIssueComments(const std::string& issueKey) {
+Result<std::vector<TrackerIssueComment>, TrackerError> PlaneClient::FetchIssueComments(const std::string& issueKey) {
     using CommentsResult = Result<std::vector<TrackerIssueComment>, TrackerError>;
     // No cfg parameter on this interface — resolve from the settled on-disk config
     // (same per-request pattern UpdateIssueFields / CreateIssue use).
