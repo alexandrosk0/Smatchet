@@ -96,6 +96,7 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "CliCommandRunner.h"
 #include "StandaloneAppBootstrap.h"
+#include "StandaloneBoot_detail.h"
 #include "Dx12Bootstrap.h" // StandaloneRenderer + optional DX12 backend (no-op shell off-Windows)
 // AppController holds unique_ptr<> members of these service types; main.cpp's
 // stack instance triggers destructor / noexcept evaluation that requires the
@@ -130,13 +131,9 @@ static void glfw_error_callback(int error, const char* description) {
     ::fprintf(stderr, "GLFW Error %d: %s\n", error, description); // pre-logger-init — LOG_* unavailable
 }
 
-// GLFW Key Callback wrapper to bridge Keypad Enter to standard Enter key
-static void SmatchetKeypadEnterBridgeCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
-    if (key == GLFW_KEY_KP_ENTER) {
-        ImGui_ImplGlfw_KeyCallback(window, GLFW_KEY_ENTER, scancode, action, mods);
-    }
-    ImGui_ImplGlfw_KeyCallback(window, key, scancode, action, mods);
-}
+// Keypad-Enter -> Enter bridge lives in StandaloneBoot_detail (shared with the
+// hidden-window bootstrap). Aliased so the glfwSetKeyCallback site stays terse.
+using smatchet::standalone::boot_detail::KeypadEnterBridgeCallback;
 
 #if defined(_WIN32)
 static void SmatchetApplyWindowIcon(GLFWwindow* window) {
@@ -220,25 +217,10 @@ static void SmatchetLogOpenGLInfo() {
               shading ? reinterpret_cast<const char*>(shading) : "(null)"); // pre-logger-init — LOG_* unavailable
 }
 
-static std::string SmatchetNormalizeDirectory(std::string path) {
-    if (path.empty()) {
-        return path;
-    }
-    std::replace(path.begin(), path.end(), '\\', '/');
-    if (path.back() != '/') {
-        path.push_back('/');
-    }
-    return path;
-}
-
-static void SmatchetEnsureDirectoryExists(const std::string& path) {
-    namespace fs = ghc::filesystem;
-    if (path.empty()) {
-        return;
-    }
-    std::error_code ec;
-    fs::create_directories(fs::path(path), ec);
-}
+// NormalizeDirectory / EnsureDirectoryExists live in StandaloneBoot_detail (shared
+// with the hidden-window bootstrap). Aliased so the call sites below stay terse.
+using smatchet::standalone::boot_detail::EnsureDirectoryExists;
+using smatchet::standalone::boot_detail::NormalizeDirectory;
 
 namespace smatchet {
 namespace standalone {
@@ -285,8 +267,8 @@ static void WireUserDataAndLogSink(MainBootState& boot) {
 #pragma warning(pop)
 #endif
         if (envUserData && envUserData[0] != '\0') {
-            const std::string userDataDir = SmatchetNormalizeDirectory(std::string(envUserData));
-            SmatchetEnsureDirectoryExists(userDataDir);
+            const std::string userDataDir = NormalizeDirectory(std::string(envUserData));
+            EnsureDirectoryExists(userDataDir);
             ConfigManager::SetUserDataDirectory(userDataDir);
         }
     }
@@ -328,7 +310,7 @@ static void WireUserDataAndLogSink(MainBootState& boot) {
 #endif
             if (localAppData && localAppData[0] != '\0') {
                 const std::string dir = std::string(localAppData) + "\\Smatchet";
-                SmatchetEnsureDirectoryExists(dir);
+                EnsureDirectoryExists(dir);
                 char pidBuf[32];
                 std::snprintf(pidBuf, sizeof(pidBuf), "Smatchet-%lu.log",
                               static_cast<unsigned long>(GetCurrentProcessId()));
@@ -360,18 +342,9 @@ static void WireUserDataAndLogSink(MainBootState& boot) {
 // running executable's path. Runs BEFORE window creation so the saved window
 // pos/size/maximized state in config can drive the initial window hints.
 static void ResolveExeAndUserDataDirs() {
-    const auto resolveStandaloneUserDataDir = [](const std::string& exeDir) -> std::string {
-        const ConfigManager::StoragePreference pref =
-            ConfigManager::GetStoragePreference(exeDir, ConfigManager::StoragePreference::Shared);
-        if (pref == ConfigManager::StoragePreference::Portable) {
-            return exeDir;
-        }
-        std::string osDir = ConfigManager::GetPlatformSharedUserDataDirectory();
-        if (!osDir.empty()) {
-            return osDir;
-        }
-        return exeDir;
-    };
+    // Shared with the hidden-window bootstrap (StandaloneBoot_detail) — was a
+    // file-local lambda, identical body.
+    const auto& resolveStandaloneUserDataDir = boot_detail::ResolveStandaloneUserDataDir;
 
 #if defined(_WIN32)
     {
@@ -380,10 +353,10 @@ static void ResolveExeAndUserDataDirs() {
             std::string exePath(buf);
             std::string::size_type last = exePath.find_last_of("\\/");
             if (last != std::string::npos) {
-                std::string exeDir = SmatchetNormalizeDirectory(exePath.substr(0, last + 1));
+                std::string exeDir = NormalizeDirectory(exePath.substr(0, last + 1));
                 ConfigManager::SetRuntimeAssetDirectory(exeDir);
                 std::string userDataDir = resolveStandaloneUserDataDir(exeDir);
-                SmatchetEnsureDirectoryExists(userDataDir);
+                EnsureDirectoryExists(userDataDir);
                 ConfigManager::SetUserDataDirectory(userDataDir);
             }
         }
@@ -397,10 +370,10 @@ static void ResolveExeAndUserDataDirs() {
             std::string exePath(buf);
             const std::string::size_type last = exePath.find_last_of('/');
             if (last != std::string::npos) {
-                const std::string exeDir = SmatchetNormalizeDirectory(exePath.substr(0, last + 1));
+                const std::string exeDir = NormalizeDirectory(exePath.substr(0, last + 1));
                 ConfigManager::SetRuntimeAssetDirectory(exeDir);
                 std::string userDataDir = resolveStandaloneUserDataDir(exeDir);
-                SmatchetEnsureDirectoryExists(userDataDir);
+                EnsureDirectoryExists(userDataDir);
                 ConfigManager::SetUserDataDirectory(userDataDir);
             }
         }
@@ -413,10 +386,10 @@ static void ResolveExeAndUserDataDirs() {
             std::string exePath(buf.data());
             const std::string::size_type last = exePath.find_last_of('/');
             if (last != std::string::npos) {
-                const std::string exeDir = SmatchetNormalizeDirectory(exePath.substr(0, last + 1));
+                const std::string exeDir = NormalizeDirectory(exePath.substr(0, last + 1));
                 ConfigManager::SetRuntimeAssetDirectory(exeDir);
                 std::string userDataDir = resolveStandaloneUserDataDir(exeDir);
-                SmatchetEnsureDirectoryExists(userDataDir);
+                EnsureDirectoryExists(userDataDir);
                 ConfigManager::SetUserDataDirectory(userDataDir);
             }
         }
@@ -588,7 +561,7 @@ static bool BootSetupImGui(GLFWwindow* window, const char* glsl_version, MainBoo
         // DX12: the GLFW platform backend runs in no-GL ("Other") mode; the
         // renderer backend is the D3D12 swapchain owned by boot.dx12.
         ImGui_ImplGlfw_InitForOther(window, true);
-        glfwSetKeyCallback(window, SmatchetKeypadEnterBridgeCallback);
+        glfwSetKeyCallback(window, KeypadEnterBridgeCallback);
 
         int fbW = 0, fbH = 0;
         glfwGetFramebufferSize(window, &fbW, &fbH);
@@ -609,7 +582,7 @@ static bool BootSetupImGui(GLFWwindow* window, const char* glsl_version, MainBoo
     }
 
     ImGui_ImplGlfw_InitForOpenGL(window, true);
-    glfwSetKeyCallback(window, SmatchetKeypadEnterBridgeCallback);
+    glfwSetKeyCallback(window, KeypadEnterBridgeCallback);
     ImGui_ImplOpenGL3_Init(glsl_version);
     SmatchetLogOpenGLInfo();
     if (!ImGui_ImplOpenGL3_CreateDeviceObjects()) {
@@ -718,27 +691,9 @@ static void HandleResizeRequest(GLFWwindow* window) {
     }
 }
 
-// Pack a top-left-origin RGBA source into tightly-packed top-left RGB, dropping
-// the alpha channel (golden diffs compare R/G/B only). `flipVertical` reads rows
-// bottom-up — the GL path needs it (GL readback is bottom-left origin); the DX12
-// path does not (its readback is already top-left).
-static void PackRgbDropAlpha(const unsigned char* rgbaSrc, int w, int h, bool flipVertical,
-                             std::vector<unsigned char>& rgb) {
-    const size_t rowBytesRgb = static_cast<size_t>(w) * 3u;
-    rgb.assign(static_cast<size_t>(h) * rowBytesRgb, 0);
-    for (int y = 0; y < h; ++y) {
-        const int srcRow = flipVertical ? (h - 1 - y) : y;
-        const unsigned char* src = &rgbaSrc[static_cast<size_t>(srcRow) * static_cast<size_t>(w) * 4u];
-        unsigned char* dst = &rgb[static_cast<size_t>(y) * rowBytesRgb];
-        for (int x = 0; x < w; ++x) {
-            dst[0] = src[0];
-            dst[1] = src[1];
-            dst[2] = src[2];
-            dst += 3;
-            src += 4;
-        }
-    }
-}
+// PackRgbDropAlpha lives in StandaloneBoot_detail (shared with the hidden-window
+// bootstrap). Aliased so CaptureFrameRgb below calls it unqualified.
+using boot_detail::PackRgbDropAlpha;
 
 // Read the just-presented frame into top-left-origin RGB. GL reads the front
 // buffer (bottom-left, flipped here); DX12 reads its swapchain back buffer

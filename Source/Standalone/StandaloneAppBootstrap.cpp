@@ -10,6 +10,8 @@
 
 #include "StandaloneAppBootstrap.h"
 
+#include "StandaloneBoot_detail.h"
+
 #include "AppController.h"
 #include "Dx12Bootstrap.h"
 #include "GridContextDepsAdapter.h"
@@ -113,47 +115,17 @@ namespace standalone {
 
 namespace {
 
-static std::string SmatchetNormalizeDirectory(std::string path) {
-    if (path.empty()) {
-        return path;
-    }
-    std::replace(path.begin(), path.end(), '\\', '/');
-    if (path.back() != '/') {
-        path.push_back('/');
-    }
-    return path;
-}
-
-static void SmatchetEnsureDirectoryExists(const std::string& path) {
-    if (path.empty()) {
-        return;
-    }
-    std::error_code ec;
-    ghc::filesystem::create_directories(ghc::filesystem::path(path), ec);
-}
+// Path / callback / pixel leaf helpers are shared with main.cpp via
+// StandaloneBoot_detail (de-dup of the dup_audit `duplication` WARN). Local
+// aliases keep the existing call sites readable + behaviour byte-identical.
+using boot_detail::EnsureDirectoryExists;
+using boot_detail::KeypadEnterBridgeCallback;
+using boot_detail::NormalizeDirectory;
+using boot_detail::PackRgbDropAlpha;
+using boot_detail::ResolveStandaloneUserDataDir;
 
 static void glfw_error_callback(int error, const char* description) {
     LOG_ERROR("GLFW Error %d: %s", error, description);
-}
-
-static void SmatchetKeypadEnterBridgeCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
-    if (key == GLFW_KEY_KP_ENTER) {
-        ImGui_ImplGlfw_KeyCallback(window, GLFW_KEY_ENTER, scancode, action, mods);
-    }
-    ImGui_ImplGlfw_KeyCallback(window, key, scancode, action, mods);
-}
-
-static std::string ResolveStandaloneUserDataDir(const std::string& exeDir) {
-    const ConfigManager::StoragePreference pref =
-        ConfigManager::GetStoragePreference(exeDir, ConfigManager::StoragePreference::Shared);
-    if (pref == ConfigManager::StoragePreference::Portable) {
-        return exeDir;
-    }
-    std::string osDir = ConfigManager::GetPlatformSharedUserDataDirectory();
-    if (!osDir.empty()) {
-        return osDir;
-    }
-    return exeDir;
 }
 
 static void SetupRuntimePaths(const bool preserveUserDataDir) {
@@ -163,11 +135,11 @@ static void SetupRuntimePaths(const bool preserveUserDataDir) {
         std::string exePath(buf);
         const std::string::size_type last = exePath.find_last_of("\\/");
         if (last != std::string::npos) {
-            const std::string exeDir = SmatchetNormalizeDirectory(exePath.substr(0, last + 1));
+            const std::string exeDir = NormalizeDirectory(exePath.substr(0, last + 1));
             ConfigManager::SetRuntimeAssetDirectory(exeDir);
             if (!preserveUserDataDir) {
                 const std::string userDataDir = ResolveStandaloneUserDataDir(exeDir);
-                SmatchetEnsureDirectoryExists(userDataDir);
+                EnsureDirectoryExists(userDataDir);
                 ConfigManager::SetUserDataDirectory(userDataDir);
             }
         }
@@ -180,11 +152,11 @@ static void SetupRuntimePaths(const bool preserveUserDataDir) {
         std::string exePath(buf);
         const std::string::size_type last = exePath.find_last_of('/');
         if (last != std::string::npos) {
-            const std::string exeDir = SmatchetNormalizeDirectory(exePath.substr(0, last + 1));
+            const std::string exeDir = NormalizeDirectory(exePath.substr(0, last + 1));
             ConfigManager::SetRuntimeAssetDirectory(exeDir);
             if (!preserveUserDataDir) {
                 const std::string userDataDir = ResolveStandaloneUserDataDir(exeDir);
-                SmatchetEnsureDirectoryExists(userDataDir);
+                EnsureDirectoryExists(userDataDir);
                 ConfigManager::SetUserDataDirectory(userDataDir);
             }
         }
@@ -196,11 +168,11 @@ static void SetupRuntimePaths(const bool preserveUserDataDir) {
         std::string exePath(buf.data());
         const std::string::size_type last = exePath.find_last_of('/');
         if (last != std::string::npos) {
-            const std::string exeDir = SmatchetNormalizeDirectory(exePath.substr(0, last + 1));
+            const std::string exeDir = NormalizeDirectory(exePath.substr(0, last + 1));
             ConfigManager::SetRuntimeAssetDirectory(exeDir);
             if (!preserveUserDataDir) {
                 const std::string userDataDir = ResolveStandaloneUserDataDir(exeDir);
-                SmatchetEnsureDirectoryExists(userDataDir);
+                EnsureDirectoryExists(userDataDir);
                 ConfigManager::SetUserDataDirectory(userDataDir);
             }
         }
@@ -226,28 +198,7 @@ static void SmatchetDrawFrameWithSeh(SmatchetUI& mainWindow, AppController& smat
 #endif
 }
 
-// Drop the alpha channel from tightly-packed RGBA8 into RGB8. When flipVertical
-// is set the source is bottom-left-origin (GL front-buffer readback) and rows are
-// reversed to top-left; DX12 readback is already top-left (flipVertical=false).
-// Mirrors the same-named helper in main.cpp (two standalone loops, one shape —
-// copy-paste DRY WARN accepted, see the Phase 1 plan).
-static void PackRgbDropAlpha(const unsigned char* rgbaSrc, int w, int h, bool flipVertical,
-                             std::vector<unsigned char>& rgb) {
-    const size_t rowBytesRgb = static_cast<size_t>(w) * 3u;
-    rgb.resize(static_cast<size_t>(h) * rowBytesRgb);
-    for (int y = 0; y < h; ++y) {
-        const int srcRow = flipVertical ? (h - 1 - y) : y;
-        const unsigned char* src = &rgbaSrc[static_cast<size_t>(srcRow) * static_cast<size_t>(w) * 4u];
-        unsigned char* dst = &rgb[static_cast<size_t>(y) * rowBytesRgb];
-        for (int x = 0; x < w; ++x) {
-            dst[0] = src[0];
-            dst[1] = src[1];
-            dst[2] = src[2];
-            dst += 3;
-            src += 4;
-        }
-    }
-}
+// PackRgbDropAlpha lives in StandaloneBoot_detail (shared with main.cpp).
 
 // Read the just-presented frame into top-left-origin RGB. DX12 reads its swapchain
 // back buffer (already top-left, no flip); GL reads the front buffer (bottom-left,
@@ -329,8 +280,8 @@ void ApplyUserDataEnvOverride() {
 #pragma warning(pop)
 #endif
     if (envUserData && envUserData[0] != '\0') {
-        const std::string userDataDir = SmatchetNormalizeDirectory(std::string(envUserData));
-        SmatchetEnsureDirectoryExists(userDataDir);
+        const std::string userDataDir = NormalizeDirectory(std::string(envUserData));
+        EnsureDirectoryExists(userDataDir);
         ConfigManager::SetUserDataDirectory(userDataDir);
     }
 }
@@ -536,7 +487,7 @@ bool InitRendererBackend(BootstrapContext& ctx, GLFWwindow* window, std::string&
             err = "ImGui GLFW platform backend init failed (DX12 path)";
             return false;
         }
-        glfwSetKeyCallback(window, SmatchetKeypadEnterBridgeCallback);
+        glfwSetKeyCallback(window, KeypadEnterBridgeCallback);
         int fbW = 0;
         int fbH = 0;
         glfwGetFramebufferSize(window, &fbW, &fbH);
@@ -560,7 +511,7 @@ bool InitRendererBackend(BootstrapContext& ctx, GLFWwindow* window, std::string&
         err = "ImGui GLFW platform backend init failed (OpenGL path)";
         return false;
     }
-    glfwSetKeyCallback(window, SmatchetKeypadEnterBridgeCallback);
+    glfwSetKeyCallback(window, KeypadEnterBridgeCallback);
     if (!ImGui_ImplOpenGL3_Init(ctx.glslVersion)) {
         err = "ImGui OpenGL3 renderer backend init failed";
         return false;

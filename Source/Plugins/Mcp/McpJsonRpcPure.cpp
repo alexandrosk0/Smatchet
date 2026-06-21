@@ -12,8 +12,13 @@ namespace smatchet {
 namespace mcp {
 namespace pure {
 
-namespace {
+namespace detail {
 
+// SMATCHET_DEVIATION(rule=duplication; reason=the ASCII-lower-then-trim pair is a
+// SMATCHET_DEVIATION ubiquitous idiom repeated across subsystems and pre-dates this
+// SMATCHET_DEVIATION anon-ns to detail promotion, so folding it into a shared
+// SMATCHET_DEVIATION Core StringUtil helper is out of scope for the testability work;
+// owner=build-doctor; revisit=when a canonical Core ascii-lower-trim helper is adopted)
 std::string ToLowerAscii(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -74,7 +79,16 @@ void AppendAllowlistedArgKvs(std::ostringstream& oss, const nlohmann::json& obj)
     }
 }
 
-} // namespace
+} // namespace detail
+
+// Bring the promoted detail helpers into pure-namespace lookup so the existing
+// call sites below (NormalizeDomain, ExtractHostFromUrl, IsAllowedMcpOrigin,
+// BuildRunLuaSummary, BuildToolCallSummary, …) resolve them unqualified exactly
+// as they did when these were file-local anonymous-namespace functions.
+using detail::AppendAllowlistedArgKvs;
+using detail::BasenameForDisplay;
+using detail::ToLowerAscii;
+using detail::TrimAsciiWhitespace;
 
 std::string TruncateOneLine(const std::string& s, std::size_t maxChars) {
     if (s.size() <= maxChars) {

@@ -13,6 +13,7 @@
 // pins the registered name set — also update the stub list in
 // tests/Core/SmatchetScenarioRegistry.stubs.cpp).
 
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <string>
@@ -84,6 +85,12 @@ class ScenarioRunner {
     using Factory = std::function<std::unique_ptr<IScenario>()>;
 
     void RegisterFactory(const std::string& name, Factory f);
+
+    /// Remove a previously-registered factory. No-op if `name` was never registered.
+    /// Used by ProbeScope (the stack-scoped programmatic-scenario RAII) to unwind a
+    /// transient factory it installed; never touches the built-in registry entries
+    /// unless a caller passes one of their names. Returns the number erased (0 or 1).
+    std::size_t UnregisterFactory(const std::string& name);
 
     /// Start a named scenario. Returns error result immediately if not found or start fails.
     CommandResult Start(const std::string& name, const nlohmann::json& args, const CommandContext& ctx);

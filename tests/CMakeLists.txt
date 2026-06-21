@@ -638,6 +638,12 @@ add_executable(SmatchetTests
     Core/SmatchetScenarioRegistry.test.cpp
     Core/SmatchetScenarioRegistry.stubs.cpp
     Core/ScenarioCaptureSizing.test.cpp
+    # ProbeScenario / ProbeScope — lambda-driven programmatic scenario + the
+    # stack-scoped register/unregister RAII. Exercises only the AppController-free
+    # surface (Name / IsDone / factory lifecycle); links ProbeScenario.cpp +
+    # ScenarioRunner.cpp (already below).
+    Core/ProbeScenario.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Scenarios/ProbeScenario.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Scenarios/SmatchetScenarioRegistry.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Scenarios/ScenarioCaptureSizing.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Scenarios/ScenarioRunner.cpp"

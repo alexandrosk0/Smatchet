@@ -36,9 +36,15 @@ bool ApproxEq(const float (&a)[4], const float (&b)[4]) {
 
 } // namespace
 
-TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle writes SmatchetDark syntax palette") {
-    SmatchetTheme::ApplyStyle(ThemeId::SmatchetDark);
-    const SmatchetThemeSyntaxColors& s = SmatchetTheme::GetSyntaxColors();
+// --- Pure syntax-palette cases ---
+// BuildSyntaxColorsForTheme is the single source of truth for every per-theme
+// palette and has NO ImGui side effects, so these cases call it directly (no
+// ImGuiCtxFixture). They pin the exact RGBA table; the ApplyStyle integration
+// (that ApplyStyle actually publishes this palette through GetSyntaxColors) is
+// pinned once by "ApplyStyle publishes BuildSyntaxColorsForTheme" below.
+
+TEST_CASE("BuildSyntaxColorsForTheme returns SmatchetDark syntax palette") {
+    const SmatchetThemeSyntaxColors s = SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId::SmatchetDark);
 
     const float keyword[4] = {0.78f, 0.50f, 1.00f, 1.0f};
     const float strLit[4] = {0.95f, 0.65f, 0.45f, 1.0f};
@@ -53,9 +59,8 @@ TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle writes SmatchetDar
     CHECK(ApproxEq(s.Preprocessor, preproc));
 }
 
-TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle writes ModernDark syntax palette") {
-    SmatchetTheme::ApplyStyle(ThemeId::ModernDark);
-    const SmatchetThemeSyntaxColors& s = SmatchetTheme::GetSyntaxColors();
+TEST_CASE("BuildSyntaxColorsForTheme returns ModernDark syntax palette") {
+    const SmatchetThemeSyntaxColors s = SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId::ModernDark);
 
     // ModernDark shares the SmatchetDark syntax family (only chrome diverges) — encoded explicitly
     // so a future divergence between the two trips the assertion instead of silently passing.
@@ -63,12 +68,11 @@ TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle writes ModernDark 
     CHECK(ApproxEq(s.Keyword, keyword));
 }
 
-TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle writes Vs2022Dark syntax palette") {
-    SmatchetTheme::ApplyStyle(ThemeId::Vs2022Dark);
-    const SmatchetThemeSyntaxColors& s = SmatchetTheme::GetSyntaxColors();
+TEST_CASE("BuildSyntaxColorsForTheme returns Vs2022Dark syntax palette") {
+    const SmatchetThemeSyntaxColors s = SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId::Vs2022Dark);
 
     // VS Code Dark+ canonical: keyword #569CD6, string #CE9178, comment #6A9955, number #B5CEA8,
-    // preproc #9B9B9B. Source-of-truth lives in SmatchetTheme.cpp ApplyVs2022Dark.
+    // preproc #9B9B9B. Source-of-truth lives in SmatchetTheme.cpp BuildSyntaxColorsForTheme.
     const float keyword[4] = {0.34f, 0.61f, 0.84f, 1.0f};
     const float strLit[4] = {0.81f, 0.57f, 0.47f, 1.0f};
     const float comment[4] = {0.42f, 0.60f, 0.33f, 1.0f};
@@ -82,9 +86,8 @@ TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle writes Vs2022Dark 
     CHECK(ApproxEq(s.Preprocessor, preproc));
 }
 
-TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle writes Vs2022Light syntax palette") {
-    SmatchetTheme::ApplyStyle(ThemeId::Vs2022Light);
-    const SmatchetThemeSyntaxColors& s = SmatchetTheme::GetSyntaxColors();
+TEST_CASE("BuildSyntaxColorsForTheme returns Vs2022Light syntax palette") {
+    const SmatchetThemeSyntaxColors s = SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId::Vs2022Light);
 
     // VS Code Light+ canonical: keyword #0000FF (pure blue), string #A31515, comment #008000,
     // number #098658, preproc #808080. Chosen for legibility on white WindowBg.
@@ -101,9 +104,8 @@ TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle writes Vs2022Light
     CHECK(ApproxEq(s.Preprocessor, preproc));
 }
 
-TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle writes HighContrast syntax palette") {
-    SmatchetTheme::ApplyStyle(ThemeId::HighContrast);
-    const SmatchetThemeSyntaxColors& s = SmatchetTheme::GetSyntaxColors();
+TEST_CASE("BuildSyntaxColorsForTheme returns HighContrast syntax palette") {
+    const SmatchetThemeSyntaxColors s = SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId::HighContrast);
 
     // Fully saturated primaries — keyword yellow, string magenta, comment green, number cyan,
     // preproc orange. Picked for low-vision / accessibility audits on pure-black background.
@@ -120,13 +122,12 @@ TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle writes HighContras
     CHECK(ApproxEq(s.Preprocessor, preproc));
 }
 
-TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle writes NortonCommander syntax palette") {
-    SmatchetTheme::ApplyStyle(ThemeId::NortonCommander);
-    const SmatchetThemeSyntaxColors& s = SmatchetTheme::GetSyntaxColors();
+TEST_CASE("BuildSyntaxColorsForTheme returns NortonCommander syntax palette") {
+    const SmatchetThemeSyntaxColors s = SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId::NortonCommander);
 
     // Norton Commander DOS tribute — keyword bright yellow #FFFF55, string light red, comment light
     // gray, number bright cyan #55FFFF, preproc bright green. Source-of-truth in SmatchetTheme.cpp
-    // ApplyNortonCommander.
+    // BuildSyntaxColorsForTheme.
     const float keyword[4] = {1.00f, 1.00f, 0.333f, 1.0f};
     const float strLit[4] = {1.00f, 0.50f, 0.50f, 1.0f};
     const float comment[4] = {0.667f, 0.667f, 0.667f, 1.0f};
@@ -140,9 +141,8 @@ TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle writes NortonComma
     CHECK(ApproxEq(s.Preprocessor, preproc));
 }
 
-TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle writes ImGuiDefaultDark syntax palette") {
-    SmatchetTheme::ApplyStyle(ThemeId::ImGuiDefaultDark);
-    const SmatchetThemeSyntaxColors& s = SmatchetTheme::GetSyntaxColors();
+TEST_CASE("BuildSyntaxColorsForTheme returns ImGuiDefaultDark syntax palette") {
+    const SmatchetThemeSyntaxColors s = SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId::ImGuiDefaultDark);
 
     // ImGuiDefaultDark mirrors SmatchetDark's syntax family (only the chrome — provided by
     // ImGui::StyleColorsDark — diverges). Encoded explicitly so a future hue split between
@@ -160,8 +160,7 @@ TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle writes ImGuiDefaul
     CHECK(ApproxEq(s.Preprocessor, preproc));
 }
 
-TEST_CASE_FIXTURE(ImGuiCtxFixture,
-                  "SmatchetTheme::ApplyStyle — every theme populates the slice-6 Identifier syntax color") {
+TEST_CASE("BuildSyntaxColorsForTheme — every theme populates the slice-6 Identifier syntax color") {
     // Per-theme Identifier color pin (Slice 6 of code-syntax-coloring-and-tooltips.md).
     // Previously identifiers fell through to ImGuiCol_Text (no visible color
     // distinct from plain text); the per-theme Identifier field now drives
@@ -181,9 +180,28 @@ TEST_CASE_FIXTURE(ImGuiCtxFixture,
         {ThemeId::ImGuiDefaultDark, {0.62f, 0.80f, 0.92f, 1.0f}},
     };
     for (const ThemeIdentExpect& c : cases) {
-        SmatchetTheme::ApplyStyle(c.id);
-        const SmatchetThemeSyntaxColors& s = SmatchetTheme::GetSyntaxColors();
+        const SmatchetThemeSyntaxColors s = SmatchetTheme::BuildSyntaxColorsForTheme(c.id);
         CHECK(ApproxEq(s.Identifier, c.expected));
+    }
+}
+
+TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle publishes BuildSyntaxColorsForTheme") {
+    // The lone integration pin: ApplyStyle (ImGui side effect) must publish the SAME
+    // palette BuildSyntaxColorsForTheme returns through GetSyntaxColors, for every theme.
+    const ThemeId all[] = {ThemeId::SmatchetDark,    ThemeId::ModernDark,   ThemeId::Vs2022Dark,
+                           ThemeId::Vs2022Light,     ThemeId::HighContrast, ThemeId::NortonCommander,
+                           ThemeId::ImGuiDefaultDark};
+    for (ThemeId t : all) {
+        SmatchetTheme::ApplyStyle(t);
+        const SmatchetThemeSyntaxColors expected = SmatchetTheme::BuildSyntaxColorsForTheme(t);
+        const SmatchetThemeSyntaxColors& live = SmatchetTheme::GetSyntaxColors();
+        INFO("theme=", static_cast<int>(t));
+        CHECK(ApproxEq(live.Keyword, expected.Keyword));
+        CHECK(ApproxEq(live.String, expected.String));
+        CHECK(ApproxEq(live.Comment, expected.Comment));
+        CHECK(ApproxEq(live.Number, expected.Number));
+        CHECK(ApproxEq(live.Preprocessor, expected.Preprocessor));
+        CHECK(ApproxEq(live.Identifier, expected.Identifier));
     }
 }
 
@@ -219,35 +237,26 @@ TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle ImGuiDefaultDark s
     CHECK(std::fabs(ImGui::GetStyle().WindowRounding) < 1e-5f);
 }
 
-TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle keyword color diverges between themes") {
+TEST_CASE("BuildSyntaxColorsForTheme keyword color diverges between themes") {
     // Round-trip proof for the user-facing claim — switching theme actually recolors the syntax
-    // palette in the next frame. Captures the SmatchetDark / Vs2022Dark / Vs2022Light /
-    // HighContrast keyword channel and asserts pairwise inequality across the families. ModernDark
-    // is intentionally not in this check because it currently shares SmatchetDark's syntax family.
-    SmatchetTheme::ApplyStyle(ThemeId::SmatchetDark);
-    const float smatchetKeyword[4] = {
-        SmatchetTheme::GetSyntaxColors().Keyword[0], SmatchetTheme::GetSyntaxColors().Keyword[1],
-        SmatchetTheme::GetSyntaxColors().Keyword[2], SmatchetTheme::GetSyntaxColors().Keyword[3]};
+    // palette. Captures the SmatchetDark / Vs2022Dark / Vs2022Light / HighContrast / Norton
+    // keyword channel and asserts pairwise inequality across the families. ModernDark is
+    // intentionally not in this check because it currently shares SmatchetDark's syntax family.
+    const SmatchetThemeSyntaxColors smatchet = SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId::SmatchetDark);
+    const float smatchetKeyword[4] = {smatchet.Keyword[0], smatchet.Keyword[1], smatchet.Keyword[2],
+                                      smatchet.Keyword[3]};
 
-    SmatchetTheme::ApplyStyle(ThemeId::Vs2022Dark);
-    const float vsDarkKeyword[4] = {
-        SmatchetTheme::GetSyntaxColors().Keyword[0], SmatchetTheme::GetSyntaxColors().Keyword[1],
-        SmatchetTheme::GetSyntaxColors().Keyword[2], SmatchetTheme::GetSyntaxColors().Keyword[3]};
+    const SmatchetThemeSyntaxColors vsDark = SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId::Vs2022Dark);
+    const float vsDarkKeyword[4] = {vsDark.Keyword[0], vsDark.Keyword[1], vsDark.Keyword[2], vsDark.Keyword[3]};
 
-    SmatchetTheme::ApplyStyle(ThemeId::Vs2022Light);
-    const float vsLightKeyword[4] = {
-        SmatchetTheme::GetSyntaxColors().Keyword[0], SmatchetTheme::GetSyntaxColors().Keyword[1],
-        SmatchetTheme::GetSyntaxColors().Keyword[2], SmatchetTheme::GetSyntaxColors().Keyword[3]};
+    const SmatchetThemeSyntaxColors vsLight = SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId::Vs2022Light);
+    const float vsLightKeyword[4] = {vsLight.Keyword[0], vsLight.Keyword[1], vsLight.Keyword[2], vsLight.Keyword[3]};
 
-    SmatchetTheme::ApplyStyle(ThemeId::HighContrast);
-    const float highContrastKeyword[4] = {
-        SmatchetTheme::GetSyntaxColors().Keyword[0], SmatchetTheme::GetSyntaxColors().Keyword[1],
-        SmatchetTheme::GetSyntaxColors().Keyword[2], SmatchetTheme::GetSyntaxColors().Keyword[3]};
+    const SmatchetThemeSyntaxColors hc = SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId::HighContrast);
+    const float highContrastKeyword[4] = {hc.Keyword[0], hc.Keyword[1], hc.Keyword[2], hc.Keyword[3]};
 
-    SmatchetTheme::ApplyStyle(ThemeId::NortonCommander);
-    const float nortonKeyword[4] = {
-        SmatchetTheme::GetSyntaxColors().Keyword[0], SmatchetTheme::GetSyntaxColors().Keyword[1],
-        SmatchetTheme::GetSyntaxColors().Keyword[2], SmatchetTheme::GetSyntaxColors().Keyword[3]};
+    const SmatchetThemeSyntaxColors norton = SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId::NortonCommander);
+    const float nortonKeyword[4] = {norton.Keyword[0], norton.Keyword[1], norton.Keyword[2], norton.Keyword[3]};
 
     CHECK_FALSE(ApproxEq(smatchetKeyword, vsDarkKeyword));
     CHECK_FALSE(ApproxEq(smatchetKeyword, vsLightKeyword));
@@ -261,14 +270,12 @@ TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle keyword color dive
     CHECK_FALSE(ApproxEq(highContrastKeyword, nortonKeyword));
 }
 
-TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle is idempotent for syntax palette") {
-    SmatchetTheme::ApplyStyle(ThemeId::Vs2022Dark);
-    const float first[4] = {SmatchetTheme::GetSyntaxColors().Keyword[0], SmatchetTheme::GetSyntaxColors().Keyword[1],
-                            SmatchetTheme::GetSyntaxColors().Keyword[2], SmatchetTheme::GetSyntaxColors().Keyword[3]};
+TEST_CASE("BuildSyntaxColorsForTheme is idempotent for syntax palette") {
+    const SmatchetThemeSyntaxColors a = SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId::Vs2022Dark);
+    const float first[4] = {a.Keyword[0], a.Keyword[1], a.Keyword[2], a.Keyword[3]};
 
-    SmatchetTheme::ApplyStyle(ThemeId::Vs2022Dark);
-    const float second[4] = {SmatchetTheme::GetSyntaxColors().Keyword[0], SmatchetTheme::GetSyntaxColors().Keyword[1],
-                             SmatchetTheme::GetSyntaxColors().Keyword[2], SmatchetTheme::GetSyntaxColors().Keyword[3]};
+    const SmatchetThemeSyntaxColors b = SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId::Vs2022Dark);
+    const float second[4] = {b.Keyword[0], b.Keyword[1], b.Keyword[2], b.Keyword[3]};
 
     CHECK(ApproxEq(first, second));
 }

@@ -2,6 +2,7 @@
 #define SMATCHET_MCP_MCPJSONRPCPURE_H
 
 #include <cstddef>
+#include <iosfwd>
 #include <string>
 
 #include <nlohmann/json.hpp>
@@ -13,6 +14,27 @@
 namespace smatchet {
 namespace mcp {
 namespace pure {
+
+// Internal log-summary / string helpers, promoted from an anonymous namespace so
+// the dispatch test rig can exercise them directly (they back BuildRunLuaSummary /
+// BuildToolCallSummary). Behaviour is unchanged — same byte-for-byte logic as the
+// former file-local statics.
+namespace detail {
+
+/// Lowercase an ASCII string (per-byte std::tolower). Non-ASCII bytes pass through.
+std::string ToLowerAscii(std::string value);
+
+/// Trim leading + trailing ASCII whitespace (std::isspace).
+std::string TrimAsciiWhitespace(const std::string& value);
+
+/// Final path component after the last '/' or '\\' (empty in -> empty out).
+std::string BasenameForDisplay(const std::string& path);
+
+/// Append ` key=value` for each allow-listed identifier key present in `obj`
+/// (issue_key / key / id / priority); string values are TruncateOneLine'd to 80.
+void AppendAllowlistedArgKvs(std::ostringstream& oss, const nlohmann::json& obj);
+
+} // namespace detail
 
 std::string Base64Encode(const std::string& in);
 

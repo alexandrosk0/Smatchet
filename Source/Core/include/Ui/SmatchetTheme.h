@@ -91,6 +91,14 @@ void ApplyTouchScale(float scale);
  *  count reads as a wide desktop and Auto never resolves Mobile. UI-thread-only read. */
 float HostDensityScale();
 
+/** Pure mapping from a ThemeId to its C++ syntax-highlight palette — NO ImGui side
+ *  effects (does not touch the active ImGui style, the gSyntaxColors global, or the
+ *  theme-revision counter). ApplyStyle delegates each per-theme arm to this so the
+ *  palette literals live in exactly one place; tests pin the table by calling this
+ *  directly without an ImGui context. An unrecognized id returns the SmatchetDark
+ *  palette (matching ApplyStyle's `default:` arm). */
+SmatchetThemeSyntaxColors BuildSyntaxColorsForTheme(ThemeId theme);
+
 /** Active theme's C++ syntax-highlight palette. Updated by ApplyStyle. */
 const SmatchetThemeSyntaxColors& GetSyntaxColors();
 
