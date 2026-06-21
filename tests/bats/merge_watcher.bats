@@ -16,6 +16,32 @@
 #   - cascade lock-dir (Phase 2 territory)
 #
 # Requires: python3, bats. NO `jq` dep (the CLI handles JSON itself).
+#
+# ----------------------------------------------------------------------------
+# Windows / git-bash seams (shared by every gh-stubbing bats in tests/bats/):
+#
+#  1. gh.cmd forwarder. merge-watcher's _resolve_bin() uses shutil.which("gh"),
+#     which on Windows honours PATHEXT and so resolves a real `gh.exe` / `gh.cmd`
+#     in preference to an extensionless bash-script stub on PATH — the stub is
+#     bypassed and the test hits live GitHub. A shebang script also can't be
+#     subprocess.run() directly on Windows even by explicit path. Tests that
+#     stub gh therefore `skip` under msys/cygwin/win OSTYPE (see the per-test
+#     skip guards below); the cross-platform fix is a `gh.cmd` forwarder on PATH,
+#     not an extensionless script (backlog: merge-watcher-gh-stub-windows).
+#
+#  2. cygpath -m LOCALAPPDATA. git-bash mktemp yields a driveless POSIX path
+#     (/c/Users/...) that native Windows Python mis-resolves; `cygpath -m`
+#     converts it to the mixed C:/... form (drive letter + forward slashes) that
+#     BOTH native Python and git-bash filesystem tests accept, and which matches
+#     `git rev-parse --show-toplevel`. POSIX has no cygpath and mktemp already
+#     returns a valid path, so it is used verbatim there (see setup() below).
+#
+#  3. REST path-token routing. The gh stubs route on `case "$2 $3"` — the verb +
+#     first path segment of the gh argv (`api repos/o/r/pulls/999`, `pr merge`,
+#     `pr view`, `repo view`). When merge-watcher swaps a `gh api -X PUT
+#     .../merge` REST call for a `gh pr merge --auto` invocation (or vice versa),
+#     the stub's `case` arms must be updated to the new argv shape or the stub
+#     silently falls through to `exit 0` and the assertion tests nothing.
 # ----------------------------------------------------------------------------
 
 setup() {

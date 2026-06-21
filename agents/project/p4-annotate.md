@@ -38,6 +38,7 @@ Perforce annotate specialist.
 - **`PathRemaps` apply to callstacks.** `CallstackParser` consumes user-configured remap rules (longest-prefix match, case-sensitive on Windows paths). Don't change the matching algorithm without checking `ApplyPathRemaps` callers — Windows path semantics are easy to break.
 - **Ignore-keywords filter frames.** `FrameMatchesIgnoreKeywords` lets users hide noise (vendored deps, generated code). Filter in the parser layer, not in the UI.
 - **Syntax highlighting is offline.** `CppSyntaxHighlight` operates on local file content with no network — keep it that way.
+- **`CppSyntaxHighlight` scope = annotate-view rendering only.** This agent owns `CppSyntaxHighlight` *as the highlighter that colours rendered annotate views* — not as a general lexer/tokenizer. A change to pure lexing/tokenization (token classification rules, a new language grammar, a tokenizer consumed outside annotate rendering) routes to its owning subsystem, not here. Touch `CppSyntaxHighlight` only when the change is about how annotate lines are highlighted on screen.
 
 **Workflow:**
 
