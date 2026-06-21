@@ -215,7 +215,7 @@ JSON
 # MERGE_GATES_BLOCK_ALLOWLIST_RE rather than hand-copied. These two pin the
 # sourced content: Coverage IS owed (above), a dropped Bucket-* is NOT.
 
-@test "non-allowlist non-required (Bucket-E UI tests) red owes nothing — #1258 regression guard" {
+@test "non-allowlist non-required (Bucket-E UI tests) red owes nothing - #1258 regression guard" {
     # The #1258 false-flag: a stale branch's hand-synced copy still carried
     # `Bucket-|`, so a red Bucket-E lane (Mesa-GL, can't boot the exe) was
     # mis-flagged. The sourced list dropped Bucket-* in lock-step → not owed.

@@ -169,7 +169,7 @@ set_fixture() {
 
 # ---------- Pass / block by gate ----------
 
-@test "all gates pass → return 0 + GATES_PASSED" {
+@test "all gates pass -> return 0 + GATES_PASSED" {
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     run poll_merge_gates org repo 1
     [ "$status" -eq 0 ]
@@ -182,7 +182,7 @@ set_fixture() {
     [[ "$output" != *"GATE_SNAPSHOT cr_override=1"* ]]
 }
 
-@test "CI conclusion FAILURE → return 1" {
+@test "CI conclusion FAILURE -> return 1" {
     set_fixture "$FIXTURES_DIR/merge_gates_ci_fail.json"
     run poll_merge_gates org repo 1
     [ "$status" -eq 1 ]
@@ -196,7 +196,7 @@ set_fixture() {
 # MERGE_GATES_FRESH_RUN_BLOB / _DEV_BLOB test overrides bypass git so the guard is
 # exercised deterministically (no git/network dependency in the bats sandbox).
 
-@test "freshness OFF by default → divergent blobs do NOT block (opt-in guard)" {
+@test "freshness OFF by default -> divergent blobs do NOT block (opt-in guard)" {
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     # Inject divergent blobs but leave MERGE_GATES_FRESHNESS unset (→ off): the
     # guard must be inert so every legacy caller + local-dev run is unaffected.
@@ -209,7 +209,7 @@ set_fixture() {
     [[ "$output" != *"differs from origin/develop"* ]]
 }
 
-@test "freshness BLOCK + stale (run != develop) → refuses GATES_PASSED (#1428)" {
+@test "freshness BLOCK + stale (run != develop) -> refuses GATES_PASSED (#1428)" {
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     export MERGE_GATES_FRESHNESS=block
     export MERGE_GATES_FRESH_RUN_BLOB="aaaaaaaaaaaa1111"
@@ -223,7 +223,7 @@ set_fixture() {
     [[ "$output" == *"Refusing GATES_PASSED"* ]]
 }
 
-@test "freshness BLOCK + fresh (run == develop) → passes" {
+@test "freshness BLOCK + fresh (run == develop) -> passes" {
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     export MERGE_GATES_FRESHNESS=block
     export MERGE_GATES_FRESH_RUN_BLOB="cccccccccccc3333"
@@ -234,7 +234,7 @@ set_fixture() {
     [[ "$output" != *"differs from origin/develop"* ]]
 }
 
-@test "freshness WARN + divergent blobs → warns but still passes" {
+@test "freshness WARN + divergent blobs -> warns but still passes" {
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     export MERGE_GATES_FRESHNESS=warn
     export MERGE_GATES_FRESH_RUN_BLOB="aaaaaaaaaaaa1111"
@@ -245,7 +245,7 @@ set_fixture() {
     [[ "$output" == *"WARN: merge-gates.sh differs from origin/develop"* ]]
 }
 
-@test "freshness BLOCK + unverifiable (no develop blob) → fail-closed block" {
+@test "freshness BLOCK + unverifiable (no develop blob) -> fail-closed block" {
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     export MERGE_GATES_FRESHNESS=block
     export MERGE_GATES_FRESH_RUN_BLOB="aaaaaaaaaaaa1111"
@@ -257,7 +257,7 @@ set_fixture() {
     [[ "$output" == *"freshness unverifiable"* ]]
 }
 
-@test "freshness INVALID value → return 3, never passes (reject typo) (#1428 CR)" {
+@test "freshness INVALID value -> return 3, never passes (reject typo) (#1428 CR)" {
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     # A typo'd mode previously fell through the "!= off" gate into warn-only,
     # silently weakening enforcement; it must now fail loud instead.
@@ -268,7 +268,7 @@ set_fixture() {
     [[ "$output" == *"must be one of off|warn|block"* ]]
 }
 
-@test "CI StatusContext state ERROR → return 1" {
+@test "CI StatusContext state ERROR -> return 1" {
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_ci_fail.json" \
         "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
@@ -410,14 +410,14 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "CI pending IN_PROGRESS → return 1" {
+@test "CI pending IN_PROGRESS -> return 1" {
     set_fixture "$FIXTURES_DIR/merge_gates_ci_pending.json"
     run poll_merge_gates org repo 1
     [ "$status" -eq 1 ]
     [[ "$output" == *"1 pending"* ]]
 }
 
-@test "CI StatusContext state EXPECTED → return 1 (pending)" {
+@test "CI StatusContext state EXPECTED -> return 1 (pending)" {
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_ci_pending.json" \
         "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
@@ -463,14 +463,14 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "CodeRabbit CHANGES_REQUESTED on current head → return 1" {
+@test "CodeRabbit CHANGES_REQUESTED on current head -> return 1" {
     set_fixture "$FIXTURES_DIR/merge_gates_cr_changes.json"
     run poll_merge_gates org repo 1
     [ "$status" -eq 1 ]
     [[ "$output" == *"CodeRabbit: CHANGES_REQUESTED"* ]]
 }
 
-@test "user conversation comment → return 1" {
+@test "user conversation comment -> return 1" {
     set_fixture "$FIXTURES_DIR/merge_gates_user_comment.json"
     run poll_merge_gates org repo 1
     [ "$status" -eq 1 ]
@@ -498,7 +498,7 @@ set_fixture() {
     [[ "$output" == *"CodeRabbit: CHANGES_REQUESTED"* ]]
 }
 
-@test "stale CodeRabbit APPROVED on old SHA → return 1 (STALE)" {
+@test "stale CodeRabbit APPROVED on old SHA -> return 1 (STALE)" {
     # Legacy fixture has no body — falls into STALE_UNKNOWN (safe-default block per
     # P1 fix in docs/self-improvement/categories/process.md).
     set_fixture "$FIXTURES_DIR/merge_gates_cr_stale.json"
@@ -509,7 +509,7 @@ set_fixture() {
 
 # ---------- CR three-bucket actionable parsing (P1 from 2026-05-21) ----------
 
-@test "CR review on current head with 'Actionable comments posted: N>0' → block (P1: don't merge unaddressed findings)" {
+@test "CR review on current head with 'Actionable comments posted: N>0' -> block (P1: don't merge unaddressed findings)" {
     set_fixture "$FIXTURES_DIR/merge_gates_cr_findings.json"
     run poll_merge_gates org repo 1
     [ "$status" -eq 1 ]
@@ -517,7 +517,7 @@ set_fixture() {
     [[ "$output" == *"block"* ]]
 }
 
-@test "CR review on current head with 'Actionable comments posted: 0' → pass" {
+@test "CR review on current head with 'Actionable comments posted: 0' -> pass" {
     set_fixture "$FIXTURES_DIR/merge_gates_cr_current_clean.json"
     run poll_merge_gates org repo 1
     [ "$status" -eq 0 ]
@@ -525,14 +525,14 @@ set_fixture() {
     [[ "$output" == *"GATES_PASSED"* ]]
 }
 
-@test "STALE CR review with 'Actionable comments posted: N>0' → block (P1: surface findings, don't force-merge)" {
+@test "STALE CR review with 'Actionable comments posted: N>0' -> block (P1: surface findings, don't force-merge)" {
     set_fixture "$FIXTURES_DIR/merge_gates_cr_stale_findings.json"
     run poll_merge_gates org repo 1
     [ "$status" -eq 1 ]
     [[ "$output" == *"STALE_WITH_FINDINGS (5 actionable"* ]]
 }
 
-@test "STALE CR review with 'Actionable comments posted: 0' → pass (prior review was clean)" {
+@test "STALE CR review with 'Actionable comments posted: 0' -> pass (prior review was clean)" {
     set_fixture "$FIXTURES_DIR/merge_gates_cr_stale_clean.json"
     run poll_merge_gates org repo 1
     [ "$status" -eq 0 ]
@@ -540,7 +540,7 @@ set_fixture() {
     [[ "$output" == *"GATES_PASSED"* ]]
 }
 
-@test "H16: STALE CR with N>0 findings + all threads resolved + StatusContext SUCCESS → pass (CR-driven thread resolution)" {
+@test "H16: STALE CR with N>0 findings + all threads resolved + StatusContext SUCCESS -> pass (CR-driven thread resolution)" {
     # CR's "resolved threads + cleared StatusContext without re-posting a clean
     # review body" path. The old review reported N>0 actionable; CR re-evaluated
     # the current head, resolved each finding's thread (its accept signal), and
@@ -553,7 +553,7 @@ set_fixture() {
     [[ "$output" == *"GATES_PASSED"* ]]
 }
 
-@test "H16: STALE CR with N>0 findings + all threads resolved but StatusContext NOT SUCCESS → still block (need both signals)" {
+@test "H16: STALE CR with N>0 findings + all threads resolved but StatusContext NOT SUCCESS -> still block (need both signals)" {
     # CR's StatusContext must be SUCCESS — open=0 alone could mean the user
     # manually resolved threads without CR judgement. Without the SUCCESS
     # signal we conservatively block.
@@ -568,7 +568,7 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "H16: STALE CR with N>0 findings + StatusContext SUCCESS but an open thread → still block (need both signals)" {
+@test "H16: STALE CR with N>0 findings + StatusContext SUCCESS but an open thread -> still block (need both signals)" {
     # Status=SUCCESS alone could be a stale placeholder. With even one open
     # CR thread, we conservatively block to surface the finding.
     local f
@@ -582,7 +582,7 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "STALE CR with no Actionable header in body → STALE_UNKNOWN block (safe default)" {
+@test "STALE CR with no Actionable header in body -> STALE_UNKNOWN block (safe default)" {
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_stale_clean.json" \
         "data.repository.pullRequest.reviews.nodes.0.body" \
@@ -594,7 +594,7 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "CR COMMENTED on current head with empty body → pass (no Actionable header, conservative pass)" {
+@test "CR COMMENTED on current head with empty body -> pass (no Actionable header, conservative pass)" {
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_current_clean.json" \
         "data.repository.pullRequest.reviews.nodes.0.body" \
@@ -606,7 +606,7 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "CR body has 'Actionable comments posted: N' on line 7+ but not line 1 → cr_actionable=-1 (per #360 first-line-only parse)" {
+@test "CR body has 'Actionable comments posted: N' on line 7+ but not line 1 -> cr_actionable=-1 (per #360 first-line-only parse)" {
     # Per CodeRabbit on PR #360 — restrict parsing to first line. Body with the
     # header on a non-first line is a pathological case (e.g. nested finding
     # quoting CR's own header format). Should NOT be treated as actionable=N.
@@ -621,7 +621,7 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "CR APPROVED on current head with N>0 findings in body → pass (approval trumps body)" {
+@test "CR APPROVED on current head with N>0 findings in body -> pass (approval trumps body)" {
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_findings.json" \
         "data.repository.pullRequest.reviews.nodes.0.state" \
@@ -633,14 +633,14 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "no CodeRabbit review ever → cr_state=NONE → contributes to pass" {
+@test "no CodeRabbit review ever -> cr_state=NONE -> contributes to pass" {
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     run poll_merge_gates org repo 1
     [ "$status" -eq 0 ]
     [[ "$output" == *"CodeRabbit: NONE"* ]]
 }
 
-@test "CR installed + NONE + no SUCCESS status → block until grace expires" {
+@test "CR installed + NONE + no SUCCESS status -> block until grace expires" {
     # CR installed (no auto-probe required — env override). Default MAX_POLLS=1 +
     # GRACE_POLLS=10 means poll 0 < 10 → cr_state_print="NONE+pending"; gates block.
     export MERGE_GATES_CR_INSTALLED=true
@@ -651,7 +651,7 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED
 }
 
-@test "CR installed + NONE + grace expired (GRACE_POLLS=0) → pass with warn" {
+@test "CR installed + NONE + grace expired (GRACE_POLLS=0) -> pass with warn" {
     # GRACE_POLLS=0 → poll index 0 ≥ 0 immediately → fall through to pass.
     export MERGE_GATES_CR_INSTALLED=true
     export MERGE_GATES_CR_GRACE_POLLS=0
@@ -664,7 +664,7 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
 }
 
-@test "C4 prong 2: CR installed + NONE + StatusContext=SUCCESS + CR inline comment on head → pass" {
+@test "C4 prong 2: CR installed + NONE + StatusContext=SUCCESS + CR inline comment on head -> pass" {
     # C4 prong 2 happy path. Status fires SUCCESS AND CR has posted at least
     # one review-thread comment whose commit.oid matches headRefOid (= CR has
     # actively reviewed THIS commit, not just emitted a placeholder).
@@ -689,7 +689,7 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED
 }
 
-@test "C4 prong 2: CR installed + NONE + StatusContext=SUCCESS + NO inline CR comment → block during grace" {
+@test "C4 prong 2: CR installed + NONE + StatusContext=SUCCESS + NO inline CR comment -> block during grace" {
     # C4 prong 2 wait path. Status fires SUCCESS but no CR review-thread
     # comment on head — the C4 draft-PR bypass shape, or a status-only CR
     # config. Within grace window, hold.
@@ -706,7 +706,7 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED
 }
 
-@test "CR installed + NONE + StatusContext=SUCCESS + description 'Review skipped' (generic) → terminal pass within grace" {
+@test "CR installed + NONE + StatusContext=SUCCESS + description 'Review skipped' (generic) -> terminal pass within grace" {
     # PR #976 regression: CR processed a docs-only PR and deliberately skipped
     # the incremental review — its "CodeRabbit" StatusContext is SUCCESS with
     # description "Review skipped" (NOT the too-many-files size-skip). That is
@@ -753,7 +753,7 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED
 }
 
-@test "C4 prong 2: NONE + StatusContext=SUCCESS + no inline + grace expired → pass with no-inline-evidence WARN" {
+@test "C4 prong 2: NONE + StatusContext=SUCCESS + no inline + grace expired -> pass with no-inline-evidence WARN" {
     # Grace-expired path. Probably a status-only CR config — pass so the loop
     # never wedges. WARN names the suspicious shape so the operator can spot
     # the case where it's actually the C4 bypass + force-investigate.
@@ -797,14 +797,14 @@ set_fixture() {
 
 # ---------- PR state early-exit ----------
 
-@test "PR state=CLOSED → return 4" {
+@test "PR state=CLOSED -> return 4" {
     set_fixture "$FIXTURES_DIR/merge_gates_state.json"
     run poll_merge_gates org repo 1
     [ "$status" -eq 4 ]
     [[ "$output" == *"PR_CLOSED"* ]]
 }
 
-@test "PR state=MERGED → return 4" {
+@test "PR state=MERGED -> return 4" {
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_state.json" \
         "data.repository.pullRequest.state" '"MERGED"')"
@@ -817,7 +817,7 @@ set_fixture() {
 
 # ---------- reviewDecision ----------
 
-@test "reviewDecision=REVIEW_REQUIRED → return 1" {
+@test "reviewDecision=REVIEW_REQUIRED -> return 1" {
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
         "data.repository.pullRequest.reviewDecision" '"REVIEW_REQUIRED"')"
@@ -828,7 +828,7 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "reviewDecision=CHANGES_REQUESTED → return 1" {
+@test "reviewDecision=CHANGES_REQUESTED -> return 1" {
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
         "data.repository.pullRequest.reviewDecision" '"CHANGES_REQUESTED"')"
@@ -839,7 +839,7 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "reviewDecision=APPROVED → contributes to pass" {
+@test "reviewDecision=APPROVED -> contributes to pass" {
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     run poll_merge_gates org repo 1
     [ "$status" -eq 0 ]
@@ -848,7 +848,7 @@ set_fixture() {
 
 # ---------- Pagination overflow (returns 5) ----------
 
-@test "contexts.pageInfo.hasNextPage=true → return 5" {
+@test "contexts.pageInfo.hasNextPage=true -> return 5" {
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_pagination.json" \
         "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.pageInfo.hasNextPage" 'true')"
@@ -859,7 +859,7 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "reviews.pageInfo.hasNextPage=true → return 5" {
+@test "reviews.pageInfo.hasNextPage=true -> return 5" {
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_pagination.json" \
         "data.repository.pullRequest.reviews.pageInfo.hasNextPage" 'true')"
@@ -869,7 +869,7 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "reviewThreads.pageInfo.hasNextPage=true → return 5" {
+@test "reviewThreads.pageInfo.hasNextPage=true -> return 5" {
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_pagination.json" \
         "data.repository.pullRequest.reviewThreads.pageInfo.hasNextPage" 'true')"
@@ -879,7 +879,7 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "comments.pageInfo.hasNextPage=true → return 5" {
+@test "comments.pageInfo.hasNextPage=true -> return 5" {
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_pagination.json" \
         "data.repository.pullRequest.comments.pageInfo.hasNextPage" 'true')"
@@ -889,7 +889,7 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "per-thread comments.pageInfo.hasNextPage=true → return 5" {
+@test "per-thread comments.pageInfo.hasNextPage=true -> return 5" {
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_pagination.json" \
         "data.repository.pullRequest.reviewThreads.nodes" \
@@ -930,7 +930,7 @@ set_fixture() {
 
 # ---------- Latest-per-name dedup (rerun jobs) ----------
 
-@test "rerun: same check name with stale FAILURE + fresh SUCCESS → pass via latest-per-name dedup" {
+@test "rerun: same check name with stale FAILURE + fresh SUCCESS -> pass via latest-per-name dedup" {
     set_fixture "$FIXTURES_DIR/merge_gates_dedup_rerun_pass.json"
     run poll_merge_gates org repo 1
     [ "$status" -eq 0 ]
@@ -972,7 +972,7 @@ set_fixture() {
 
 # ---------- Per-PR label overrides ----------
 
-@test "tests-out-of-band label downgrades Test-delta FAILURE → WARN, gates pass" {
+@test "tests-out-of-band label downgrades Test-delta FAILURE -> WARN, gates pass" {
     set_fixture "$FIXTURES_DIR/merge_gates_label_tests_oob.json"
     run poll_merge_gates org repo 1
     [ "$status" -eq 0 ]
@@ -984,7 +984,7 @@ set_fixture() {
     [[ "$output" == *"GATE_SNAPSHOT cr_override=0 downgraded=Test-delta gate"* ]]
 }
 
-@test "perf-out-of-band label downgrades Perf PR-fast FAILURE → WARN, gates pass" {
+@test "perf-out-of-band label downgrades Perf PR-fast FAILURE -> WARN, gates pass" {
     set_fixture "$FIXTURES_DIR/merge_gates_label_perf_oob.json"
     run poll_merge_gates org repo 1
     [ "$status" -eq 0 ]
@@ -1011,7 +1011,7 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "intent-out-of-band label downgrades Intent section FAILURE → WARN, gates pass" {
+@test "intent-out-of-band label downgrades Intent section FAILURE -> WARN, gates pass" {
     set_fixture "$FIXTURES_DIR/merge_gates_label_intent_oob.json"
     run poll_merge_gates org repo 1
     [ "$status" -eq 0 ]
@@ -1037,7 +1037,7 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "plan-lock-out-of-band label downgrades Plan-lock gate FAILURE → WARN, gates pass" {
+@test "plan-lock-out-of-band label downgrades Plan-lock gate FAILURE -> WARN, gates pass" {
     local f1 f2
     f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
         "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
@@ -1080,7 +1080,7 @@ set_fixture() {
     [[ "$output" == *"1 warn-downgraded"* ]]
 }
 
-@test "no out-of-band label → Test-delta FAILURE still blocks" {
+@test "no out-of-band label -> Test-delta FAILURE still blocks" {
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_label_tests_oob.json" \
         "data.repository.pullRequest.labels.nodes" '[]')"
@@ -1092,7 +1092,7 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "labels.pageInfo.hasNextPage=true → return 5" {
+@test "labels.pageInfo.hasNextPage=true -> return 5" {
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_pagination.json" \
         "data.repository.pullRequest.labels.pageInfo.hasNextPage" 'true')"
@@ -1105,7 +1105,7 @@ set_fixture() {
 
 # ---------- cr-out-of-band label (downgrades a CR block → WARN, CR gate only) ----------
 
-@test "cr-out-of-band label downgrades CR CHANGES_REQUESTED block → pass with WARN" {
+@test "cr-out-of-band label downgrades CR CHANGES_REQUESTED block -> pass with WARN" {
     # merge_gates_cr_changes.json: CR CHANGES_REQUESTED on head + 2 unresolved
     # CR threads (cr_open=2). The label must waive BOTH the state verdict and
     # the open-CR-thread block; CI passes + reviewDecision APPROVED so the gate
@@ -1127,7 +1127,7 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "cr-out-of-band label downgrades STALE_WITH_FINDINGS block → pass with WARN" {
+@test "cr-out-of-band label downgrades STALE_WITH_FINDINGS block -> pass with WARN" {
     # Covers the stale-family block path. Prior CR review had N>0 findings on an
     # old SHA (STALE_WITH_FINDINGS — normally a hard block that never passes on
     # timeout). cr-out-of-band downgrades it to WARN.
@@ -1144,7 +1144,7 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "cr-out-of-band downgrades NONE-within-grace block (CR installed) → pass with WARN" {
+@test "cr-out-of-band downgrades NONE-within-grace block (CR installed) -> pass with WARN" {
     # CR installed, NONE, within grace → normally blocks (NONE+pending). The
     # label downgrades the CR condition so the gate passes immediately without
     # waiting for the grace window.
@@ -1192,7 +1192,7 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "regression: no cr-out-of-band label → CR CHANGES_REQUESTED still blocks (no downgrade WARN)" {
+@test "regression: no cr-out-of-band label -> CR CHANGES_REQUESTED still blocks (no downgrade WARN)" {
     set_fixture "$FIXTURES_DIR/merge_gates_cr_changes.json"
     run poll_merge_gates org repo 1
     [ "$status" -eq 1 ]
@@ -1202,7 +1202,7 @@ set_fixture() {
 
 # ---------- CR=NONE early auto-nudge (@coderabbitai review, once per HEAD) ----------
 
-@test "CR installed + NONE within grace + NONE_NUDGE_POLLS=1 → posts exactly one @coderabbitai review" {
+@test "CR installed + NONE within grace + NONE_NUDGE_POLLS=1 -> posts exactly one @coderabbitai review" {
     # NONE early-nudge is OFF by default (Slice 2); opt in with NONE_NUDGE_POLLS=1
     # so a single NONE poll (streak 1 ≥ 1) fires the nudge once. Counter file
     # records each gh pr comment call; assert exactly one line.
@@ -1221,7 +1221,7 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED
 }
 
-@test "CR=NONE nudge is idempotent per HEAD — 3 polls on same head still post once" {
+@test "CR=NONE nudge is idempotent per HEAD - 3 polls on same head still post once" {
     # Across multiple polls on the same head SHA, the shared once-per-HEAD guard
     # must keep the post count at exactly one (NONE_NUDGE_POLLS=1 to opt in).
     export MERGE_GATES_CR_INSTALLED=true
@@ -1237,7 +1237,7 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_MAX_POLLS
 }
 
-@test "CR=NONE early-nudge OFF by default (NONE_NUDGE_POLLS=0) → no post (Slice 2)" {
+@test "CR=NONE early-nudge OFF by default (NONE_NUDGE_POLLS=0) -> no post (Slice 2)" {
     # Default after Slice 2: the NONE early-nudge is disabled — .coderabbit.yaml
     # auto_review already reviews every push, so nudging was redundant. NONE still
     # blocks within grace, but no @coderabbitai review is posted.
@@ -1277,7 +1277,7 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED
 }
 
-@test "CR=NONE nudge: gh pr comment failure leaves guard unset → retries each poll" {
+@test "CR=NONE nudge: gh pr comment failure leaves guard unset -> retries each poll" {
     # When `gh pr comment` exits non-zero, nudge_coderabbit must NOT mark the
     # head as posted (guard stays unset), so a later poll on the same head
     # re-attempts. With a failing stub + 2 polls, the counter file records one
@@ -1299,7 +1299,7 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_MAX_POLLS MERGE_GATES_STUB_COMMENT_EXIT
 }
 
-@test "CR not installed + NONE → no nudge (NONE is steady state)" {
+@test "CR not installed + NONE -> no nudge (NONE is steady state)" {
     # cr_installed=false (default 404 probe) → NONE passes, no nudge — even with
     # the early-nudge opted in, the cr_installed gate (not the default-off) wins.
     export MERGE_GATES_NONE_NUDGE_POLLS=1
@@ -1313,7 +1313,7 @@ set_fixture() {
     rm -f "$MERGE_GATES_STUB_COMMENT_COUNTER"
 }
 
-@test "NONE_NUDGE_POLLS=3 + single poll → streak 1 < 3 → no nudge yet (Slice 2 grace)" {
+@test "NONE_NUDGE_POLLS=3 + single poll -> streak 1 < 3 -> no nudge yet (Slice 2 grace)" {
     # Opt-in but with a 3-poll grace: one NONE poll only reaches streak 1, below
     # the threshold, so auto_review still gets its window before any nudge.
     export MERGE_GATES_CR_INSTALLED=true
@@ -1330,7 +1330,7 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_NONE_NUDGE_POLLS
 }
 
-@test "NONE_NUDGE_POLLS=3 + PRIOR_NONE_STREAK=2 on same head → streak 3 → one nudge (carry round-trip)" {
+@test "NONE_NUDGE_POLLS=3 + PRIOR_NONE_STREAK=2 on same head -> streak 3 -> one nudge (carry round-trip)" {
     # The none_streak carries across MAX_POLLS=1 watcher cycles via
     # MERGE_GATES_PRIOR_NONE_STREAK/HEAD (mirror of the STALE carry). Seed a prior
     # streak of 2 on the fixture head (abc123); the third poll crosses the
@@ -1369,7 +1369,7 @@ set_fixture() {
 # assert the env round-trip (GATE_CARRY out, MERGE_GATES_PRIOR_* in) keeps the
 # nudge to once-per-HEAD across cycles and lets the STALE streak accumulate.
 
-@test "nudge guard survives MAX_POLLS=1 cycles via GATE_CARRY round-trip → exactly one post" {
+@test "nudge guard survives MAX_POLLS=1 cycles via GATE_CARRY round-trip -> exactly one post" {
     export MERGE_GATES_CR_INSTALLED=true
     export MERGE_GATES_NONE_NUDGE_POLLS=1
     export MERGE_GATES_STUB_COMMENT_COUNTER="${BATS_TMPDIR:-/tmp}/cr-nudge-${BATS_TEST_NUMBER}"
@@ -1412,7 +1412,7 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_PRIOR_NUDGE_HEAD
 }
 
-@test "STALE streak persists via MERGE_GATES_PRIOR_STALE_STREAK → STALE nudge fires at threshold" {
+@test "STALE streak persists via MERGE_GATES_PRIOR_STALE_STREAK -> STALE nudge fires at threshold" {
     export MERGE_GATES_CR_INSTALLED=true
     export MERGE_GATES_STALE_REREVIEW_POLLS=3
     local stale_head
@@ -1453,7 +1453,7 @@ set_fixture() {
 # completely-unreviewed PR through. The poller detects the comment's HTML marker
 # (`skip review by coderabbit.ai`) and hard-blocks unless `cr-out-of-band` is set.
 
-@test "CR size-skip + no label → BLOCK (not mergeable + actionable message)" {
+@test "CR size-skip + no label -> BLOCK (not mergeable + actionable message)" {
     # CR installed, NONE, CR posted the size-skip comment. Must block regardless
     # of the NONE grace counter (GRACE_POLLS=0 forces the grace fall-through that
     # the size-skip guard must override).
@@ -1471,7 +1471,7 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
 }
 
-@test "CR size-skip via structural heading (## Review skipped + Too many files, no HTML marker) → BLOCK" {
+@test "CR size-skip via structural heading (## Review skipped + Too many files, no HTML marker) -> BLOCK" {
     # Robustness: even if CR drops the HTML comment marker, the structural
     # fallback (a "## Review skipped" heading together with "too many files")
     # still detects the skip. NOTE: the match is anchored to the heading, NOT a
@@ -1491,7 +1491,7 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
 }
 
-@test "CR clean summary that merely mentions 'Review skipped' + 'Too many files' as prose → NOT size-skip" {
+@test "CR clean summary that merely mentions 'Review skipped' + 'Too many files' as prose -> NOT size-skip" {
     # PR #980 regression: a CLEAN PR whose own diff/walkthrough discusses CR's
     # size-skip behaviour makes CR echo the phrases 'Review skipped' and 'Too
     # many files' into its summary walkthrough as PROSE — no HTML skip marker,
@@ -1514,7 +1514,7 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
 }
 
-@test "CR size-skip + cr-out-of-band label → PASS with tailored WARN" {
+@test "CR size-skip + cr-out-of-band label -> PASS with tailored WARN" {
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_size_skip.json" \
         "data.repository.pullRequest.labels" \
@@ -1529,7 +1529,7 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED
 }
 
-@test "CR size-skip → @coderabbitai review auto-nudge is NOT posted (futile re-trigger suppressed)" {
+@test "CR size-skip -> @coderabbitai review auto-nudge is NOT posted (futile re-trigger suppressed)" {
     # The CR=NONE early-nudge (#554) must be suppressed for a size-skip — nudging
     # a PR that exceeds CR's file limit just makes CR skip again + spams the
     # thread. Counter file must have ZERO lines (the stub appends one line per
@@ -1587,7 +1587,7 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED
 }
 
-@test "CR size-skip but CR not installed → NONE steady-state pass (skip guard gated on cr_installed)" {
+@test "CR size-skip but CR not installed -> NONE steady-state pass (skip guard gated on cr_installed)" {
     # Defensive: a coderabbitai skip comment with cr_installed=false (404 probe)
     # — the not-installed NONE steady-state pass still applies (no CR gate to
     # enforce). The size-skip block is gated on cr_installed=true for symmetry.
@@ -1607,7 +1607,7 @@ set_fixture() {
 # against the head rollup: a required name absent entirely blocks like a pending
 # check. MERGE_GATES_REQUIRED_CONTEXTS injects the expected set per-test.
 
-@test "required context ABSENT from head rollup → block (NOT 0/0 GATES_PASSED) [P1]" {
+@test "required context ABSENT from head rollup -> block (NOT 0/0 GATES_PASSED) [P1]" {
     # The pass fixture's rollup has names build / ci/standalone (+ skipped/neutral/
     # stale). Declare a required context "Doc anchors + agent contract" that is NOT
     # in the rollup → it never ran on the head → must block. Pre-fix: the poller
@@ -1622,7 +1622,7 @@ set_fixture() {
     [[ "$output" == *"1 req-missing"* ]]
 }
 
-@test "required context PRESENT + passing (SKIPPED) → still passes (skipped-present != absent) [P1]" {
+@test "required context PRESENT + passing (SKIPPED) -> still passes (skipped-present != absent) [P1]" {
     # A docs-only PR where a required Windows-build check is SKIPPED (path-filtered)
     # must still pass: SKIPPED is a passing terminal state AND the context is
     # PRESENT in the rollup (not absent). The fixture's "skipped-job" (SKIPPED,
@@ -1637,7 +1637,7 @@ set_fixture() {
     [[ "$output" != *"required-missing"* ]]
 }
 
-@test "all required-config contexts present + passing → passes (multi-name set) [P1]" {
+@test "all required-config contexts present + passing -> passes (multi-name set) [P1]" {
     # Both declared required names exist in the rollup in passing states
     # (build=SUCCESS CheckRun, ci/standalone=SUCCESS StatusContext) → no absent →
     # pass. Proves the cross-check is satisfied by present+passing contexts.
@@ -1662,7 +1662,7 @@ set_fixture() {
     [[ "$output" != *"required-missing"* ]]
 }
 
-@test "config name with UTF-8 em-dash present in rollup → no false absent (UTF-8-safe match) [P1]" {
+@test "config name with UTF-8 em-dash present in rollup -> no false absent (UTF-8-safe match) [P1]" {
     # The real config name "Windows + MSVC (Smatchet light — AI/Whisper/MCP off)"
     # carries a UTF-8 em-dash. Add a matching SUCCESS context to the rollup and
     # declare it required — the em-dash must round-trip through the JSON-array
@@ -1681,7 +1681,7 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "MERGE_GATES_REQUIRED_CONTEXTS empty → detector inert (legacy fixtures unaffected) [P1]" {
+@test "MERGE_GATES_REQUIRED_CONTEXTS empty -> detector inert (legacy fixtures unaffected) [P1]" {
     # The setup() default ("") keeps the detector inert so the 98 legacy
     # synthetic-name fixtures don't newly block. Explicit re-assertion.
     export MERGE_GATES_REQUIRED_CONTEXTS=""
@@ -1718,7 +1718,7 @@ CFG
 
 # ---------- mergeStateStatus guard (P1 secondary: refuse GATES_PASSED on BLOCKED/BEHIND) ----------
 
-@test "mergeStateStatus=BLOCKED → block even when all gates green [P1]" {
+@test "mergeStateStatus=BLOCKED -> block even when all gates green [P1]" {
     # All gates green (pass fixture) but GitHub reports BLOCKED → must NOT pass.
     # This is the direct backstop for the absent-required false-pass when the
     # config cross-check is inert (the setup() default leaves it inert here).
@@ -1733,7 +1733,7 @@ CFG
     rm -f "$f"
 }
 
-@test "mergeStateStatus=BLOCKED + MERGE_GATES_IGNORE_MERGESTATE=true → passes (admin-merge escape) [P1]" {
+@test "mergeStateStatus=BLOCKED + MERGE_GATES_IGNORE_MERGESTATE=true -> passes (admin-merge escape) [P1]" {
     # The documented admin-merge escape for a positively-confirmed STALE-BLOCKED
     # PR that is actually all-green (AGENTS.md § Merge gates). Override flips the
     # mergeStateStatus guard off so the all-green gates pass.
@@ -1749,7 +1749,7 @@ CFG
     unset MERGE_GATES_IGNORE_MERGESTATE
 }
 
-@test "mergeStateStatus=BEHIND → block (strict branch protection, head behind base) [P1]" {
+@test "mergeStateStatus=BEHIND -> block (strict branch protection, head behind base) [P1]" {
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
         "data.repository.pullRequest.mergeStateStatus" '"BEHIND"')"
@@ -1761,7 +1761,7 @@ CFG
     rm -f "$f"
 }
 
-@test "mergeStateStatus=UNSTABLE → STILL passes when all required green (we merge on UNSTABLE) [P1 regression]" {
+@test "mergeStateStatus=UNSTABLE -> STILL passes when all required green (we merge on UNSTABLE) [P1 regression]" {
     # CRITICAL regression guard: UNSTABLE (non-required checks pending/failing) is
     # NOT in {BLOCKED,BEHIND} and must NOT be caught. #874/#876 merged on UNSTABLE.
     local f
@@ -1774,7 +1774,7 @@ CFG
     rm -f "$f"
 }
 
-@test "mergeStateStatus=CLEAN → passes (the normal all-green case) [P1 regression]" {
+@test "mergeStateStatus=CLEAN -> passes (the normal all-green case) [P1 regression]" {
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
         "data.repository.pullRequest.mergeStateStatus" '"CLEAN"')"
@@ -1785,7 +1785,7 @@ CFG
     rm -f "$f"
 }
 
-@test "mergeStateStatus=BLOCKED caused solely by required-absent → both signals block, named [P1]" {
+@test "mergeStateStatus=BLOCKED caused solely by required-absent -> both signals block, named [P1]" {
     # Combined real-world #856 shape: a required context absent from the head AND
     # GitHub reports BLOCKED. Both detectors fire; the poller names the missing
     # required context and refuses to pass.
@@ -1851,7 +1851,7 @@ CFG
 
 # ---------- Infra: gh failure / timeout / MAX_POLLS ----------
 
-@test "3 consecutive gh failures → return 3" {
+@test "3 consecutive gh failures -> return 3" {
     export MERGE_GATES_MAX_POLLS=3
     export MERGE_GATES_STUB_GH_FAIL="network error"
     run poll_merge_gates org repo 1
@@ -1859,14 +1859,14 @@ CFG
     [[ "$output" == *"GH_API_DOWN"* ]]
 }
 
-@test "MAX_POLLS=1 with blocking fixture → return 1" {
+@test "MAX_POLLS=1 with blocking fixture -> return 1" {
     set_fixture "$FIXTURES_DIR/merge_gates_ci_fail.json"
     export MERGE_GATES_MAX_POLLS=1
     run poll_merge_gates org repo 1
     [ "$status" -eq 1 ]
 }
 
-@test "ORCH_USER unset → return 3" {
+@test "ORCH_USER unset -> return 3" {
     unset ORCH_USER
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     run poll_merge_gates org repo 1
@@ -1880,7 +1880,7 @@ CFG
 # unexpected output) could silently feed 0 into the pass-check. Defensive
 # defaults of -1 on every jq-derived integer fail the pass-check explicitly.
 
-@test "C2 fail-closed: malformed contexts.nodes (string not array) → ci_* default -1 → block" {
+@test "C2 fail-closed: malformed contexts.nodes (string not array) -> ci_* default -1 -> block" {
     # Break contexts.nodes shape so the ctx jq's `map(...)` crashes. Without
     # the defensive `|| echo -1`, the integer assignments would become empty
     # and the `[ "$ci_fail" -eq 0 ]` check would error-out into "not pass",
@@ -1896,7 +1896,7 @@ CFG
     [ "$status" -eq 1 ]
 }
 
-@test "C2 fail-closed: missing reviewThreads → cr_open / user default -1 → block" {
+@test "C2 fail-closed: missing reviewThreads -> cr_open / user default -1 -> block" {
     # Replace reviewThreads with a non-object so the jq queries against it
     # crash. The overflow check fires first (reviewThreads.pageInfo.hasNextPage
     # jq fails → defensive "true" → PAGINATION_OVERFLOW → return 5) before
@@ -1919,7 +1919,7 @@ CFG
 # itself left for context) wedged the gate. Fix decomposes into an explicit
 # `cr_open_blocks` that's false when cr_state==APPROVED.
 
-@test "H1: APPROVED on head + 1 unresolved CR thread → pass (approval trumps cr_open)" {
+@test "H1: APPROVED on head + 1 unresolved CR thread -> pass (approval trumps cr_open)" {
     # Start from the pass fixture (which has cr_state=NONE) and graft on:
     #   - an APPROVED CR review on the current head SHA,
     #   - an unresolved non-outdated thread with a CR comment (would
@@ -1963,7 +1963,7 @@ CFG
 # cr_installed=true (fail safe; gate blocks on unknown state rather than
 # silently passing).
 
-@test "H12: cr_installed probe — confirmed 404 → cr_installed=false → NONE passes (preserved behavior)" {
+@test "H12: cr_installed probe - confirmed 404 -> cr_installed=false -> NONE passes (preserved behavior)" {
     # Default stub behavior is 404. Existing test
     # "no CodeRabbit review ever → cr_state=NONE → contributes to pass"
     # already exercises this; re-asserting here for clarity grouped with H12.
@@ -1975,7 +1975,7 @@ CFG
     unset MERGE_GATES_STUB_CR_CONFIG
 }
 
-@test "H12: cr_installed probe — 401 auth failure → cr_installed=true (fail safe) → NONE blocks until grace expires" {
+@test "H12: cr_installed probe - 401 auth failure -> cr_installed=true (fail safe) -> NONE blocks until grace expires" {
     # With cr_installed=true (fail-safe assumed) and no CR review,
     # NONE+pending blocks on poll 1 (grace=10 by default, poll 0 < 10).
     # Pre-H12: any non-zero gh exit → cr_installed=false → NONE passes
@@ -1989,7 +1989,7 @@ CFG
     unset MERGE_GATES_STUB_CR_CONFIG
 }
 
-@test "H12: cr_installed probe — transient (no HTTP code) → cr_installed=true (fail safe) → block" {
+@test "H12: cr_installed probe - transient (no HTTP code) -> cr_installed=true (fail safe) -> block" {
     # Same as 401 test but with a stub error that doesn't carry "HTTP 404"
     # — covers DNS / connect / read-timeout shape.
     export MERGE_GATES_STUB_CR_CONFIG=transient
@@ -2088,7 +2088,7 @@ CFG
 # silent Bugbot from ever wedging a merge. Decision ORDER is load-bearing: open
 # findings BLOCK before the terminal-signal hatch is consulted.
 
-@test "Bugbot (1) 2 open cursor[bot] threads on head → BLOCK" {
+@test "Bugbot (1) 2 open cursor[bot] threads on head -> BLOCK" {
     # bb_open=2 unresolved cursor[bot] threads + a COMMENTED Bugbot review on head.
     # CI green, CR not installed (NONE→pass), reviewDecision APPROVED, user=0, so
     # Bugbot is the SOLE blocker.
@@ -2100,7 +2100,7 @@ CFG
     [[ "$output" != *"GATES_PASSED"* ]]
 }
 
-@test "Bugbot (2) 2 open threads + bugbot-out-of-band label → WARN/pass" {
+@test "Bugbot (2) 2 open threads + bugbot-out-of-band label -> WARN/pass" {
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_bb_findings.json" \
         "data.repository.pullRequest.labels" \
@@ -2113,7 +2113,7 @@ CFG
     rm -f "$f"
 }
 
-@test "Bugbot (3) usage-limit conversation comment, no open threads → PASS (terminal short-circuit, skips grace)" {
+@test "Bugbot (3) usage-limit conversation comment, no open threads -> PASS (terminal short-circuit, skips grace)" {
     # The spend-cap-no-wedge canary. Bugbot couldn't run → a status comment, no
     # review, no findings. Must PASS immediately even with the default grace
     # window in force (terminal short-circuit skips grace).
@@ -2124,7 +2124,7 @@ CFG
     [[ "$output" == *"Bugbot: TERMINAL (Bugbot couldn't run / usage limit — no-wedge pass)"* ]]
 }
 
-@test "Bugbot (4) no cursor[bot] review on head + poll < BB_GRACE_POLLS → PENDING (grace wait)" {
+@test "Bugbot (4) no cursor[bot] review on head + poll < BB_GRACE_POLLS -> PENDING (grace wait)" {
     # STALE: Bugbot reviewed a PRIOR commit only. Within the grace window the
     # gate waits (don't merge under a mid-re-review Bugbot).
     set_fixture "$FIXTURES_DIR/merge_gates_bb_stale.json"
@@ -2134,7 +2134,7 @@ CFG
     [[ "$output" != *"GATES_PASSED"* ]]
 }
 
-@test "Bugbot (5) no cursor[bot] review on head + grace expired (BB_GRACE_POLLS=0) → PASS (never wedge)" {
+@test "Bugbot (5) no cursor[bot] review on head + grace expired (BB_GRACE_POLLS=0) -> PASS (never wedge)" {
     export MERGE_GATES_BB_GRACE_POLLS=0
     set_fixture "$FIXTURES_DIR/merge_gates_bb_stale.json"
     run poll_merge_gates org repo 1
@@ -2144,7 +2144,7 @@ CFG
     unset MERGE_GATES_BB_GRACE_POLLS
 }
 
-@test "Bugbot (6) clean cursor[bot] review on head, bb_open=0 → PASS" {
+@test "Bugbot (6) clean cursor[bot] review on head, bb_open=0 -> PASS" {
     set_fixture "$FIXTURES_DIR/merge_gates_bb_clean.json"
     run poll_merge_gates org repo 1
     [ "$status" -eq 0 ]
@@ -2152,7 +2152,7 @@ CFG
     [[ "$output" == *"Bugbot: COMMENTED (clean)"* ]]
 }
 
-@test "Bugbot (7) bugbot-out-of-band label with no review on head yet → PASS (waiver short-circuits grace)" {
+@test "Bugbot (7) bugbot-out-of-band label with no review on head yet -> PASS (waiver short-circuits grace)" {
     # STALE base would PENDING within grace; the label short-circuits it to PASS
     # even with the default grace window (the oob check precedes the grace check).
     local f
@@ -2167,7 +2167,7 @@ CFG
     rm -f "$f"
 }
 
-@test "Bugbot (8) no cursor[bot] artefacts at all → unchanged pass (Bugbot-free PR)" {
+@test "Bugbot (8) no cursor[bot] artefacts at all -> unchanged pass (Bugbot-free PR)" {
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     run poll_merge_gates org repo 1
     [ "$status" -eq 0 ]
@@ -2203,7 +2203,7 @@ CFG
     [[ "$output" != *"GATES_PASSED"* ]]
 }
 
-@test "Bugbot (11) open findings + usage-limit comment on head → still BLOCK (terminal must NOT override findings)" {
+@test "Bugbot (11) open findings + usage-limit comment on head -> still BLOCK (terminal must NOT override findings)" {
     # Decision-order canary (plan Finding 1): the terminal short-circuit sits
     # BELOW the open-findings branch, so a usage-limit comment that coexists with
     # real unresolved cursor[bot] threads must still BLOCK — a spend cap does not
@@ -2239,7 +2239,7 @@ CFG
 # these cases inject a `files` node via fixture_override (legacy fixtures have none, so
 # selfImpOnly defaults false there — the Bugbot 1-12 cases above are the not-exempt baseline).
 
-@test "self-improvement (1) pure docs/self-improvement diff + open cursor[bot] finding → PASS (Bugbot auto-skip)" {
+@test "self-improvement (1) pure docs/self-improvement diff + open cursor[bot] finding -> PASS (Bugbot auto-skip)" {
     # bb_findings has 2 open cursor[bot] threads (Bugbot 1 → BLOCK). Tagging the diff
     # as pure self-improvement auto-downgrades that block to WARN → GATES_PASSED.
     local f
@@ -2256,7 +2256,7 @@ CFG
     rm -f "$f"
 }
 
-@test "self-improvement (2) mixed diff (self-improvement + one Source/ file) + open finding → BLOCK (scope canary)" {
+@test "self-improvement (2) mixed diff (self-improvement + one Source/ file) + open finding -> BLOCK (scope canary)" {
     # A single non-self-improvement path flips selfImpOnly false → the Bugbot block
     # stands. Guards the 'no code rides along unreviewed' scope decision.
     local f
@@ -2271,7 +2271,7 @@ CFG
     rm -f "$f"
 }
 
-@test "self-improvement (3) >100-file page (pageInfo.hasNextPage) → NOT exempt → BLOCK (fail-safe canary)" {
+@test "self-improvement (3) >100-file page (pageInfo.hasNextPage) -> NOT exempt -> BLOCK (fail-safe canary)" {
     # Files overflow means we can't see every path, so selfImpOnly fails safe to
     # false even though every visible path is self-improvement → full gates.
     local f
@@ -2286,7 +2286,7 @@ CFG
     rm -f "$f"
 }
 
-@test "self-improvement (4) empty files list → NOT exempt → BLOCK (vacuous-all guard)" {
+@test "self-improvement (4) empty files list -> NOT exempt -> BLOCK (vacuous-all guard)" {
     # length 0 must NOT vacuously satisfy all() — an empty diff is not 'pure
     # self-improvement'. selfImpOnly false → the Bugbot block stands.
     local f
@@ -2301,7 +2301,7 @@ CFG
     rm -f "$f"
 }
 
-@test "self-improvement (5) STALE Bugbot (no review on head) + pure self-improvement → PASS (short-circuits grace)" {
+@test "self-improvement (5) STALE Bugbot (no review on head) + pure self-improvement -> PASS (short-circuits grace)" {
     # bb_stale would PENDING within the grace window (Bugbot 4). The self-improvement
     # branch precedes the STALE-grace check → PASS without waiting.
     local f
@@ -2316,7 +2316,7 @@ CFG
     rm -f "$f"
 }
 
-@test "self-improvement (6) CR CHANGES_REQUESTED + pure self-improvement → PASS (CR belt-and-suspenders)" {
+@test "self-improvement (6) CR CHANGES_REQUESTED + pure self-improvement -> PASS (CR belt-and-suspenders)" {
     # cr_changes blocks on a CHANGES_REQUESTED review (CR test → return 1). The
     # self-improvement CR auto-skip downgrades it (the path_filter normally makes CR
     # 'Review skipped', but this covers a residual/stale CR block).
@@ -2332,7 +2332,7 @@ CFG
     rm -f "$f"
 }
 
-@test "self-improvement (7) already-green pass fixture + self-improvement files → PASS, exemption is moot (no spurious WARN)" {
+@test "self-improvement (7) already-green pass fixture + self-improvement files -> PASS, exemption is moot (no spurious WARN)" {
     # When nothing is blocking, the exemption is load-bearing-only: it must NOT emit
     # an auto-skip WARN or set cr_override (the GATE_SNAPSHOT clean-merge contract).
     local f
