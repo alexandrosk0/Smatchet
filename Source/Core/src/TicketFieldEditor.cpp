@@ -705,7 +705,7 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
     // Hot path: ResolveOptionId + ResolveDisplayValue both parse / linear-scan against the raw JSON
     // value blob. They're only needed when the combo opens (currentId for the selected-row check)
     // or when the visible preview text actually shows (haveOverlayIcon = false). For a 100-row
-    // priority column they fired ~100×/frame and the result was discarded — see PR #41.
+    // priority column they fired ~100×/frame and the result was discarded.
     std::string preview;
     const char* previewCStr;
     if (haveOverlayIcon) {

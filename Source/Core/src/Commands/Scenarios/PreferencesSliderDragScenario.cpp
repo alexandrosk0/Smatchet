@@ -1,5 +1,5 @@
-// PreferencesSliderDragScenario — regression guard for PR #190.
-// PR #190 (`configmanager-save-coalesce`) replaced 31 immediate
+// PreferencesSliderDragScenario — regression guard for the configmanager-save-
+// coalesce change, which replaced 31 immediate
 // `ConfigManager::Save` call sites in `SmatchetPreferencesUi.cpp` with a
 // `MarkPrefsDirty(d)` helper that defers the save behind a debounce window
 // (~100 ms). The end-of-frame fire (in `SmatchetUI::Draw` tail) is wrapped in

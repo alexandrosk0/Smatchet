@@ -698,7 +698,7 @@ void SmatchetUI::applyActiveProjectViewChange(ActiveProjectDrawCtx& ctx) {
     GridPane& pane = ctx.pane;
     ViewDefinition* activeViewForGrid = ctx.activeViewForGrid;
 
-    // Sort-read ownership gate (PR #986 review HIGH-2, same class as the columns fix):
+    // Sort-read ownership gate (same class as the columns fix):
     // for a pane whose resolved view is the FALLBACK (cross-backend unfocused pane —
     // resolvePaneView returned the other backend's active view), tracking that fallback
     // id in lastGridActiveViewId flipped viewChanged on every focus switch, which reset

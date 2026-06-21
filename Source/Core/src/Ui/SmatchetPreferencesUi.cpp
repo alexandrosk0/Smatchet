@@ -186,7 +186,7 @@ void SmatchetUI::loadPreferencesBuffers(UiDrawSession& d) {
     CopyStringToBuffer(d.domainBuf, d.cfg.Domain);
     CopyStringToBuffer(d.emailBuf, d.cfg.Email);
     CopyStringToBuffer(d.tokenBuf, d.cfg.ApiToken);
-    // PR 6: projectKeyBuf / planeProjectBuf removed — see SmatchetUiSession.h.
+    // No projectKeyBuf / planeProjectBuf — see SmatchetUiSession.h.
     CopyStringToBuffer(d.trackerTypeBuf, d.cfg.TrackerType);
     CopyStringToBuffer(d.planeUrlBuf, d.cfg.PlaneUrl);
     CopyStringToBuffer(d.planeWorkspaceBuf, d.cfg.PlaneWorkspaceSlug);
@@ -250,7 +250,7 @@ int DrawTrackerBackendSelection(UiDrawSession& d) {
         // smatchet_config.json could be hand-edited with lowercase
         // "plane"/"github"/"linear" values; the combo writer below always
         // emits canonical PascalCase, but the load path doesn't
-        // canonicalize. CR finding on PR #386/#387.
+        // canonicalize.
         const std::string trackerTypeStr(d.trackerTypeBuf);
         if (trackerTypeStr == "Plane" || trackerTypeStr == "plane") {
             currentItem = 1;
@@ -290,7 +290,7 @@ void DrawTrackerBackendConfig(UiDrawSession& d, int currentItem) {
         ImGui::SetItemTooltip("e.g. companyname.atlassian.net");
         ImGui::InputText("Email", d.emailBuf, sizeof(d.emailBuf));
         ImGui::InputText("API Token", d.tokenBuf, sizeof(d.tokenBuf), ImGuiInputTextFlags_Password);
-        // PR 6: "Project Key" preference row removed. Project is per-operation — picked
+        // No "Project Key" preference row. Project is per-operation — picked
         // via the new-issue draft picker, derived from the active view's JQL, or supplied
         // on ticket.create. The "Recently used projects" section below surfaces cached
         // projects for visibility / Forget.
@@ -309,7 +309,7 @@ void DrawTrackerBackendConfig(UiDrawSession& d, int currentItem) {
         ImGui::SetItemTooltip("e.g. https://api.plane.so");
         ImGui::InputText("Workspace Slug", d.planeWorkspaceBuf, sizeof(d.planeWorkspaceBuf),
                          ImGuiInputTextFlags_CharsNoBlank);
-        // PR 6: "Project ID (UUID)" preference row removed. See Jira note above.
+        // No "Project ID (UUID)" preference row. See Jira note above.
         ImGui::InputText("API Key", d.planeApiKeyBuf, sizeof(d.planeApiKeyBuf), ImGuiInputTextFlags_Password);
         ImGui::Spacing();
         ImGui::InputText("New issue: inherit fields from last row (Plane)", d.newIssueInheritFieldsPlaneBuf,
@@ -320,7 +320,7 @@ void DrawTrackerBackendConfig(UiDrawSession& d, int currentItem) {
                                    "Comma-separated Plane field ids copied from the last grid row when you "
                                    "click + New issue (e.g. description, priority, assignee, labels).");
     } else if (currentItem == 2) {
-        // GitHub-as-tracker — PR3 of docs/plans/shipped/github-tracker-backend.md.
+        // GitHub-as-tracker — docs/plans/shipped/github-tracker-backend.md.
         ImGui::TextUnformatted("GitHub Configuration (github.com or Enterprise)");
         ImGui::InputText("Base URL", d.githubBaseUrlBuf, sizeof(d.githubBaseUrlBuf), ImGuiInputTextFlags_CharsNoBlank);
         ImGui::SetItemTooltip("e.g. https://api.github.com or https://github.your-corp.com/api/v3");
@@ -374,7 +374,7 @@ void DrawTrackerBackendConfig(UiDrawSession& d, int currentItem) {
 // backend + endpoint, each with a Forget button. Extracted from drawPreferencesTrackerTab during the
 // over-100-line decomposition; behaviour-identical.
 void DrawTrackerRecentProjects(UiDrawSession& d, int currentItem) {
-    // PR 6: "Recently used projects" — read-only listbox sourced from FieldCatalogCache,
+    // "Recently used projects" — read-only listbox sourced from FieldCatalogCache,
     // filtered to the current backend + endpoint. Replaces the deleted "Project Key" /
     // "Project ID (UUID)" preference rows. Each row has a Forget button.
     ImGui::Separator();
@@ -411,7 +411,7 @@ void DrawTrackerRecentProjects(UiDrawSession& d, int currentItem) {
         for (const auto& entry : cached) {
             ImGui::PushID(entry.projectKey.c_str());
             // Format: KEY — lastUsed timestamp. (CachedProjectEntry has no displayName
-            // field today; PR 7 may extend the schema with one — for now the key alone
+            // field today; a future change may extend the schema with one — for now the key alone
             // is enough since the picker UI already resolves display names live.)
             char timeBuf[32] = {0};
             const std::time_t t = static_cast<std::time_t>(entry.lastUsedUnix);
@@ -622,7 +622,7 @@ void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) 
     d.cfg.Domain = d.domainBuf;
     d.cfg.Email = d.emailBuf;
     d.cfg.ApiToken = d.tokenBuf;
-    // PR 6: ProjectKey / PlaneProjectId writebacks removed — project is per-operation.
+    // No ProjectKey / PlaneProjectId writebacks — project is per-operation.
     // Canonicalize so a hand-edited lowercase "plane"/"github" buffer value
     // persists as the canonical PascalCase form the rest of the code (and the
     // exact-match TrackerType == "Plane"/"GitHub" branches below) expect. The

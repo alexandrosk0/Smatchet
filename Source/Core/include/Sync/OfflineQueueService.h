@@ -156,7 +156,7 @@ class OfflineQueueService {
     /// Reset to empty by `TakeLegacyPendingStartupBanner`. Read/write only on the UI thread.
     std::string legacyPendingStartupBanner_;
 
-    /// PR 5 of docs/plans/shipped/remove-global-project-key.md: one-shot startup sweep that fills in
+    /// remove-global-project-key.md: one-shot startup sweep that fills in
     /// `IssueDraft::ProjectKey` on legacy `pending_creates` rows whose draft was authored
     /// against the now-removed global project. Recovery order per row:
     ///   1. parent key prefix from `draft.ExistingIssueKey` (Jira `PROJ-123` -> `PROJ`)

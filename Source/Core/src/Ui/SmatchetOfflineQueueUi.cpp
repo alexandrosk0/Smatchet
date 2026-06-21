@@ -762,7 +762,7 @@ static void DrawOfflineRowActionCell(const UnifiedOfflineRow& row) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
         ImGui::TextUnformatted("Dead create");
         ImGui::PopStyleColor();
-        // PR 5 of docs/plans/shipped/remove-global-project-key.md: surface a small badge for
+        // remove-global-project-key.md: surface a small badge for
         // rows the legacy-project sweep dead-lettered, so the user knows to restore
         // and pick a project rather than mistaking it for a transport failure.
         if (row.terminalReason == "legacy_missing_project") {

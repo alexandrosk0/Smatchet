@@ -98,7 +98,7 @@ std::string ResolveProjectForDraft(const ITrackerConnectivity* client, const std
         }
     }
 
-    // (3) Legacy fallback — `cfg.ProjectKey` today; "" after PR 6 (final removal).
+    // (3) Legacy fallback — "" now that the global project key is removed.
     return legacyFallback;
 }
 

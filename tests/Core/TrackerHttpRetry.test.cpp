@@ -72,10 +72,12 @@ TEST_CASE("TrackerHttpRequestWithRetry stops as soon as a retry recovers") {
 
 TEST_CASE("TrackerHttpRequestWithRetry exhausts maxAttempts on a persistent retryable error") {
     int calls = 0;
-    const TrackerHttpResult r = TrackerHttpRequestWithRetry([&calls]() {
-        ++calls;
-        return ResultFromStatus(429);
-    }, 2);
+    const TrackerHttpResult r = TrackerHttpRequestWithRetry(
+        [&calls]() {
+            ++calls;
+            return ResultFromStatus(429);
+        },
+        2);
     CHECK_FALSE(r.IsOk());
     CHECK(calls == 2);
     CHECK(r.Error.Kind == TrackerErrorKind::RateLimited);
@@ -83,10 +85,12 @@ TEST_CASE("TrackerHttpRequestWithRetry exhausts maxAttempts on a persistent retr
 
 TEST_CASE("Default predicate retries 5xx ServerError") {
     int calls = 0;
-    const TrackerHttpResult r = TrackerHttpRequestWithRetry([&calls]() {
-        ++calls;
-        return ResultFromStatus(500);
-    }, 2);
+    const TrackerHttpResult r = TrackerHttpRequestWithRetry(
+        [&calls]() {
+            ++calls;
+            return ResultFromStatus(500);
+        },
+        2);
     CHECK(calls == 2);
     CHECK(r.Error.Kind == TrackerErrorKind::ServerError);
 }
@@ -94,19 +98,23 @@ TEST_CASE("Default predicate retries 5xx ServerError") {
 TEST_CASE("Default predicate does NOT retry non-retryable errors") {
     SUBCASE("Auth 401 is single-shot") {
         int calls = 0;
-        const TrackerHttpResult r = TrackerHttpRequestWithRetry([&calls]() {
-            ++calls;
-            return ResultFromStatus(401);
-        }, 3);
+        const TrackerHttpResult r = TrackerHttpRequestWithRetry(
+            [&calls]() {
+                ++calls;
+                return ResultFromStatus(401);
+            },
+            3);
         CHECK(calls == 1);
         CHECK(r.Error.Kind == TrackerErrorKind::Auth);
     }
     SUBCASE("NotFound 404 is single-shot") {
         int calls = 0;
-        const TrackerHttpResult r = TrackerHttpRequestWithRetry([&calls]() {
-            ++calls;
-            return ResultFromStatus(404);
-        }, 3);
+        const TrackerHttpResult r = TrackerHttpRequestWithRetry(
+            [&calls]() {
+                ++calls;
+                return ResultFromStatus(404);
+            },
+            3);
         CHECK(calls == 1);
         CHECK(r.Error.Kind == TrackerErrorKind::NotFound);
     }
@@ -114,30 +122,36 @@ TEST_CASE("Default predicate does NOT retry non-retryable errors") {
 
 TEST_CASE("POST Transport-only predicate never resends a landed-then-5xx mutation") {
     int calls = 0;
-    const TrackerHttpResult r = TrackerHttpRequestWithRetry([&calls]() {
-        ++calls;
-        return ResultFromStatus(500); // reached the server, server failed — not safe to resend.
-    }, 3, nullptr, RetryTransportOnly);
+    const TrackerHttpResult r = TrackerHttpRequestWithRetry(
+        [&calls]() {
+            ++calls;
+            return ResultFromStatus(500); // reached the server, server failed — not safe to resend.
+        },
+        3, nullptr, RetryTransportOnly);
     CHECK(calls == 1);
     CHECK(r.Error.Kind == TrackerErrorKind::ServerError);
 }
 
 TEST_CASE("POST Transport-only predicate DOES retry a never-landed request") {
     int calls = 0;
-    const TrackerHttpResult r = TrackerHttpRequestWithRetry([&calls]() {
-        ++calls;
-        return ResultFromStatus(0); // status 0 = Transport: request provably never landed.
-    }, 2, nullptr, RetryTransportOnly);
+    const TrackerHttpResult r = TrackerHttpRequestWithRetry(
+        [&calls]() {
+            ++calls;
+            return ResultFromStatus(0); // status 0 = Transport: request provably never landed.
+        },
+        2, nullptr, RetryTransportOnly);
     CHECK(calls == 2);
     CHECK(r.Error.Kind == TrackerErrorKind::Transport);
 }
 
 TEST_CASE("maxAttempts below 1 is clamped to a single attempt") {
     int calls = 0;
-    const TrackerHttpResult r = TrackerHttpRequestWithRetry([&calls]() {
-        ++calls;
-        return ResultFromStatus(429);
-    }, 0);
+    const TrackerHttpResult r = TrackerHttpRequestWithRetry(
+        [&calls]() {
+            ++calls;
+            return ResultFromStatus(429);
+        },
+        0);
     CHECK(calls == 1);
 }
 
@@ -160,12 +174,32 @@ TEST_CASE("cancelled before the first attempt short-circuits to Cancelled") {
     CHECK(r.Error.Kind == TrackerErrorKind::Cancelled);
 }
 
+TEST_CASE("cancelled flipping true mid-loop stops further retries with Cancelled") {
+    // Guards the http-fault-injection-residue fix: the search-fetch GET loops now thread the sync
+    // worker's cancel token into the retry wrapper, so an abort during a backoff/retry window is
+    // honoured immediately. The first 429 schedules a retry; the token flips before that retry, so
+    // the loop must exit Cancelled WITHOUT a second requestFn invocation.
+    int calls = 0;
+    bool cancel = false;
+    const TrackerHttpResult r = TrackerHttpRequestWithRetry(
+        [&calls, &cancel]() {
+            ++calls;
+            cancel = true; // abort requested while the first attempt's backoff is pending.
+            return ResultFromStatus(429);
+        },
+        3, [&cancel]() { return cancel; });
+    CHECK(calls == 1); // first attempt ran; the cancel poll before attempt 2 short-circuits.
+    CHECK(r.Error.Kind == TrackerErrorKind::Cancelled);
+}
+
 TEST_CASE("A first-try success returns immediately") {
     int calls = 0;
-    const TrackerHttpResult r = TrackerHttpRequestWithRetry([&calls]() {
-        ++calls;
-        return ResultFromStatus(200);
-    }, 3);
+    const TrackerHttpResult r = TrackerHttpRequestWithRetry(
+        [&calls]() {
+            ++calls;
+            return ResultFromStatus(200);
+        },
+        3);
     CHECK(calls == 1);
     CHECK(r.IsOk());
 }

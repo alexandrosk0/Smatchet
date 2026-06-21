@@ -16,7 +16,7 @@
  * on `LocalCacheManager` and are deliberately off this interface (see
  * `Source/Core/src/Persistence/CONTEXT.md`).
  *
- * `LocalCacheManager` implements this in production; PR2 adds `tests/support/FakeSyncCache.h`, an
+ * `LocalCacheManager` implements this in production; `tests/support/FakeSyncCache.h` is an
  * in-memory implementation so the service tests run without SQLite. SQLite-free by construction
  * (includes only `CachedTicketTypes.h`); compiles in both the GL/standalone and DX12 targets.
  */

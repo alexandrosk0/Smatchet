@@ -93,9 +93,10 @@ static std::string MenuShortcutArgs(const MainMenuDrawCtx& ctx, const char* comm
 }
 
 // Dispatch a zero-arg registry command from a menu click so the menu and the
-// keybinding share one code path (zoom items). Already on the UI thread here; the
-// command's RunOnUiThreadAsCommandResult re-posts to the dispatcher and applies on
-// the next drain. Source mirrors the recently-used-views menu dispatch below.
+// keybinding share one code path (zoom items). This runs on the UI thread, but the
+// command's effect is still deferred: RunOnUiThreadAsCommandResult re-posts the body
+// to the main-thread dispatcher, so the config mutation + Save land on the next drain
+// rather than inline here. Source mirrors the recently-used-views menu dispatch below.
 static void DispatchMenuCommand(MainMenuDrawCtx& ctx, const char* commandId) {
     smatchet::cmd::CommandContext cmdCtx;
     cmdCtx.App = &ctx.app;
@@ -436,14 +437,16 @@ void SmatchetUI::drawMenuBarAppearanceMenu(MainMenuDrawCtx& ctx) {
     // Zoom clicks route through the command registry (ui.zoom.*) so the menu and the
     // Ctrl+= / Ctrl+- / Ctrl+0 keybindings share one clamp+Save path. Enable-gates keep
     // the pre-registry min/max bounds (the command clamps too).
-    if (ImGui::MenuItem("Zoom In", MenuShortcut(ctx, "ui.zoom.in", "Ctrl+=").c_str(), false, d.cfg.FontSizePt < 32)) {
+    if (ImGui::MenuItem("Zoom In", MenuShortcut(ctx, "ui.zoom.in", "Ctrl+=").c_str(), false,
+                        d.cfg.FontSizePt < SmatchetDefaults::kFontSizeMaxPt)) {
         DispatchMenuCommand(ctx, "ui.zoom.in");
     }
-    if (ImGui::MenuItem("Zoom Out", MenuShortcut(ctx, "ui.zoom.out", "Ctrl+-").c_str(), false, d.cfg.FontSizePt > 8)) {
+    if (ImGui::MenuItem("Zoom Out", MenuShortcut(ctx, "ui.zoom.out", "Ctrl+-").c_str(), false,
+                        d.cfg.FontSizePt > SmatchetDefaults::kFontSizeMinPt)) {
         DispatchMenuCommand(ctx, "ui.zoom.out");
     }
     if (ImGui::MenuItem("Reset Zoom", MenuShortcut(ctx, "ui.zoom.reset", "Ctrl+0").c_str(), false,
-                        d.cfg.FontSizePt != 16)) {
+                        d.cfg.FontSizePt != SmatchetDefaults::kFontSizeDefaultPt)) {
         DispatchMenuCommand(ctx, "ui.zoom.reset");
     }
     ImGui::Separator();

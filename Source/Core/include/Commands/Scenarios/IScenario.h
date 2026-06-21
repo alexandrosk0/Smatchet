@@ -73,7 +73,7 @@ class IScenario {
     /// many frames, so the rings feeding ComputeP99 hold only steady-state — the
     /// one-time cold-start spikes (font-atlas, first-frame layout, initial sync)
     /// that otherwise dominate p99 and trip the absolute ceiling are dropped.
-    /// See tooling.md `p99-gate-warmup-frame-exclusion` + PR #963.
+    /// See tooling.md `p99-gate-warmup-frame-exclusion`.
     virtual int WarmupFrames() const { return 0; }
 };
 

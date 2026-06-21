@@ -1,7 +1,7 @@
 #pragma once
 
 // BackgroundTaskFirewall — the pure exception-containment half of AppController's
-// background-worker launch (issue #1081 / PR #1080). An exception escaping a worker-thread
+// background-worker launch (issue #1081). An exception escaping a worker-thread
 // function calls std::terminate — the UI-thread SEH guard does NOT cover worker threads —
 // so a single throw in any background task takes the whole app down. This firewall contains
 // it: the task is abandoned, the outcome is reported to the caller (which logs), and the app

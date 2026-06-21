@@ -1,6 +1,6 @@
 #pragma once
 
-// PR 4b: shared "Project" combobox used by the new-issue draft picker and the bulk-import modal.
+// Shared "Project" combobox used by the new-issue draft picker and the bulk-import modal.
 // Hybrid surface (OQ-2):
 //   - Recently used: read directly from FieldCatalogCache::ListCachedProjects(), filtered to the
 //     current backend+endpoint, ordered by lastUsedUnix desc.

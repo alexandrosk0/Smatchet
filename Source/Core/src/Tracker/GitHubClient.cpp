@@ -28,7 +28,7 @@ const char* const kMilestoneLabel = "Milestone";
 const char* const kTitleLabel = "Title";
 const char* const kBodyLabel = "Body";
 
-// PR12 — PR-only columns populated by the per-PR /pulls/{n} enrichment loop
+// PR-only columns populated by the per-PR /pulls/{n} enrichment loop
 // in GitHubIssueSearch.cpp. Read-only on the grid; never targeted by
 // UpdateField (mergeable + draft + head/base are not user-editable from
 // Smatchet's grid).
@@ -41,7 +41,7 @@ const char* const kPatMissingError = "GitHub PAT not configured (set Preferences
 
 void StubError(std::string& out, const char* method) {
     out = std::string(method) + ": GitHubClient HTTP impl deferred to a follow-up slice of "
-                                "docs/plans/shipped/github-tracker-backend.md PR2";
+                                "docs/plans/shipped/github-tracker-backend.md";
 }
 
 } // namespace
@@ -190,7 +190,7 @@ TrackerReachabilityProbeResult GitHubClient::ProbeReachability(const TrackerConf
 std::vector<CachedTicket> GitHubClient::FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* configOverride,
                                                     const ViewsStore* /*viewsOverride*/, std::string* outFetchError,
                                                     std::string* outWarning) {
-    // PR4 — delegate to the standalone fetcher (mirrors JiraIssueSearch /
+    // Delegate to the standalone fetcher (mirrors JiraIssueSearch /
     // PlaneIssueSearch convention; the per-class FetchIssues is just a thin
     // shim that resolves config + forwards). Called from
     // TicketSyncService::SyncWithBackend on a worker thread (never the UI
@@ -205,7 +205,7 @@ TrackerIssueFetchSummary GitHubClient::FetchIssuesStreamed(const BatchCallback& 
                                                            const CancelCallback& shouldCancel,
                                                            const TrackerConfig* configOverride,
                                                            const ViewsStore* /*viewsOverride*/) {
-    // PR12 latency fix — per-page emission. Each GraphQL page's mapped tickets
+    // Latency fix — per-page emission. Each GraphQL page's mapped tickets
     // are posted to `onBatch` immediately, so the UI grid populates
     // progressively instead of waiting for all 4 pages (~6s wall-clock).
     TrackerIssueFetchSummary summary;
@@ -254,7 +254,7 @@ TrackerIssueFetchSummary GitHubClient::FetchIssuesStreamed(const BatchCallback& 
 Result<std::vector<CachedTicket>, TrackerError>
 GitHubClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
                                  const ViewsStore& /*views*/) {
-    // PR4 — single-issue GET loop per key. Credentials resolve from the live cfg
+    // Single-issue GET loop per key. Credentials resolve from the live cfg
     // (issue #979); owner/repo aren't consulted because the canonical owner/repo
     // is already embedded in each key (`owner/repo#N`).
     const smatchet::github::GitHubRequestAuth auth = ResolveAuth(&cfg);
@@ -296,7 +296,7 @@ Result<TrackerFieldCatalogResult, TrackerError> GitHubClient::FetchFieldCatalog(
     // fields and there's no collision with Jira's singular `comment` blob.
     // Non-editable in editmeta below (the UI intercepts the cell).
     addField("comments", "Comments", "number");
-    // PR12 — PR-only fields. Strings ("true"/"false"/"computing"/"" for
+    // PR-only fields. Strings ("true"/"false"/"computing"/"" for
     // mergeable; "true"/"false"/"" for draft) consistent with the existing
     // bool-as-string pattern used by other tracker catalogs.
     addField("pr.head", kPrHeadLabel, "string");

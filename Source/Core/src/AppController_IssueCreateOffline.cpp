@@ -64,7 +64,7 @@ IssueDraft AppController::BuildDraftFromLastTicket(const TrackerConfig& cfg) con
         (cfg.TrackerType == "Plane")
             ? cfg.NewIssueInheritFieldIdsPlane
             : (cfg.TrackerType == "Linear") ? cfg.NewIssueInheritFieldIdsLinear : cfg.NewIssueInheritFieldIds;
-    // PR 6: legacy global cfg.ProjectKey removed — pass "" as the legacy fallback.
+    // No global cfg.ProjectKey exists — pass "" as the legacy fallback.
     const std::string resolvedProject = smatchet::ResolveProjectForDraft(
         focusedContext().Backend ? &focusedContext().Backend->Connectivity() : nullptr, cfg.JqlQuery, lastTicket.id,
         /*legacyFallback*/ std::string());

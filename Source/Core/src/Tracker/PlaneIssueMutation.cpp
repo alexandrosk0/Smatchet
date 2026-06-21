@@ -48,8 +48,8 @@ TrackerError PlaneClient::UpdateIssueFields(const std::string& issueId, const nl
     // the HTTP PATCH so UI thread calls to ResolveDisplayValue / display-name lookups are not
     // blocked for the duration of the round trip.
     TrackerConfig cfg = ConfigManager::Load();
-    // PR 6: legacy cfg.PlaneProjectId removed. Resolve via the active view query (filled by the
-    // current view; legacy installs swept by PR 5). UpdateIssueFields is invoked from grid edits
+    // No global cfg.PlaneProjectId. Resolve via the active view query (filled by the
+    // current view; legacy installs swept by the one-shot startup migration). UpdateIssueFields is invoked from grid edits
     // which are scoped to the current view → its query carries the project.
     const std::string projectKey = ExtractProjectFromQuery(cfg.JqlQuery);
     const std::string planeApi = NormalizePlaneApiBase(cfg.PlaneUrl);
@@ -281,7 +281,7 @@ Result<std::string, TrackerError> PlaneClient::CreateIssue(const nlohmann::json&
     {
         std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
         TrackerConfig cfg = ConfigManager::Load();
-        // PR 6: legacy cfg.PlaneProjectId removed (see remove-global-project-key.md §2.5).
+        // No global cfg.PlaneProjectId (see remove-global-project-key.md §2.5).
         // Resolve from the active view's query — same pattern as UpdateIssueFields above.
         const std::string projectKey = ExtractProjectFromQuery(cfg.JqlQuery);
         planeApi = NormalizePlaneApiBase(cfg.PlaneUrl);

@@ -61,7 +61,7 @@ CommandResult ScenarioRunner::Start(const std::string& name, const nlohmann::jso
     // Stale-file footgun fix: --spawn callers' WaitForFile poller treats any
     // non-empty file at outPath_ as "result ready". A stale file from the prior
     // run produces phantom-same numbers on three consecutive runs (perf-detective
-    // hit this debugging PR #311). Unlink before scenario starts so the poller
+    // hit this while debugging). Unlink before scenario starts so the poller
     // can only ever see the result of this run.
     std::remove(outPath_.c_str());
 
@@ -98,7 +98,7 @@ void ScenarioRunner::Tick(AppController& app, bool& outScrollActive, int& outScr
     // so the snapshot-time ComputeP99 that feeds the absolute p99 ceiling sees
     // only steady-state samples, not the one-time cold-start spikes (font-atlas
     // build, first-frame layout, initial catalog sync) that otherwise dominate
-    // p99 (PR #963: SmatchetUI::Draw p99 ~12 ms, drawEnsureCatalogAndInitialSync
+    // p99 (observed: SmatchetUI::Draw p99 ~12 ms, drawEnsureCatalogAndInitialSync
     // ~9 ms, both pure warmup). WarmupFrames() defaults to 0, so scenarios that
     // do not opt in — including the ten that Reset() themselves in OnStart — are
     // never touched here.

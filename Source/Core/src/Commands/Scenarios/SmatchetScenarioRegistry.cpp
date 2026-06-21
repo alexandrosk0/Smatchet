@@ -143,7 +143,7 @@ void RegisterAllScenarios(ScenarioRunner& runner) {
     // CMake option is ON), so the factory call must be ifdef-wrapped too:
     // the OFF build has no symbol for MakeWhisperDictationScenario.
     runner.RegisterFactory("whisper-dictation-roundtrip", []() { return ::MakeWhisperDictationScenario(); });
-    // PR #249 (bf9ce67f) regression gate — focuses the AI Assistant chat
+    // Regression gate (fix at bf9ce67f) — focuses the AI Assistant chat
     // input via router registration + non-zero ItemId so the
     // ReloadUserBufAndMoveToEnd half of the fix is exercised end-to-end.
     // Source-list conditional (CMakeLists.txt) + ifdef-wrapped here for the

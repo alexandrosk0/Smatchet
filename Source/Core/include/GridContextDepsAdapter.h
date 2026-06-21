@@ -98,7 +98,7 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
                           int durationMs) override;
     // Failed session → re-arm the context's initial-sync latch + drop its recorded JQL so
     // the next pane focus switch retries instead of suppressing the re-sync forever
-    // (PR #986 review MEDIUM-1). UI thread (TickStreamingApply) — same single-thread
+    // UI thread (TickStreamingApply) — same single-thread
     // discipline as the latch itself.
     void OnStreamingSyncSessionFinished(bool fetchOk) override;
     // RequestDeferredLiveTrackerBackendSuccessNotify shared with IOfflineQueueDeps.

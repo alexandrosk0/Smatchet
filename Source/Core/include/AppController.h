@@ -587,7 +587,7 @@ class AppController : public IMainThreadPoster {
     // generation from (UpdateTicket inline; replay workers via the friend
     // GridContextDepsAdapter). A ctx-less public overload re-resolved focusedContext() at
     // apply time — per-context generation counters can be equal-by-coincidence across panes,
-    // passing the gate while focus moved (PR #1104 review MEDIUM-1).
+    // passing the gate while focus moved.
     /** Reload ActiveTickets from cache and kick per-issue-type editmeta warmup (same tail as SyncWithBackend). */
     void RefreshLocalDataAndWarmIssueTypeMeta();
 
@@ -606,7 +606,7 @@ class AppController : public IMainThreadPoster {
     std::uint64_t GetFieldCatalogRevision() const { return fieldCatalog().TrackerFieldCatalogRevision.load(); }
 
     bool RefreshFieldCatalog(const TrackerConfig& cfg);
-    /** PR 6: refetch the catalog scoped to a specific project. The project key is plumbed to
+    /** Refetch the catalog scoped to a specific project. The project key is plumbed to
      *  the fetcher via a transient capture on the backend cfg snapshot (see TrackerFieldCatalog
      *  and PlaneClient single-capture sites) and used by SetFieldCatalog to land the snapshot
      *  under the right per-project cache entry. Empty projectKey ≡ unscoped, identical to the
@@ -705,7 +705,7 @@ class AppController : public IMainThreadPoster {
     // std::atomic_store (ADR 0012): the slot is reassigned live on a tracker swap, and a
     // shared_ptr *instance* is not itself thread-safe to copy/assign concurrently (C++14).
     const ITrackerBackend* GetTrackerBackend() const { return std::atomic_load(&focusedContext().Backend).get(); }
-    // PR 4b: non-const accessor for callers that invoke mutating client methods (e.g.
+    // Non-const accessor for callers that invoke mutating client methods (e.g.
     // ListProjects() which populates a per-client in-memory cache).
     ITrackerBackend* GetTrackerBackendMutable() { return std::atomic_load(&focusedContext().Backend).get(); }
     /** Strong (shared) handle to the active backend, for OFF-THREAD work that must
@@ -1071,7 +1071,7 @@ class AppController : public IMainThreadPoster {
     /// Shared body of the RefreshLocalData paths (issue #1081): null = unchecked UI-thread
     /// refresh; non-null = drop the replace (under ctx.activeTicketsMutex_) when ctx's
     /// backendGeneration_ no longer matches the captured value. `ctx` MUST be the context the
-    /// generation was captured from (PR #1104 review MEDIUM-1) — callers latch it once and do
+    /// generation was captured from — callers latch it once and do
     /// capture + check + apply on the SAME context. Worker-safe: a reference latched before
     /// retirement stays valid via the retiredContexts_ husk graveyard (until ~AppController).
     /// The full-table cache read runs OUTSIDE the mutex; only the re-check + swap-in lock it.
@@ -1311,7 +1311,7 @@ class AppController : public IMainThreadPoster {
     // WarmIssueTypeEditMetaWorker moved into EditMetaCacheService (god-object decomposition
     // Phase 1). Accessed via `editMeta_`; the public delegators below preserve the prior surface.
 
-    // Take the caller's already-latched catalog (#823 / CR PR#1218): fieldCatalog() re-resolves
+    // Take the caller's already-latched catalog (#823): fieldCatalog() re-resolves
     // focusedContextPtr_ per call, so re-resolving inside the helper could insert the synthetic
     // field into a different context than the caller populated. Caller passes its latch.
     void EnsureCatalogHistoryField(GridContextFieldCatalog& cat);

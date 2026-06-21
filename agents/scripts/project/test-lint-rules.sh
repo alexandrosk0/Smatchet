@@ -958,6 +958,73 @@ compute_ui_request_flag_violations() {
     for f in "${files[@]}"; do scan_ui_request_flag_file "$f"; done
 }
 
+# pr-numbered-temporal-comments — WARN-first over first-party C++ comments. A comment that pins a
+# DEVELOPMENT pull-request NUMBER (`// PR 5`, `// PR #1104`, `PR#1218`, `PR12`, `PRn`) is a temporal
+# scaffold: it documents which PR introduced a change rather than the durable intent, and rots the
+# moment the PR is squash-merged + the number forgotten. Rewrite each to present-tense intent (drop
+# the PR-number token; keep the technical meaning). This gate stops the pattern re-accumulating after
+# the one-shot sweep.
+#
+# A bash linter cannot tell a dev-PR token from the GitHub PRODUCT term "pull request" by meaning, so
+# the regex is deliberately narrow — it fires ONLY on `PR` immediately followed by an OPTIONAL space,
+# an OPTIONAL `#`, then a DIGIT (the dev-PR-number shape). Product-domain usages that carry no number
+# ("PR-only columns", "type:pr", "per-PR enrichment", "[PR] prefix", "tell PRs apart") do NOT match.
+# GitHub Issue refs (`#1081`), ADR refs (`ADR-0012`) and commit hashes never match (no `PR` prefix).
+#
+# WARN-FIRST / ADVISORY (calibration phase, mirrors the bare-json + unused-symbol + interface-doc
+# gates; never touches $rc). Diff-scoped to the CHANGED first-party C++ files (the sweep cleaned the
+# tree, so a whole-tree scan would be quiet today, but diff-scoping keeps it fast + focuses the WARN
+# on newly-introduced text). A `// SMATCHET_DEVIATION(rule=pr-numbered-temporal-comments; ...)` on the
+# line above suppresses (rare — e.g. a comment that must cite a specific historical PR for an audit).
+# The whole-tree set is available via --scan-pr-comments for a campaign sweep.
+PR_COMMENT_RE='\bPR ?#?[0-9]|\bPR[0-9]'
+
+scan_pr_comment_file() {
+    # $1 = a first-party .cpp/.h/.hpp file. Emits `pr-numbered-temporal-comments\t<f>:<line>` per
+    # COMMENT line carrying a dev-PR-number token. Only comment lines fire (code that happens to
+    # contain a `PR<digit>` token in a string/identifier is out of scope — this is a comment rule).
+    local f="$1"
+    [ -f "$f" ] || return 0
+    case "$f" in *.cpp|*.h|*.hpp) ;; *) return 0 ;; esac
+    local lineno=0 prev_dev_rule=""
+    while IFS= read -r line || [ -n "$line" ]; do
+        lineno=$((lineno+1))
+        # A SMATCHET_DEVIATION on the line ABOVE suppresses the next non-blank line.
+        if [[ "$line" =~ $DEV_RE ]]; then
+            local body="${BASH_REMATCH[1]}" kv
+            prev_dev_rule=""
+            IFS=';' read -ra kvs <<< "$body"
+            for kv in "${kvs[@]}"; do kv="${kv# }"; case "$kv" in rule=*) prev_dev_rule="${kv#rule=}" ;; esac; done
+            continue
+        fi
+        if [[ "$line" =~ ^[[:space:]]*$ ]]; then continue; fi
+        local suppress="$prev_dev_rule"; prev_dev_rule=""
+        # Only consider COMMENT lines: a `//` line-comment, or a `*` / `/*` block-comment body.
+        case "$line" in
+            *'//'*|*'/*'*) ;;
+            *'*'*) [[ "$line" =~ ^[[:space:]]*\* ]] || continue ;;
+            *) continue ;;
+        esac
+        if [[ "$line" =~ $PR_COMMENT_RE ]]; then
+            if [ "$suppress" != "pr-numbered-temporal-comments" ]; then
+                printf 'pr-numbered-temporal-comments\t%s:%s\n' "$f" "$lineno"
+            fi
+        fi
+    done < "$f"
+}
+
+compute_pr_comment_violations() {
+    local files=() f
+    while IFS= read -r f; do files+=("$f"); done < <(
+        git ls-files \
+            'Source/Core/**' 'Source/Plugins/**' 'Source/Standalone/**' 'Source/UnrealPlugins/**' \
+            2>/dev/null \
+            | grep -E '\.(cpp|h|hpp)$' | grep -vE '(^|/)ThirdParty/' || true
+    )
+    [ "${#files[@]}" -gt 0 ] || return 0
+    for f in "${files[@]}"; do scan_pr_comment_file "$f"; done
+}
+
 # ---------------------------------------------------------------------------
 # Modes
 # ---------------------------------------------------------------------------
@@ -1042,9 +1109,10 @@ case "${1:-}" in
     --scan-unused-cfg) MODE=scanunusedcfg ;;
     --scan-bare-json) MODE=scanbarejson ;;
     --scan-ui-reqflag) MODE=scanuireqflag ;;
+    --scan-pr-comments) MODE=scanprcomments ;;
     --selftest)    MODE=selftest ;;
     "")            MODE=diff ;;
-    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--agentsize-baseline|--dup-baseline|--include-cycle-baseline|--scan-file[=]<f>|--full|--scan-wide|--scan-glfw|--scan-cmake-ci|--scan-unused-cfg|--scan-bare-json|--scan-ui-reqflag|--selftest]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--agentsize-baseline|--dup-baseline|--include-cycle-baseline|--scan-file[=]<f>|--full|--scan-wide|--scan-glfw|--scan-cmake-ci|--scan-unused-cfg|--scan-bare-json|--scan-ui-reqflag|--scan-pr-comments|--selftest]" >&2; exit 2 ;;
 esac
 
 case "$MODE" in
@@ -1179,6 +1247,34 @@ case "$MODE" in
     if [ -n "$(scan_ui_request_flag_file "$_ui_tmp")" ]; then
         echo "SELFTEST FAIL: ui-request-flag-off-thread fired despite an in-window SMATCHET_DEVIATION" >&2; miss=1; fi
     rm -f "$_ui_tmp" 2>/dev/null || true
+    # --- pr-numbered-temporal-comments — assert the rule is documented + fires on a dev-PR-number
+    # comment, and stays quiet for product-domain "PR" (no number) / Issue refs / non-comment lines /
+    # a deviation. ---
+    if ! grep -qF "pr-numbered-temporal-comments" AGENTS.md; then echo "SELFTEST FAIL: 'pr-numbered-temporal-comments' rule missing from AGENTS.md" >&2; miss=1; fi
+    _prc_tmp="$(mktemp --suffix=.cpp 2>/dev/null || echo "${TMPDIR:-/tmp}/prc_selftest.$$.cpp")"
+    case "$_prc_tmp" in *.cpp) ;; *) mv -f "$_prc_tmp" "$_prc_tmp.cpp" 2>/dev/null && _prc_tmp="$_prc_tmp.cpp" ;; esac
+    # Positive: each dev-PR-number comment shape must fire.
+    printf '// PR 6: legacy key removed.\n// PR #1104 review MEDIUM-1.\n// CR PR#1218.\n// PR12 latency fix.\n' > "$_prc_tmp"
+    _prc_hits="$(scan_pr_comment_file "$_prc_tmp" | wc -l | tr -d ' ')"
+    if [ "$_prc_hits" != "4" ]; then
+        echo "SELFTEST FAIL: pr-numbered-temporal-comments expected 4 dev-PR-number hits, got $_prc_hits" >&2; miss=1; fi
+    # Negative: product-domain "PR" with NO number must NOT fire.
+    printf '// GitHub PR-only columns populated by the per-PR enrichment loop.\n// the JQL shorthand type:pr maps to is:pr.\n// a visible [PR] prefix so users tell PRs apart.\n' > "$_prc_tmp"
+    if [ -n "$(scan_pr_comment_file "$_prc_tmp")" ]; then
+        echo "SELFTEST FAIL: pr-numbered-temporal-comments fired on product-domain PR usage (no number)" >&2; miss=1; fi
+    # Negative: GitHub Issue refs / ADR refs must NOT fire (no PR prefix).
+    printf '// capture-then-check (issue #1081); see ADR-0012.\n// drop the legacy field (#823).\n' > "$_prc_tmp"
+    if [ -n "$(scan_pr_comment_file "$_prc_tmp")" ]; then
+        echo "SELFTEST FAIL: pr-numbered-temporal-comments fired on a GitHub Issue / ADR ref" >&2; miss=1; fi
+    # Negative: a NON-comment code line carrying a PR<digit>-looking token must NOT fire.
+    printf 'const int kPR12Threshold = 5;\nReadOnlyMode = true;\n' > "$_prc_tmp"
+    if [ -n "$(scan_pr_comment_file "$_prc_tmp")" ]; then
+        echo "SELFTEST FAIL: pr-numbered-temporal-comments fired on a non-comment code line" >&2; miss=1; fi
+    # Negative: an in-window SMATCHET_DEVIATION above the comment must escape.
+    printf '// SMATCHET_DEVIATION(rule=pr-numbered-temporal-comments; reason=test; owner=x; revisit=2099-01-01)\n// PR 6: cited for the audit trail.\n' > "$_prc_tmp"
+    if [ -n "$(scan_pr_comment_file "$_prc_tmp")" ]; then
+        echo "SELFTEST FAIL: pr-numbered-temporal-comments fired despite an in-window SMATCHET_DEVIATION" >&2; miss=1; fi
+    rm -f "$_prc_tmp" 2>/dev/null || true
     # --- interface-doc WARN (Gap B / Slice 2) — assert the rule WARNs on real drift, stays quiet
     # otherwise, and is documented. This exercises a FAILURE case (the pinned symbol changed without
     # a doc touch), satisfying both Slice 2's selftest contract and Slice 3's "assert-a-failure" rule.
@@ -1246,6 +1342,12 @@ case "$MODE" in
     # ui-request-flag-off-thread set over Source/Core/src/Commands (excl. Scenarios) .cpp TUs
     # (debug + bats harness). `--root <dir>` (handled above) points this at an arbitrary tree.
     compute_ui_request_flag_violations
+    ;;
+
+  scanprcomments)
+    # pr-numbered-temporal-comments set over first-party C++ (.cpp/.h/.hpp) — whole-tree campaign
+    # sweep (debug + bats harness). `--root <dir>` (handled above) points this at an arbitrary tree.
+    compute_pr_comment_violations
     ;;
 
   catalog)
@@ -1558,6 +1660,35 @@ case "$MODE" in
             echo "  Route the ingress decode through smatchet::json_safe::ParseBounded(text, errOut[, maxBytes]) (#include \"Json/BoundedJsonParse.h\")."
             echo "  If the bytes are program-internal (not external input): add"
             echo "  // SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; reason=...; owner=...; revisit=...) above the parse."
+        } >&2
+    fi
+
+    # --- pr-numbered-temporal-comments (CHANGED first-party C++ comments; WARN-first) ---
+    # A comment that pins a DEVELOPMENT pull-request number (`// PR 5`, `// PR #1104`, `PR#1218`,
+    # `PR12`) is a temporal scaffold — it rots the moment the PR squash-merges and the number is
+    # forgotten. Rewrite to durable present-tense intent (drop the PR-number token; keep the meaning).
+    # Product-domain "PR" usages with no number ("PR-only", "type:pr", "per-PR") do NOT match.
+    # WARN-FIRST / ADVISORY (calibration; never touches $rc), diff-scoped to the CHANGED first-party
+    # C++ files (mirrors the bare-json + unused-symbol WARNs). A SMATCHET_DEVIATION(rule=pr-numbered-
+    # temporal-comments; ...) on the line above suppresses. Whole-tree sweep via --scan-pr-comments.
+    prc_mb="$(git merge-base "$BASE" HEAD 2>/dev/null || echo "$BASE")"
+    prc_changed="$(git diff --name-only --diff-filter=d "$prc_mb" 2>/dev/null \
+        | grep -E '\.(cpp|h|hpp)$' | grep -vE '(^|/)ThirdParty/' || true)"
+    prc_out=""
+    if [ -n "$prc_changed" ]; then
+        while IFS= read -r prc_f; do
+            [ -n "$prc_f" ] || continue
+            prc_out="$prc_out$(scan_pr_comment_file "$prc_f")"$'\n'
+        done <<< "$prc_changed"
+        prc_out="$(printf '%s' "$prc_out" | grep -E . || true)"
+    fi
+    if [ -n "$prc_out" ]; then
+        {
+            echo "[pr-numbered-temporal-comments] WARN: a comment pins a development PR number (// PR <n> / PR#<n> / PRn) — a temporal scaffold that rots once the PR squash-merges. Rewrite to durable present-tense intent (drop the PR-number token, keep the meaning). Advisory (calibration); not blocking:"
+            printf '%s\n' "$prc_out" | sed 's/^/  /'
+            echo "  Rephrase the comment to state what the code does / why, without the dev-PR number (keep GitHub Issue / ADR refs)."
+            echo "  If a specific historical PR genuinely must be cited (e.g. an audit trail): add"
+            echo "  // SMATCHET_DEVIATION(rule=pr-numbered-temporal-comments; reason=...; owner=...; revisit=...) above the comment."
         } >&2
     fi
 

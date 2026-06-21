@@ -5,7 +5,7 @@
 // GitHubClient::FetchIssues / FetchIssuesForKeys. Not part of the public
 // Source/Core/include surface; lives next to its implementation so only
 // GitHubClient.cpp + GitHubIssueSearch.cpp pick it up.
-// PR4 of docs/plans/shipped/github-tracker-backend.md.
+// docs/plans/shipped/github-tracker-backend.md.
 
 #include "CachedTicketTypes.h"
 #include "SmatchetResult.h"
@@ -22,12 +22,12 @@ namespace smatchet {
 namespace github {
 
 /// Build the Authorization + Accept + API-version + User-Agent header set used
-/// by every GitHub REST call. Mirrors the helper PR9 placed in the anon
+/// by every GitHub REST call. Mirrors the helper in the anon
 /// namespace of GitHubClient.cpp — re-exposed here so GitHubIssueSearch.cpp
 /// can reuse it without copying the implementation.
 cpr::Header BuildGitHubHeaders(const std::string& pat);
 
-/// PR4 — paginated fetch entry point used by GitHubClient::FetchIssues.
+/// Paginated fetch entry point used by GitHubClient::FetchIssues.
 /// Two flow shapes selected by owner/repo presence:
 ///   - owner+repo non-empty → GET /repos/{owner}/{repo}/issues?state=all
 ///     (per_page=100, paginate by page=N). The repo-scoped REST endpoint
@@ -49,7 +49,7 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
                                                 const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted,
                                                 std::string* outFetchError, std::string* outWarning);
 
-/// PR12 latency fix — same as `FetchIssuesViaRestApi` but emits each page's
+/// Latency fix — same as `FetchIssuesViaRestApi` but emits each page's
 /// mapped tickets via `onPage` as soon as the page mapping completes (before
 /// the next page's HTTP roundtrip). Used by `GitHubClient::FetchIssuesStreamed`
 /// so the grid populates progressively (t+1.7s, t+3.4s, ...) instead of
@@ -69,7 +69,7 @@ FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat, const 
                       std::string* outFetchError, std::string* outWarning,
                       const std::function<void(const std::vector<CachedTicket>& page, bool isLast)>& onPage);
 
-/// PR4 — single-issue lookup loop used by GitHubClient::FetchIssuesForKeys.
+/// Single-issue lookup loop used by GitHubClient::FetchIssuesForKeys.
 /// For each key in `issueKeys` (canonical `owner/repo#N` shape), issues a
 /// GET /repos/{owner}/{repo}/issues/{number}. Stops at the first failure
 /// and returns Err carrying the diagnostic (any tickets appended before the

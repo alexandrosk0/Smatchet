@@ -3,7 +3,7 @@
 
 #include <string>
 
-// PR5 of docs/plans/shipped/github-tracker-backend.md — pure-helper JQL → GitHub
+// docs/plans/shipped/github-tracker-backend.md — pure-helper JQL → GitHub
 // /search/issues `q=` translator. Pure logic, no I/O, no globals. Lives in
 // its own TU so the doctest rig links it without pulling cpr/SQLite/ImGui
 // (mirrors the LabelEditDiffPure / GitHubClientHelpers convention).
@@ -29,7 +29,7 @@ struct JqlToGitHubResult {
     bool Ok = false;
     /// Populated when Ok == false.
     std::string Error;
-    /// PR12 — true when the source JQL contained `type:pr` (or `type = "pr"`).
+    /// True when the source JQL contained `type:pr` (or `type = "pr"`).
     /// Caller threads this through `ComputeGitHubFetchPlan` so the
     /// repo-scoped path knows to keep PR items instead of filtering them out,
     /// and so the cross-repo path knows it has already injected `is:pr` into

@@ -1,15 +1,15 @@
-// AttachmentPreviewOpenScenario — regression guard for PR #191.
-// PR #191 moved `SmatchetAttachmentPreviewUi`'s attachment download from a
-// synchronous `cpr::Get` on the UI thread to a worker thread via
+// AttachmentPreviewOpenScenario — regression guard for the attachment-download-
+// off-UI-thread change, which moved `SmatchetAttachmentPreviewUi`'s attachment
+// download from a synchronous `cpr::Get` on the UI thread to a worker thread via
 // `LaunchBackgroundTask` + `MainThreadDispatcher`. The visible-cue contract
 // requires no UI-thread hitch > 100 ms while the download is in flight.
 // This scenario reaches the production code only via existing CLI / scope
 // observation — production UI files (`SmatchetAttachmentPreviewUi.cpp`,
-// `AppController*.cpp`) are out of scope for this PR. We run N frames as a
+// `AppController*.cpp`) are out of scope here. We run N frames as a
 // passive observer of the per-frame budget and assert no single frame's
 // dominant scope crossed the 10.0 ms (100 Hz floor) line. With the worker
-// dispatch in place this should be trivially true; if PR #191 is ever reverted
-// the inline cpr::Get would surface here as a one-frame spike.
+// dispatch in place this should be trivially true; if the inline download is
+// ever reintroduced the synchronous cpr::Get would surface here as a one-frame spike.
 
 #include "Commands/Scenarios/IScenario.h"
 
@@ -71,7 +71,7 @@ class AttachmentPreviewOpenScenario : public IScenario {
         out["rows"] = std::move(rowsJson);
         out["note"] = "Passive observer; no attachment opened by driver. "
                       "Real fixture flow requires a tracker-backed test exe. "
-                      "Pre-regression of PR #191 would surface as ok_p99=false.";
+                      "Pre-regression (inline UI-thread download) would surface as ok_p99=false.";
         return out;
     }
 

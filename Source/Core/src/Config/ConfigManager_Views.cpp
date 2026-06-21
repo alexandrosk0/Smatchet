@@ -160,7 +160,7 @@ ViewWorkspaceState MakeDefaultViewWorkspaceForBackend(const std::string& backend
         // GitHub has no `priority` / `issuetype` / `description`-as-column —
         // seed only fields present in TrackerFieldCatalog for the GitHub
         // backend. Users add `pr.head` / `pr.base` / `pr.mergeable` / `pr.draft`
-        // when their JQL opts into `type:pr` per PR12.
+        // when their JQL opts into `type:pr`.
         ViewDefinition v;
         v.Id = "github_default_view";
         v.Name = "Default GitHub View";

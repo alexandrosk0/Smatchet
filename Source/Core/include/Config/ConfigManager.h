@@ -73,7 +73,7 @@ struct TrackerConfig {
     std::string PlaneWorkspaceSlug; // e.g. "my-workspace"
     std::string PlaneApiKey;        // Plane API Key
 
-    // GitHub-as-tracker configuration (PR2 of docs/plans/shipped/github-tracker-backend.md).
+    // GitHub-as-tracker configuration (docs/plans/shipped/github-tracker-backend.md).
     // Tracker-role only — independent from the deleted agentic flow's old GitHubPat.
     // PAT is DPAPI-encrypted on Win32 (same code path as AiApiKey); base URL defaults
     // to api.github.com; owner/repo carry the active repository the tracker views.
@@ -87,11 +87,11 @@ struct TrackerConfig {
     // GitHubPat). Base URL defaults to the public GraphQL endpoint; team id/key carry the active
     // Linear team the tracker views (Smatchet's draft scope rides the existing ProjectKey
     // plumbing but the user-facing Linear UI says "Team").
-    std::string LinearApiKey;     // Personal API Key (DPAPI-encrypted on Win32)
+    std::string LinearApiKey;                                     // Personal API Key (DPAPI-encrypted on Win32)
     std::string LinearBaseUrl = "https://api.linear.app/graphql"; // GraphQL POST endpoint
-    std::string LinearTeamId;     // Linear team UUID
-    std::string LinearTeamKey;    // Linear team key, e.g. "ENG"
-    std::string LinearWorkspaceUrl; // optional workspace URL / display hint
+    std::string LinearTeamId;                                     // Linear team UUID
+    std::string LinearTeamKey;                                    // Linear team key, e.g. "ENG"
+    std::string LinearWorkspaceUrl;                               // optional workspace URL / display hint
 
     // "Log a Bug" reporter (docs/plans/shipped/log-a-bug-github.md). Bug + (phase-2)
     // crash reports go to ONE fixed dev GitHub repo, independent of the active
@@ -149,7 +149,7 @@ struct TrackerConfig {
     int WindowWidth = 1280;
     int WindowHeight = 720;
     bool WindowMaximized = false;
-    // PR 3: max distinct projects retained in the on-disk field catalog cache; LRU evicted past cap.
+    // Max distinct projects retained in the on-disk field catalog cache; LRU evicted past cap.
     // 0/negative falls back to the in-cache default (16).
     int FieldCatalogCacheMaxProjects = 16;
     // multi-grid-tabs Slice 5a (plan item 21): max HIDDEN grid panes that may retain an in-memory
@@ -451,8 +451,8 @@ struct TrackerConfig {
     // Font setting
     std::string SelectedFontName = "Segoe UI";
     // Font size in points, used by View > Appearance > Zoom In/Out/Reset.
-    // Clamped to [8, 32] at load. 16 matches the legacy hardcoded value.
-    int FontSizePt = 16;
+    // Default + clamp range come from SmatchetDefaults::kFontSize*Pt (single source of truth).
+    int FontSizePt = SmatchetDefaults::kFontSizeDefaultPt;
     // Active ImGui style palette, applied per-frame from View > Appearance > Theme.
     // Fresh installs land on the bright ImGui-built-in dark palette. Existing users keep
     // whatever theme they previously persisted — ConfigManager::Load overwrites this default

@@ -4,7 +4,7 @@
 
 #include <cctype>
 #include <chrono>
-#include <cstdio> // snprintf / sscanf — per CodeRabbit on PR #357 (some toolchains don't transitively include via <ctime>/<sstream>)
+#include <cstdio> // snprintf / sscanf — some toolchains don't transitively include via <ctime>/<sstream>
 #include <cstdlib>
 #include <ctime>
 #include <sstream>
@@ -166,7 +166,7 @@ std::string BuildIssuePatchUrlSuffix(const std::string& owner, const std::string
 }
 
 Result<bool, std::string> IsValidGitHubBaseUrl(const std::string& baseUrl) {
-    // Strict per CodeRabbit on PR #357 — accept exactly "https://api.github.com" (cloud) or
+    // Strict host check — accept exactly "https://api.github.com" (cloud) or
     // any URL whose path is exactly "/api/v3" on an arbitrary https host (Enterprise).
     // Reject any other shape so downstream URL composition lands on a working REST root.
     if (baseUrl.empty()) {
@@ -286,7 +286,7 @@ Result<std::int64_t, std::string> ParseIso8601ToUnixSec(const std::string& iso86
         return Result<std::int64_t, std::string>::Err("empty timestamp");
     }
     // Parse YYYY-MM-DDTHH:MM:SS first, then handle the optional timezone suffix.
-    // Per CodeRabbit on PR #357 — prior impl ignored non-zero offsets (e.g. +05:30)
+    // A prior impl ignored non-zero offsets (e.g. +05:30)
     // and returned wrong epoch. Now: 'Z' → UTC; '+HH:MM' / '-HH:MM' / '+HHMM' / '-HHMM' →
     // adjust the computed time_t accordingly; missing suffix → reject (force callers to
     // disambiguate UTC explicitly).
@@ -325,7 +325,7 @@ Result<std::int64_t, std::string> ParseIso8601ToUnixSec(const std::string& iso86
             return Result<std::int64_t, std::string>::Err("unrecognised timezone offset: '" + suffix + "' in " +
                                                           iso8601);
         }
-        // Bounds-check the parsed offset per CodeRabbit nitpick on PR #358 — `%d:%d` accepts
+        // Bounds-check the parsed offset — `%d:%d` accepts
         // arbitrary integers (e.g. `+53:99`). Max real-world offset is `+14:00` (Pacific/Kiritimati).
         if (offH < 0 || offH > 14 || offM < 0 || offM > 59 || (offH == 14 && offM != 0)) {
             return Result<std::int64_t, std::string>::Err(

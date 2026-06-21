@@ -185,24 +185,32 @@ static cpr::Response ExecuteTrackerGet(const char* clientName, const std::string
     return response;
 }
 
-cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, const cpr::Header& headers) {
+cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
+                               const std::function<bool()>& cancelled) {
     // Idempotent GET — retry on Transport / 429 / 5xx (wrapper's default IsRetryable predicate).
-    TrackerHttpResult result = TrackerHttpRequestWithRetry([&]() {
-        return ClassifyTrackerResponse(ExecuteTrackerGet(clientName, url, headers, nullptr,
-                                                         static_cast<std::int32_t>(kTrackerConnectTimeoutMs),
-                                                         static_cast<std::int32_t>(kTrackerOverallTimeoutMs)));
-    });
+    // `cancelled` is forwarded so an aborting sync worker is honoured during the retry/backoff
+    // window, not only between page GETs (default nullptr = no in-loop cancellation polling).
+    TrackerHttpResult result = TrackerHttpRequestWithRetry(
+        [&]() {
+            return ClassifyTrackerResponse(ExecuteTrackerGet(clientName, url, headers, nullptr,
+                                                             static_cast<std::int32_t>(kTrackerConnectTimeoutMs),
+                                                             static_cast<std::int32_t>(kTrackerOverallTimeoutMs)));
+        },
+        kTrackerHttpDefaultMaxAttempts, cancelled);
     return std::move(result.Response);
 }
 
 cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
-                               const cpr::Parameters& params) {
-    // Idempotent GET (paged) — same retry policy as the no-params overload.
-    TrackerHttpResult result = TrackerHttpRequestWithRetry([&]() {
-        return ClassifyTrackerResponse(ExecuteTrackerGet(clientName, url, headers, &params,
-                                                         static_cast<std::int32_t>(kTrackerConnectTimeoutMs),
-                                                         static_cast<std::int32_t>(kTrackerOverallTimeoutMs)));
-    });
+                               const cpr::Parameters& params, const std::function<bool()>& cancelled) {
+    // Idempotent GET (paged) — same retry policy as the no-params overload. `cancelled` is forwarded
+    // so a paged search aborting mid-fetch is honoured during the retry/backoff window too.
+    TrackerHttpResult result = TrackerHttpRequestWithRetry(
+        [&]() {
+            return ClassifyTrackerResponse(ExecuteTrackerGet(clientName, url, headers, &params,
+                                                             static_cast<std::int32_t>(kTrackerConnectTimeoutMs),
+                                                             static_cast<std::int32_t>(kTrackerOverallTimeoutMs)));
+        },
+        kTrackerHttpDefaultMaxAttempts, cancelled);
     return std::move(result.Response);
 }
 

@@ -489,6 +489,8 @@ add_executable(SmatchetTests
     # Security finding #13 — automation count-hook abort policy (shutdown + runaway budget).
     # Header-only pure predicate; no extra production .cpp to link.
     Core/LuaAutomationHookPolicyPure.test.cpp
+    # SSRF guard — Lua imgui.image http(s)-URL refusal allowlist. Header-only pure predicate.
+    Core/LuaImagePathPolicyPure.test.cpp
     Core/TicketFieldEditorDurationPopupPure.test.cpp
     Core/IsDescriptionLikeFieldId.test.cpp
     Core/TrackerFieldPayloadPure.test.cpp

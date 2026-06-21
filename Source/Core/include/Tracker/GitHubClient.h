@@ -15,8 +15,8 @@
 #include <string>
 #include <unordered_map>
 
-// GitHubClient — third tracker backend (PR2 of
-// docs/plans/shipped/github-tracker-backend.md). Tracker-only — does NOT implement
+// GitHubClient — third tracker backend
+// (docs/plans/shipped/github-tracker-backend.md). Tracker-only — does NOT implement
 // the PR / check-run / GraphQL surface the deleted agentic flow used.
 // Lifecycle: factory-owned `unique_ptr<GitHubClient>` per `Create("github")`
 // call (same shape as JiraClient / PlaneClient). Ctor takes a baseUrl + PAT
@@ -50,7 +50,7 @@ class GitHubClient : public ITrackerBackend,
     std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* configOverride,
                                           const ViewsStore* viewsOverride, std::string* outFetchError,
                                           std::string* outWarning) override;
-    /// PR12 latency fix — overrides the default single-batch
+    /// Latency fix — overrides the default single-batch
     /// `ITrackerIssueReader::FetchIssuesStreamed` so each GraphQL page is forwarded
     /// to `onBatch` as soon as it returns from GitHub. Without this override the
     /// grid stays empty until all 4 pages complete (~6s wall-clock); with it,

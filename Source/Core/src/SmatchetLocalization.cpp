@@ -54,7 +54,7 @@ const TranslationEntry kEntries[] = {
     {"toast.comment_failed", "Comment Failed", u8"Échec du commentaire"},
     {"toast.queued_offline", "Queued Offline", u8"Mis en file hors ligne"},
 
-    // PR 5 of docs/plans/shipped/remove-global-project-key.md: badge for dead-letter rows whose draft
+    // remove-global-project-key.md: badge for dead-letter rows whose draft
     // was missing a project after the legacy-project sweep.
     {"offlineQueue.badge.missingProject", "missing project", u8"projet manquant"},
     {"offlineQueue.badge.missingProject.tooltip",
@@ -133,7 +133,7 @@ const TranslationEntry kEntries[] = {
 
     // Preferences "Keyboard Shortcuts" tab + the shared capture widget + quick-bind popup.
     // See SmatchetPreferencesUi_Keybindings.cpp / SmatchetHotkeyCapture.cpp and
-    // docs/plans/shipped/keyboard-shortcuts-rebindable.md (PR2).
+    // docs/plans/shipped/keyboard-shortcuts-rebindable.md.
     {"keybindings.editor.intro",
      "Rebind in-app keyboard shortcuts. Click a shortcut to capture a new key combo (Esc cancels). "
      "Changes save automatically.",
@@ -198,7 +198,7 @@ const TranslationEntry kEntries[] = {
     {"prefs.api_token", "API Token", u8"Jeton d'API"},
     {"prefs.url", "URL", u8"URL"},
     {"prefs.workspace_slug", "Workspace Slug", u8"Slug de l'espace de travail"},
-    // PR 6: new "Recently used projects" section in Preferences (replaces the deleted rows).
+    // "Recently used projects" section in Preferences (replaces the deleted rows).
     {"prefs.recentProjects", "Recently used projects", u8"Projets récemment utilisés"},
     {"prefs.recentProjects.forget", "Forget", u8"Oublier"},
     {"prefs.recentProjects.empty", "(none yet)", u8"(aucun pour l'instant)"},
@@ -773,7 +773,7 @@ const TranslationEntry kEntries[] = {
     {"annotate.groups", "Groups (best effort):", u8"Groupes (au mieux) :"},
     {"annotate.none_permitted", "(none or not permitted)", u8"(aucun ou non autorisé)"},
 
-    // PR 4b: project picker (draft + bulk import modal).
+    // Project picker (draft + bulk import modal).
     {"draft.project", "Project", u8"Projet"},
     {"draft.project.placeholder", "(pick one)", u8"(choisir)"},
     {"draft.project.section.recent", "Recently used", u8"Récemment utilisés"},
@@ -788,7 +788,7 @@ const TranslationEntry kEntries[] = {
      u8"Nouveau panneau de grille (duplique ce panneau ; ancrez-le comme onglet ou faites glisser son onglet vers un "
      u8"bord pour une vue côte à côte)"},
 
-    // PR 4b: active-view JQL bar project pill (Jira only).
+    // Active-view JQL bar project pill (Jira only).
     {"view.projectPill.single", "Project: %s", u8"Projet : %s"},
     {"view.projectPill.multi", "Project: multi", u8"Projet : multiple"},
     {"view.projectPill.tooltip.single", "Active view is scoped to a single project. Click to switch project.",
@@ -798,7 +798,7 @@ const TranslationEntry kEntries[] = {
      u8"La vue active couvre plusieurs projets (ou n'a aucune clause de projet). Cliquer pour choisir un seul projet."},
     {"view.projectPill.empty", "(no cached projects)", u8"(aucun projet en cache)"},
 
-    // PR 4b: bulk import modal.
+    // Bulk import modal.
     {"bulkImport.chooseProject.title", "Choose target project for bulk import",
      u8"Choisir le projet cible pour l'import en masse"},
     {"bulkImport.chooseProject.cancel", "Cancel", u8"Annuler"},

@@ -841,7 +841,7 @@ static void RenderUncachedRuns(const std::vector<StyledRun>& runs, const RenderS
 }
 
 // Classify a code block's language from its fence tag. Pure (no ImGui).
-// Per CodeRabbit on PR #353 — fenced blocks like ```foo.py``` were classified
+// Fenced blocks like ```foo.py``` were previously classified
 // Plain by FromTag (which expects bare language tags). Fall back to
 // LangFromFilePath when FromTag yields Plain but the tag is non-empty, so
 // path-style fence names get the right tokenizer.
@@ -943,11 +943,11 @@ static void RenderInlineCodeBlock(const PreviewPlan::Block& b, RenderState& r, c
         ImGui::EndTooltip();
     }
     ImGui::SameLine();
-    // Per CodeRabbit on PR #351 — measure the Copy button width instead of hardcoding 60px.
+    // Measure the Copy button width instead of hardcoding 60px.
     // Hardcoded width clipped the language badge when CanonicalName(lang) returned a longer
     // string (e.g. "TypeScript", "Objective-C"). Use the button's text-size + padding for
     // an exact reservation.
-    // Per CodeRabbit follow-up on PR #359 — clamp the right-align math so the cursor never
+    // Clamp the right-align math so the cursor never
     // moves LEFT of where SameLine() put it. Without the clamp, narrow tooltips / parent
     // columns (availW < btnW) push the button on top of the language badge.
     const float availW = ImGui::GetContentRegionAvail().x;

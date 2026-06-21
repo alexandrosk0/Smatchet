@@ -3,7 +3,7 @@
 
 // SelectableTextRun — drag-selectable rich-rendered text overlay.
 // ImGui ships no rich-text widget that supports drag-select + Ctrl+C — that
-// constraint was the original reason `AiChatTextEditorView` (PR #289) put the
+// constraint was the original reason `AiChatTextEditorView` put the
 // AI chat inside a TextEditor instead of using `MarkdownPreviewRender`. This
 // widget reverses that: it sits on top of any draw path that already emits
 // `ImGui::TextUnformatted` (or `ImDrawList::AddText`) and adds the missing

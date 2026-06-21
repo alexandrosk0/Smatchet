@@ -33,7 +33,7 @@ class IOfflineQueueDeps {
     virtual ~IOfflineQueueDeps() = default;
 
     /// Sync/replay-facing local-cache surface (ADR-0020 — `LocalCacheManager` in production;
-    /// PR2 adds `FakeSyncCache` for tests). May be null before `Initialize` has wired the cache,
+    /// `FakeSyncCache` in tests). May be null before `Initialize` has wired the cache,
     /// or after `RecreateLocalCacheDatabase` has torn it down. Callers must null-check.
     virtual ISyncCache* Cache() = 0;
 

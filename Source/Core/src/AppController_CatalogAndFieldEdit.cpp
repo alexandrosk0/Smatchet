@@ -59,9 +59,8 @@ void AppController::RefreshLocalDataCheckedImpl_(GridLiveContext& ctx, const std
             // at work-capture time; if the backend was swapped/retired since — including
             // DURING the GetAllTickets read above — this wholesale replace would push the
             // OLD backend's rows into the NEW backend's just-cleared grid. Re-checked under
-            // ctx.activeTicketsMutex_ (the SAME context the caller captured from, PR #1104
-            // review MEDIUM-1) so the decision is ordered against the swap path's locked
-            // clear+publish.
+            // ctx.activeTicketsMutex_ (the SAME context the caller captured from) so the
+            // decision is ordered against the swap path's locked clear+publish.
             if (capturedBackendGeneration != nullptr && ctx.backendGeneration_.load() != *capturedBackendGeneration) {
                 LOG_INFO("AppController::RefreshLocalData skipped — backend generation moved since capture "
                          "(issue #1081): key='%s' captured=%llu current=%llu",
@@ -107,7 +106,7 @@ void AppController::UpdateTicket(const CachedTicket& ticket) {
         if (ctx.backendGeneration_.load() != capturedGeneration) {
             // WARN, not INFO: callers reach UpdateTicket after the backend mutation already
             // succeeded upstream — dropping the local save leaves a stale row until the old
-            // backend's next sync (PR #1104 review MEDIUM-2).
+            // backend's next sync.
             LOG_WARN("AppController::UpdateTicket skipped — backend swapped during key latch (issue #1081): "
                      "key='%s' ticket='%s' generation=%llu",
                      capturedKey.c_str(), ticket.id.c_str(), static_cast<unsigned long long>(capturedGeneration));
@@ -179,8 +178,8 @@ bool AppController::FetchFieldCatalog(const TrackerConfig& cfg, TrackerFieldCata
         outError = "Tracker backend is not initialized.";
         return false;
     }
-    // PR 6: project is per-operation. This convenience overload is called by config-time
-    // probes that don't pin a project; backend returns the unscoped catalog.
+    // Project is per-operation (there is no global project key). This convenience overload is
+    // called by config-time probes that don't pin a project; backend returns the unscoped catalog.
     if (!backend->FieldCatalog()) {
         outError = "FetchFieldCatalog is not supported by this backend.";
         return false;
@@ -269,10 +268,11 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
     // Latch the catalog once: fieldCatalog() re-resolves focusedContextPtr_ per call; a focus
     // switch between two calls would lock context A's mutex while mutating context B (Pillar 3).
     GridContextFieldCatalog& cat = fieldCatalog();
-    // PR 6: legacy global project fields removed. Saves under the unscoped ("") cache key when
+    // No legacy global project fields exist. Saves under the unscoped ("") cache key when
     // the caller hasn't pinned a project via SetCurrentCatalogProject(). Per-project refetches
     // (driven by the new-issue draft / picker UI) set that hint so the snapshot lands under
-    // the right per-project entry. PR 7 will replace this with a parameter on the call chain.
+    // the right per-project entry. (A future refactor may thread the project as an explicit
+    // parameter on the call chain instead of via this latched hint.)
     // Read cat.currentCatalogProjectKey_ under the lock into a local — SetCurrentCatalogProject /
     // RefreshFieldCatalog write it under cat.availableFieldsMutex_ from other threads, so an unlocked
     // read of the std::string here is a data race.
@@ -434,7 +434,7 @@ void AppController::EnsureCatalogHistoryField(GridContextFieldCatalog& cat) {
     // non-recursive availableFieldsMutex_ → would self-deadlock) so the lookup
     // and the push_back can't race a concurrent catalog read/write. `cat` is the
     // caller's latched catalog — must NOT re-resolve fieldCatalog() here, or a focus
-    // switch could insert into a different context than the caller populated (CR PR#1218).
+    // switch could insert into a different context than the caller populated.
     std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
     const auto it = std::find_if(cat.AvailableFields.begin(), cat.AvailableFields.end(),
                                  [](const TrackerField& field) { return field.Id == "history"; });
@@ -455,7 +455,7 @@ void AppController::EnsureCatalogCommentsField(GridContextFieldCatalog& cat) {
     // Type "number" matches the GitHub catalog's comments field so the shared comments cell
     // special-case renders a count. Read-only via ReadOnly=true alone — no Jira editmeta entry
     // needed (the sibling `history` synthetic field is the precedent). `cat` is the caller's
-    // latched catalog — do NOT re-resolve fieldCatalog() here (CR PR#1218; see header).
+    // latched catalog — do NOT re-resolve fieldCatalog() here (see header).
     std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
     const auto it = std::find_if(cat.AvailableFields.begin(), cat.AvailableFields.end(),
                                  [](const TrackerField& field) { return field.Id == "comments"; });
@@ -478,7 +478,7 @@ void AppController::EraseCatalogLegacyCommentField(GridContextFieldCatalog& cat)
     // Comments-cell hover tooltip — so dropping it from the catalog removes the duplicate picker entry
     // without losing the text. Mirrors the sibling Ensure* helpers: own the catalog lock, INLINE scan
     // (not FindFieldById, which re-locks the non-recursive mutex → self-deadlock). `cat` is the
-    // caller's latched catalog — do NOT re-resolve fieldCatalog() here (CR PR#1218; see header).
+    // caller's latched catalog — do NOT re-resolve fieldCatalog() here (see header).
     std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
     cat.AvailableFields.erase(std::remove_if(cat.AvailableFields.begin(), cat.AvailableFields.end(),
                                              [](const TrackerField& field) { return field.Id == "comment"; }),

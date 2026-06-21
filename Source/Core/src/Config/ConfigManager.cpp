@@ -620,9 +620,8 @@ void ConfigManager::Save(const TrackerConfig& config) {
     // per field in kStringFields / kBoolFields / kIntFields / kFloatFields — see LoadScalarFields.
     SaveScalarFields(j, config);
 
-    // PR 5 of docs/plans/shipped/remove-global-project-key.md: stop persisting the legacy global
-    // project scope. Erase explicitly so any legacy keys carried in from disk via
-    // LoadMergedConfigJson() are dropped.
+    // The legacy global project scope is no longer persisted. Erase explicitly so any legacy keys
+    // carried in from disk via LoadMergedConfigJson() are dropped.
     j.erase("project_key");
     j.erase("plane_project_id");
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
@@ -944,13 +943,14 @@ void LoadSecretFields(const nlohmann::json& j, TrackerConfig& cfg, SecretMigrati
     if (cfg.PlaneApiKey.empty()) {
         cfg.PlaneApiKey = j.value("plane_api_key", std::string{});
     }
-    // PR2 of github-tracker-backend.md — same DPAPI + legacy-plaintext shape as PlaneApiKey.
+    // GitHub PAT: same DPAPI + legacy-plaintext shape as PlaneApiKey.
     cfg.GitHubPat = UnprotectSecretFieldFromConfig("github_pat_enc", j.value("github_pat_enc", std::string{}));
     if (cfg.GitHubPat.empty()) {
         cfg.GitHubPat = j.value("github_pat", std::string{});
     }
     // Linear API key — same DPAPI + legacy-plaintext shape as GitHubPat.
-    cfg.LinearApiKey = UnprotectSecretFieldFromConfig("linear_api_key_enc", j.value("linear_api_key_enc", std::string{}));
+    cfg.LinearApiKey =
+        UnprotectSecretFieldFromConfig("linear_api_key_enc", j.value("linear_api_key_enc", std::string{}));
     if (cfg.LinearApiKey.empty()) {
         cfg.LinearApiKey = j.value("linear_api_key", std::string{});
     }
@@ -1118,11 +1118,11 @@ void LoadEnumAndClampedFields(const nlohmann::json& j, TrackerConfig& cfg) {
         cfg.LayoutSchemaVersion = 0;
     }
     cfg.FontSizePt = j.value("font_size_pt", cfg.FontSizePt);
-    if (cfg.FontSizePt < 8) {
-        cfg.FontSizePt = 8;
+    if (cfg.FontSizePt < SmatchetDefaults::kFontSizeMinPt) {
+        cfg.FontSizePt = SmatchetDefaults::kFontSizeMinPt;
     }
-    if (cfg.FontSizePt > 32) {
-        cfg.FontSizePt = 32;
+    if (cfg.FontSizePt > SmatchetDefaults::kFontSizeMaxPt) {
+        cfg.FontSizePt = SmatchetDefaults::kFontSizeMaxPt;
     }
     {
         const std::string densityStr = j.value("ui_density", std::string("Normal"));
@@ -1207,7 +1207,7 @@ void LoadInheritFieldIds(const nlohmann::json& j, const char* key, std::vector<s
 
 // One-shot migration: fold the legacy BugReportHotkey / BugReportHotkeyEnabled pair into the
 // keybinding registry ("app.bug_report.open"). The registry became authoritative for the
-// bug-report shortcut in the PR1 migration, but Defaults() seeded "Ctrl+Shift+B" regardless of
+// bug-report shortcut when it became rebindable, but Defaults() seeded "Ctrl+Shift+B" regardless of
 // a user's customized / disabled BugReportHotkey — fold it once so that customization survives.
 // Runs after the keybindings load (cfg.Keybindings populated) and after LoadScalarFields
 // (cfg.BugReportHotkey* populated). SetBindingHotkey upserts the "{}" binding in place.
@@ -1413,7 +1413,8 @@ static void RouteTrackerEnvCredentials(TrackerConfig& cfg) {
         }
     }
 
-    // SMATCHET_TRACKER_BASE_URL — tracker origin URL (Jira→Domain / Plane→PlaneUrl / GitHub→GitHubBaseUrl / Linear→LinearBaseUrl).
+    // SMATCHET_TRACKER_BASE_URL — tracker origin URL (Jira→Domain / Plane→PlaneUrl / GitHub→GitHubBaseUrl /
+    // Linear→LinearBaseUrl).
     if (const char* envBase = std::getenv("SMATCHET_TRACKER_BASE_URL")) {
         if (envBase[0] != '\0') {
             if (cfg.TrackerType == "Plane") {

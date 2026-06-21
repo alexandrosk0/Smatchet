@@ -2001,7 +2001,7 @@ void AppController::MaybeInstallGitHubFixtureFactory(const std::string& activeTr
 }
 
 void AppController::RunLegacyStartupSweeps(const std::string& activeTrackerType) {
-    // PR 5 of docs/plans/shipped/remove-global-project-key.md: one-shot legacy-project sweeps.
+    // remove-global-project-key.md: one-shot legacy-project sweeps.
     // Drain legacy global project state into per-entity carriers (offline-queue payloads,
     // Plane view query JSON). Each sweep is guarded by its own `cache_meta` flag so it runs
     // exactly once per database file; subsequent launches are no-ops.
@@ -2241,8 +2241,8 @@ void AppController::InitCommands() {
     }
 
     // One-time audit per design doc §2.8: list saved views whose JQL has no
-    // project scope. After PR 6 removes the global project key, those views
-    // will broaden to "all projects you can read".
+    // project scope. With no global project key, those views
+    // broaden to "all projects you can read".
     static bool s_loggedViewsWithoutProjectScope = false;
     if (!s_loggedViewsWithoutProjectScope) {
         s_loggedViewsWithoutProjectScope = true;

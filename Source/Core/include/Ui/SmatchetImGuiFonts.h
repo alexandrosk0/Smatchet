@@ -44,7 +44,7 @@ struct SmatchetPreviewFonts {
 // are invalidated after every SmatchetApplyImGuiFont call (i.e. font hot-reload).
 const SmatchetPreviewFonts& SmatchetGetPreviewFonts();
 
-// Bug-report censor (font-redaction; shipped in PR #618): for
+// Bug-report censor (font-redaction): for
 // the single screenshot-capture frame, repoint every preview font + io.FontDefault
 // at the Redaction font so the captured frame renders all text as blocks (sharp,
 // layout-preserving). Push BEFORE ImGui::NewFrame; Pop after the capture. No-op

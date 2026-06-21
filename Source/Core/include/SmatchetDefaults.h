@@ -29,6 +29,13 @@ inline std::string GetEnvString(const char* name) {
 constexpr char kDefaultDbPath[] = "Smatchet_LocalCache.sqlite";
 constexpr char kDefaultBackendType[] = "Jira";
 
+// UI font size (points). Single source of truth for the default + the legible clamp range so the
+// config default, the load-time clamp, the ui.zoom.* command clamp, and the View > Appearance
+// menu enable-gates can't drift apart. Default 16 matches the legacy hardcoded value.
+constexpr int kFontSizeDefaultPt = 16;
+constexpr int kFontSizeMinPt = 8;
+constexpr int kFontSizeMaxPt = 32;
+
 // Bug-report relay — seeded as the first-run default so a fresh install can
 // submit bug/crash reports with zero setup. The relay holds the GitHub token
 // server-side; the key below is a low-value shared access key (abuse
