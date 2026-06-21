@@ -150,12 +150,9 @@ void ApplySmatchetDark(ImGuiStyle& /*style*/, ImVec4* colors) {
     colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.20f);
     colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.35f);
 
-    // C++ syntax palette — legacy SmatchetDark defaults (purple/orange/green/cyan/yellow).
-    // Slice 6: identifier = soft sky-blue, distinct from cyan number + white text.
-    const SmatchetThemeSyntaxColors syn = {{0.78f, 0.50f, 1.00f, 1.0f}, {0.95f, 0.65f, 0.45f, 1.0f},
-                                           {0.45f, 0.75f, 0.45f, 1.0f}, {0.65f, 0.85f, 1.00f, 1.0f},
-                                           {0.85f, 0.85f, 0.50f, 1.0f}, {0.62f, 0.80f, 0.92f, 1.0f}};
-    SetSyntaxColors(syn);
+    // C++ syntax palette — single source of truth in BuildSyntaxColorsForTheme
+    // (legacy SmatchetDark defaults: purple/orange/green/cyan/yellow + sky-blue identifier).
+    SetSyntaxColors(SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId::SmatchetDark));
     // AI chat-panel palette (Phase 5 of ai-chat-claude-desktop-parity). Accent is
     // the NavHighlight blue (#5993F2); bubble uses 0.18 alpha so 0.95-luma Text
     // remains WCAG AA on the 0.12-luma WindowBg even where the bubble overlays.
@@ -242,11 +239,7 @@ void ApplyModernDark(ImGuiStyle& /*style*/, ImVec4* colors) {
     colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.35f);
 
     // C++ syntax palette — same family as SmatchetDark; ModernDark only repaints chrome.
-    // Slice 6: identifier = soft sky-blue, matches SmatchetDark.
-    const SmatchetThemeSyntaxColors syn = {{0.78f, 0.50f, 1.00f, 1.0f}, {0.95f, 0.65f, 0.45f, 1.0f},
-                                           {0.45f, 0.75f, 0.45f, 1.0f}, {0.65f, 0.85f, 1.00f, 1.0f},
-                                           {0.85f, 0.85f, 0.50f, 1.0f}, {0.62f, 0.80f, 0.92f, 1.0f}};
-    SetSyntaxColors(syn);
+    SetSyntaxColors(SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId::ModernDark));
     // AI palette — accent is the desaturated ModernDark blue (CheckMark / Tab).
     const SmatchetThemeAiColors ai = {
         {0.45f, 0.65f, 0.95f, 0.18f}, // AiUserBubbleBg
@@ -334,17 +327,8 @@ void ApplyVs2022Dark(ImGuiStyle& /*style*/, ImVec4* colors) {
     colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.20f);
     colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.20f, 0.20f, 0.20f, 0.35f);
 
-    // C++ syntax palette — VS Code Dark+ canonical colors.
-    // VS2022 Dark + AI palette anchor — accent is #007ACC (defined as `accent` above).
-    // Captured here as a literal so the AI palette block below is self-contained
-    // (the accent local goes out of scope before SetSyntaxColors runs).
-    const SmatchetThemeSyntaxColors syn = {{0.34f, 0.61f, 0.84f, 1.0f},  // Keyword  #569CD6
-                                           {0.81f, 0.57f, 0.47f, 1.0f},  // String   #CE9178
-                                           {0.42f, 0.60f, 0.33f, 1.0f},  // Comment  #6A9955
-                                           {0.71f, 0.81f, 0.66f, 1.0f},  // Number   #B5CEA8
-                                           {0.61f, 0.61f, 0.61f, 1.0f},  // Preproc  #9B9B9B
-                                           {0.61f, 0.86f, 0.99f, 1.0f}}; // Identifier #9CDCFE (VS Code Dark+ canonical)
-    SetSyntaxColors(syn);
+    // C++ syntax palette — VS Code Dark+ canonical colors (BuildSyntaxColorsForTheme).
+    SetSyntaxColors(SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId::Vs2022Dark));
     // AI palette — #007ACC accent, VS Code Dark+ purple for assistant.
     const SmatchetThemeAiColors ai = {
         {0.00f, 0.48f, 0.80f, 0.18f}, // AiUserBubbleBg — VS blue, 0.18 alpha
@@ -432,14 +416,8 @@ void ApplyVs2022Light(ImGuiStyle& /*style*/, ImVec4* colors) {
     colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.20f, 0.20f, 0.20f, 0.20f);
     colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.20f, 0.20f, 0.20f, 0.35f);
 
-    // C++ syntax palette — VS Code Light+ canonical colors (legible on white background).
-    const SmatchetThemeSyntaxColors syn = {{0.00f, 0.00f, 1.00f, 1.0f},  // Keyword  #0000FF
-                                           {0.64f, 0.08f, 0.08f, 1.0f},  // String   #A31515
-                                           {0.00f, 0.50f, 0.00f, 1.0f},  // Comment  #008000
-                                           {0.04f, 0.53f, 0.35f, 1.0f},  // Number   #098658
-                                           {0.50f, 0.50f, 0.50f, 1.0f},  // Preproc  #808080
-                                           {0.00f, 0.06f, 0.50f, 1.0f}}; // Identifier #001080 (VS Code Light canonical)
-    SetSyntaxColors(syn);
+    // C++ syntax palette — VS Code Light+ canonical (legible on white; BuildSyntaxColorsForTheme).
+    SetSyntaxColors(SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId::Vs2022Light));
     // AI palette — light theme. Bubble alpha bumped to 0.20 because a pure-white
     // WindowBg dilutes the tint more than a dark bg does at the same opacity.
     // Text on bubble = 0.10-luma on (1.0 - 0.20) + (0.0,0.48,0.80) * 0.20 ≈
@@ -529,15 +507,8 @@ void ApplyHighContrast(ImGuiStyle& /*style*/, ImVec4* colors) {
     colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.50f);
     colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.70f);
 
-    // C++ syntax palette — fully saturated primaries for low-vision / accessibility audits.
-    const SmatchetThemeSyntaxColors syn = {
-        {1.00f, 1.00f, 0.00f, 1.0f},  // Keyword  yellow
-        {1.00f, 0.00f, 1.00f, 1.0f},  // String   magenta
-        {0.00f, 1.00f, 0.00f, 1.0f},  // Comment  green
-        {0.00f, 1.00f, 1.00f, 1.0f},  // Number   cyan
-        {1.00f, 0.65f, 0.00f, 1.0f},  // Preproc  orange
-        {1.00f, 1.00f, 1.00f, 1.0f}}; // Identifier pure white (max contrast on black bg)
-    SetSyntaxColors(syn);
+    // C++ syntax palette — fully saturated primaries for accessibility (BuildSyntaxColorsForTheme).
+    SetSyntaxColors(SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId::HighContrast));
     // AI palette — High Contrast. Bubble alpha bumped to 0.35 because a pure-black
     // WindowBg shows little tint at low alpha; the bubble must still read as a
     // distinct surface even for low-vision users. Role labels use Pillar-4-floor
@@ -575,17 +546,8 @@ void ApplyNortonRounding(ImGuiStyle& style) {
 // Norton Commander C++ syntax palette + AI-bubble palette. Split out of ApplyNortonCommander for
 // function-size compliance; the color values are unchanged.
 void ApplyNortonSyntaxAndAi() {
-    // C++ syntax palette — match NC's panel tones. Keyword bright yellow (filename accent),
-    // string light red, comment light gray, number bright cyan (matches the date/time column
-    // in the file panel), preproc bright green. Keyword R/G/B differs from HighContrast's pure
-    // yellow on the B channel (0.333 vs 0.0) so pairwise-divergence tests still pass.
-    const SmatchetThemeSyntaxColors syn = {{1.00f, 1.00f, 0.333f, 1.0f},   // Keyword  bright yellow
-                                           {1.00f, 0.50f, 0.50f, 1.0f},    // String   light red
-                                           {0.667f, 0.667f, 0.667f, 1.0f}, // Comment light gray
-                                           {0.333f, 1.00f, 1.00f, 1.0f},   // Number   bright cyan
-                                           {0.333f, 1.00f, 0.333f, 1.0f},  // Preproc bright green
-                                           {1.00f, 1.00f, 1.00f, 1.0f}};   // Identifier bright white (NC text default)
-    SetSyntaxColors(syn);
+    // C++ syntax palette — NC panel tones (BuildSyntaxColorsForTheme).
+    SetSyntaxColors(SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId::NortonCommander));
     // AI palette — Norton Commander 5.51 DOS aesthetic. Bubble uses NC bright yellow
     // (the iconic filename accent) tinted at 0.22 alpha against the teal panel bg.
     // Role labels use yellow (user) / bright cyan (assistant) per the NC palette
@@ -702,15 +664,8 @@ void ApplyImGuiDefaultDark(ImGuiStyle& style, ImVec4* /*colors*/) {
     ImGui::StyleColorsDark(&style);
 
     // Muted, neutral syntax palette readable on ImGui-default-dark bg (#0F0F0F). Mirrors
-    // SmatchetDark's family (purple/orange/green/cyan/yellow) — same hues land just as
-    // legibly on the bright ImGui default backdrop as they do on Smatchet's muted navy.
-    const SmatchetThemeSyntaxColors syn = {{0.78f, 0.50f, 1.00f, 1.0f},  // Keyword
-                                           {0.95f, 0.65f, 0.45f, 1.0f},  // String
-                                           {0.45f, 0.75f, 0.45f, 1.0f},  // Comment
-                                           {0.65f, 0.85f, 1.00f, 1.0f},  // Number
-                                           {0.85f, 0.85f, 0.50f, 1.0f},  // Preprocessor
-                                           {0.62f, 0.80f, 0.92f, 1.0f}}; // Identifier (slice 6 — sky-blue)
-    SetSyntaxColors(syn);
+    // SmatchetDark's family (BuildSyntaxColorsForTheme treats ImGuiDefaultDark identically).
+    SetSyntaxColors(SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId::ImGuiDefaultDark));
     // AI palette — ImGui default-dark. Accent is #4296FA (the ImGui HeaderHovered)
     // = (0.26, 0.59, 0.98). Bubble at 0.18 alpha reads cleanly against the
     // 0.06-luma WindowBg (#0F0F0F) without fighting the bright accent on hover.
@@ -726,6 +681,39 @@ void ApplyImGuiDefaultDark(ImGuiStyle& style, ImVec4* /*colors*/) {
 }
 
 } // namespace
+
+SmatchetThemeSyntaxColors SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId theme) {
+    switch (theme) {
+    case ThemeId::Vs2022Dark:
+        // VS Code Dark+ canonical: keyword #569CD6, string #CE9178, comment #6A9955,
+        // number #B5CEA8, preproc #9B9B9B, identifier #9CDCFE.
+        return {{0.34f, 0.61f, 0.84f, 1.0f}, {0.81f, 0.57f, 0.47f, 1.0f}, {0.42f, 0.60f, 0.33f, 1.0f},
+                {0.71f, 0.81f, 0.66f, 1.0f}, {0.61f, 0.61f, 0.61f, 1.0f}, {0.61f, 0.86f, 0.99f, 1.0f}};
+    case ThemeId::Vs2022Light:
+        // VS Code Light+ canonical (legible on white): keyword #0000FF, string #A31515,
+        // comment #008000, number #098658, preproc #808080, identifier #001080.
+        return {{0.00f, 0.00f, 1.00f, 1.0f}, {0.64f, 0.08f, 0.08f, 1.0f}, {0.00f, 0.50f, 0.00f, 1.0f},
+                {0.04f, 0.53f, 0.35f, 1.0f}, {0.50f, 0.50f, 0.50f, 1.0f}, {0.00f, 0.06f, 0.50f, 1.0f}};
+    case ThemeId::HighContrast:
+        // Fully saturated primaries for low-vision / accessibility audits on pure black.
+        return {{1.00f, 1.00f, 0.00f, 1.0f}, {1.00f, 0.00f, 1.00f, 1.0f}, {0.00f, 1.00f, 0.00f, 1.0f},
+                {0.00f, 1.00f, 1.00f, 1.0f}, {1.00f, 0.65f, 0.00f, 1.0f}, {1.00f, 1.00f, 1.00f, 1.0f}};
+    case ThemeId::NortonCommander:
+        // NC panel tones — keyword bright yellow (#FFFF55, B channel 0.333 to stay
+        // pairwise-distinct from HighContrast's pure yellow), string light red, comment
+        // light gray, number bright cyan, preproc bright green, identifier bright white.
+        return {{1.00f, 1.00f, 0.333f, 1.0f}, {1.00f, 0.50f, 0.50f, 1.0f},   {0.667f, 0.667f, 0.667f, 1.0f},
+                {0.333f, 1.00f, 1.00f, 1.0f}, {0.333f, 1.00f, 0.333f, 1.0f}, {1.00f, 1.00f, 1.00f, 1.0f}};
+    case ThemeId::ModernDark:
+    case ThemeId::ImGuiDefaultDark:
+    case ThemeId::SmatchetDark:
+    default:
+        // Legacy SmatchetDark family (purple/orange/green/cyan/yellow); ModernDark +
+        // ImGuiDefaultDark share it (only chrome diverges). Identifier = soft sky-blue.
+        return {{0.78f, 0.50f, 1.00f, 1.0f}, {0.95f, 0.65f, 0.45f, 1.0f}, {0.45f, 0.75f, 0.45f, 1.0f},
+                {0.65f, 0.85f, 1.00f, 1.0f}, {0.85f, 0.85f, 0.50f, 1.0f}, {0.62f, 0.80f, 0.92f, 1.0f}};
+    }
+}
 
 void SmatchetTheme::ApplyStyle(ThemeId theme) {
     ImGuiStyle& style = ImGui::GetStyle();

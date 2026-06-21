@@ -5,10 +5,14 @@
 
 #include <doctest/doctest.h>
 
+#include <nlohmann/json.hpp>
+
+#include <sstream>
 #include <string>
 
 using smatchet::mcp::pure::ConstantTimeStringEquals;
 using smatchet::mcp::pure::IsAllowedAttachmentHost;
+namespace detail = smatchet::mcp::pure::detail;
 
 // NOTE: Timing-side-channel properties of ConstantTimeStringEquals cannot be asserted
 // from a unit-test harness (would be hopelessly flaky). We only test boolean
@@ -29,7 +33,7 @@ TEST_CASE("ConstantTimeStringEquals returns true for byte-equal strings of any l
 TEST_CASE("ConstantTimeStringEquals returns false on length mismatch or byte diff") {
     CHECK_FALSE(ConstantTimeStringEquals("", "x"));
     CHECK_FALSE(ConstantTimeStringEquals("x", ""));
-    CHECK_FALSE(ConstantTimeStringEquals("foo", "foo "));   // length differs.
+    CHECK_FALSE(ConstantTimeStringEquals("foo", "foo ")); // length differs.
     CHECK_FALSE(ConstantTimeStringEquals("foo ", "foo"));
 
     // Single-byte diff at start.
@@ -50,26 +54,24 @@ TEST_CASE("ConstantTimeStringEquals returns false on length mismatch or byte dif
     CHECK_FALSE(ConstantTimeStringEquals("Foo", "foo"));
 }
 
-TEST_CASE("IsAllowedAttachmentHost permits exact and subdomain matches against tracker"
-          * doctest::test_suite("[high-risk]")) {
+TEST_CASE("IsAllowedAttachmentHost permits exact and subdomain matches against tracker" *
+          doctest::test_suite("[high-risk]")) {
     // Forces McpJsonRpcPure.cpp IsAllowedAttachmentHost ::suffix-with-dot guard.
     // Removing the "." prefix from TrackerSuffix would admit `maliciousatlassian.net`
     // when the tracker is `atlassian.net` — verified by the negative case below.
     const std::string tracker = "tracker.atlassian.net";
 
-    CHECK(IsAllowedAttachmentHost(tracker, tracker));                          // exact.
-    CHECK(IsAllowedAttachmentHost("assets.tracker.atlassian.net", tracker));   // subdomain.
-    CHECK(IsAllowedAttachmentHost("media.tracker.atlassian.net", tracker));    // subdomain.
-    CHECK(IsAllowedAttachmentHost("a.b.tracker.atlassian.net", tracker));      // multi-level subdomain.
+    CHECK(IsAllowedAttachmentHost(tracker, tracker));                        // exact.
+    CHECK(IsAllowedAttachmentHost("assets.tracker.atlassian.net", tracker)); // subdomain.
+    CHECK(IsAllowedAttachmentHost("media.tracker.atlassian.net", tracker));  // subdomain.
+    CHECK(IsAllowedAttachmentHost("a.b.tracker.atlassian.net", tracker));    // multi-level subdomain.
 }
 
-TEST_CASE("IsAllowedAttachmentHost rejects suffix-without-dot near-matches"
-          * doctest::test_suite("[high-risk]")) {
+TEST_CASE("IsAllowedAttachmentHost rejects suffix-without-dot near-matches" * doctest::test_suite("[high-risk]")) {
     // The suffix guard inserts a leading "." — `maliciousatlassian.net` ends in
     // `atlassian.net` but not `.atlassian.net`, so it must be rejected.
     CHECK_FALSE(IsAllowedAttachmentHost("maliciousatlassian.net", "atlassian.net"));
-    CHECK_FALSE(IsAllowedAttachmentHost("evil-tracker.atlassian.net.attacker.com",
-                                        "tracker.atlassian.net"));
+    CHECK_FALSE(IsAllowedAttachmentHost("evil-tracker.atlassian.net.attacker.com", "tracker.atlassian.net"));
     CHECK_FALSE(IsAllowedAttachmentHost("notatracker.atlassian.net", "tracker.atlassian.net"));
 }
 
@@ -92,4 +94,75 @@ TEST_CASE("IsAllowedAttachmentHost rejects empty host or empty tracker") {
     // Note: "api.media.atlassian.com" with empty tracker also rejected — the empty-guard
     // fires first, before the media-exception check.
     CHECK_FALSE(IsAllowedAttachmentHost("api.media.atlassian.com", ""));
+}
+
+// --- pure::detail log-summary helpers (promoted from an anonymous namespace so the
+// dispatch summary builders are directly testable). ---
+
+TEST_CASE("detail::ToLowerAscii lowercases ASCII and leaves other bytes intact") {
+    CHECK(detail::ToLowerAscii("HeLLo World") == "hello world");
+    CHECK(detail::ToLowerAscii("ABC-123_XYZ") == "abc-123_xyz");
+    CHECK(detail::ToLowerAscii("") == "");
+}
+
+TEST_CASE("detail::TrimAsciiWhitespace strips leading and trailing whitespace") {
+    CHECK(detail::TrimAsciiWhitespace("  spaced  ") == "spaced");
+    CHECK(detail::TrimAsciiWhitespace("\t\n value \r\n") == "value");
+    CHECK(detail::TrimAsciiWhitespace("no-edge-ws") == "no-edge-ws");
+    CHECK(detail::TrimAsciiWhitespace("   ") == "");
+    CHECK(detail::TrimAsciiWhitespace("") == "");
+}
+
+TEST_CASE("detail::BasenameForDisplay returns the final path component") {
+    CHECK(detail::BasenameForDisplay("Scripts/Automation.lua") == "Automation.lua");
+    CHECK(detail::BasenameForDisplay("C:\\dir\\sub\\file.lua") == "file.lua");
+    CHECK(detail::BasenameForDisplay("flat.lua") == "flat.lua");
+    CHECK(detail::BasenameForDisplay("") == "");
+    // Mixed separators — last of either wins.
+    CHECK(detail::BasenameForDisplay("a/b\\c.lua") == "c.lua");
+}
+
+TEST_CASE("detail::AppendAllowlistedArgKvs emits only allow-listed keys with their values") {
+    nlohmann::json args;
+    args["issue_key"] = "PROJ-42";
+    args["priority"] = "High";
+    args["id"] = 7;
+    args["secret"] = "should-not-appear"; // not allow-listed
+    std::ostringstream oss;
+    detail::AppendAllowlistedArgKvs(oss, args);
+    const std::string out = oss.str();
+    CHECK(out.find("issue_key=PROJ-42") != std::string::npos);
+    CHECK(out.find("priority=High") != std::string::npos);
+    CHECK(out.find("id=7") != std::string::npos);
+    CHECK(out.find("secret") == std::string::npos);
+}
+
+TEST_CASE("detail::AppendAllowlistedArgKvs is a no-op on a non-object json") {
+    std::ostringstream oss;
+    detail::AppendAllowlistedArgKvs(oss, nlohmann::json("not-an-object"));
+    CHECK(oss.str().empty());
+}
+
+// --- Summary builders that route through the promoted helpers. ---
+
+TEST_CASE("BuildRunLuaSummary script mode uses BasenameForDisplay + allow-listed args") {
+    nlohmann::json args;
+    args["mode"] = "script";
+    args["script"] = "Scripts/sub/MyHook.lua";
+    args["args"] = {{"issue_key", "PROJ-9"}, {"ignored", "x"}};
+    const std::string s = smatchet::mcp::pure::BuildRunLuaSummary(args);
+    CHECK(s.find("mode=script") != std::string::npos);
+    CHECK(s.find("script=MyHook.lua") != std::string::npos);
+    CHECK(s.find("issue_key=PROJ-9") != std::string::npos);
+    CHECK(s.find("ignored") == std::string::npos);
+}
+
+TEST_CASE("BuildToolCallSummary lists sorted-iteration arg keys + allow-listed values") {
+    nlohmann::json args;
+    args["issue_key"] = "PROJ-1";
+    args["extra"] = "data";
+    const std::string s = smatchet::mcp::pure::BuildToolCallSummary("update_ticket", args);
+    CHECK(s.find("tool=update_ticket") != std::string::npos);
+    CHECK(s.find("arg_keys=[") != std::string::npos);
+    CHECK(s.find("issue_key=PROJ-1") != std::string::npos);
 }

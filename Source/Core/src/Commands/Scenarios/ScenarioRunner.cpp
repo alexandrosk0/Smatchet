@@ -6,6 +6,7 @@
 #include "UiPerfMonitor.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdio>
 #include <ctime>
 #include <stdexcept>
@@ -25,6 +26,8 @@ namespace smatchet {
 namespace cmd {
 
 void ScenarioRunner::RegisterFactory(const std::string& name, Factory f) { factories_[name] = std::move(f); }
+
+std::size_t ScenarioRunner::UnregisterFactory(const std::string& name) { return factories_.erase(name); }
 
 CommandResult ScenarioRunner::Start(const std::string& name, const nlohmann::json& args, const CommandContext& ctx) {
     auto it = factories_.find(name);
