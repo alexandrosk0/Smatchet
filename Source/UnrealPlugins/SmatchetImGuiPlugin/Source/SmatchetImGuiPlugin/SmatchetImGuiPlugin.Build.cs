@@ -307,16 +307,28 @@ public class SmatchetImGuiPlugin : ModuleRules
             }
 
             TimeSpan lag = newestSource - packagedStamp;
-            // UBT promotes lines starting with "warning:" into the build output and surface list.
-            System.Console.WriteLine(
-                "warning: SmatchetImGuiPlugin: packaged native lib '{0}' is older than Source/Core by {1:c}. " +
-                "Unreal will load a stale Smatchet host. Run 'scripts\\dev\\local\\package_unreal_plugin_msvc.ps1' " +
-                "to refresh ThirdParty libs, then rebuild the plugin.",
-                Path.GetFileName(packagedLib),
-                lag);
+            // Hard-fail: a packaged lib older than Source/Core means Unreal silently links an
+            // out-of-date Smatchet host (the standalone app and the editor diverge — a real
+            // C-ABI-staleness defect, not advisory). Fail the build so the divergence cannot
+            // ship unnoticed. This only fires when packaged libs ACTUALLY exist and are stale
+            // (LibDir-missing / no-host-lib short-circuit above is a no-op on a fresh tree, and
+            // no CI lane runs UBT — only a local Unreal-editor build hits this path).
+            throw new BuildException(
+                "SmatchetImGuiPlugin: packaged native lib '" + Path.GetFileName(packagedLib) +
+                "' is older than Source/Core by " + lag.ToString("c") + ". Unreal would load a stale " +
+                "Smatchet host. Run 'scripts\\dev\\local\\package_unreal_plugin_msvc.ps1' to refresh " +
+                "ThirdParty libs, then rebuild the plugin.");
+        }
+        catch (BuildException)
+        {
+            // Re-throw the staleness hard-fail above; only genuine check-internal errors
+            // (FS read failures, path issues) fall through to the fail-safe warning below.
+            throw;
         }
         catch (Exception ex)
         {
+            // The staleness check ITSELF failed (not a real staleness) — stay advisory so a
+            // flaky filesystem read never wedges an otherwise-correct build.
             System.Console.WriteLine(
                 "warning: SmatchetImGuiPlugin: staleness check failed ({0}). Packaged libs may or may not be up to date.",
                 ex.Message);

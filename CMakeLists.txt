@@ -358,11 +358,10 @@ option(SMATCHET_WITH_WHISPER "Build with Whisper dictation plugin (push-to-talk;
 option(SMATCHET_WHISPER_LOCAL_BACKEND
     "Fetch + link whisper.cpp for on-device Whisper inference (large binary impact)" OFF)
 # Unreal-packaged DX12 artifacts intentionally ship without Whisper (WASAPI / whisper.cpp /
-# global-hotkey hook would pollute the Unreal header path). Mirror SMATCHET_WITH_MCP_UNREAL.
-if(SMATCHET_EMBEDDED_IN_UNREAL)
-    set(SMATCHET_WITH_WHISPER OFF)
-    set(SMATCHET_WHISPER_LOCAL_BACKEND OFF)
-endif()
+# global-hotkey hook would pollute the Unreal header path). The DX12/Unreal exclusion is keyed
+# on the SMATCHET_EMBEDDED_IN_UNREAL *compile-define* (target_compile_definitions on the DX12
+# targets below), NOT a CMake variable — the variable is never set()/option()'d, so the old
+# `if(SMATCHET_EMBEDDED_IN_UNREAL)` branch here was dead code. Whisper is gated per-target.
 option(SMATCHET_BUILD_TESTS "Build CTest target for pure-logic Source/Core unit tests (doctest)" OFF)
 option(SMATCHET_BUILD_UI_TESTS "Build ImGui Test Engine bucket-E surface (in-process; opt-in)" OFF)
 # Gate the entire GUI/app surface — GLFW, Dear ImGui (+ImGuiLib), Lua/sol2,

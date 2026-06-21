@@ -30,17 +30,62 @@ namespace {
 // one — destroying the only diagnostic the next-launch reporter has. First-rich-dump wins.
 std::atomic<bool> g_exceptionDumpWritten{false};
 
-void WriteMiniDump(EXCEPTION_POINTERS* exPtrs) noexcept {
+// Synthetic exception code for dumps written off the terminate/signal path, where the OS gives
+// us no EXCEPTION_RECORD. The high bit (0x8000'0000 = severity ERROR) + the customer bit
+// (0x2000'0000) form a valid non-system NTSTATUS-style code so a debugger/minidump reader treats
+// the ExceptionStream as a real (if app-synthesized) record. 'S' = Smatchet.
+const DWORD kSyntheticTerminateException = 0xE0535343; // 0xE0000000 | 'SCS'
+
+// Whether a dump's exception record was OS-supplied (real SEH) vs app-synthesized (terminate/signal).
+enum class DumpExceptionOrigin { Real, Synthetic };
+
+// `realExPtrs` is the OS-supplied EXCEPTION_POINTERS (SEH path) or null. `origin` records whether
+// the record is OS-supplied or app-synthesized so the first-rich-dump-wins arbitration treats a
+// synthetic terminate/signal dump with the same (lower) priority the old exPtrs==null path had —
+// a later real SEH dump must still be able to win, and a synthetic dump must not clobber a prior
+// real one.
+void WriteMiniDumpImpl(EXCEPTION_POINTERS* realExPtrs, DumpExceptionOrigin origin) noexcept {
     const char* path = diagnostics::CrashSinkPendingDumpPath();
     if (path == nullptr || path[0] == '\0') {
         return;
     }
-    if (exPtrs == nullptr && g_exceptionDumpWritten.load(std::memory_order_acquire)) {
-        return; // preserve the earlier exception-bearing dump
+    const bool isRealException = (origin == DumpExceptionOrigin::Real) && (realExPtrs != nullptr);
+    if (!isRealException && g_exceptionDumpWritten.load(std::memory_order_acquire)) {
+        return; // preserve the earlier (real) exception-bearing dump
     }
     HANDLE file = CreateFileA(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) {
         return;
+    }
+    // On the terminate/signal path the OS hands us no EXCEPTION_RECORD, so a MiniDumpNormal with a
+    // null MINIDUMP_EXCEPTION_INFORMATION carries NO ExceptionStream — the dump is barely
+    // analyzable (no faulting thread/context marked). Synthesize one: RtlCaptureContext snapshots
+    // the current thread's registers at the crash site, and a minimal EXCEPTION_RECORD with our
+    // synthetic code gives the reader a real ExceptionStream to anchor on.
+    CONTEXT synthCtx;
+    EXCEPTION_RECORD synthRec;
+    EXCEPTION_POINTERS synthPtrs;
+    EXCEPTION_POINTERS* exPtrs = realExPtrs;
+    if (exPtrs == nullptr) {
+        ZeroMemory(&synthCtx, sizeof(synthCtx));
+        synthCtx.ContextFlags = CONTEXT_FULL;
+        RtlCaptureContext(&synthCtx);
+        ZeroMemory(&synthRec, sizeof(synthRec));
+        synthRec.ExceptionCode = kSyntheticTerminateException;
+        // EXCEPTION_NONCONTINUABLE: the process is going down right after this dump.
+        synthRec.ExceptionFlags = EXCEPTION_NONCONTINUABLE;
+#if defined(_M_X64) || defined(__x86_64__)
+        synthRec.ExceptionAddress = reinterpret_cast<PVOID>(synthCtx.Rip);
+#elif defined(_M_IX86) || defined(__i386__)
+        synthRec.ExceptionAddress = reinterpret_cast<PVOID>(synthCtx.Eip);
+#elif defined(_M_ARM64) || defined(__aarch64__)
+        synthRec.ExceptionAddress = reinterpret_cast<PVOID>(synthCtx.Pc);
+#else
+        synthRec.ExceptionAddress = nullptr;
+#endif
+        synthPtrs.ExceptionRecord = &synthRec;
+        synthPtrs.ContextRecord = &synthCtx;
+        exPtrs = &synthPtrs;
     }
     MINIDUMP_EXCEPTION_INFORMATION mei;
     MINIDUMP_EXCEPTION_INFORMATION* meiPtr = nullptr;
@@ -60,9 +105,22 @@ void WriteMiniDump(EXCEPTION_POINTERS* exPtrs) noexcept {
     MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), file, MiniDumpNormal, meiPtr,
                       nullptr, nullptr);
     CloseHandle(file);
-    if (exPtrs != nullptr) {
+    // Only a REAL (OS-supplied) exception record marks "rich dump written" — a synthesized
+    // terminate/signal record stays low-priority so a subsequent real SEH dump can still win.
+    if (isRealException) {
         g_exceptionDumpWritten.store(true, std::memory_order_release);
     }
+}
+
+// SEH path: OS-supplied EXCEPTION_POINTERS — a real exception record.
+void WriteMiniDump(EXCEPTION_POINTERS* exPtrs) noexcept {
+    WriteMiniDumpImpl(exPtrs, DumpExceptionOrigin::Real);
+}
+
+// terminate/signal path: no OS record — synthesize one (captured context + synthetic code) so the
+// dump still carries an analyzable ExceptionStream instead of being context-less.
+void WriteSyntheticMiniDump() noexcept {
+    WriteMiniDumpImpl(nullptr, DumpExceptionOrigin::Synthetic);
 }
 
 LONG WINAPI TopLevelExceptionFilter(EXCEPTION_POINTERS* exPtrs) {
@@ -97,7 +155,7 @@ void TerminateHandler() {
         diagnostics::CrashSinkAppendBreadcrumbLine("terminate: ", "non-std exception type (no what())");
     }
 #if defined(_WIN32)
-    WriteMiniDump(nullptr);
+    WriteSyntheticMiniDump();
 #endif
     std::_Exit(3);
 }
@@ -122,7 +180,7 @@ void SignalHandler(int sig) {
     }
     diagnostics::CrashSinkWriteMarkerAsyncSafe(reason);
 #if defined(_WIN32)
-    WriteMiniDump(nullptr);
+    WriteSyntheticMiniDump();
 #endif
     std::_Exit(2);
 }
