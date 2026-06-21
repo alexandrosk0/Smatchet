@@ -1110,15 +1110,18 @@ set_fixture() {
     # CR threads (cr_open=2). The label must waive BOTH the state verdict and
     # the open-CR-thread block; CI passes + reviewDecision APPROVED so the gate
     # passes overall.
+    # PR-3: cr-out-of-band now REQUIRES a paired cr-disposition attestation, so
+    # the fixture carries BOTH labels (without the disposition this would block —
+    # see the dedicated WITHOUT-disposition regression below).
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_changes.json" \
         "data.repository.pullRequest.labels" \
-        '{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"cr-out-of-band"}]}')"
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"cr-out-of-band"},{"name":"cr-disposition:follow-up-pr"}]}')"
     set_fixture "$f"
     run poll_merge_gates org repo 1
     [ "$status" -eq 0 ]
     [[ "$output" == *"GATES_PASSED"* ]]
-    [[ "$output" == *"cr-out-of-band label downgraded CR block"* ]]
+    [[ "$output" == *"cr-out-of-band + cr-disposition label downgraded CR block"* ]]
     [[ "$output" == *"CHANGES_REQUESTED"* ]]
     # GATE_SNAPSHOT marks the CR gate as load-bearingly bypassed (cr_override=1)
     # so the merge actor records "CodeRabbit" in the snapshot's redChecks
@@ -1134,12 +1137,12 @@ set_fixture() {
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_stale_findings.json" \
         "data.repository.pullRequest.labels" \
-        '{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"cr-out-of-band"}]}')"
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"cr-out-of-band"},{"name":"cr-disposition:follow-up-pr"}]}')"
     set_fixture "$f"
     run poll_merge_gates org repo 1
     [ "$status" -eq 0 ]
     [[ "$output" == *"GATES_PASSED"* ]]
-    [[ "$output" == *"cr-out-of-band label downgraded CR block"* ]]
+    [[ "$output" == *"cr-out-of-band + cr-disposition label downgraded CR block"* ]]
     [[ "$output" == *"STALE_WITH_FINDINGS"* ]]
     rm -f "$f"
 }
@@ -1151,7 +1154,7 @@ set_fixture() {
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
         "data.repository.pullRequest.labels" \
-        '{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"cr-out-of-band"}]}')"
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"cr-out-of-band"},{"name":"cr-disposition:acked"}]}')"
     export MERGE_GATES_CR_INSTALLED=true
     # Disable the auto-nudge so this test isolates the downgrade (no gh pr comment).
     export MERGE_GATES_STALE_REREVIEW_POLLS=0
@@ -1159,7 +1162,7 @@ set_fixture() {
     run poll_merge_gates org repo 1
     [ "$status" -eq 0 ]
     [[ "$output" == *"GATES_PASSED"* ]]
-    [[ "$output" == *"cr-out-of-band label downgraded CR block"* ]]
+    [[ "$output" == *"cr-out-of-band + cr-disposition label downgraded CR block"* ]]
     rm -f "$f"
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_STALE_REREVIEW_POLLS
 }
@@ -1198,6 +1201,60 @@ set_fixture() {
     [ "$status" -eq 1 ]
     [[ "$output" == *"CodeRabbit: CHANGES_REQUESTED"* ]]
     [[ "$output" != *"cr-out-of-band label downgraded"* ]]
+}
+
+# ---------- PR-3 cr-out-of-band-disposition-trail (cr-disposition REQUIRED) ----------
+
+@test "cr-out-of-band WITHOUT cr-disposition still BLOCKS (disposition required)" {
+    # PR-3: a bare cr-out-of-band must NOT waive a CR block — the operator must
+    # also attest a cr-disposition reason (label or PR-body marker). Here only
+    # cr-out-of-band is present, so the CR CHANGES_REQUESTED block must stand.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_changes.json" \
+        "data.repository.pullRequest.labels" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"cr-out-of-band"}]}')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [[ "$output" == *"NOT honoured"* ]]
+    [[ "$output" == *"cr-disposition"* ]]
+    [[ "$output" == *"cr-out-of-band-disposition-trail"* ]]
+    rm -f "$f"
+}
+
+@test "cr-out-of-band WITH cr-disposition LABEL downgrades CR block -> pass" {
+    # PR-3: cr-out-of-band paired with a cr-disposition:<reason> LABEL is honoured.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_changes.json" \
+        "data.repository.pullRequest.labels" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"cr-out-of-band"},{"name":"cr-disposition:follow-up-pr"}]}')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"cr-out-of-band + cr-disposition label downgraded CR block"* ]]
+    # The CR gate is recorded as load-bearingly bypassed in the snapshot ledger.
+    [[ "$output" == *"GATE_SNAPSHOT cr_override=1"* ]]
+    rm -f "$f"
+}
+
+@test "cr-out-of-band WITH cr-disposition PR-BODY marker downgrades CR block -> pass" {
+    # PR-3: the disposition may be a grep-able marker line in the PR BODY instead
+    # of a label. cr-out-of-band label + body marker -> honoured.
+    local f1 f2
+    f1="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_changes.json" \
+        "data.repository.pullRequest.labels" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"cr-out-of-band"}]}')"
+    f2="$(fixture_override "$f1" \
+        "data.repository.pullRequest.body" \
+        '"Merging past CR; follow-up PR queued.\ncr-disposition: addressed-in-followup"')"
+    set_fixture "$f2"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"cr-out-of-band + cr-disposition label downgraded CR block"* ]]
+    rm -f "$f1" "$f2"
 }
 
 # ---------- CR=NONE early auto-nudge (@coderabbitai review, once per HEAD) ----------
@@ -1514,18 +1571,23 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
 }
 
-@test "CR size-skip + cr-out-of-band label -> PASS with tailored WARN" {
-    local f
-    f="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_size_skip.json" \
+@test "CR size-skip + cr-out-of-band + cr-disposition PR-BODY marker -> PASS with tailored WARN" {
+    # PR-3: the disposition attestation may be supplied via a PR-BODY marker
+    # (`cr-disposition:<reason>`) instead of a label — exercises the body path.
+    local f1 f2
+    f1="$(fixture_override "$FIXTURES_DIR/merge_gates_cr_size_skip.json" \
         "data.repository.pullRequest.labels" \
         '{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"cr-out-of-band"}]}')"
+    f2="$(fixture_override "$f1" \
+        "data.repository.pullRequest.body" \
+        '"This reorg cannot be split.\ncr-disposition: over-CR-file-limit-acked"')"
     export MERGE_GATES_CR_INSTALLED=true
-    set_fixture "$f"
+    set_fixture "$f2"
     run poll_merge_gates org repo 1
     [ "$status" -eq 0 ]
     [[ "$output" == *"GATES_PASSED"* ]]
-    [[ "$output" == *"cr-out-of-band — CR skipped review (too many files) overridden"* ]]
-    rm -f "$f"
+    [[ "$output" == *"cr-out-of-band + cr-disposition — CR skipped review (too many files) overridden"* ]]
+    rm -f "$f1" "$f2"
     unset MERGE_GATES_CR_INSTALLED
 }
 

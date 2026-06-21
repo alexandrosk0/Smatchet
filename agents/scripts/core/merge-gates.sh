@@ -36,12 +36,16 @@
 #   intent-out-of-band → downgrades `Intent section` FAIL → WARN
 #   plan-lock-out-of-band → downgrades `Plan-lock gate` FAIL → WARN
 #   cr-out-of-band    → downgrades a CodeRabbit block → WARN (CR gate only;
-#                       CI + user-comment gates still bind). EXCEPTION: a CR
-#                       rate-limit skip on a CODE PR is NOT waived by
-#                       cr-out-of-band alone — it ALSO needs a `cr-disposition:`
-#                       label (PR-2 cr-rate-limit-code-pr-auto-pause).
-#   cr-disposition:*  → operator attestation paired with cr-out-of-band to merge
-#                       past a CR rate-limit skip on a CODE PR.
+#                       CI + user-comment gates still bind). REQUIRES a paired
+#                       `cr-disposition:<reason>` attestation (label OR PR-body
+#                       marker) — cr-out-of-band ALONE is NOT honoured (PR-3
+#                       cr-out-of-band-disposition-trail). The CR rate-limit skip
+#                       on a CODE PR is the original case of this rule (PR-2
+#                       cr-rate-limit-code-pr-auto-pause).
+#   cr-disposition:*  → operator attestation (a `cr-disposition:`-prefixed label
+#                       OR a `cr-disposition:<reason>` marker line in the PR body)
+#                       paired with cr-out-of-band to record WHY CR review was
+#                       waived. Mandatory for every cr-out-of-band downgrade.
 #   bugbot-out-of-band → downgrades a Cursor Bugbot block → WARN (Bugbot gate
 #                       only; CI + CR + user-comment gates still bind)
 # Downgraded failures are logged on stderr but do NOT contribute to ci_fail
@@ -494,9 +498,10 @@ poll_merge_gates() {
     # allow-list — docs/ / backlog/ / agents/scripts/ / *.md) ·
     # 29 crRateLimited (bool: CR posted a rate-limit signal on a comment OR the
     # CodeRabbit StatusContext description — a TEMPORARY skip, not a terminal pass) ·
-    # 30 crDisposition (bool: a `cr-disposition:` prefixed label is present — the
-    # explicit operator attestation required before `cr-out-of-band` waives a
-    # rate-limit skip on a CODE PR).
+    # 30 crDisposition (bool: a `cr-disposition:`-prefixed label is present OR a
+    # `cr-disposition:<reason>` marker line is in the PR body — the explicit
+    # operator attestation REQUIRED before any `cr-out-of-band` downgrade is
+    # honoured; PR-3 cr-out-of-band-disposition-trail).
     # The trailing fields must all be non-empty so the `data=$(gh …)` command
     # substitution (trailing-newline collapse) never strips one and deflates the
     # 31-field count (tripping the fail-closed assertion). reqAbsentCount (22),
@@ -526,13 +531,19 @@ poll_merge_gates() {
 | ($labels | any(. == "intent-out-of-band")) as $intent
 | ($labels | any(. == "plan-lock-out-of-band")) as $planlock
 | ($labels | any(. == "cr-out-of-band")) as $cr
-# crDisposition — any label prefixed `cr-disposition:` (e.g.
-# `cr-disposition:rate-limit-acked`). On a CODE PR that CR rate-limit-skipped,
-# `cr-out-of-band` alone is NOT honoured — the operator must ALSO attest an
-# explicit disposition via this label, proving they consciously merged past an
-# incomplete CR review rather than letting a transient rate limit silently
-# bypass review (PR-2 cr-rate-limit-code-pr-auto-pause).
-| ($labels | any(startswith("cr-disposition:"))) as $crdisposition
+# crDisposition — an explicit operator attestation supplied EITHER as a label
+# prefixed `cr-disposition:` (e.g. `cr-disposition:rate-limit-acked`) OR as a
+# grep-able `cr-disposition:<reason>` marker line in the PR BODY. Whenever
+# `cr-out-of-band` would downgrade a CR block, this disposition is REQUIRED —
+# `cr-out-of-band` alone is NOT honoured (PR-3 cr-out-of-band-disposition-trail,
+# generalising the PR-2 cr-rate-limit-code-pr-auto-pause requirement to EVERY
+# cr-out-of-band downgrade): it proves the operator consciously waived CR review
+# with a recorded reason rather than reflexively slapping a generic override on.
+# Body match: `cr-disposition:` followed by any non-empty reason on the line
+# (regex tolerates leading whitespace / list markers). (NB: no apostrophes in
+# this single-quoted jq filter string.)
+| (($labels | any(startswith("cr-disposition:")))
+   or (($pr.body // "") | test("cr-disposition:[[:space:]]*[^[:space:]]"; "i"))) as $crdisposition
 | ($labels | any(. == "bugbot-out-of-band")) as $bb
 | ((($pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes) // [])
    | map(. + {_k: (if .__typename == "CheckRun" then ["CheckRun", (.name // "")]
@@ -948,9 +959,10 @@ poll_merge_gates() {
         # Drives both the pure-docs auto-downgrade (deliverable 1) and the CODE-PR
         # pause/disposition gate (deliverable 2). Empty/parse-miss → false.
         local cr_rate_limited="${fields[29]:-false}"
-        # cr_disposition — a `cr-disposition:` prefixed label is present (field 30).
-        # Required ALONGSIDE cr-out-of-band to waive a rate-limit skip on a CODE
-        # PR (deliverable 2): cr-out-of-band alone is NOT honoured for that case.
+        # cr_disposition — a `cr-disposition:`-prefixed label OR a
+        # `cr-disposition:<reason>` PR-body marker is present (field 30). Required
+        # ALONGSIDE cr-out-of-band to waive ANY CR block (PR-3): cr-out-of-band
+        # alone is NOT honoured — the disposition records why CR review was waived.
         local cr_disposition="${fields[30]:-false}"
 
         # User comments (non-bot, non-self) — -1 fails closed at `user -eq 0`.
@@ -1330,25 +1342,33 @@ poll_merge_gates() {
         # the label only waives CodeRabbit's own conditions. Like the other
         # out-of-band labels, it MUST NOT stay on the PR post-merge.
         if [ "$has_cr_oob" = "true" ] && { [ "$cr_pass" != true ] || [ "$cr_open_blocks" = true ]; }; then
-            if [ "$cr_rate_limit_block" = true ] && [ "$cr_disposition" != true ]; then
-                # Deliverable 2: a CR rate-limit skip on a CODE PR needs MORE than
-                # cr-out-of-band — the operator must ALSO attest an explicit
-                # `cr-disposition:` label. Without it, cr-out-of-band is NOT honoured
-                # here (the block stands → keep pausing for CR re-review). This stops
-                # a transient rate limit from being silently waved through on the
-                # strength of a generic out-of-band label alone.
-                echo "WARN: cr-out-of-band present but NOT honoured — a CR rate-limit skip on a CODE PR also requires a 'cr-disposition:<reason>' label. Add one to merge past the rate-limited review, or wait for CR to re-review. PR-2 cr-rate-limit-code-pr-auto-pause." >&2
+            # PR-3 cr-out-of-band-disposition-trail: a cr-out-of-band downgrade now
+            # ALWAYS requires a paired `cr-disposition:<reason>` attestation (a
+            # `cr-disposition:` LABEL or a grep-able `cr-disposition:` marker line
+            # in the PR body — $cr_disposition folds both). Without it the override
+            # is NOT honoured and the CR block stands. This generalises the PR-2
+            # rate-limit-only requirement to EVERY cr-out-of-band waiver so a generic
+            # override can never silently bypass CR review with no recorded reason
+            # (the override-merge ledger then always carries the disposition trail).
+            if [ "$cr_disposition" != true ]; then
+                if [ "$cr_rate_limit_block" = true ]; then
+                    # Rate-limit-specific guidance (PR-2): the block is a transient
+                    # skip — pause for CR to re-review, or attest a disposition.
+                    echo "WARN: cr-out-of-band present but NOT honoured — a CR rate-limit skip on a CODE PR also requires a 'cr-disposition:<reason>' label or PR-body marker. Add one to merge past the rate-limited review, or wait for CR to re-review. PR-2 cr-rate-limit-code-pr-auto-pause." >&2
+                else
+                    echo "WARN: cr-out-of-band present but NOT honoured — a cr-out-of-band downgrade also requires a 'cr-disposition:<reason>' label or PR-body marker recording why CR review was waived. Add one to merge past the CR block (${cr_state_print}). PR-3 cr-out-of-band-disposition-trail." >&2
+                fi
             else
                 if [ "$cr_size_skip_block" = true ]; then
                     # Tailored message for the size-skip block — names the actual
                     # cause (CR skipped review, too many files) rather than the
                     # generic "CR block" so the operator's log is unambiguous.
-                    echo "WARN: cr-out-of-band — CR skipped review (too many files) overridden" >&2
+                    echo "WARN: cr-out-of-band + cr-disposition — CR skipped review (too many files) overridden" >&2
                 elif [ "$cr_rate_limit_block" = true ]; then
                     # cr-out-of-band + cr-disposition both present → honoured.
                     echo "WARN: cr-out-of-band + cr-disposition label downgraded CR rate-limit block (${cr_state_print}) to WARN" >&2
                 else
-                    echo "WARN: cr-out-of-band label downgraded CR block (${cr_state_print}) to WARN" >&2
+                    echo "WARN: cr-out-of-band + cr-disposition label downgraded CR block (${cr_state_print}) to WARN" >&2
                 fi
                 cr_pass=true
                 cr_open_blocks=false

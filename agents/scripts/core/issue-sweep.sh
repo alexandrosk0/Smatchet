@@ -14,6 +14,15 @@
 #
 # Env: REPO; BOT_LOGINS (space-sep, default "coderabbitai coderabbitai[bot] app/coderabbitai");
 #      ISSUES_JSON (a file of `gh issue list --json ...` output — bats injects a fixture, no gh).
+#      MERGED_PRS_JSON (a file of `gh pr list --state merged --json number,labels` output —
+#                      bats injects a fixture; drives the merged-PR out-of-band-label strip).
+#
+# Also strips lingering `*-out-of-band` override labels off recently-MERGED PRs
+# (PR-3 cr-out-of-band-disposition-trail): an override label's lifetime is
+# confirmed-red -> merge (docs/agent-rules/merge-gates.md § Override-label
+# hygiene), so it must NOT survive on the merged PR. --apply removes them; dry-run
+# reports. Bot-only autonomy does NOT apply here — an override label is operator
+# metadata on a PR, not an Issue authored by a human, so the strip is always safe.
 #
 # Exit codes: 0 ok · 2 gh missing / bad args.
 
@@ -145,4 +154,62 @@ if command -v grep >/dev/null 2>&1; then
                 docs/self-improvement/categories docs/plans/active 2>/dev/null || true)
     [ "$elev" -gt 0 ] && echo "issue-sweep: $elev unfiled self-elevation marker(s) — see [issue-propose] lines above" >&2
 fi
+
+# ── Merged-PR out-of-band-label strip (PR-3 cr-out-of-band-disposition-trail) ──
+# An override label (`*-out-of-band`) is scoped to confirmed-red -> merge; once a
+# PR is merged the label must come off so it does not linger and skew the
+# override-merge ledger / audits. Source of merged PRs + their labels: a fixture
+# file (bats: MERGED_PRS_JSON) or a live `gh pr list --state merged`. In --apply
+# mode the labels are removed via `gh pr edit --remove-label`; dry-run reports.
+strip_merged_oob_labels() {
+    local merged_json=""
+    if [ -n "${MERGED_PRS_JSON:-}" ]; then
+        [ -f "$MERGED_PRS_JSON" ] || { echo "issue-sweep: MERGED_PRS_JSON '$MERGED_PRS_JSON' not found" >&2; return 0; }
+        merged_json="$(cat "$MERGED_PRS_JSON")"
+    elif command -v gh >/dev/null 2>&1; then
+        merged_json="$(gh pr list --repo "$REPO" --state merged --limit 50 \
+            --json number,labels 2>/dev/null || echo '[]')"
+    else
+        return 0
+    fi
+
+    # Emit "<number><TAB><label>" rows for every `*-out-of-band` label on a merged PR.
+    local rows
+    rows="$("$PY" - "$merged_json" <<'PY'
+import json, sys
+for s in (sys.stdout, sys.stderr):
+    try: s.reconfigure(encoding="utf-8", errors="replace")
+    except Exception: pass
+try:
+    prs = json.loads(sys.argv[1])
+except Exception:
+    prs = []
+out = []
+for pr in prs:
+    num = pr.get("number")
+    for l in pr.get("labels", []):
+        name = l.get("name", "")
+        if name.endswith("-out-of-band"):
+            out.append("%s\t%s" % (num, name))
+sys.stdout.write("\n".join(out) + ("\n" if out else ""))
+PY
+)"
+
+    local stripped=0 acted=0
+    while IFS=$'\t' read -r num label; do
+        [ -n "$num" ] || continue
+        stripped=$((stripped+1))
+        echo "  OOB-STRIP #$num remove-label '$label'"
+        if [ "$MODE" = "apply" ] && command -v gh >/dev/null 2>&1; then
+            gh pr edit "$num" --repo "$REPO" --remove-label "$label" >/dev/null 2>&1 \
+                && acted=$((acted+1)) || echo "issue-sweep: WARN strip '$label' off #$num failed" >&2
+        fi
+    done <<< "$rows"
+
+    if [ "$stripped" -gt 0 ]; then
+        echo "issue-sweep: $stripped lingering out-of-band label(s) on merged PR(s) — $([ "$MODE" = apply ] && echo "removed $acted" || echo "dry-run; --apply removes them")"
+    fi
+}
+strip_merged_oob_labels
+
 exit 0
