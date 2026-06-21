@@ -1783,15 +1783,17 @@ case "$MODE" in
     # --- soft comment-ratio warning (ADVISORY — never changes exit code) ---
     ratio_warn_for "$BASE" || true
 
-    # --- duplication WARN (DRY Engineering Pillar 5; ADVISORY — never changes exit code) ---
-    # dup_audit.py --diff is WARN-first (calibration phase per ADR-0015): it prints [dup] WARN
-    # lines to stderr for NEW cross-file copy-paste clones and ALWAYS exits 0. It graduates to a
-    # blocking rule only once the FP rate is < 10% over ~20 PRs (dry-pillar-dup-gate § Verification);
-    # until then it must NEVER touch $rc. An infra error (>=2) is surfaced but stays non-fatal here.
+    # --- duplication BLOCKING (DRY Engineering Pillar 5; fails CLOSED) ---
+    # dup_audit.py --diff graduated WARN→blocking on 2026-06-21 (ADR-0015 calibration complete): it
+    # prints [dup] FAIL lines to stderr for NEW cross-file copy-paste clones and exits 1, which now
+    # FAILS the gate ($rc=1). An infra error (>=2) also fails CLOSED. Exempt a genuine NEW clone with
+    # a // SMATCHET_DEVIATION(rule=duplication; ...) marker on/above either occurrence.
     dup_aud="$REPO_ROOT/agents/scripts/core/dup_audit.py"
     if [ -f "$dup_aud" ] && [ -n "$cr_py" ]; then
-        "$cr_py" "$dup_aud" --diff "$BASE" || \
-            echo "test-lint-rules: WARN: dup_audit.py --diff exited non-zero (advisory; not failing the gate)" >&2
+        if ! "$cr_py" "$dup_aud" --diff "$BASE"; then
+            echo "test-lint-rules: FAIL: NEW copy-paste clone(s) (rule=duplication, DRY Pillar 5) — de-duplicate or exempt with SMATCHET_DEVIATION(rule=duplication)" >&2
+            rc=1
+        fi
     fi
 
     # --- interface-doc WARN (Gap B / Slice 2; ADVISORY — never changes exit code) ---

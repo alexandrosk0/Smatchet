@@ -11,10 +11,10 @@ copy-then-rename is still caught. This is the DRY gate's detector — NOT a stru
 or semantic-dup tool; it flags literal copy-paste only (see docs/adr/0015 + the plan's
 double-edged-DRY guardrail).
 
-Verdict model — WARN-first (calibration phase). `--diff` emits advisory `[dup] WARN ...` lines
-and ALWAYS exits 0; it does NOT block a merge yet. The graduation to hard-block is a committed
-follow-up gated on a measured false-positive rate < 10% over ~20 PRs (plan § Verification). The
-delta-grandfather machinery is live from day one so that, once graduated, only NEW clones fire.
+Verdict model — BLOCKING (graduated 2026-06-21; calibration complete per ADR-0015). `--diff`
+emits `[dup] FAIL ...` lines for NEW cross-file copy-paste clones and exits 1, blocking the
+merge. The delta-grandfather machinery ensures only genuinely-NEW clones (duplicated at HEAD but
+not at the merge-base) fire; all pre-existing duplication is grandfathered. A clean tree exits 0.
 
 Delta semantics (grandfathering): a clone is keyed by the content-hash of its normalized token
 run. All duplication that already exists at the merge-base is grandfathered (its content-hashes
@@ -28,7 +28,7 @@ Modes mirror function_size_audit.py:
   dup_audit.py                       # human report of current cross-file clones
   dup_audit.py --list                # one `rule<TAB>fileA:lineA<TAB>fileB:lineB (Ntok)` per clone
   dup_audit.py --baseline-md         # deterministic markdown grandfather snapshot
-  dup_audit.py --diff <ref>          # DELTA gate: advisory `[dup] WARN ...` for NEW clones (exit 0)
+  dup_audit.py --diff <ref>          # DELTA gate: BLOCKING `[dup] FAIL ...` for NEW clones (exit 1)
   dup_audit.py --scan-file <path>    # git-free single-file INTRA-file clone scan (bats harness)
   dup_audit.py --selftest            # assert normalization + threshold invariants hold
 
@@ -36,8 +36,8 @@ Scope note: `--diff` is **cross-file primary** (intra-file clones overlap the fu
 so they are off there). `--scan-file` is a self-contained intra-file diagnostic + the unit-test
 seam for the shingle/normalize/extend core.
 
-Exit contract (so test-lint-rules.sh can fail CLOSED once graduated): 0 = clean / advisory-only,
-1 = blocking violations (reserved for post-graduation; unused while WARN-first), >=2 = infra error.
+Exit contract (test-lint-rules.sh fails CLOSED on this): 0 = clean / no NEW clones,
+1 = blocking violation (>=1 NEW non-exempt clone), >=2 = infra error.
 
 See docs/plans/shipped/dry-pillar-dup-gate.md + docs/adr/0015-dry-quality-pillar-duplication-gate.md.
 """
@@ -381,10 +381,12 @@ def _suppressed(path, start_line, end_line):
     return False
 
 
-def run_diff(ref):
-    base = _merge_base_or_ref(ref)
-    head_clones = find_clones(streams_head(), allow_intra=False)
-    base_hashes = {c.content_hash for c in find_clones(streams_ref(base), allow_intra=False)}
+def new_clones_vs(base, head_streams, base_streams):
+    """Return the list of NEW non-exempt cross-file clones: duplicated at HEAD, not grandfathered at
+    `base`, and not SMATCHET_DEVIATION-suppressed. Pure (takes pre-built streams) so --selftest can
+    exercise the blocking decision without git."""
+    head_clones = find_clones(head_streams, allow_intra=False)
+    base_hashes = {c.content_hash for c in find_clones(base_streams, allow_intra=False)}
     new = []
     for c in head_clones:
         if c.content_hash in base_hashes:
@@ -392,13 +394,20 @@ def run_diff(ref):
         if any(_suppressed(p, s, e) for p, s, e in c.locations):
             continue
         new.append(c)
-    # WARN-first (calibration phase): advisory to stderr, NEVER affects exit code. Once the
-    # false-positive trigger is met (plan § Verification) this graduates to a blocking stdout list.
+    return new
+
+
+def run_diff(ref):
+    base = _merge_base_or_ref(ref)
+    new = new_clones_vs(base, streams_head(), streams_ref(base))
+    # BLOCKING (graduated 2026-06-21, ADR-0015 calibration complete): each NEW non-exempt clone is a
+    # hard FAIL; the gate exits 1 so test-lint-rules.sh / CI fail CLOSED. Exempt with a
+    # SMATCHET_DEVIATION(rule=duplication) marker on/above either clone occurrence (cheap exemption).
     for c in sorted(new, key=lambda c: c.locations):
         locs = " <-> ".join("%s:%d" % (os.path.basename(p), ln) for p, ln, _e in c.locations)
-        print("[dup] WARN %s — %d-token copy-paste clone (DRY; not blocking yet, calibration phase; "
+        print("[dup] FAIL %s — %d-token copy-paste clone (DRY Engineering Pillar 5; blocking; "
               "exempt with SMATCHET_DEVIATION(rule=duplication))" % (locs, c.ntokens), file=sys.stderr)
-    return 0
+    return 1 if new else 0
 
 
 # --- reporting ---------------------------------------------------------------------------------
@@ -502,6 +511,16 @@ def run_selftest():
     streams_small = {"A.cpp": normalized_stream(small), "B.cpp": normalized_stream(small)}
     if find_clones(streams_small):
         print("SELFTEST FAIL: sub-threshold block flagged as a clone", file=sys.stderr)
+        miss = 1
+    # Graduation invariant (2026-06-21): the delta gate now BLOCKS. A planted NEW clone (present at
+    # HEAD, absent from the base streams) must be reported as a new clone — i.e. the verdict path
+    # that run_diff turns into exit 1. (WARN-first would have returned exit 0 here.)
+    if not new_clones_vs("BASE", streams, {}):
+        print("SELFTEST FAIL: planted NEW clone not flagged by the blocking delta gate", file=sys.stderr)
+        miss = 1
+    # A clone already present at base is grandfathered -> NOT new -> gate stays green (exit 0).
+    if new_clones_vs("BASE", streams, streams):
+        print("SELFTEST FAIL: grandfathered (base-present) clone flagged as NEW", file=sys.stderr)
         miss = 1
     if miss:
         return 1

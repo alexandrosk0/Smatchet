@@ -2,13 +2,13 @@
 # tests/bats/dup_audit.bats
 # ----------------------------------------------------------------------------
 # Bats coverage for agents/scripts/core/dup_audit.py — the DRY-pillar duplication
-# delta gate (dry-pillar-dup-gate Slice 1 / ADR-0015). WARN-first: --diff is
-# advisory (always exit 0) during the calibration phase.
+# delta gate (dry-pillar-dup-gate / ADR-0015). BLOCKING (graduated WARN→blocking
+# 2026-06-21): --diff exits 1 and prints [dup] FAIL on a NEW clone, exit 0 clean.
 #
 # Covers: --selftest; intra-file detection + path exclusion via --scan-file; and
-# the --diff delta gate (new clone WARNs, copy-then-rename still caught,
-# grandfathered duplication is silent, sub-threshold is silent, SMATCHET_DEVIATION
-# suppresses) via throwaway git repos.
+# the --diff delta gate (new clone FAILs/exit 1, copy-then-rename still caught,
+# grandfathered duplication is silent/exit 0, sub-threshold is silent,
+# SMATCHET_DEVIATION suppresses) via throwaway git repos.
 #
 # Requires: bash, bats, a working python interpreter (python3/python/py).
 # ----------------------------------------------------------------------------
@@ -85,15 +85,15 @@ _mk_repo() {
     git -C "$dir" add -A && git -C "$dir" commit -qm base
 }
 
-@test "--diff WARNs (exit 0) when a NEW copy-paste clone appears across two files" {
+@test "--diff FAILs (exit 1) when a NEW copy-paste clone appears across two files" {
     repo="$BATS_TEST_TMPDIR/new"
     _mk_repo "$repo"
     { echo "void a(){ int x=1; x+=2; }"; _block clone v; } > "$repo/Source/Core/src/Tracker/A.cpp"
     { echo "void b(){ float y=3; y-=4; }"; _block clone v; } > "$repo/Source/Core/src/Tracker/B.cpp"
     cd "$repo"
     run "$PY" "$AUD" --diff HEAD
-    [ "$status" -eq 0 ]                 # WARN-first: advisory, never blocks
-    [[ "$output" == *"[dup] WARN"* ]]
+    [ "$status" -eq 1 ]                 # blocking: a NEW clone fails CLOSED
+    [[ "$output" == *"[dup] FAIL"* ]]
 }
 
 @test "--diff catches a copy-then-RENAME clone (identifier normalization)" {
@@ -103,8 +103,8 @@ _mk_repo() {
     { echo "void b(){ float y=3; y-=4; }"; _block other w; } > "$repo/Source/Core/src/Tracker/B.cpp"
     cd "$repo"
     run "$PY" "$AUD" --diff HEAD
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"[dup] WARN"* ]]
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"[dup] FAIL"* ]]
 }
 
 @test "--diff is silent for duplication already present at base (grandfathered)" {
@@ -119,7 +119,7 @@ _mk_repo() {
     cd "$repo"
     run "$PY" "$AUD" --diff HEAD
     [ "$status" -eq 0 ]
-    [[ "$output" != *"[dup] WARN"* ]]
+    [[ "$output" != *"[dup] FAIL"* ]]
 }
 
 @test "--diff is silent for a sub-threshold near-clone (< 70 tokens)" {
@@ -131,7 +131,7 @@ _mk_repo() {
     cd "$repo"
     run "$PY" "$AUD" --diff HEAD
     [ "$status" -eq 0 ]
-    [[ "$output" != *"[dup] WARN"* ]]
+    [[ "$output" != *"[dup] FAIL"* ]]
 }
 
 @test "--diff PASSES silently when SMATCHET_DEVIATION suppresses a new clone" {
@@ -150,5 +150,5 @@ _mk_repo() {
     cd "$repo"
     run "$PY" "$AUD" --diff HEAD
     [ "$status" -eq 0 ]
-    [[ "$output" != *"[dup] WARN"* ]]
+    [[ "$output" != *"[dup] FAIL"* ]]
 }
