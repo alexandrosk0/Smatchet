@@ -145,14 +145,14 @@
 - 2026-06-08 · test-author · [tooling] · P2 — bucket-E `UiTestScenario` boot has no live local cache (`OfflineQueueService` null) → the Offline-Queue-panel populated-path smoke can't run, only its empty-guard path (plan #12 batch-2)
   Details: `tests/ui/data_dependent_windows_smoke.test.cpp` case 8 (`OfflineQueuePanel_RendersInlineInActiveProject`) wants to push the inline offline-queue panel PAST its `total==0` guard by enqueueing a synthetic create via `AppController::QueueCreateOffline`. Under the `cmd ui_test.run --spawn` harness that returns 0: `QueueCreateOffline` delegates to `offlineQueue_`, which `AppController::Initialize` only constructs when the local cache (`Cache`/LCM) is live (`AppController.cpp:1438`), and the minimal UiTestScenario boot doesn't initialise it. So the test asserts only the empty-guard branch (host-window-live ⇒ panel's early-return ticked) and logs the populated path as skipped — honest, but the toolbar/table body (header, `Copy selected##unifiedoff`, the unified table) gets no live bucket-E coverage. Same gap would block any future inline-panel test that needs real offline-queue/LCM rows (dead-letter restore UI, conflict-resolve modal).
   Concrete next action: give `UiTestScenario::OnStart` an opt-in that initialises a throwaway SQLite LCM (temp `SMATCHET_USER_DATA` dir) so `offlineQueue_` is constructed and `QueueCreateOffline`/`GetPendingCreates` work in-harness — then case 8's populated path (and the `IM_CHECK_NO_RET(!GetPendingCreates().empty())` + toolbar probe) self-activates with no test edit (the branch is already written behind the `queuedId>0` guard). Cheapest: a `SMATCHET_UITEST_WITH_LOCAL_CACHE=1` env gate that the data-dependent driver sets. Est ~1-2 h. Until then case 8 = empty-path coverage only.
-  Status: open
-  Last-reviewed: 2026-06-08
+  Status: partially applied (2026-06-21 final autonomous batch — shipped #1518)
+  Last-reviewed: 2026-06-21
 
 - 2026-06-07 · test-author (Slice-2 agent) · [tooling] · P2 — bucket-E failures are blind: spawned-child stdout is reliably 0 bytes on Windows, so a failing UI test reports nothing
   Details: When a bucket-E run fails under the spawned-child runner on Windows, the child's stdout reliably comes back 0 bytes — the test engine's per-test log (which names the failing step/assertion) never reaches the caller, so every failure triage starts blind. The per-test output already exists in memory in the engine (`ctx->Test->Output.Log`); it just has no file egress. The `ui_test.run` command (`Source/Core/src/Commands/Builtin/BuiltinCommands_UiTest.cpp:27`) currently exposes no output-log parameter.
   Concrete next action: add a `ui_test.run --outLog=<path>` parameter that dumps `ctx->Test->Output.Log` per test to the given file, so a failed bucket-E run leaves a readable per-test log regardless of spawned-child stdout loss; wire the bucket-E bash drivers to pass it and cat it on failure. Est ~1-2 h.
-  Status: open
-  Last-reviewed: 2026-06-07
+  Status: applied (2026-06-21 final autonomous batch — shipped #1518)
+  Last-reviewed: 2026-06-21
 
 - 2026-06-07 · code-review · [tooling] · P3 — `guard-head-drift.sh` residual fail-open shapes after the CR-953 regex hardening (quoted -C paths with spaces; no-jq sed fallback truncation)
   Details: Post-merge review of #947/#953 + the regex-hardening follow-up fixed `git.exe` / quoted-full-path / subshell forms, but two shapes still fail OPEN: (a) `git -C "C:\a b" commit` — `GIT_OPTS_RE`'s `-C[[:space:]]+[^[:space:]]+` can't span a quoted path containing spaces, so the whole invocation mismatches and no deny fires (low practical risk: no repo/worktree path contains spaces today); (b) the no-jq `json_field` sed fallback truncates `.tool_input.command` at the first escaped quote, silently degrading every downstream regex — if jq is a hard prerequisite for the hook set, the hook should deny (or at least warn) when jq is absent instead of parsing garbage. Also: the protected-branch list `develop|main` is hardcoded at 3 sites; per portable-purity it should eventually read `project.config.json`.
@@ -261,8 +261,8 @@
 - 2026-06-08 · orchestrator · [tooling] · P2 — session-registry liveness fix shipped (ppid=1 → authoritative pid)
   Details: the per-tree session registry (`<tree>/.claude/.active-sessions/<id>`) recorded `ppid=1` on every entry — MSYS/git-bash `$PPID` sentinel on Windows. `kill -0 1` always fails there, so the PID-liveness arm of the concurrent-session guards was dead: liveness collapsed onto the 30-min ts-freshness arm alone, over-blocking legitimate HEAD-moving git ops for up to 30 min after a sibling closes, and letting the registry accrete dead entries nothing prunes. Fixed by capturing the real parent pid in the SessionStart writer (`session-tree-banner.sh`), an authoritative-pid (`numeric AND >4`) Win32 liveness probe (`tasklist`) in the shared lib (`session-registry-lib.sh`), and a SessionStart prune that removes an entry ONLY when BOTH dead-pid AND ts-stale. Shipped PR #996 with 18 bats scenarios + a 20-assertion `--selftest`.
   Concrete next action: two follow-ups — (1) wire a git-janitor registry sweep that calls `sr_prune_dead_stale` over every worktree's `.active-sessions/` (today prune only fires on the writing tree's SessionStart); (2) when the planned `guard.mjs` Node rewrite lands (`docs/plans/active/session-guard-agnostic.md`), port-forward the authoritative-pid liveness + dead+stale prune, reusing the bats scenarios as acceptance.
-  Status: open
-  Last-reviewed: 2026-06-08
+  Status: applied (2026-06-21 final autonomous batch — shipped #1512)
+  Last-reviewed: 2026-06-21
 
 ## Parked
 
