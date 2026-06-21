@@ -179,11 +179,29 @@ _line_is_no_runtime_surface() {
 # Source/Standalone, tests/. Lines in other files (build/docs/scripts/non-product
 # C++) are ignored for the purposes of this classifier — they carry no runtime
 # surface the gate enforces, so they neither block nor force a fallthrough.
+# Net paren balance of a string: count of '(' minus count of ')'. Used to know when a
+# wrapped LOG_*( ... ) statement has closed. Conservative: counts raw parens (a stray paren
+# inside a string literal is rare in a LOG format arg and would only DELAY the close by one
+# more accumulated line, never falsely exempt real surface — a non-LOG token still breaks).
+_paren_delta() {
+    local s="$1" opens closes
+    opens="${s//[^(]/}"
+    closes="${s//[^)]/}"
+    echo $(( ${#opens} - ${#closes} ))
+}
+
 _classify_diff() {
     local cur_file=""
     local in_product_cpp=0
     local in_block_comment=0
     local saw_real_surface=0
+    # Multi-line LOG_*( ... ) accumulation: when a logging call opens with unbalanced parens,
+    # keep consuming added lines (treating them as part of the one logging-only-exempt unit)
+    # until the paren depth returns to zero. A non-LOG real-surface line is never swallowed
+    # because we only enter this state on a LOG_ opener — once balanced we resume normal
+    # per-line classification.
+    local in_log_stmt=0
+    local log_depth=0
     local raw line code
 
     while IFS= read -r raw; do
@@ -194,6 +212,8 @@ _classify_diff() {
                 cur_file="${cur_file#b/}"
                 in_product_cpp=0
                 in_block_comment=0
+                in_log_stmt=0
+                log_depth=0
                 case "$cur_file" in
                     Source/Core/*.cpp|Source/Core/*.h|Source/Core/*.hpp|Source/Core/*.cc|Source/Core/*.cxx|\
                     Source/Plugins/*.cpp|Source/Plugins/*.h|Source/Plugins/*.hpp|Source/Plugins/*.cc|Source/Plugins/*.cxx|\
@@ -203,8 +223,8 @@ _classify_diff() {
                 esac
                 continue ;;
             '--- '*) continue ;;
-            'diff --git '*) in_block_comment=0; continue ;;
-            '@@'*) in_block_comment=0; continue ;;
+            'diff --git '*) in_block_comment=0; in_log_stmt=0; log_depth=0; continue ;;
+            '@@'*) in_block_comment=0; in_log_stmt=0; log_depth=0; continue ;;
         esac
 
         # Only added lines matter. Skip context / removed / metadata.
@@ -232,6 +252,32 @@ _classify_diff() {
         case "$line" in
             '/*'*'*/'*) : ;;            # opens and closes — handled by helper
             '/*'*) in_block_comment=1; continue ;;
+        esac
+
+        # Mid-LOG-statement continuation: keep consuming until parens balance. The whole
+        # multi-line LOG_*( ... ) is one logging-only-exempt unit — its continuation lines
+        # (format-string fragments, arg lists, the closing `);`) carry no runtime surface.
+        if [ "$in_log_stmt" -eq 1 ]; then
+            log_depth=$(( log_depth + $(_paren_delta "$line") ))
+            if [ "$log_depth" -le 0 ]; then
+                in_log_stmt=0
+                log_depth=0
+            fi
+            continue
+        fi
+
+        # A LOG_*( opener: if its parens are NOT balanced on this line, enter the multi-line
+        # accumulation state (the statement wraps across 2-3 lines). A single-line LOG_*(...);
+        # is already handled by _line_is_no_runtime_surface below.
+        case "$line" in
+            'LOG_DEBUG('*|'LOG_INFO('*|'LOG_WARN('*|'LOG_ERROR('*|'LOG_TRACE('*)
+                log_depth=$(_paren_delta "$line")
+                if [ "$log_depth" -gt 0 ]; then
+                    in_log_stmt=1
+                    continue
+                fi
+                # balanced on one line — exempt logging, fall through to confirm below.
+                ;;
         esac
 
         if ! _line_is_no_runtime_surface "$line"; then
@@ -293,6 +339,42 @@ diff --git a/Source/Core/src/Tracker/PlaneIssueMutation.cpp b/Source/Core/src/Tr
 +        LOG_WARN("PlaneClient::CreateIssue: response JSON failed to parse: %s", ex.what());
      } catch (...) {
 +        LOG_WARN("PlaneClient::CreateIssue: response JSON failed to parse: unknown exception");
+EOF
+
+    # 2-line wrapped LOG_ERROR — the format string + args span two lines; the whole call is
+    # one logging-only-exempt unit (the paren-balance accumulator joins them). Before the join
+    # fix the continuation line `param);` was classified standalone and fell through.
+    _expect EXEMPT "2-line wrapped LOG_ERROR" <<'EOF'
+diff --git a/Source/Core/src/Sync/Wrap2.cpp b/Source/Core/src/Sync/Wrap2.cpp
+--- a/Source/Core/src/Sync/Wrap2.cpp
++++ b/Source/Core/src/Sync/Wrap2.cpp
+@@ -10,0 +11,2 @@
++    LOG_ERROR("sync failed for ticket %s with status %d",
++              ticketKey.c_str(), httpStatus);
+EOF
+
+    # 3-line wrapped LOG_ERROR — opener + a middle arg line + the closing `);`. All three
+    # accumulate into one exempt logging statement.
+    _expect EXEMPT "3-line wrapped LOG_ERROR" <<'EOF'
+diff --git a/Source/Core/src/Sync/Wrap3.cpp b/Source/Core/src/Sync/Wrap3.cpp
+--- a/Source/Core/src/Sync/Wrap3.cpp
++++ b/Source/Core/src/Sync/Wrap3.cpp
+@@ -20,0 +21,3 @@
++    LOG_ERROR(
++        "create failed: %s (code %d)",
++        ex.what(), code);
+EOF
+
+    # A wrapped LOG_ERROR followed by REAL surface must still fall through — the accumulator
+    # closes on the balanced `);`, then the assignment is classified on its own merits.
+    _expect FALLTHROUGH "wrapped LOG_ERROR then a real assignment" <<'EOF'
+diff --git a/Source/Core/src/Sync/WrapMix.cpp b/Source/Core/src/Sync/WrapMix.cpp
+--- a/Source/Core/src/Sync/WrapMix.cpp
++++ b/Source/Core/src/Sync/WrapMix.cpp
+@@ -30,0 +31,3 @@
++    LOG_ERROR("partial: %s",
++              detail.c_str());
++    retries = retries + 1;
 EOF
 
     # LOG_WARN added inside an existing catch (no new clause).

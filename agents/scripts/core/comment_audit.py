@@ -84,6 +84,11 @@ KEEP_NOTE_RE = re.compile(r"//.*\b(kept:|reference impl|example:|e\.g\.|usage:)"
 _CODE_TERMINATOR_RE = re.compile(r"[;{}]\s*$")  # commented-out code ends in ; { } ; prose ~never does
 _CODE_OPERATOR_RE = re.compile(r"->|::|==|!=|<=|>=|&&|\|\||\+\+|--|[-+*/]=|=>")
 _WORD_RE = re.compile(r"[A-Za-z]{2,}")
+# A bare identifier-call (`foo()` / `foo(bar)`) that is NOT terminated by `;`/`{`/`}` is the #1
+# residual false positive: real commented-out code statements close with `;`/brace, whereas prose
+# that merely MENTIONS a function ("note foo() does X", "call reset() when done") leaves the call
+# mid-sentence. Demote such a line to prose when no code terminator is present.
+_BARE_CALL_RE = re.compile(r"[A-Za-z_]\w*\s*\([^)]*\)")
 
 
 def _comment_body(raw_line):
@@ -97,6 +102,12 @@ def is_prose_not_code(raw_line):
     body = _comment_body(raw_line)
     if not body or _CODE_TERMINATOR_RE.search(body) or _CODE_OPERATOR_RE.search(body):
         return False
+    # A line-leading identifier-call with NO trailing `;`/`{`/`}` is prose mentioning a function,
+    # not a commented-out statement (those close with a terminator). Demote it directly — the
+    # terminator + operator guards above already rule out genuine code, so a bare unterminated call
+    # ("foo() does X", "note bar()") is safe to treat as rationale.
+    if _BARE_CALL_RE.search(body):
+        return True
     words = _WORD_RE.findall(body)
     if len(words) < 4:
         return False
@@ -482,12 +493,15 @@ def run_selftest():
         "// Foo::Bar baz = qux();",
         "// while (i < n) {",
         "// std::vector<int> v = make();",
+        "// foo();",  # bare call WITH terminator — real commented-out code, must still flag
     ]
     prose = [
         "// reset the latch (mirroring the sibling early returns)",
         "// see computeValue() for details on the parser path",
         "// Resolve the fork point of ref and head (so the diff reflects only added lines)",
         "// drops cpr from the public include graph (about a hundred translation units)",
+        "// note foo() does X",   # line-leading unterminated ident-call mid-prose — must NOT flag
+        "// call reset() before reuse",
     ]
     fails = 0
     # selftest: asserts-failure — known commented-out-code fixtures must classify as flag-commented-code.
