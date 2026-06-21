@@ -50,6 +50,16 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 source "$REPO_ROOT/agents/scripts/core/merge-gates.sh" 2>/dev/null || true
 ALLOW_RE="${MERGE_GATES_BLOCK_ALLOWLIST_RE:-Coverage|Sanitizer|Perf PR-fast|Android security gate|Fuzz smoke}"
 
+# GOTCHA (c): `gh api <path>` REST paths must be SLASH-RELATIVE (`repos/...`,
+# `user`), NOT absolute (`/repos/...`). A leading slash makes gh build
+# `https://api.github.com//repos/...` (double slash) → an HTTP 404 that reads
+# like a missing resource. This wrapper strips any accidental leading `/` so a
+# caller can pass either form safely. Used for every REST (non-graphql) call.
+gh_rest() {
+    local path="${1#/}"; shift
+    gh api "$path" "$@"
+}
+
 read_required_contexts() {
     if [ -n "${PR_BLOCKED_WHY_REQUIRED_CONTEXTS+x}" ]; then
         printf '%s\n' "${PR_BLOCKED_WHY_REQUIRED_CONTEXTS//,/$'\n'}"
@@ -264,8 +274,32 @@ run_selftest() {
         fails=$((fails + 1))
     fi
 
+    # CASE 8 — GOTCHA (c): gh_rest strips a leading slash on a REST path so
+    # `gh api` never builds a double-slash URL. Stub `gh` to echo the path it
+    # received; assert both "/user" and "user" resolve to the same slash-relative
+    # form. (Verifies the Windows/Git-Bash REST-path convention the helper bakes in.)
+    local gh_stub_dir captured
+    gh_stub_dir=$(mktemp -d "${TMPDIR:-/tmp}/pr-blocked-why-ghstub.XXXXXX")
+    cat > "$gh_stub_dir/gh" <<'STUB'
+#!/usr/bin/env bash
+# Stub gh: print the api path argument so the caller can assert slash-stripping.
+[ "$1" = "api" ] && { echo "PATH=$2"; exit 0; }
+exit 0
+STUB
+    chmod +x "$gh_stub_dir/gh"
+    captured=$(PATH="$gh_stub_dir:$PATH" gh_rest /user --jq .login 2>/dev/null)
+    local captured2
+    captured2=$(PATH="$gh_stub_dir:$PATH" gh_rest user --jq .login 2>/dev/null)
+    rm -rf "$gh_stub_dir"
+    if [ "$captured" = "PATH=user" ] && [ "$captured2" = "PATH=user" ]; then
+        echo "selftest CASE8 PASS — gh_rest strips a leading slash on REST paths"
+    else
+        echo "selftest CASE8 FAIL — leading slash should be stripped (got: '$captured' / '$captured2')" >&2
+        fails=$((fails + 1))
+    fi
+
     if [ "$fails" -eq 0 ]; then
-        echo "PASS — pr-blocked-why --selftest (7/7)"
+        echo "PASS — pr-blocked-why --selftest (8/8)"
         return 0
     fi
     echo "FAIL — pr-blocked-why --selftest ($fails failing case(s))" >&2
@@ -294,7 +328,10 @@ main() {
         pr_json="$PR_BLOCKED_WHY_STUB_JSON"
     else
         command -v gh >/dev/null 2>&1 || { echo "pr-blocked-why: gh required" >&2; exit 2; }
-        [ -n "$orch" ] || orch=$(gh api user --jq .login 2>/dev/null) || orch=""
+        [ -n "$orch" ] || orch=$(gh_rest user --jq .login 2>/dev/null) || orch=""
+        # GOTCHA (a): derive owner/repo from `gh repo view --json nameWithOwner`,
+        # NEVER a hardcoded slug — a worktree of a fork (or a renamed repo) would
+        # otherwise query the wrong PR. nameWithOwner is "<owner>/<repo>".
         local nwo owner repo
         nwo=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null) || nwo=""
         owner="${nwo%%/*}"; repo="${nwo##*/}"
@@ -302,11 +339,34 @@ main() {
             echo "pr-blocked-why: cannot resolve owner/repo (run inside the repo)." >&2
             exit 2
         fi
-        if ! pr_json=$(gh api graphql -f owner="$owner" -f repo="$repo" -F pr="$pr" \
-                          -f query="$GRAPHQL" --jq '.data.repository.pullRequest' 2>&1); then
+        # GOTCHA (b): pass the GraphQL document via `-F query=@<file>` (a typed
+        # field that gh reads FROM the file), not inline `-f query="$GRAPHQL"`.
+        # Under Git-Bash on Windows a multi-line inline string is fragile —
+        # CRLF / quoting / the leading newline in $GRAPHQL can mangle the body
+        # before gh sees it. A heredoc to a tmpfile + `-F …=@file` sidesteps all
+        # shell quoting: gh slurps the raw bytes. (Distinct from `-f query=@file`,
+        # which sends the LITERAL "@file" string — only `-F` dereferences `@`.)
+        local query_file
+        query_file=$(mktemp "${TMPDIR:-/tmp}/pr-blocked-why-query.XXXXXX") || {
+            echo "pr-blocked-why: mktemp failed" >&2; exit 2; }
+        # shellcheck disable=SC2064  # expand query_file now for the EXIT trap
+        trap "rm -f '$query_file'" EXIT
+        cat > "$query_file" <<EOF
+$GRAPHQL
+EOF
+        # GOTCHA (d): read the response as UTF-8. `gh api --jq` uses gh's bundled
+        # jq (UTF-8 by construction), and we force a UTF-8 locale so the
+        # downstream standalone-`jq` parse in classify_blockers never mojibakes a
+        # multibyte path / author / em-dash check name under a cp1252 default.
+        if ! pr_json=$(LC_ALL="${LC_ALL:-C.UTF-8}" gh api graphql \
+                          -f owner="$owner" -f repo="$repo" -F pr="$pr" \
+                          -F query=@"$query_file" \
+                          --jq '.data.repository.pullRequest' 2>&1); then
             echo "pr-blocked-why: gh api graphql failed: $pr_json" >&2
+            rm -f "$query_file"; trap - EXIT
             exit 3
         fi
+        rm -f "$query_file"; trap - EXIT
     fi
 
     echo "PR #$pr — blocker analysis:"

@@ -7,6 +7,12 @@ query($owner: String!, $repo: String!, $pr: Int!) {
       headRefOid
       headRefName
       mergeStateStatus
+      # body — load-bearing for the cr-disposition trail (PR-3
+      # cr-out-of-band-disposition-trail): the disposition reason may be supplied
+      # as a `cr-disposition:<reason>` LABEL or as a grep-able marker line in the
+      # PR BODY. The filter folds a body-marker match into $crdisposition so the
+      # operator can attest the disposition either way.
+      body
       labels(first: 50) {
         pageInfo { hasNextPage }
         nodes { name }
