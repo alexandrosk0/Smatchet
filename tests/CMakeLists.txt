@@ -1045,6 +1045,14 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneActivityFeedPure.cpp"
     Core/GitHubActivityFeed.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubActivityFeedPure.cpp"
+    # Coverage ramp (global-floor 65->70) — the pure free-text issue-key scan half of
+    # ProjectResolver (FindFirstIssueKeyInText) that ProjectComponentResolution.test.cpp
+    # does not exercise. ProjectResolver.cpp is already linked above (line ~301).
+    Core/ProjectResolverPure.test.cpp
+    # Coverage ramp (global-floor 65->70) — pure Plane structured-query project-scoping
+    # helper (SetProjectInQuery). Depends only on nlohmann (already linked); no cpr/sqlite.
+    Core/PlaneProjectScope.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneProjectScope.cpp"
     # keyboard-shortcuts-rebindable PR1 — pure hotkey grammar (Parse/Stringify/
     # FindShortcutConflict; MatchHotkey is ImGui-IO-bound and excluded -> bucket-E)
     # + the rebindable keybinding table (Defaults() parity, JSON round-trip,
