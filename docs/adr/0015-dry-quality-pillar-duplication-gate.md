@@ -1,6 +1,13 @@
-# DRY is an enforced Quality Pillar via a WARN-first duplication delta-gate
+# DRY is an enforced Quality Pillar via a duplication delta-gate
 
-**Status:** accepted (2026-06-03)
+**Status:** accepted (2026-06-03); **graduated WARN→blocking 2026-06-21** (calibration complete — user decision)
+
+> **2026-06-21 graduation:** the WARN-first calibration phase is complete and the `duplication`
+> delta-gate is now **blocking** (`dup_audit.py --diff` exits 1 on a NEW non-exempt clone;
+> `test-lint-rules.sh` + the `dup-scan` CI job fail CLOSED). This was decided by the maintainer
+> rather than mechanically from the FP<10%-over-20-PRs trigger named below; the trigger remains the
+> documented rationale for *why* WARN-first preceded blocking. The grandfather + `SMATCHET_DEVIATION
+> (rule=duplication)` exemption machinery is unchanged — only the verdict severity flipped.
 
 DRY (Don't-Repeat-Yourself) becomes a first-class **enforced quality invariant**, not just a § Quality guideline. To house it, the existing **"UX Pillars"** umbrella is renamed **"Quality Pillars"** with two sub-groups: **UX** (1-4: Performance / No-freeze / No-crash / Accessibility — user-facing) and **Engineering** (5: DRY — code-maintainability). DRY is enforced by a **duplication delta-gate** that grandfathers all existing duplication and fails only NEW clones vs `origin/develop` — the same machinery as `function_size_audit.py` / `comment_audit.py`. The detector is a **custom Python scanner** (`dup_audit.py`, token-shingle rolling-hash), not jscpd/PMD-CPD, to match the repo's gate idiom and avoid a new CI toolchain. It ships **WARN-first** (advisory) and graduates to hard-block once a committed false-positive trigger is met (FP < 10% over ~20 PRs).
 

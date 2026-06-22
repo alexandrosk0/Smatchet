@@ -1,15 +1,13 @@
-name: Duplication scanner (advisory)
+name: Duplication scanner
 
 # DRY Quality Pillar (Engineering Pillar 5): runs agents/scripts/core/dup_audit.py
-# --diff over the PR's first-party C++ and surfaces NEW copy-paste clones as advisory
-# [dup] WARN lines. WARN-first (calibration phase per ADR-0015): this job ALWAYS
-# exits 0 and is NOT a required check — it does not block a merge yet. Graduation to
-# a blocking gate is the committed follow-up once the false-positive rate is < 10%
-# over ~20 PRs (plan: dry-pillar-dup-gate § Verification).
+# --diff over the PR's first-party C++ and BLOCKS on NEW copy-paste clones ([dup] FAIL
+# lines, exit 1). Graduated WARN→blocking on 2026-06-21 (ADR-0015 calibration complete).
+# De-duplicate or exempt a genuine NEW clone with SMATCHET_DEVIATION(rule=duplication).
 #
 # Pattern A "always reports" (docs/agent-rules/ci-required-check-pattern.md): NO
 # on.paths filter; the single job computes its own base and exits 0 when nothing is
-# in scope, so the context reports on every PR — but advisory, never required.
+# in scope, so the context reports on every PR.
 
 on:
   pull_request:
@@ -32,7 +30,7 @@ env:
 
 jobs:
   dup-scan:
-    name: Duplication scanner (advisory)
+    name: Duplication scanner
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
@@ -47,31 +45,33 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Scan for NEW copy-paste clones (advisory — never blocks)
+      - name: Scan for NEW copy-paste clones (blocks on a new clone)
         shell: bash
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             # NO --depth: a shallow base-ref fetch re-shallows develop after the
             # fetch-depth:0 checkout and breaks merge-base for any diff consumer
-            # (same defect as the Pillar-2 scanner, #1227(b)) — here it is masked
-            # because the job always exits 0, but keep it correct for consistency.
-            git fetch --no-tags origin "${{ github.base_ref }}" 2>/dev/null || true
+            # (same defect as the Pillar-2 scanner, #1227(b)).
+            git fetch --no-tags origin -- "${{ github.base_ref }}" 2>/dev/null || true
             base="origin/${{ github.base_ref }}"
           else
             base="${{ github.event.before }}"
           fi
-          echo "Duplication scanner (DRY pillar, WARN-first) — base: $base"
-          # dup_audit.py --diff is WARN-first: it prints [dup] WARN lines to stderr and ALWAYS
-          # exits 0. Capture its stderr to a file, echo it back to the log, and key the advisory
-          # notice off it. The job's own success is independent of whether any clone was found.
-          python3 agents/scripts/core/dup_audit.py --diff "$base" 2>/tmp/dup.warn || \
-            echo "dup-scan: dup_audit.py exited non-zero (infra error) — not failing the advisory job." >&2
+          echo "Duplication scanner (DRY pillar, blocking) — base: $base"
+          # dup_audit.py --diff prints [dup] FAIL lines to stderr and exits 1 on a NEW clone (exit 0
+          # clean, >=2 infra error). Capture stderr, echo it back, then fail CLOSED on its exit code.
+          rc=0
+          python3 agents/scripts/core/dup_audit.py --diff "$base" 2>/tmp/dup.warn || rc=$?
           cat /tmp/dup.warn >&2 || true
-          if grep -q '\[dup\] WARN' /tmp/dup.warn 2>/dev/null; then
-            n=$(grep -c '\[dup\] WARN' /tmp/dup.warn)
-            echo "::notice::Duplication scanner found $n NEW copy-paste clone(s) (advisory; not blocking). De-duplicate or exempt with SMATCHET_DEVIATION(rule=duplication)."
-          else
+          if [ "$rc" -eq 0 ]; then
             echo "Duplication scanner: no new clones."
+            exit 0
           fi
-          exit 0
+          if [ "$rc" -ge 2 ]; then
+            echo "::error::Duplication scanner infra error (exit $rc)."
+            exit "$rc"
+          fi
+          n=$(grep -c '\[dup\] FAIL' /tmp/dup.warn 2>/dev/null || echo 0)
+          echo "::error::Duplication scanner found $n NEW copy-paste clone(s). De-duplicate or exempt with SMATCHET_DEVIATION(rule=duplication)."
+          exit 1
