@@ -48,12 +48,16 @@ cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, c
                                const cpr::Parameters& params, const std::function<bool()>& cancelled = nullptr);
 cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                long connectTimeoutMs, long overallTimeoutMs);
+// PUT/PATCH/POST mutation helpers: `cancelled` (optional) is forwarded to the retry wrapper exactly
+// like the GET overloads above, so an in-flight tracker mutation aborts promptly when an automation
+// worker is asked to shut down (#1529 cancel plumbing extended to the mutation path). When null,
+// behaves exactly as before (no cancellation polling inside the retry loop).
 cpr::Response TrackerPostLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
-                                const std::string& body);
+                                const std::string& body, const std::function<bool()>& cancelled = nullptr);
 cpr::Response TrackerPutLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
-                               const std::string& body);
+                               const std::string& body, const std::function<bool()>& cancelled = nullptr);
 cpr::Response TrackerPatchLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
-                                 const std::string& body);
+                                 const std::string& body, const std::function<bool()>& cancelled = nullptr);
 void LogTrackerHttpResult(const char* clientName, const char* method, const std::string& url,
                           const cpr::Response& response);
 

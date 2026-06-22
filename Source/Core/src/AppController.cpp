@@ -78,6 +78,7 @@
 #include "GitHubFixtureBackend.h"
 
 #include "ITrackerBackendFactory.h"
+#include "ITrackerIssueMutations.h"
 
 #include "LinearFixtureBackend.h"
 
@@ -356,7 +357,8 @@ const std::chrono::milliseconds kHiddenContextGrace(30000);
 // src-only AppControllerImpl.h (included above) where its sol2 / subsystem member types are
 // complete. The out-of-line ctor/dtor here keep the incomplete-type unique_ptr<Impl> in the
 // header legal.
-AppController::AppController() : impl_(std::make_unique<Impl>(*this)) {
+AppController::AppController()
+    : automationShutdownCancel_(std::make_shared<std::atomic<bool>>(false)), impl_(std::make_unique<Impl>(*this)) {
     // Multi-grid (ADR-0018): the default context is created here — not lazily — and is
     // PERMANENT, so focusedContext()'s fallback stays valid for the controller's entire
     // lifetime (delegators, the deps adapter, and the destructor all assume it exists).
@@ -1070,6 +1072,16 @@ AppController::~AppController() {
 
         impl_->automationWorkerShuttingDown_.store(true);
     }
+
+    // Abort any in-flight blocking tracker mutation the worker is parked inside (UpdateIssueFields →
+    // TrackerPut/Patch/PostLogged). The retry/backoff loop polls this token before each attempt and at
+    // 50 ms granularity during backoff (#1529), so a job blocked in synchronous tracker glue — which
+    // executes no Lua and so never fires the count-hook — stops retrying immediately and unwinds. A
+    // single already-issued HTTP request still runs to its own kTrackerOverallTimeoutMs, but the
+    // pathological case (up to maxAttempts × timeout of serial retries) is gone, so the unconditional
+    // join() below completes within one request timeout at most — not the multi-retry worst case — and
+    // still without .detach (the worker returns from the cancelled call and breaks its loop).
+    automationShutdownCancel_->store(true);
 
     impl_->automationJobCv_.notify_all();
 
@@ -1933,6 +1945,12 @@ std::string AppController::InitBackends(TrackerConfig& cfgOut) {
     if (!ctx.Backend) {
         LOG_ERROR("AppController: tracker backend factory returned null for type '%s'.", activeTracker.c_str());
     } else {
+        // Thread the app-lifetime shutdown cancel token into the new backend's mutation path, so a
+        // blocking UpdateIssueFields running inside an automation worker aborts when shutdown raises
+        // the token (see ~AppController). No-op on backends without a cancellable mutation path.
+        if (ITrackerIssueMutations* mutations = ctx.Backend->Mutations()) {
+            mutations->SetMutationCancelToken(automationShutdownCancel_);
+        }
         LOG_INFO("AppController: %s backend initialized.", ctx.Backend->Connectivity().GetTrackerType().c_str());
     }
 

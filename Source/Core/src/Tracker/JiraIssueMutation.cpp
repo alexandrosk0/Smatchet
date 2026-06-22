@@ -100,7 +100,8 @@ void AppendTransitionFailure(const std::string& issueId, const std::string& audi
 
 bool JiraClient::UpdateIssueFieldsViaTransition(const std::string& issueId, const nlohmann::json& statusValue,
                                                 const std::string& base, const cpr::Header& headers,
-                                                const std::string& auditOp, std::string& outError) {
+                                                const std::string& auditOp, std::string& outError,
+                                                const std::function<bool()>& cancelled) {
     std::string targetStatusId;
     std::string targetStatusName;
     ParseTargetStatus(statusValue, targetStatusId, targetStatusName);
@@ -113,7 +114,7 @@ bool JiraClient::UpdateIssueFieldsViaTransition(const std::string& issueId, cons
     }
 
     const std::string transitionsUrl = base + "/rest/api/3/issue/" + UrlEncode(issueId) + "/transitions";
-    auto transitionsResp = TrackerGetLogged("JiraClient", transitionsUrl, headers);
+    auto transitionsResp = TrackerGetLogged("JiraClient", transitionsUrl, headers, cancelled);
     if (transitionsResp.status_code != 200) {
         outError = "Failed to fetch issue transitions: HTTP " + std::to_string(transitionsResp.status_code);
         if (!transitionsResp.text.empty()) {
@@ -153,7 +154,7 @@ bool JiraClient::UpdateIssueFieldsViaTransition(const std::string& issueId, cons
 
     nlohmann::json transitionBody = {{"transition", {{"id", transitionId}}}};
     const std::string transitionBodyStr = transitionBody.dump();
-    auto transitionResp = TrackerPostLogged("JiraClient", transitionsUrl, headers, transitionBodyStr);
+    auto transitionResp = TrackerPostLogged("JiraClient", transitionsUrl, headers, transitionBodyStr, cancelled);
     if (transitionResp.status_code != 204 && transitionResp.status_code != 200) {
         outError = "Failed to transition issue status: HTTP " + std::to_string(transitionResp.status_code);
         if (!transitionResp.text.empty()) {
@@ -175,12 +176,13 @@ bool JiraClient::UpdateIssueFieldsViaTransition(const std::string& issueId, cons
 
 bool JiraClient::UpdateIssueFieldsViaPut(const std::string& issueId, const nlohmann::json& fieldsAudited,
                                          const std::string& base, const cpr::Header& headers,
-                                         const std::string& auditOp, std::string& outError) {
+                                         const std::string& auditOp, std::string& outError,
+                                         const std::function<bool()>& cancelled) {
     nlohmann::json body = nlohmann::json::object();
     body["fields"] = fieldsAudited;
     const std::string updateUrl = base + "/rest/api/3/issue/" + UrlEncode(issueId);
     const std::string putBodyStr = body.dump();
-    auto response = TrackerPutLogged("JiraClient", updateUrl, headers, putBodyStr);
+    auto response = TrackerPutLogged("JiraClient", updateUrl, headers, putBodyStr, cancelled);
 
     if (response.status_code != 204 && response.status_code != 200) {
         outError = "Failed to update issue fields: HTTP " + std::to_string(response.status_code);
@@ -203,8 +205,20 @@ bool JiraClient::UpdateIssueFieldsViaPut(const std::string& issueId, const nlohm
     return true;
 }
 
+void JiraClient::SetMutationCancelToken(std::shared_ptr<std::atomic<bool>> token) {
+    // Single-writer (AppController, before any worker spawns / during backend create) — plain store.
+    mutationCancel_ = std::move(token);
+}
+
 TrackerError JiraClient::UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) {
     std::string outError;
+    // Observe the shutdown/abort token (if installed) on every retry attempt + backoff of the
+    // blocking mutation HTTP calls below, so an automation worker blocked here unwinds promptly when
+    // shutdown raises it (mutation-path twin of the search-path cancel plumbing, #1529). Captured by
+    // value: the shared_ptr keeps the token alive for the call even across a concurrent backend swap.
+    std::shared_ptr<std::atomic<bool>> cancelTok = mutationCancel_;
+    std::function<bool()> cancelled =
+        cancelTok ? std::function<bool()>([cancelTok]() { return cancelTok->load(); }) : std::function<bool()>();
     const std::string auditOp = BackendAuditTrail::MakeOperationId("issue-update");
     const bool auditIsTransition = fields.is_object() && fields.size() == 1 && fields.contains("status");
     const std::string auditAction = auditIsTransition ? "issue_transition" : "issue_update_fields";
@@ -263,9 +277,10 @@ TrackerError JiraClient::UpdateIssueFields(const std::string& issueId, const nlo
     // landmine L2); wrap their string error as Unknown — HTTP-status re-threading is a later slice
     // (#21b) when an IsRetryable() consumer arrives. Detail is preserved verbatim so the caller's
     // status-text parsing (ErrorTextContainsHttpStatus / IsTrackerTransportErrorText) is unaffected.
-    const bool ok = auditIsTransition
-                        ? UpdateIssueFieldsViaTransition(issueId, fields["status"], base, headers, auditOp, outError)
-                        : UpdateIssueFieldsViaPut(issueId, fieldsAudited, base, headers, auditOp, outError);
+    const bool ok =
+        auditIsTransition
+            ? UpdateIssueFieldsViaTransition(issueId, fields["status"], base, headers, auditOp, outError, cancelled)
+            : UpdateIssueFieldsViaPut(issueId, fieldsAudited, base, headers, auditOp, outError, cancelled);
     if (!ok) {
         return TrackerErrorUnknown(outError); // TODO(#21b later slice): re-thread HTTP status from Via* helpers
     }

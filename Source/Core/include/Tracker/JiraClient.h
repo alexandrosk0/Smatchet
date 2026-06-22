@@ -15,6 +15,8 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -45,6 +47,7 @@ class JiraClient : public ITrackerBackend,
     // backend clients; owner=tracker-backend; revisit=2026-12-31)
     bool FetchUsers(const TrackerConfig& cfg, std::vector<TrackerUser>& outUsers, std::string& outError);
 
+    void SetMutationCancelToken(std::shared_ptr<std::atomic<bool>> token) override;
     TrackerError UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) override;
     TrackerError UpdateField(const std::string& issueId, const TrackerField& field,
                              const std::vector<std::string>& values) override;
@@ -202,13 +205,19 @@ class JiraClient : public ITrackerBackend,
     // scan loop; raised by ClearUserActivity from any thread).
     std::atomic<bool> activityCancel_{false};
 
+    // Shutdown/abort cancel token shared with AppController. Set via SetMutationCancelToken; when
+    // raised, an in-flight UpdateIssueFields HTTP retry loop aborts promptly so an automation
+    // worker blocked in a mutation unwinds at shutdown (mutation-path twin of the search-path
+    // cancel plumbing, #1529). A shared_ptr<atomic<bool>> so the token outlives a backend swap.
+    std::shared_ptr<std::atomic<bool>> mutationCancel_;
+
     // UpdateIssueFields sub-paths — split to keep the public orchestrator within size caps.
     bool UpdateIssueFieldsViaTransition(const std::string& issueId, const nlohmann::json& statusValue,
                                         const std::string& base, const cpr::Header& headers, const std::string& auditOp,
-                                        std::string& outError);
+                                        std::string& outError, const std::function<bool()>& cancelled);
     bool UpdateIssueFieldsViaPut(const std::string& issueId, const nlohmann::json& fieldsAudited,
                                  const std::string& base, const cpr::Header& headers, const std::string& auditOp,
-                                 std::string& outError);
+                                 std::string& outError, const std::function<bool()>& cancelled);
 };
 
 #endif
