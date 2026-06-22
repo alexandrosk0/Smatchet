@@ -864,6 +864,20 @@ static bool RenderOneFrame(GLFWwindow* window, SmatchetUI& mainWindow, AppContro
     // backgrounds — viewport background should never visibly differ from panels.
     const ImVec4 bg = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
     (void)clear_color;
+    // pink-clear dock-gap scan (pink-clear-dock-gap-scan): a scenario may arm a
+    // transient clear-color override for THIS frame so any uncovered dock gap
+    // renders in the sentinel color (typically magenta 255,0,255) instead of the
+    // theme background. TRANSIENT — read then clear the flag every frame (mirrors
+    // the redaction-font swap); a scenario re-arms it per warm-up frame, so the
+    // normal theme clear is restored the moment it stops re-arming. GL-only: the
+    // GL renderer is the byte-stable bucket-C lane CI pins the goldens to; the DX12
+    // BeginFrame clear keeps the theme bg.
+    const bool clearOverride = g_ui.requestClearColorActive;
+    const ImVec4 clearColor = clearOverride
+                                  ? ImVec4(g_ui.requestClearColorR, g_ui.requestClearColorG, g_ui.requestClearColorB,
+                                           g_ui.requestClearColorA)
+                                  : bg;
+    g_ui.requestClearColorActive = false;
     ImDrawData* drawData = ImGui::GetDrawData();
     smatchet::ui::GuardImGuiDynamicTextures(drawData); // [P0 #1122] shared dynamic-texture guard
     if (boot.renderer == smatchet::standalone::StandaloneRenderer::Dx12) {
@@ -876,7 +890,8 @@ static bool RenderOneFrame(GLFWwindow* window, SmatchetUI& mainWindow, AppContro
         }
     } else {
         glViewport(0, 0, display_w, display_h);
-        glClearColor(bg.x * bg.w, bg.y * bg.w, bg.z * bg.w, bg.w);
+        glClearColor(clearColor.x * clearColor.w, clearColor.y * clearColor.w, clearColor.z * clearColor.w,
+                     clearColor.w);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(drawData);
         glfwSwapBuffers(window);

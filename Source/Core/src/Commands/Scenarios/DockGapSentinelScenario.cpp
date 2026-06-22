@@ -80,12 +80,20 @@ class DockGapSentinelScenario : public IScenario {
         g_ui.requestWindowWidth = captureSize_.Width;
         g_ui.requestWindowHeight = captureSize_.Height;
         g_ui.requestWindowResize = true;
+
+        // Arm the pink (magenta) clear-color override on the first frame too.
+        ArmPinkClear();
     }
 
     void OnFrame(AppController& /*app*/, int /*frameIndex*/) override {
-        // Nothing to drive — the dock is already in its steady-state layout
-        // by the time SmatchetUI::Draw runs. Warm-up frames give the docking
-        // builder time to settle from a cold-spawn state.
+        // The dock is already in its steady-state layout by the time
+        // SmatchetUI::Draw runs; warm-up frames give the docking builder time to
+        // settle from a cold-spawn state. Re-arm the transient pink clear-color
+        // EVERY warm-up frame: Source/Standalone/main.cpp consumes (clears) the
+        // override each frame, so re-arming holds the diagnostic clear active right
+        // through to the captured frame. Any viewport pixel the dock leaves
+        // uncovered then renders magenta (255,0,255) instead of the theme bg.
+        ArmPinkClear();
     }
 
     bool IsDone(int frameIndex) const override { return frameIndex >= warmupFrames_; }
@@ -96,6 +104,13 @@ class DockGapSentinelScenario : public IScenario {
         // request and write the PPM. On DX12 the request flag has no
         // consumer; we still report what we asked for so the bash driver
         // can detect the platform gap.
+        // Keep the pink clear-color armed on the captured frame too: OnFinish runs
+        // in the SAME runner tick as the final OnFrame, but arm here as well so the
+        // captured frame is pink even if the warm-up window is a single frame. Any
+        // magenta in the capture = a real dock gap (the bash driver asserts the
+        // pink-pixel count is zero).
+        ArmPinkClear();
+
         g_ui.requestScreenshotPath = screenshotPath_;
         g_ui.requestScreenshot = true;
 
@@ -106,10 +121,26 @@ class DockGapSentinelScenario : public IScenario {
         out["windowHeight"] = captureSize_.Height;
         out["screenshotPath"] = screenshotPath_;
         out["captureRequested"] = true;
+        // Echo the sentinel color so the bash driver knows which RGB to count.
+        out["pinkClear"] = true;
+        out["sentinelR"] = 255;
+        out["sentinelG"] = 0;
+        out["sentinelB"] = 255;
         return out;
     }
 
   private:
+    // Arm the transient magenta clear-color override for the current frame. The
+    // standalone consumer (Source/Standalone/main.cpp) reads + clears it each frame,
+    // so this is re-called every warm-up frame to hold the diagnostic clear active.
+    static void ArmPinkClear() {
+        g_ui.requestClearColorActive = true;
+        g_ui.requestClearColorR = 1.0f; // 255
+        g_ui.requestClearColorG = 0.0f; // 0
+        g_ui.requestClearColorB = 1.0f; // 255
+        g_ui.requestClearColorA = 1.0f;
+    }
+
     int warmupFrames_ = 8;
     ScenarioCaptureSize captureSize_;
     std::string screenshotPath_;
