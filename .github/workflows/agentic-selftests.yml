@@ -70,5 +70,8 @@ jobs:
           shellcheck --version | head -2
           python3 --version
 
+      - name: Provision .claude/ adapter (gitignored — hooks/agents the guard + lint-hook + adapter suites source)
+        run: bash agents/scripts/core/setup-harness.sh claude-code
+
       - name: test-all.sh --ci — agentic self-test aggregator
         run: bash scripts/dev/test-all.sh --ci
