@@ -96,7 +96,10 @@ except OSError:
 # OpenCppCoverage Cobertura: <class name="..." filename="...\path\Unit.cpp" ...>.
 # Match the basename token + a C/C++ extension, separator- and case-agnostic, with
 # a word boundary after the ext so "JqlEscape" never matches "JqlEscapeExtra".
-unit_re = re.compile(r"[\\/]" + re.escape(unit) + r"\.(?:cpp|cc|cxx)\b", re.IGNORECASE)
+# The leading separator is OPTIONAL ((^|[\\/])) so a basename-only filename in the
+# XML (e.g. "JqlEscape.cpp" with no path) matches as well as "src/foo/JqlEscape.cpp";
+# anchoring to start-or-separator still prevents "ExtraJqlEscape.cpp" from matching.
+unit_re = re.compile(r"(?:^|[\\/])" + re.escape(unit) + r"\.(?:cpp|cc|cxx)\b", re.IGNORECASE)
 covered = 0
 total = 0
 matched = False
@@ -260,6 +263,22 @@ if [ "${1:-}" = "--selftest" ]; then
     ( SMATCHET_PERFILE_OOB="" enforce "$st_tmp/boundary.xml" "$DEFAULT_FLOOR" ) >/dev/null 2>&1
     rc=$?
     [ "$rc" -eq 0 ] || { echo "selftest FAIL: exactly-90% boundary did not PASS (rc=$rc)" >&2; st_fail=1; }
+
+    # (7) BASENAME-ONLY filename (no path separator) must still MATCH the unit and be
+    # enforced — not mis-classified as MISSING. JqlEscape 1/5 = 20% with a bare
+    # "JqlEscape.cpp" filename must FAIL (proving the leading-separator-optional regex
+    # matched; a MISSING classification would fail-OPEN to PASS and hide the rot).
+    {
+        echo '<?xml version="1.0"?><coverage><packages><package><classes>'
+        echo '<class filename="JqlEscape.cpp"><lines>'
+        echo '<line number="1" hits="1"/>'
+        for i in 2 3 4 5; do echo "<line number=\"$i\" hits=\"0\"/>"; done
+        echo '</lines></class>'
+        echo '</classes></package></packages></coverage>'
+    } > "$st_tmp/basename.xml"
+    ( SMATCHET_PERFILE_OOB="" enforce "$st_tmp/basename.xml" "$DEFAULT_FLOOR" ) >/dev/null 2>&1
+    rc=$?
+    [ "$rc" -eq 1 ] || { echo "selftest FAIL: basename-only filename did not MATCH+FAIL (rc=$rc, expected 1 — likely mis-classified MISSING)" >&2; st_fail=1; }
     set -e
 
     if [ "$st_fail" -eq 0 ]; then

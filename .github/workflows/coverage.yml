@@ -100,7 +100,7 @@ jobs:
           # never affects compiled coverage. grep -E over the changed-file list.
           if printf '%s\n' "$changed" \
             | grep -vE '\.md$' \
-            | grep -qE '^(Source/Core/|Source/Plugins/|tests/|CMakeLists\.txt$|CMakePresets\.json$|\.github/workflows/coverage\.yml$|scripts/dev/coverage\.sh$)'; then
+            | grep -qE '^(Source/Core/|Source/Plugins/|tests/|CMakeLists\.txt$|CMakePresets\.json$|\.github/workflows/coverage\.yml$|scripts/dev/coverage\.sh$|scripts/dev/coverage-perfile-gate\.sh$|tests/bats/coverage_perfile_gate\.bats$)'; then
             echo "run=true" >> "$GITHUB_OUTPUT"
             echo "coverage-relevant changes detected — running full coverage gate."
           else
