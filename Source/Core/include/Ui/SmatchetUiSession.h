@@ -865,6 +865,20 @@ struct UiDrawSession {
     /// attached bug-report screenshot is █-redacted (sharp, layout-preserving).
     bool requestRedactFontThisFrame = false;
 
+    /// pink-clear dock-gap scan (pink-clear-dock-gap-scan) — when true for a frame,
+    /// the standalone render path uses requestClearColor{R,G,B,A} as the GL clear
+    /// color INSTEAD of the theme WindowBg, so any uncovered dock gap renders in the
+    /// sentinel color (typically magenta 255,0,255). TRANSIENT: the consumer in
+    /// Source/Standalone/main.cpp reads then clears this flag every frame (mirrors
+    /// requestRedactFontThisFrame), so the normal theme clear is restored the moment
+    /// the override is no longer re-set. A scenario re-sets it each warm-up frame to
+    /// hold the diagnostic clear for the captured frame. No-op on the DX12 path.
+    bool requestClearColorActive = false;
+    float requestClearColorR = 0.0f;
+    float requestClearColorG = 0.0f;
+    float requestClearColorB = 0.0f;
+    float requestClearColorA = 1.0f;
+
     // --- "Log a Bug" modal (docs/plans/shipped/log-a-bug-github.md Slice 4) ---
     // All bugReport* fields are read/written ONLY on the UI thread (the worker posts
     // its result back via mainThreadDispatcher), so no extra synchronisation is needed.

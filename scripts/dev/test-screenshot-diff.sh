@@ -97,6 +97,29 @@ if [ -z "${SCREENSHOT_DIFF_BIN:-}" ]; then
         tests/support/ScreenshotDiffMain.cpp
 fi
 
+# pink-clear dock-gap scan (pink-clear-dock-gap-scan): the dock-gap-sentinel
+# scenario arms a magenta clear-color during warm-up so any uncovered viewport
+# pixel renders pink. This helper counts sentinel pixels; the gate asserts zero.
+PINK_BIN="${PINK_PIXEL_COUNT_BIN:-$TMP_DIR/pink_pixel_count}"
+if [ -z "${PINK_PIXEL_COUNT_BIN:-}" ]; then
+    GXX="${CXX:-g++}"
+    if ! command -v "$GXX" >/dev/null 2>&1; then
+        echo "FAIL: $GXX not found. Set PINK_PIXEL_COUNT_BIN to a prebuilt helper or install g++." >&2
+        exit 2
+    fi
+    echo "[test-screenshot-diff] compiling pink-pixel-count helper via $GXX..."
+    "$GXX" -std=c++14 -O2 -Wall -Wextra -Wpedantic \
+        -Itests/support -ISource/Core/ThirdParty \
+        -o "$PINK_BIN" \
+        tests/support/PinkPixelCountMain.cpp
+fi
+# Sentinel RGB + tolerance + max-allowed for the pink-clear dock-gap assertion.
+PINK_RGB_R=255
+PINK_RGB_G=0
+PINK_RGB_B=255
+PINK_TOL="${PINK_TOLERANCE:-8}"
+PINK_MAX_ALLOWED="${PINK_MAX_ALLOWED:-0}"
+
 PASSED=0
 FAILED=0
 SCENARIOS=(
@@ -171,6 +194,27 @@ run_scenario() {
         return
     fi
     assert "$scen captureRequested" "ok"
+
+    # pink-clear dock-gap scan (pink-clear-dock-gap-scan): the dock-gap-sentinel
+    # scenario armed a magenta clear-color over its warm-up frames so any viewport
+    # region the dockspace fails to cover renders pink. Assert ZERO sentinel pixels
+    # in the capture — a hard, headless, golden-independent gate (runs even in
+    # bootstrap mode, since it doesn't compare against a committed golden). Any
+    # pink = a real dock gap leak. Skip for non-sentinel scenarios.
+    if [ "$scen" = "dock-gap-sentinel" ]; then
+        local pink_out pink_rc
+        set +e
+        pink_out=$("$PINK_BIN" "$captured" "$PINK_RGB_R" "$PINK_RGB_G" "$PINK_RGB_B" "$PINK_TOL" \
+            "$PINK_MAX_ALLOWED" 2>&1)
+        pink_rc=$?
+        set -e
+        echo "  $pink_out"
+        if [ "$pink_rc" -eq 0 ]; then
+            assert "$scen pink-pixels == 0 (no dock gap)" "ok"
+        else
+            assert "$scen pink-pixels == 0 (no dock gap)" "$pink_out"
+        fi
+    fi
 
     # Bootstrap mode: copy capture → golden. No diff, always PASS.
     if [ "$BOOTSTRAP" -eq 1 ]; then
