@@ -53,7 +53,7 @@ jobs:
             # NO --depth: a shallow base-ref fetch re-shallows develop after the
             # fetch-depth:0 checkout and breaks merge-base for any diff consumer
             # (same defect as the Pillar-2 scanner, #1227(b)).
-            git fetch --no-tags origin "${{ github.base_ref }}" 2>/dev/null || true
+            git fetch --no-tags origin -- "${{ github.base_ref }}" 2>/dev/null || true
             base="origin/${{ github.base_ref }}"
           else
             base="${{ github.event.before }}"
