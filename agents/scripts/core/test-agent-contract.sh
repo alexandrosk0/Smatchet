@@ -6,7 +6,7 @@
 #   2. Every Maintenance agent has 4 required headings (Pre-flight / Mutations applied / Regression gate / Residue requiring user action).
 #   3. Every Diagnostic-read-edit agent (debug-detective) has 6 required headings.
 #   4. Every agent prompt contains the `## Outcome:` mandate text.
-#   5. Banner `model/effort` substring matches frontmatter `harness-hints.claude-code.{model,effort}` byte-for-byte.
+#   5. Banner identity line matches frontmatter: `🤖 AGENT: <name> · <model>/<effort> · <read-only|read-edit>` (name + model/effort + read-scope; version via check 10).
 #   6. "$(agent_path architect)" does NOT contain a `git commit` self-directive.
 #   7. docs/agent-rules/delegation.md § Agent output contract has 6 class rows (post-H9 Design class added).
 #   7b. architect.md emits the Design-class sections (Goal / Affected components / Interface contracts / Risks / Implementation handoff).
@@ -116,10 +116,15 @@ else
 fi
 
 # -------------------------------------------------------------------------
-# 5. Banner model/effort substring matches frontmatter harness-hints.claude-code.{model,effort}.
+# 5. Banner identity line matches frontmatter: every agent must open with
+#    `🤖 AGENT: <name> · <model>/<effort> · <read-only|read-edit> · v<N>` so the
+#    name + model + effort + write-scope it ran under is printed at the top of
+#    its output. Asserts name, model/effort, AND the read-only token (the
+#    `read-write` perf-gatekeeper drift slipped past the old model/effort-only
+#    substring check). Version (`· vN`) is asserted by check 10.
 # -------------------------------------------------------------------------
 echo
-echo "[5/14] Banner ↔ frontmatter model/effort match"
+echo "[5/14] Banner ↔ frontmatter identity (name · model/effort · read-scope)"
 banner_mismatch=()
 for f in $(agent_files); do
   base=$(basename "$f")
@@ -127,14 +132,20 @@ for f in $(agent_files); do
   fm_model=$(awk '/^harness-hints:/,/^---/' "$f" | grep -E "^    model:" | head -1 | awk -F': *' '{print $2}' | tr -d '[:space:]')
   fm_effort=$(awk '/^harness-hints:/,/^---/' "$f" | grep -E "^    effort:" | head -1 | awk -F': *' '{print $2}' | tr -d '[:space:]')
   [[ -z "$fm_model" || -z "$fm_effort" ]] && continue  # Agent has no claude-code hint; skip.
-  expected="$fm_model/$fm_effort"
+  fm_name=$(grep -m1 -E "^name:" "$f" | awk -F': *' '{print $2}' | tr -d '[:space:]')
+  fm_ro=$(grep -m1 -E "^read-only:" "$f" | awk -F': *' '{print $2}' | tr -d '[:space:]')
+  if [[ "$fm_ro" == "true" ]]; then ro_tok="read-only"; else ro_tok="read-edit"; fi
+  # Anchor to the OPENING banner (`🤖 AGENT: …`) — the identity line printed at
+  # the top of the agent's output — so a one-sided drift in only the open banner
+  # is still caught (the close `✅ END —` half shares the line).
+  expected="🤖 AGENT: ${fm_name} · ${fm_model}/${fm_effort} · ${ro_tok}"
   banner=$(grep -m1 -F '**Banner**' "$f" || true)
   if ! echo "$banner" | grep -qF "$expected"; then
-    banner_mismatch+=("$base: expected $expected; banner: $banner")
+    banner_mismatch+=("$base: expected '$expected'; banner: $banner")
   fi
 done
 if [[ ${#banner_mismatch[@]} -eq 0 ]]; then
-  check_pass "all banners match frontmatter"
+  check_pass "all banners match frontmatter (name · model/effort · read-scope)"
 else
   for m in "${banner_mismatch[@]}"; do echo "    $m"; done
   check_fail "${#banner_mismatch[@]} banner mismatches"

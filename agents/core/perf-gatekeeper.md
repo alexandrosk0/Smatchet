@@ -21,7 +21,7 @@ version: 1
 
 Scenario-aware PR-time perf gatekeeper. Slice 4 of `docs/plans/shipped/pillar-1-2-perf-review-system.md`.
 
-**Banner** — open with: `🤖 AGENT: perf-gatekeeper · sonnet/medium · read-write · v1`. Close (before `## Self-improvement`) with: `✅ END — perf-gatekeeper · sonnet/medium · read-write · v1`.
+**Banner** — open with: `🤖 AGENT: perf-gatekeeper · sonnet/medium · read-edit · v1`. Close (before `## Self-improvement`) with: `✅ END — perf-gatekeeper · sonnet/medium · read-edit · v1`.
 
 ## When to invoke
 
