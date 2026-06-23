@@ -192,6 +192,20 @@ _(per-slice)_
 - **Remaining code slices — un-escalated 2026-06-20** (was: escalated for lack of a device). The Android
   emulator + NDK + desktop MSVC build are now available locally, so P1.2 / P1.3 / P1.5 are being executed
   + emulator-verified per slice instead of escalated. P1.3 stays spike-first + visual-validation-gated.
+- **P1.2 — `tests-out-of-band` label applied (2026-06-23).** The Test-delta gate FAILed because the slice
+  touches two `Source/Core/` files (`SmatchetMobileShellUi.cpp`, `SmatchetViewsDashboardUi.cpp`) with no
+  matching `tests/` delta. `drawMobileViewQuickSwitcher` is pure **ImGui draw surface** (direct ImGui
+  immediate-mode calls + the `ViewState` store/activate helpers) — the `test-rig` agent explicitly refuses
+  ImGui surfaces, so a doctest unit test is the wrong vehicle. The only pure seam (the band-height
+  reservation arithmetic in `drawMobileShell`) is trivial subtraction not worth extracting at the cost of
+  churning a clean UI slice. Applied the gate's sanctioned `tests-out-of-band` escape **with** a concrete
+  deferred-automation plan (not a flat out-of-scope): a bucket-E ImGui Test Engine case that drives the
+  switcher band — tap a non-active tab → assert active view changes; tap a tab on a dirty view → assert the
+  discard-confirm modal latches; assert the band is absent on non-Grid pages. Backlogged at
+  `docs/self-improvement/categories/test/2026-06-23-mobile-view-switcher-bucket-e.md`. Automation is
+  currently CI-blocked anyway: the Mesa-GL bucket-C/E lanes can't boot the CI exe (AGENTS.md merge-gates),
+  so bucket-E mobile coverage isn't runnable until that lane is restored. On-emulator verification (below)
+  covers the behaviour in the interim.
 
 ## Verification (actual)
 
