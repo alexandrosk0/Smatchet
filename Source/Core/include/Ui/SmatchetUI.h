@@ -274,6 +274,13 @@ class SmatchetUI {
     // ViewsDashboardDrawCtx + activate closures and reuse drawViewsSidebar
     // verbatim; selecting a view closes the drawer.
     void drawMobileDrawerViews(AppController& app, UiDrawSession& d);
+    // P1.2 — touch view quick-switcher band drawn in the Grid page's chrome (between the app
+    // bar and the content dock). A horizontal-scroll strip of saved-view tabs (active one
+    // highlighted) + a trailing New-view button, routing through the same dirty-aware
+    // viewsRequestActivate / viewsCreateNewView the drawer uses. Defined in
+    // SmatchetViewsDashboardUi.cpp where the ViewState store + activate helpers are local.
+    // bandHeight is the switcher-band height reserved by drawMobileShell.
+    void drawMobileViewQuickSwitcher(AppController& app, UiDrawSession& d, float bandHeight);
     // Builds the per-frame ViewsDashboardDrawCtx shared by the two mobile Views paths
     // (drawer sidebar + the confirm modals), so neither rebuilds the closure set. Defined
     // in SmatchetViewsDashboardUi.cpp where ViewsDashboardDrawCtx is fully visible; the

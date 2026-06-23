@@ -263,6 +263,60 @@ void SmatchetUI::drawMobileDrawerViews(AppController& app, UiDrawSession& d) {
     drawViewsSidebar(ctx);
 }
 
+// P1.2 — touch view quick-switcher band: a horizontal-scroll strip of saved-view tabs shown in
+// the grid area (between the app bar and the content dock) so switching saved views needs no
+// drawer trip or desktop menu bar. The active view is highlighted; a tap routes through the same
+// dirty-aware viewsRequestActivate the drawer uses — a dirty switch latches the shell-level
+// discard-confirm modal, kept rendering every frame by drawMobileViewsModals. A trailing "+"
+// reuses viewsCreateNewView (deferred-create latch). Both helpers dereference *activeView, so the
+// band is skipped when there is no active view. The chosen tab id is applied AFTER the loop so no
+// store/activeView reference is used across a potential activation mutation. Mobile-only path.
+void SmatchetUI::drawMobileViewQuickSwitcher(AppController& app, UiDrawSession& d, float bandHeight) {
+    ViewState.EnsureLoaded(d.cfg);
+    const ViewsStore& store = ViewState.GetStoreMutable();
+    const ViewDefinition* activeView = ViewState.GetActiveView();
+    if (!activeView) {
+        return;
+    }
+    const std::string& activeId = activeView->Id;
+
+    std::string requestedId; // a tap latches the target id; activation runs after the loop
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.0f, ImGui::GetStyle().ItemSpacing.y));
+    if (ImGui::BeginChild("##MobileViewSwitcher", ImVec2(0.0f, bandHeight), false,
+                          ImGuiWindowFlags_HorizontalScrollbar)) {
+        for (std::size_t i = 0; i < store.Views.size(); ++i) {
+            const ViewDefinition& v = store.Views[i];
+            if (i > 0) {
+                ImGui::SameLine();
+            }
+            const bool active = (v.Id == activeId);
+            if (active) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+            }
+            ImGui::PushID(static_cast<int>(i));
+            if (ImGui::Button(v.Name.c_str()) && v.Id != activeId) {
+                requestedId = v.Id;
+            }
+            ImGui::PopID();
+            if (active) {
+                ImGui::PopStyleColor();
+            }
+        }
+        if (!store.Views.empty()) {
+            ImGui::SameLine();
+        }
+        if (ImGui::Button("+##MobileNewView")) {
+            viewsCreateNewView(d, activeView); // deferred-create latch; consumed next frame
+        }
+    }
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+
+    if (!requestedId.empty()) {
+        viewsRequestActivate(app, d, activeView, requestedId);
+    }
+}
+
 void SmatchetUI::drawMobileViewsModals(AppController& app, UiDrawSession& d) {
     // #1117: render the discard/delete-confirm popups regardless of drawer state. The drawer's
     // requestActivate latches viewsShowDiscardConfirm on a dirty switch, so the modal must be
