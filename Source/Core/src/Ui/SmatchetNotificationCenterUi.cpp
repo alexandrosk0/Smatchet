@@ -12,11 +12,11 @@
 #include <string>
 #include <vector>
 
-// SmatchetDrawNotificationCenterWindow — see SmatchetNotificationCenterUi.h. Lists the toast
-// manager's bounded history newest-first; a clicked row's RowAction is captured and invoked
-// AFTER the End()/iteration so an action that pushes a toast or clears history cannot invalidate
-// the vector reference mid-loop. Begin's own visibility bool (&d.showNotificationCenterWindow)
-// drives the title-bar X; the menu / command / toast-click set it true elsewhere.
+// SmatchetDrawNotificationCenterWindow — see the header. Lists the toast manager's bounded history
+// newest-first. A clicked row's action is captured and run only after the window is closed for the
+// frame, so an action that pushes a toast or clears history cannot invalidate the vector reference
+// the row loop walks. The window's visibility bool drives the title-bar close; the menu, command,
+// and toast-click open it elsewhere.
 void SmatchetDrawNotificationCenterWindow(UiDrawSession& d) {
     if (!d.showNotificationCenterWindow) {
         return;

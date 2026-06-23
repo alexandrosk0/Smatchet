@@ -2,12 +2,7 @@
 
 struct UiDrawSession;
 
-// Notification Center (ticket-change-monitor plan, S3 / § Files-to-modify #13a) — a session-long,
-// newest-first log of every toast the app has raised. Reads the bounded history ring exposed by
-// SmatchetToastManager::History() (shipped in S2) and lists timestamp · type · title · message
-// per row; a row click invokes that entry's RowAction (ticket entries focus the ticket once
-// FocusTicketInGrid lands — a follow-up; informational entries are inert). A "Clear all" button
-// empties the ring. Opened by the View menu, the `notifications` command, or a transient toast's
-// own click (which raises SmatchetToastManager::RequestOpenCenter, consumed in SmatchetUI::Draw).
-// UI-thread only — drawn from SmatchetUI::Draw; the manager singleton is not thread-safe.
+// Notification Center (ticket-change-monitor plan, S3) — a session-long, newest-first log of every
+// toast, read from the toast manager's bounded history ring (S2); each row runs its optional row
+// action on click. Opened from the View menu, the notifications command, or a toast click. See cpp.
 void SmatchetDrawNotificationCenterWindow(UiDrawSession& d);
