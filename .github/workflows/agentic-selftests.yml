@@ -1,0 +1,77 @@
+name: Agentic self-tests
+
+# CI backstop for the agentic harness's own test suite (the bats layer + the
+# shell self-tests under agents/scripts/{core,project} and scripts/dev). These
+# run via scripts/dev/test-all.sh, which historically ran ONLY at a local
+# pre-push gate that nothing actually invoked — so a regression in the lock /
+# guard / merge-gate-logic / session-registry / plan + contract gates could
+# merge green (the "gate, don't trust" suite gated nowhere). This lane is that
+# missing backstop.
+#
+# Runs on ubuntu-latest where shellcheck is preinstalled; bats is installed via
+# apt and python3 is preinstalled. `test-all.sh --ci` treats a missing built
+# Smatchet.exe (exit 2) as a clean SKIP and denylists suites needing a service
+# unavailable here (Perforce, live gh) or tracked-pending-fix — so only genuine
+# assertion failures in the deterministic agentic suite red this lane. The
+# denylist + its reasons live in scripts/dev/test-all.sh (CI_SKIP_RE).
+#
+# Follow-ups (tracked, not yet gated here): the merge-watcher / pr-status-watch
+# bats suites (registry/state-machine + live gh seams), the lint-rules-bats
+# comment_audit `--fix HEAD` case, and the Mesa-bound bucket-lane smoke — un-skip
+# these as each is hardened to run headless. This check is not yet a
+# branch-protection REQUIRED context (that needs project.config.json +
+# setup-branch-protection.sh); until then the merge-gates poller still blocks on
+# it being red per AGENTS.md ("never merge past ANY red check").
+
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [develop]
+  # Future-proof for a GitHub merge queue: this lane runs test-all.sh against the
+  # working tree (no PR context), so it reports a real terminal status on the
+  # synthetic merge_group ref with no self-gate needed.
+  merge_group:
+
+concurrency:
+  group: agentic-selftests-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Force JS actions onto Node 24 (Node 20 deprecated 2026-06-16).
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+permissions:
+  contents: read
+
+jobs:
+  agentic-selftests:
+    name: Agentic self-tests (bats)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # Full history: several gates are merge-base deltas vs origin/develop
+          # (dup_audit / agent_size_audit / test-lint-rules / portable-purity).
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Ensure origin/develop ref (for delta-vs-develop gates)
+        run: git fetch --no-tags --quiet origin develop || true
+
+      - name: Install bats (shellcheck + python3 preinstalled on ubuntu runner)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bats
+          bats --version
+          shellcheck --version | head -2
+          python3 --version
+
+      - name: Provision .claude/ adapter (gitignored — hooks/agents the guard + lint-hook + adapter suites source)
+        run: bash agents/scripts/core/setup-harness.sh claude-code
+
+      - name: test-all.sh --ci — agentic self-test aggregator
+        run: bash scripts/dev/test-all.sh --ci
