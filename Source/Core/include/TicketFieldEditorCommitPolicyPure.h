@@ -62,4 +62,28 @@ inline bool ShouldOpenCellEditorByLongPress(bool cellHovered, bool primaryDown, 
     return cellHovered && primaryDown && heldSeconds >= longPressThresholdSeconds && !dragging;
 }
 
+// P1.3 touch-popup commit policy (#1018 item 23 build-out (b)): the choice / labels / cascading /
+// date-time editors on the touch build present an explicit Save / Cancel in their popup instead of
+// committing on focus-loss. On-device a focus-loss is a Back press, a tap-away, or an IME dismiss —
+// none of which can mean "commit" (same reasoning as ShouldCommitInlineFieldEdit, where mobile must
+// never PUT on deactivation). So only an explicit Save of a real change PUTs; Cancel, Back, and
+// tap-away every one discard with no PUT. Split out so the popup contract is unit-tested once rather
+// than re-derived in each editor's ImGui glue (TrackerLabelsEditor, TrackerDateTimeFieldEditor, the
+// MultiSelect / Cascading combos).
+//   savePressed  - the explicit Save / Done control in the touch popup was tapped this frame.
+//   valueChanged - the edited selection / value differs from the field's original. Gates the PUT so
+//                  that Saving an unchanged value never PUTs (mirrors the inline no-op-edit rule).
+inline bool ShouldCommitTouchPopupEdit(bool savePressed, bool valueChanged) {
+    return savePressed && valueChanged; // only an explicit Save of a real change PUTs
+}
+
+// True if the touch-popup edit SESSION should close this frame. Save, Cancel, Back, and tap-away
+// all dismiss the popup; the caller PUTs via ShouldCommitTouchPopupEdit only when Save fired on a
+// real change, otherwise it closes with no mutation. Mirrors ShouldEndInlineEdit for popups: the
+// session always ends on any of these so the editor never sticks open after a Back / tap-away.
+inline bool ShouldCloseTouchPopupEdit(bool savePressed, bool cancelPressed, bool dismissedByTapAway,
+                                      bool backPressed) {
+    return savePressed || cancelPressed || dismissedByTapAway || backPressed;
+}
+
 } // namespace TicketFieldEditorCommitPolicyPure
