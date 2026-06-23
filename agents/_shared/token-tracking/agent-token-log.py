@@ -15,6 +15,7 @@ Output:
 Silent on success; warnings to stderr on parse failure. Never blocks the user.
 """
 
+import contextlib
 import json
 import os
 import re
@@ -51,6 +52,75 @@ def _save_state(state_file: Path, state: dict) -> None:
         state_file.write_text(json.dumps(state), encoding="utf-8")
     except OSError as exc:
         _warn(f"state write failed: {exc}")
+
+
+@contextlib.contextmanager
+def _file_lock(lock_path: Path, timeout: float = 5.0):
+    """Best-effort cross-platform advisory file lock.
+
+    Serialises the state read-modify-write + JSONL append across concurrent
+    SubagentStop hooks (parallel subagent dispatch), which otherwise race: two
+    hooks both load the shared state, both save, and the last writer drops the
+    other's transcript key (double-count); and two >PIPE_BUF appends interleave
+    into a garbled line. NEVER raises to the caller — on any failure (no
+    fcntl/msvcrt, lock timeout, OS error) it proceeds UNLOCKED, because telemetry
+    must not block the user.
+    """
+    handle = None
+    locked = False
+    try:
+        handle = open(lock_path, "a+")  # noqa: SIM115 — released in finally.
+    except OSError:
+        yield
+        return
+    try:
+        try:
+            import fcntl
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    locked = True
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        break
+                    time.sleep(0.05)
+        except ImportError:
+            try:
+                import msvcrt
+                handle.seek(0)
+                deadline = time.monotonic() + timeout
+                while True:
+                    try:
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+                        locked = True
+                        break
+                    except OSError:
+                        if time.monotonic() >= deadline:
+                            break
+                        time.sleep(0.05)
+            except ImportError:
+                pass  # no lock primitive — proceed best-effort, unlocked.
+        yield
+    finally:
+        if locked:
+            try:
+                import fcntl
+                fcntl.flock(handle, fcntl.LOCK_UN)
+            except ImportError:
+                try:
+                    import msvcrt
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+        try:
+            handle.close()
+        except Exception:
+            pass
 
 
 def _model_family(model: str) -> str:
@@ -243,8 +313,19 @@ def _sum_usage_and_tools(
 
 _OUTCOME_TAG = re.compile(r"^\s*##\s+Outcome:\s*(applied|halted|failed|partial|aborted)\b",
                           re.IGNORECASE | re.MULTILINE)
-_HALT_HINT = re.compile(r"\b(halt(?:ed|s)?|refused|REFUSE|cannot proceed|blocked by|"
-                        r"fatal error|stack trace|traceback)\b", re.IGNORECASE)
+# Halt fallback (no explicit `## Outcome:` tag): a halt keyword that LEADS a line
+# (after markdown markers + an optional pronoun/article) within the trailing
+# window. Leading-anchored on purpose — a genuine halt report opens with the halt
+# phrase ("Cannot proceed: …", "Halted because …", "Blocked by …"), whereas a
+# success report buries the word after other text ("All done. No traceback
+# anymore.", "Fixed the crash; the old code was blocked by a lock, now resolved")
+# — those must NOT flip a clean run to halted (the #M-token-tracking false-halt fix).
+_HALT_LEAD = re.compile(
+    r"^\s*[>*\-#\s]*"                          # markdown bullet / quote / heading markers
+    r"(?:i|we|it|the|this|that)?\s*"           # optional leading pronoun/article filler
+    r"(halt(?:ed|s)?|refus(?:e|ed)|cannot proceed|unable to proceed|"
+    r"blocked by|fatal error|stack trace|traceback|halt[_ ]reason)\b",
+    re.IGNORECASE)
 _HALT_REASON = re.compile(r"^\s*\*?\*?halt[_ ]reason\*?\*?:\s*(.+?)\s*$",
                           re.IGNORECASE | re.MULTILINE)
 _SELF_IMPROV = re.compile(r"^\s*##\s+Self-improvement\s*$", re.IGNORECASE | re.MULTILINE)
@@ -277,11 +358,14 @@ def _infer_outcome(final_text: str) -> tuple[str, str | None]:
     Priority (per AGENTS.md § Agent output contract):
       1. Explicit `## Outcome: applied|halted|failed|partial|aborted` line.
          This is the contract; every agent prompt mandates it.
-      2. Halt keywords near the end → `halted` (defensive — agent forgot
-         the tag but emitted a halt signal).
+      2. A halt phrase LEADING a line in the trailing window → `halted`
+         (defensive — agent forgot the tag but opened a line with a halt
+         signal). Leading-anchored + trailing-window so a negated/past-tense
+         mention mid-prose ("No traceback anymore", "was blocked by …; now
+         resolved") does not false-flag a successful run.
       3. Default → `partial`. An agent that did not emit `## Outcome:` and
-         didn't trip a halt keyword is **not** automatically green; the
-         missing tag is itself a signal that something diverged. The
+         didn't open a line with a halt signal is **not** automatically green;
+         the missing tag is itself a signal that something diverged. The
          former rule ("`## Self-improvement` present → `applied`") was
          dropped because it silently green-washed halted runs — see
          docs/plans/shipped/agent-contract-alignment.md § Pre-resolved decision 5.
@@ -294,12 +378,13 @@ def _infer_outcome(final_text: str) -> tuple[str, str | None]:
         if rm:
             reason = rm.group(1).strip()
         return outcome, reason
-    if _HALT_HINT.search(final_text):
-        # Pick the first matching line as the reason.
-        for line in final_text.splitlines():
-            if _HALT_HINT.search(line):
-                return "halted", line.strip()[:200]
-        return "halted", None
+    # Scan only the trailing window — a real halt notice lands at the end of the
+    # report, not buried in an early quoted error — and require the halt phrase
+    # to lead the line (see _HALT_LEAD).
+    tail = [ln for ln in final_text.splitlines() if ln.strip()][-25:]
+    for line in tail:
+        if _HALT_LEAD.search(line):
+            return "halted", line.strip()[:200]
     return "partial", None
 
 
@@ -409,6 +494,7 @@ def main() -> int:
         "tool_trace": "",
     }
 
+    advance_to: int | None = None  # new transcript position to persist (under lock).
     if transcript_path and transcript_path.is_file():
         usage, model_full, tools, assistant_msgs, total_lines = \
             _sum_usage_and_tools(transcript_path, start_line)
@@ -440,22 +526,32 @@ def main() -> int:
         _append_scratchpad(project_dir, agent_name or "unknown", outcome,
                            _extract_scratchpad_block(final_text))
 
-        # Advance the transcript position so the next SubagentStop only sees
-        # the delta since this call.
+        # Defer the transcript-position save to the locked critical section below
+        # (re-read there so we never clobber a sibling hook's key).
         if transcript_key and total_lines > start_line:
-            state[transcript_key] = total_lines
-            _save_state(state_file, state)
+            advance_to = total_lines
     else:
         if transcript_raw:
             _warn(f"transcript_path '{transcript_raw}' missing; logging zero-row")
         row["note"] = "no-transcript"
 
-    try:
-        with log_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(row, separators=(",", ":")) + "\n")
-    except OSError as exc:
-        _warn(f"log write failed at {log_path}: {exc}")
-        return 0  # never block user
+    # Single critical section: serialise the state read-modify-write + the JSONL
+    # append against concurrent SubagentStop hooks (parallel subagent dispatch).
+    # Re-read state under the lock so we only add our own transcript key and never
+    # drop a sibling's (the double-count fix); the lock also stops two appends
+    # interleaving into one garbled line.
+    lock_path = log_path.parent / ".agent-tokens.lock"
+    with _file_lock(lock_path):
+        if advance_to is not None:
+            state = _load_state(state_file)
+            state[transcript_key] = advance_to
+            _save_state(state_file, state)
+        try:
+            with log_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(row, separators=(",", ":")) + "\n")
+        except OSError as exc:
+            _warn(f"log write failed at {log_path}: {exc}")
+            return 0  # never block user
 
     return 0
 

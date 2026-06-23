@@ -174,8 +174,12 @@ def _agents_badge() -> str:
     total_tokens = sum(b["tokens"] for b in by_agent.values())
     total_cost = sum(b["cost"] for b in by_agent.values())
 
-    # Halt count this session — visible only when >0 so the badge stays quiet on clean runs.
-    halts = sum(1 for r in session_rows if str(r.get("outcome") or "applied") != "applied")
+    # Halt count this session — visible only when >0 so the badge stays quiet on
+    # clean runs. Count ONLY genuine `halted` outcomes: the badge is labelled
+    # "halted", so counting every non-applied row (partial/failed/aborted) over-
+    # reported it — especially now that `partial` is the honest default for a
+    # tag-forgetting run. The full outcome breakdown lives in the agent-tokens report.
+    halts = sum(1 for r in session_rows if str(r.get("outcome") or "applied").lower() == "halted")
     halt_segment = f" · halted: {halts}" if halts else ""
 
     return f"[AGENTS] 🤖 " + " · ".join(parts) + f" · total {_fmt_k(total_tokens)} · ${total_cost:.2f}{halt_segment}"

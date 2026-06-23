@@ -110,13 +110,43 @@ def main() -> int:
         "applied",
     )
 
+    # Case 10 — false-positive guard: a success report that merely MENTIONS a halt
+    # word mid-prose must NOT be classified halted (the leading-anchor fix).
+    check(
+        "success-mentions-traceback-NOT-halted",
+        "All done. No traceback anymore — the fix holds.\n",
+        "partial",
+    )
+
+    # Case 11 — false-positive guard: past-tense + resolution mention.
+    check(
+        "resolved-blocked-by-NOT-halted",
+        "Fixed the crash. The old code was blocked by a stale lock; now resolved.\n",
+        "partial",
+    )
+
+    # Case 12 — a halt phrase LEADING a line (no tag) is still detected as halted.
+    check(
+        "leading-halt-detected",
+        "Investigated the socket.\n\nBlocked by: MCP server unreachable after 15s.\n",
+        "halted",
+        want_reason_substring="Blocked by",
+    )
+
+    # Case 13 — halt word buried mid-line, not leading → partial (not halted).
+    check(
+        "buried-halt-word-NOT-halted",
+        "The retry succeeded right after the earlier traceback was logged.\n",
+        "partial",
+    )
+
     print()
     if failures:
         print(f"FAIL ({len(failures)} failure{'s' if len(failures) != 1 else ''}):")
         for line in failures:
             print(line)
         return 1
-    print("PASS (9 cases)")
+    print("PASS (13 cases)")
     return 0
 
 
