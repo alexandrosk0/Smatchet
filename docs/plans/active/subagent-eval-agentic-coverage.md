@@ -2,7 +2,7 @@
 
 > **Slug**: `subagent-eval-agentic-coverage` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — **not started**; only the parent #650 schemas exist on develop (Phases 0–4 of this plan unbuilt). Phased; each phase ships as its own PR (prove-first ordering, § Approach).
+> **Status**: `active` — **Phase 0 shipped** (2026-06-23 status reconciliation; the "not started, Phases 0–4 unbuilt" line was stale). Phase 0 (judge calibration) landed via **#1507** (roadmap PR-23): `scripts/dev/agent-eval-calibrate.py` + `docs/agent-eval/calibration-policy.json` + `test-agent-eval-calibrate-bats.sh` are on develop. **Phases 1–4 remain unbuilt** (parent #650 schemas exist). Phased; each phase ships as its own PR (prove-first ordering, § Approach).
 >
 > **Scope clarifier**: evaluates the **development agents** (`agents/*.md` — the orchestrator + the ~30 delegated subagents), NOT the Smatchet product or any in-app AI-assistant surface. Same scope as the parent `subagent-eval-harness.md` (shipped) and the now-absorbed `subagent-eval-flywheel.md`.
 >
