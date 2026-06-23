@@ -82,7 +82,7 @@ struct TrackerConfig {
     std::string GitHubOwner;   // e.g. "alexandrosk0"
     std::string GitHubRepo;    // e.g. "Smatchet"
 
-    // Linear-as-tracker configuration (Slice 1 of docs/plans/active/linear-tracker-backend.md).
+    // Linear-as-tracker configuration (Slice 1 of docs/plans/linear-tracker-backend.md).
     // GraphQL-only backend; personal API key is DPAPI-encrypted on Win32 (same code path as
     // GitHubPat). Base URL defaults to the public GraphQL endpoint; team id/key carry the active
     // Linear team the tracker views (Smatchet's draft scope rides the existing ProjectKey

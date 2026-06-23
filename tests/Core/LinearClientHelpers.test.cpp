@@ -1,5 +1,5 @@
 // LinearClientHelpers doctest — pure helper round-trips.
-// Slice 1 of docs/plans/active/linear-tracker-backend.md.
+// Slice 1 of docs/plans/linear-tracker-backend.md.
 
 #include "LinearClientHelpers.h"
 

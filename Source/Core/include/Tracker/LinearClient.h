@@ -14,7 +14,7 @@
 #include <string>
 #include <unordered_map>
 
-// LinearClient — fourth tracker backend (docs/plans/active/linear-tracker-backend.md).
+// LinearClient — fourth tracker backend (docs/plans/linear-tracker-backend.md).
 // Linear's API is GraphQL at https://api.linear.app/graphql (POST only); personal
 // API keys authenticate via a raw Authorization header (no "Bearer").
 // Lifecycle mirrors GitHubClient: factory-owned `unique_ptr<LinearClient>` per

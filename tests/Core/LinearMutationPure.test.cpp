@@ -1,7 +1,7 @@
 // LinearMutationPure doctest — the hermetic half of the Linear write-path
 // coverage: pins the exact GraphQL documents, the field→input mapping, priority/
 // option resolution, and the {success,entity} / resolve-issue parse, with no
-// network. Slice 3 of docs/plans/active/linear-tracker-backend.md.
+// network. Slice 3 of docs/plans/linear-tracker-backend.md.
 
 #include "LinearMutationPure.h"
 

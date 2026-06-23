@@ -1,4 +1,4 @@
-// Slice 4 of docs/plans/active/linear-tracker-backend.md — see
+// Slice 4 of docs/plans/linear-tracker-backend.md — see
 // LinearFixtureBackend.h for the contract.
 
 #include "LinearFixtureBackend.h"

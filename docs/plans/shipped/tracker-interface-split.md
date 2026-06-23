@@ -146,7 +146,7 @@ Per `AGENTS.md` verification rules — zero manual steps.
 ## Out of scope (flagged, not designed)
 
 - Splitting backend implementation files (`JiraClient.cpp` at ~60 KB) into per-capability TUs — follow-up file-size plan if needed after the interface split.
-- Adding a Linear backend — follow-up plan (`docs/plans/active/linear-tracker-backend.md` already exists); this refactor makes it cheaper but doesn't implement it.
+- Adding a Linear backend — follow-up plan (`docs/plans/shipped/linear-tracker-backend.md`, since shipped); this refactor made it cheaper but doesn't implement it.
 - Runtime capability negotiation UI ("this backend doesn't support comments" banner) — follow-up UX plan.
 - Moving `TrackerFieldValueParser` / `TrackerFieldPayload` into `ITrackerIssueMutations` — those are already standalone utilities, not interface methods.
 

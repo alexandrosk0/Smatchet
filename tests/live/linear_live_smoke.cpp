@@ -1,5 +1,5 @@
 // linear_live_smoke.cpp — credential-gated LIVE end-to-end smoke for the Linear
-// backend (the manual-residue item from docs/plans/active/linear-tracker-backend.md,
+// backend (the manual-residue item from docs/plans/linear-tracker-backend.md,
 // automated). Drives the REAL LinearClient against a real Linear workspace:
 // reachability → fetch → create → update → comment → archive (cleanup).
 //

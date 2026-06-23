@@ -1,5 +1,5 @@
 // linear_deterministic_backend.test.cpp — bucket-E tests for the deterministic
-// Linear fixture backend (Slice 4 of docs/plans/active/linear-tracker-backend.md).
+// Linear fixture backend (Slice 4 of docs/plans/linear-tracker-backend.md).
 //
 // All tests require the app to have been booted with a fixture-backed factory via
 // SMATCHET_TEST_LINEAR_BACKEND_FIXTURE (the AppController::Initialize hook). If
