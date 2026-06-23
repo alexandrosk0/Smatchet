@@ -21,6 +21,7 @@
 #include "TicketFieldEditorOptionFilterPure.h"
 #include "TicketFieldEditorCommitPolicyPure.h"
 #include "TicketFieldEditorDurationPopupPure.h"
+#include "Ui/TouchCellEditGesture.h"
 #include "TextEditor.h"
 #include "Logger.h"
 #include "JiraClient.h"
@@ -73,27 +74,13 @@ constexpr bool kMobileInlineEditBuild = true;
 constexpr bool kMobileInlineEditBuild = false;
 #endif
 
-// P1.3 mobile interaction model (#1018 item 23). On a touch build a quick tap selects the cell /
-// scrolls the grid; a cell editor opens only on a *long-press* — a stationary hold past
-// kCellLongPressOpenSeconds over the cell (the standard Android disambiguator, since touch has no
-// double-click). The long-press rule itself lives in TicketFieldEditorCommitPolicyPure.h
-// (ShouldOpenCellEditorByLongPress) so it is unit-tested without ImGui or __ANDROID__. Desktop is
-// unchanged: kMobileInlineEditBuild is constexpr-false there, so the touch branch is dead-eliminated
-// and the gate collapses to the exact pre-existing `clicked && (singleClickToEdit ||
-// IsMouseDoubleClicked(0))` expression with its identical short-circuit (IsMouseDoubleClicked is
-// still only probed when the cell was clicked) — byte-identical desktop codegen.
-constexpr float kCellLongPressOpenSeconds = 0.5f;
-
-bool ShouldOpenCellEditorOnGesture(bool cellSelectableClicked, bool singleClickToEdit) {
-    if (kMobileInlineEditBuild) {
-        // IsItemHovered() refers to the cell Selectable drawn immediately before this call.
-        const ImGuiIO& io = ImGui::GetIO();
-        return TicketFieldEditorCommitPolicyPure::ShouldOpenCellEditorByLongPress(
-            ImGui::IsItemHovered(), io.MouseDown[0], io.MouseDownDuration[0], ImGui::IsMouseDragging(0),
-            kCellLongPressOpenSeconds);
-    }
-    return cellSelectableClicked && (singleClickToEdit || ImGui::IsMouseDoubleClicked(0));
-}
+// P1.3 mobile interaction model (#1018 item 23): the cell-editor open gesture (long-press on the
+// touch build, click / double-click on desktop) lives in Ui/TouchCellEditGesture.h so all five cell
+// editors share one rule — the inline text cell here plus the SingleSelect / MultiSelect / Cascading
+// combos, and the Labels / DateTime editors in their own TUs. Pulled in unqualified for the call
+// sites below; desktop codegen stays byte-identical (kMobileTouchBuild is constexpr-false there).
+using SmatchetTouchEdit::ArmThenPopupCellGate;
+using SmatchetTouchEdit::ShouldOpenCellEditorOnGesture;
 
 std::string GetCurrentJiraDateTimeString() {
     auto now = std::chrono::system_clock::now();
@@ -560,8 +547,8 @@ void DrawTextCellTooltip(const CachedTicket& ticket, const TrackerField& field, 
     // markdown) which would join paragraphs into one line.
     std::string descMd;
     if (isDescriptionLike) {
-        descMd = TicketFieldEditorLongTextPure::RichValueToTooltipMarkdown(ticket.GetFieldRichValue(field.Id),
-                                                                           currentValue);
+        descMd =
+            TicketFieldEditorLongTextPure::RichValueToTooltipMarkdown(ticket.GetFieldRichValue(field.Id), currentValue);
     }
     const std::string& tipSource =
         isDescriptionLike ? descMd : ((rawTip && !rawTip->empty()) ? *rawTip : valueForDisplay);
@@ -741,26 +728,8 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
     // force-opens the combo popup via OpenPopupEx + IsPopupOpen probe; on dismiss the arm
     // clears and the cell falls back to the Selectable preview.
     const std::string editorKey = ticket.id + "::" + field.Id;
-    bool armed = (state.EditArmedKey == editorKey);
-    if (armed) {
-        const ImGuiID popupId = ImHashStr("##ComboPopup", 0, ImGui::GetID("##singleselect"));
-        if (state.EditArmedJustOpened) {
-            ImGui::OpenPopupEx(popupId, ImGuiPopupFlags_None);
-            state.EditArmedJustOpened = false;
-        } else if (!ImGui::IsPopupOpen(popupId, 0)) {
-            // User dismissed the combo on a prior frame; release arm.
-            state.EditArmedKey.clear();
-            armed = false;
-        }
-    }
-    if (!armed) {
-        const ImVec2 selSize(cellAvail > 0.0f ? cellAvail : 0.0f, 0.0f);
-        if (ImGui::Selectable(previewCStr, false, ImGuiSelectableFlags_AllowDoubleClick, selSize)) {
-            if (singleClickToEdit || ImGui::IsMouseDoubleClicked(0)) {
-                state.EditArmedKey = editorKey;
-                state.EditArmedJustOpened = true;
-            }
-        }
+    if (!ArmThenPopupCellGate(state.EditArmedKey, state.EditArmedJustOpened, editorKey, "##singleselect", previewCStr,
+                              cellAvail, singleClickToEdit)) {
         const ImVec2 selMin = ImGui::GetItemRectMin();
         const ImVec2 selMax = ImGui::GetItemRectMax();
         if (haveOverlayIcon) {
@@ -908,29 +877,11 @@ void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, con
     // through ResolveDisplayValueForSubmittedSelection's allowed-value scan and render the raw id.
     const std::string preview = app.ResolveDisplayValue(field.Id, &effectiveField, currentValue);
     const float cellAvail = ImGui::GetContentRegionAvail().x;
-    // Arm-then-popup: see RenderSingleSelectEditor. Always Selectable preview; click threshold
-    // gated by singleClickToEdit (any-click vs double-click).
+    // Arm-then-popup: see RenderSingleSelectEditor. Shared scaffold in ArmThenPopupCellGate.
     const std::string editorKey = ticket.id + "::" + field.Id;
-    bool armed = (state.EditArmedKey == editorKey);
-    if (armed) {
-        const ImGuiID popupId = ImHashStr("##ComboPopup", 0, ImGui::GetID("##multiselect"));
-        if (state.EditArmedJustOpened) {
-            ImGui::OpenPopupEx(popupId, ImGuiPopupFlags_None);
-            state.EditArmedJustOpened = false;
-        } else if (!ImGui::IsPopupOpen(popupId, 0)) {
-            state.EditArmedKey.clear();
-            armed = false;
-        }
-    }
-    if (!armed) {
-        const char* previewCStr = preview.empty() ? "" : preview.c_str();
-        const ImVec2 selSize(cellAvail > 0.0f ? cellAvail : 0.0f, 0.0f);
-        if (ImGui::Selectable(previewCStr, false, ImGuiSelectableFlags_AllowDoubleClick, selSize)) {
-            if (singleClickToEdit || ImGui::IsMouseDoubleClicked(0)) {
-                state.EditArmedKey = editorKey;
-                state.EditArmedJustOpened = true;
-            }
-        }
+    const char* previewCStr = preview.empty() ? "" : preview.c_str();
+    if (!ArmThenPopupCellGate(state.EditArmedKey, state.EditArmedJustOpened, editorKey, "##multiselect", previewCStr,
+                              cellAvail, singleClickToEdit)) {
         DrawClippedPreviewTooltip(tooltipsEnabled, previewCStr, cellAvail);
         return;
     }
@@ -953,28 +904,11 @@ void RenderCascadingSelectEditor(const AppController& app, const CachedTicket& t
     const std::string preview = app.ResolveDisplayValue(field.Id, &field, currentValue);
 
     const float cellAvail = ImGui::GetContentRegionAvail().x;
-    // Arm-then-popup: see RenderSingleSelectEditor.
+    // Arm-then-popup: see RenderSingleSelectEditor. Shared scaffold in ArmThenPopupCellGate.
     const std::string editorKey = ticket.id + "::" + field.Id;
-    bool armed = (state.EditArmedKey == editorKey);
-    if (armed) {
-        const ImGuiID popupId = ImHashStr("##ComboPopup", 0, ImGui::GetID("##cascadeselect"));
-        if (state.EditArmedJustOpened) {
-            ImGui::OpenPopupEx(popupId, ImGuiPopupFlags_None);
-            state.EditArmedJustOpened = false;
-        } else if (!ImGui::IsPopupOpen(popupId, 0)) {
-            state.EditArmedKey.clear();
-            armed = false;
-        }
-    }
-    if (!armed) {
-        const char* previewCStr = preview.empty() ? "" : preview.c_str();
-        const ImVec2 selSize(cellAvail > 0.0f ? cellAvail : 0.0f, 0.0f);
-        if (ImGui::Selectable(previewCStr, false, ImGuiSelectableFlags_AllowDoubleClick, selSize)) {
-            if (singleClickToEdit || ImGui::IsMouseDoubleClicked(0)) {
-                state.EditArmedKey = editorKey;
-                state.EditArmedJustOpened = true;
-            }
-        }
+    const char* previewCStr = preview.empty() ? "" : preview.c_str();
+    if (!ArmThenPopupCellGate(state.EditArmedKey, state.EditArmedJustOpened, editorKey, "##cascadeselect", previewCStr,
+                              cellAvail, singleClickToEdit)) {
         DrawClippedPreviewTooltip(tooltipsEnabled, previewCStr, cellAvail);
         return;
     }
@@ -1395,9 +1329,8 @@ void RenderPlainTextCell(AppController& app, const CachedTicket& ticket, const T
         // Lazy: parse ADF → markdown only on actual hover, not per-cell per-frame.
         RenderClippedFieldText(display, availWidth, false, disabled, nullptr, false, &column.FieldId);
         if (tooltipsEnabled && ImGui::IsItemHovered()) {
-            const std::string md =
-                TicketFieldEditorLongTextPure::RichValueToTooltipMarkdown(ticket.GetFieldRichValue(column.FieldId),
-                                                                          currentValue);
+            const std::string md = TicketFieldEditorLongTextPure::RichValueToTooltipMarkdown(
+                ticket.GetFieldRichValue(column.FieldId), currentValue);
             if (!md.empty()) {
                 ImGui::BeginTooltip();
                 ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);

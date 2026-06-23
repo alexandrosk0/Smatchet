@@ -2,6 +2,8 @@
 #include "CompactDateFormat.h"
 #include "ConfigManager.h"
 #include "TrackerDateTimePure.h"
+#include "TicketFieldEditorCommitPolicyPure.h"
+#include "Ui/TouchCellEditGesture.h"
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
@@ -416,11 +418,13 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& f
         std::string display = ComputeDateCellDisplay(currentValue, dateFormatOption, thresholdDays);
         const bool blankValue = std::all_of(currentValue.begin(), currentValue.end(),
                                             [](unsigned char ch) { return std::isspace(ch) != 0; });
-        if (ImGui::Selectable((display + itemId).c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
-            // Empty due date (and similar) would otherwise require double-click like populated cells.
-            if (blankValue || singleClickToEdit || ImGui::IsMouseDoubleClicked(0)) {
-                state.StartEditingField(ticket.id, field.Id, currentValue);
-            }
+        // Empty due date (and similar) would otherwise require double-click like populated cells, so
+        // a blank cell folds into the single-click open affordance. On the touch build this collapses
+        // to a long-press (Ui/TouchCellEditGesture.h); desktop codegen stays byte-identical.
+        const bool dtCellClicked =
+            ImGui::Selectable((display + itemId).c_str(), false, ImGuiSelectableFlags_AllowDoubleClick);
+        if (SmatchetTouchEdit::ShouldOpenCellEditorOnGesture(dtCellClicked, singleClickToEdit || blankValue)) {
+            state.StartEditingField(ticket.id, field.Id, currentValue);
         }
         ImGui::PopID();
         return;
@@ -429,7 +433,14 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& f
     const bool editJustStarted = state.EditJustStarted;
     if (editJustStarted) {
         InitDatePickerWorking(currentValue, isDateOnly, s_working, s_viewYear, s_viewMonth, s_forceTextMode);
-        ImGui::SetNextWindowPos(ImGui::GetIO().MousePos, ImGuiCond_Appearing, ImVec2(0.0f, 0.0f));
+        if (SmatchetTouchEdit::kMobileTouchBuild) {
+            // Touch: anchoring the picker at the touch point pins it to a screen edge and can clip the
+            // Apply / Clear / Cancel footer off-screen (phone trap). Center it on the display instead.
+            const ImVec2 disp = ImGui::GetIO().DisplaySize;
+            ImGui::SetNextWindowPos(ImVec2(disp.x * 0.5f, disp.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        } else {
+            ImGui::SetNextWindowPos(ImGui::GetIO().MousePos, ImGuiCond_Appearing, ImVec2(0.0f, 0.0f));
+        }
     }
     if (!ImGui::IsPopupOpen("picker")) {
         ImGui::OpenPopup("picker");
@@ -437,26 +448,38 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& f
 
     const bool modalOpen = ImGui::BeginPopupModal("picker", nullptr, ImGuiWindowFlags_AlwaysAutoResize);
     if (modalOpen) {
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-            state.ClearEditing();
-            ImGui::CloseCurrentPopup();
-        }
+        // Back / Escape dismisses with no PUT (mirrors the inline mobile rule: focus-loss never
+        // commits). A modal has no tap-away path, so dismissedByTapAway is always false here.
+        const bool backPressed = ImGui::IsKeyPressed(ImGuiKey_Escape);
 
         PickerAction action = DrawCalendarPicker(s_working, s_viewYear, s_viewMonth, s_forceTextMode, isDateOnly,
                                                  currentValue, state.EditBuffer, sizeof(state.EditBuffer),
                                                  InputTextCallback_ClearSelectOnEditOpen, static_cast<void*>(&state));
 
-        if (action == PickerAction::Apply) {
-            ClampDayToMonth(s_working, s_working.Year, s_working.Month);
-            const std::string canon = FormatJiraDateOrDateTimeForApi(isDateOnly, s_working);
-            queue({canon});
-            state.ClearEditing();
-            ImGui::CloseCurrentPopup();
-        } else if (action == PickerAction::Clear) {
-            queue({});
-            state.ClearEditing();
-            ImGui::CloseCurrentPopup();
-        } else if (action == PickerAction::Cancel) {
+        const bool applyPressed = (action == PickerAction::Apply);
+        const bool clearPressed = (action == PickerAction::Clear);
+        const bool cancelPressed = (action == PickerAction::Cancel);
+
+        // Apply and Clear are the explicit "Save" of this touch popup; Cancel / Back discard. Gate the
+        // PUT on a real change so re-Applying an unchanged value (or Clearing an already-empty cell)
+        // never fires a stray no-op PUT — same no-op rule as the inline editor.
+        if (applyPressed || clearPressed) {
+            std::string canon;
+            if (applyPressed) {
+                ClampDayToMonth(s_working, s_working.Year, s_working.Month);
+                canon = FormatJiraDateOrDateTimeForApi(isDateOnly, s_working);
+            }
+            const bool curBlank = std::all_of(currentValue.begin(), currentValue.end(),
+                                              [](unsigned char ch) { return std::isspace(ch) != 0; });
+            const bool valueChanged = clearPressed ? !curBlank : (canon != currentValue);
+            if (TicketFieldEditorCommitPolicyPure::ShouldCommitTouchPopupEdit(/*savePressed=*/true, valueChanged)) {
+                queue(clearPressed ? std::vector<std::string>{} : std::vector<std::string>{canon});
+            }
+        }
+
+        if (TicketFieldEditorCommitPolicyPure::ShouldCloseTouchPopupEdit(
+                /*savePressed=*/applyPressed || clearPressed, cancelPressed,
+                /*dismissedByTapAway=*/false, backPressed)) {
             state.ClearEditing();
             ImGui::CloseCurrentPopup();
         }

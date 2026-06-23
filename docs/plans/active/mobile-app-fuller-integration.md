@@ -179,6 +179,29 @@ _(per-slice; appended as each PR ships)_
   `EffectiveUiMode::Mobile` → `drawMobileShell` fork, so desktop paths are untouched by construction.
   3 files, +75/−5. Built desktop `SmatchetStandalone` (clean link) + Android x86_64 `assembleDebug`;
   emulator-verified (below).
+- **2026-06-23 — P1.3 touch cell editors: long-press open + explicit-commit policy (this PR).** Builds on
+  the two prior branch commits (the unit-tested pure long-press gate `52da1075` + the pure touch-popup
+  commit policy `aeaff745`). This commit adds the **ImGui glue** that wires those pure seams into the live
+  editors. New shared header `Source/Core/include/Ui/TouchCellEditGesture.h` exposes two seams:
+  `ShouldOpenCellEditorOnGesture(cellClicked, openOnClick)` (the open gesture, consuming the unit-tested
+  pure `ShouldOpenCellEditorByLongPress`) and `ArmThenPopupCellGate(...)` (the arm-then-popup state-machine
+  + collapsed-preview `Selectable` shared by the four combo/popup editors), unifying both the open gesture
+  and the arm scaffold across the five grid cell editors. `kMobileTouchBuild`
+  (`__ANDROID__`-gated `constexpr bool`) makes the touch branch dead-eliminate on desktop, collapsing the
+  gate to the exact pre-existing `clicked && (openOnClick || IsMouseDoubleClicked(0))` — byte-identical
+  desktop codegen (the Pillar-3/Risk invariant on line 131). Wired three TUs: `TicketFieldEditor.cpp`
+  (replaced the file-local open-helper; routed the three combo arm sites — SingleSelect / MultiSelect /
+  Cascading — through the shared `ArmThenPopupCellGate`, each caller keeping its own divergent tail
+  (SingleSelect's icon-overlay + lazy tooltip stays inline); kept `kMobileInlineEditBuild` for the existing
+  inline-text commit policy);
+  `TrackerLabelsEditor.cpp` (Labels arm site → helper); `TrackerDateTimeFieldEditor.cpp` (DateTime arm site
+  → helper; **phone-centered** the modal on touch via `SetNextWindowPos(displayCenter)` vs desktop
+  `MousePos`; rewired Apply/Clear/Cancel/Back through the pure `ShouldCommitTouchPopupEdit` /
+  `ShouldCloseTouchPopupEdit` — Apply→canon queued PUT, Clear→empty vector, Cancel/Back→close with no PUT,
+  plus no-op-PUT suppression via `valueChanged`; this gives both pure seams real callers, no dead code).
+  3 files + 1 new header, ~+76/−67 (post-format). Built desktop dual-target (`SmatchetStandalone` +
+  `SmatchetCore_DX12`, clean link) + Android x86_64 `assembleDebug` (BUILD SUCCESSFUL); emulator-verified
+  (below). Visual-validation pause raised for the user (touches Tracker editors → ship-loop exception 5).
 
 ## Deviations from plan
 
@@ -206,6 +229,19 @@ _(per-slice)_
   currently CI-blocked anyway: the Mesa-GL bucket-C/E lanes can't boot the CI exe (AGENTS.md merge-gates),
   so bucket-E mobile coverage isn't runnable until that lane is restored. On-emulator verification (below)
   covers the behaviour in the interim.
+- **P1.3 — files-to-modify drift (2026-06-23).** The original §Files-to-modify listed an Android-input
+  change for the long-press timer (item *d*); found **unnecessary** — `imgui_impl_android` sustains
+  `io.MouseDown[0]` for the full hold, so ImGui's own `io.MouseDownDuration[0]` *is* the long-press timer.
+  No custom Android-path code. Net file delta vs plan: **+1** new shared header
+  (`Source/Core/include/Ui/TouchCellEditGesture.h`, not in the original list), **−** the planned
+  Android-input file(s). Item *c* ("single-click-to-edit for empty cells") also needs **no new code**:
+  `SingleClickToEditGridCells` (default-true) folds into the helper's `openOnClick`, and on the touch build
+  long-press supersedes (`openOnClick` ignored). This slice implements the `grill-with-docs` re-scope
+  already recorded on plan line 144 (arm-then-popup touch-dismissal, not "route four editors through
+  `ShouldCommitInlineFieldEdit`"). The Test-delta gate is satisfied without an out-of-band label: the
+  branch carries the `tests/Core/TicketFieldEditorCommitPolicyPure.test.cpp` delta (commits `52da1075` /
+  `aeaff745`) covering every pure seam the glue routes through; the glue itself is ImGui immediate-mode
+  surface (`test-rig` refuses ImGui), deferred to the bucket-E follow-up below.
 
 ## Verification (actual)
 
@@ -243,3 +279,39 @@ _(per-slice)_
     gate (plan lines 111/141).
   - **Lint** — `agents/scripts/project/test-lint-rules.sh --diff origin/develop` green (exit 0;
     `Source/Core/src/Ui/` is the Light/ungated zone, no strict-zone files touched).
+- **P1.3 touch cell editors (2026-06-23):**
+  - **DRY extraction** — the first glue draft *flattened* the three combo arm sites inline, which made the
+    MultiSelect / Cascading scaffolds byte-identical to the Labels arm site → the `duplication` gate FAILed
+    with two NEW 103-token clones (`TicketFieldEditor.cpp` MultiSelect/Cascading ↔ `TrackerLabelsEditor.cpp`
+    Labels). Fixed by **extraction, not exemption**: hoisted the shared arm-then-popup state-machine +
+    collapsed `Selectable` into `SmatchetTouchEdit::ArmThenPopupCellGate` (header) and routed all four combo/
+    popup editors through it (chose extraction over a `SMATCHET_DEVIATION(rule=duplication)` because leaving
+    a clone of the very scaffold the slice unifies is incoherent). Re-verified clean:
+    `python agents/scripts/core/dup_audit.py --diff origin/develop` → **exit 0** (zero new clones).
+  - **Lint** — `agents/scripts/project/test-lint-rules.sh --diff origin/develop` green (exit 0), including
+    the **strict zone** `Source/Core/src/Tracker/` (`TrackerLabelsEditor.cpp` + `TrackerDateTimeFieldEditor.cpp`):
+    no new strict-zone / comment-noise / oversized-function / include-cycle / fan-in violations. (Only the
+    pre-existing non-blocking `comment-ratio` WARN on `TicketFieldEditorCommitPolicyPure.h`.)
+  - **Build (post-extraction rebuild)** — desktop dual-target
+    (`cmake --build build/ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`, via
+    `with-msvc-env.sh`) → both link clean; Android x86_64 `assembleDebug` → `app-debug.apk` **BUILD
+    SUCCESSFUL (54.6 MB)**. Proves the `ArmThenPopupCellGate` extraction + the self-included
+    `imgui_internal.h` compile in all three targets.
+  - **Emulator (rebuilt binary)** — installed `-r -t` on `emulator-5554`, launched `.SmatchetActivity`:
+    clean boot (PID 7698, no logcat FATAL, EGL GLES3 1080×1920, swiftshader ~28–32 ms/frame — software
+    renderer, not device-representative perf). Taps pinned `-s emulator-5554`; **never** coordinate-injected
+    the physical device.
+  - **On-device discard matrix** (screenshot-confirmed, logcat mutation-tag scan = **zero**
+    `BackendAuditTrail` / `FieldEditAudit` / `AppendBegin` / `QueueFieldEdit` after IME-noise filter):
+    (1) **inline text** — long-press the *Description* cell → `EditLongText` modal opens with the live value
+    ("tghg") → `Escape` → modal closes, **no PUT, no queued edit**; (2) **SingleSelect combo** — long-press
+    the *Assignee* cell → the combo arms + opens (soft-keyboard filter raised) → tap-away on the app-bar →
+    combo closes, cell reverts to the original value, **no mutation tag**. These are the PR-6 stray-PUT proof
+    extended to the rebuilt post-extraction binary.
+  - **Held for explicit user confirmation** — the **Save / Apply → live PUT** path was **not** exercised on
+    a real ticket: a live mutation against a real backend is an external-service action requiring explicit
+    user confirmation (standing constraint). It is the first item in the visual-validation pause below.
+  - **Deferred automation** — the full long-press / Save / Cancel / Back / tap-away matrix across all five
+    editors (incl. MultiSelect / Cascading / Labels / DateTime-centering) is glue-on-ImGui-surface, so it is
+    backlogged as a bucket-E ImGui Test Engine case (CI-blocked today on the Mesa-GL lane, same as P1.2);
+    backlog entry below.
