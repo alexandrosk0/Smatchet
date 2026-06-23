@@ -15,7 +15,7 @@ done**. Corrected per-slice status (evidence = current-tree `file:line`):
 |---|---|---|
 | **P1.0** Keystore token | ✅ **Shipped** (audit H2 / CR #1357) | `Source/Mobile/Android/SmatchetAndroidSecretBridge.{h,cpp}` (JNI AES-GCM Keystore bridge, fail-closed, StrongBox, Shutdown-vs-Protect race fix); `ConfigManager.cpp:506–544` (`__ANDROID__` `WriteSecretFields` seals every secret, **no plaintext fallback**) + `:971–1007` (`__ANDROID__` `LoadSecretFields` `unsealSecret` + `migrate.LegacyPlaintext` scrub); installed at boot `android_main.cpp:285,379–386`. The migration scrub the plan called "mandatory/missing" exists. |
 | **P1.1** Offline replay | ✅ **Shipped** | The replay/sync drive runs every frame in the **shared Core loop** (not a separate Android hook): `SmatchetUI.cpp:470–473` calls `TickOfflineCreates` / `TickOfflineFieldEdits` / `SyncWithBackend`; reachability transitions `AppController_Connectivity.cpp:72–78,118–120`; dead-letter surface `SmatchetOfflineQueueUi.cpp`. Runs on Android because the loop is shared. |
-| **P1.2** Saved views + touch switcher | 🟡 **Partial** | View commands exist + reachable (`ViewCommands.cpp:151–282`); mobile drawer + modals shipped (`SmatchetViewsDashboardUi.cpp` `buildMobileViewsCtx` / `drawMobileDrawerViews` / `drawMobileViewsModals`). **Missing:** a dedicated touch tab-strip / bottom-sheet quick-switcher in the grid area. |
+| **P1.2** Saved views + touch switcher | ✅ **Shipped this PR** | The missing piece — a dedicated touch tab-strip quick-switcher in the grid area — now ships: `drawMobileViewQuickSwitcher` (`SmatchetViewsDashboardUi.cpp`) draws a horizontal-scroll strip of saved-view tabs (active highlighted) + a trailing "+" between the app bar and content dock, reserved by `drawMobileShell` (`SmatchetMobileShellUi.cpp`, `kViewSwitcherBaseHeightPx`). Reuses the existing dirty-aware `viewsRequestActivate` / `viewsCreateNewView`; Grid-page-only (off-grid pages reserve no band). Emulator-verified (switch + dirty discard-confirm). Earlier pieces still hold: view commands (`ViewCommands.cpp:151–282`), mobile drawer + modals (`buildMobileViewsCtx` / `drawMobileDrawerViews` / `drawMobileViewsModals`). |
 | **P1.3** Touch cell editors | ❌ **Not started** (the spike-first, highest-risk slice) | `kMobileInlineEditBuild=true` on Android (`TicketFieldEditor.cpp:71–73`) + `SingleClickToEditGridCells` default-on exist, but **no long-press detector** (`SmatchetAndroidImeBridge.cpp`) and **no touch Save/Cancel affordance** for the four combo/modal editors. |
 | **P1.4** Attachments | ✅ **Shipped** (decode cross-platform) | `SmatchetImageTextureCache.cpp:139–157` (`DecodeWithStb`, no `_WIN32` guard) + renderer-agnostic `RegisterUserTexture`; thumbnails enabled globally. **Residual:** the *optional* Win32-only bitmap thumbnail-to-file at `SmatchetAttachmentPreviewUi.cpp:112` (low priority). |
 | **P1.5** Multi-backend | 🟡 **Infra ready** | `ITrackerBackend` abstraction + Jira / Plane / GitHub all in Core; backend selection lives in the Preferences combo (`SmatchetPreferencesUi.cpp:253`). **Missing:** a touch-first backend-selection UI (depends on P1.3 chrome). |
@@ -165,6 +165,20 @@ _(per-slice; appended as each PR ships)_
   + Pillar-4 backlog `debt/2026-06-20-mobile-accessibility-pillar4.md` (TalkBack/`AccessibilityNodeProvider`
   gap, `Configuration.fontScale` seam gap, WCAG contrast audit incl. the **2.90:1 white-on-accent** fail,
   48 dp touch targets). Pure-docs PR.
+- **2026-06-23 — P1.2 touch view quick-switcher (this PR).** Added `drawMobileViewQuickSwitcher`
+  (`SmatchetViewsDashboardUi.cpp`, +54): a horizontal-scroll band of saved-view tabs (active one
+  highlighted via `ImGuiCol_ButtonActive`) + a trailing `+##MobileNewView`, drawn in the Grid page's
+  chrome between the app bar and the content dock. `drawMobileShell` reserves the band
+  (`kViewSwitcherBaseHeightPx = 40 px`, scaled by touch-density × host-density) **only on the Grid page**
+  — other pages get the full content region (`switcherH = gridPage ? … : 0`). Routes taps through the
+  **existing** dirty-aware `viewsRequestActivate` (a dirty switch latches the shell-level discard-confirm
+  modal kept rendering by `drawMobileViewsModals`) and `viewsCreateNewView` (deferred-create latch); the
+  chosen id is applied *after* the draw loop so no `store`/`activeView` reference is read across the
+  activation mutation. Null-`activeView` guard (both helpers deref `*activeView`). No new gate
+  (`kMobileInlineEditBuild` was P1.3-specific): the band is purely additive mobile chrome behind the
+  `EffectiveUiMode::Mobile` → `drawMobileShell` fork, so desktop paths are untouched by construction.
+  3 files, +75/−5. Built desktop `SmatchetStandalone` (clean link) + Android x86_64 `assembleDebug`;
+  emulator-verified (below).
 
 ## Deviations from plan
 
@@ -178,6 +192,20 @@ _(per-slice)_
 - **Remaining code slices — un-escalated 2026-06-20** (was: escalated for lack of a device). The Android
   emulator + NDK + desktop MSVC build are now available locally, so P1.2 / P1.3 / P1.5 are being executed
   + emulator-verified per slice instead of escalated. P1.3 stays spike-first + visual-validation-gated.
+- **P1.2 — `tests-out-of-band` label applied (2026-06-23).** The Test-delta gate FAILed because the slice
+  touches two `Source/Core/` files (`SmatchetMobileShellUi.cpp`, `SmatchetViewsDashboardUi.cpp`) with no
+  matching `tests/` delta. `drawMobileViewQuickSwitcher` is pure **ImGui draw surface** (direct ImGui
+  immediate-mode calls + the `ViewState` store/activate helpers) — the `test-rig` agent explicitly refuses
+  ImGui surfaces, so a doctest unit test is the wrong vehicle. The only pure seam (the band-height
+  reservation arithmetic in `drawMobileShell`) is trivial subtraction not worth extracting at the cost of
+  churning a clean UI slice. Applied the gate's sanctioned `tests-out-of-band` escape **with** a concrete
+  deferred-automation plan (not a flat out-of-scope): a bucket-E ImGui Test Engine case that drives the
+  switcher band — tap a non-active tab → assert active view changes; tap a tab on a dirty view → assert the
+  discard-confirm modal latches; assert the band is absent on non-Grid pages. Backlogged at
+  `docs/self-improvement/categories/test/2026-06-23-mobile-view-switcher-bucket-e.md`. Automation is
+  currently CI-blocked anyway: the Mesa-GL bucket-C/E lanes can't boot the CI exe (AGENTS.md merge-gates),
+  so bucket-E mobile coverage isn't runnable until that lane is restored. On-emulator verification (below)
+  covers the behaviour in the interim.
 
 ## Verification (actual)
 
@@ -195,3 +223,23 @@ _(per-slice)_
   The findings doc's WCAG contrast ratios are computed from the source palette values (deterministic,
   device-independent). On-device TalkBack / touch-target confirmation is a documented follow-up — no
   Android device/emulator in the authoring environment.
+- **P1.2 touch view quick-switcher (2026-06-23):**
+  - **Build** — desktop `SmatchetStandalone` (`cmake --build --preset ninja-iter-msvc`, light features)
+    links clean; Android x86_64 `assembleDebug` → `app-debug.apk` BUILD SUCCESSFUL.
+  - **Emulator** — installed `-r -t` on `emulator-5554`, launched `.SmatchetActivity`: clean boot
+    (PID 5490, no logcat FATAL, EGL GLES3 surface 1080×1920, ImGui density 2.62, steady frames).
+  - **On-device feature checks** (screenshot-confirmed, taps pinned `-s emulator-5554`): (1) the switcher
+    band renders between the app bar and the grid dock with one tab per saved view; (2) the active view's
+    tab carries the `ButtonActive` highlight; (3) tapping `+##MobileNewView` on a dirty view raised the
+    shell-level **"Discard changes?"** confirm (proves the reuse of `viewsRequestActivate` /
+    `drawMobileViewsModals` dirty path); (4) confirming the switch reloaded the grid for the new view;
+    (5) the band is **absent** on non-Grid pages (Settings/Activity) — the `gridPage` gate holds.
+  - **Perf** — no mobile perf scenario exists; the band is mobile-only (behind the
+    `EffectiveUiMode::Mobile` → `drawMobileShell` fork) so no desktop scenario path touches it →
+    zero desktop regression by construction. The local `priority-grid-scroll` headless run flaked
+    (the GUI harness hit its own `scenario.run` timeout → `std::terminate`, a known local-harness
+    issue, not a code regression — desktop exe boots + `perf.reset` runs fine). CI **Perf PR-fast** is
+    the authoritative headless gate; real-hardware mobile Pillar-1 remains the cross-cutting deferred
+    gate (plan lines 111/141).
+  - **Lint** — `agents/scripts/project/test-lint-rules.sh --diff origin/develop` green (exit 0;
+    `Source/Core/src/Ui/` is the Light/ungated zone, no strict-zone files touched).

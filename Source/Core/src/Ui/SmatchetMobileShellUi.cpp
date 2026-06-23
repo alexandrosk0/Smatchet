@@ -38,6 +38,9 @@ namespace {
 // Comfortable shell gets larger hit targets than a Compact one.
 constexpr float kAppBarBaseHeightPx = 40.0f;
 constexpr float kBottomNavBaseHeightPx = 48.0f;
+// P1.2 — height of the Grid-page touch view quick-switcher band (one tab row), scaled like the
+// other bands. Only the Grid page reserves it; other pages get the full content region.
+constexpr float kViewSwitcherBaseHeightPx = 40.0f;
 
 } // namespace
 
@@ -59,8 +62,8 @@ bool SmatchetHostPrefersDesktopUi() { return s_hostPrefersDesktopUi; }
 void SmatchetUI::drawResolveUiMode(UiDrawSession& d) {
     const float density = SmatchetTheme::HostDensityScale();
     const float logicalWidth = ::ImGui::GetIO().DisplaySize.x / (density > 0.0f ? density : 1.0f);
-    d.effectiveUiMode = resolveEffectiveUiMode(d.cfg.UiMode, SmatchetHostPrefersDesktopUi(),
-                                               logicalWidth, d.effectiveUiMode);
+    d.effectiveUiMode =
+        resolveEffectiveUiMode(d.cfg.UiMode, SmatchetHostPrefersDesktopUi(), logicalWidth, d.effectiveUiMode);
 }
 
 // Fullscreen mobile shell: occludes the host viewport dockspace with one borderless
@@ -116,12 +119,19 @@ void SmatchetUI::drawMobileShell(AppController& app, UiDrawSession& d) {
     unsigned int gridDockId = 0;
     if (open) {
         const float totalH = ::ImGui::GetContentRegionAvail().y;
-        const float contentH = totalH - appBarH - navH;
+        // The Grid page carries a touch view quick-switcher band between the app bar and the
+        // content dock (P1.2); other pages reserve no switcher height.
+        const float switcherH = gridPage ? (kViewSwitcherBaseHeightPx * scale * densityFactor) : 0.0f;
+        const float contentH = totalH - appBarH - navH - switcherH;
 
         if (::ImGui::BeginChild("##MobileAppBar", ::ImVec2(0.0f, appBarH), false, ImGuiWindowFlags_NoScrollbar)) {
             drawMobileTopAppBar(app, d);
         }
         ::ImGui::EndChild();
+
+        if (gridPage && switcherH > 0.0f) {
+            drawMobileViewQuickSwitcher(app, d, switcherH);
+        }
 
         const float pageH = contentH > 0.0f ? contentH : 0.0f;
         if (gridPage) {
@@ -266,8 +276,7 @@ void SmatchetUI::drawMobileBottomNav(AppController& app, UiDrawSession& d) {
             ::ImGui::PushStyleColor(ImGuiCol_Button, ::ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
         }
         ::ImGui::PushID(i);
-        if (::ImGui::Button(mobileNavPageLabel(pages[static_cast<std::size_t>(i)]).c_str(),
-                            ::ImVec2(btnW, btnH))) {
+        if (::ImGui::Button(mobileNavPageLabel(pages[static_cast<std::size_t>(i)]).c_str(), ::ImVec2(btnW, btnH))) {
             d.mobilePage = page;
             d.mobileDrawerOpen = false;
         }
