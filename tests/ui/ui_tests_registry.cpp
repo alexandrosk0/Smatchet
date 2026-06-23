@@ -24,6 +24,7 @@ extern "C" void SmatchetRegisterDescriptionTooltipMarkdownRenderTests(ImGuiTestE
 extern "C" void SmatchetRegisterSpawnWarmupDeterministicGateTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAnnotatePrefsPersistFlowTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterDataDependentWindowsSmokeTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterNotificationCenterTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterFuncSizeWindowRenderSmokeTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterFuncSizePreferencesTabsTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterFuncSizeMainUiSmokeTests(ImGuiTestEngine* engine);
@@ -70,6 +71,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterSpawnWarmupDeterministicGateTests(engine);
     SmatchetRegisterAnnotatePrefsPersistFlowTests(engine);
     SmatchetRegisterDataDependentWindowsSmokeTests(engine);
+    SmatchetRegisterNotificationCenterTests(engine);
     SmatchetRegisterFuncSizeWindowRenderSmokeTests(engine);
     SmatchetRegisterFuncSizePreferencesTabsTests(engine);
     SmatchetRegisterFuncSizeMainUiSmokeTests(engine);

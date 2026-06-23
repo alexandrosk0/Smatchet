@@ -34,6 +34,7 @@
 #include "SmatchetAiAssistantUi.h"
 #endif
 #include "SmatchetToast.h"
+#include "SmatchetNotificationCenterUi.h"
 #include "SmatchetImGuiFonts.h"
 #include "SmatchetLocalization.h"
 #if defined(SMATCHET_WITH_WHISPER)
@@ -1039,6 +1040,16 @@ void SmatchetUI::drawSecondaryWindowsTail(AppController& app, UiDrawSession& d) 
     if (d.showLogWindow) {
         SMATCHET_UI_PERF_SCOPE("drawLogWindow");
         drawLogWindow(d);
+    }
+    // Notification Center. A clicked transient toast raises the manager's open-center request,
+    // consumed here on the UI thread so the window opens from any Push surface, then drawn below.
+    if (SmatchetToastManager::Instance().ConsumeOpenCenterRequest()) {
+        d.showNotificationCenterWindow = true;
+        d.requestNotificationCenterFocus = true;
+    }
+    if (d.showNotificationCenterWindow) {
+        SMATCHET_UI_PERF_SCOPE("SmatchetDrawNotificationCenterWindow");
+        SmatchetDrawNotificationCenterWindow(d);
     }
     if (g_ui.showPerformance) {
         g_perfUi.DrawFpsOverlay();

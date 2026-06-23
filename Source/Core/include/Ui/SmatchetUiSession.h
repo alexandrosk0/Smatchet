@@ -300,6 +300,12 @@ struct UiDrawSession {
     bool showLogWindow = true;
     /// One-frame focus latch for the Log window. See `requestPreferencesFocus`.
     bool requestLogFocus = false;
+    /** Notification Center (toast-history log, ticket-change-monitor S3). Opened by the View
+     *  menu, the `notifications` command, or a transient toast click (consumed in
+     *  SmatchetUI::Draw via SmatchetToastManager::ConsumeOpenCenterRequest); closed via the X. */
+    bool showNotificationCenterWindow = false;
+    /// One-frame focus latch for the Notification Center. See `requestPreferencesFocus`.
+    bool requestNotificationCenterFocus = false;
     int layoutForceDefaultsFrames = 0;
     std::unordered_set<std::string> pendingReDockWindows;
     /// Latch set when a layout reset is requested MID-FRAME (menu bar, command dispatch).
