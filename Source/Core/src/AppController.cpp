@@ -1881,7 +1881,7 @@ std::string AppController::InitBackends(TrackerConfig& cfgOut) {
         }
     }
 
-    // Slice 4 of docs/plans/active/linear-tracker-backend.md — the Linear sibling
+    // Slice 4 of docs/plans/linear-tracker-backend.md — the Linear sibling
     // of the Plane fixture hook above. SMATCHET_TEST_LINEAR_BACKEND_FIXTURE=<path>
     // swaps in a fixture-driven Linear backend (no GraphQL, no API key) so the
     // zero-credentials scenario replay covers the Linear read path too.

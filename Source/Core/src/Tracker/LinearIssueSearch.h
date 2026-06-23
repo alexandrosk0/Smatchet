@@ -5,7 +5,7 @@
 // LinearClient::FetchIssues / FetchIssuesStreamed / FetchIssuesForKeys. Not part
 // of the public Source/Core/include surface; lives next to its implementation so
 // only LinearClient.cpp + LinearIssueSearch.cpp pick it up.
-// Slice 2 of docs/plans/active/linear-tracker-backend.md — mirrors the GitHub
+// Slice 2 of docs/plans/linear-tracker-backend.md — mirrors the GitHub
 // GitHubIssueSearch.h thin-adapter/pure-TU split.
 
 #include "CachedTicketTypes.h"

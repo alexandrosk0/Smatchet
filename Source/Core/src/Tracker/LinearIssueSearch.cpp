@@ -16,7 +16,7 @@
 #include <utility>
 #include <vector>
 
-// Slice 2 of docs/plans/active/linear-tracker-backend.md — cursor-paginated
+// Slice 2 of docs/plans/linear-tracker-backend.md — cursor-paginated
 // Linear GraphQL `issues` fetch. Mirrors GitHubIssueSearch.cpp: a thin
 // HTTP-touching adapter over the cpr-free pure helpers (key parse, filter
 // translation, node mapping). All GraphQL POSTs route through TrackerPostLogged.

@@ -1,5 +1,5 @@
 // LinearQueryFromJql doctest — JQL subset -> Linear IssueFilter.
-// Slice 2 of docs/plans/active/linear-tracker-backend.md.
+// Slice 2 of docs/plans/linear-tracker-backend.md.
 
 #include "LinearQueryFromJql.h"
 

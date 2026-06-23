@@ -2,7 +2,7 @@
 
 > **Slug**: `cursor-vexp-coexistence` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — **not started** (no code on develop). Premise needs re-validation: vexp was removed as the Claude Code nav tool by #1084 before this plan was filed.
+> **Status**: `deferred — retired` (2026-06-23). **Not started** (no code on develop, § Implementation log empty) **and the premise is dead**: vexp was removed as the Claude Code nav tool by **#1084**, which merged *before* this plan doc was filed (#1176). The `.cursor/rules` file-vs-directory collision this plan was meant to resolve no longer arises from a vexp install Smatchet ships against. Retired rather than executed; re-file fresh if a real Cursor/vexp coexistence conflict recurs.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules (Plan location, Plan-doc safety, Plan revision after implementation, Plan stress-test, Plan template).
 

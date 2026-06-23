@@ -1,7 +1,7 @@
 #ifndef SMATCHET_LINEAR_FIXTURE_BACKEND_H
 #define SMATCHET_LINEAR_FIXTURE_BACKEND_H
 
-// Slice 4 of docs/plans/active/linear-tracker-backend.md — deterministic
+// Slice 4 of docs/plans/linear-tracker-backend.md — deterministic
 // in-process Linear backend. Reads a JSON fixture from disk at construction,
 // maps the issue `nodes` array through LinearIssueMappingPure, and serves
 // `FetchIssues` from the resulting CachedTickets. No HTTP, no network, no API

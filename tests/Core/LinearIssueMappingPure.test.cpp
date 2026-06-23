@@ -1,5 +1,5 @@
 // LinearIssueMappingPure doctest — Linear issue node -> CachedTicket.
-// Slice 1/2 of docs/plans/active/linear-tracker-backend.md.
+// Slice 1/2 of docs/plans/linear-tracker-backend.md.
 
 #include "LinearIssueMappingPure.h"
 

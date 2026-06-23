@@ -2,7 +2,7 @@
 
 > **Slug**: `linear-tracker-backend` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — not started. The plan doc merged in #466; **revised 2026-06-20** to the current tracker architecture (`ITrackerBackend` + 6 role interfaces, post `tracker-interface-split`) and the latest Linear GraphQL API. No production code shipped yet.
+> **Status**: `shipped` (2026-06-23 status reconciliation) — the "not started / no production code shipped yet" line was **stale**. The full backend (slices 1–4) landed via **#1453**; live-smoke automation + bucket-E red-fix followed in **#1486 / #1489 / #1491**. 16 `Linear*.{h,cpp}` TUs + 4 Bucket-A tests + fixtures + the `linear-live-smoke.yml` workflow are on develop, and the post-ship sections (§ Implementation log / Deviations / Verification) below are populated. The plan doc originally merged in #466; **revised 2026-06-20** (#1448) to the current tracker architecture (`ITrackerBackend` + 6 role interfaces, post `tracker-interface-split`) and the latest Linear GraphQL API. Only residue: the manual live-smoke credential step (§ Verification).
 >
 > **Origin**: User request, 2026-05-26: "Can I add Linear as a tracker to smatchet?" → "make a plan for it". Revision request, 2026-06-20: "this plan is very old, start over from scratch and revise the plan to be following the latest Linear api and the latest code features and structure."
 >

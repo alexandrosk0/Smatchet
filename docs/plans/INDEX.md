@@ -75,6 +75,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`unreal-command-bridge`](shipped/unreal-command-bridge.md) | 2026-05-25 | Plan - Unreal Async Command Bridge |
 | [`unreal-console-command-bridge`](shipped/unreal-console-command-bridge.md) | 2026-05-25 | Plan - Unreal Console Command Bridge |
 | [`generic-cmake-cross-platform`](shipped/generic-cmake-cross-platform.md) | 2026-05-26 | Plan — Generic Cross-Platform CMake |
+| [`linear-tracker-backend`](shipped/linear-tracker-backend.md) | 2026-05-26 | Plan - Linear as fourth tracker backend |
 | [`tracker-interface-split`](shipped/tracker-interface-split.md) | 2026-05-26 | Plan — ITrackerClient Interface Split |
 | [`dock-slot-enforcement`](shipped/dock-slot-enforcement.md) | 2026-05-27 | Plan: Enforce dock-slot-only windows (no free-floating) |
 | [`policy-tighten-catch-all`](shipped/policy-tighten-catch-all.md) | 2026-05-27 | Plan: Tighten catch-all exception handling policy |

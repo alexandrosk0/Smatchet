@@ -17,7 +17,7 @@
 #include <string>
 #include <vector>
 
-// Slice 3 of docs/plans/active/linear-tracker-backend.md — the Linear GraphQL
+// Slice 3 of docs/plans/linear-tracker-backend.md — the Linear GraphQL
 // mutation surface (issueUpdate / issueCreate / commentCreate), split out of the
 // read-only LinearClient shell exactly like JiraIssueMutation.cpp /
 // PlaneIssueMutation.cpp split their writes out of the client TU. A thin

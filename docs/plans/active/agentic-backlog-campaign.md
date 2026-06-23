@@ -2,7 +2,7 @@
 
 > **Slug**: `agentic-backlog-campaign` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — most priority batches shipped; B7 (supply-chain) + B8 (bucket-E keystone) remain.
+> **Status**: `active` — most priority batches shipped; **B7 partially cleared** (CI dead-job + workflow-permissions done per § Implementation log, and `.github/dependabot.yml` is now on develop — only the Lua tarball `EXPECTED_HASH SHA256=` pin remains) + B8 (bucket-E keystone) remain. *(B7 dependabot status reconciled 2026-06-23.)*
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template.
 
@@ -64,7 +64,7 @@ Grouped by batch. `path` links are representative anchors; each batch's PR enume
 
 **B7 · CI lint + supply-chain hardening** (one security/CI PR)
 21. `.github/workflows/build-and-test.yml` — bucket-A C++ lint step (lint-catch-all + curated cppcheck over diff); delete dead `windows-msvc-no-agentic` job; pin all `uses:` to SHAs; workflow `permissions: contents:read` + per-job overrides; Mesa TOFU SHA256.
-22. `.github/dependabot.yml` — github-actions weekly.
+22. `.github/dependabot.yml` — github-actions weekly. **Done** (on develop).
 23. `agents/scripts/project/test-lint-rules.sh` — parallelize `scan_narrowing` clang-tidy fan-out (`xargs -P`).
 24. `CMakeLists.txt:377` — Lua tarball `EXPECTED_HASH SHA256=`.
 

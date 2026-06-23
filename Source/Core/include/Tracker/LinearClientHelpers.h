@@ -13,7 +13,7 @@
 // out like GitHubClientHelpers so the doctest rig links them without a network
 // stack. Linear's API is GraphQL (POST); personal API keys use a RAW Authorization
 // header (no "Bearer"), and errors arrive in a top-level `errors` array even on
-// HTTP 200. See docs/plans/active/linear-tracker-backend.md § Context.
+// HTTP 200. See docs/plans/linear-tracker-backend.md § Context.
 
 namespace smatchet {
 namespace linear {

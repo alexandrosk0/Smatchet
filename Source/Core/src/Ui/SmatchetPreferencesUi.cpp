@@ -344,7 +344,7 @@ void DrawTrackerBackendConfig(UiDrawSession& d, int currentItem) {
                                    "Comma-separated GitHub field ids copied from the last grid row when you "
                                    "click + New issue (e.g. body, labels, assignees, milestone).");
     } else {
-        // Linear-as-tracker — Slice 1 of docs/plans/active/linear-tracker-backend.md. Draft scope is
+        // Linear-as-tracker — Slice 1 of docs/plans/linear-tracker-backend.md. Draft scope is
         // the Team, so identity is the Team Key / Team Id pair (mirrors GitHub's Owner/Repo shape).
         ImGui::TextUnformatted("Linear Configuration (linear.app)");
         ImGui::InputText("API Key", d.linearApiKeyBuf, sizeof(d.linearApiKeyBuf), ImGuiInputTextFlags_Password);

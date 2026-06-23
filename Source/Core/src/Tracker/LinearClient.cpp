@@ -17,7 +17,7 @@
 #include <map>
 #include <utility>
 
-// LinearClient — fourth tracker backend (docs/plans/active/linear-tracker-backend.md).
+// LinearClient — fourth tracker backend (docs/plans/linear-tracker-backend.md).
 // This TU holds the read shell: GraphQL transport + connectivity + field catalog +
 // read sync. The mutation surface (issueUpdate/issueCreate/commentCreate) lives in
 // LinearIssueMutation.cpp (slice 3), split out like JiraIssueMutation.cpp.
