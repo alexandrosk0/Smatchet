@@ -1,0 +1,168 @@
+name: Dependabot auto-merge
+
+# Arm auto-merge for Dependabot PRs the SANCTIONED way (operator decision:
+# "auto-merge when green", routed via safe-merge.sh per ship-loops.md § Sanctioned
+# non-admin merge path). A bare `gh pr merge --auto` is FORBIDDEN here: it waits
+# only on branch-protection REQUIRED contexts, so it can land past a RED
+# non-required block-allowlist check (Coverage / Sanitizer / Perf) — the #923
+# gate-escape class. `agents/scripts/core/safe-merge.sh` runs the FULL merge-gates
+# poll first and arms `--squash --auto` ONLY on GATES_PASSED, refusing on any
+# block-allowlist RED lacking its `*-out-of-band` override.
+#
+# Trigger: workflow_run on "Build and test" SUCCESS (not pull_request_target on
+# open). Three reasons: (1) a merge needs a writable token — Dependabot's
+# pull_request token is read-only; workflow_run runs in the base repo with write
+# scope; (2) the gate poll is only meaningful once CI has a verdict; (3) it
+# composes with automated-pr-guard.yml, which owns the `failure` side of the same
+# "Build and test" completion.
+#
+# SECURITY: workflow_run carries base-repo write scope, so authorship is taken
+# from the GitHub-authenticated PR author (unforgeable), never the head-branch
+# name (a fork can forge `dependabot/...`). The repo is checked out at the base
+# `develop` ref — never the PR head — so the sanctioned scripts that run are the
+# trusted base versions, not anything a PR could modify. Interpolated values are
+# passed through `env:` (not inlined into run scripts) to avoid template-injection.
+#
+# CR gate: scoped to github-actions SHA-bumps only. CR does not review mechanical
+# action bumps, so the workflow applies the documented `cr-out-of-band` label (the
+# same override that unblocked #1546) to waive the CR gate in the poll immediately
+# — but ONLY for dependabot/github_actions/* PRs. A non-actions bump (npm/pip/…,
+# if ever added) keeps its CR gate: the waiver is skipped, so safe-merge won't arm
+# until CR / a human actually reviews it. The block-allowlist checks stay enforced
+# regardless of ecosystem.
+#
+# Requires the repo "Allow auto-merge" setting (Settings -> General -> Pull
+# Requests) ON — safe-merge.sh arms `--auto`, which GitHub completes once the
+# required contexts are green.
+
+on:
+  workflow_run:
+    workflows: ["Build and test"]
+    types: [completed]
+
+# contents/pull-requests write to arm the squash-merge; issues write for the
+# cr-out-of-band label (gh label create + gh issue edit --add-label both need
+# issues:write); checks/statuses read for the merge-gates poll's rollup read.
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  checks: read
+  statuses: read
+
+concurrency:
+  # One arming attempt per triggering run; never cancel a half-armed merge.
+  group: dependabot-automerge-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  automerge:
+    # Cheap pre-filter: a same-repo Dependabot PR run that went GREEN. The
+    # head-branch prefix + same-repo check are NOT the trust gate (a fork can
+    # forge the name) — the AUTHENTICATED-author check in the resolve step is.
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      startsWith(github.event.workflow_run.head_branch, 'dependabot/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      # Passed via env (not inlined into run) to avoid template-injection.
+      EVENT_PR_NUM: ${{ github.event.workflow_run.pull_requests[0].number }}
+    steps:
+      - name: Resolve PR number + verify Dependabot authorship
+        id: pr
+        run: |
+          set -uo pipefail
+          # Prefer the run payload's own association; fall back to the head
+          # commit's associated PRs if the array is empty.
+          num="$EVENT_PR_NUM"
+          if [ -z "$num" ]; then
+            num=$(gh api "repos/${REPO}/commits/${HEAD_SHA}/pulls" \
+                    --jq '.[0].number' 2>/dev/null || true)
+          fi
+          [ "$num" = "null" ] && num=""
+          if [ -z "$num" ]; then
+            echo "::warning::could not resolve a PR number for the green run; nothing to merge."
+            echo "num=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # SECURITY: verify the GitHub-authenticated author is Dependabot before
+          # arming any merge; the head-branch name is not trusted.
+          author=$(gh pr view "$num" --repo "${REPO}" --json author --jq '.author.login' 2>/dev/null || true)
+          if [ "$author" != "dependabot[bot]" ]; then
+            echo "::notice::PR #${num} author is '${author:-unknown}', not dependabot[bot] — not arming auto-merge."
+            echo "num=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "num=${num}" >> "$GITHUB_OUTPUT"
+          echo "Resolved Dependabot PR #${num}; author verified as dependabot[bot]."
+
+      - name: Check out base develop (trusted sanctioned scripts)
+        if: steps.pr.outputs.num != ''
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: develop
+          persist-credentials: false
+
+      - name: Waive the CR gate out-of-band (github-actions SHA-bumps only)
+        # Scoped to the github-actions ecosystem: CR doesn't review mechanical
+        # action SHA-bumps, but a non-actions bump (npm/pip/…, if ever added to
+        # dependabot.yml) carries real supply-chain surface and must keep its CR
+        # gate — so the waiver is gated on the dependabot/github_actions/ head ref
+        # (matching the cr-finding-gate auto-pass scope).
+        if: steps.pr.outputs.num != '' && startsWith(github.event.workflow_run.head_branch, 'dependabot/github_actions/')
+        env:
+          PR_NUM: ${{ steps.pr.outputs.num }}
+        run: |
+          set -uo pipefail
+          # The documented cr-out-of-band override waives the CR gate in the
+          # merge-gates poll immediately (idempotent — the label may pre-exist).
+          gh label create cr-out-of-band --repo "${REPO}" --color 0E8A16 \
+            --description "CR review handled out of band (waives the CR merge gate)" \
+            2>/dev/null || true
+          gh issue edit "${PR_NUM}" --repo "${REPO}" --add-label cr-out-of-band \
+            || echo "::warning::could not apply cr-out-of-band to #${PR_NUM} (poll still passes after the CR grace window)."
+
+      - name: Arm squash auto-merge via safe-merge.sh (full gate poll)
+        if: steps.pr.outputs.num != ''
+        env:
+          PR_NUM: ${{ steps.pr.outputs.num }}
+          # ORCH_USER is the self-comment filter; set it to the bot so EVERY
+          # genuine human comment still blocks the auto-merge (no human excluded).
+          ORCH_USER: dependabot[bot]
+          SAFE_MERGE_OWNER: ${{ github.repository_owner }}
+          SAFE_MERGE_REPO: ${{ github.event.repository.name }}
+          # Bound the poll so a slow sibling check can't pin a runner; if gates
+          # are not green inside this window safe-merge refuses (a safe no-merge).
+          MERGE_GATES_TIMEOUT_SECONDS: "900"
+        run: |
+          set -uo pipefail
+          echo "Routing Dependabot PR #${PR_NUM} through the sanctioned safe-merge.sh gate poll."
+          # safe-merge.sh runs the FULL merge-gates poll (incl. the non-required
+          # block-allowlist: Coverage / Sanitizer / Perf) and arms --squash --auto
+          # ONLY on GATES_PASSED. Exit codes: 0=armed, 1=gates not passed (benign
+          # no-merge), 2=usage/dep error, 3=precondition (PR closed/merged, gh API
+          # down, config). Surface 2/3 as real failures so a setup/API bug is
+          # visible — EXCEPT the benign "already merged by a sibling run" race,
+          # which is a no-op, not an error.
+          if bash agents/scripts/core/safe-merge.sh "${PR_NUM}"; then
+            echo "safe-merge.sh armed squash auto-merge for #${PR_NUM}."
+          else
+            rc=$?
+            if [ "${rc}" = "1" ]; then
+              echo "::warning::safe-merge.sh did not arm auto-merge for #${PR_NUM} (rc=1: gates not passed). Left open for the maintainer."
+            else
+              state=$(gh pr view "${PR_NUM}" --repo "${REPO}" --json state --jq '.state' 2>/dev/null || echo UNKNOWN)
+              if [ "${state}" = "MERGED" ]; then
+                echo "::notice::#${PR_NUM} already merged (rc=${rc} — race with a sibling run); nothing to do."
+              else
+                echo "::error::safe-merge.sh failed for #${PR_NUM} (rc=${rc}: precondition/config/API failure; PR state=${state})."
+                exit "${rc}"
+              fi
+            fi
+          fi
