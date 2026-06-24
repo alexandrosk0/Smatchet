@@ -18,7 +18,7 @@ done**. Corrected per-slice status (evidence = current-tree `file:line`):
 | **P1.2** Saved views + touch switcher | ✅ **Shipped this PR** | The missing piece — a dedicated touch tab-strip quick-switcher in the grid area — now ships: `drawMobileViewQuickSwitcher` (`SmatchetViewsDashboardUi.cpp`) draws a horizontal-scroll strip of saved-view tabs (active highlighted) + a trailing "+" between the app bar and content dock, reserved by `drawMobileShell` (`SmatchetMobileShellUi.cpp`, `kViewSwitcherBaseHeightPx`). Reuses the existing dirty-aware `viewsRequestActivate` / `viewsCreateNewView`; Grid-page-only (off-grid pages reserve no band). Emulator-verified (switch + dirty discard-confirm). Earlier pieces still hold: view commands (`ViewCommands.cpp:151–282`), mobile drawer + modals (`buildMobileViewsCtx` / `drawMobileDrawerViews` / `drawMobileViewsModals`). |
 | **P1.3** Touch cell editors | ❌ **Not started** (the spike-first, highest-risk slice) | `kMobileInlineEditBuild=true` on Android (`TicketFieldEditor.cpp:71–73`) + `SingleClickToEditGridCells` default-on exist, but **no long-press detector** (`SmatchetAndroidImeBridge.cpp`) and **no touch Save/Cancel affordance** for the four combo/modal editors. |
 | **P1.4** Attachments | ✅ **Shipped** (decode cross-platform) | `SmatchetImageTextureCache.cpp:139–157` (`DecodeWithStb`, no `_WIN32` guard) + renderer-agnostic `RegisterUserTexture`; thumbnails enabled globally. **Residual:** the *optional* Win32-only bitmap thumbnail-to-file at `SmatchetAttachmentPreviewUi.cpp:112` (low priority). |
-| **P1.5** Multi-backend | 🟡 **Infra ready** | `ITrackerBackend` abstraction + Jira / Plane / GitHub all in Core; backend selection lives in the Preferences combo (`SmatchetPreferencesUi.cpp:253`). **Missing:** a touch-first backend-selection UI (depends on P1.3 chrome). |
+| **P1.5** Multi-backend | ✅ **Shipped this PR** | `ITrackerBackend` abstraction + Jira / Plane / GitHub / Linear all in Core; the missing piece — a touch-first backend picker — now ships: `DrawTrackerBackendSelection` (`SmatchetPreferencesUi.cpp:234`) forks on `d.effectiveUiMode == EffectiveUiMode::Mobile` to render the four backends as full-width `ImGui::Selectable` rows (the drawer page-list touch idiom) instead of the tiny desktop `ImGui::Combo`, writing the **same** `d.trackerTypeBuf` so `DrawTrackerBackendConfig` + the multi-backend layer are inherited unchanged (a widget swap, not new backend code). |
 | **P1.6** Accessibility | ✅ **Shipped this PR** (research) | [`docs/mobile/PHASE1_ACCESSIBILITY_RESEARCH.md`](../../mobile/PHASE1_ACCESSIBILITY_RESEARCH.md) + Pillar-4 backlog [`debt/2026-06-20-mobile-accessibility-pillar4.md`](../../self-improvement/categories/debt/2026-06-20-mobile-accessibility-pillar4.md). |
 
 **Residual P1.0 finding — ✅ SHIPPED 2026-06-20:** the Android plaintext-token warning at
@@ -123,6 +123,7 @@ Per [`docs/guides/perf-workflow.md`](../../guides/perf-workflow.md), each Source
 - **P1.0 Keystore**: no steady-state scenario (crypto fires only on config save/load) — assert *absence* of per-frame cost; one save/load latency check (<100 ms, Pillar 2).
 - **P1.1 Replay tick**: the sync/replay scenario must show the tick off the UI-thread frame budget (Pillar 2) — instrument with a `perf_temp:` scope on the tick, assert the UI-thread frame stays ≤6.94 ms while replay runs.
 - **P1.3 Touch editors**: grid-scroll + cell-edit-open scenarios — Pillar-1 steady-state ≤6.94 ms, popup-open Pillar-2 <100 ms. Baseline = current grid-scroll scenario.
+- **P1.5 Backend picker**: no steady-state scenario (the picker is a `Combo`↔`Selectable` widget swap rendered only inside the `EffectiveUiMode::Mobile` fork, while the Preferences page is open — never on the grid/scroll hot path) — assert *absence* of per-frame cost: the four `Selectable`s are O(1) + allocation-free, and the desktop `Combo` arm's codegen is unchanged (zero desktop regression by construction). No mobile perf scenario exists yet (same gap as P1.2/P1.3); CI **Perf PR-fast** is the authoritative headless gate.
 - Each slice's execution plan carries its own filled Perf-gate section; `perf-gatekeeper` runs the diff→scenario subset at PR time.
 
 ## Risks / non-goals
@@ -202,6 +203,25 @@ _(per-slice; appended as each PR ships)_
   3 files + 1 new header, ~+76/−67 (post-format). Built desktop dual-target (`SmatchetStandalone` +
   `SmatchetCore_DX12`, clean link) + Android x86_64 `assembleDebug` (BUILD SUCCESSFUL); emulator-verified
   (below). Visual-validation pause raised for the user (touches Tracker editors → ship-loop exception 5).
+- **2026-06-24 — P1.5 touch backend-selection UI (this PR).** Forked `DrawTrackerBackendSelection`
+  (`SmatchetPreferencesUi.cpp:234`) on `d.effectiveUiMode == EffectiveUiMode::Mobile`: when the mobile shell
+  renders the Preferences page (phone, or a narrow desktop window pinned/auto-resolved to Mobile) the four
+  backends (`Jira`/`Plane`/`GitHub`/`Linear`) draw as full-width `ImGui::Selectable` rows (the same touch
+  idiom as the drawer page-list) instead of the tiny desktop `ImGui::Combo` whose popup hit-targets are
+  finger-hostile. The touch branch writes the **identical** `d.trackerTypeBuf` the combo writes, so
+  `DrawTrackerBackendConfig` below and the multi-backend `ITrackerBackend` layer are inherited unchanged —
+  a widget swap, not new backend code (Pillar-5 DRY: zero new backend logic). **RUNTIME** fork
+  (`effectiveUiMode`), not the P1.3 compile-time `kMobileTouchBuild` idiom, because backend-selection is a
+  *layout* choice and the mobile shell legitimately renders on desktop (Auto-narrow / Mobile-pin) — the
+  selectable rows must appear there too. The touch path omits `MarkPrefsDirty` exactly as the desktop combo
+  does (the save at `:634` reads `trackerTypeBuf` regardless), so behaviour is identical. The density-scaled
+  mobile style already enlarges each `Selectable` to a touch-comfortable target, so no explicit row height is
+  needed (and no wrapper-incompatible `::ImGui::` metric getter is called — this TU `#define ImGui
+  SmatchetLocalizedImGui`s, and the wrapper forwards `Selectable`/`TextUnformatted` but not metric getters).
+  1 file, +18/−1. Built desktop dual-target (`SmatchetStandalone` + `SmatchetCore_DX12`, clean link via
+  `with-msvc-env.sh`); Android coverage via the PR's advisory `android-ndk-arm64` CI job (pure portable
+  C++14 UI logic — no new symbols/includes; the same widgets already compile in the Android-built
+  `SmatchetMobileShellUi.cpp`).
 
 ## Deviations from plan
 
@@ -255,6 +275,26 @@ _(per-slice)_
   condition). Bundled on this branch rather than split to its own PR because it is the gating RED *for this
   PR* and must live on this branch's merge ref for CI to pick it up; 1 file, test-env only, no product code.
   Self-improvement note: `docs/self-improvement/categories/test/2026-06-24-pre-push-guard-test-not-hermetic.md`.
+- **P1.5 — "depends on P1.3 chrome" was looser than the spec implied; runtime idiom chosen (2026-06-24).**
+  The §Approach line cast P1.5 as *blocked on* P1.3's touch chrome. In practice the backend picker needs
+  **none** of P1.3's machinery — no long-press, no arm-then-popup, no `kMobileTouchBuild`. It reuses the
+  pre-existing **mobile-shell runtime fork** (`d.effectiveUiMode == EffectiveUiMode::Mobile`, the same seam
+  P1.0/P1.2 already ride) and the plain `Selectable` page-list idiom. So the only real P1.3 dependency was
+  *temporal* (P1.3 landed first), not architectural. Deliberately **did not** use P1.3's compile-time
+  `kMobileTouchBuild` constexpr: that idiom keeps desktop codegen byte-identical for the grid cell editors,
+  but backend-selection is a *layout* decision and the mobile shell renders on desktop too (Auto-narrow /
+  Mobile-pin), so the touch rows must be reachable at runtime on desktop — a compile-time fork would wrongly
+  hide them. Net file delta vs the §Files-to-modify "touch backend-selection UI" row: **1 existing file**
+  (`SmatchetPreferencesUi.cpp`), **no new file**, **no backend-code change**.
+- **P1.5 — `tests-out-of-band` anticipated (2026-06-24).** Like P1.2, the slice touches one `Source/Core/`
+  file with no `tests/` delta and the changed surface is pure **ImGui immediate-mode draw** (a `Combo`↔
+  `Selectable` widget swap behind the `EffectiveUiMode::Mobile` fork) — `test-rig` refuses ImGui surfaces, so
+  a doctest is the wrong vehicle and there is no new pure seam to extract (the picker writes the existing
+  `trackerTypeBuf`; the case-insensitive match it reads was already present). If the Test-delta gate FAILs,
+  apply the sanctioned `tests-out-of-band` escape with the deferred-automation plan folded into the **same**
+  bucket-E ImGui Test Engine backlog as P1.2/P1.3 (drive the mobile Preferences page → tap a backend row →
+  assert `trackerTypeBuf` / `cfg.TrackerType` flips → assert the desktop `Combo` path still works when
+  `effectiveUiMode == Desktop`). That bucket-E lane is CI-blocked today (Mesa-GL can't boot the CI exe).
 
 ## Verification (actual)
 
@@ -349,3 +389,27 @@ _(per-slice)_
     editors (incl. MultiSelect / Cascading / Labels / DateTime-centering) is glue-on-ImGui-surface, so it is
     backlogged as a bucket-E ImGui Test Engine case (CI-blocked today on the Mesa-GL lane, same as P1.2);
     backlog entry below.
+- **P1.5 touch backend-selection UI (2026-06-24):**
+  - **Build** — desktop dual-target via the MSVC env wrapper
+    (`bash scripts/dev/with-msvc-env.sh cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
+    SmatchetCore_DX12`) → both link clean (`SmatchetCore_DX12.lib` + `Smatchet.exe`, 117/117). Android
+    coverage is the PR's advisory `android-ndk-arm64` CI job — the change is pure portable C++14 UI logic
+    (no new symbols, no new includes; `Selectable` / `TextUnformatted` / `CopyStringToBuffer` / `IM_ARRAYSIZE`
+    all already compile in the Android-built `SmatchetMobileShellUi.cpp` + this same TU), so a local Android
+    reconfigure (which needs CI-runtime OpenSSL-for-Android absolute paths) was skipped in favour of the
+    authoritative CI Android lane.
+  - **Behaviour-identical save path** — the touch branch omits `MarkPrefsDirty` exactly as the desktop combo
+    does; the Tracker-tab save reads `d.trackerTypeBuf` unconditionally (`SmatchetPreferencesUi.cpp:634`,
+    `cfg.TrackerType = NormalizeViewsBackendKey(trackerTypeBuf)`), so both widget paths persist identically.
+    The case-insensitive `currentItem` resolve (handles hand-edited lowercase `plane`/`github`/`linear`) is
+    shared by both branches.
+  - **Perf** — see the §Perf-review-system-gates P1.5 bullet: the picker is rendered only inside the
+    `EffectiveUiMode::Mobile` fork, fires the four `Selectable`s once per Preferences-page frame (O(1),
+    allocation-free, only while Settings is open — never on the grid hot path), and changes **zero** desktop
+    `Combo` codegen (the `else if` arm is unchanged). No new per-frame steady-state cost; no mobile perf
+    scenario exists (same gap as P1.2/P1.3); CI **Perf PR-fast** is the authoritative headless gate.
+  - **Lint** — `agents/scripts/project/test-lint-rules.sh --diff origin/develop` to be run before push
+    (`Source/Core/src/Ui/` is the Light/ungated zone; no strict-zone file touched).
+  - **Emulator** — on-device confirmation of the touch rows rendering in Settings ▸ Tracker on
+    `emulator-5554` is a documented follow-up bundled with the bucket-E automation (taps pinned
+    `-s emulator-5554`; never coordinate-inject the physical device).

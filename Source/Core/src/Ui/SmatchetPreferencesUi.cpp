@@ -264,7 +264,24 @@ int DrawTrackerBackendSelection(UiDrawSession& d) {
             currentItem = 3;
         }
     }
-    if (ImGui::Combo("Tracker Backend", &currentItem, items, IM_ARRAYSIZE(items))) {
+    if (d.effectiveUiMode == EffectiveUiMode::Mobile) {
+        // P1.5 touch-first backend picker: when the mobile shell renders this Preferences page
+        // (effectiveUiMode == Mobile — phone, or a narrow desktop window pinned/auto-resolved to
+        // Mobile), replace the desktop combo's small popup hit-targets with full-width selectable
+        // rows (the drawer page-list touch idiom). Writes the same d.trackerTypeBuf the combo does,
+        // so DrawTrackerBackendConfig below and the multi-backend ITrackerBackend layer
+        // (Jira/Plane/GitHub/Linear) are inherited unchanged — this is a widget swap, not new
+        // backend code. The density-scaled mobile style already enlarges each Selectable to a
+        // touch-comfortable target, so no explicit row height is needed.
+        ImGui::TextUnformatted("Tracker Backend");
+        for (int i = 0; i < IM_ARRAYSIZE(items); ++i) {
+            const bool selected = (i == currentItem);
+            if (ImGui::Selectable(items[i], selected) && i != currentItem) {
+                currentItem = i;
+                CopyStringToBuffer(d.trackerTypeBuf, items[i]);
+            }
+        }
+    } else if (ImGui::Combo("Tracker Backend", &currentItem, items, IM_ARRAYSIZE(items))) {
         CopyStringToBuffer(d.trackerTypeBuf, items[currentItem]);
     }
     ImGui::Spacing();
