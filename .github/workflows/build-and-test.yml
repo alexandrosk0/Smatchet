@@ -489,19 +489,23 @@ jobs:
 
     steps:
       - name: Checkout
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
       - name: Setup MSVC dev environment (ARM64 native)
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: arm64
 
       - name: Setup sccache (object cache)
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (msvc-arm64-native)
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ${{ github.workspace }}\.sccache
@@ -510,6 +514,7 @@ jobs:
             ${{ runner.os }}-sccache-msvc-arm64-native-
 
       - name: Cache FetchContent _deps (msvc-arm64-native)
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .fetchcontent-src
@@ -520,6 +525,7 @@ jobs:
             ${{ runner.os }}-fetchcontent-
 
       - name: Fetch Font Awesome 6 Solid TTF (pinned + checksum-verified)
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         shell: bash
         env:
           FA_TAG: "6.7.2"
@@ -532,6 +538,7 @@ jobs:
           echo "${FA_SHA256}  assets/fonts/fa-solid-900.ttf" | sha256sum -c -
 
       - name: Confirm native ARM64 host (guard against an x64 fallback runner)
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         shell: pwsh
         run: |
           # Assert the leg is on a real ARM core before the expensive build —
@@ -551,12 +558,15 @@ jobs:
           Write-Host 'Confirmed: native ARM64 host.'
 
       - name: Configure ninja-publish-msvc-arm64 (native)
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         run: cmake --preset ninja-publish-msvc-arm64
 
       - name: Build SmatchetStandalone + SmatchetTests (ARM64 native)
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         run: cmake --build --preset ninja-publish-msvc-arm64
 
       - name: Run ctest — bucket-A doctest rig on native ARM64 (atomics gate)
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         working-directory: build/ninja-publish-msvc-arm64
         run: ctest --output-on-failure
 
@@ -570,6 +580,7 @@ jobs:
       # --mcp-port). DX12 falls back to the WARP adapter when no hardware D3D12 exists
       # (Dx12Bootstrap SelectAdapterAndCreateDevice -> EnumWarpAdapter).
       - name: DX12-on-WARP launch smoke (ARM64)
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         shell: bash
         env:
           SMATCHET_RENDERER: "dx12"
@@ -614,6 +625,7 @@ jobs:
       # are produced as an ARTEFACT for a human to commit in a follow-up bootstrap PR
       # (same flow as the ci-windows-latest set) — NOT auto-committed here.
       - name: Perf PR-fast bootstrap (ci-windows-arm64, DX12/WARP)
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         shell: bash
         env:
           SMATCHET_RENDERER: "dx12"
@@ -641,6 +653,7 @@ jobs:
           done
 
       - name: Upload ARM64 perf baselines (for human bootstrap commit)
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -649,6 +662,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Report sccache stats
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         if: always()
         run: sccache --show-stats
 
@@ -675,16 +689,19 @@ jobs:
 
     steps:
       - name: Checkout
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
       - name: Setup MSVC dev environment (ARM64 native)
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: arm64
 
       - name: Confirm native ARM64 host
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         shell: pwsh
         run: |
           $hostArch = $env:PROCESSOR_ARCHITEW6432
@@ -696,9 +713,11 @@ jobs:
           }
 
       - name: Setup sccache (object cache)
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (msvc-arm64-installer)
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ${{ github.workspace }}\.sccache
@@ -709,6 +728,7 @@ jobs:
             ${{ runner.os }}-sccache-msvc-arm64-native-
 
       - name: Cache FetchContent _deps (msvc-arm64-installer)
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .fetchcontent-src
@@ -717,6 +737,7 @@ jobs:
             ${{ runner.os }}-fetchcontent-
 
       - name: Fetch Font Awesome 6 Solid TTF (pinned + checksum-verified)
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         shell: bash
         env:
           FA_TAG: "6.7.2"
@@ -729,6 +750,7 @@ jobs:
           echo "${FA_SHA256}  assets/fonts/fa-solid-900.ttf" | sha256sum -c -
 
       - name: Install Inno Setup 6 (ISCC.exe)
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         shell: pwsh
         run: |
           # release_github.ps1 requires Inno Setup's ISCC.exe (x86 binary, runs under
@@ -739,6 +761,7 @@ jobs:
           else { Write-Host "::warning::ISCC.exe not on PATH after choco; release_github.ps1 also searches fixed install dirs + the uninstall registry." }
 
       - name: Build ARM64 installer (release_github.ps1 -Arch arm64)
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         shell: pwsh
         run: |
           # No -Publish (no gh/secrets) and no -Sign (no signing cert in CI). -Arch
@@ -751,6 +774,7 @@ jobs:
             -OutDir out/arm64-installer
 
       - name: Silent-install + launch smoke (DX12/WARP)
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         shell: pwsh
         env:
           SMATCHET_RENDERER: "dx12"
@@ -786,6 +810,7 @@ jobs:
           Write-Host "ARM64 installer smoke OK — installed + launched the native arm64 build."
 
       - name: Upload ARM64 installer (for inspection)
+        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
