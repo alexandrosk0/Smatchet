@@ -154,6 +154,116 @@ case "$branch" in
     develop|main|HEAD) exit 0 ;;
 esac
 
+# (D) LOCAL-CI DELTA-GATE — run the locally-runnable required-check mirrors on a
+#     feature-branch push, so a locally-knowable lint / doc / format / shell
+#     failure is caught HERE instead of reding the required `Comment-noise +
+#     high-integrity gate`, `Doc anchors + agent contract`, or `Shell lint`
+#     checks after the PR opens. That is the top re-push churn class
+#     (`build-verify-shortcut-bypasses-comment-noise-and-lint-gate`, tooling
+#     2026-06-18): the fast build-only verify path (`cmake --build`,
+#     `build_and_run.ps1 -BuildOnly`) skips these gates entirely, so the first
+#     CI run is where the author learns. Parity matrix + the CI-only (Windows /
+#     Mesa toolchain) residue this can NOT cover: docs/agent-rules/ci-local-parity.md.
+#
+#     Delta + path scoped: fast for docs / config / shell pushes (the C++
+#     delta-audits early-exit); a first-party C++ change runs them, bounded by a
+#     90s fail-open timeout. FAIL-CLOSED on a real violation; FAIL-OPEN on any
+#     infra / missing-tool / unresolvable-base / timeout uncertainty (the gate
+#     must never wedge a push on its OWN breakage or on a slow box).
+#     Override (sanctioned, logged): SMATCHET_SKIP_PRESHIP_GATE=1.
+if [ "${SMATCHET_SKIP_PRESHIP_GATE:-0}" = "1" ]; then
+    echo "pre-push: SMATCHET_SKIP_PRESHIP_GATE=1 — skipping the local CI delta-gate." >&2
+elif [ -n "$repo_root" ]; then
+    ci_base=""
+    ci_base="$(git -C "$repo_root" merge-base origin/develop HEAD 2>/dev/null || true)"
+    if [ -n "$ci_base" ]; then
+        ci_changed=""
+        ci_changed="$(git -C "$repo_root" diff --name-only --diff-filter=d "$ci_base"..HEAD 2>/dev/null || true)"
+        ci_fail=""
+        # 1. Comment-noise + high-integrity + function-size + strict-zone + dup +
+        #    include-cycle + fan-in — via the one delta gate. C++-gated to mirror
+        #    CI's `if: changes.code == 'true'` trigger (docs/shell/config pushes
+        #    skip it, staying fast). The C++ delta-audits each re-check the base
+        #    worktree (~tens of seconds), so bound it with a 90s fail-OPEN
+        #    timeout — a slow box never wedges a push (it falls back to
+        #    pre-ship.sh + CI). exit 1 = real violation (block); 124 = timed out
+        #    (fail-open + note); else infra (fail-open).
+        if grep -qE '\.(c|cc|cpp|cxx|h|hpp|hxx)$' <<<"$ci_changed" \
+           && [ -f "$repo_root/agents/scripts/project/test-lint-rules.sh" ]; then
+            ci_rc=0
+            if command -v timeout >/dev/null 2>&1; then
+                ( cd "$repo_root" && timeout 90 bash agents/scripts/project/test-lint-rules.sh --diff origin/develop ) \
+                    >/dev/null 2>&1 || ci_rc=$?
+            else
+                # No `timeout` (e.g. a stripped macOS / minimal shell): SKIP rather
+                # than run unbounded — an unbounded run could hang the very push the
+                # gate protects (CR #1556). Fail-open via the 124 path below;
+                # pre-ship.sh + CI remain the full gate.
+                ci_rc=124
+            fi
+            if [ "$ci_rc" -eq 1 ]; then
+                ci_fail="$ci_fail
+  - Comment-noise + high-integrity gate  (agents/scripts/project/test-lint-rules.sh)"
+            elif [ "$ci_rc" -eq 124 ]; then
+                echo "pre-push: NOTE — local lint gate skipped (no 'timeout' cmd, or it timed out); run 'bash scripts/dev/pre-ship.sh' for the full check." >&2
+            fi
+        fi
+        # 2. Doc-validation mirror — only the develop-clean, delta-relevant doc
+        #    checks that historically red a PR on push: doc-anchors (#953),
+        #    markdown-links (#1156), portable-purity (#1394 doc-rename). NOT the
+        #    full scripts/dev/test-docs.sh — that also runs the advisory auto-
+        #    synced plan-INDEX check, which fails on pre-existing develop drift
+        #    (CI auto-fixes it, never blocks) and would false-block an unrelated
+        #    push. A false-blocking gate trains override-by-reflex.
+        if grep -qE '\.md$|^agents/|^docs/|^project\.config\.json$' <<<"$ci_changed"; then
+            for ci_doc in test-doc-anchors test-markdown-links test-portable-purity; do
+                [ -f "$repo_root/agents/scripts/core/$ci_doc.sh" ] || continue
+                if ! ( cd "$repo_root" && bash "agents/scripts/core/$ci_doc.sh" ) >/dev/null 2>&1; then
+                    ci_fail="$ci_fail
+  - $ci_doc  (agents/scripts/core/$ci_doc.sh)"
+                fi
+            done
+        fi
+        # 3. clang-format reflow (folds into the required `Windows + MSVC` lint
+        #    step) — changed first-party C++ only, and only if clang-format is
+        #    installed (else fail-open).
+        if command -v clang-format >/dev/null 2>&1; then
+            ci_cpp=""
+            ci_cpp="$(grep -E '^(Source|tests)/.*\.(c|cc|cpp|cxx|h|hpp|hxx)$' <<<"$ci_changed" || true)"
+            if [ -n "$ci_cpp" ]; then
+                ci_fmt_bad=0
+                while IFS= read -r ci_f; do
+                    [ -n "$ci_f" ] || continue
+                    ( cd "$repo_root" && clang-format --dry-run --Werror "$ci_f" ) >/dev/null 2>&1 \
+                        || ci_fmt_bad=1
+                done <<<"$ci_cpp"
+                if [ "$ci_fmt_bad" -ne 0 ]; then
+                    ci_fail="$ci_fail
+  - clang-format reflow  (run: bash scripts/dev/pre-ship.sh  to auto-format)"
+                fi
+            fi
+        fi
+        # 4. Shell lint (`Shell lint (shellcheck)`) — only when a .sh changed AND
+        #    shellcheck is installed (else fail-open).
+        if grep -qE '\.sh$' <<<"$ci_changed" \
+           && command -v shellcheck >/dev/null 2>&1 \
+           && [ -f "$repo_root/agents/scripts/core/test-lint-bash.sh" ]; then
+            if ! ( cd "$repo_root" && bash agents/scripts/core/test-lint-bash.sh ) >/dev/null 2>&1; then
+                ci_fail="$ci_fail
+  - Shell lint (shellcheck)  (agents/scripts/core/test-lint-bash.sh)"
+            fi
+        fi
+        if [ -n "$ci_fail" ]; then
+            printf '\npre-push: REFUSING push — local CI delta-gate found failures CI would red on:\n%s\n\n' "$ci_fail" >&2
+            printf '  These are locally-knowable failures the fast build-only verify path skips.\n' >&2
+            printf '  Fix (most auto-fix):  bash scripts/dev/pre-ship.sh   then re-push.\n' >&2
+            printf '  Parity matrix: docs/agent-rules/ci-local-parity.md\n' >&2
+            printf '  Override (sanctioned, logged): SMATCHET_SKIP_PRESHIP_GATE=1 git push ...\n\n' >&2
+            exit 1
+        fi
+    fi
+fi
+
 if ! command -v gh >/dev/null 2>&1; then
     exit 0
 fi
