@@ -387,6 +387,10 @@ add_executable(SmatchetTests
     Core/SmatchetThemeAiColors.test.cpp
     # Regression guard for the inverted Norton Commander palette (blue-dominant, NC 2.01 menu).
     Core/SmatchetThemeNortonPalette.test.cpp
+    # Mobile P1.6 — SmatchetDark accent WCAG-AA darken (0.35,0.55,0.95)->(0.26,0.42,0.72).
+    # Pins both constraints: white-on-fill >= 4.5 AND accent-on-WindowBg >= 3.0. Same
+    # SmatchetTheme.cpp link as the sibling theme tests; computes contrast in-test.
+    Core/SmatchetThemeAccentContrast.test.cpp
     # Mobile host-injection seam #13 (PR #1043) — pure ShouldApplyDensityScale predicate
     # (SmatchetThemeDensity.h, header-only inline) behind ReapplyHostDensityScale. No extra
     # .cpp link: header-only, and SmatchetTheme.cpp + include/Ui are already in the rig.

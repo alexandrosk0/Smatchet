@@ -103,33 +103,43 @@ void ApplySmatchetDark(ImGuiStyle& /*style*/, ImVec4* colors) {
     colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.41f, 0.41f, 0.41f, 1.00f);
     colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.51f, 0.51f, 0.51f, 1.00f);
 
-    colors[ImGuiCol_CheckMark] = ImVec4(0.35f, 0.55f, 0.95f, 1.00f);
-    colors[ImGuiCol_SliderGrab] = ImVec4(0.35f, 0.55f, 0.95f, 1.00f);
-    colors[ImGuiCol_SliderGrabActive] = ImVec4(0.45f, 0.65f, 1.00f, 1.00f);
+    // Accent darkened from (0.35,0.55,0.95) to (0.26,0.42,0.72) — WCAG AA fix (mobile Phase-1
+    // P1.6). The old accent failed AA as an opaque fill behind white(0.95) Text on
+    // ButtonActive/HeaderActive (white-on-fill 2.90:1, below the 4.5 AA-normal and 3.0 UI floors).
+    // The new shade is the single hue-preserving darken that clears BOTH constraints with margin:
+    //   white(0.95)-on-fill            = 4.67:1  (>= 4.5 AA-normal)
+    //   accent-on-WindowBg(0.12,.12,.14) = 3.16:1  (>= 3.0 UI-component floor, for the opaque
+    //                                              CheckMark/SliderGrab/SeparatorActive/NavHighlight glyphs)
+    // A naive swap to the research doc's (0.20,0.34,0.62) fixed white-on-fill but dropped the
+    // on-dark glyphs to 2.35:1 — see docs/mobile/PHASE1_ACCESSIBILITY_RESEARCH.md Finding 3.
+    colors[ImGuiCol_CheckMark] = ImVec4(0.26f, 0.42f, 0.72f, 1.00f);
+    colors[ImGuiCol_SliderGrab] = ImVec4(0.26f, 0.42f, 0.72f, 1.00f);
+    // One step brighter than SliderGrab (preserves the original +0.10,+0.10,+0.05 active-step delta).
+    colors[ImGuiCol_SliderGrabActive] = ImVec4(0.36f, 0.52f, 0.77f, 1.00f);
 
     colors[ImGuiCol_Button] = ImVec4(0.22f, 0.22f, 0.26f, 1.00f);
     colors[ImGuiCol_ButtonHovered] = ImVec4(0.28f, 0.28f, 0.35f, 1.00f);
-    colors[ImGuiCol_ButtonActive] = ImVec4(0.35f, 0.55f, 0.95f, 1.00f);
+    colors[ImGuiCol_ButtonActive] = ImVec4(0.26f, 0.42f, 0.72f, 1.00f);
 
     colors[ImGuiCol_Header] = ImVec4(0.22f, 0.22f, 0.26f, 1.00f);
     colors[ImGuiCol_HeaderHovered] = ImVec4(0.28f, 0.28f, 0.35f, 1.00f);
-    colors[ImGuiCol_HeaderActive] = ImVec4(0.35f, 0.55f, 0.95f, 1.00f);
+    colors[ImGuiCol_HeaderActive] = ImVec4(0.26f, 0.42f, 0.72f, 1.00f);
 
     colors[ImGuiCol_Separator] = ImVec4(0.25f, 0.25f, 0.28f, 0.50f);
-    colors[ImGuiCol_SeparatorHovered] = ImVec4(0.35f, 0.55f, 0.95f, 0.78f);
-    colors[ImGuiCol_SeparatorActive] = ImVec4(0.35f, 0.55f, 0.95f, 1.00f);
+    colors[ImGuiCol_SeparatorHovered] = ImVec4(0.26f, 0.42f, 0.72f, 0.78f);
+    colors[ImGuiCol_SeparatorActive] = ImVec4(0.26f, 0.42f, 0.72f, 1.00f);
 
-    colors[ImGuiCol_ResizeGrip] = ImVec4(0.35f, 0.55f, 0.95f, 0.20f);
-    colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.35f, 0.55f, 0.95f, 0.67f);
-    colors[ImGuiCol_ResizeGripActive] = ImVec4(0.35f, 0.55f, 0.95f, 0.95f);
+    colors[ImGuiCol_ResizeGrip] = ImVec4(0.26f, 0.42f, 0.72f, 0.20f);
+    colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.26f, 0.42f, 0.72f, 0.67f);
+    colors[ImGuiCol_ResizeGripActive] = ImVec4(0.26f, 0.42f, 0.72f, 0.95f);
 
     colors[ImGuiCol_Tab] = ImVec4(0.18f, 0.18f, 0.22f, 0.86f);
-    colors[ImGuiCol_TabHovered] = ImVec4(0.35f, 0.55f, 0.95f, 0.80f);
+    colors[ImGuiCol_TabHovered] = ImVec4(0.26f, 0.42f, 0.72f, 0.80f);
     colors[ImGuiCol_TabActive] = ImVec4(0.25f, 0.35f, 0.55f, 1.00f);
     colors[ImGuiCol_TabUnfocused] = ImVec4(0.12f, 0.12f, 0.14f, 0.97f);
     colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.18f, 0.18f, 0.22f, 1.00f);
 
-    colors[ImGuiCol_DockingPreview] = ImVec4(0.35f, 0.55f, 0.95f, 0.70f);
+    colors[ImGuiCol_DockingPreview] = ImVec4(0.26f, 0.42f, 0.72f, 0.70f);
     colors[ImGuiCol_DockingEmptyBg] = ImVec4(0.20f, 0.20f, 0.20f, 1.00f);
 
     colors[ImGuiCol_PlotLines] = ImVec4(0.61f, 0.61f, 0.61f, 1.00f);
@@ -143,9 +153,9 @@ void ApplySmatchetDark(ImGuiStyle& /*style*/, ImVec4* colors) {
     colors[ImGuiCol_TableRowBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
     colors[ImGuiCol_TableRowBgAlt] = ImVec4(1.00f, 1.00f, 1.00f, 0.03f);
 
-    colors[ImGuiCol_TextSelectedBg] = ImVec4(0.35f, 0.55f, 0.95f, 0.35f);
+    colors[ImGuiCol_TextSelectedBg] = ImVec4(0.26f, 0.42f, 0.72f, 0.35f);
     colors[ImGuiCol_DragDropTarget] = ImVec4(1.00f, 1.00f, 0.00f, 0.90f);
-    colors[ImGuiCol_NavHighlight] = ImVec4(0.35f, 0.55f, 0.95f, 1.00f);
+    colors[ImGuiCol_NavHighlight] = ImVec4(0.26f, 0.42f, 0.72f, 1.00f);
     colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.00f, 1.00f, 1.00f, 0.70f);
     colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.20f);
     colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.35f);
@@ -153,11 +163,13 @@ void ApplySmatchetDark(ImGuiStyle& /*style*/, ImVec4* colors) {
     // C++ syntax palette — single source of truth in BuildSyntaxColorsForTheme
     // (legacy SmatchetDark defaults: purple/orange/green/cyan/yellow + sky-blue identifier).
     SetSyntaxColors(SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId::SmatchetDark));
-    // AI chat-panel palette (Phase 5 of ai-chat-claude-desktop-parity). Accent is
-    // the NavHighlight blue (#5993F2); bubble uses 0.18 alpha so 0.95-luma Text
-    // remains WCAG AA on the 0.12-luma WindowBg even where the bubble overlays.
+    // AI chat-panel palette (Phase 5 of ai-chat-claude-desktop-parity). Bubble keeps the
+    // original brighter blue (#5993F2) at 0.18 alpha — a low-alpha TINT, not an opaque fill,
+    // so 0.95-luma Text stays WCAG AA on the 0.12-luma WindowBg even where the bubble overlays
+    // (already-verified, doctest-pinned). Intentionally NOT darkened to the new chrome accent:
+    // the P1.6 darken targets opaque-fill-behind-white failures, which this tint never had.
     const SmatchetThemeAiColors ai = {
-        {0.35f, 0.55f, 0.95f, 0.18f}, // AiUserBubbleBg — accent blue, 0.18 alpha
+        {0.35f, 0.55f, 0.95f, 0.18f}, // AiUserBubbleBg — accent-blue tint, 0.18 alpha
         {0.65f, 0.80f, 1.00f, 1.00f}, // AiUserRoleLabel — bright accent
         {0.85f, 0.75f, 1.00f, 1.00f}, // AiAssistantRoleLabel — soft purple
         {0.50f, 0.50f, 0.55f, 1.00f}, // AiActionRowIcon — matches TextDisabled (0.50,0.50,0.50)
