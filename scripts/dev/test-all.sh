@@ -135,6 +135,7 @@ TOTAL_PASSED=0
 TOTAL_FAILED=0
 FAILED_SCRIPTS=()
 MISSING_BINARY=0
+SUSPECT_ZERO_SCRIPTS=()
 
 for script in "${TESTS[@]}"; do
     # Skip worktree-incompatible scripts when running from a worktree (see
@@ -212,6 +213,19 @@ for script in "${TESTS[@]}"; do
     F=$(echo "$SUMMARY" | sed -E 's/.*Failed: ([0-9]+).*/\1/')
     TOTAL_PASSED=$((TOTAL_PASSED + P))
     TOTAL_FAILED=$((TOTAL_FAILED + F))
+    # Suspicious zero-run guard (defence-in-depth, WARN-first — the
+    # ci-falsepositive-hardening "per-runner unknown-test-name -> fail" item, deferred
+    # there as a non-goal follow-up). A suite that RAN but reports 0 passed / 0 failed
+    # with no `Skipped:` marker may have silently skipped all its cases (e.g. bats
+    # "unknown test name" under a non-UTF-8 locale — tooling.md
+    # windows-bats-silently-skips-unicode-test-names). Explicit worktree/CI skips
+    # `continue` earlier WITH a `Skipped:` marker, so they never reach here. WARN only
+    # (a delta-gate with no changed inputs legitimately reports 0/0); surfaced in the
+    # aggregate for the operator to verify.
+    if [ "$P" -eq 0 ] && [ "$F" -eq 0 ] && ! grep -q "Skipped:" <<<"$SUMMARY"; then
+        echo "WARN (zero-run): reported 0 passed / 0 failed, no Skipped marker — verify it actually ran (possible silent skip)."
+        SUSPECT_ZERO_SCRIPTS+=("$script")
+    fi
     if [ "$F" -gt 0 ] || [ "$RC" -ne 0 ]; then
         FAILED_SCRIPTS+=("$script ($F assertion failure(s), exit=$RC)")
     fi
@@ -221,6 +235,12 @@ echo
 echo "============================================================"
 echo "AGGREGATE  Passed: $TOTAL_PASSED  Failed: $TOTAL_FAILED  Scripts: ${#TESTS[@]}"
 echo "============================================================"
+
+if [ "${#SUSPECT_ZERO_SCRIPTS[@]}" -gt 0 ]; then
+    echo
+    echo "WARN (zero-run, advisory): ${#SUSPECT_ZERO_SCRIPTS[@]} suite(s) reported 0/0 with no Skipped marker — possible silent skip; verify, then add an explicit skip marker or fix the cause:"
+    printf '  - %s\n' "${SUSPECT_ZERO_SCRIPTS[@]}"
+fi
 
 if [ "$MISSING_BINARY" -eq 1 ]; then
     echo
