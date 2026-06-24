@@ -476,7 +476,13 @@ jobs:
     # continue-on-error keeps a first-run break advisory (matching the cross leg).
     # Follow-on steps for the live leg (tracked in tooling.md): DX12-on-WARP launch
     # smoke and the -Arch arm64 Inno installer smoke.
-    if: ${{ vars.ENABLE_WIN_ARM64_RUNNER == 'true' && needs.changes.outputs.code == 'true' && needs.changes.outputs.android_only != 'true' }}
+    # Skip on pull_request: these runner-gated ARM legs EXECUTE on the windows-11-arm
+    # runner and fail during ARM64 bring-up (Phase 3), and job-level continue-on-error
+    # does NOT make a check-run green (only the workflow) — so they red every PR for a
+    # non-review reason. Run them on develop push + merge_group instead (post-merge
+    # advisory signal, the strict-off backstop model); PRs stay green. Goal:
+    # docs/agent-rules/ci-local-parity.md "advisory runner-gated lanes skip cleanly on PR".
+    if: ${{ vars.ENABLE_WIN_ARM64_RUNNER == 'true' && needs.changes.outputs.code == 'true' && needs.changes.outputs.android_only != 'true' && github.event_name != 'pull_request' }}
     runs-on: windows-11-arm
     continue-on-error: true
     timeout-minutes: 60
@@ -656,7 +662,13 @@ jobs:
     # needs Inno Setup provisioning (choco) and a heavier LTO publish build; the
     # atomics-gate job shouldn't carry that. Advisory + dormant behind
     # ENABLE_WIN_ARM64_RUNNER like the other ARM64 legs.
-    if: ${{ vars.ENABLE_WIN_ARM64_RUNNER == 'true' && needs.changes.outputs.code == 'true' && needs.changes.outputs.android_only != 'true' }}
+    # Skip on pull_request: these runner-gated ARM legs EXECUTE on the windows-11-arm
+    # runner and fail during ARM64 bring-up (Phase 3), and job-level continue-on-error
+    # does NOT make a check-run green (only the workflow) — so they red every PR for a
+    # non-review reason. Run them on develop push + merge_group instead (post-merge
+    # advisory signal, the strict-off backstop model); PRs stay green. Goal:
+    # docs/agent-rules/ci-local-parity.md "advisory runner-gated lanes skip cleanly on PR".
+    if: ${{ vars.ENABLE_WIN_ARM64_RUNNER == 'true' && needs.changes.outputs.code == 'true' && needs.changes.outputs.android_only != 'true' && github.event_name != 'pull_request' }}
     runs-on: windows-11-arm
     continue-on-error: true
     timeout-minutes: 75
