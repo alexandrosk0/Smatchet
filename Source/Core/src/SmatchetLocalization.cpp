@@ -306,6 +306,10 @@ const TranslationEntry kEntries[] = {
      "walks up the cwd chain looking for agents.md / AGENTS.md.",
      u8"OFF (défaut) : seuls le fichier global et le chemin projet explicite sont utilisés. "
      u8"ON : remonte la chaîne de répertoires à la recherche d'agents.md / AGENTS.md."},
+    {"prefs.assistant.saved_title", "Assistant settings", u8"Paramètres de l'assistant"},
+    {"prefs.assistant.saved_body", "Saved to disk.", u8"Enregistré sur le disque."},
+    {"prefs.assistant.unsaved", "Unsaved changes", u8"Modifications non enregistrées"},
+    {"prefs.assistant.no_changes", "No unsaved changes", u8"Aucune modification non enregistrée"},
 
     // Whisper tab — shortened PTT intro + (?) help body.
     {"prefs.whisper.ptt.short", "Push-to-talk dictation: hold the hotkey, speak, release.",
@@ -483,6 +487,10 @@ const TranslationEntry kEntries[] = {
      "MCP settings save when changed. Runtime status: Automation -> Agent Bridge (MCP)...",
      u8"Les réglages MCP s'enregistrent dès modification. État d'exécution : Automation -> Agent "
      u8"Bridge (MCP)..."},
+    {"prefs.footer.assistant.short",
+     "Assistant settings use explicit Save / Discard. Unsaved edits show an * on the tab.",
+     u8"Les réglages de l'assistant utilisent un Enregistrer / Annuler explicite. Les modifications "
+     u8"non enregistrées affichent un * sur l'onglet."},
     {"prefs.footer.autosave.short", "Settings on this tab save automatically when changed.",
      u8"Les réglages de cet onglet s'enregistrent automatiquement dès modification."},
     {"prefs.footer.immediate.short", "Options on this tab apply and save immediately.",
