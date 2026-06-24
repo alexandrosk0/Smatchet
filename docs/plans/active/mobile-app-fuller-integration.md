@@ -242,6 +242,19 @@ _(per-slice)_
   branch carries the `tests/Core/TicketFieldEditorCommitPolicyPure.test.cpp` delta (commits `52da1075` /
   `aeaff745`) covering every pure seam the glue routes through; the glue itself is ImGui immediate-mode
   surface (`test-rig` refuses ImGui), deferred to the bucket-E follow-up below.
+- **P1.3 — incidental CI fix bundled (2026-06-24).** The sole genuine RED on this PR was the
+  **`Agentic self-tests (bats)`** check, not the mobile diff: `test-pre-push-merged-pr-guard.sh` reported
+  6/12 failures **only on the PR's merge-ref checkout** (`refs/pull/1552/merge`), green on a head-only local
+  run. Root cause — the test was **non-hermetic**: GitHub `pull_request` checks out the merge ref (head
+  auto-merged with `develop`), whose `pre-push` hook contains develop's **gate D** (local-CI delta-gate);
+  the test's stripped `env -i` sandbox lacks gate D's tooling (python/clang-format/…), so
+  `test-lint-rules.sh` exits non-zero → the hook refuses early, *before* the merged-PR guard the test
+  actually exercises. Fixed by neutralising the two sibling pre-gh probes inside the test's `run_hook`
+  (`SMATCHET_SKIP_PRESHIP_GATE=1` + `SMATCHET_ALLOW_UNLOCKED_PUSH=1`), isolating the unit under test.
+  Verified 12/12 against the gate-D merge-ref hook in a throwaway merge-ref worktree (the exact CI
+  condition). Bundled on this branch rather than split to its own PR because it is the gating RED *for this
+  PR* and must live on this branch's merge ref for CI to pick it up; 1 file, test-env only, no product code.
+  Self-improvement note: `docs/self-improvement/categories/test/2026-06-24-pre-push-guard-test-not-hermetic.md`.
 
 ## Verification (actual)
 
