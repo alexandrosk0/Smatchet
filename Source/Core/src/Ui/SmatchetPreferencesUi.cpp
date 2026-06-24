@@ -155,6 +155,10 @@ void SmatchetUI::resetPreferencesWindowState(UiDrawSession& d) {
     d.assistantPrefsTestInFlight = false;
     d.assistantPrefsTestResult.clear();
     d.assistantPrefsTestResultType = 0;
+    // Drop the explicit-Save working-copy seed latch so reopening the window
+    // re-seeds the Assistant tab's working copy from cfg (any unsaved edits the
+    // user closed the window on are intentionally dropped — Discard-on-close).
+    d.assistantPrefsWorkingSeeded = false;
 #endif
 }
 
@@ -754,6 +758,9 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
         footerFallback = "MCP settings save when changed. Runtime status: Automation -> Agent Bridge (MCP)...";
         break;
     case PreferencesActiveTab::Assistant:
+        footerKey = "prefs.footer.assistant.short";
+        footerFallback = "Assistant settings use explicit Save / Discard. Unsaved edits show an * on the tab.";
+        break;
     case PreferencesActiveTab::Whisper:
     case PreferencesActiveTab::Templates:
     case PreferencesActiveTab::Keybindings:

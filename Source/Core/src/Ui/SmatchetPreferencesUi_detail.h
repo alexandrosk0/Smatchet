@@ -69,6 +69,49 @@ inline void TrimTrackerCredentialFields(TrackerConfig& cfg) {
     cfg.LinearWorkspaceUrl = TrimCopyAsciiWhitespace(cfg.LinearWorkspaceUrl);
 }
 
+#if defined(SMATCHET_WITH_AI)
+/// The AI-related `TrackerConfig` fields the Assistant Preferences tab edits.
+/// Copies just these from `src` into `dst`, leaving every non-AI field of `dst`
+/// untouched. Used to (a) seed the tab's working copy from `cfg` on open /
+/// Discard and (b) commit the working copy back into `cfg` on Save. Pure — no
+/// ImGui / no session state — so it is bucket-E/-A testable in isolation.
+inline void CopyAssistantAiFields(const TrackerConfig& src, TrackerConfig& dst) {
+    dst.AiProviderKind = src.AiProviderKind;
+    dst.AiApiKey = src.AiApiKey;
+    dst.AiAnthropicApiKey = src.AiAnthropicApiKey;
+    dst.AiDeepSeekApiKey = src.AiDeepSeekApiKey;
+    dst.AiBaseUrl = src.AiBaseUrl;
+    dst.AiOllamaBaseUrl = src.AiOllamaBaseUrl;
+    dst.AiDeepSeekBaseUrl = src.AiDeepSeekBaseUrl;
+    dst.AiModelOpenAi = src.AiModelOpenAi;
+    dst.AiModelAnthropic = src.AiModelAnthropic;
+    dst.AiModelOllama = src.AiModelOllama;
+    dst.AiModelDeepSeek = src.AiModelDeepSeek;
+    dst.AiReasoningEffort = src.AiReasoningEffort;
+    dst.AiAllowCustomEndpointOpenAi = src.AiAllowCustomEndpointOpenAi;
+    dst.AiAllowCustomEndpointAnthropic = src.AiAllowCustomEndpointAnthropic;
+    dst.AgentsMdGlobalPath = src.AgentsMdGlobalPath;
+    dst.ProjectAgentsMdPath = src.ProjectAgentsMdPath;
+    dst.AgentsMdAutoDiscoverProject = src.AgentsMdAutoDiscoverProject;
+}
+
+/// True when any AI field the Assistant tab edits differs between `a` and `b`.
+/// Drives the `Assistant *` dirty-tab marker + the Save/Discard enable state.
+/// Pure — bucket-E/-A testable in isolation.
+inline bool AssistantAiFieldsDiffer(const TrackerConfig& a, const TrackerConfig& b) {
+    return a.AiProviderKind != b.AiProviderKind || a.AiApiKey != b.AiApiKey ||
+           a.AiAnthropicApiKey != b.AiAnthropicApiKey || a.AiDeepSeekApiKey != b.AiDeepSeekApiKey ||
+           a.AiBaseUrl != b.AiBaseUrl || a.AiOllamaBaseUrl != b.AiOllamaBaseUrl ||
+           a.AiDeepSeekBaseUrl != b.AiDeepSeekBaseUrl || a.AiModelOpenAi != b.AiModelOpenAi ||
+           a.AiModelAnthropic != b.AiModelAnthropic || a.AiModelOllama != b.AiModelOllama ||
+           a.AiModelDeepSeek != b.AiModelDeepSeek || a.AiReasoningEffort != b.AiReasoningEffort ||
+           a.AiAllowCustomEndpointOpenAi != b.AiAllowCustomEndpointOpenAi ||
+           a.AiAllowCustomEndpointAnthropic != b.AiAllowCustomEndpointAnthropic ||
+           a.AgentsMdGlobalPath != b.AgentsMdGlobalPath || a.ProjectAgentsMdPath != b.ProjectAgentsMdPath ||
+           a.AgentsMdAutoDiscoverProject != b.AgentsMdAutoDiscoverProject;
+}
+#endif // SMATCHET_WITH_AI
+
 } // namespace SmatchetPreferencesUiDetail
 
 // Lazy-load flags for template lists in DrawTemplatePreferencesTabs.

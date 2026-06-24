@@ -11,6 +11,8 @@
 
 #include "SmatchetPreferencesUi_detail.h"
 #include "SmatchetUI.h"
+#include "ConfigManager.h"
+#include "SmatchetToast.h"
 #include "AiAssistantController.h"
 #include "AiClientFactory.h"
 #include "AiEndpointPolicy.h"
@@ -44,8 +46,8 @@
 namespace {
 
 // Persistent across frames + tab toggles — was a cluster of function-scope
-// `static` locals. Re-seeded from `d.cfg.Ai*` on first paint + on provider
-// change (see SeedAssistantBuffers).
+// `static` locals. Re-seeded from the working copy on first paint + on provider
+// change + on Discard (see SeedAssistantBuffers).
 struct AssistantPrefsBuffers {
     char agentsMdGlobalBuf[1024] = {};
     char projectAgentsMdBuf[1024] = {};
@@ -68,29 +70,37 @@ struct AssistantPrefsBuffers {
     int lastSeededProvider = -1;
 };
 
-void SeedAssistantBuffers(AssistantPrefsBuffers& b, UiDrawSession& d) {
+// Seeds the InputText buffers from the working copy `w` (NOT `cfg`). The
+// working copy is the staging store the user edits until an explicit Save (see
+// DrawAssistantPreferencesTab); buffers mirror it, edits flow buffer -> working,
+// Save flushes working -> cfg.
+void SeedAssistantBuffers(AssistantPrefsBuffers& b, UiDrawSession& d, const TrackerConfig& w) {
     if (!b.agentsBufsSeeded) {
         b.agentsBufsSeeded = true;
-        std::snprintf(b.agentsMdGlobalBuf, sizeof(b.agentsMdGlobalBuf), "%s", d.cfg.AgentsMdGlobalPath.c_str());
-        std::snprintf(b.projectAgentsMdBuf, sizeof(b.projectAgentsMdBuf), "%s", d.cfg.ProjectAgentsMdPath.c_str());
+        std::snprintf(b.agentsMdGlobalBuf, sizeof(b.agentsMdGlobalBuf), "%s", w.AgentsMdGlobalPath.c_str());
+        std::snprintf(b.projectAgentsMdBuf, sizeof(b.projectAgentsMdBuf), "%s", w.ProjectAgentsMdPath.c_str());
     }
     // Reseed on first paint, on provider switch, or when the Test-connection
-    // success callback persisted a fallback default value back into cfg (so
-    // the buffer reflects the just-saved value on the next paint).
-    if (!b.aiBufsSeeded || b.lastSeededProvider != d.cfg.AiProviderKind || d.assistantPrefsForceBufferReseed) {
+    // success callback wrote a fallback default value into the working copy (so
+    // the buffer reflects the just-written value on the next paint). A Discard
+    // also requests a reseed via assistantPrefsForceBufferReseed.
+    if (!b.aiBufsSeeded || b.lastSeededProvider != w.AiProviderKind || d.assistantPrefsForceBufferReseed) {
         b.aiBufsSeeded = true;
-        b.lastSeededProvider = d.cfg.AiProviderKind;
+        b.lastSeededProvider = w.AiProviderKind;
         d.assistantPrefsForceBufferReseed = false;
-        std::snprintf(b.openAiKeyBuf, sizeof(b.openAiKeyBuf), "%s", d.cfg.AiApiKey.c_str());
-        std::snprintf(b.anthropicKeyBuf, sizeof(b.anthropicKeyBuf), "%s", d.cfg.AiAnthropicApiKey.c_str());
-        std::snprintf(b.openAiModelBuf, sizeof(b.openAiModelBuf), "%s", d.cfg.AiModelOpenAi.c_str());
-        std::snprintf(b.anthropicModelBuf, sizeof(b.anthropicModelBuf), "%s", d.cfg.AiModelAnthropic.c_str());
-        std::snprintf(b.ollamaModelBuf, sizeof(b.ollamaModelBuf), "%s", d.cfg.AiModelOllama.c_str());
-        std::snprintf(b.baseUrlBuf, sizeof(b.baseUrlBuf), "%s", d.cfg.AiBaseUrl.c_str());
-        std::snprintf(b.ollamaBaseUrlBuf, sizeof(b.ollamaBaseUrlBuf), "%s", d.cfg.AiOllamaBaseUrl.c_str());
-        std::snprintf(b.deepseekKeyBuf, sizeof(b.deepseekKeyBuf), "%s", d.cfg.AiDeepSeekApiKey.c_str());
-        std::snprintf(b.deepseekBaseUrlBuf, sizeof(b.deepseekBaseUrlBuf), "%s", d.cfg.AiDeepSeekBaseUrl.c_str());
-        std::snprintf(b.deepseekModelBuf, sizeof(b.deepseekModelBuf), "%s", d.cfg.AiModelDeepSeek.c_str());
+        // Discard reverts the agents.md buffers too (they otherwise seed once).
+        std::snprintf(b.agentsMdGlobalBuf, sizeof(b.agentsMdGlobalBuf), "%s", w.AgentsMdGlobalPath.c_str());
+        std::snprintf(b.projectAgentsMdBuf, sizeof(b.projectAgentsMdBuf), "%s", w.ProjectAgentsMdPath.c_str());
+        std::snprintf(b.openAiKeyBuf, sizeof(b.openAiKeyBuf), "%s", w.AiApiKey.c_str());
+        std::snprintf(b.anthropicKeyBuf, sizeof(b.anthropicKeyBuf), "%s", w.AiAnthropicApiKey.c_str());
+        std::snprintf(b.openAiModelBuf, sizeof(b.openAiModelBuf), "%s", w.AiModelOpenAi.c_str());
+        std::snprintf(b.anthropicModelBuf, sizeof(b.anthropicModelBuf), "%s", w.AiModelAnthropic.c_str());
+        std::snprintf(b.ollamaModelBuf, sizeof(b.ollamaModelBuf), "%s", w.AiModelOllama.c_str());
+        std::snprintf(b.baseUrlBuf, sizeof(b.baseUrlBuf), "%s", w.AiBaseUrl.c_str());
+        std::snprintf(b.ollamaBaseUrlBuf, sizeof(b.ollamaBaseUrlBuf), "%s", w.AiOllamaBaseUrl.c_str());
+        std::snprintf(b.deepseekKeyBuf, sizeof(b.deepseekKeyBuf), "%s", w.AiDeepSeekApiKey.c_str());
+        std::snprintf(b.deepseekBaseUrlBuf, sizeof(b.deepseekBaseUrlBuf), "%s", w.AiDeepSeekBaseUrl.c_str());
+        std::snprintf(b.deepseekModelBuf, sizeof(b.deepseekModelBuf), "%s", w.AiModelDeepSeek.c_str());
     }
 }
 
@@ -222,18 +232,18 @@ void RunProbeWorker(AiProvider provider, AiClientConfig clientCfg, std::shared_p
                      static_cast<int>(provider), defaultedBaseUrl.c_str());
             g_ui.assistantPrefsTestResult = "Verified";
             g_ui.assistantPrefsTestResultType = 1;
-            // On success with a defaulted URL, persist the default into
-            // cfg + force a buffer reseed so the field shows the value
-            // the probe used.
+            // On success with a defaulted URL, write the default into the
+            // Assistant tab's WORKING copy (not cfg — the explicit-Save flow
+            // owns the cfg write) + force a buffer reseed so the field shows the
+            // value the probe used. The user then clicks Save to persist it.
             if (!defaultedBaseUrl.empty()) {
                 if (provider == AiProvider::OllamaOpenAiCompat) {
-                    g_ui.cfg.AiBaseUrl = defaultedBaseUrl;
+                    g_ui.assistantPrefsWorking.AiBaseUrl = defaultedBaseUrl;
                 } else if (provider == AiProvider::OllamaNative) {
-                    g_ui.cfg.AiOllamaBaseUrl = defaultedBaseUrl;
+                    g_ui.assistantPrefsWorking.AiOllamaBaseUrl = defaultedBaseUrl;
                 } else if (provider == AiProvider::DeepSeek) {
-                    g_ui.cfg.AiDeepSeekBaseUrl = defaultedBaseUrl;
+                    g_ui.assistantPrefsWorking.AiDeepSeekBaseUrl = defaultedBaseUrl;
                 }
-                MarkPrefsDirty(g_ui);
                 g_ui.assistantPrefsForceBufferReseed = true;
             }
         } else {
@@ -273,7 +283,7 @@ void LaunchTestProbe(AppController& app, UiDrawSession& d, TrackerConfig probeCf
     std::string sanitisedBase;
     if (!baseUrl.empty()) {
         std::string normalised;
-        const smatchet::ai::pure::EndpointPolicy policy = smatchet::ai::EndpointPolicyForProvider(d.cfg, provider);
+        const smatchet::ai::pure::EndpointPolicy policy = smatchet::ai::EndpointPolicyForProvider(probeCfg, provider);
         const smatchet::ai::pure::EndpointVerdict v =
             smatchet::ai::pure::SanitizeAiEndpointUrl(baseUrl, policy, normalised);
         if (v == smatchet::ai::pure::EndpointVerdict::Allowed) {
@@ -341,7 +351,7 @@ void RenderValidationBanner(const smatchet::ai::PrefsValidation& validation) {
 
 // Provider Combo + the prominent always-enabled Test connection button and its
 // result line. Returns the selected provider kind for the credential section.
-AiProvider RenderProviderComboAndTest(AppController& app, UiDrawSession& d) {
+AiProvider RenderProviderComboAndTest(AppController& app, UiDrawSession& d, TrackerConfig& work) {
     // --- Provider Combo (top). Picking from this dropdown seeds sensible
     // defaults for the chosen provider so the LM Studio / Ollama happy paths
     // need zero extra fields.
@@ -352,16 +362,15 @@ AiProvider RenderProviderComboAndTest(AppController& app, UiDrawSession& d) {
                    [](const AiClientFactory::ProviderEntry& p) { return p.Display.c_str(); });
     int providerIdx = 0;
     auto providerIt = std::find_if(providers.begin(), providers.end(), [&](const AiClientFactory::ProviderEntry& p) {
-        return static_cast<int>(p.Kind) == d.cfg.AiProviderKind;
+        return static_cast<int>(p.Kind) == work.AiProviderKind;
     });
     if (providerIt != providers.end()) {
         providerIdx = static_cast<int>(std::distance(providers.begin(), providerIt));
     }
     if (ImGui::Combo("AI provider", &providerIdx, providerLabels.data(), static_cast<int>(providerLabels.size()))) {
         const int newKind = static_cast<int>(providers[providerIdx].Kind);
-        LOG_INFO("Preferences: AiProviderKind %d -> %d", d.cfg.AiProviderKind, newKind);
-        d.cfg.AiProviderKind = newKind;
-        MarkPrefsDirty(d);
+        LOG_INFO("Preferences: AiProviderKind (working) %d -> %d", work.AiProviderKind, newKind);
+        work.AiProviderKind = newKind;
         ClearStaleTestResult(d);
     }
     const AiProvider selectedKind = providers[providerIdx].Kind;
@@ -379,7 +388,9 @@ AiProvider RenderProviderComboAndTest(AppController& app, UiDrawSession& d) {
         ImGui::EndDisabled();
     }
     if (testPressed && !testInFlight) {
-        LaunchTestProbe(app, d, d.cfg, selectedKind);
+        // Probe the WORKING copy — Test verifies the unsaved edits the user is
+        // about to Save, not the last-persisted cfg.
+        LaunchTestProbe(app, d, work, selectedKind);
     }
     ImGui::SameLine();
     if (!d.assistantPrefsTestResult.empty()) {
@@ -416,7 +427,6 @@ void RenderModelPicker(UiDrawSession& d, const char* comboLabel, const char* fre
     if (catalog.empty()) {
         if (ImGui::InputTextWithHint(freeFormLabel, freeFormHint, modelBuf, static_cast<int>(modelBufCap))) {
             cfgField = modelBuf;
-            MarkPrefsDirty(d);
             ClearStaleTestResult(d);
         }
         return;
@@ -435,7 +445,6 @@ void RenderModelPicker(UiDrawSession& d, const char* comboLabel, const char* fre
     if (ImGui::Combo(comboLabel, &comboIdx, displayPtrs.data(), static_cast<int>(displayPtrs.size()))) {
         std::snprintf(modelBuf, modelBufCap, "%s", catalog[static_cast<std::size_t>(comboIdx)].Id.c_str());
         cfgField = modelBuf;
-        MarkPrefsDirty(d);
         ClearStaleTestResult(d);
     }
     if (selectedIdx < 0 && modelBuf[0] != '\0') {
@@ -445,7 +454,6 @@ void RenderModelPicker(UiDrawSession& d, const char* comboLabel, const char* fre
     if (ImGui::CollapsingHeader("Custom model ID (advanced)")) {
         if (ImGui::InputText("##model_custom", modelBuf, static_cast<int>(modelBufCap))) {
             cfgField = modelBuf;
-            MarkPrefsDirty(d);
             ClearStaleTestResult(d);
         }
     }
@@ -465,7 +473,6 @@ void RenderCustomEndpointConsent(UiDrawSession& d, AiProvider prov, bool& flag, 
             ImGui::OpenPopup("Allow custom AI endpoint?");
         } else if (!checked && flag) {
             flag = false;
-            MarkPrefsDirty(d);
             ClearStaleTestResult(d);
         }
     }
@@ -491,7 +498,6 @@ void RenderCustomEndpointConsent(UiDrawSession& d, AiProvider prov, bool& flag, 
             ImGui::Separator();
             if (ImGui::Button("Enable custom endpoint")) {
                 flag = true;
-                MarkPrefsDirty(d);
                 ClearStaleTestResult(d);
                 consentModalProvider = -1;
                 ImGui::CloseCurrentPopup();
@@ -508,14 +514,13 @@ void RenderCustomEndpointConsent(UiDrawSession& d, AiProvider prov, bool& flag, 
 
 // Per-provider credential fields (key / model / base URL + custom-endpoint
 // consent), auto-saved on every edit. One branch per provider kind.
-void RenderProviderCredentials(UiDrawSession& d, AiProvider selectedKind, AssistantPrefsBuffers& b,
-                               int& consentModalProvider) {
+void RenderProviderCredentials(UiDrawSession& d, TrackerConfig& work, AiProvider selectedKind,
+                               AssistantPrefsBuffers& b, int& consentModalProvider) {
     if (selectedKind == AiProvider::OpenAi || selectedKind == AiProvider::OllamaOpenAiCompat) {
         const bool isLocalCompat = (selectedKind == AiProvider::OllamaOpenAiCompat);
         const char* keyLabel = isLocalCompat ? "API key (optional for local)" : "OpenAI API key";
         if (ImGui::InputText(keyLabel, b.openAiKeyBuf, sizeof(b.openAiKeyBuf), ImGuiInputTextFlags_Password)) {
-            d.cfg.AiApiKey = b.openAiKeyBuf;
-            MarkPrefsDirty(d);
+            work.AiApiKey = b.openAiKeyBuf;
             ClearStaleTestResult(d);
         }
         // OllamaOpenAiCompat keeps an empty catalog — the local server
@@ -525,51 +530,46 @@ void RenderProviderCredentials(UiDrawSession& d, AiProvider selectedKind, Assist
         const char* modelFreeFormLabel = modelComboLabel;
         const char* modelHint = isLocalCompat ? "e.g. local-model, llama3, qwen2.5" : "";
         RenderModelPicker(d, modelComboLabel, modelFreeFormLabel, modelHint, selectedKind, b.openAiModelBuf,
-                          sizeof(b.openAiModelBuf), d.cfg.AiModelOpenAi);
+                          sizeof(b.openAiModelBuf), work.AiModelOpenAi);
         const char* urlHint = isLocalCompat ? "http://127.0.0.1:1234 (LM Studio)" : "https://api.openai.com";
         if (ImGui::InputTextWithHint("Base URL", urlHint, b.baseUrlBuf, sizeof(b.baseUrlBuf))) {
-            d.cfg.AiBaseUrl = b.baseUrlBuf;
-            MarkPrefsDirty(d);
+            work.AiBaseUrl = b.baseUrlBuf;
             ClearStaleTestResult(d);
         }
         // Real OpenAi only. The local-compat shim is unpinned - its base URL is the config itself.
         if (!isLocalCompat) {
-            RenderCustomEndpointConsent(d, AiProvider::OpenAi, d.cfg.AiAllowCustomEndpointOpenAi, "OpenAI",
+            RenderCustomEndpointConsent(d, AiProvider::OpenAi, work.AiAllowCustomEndpointOpenAi, "OpenAI",
                                         "api.openai.com", consentModalProvider);
         }
     } else if (selectedKind == AiProvider::Anthropic) {
         if (ImGui::InputText("Anthropic API key", b.anthropicKeyBuf, sizeof(b.anthropicKeyBuf),
                              ImGuiInputTextFlags_Password)) {
-            d.cfg.AiAnthropicApiKey = b.anthropicKeyBuf;
-            MarkPrefsDirty(d);
+            work.AiAnthropicApiKey = b.anthropicKeyBuf;
             ClearStaleTestResult(d);
         }
         RenderModelPicker(d, "Anthropic model", "Anthropic model", "", AiProvider::Anthropic, b.anthropicModelBuf,
-                          sizeof(b.anthropicModelBuf), d.cfg.AiModelAnthropic);
-        RenderCustomEndpointConsent(d, AiProvider::Anthropic, d.cfg.AiAllowCustomEndpointAnthropic, "Anthropic",
+                          sizeof(b.anthropicModelBuf), work.AiModelAnthropic);
+        RenderCustomEndpointConsent(d, AiProvider::Anthropic, work.AiAllowCustomEndpointAnthropic, "Anthropic",
                                     "api.anthropic.com", consentModalProvider);
     } else if (selectedKind == AiProvider::OllamaNative) {
         RenderModelPicker(d, "Ollama model", "Ollama model", "e.g. llama3, qwen2.5, mistral", AiProvider::OllamaNative,
-                          b.ollamaModelBuf, sizeof(b.ollamaModelBuf), d.cfg.AiModelOllama);
+                          b.ollamaModelBuf, sizeof(b.ollamaModelBuf), work.AiModelOllama);
         if (ImGui::InputTextWithHint("Ollama base URL", "http://localhost:11434", b.ollamaBaseUrlBuf,
                                      sizeof(b.ollamaBaseUrlBuf))) {
-            d.cfg.AiOllamaBaseUrl = b.ollamaBaseUrlBuf;
-            MarkPrefsDirty(d);
+            work.AiOllamaBaseUrl = b.ollamaBaseUrlBuf;
             ClearStaleTestResult(d);
         }
     } else if (selectedKind == AiProvider::DeepSeek) {
         if (ImGui::InputText("DeepSeek API key", b.deepseekKeyBuf, sizeof(b.deepseekKeyBuf),
                              ImGuiInputTextFlags_Password)) {
-            d.cfg.AiDeepSeekApiKey = b.deepseekKeyBuf;
-            MarkPrefsDirty(d);
+            work.AiDeepSeekApiKey = b.deepseekKeyBuf;
             ClearStaleTestResult(d);
         }
         RenderModelPicker(d, "DeepSeek model", "DeepSeek model", "", AiProvider::DeepSeek, b.deepseekModelBuf,
-                          sizeof(b.deepseekModelBuf), d.cfg.AiModelDeepSeek);
+                          sizeof(b.deepseekModelBuf), work.AiModelDeepSeek);
         if (ImGui::InputTextWithHint("Base URL", "https://api.deepseek.com", b.deepseekBaseUrlBuf,
                                      sizeof(b.deepseekBaseUrlBuf))) {
-            d.cfg.AiDeepSeekBaseUrl = b.deepseekBaseUrlBuf;
-            MarkPrefsDirty(d);
+            work.AiDeepSeekBaseUrl = b.deepseekBaseUrlBuf;
             ClearStaleTestResult(d);
         }
     }
@@ -580,7 +580,7 @@ void RenderProviderCredentials(UiDrawSession& d, AiProvider selectedKind, Assist
 // picks). The OpenAI client forwards it as the wire `reasoning_effort` body
 // field; providers that don't understand it ignore it. The chat-window has a
 // per-turn Combo that overrides this default for one Send.
-void RenderReasoningEffort(UiDrawSession& d) {
+void RenderReasoningEffort(UiDrawSession& d, TrackerConfig& work) {
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
@@ -588,15 +588,15 @@ void RenderReasoningEffort(UiDrawSession& d) {
     const char* kEffortIds[] = {"auto", "low", "medium", "high"};
     int effortIdx = 0;
     for (int i = 0; i < 4; ++i) {
-        if (d.cfg.AiReasoningEffort == kEffortIds[i]) {
+        if (work.AiReasoningEffort == kEffortIds[i]) {
             effortIdx = i;
             break;
         }
     }
     if (ImGui::Combo("Default reasoning effort", &effortIdx, kEffortLabels, 4)) {
-        LOG_INFO("Preferences: AiReasoningEffort %s -> %s", d.cfg.AiReasoningEffort.c_str(), kEffortIds[effortIdx]);
-        d.cfg.AiReasoningEffort = kEffortIds[effortIdx];
-        MarkPrefsDirty(d);
+        LOG_INFO("Preferences: AiReasoningEffort (working) %s -> %s", work.AiReasoningEffort.c_str(),
+                 kEffortIds[effortIdx]);
+        work.AiReasoningEffort = kEffortIds[effortIdx];
         ClearStaleTestResult(d);
     }
     ImGui::SetItemTooltip("OpenAI `reasoning_effort` request parameter.");
@@ -611,7 +611,10 @@ void RenderReasoningEffort(UiDrawSession& d) {
 // agents.md harness (optional) — layered system-prompt path config. Each edit
 // invalidates the assistant controller's agents.md cache so the next turn
 // re-reads from disk.
-void RenderAgentsMdHarness(AppController& app, UiDrawSession& d, AssistantPrefsBuffers& b) {
+// agents.md edits stage into the working copy; the agents.md cache is
+// invalidated on explicit Save (CommitAssistantWorkingToConfig), not per
+// keystroke. `app` is no longer needed here.
+void RenderAgentsMdHarness(TrackerConfig& work, AssistantPrefsBuffers& b) {
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
@@ -623,11 +626,7 @@ void RenderAgentsMdHarness(AppController& app, UiDrawSession& d, AssistantPrefsB
                                "capped at 64 KB.");
     ImGui::Spacing();
     if (ImGui::InputText("Global agents.md path", b.agentsMdGlobalBuf, sizeof(b.agentsMdGlobalBuf))) {
-        d.cfg.AgentsMdGlobalPath = b.agentsMdGlobalBuf;
-        MarkPrefsDirty(d);
-        if (app.HasAiAssistantController()) {
-            app.GetAiAssistantController().InvalidateAgentsMdCache();
-        }
+        work.AgentsMdGlobalPath = b.agentsMdGlobalBuf;
     }
     ImGui::SetItemTooltip("Override the global agents.md location.");
     ImGui::SameLine();
@@ -635,24 +634,16 @@ void RenderAgentsMdHarness(AppController& app, UiDrawSession& d, AssistantPrefsB
                                "Default %LOCALAPPDATA%/Smatchet/agents.md when blank. Override to point "
                                "at a checked-in shared file.");
     if (ImGui::InputText("Project agents.md path (override)", b.projectAgentsMdBuf, sizeof(b.projectAgentsMdBuf))) {
-        d.cfg.ProjectAgentsMdPath = b.projectAgentsMdBuf;
-        MarkPrefsDirty(d);
-        if (app.HasAiAssistantController()) {
-            app.GetAiAssistantController().InvalidateAgentsMdCache();
-        }
+        work.ProjectAgentsMdPath = b.projectAgentsMdBuf;
     }
     ImGui::SetItemTooltip("Explicit project-layer path.");
     ImGui::SameLine();
     SmatchetHelpMarker::Render("prefs.assistant.agents_md_project.help",
                                "When set, this exact path is used as the project layer. Leave blank to "
                                "disable the project layer entirely unless Auto-discover is enabled below.");
-    bool autoDiscover = d.cfg.AgentsMdAutoDiscoverProject;
+    bool autoDiscover = work.AgentsMdAutoDiscoverProject;
     if (ImGui::Checkbox("Auto-discover project agents.md (walk up from cwd)", &autoDiscover)) {
-        d.cfg.AgentsMdAutoDiscoverProject = autoDiscover;
-        MarkPrefsDirty(d);
-        if (app.HasAiAssistantController()) {
-            app.GetAiAssistantController().InvalidateAgentsMdCache();
-        }
+        work.AgentsMdAutoDiscoverProject = autoDiscover;
     }
     ImGui::SetItemTooltip("Walk up from cwd looking for agents.md.");
     ImGui::SameLine();
@@ -661,33 +652,105 @@ void RenderAgentsMdHarness(AppController& app, UiDrawSession& d, AssistantPrefsB
                                "walks up the cwd chain looking for agents.md / AGENTS.md.");
 }
 
+// Save: flush the working AI fields into cfg, persist to disk, invalidate the
+// agents.md cache (paths may have changed) and re-seed the working baseline so
+// the tab is no longer dirty. Mirrors the debounced-autosave path the other
+// tabs use, but fired explicitly. UI-thread-only.
+void CommitAssistantWorkingToConfig(AppController& app, UiDrawSession& d) {
+    SmatchetPreferencesUiDetail::CopyAssistantAiFields(d.assistantPrefsWorking, d.cfg);
+    // Persist immediately (explicit Save semantics) + clear any pending
+    // debounced flag so a separate non-AI mutation doesn't double-write.
+    ConfigManager::Save(d.cfg);
+    d.prefsDirty = false;
+    if (app.HasAiAssistantController()) {
+        // agents.md paths may have changed — force a re-read on the next turn.
+        app.GetAiAssistantController().InvalidateAgentsMdCache();
+    }
+    LOG_INFO("Preferences: Assistant tab saved (providerKind=%d)", d.cfg.AiProviderKind);
+    SmatchetToastManager::Instance().Push(SmatchetLocalization::T("prefs.assistant.saved_title", "Assistant settings"),
+                                          SmatchetLocalization::T("prefs.assistant.saved_body", "Saved to disk."),
+                                          ToastType::Success, 1500);
+}
+
+// Discard: revert the working copy back to the last-saved cfg + request a buffer
+// reseed so the InputText widgets show the reverted values next frame.
+void DiscardAssistantWorking(UiDrawSession& d) {
+    SmatchetPreferencesUiDetail::CopyAssistantAiFields(d.cfg, d.assistantPrefsWorking);
+    d.assistantPrefsForceBufferReseed = true;
+    ClearStaleTestResult(d);
+    LOG_INFO("Preferences: Assistant tab edits discarded");
+}
+
+// Save / Discard control row + an unsaved-changes hint. Enabled only while the
+// working copy differs from cfg.
+void RenderAssistantSaveDiscard(AppController& app, UiDrawSession& d, bool dirty) {
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+    if (!dirty) {
+        ImGui::BeginDisabled(true);
+    }
+    if (ImGui::Button("Save")) {
+        CommitAssistantWorkingToConfig(app, d);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Discard")) {
+        DiscardAssistantWorking(d);
+    }
+    if (!dirty) {
+        ImGui::EndDisabled();
+    }
+    ImGui::SameLine();
+    if (dirty) {
+        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f),
+                           "%s", SmatchetLocalization::T("prefs.assistant.unsaved", "Unsaved changes"));
+    } else {
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("prefs.assistant.no_changes", "No unsaved changes"));
+    }
+}
+
 } // namespace
 
 void DrawAssistantPreferencesTab(AppController& app, UiDrawSession& d) {
-    // Assistant tab — minimal config. Goal: "select provider from dropdown +
-    // press Test connection" Just Works for LM Studio out of the box.
-    // Per-provider sensible defaults are seeded on provider switch. Field edits
-    // commit through MarkPrefsDirty (debounced ~100 ms save). No explicit Save
-    // button — the validator banner + the Test-connection result line provide
-    // all the feedback.
+    // Assistant tab — explicit Save / Discard flow (NOT the debounced autosave
+    // the other tabs use). Edits stage into `d.assistantPrefsWorking`; Save
+    // flushes that into cfg + persists, Discard reverts it to cfg. The tab label
+    // gains a `*` marker while the working copy differs from cfg. The validator
+    // banner + Test-connection probe read the working copy so they reflect the
+    // unsaved edits the user is typing.
     static AssistantPrefsBuffers s_bufs;
     static int s_consentModalProvider = -1; // -1 = none; else AiProviderKind awaiting confirm
-    SeedAssistantBuffers(s_bufs, d);
 
-    if (ImGui::BeginTabItem("Assistant")) {
+    // Seed the working copy from cfg once per open session of the Preferences
+    // window (the flag is reset in resetPreferencesWindowState on close).
+    if (!d.assistantPrefsWorkingSeeded) {
+        d.assistantPrefsWorkingSeeded = true;
+        SmatchetPreferencesUiDetail::CopyAssistantAiFields(d.cfg, d.assistantPrefsWorking);
+    }
+    TrackerConfig& work = d.assistantPrefsWorking;
+    SeedAssistantBuffers(s_bufs, d, work);
+
+    // Dirty must be known BEFORE BeginTabItem so the `*` marker can be part of
+    // the label (the marker shows even when another tab is the active one).
+    const bool dirty = SmatchetPreferencesUiDetail::AssistantAiFieldsDiffer(work, d.cfg);
+    const char* tabLabel = dirty ? "Assistant *###AssistantPrefsTab" : "Assistant###AssistantPrefsTab";
+
+    if (ImGui::BeginTabItem(tabLabel)) {
         d.preferencesActiveTab = PreferencesActiveTab::Assistant;
-        // Validator runs against the live cfg (auto-saved on every field edit)
-        // so the user gets live feedback for the text they're typing.
-        const smatchet::ai::PrefsValidation validation = smatchet::ai::ValidateAiPrefs(d.cfg);
+        // Validator runs against the working copy so the user gets live feedback
+        // for the unsaved text they're typing.
+        const smatchet::ai::PrefsValidation validation = smatchet::ai::ValidateAiPrefs(work);
         RenderValidationBanner(validation);
 
-        const AiProvider selectedKind = RenderProviderComboAndTest(app, d);
+        const AiProvider selectedKind = RenderProviderComboAndTest(app, d, work);
 
-        // --- Per-provider credentials (auto-saved on every edit). ---
-        RenderProviderCredentials(d, selectedKind, s_bufs, s_consentModalProvider);
+        // --- Per-provider credentials (staged into the working copy). ---
+        RenderProviderCredentials(d, work, selectedKind, s_bufs, s_consentModalProvider);
 
-        RenderReasoningEffort(d);
-        RenderAgentsMdHarness(app, d, s_bufs);
+        RenderReasoningEffort(d, work);
+        RenderAgentsMdHarness(work, s_bufs);
+
+        RenderAssistantSaveDiscard(app, d, dirty);
 
         ImGui::EndTabItem();
     }

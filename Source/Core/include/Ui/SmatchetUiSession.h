@@ -408,10 +408,23 @@ struct UiDrawSession {
     std::shared_ptr<std::atomic<bool>> assistantPrefsTestCancel;
     /// Set by the Test-connection success callback when the probe used a
     /// fallback default URL (cfg base URL was empty). The next paint of the
-    /// Assistant tab reseeds the static InputText buffers from cfg so the
-    /// just-persisted default value shows up in the field, then clears this
-    /// flag. UI-thread-only.
+    /// Assistant tab reseeds the static InputText buffers from the working copy
+    /// so the just-persisted default value shows up in the field, then clears
+    /// this flag. UI-thread-only.
     bool assistantPrefsForceBufferReseed = false;
+
+    // --- Assistant Preferences tab: explicit Save / Discard working copy. ---
+    // Unlike the other Preferences tabs (which write straight into `cfg` +
+    // MarkPrefsDirty for a debounced autosave), the Assistant tab edits a
+    // staging copy of the AI-related fields and only commits them into `cfg` on
+    // an explicit Save. Discard reverts the staging copy back to `cfg`. The
+    // validator banner + Test-connection probe read this working copy so they
+    // reflect the unsaved edits the user is typing. Seeded from `cfg` on the
+    // tab open-edge (see `assistantPrefsWorkingSeeded`). UI-thread-only.
+    TrackerConfig assistantPrefsWorking;
+    /// False until the working copy has been seeded from `cfg` for the current
+    /// open session of the tab. Reset on window close so reopening re-seeds.
+    bool assistantPrefsWorkingSeeded = false;
 #endif
 
     bool fieldCatalogFetchStarted = false;
