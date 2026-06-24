@@ -36,8 +36,13 @@ SessionStart by the `## === loop-mode: <on|in> ===` banner
   not improvise scope. The human authorises a plan, then the agent runs it,
   escalating rather than guessing on anything the plan did not settle.
 
-**Prerelease default = `in`.** Absent an explicit `SMATCHET_LOOP_MODE`, during
-prerelease development the agent assumes **in-the-loop-after-an-approved-plan**.
+**Default = `project.config.json` § `governance.loop_mode`** (operator-owned;
+read at SessionStart by `agents/scripts/core/clear-session-context.sh`, with an
+explicit `SMATCHET_LOOP_MODE` env var overriding per session, and a fail-safe to
+`in` when the config is unreadable). **Currently set to `on`** (human-on-the-loop
+/ autonomous) — the operator selected action-biased autonomy. Flip the config
+value back to `in`, or export `SMATCHET_LOOP_MODE=in`, to return to the
+conservative plan-gated mode (recommended for unattended high-risk work).
 
 ## Escalate, don't assume (invariant in BOTH modes)
 
