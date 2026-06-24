@@ -101,11 +101,26 @@ run_hook() {
     # Append a minimal real PATH so basic utils still resolve.
     sandbox_path="$sandbox_path:/usr/bin:/bin"
 
+    # Isolate the merged-PR guard (the unit under test) from the hook's two
+    # sibling pre-gh probes, both of which depend on environment state this
+    # stripped `env -i` sandbox does not provide and which therefore mis-fire
+    # here (they own their own tests):
+    #   - gate (D) local-CI delta-gate runs test-lint-rules.sh, which exits
+    #     non-zero when its tooling (python/clang-format/...) is absent from the
+    #     minimal PATH -> misread as a violation -> hook refuses early. Only
+    #     present on a merge-ref checkout (refs/pull/N/merge), so the failure
+    #     surfaces in PR CI but not on a head-only local run. -> SKIP_PRESHIP_GATE.
+    #   - plan-lock probe (C) reads the *real* branch via `git symbolic-ref`
+    #     (not the stubbed `git rev-parse`), so a real feature-branch checkout
+    #     with plan-locked changed files can refuse before the guard runs.
+    #     -> ALLOW_UNLOCKED_PUSH.
     local out exit_code
     set +e
     out=$(env -i \
         PATH="$sandbox_path" \
         HOME="$HOME" \
+        SMATCHET_SKIP_PRESHIP_GATE=1 \
+        SMATCHET_ALLOW_UNLOCKED_PUSH=1 \
         SMATCHET_ALLOW_MERGED_PR_PUSH="${extra_env#SMATCHET_ALLOW_MERGED_PR_PUSH=}" \
         bash "$HOOK" 2>&1)
     exit_code=$?
