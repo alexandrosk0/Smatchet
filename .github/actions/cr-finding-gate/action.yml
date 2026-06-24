@@ -61,6 +61,24 @@ runs:
           exit 0
         fi
 
+        # --- Dependabot / bot-authored PRs (auto-pass) -------------------------
+        # CodeRabbit's auto_review never engages on Dependabot PRs (observed: no
+        # review node ever appears and CR posts no "CodeRabbit" StatusContext),
+        # so without this branch the gate hangs on PENDING forever — the same
+        # "stuck awaiting review" wedge as PR #536, but un-retriggerable because
+        # CR never acts. Dependabot here is scoped to github-actions SHA bumps
+        # (.github/dependabot.yml): mechanical version pins with nothing for a
+        # reviewer to action, while the build/test/lint gates still run in full.
+        # A bot PR therefore has nothing for THIS gate to evaluate — pass it, the
+        # same posture as the cr_installed=false fast-pass below. Human PRs are
+        # never auto-passed. NOTE: a `case` glob would read the literal "[bot]"
+        # as a one-char class, so match with explicit string equality.
+        pr_author=$(gh api "repos/${OWNER}/${REPO}/pulls/${PR}" --jq '.user.login' 2>/dev/null || true)
+        if [ "$pr_author" = "dependabot[bot]" ] || [ "$pr_author" = "dependabot" ]; then
+          post success "Dependabot PR (${pr_author}) — CodeRabbit does not auto-review bot PRs; build/test/lint gates still enforced"
+          exit 0
+        fi
+
         # --- Is CodeRabbit installed? (probe .coderabbit.yaml/.yml) ------------
         # Fall through to PASS when CR is not installed — same posture as
         # merge-gates.sh (a repo without CR must not be blocked by this gate).

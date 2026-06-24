@@ -1,0 +1,116 @@
+name: Automated-PR CI guard
+
+# Self-heal Dependabot PRs when CI goes red, so the sole maintainer does not
+# have to babysit them. The two known per-PR false-reds are already handled
+# elsewhere — the advisory Windows-on-ARM lanes skip on pull_request (#1557),
+# and the CR-finding gate auto-passes bot PRs (.github/actions/cr-finding-gate).
+# So a `failure` conclusion of the main "Build and test" run on a Dependabot
+# branch now means a GENUINE break (or a transient runner/infra flake), not the
+# old systematic noise. This guard reacts to exactly that:
+#   1. First failure  -> re-run the failed jobs once. Absorbs transient flakes,
+#      the same class the in-job retries in build-and-test.yml already soak up
+#      (Mesa first-frame, bucket-E collapse, ...). A bumped action that merely
+#      hit a flaky runner clears here with zero human attention.
+#   2. Still red after that retry -> add the `ci-attention` label + post ONE
+#      summary comment, so the human-on-the-loop gets a single clear ping
+#      instead of scanning a wall of checks.
+# No auto-merge: develop is human-on-the-loop by policy (PR #1553). Turning a
+# green Dependabot PR into an auto-merge is a deliberate opt-in left to the
+# maintainer (a check_suite:success handler calling `gh pr merge --auto`).
+#
+# Why workflow_run rather than pull_request? Dependabot's `pull_request` event
+# carries a READ-ONLY GITHUB_TOKEN, so a handler on that trigger cannot re-run
+# jobs, label, or comment. A workflow_run handler runs in the base repo on the
+# DEFAULT branch (develop) with a writable token — exactly the privilege this
+# needs — and sees the FINAL run conclusion instead of one job's result.
+
+on:
+  workflow_run:
+    workflows: ["Build and test"]
+    types: [completed]
+
+# Least-privilege: re-run failed jobs (actions), manage the attention label
+# (issues), and comment (pull-requests). No contents write — the guard never
+# pushes.
+permissions:
+  actions: write
+  issues: write
+  pull-requests: write
+  contents: read
+
+concurrency:
+  # One guard per run; never cancel — a cancelled guard could drop an escalation.
+  group: automated-pr-guard-${{ github.event.workflow_run.id }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    # Act only on bot-authored PR runs that ended red. The head-branch prefix is
+    # the stable signal: a re-run rotates triggering_actor, but `dependabot/...`
+    # branch names do not change. Add prefixes here to onboard other bots.
+    if: >-
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'failure' &&
+      startsWith(github.event.workflow_run.head_branch, 'dependabot/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      RUN_URL: ${{ github.event.workflow_run.html_url }}
+      ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Resolve PR number
+        id: pr
+        run: |
+          set -uo pipefail
+          # Prefer the run payload's own association; fall back to the head
+          # commit's associated PRs if the array is empty.
+          num='${{ github.event.workflow_run.pull_requests[0].number }}'
+          if [ -z "$num" ]; then
+            num=$(gh api "repos/${REPO}/commits/${HEAD_SHA}/pulls" \
+                    --jq '.[0].number' 2>/dev/null || true)
+          fi
+          [ "$num" = "null" ] && num=""
+          echo "num=${num}" >> "$GITHUB_OUTPUT"
+          if [ -z "$num" ]; then
+            echo "::warning::could not resolve a PR number for run ${RUN_ID}; nothing to do."
+          else
+            echo "Resolved Dependabot PR #${num} (run attempt ${ATTEMPT})."
+          fi
+
+      - name: Retry failed jobs once (transient-flake absorber)
+        if: steps.pr.outputs.num != '' && env.ATTEMPT == '1'
+        run: |
+          set -uo pipefail
+          echo "First-attempt CI failure on Dependabot PR #${{ steps.pr.outputs.num }} — re-running failed jobs once."
+          gh run rerun "${RUN_ID}" --failed --repo "${REPO}" \
+            || echo "::warning::re-run request failed (run already re-running or not retryable)."
+
+      - name: Escalate to the maintainer (label + one comment)
+        if: steps.pr.outputs.num != '' && env.ATTEMPT != '1'
+        run: |
+          set -uo pipefail
+          PR='${{ steps.pr.outputs.num }}'
+          # Ensure the label exists (idempotent), then apply it (idempotent).
+          gh label create ci-attention --repo "${REPO}" --color B60205 \
+            --description "Automated PR with CI still failing after an auto-retry — needs a human" \
+            2>/dev/null || true
+          gh issue edit "${PR}" --repo "${REPO}" --add-label ci-attention \
+            || echo "::warning::could not add ci-attention label to #${PR}"
+          # Post at most one guard comment (idempotent via a hidden marker).
+          marker='<!-- automated-pr-guard:escalation -->'
+          existing=$(gh api "repos/${REPO}/issues/${PR}/comments" --jq '.[].body' 2>/dev/null || true)
+          if printf '%s' "$existing" | grep -qF "$marker"; then
+            echo "Escalation comment already present on #${PR} — not duplicating."
+            exit 0
+          fi
+          body=$(printf '%s\n\n%s\n\n%s\n\n%s' \
+            "$marker" \
+            "⚠️ **CI is still red after an automatic re-run of the failed jobs.**" \
+            "The transient-flake retry did not clear it, so this Dependabot PR needs a human look — the failure is likely real (a genuine break from the bumped action) rather than a flake." \
+            "Failed run: ${RUN_URL}")
+          gh pr comment "${PR}" --repo "${REPO}" --body "$body" \
+            || echo "::warning::could not post escalation comment on #${PR}"
