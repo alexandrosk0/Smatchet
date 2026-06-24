@@ -44,6 +44,15 @@ explicit `SMATCHET_LOOP_MODE` env var overriding per session, and a fail-safe to
 value back to `in`, or export `SMATCHET_LOOP_MODE=in`, to return to the
 conservative plan-gated mode (recommended for unattended high-risk work).
 
+**Standing auto-merge grant (`governance.auto_merge`).** A separate, revocable
+grant (same resolution: `SMATCHET_AUTOMERGE` env > config > `off` fallback): when
+`on`, the agent auto-squash-merges a PR once the **full merge-gates poll passes**
+(CI + CodeRabbit + Bugbot + unresolved comments), **without** the per-PR post-ship
+merge prompt — the gates still bind; only the *asking* is removed. It does not
+grant merging past a real blocker, and a rate-limited / capped review bot is an
+out-of-band downgrade (`*-out-of-band` label), not a licence to skip a genuine
+finding. Revoke by setting `governance.auto_merge: off`.
+
 ## Escalate, don't assume (invariant in BOTH modes)
 
 Before acting, the agent must be able to **autonomously validate** the action —

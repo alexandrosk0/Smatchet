@@ -150,21 +150,20 @@ P4EOF
     fi
 fi
 
-# --- Loop-mode banner: surface the active loop mode at session start --------
+# --- Loop-mode + auto-merge banner: surface the active governance modes --------
 # Per AI_POLICY.md § Two loop modes: the human selects human-on-the-loop
 # (action-biased, autonomous) or human-in-the-loop (execute only within an
-# approved plan; pause at undocumented decisions). Resolution order:
-#   1. SMATCHET_LOOP_MODE env var  (per-session override), else
-#   2. project.config.json governance.loop_mode  (committed operator default), else
-#   3. `in`  (fail-safe to the more-conservative mode when config is unreadable).
-# Mirrors the p4-mode banner above so the orchestrator can't miss the active
-# mode at boot. Any value other than `on` normalises to `in`.
-LOOP_MODE="${SMATCHET_LOOP_MODE:-}"
-if [ -z "$LOOP_MODE" ]; then
-    _proj_cfg="$PROJECT_DIR/project.config.json"
-    LOOP_MODE="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["governance"]["loop_mode"])' "$_proj_cfg" 2>/dev/null || python -c 'import json,sys;print(json.load(open(sys.argv[1]))["governance"]["loop_mode"])' "$_proj_cfg" 2>/dev/null || printf 'in')"
-fi
-if [ "$LOOP_MODE" = "on" ]; then
+# approved plan; pause at undocumented decisions). Resolution order for each
+# mode:
+#   1. the matching env var (SMATCHET_LOOP_MODE / SMATCHET_AUTOMERGE) — per-session
+#      override, else
+#   2. project.config.json governance.<mode>  (committed operator default), else
+#   3. the conservative fallback (loop_mode `in` / auto_merge `off`).
+# Mirrors the p4-mode banner above so the orchestrator can't miss the modes at boot.
+_gov() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["governance"].get(sys.argv[2],sys.argv[3]))' "$PROJECT_DIR/project.config.json" "$1" "$2" 2>/dev/null || echo "$2"; }
+_loop_mode="${SMATCHET_LOOP_MODE:-$(_gov loop_mode in)}"
+_auto_merge="${SMATCHET_AUTOMERGE:-$(_gov auto_merge off)}"
+if [ "$_loop_mode" = "on" ]; then
     cat >> "$SCRATCHPAD" <<LOOPEOF
 
 ## === loop-mode: on ===
@@ -184,6 +183,24 @@ human-in-the-loop (prerelease default). Execute ONLY within an approved plan;
 pause at each decision point the plan does not cover; do not improvise scope.
 Escalate (don't assume) on anything not autonomously validatable —
 ship-loop exception (6). See \`AI_POLICY.md\` § Two loop modes + § Escalate.
+
+LOOPEOF
+fi
+
+if [ "$_auto_merge" = "on" ]; then
+    cat >> "$SCRATCHPAD" <<'LOOPEOF'
+
+## === auto-merge: on ===
+
+Standing grant (project.config.json § governance.auto_merge). After a feature PR
+is opened READY (not draft) and the full merge-gates poll passes, squash-merge it
+WITHOUT the per-PR post-ship merge prompt — do not ask the user to mark-ready or
+to authorise the merge. The gates still bind (CI + CodeRabbit + Bugbot + user
+comments); only the asking is removed. A rate-limited / usage-capped CR or Bugbot
+is an out-of-band condition, not a finding: apply the named `cr-out-of-band` /
+`bugbot-out-of-band` label and proceed. STILL halt + escalate on a real blocker
+(red required check, a genuine CR/Bugbot finding, an unresolved user comment) and
+on the standard ship-loop pause exceptions.
 
 LOOPEOF
 fi
