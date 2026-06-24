@@ -14,9 +14,10 @@ name: Automated-PR CI guard
 #   2. Still red after that retry -> add the `ci-attention` label + post ONE
 #      summary comment, so the human-on-the-loop gets a single clear ping
 #      instead of scanning a wall of checks.
-# No auto-merge: develop is human-on-the-loop by policy (PR #1553). Turning a
-# green Dependabot PR into an auto-merge is a deliberate opt-in left to the
-# maintainer (a check_suite:success handler calling `gh pr merge --auto`).
+# The `success` side of the same "Build and test" completion is owned by the
+# sibling dependabot-auto-merge.yml, which arms auto-merge the sanctioned way
+# (via safe-merge.sh). This guard owns only the `failure` side, so the two never
+# act on the same run.
 #
 # Why workflow_run rather than pull_request? Dependabot's `pull_request` event
 # carries a READ-ONLY GITHUB_TOKEN, so a handler on that trigger cannot re-run
@@ -45,12 +46,16 @@ concurrency:
 
 jobs:
   guard:
-    # Act only on bot-authored PR runs that ended red. The head-branch prefix is
-    # the stable signal: a re-run rotates triggering_actor, but `dependabot/...`
-    # branch names do not change. Add prefixes here to onboard other bots.
+    # Cheap pre-filter: a same-repo bot PR run that ended red. The head-branch
+    # prefix + same-repo check keep forks out without an API call, but they are
+    # NOT the privileged-action gate — a fork could forge a `dependabot/...`
+    # name. The authoritative gate is the AUTHENTICATED PR-author check in the
+    # resolve step below (must be dependabot[bot]) before any re-run / label /
+    # comment. Add prefixes here to onboard other bots.
     if: >-
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
       startsWith(github.event.workflow_run.head_branch, 'dependabot/')
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -62,7 +67,7 @@ jobs:
       ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
       HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
     steps:
-      - name: Resolve PR number
+      - name: Resolve PR number + verify Dependabot authorship
         id: pr
         run: |
           set -uo pipefail
@@ -74,12 +79,23 @@ jobs:
                     --jq '.[0].number' 2>/dev/null || true)
           fi
           [ "$num" = "null" ] && num=""
-          echo "num=${num}" >> "$GITHUB_OUTPUT"
           if [ -z "$num" ]; then
             echo "::warning::could not resolve a PR number for run ${RUN_ID}; nothing to do."
-          else
-            echo "Resolved Dependabot PR #${num} (run attempt ${ATTEMPT})."
+            echo "num=" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          # SECURITY: this workflow_run handler holds base-repo write scope, so it
+          # must not act on a forgeable head-branch name alone. Re-verify the
+          # GitHub-authenticated PR author (unforgeable) is Dependabot before any
+          # privileged step; blank `num` to skip them all otherwise.
+          author=$(gh pr view "$num" --repo "${REPO}" --json author --jq '.author.login' 2>/dev/null || true)
+          if [ "$author" != "dependabot[bot]" ]; then
+            echo "::notice::PR #${num} author is '${author:-unknown}', not dependabot[bot] — guard takes no action."
+            echo "num=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "num=${num}" >> "$GITHUB_OUTPUT"
+          echo "Resolved Dependabot PR #${num} (run attempt ${ATTEMPT}); author verified as dependabot[bot]."
 
       - name: Retry failed jobs once (transient-flake absorber)
         if: steps.pr.outputs.num != '' && env.ATTEMPT == '1'
