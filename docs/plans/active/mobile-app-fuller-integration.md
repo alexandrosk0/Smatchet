@@ -318,9 +318,20 @@ _(per-slice)_
     the *Assignee* cell → the combo arms + opens (soft-keyboard filter raised) → tap-away on the app-bar →
     combo closes, cell reverts to the original value, **no mutation tag**. These are the PR-6 stray-PUT proof
     extended to the rebuilt post-extraction binary.
-  - **Held for explicit user confirmation** — the **Save / Apply → live PUT** path was **not** exercised on
-    a real ticket: a live mutation against a real backend is an external-service action requiring explicit
-    user confirmation (standing constraint). It is the first item in the visual-validation pause below.
+  - **Live commit→PUT — user-authorised, emulator-blocked (escalate-when-unvalidatable)** — the user granted
+    the external-service mutation ("safe to mutate any ticket"). The **Save / Apply → live PUT** path was
+    hand-attempted on `emulator-5554` (long-press the *Assignee* SingleSelect → arm/open → narrow the filter →
+    select a different user) across multiple tries over two sessions, but a **clean capture could not be
+    obtained**: the emulator's soft-keyboard (auto-raised by the combo filter InputText) + the variable
+    Read-tool screenshot scale make coordinate-injected option-taps land on the filter field rather than the
+    target Selectable, and `Escape` collapses the whole combo. This is an **emulator/swiftshader input-tooling
+    limitation, not a product defect** (the same `ServiceNotFoundException: No service published for: input`
+    boot-race flakes the CI `Android emulator smoke` lane). Per the escalate-when-unvalidatable invariant the
+    result is recorded honestly rather than claimed. **Safety**: a full-session logcat scan confirmed **zero**
+    mutation tags — no accidental PUT fired; the ticket assignee remained `Alexandros Konstantonis` throughout;
+    input stayed pinned `-s emulator-5554`. Commit-path **correctness** is covered by the pure unit test
+    `ShouldCommitTouchPopupEdit` (Save=PUT / unchanged=no-op) and the deferred bucket-E case below; the
+    on-device evidence here is the **discard** half of the matrix (the security-critical stray-PUT proof).
   - **Deferred automation** — the full long-press / Save / Cancel / Back / tap-away matrix across all five
     editors (incl. MultiSelect / Cascading / Labels / DateTime-centering) is glue-on-ImGui-surface, so it is
     backlogged as a bucket-E ImGui Test Engine case (CI-blocked today on the Mesa-GL lane, same as P1.2);
