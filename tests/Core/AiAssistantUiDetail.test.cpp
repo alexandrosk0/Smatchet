@@ -95,3 +95,20 @@ TEST_CASE("AiToastAlpha: full before fade window, linear ramp inside, clamped") 
     CHECK(AiToastAlpha(-10, 250) == doctest::Approx(0.0f));  // past dismissal clamps
     CHECK(AiToastAlpha(100, 0) == doctest::Approx(1.0f));    // zero fade window -> full
 }
+
+TEST_CASE("AiTruncatedPasteDroppedBytes: zero under cap, overflow above, degenerate guards") {
+    constexpr int kBufCap = 8 * 1024; // BufSize = capacity+1; usable text = 8191 bytes
+    // Comfortably under cap -> nothing dropped.
+    CHECK(AiTruncatedPasteDroppedBytes(100, kBufCap) == 0u);
+    // Exactly at the usable limit (cap-1) -> nothing dropped.
+    CHECK(AiTruncatedPasteDroppedBytes(kBufCap - 1, kBufCap) == 0u);
+    // One byte over the usable limit -> exactly 1 dropped.
+    CHECK(AiTruncatedPasteDroppedBytes(kBufCap, kBufCap) == 1u);
+    // 2 KB over -> that many bytes dropped.
+    CHECK(AiTruncatedPasteDroppedBytes(kBufCap - 1 + 2048, kBufCap) == 2048u);
+    // Degenerate inputs guard to zero.
+    CHECK(AiTruncatedPasteDroppedBytes(0, kBufCap) == 0u);
+    CHECK(AiTruncatedPasteDroppedBytes(-5, kBufCap) == 0u);
+    CHECK(AiTruncatedPasteDroppedBytes(100, 1) == 0u);
+    CHECK(AiTruncatedPasteDroppedBytes(100, 0) == 0u);
+}
