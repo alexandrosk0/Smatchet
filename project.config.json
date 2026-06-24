@@ -151,8 +151,8 @@
     "sink_warn_lines": 400
   },
   "governance": {
-    "_doc": "Human-authority charter defaults (AI_POLICY.md). loop_mode is the SessionStart default when SMATCHET_LOOP_MODE is unset; the env var overrides per session.",
+    "_doc": "Human-authority charter defaults (AI_POLICY.md). loop_mode is the committed operator default, read at SessionStart by agents/scripts/core/clear-session-context.sh when SMATCHET_LOOP_MODE is unset; the env var overrides per session. Set 'on' for human-on-the-loop (action-biased, autonomous); 'in' for plan-gated human-in-the-loop.",
     "policy": "AI_POLICY.md",
-    "loop_mode": "in"
+    "loop_mode": "on"
   }
 }

@@ -150,14 +150,21 @@ P4EOF
     fi
 fi
 
-# --- Loop-mode banner: surface SMATCHET_LOOP_MODE at session start ----------
+# --- Loop-mode banner: surface the active loop mode at session start --------
 # Per AI_POLICY.md § Two loop modes: the human selects human-on-the-loop
 # (action-biased, autonomous) or human-in-the-loop (execute only within an
-# approved plan; pause at undocumented decisions). Prerelease default is `in`.
+# approved plan; pause at undocumented decisions). Resolution order:
+#   1. SMATCHET_LOOP_MODE env var  (per-session override), else
+#   2. project.config.json governance.loop_mode  (committed operator default), else
+#   3. `in`  (fail-safe to the more-conservative mode when config is unreadable).
 # Mirrors the p4-mode banner above so the orchestrator can't miss the active
-# mode at boot. Any value other than `on` normalises to `in` (fail-safe to the
-# more-conservative mode).
-if [ "${SMATCHET_LOOP_MODE:-}" = "on" ]; then
+# mode at boot. Any value other than `on` normalises to `in`.
+LOOP_MODE="${SMATCHET_LOOP_MODE:-}"
+if [ -z "$LOOP_MODE" ]; then
+    _proj_cfg="$PROJECT_DIR/project.config.json"
+    LOOP_MODE="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["governance"]["loop_mode"])' "$_proj_cfg" 2>/dev/null || python -c 'import json,sys;print(json.load(open(sys.argv[1]))["governance"]["loop_mode"])' "$_proj_cfg" 2>/dev/null || printf 'in')"
+fi
+if [ "$LOOP_MODE" = "on" ]; then
     cat >> "$SCRATCHPAD" <<LOOPEOF
 
 ## === loop-mode: on ===
