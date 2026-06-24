@@ -1,0 +1,49 @@
+name: Dependabot auto-merge
+
+# Auto-merge Dependabot PRs once every REQUIRED branch-protection check is green
+# (operator decision: "auto-merge when green"). The full build/test/lint suite is
+# the backstop — `--auto` only completes the merge when those pass, so a bump that
+# breaks CI never lands (it goes red, automated-pr-guard.yml retries once, then
+# escalates). The CR-finding gate auto-passes bot PRs (.github/actions/
+# cr-finding-gate), so it does not hold the queue. Squash matches the repo's
+# "(#NNNN)" merge style.
+#
+# Trigger is pull_request_target, NOT pull_request: Dependabot's pull_request
+# GITHUB_TOKEN is read-only, so `gh pr merge --auto` would fail from it.
+# pull_request_target runs in the BASE repo with a writable token. This is safe
+# here because the job never checks out or executes PR-supplied code — it only
+# calls the API against the PR number/URL (no injection surface). The repo's
+# "Allow auto-merge" setting (Settings -> General -> Pull Requests) must be ON;
+# if it is off, the step warns and no-ops rather than failing.
+
+on:
+  pull_request_target:
+    branches: [develop]
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: dependabot-automerge-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  automerge:
+    # Bot author is the trust boundary; only Dependabot's own PRs qualify.
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Enable squash auto-merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          set -uo pipefail
+          echo "Enabling squash auto-merge for Dependabot PR ${PR_URL}."
+          # Idempotent: re-enabling on a later synchronize is a no-op. GitHub
+          # completes the merge only when all required checks are green.
+          gh pr merge --auto --squash "${PR_URL}" \
+            || echo "::warning::could not enable auto-merge — is the repo 'Allow auto-merge' setting on, and branch protection configured?"
