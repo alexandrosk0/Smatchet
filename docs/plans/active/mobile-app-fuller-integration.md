@@ -292,6 +292,16 @@ _(per-slice)_
     the **strict zone** `Source/Core/src/Tracker/` (`TrackerLabelsEditor.cpp` + `TrackerDateTimeFieldEditor.cpp`):
     no new strict-zone / comment-noise / oversized-function / include-cycle / fan-in violations. (Only the
     pre-existing non-blocking `comment-ratio` WARN on `TicketFieldEditorCommitPolicyPure.h`.)
+  - **Perf** — desktop codegen is **byte-identical** by construction: `kMobileTouchBuild` is
+    `constexpr false` off-Android, so `ShouldOpenCellEditorOnGesture` dead-eliminates the touch branch
+    and collapses to the exact pre-existing `clicked && (openOnClick || IsMouseDoubleClicked(0))`
+    expression — no desktop scenario path changes, zero desktop regression by construction. The new
+    touch open/arm gesture is mobile-only (`__ANDROID__`), and the per-cell collapsed-preview helpers
+    (`EmptySelectPreviewLabel`, the arm-then-popup `Selectable`) are O(1), allocation-free, and already
+    on the SingleSelect hot path; the DateTime no-op canon round-trip runs only on Apply/Clear (a user
+    action, never per-frame). No mobile perf scenario exists yet (same gap as P1.2); CI **Perf PR-fast**
+    is the authoritative headless gate and `perf-gatekeeper` runs the diff→scenario subset at PR time;
+    real-hardware mobile Pillar-1 remains the cross-cutting deferred gate (plan lines 111/141).
   - **Build (post-extraction rebuild)** — desktop dual-target
     (`cmake --build build/ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`, via
     `with-msvc-env.sh`) → both link clean; Android x86_64 `assembleDebug` → `app-debug.apk` **BUILD

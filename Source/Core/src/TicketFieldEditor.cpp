@@ -879,7 +879,10 @@ void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, con
     const float cellAvail = ImGui::GetContentRegionAvail().x;
     // Arm-then-popup: see RenderSingleSelectEditor. Shared scaffold in ArmThenPopupCellGate.
     const std::string editorKey = ticket.id + "::" + field.Id;
-    const char* previewCStr = preview.empty() ? "" : preview.c_str();
+    // Match RenderSingleSelectEditor: an empty preview becomes the EmptySelectPreviewLabel placeholder
+    // so the collapsed Selectable keeps a tappable width on touch (an empty cell otherwise collapses
+    // to a zero-width long-press target).
+    const char* previewCStr = preview.empty() ? EmptySelectPreviewLabel(field) : preview.c_str();
     if (!ArmThenPopupCellGate(state.EditArmedKey, state.EditArmedJustOpened, editorKey, "##multiselect", previewCStr,
                               cellAvail, singleClickToEdit)) {
         DrawClippedPreviewTooltip(tooltipsEnabled, previewCStr, cellAvail);
@@ -906,7 +909,10 @@ void RenderCascadingSelectEditor(const AppController& app, const CachedTicket& t
     const float cellAvail = ImGui::GetContentRegionAvail().x;
     // Arm-then-popup: see RenderSingleSelectEditor. Shared scaffold in ArmThenPopupCellGate.
     const std::string editorKey = ticket.id + "::" + field.Id;
-    const char* previewCStr = preview.empty() ? "" : preview.c_str();
+    // Match RenderSingleSelectEditor: an empty preview becomes the EmptySelectPreviewLabel placeholder
+    // so the collapsed Selectable keeps a tappable width on touch (an empty cell otherwise collapses
+    // to a zero-width long-press target).
+    const char* previewCStr = preview.empty() ? EmptySelectPreviewLabel(field) : preview.c_str();
     if (!ArmThenPopupCellGate(state.EditArmedKey, state.EditArmedJustOpened, editorKey, "##cascadeselect", previewCStr,
                               cellAvail, singleClickToEdit)) {
         DrawClippedPreviewTooltip(tooltipsEnabled, previewCStr, cellAvail);

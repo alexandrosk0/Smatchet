@@ -471,7 +471,18 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& f
             }
             const bool curBlank = std::all_of(currentValue.begin(), currentValue.end(),
                                               [](unsigned char ch) { return std::isspace(ch) != 0; });
-            const bool valueChanged = clearPressed ? !curBlank : (canon != currentValue);
+            // Compare canon against the canonical form of currentValue, not its raw wire string:
+            // FormatJiraDateOrDateTimeForApi forces ".000" milliseconds and always emits seconds, so a
+            // re-Apply of an unchanged value whose Jira wire form differs only in ms/seconds/zone
+            // spelling (e.g. "...T10:00:00.123+0000") would otherwise read as changed and fire a stray
+            // no-op PUT. Both sides go through the same formatter, so equality means semantic identity.
+            // Unparseable currentValue falls back to the raw string (conservative — treats as changed).
+            std::string canonCurrent = currentValue;
+            ParsedJiraDateTime curParsed;
+            if (TryParseJiraDateTime(currentValue, curParsed)) {
+                canonCurrent = FormatJiraDateOrDateTimeForApi(isDateOnly, curParsed);
+            }
+            const bool valueChanged = clearPressed ? !curBlank : (canon != canonCurrent);
             if (TicketFieldEditorCommitPolicyPure::ShouldCommitTouchPopupEdit(/*savePressed=*/true, valueChanged)) {
                 queue(clearPressed ? std::vector<std::string>{} : std::vector<std::string>{canon});
             }
