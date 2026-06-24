@@ -19,7 +19,7 @@
 // either way, but binding to the real namespace keeps the header independent of the macro).
 namespace SmatchetTouchEdit {
 
-// Compile-time: is this the mobile/touch build? The NDK toolchain auto-defines __ANDROID__;
+// Compile-time: is this the mobile/touch build? The NDK toolchain auto-defines __ANDROID__ and
 // Source/Core has no other mobile gate today. Desktop is constexpr-false, so the touch branch in
 // ShouldOpenCellEditorOnGesture dead-eliminates and the gate collapses to the exact pre-existing
 // `clicked && (openOnClick || IsMouseDoubleClicked(0))` expression — byte-identical desktop codegen.
