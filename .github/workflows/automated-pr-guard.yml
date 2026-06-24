@@ -66,6 +66,8 @@ jobs:
       RUN_URL: ${{ github.event.workflow_run.html_url }}
       ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
       HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      # Passed via env (not inlined into run) to avoid template-injection.
+      EVENT_PR_NUM: ${{ github.event.workflow_run.pull_requests[0].number }}
     steps:
       - name: Resolve PR number + verify Dependabot authorship
         id: pr
@@ -73,7 +75,7 @@ jobs:
           set -uo pipefail
           # Prefer the run payload's own association; fall back to the head
           # commit's associated PRs if the array is empty.
-          num='${{ github.event.workflow_run.pull_requests[0].number }}'
+          num="$EVENT_PR_NUM"
           if [ -z "$num" ]; then
             num=$(gh api "repos/${REPO}/commits/${HEAD_SHA}/pulls" \
                     --jq '.[0].number' 2>/dev/null || true)
@@ -99,17 +101,21 @@ jobs:
 
       - name: Retry failed jobs once (transient-flake absorber)
         if: steps.pr.outputs.num != '' && env.ATTEMPT == '1'
+        env:
+          PR_NUM: ${{ steps.pr.outputs.num }}
         run: |
           set -uo pipefail
-          echo "First-attempt CI failure on Dependabot PR #${{ steps.pr.outputs.num }} — re-running failed jobs once."
+          echo "First-attempt CI failure on Dependabot PR #${PR_NUM} — re-running failed jobs once."
           gh run rerun "${RUN_ID}" --failed --repo "${REPO}" \
             || echo "::warning::re-run request failed (run already re-running or not retryable)."
 
       - name: Escalate to the maintainer (label + one comment)
         if: steps.pr.outputs.num != '' && env.ATTEMPT != '1'
+        env:
+          PR_NUM: ${{ steps.pr.outputs.num }}
         run: |
           set -uo pipefail
-          PR='${{ steps.pr.outputs.num }}'
+          PR="$PR_NUM"
           # Ensure the label exists (idempotent), then apply it (idempotent).
           gh label create ci-attention --repo "${REPO}" --color B60205 \
             --description "Automated PR with CI still failing after an auto-retry — needs a human" \
