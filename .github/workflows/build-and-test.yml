@@ -483,7 +483,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -496,7 +496,7 @@ jobs:
         uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (msvc-arm64-native)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ${{ github.workspace }}\.sccache
           key: ${{ runner.os }}-sccache-msvc-arm64-native-${{ github.sha }}
@@ -504,7 +504,7 @@ jobs:
             ${{ runner.os }}-sccache-msvc-arm64-native-
 
       - name: Cache FetchContent _deps (msvc-arm64-native)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .fetchcontent-src
           # Sources are arch-independent; fall back to the shared prefix to reuse
@@ -663,7 +663,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -687,7 +687,7 @@ jobs:
         uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (msvc-arm64-installer)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ${{ github.workspace }}\.sccache
           # Share the native leg's object cache (same ninja-publish-msvc-arm64
@@ -697,7 +697,7 @@ jobs:
             ${{ runner.os }}-sccache-msvc-arm64-native-
 
       - name: Cache FetchContent _deps (msvc-arm64-installer)
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-msvc-arm64-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}

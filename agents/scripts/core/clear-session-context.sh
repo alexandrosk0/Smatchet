@@ -153,11 +153,14 @@ fi
 # --- Loop-mode + auto-merge banner: surface the active governance modes --------
 # Per AI_POLICY.md § Two loop modes: the human selects human-on-the-loop
 # (action-biased, autonomous) or human-in-the-loop (execute only within an
-# approved plan; pause at undocumented decisions). Effective mode = the matching
-# env var if set, else the project.config.json governance default, else the
-# conservative fallback. Mirrors the p4-mode banner above so the orchestrator
-# can't miss the active modes at boot.
-_gov() { python3 -c "import json;print(json.load(open('$PROJECT_DIR/project.config.json')).get('governance',{}).get('$1','$2'))" 2>/dev/null || echo "$2"; }
+# approved plan; pause at undocumented decisions). Resolution order for each
+# mode:
+#   1. the matching env var (SMATCHET_LOOP_MODE / SMATCHET_AUTOMERGE) — per-session
+#      override, else
+#   2. project.config.json governance.<mode>  (committed operator default), else
+#   3. the conservative fallback (loop_mode `in` / auto_merge `off`).
+# Mirrors the p4-mode banner above so the orchestrator can't miss the modes at boot.
+_gov() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["governance"].get(sys.argv[2],sys.argv[3]))' "$PROJECT_DIR/project.config.json" "$1" "$2" 2>/dev/null || echo "$2"; }
 _loop_mode="${SMATCHET_LOOP_MODE:-$(_gov loop_mode in)}"
 _auto_merge="${SMATCHET_AUTOMERGE:-$(_gov auto_merge off)}"
 if [ "$_loop_mode" = "on" ]; then

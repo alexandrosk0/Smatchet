@@ -151,7 +151,7 @@
     "sink_warn_lines": 400
   },
   "governance": {
-    "_doc": "Human-authority charter defaults (AI_POLICY.md). loop_mode / auto_merge are SessionStart defaults when the matching env var (SMATCHET_LOOP_MODE / SMATCHET_AUTOMERGE) is unset; the env var overrides per session. auto_merge=on is a STANDING, revocable grant: the orchestrator auto-merges a PR once the full merge-gates poll passes (safe-merge.sh) WITHOUT the per-PR post-ship merge prompt — the gates still bind; only the asking is removed (set 2026-06-23: solo maintainer, low review availability).",
+    "_doc": "Human-authority charter defaults (AI_POLICY.md). loop_mode / auto_merge are the committed operator defaults, read at SessionStart by agents/scripts/core/clear-session-context.sh when the matching env var (SMATCHET_LOOP_MODE / SMATCHET_AUTOMERGE) is unset; the env var overrides per session. loop_mode 'on' = action-biased human-on-the-loop, 'in' = plan-gated human-in-the-loop. auto_merge 'on' is a STANDING, revocable grant: the orchestrator auto-merges a PR once the full merge-gates poll passes (safe-merge.sh) WITHOUT the per-PR post-ship merge prompt — the gates still bind; only the asking is removed (set 2026-06-23: solo maintainer, low review availability).",
     "policy": "AI_POLICY.md",
     "loop_mode": "on",
     "auto_merge": "on"
