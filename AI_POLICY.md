@@ -36,8 +36,19 @@ SessionStart by the `## === loop-mode: <on|in> ===` banner
   not improvise scope. The human authorises a plan, then the agent runs it,
   escalating rather than guessing on anything the plan did not settle.
 
-**Prerelease default = `in`.** Absent an explicit `SMATCHET_LOOP_MODE`, during
-prerelease development the agent assumes **in-the-loop-after-an-approved-plan**.
+**Conservative fallback = `in`.** Absent **both** an explicit `SMATCHET_LOOP_MODE`
+env var **and** a `governance.loop_mode` config value, the agent assumes
+**in-the-loop-after-an-approved-plan**. The project sets its own default in
+`project.config.json` § `governance` (currently `on` — a granted, revocable
+human choice for this solo-maintained repo).
+
+**Standing auto-merge grant (`governance.auto_merge`).** A separate, revocable
+grant: when `on`, the agent auto-squash-merges a PR once the **full merge-gates
+poll passes** (CI + CodeRabbit + Bugbot + unresolved comments), **without** the
+per-PR post-ship merge prompt — the gates still bind; only the *asking* is
+removed. It does not grant merging past a real blocker, and a rate-limited /
+capped review bot is an out-of-band downgrade (`*-out-of-band` label), not a
+licence to skip a genuine finding. Revoke by setting `governance.auto_merge: off`.
 
 ## Escalate, don't assume (invariant in BOTH modes)
 

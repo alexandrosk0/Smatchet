@@ -151,8 +151,9 @@
     "sink_warn_lines": 400
   },
   "governance": {
-    "_doc": "Human-authority charter defaults (AI_POLICY.md). loop_mode is the SessionStart default when SMATCHET_LOOP_MODE is unset; the env var overrides per session.",
+    "_doc": "Human-authority charter defaults (AI_POLICY.md). loop_mode / auto_merge are SessionStart defaults when the matching env var (SMATCHET_LOOP_MODE / SMATCHET_AUTOMERGE) is unset; the env var overrides per session. auto_merge=on is a STANDING, revocable grant: the orchestrator auto-merges a PR once the full merge-gates poll passes (safe-merge.sh) WITHOUT the per-PR post-ship merge prompt — the gates still bind; only the asking is removed (set 2026-06-23: solo maintainer, low review availability).",
     "policy": "AI_POLICY.md",
-    "loop_mode": "in"
+    "loop_mode": "on",
+    "auto_merge": "on"
   }
 }

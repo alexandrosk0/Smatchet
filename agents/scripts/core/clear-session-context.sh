@@ -150,14 +150,17 @@ P4EOF
     fi
 fi
 
-# --- Loop-mode banner: surface SMATCHET_LOOP_MODE at session start ----------
+# --- Loop-mode + auto-merge banner: surface the active governance modes --------
 # Per AI_POLICY.md § Two loop modes: the human selects human-on-the-loop
 # (action-biased, autonomous) or human-in-the-loop (execute only within an
-# approved plan; pause at undocumented decisions). Prerelease default is `in`.
-# Mirrors the p4-mode banner above so the orchestrator can't miss the active
-# mode at boot. Any value other than `on` normalises to `in` (fail-safe to the
-# more-conservative mode).
-if [ "${SMATCHET_LOOP_MODE:-}" = "on" ]; then
+# approved plan; pause at undocumented decisions). Effective mode = the matching
+# env var if set, else the project.config.json governance default, else the
+# conservative fallback. Mirrors the p4-mode banner above so the orchestrator
+# can't miss the active modes at boot.
+_gov() { python3 -c "import json;print(json.load(open('$PROJECT_DIR/project.config.json')).get('governance',{}).get('$1','$2'))" 2>/dev/null || echo "$2"; }
+_loop_mode="${SMATCHET_LOOP_MODE:-$(_gov loop_mode in)}"
+_auto_merge="${SMATCHET_AUTOMERGE:-$(_gov auto_merge off)}"
+if [ "$_loop_mode" = "on" ]; then
     cat >> "$SCRATCHPAD" <<LOOPEOF
 
 ## === loop-mode: on ===
@@ -177,6 +180,24 @@ human-in-the-loop (prerelease default). Execute ONLY within an approved plan;
 pause at each decision point the plan does not cover; do not improvise scope.
 Escalate (don't assume) on anything not autonomously validatable —
 ship-loop exception (6). See \`AI_POLICY.md\` § Two loop modes + § Escalate.
+
+LOOPEOF
+fi
+
+if [ "$_auto_merge" = "on" ]; then
+    cat >> "$SCRATCHPAD" <<'LOOPEOF'
+
+## === auto-merge: on ===
+
+Standing grant (project.config.json § governance.auto_merge). After a feature PR
+is opened READY (not draft) and the full merge-gates poll passes, squash-merge it
+WITHOUT the per-PR post-ship merge prompt — do not ask the user to mark-ready or
+to authorise the merge. The gates still bind (CI + CodeRabbit + Bugbot + user
+comments); only the asking is removed. A rate-limited / usage-capped CR or Bugbot
+is an out-of-band condition, not a finding: apply the named `cr-out-of-band` /
+`bugbot-out-of-band` label and proceed. STILL halt + escalate on a real blocker
+(red required check, a genuine CR/Bugbot finding, an unresolved user comment) and
+on the standard ship-loop pause exceptions.
 
 LOOPEOF
 fi
