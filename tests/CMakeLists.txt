@@ -249,6 +249,10 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/UiThreadAffinity.cpp"
     Core/AnnotateAnalysisConfig.test.cpp
     Core/AnnotateLocalization.test.cpp
+    # savediscard-locales — pin the 5 Assistant Save/Discard prefs keys so a key
+    # typo (key resolves to English fallback under fr-FR) can't regress.
+    # SmatchetLocalization.cpp already linked below.
+    Core/PrefsAssistantLocalization.test.cpp
     Core/ConfigSaveConcurrency.test.cpp
     Core/MainThreadDispatcherDrain.test.cpp
     Core/CacheEvictionPolicy.test.cpp
