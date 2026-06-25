@@ -236,7 +236,7 @@ _(per-slice; appended as each PR ships)_
     - **white(0.95)-on-fill**: 2.90:1 → **4.67:1** (≥ 4.5 AA-normal) ✅
     - **accent-on-WindowBg**: 5.09:1 → **3.16:1** (still ≥ 3.0 UI-floor; darkening *lowers* this but stays above) ✅
   `SliderGrabActive` re-derived to `(0.36,0.52,0.77)` to preserve the original "+0.10,+0.10,+0.05 one-step-
-  brighter" relationship over `SliderGrab`. The 11 slots touched: CheckMark, SliderGrab, SliderGrabActive,
+  brighter" relationship over `SliderGrab`. The 14 slots touched: CheckMark, SliderGrab, SliderGrabActive,
   ButtonActive, HeaderActive, SeparatorHovered, SeparatorActive, ResizeGrip{,Hovered,Active}, TabHovered,
   DockingPreview, TextSelectedBg, NavHighlight (alpha preserved per slot). `AiUserBubbleBg` (a separate,
   already-AA-verified 0.18α chat *tint*, doctest-pinned) intentionally **left unchanged** — it is not an
