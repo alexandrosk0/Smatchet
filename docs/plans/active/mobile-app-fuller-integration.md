@@ -19,7 +19,7 @@ done**. Corrected per-slice status (evidence = current-tree `file:line`):
 | **P1.3** Touch cell editors | ❌ **Not started** (the spike-first, highest-risk slice) | `kMobileInlineEditBuild=true` on Android (`TicketFieldEditor.cpp:71–73`) + `SingleClickToEditGridCells` default-on exist, but **no long-press detector** (`SmatchetAndroidImeBridge.cpp`) and **no touch Save/Cancel affordance** for the four combo/modal editors. |
 | **P1.4** Attachments | ✅ **Shipped** (decode cross-platform) | `SmatchetImageTextureCache.cpp:139–157` (`DecodeWithStb`, no `_WIN32` guard) + renderer-agnostic `RegisterUserTexture`; thumbnails enabled globally. **Residual:** the *optional* Win32-only bitmap thumbnail-to-file at `SmatchetAttachmentPreviewUi.cpp:112` (low priority). |
 | **P1.5** Multi-backend | ✅ **Shipped this PR** | `ITrackerBackend` abstraction + Jira / Plane / GitHub / Linear all in Core; the missing piece — a touch-first backend picker — now ships: `DrawTrackerBackendSelection` (`SmatchetPreferencesUi.cpp:234`) forks on `d.effectiveUiMode == EffectiveUiMode::Mobile` to render the four backends as full-width `ImGui::Selectable` rows (the drawer page-list touch idiom) instead of the tiny desktop `ImGui::Combo`, writing the **same** `d.trackerTypeBuf` so `DrawTrackerBackendConfig` + the multi-backend layer are inherited unchanged (a widget swap, not new backend code). |
-| **P1.6** Accessibility | ✅ **Research shipped 2026-06-20**; **accent-contrast fix shipped this PR** | Research: [`docs/mobile/PHASE1_ACCESSIBILITY_RESEARCH.md`](../../mobile/PHASE1_ACCESSIBILITY_RESEARCH.md) + Pillar-4 backlog [`debt/2026-06-20-mobile-accessibility-pillar4.md`](../../self-improvement/categories/debt/2026-06-20-mobile-accessibility-pillar4.md). **Code fix (this PR):** `SmatchetTheme.cpp::ApplySmatchetDark` accent darkened `(0.35,0.55,0.95)`→`(0.26,0.42,0.72)` (Finding 3, white-on-fill 2.90→4.67:1 AA, on-dark 3.16:1 UI-floor); doctest pin `tests/Core/SmatchetThemeAccentContrast.test.cpp`. ModernDark (non-default) flagged as follow-up (needs its own shade). |
+| **P1.6** Accessibility | ✅ **Research shipped 2026-06-20**; **accent-contrast fix shipped this PR** | Research: [`docs/mobile/PHASE1_ACCESSIBILITY_RESEARCH.md`](../../mobile/PHASE1_ACCESSIBILITY_RESEARCH.md) + Pillar-4 backlog [`debt/2026-06-20-mobile-accessibility-pillar4.md`](../../self-improvement/categories/debt/2026-06-20-mobile-accessibility-pillar4.md). **Code fix (this PR):** `SmatchetTheme.cpp::ApplySmatchetDark` accent darkened `(0.35,0.55,0.95)`→`(0.26,0.42,0.72)` (Finding 3, white-on-fill 2.90→4.67:1 AA, on-dark 3.16:1 UI-floor); doctest pin `tests/Core/SmatchetThemeAccentContrast.test.cpp`. **ModernDark follow-up shipped (stacked PR):** `ApplyModernDark` accent darkened `(0.45,0.65,0.95)`→its own `(0.29,0.42,0.62)` (dimmer Text needs a darker shade than SmatchetDark's; 2.12→4.61:1 AA, on-dark 3.16:1) — test now 4 cases / 36 assertions. |
 
 **Residual P1.0 finding — ✅ SHIPPED 2026-06-20:** the Android plaintext-token warning at
 `SmatchetPreferencesUi.cpp` (now line 275) was guarded `#if !defined(_WIN32)`, so it still told
@@ -246,6 +246,20 @@ _(per-slice; appended as each PR ships)_
   Built desktop dual-target (`SmatchetStandalone` + `SmatchetCore_DX12`, clean link via `with-msvc-env.sh`).
   Color-literal-only change — zero hot-path delta (see § Perf-review-system-gates P1.6 bullet).
   Visual-validation pause raised for the user (touches `SmatchetTheme.cpp` → ship-loop exception 5).
+- **2026-06-24 — P1.6 ModernDark accent-contrast follow-up (stacked PR off #1563).** Closed the deferral the
+  accent fix left open: `ApplyModernDark` carried the same opaque-fill defect (old accent `(0.45,0.65,0.95)`,
+  **white-on-fill 2.12:1** — worse than SmatchetDark's). ModernDark needs its **own** shade, not the SmatchetDark
+  one: its `Text(0.92,0.93,0.95)` is dimmer, so reusing `(0.26,0.42,0.72)` lands 4.45:1 (<4.5). Derived
+  **`(0.29,0.42,0.62)`** (hue-faithful 1:1.45:2.14) — the band clearing BOTH ModernDark floors:
+    - **text-on-fill**: 2.12:1 → **4.61:1** (≥ 4.5 AA-normal) ✅
+    - **accent-on-WindowBg `(0.10,0.11,0.13)`**: 6.86:1 → **3.16:1** (still ≥ 3.0 UI-floor) ✅
+  14 accent slots swapped (alpha preserved per slot); `SliderGrabActive`→`(0.39,0.52,0.67)` preserves the
+  one-step-brighter delta. `TabActive` `(0.28,0.38,0.55)` (separate desaturated blue, 5.34:1 white-on-tab) and
+  the low-alpha `AiUserBubbleBg` tint left unchanged (comment updated). Stacked on #1563 so the test file extends
+  in place (no DRY-clone of the WCAG helpers): `SmatchetThemeAccentContrast.test.cpp` now **4 cases / 36
+  assertions, SUCCESS** (`ninja-test-msvc`), incl. a guard pinning that the SmatchetDark shade fails on
+  ModernDark's text. 2 files (`SmatchetTheme.cpp`, the test). Color-literal-only — zero hot-path delta. Built
+  `SmatchetStandalone` clean; visual-validation pause raised (touches `SmatchetTheme.cpp` → exception 5).
 
 ## Deviations from plan
 
@@ -331,6 +345,15 @@ _(per-slice)_
   untouched here. **Follow-up:** apply ModernDark's own AA-clearing accent (separate slice — non-default
   theme, not on the mobile-default path). Backlog: tracked in the Pillar-4 debt entry
   `debt/2026-06-20-mobile-accessibility-pillar4.md`.
+  **✅ Resolved 2026-06-24 (stacked PR off #1563).** ModernDark darkened to its **own** AA-clearing shade
+  **`(0.29,0.42,0.62)`** (the precisely-derived value; the ≈`(0.28,0.41,0.60)` band estimate above was close).
+  On ModernDark's dimmer `Text(0.92,0.93,0.95)` / `WindowBg(0.10,0.11,0.13)`: **text-on-fill 2.12:1 → 4.61:1**
+  (≥4.5 AA-normal) and **accent-on-WindowBg 6.86:1 → 3.16:1** (≥3.0 UI-floor). 14 accent slots swapped (alphas
+  preserved); `SliderGrabActive`→`(0.39,0.52,0.67)` keeps the +.10,+.10,+.05 step; `TabActive` `(0.28,0.38,0.55)`
+  (separate desaturated blue, 5.34:1 white-on-tab) and the low-alpha `AiUserBubbleBg` tint left untouched.
+  `SmatchetThemeAccentContrast.test.cpp` extended (now **4 cases / 36 assertions, SUCCESS**) with two ModernDark
+  cases incl. a regression guard pinning that the SmatchetDark `(0.26,0.42,0.72)` shade fails AA on ModernDark's
+  dimmer Text (the documented reason the two themes carry different shades).
 - **P1.6 — golden-image-approval: no golden regenerated; surfaced for human verdict (2026-06-24).** This
   restyles the default `SmatchetDark` accent, so the three bucket-C goldens (`dock-gap-sentinel`,
   `command-palette-fuzzy`, `code-syntax-coloring`) **would** diff where an active tab / selected-row /
@@ -495,3 +518,32 @@ _(per-slice)_
   - **Visual-validation** — **PENDING (ship-loop exception 5).** Touches `SmatchetTheme.cpp` with no
     bucket-C/E coverage that gates → the launched exe is surfaced to the user for eyeball verification before
     merge. Exe: `C:\Dev\trees\mobile-p1.6\build\ninja-iter-msvc\Smatchet.exe`.
+- **P1.6 ModernDark accent-contrast follow-up (2026-06-24, stacked off the SmatchetDark fix):**
+  - **Why a separate shade** — ModernDark is the opt-in (non-default) theme and carried the SAME old defect
+    (its old accent `(0.45,0.65,0.95)` → white-on-fill **2.12:1**). But its Text is `(0.92,0.93,0.95)` —
+    *dimmer* than SmatchetDark's `(0.95,0.95,0.95)` — so the shared SmatchetDark shade `(0.26,0.42,0.72)`
+    lands only **~4.45:1** on ModernDark's text (below 4.5). ModernDark needs its own darker
+    `(0.29,0.42,0.62)`.
+  - **Build** — desktop product via the MSVC env wrapper
+    (`bash scripts/dev/with-msvc-env.sh cmake --build --preset ninja-iter-msvc --target SmatchetStandalone`)
+    → `Smatchet.exe` links clean (no errors/warnings). Reuses the parent slice's already-configured
+    `ninja-iter-msvc` dir (no reconfigure).
+  - **WCAG contrast math (in-tree):** ModernDark Text `(0.92,0.93,0.95)` on WindowBg `(0.10,0.11,0.13)`.
+    - text-on-fill: **2.12:1 (before) → 4.61:1 (after)** — clears the 4.5 AA-normal floor. ✅
+    - accent-on-WindowBg: **6.86:1 (before) → 3.16:1 (after)** — still clears the 3.0 UI-floor. ✅
+    - The shared SmatchetDark shade `(0.26,0.42,0.72)` was **rejected** here (≈4.45 < 4.5 on the dimmer text);
+      `(0.29,0.42,0.62)` is the hue-faithful value clearing both ModernDark floors.
+  - **Doctest pin** — `tests/Core/SmatchetThemeAccentContrast.test.cpp` **extended** (no new file → reuses the
+    SmatchetDark WCAG helpers, no Pillar-5 clone) with 2 ModernDark cases: literal-shade pin
+    (`== (0.29,0.42,0.62)`, SliderGrabActive `(0.39,0.52,0.67)` one step brighter, `CHECK_FALSE` it equals
+    the SmatchetDark shade) + the dual-floor WCAG pin (`Approx(4.610)/(3.160).epsilon(0.01)`, regression
+    guards that BOTH the old `(0.45,0.65,0.95)` AND the shared `(0.26,0.42,0.72)` fail AA on ModernDark text).
+    Full file: **4 cases / 36 assertions, 0 failed (SUCCESS)** under `ninja-test-msvc`; CI Coverage/Test lane
+    is the authoritative backstop.
+  - **Perf** — zero hot-path delta. Color-literal-only change inside `ApplyModernDark` (runs once per
+    theme-apply, never per frame); identical assignment count + codegen shape, different constants.
+  - **Lint** — `Source/Core/src/Ui/` is the Light/ungated zone; no strict-zone file touched.
+  - **Visual-validation** — **PENDING (ship-loop exception 5).** Touches `SmatchetTheme.cpp`; the launched exe
+    (which reflects both the SmatchetDark default + this ModernDark change) is surfaced for eyeball
+    verification. ModernDark is opt-in (Settings ▸ Appearance), so verify by switching to it.
+    Exe: `C:\Dev\trees\mobile-p1.6\build\ninja-iter-msvc\Smatchet.exe`.
