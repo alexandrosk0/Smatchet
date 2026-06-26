@@ -54,7 +54,8 @@ CommandResult ScenarioRunner::Start(const std::string& name, const nlohmann::jso
         fs::create_directories(fs::path(userDataDir + "perf"), ec);
         char ts[64] = {};
         std::time_t t = std::time(nullptr);
-        std::strftime(ts, sizeof(ts), "%Y%m%d-%H%M%S", std::localtime(&t));
+        if (const std::tm* lt = std::localtime(&t)) // null-check: localtime can fail; strftime(nullptr) is UB
+            std::strftime(ts, sizeof(ts), "%Y%m%d-%H%M%S", lt);
         outPath = userDataDir + "perf/" + name + "-" + ts + ".json";
     }
     outPath_ = std::move(outPath);

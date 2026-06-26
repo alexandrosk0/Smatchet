@@ -782,6 +782,14 @@ long long ParseWorkDurationToSeconds(const std::string& input) {
             break;
         }
 
+        // Clamp to a sane upper bound: a tracker-supplied worklog string with a huge
+        // magnitude would otherwise make `number * <unit multiplier>` and the running
+        // `total` signed-overflow (UB). 1e9 units is far beyond any real duration and
+        // keeps every product (max multiplier 144000) well inside long long.
+        constexpr long long kMaxDurationUnits = 1000000000LL;
+        if (number > kMaxDurationUnits)
+            number = kMaxDurationUnits;
+
         if (pos >= s.size())
             break;
         char u = s[pos++];

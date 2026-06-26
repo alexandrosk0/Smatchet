@@ -77,9 +77,16 @@ inline sol::object JsonToLuaImpl(sol::state_view luaView, const nlohmann::json& 
     }
 }
 
-inline nlohmann::json LuaToJsonImpl(sol::object obj, int depth) {
-    if (depth > 64)
+// `nodes` is a shared element budget (defense-in-depth, mirrors JsonToLuaImpl):
+// a Lua table with a single sparse integer key (e.g. {[2000000000]=1}) makes
+// max_idx astronomically large, so densifying [1..max_idx] would build a
+// billions-element json array and exhaust the heap. The budget caps total
+// materialised elements; on exhaustion we stop densifying (Pillar 3 graceful
+// degradation) instead of OOM-crashing.
+inline nlohmann::json LuaToJsonImpl(sol::object obj, int depth, std::size_t& nodes) {
+    if (depth > 64 || nodes == 0)
         return nullptr;
+    --nodes;
     if (obj.get_type() == sol::type::lua_nil)
         return nullptr;
     if (obj.is<bool>())
@@ -102,14 +109,16 @@ inline nlohmann::json LuaToJsonImpl(sol::object obj, int depth) {
         if (is_array && max_idx > 0) {
             nlohmann::json j = nlohmann::json::array();
             for (size_t i = 1; i <= max_idx; ++i) {
-                j.push_back(LuaToJsonImpl(t[i], depth + 1));
+                if (nodes == 0)
+                    break; // budget exhausted — stop densifying (caps a sparse-key blow-up)
+                j.push_back(LuaToJsonImpl(t[i], depth + 1, nodes));
             }
             return j;
         } else {
             nlohmann::json j = nlohmann::json::object();
             t.for_each([&](sol::object k, sol::object v) {
                 if (k.is<std::string>()) {
-                    j[k.as<std::string>()] = LuaToJsonImpl(v, depth + 1);
+                    j[k.as<std::string>()] = LuaToJsonImpl(v, depth + 1, nodes);
                 }
             });
             return j;
@@ -130,6 +139,9 @@ inline sol::object JsonToLua(sol::state_view luaView, const nlohmann::json& j) {
     return smatchet::lua_json_detail::JsonToLuaImpl(luaView, j, 0, nodes);
 }
 
-inline nlohmann::json LuaToJson(sol::object obj) { return smatchet::lua_json_detail::LuaToJsonImpl(obj, 0); }
+inline nlohmann::json LuaToJson(sol::object obj) {
+    std::size_t nodes = smatchet::lua_json_detail::kJsonToLuaMaxNodes;
+    return smatchet::lua_json_detail::LuaToJsonImpl(obj, 0, nodes);
+}
 
 #endif // SMATCHET_WITH_LUA_AUTOMATION
