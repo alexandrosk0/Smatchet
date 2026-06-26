@@ -19,7 +19,7 @@ Agentic deep search executed as a deterministic multi-agent workflow, then indep
 **0 of 33 findings were refuted** — every finding is a real defect. 18 confirmed as described; 15 partially-confirmed (real defect, correct fix, but a detail of the *description* was refined — see each finding's **Verification** line). Independent severity matched the auditor on **all 33**. One line-number correction was applied (Jira search finding).
 
 > **Mechanism correction (applies to the whole `unbounded-recursion-DoS` class).** Several findings originally described nlohmann-json as a *recursive-descent parser that overflows the stack during parsing*. Per the codebase's own `Source/Core/include/Json/BoundedJsonParse.h` (lines 6–14), that is **not** how the crash happens: nlohmann's parser is **iterative** (SAX-driven, no per-level parse recursion), so the stack does **not** overflow while parsing. The uncatchable crash instead comes from the resulting **DOM**: `~json` destroys nested containers **recursively**, so tearing down a deeply-nested tree overflows the C++ stack (a `SIGSEGV`, *not* a catchable C++ exception), and building it grows the heap unboundedly. A byte cap alone does not bound depth (~1M nested arrays fit in ~1 MiB). The conclusion and the fix are unchanged: route the parse through `smatchet::json_safe::ParseBounded`, which drives the DOM builder from `sax_parse` and aborts past a depth/node cap *before* a deep DOM is ever constructed.
-
+>
 > **Severity framing.** No remotely-exploitable memory-corruption or RCE was found. The dominant class is denial-of-service (Pillar-3 "never crash"), generally requiring a hostile/compromised/MITM'd network peer over TLS or a local IPC/file vector. Severities reflect that.
 
 ## Summary
