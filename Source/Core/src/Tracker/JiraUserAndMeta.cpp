@@ -4,6 +4,7 @@
 #include "TrackerFieldValueParser.h"
 #include "TrackerHttpUtils.h"
 #include "JsonParseUtil.h"
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "StringUtil.h"
 
@@ -44,7 +45,13 @@ bool JiraClient::FetchUsers(const TrackerConfig& cfg, std::vector<TrackerUser>& 
     }
 
     try {
-        auto usersJson = nlohmann::json::parse(usersResponse.text);
+        std::string parseErr;
+        auto usersJson = smatchet::json_safe::ParseBounded(usersResponse.text, parseErr);
+        if (!parseErr.empty()) {
+            outError = std::string("Failed to parse users response: ") + parseErr;
+            LOG_ERROR("JiraClient: %s", outError.c_str());
+            return false;
+        }
         if (!usersJson.is_array()) {
             outError = "Invalid users response format.";
             LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), RedactHttpBodyForLog(usersResponse.text).c_str());
@@ -113,7 +120,13 @@ Result<std::vector<TrackerUser>, TrackerError> JiraClient::FetchIssueWatchers(co
     }
 
     try {
-        const auto j = nlohmann::json::parse(response.text);
+        std::string parseErr;
+        const auto j = smatchet::json_safe::ParseBounded(response.text, parseErr);
+        if (!parseErr.empty()) {
+            outError = std::string("Failed to parse watchers response: ") + parseErr;
+            LOG_ERROR("JiraClient: %s", outError.c_str());
+            return WatchersResult::Err(TrackerErrorParse(outError));
+        }
         if (!j.is_object()) {
             outError = "Invalid watchers response format.";
             LOG_ERROR("JiraClient: %s issue=%s body=%s", outError.c_str(), issueKey.c_str(),
@@ -164,7 +177,13 @@ TrackerError JiraClient::AddIssueWatcher(const TrackerConfig& cfg, const std::st
     }
     std::string accountId;
     try {
-        const auto me = nlohmann::json::parse(myselfResp.text);
+        std::string parseErr;
+        const auto me = smatchet::json_safe::ParseBounded(myselfResp.text, parseErr);
+        if (!parseErr.empty()) {
+            outError = std::string("Failed to parse myself response: ") + parseErr;
+            LOG_ERROR("JiraClient::AddIssueWatcher %s", outError.c_str());
+            return TrackerErrorParse(outError);
+        }
         accountId = me.value("accountId", std::string());
     } catch (const std::exception& ex) {
         outError = std::string("Failed to parse myself response: ") + ex.what();
@@ -229,7 +248,13 @@ JiraClient::FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issu
     }
 
     try {
-        const auto root = nlohmann::json::parse(response.text);
+        std::string parseErr;
+        const auto root = smatchet::json_safe::ParseBounded(response.text, parseErr);
+        if (!parseErr.empty()) {
+            outError = std::string("Failed to parse editmeta response: ") + parseErr;
+            LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueKeyOrId.c_str());
+            return EditMetaResult::Err(TrackerErrorParse(std::move(outError)));
+        }
         if (!root.is_object() || !root.contains("fields") || !root["fields"].is_object()) {
             outError = "Invalid editmeta response: missing fields object.";
             LOG_ERROR("JiraClient: %s issue=%s body=%s", outError.c_str(), issueKeyOrId.c_str(),
@@ -278,7 +303,13 @@ Result<TrackerIssueVotes, TrackerError> JiraClient::FetchIssueVotes(const Tracke
     }
 
     try {
-        const auto j = nlohmann::json::parse(response.text);
+        std::string parseErr;
+        const auto j = smatchet::json_safe::ParseBounded(response.text, parseErr);
+        if (!parseErr.empty()) {
+            outError = std::string("Failed to parse votes response: ") + parseErr;
+            LOG_ERROR("JiraClient: %s", outError.c_str());
+            return VotesResult::Err(TrackerErrorParse(outError));
+        }
         if (!j.is_object()) {
             outError = "Invalid votes response format.";
             LOG_ERROR("JiraClient: %s issue=%s body=%s", outError.c_str(), issueKey.c_str(),
@@ -346,7 +377,13 @@ Result<std::vector<TrackerUser>, TrackerError> JiraClient::SearchUsersByQuery(co
     }
 
     try {
-        auto arr = nlohmann::json::parse(resp.text);
+        std::string parseErr;
+        auto arr = smatchet::json_safe::ParseBounded(resp.text, parseErr);
+        if (!parseErr.empty()) {
+            outError = std::string("user/search parse error: ") + parseErr;
+            LOG_ERROR("JiraClient: %s", outError.c_str());
+            return UsersResult::Err(TrackerErrorParse(outError));
+        }
         if (!arr.is_array()) {
             outError = "user/search: expected array.";
             LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), RedactHttpBodyForLog(resp.text).c_str());
@@ -401,7 +438,13 @@ Result<std::vector<std::string>, TrackerError> JiraClient::FetchUserGroupNames(c
     }
 
     try {
-        auto j = nlohmann::json::parse(resp.text);
+        std::string parseErr;
+        auto j = smatchet::json_safe::ParseBounded(resp.text, parseErr);
+        if (!parseErr.empty()) {
+            outError = std::string("user parse error: ") + parseErr;
+            LOG_ERROR("JiraClient: %s", outError.c_str());
+            return GroupsResult::Err(TrackerErrorParse(outError));
+        }
         if (j.contains("groups") && j["groups"].is_object()) {
             const auto& g = j["groups"];
             if (g.contains("items") && g["items"].is_array()) {
@@ -455,7 +498,13 @@ Result<std::vector<TrackerUser>, TrackerError> JiraClient::FetchGroupMembers(con
 
         bool isLast = true;
         try {
-            auto j = nlohmann::json::parse(resp.text);
+            std::string parseErr;
+            auto j = smatchet::json_safe::ParseBounded(resp.text, parseErr);
+            if (!parseErr.empty()) {
+                outError = std::string("group/member parse error: ") + parseErr;
+                LOG_ERROR("JiraClient: %s", outError.c_str());
+                return MembersResult::Err(TrackerErrorParse(outError));
+            }
             const auto values = j.value("values", nlohmann::json::array());
             if (values.is_array()) {
                 for (const auto& node : values) {

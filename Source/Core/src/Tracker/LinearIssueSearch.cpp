@@ -5,6 +5,7 @@
 #include "LinearQueryFromJql.h"
 #include "Logger.h"
 #include "TrackerHttpUtils.h"
+#include "Json/BoundedJsonParse.h"
 
 #include <nlohmann/json.hpp>
 
@@ -175,8 +176,9 @@ struct IssuesPageParse {
 IssuesPageParse ParseIssuesPage(int httpStatus, const std::string& responseText) {
     IssuesPageParse out;
 
-    nlohmann::json parsed = nlohmann::json::parse(responseText, nullptr, false);
-    if (parsed.is_discarded()) {
+    std::string parseErr;
+    nlohmann::json parsed = smatchet::json_safe::ParseBounded(responseText, parseErr);
+    if (!parseErr.empty()) {
         out.Fatal = true;
         out.Error = "Linear returned invalid JSON";
         return out;

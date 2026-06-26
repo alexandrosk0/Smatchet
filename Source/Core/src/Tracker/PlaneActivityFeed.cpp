@@ -6,6 +6,7 @@
 #include "StringUtil.h"
 #include "PlaneIssueMappingPure.h"
 #include "TrackerHttpUtils.h"
+#include "Json/BoundedJsonParse.h"
 
 #include <cpr/cpr.h>
 
@@ -66,12 +67,11 @@ void ScanIssueActivities(const std::string& listBase, const std::string& issueId
                      static_cast<long>(activityResp.status_code), TruncateForLog(issueKey, 40).c_str());
             return;
         }
-        nlohmann::json activityPayload;
-        try {
-            activityPayload = nlohmann::json::parse(activityResp.text);
-        } catch (const std::exception& ex) {
+        std::string parseErr;
+        nlohmann::json activityPayload = smatchet::json_safe::ParseBounded(activityResp.text, parseErr);
+        if (!parseErr.empty()) {
             LOG_WARN("PlaneClient: activities parse error issue=%s: %s", TruncateForLog(issueKey, 40).c_str(),
-                     ex.what());
+                     parseErr.c_str());
             return;
         }
         std::vector<TrackerActivityEntry> entries =
@@ -151,11 +151,10 @@ PlaneClient::FetchUserActivity(const TrackerConfig& cfg, const std::string& acco
             }
             return FeedResult::Err(TrackerErrorFromHttpStatus(resp.status_code, outError));
         }
-        nlohmann::json listPayload;
-        try {
-            listPayload = nlohmann::json::parse(resp.text);
-        } catch (const std::exception& ex) {
-            outError = std::string("activity discovery parse error: ") + ex.what();
+        std::string parseErr;
+        nlohmann::json listPayload = smatchet::json_safe::ParseBounded(resp.text, parseErr);
+        if (!parseErr.empty()) {
+            outError = std::string("activity discovery parse error: ") + parseErr;
             LOG_ERROR("PlaneClient: %s", outError.c_str());
             return FeedResult::Err(TrackerErrorParse(outError));
         }

@@ -417,7 +417,12 @@ void CommandRegistry::LoadRecents() {
         content.append(buf, n);
     std::fclose(f);
     try {
-        const nlohmann::json j = nlohmann::json::parse(content);
+        std::string parseErr;
+        const nlohmann::json j = json_safe::ParseBounded(content, parseErr);
+        if (!parseErr.empty()) {
+            LOG_DEBUG("CommandRegistry: recents JSON parse failed; starting empty");
+            return;
+        }
         if (!j.is_array())
             return;
         std::lock_guard<std::mutex> lk(mutex_);

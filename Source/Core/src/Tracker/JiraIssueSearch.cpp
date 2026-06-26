@@ -6,6 +6,7 @@
 #include "TrackerFieldValueParser.h"
 #include "TrackerHttpUtils.h"
 #include "JsonParseUtil.h"
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "StringUtil.h"
 
@@ -38,7 +39,12 @@ bool JiraFetchIssueCommentsPages(const std::string& base, const cpr::Header& hea
         }
 
         try {
-            auto commentsJson = nlohmann::json::parse(commentsResp.text);
+            std::string parseErr;
+            auto commentsJson = smatchet::json_safe::ParseBounded(commentsResp.text, parseErr);
+            if (!parseErr.empty()) {
+                LOG_WARN("JiraClient: failed to parse comments for issue %s: %s", issueKey.c_str(), parseErr.c_str());
+                return false;
+            }
             if (!commentsJson.contains("comments") || !commentsJson["comments"].is_array()) {
                 LOG_WARN("JiraClient: comments endpoint for %s missing comments array.", issueKey.c_str());
                 return false;
@@ -85,7 +91,17 @@ ProcessJiraSearchPage(int page, const std::string& responseText, const std::stri
                       TrackerIssueFetchSummary& summary) {
     JiraSearchPageOutcome outcome;
     try {
-        auto json = nlohmann::json::parse(responseText);
+        std::string parseErr;
+        auto json = smatchet::json_safe::ParseBounded(responseText, parseErr);
+        if (!parseErr.empty()) {
+            LOG_ERROR("JiraClient: JSON parse error on page %d: %s | response excerpt: %s", page, parseErr.c_str(),
+                      RedactHttpBodyForLog(lastResponseBody).c_str());
+            outcome.Stop = true;
+            outcome.EndedCleanly = false;
+            outcome.HadFetchError = true;
+            outcome.FetchError = std::string("JSON parse error: ") + parseErr;
+            return outcome;
+        }
         if (!json.contains("issues")) {
             LOG_WARN("JiraClient: page %d response has no 'issues' key. Body (truncated):\n%s", page,
                      RedactHttpBodyForLog(responseText).c_str());
@@ -163,11 +179,17 @@ void JiraDiagnoseZeroIssueResult(const TrackerConfig& cfg, const std::string& ba
     auto myselfResp = TrackerGetLogged("JiraClient", myselfUrl, headers);
     if (myselfResp.status_code == 200) {
         try {
-            auto me = nlohmann::json::parse(myselfResp.text);
-            std::string name = me.value("displayName", std::string());
-            std::string emailAddr = me.value("emailAddress", std::string());
-            who = name.empty() ? emailAddr : (name + " <" + emailAddr + ">");
-            verifiedIdentity = true;
+            std::string parseErr;
+            auto me = smatchet::json_safe::ParseBounded(myselfResp.text, parseErr);
+            if (!parseErr.empty()) {
+                LOG_WARN("JiraClient: failed to parse /myself response: %s body=%s", parseErr.c_str(),
+                         RedactHttpBodyForLog(myselfResp.text).c_str());
+            } else {
+                std::string name = me.value("displayName", std::string());
+                std::string emailAddr = me.value("emailAddress", std::string());
+                who = name.empty() ? emailAddr : (name + " <" + emailAddr + ">");
+                verifiedIdentity = true;
+            }
         } catch (const std::exception& ex) {
             LOG_WARN("JiraClient: failed to parse /myself response: %s body=%s", ex.what(),
                      RedactHttpBodyForLog(myselfResp.text).c_str());
@@ -426,7 +448,12 @@ JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::
             return FetchResult::Err(TrackerErrorFromHttpStatus(response.status_code, outError));
         }
         try {
-            auto json = nlohmann::json::parse(response.text);
+            std::string parseErr;
+            auto json = smatchet::json_safe::ParseBounded(response.text, parseErr);
+            if (!parseErr.empty()) {
+                outError = std::string("Fetch by key parse error: ") + parseErr;
+                return FetchResult::Err(TrackerErrorParse(outError));
+            }
             if (!json.contains("issues") || !json["issues"].is_array()) {
                 outError = "Fetch by key: response missing issues array.";
                 return FetchResult::Err(TrackerErrorParse(outError));
@@ -454,12 +481,18 @@ JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::
                                                  "?fields=" + fields + "&expand=changelog";
                     auto issueResp = TrackerGetLogged("JiraClient", issueUrl, headers);
                     if (issueResp.status_code == 200) {
-                        try {
-                            auto issueJson = nlohmann::json::parse(issueResp.text);
-                            (void)smatchet::jira::AppendCachedTicketFromJiraSearchIssue(issueJson, selectedFields,
-                                                                                        fetchIssueComments, outTickets);
-                        } catch (const std::exception&) {
-                            // Best-effort fallback hydration only.
+                        std::string issueParseErr;
+                        auto issueJson = smatchet::json_safe::ParseBounded(issueResp.text, issueParseErr);
+                        if (issueParseErr.empty()) {
+                            // Best-effort fallback hydration only: a throw from
+                            // AppendCachedTicketFromJiraSearchIssue must stay local (skip this
+                            // one issue) rather than propagate to the outer catch and abort the
+                            // whole FetchIssuesForKeys — preserves the pre-sweep inner-catch.
+                            try {
+                                (void)smatchet::jira::AppendCachedTicketFromJiraSearchIssue(
+                                    issueJson, selectedFields, fetchIssueComments, outTickets);
+                            } catch (const std::exception&) { // catch-all-ok: best-effort fallback hydration
+                            }
                         }
                     }
                 }

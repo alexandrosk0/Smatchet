@@ -5,6 +5,7 @@
 #include "Logger.h"
 #include "StringUtil.h"
 #include "TrackerHttpUtils.h"
+#include "Json/BoundedJsonParse.h"
 
 #include <algorithm>
 #include <string>
@@ -72,11 +73,10 @@ GitHubClient::FetchUserActivity(const TrackerConfig& cfg, const std::string& acc
             }
             return FeedResult::Err(TrackerErrorFromHttpStatus(resp.status_code, outError));
         }
-        nlohmann::json events;
-        try {
-            events = nlohmann::json::parse(resp.text);
-        } catch (const std::exception& ex) {
-            outError = std::string("issue-events parse error: ") + ex.what();
+        std::string parseErr;
+        nlohmann::json events = smatchet::json_safe::ParseBounded(resp.text, parseErr);
+        if (!parseErr.empty()) {
+            outError = std::string("issue-events parse error: ") + parseErr;
             LOG_ERROR("GitHubClient: %s", outError.c_str());
             return FeedResult::Err(TrackerErrorParse(outError));
         }
@@ -132,7 +132,12 @@ Result<std::vector<std::string>, TrackerError> GitHubClient::FetchUserGroupNames
     }
 
     try {
-        const auto teams = nlohmann::json::parse(resp.text);
+        std::string parseErr;
+        const auto teams = smatchet::json_safe::ParseBounded(resp.text, parseErr);
+        if (!parseErr.empty()) {
+            LOG_WARN("GitHubClient: org teams parse error: %s", parseErr.c_str());
+            return GroupsResult::Ok(std::move(outGroupNames));
+        }
         if (!teams.is_array()) {
             LOG_WARN("GitHubClient: org teams: expected array, body=%s", RedactHttpBodyForLog(resp.text).c_str());
             return GroupsResult::Ok(std::move(outGroupNames));
@@ -193,7 +198,12 @@ Result<std::vector<TrackerUser>, TrackerError> GitHubClient::FetchGroupMembers(c
         return MembersResult::Ok(std::move(outMembers));
     }
     try {
-        const auto teams = nlohmann::json::parse(teamsResp.text);
+        std::string parseErr;
+        const auto teams = smatchet::json_safe::ParseBounded(teamsResp.text, parseErr);
+        if (!parseErr.empty()) {
+            LOG_WARN("GitHubClient: org teams parse error: %s", parseErr.c_str());
+            return MembersResult::Ok(std::move(outMembers));
+        }
         const std::string wanted = ToLowerAsciiCopy(groupName);
         if (teams.is_array()) {
             for (const auto& team : teams) {
@@ -226,7 +236,12 @@ Result<std::vector<TrackerUser>, TrackerError> GitHubClient::FetchGroupMembers(c
         return MembersResult::Ok(std::move(outMembers));
     }
     try {
-        const auto members = nlohmann::json::parse(resp.text);
+        std::string parseErr;
+        const auto members = smatchet::json_safe::ParseBounded(resp.text, parseErr);
+        if (!parseErr.empty()) {
+            LOG_WARN("GitHubClient: team members parse error: %s", parseErr.c_str());
+            return MembersResult::Ok(std::move(outMembers));
+        }
         if (members.is_array()) {
             for (const auto& member : members) {
                 if (!member.is_object() || !member.contains("login") || !member["login"].is_string()) {
