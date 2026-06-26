@@ -4,15 +4,24 @@
 
 #include <nlohmann/json.hpp>
 
+#include "Json/BoundedJsonParse.h"
+
+// Both parses route through ParseBounded: `raw` (and the double-encoded inner
+// string) is tracker-sourced field data, so a deeply-nested payload would
+// stack-overflow the recursive ~json DOM teardown under a bare parse — the 3-arg
+// non-throwing form still builds the full DOM. ParseBounded caps depth/nodes/bytes
+// and signals failure via a non-empty errOut (it never throws / discards).
 inline bool TryParseJsonMaybeDoubleEncoded(const std::string& raw, nlohmann::json& outJson) {
-    outJson = nlohmann::json::parse(raw, nullptr, false);
-    if (outJson.is_discarded()) {
+    std::string err;
+    outJson = smatchet::json_safe::ParseBounded(raw, err);
+    if (!err.empty()) {
         outJson = nlohmann::json();
         return false;
     }
     if (outJson.is_string()) {
-        nlohmann::json nested = nlohmann::json::parse(outJson.get<std::string>(), nullptr, false);
-        if (nested.is_discarded()) {
+        std::string nestedErr;
+        nlohmann::json nested = smatchet::json_safe::ParseBounded(outJson.get<std::string>(), nestedErr);
+        if (!nestedErr.empty()) {
             outJson = nlohmann::json();
             return false;
         }

@@ -993,7 +993,21 @@ std::string NormalizeTrackerObjectValue(const nlohmann::json& value) {
 
 } // namespace
 
+// Depth-bounded recursion. Field values are tracker-HTTP-sourced; with the upstream
+// bounded parse the DOM is already <=256 deep, but this guard keeps the walker safe
+// even if a value arrives from a not-yet-migrated parse path (defense-in-depth,
+// matches json_safe::kDefaultMaxDepth). On cap we drop the deep subtree (return
+// empty) rather than recurse — Pillar 3 graceful degradation.
+static std::string NormalizeTrackerFieldValueDepth(const nlohmann::json& value, int depth);
+
 std::string NormalizeTrackerFieldValue(const nlohmann::json& value) {
+    return NormalizeTrackerFieldValueDepth(value, 0);
+}
+
+static std::string NormalizeTrackerFieldValueDepth(const nlohmann::json& value, int depth) {
+    if (depth > 256) {
+        return std::string(); // depth cap reached — stop recursing
+    }
     if (value.is_null()) {
         return std::string();
     }
@@ -1020,7 +1034,7 @@ std::string NormalizeTrackerFieldValue(const nlohmann::json& value) {
     if (value.is_array()) {
         std::vector<std::string> parts;
         for (const auto& item : value) {
-            const std::string normalized = NormalizeTrackerFieldValue(item);
+            const std::string normalized = NormalizeTrackerFieldValueDepth(item, depth + 1);
             if (!normalized.empty()) {
                 parts.push_back(normalized);
             }

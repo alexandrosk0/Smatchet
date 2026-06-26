@@ -776,6 +776,9 @@ struct AdfWalkState {
     /// Per-ordered-list counter so we emit "1.", "2.", ...
     std::vector<int> orderedCounters;
     bool insideBlockquote = false;
+    /// ADF block-nesting depth — bounded in EmitAdfBlock so server-supplied,
+    /// deeply-nested ADF can't stack-overflow the mutually-recursive walk.
+    int depth = 0;
 };
 
 void AppendIndent(std::ostringstream& out, int spaces) {
@@ -1232,14 +1235,26 @@ void EmitAdfBlock(const json& node, AdfWalkState& s) {
     if (!node.is_object()) {
         return;
     }
+    // Depth cap: every nested ADF node re-enters here (EmitAdfChildren / list /
+    // table / blockquote handlers all funnel back through EmitAdfBlock), so one
+    // guard at this chokepoint bounds the whole mutual recursion. A hostile
+    // deeply-nested ADF tree (server-supplied) would otherwise overflow the C++
+    // stack — Pillar 3. 256 matches json_safe::kDefaultMaxDepth.
+    constexpr int kMaxAdfDepth = 256;
+    if (s.depth > kMaxAdfDepth) {
+        s.dropped.push_back("<depth-capped>");
+        return;
+    }
+    ++s.depth;
     const std::string type = node.value("type", std::string());
     const auto& handlers = AdfBlockHandlers();
     const auto it = handlers.find(type);
     if (it != handlers.end()) {
         it->second(node, s);
-        return;
+    } else {
+        s.dropped.push_back(type.empty() ? std::string("<unknown>") : type);
     }
-    s.dropped.push_back(type.empty() ? std::string("<unknown>") : type);
+    --s.depth;
 }
 
 // HTML subset -> Markdown (state machine over a small tag allowlist)
