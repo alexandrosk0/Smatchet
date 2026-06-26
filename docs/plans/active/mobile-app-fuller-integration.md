@@ -19,7 +19,7 @@ done**. Corrected per-slice status (evidence = current-tree `file:line`):
 | **P1.3** Touch cell editors | ❌ **Not started** (the spike-first, highest-risk slice) | `kMobileInlineEditBuild=true` on Android (`TicketFieldEditor.cpp:71–73`) + `SingleClickToEditGridCells` default-on exist, but **no long-press detector** (`SmatchetAndroidImeBridge.cpp`) and **no touch Save/Cancel affordance** for the four combo/modal editors. |
 | **P1.4** Attachments | ✅ **Shipped** (decode cross-platform) | `SmatchetImageTextureCache.cpp:139–157` (`DecodeWithStb`, no `_WIN32` guard) + renderer-agnostic `RegisterUserTexture`; thumbnails enabled globally. **Residual:** the *optional* Win32-only bitmap thumbnail-to-file at `SmatchetAttachmentPreviewUi.cpp:112` (low priority). |
 | **P1.5** Multi-backend | ✅ **Shipped this PR** | `ITrackerBackend` abstraction + Jira / Plane / GitHub / Linear all in Core; the missing piece — a touch-first backend picker — now ships: `DrawTrackerBackendSelection` (`SmatchetPreferencesUi.cpp:234`) forks on `d.effectiveUiMode == EffectiveUiMode::Mobile` to render the four backends as full-width `ImGui::Selectable` rows (the drawer page-list touch idiom) instead of the tiny desktop `ImGui::Combo`, writing the **same** `d.trackerTypeBuf` so `DrawTrackerBackendConfig` + the multi-backend layer are inherited unchanged (a widget swap, not new backend code). |
-| **P1.6** Accessibility | ✅ **Shipped this PR** (research) | [`docs/mobile/PHASE1_ACCESSIBILITY_RESEARCH.md`](../../mobile/PHASE1_ACCESSIBILITY_RESEARCH.md) + Pillar-4 backlog [`debt/2026-06-20-mobile-accessibility-pillar4.md`](../../self-improvement/categories/debt/2026-06-20-mobile-accessibility-pillar4.md). |
+| **P1.6** Accessibility | ✅ **Research shipped 2026-06-20**; **accent-contrast fix shipped this PR** | Research: [`docs/mobile/PHASE1_ACCESSIBILITY_RESEARCH.md`](../../mobile/PHASE1_ACCESSIBILITY_RESEARCH.md) + Pillar-4 backlog [`debt/2026-06-20-mobile-accessibility-pillar4.md`](../../self-improvement/categories/debt/2026-06-20-mobile-accessibility-pillar4.md). **Code fix (this PR):** `SmatchetTheme.cpp::ApplySmatchetDark` accent darkened `(0.35,0.55,0.95)`→`(0.26,0.42,0.72)` (Finding 3, white-on-fill 2.90→4.67:1 AA, on-dark 3.16:1 UI-floor); doctest pin `tests/Core/SmatchetThemeAccentContrast.test.cpp`. ModernDark (non-default) flagged as follow-up (needs its own shade). |
 
 **Residual P1.0 finding — ✅ SHIPPED 2026-06-20:** the Android plaintext-token warning at
 `SmatchetPreferencesUi.cpp` (now line 275) was guarded `#if !defined(_WIN32)`, so it still told
@@ -124,6 +124,7 @@ Per [`docs/guides/perf-workflow.md`](../../guides/perf-workflow.md), each Source
 - **P1.1 Replay tick**: the sync/replay scenario must show the tick off the UI-thread frame budget (Pillar 2) — instrument with a `perf_temp:` scope on the tick, assert the UI-thread frame stays ≤6.94 ms while replay runs.
 - **P1.3 Touch editors**: grid-scroll + cell-edit-open scenarios — Pillar-1 steady-state ≤6.94 ms, popup-open Pillar-2 <100 ms. Baseline = current grid-scroll scenario.
 - **P1.5 Backend picker**: no steady-state scenario (the picker is a `Combo`↔`Selectable` widget swap rendered only inside the `EffectiveUiMode::Mobile` fork, while the Preferences page is open — never on the grid/scroll hot path) — assert *absence* of per-frame cost: the four `Selectable`s are O(1) + allocation-free, and the desktop `Combo` arm's codegen is unchanged (zero desktop regression by construction). No mobile perf scenario exists yet (same gap as P1.2/P1.3); CI **Perf PR-fast** is the authoritative headless gate.
+- **P1.6 Accent-contrast fix (this PR)**: **zero hot-path delta — pure compile-time color constant.** The change replaces `ImVec4` literals inside `ApplySmatchetDark`, which runs once per theme-apply (boot + explicit theme switch), never per frame. No new branches, allocations, or call sites; the assignment count and codegen shape are identical to before (same `colors[ImGuiCol_*] = ImVec4(...)` writes, different constants). No steady-state scenario applies; no `perf-run.sh` subset needed. Per-frame UI cost is provably unchanged.
 - Each slice's execution plan carries its own filled Perf-gate section; `perf-gatekeeper` runs the diff→scenario subset at PR time.
 
 ## Risks / non-goals
@@ -222,6 +223,29 @@ _(per-slice; appended as each PR ships)_
   `with-msvc-env.sh`); Android coverage via the PR's advisory `android-ndk-arm64` CI job (pure portable
   C++14 UI logic — no new symbols/includes; the same widgets already compile in the Android-built
   `SmatchetMobileShellUi.cpp`).
+- **2026-06-24 — P1.6 accent-contrast fix: WCAG AA default-theme darken (this PR).** Fixed the documented
+  Finding-3 defect in `SmatchetTheme.cpp::ApplySmatchetDark` (the **default** theme, shown on desktop AND
+  mobile). The accent `(0.35,0.55,0.95)` was the opaque fill behind white(0.95) Text on `ButtonActive` /
+  `HeaderActive` → **white-on-fill 2.90:1**, failing both the 4.5 AA-normal floor and the 3.0 UI floor.
+  **User decision (locked): global uniform darken** — replaced the accent uniformly across `ApplySmatchetDark`
+  (every slot kept its existing alpha) with a single darker shade **`(0.26,0.42,0.72)`**, the one
+  hue-preserving value that clears BOTH constraints (a naive swap to the research doc's `(0.20,0.34,0.62)`
+  would fix white-on-fill but drop the opaque on-dark glyphs — CheckMark / SliderGrab / SeparatorActive /
+  NavHighlight, 1.0α on WindowBg `(0.12,0.12,0.14)` — to 2.35:1, failing the 3.0 floor). **Computed both
+  WCAG ratios in-tree** (sRGB→linear, 0.2126R+0.7152G+0.0722B, (L1+0.05)/(L2+0.05)):
+    - **white(0.95)-on-fill**: 2.90:1 → **4.67:1** (≥ 4.5 AA-normal) ✅
+    - **accent-on-WindowBg**: 5.09:1 → **3.16:1** (still ≥ 3.0 UI-floor; darkening *lowers* this but stays above) ✅
+  `SliderGrabActive` re-derived to `(0.36,0.52,0.77)` to preserve the original "+0.10,+0.10,+0.05 one-step-
+  brighter" relationship over `SliderGrab`. The 14 slots touched: CheckMark, SliderGrab, SliderGrabActive,
+  ButtonActive, HeaderActive, SeparatorHovered, SeparatorActive, ResizeGrip{,Hovered,Active}, TabHovered,
+  DockingPreview, TextSelectedBg, NavHighlight (alpha preserved per slot). `AiUserBubbleBg` (a separate,
+  already-AA-verified 0.18α chat *tint*, doctest-pinned) intentionally **left unchanged** — it is not an
+  opaque fill behind white and the P1.6 darken doesn't apply (comment updated to say so). Doctest pin added:
+  `tests/Core/SmatchetThemeAccentContrast.test.cpp` (computes both contrast ratios in-test + pins the literal
+  + a regression guard that the OLD accent fails). 3 files (`SmatchetTheme.cpp`, new test, `tests/CMakeLists.txt`).
+  Built desktop dual-target (`SmatchetStandalone` + `SmatchetCore_DX12`, clean link via `with-msvc-env.sh`).
+  Color-literal-only change — zero hot-path delta (see § Perf-review-system-gates P1.6 bullet).
+  Visual-validation pause raised for the user (touches `SmatchetTheme.cpp` → ship-loop exception 5).
 
 ## Deviations from plan
 
@@ -295,6 +319,37 @@ _(per-slice)_
   bucket-E ImGui Test Engine backlog as P1.2/P1.3 (drive the mobile Preferences page → tap a backend row →
   assert `trackerTypeBuf` / `cfg.TrackerType` flips → assert the desktop `Combo` path still works when
   `effectiveUiMode == Desktop`). That bucket-E lane is CI-blocked today (Mesa-GL can't boot the CI exe).
+- **P1.6 — ModernDark NOT darkened in this slice; flagged as a one-line follow-up (2026-06-24).** The brief
+  permitted mirroring the uniform darken into `ApplyModernDark` (non-default, opt-in theme, even brighter
+  `(0.45,0.65,0.95)` accent with the same white-on-fill failure) **only if it were a clean mechanical mirror
+  that keeps that theme coherent.** It is **not**: ModernDark's `Text` is `(0.92,0.93,0.95)` (dimmer than
+  SmatchetDark's `0.95`) and its `WindowBg` is `(0.10,0.11,0.13)`. Reusing the SmatchetDark target
+  `(0.26,0.42,0.72)` lands ModernDark at **text-on-fill 4.45:1 — *below* the 4.5 AA-normal floor** (vs
+  SmatchetDark's 4.67:1). A clean mechanical mirror would therefore ship a *still-failing* ModernDark — the
+  exact "trade one failure for another" trap the brief said to STOP on. ModernDark needs its **own** slightly
+  different shade (feasible band ≈`(0.28,0.41,0.60)`, text-on-fill ≥4.5 AND accent-on-WindowBg ≥3.0). Left
+  untouched here. **Follow-up:** apply ModernDark's own AA-clearing accent (separate slice — non-default
+  theme, not on the mobile-default path). Backlog: tracked in the Pillar-4 debt entry
+  `debt/2026-06-20-mobile-accessibility-pillar4.md`.
+- **P1.6 — golden-image-approval: no golden regenerated; surfaced for human verdict (2026-06-24).** This
+  restyles the default `SmatchetDark` accent, so the three bucket-C goldens (`dock-gap-sentinel`,
+  `command-palette-fuzzy`, `code-syntax-coloring`) **would** diff where an active tab / selected-row /
+  `HeaderActive` accent fill is visible (the goldens in this worktree are captured under the live SmatchetDark
+  theme — the stock-style insulation knob `SMATCHET_TEST_DEFAULT_IMGUI_THEME` described in
+  `docs/agent-rules/golden-image-approval.md` is **not wired in this tree**, a separate gap). Per the
+  golden-image-approval contract, an agent **must not** headlessly bootstrap or self-approve a golden — the
+  user opens the captured PNGs and gives an explicit "looks right" verdict before any `git add tests/golden/`.
+  **Mitigating facts:** the `bucket-c-screenshot-diff` job **and** its inner diff step are both
+  `continue-on-error: true` (advisory), and `Bucket-` was dropped from the merge-gate meant-to-block
+  allow-list (Mesa-GL can't boot the CI exe) — so **no merge gate blocks on these goldens**. Goldens are also
+  per-developer-bootstrapped (GPU-specific), not authoritative committed references. **Action for the user:**
+  if you want the committed goldens refreshed, run `bash scripts/dev/test-screenshot-diff.sh --bootstrap`,
+  eyeball the 3 PNGs, then approve. No approval marker / label is needed on the PR itself (advisory lane).
+- **P1.6 — Test-delta gate satisfied (no out-of-band label needed).** Unlike P1.2 / P1.3 / P1.5, this slice
+  ships a real `tests/` delta: `tests/Core/SmatchetThemeAccentContrast.test.cpp` is a pure doctest (no ImGui
+  *surface* — it only reads `ImGui::GetStyle().Colors` after `ApplyStyle`, the same pattern as the existing
+  `SmatchetThemeAiColors.test.cpp`) that computes both WCAG ratios and pins the literal. `test-rig`'s
+  ImGui-surface refusal doesn't apply (palette readback, not draw).
 
 ## Verification (actual)
 
@@ -413,3 +468,30 @@ _(per-slice)_
   - **Emulator** — on-device confirmation of the touch rows rendering in Settings ▸ Tracker on
     `emulator-5554` is a documented follow-up bundled with the bucket-E automation (taps pinned
     `-s emulator-5554`; never coordinate-inject the physical device).
+- **P1.6 accent-contrast fix (2026-06-24):**
+  - **Build** — desktop dual-target via the MSVC env wrapper
+    (`bash scripts/dev/with-msvc-env.sh cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
+    SmatchetCore_DX12`) → **both link clean** (`SmatchetCore_DX12.lib` step 886/895 + `Smatchet.exe`
+    step 894/895, no errors/warnings). This worktree had no pre-existing `build/` dir (fresh worktree), so a
+    one-time non-destructive `cmake --preset ninja-iter-msvc` configure preceded the build — nothing was
+    wiped or reconfigured-over (no incremental state existed to preserve).
+  - **WCAG contrast math (computed in-tree, not taken from the research doc):** sRGB→linear, luminance
+    `0.2126R+0.7152G+0.0722B`, ratio `(L1+0.05)/(L2+0.05)`.
+    - white(0.95)-on-fill: **2.90:1 (before) → 4.67:1 (after)** — clears the 4.5 AA-normal floor. ✅
+    - accent-on-WindowBg(0.12,.12,.14): **5.09:1 (before) → 3.16:1 (after)** — still clears the 3.0 UI-floor
+      (darkening lowers this; the chosen `(0.26,0.42,0.72)` is the band that keeps BOTH above floor). ✅
+    The research doc's suggested `(0.20,0.34,0.62)` was **rejected** by this math (white-on-fill 6.29 but
+    accent-on-dark drops to 2.35 — a new 3.0-floor failure). No single shade trading one fail for another
+    was shipped.
+  - **Doctest pin** — `tests/Core/SmatchetThemeAccentContrast.test.cpp` (registered in `tests/CMakeLists.txt`)
+    recomputes both ratios in-test (CHECK ≥4.5 and ≥3.0 + Approx pins at 4.665 / 3.163) and guards that the
+    OLD `(0.35,0.55,0.95)` accent fails AA. **Run locally** under `ninja-test-msvc` (one-time fresh-worktree
+    configure, no destructive reconfigure of the `ninja-iter-msvc` product dir): `SmatchetTests.exe`
+    `--test-case="*accent*"` → **2 cases / 17 assertions, 0 failed (SUCCESS)**. The CI Coverage/Test lane
+    reruns it as the authoritative backstop.
+  - **Perf** — zero hot-path delta. Color-literal-only change inside `ApplySmatchetDark` (runs once per
+    theme-apply, never per frame); identical assignment count + codegen shape, different constants. No
+    `perf-run.sh` subset applies (see §Perf-review-system-gates P1.6 bullet).
+  - **Visual-validation** — **PENDING (ship-loop exception 5).** Touches `SmatchetTheme.cpp` with no
+    bucket-C/E coverage that gates → the launched exe is surfaced to the user for eyeball verification before
+    merge. Exe: `C:\Dev\trees\mobile-p1.6\build\ninja-iter-msvc\Smatchet.exe`.
