@@ -835,7 +835,7 @@ compute_unused_under_config_guard_violations() {
 #
 # The curated untrusted-ingress TU basename set. KEEP IN SYNC with the ParseBounded callers + the
 # transport ingress clients; extend when a NEW trust-boundary TU is added.
-BARE_JSON_INGRESS_TUS='McpPlugin|CommandRegistry|CliCommandRunner|AnthropicClient|OpenAiClient|AiNdjsonParser|SmatchetMergeWatchNotifyServer|AttachmentAppUpdateService|BugReportService'
+BARE_JSON_INGRESS_TUS='McpPlugin|CommandRegistry|CliCommandRunner|AnthropicClient|OpenAiClient|AiNdjsonParser|SmatchetMergeWatchNotifyServer|AttachmentAppUpdateService|BugReportService|JiraIssueSearch|JiraIssueMutation|JiraUserAndMeta|PlaneActivityFeed|LinearIssueSearch|GitHubActivityFeed|GitHubCommitsParse|FieldCatalogCache|OfflineQueueService|SmatchetImGuiHost|SmatchetOfflineQueueUi|TicketFieldEditorLongTextPure|ConfigManager_PathUtils|WhisperApiClient'
 
 scan_bare_json_parse_file() {
     # $1 = a first-party .cpp file whose basename is in the curated ingress set. Emits
@@ -1656,12 +1656,13 @@ case "$MODE" in
     fi
     if [ -n "$barejson_out" ]; then
         {
-            echo "[bare-json-parse-untrusted] WARN: a bare nlohmann::json::parse( appears in an untrusted-ingress TU without routing through smatchet::json_safe::ParseBounded — a deeply-nested payload stack-overflows the recursive parser before any try/catch can fire (#1271/#1287). Advisory (calibration); not blocking:"
+            echo "[bare-json-parse-untrusted] FAIL: a bare nlohmann::json::parse( appears in an untrusted-ingress TU without routing through smatchet::json_safe::ParseBounded — a deeply-nested payload stack-overflows the recursive ~json DOM teardown before any try/catch can fire (#1271/#1287). Blocking (graduated from WARN-first after the SECURITY_AUDIT.md ParseBounded sweep cleared the backlog):"
             printf '%s\n' "$barejson_out" | sed 's/^/  /'
             echo "  Route the ingress decode through smatchet::json_safe::ParseBounded(text, errOut[, maxBytes]) (#include \"Json/BoundedJsonParse.h\")."
             echo "  If the bytes are program-internal (not external input): add"
             echo "  // SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; reason=...; owner=...; revisit=...) above the parse."
         } >&2
+        rc=1
     fi
 
     # --- pr-numbered-temporal-comments (CHANGED first-party C++ comments; WARN-first) ---

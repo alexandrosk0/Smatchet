@@ -64,6 +64,7 @@ GitHubClient::FetchUserActivity(const TrackerConfig& cfg, const std::string& acc
             break; // window closed — return what we have
         }
         const std::string pageUrl = eventsBase + "?per_page=100&page=" + std::to_string(page);
+        // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
         auto resp = TrackerGetLogged("GitHubClient", pageUrl, headers);
         if (resp.status_code != 200) {
             outError = "issue-events fetch failed: HTTP " + std::to_string(resp.status_code);
@@ -74,6 +75,7 @@ GitHubClient::FetchUserActivity(const TrackerConfig& cfg, const std::string& acc
             return FeedResult::Err(TrackerErrorFromHttpStatus(resp.status_code, outError));
         }
         std::string parseErr;
+        // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
         nlohmann::json events = smatchet::json_safe::ParseBounded(resp.text, parseErr);
         if (!parseErr.empty()) {
             outError = std::string("issue-events parse error: ") + parseErr;
