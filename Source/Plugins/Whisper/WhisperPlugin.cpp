@@ -12,6 +12,7 @@
 #include "AppController.h"
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
+#include "Commands/PathConfinement.h"
 #include "ConfigManager.h"
 #include "DictationInsertionRouter.h"
 #include "GlobalHotkey_Win32.h"
@@ -448,8 +449,19 @@ smatchet::cmd::CommandResult AcquireTranscribeOnceAudio(const nlohmann::json& ar
 
     const std::string filePath = args.value("file", std::string());
     if (!filePath.empty()) {
+        // SECURITY: `file` is caller-supplied and whisper.transcribe-once is reachable
+        // from the MCP command surface. Confine the read under the user-data dir so a
+        // caller cannot read an arbitrary file (which would then be uploaded to the
+        // cloud transcription endpoint). transcribe-once is a smoke/diagnostic path,
+        // so confining its --file input to the user-data dir is acceptable.
+        std::string resolvedPath, confineErr;
+        if (!smatchet::cmd::ConfinePathUnderBase(ConfigManager::GetUserDataDirectory(), filePath, resolvedPath,
+                                                 confineErr)) {
+            return CommandResult::Failure(ErrorCode::ValidationError,
+                                          "transcribe-once --file rejected: " + confineErr);
+        }
         std::string err;
-        if (!ReadWavFile(filePath, outWav, err)) {
+        if (!ReadWavFile(resolvedPath, outWav, err)) {
             return CommandResult::Failure(ErrorCode::HandlerError, err);
         }
         outOk = true;

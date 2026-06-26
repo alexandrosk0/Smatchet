@@ -6,6 +6,7 @@
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 #include "Commands/MainThreadDispatch.h"
+#include "Commands/PathConfinement.h"
 
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
@@ -131,8 +132,18 @@ void RegisterPerfDumpCommand(CommandRegistry& reg) {
                         if (outPath.empty()) {
                             std::time_t t = std::time(nullptr);
                             char ts[64] = {};
-                            std::strftime(ts, sizeof(ts), "%Y%m%d-%H%M%S", std::localtime(&t));
+                            if (const std::tm* lt = std::localtime(&t))
+                                std::strftime(ts, sizeof(ts), "%Y%m%d-%H%M%S", lt);
                             outPath = userDataDir + "perf-snapshot-" + ts + ".json";
+                        } else {
+                            // SECURITY: a caller-supplied outPath is untrusted (CLI/Lua/MCP). Confine
+                            // it under the user-data dir so perf.dump cannot write an arbitrary file.
+                            std::string resolved, confineErr;
+                            if (!smatchet::cmd::ConfinePathUnderBase(userDataDir, outPath, resolved, confineErr)) {
+                                return CommandResult::Failure(ErrorCode::ValidationError,
+                                                              "perf.dump outPath rejected: " + confineErr);
+                            }
+                            outPath = resolved;
                         }
                         std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
                         nlohmann::json doc = nlohmann::json::array();

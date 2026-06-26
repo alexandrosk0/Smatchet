@@ -10,6 +10,7 @@
 #include "ConfigManager_Internal.h"
 #include "UiThreadAffinity.h"
 
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 
 #include <nlohmann/json.hpp>
@@ -771,21 +772,28 @@ nlohmann::json ConfigManager::LoadJsonFile(const std::string& path) {
     {
         std::ifstream file(path, std::ios::binary);
         if (file.is_open()) {
-            std::ostringstream ss;
-            ss << file.rdbuf();
-            raw = ss.str();
+            file.seekg(0, std::ios::end);
+            const std::streamoff sz = file.tellg();
+            file.seekg(0, std::ios::beg);
+            // Cap the read at 64 MiB to match the Win32 sibling: bound memory so a
+            // pathologically large file can't balloon the heap before the bounded parse.
+            if (sz > 0 && sz <= static_cast<std::streamoff>(64 * 1024 * 1024)) {
+                std::ostringstream ss;
+                ss << file.rdbuf();
+                raw = ss.str();
+            }
         }
     }
 #endif
     nlohmann::json j = nlohmann::json::object();
     if (!raw.empty()) {
-        try {
-            j = nlohmann::json::parse(raw);
-        } catch (const std::exception& ex) {
-            LOG_ERROR("ConfigManager: failed to parse config '%s': %s", path.c_str(), ex.what());
-            j = nlohmann::json::object();
-        } catch (...) {
-            LOG_ERROR("ConfigManager: failed to parse config '%s' with unknown exception", path.c_str());
+        // Bounded parse: the config file is owner-only, but a deeply-nested document
+        // would otherwise stack-overflow the recursive ~json teardown (Pillar 3).
+        // ParseBounded never throws — it signals failure via a non-empty errOut.
+        std::string parseErr;
+        j = smatchet::json_safe::ParseBounded(raw, parseErr);
+        if (!parseErr.empty()) {
+            LOG_ERROR("ConfigManager: failed to parse config '%s': %s", path.c_str(), parseErr.c_str());
             j = nlohmann::json::object();
         }
     }

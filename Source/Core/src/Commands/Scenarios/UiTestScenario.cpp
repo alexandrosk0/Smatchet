@@ -7,7 +7,9 @@
 
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+#include "Commands/PathConfinement.h"
 #include "Commands/Scenarios/UiTestOutcomeFormat.h"
+#include "ConfigManager.h"
 #include "Logger.h"
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
@@ -217,6 +219,27 @@ void UiTestScenario::OnStart(AppController& app, const nlohmann::json& args, std
     filter_ = args.value("name", std::string());
     outPath_ = args.value("outPath", std::string());
     outLog_ = args.value("outLog", std::string());
+    // SECURITY: outPath/outLog are caller-supplied and ui_test.run is reachable from
+    // MCP/CLI/Lua. Confine both under the user-data dir so they cannot write an
+    // arbitrary file.
+    {
+        const std::string userDataDir = ConfigManager::GetUserDataDirectory();
+        std::string resolved, confineErr;
+        if (!outPath_.empty()) {
+            if (!ConfinePathUnderBase(userDataDir, outPath_, resolved, confineErr)) {
+                outErr = "ui_test.run outPath rejected: " + confineErr;
+                return;
+            }
+            outPath_ = resolved;
+        }
+        if (!outLog_.empty()) {
+            if (!ConfinePathUnderBase(userDataDir, outLog_, resolved, confineErr)) {
+                outErr = "ui_test.run outLog rejected: " + confineErr;
+                return;
+            }
+            outLog_ = resolved;
+        }
+    }
     const bool all = args.value("all", false);
     if (all) {
         filter_.clear();

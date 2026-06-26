@@ -1,6 +1,7 @@
 #include "Commands/Scenarios/IScenario.h"
 
 #include "Commands/Command.h"
+#include "Commands/PathConfinement.h"
 #include "ConfigManager.h"
 #include "Logger.h"
 #include "UiPerfMonitor.h"
@@ -57,6 +58,15 @@ CommandResult ScenarioRunner::Start(const std::string& name, const nlohmann::jso
         if (const std::tm* lt = std::localtime(&t)) // null-check: localtime can fail; strftime(nullptr) is UB
             std::strftime(ts, sizeof(ts), "%Y%m%d-%H%M%S", lt);
         outPath = userDataDir + "perf/" + name + "-" + ts + ".json";
+    } else {
+        // SECURITY: a caller-supplied outPath is untrusted (MCP/CLI/Lua can invoke
+        // scenario.run). Confine it under the user-data dir so it cannot write an
+        // arbitrary file.
+        std::string resolved, confineErr;
+        if (!ConfinePathUnderBase(ConfigManager::GetUserDataDirectory(), outPath, resolved, confineErr)) {
+            return CommandResult::Failure(ErrorCode::ValidationError, "scenario.run outPath rejected: " + confineErr);
+        }
+        outPath = resolved;
     }
     outPath_ = std::move(outPath);
     frame_ = 0;

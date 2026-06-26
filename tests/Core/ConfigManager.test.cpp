@@ -354,6 +354,7 @@ TrackerConfig MakeNonDefaultConfig() {
     c.McpAllowRemote = true;
     c.McpAuthToken = "rt-mcp-token-zzz";
     c.McpAllowLuaExecution = true;
+    c.McpRequireTokenOnLoopback = false; // default true — flip to prove the round-trip
     c.McpExportFields = {"status", "priority"};
     c.ShowMcpServerWindow = true;
     c.McpServerInfoPanelHeightPx = 123.0f;
@@ -503,6 +504,7 @@ TEST_CASE("ConfigManager Save/Load per-field round-trip preserves every persiste
     CHECK(out.McpEnabled == in.McpEnabled);
     CHECK(out.McpAllowRemote == in.McpAllowRemote);
     CHECK(out.McpAllowLuaExecution == in.McpAllowLuaExecution);
+    CHECK(out.McpRequireTokenOnLoopback == in.McpRequireTokenOnLoopback);
     CHECK(out.ShowMcpServerWindow == in.ShowMcpServerWindow);
     CHECK(out.AnnotateAllowCustomCommands == in.AnnotateAllowCustomCommands);
     CHECK(out.AssistantPanelOpen == in.AssistantPanelOpen);

@@ -188,6 +188,11 @@ struct TrackerConfig {
     std::string McpAuthToken;
     // Off by default: allow MCP clients to execute Lua code/snippets through built-in run_lua tool.
     bool McpAllowLuaExecution = false;
+    // Security hardening (ON by default): require the auth token even for loopback
+    // (127.0.0.1) callers. A tokenless loopback MCP server is reachable by ANY local
+    // process, which can drive the global command registry. Set false to restore the
+    // legacy "any local process may call without a token" behavior.
+    bool McpRequireTokenOnLoopback = true;
     // Field ids that MCP /list_tickets and /search are allowed to export.
     // Empty = safe default subset (summary, status, priority, assignee, updated, created, labels, issuetype).
     std::vector<std::string> McpExportFields;
