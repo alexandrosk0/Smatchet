@@ -84,6 +84,25 @@ TEST_CASE("PathConfinement · ConfinePathUnderSubdir creates and confines under 
     CHECK_FALSE(e2.empty());
 }
 
+TEST_CASE("PathConfinement · ConfinePathUnderSubdir validates the subdir argument") {
+    const fs::path base = MakeScratchBase("subdirval");
+    std::string resolved, err;
+
+    SUBCASE("empty subdir is rejected") {
+        CHECK_FALSE(ConfinePathUnderSubdir(base.string(), "", "x.json", resolved, err));
+        CHECK_FALSE(err.empty());
+    }
+    SUBCASE("'..' in the subdir is rejected before any mkdir") {
+        CHECK_FALSE(ConfinePathUnderSubdir(base.string(), "../escape", "x.json", resolved, err));
+        CHECK_FALSE(err.empty());
+        CHECK_FALSE(fs::exists(base.parent_path() / "escape")); // nothing was created outside base
+    }
+    SUBCASE("'.' subdir (no dedicated dir) is rejected") {
+        CHECK_FALSE(ConfinePathUnderSubdir(base.string(), ".", "x.json", resolved, err));
+        CHECK_FALSE(err.empty());
+    }
+}
+
 TEST_CASE("PathConfinement · ConfinePathUnderSubdir rejects a symlinked subdir (escape regression)") {
     const fs::path base = MakeScratchBase("symbase");
     const fs::path outside = MakeScratchBase("outside");

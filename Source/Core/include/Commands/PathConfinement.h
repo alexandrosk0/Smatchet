@@ -89,6 +89,26 @@ inline bool ConfinePathUnderSubdir(const std::string& baseDir, const std::string
         errOut = "no base directory configured for confinement";
         return false;
     }
+    // Validate the subdir FIRST — before any mkdir — so an absolute, empty, or
+    // dot-dot value can never anchor (or create) a directory outside the base. Every
+    // caller passes a fixed literal today, yet validating up front keeps the helper
+    // safe should a variable ever flow in. The canonical-containment check further
+    // below remains as a secondary guard.
+    if (subdir.empty()) {
+        errOut = "empty confinement directory";
+        return false;
+    }
+    const fs::path subdirPath(subdir);
+    if (subdirPath.is_absolute()) {
+        errOut = "absolute confinement directories are not allowed";
+        return false;
+    }
+    for (const auto& part : subdirPath) {
+        if (part.string() == "..") {
+            errOut = "confinement directory traversal ('..') is not allowed";
+            return false;
+        }
+    }
     std::error_code ec;
     // Anchor the subdir to the canonical user-data dir so the base itself can't be
     // redirected through a symlink before we ever look at the candidate.
@@ -98,7 +118,11 @@ inline bool ConfinePathUnderSubdir(const std::string& baseDir, const std::string
         ec.clear();
     }
 
-    const fs::path subBase = canonBase / subdir;
+    const fs::path subBase = (canonBase / subdirPath).lexically_normal();
+    if (subBase == canonBase) {
+        errOut = "empty confinement directory"; // e.g. subdir was "." — no dedicated dir
+        return false;
+    }
     fs::create_directories(subBase, ec); // idempotent; ignore "already exists"
     if (ec && !fs::exists(subBase)) {
         errOut = "could not create confinement directory";
