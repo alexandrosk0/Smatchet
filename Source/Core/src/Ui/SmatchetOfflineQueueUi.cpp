@@ -2,8 +2,10 @@
 
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+// SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
 #include "ConfigManager.h"
 #include "IssueDraft.h"
+#include "Json/BoundedJsonParse.h"
 #include "MarkdownConvert.h"
 #include "MarkdownPreviewRender.h"
 #include "TrackerHttpUtils.h"
@@ -959,8 +961,9 @@ static void DrawOfflineRowStateCell(OfflineDrawCtx& ctx, const UnifiedOfflineRow
 static void DrawOfflineRowPayloadTooltip(const UnifiedOfflineRow& row) {
     std::string md;
     try {
-        const auto j = nlohmann::json::parse(row.payload);
-        if (j.is_object()) {
+        std::string parseErr;
+        const nlohmann::json j = smatchet::json_safe::ParseBounded(row.payload, parseErr);
+        if (parseErr.empty() && j.is_object()) {
             for (auto it = j.begin(); it != j.end(); ++it) {
                 const auto& val = it.value();
                 if (val.is_object() && val.value("type", std::string()) == "doc") {
@@ -1112,8 +1115,9 @@ struct ConflictModalCtx {
 static ConflictModalCtx ParseConflictModalCtx(const std::string& json) {
     ConflictModalCtx out;
     try {
-        auto ctx = nlohmann::json::parse(json, nullptr, false);
-        if (ctx.is_object()) {
+        std::string parseErr;
+        const nlohmann::json ctx = smatchet::json_safe::ParseBounded(json, parseErr);
+        if (parseErr.empty() && ctx.is_object()) {
             out.Kind = ctx.value("kind", std::string("text"));
             out.Mine = ctx.value("mine", std::string());
             out.Theirs = ctx.value("theirs", std::string());

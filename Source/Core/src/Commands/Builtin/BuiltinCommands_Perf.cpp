@@ -6,6 +6,7 @@
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 #include "Commands/MainThreadDispatch.h"
+#include "Commands/PathConfinement.h"
 
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
@@ -131,8 +132,22 @@ void RegisterPerfDumpCommand(CommandRegistry& reg) {
                         if (outPath.empty()) {
                             std::time_t t = std::time(nullptr);
                             char ts[64] = {};
-                            std::strftime(ts, sizeof(ts), "%Y%m%d-%H%M%S", std::localtime(&t));
-                            outPath = userDataDir + "perf-snapshot-" + ts + ".json";
+                            if (const std::tm* lt = std::localtime(&t))
+                                std::strftime(ts, sizeof(ts), "%Y%m%d-%H%M%S", lt);
+                            outPath = (fs::path(userDataDir) / "perf" / (std::string("perf-snapshot-") + ts + ".json"))
+                                          .string();
+                        } else {
+                            // SECURITY: a caller-supplied outPath is untrusted (CLI/Lua/MCP). Confine it
+                            // under a dedicated <userData>/perf/ subdir — not the user-data root, which
+                            // holds smatchet_config.json and other state — so perf.dump cannot write or
+                            // clobber an arbitrary file.
+                            std::string resolved, confineErr;
+                            if (!smatchet::cmd::ConfinePathUnderSubdir(userDataDir, "perf", outPath, resolved,
+                                                                       confineErr)) {
+                                return CommandResult::Failure(ErrorCode::ValidationError,
+                                                              "perf.dump outPath rejected: " + confineErr);
+                            }
+                            outPath = resolved;
                         }
                         std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
                         nlohmann::json doc = nlohmann::json::array();
@@ -163,7 +178,8 @@ void RegisterPerfDumpCommand(CommandRegistry& reg) {
                         out["count"] = static_cast<int>(rows.size());
                         return CommandResult::Success(std::move(out));
                     });
-    c.Params = {PString("outPath", "Output file path (default: <userData>/perf-snapshot-<ts>.json).")};
+    c.Params = {
+        PString("outPath", "Output file path, confined under <userData>/perf/ (default: perf-snapshot-<ts>.json).")};
     reg.Register(std::move(c));
 }
 

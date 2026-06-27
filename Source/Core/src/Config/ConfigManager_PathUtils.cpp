@@ -10,6 +10,7 @@
 #include "ConfigManager_Internal.h"
 #include "UiThreadAffinity.h"
 
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 
 #include <nlohmann/json.hpp>
@@ -369,9 +370,10 @@ std::string UnprotectSecretFromConfig(const std::string& protectedBase64) {
 // SECURITY (audit H2): no DPAPI off Windows. On Windows the CryptProtectData path above binds the
 // ciphertext to the user/machine; the two non-Windows families are covered differently:
 //   * POSIX desktop (Linux/macOS): no OS-backed encryption — the secret value is returned verbatim
-//     (passthrough below) and lands as cleartext JSON. Mitigation: AtomicWriteTextFile chmods the
-//     config file 0600 (owner-only) and LoadJsonFile LOG_WARNs on a group/world-readable file. That
-//     bounds exposure to the file owner; it is NOT encryption.
+//     (passthrough below) and lands as cleartext JSON. Mitigation: AtomicWriteTextFile opens the
+//     temp file O_NOFOLLOW and fchmods it 0600 (owner-only) before the atomic rename, and
+//     LoadJsonFile LOG_WARNs on a group/world-readable file. That bounds exposure to the file
+//     owner; it is NOT encryption.
 //   * Android (audit H2 / CR #1357): secret-at-rest IS sealed — ProtectSecretForConfig /
 //     UnprotectSecretFromConfig below route every secret through the host-installed AndroidKeyStore
 //     AES-GCM provider, FAIL CLOSED (drop rather than persist cleartext) when no provider is wired.
@@ -771,21 +773,31 @@ nlohmann::json ConfigManager::LoadJsonFile(const std::string& path) {
     {
         std::ifstream file(path, std::ios::binary);
         if (file.is_open()) {
-            std::ostringstream ss;
-            ss << file.rdbuf();
-            raw = ss.str();
+            file.seekg(0, std::ios::end);
+            const std::streamoff sz = file.tellg();
+            file.seekg(0, std::ios::beg);
+            // Cap the read at 64 MiB to match the Win32 sibling: bound memory so a
+            // pathologically large file can't balloon the heap before the bounded parse.
+            if (sz > 0 && sz <= static_cast<std::streamoff>(64 * 1024 * 1024)) {
+                std::ostringstream ss;
+                ss << file.rdbuf();
+                raw = ss.str();
+            }
         }
     }
 #endif
     nlohmann::json j = nlohmann::json::object();
     if (!raw.empty()) {
-        try {
-            j = nlohmann::json::parse(raw);
-        } catch (const std::exception& ex) {
-            LOG_ERROR("ConfigManager: failed to parse config '%s': %s", path.c_str(), ex.what());
-            j = nlohmann::json::object();
-        } catch (...) {
-            LOG_ERROR("ConfigManager: failed to parse config '%s' with unknown exception", path.c_str());
+        // Bounded parse: the config file is owner-only, but a deeply-nested document
+        // would otherwise stack-overflow the recursive ~json teardown (Pillar 3).
+        // ParseBounded never throws — it signals failure via a non-empty errOut.
+        std::string parseErr;
+        // Match the 64 MiB read cap above: a config in the 4–64 MiB window is
+        // legitimately large (e.g. many recents/boards), so raise the parse byte
+        // bound to the same ceiling instead of ParseBounded's 4 MiB default.
+        j = smatchet::json_safe::ParseBounded(raw, parseErr, 64u * 1024u * 1024u);
+        if (!parseErr.empty()) {
+            LOG_ERROR("ConfigManager: failed to parse config '%s': %s", path.c_str(), parseErr.c_str());
             j = nlohmann::json::object();
         }
     }
@@ -908,6 +920,83 @@ void ConfigManager::EnsureDefaultImGuiSettingsFile() {
 bool ConfigManager::AtomicWriteTextFile(const std::string& path, const std::string& content) {
     const std::string tmp = path + ".tmp";
     EnsureParentDirectoryForFile(path);
+#if !defined(_WIN32)
+    // SECURITY (audit H2 follow-up): on POSIX open the temp file through a raw fd with
+    // O_NOFOLLOW + O_CREAT|O_TRUNC at mode 0600, then fchmod the fd before writing a byte.
+    // This hardens the secret-bearing config write against two gaps the prior ofstream +
+    // path-based chmod left open:
+    //   - symlink redirect: O_NOFOLLOW makes open() fail (ELOOP) when '<path>.tmp' is a
+    //     symlink, so a planted link can't divert the write — or its 0600 — onto another file.
+    //   - 0644 window / chmod TOCTOU: fchmod on the fd pins owner-only perms before the write
+    //     and the atomic rename, with no reliance on umask and no path-based chmod race.
+    // Failure to write is fatal (drop the tmp, keep the prior config); a perms/fsync miss is
+    // logged non-fatally so a hardening hiccup never loses the user's config write.
+    {
+        const int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW, S_IRUSR | S_IWUSR);
+        if (fd < 0) {
+            LOG_ERROR("ConfigManager: failed to open temp file for write '%s' errno=%d", tmp.c_str(), errno);
+            return false;
+        }
+        // O_CREAT's mode is masked by umask and only applies on creation; fchmod pins 0600
+        // unconditionally (also covers a pre-existing .tmp left by an earlier interrupted write).
+        if (::fchmod(fd, S_IRUSR | S_IWUSR) != 0) {
+            LOG_WARN("ConfigManager: fchmod 0600 on '%s' failed errno=%d; config may be group/world-readable",
+                     tmp.c_str(), errno);
+        }
+        const char* data = content.data();
+        size_t remaining = content.size();
+        bool writeOk = true;
+        while (remaining > 0) {
+            const ssize_t n = ::write(fd, data, remaining);
+            if (n < 0) {
+                if (errno == EINTR) {
+                    continue;  // interrupted before any byte moved — retry the same chunk.
+                }
+                LOG_ERROR("ConfigManager: failed to write temp file '%s' errno=%d", tmp.c_str(), errno);
+                writeOk = false;
+                break;
+            }
+            data += n;
+            remaining -= static_cast<size_t>(n);
+        }
+        if (writeOk && ::fsync(fd) != 0) {
+            LOG_WARN("ConfigManager: fsync on '%s' failed errno=%d", tmp.c_str(), errno);
+        }
+        const bool closeOk = (::close(fd) == 0);
+        if (!writeOk || !closeOk) {
+            if (writeOk && !closeOk) {
+                LOG_ERROR("ConfigManager: close failed on temp file '%s' errno=%d", tmp.c_str(), errno);
+            }
+            std::remove(tmp.c_str());
+            return false;
+        }
+    }
+    if (std::rename(tmp.c_str(), path.c_str()) != 0) {
+        LOG_ERROR("ConfigManager: rename failed '%s' -> '%s' errno=%d", tmp.c_str(), path.c_str(), errno);
+        std::remove(tmp.c_str());
+        return false;
+    }
+    // Durability: fsync the parent directory so the rename's new dirent survives a crash / power
+    // loss. fsync(fd) above persists the file's data+metadata, but the directory entry that now
+    // points at it needs its own sync to be durable. Best-effort — a dir-sync miss is logged, not
+    // fatal, and never undoes a successful publish (the rename itself already happened atomically).
+    {
+        const std::string::size_type slash = path.find_last_of('/');
+        const std::string dir = (slash == std::string::npos)  ? std::string(".")
+                                : (slash == 0)                ? std::string("/")
+                                                              : path.substr(0, slash);
+        const int dfd = ::open(dir.c_str(), O_RDONLY | O_DIRECTORY);
+        if (dfd >= 0) {
+            if (::fsync(dfd) != 0) {
+                LOG_WARN("ConfigManager: fsync on parent dir '%s' failed errno=%d", dir.c_str(), errno);
+            }
+            ::close(dfd);
+        } else {
+            LOG_WARN("ConfigManager: open parent dir '%s' for fsync failed errno=%d", dir.c_str(), errno);
+        }
+    }
+    return true;
+#else
     {
         std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
         if (!file.is_open()) {
@@ -925,18 +1014,6 @@ bool ConfigManager::AtomicWriteTextFile(const std::string& path, const std::stri
             return false;
         }
     }
-#if !defined(_WIN32)
-    // SECURITY (audit H2): tighten the temp file to owner-only (0600) BEFORE the atomic rename, so
-    // the secret-bearing config never appears at its final path with the default-umask perms
-    // (commonly 0644 — group/world readable). Windows is covered by DPAPI + NTFS ACLs, so this is
-    // POSIX-only. chmod on the .tmp path (it is already created and fully written here) — failure
-    // is logged but non-fatal: a perms-tightening miss must not lose the user's config write.
-    if (::chmod(tmp.c_str(), S_IRUSR | S_IWUSR) != 0) {
-        LOG_WARN("ConfigManager: chmod 0600 on '%s' failed errno=%d; config may be group/world-readable", tmp.c_str(),
-                 errno);
-    }
-#endif
-#if defined(_WIN32)
     const std::wstring wSrc = smatchet::config_detail::Utf8ToWide(tmp);
     const std::wstring wDst = smatchet::config_detail::Utf8ToWide(path);
     if (wSrc.empty() || wDst.empty()) {
@@ -947,13 +1024,6 @@ bool ConfigManager::AtomicWriteTextFile(const std::string& path, const std::stri
         LOG_ERROR("ConfigManager: MoveFileEx failed '%s' -> '%s' err=%lu", tmp.c_str(), path.c_str(),
                   static_cast<unsigned long>(GetLastError()));
         DeleteFileW(wSrc.c_str());
-        return false;
-    }
-    return true;
-#else
-    if (std::rename(tmp.c_str(), path.c_str()) != 0) {
-        LOG_ERROR("ConfigManager: rename failed '%s' -> '%s' errno=%d", tmp.c_str(), path.c_str(), errno);
-        std::remove(tmp.c_str());
         return false;
     }
     return true;

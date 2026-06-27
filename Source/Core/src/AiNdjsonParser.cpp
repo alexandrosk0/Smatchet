@@ -1,5 +1,6 @@
 #include "AiNdjsonParser.h"
 
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 
 #include <cstddef>
@@ -15,10 +16,12 @@ void AiNdjsonParser::emitOneLine(std::size_t begin, std::size_t end, const LineC
         return; // blank line — silently skipped
     const std::string line(buffer_, begin, actualEnd - begin);
 
-    nlohmann::json j;
-    try {
-        j = nlohmann::json::parse(line);
-    } catch (const std::exception&) {
+    // Each NDJSON line is server-supplied and attacker-influenced; route it through the
+    // depth/node-bounded helper so a hostile / oversized line can't crash the process.
+    // ParseBounded never throws and signals failure via a non-empty parseErr.
+    std::string parseErr;
+    nlohmann::json j = smatchet::json_safe::ParseBounded(line, parseErr);
+    if (!parseErr.empty()) {
         if (onError)
             onError(line);
         return;

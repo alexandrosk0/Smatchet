@@ -67,6 +67,10 @@ void Stop();
 /// worker is not running (between Stop and the next Start, or before first Start).
 void Enqueue(Op op);
 
+/// Enqueue an Append of `message` (at history index `messageIndex`) then a coalescing Trim to
+/// `maxRowsCfg` rows (`<= 0` ⇒ 500). Shared by the controller's flush paths + the UI send path.
+void EnqueueAppendAndTrim(AiMessage message, std::size_t messageIndex, int maxRowsCfg);
+
 } // namespace chat_persist
 } // namespace ai
 } // namespace smatchet

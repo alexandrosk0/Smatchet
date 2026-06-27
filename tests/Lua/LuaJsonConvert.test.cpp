@@ -143,6 +143,7 @@ TEST_CASE("LuaJsonConvert · LuaToJson depth cap returns null past 64") {
     sol::state L = MakeState();
 
     sol::object tbl = L.script("return {a = 1}");
-    nlohmann::json j = smatchet::lua_json_detail::LuaToJsonImpl(tbl, 65);
+    std::size_t nodes = smatchet::lua_json_detail::kJsonToLuaMaxNodes;
+    nlohmann::json j = smatchet::lua_json_detail::LuaToJsonImpl(tbl, 65, nodes);
     CHECK(j.is_null());
 }

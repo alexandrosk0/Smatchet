@@ -1,6 +1,7 @@
 #include "SmatchetMergeWatchNotifyServer.h"
 
 #include "AppController.h"
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "SmatchetToast.h"
 
@@ -73,13 +74,15 @@ void SmatchetMergeWatchNotifyServer::RegisterRoutes(AppController& app) {
     MainThreadDispatcher& dispatcher = app.mainThreadDispatcher;
 
     server_->Post("/merge-watch/notify", [&dispatcher](const httplib::Request& req, httplib::Response& res) {
-        // Pillar 3: parse + validate before any toast dispatch.
-        nlohmann::json j;
-        try {
-            j = nlohmann::json::parse(req.body);
-        } catch (const nlohmann::json::parse_error& e) {
+        // Pillar 3: depth/node-bounded parse + validate before any toast dispatch. The
+        // request body is attacker-controlled (localhost POST), so ParseBounded guards
+        // against a hostile / oversized payload. It never throws; failure is a non-empty
+        // parseErr holding a stable, input-free message (safe to embed in the response).
+        std::string parseErr;
+        nlohmann::json j = smatchet::json_safe::ParseBounded(req.body, parseErr);
+        if (!parseErr.empty()) {
             res.status = 400;
-            res.set_content(std::string("{\"error\":\"bad JSON: ") + e.what() + "\"}", "application/json");
+            res.set_content(std::string("{\"error\":\"bad JSON: ") + parseErr + "\"}", "application/json");
             return;
         }
         if (!j.is_object() || !j.contains("pr") || !j.contains("state") || !j.contains("message")) {

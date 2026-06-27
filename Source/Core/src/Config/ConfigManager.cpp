@@ -262,6 +262,7 @@ const FieldDesc<bool> kBoolFields[] = {
     {"mcp_enabled", &TrackerConfig::McpEnabled},
     {"mcp_allow_remote", &TrackerConfig::McpAllowRemote},
     {"mcp_allow_lua_execution", &TrackerConfig::McpAllowLuaExecution},
+    {"mcp_require_token_on_loopback", &TrackerConfig::McpRequireTokenOnLoopback},
     {"show_mcp_server_window", &TrackerConfig::ShowMcpServerWindow},
     {"annotate_allow_custom_commands", &TrackerConfig::AnnotateAllowCustomCommands},
     {"assistant_panel_open", &TrackerConfig::AssistantPanelOpen},
@@ -1449,6 +1450,25 @@ void ApplyOverridesAndClamps(const ConfigManager::CliOverrides& cli, TrackerConf
     if (const char* envMcpRemote = std::getenv("SMATCHET_MCP_ALLOW_REMOTE")) {
         std::string s(envMcpRemote);
         cfg.McpAllowRemote = (s == "true" || s == "1");
+    }
+    // SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK — opt out of the tokenless-loopback
+    // 401 while keeping the secure default ON. Used by single-tenant CI runners
+    // that --spawn an ephemeral child and drive it over loopback MCP without
+    // provisioning a token; on a throwaway runner "any local process" is just the
+    // CI job itself, so the defence the default adds (a co-resident process
+    // reaching the registry) does not apply. This flag gates UNAUTHENTICATED
+    // local MCP access, so it fails CLOSED: only an explicit "false"/"0" disables
+    // it; an unset, empty, or malformed value preserves the secure default.
+    if (const char* envReqTok = std::getenv("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK")) {
+        std::string s(envReqTok);
+        if (s == "true" || s == "1") {
+            cfg.McpRequireTokenOnLoopback = true;
+        } else if (s == "false" || s == "0") {
+            cfg.McpRequireTokenOnLoopback = false;
+        } else if (!s.empty()) {
+            LOG_WARN("ConfigManager: ignoring invalid SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK=%s (keeping secure default)",
+                     s.c_str());
+        }
     }
 
     // Route SMATCHET_TRACKER_TOKEN / SMATCHET_TRACKER_BASE_URL to the active backend's cfg slots.

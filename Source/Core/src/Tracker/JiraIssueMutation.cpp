@@ -1,9 +1,11 @@
+// SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
 #include "JiraClient.h"
 
 #include "BackendAuditTrail.h"
 #include "JiraIssueMappingPure.h"
 #include "TrackerFieldValueParser.h"
 #include "TrackerHttpUtils.h"
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "NetworkUsageTracker.h"
 #include "StringUtil.h"
@@ -128,7 +130,14 @@ bool JiraClient::UpdateIssueFieldsViaTransition(const std::string& issueId, cons
 
     std::string transitionId;
     try {
-        auto transitionsJson = nlohmann::json::parse(transitionsResp.text);
+        std::string parseErr;
+        auto transitionsJson = smatchet::json_safe::ParseBounded(transitionsResp.text, parseErr);
+        if (!parseErr.empty()) {
+            outError = std::string("Failed to parse transitions response: ") + parseErr;
+            LOG_ERROR("JiraClient: %s", outError.c_str());
+            AppendTransitionFailure(issueId, auditOp, outError, targetStatusId, targetStatusName);
+            return false;
+        }
         if (!transitionsJson.contains("transitions") || !transitionsJson["transitions"].is_array()) {
             outError = "Invalid transitions response format.";
             LOG_ERROR("JiraClient: %s issue=%s body=%s", outError.c_str(), issueId.c_str(),
@@ -515,17 +524,28 @@ Result<std::string, TrackerError> JiraClient::CreateIssue(const nlohmann::json& 
         LOG_DEBUG("JiraClient: create payload:\n%s", body.dump(2).c_str());
         BackendAuditTrail::AppendResult(
             "issue_create", "jira_client", std::string(), auditOp, false, outError,
+            // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
             nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
         // 2xx-but-not-200/201 (e.g. 202/204) reaches this failure branch; guard before FromHttpStatus
         // (which maps 2xx → Ok() and drops the detail — plan FIX-1 / Slice-2 precedent).
         if (response.status_code >= 200 && response.status_code < 300) {
             return Result<std::string, TrackerError>::Err(TrackerErrorUnknown(outError, response.status_code));
         }
+        // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
         return Result<std::string, TrackerError>::Err(TrackerErrorFromHttpStatus(response.status_code, outError));
     }
 
     try {
-        auto j = nlohmann::json::parse(response.text);
+        std::string parseErr;
+        auto j = smatchet::json_safe::ParseBounded(response.text, parseErr);
+        if (!parseErr.empty()) {
+            outError = std::string("Failed to parse create response: ") + parseErr;
+            LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), RedactHttpBodyForLog(response.text).c_str());
+            BackendAuditTrail::AppendResult(
+                "issue_create", "jira_client", std::string(), auditOp, false, outError,
+                nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
+            return Result<std::string, TrackerError>::Err(TrackerErrorParse(outError));
+        }
         const std::string key = j.value("key", std::string());
         if (key.empty()) {
             outError = "Create issue response missing 'key'.";

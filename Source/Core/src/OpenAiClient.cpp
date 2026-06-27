@@ -2,6 +2,7 @@
 
 #include "AiErrorRedact.h"
 #include "AiSseParser.h"
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "NetworkUsageTracker.h"
 
@@ -84,18 +85,18 @@ void DispatchOpenAiDataLine(const std::string& data, const IAiClient::DeltaCallb
         sawFinal = true;
         return;
     }
-    nlohmann::json j;
-    try {
-        j = nlohmann::json::parse(data);
-    } catch (const std::exception& e) {
-        // The raw SSE payload is server-supplied; a misconfigured proxy could echo the
-        // request Authorization header into a malformed stream. nlohmann's
-        // parse_error::what() embeds the offending input window ("… last read: '<frag>'"),
-        // so the exception text leaks the same secret as the body — redact BOTH the error
-        // message and the excerpt (Bearer / api-key shapes) before logging, then cap the
-        // excerpt at 200 chars. Redaction is the ONLY path provider-error text reaches a log
-        // (issue #1286).
-        const std::string redactedErr = smatchet::ai::pure::RedactProviderErrorBody(e.what());
+    // The raw SSE payload is server-supplied and attacker-influenced; parse it through
+    // the depth/node-bounded helper so a hostile / oversized stream can't crash the
+    // process. ParseBounded never throws and signals failure via a non-empty parseErr.
+    std::string parseErr;
+    nlohmann::json j = smatchet::json_safe::ParseBounded(data, parseErr);
+    if (!parseErr.empty()) {
+        // A misconfigured proxy could echo the request Authorization header into a
+        // malformed stream, so redact the excerpt (Bearer / api-key shapes) before
+        // logging and cap it at 200 chars. parseErr is a stable, input-free message but
+        // is run through the same redactor for symmetry. Redaction is the ONLY path
+        // provider-error text reaches a log (issue #1286).
+        const std::string redactedErr = smatchet::ai::pure::RedactProviderErrorBody(parseErr);
         const std::string redacted = smatchet::ai::pure::RedactProviderErrorBody(data);
         LOG_WARN("OpenAiClient: SSE data not valid JSON (%s): %.*s", redactedErr.c_str(),
                  static_cast<int>(redacted.size() > 200 ? 200 : redacted.size()), redacted.c_str());

@@ -286,6 +286,66 @@ TEST_CASE("ConfigManager CLI overrides win over env vars on Load") {
     ConfigManager::InvalidateCache();
 }
 
+TEST_CASE("ConfigManager SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK env override") {
+    smatchet_tests::TestEnvGuard env;
+
+    // The CI --spawn workflows export SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK=false
+    // at job scope, so the var is already present when this test runs in CI.
+    // Clear it explicitly before the "default ON" assertion so we test the real
+    // compiled default, not the inherited CI override. (TestEnvGuard does NOT
+    // touch this env var — the final Cleanup block below is what restores a
+    // clean environment for later cases.)
+#if defined(_WIN32)
+    ::_putenv_s("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK", "");
+#else
+    ::unsetenv("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK");
+#endif
+
+    // Default ON (#1566 security hardening): without the env var the loopback
+    // token requirement stays true.
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().McpRequireTokenOnLoopback == true);
+
+    // env "false" disables it — the CI --spawn unblock path. This flag gates
+    // UNAUTHENTICATED loopback MCP access, so it parses fail-closed: only an
+    // explicit "false"/"0" disables it.
+#if defined(_WIN32)
+    ::_putenv_s("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK", "false");
+#else
+    ::setenv("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK", "false", 1);
+#endif
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().McpRequireTokenOnLoopback == false);
+
+    // env "true" keeps it on.
+#if defined(_WIN32)
+    ::_putenv_s("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK", "true");
+#else
+    ::setenv("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK", "true", 1);
+#endif
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().McpRequireTokenOnLoopback == true);
+
+    // Fail-closed: a malformed value is NOT treated as "false" — it preserves
+    // the secure default (true). Locks the #1566 hardening against a typo
+    // silently dropping the loopback token requirement.
+#if defined(_WIN32)
+    ::_putenv_s("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK", "garbage");
+#else
+    ::setenv("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK", "garbage", 1);
+#endif
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().McpRequireTokenOnLoopback == true);
+
+    // Cleanup.
+#if defined(_WIN32)
+    ::_putenv_s("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK", "");
+#else
+    ::unsetenv("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK");
+#endif
+    ConfigManager::InvalidateCache();
+}
+
 // --- Save/Load round-trip regression net for the field-registration-table refactor. -------
 //
 // decompose-top-20-monoliths § ConfigManager::Load/Save. These are the
@@ -354,6 +414,7 @@ TrackerConfig MakeNonDefaultConfig() {
     c.McpAllowRemote = true;
     c.McpAuthToken = "rt-mcp-token-zzz";
     c.McpAllowLuaExecution = true;
+    c.McpRequireTokenOnLoopback = false; // default true — flip to prove the round-trip
     c.McpExportFields = {"status", "priority"};
     c.ShowMcpServerWindow = true;
     c.McpServerInfoPanelHeightPx = 123.0f;
@@ -503,6 +564,7 @@ TEST_CASE("ConfigManager Save/Load per-field round-trip preserves every persiste
     CHECK(out.McpEnabled == in.McpEnabled);
     CHECK(out.McpAllowRemote == in.McpAllowRemote);
     CHECK(out.McpAllowLuaExecution == in.McpAllowLuaExecution);
+    CHECK(out.McpRequireTokenOnLoopback == in.McpRequireTokenOnLoopback);
     CHECK(out.ShowMcpServerWindow == in.ShowMcpServerWindow);
     CHECK(out.AnnotateAllowCustomCommands == in.AnnotateAllowCustomCommands);
     CHECK(out.AssistantPanelOpen == in.AssistantPanelOpen);

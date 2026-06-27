@@ -2,6 +2,8 @@
 
 #include "MarkdownConvert.h"
 
+#include "Json/BoundedJsonParse.h"
+
 #include <nlohmann/json.hpp>
 
 #include <string>
@@ -18,8 +20,9 @@ LongTextRichKind ClassifyRichValue(const std::string& rich) {
     if (i >= rich.size())
         return LongTextRichKind::None;
     if (rich[i] == '{') {
-        const auto parsed = nlohmann::json::parse(rich, nullptr, false);
-        if (!parsed.is_discarded() && parsed.is_object() && parsed.value("type", std::string()) == "doc") {
+        std::string parseErr;
+        const nlohmann::json parsed = smatchet::json_safe::ParseBounded(rich, parseErr);
+        if (parseErr.empty() && parsed.is_object() && parsed.value("type", std::string()) == "doc") {
             return LongTextRichKind::Adf;
         }
     }
@@ -36,7 +39,11 @@ std::string ComputeLongTextSeed(LongTextRichKind kind, const std::string& rich, 
     switch (kind) {
     case LongTextRichKind::Adf: {
         try {
-            const auto adf = nlohmann::json::parse(rich);
+            std::string parseErr;
+            const nlohmann::json adf = smatchet::json_safe::ParseBounded(rich, parseErr);
+            if (!parseErr.empty()) {
+                return strippedFallback;
+            }
             return MarkdownConvert::AdfToMarkdown(adf, &outDroppedAdfNodeTypes);
         } catch (...) {
             return strippedFallback;

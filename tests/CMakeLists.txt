@@ -565,6 +565,10 @@ add_executable(SmatchetTests
     # audit H2 — pure POSIX secret-at-rest loose-permission decision (IsLooseConfigFileMode,
     # defined in ConfigManager_PathUtils.cpp which is already linked below). No extra .cpp.
     Core/ConfigSecretFilePerms.test.cpp
+    # audit H2 follow-up — AtomicWriteTextFile POSIX hardening (O_NOFOLLOW + fchmod 0600), the
+    # filesystem-bound write path (public static in ConfigManager_PathUtils.cpp, already linked
+    # below). POSIX assertions run on the Linux ctest jobs; the round-trip runs everywhere. No extra .cpp.
+    Core/ConfigAtomicWriteSecurity.test.cpp
     # security backlog 2026-05-17 — pure CR/LF/NUL strip for header-bound config fields
     # (SanitizeConfigStringValue, defined in ConfigManager_PathUtils.cpp linked below). No extra .cpp.
     Core/ConfigStringSanitize.test.cpp
@@ -641,6 +645,11 @@ add_executable(SmatchetTests
     # guards (Success/ToWireJson/ToJson/BuildJsonSchema). Links Command.cpp, which
     # is already pulled into this rig below for the scenario-registry tests.
     Core/CommandResultBoxing.test.cpp
+    # Path-confinement leaf (Source/Core/include/Commands/PathConfinement.h) —
+    # header-only; pins ConfinePathUnderBase / ConfinePathUnderSubdir traversal
+    # rejections + the symlinked-subdir escape regression from the security-audit
+    # MCP file-command confinement. No extra .cpp source.
+    Core/PathConfinement.test.cpp
     Core/DictationInsertionRouter.test.cpp
     Core/AiAssistantInputSeedDecision.test.cpp
     Core/AiAssistantSendButton.test.cpp

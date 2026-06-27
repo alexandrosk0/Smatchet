@@ -229,6 +229,19 @@ void Enqueue(Op op) {
     s.cv.notify_one();
 }
 
+void EnqueueAppendAndTrim(AiMessage message, std::size_t messageIndex, int maxRowsCfg) {
+    Op appendOp;
+    appendOp.kind = OpKind::Append;
+    appendOp.message = std::move(message);
+    appendOp.messageIndex = messageIndex;
+    Enqueue(std::move(appendOp));
+
+    Op trimOp;
+    trimOp.kind = OpKind::Trim;
+    trimOp.trimCap = static_cast<std::size_t>(maxRowsCfg > 0 ? maxRowsCfg : 500);
+    Enqueue(std::move(trimOp));
+}
+
 } // namespace chat_persist
 } // namespace ai
 } // namespace smatchet
