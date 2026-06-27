@@ -475,18 +475,39 @@ smatchet::cmd::CommandResult AcquireTranscribeOnceAudio(const nlohmann::json& ar
                                               "transcribe-once --file must be a .wav file");
             }
         }
-        // Bound the read: a diagnostic WAV is small; reject an oversized file before it is
-        // slurped into memory and uploaded.
+        // Fail closed before the file can reach the cloud path: require a regular file
+        // (not a fifo/device/dir) and a successful stat. A diagnostic WAV is small, so a
+        // stat error or oversize is rejected rather than silently allowed through.
+        std::error_code typeEc;
+        if (!ghc::filesystem::is_regular_file(resolvedPath, typeEc) || typeEc) {
+            return CommandResult::Failure(ErrorCode::ValidationError,
+                                          "transcribe-once --file must be a regular .wav file");
+        }
         std::error_code sizeEc;
         const auto fileSize = ghc::filesystem::file_size(resolvedPath, sizeEc);
         constexpr std::uintmax_t kMaxTranscribeWavBytes = 256ull * 1024ull * 1024ull;
-        if (!sizeEc && fileSize > kMaxTranscribeWavBytes) {
+        if (sizeEc) {
+            return CommandResult::Failure(ErrorCode::ValidationError,
+                                          "transcribe-once --file could not be statted");
+        }
+        if (fileSize > kMaxTranscribeWavBytes) {
             return CommandResult::Failure(ErrorCode::ValidationError,
                                           "transcribe-once --file exceeds the 256 MiB limit");
         }
         std::string err;
         if (!ReadWavFile(resolvedPath, outWav, err)) {
             return CommandResult::Failure(ErrorCode::HandlerError, err);
+        }
+        // Confirm the RIFF/WAVE container so a non-audio file merely renamed `.wav`
+        // cannot be shipped to the cloud transcription endpoint.
+        const bool hasWavMagic =
+            outWav.size() >= 12 && outWav[0] == static_cast<std::uint8_t>('R') &&
+            outWav[1] == static_cast<std::uint8_t>('I') && outWav[2] == static_cast<std::uint8_t>('F') &&
+            outWav[3] == static_cast<std::uint8_t>('F') && outWav[8] == static_cast<std::uint8_t>('W') &&
+            outWav[9] == static_cast<std::uint8_t>('A') && outWav[10] == static_cast<std::uint8_t>('V') &&
+            outWav[11] == static_cast<std::uint8_t>('E');
+        if (!hasWavMagic) {
+            return CommandResult::Failure(ErrorCode::ValidationError, "transcribe-once --file is not a WAV file");
         }
         outOk = true;
         return CommandResult::Success(nlohmann::json::object());

@@ -89,14 +89,48 @@ inline bool ConfinePathUnderSubdir(const std::string& baseDir, const std::string
         errOut = "no base directory configured for confinement";
         return false;
     }
-    const fs::path subBase = fs::path(baseDir) / subdir;
     std::error_code ec;
+    // Anchor the subdir to the canonical user-data dir so the base itself can't be
+    // redirected through a symlink before we ever look at the candidate.
+    fs::path canonBase = fs::weakly_canonical(fs::path(baseDir), ec);
+    if (ec) {
+        canonBase = fs::path(baseDir).lexically_normal();
+        ec.clear();
+    }
+
+    const fs::path subBase = canonBase / subdir;
     fs::create_directories(subBase, ec); // idempotent; ignore "already exists"
     if (ec && !fs::exists(subBase)) {
         errOut = "could not create confinement directory";
         return false;
     }
-    return ConfinePathUnderBase(subBase.string(), candidate, resolvedOut, errOut);
+    // Reject a symlinked subdir: if <base>/<subdir> is a symlink, its target could
+    // point outside the user-data root, and ConfinePathUnderBase would then resolve
+    // (and accept) candidates relative to that escaped target. Require a real dir.
+    ec.clear();
+    if (fs::is_symlink(subBase, ec)) {
+        errOut = "confinement directory must not be a symlink";
+        return false;
+    }
+    ec.clear();
+    if (!fs::is_directory(subBase, ec) || ec) {
+        errOut = "confinement directory is not a directory";
+        return false;
+    }
+    // Defense-in-depth: the canonical subdir must still sit under the canonical base
+    // (catches a symlinked ancestor component too).
+    ec.clear();
+    fs::path canonSub = fs::weakly_canonical(subBase, ec);
+    if (ec) {
+        canonSub = subBase.lexically_normal();
+        ec.clear();
+    }
+    const fs::path rel = canonSub.lexically_relative(canonBase);
+    if (rel.empty() || rel.begin()->string() == "..") {
+        errOut = "confinement directory escapes the allowed base directory";
+        return false;
+    }
+    return ConfinePathUnderBase(canonSub.string(), candidate, resolvedOut, errOut);
 }
 
 } // namespace cmd
