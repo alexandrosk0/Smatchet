@@ -1451,6 +1451,17 @@ void ApplyOverridesAndClamps(const ConfigManager::CliOverrides& cli, TrackerConf
         std::string s(envMcpRemote);
         cfg.McpAllowRemote = (s == "true" || s == "1");
     }
+    // SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK — opt out of the tokenless-loopback
+    // 401 (McpRequireTokenOnLoopback default ON, #1566). Mirrors the
+    // SMATCHET_MCP_ALLOW_REMOTE escape-hatch precedent: anything but "true"/"1"
+    // disables. Used by single-tenant CI runners that --spawn an ephemeral child
+    // and drive it over loopback MCP without provisioning a token; on a throwaway
+    // runner "any local process" is just the CI job itself, so the defence the
+    // default adds (a co-resident process reaching the registry) does not apply.
+    if (const char* envReqTok = std::getenv("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK")) {
+        std::string s(envReqTok);
+        cfg.McpRequireTokenOnLoopback = (s == "true" || s == "1");
+    }
 
     // Route SMATCHET_TRACKER_TOKEN / SMATCHET_TRACKER_BASE_URL to the active backend's cfg slots.
     RouteTrackerEnvCredentials(cfg);

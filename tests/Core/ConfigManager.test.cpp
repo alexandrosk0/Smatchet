@@ -286,6 +286,42 @@ TEST_CASE("ConfigManager CLI overrides win over env vars on Load") {
     ConfigManager::InvalidateCache();
 }
 
+TEST_CASE("ConfigManager SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK env override") {
+    smatchet_tests::TestEnvGuard env;
+
+    // Default ON (#1566 security hardening): without the env var the loopback
+    // token requirement stays true.
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().McpRequireTokenOnLoopback == true);
+
+    // env "false" disables it — the CI --spawn unblock path. Anything but
+    // "true"/"1" disables (mirrors SMATCHET_MCP_ALLOW_REMOTE parse).
+#if defined(_WIN32)
+    ::_putenv_s("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK", "false");
+#else
+    ::setenv("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK", "false", 1);
+#endif
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().McpRequireTokenOnLoopback == false);
+
+    // env "true" keeps it on.
+#if defined(_WIN32)
+    ::_putenv_s("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK", "true");
+#else
+    ::setenv("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK", "true", 1);
+#endif
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().McpRequireTokenOnLoopback == true);
+
+    // Cleanup.
+#if defined(_WIN32)
+    ::_putenv_s("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK", "");
+#else
+    ::unsetenv("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK");
+#endif
+    ConfigManager::InvalidateCache();
+}
+
 // --- Save/Load round-trip regression net for the field-registration-table refactor. -------
 //
 // decompose-top-20-monoliths § ConfigManager::Load/Save. These are the
