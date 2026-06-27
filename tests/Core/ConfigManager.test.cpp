@@ -289,13 +289,26 @@ TEST_CASE("ConfigManager CLI overrides win over env vars on Load") {
 TEST_CASE("ConfigManager SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK env override") {
     smatchet_tests::TestEnvGuard env;
 
+    // The CI --spawn workflows export SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK=false
+    // at job scope, so the var is already present when this test runs in CI.
+    // Clear it explicitly before the "default ON" assertion so we test the real
+    // compiled default, not the inherited CI override. (TestEnvGuard does NOT
+    // touch this env var — the final Cleanup block below is what restores a
+    // clean environment for later cases.)
+#if defined(_WIN32)
+    ::_putenv_s("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK", "");
+#else
+    ::unsetenv("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK");
+#endif
+
     // Default ON (#1566 security hardening): without the env var the loopback
     // token requirement stays true.
     ConfigManager::InvalidateCache();
     CHECK(ConfigManager::Load().McpRequireTokenOnLoopback == true);
 
-    // env "false" disables it — the CI --spawn unblock path. Anything but
-    // "true"/"1" disables (mirrors SMATCHET_MCP_ALLOW_REMOTE parse).
+    // env "false" disables it — the CI --spawn unblock path. This flag gates
+    // UNAUTHENTICATED loopback MCP access, so it parses fail-closed: only an
+    // explicit "false"/"0" disables it.
 #if defined(_WIN32)
     ::_putenv_s("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK", "false");
 #else
@@ -309,6 +322,17 @@ TEST_CASE("ConfigManager SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK env override") {
     ::_putenv_s("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK", "true");
 #else
     ::setenv("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK", "true", 1);
+#endif
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().McpRequireTokenOnLoopback == true);
+
+    // Fail-closed: a malformed value is NOT treated as "false" — it preserves
+    // the secure default (true). Locks the #1566 hardening against a typo
+    // silently dropping the loopback token requirement.
+#if defined(_WIN32)
+    ::_putenv_s("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK", "garbage");
+#else
+    ::setenv("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK", "garbage", 1);
 #endif
     ConfigManager::InvalidateCache();
     CHECK(ConfigManager::Load().McpRequireTokenOnLoopback == true);
