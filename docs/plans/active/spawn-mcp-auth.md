@@ -22,7 +22,7 @@ CI builds the `pull_request` **merge ref** (head + develop), so every PR's
 `--spawn` gates inherited the broken default the moment #1566 landed on develop.
 
 ### Second root cause — PathConfinement rejects the perf harness's absolute `--outPath`
-#1566 also added `Source/Core/include/Commands/PathConfinement.h` and wired it
+PR #1566 also added `Source/Core/include/Commands/PathConfinement.h` and wired it
 into `ScenarioRunner.cpp`: a caller-supplied `scenario.run --outPath` is now
 confined under `<userDataDir>/perf/` via `ConfinePathUnderSubdir`, which
 **rejects absolute paths and `..` traversal** (candidate MUST be relative).

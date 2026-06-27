@@ -155,8 +155,9 @@ except Exception as e:
     sys.stderr.write('scenario.run --spawn: stdout is not valid JSON: %s\n' % e)
     sys.exit(1)
 data = env.get('data')
-if not isinstance(data, dict) or not data.get('rows'):
-    sys.stderr.write('scenario.run --spawn: envelope has no data.rows\n')
+rows = data.get('rows') if isinstance(data, dict) else None
+if not isinstance(data, dict) or not isinstance(rows, list) or not rows:
+    sys.stderr.write('scenario.run --spawn: envelope has no non-empty data.rows list\n')
     sys.exit(1)
 with open(sys.argv[1], 'w', encoding='utf-8') as f:
     json.dump(data, f)
