@@ -19,7 +19,7 @@ done**. Corrected per-slice status (evidence = current-tree `file:line`):
 | **P1.3** Touch cell editors | ❌ **Not started** (the spike-first, highest-risk slice) | `kMobileInlineEditBuild=true` on Android (`TicketFieldEditor.cpp:71–73`) + `SingleClickToEditGridCells` default-on exist, but **no long-press detector** (`SmatchetAndroidImeBridge.cpp`) and **no touch Save/Cancel affordance** for the four combo/modal editors. |
 | **P1.4** Attachments | ✅ **Shipped** (decode cross-platform) | `SmatchetImageTextureCache.cpp:139–157` (`DecodeWithStb`, no `_WIN32` guard) + renderer-agnostic `RegisterUserTexture`; thumbnails enabled globally. **Residual:** the *optional* Win32-only bitmap thumbnail-to-file at `SmatchetAttachmentPreviewUi.cpp:112` (low priority). |
 | **P1.5** Multi-backend | ✅ **Shipped this PR** | `ITrackerBackend` abstraction + Jira / Plane / GitHub / Linear all in Core; the missing piece — a touch-first backend picker — now ships: `DrawTrackerBackendSelection` (`SmatchetPreferencesUi.cpp:234`) forks on `d.effectiveUiMode == EffectiveUiMode::Mobile` to render the four backends as full-width `ImGui::Selectable` rows (the drawer page-list touch idiom) instead of the tiny desktop `ImGui::Combo`, writing the **same** `d.trackerTypeBuf` so `DrawTrackerBackendConfig` + the multi-backend layer are inherited unchanged (a widget swap, not new backend code). |
-| **P1.6** Accessibility | ✅ **Research shipped 2026-06-20**; **accent-contrast fix shipped this PR** | Research: [`docs/mobile/PHASE1_ACCESSIBILITY_RESEARCH.md`](../../mobile/PHASE1_ACCESSIBILITY_RESEARCH.md) + Pillar-4 backlog [`debt/2026-06-20-mobile-accessibility-pillar4.md`](../../self-improvement/categories/debt/2026-06-20-mobile-accessibility-pillar4.md). **Code fix (this PR):** `SmatchetTheme.cpp::ApplySmatchetDark` accent darkened `(0.35,0.55,0.95)`→`(0.26,0.42,0.72)` (Finding 3, white-on-fill 2.90→4.67:1 AA, on-dark 3.16:1 UI-floor); doctest pin `tests/Core/SmatchetThemeAccentContrast.test.cpp`. **ModernDark follow-up shipped (stacked PR):** `ApplyModernDark` accent darkened `(0.45,0.65,0.95)`→its own `(0.29,0.42,0.62)` (dimmer Text needs a darker shade than SmatchetDark's; 2.12→4.61:1 AA, on-dark 3.16:1) — test now 4 cases / 36 assertions. |
+| **P1.6** Accessibility | ✅ **Research shipped 2026-06-20**; **accent-contrast fix shipped this PR** | Research: [`docs/mobile/PHASE1_ACCESSIBILITY_RESEARCH.md`](../../mobile/PHASE1_ACCESSIBILITY_RESEARCH.md) + Pillar-4 backlog [`debt/2026-06-20-mobile-accessibility-pillar4.md`](../../self-improvement/categories/debt/2026-06-20-mobile-accessibility-pillar4.md). **Code fix (this PR):** `SmatchetTheme.cpp::ApplySmatchetDark` accent darkened `(0.35,0.55,0.95)`→`(0.26,0.42,0.72)` (Finding 3, white-on-fill 2.90→4.67:1 AA, on-dark 3.16:1 UI-floor); doctest pin `tests/Core/SmatchetThemeAccentContrast.test.cpp`. **ModernDark follow-up shipped (stacked PR):** `ApplyModernDark` accent darkened `(0.45,0.65,0.95)`→its own `(0.29,0.42,0.62)` (dimmer Text needs a darker shade than SmatchetDark's; 2.12→4.61:1 AA, on-dark 3.16:1) — test now 4 cases / 43 assertions (all 14 re-tinted slots pinned RGBA). |
 
 **Residual P1.0 finding — ✅ SHIPPED 2026-06-20:** the Android plaintext-token warning at
 `SmatchetPreferencesUi.cpp` (now line 275) was guarded `#if !defined(_WIN32)`, so it still told
@@ -351,9 +351,11 @@ _(per-slice)_
   (≥4.5 AA-normal) and **accent-on-WindowBg 6.86:1 → 3.16:1** (≥3.0 UI-floor). 14 accent slots swapped (alphas
   preserved); `SliderGrabActive`→`(0.39,0.52,0.67)` keeps the +.10,+.10,+.05 step; `TabActive` `(0.28,0.38,0.55)`
   (separate desaturated blue, 5.34:1 white-on-tab) and the low-alpha `AiUserBubbleBg` tint left untouched.
-  `SmatchetThemeAccentContrast.test.cpp` extended (now **4 cases / 36 assertions, SUCCESS**) with two ModernDark
+  `SmatchetThemeAccentContrast.test.cpp` extended (now **4 cases / 43 assertions, SUCCESS**) with two ModernDark
   cases incl. a regression guard pinning that the SmatchetDark `(0.26,0.42,0.72)` shade fails AA on ModernDark's
-  dimmer Text (the documented reason the two themes carry different shades).
+  dimmer Text (the documented reason the two themes carry different shades). **Post-review (CR finding, 2026-06-27):**
+  the ModernDark literal-shade case was widened from 8 RGB-only slots to **all 14 re-tinted slots pinned RGBA**
+  (new `ApproxEqRgba` helper) so an omitted-slot OR an alpha-flatten regression can't slip through.
 - **P1.6 — golden-image-approval: no golden regenerated; surfaced for human verdict (2026-06-24).** This
   restyles the default `SmatchetDark` accent, so the three bucket-C goldens (`dock-gap-sentinel`,
   `command-palette-fuzzy`, `code-syntax-coloring`) **would** diff where an active tab / selected-row /
@@ -538,8 +540,15 @@ _(per-slice)_
     (`== (0.29,0.42,0.62)`, SliderGrabActive `(0.39,0.52,0.67)` one step brighter, `CHECK_FALSE` it equals
     the SmatchetDark shade) + the dual-floor WCAG pin (`Approx(4.610)/(3.160).epsilon(0.01)`, regression
     guards that BOTH the old `(0.45,0.65,0.95)` AND the shared `(0.26,0.42,0.72)` fail AA on ModernDark text).
-    Full file: **4 cases / 36 assertions, 0 failed (SUCCESS)** under `ninja-test-msvc`; CI Coverage/Test lane
+    Full file: **4 cases / 43 assertions, 0 failed (SUCCESS)** under `ninja-test-msvc`; CI Coverage/Test lane
     is the authoritative backstop.
+  - **Post-review fixes (2026-06-27, clearing the merge wedge):** (1) CR flagged the ModernDark literal-shade
+    case as under-covering the changed surface (8 RGB-only slots of 14) — widened to **all 14 re-tinted slots
+    pinned RGBA** via a new `ApproxEqRgba` helper, plus a `TabActive` guard (the separate desaturated blue must
+    NOT collapse onto the accent), so omitted-slot AND alpha-flatten regressions are both caught (36→43
+    assertions). (2) `comment-commented-out-code` false-positive on the AI-palette comment (a prose line ended
+    in `;`, read as a statement) — reworded to drop the trailing `;`. (3) Rebased onto current `develop`
+    (`d6e39900`) — the branch was 7 days behind. All three were real reds; no override label used.
   - **Perf** — zero hot-path delta. Color-literal-only change inside `ApplyModernDark` (runs once per
     theme-apply, never per frame); identical assignment count + codegen shape, different constants.
   - **Lint** — `Source/Core/src/Ui/` is the Light/ungated zone; no strict-zone file touched.

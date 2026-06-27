@@ -263,8 +263,8 @@ void ApplyModernDark(ImGuiStyle& /*style*/, ImVec4* colors) {
     // C++ syntax palette — same family as SmatchetDark; ModernDark only repaints chrome.
     SetSyntaxColors(SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId::ModernDark));
     // AI palette — AiUserBubbleBg is a low-alpha (0.18) accent-blue tint, NOT an
-    // opaque fill, so it stays the brighter pre-darken blue (separately AA-fine);
-    // the chrome accent above darkened to (0.29,0.42,0.62) for opaque-fill contrast.
+    // opaque fill, so it stays the brighter pre-darken blue (separately AA-fine)
+    // while the chrome accent above darkened to (0.29,0.42,0.62) for opaque fills.
     const SmatchetThemeAiColors ai = {
         {0.45f, 0.65f, 0.95f, 0.18f}, // AiUserBubbleBg — accent-blue tint, 0.18 alpha
         {0.55f, 0.75f, 1.00f, 1.00f}, // AiUserRoleLabel

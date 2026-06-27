@@ -55,6 +55,13 @@ bool ApproxEqRgb(const ImVec4& a, float r, float g, float b) {
     return std::fabs(a.x - r) <= 1e-5f && std::fabs(a.y - g) <= 1e-5f && std::fabs(a.z - b) <= 1e-5f;
 }
 
+// RGBA-exact variant: alpha matters for the chrome slots that share the accent
+// RGB at different opacities (Separator / ResizeGrip / Tab / Docking / selection),
+// so a re-tint can't silently flatten an alpha without a test catching it.
+bool ApproxEqRgba(const ImVec4& a, float r, float g, float b, float alpha) {
+    return ApproxEqRgb(a, r, g, b) && std::fabs(a.w - alpha) <= 1e-5f;
+}
+
 } // namespace
 
 TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetDark accent literal is the AA-fixed shade") {
@@ -118,23 +125,36 @@ TEST_CASE_FIXTURE(ImGuiCtxFixture, "ModernDark accent literal is its own AA-fixe
     const ImVec4* colors = ImGui::GetStyle().Colors;
 
     // Every slot that used the old (0.45,0.65,0.95) accent now carries the
-    // ModernDark-specific (0.29,0.42,0.62), each keeping its original alpha.
-    CHECK(ApproxEqRgb(colors[ImGuiCol_CheckMark], 0.29f, 0.42f, 0.62f));
-    CHECK(ApproxEqRgb(colors[ImGuiCol_SliderGrab], 0.29f, 0.42f, 0.62f));
-    CHECK(ApproxEqRgb(colors[ImGuiCol_ButtonActive], 0.29f, 0.42f, 0.62f));
-    CHECK(ApproxEqRgb(colors[ImGuiCol_HeaderActive], 0.29f, 0.42f, 0.62f));
-    CHECK(ApproxEqRgb(colors[ImGuiCol_SeparatorActive], 0.29f, 0.42f, 0.62f));
-    CHECK(ApproxEqRgb(colors[ImGuiCol_NavHighlight], 0.29f, 0.42f, 0.62f));
-    CHECK(ApproxEqRgb(colors[ImGuiCol_TextSelectedBg], 0.29f, 0.42f, 0.62f));
-    CHECK(ApproxEqRgb(colors[ImGuiCol_DockingPreview], 0.29f, 0.42f, 0.62f));
+    // ModernDark-specific (0.29,0.42,0.62). Pinned with full RGBA across ALL 13
+    // re-tinted slots so neither an omitted slot NOR an alpha drift can slip
+    // through — the alpha-varying chrome (Separator / ResizeGrip / Tab / Docking /
+    // TextSelectedBg) is exactly what a naive re-tint would silently flatten.
+    CHECK(ApproxEqRgba(colors[ImGuiCol_CheckMark], 0.29f, 0.42f, 0.62f, 1.00f));
+    CHECK(ApproxEqRgba(colors[ImGuiCol_SliderGrab], 0.29f, 0.42f, 0.62f, 1.00f));
+    CHECK(ApproxEqRgba(colors[ImGuiCol_ButtonActive], 0.29f, 0.42f, 0.62f, 1.00f));
+    CHECK(ApproxEqRgba(colors[ImGuiCol_HeaderActive], 0.29f, 0.42f, 0.62f, 1.00f));
+    CHECK(ApproxEqRgba(colors[ImGuiCol_SeparatorHovered], 0.29f, 0.42f, 0.62f, 0.78f));
+    CHECK(ApproxEqRgba(colors[ImGuiCol_SeparatorActive], 0.29f, 0.42f, 0.62f, 1.00f));
+    CHECK(ApproxEqRgba(colors[ImGuiCol_ResizeGrip], 0.29f, 0.42f, 0.62f, 0.20f));
+    CHECK(ApproxEqRgba(colors[ImGuiCol_ResizeGripHovered], 0.29f, 0.42f, 0.62f, 0.67f));
+    CHECK(ApproxEqRgba(colors[ImGuiCol_ResizeGripActive], 0.29f, 0.42f, 0.62f, 0.95f));
+    CHECK(ApproxEqRgba(colors[ImGuiCol_TabHovered], 0.29f, 0.42f, 0.62f, 0.80f));
+    CHECK(ApproxEqRgba(colors[ImGuiCol_DockingPreview], 0.29f, 0.42f, 0.62f, 0.70f));
+    CHECK(ApproxEqRgba(colors[ImGuiCol_TextSelectedBg], 0.29f, 0.42f, 0.62f, 0.35f));
+    CHECK(ApproxEqRgba(colors[ImGuiCol_NavHighlight], 0.29f, 0.42f, 0.62f, 1.00f));
 
-    // SliderGrabActive keeps the one-step-brighter (+.10,+.10,+.05) relationship.
-    CHECK(ApproxEqRgb(colors[ImGuiCol_SliderGrabActive], 0.39f, 0.52f, 0.67f));
+    // SliderGrabActive keeps the one-step-brighter (+.10,+.10,+.05) relationship, opaque.
+    CHECK(ApproxEqRgba(colors[ImGuiCol_SliderGrabActive], 0.39f, 0.52f, 0.67f, 1.00f));
     CHECK(colors[ImGuiCol_SliderGrabActive].x > colors[ImGuiCol_SliderGrab].x);
     CHECK(colors[ImGuiCol_SliderGrabActive].y > colors[ImGuiCol_SliderGrab].y);
     CHECK(colors[ImGuiCol_SliderGrabActive].z > colors[ImGuiCol_SliderGrab].z);
 
-    // The two shades must be distinct — ModernDark is darker on blue than SmatchetDark.
+    // TabActive is a SEPARATE desaturated blue (0.28,0.38,0.55), NOT the accent —
+    // guard that the re-tint did not collapse it onto the accent shade.
+    CHECK(ApproxEqRgb(colors[ImGuiCol_TabActive], 0.28f, 0.38f, 0.55f));
+    CHECK_FALSE(ApproxEqRgb(colors[ImGuiCol_TabActive], 0.29f, 0.42f, 0.62f));
+
+    // The two accent shades must be distinct — ModernDark is darker on blue than SmatchetDark.
     CHECK_FALSE(ApproxEqRgb(colors[ImGuiCol_ButtonActive], 0.26f, 0.42f, 0.72f));
 }
 
