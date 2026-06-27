@@ -262,6 +262,7 @@ const FieldDesc<bool> kBoolFields[] = {
     {"mcp_enabled", &TrackerConfig::McpEnabled},
     {"mcp_allow_remote", &TrackerConfig::McpAllowRemote},
     {"mcp_allow_lua_execution", &TrackerConfig::McpAllowLuaExecution},
+    {"mcp_require_token_on_loopback", &TrackerConfig::McpRequireTokenOnLoopback},
     {"show_mcp_server_window", &TrackerConfig::ShowMcpServerWindow},
     {"annotate_allow_custom_commands", &TrackerConfig::AnnotateAllowCustomCommands},
     {"assistant_panel_open", &TrackerConfig::AssistantPanelOpen},

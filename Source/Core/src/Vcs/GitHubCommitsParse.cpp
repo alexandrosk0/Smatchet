@@ -1,6 +1,7 @@
 #include "Vcs/GitHubCommitsParse.h"
 
 #include "Logger.h"
+#include "Json/BoundedJsonParse.h"
 
 #include <nlohmann/json.hpp>
 
@@ -21,8 +22,9 @@ std::string FirstLineOf(const std::string& s) {
 
 std::vector<VcsSubmission> ParseGitHubCommitListJson(const std::string& body) {
     std::vector<VcsSubmission> rows;
-    const nlohmann::json parsed = nlohmann::json::parse(body, nullptr, false);
-    if (parsed.is_discarded() || !parsed.is_array()) {
+    std::string parseErr;
+    const nlohmann::json parsed = smatchet::json_safe::ParseBounded(body, parseErr);
+    if (!parseErr.empty() || !parsed.is_array()) {
         return rows;
     }
     rows.reserve(parsed.size());

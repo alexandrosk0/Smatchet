@@ -2,6 +2,7 @@
 
 #include "ConfigManager.h"
 #include "Logger.h"
+#include "Json/BoundedJsonParse.h"
 
 #include <algorithm>
 #include <cctype>
@@ -358,11 +359,11 @@ nlohmann::json LoadAndMigrateRootLocked() {
     if (inf) {
         std::string text((std::istreambuf_iterator<char>(inf)), std::istreambuf_iterator<char>());
         if (!text.empty()) {
-            try {
-                rootOnDisk = nlohmann::json::parse(text);
-            } catch (const std::exception& ex) {
+            std::string parseErr;
+            rootOnDisk = smatchet::json_safe::ParseBounded(text, parseErr);
+            if (!parseErr.empty()) {
                 LOG_WARN("FieldCatalogCache: ignoring unreadable cache, wiping to fresh v%d: %s",
-                         kFieldCatalogCacheSchemaVersion, ex.what());
+                         kFieldCatalogCacheSchemaVersion, parseErr.c_str());
                 rootOnDisk = nlohmann::json::object();
             }
         }

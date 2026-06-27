@@ -12,6 +12,7 @@
 #include "AppController.h"
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
+#include "Commands/PathConfinement.h"
 #include "ConfigManager.h"
 #include "DictationInsertionRouter.h"
 #include "GlobalHotkey_Win32.h"
@@ -37,11 +38,14 @@
 // this reach.
 #include "imgui_internal.h"
 
+// SMATCHET_DEVIATION(rule=duplication; reason=standard-library + json/filesystem include block overlaps the McpPlugin include block; include lists are not factorable behind a helper and a shared umbrella header would couple two independent plugins; owner=security-audit; revisit=2026-09-30)
 #include <nlohmann/json.hpp>
 
 #include <ghc/filesystem.hpp>
 
+#include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <fstream>
@@ -448,9 +452,62 @@ smatchet::cmd::CommandResult AcquireTranscribeOnceAudio(const nlohmann::json& ar
 
     const std::string filePath = args.value("file", std::string());
     if (!filePath.empty()) {
+        // SECURITY: `file` is caller-supplied and whisper.transcribe-once is reachable
+        // from the MCP command surface. Confine the read under a dedicated
+        // <userData>/whisper-import/ subdir — not the user-data root, which holds
+        // smatchet_config.json and other state a caller has no business exfiltrating to
+        // the cloud transcription endpoint. transcribe-once is a smoke/diagnostic path,
+        // so a dedicated import directory is the right blast radius.
+        std::string resolvedPath, confineErr;
+        if (!smatchet::cmd::ConfinePathUnderSubdir(ConfigManager::GetUserDataDirectory(), "whisper-import", filePath,
+                                                   resolvedPath, confineErr)) {
+            return CommandResult::Failure(ErrorCode::ValidationError,
+                                          "transcribe-once --file rejected: " + confineErr);
+        }
+        // Only accept .wav — ReadWavFile expects PCM WAV, and refusing other extensions
+        // keeps a caller from coaxing the diagnostic path into shipping arbitrary bytes.
+        {
+            std::string ext = ghc::filesystem::path(resolvedPath).extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(),
+                           [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            if (ext != ".wav") {
+                return CommandResult::Failure(ErrorCode::ValidationError,
+                                              "transcribe-once --file must be a .wav file");
+            }
+        }
+        // Fail closed before the file can reach the cloud path: require a regular file
+        // (not a fifo/device/dir) and a successful stat. A diagnostic WAV is small, so a
+        // stat error or oversize is rejected rather than silently allowed through.
+        std::error_code typeEc;
+        if (!ghc::filesystem::is_regular_file(resolvedPath, typeEc) || typeEc) {
+            return CommandResult::Failure(ErrorCode::ValidationError,
+                                          "transcribe-once --file must be a regular .wav file");
+        }
+        std::error_code sizeEc;
+        const auto fileSize = ghc::filesystem::file_size(resolvedPath, sizeEc);
+        constexpr std::uintmax_t kMaxTranscribeWavBytes = 256ull * 1024ull * 1024ull;
+        if (sizeEc) {
+            return CommandResult::Failure(ErrorCode::ValidationError,
+                                          "transcribe-once --file could not be statted");
+        }
+        if (fileSize > kMaxTranscribeWavBytes) {
+            return CommandResult::Failure(ErrorCode::ValidationError,
+                                          "transcribe-once --file exceeds the 256 MiB limit");
+        }
         std::string err;
-        if (!ReadWavFile(filePath, outWav, err)) {
+        if (!ReadWavFile(resolvedPath, outWav, err)) {
             return CommandResult::Failure(ErrorCode::HandlerError, err);
+        }
+        // Confirm the RIFF/WAVE container so a non-audio file merely renamed `.wav`
+        // cannot be shipped to the cloud transcription endpoint.
+        const bool hasWavMagic =
+            outWav.size() >= 12 && outWav[0] == static_cast<std::uint8_t>('R') &&
+            outWav[1] == static_cast<std::uint8_t>('I') && outWav[2] == static_cast<std::uint8_t>('F') &&
+            outWav[3] == static_cast<std::uint8_t>('F') && outWav[8] == static_cast<std::uint8_t>('W') &&
+            outWav[9] == static_cast<std::uint8_t>('A') && outWav[10] == static_cast<std::uint8_t>('V') &&
+            outWav[11] == static_cast<std::uint8_t>('E');
+        if (!hasWavMagic) {
+            return CommandResult::Failure(ErrorCode::ValidationError, "transcribe-once --file is not a WAV file");
         }
         outOk = true;
         return CommandResult::Success(nlohmann::json::object());

@@ -8,6 +8,7 @@
 #include "AppController.h"
 #include "Commands/Scenarios/IScenario.h"
 #include "ConfigManager.h"
+#include "Json/BoundedJsonParse.h"
 #include "SmatchetDefaults.h"
 
 #include <nlohmann/json.hpp>
@@ -143,13 +144,13 @@ nlohmann::json SafeObject(const nlohmann::json& j, const char* key) {
 
 /// Try to parse a JSON document; returns true on success.
 bool SafeParseJson(const std::string& text, nlohmann::json& out) {
-    try {
-        out = nlohmann::json::parse(text);
-        return true;
-    } catch (...) { // catch-all-ok: malformed JSON -> empty object + false return
+    std::string parseErr;
+    out = smatchet::json_safe::ParseBounded(text, parseErr);
+    if (!parseErr.empty()) {
         out = nlohmann::json::object();
         return false;
     }
+    return true;
 }
 
 /// Build a canonical error envelope without ever throwing.
@@ -622,12 +623,18 @@ bool TryAppendLiveCatalogToHelp(std::FILE* out, const std::string& host, int por
     if (!res || res->status < 200 || res->status >= 300)
         return false;
     try {
-        const auto parsed = nlohmann::json::parse(res->body);
+        std::string parseErr;
+        const auto parsed = smatchet::json_safe::ParseBounded(res->body, parseErr);
+        if (!parseErr.empty())
+            return false;
         if (!parsed.contains("content") || !parsed["content"].is_array() || parsed["content"].empty() ||
             !parsed["content"][0].contains("text")) {
             return false;
         }
-        const auto envelope = nlohmann::json::parse(parsed["content"][0]["text"].get<std::string>());
+        std::string envErr;
+        const auto envelope = smatchet::json_safe::ParseBounded(parsed["content"][0]["text"].get<std::string>(), envErr);
+        if (!envErr.empty())
+            return false;
         if (!envelope.value("ok", false))
             return false;
         const auto items = envelope["data"]["items"];
@@ -958,7 +965,22 @@ int SpawnAndRunHandleAsync(const ParsedArgs& pa, httplib::Client& cli, const std
         content.append(buf, n);
     std::fclose(f);
     try {
-        const nlohmann::json fileData = nlohmann::json::parse(content);
+        std::string parseErr;
+        const nlohmann::json fileData = smatchet::json_safe::ParseBounded(content, parseErr);
+        if (!parseErr.empty()) {
+            nlohmann::json errEnv;
+            errEnv["ok"] = false;
+            errEnv["command"] = commandName;
+            errEnv["error"] = {{"code", "handler-error"},
+                               {"message", "--spawn: result file is not valid JSON: " + outPath}};
+            EmitErrorToStderr(errEnv);
+            // Send app.quit on THIS failure path too (mirrors the timeout + file-read
+            // branches above) — honour the documented invariant at this function's header that
+            // every failure path quits the spawned app. Omitting it orphaned the ephemeral
+            // instance (TCP port held) whenever the result file existed but wasn't valid JSON.
+            PostAppQuitBestEffort(cli);
+            return kExitHandler;
+        }
         const bool captureRequested = SafeBool(fileData, "captureRequested", false);
         const std::string screenshotPath = SafeString(fileData, "screenshotPath");
         if (captureRequested && !screenshotPath.empty()) {
@@ -979,10 +1001,6 @@ int SpawnAndRunHandleAsync(const ParsedArgs& pa, httplib::Client& cli, const std
         errEnv["error"] = {{"code", "handler-error"},
                            {"message", "--spawn: result file is not valid JSON: " + outPath}};
         EmitErrorToStderr(errEnv);
-        // #671: send app.quit on THIS failure path too (mirrors the timeout + file-read
-        // branches above) — honour the documented invariant at this function's header that
-        // every failure path quits the spawned app. Omitting it orphaned the ephemeral
-        // instance (TCP port held) whenever the result file existed but wasn't valid JSON.
         PostAppQuitBestEffort(cli);
         return kExitHandler;
     }
@@ -1164,9 +1182,21 @@ static int RunAsyncScenarioInProcess(standalone::BootstrapContext& boot, const s
     }
     std::fclose(f);
     try {
+        std::string parseErr;
+        nlohmann::json scenarioData = smatchet::json_safe::ParseBounded(content, parseErr);
+        if (!parseErr.empty()) {
+            nlohmann::json errEnv;
+            errEnv["ok"] = false;
+            errEnv["command"] = toolName;
+            errEnv["error"] = {{"code", "handler-error"},
+                               {"message", "Scenario result file is not valid JSON: " + outPath}};
+            EmitErrorToStderr(errEnv);
+            standalone::Shutdown(boot);
+            return kExitHandler;
+        }
         envelope["ok"] = true;
         envelope["command"] = toolName;
-        envelope["data"] = nlohmann::json::parse(content);
+        envelope["data"] = std::move(scenarioData);
     } catch (...) { // catch-all-ok: malformed scenario file → handler-error envelope below
         nlohmann::json errEnv;
         errEnv["ok"] = false;
@@ -1465,18 +1495,20 @@ int RunCmdAttachDispatch(const ParsedArgs& pa, const std::string& host, int port
     }
 
     nlohmann::json parsed;
-    try {
-        parsed = nlohmann::json::parse(res->body);
-    } catch (const std::exception& e) {
-        nlohmann::json env;
-        env["ok"] = false;
-        env["command"] = toolName;
-        env["error"] = {
-            {"code", "handler-error"},
-            {"message", std::string("Could not parse MCP response: ") + e.what()},
-        };
-        EmitErrorToStderr(env);
-        return kExitTransport;
+    {
+        std::string parseErr;
+        parsed = smatchet::json_safe::ParseBounded(res->body, parseErr);
+        if (!parseErr.empty()) {
+            nlohmann::json env;
+            env["ok"] = false;
+            env["command"] = toolName;
+            env["error"] = {
+                {"code", "handler-error"},
+                {"message", std::string("Could not parse MCP response: ") + parseErr},
+            };
+            EmitErrorToStderr(env);
+            return kExitTransport;
+        }
     }
 
     try {

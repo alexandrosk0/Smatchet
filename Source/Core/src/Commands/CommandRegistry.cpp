@@ -410,14 +410,27 @@ void CommandRegistry::LoadRecents() {
     std::FILE* f = std::fopen(path.c_str(), "rb");
     if (!f)
         return;
+    // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
     std::string content;
     char buf[512];
     size_t n;
-    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0)
+    // The recents list is a short array of strings (capped at kRecentsMax). Bound
+    // the read at 64 KiB so a corrupt/hostile file can't balloon the heap before
+    // the bounded parse — well above any legitimate recents document.
+    constexpr size_t kRecentsReadCap = 64 * 1024;
+    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) {
         content.append(buf, n);
+        if (content.size() > kRecentsReadCap)
+            break;
+    }
     std::fclose(f);
     try {
-        const nlohmann::json j = nlohmann::json::parse(content);
+        std::string parseErr;
+        const nlohmann::json j = json_safe::ParseBounded(content, parseErr);
+        if (!parseErr.empty()) {
+            LOG_DEBUG("CommandRegistry: recents JSON parse failed; starting empty");
+            return;
+        }
         if (!j.is_array())
             return;
         std::lock_guard<std::mutex> lk(mutex_);

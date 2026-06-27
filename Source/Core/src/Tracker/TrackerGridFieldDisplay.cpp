@@ -530,6 +530,8 @@ ProgressRenderModel BuildProgressRenderModel(const std::string& currentValue) {
                 }
                 int val = 0;
                 while (i < trimmed.size() && std::isdigit(static_cast<unsigned char>(trimmed[i]))) {
+                    if (val >= 100000000) // clamp before *10 — avoid signed int overflow (UB) on oversized input
+                        break;
                     val = val * 10 + (trimmed[i] - '0');
                     i++;
                 }

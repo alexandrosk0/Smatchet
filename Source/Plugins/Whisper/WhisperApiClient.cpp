@@ -4,6 +4,7 @@
 #include "WhisperApiClient.h"
 
 #include "AiErrorRedact.h"
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "NetworkUsageTracker.h"
 
@@ -72,11 +73,13 @@ bool ParseWhisperResponse(const std::string& jsonBody,
         outError = "empty response body";
         return false;
     }
-    nlohmann::json parsed;
-    try {
-        parsed = nlohmann::json::parse(jsonBody);
-    } catch (const std::exception& e) {
-        outError = std::string("malformed JSON response: ") + e.what();
+    // The transcription response is a remote body; parse it through the depth/node-bounded
+    // helper so a hostile / oversized payload can't crash the process. ParseBounded never
+    // throws; failure is a non-empty parseErr (stable, input-free message).
+    std::string parseErr;
+    nlohmann::json parsed = smatchet::json_safe::ParseBounded(jsonBody, parseErr);
+    if (!parseErr.empty()) {
+        outError = std::string("malformed JSON response: ") + parseErr;
         return false;
     }
     if (!parsed.is_object()) {

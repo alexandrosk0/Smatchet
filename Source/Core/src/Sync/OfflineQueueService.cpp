@@ -10,6 +10,7 @@
 #include "ITrackerIssueMutations.h"
 #include "ITrackerIssueReader.h"
 #include "ISyncCache.h"
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "MarkdownConvert.h"
 #include "OfflineFieldConflictPolicy.h"
@@ -50,8 +51,9 @@ std::string SanitizeOfflineQueueDetail(std::string s) {
 // redaction pass leaves this already-redacted object unchanged. On the (not-expected) parse
 // failure we emit a placeholder rather than the raw string, so we never leak an unredacted draft.
 nlohmann::json MakeAuditDraft(const std::string& payload) {
-    nlohmann::json parsed = nlohmann::json::parse(payload, nullptr, false);
-    if (parsed.is_discarded()) {
+    std::string parseErr;
+    nlohmann::json parsed = smatchet::json_safe::ParseBounded(payload, parseErr);
+    if (!parseErr.empty()) {
         return nlohmann::json{{"redaction_error", "draft payload not parseable for audit redaction"}};
     }
     return BackendAuditTrail::RedactJson(parsed);
@@ -131,8 +133,9 @@ std::string RichToMarkdown(const std::string& rich) {
     const size_t i = FirstNonWhitespace(rich);
     if (i < rich.size() && rich[i] == '{') {
         try {
-            auto j = nlohmann::json::parse(rich);
-            if (j.is_object() && j.value("type", std::string()) == "doc")
+            std::string parseErr;
+            auto j = smatchet::json_safe::ParseBounded(rich, parseErr);
+            if (parseErr.empty() && j.is_object() && j.value("type", std::string()) == "doc")
                 return MarkdownConvert::AdfToMarkdown(j);
         } catch (...) {
             // catch-all-ok: malformed/partial rich JSON falls through to return the
@@ -625,10 +628,13 @@ void OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::s
                     return;
                 }
                 nlohmann::json newPayload;
-                try {
-                    newPayload = nlohmann::json::parse(row.FieldsPayloadJson);
-                } catch (...) { // catch-all-ok: malformed stored payload → rebuild from the key
-                    newPayload = nlohmann::json::object();
+                {
+                    // Malformed stored payload → rebuild from the key.
+                    std::string parseErr;
+                    newPayload = smatchet::json_safe::ParseBounded(row.FieldsPayloadJson, parseErr);
+                    if (!parseErr.empty()) {
+                        newPayload = nlohmann::json::object();
+                    }
                 }
                 std::string payloadKey = row.FieldId;
                 if (!newPayload.contains(payloadKey)) {
@@ -1123,19 +1129,21 @@ void OfflineQueueService::ReplayOneFieldEdit(const PendingFieldEditRecord& row, 
     }
 
     nlohmann::json fieldsPayload;
-    try {
-        fieldsPayload = nlohmann::json::parse(row.FieldsPayloadJson);
-    } catch (const std::exception& ex) {
-        const std::string terminal =
-            FormatOfflineQueueTerminalLine("offline_field_replay", "parse_payload", "malformed_json", ex.what());
-        if (RunFieldEditCacheMutation(
-                "archive_pending_field_edit_malformed", row.Id,
-                [&]() { cache->ArchivePendingFieldEdit(row.Id, "malformed_json", terminal); }, tally)) {
-            ++tally.Archived;
-        } else {
-            ++tally.Failures;
+    {
+        std::string parseErr;
+        fieldsPayload = smatchet::json_safe::ParseBounded(row.FieldsPayloadJson, parseErr);
+        if (!parseErr.empty()) {
+            const std::string terminal =
+                FormatOfflineQueueTerminalLine("offline_field_replay", "parse_payload", "malformed_json", parseErr);
+            if (RunFieldEditCacheMutation(
+                    "archive_pending_field_edit_malformed", row.Id,
+                    [&]() { cache->ArchivePendingFieldEdit(row.Id, "malformed_json", terminal); }, tally)) {
+                ++tally.Archived;
+            } else {
+                ++tally.Failures;
+            }
+            return;
         }
-        return;
     }
 
     tally.RanUpdate = true;

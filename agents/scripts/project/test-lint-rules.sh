@@ -810,7 +810,7 @@ compute_unused_under_config_guard_violations() {
     for f in "${files[@]}"; do scan_unused_under_config_guard_file "$f"; done
 }
 
-# bare-json-parse-untrusted — WARN-first over UNTRUSTED-INGRESS first-party .cpp TUs.
+# bare-json-parse-untrusted — BLOCKING over UNTRUSTED-INGRESS first-party .cpp TUs.
 # A bare `nlohmann::json::parse(` (or `json::parse(`) on an UNTRUSTED ingress payload that does
 # NOT route through smatchet::json_safe::ParseBounded is a DoS vector: the recursive parser
 # stack-overflows on a deeply-nested payload ("[[[[...]]]]") BEFORE any try/catch can fire (issues
@@ -827,15 +827,14 @@ compute_unused_under_config_guard_violations() {
 # `nlohmann::json::parse(..., nullptr, false)` (the non-throwing 3-arg form) STILL builds the full
 # DOM and STILL stack-overflows on depth, so the 3-arg form is NOT an escape — only ParseBounded is.
 #
-# WARN-FIRST / ADVISORY (calibration phase, mirrors the `duplication` + `unused-symbol-under-config-
-# guard` + `interface-doc` gates; never touches $rc) and scoped to the curated ingress set. A
+# BLOCKING (sets $rc=1; graduated from WARN-first after the SECURITY_AUDIT.md ParseBounded sweep
+# cleared the backlog) and scoped to the curated ingress set. A
 # `// SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; ...)` above the parse suppresses (e.g. a
-# parse of a value the program itself just serialised, not external bytes). Graduates to blocking
-# once the FP rate is calibrated low (same path as the DRY dup gate).
+# parse of a value the program itself just serialised, not external bytes).
 #
 # The curated untrusted-ingress TU basename set. KEEP IN SYNC with the ParseBounded callers + the
 # transport ingress clients; extend when a NEW trust-boundary TU is added.
-BARE_JSON_INGRESS_TUS='McpPlugin|CommandRegistry|CliCommandRunner|AnthropicClient|OpenAiClient|AiNdjsonParser|SmatchetMergeWatchNotifyServer|AttachmentAppUpdateService|BugReportService'
+BARE_JSON_INGRESS_TUS='McpPlugin|CommandRegistry|CliCommandRunner|AnthropicClient|OpenAiClient|AiNdjsonParser|SmatchetMergeWatchNotifyServer|AttachmentAppUpdateService|BugReportService|JiraIssueSearch|JiraIssueMutation|JiraUserAndMeta|PlaneActivityFeed|LinearIssueSearch|GitHubActivityFeed|GitHubCommitsParse|FieldCatalogCache|OfflineQueueService|SmatchetImGuiHost|SmatchetOfflineQueueUi|TicketFieldEditorLongTextPure|ConfigManager_PathUtils|TrackerGridFieldDisplay|WhisperApiClient'
 
 scan_bare_json_parse_file() {
     # $1 = a first-party .cpp file whose basename is in the curated ingress set. Emits
@@ -1631,13 +1630,14 @@ case "$MODE" in
         fi
     fi
 
-    # --- bare-json-parse-untrusted (curated untrusted-ingress .cpp TUs; WARN-first) ---
+    # --- bare-json-parse-untrusted (curated untrusted-ingress .cpp TUs; BLOCKING) ---
     # A bare nlohmann::json::parse( on an untrusted ingress payload (CLI / MCP / Lua / HTTP / network
     # response) that does NOT route through smatchet::json_safe::ParseBounded stack-overflows the
     # recursive parser on a deeply-nested payload BEFORE any try/catch can fire (issues #1271/#1287).
     # The 3-arg non-throwing form (..., nullptr, false) still builds the DOM and still overflows, so
-    # only ParseBounded escapes. WARN-FIRST / ADVISORY (calibration; never touches $rc), scoped to the
-    # curated ingress TU set (BARE_JSON_INGRESS_TUS). A SMATCHET_DEVIATION(rule=bare-json-parse-
+    # only ParseBounded escapes. BLOCKING (sets $rc=1; graduated from WARN-first after the
+    # SECURITY_AUDIT.md ParseBounded sweep cleared the backlog), scoped to the curated ingress TU set
+    # (BARE_JSON_INGRESS_TUS). A SMATCHET_DEVIATION(rule=bare-json-parse-
     # untrusted; ...) above the parse suppresses (e.g. parsing bytes the program itself serialised).
     # Diff-scoped to the CHANGED ingress TUs (mirrors the unused-symbol WARN): the real tree carries
     # a known residual of pre-existing bare-ingress parses (the ParseBounded migration is incremental);
@@ -1656,12 +1656,13 @@ case "$MODE" in
     fi
     if [ -n "$barejson_out" ]; then
         {
-            echo "[bare-json-parse-untrusted] WARN: a bare nlohmann::json::parse( appears in an untrusted-ingress TU without routing through smatchet::json_safe::ParseBounded — a deeply-nested payload stack-overflows the recursive parser before any try/catch can fire (#1271/#1287). Advisory (calibration); not blocking:"
+            echo "[bare-json-parse-untrusted] FAIL: a bare nlohmann::json::parse( appears in an untrusted-ingress TU without routing through smatchet::json_safe::ParseBounded — a deeply-nested payload stack-overflows the recursive ~json DOM teardown before any try/catch can fire (#1271/#1287). Blocking (graduated from WARN-first after the SECURITY_AUDIT.md ParseBounded sweep cleared the backlog):"
             printf '%s\n' "$barejson_out" | sed 's/^/  /'
             echo "  Route the ingress decode through smatchet::json_safe::ParseBounded(text, errOut[, maxBytes]) (#include \"Json/BoundedJsonParse.h\")."
             echo "  If the bytes are program-internal (not external input): add"
             echo "  // SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; reason=...; owner=...; revisit=...) above the parse."
         } >&2
+        rc=1
     fi
 
     # --- pr-numbered-temporal-comments (CHANGED first-party C++ comments; WARN-first) ---

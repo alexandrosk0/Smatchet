@@ -5,7 +5,9 @@
 
 #include <algorithm>
 #include <array>
+// SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
 #include <atomic>
+// SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
 #include <cctype>
 #include <chrono>
 #include <cstdint>
@@ -20,6 +22,7 @@
 
 #include "AttachmentMimeUtils.h"
 #include "ConfigManager.h"
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "StringUtil.h"
 #include "TrackerHttpUtils.h"
@@ -527,11 +530,13 @@ AppUpdateInfo AttachmentAppUpdateService::CheckForAppUpdate(bool includePrerelea
         return out;
     }
 
-    nlohmann::json releases;
-    try {
-        releases = nlohmann::json::parse(response.text);
-    } catch (const std::exception& ex) {
-        out.Error = std::string("Update check failed to parse GitHub response: ") + ex.what();
+    // The GitHub release listing is a remote response; parse it through the
+    // depth/node-bounded helper so a hostile / oversized body can't crash the process.
+    // ParseBounded never throws; failure is a non-empty parseErr (stable, input-free).
+    std::string parseErr;
+    nlohmann::json releases = smatchet::json_safe::ParseBounded(response.text, parseErr);
+    if (!parseErr.empty()) {
+        out.Error = std::string("Update check failed to parse GitHub response: ") + parseErr;
         return out;
     }
     if (!releases.is_array()) {

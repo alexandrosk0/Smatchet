@@ -1,6 +1,7 @@
 #include "Commands/Scenarios/IScenario.h"
 
 #include "Commands/Command.h"
+#include "Commands/PathConfinement.h"
 #include "ConfigManager.h"
 #include "Logger.h"
 #include "UiPerfMonitor.h"
@@ -54,8 +55,19 @@ CommandResult ScenarioRunner::Start(const std::string& name, const nlohmann::jso
         fs::create_directories(fs::path(userDataDir + "perf"), ec);
         char ts[64] = {};
         std::time_t t = std::time(nullptr);
-        std::strftime(ts, sizeof(ts), "%Y%m%d-%H%M%S", std::localtime(&t));
+        if (const std::tm* lt = std::localtime(&t)) // null-check: localtime can fail; strftime(nullptr) is UB
+            std::strftime(ts, sizeof(ts), "%Y%m%d-%H%M%S", lt);
         outPath = userDataDir + "perf/" + name + "-" + ts + ".json";
+    } else {
+        // SECURITY: a caller-supplied outPath is untrusted (MCP/CLI/Lua can invoke
+        // scenario.run). Confine it under the dedicated <userData>/perf/ subdir (matching
+        // the default branch above) — not the user-data root, which holds
+        // smatchet_config.json — so it cannot write or clobber an arbitrary file.
+        std::string resolved, confineErr;
+        if (!ConfinePathUnderSubdir(ConfigManager::GetUserDataDirectory(), "perf", outPath, resolved, confineErr)) {
+            return CommandResult::Failure(ErrorCode::ValidationError, "scenario.run outPath rejected: " + confineErr);
+        }
+        outPath = resolved;
     }
     outPath_ = std::move(outPath);
     frame_ = 0;

@@ -35,6 +35,7 @@
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "GridContextDepsAdapter.h"
+#include "Json/BoundedJsonParse.h"
 #include "Commands/CommandRegistry.h"
 #include "Commands/Scenarios/IScenario.h"
 #include "ConfigManager.h"
@@ -1053,8 +1054,13 @@ void SmatchetImGuiHost::DrainCommandQueue(std::size_t maxCount) {
         try {
             nlohmann::json args = nlohmann::json::object();
             if (!req.ArgsJson.empty()) {
-                args = nlohmann::json::parse(req.ArgsJson);
-                if (!args.is_object()) {
+                std::string parseErr;
+                args = smatchet::json_safe::ParseBounded(req.ArgsJson, parseErr);
+                if (!parseErr.empty()) {
+                    resultJson = MakeCommandFailureResultJson(
+                        req.CommandName, smatchet::cmd::ErrorCode::ValidationError,
+                        std::string("Command arguments must be valid JSON: ") + parseErr, std::string(), req.DryRun);
+                } else if (!args.is_object()) {
                     resultJson = MakeCommandFailureResultJson(
                         req.CommandName, smatchet::cmd::ErrorCode::ValidationError,
                         "Command arguments must be a JSON object.", std::string(), req.DryRun);
@@ -1073,8 +1079,11 @@ void SmatchetImGuiHost::DrainCommandQueue(std::size_t maxCount) {
                 resultJson = result.ToWireJson(req.CommandName, req.DryRun).dump();
             }
         } catch (const std::exception& ex) {
-            resultJson = MakeCommandFailureResultJson(req.CommandName, smatchet::cmd::ErrorCode::ValidationError,
-                                                      std::string("Command arguments must be valid JSON: ") + ex.what(),
+            // ParseBounded never throws (failures surface via parseErr above), so any
+            // exception reaching here came from Dispatch/ToWireJson — a handler-side
+            // failure, not malformed arguments. Report it as such.
+            resultJson = MakeCommandFailureResultJson(req.CommandName, smatchet::cmd::ErrorCode::HandlerError,
+                                                      std::string("Command dispatch failed: ") + ex.what(),
                                                       std::string(), req.DryRun);
         } catch (...) { // catch-all-ok: unknown command failure is returned as JSON.
             resultJson = MakeCommandFailureResultJson(req.CommandName, smatchet::cmd::ErrorCode::HandlerError,

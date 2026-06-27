@@ -782,20 +782,37 @@ long long ParseWorkDurationToSeconds(const std::string& input) {
             break;
         }
 
+        // Clamp to a sane upper bound: a tracker-supplied worklog string with a huge
+        // magnitude would otherwise make `number * <unit multiplier>` and the running
+        // `total` signed-overflow (UB). 1e9 units is far beyond any real duration and
+        // keeps every product (max multiplier 144000) well inside long long.
+        constexpr long long kMaxDurationUnits = 1000000000LL;
+        if (number > kMaxDurationUnits)
+            number = kMaxDurationUnits;
+
         if (pos >= s.size())
             break;
         char u = s[pos++];
+        long long addend = 0;
         if (u == 'w' || u == 'W') {
-            total += number * 5 * 8 * 60 * 60;
+            addend = number * 5 * 8 * 60 * 60;
         } else if (u == 'd' || u == 'D') {
-            total += number * 8 * 60 * 60;
+            addend = number * 8 * 60 * 60;
         } else if (u == 'h' || u == 'H') {
-            total += number * 60 * 60;
+            addend = number * 60 * 60;
         } else if (u == 'm' || u == 'M') {
-            total += number * 60;
+            addend = number * 60;
         } else {
             break;
         }
+        // Saturating add: clamping each `number` bounds a single addend, but a worklog
+        // string with thousands of tokens could still overflow the running `total`. Cap it
+        // at a ceiling far beyond any real duration so the accumulation can never wrap (UB).
+        constexpr long long kMaxTotalSeconds = 1000000000000000LL; // ~31.7 million years
+        if (total > kMaxTotalSeconds - addend)
+            total = kMaxTotalSeconds;
+        else
+            total += addend;
     }
     return total;
 }
@@ -985,7 +1002,21 @@ std::string NormalizeTrackerObjectValue(const nlohmann::json& value) {
 
 } // namespace
 
+// Depth-bounded recursion. Field values are tracker-HTTP-sourced; with the upstream
+// bounded parse the DOM is already <=256 deep, but this guard keeps the walker safe
+// even if a value arrives from a not-yet-migrated parse path (defense-in-depth,
+// matches json_safe::kDefaultMaxDepth). On cap we drop the deep subtree (return
+// empty) rather than recurse — Pillar 3 graceful degradation.
+static std::string NormalizeTrackerFieldValueDepth(const nlohmann::json& value, int depth);
+
 std::string NormalizeTrackerFieldValue(const nlohmann::json& value) {
+    return NormalizeTrackerFieldValueDepth(value, 0);
+}
+
+static std::string NormalizeTrackerFieldValueDepth(const nlohmann::json& value, int depth) {
+    if (depth > 256) {
+        return std::string(); // depth cap reached — stop recursing
+    }
     if (value.is_null()) {
         return std::string();
     }
@@ -1012,7 +1043,7 @@ std::string NormalizeTrackerFieldValue(const nlohmann::json& value) {
     if (value.is_array()) {
         std::vector<std::string> parts;
         for (const auto& item : value) {
-            const std::string normalized = NormalizeTrackerFieldValue(item);
+            const std::string normalized = NormalizeTrackerFieldValueDepth(item, depth + 1);
             if (!normalized.empty()) {
                 parts.push_back(normalized);
             }

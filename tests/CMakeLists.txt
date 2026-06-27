@@ -641,6 +641,11 @@ add_executable(SmatchetTests
     # guards (Success/ToWireJson/ToJson/BuildJsonSchema). Links Command.cpp, which
     # is already pulled into this rig below for the scenario-registry tests.
     Core/CommandResultBoxing.test.cpp
+    # Path-confinement leaf (Source/Core/include/Commands/PathConfinement.h) —
+    # header-only; pins ConfinePathUnderBase / ConfinePathUnderSubdir traversal
+    # rejections + the symlinked-subdir escape regression from the security-audit
+    # MCP file-command confinement. No extra .cpp source.
+    Core/PathConfinement.test.cpp
     Core/DictationInsertionRouter.test.cpp
     Core/AiAssistantInputSeedDecision.test.cpp
     Core/AiAssistantSendButton.test.cpp

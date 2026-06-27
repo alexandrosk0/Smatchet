@@ -6,6 +6,7 @@
 #include "StringUtil.h"
 #include "PlaneIssueMappingPure.h"
 #include "TrackerHttpUtils.h"
+#include "Json/BoundedJsonParse.h"
 
 #include <cpr/cpr.h>
 
@@ -66,12 +67,17 @@ void ScanIssueActivities(const std::string& listBase, const std::string& issueId
                      static_cast<long>(activityResp.status_code), TruncateForLog(issueKey, 40).c_str());
             return;
         }
-        nlohmann::json activityPayload;
-        try {
-            activityPayload = nlohmann::json::parse(activityResp.text);
-        } catch (const std::exception& ex) {
+        std::string parseErr;
+        nlohmann::json activityPayload = smatchet::json_safe::ParseBounded(activityResp.text, parseErr);
+        if (!parseErr.empty()) {
             LOG_WARN("PlaneClient: activities parse error issue=%s: %s", TruncateForLog(issueKey, 40).c_str(),
-                     ex.what());
+                     parseErr.c_str());
+            return;
+        }
+        // json::value(key, default) throws type_error on a non-object; a hostile
+        // payload could be a top-level array/scalar, so guard before reading "results".
+        if (!activityPayload.is_object()) {
+            LOG_WARN("PlaneClient: activities payload not an object issue=%s", TruncateForLog(issueKey, 40).c_str());
             return;
         }
         std::vector<TrackerActivityEntry> entries =
@@ -151,13 +157,20 @@ PlaneClient::FetchUserActivity(const TrackerConfig& cfg, const std::string& acco
             }
             return FeedResult::Err(TrackerErrorFromHttpStatus(resp.status_code, outError));
         }
-        nlohmann::json listPayload;
-        try {
-            listPayload = nlohmann::json::parse(resp.text);
-        } catch (const std::exception& ex) {
-            outError = std::string("activity discovery parse error: ") + ex.what();
+        std::string parseErr;
+        // SMATCHET_DEVIATION(rule=duplication; reason=ParseBounded + parseErr-check + is_object guard is the shared bounded-ingress shape surfaced across independent tracker clients by the security sweep; de-duping into a shared helper would couple unrelated Jira/Plane subsystems and is DRY-CRITICAL to avoid; owner=security-audit; revisit=2026-09-30)
+        nlohmann::json listPayload = smatchet::json_safe::ParseBounded(resp.text, parseErr);
+        if (!parseErr.empty()) {
+            outError = std::string("activity discovery parse error: ") + parseErr;
             LOG_ERROR("PlaneClient: %s", outError.c_str());
             return FeedResult::Err(TrackerErrorParse(outError));
+        }
+        // json::value(key, default) throws type_error on a non-object; guard the
+        // discovery payload the same way before reading "results".
+        if (!listPayload.is_object()) {
+            LOG_WARN("PlaneClient: activity discovery payload not an object account=%s",
+                     TruncateForLog(accountId, 40).c_str());
+            break;
         }
         const auto results = listPayload.value("results", nlohmann::json::array());
         if (results.is_array()) {

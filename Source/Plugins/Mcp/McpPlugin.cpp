@@ -95,6 +95,7 @@ struct McpPlugin::Impl {
     std::string tracker_domain;
     std::vector<std::string> export_fields;
     bool allow_lua_execution = false;
+    bool require_token_on_loopback = true;
     /// Path to the instance.json written by OnStart and deleted by OnStop.
     std::string instanceJsonPath;
 };
@@ -142,7 +143,8 @@ bool McpPlugin::NeedsRestart(const TrackerConfig& cfg) const {
     const std::string expectedBind =
         cfg.McpAllowRemote ? SmatchetDefaults::Mcp::kBindAny : SmatchetDefaults::Mcp::kBindLocalhost;
     return st.ListenPort != expectedPort || st.BindHost != expectedBind || !AuthTokenMatches(cfg.McpAuthToken) ||
-           !LuaExecutionEnabledMatches(cfg.McpAllowLuaExecution);
+           !LuaExecutionEnabledMatches(cfg.McpAllowLuaExecution) ||
+           (impl_ && impl_->require_token_on_loopback != cfg.McpRequireTokenOnLoopback);
 }
 
 bool McpPlugin::Authorize(const httplib::Request& req, httplib::Response& res) {
@@ -175,6 +177,20 @@ bool McpPlugin::Authorize(const httplib::Request& req, httplib::Response& res) {
                                                   " status=403 reason=localhost_only");
             return false;
         }
+        // Security hardening: a tokenless loopback server is reachable by ANY local
+        // process. With McpRequireTokenOnLoopback ON (default), deny rather than admit
+        // an unauthenticated local caller into the command registry. The operator opts
+        // back into the legacy behavior by setting McpRequireTokenOnLoopback=false.
+        if (impl_->require_token_on_loopback) {
+            res.status = 401;
+            res.set_header("WWW-Authenticate", "Token realm=\"Smatchet MCP\"");
+            res.set_content("MCP requires an auth token. Set mcp_auth_token, or set "
+                            "mcp_require_token_on_loopback=false to allow tokenless loopback access.",
+                            "text/plain");
+            AppendMcpActivityLine(impl_->app, std::string("MCP: auth denied remote=") + req.remote_addr +
+                                                  " status=401 reason=token_required_on_loopback");
+            return false;
+        }
         return true;
     }
     const auto token = req.get_header_value("X-Smatchet-Token");
@@ -201,6 +217,7 @@ void McpPlugin::OnStart(AppController& app) {
     impl_->bind_host = cfg.McpAllowRemote ? SmatchetDefaults::Mcp::kBindAny : SmatchetDefaults::Mcp::kBindLocalhost;
     impl_->auth_token = cfg.McpAuthToken;
     impl_->allow_lua_execution = cfg.McpAllowLuaExecution;
+    impl_->require_token_on_loopback = cfg.McpRequireTokenOnLoopback;
     impl_->tracker_domain = NormalizeDomain(cfg.Domain);
     if (cfg.McpExportFields.empty()) {
         impl_->export_fields = {
