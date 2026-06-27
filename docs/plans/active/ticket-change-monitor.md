@@ -2,7 +2,7 @@
 
 > **Slug**: `ticket-change-monitor` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `active` — S1 (S1a–S1c-3) + **S2 (#1501)** shipped; **S3 (Notification Center) in this PR**. Remaining before this plan flips to `shipped`: the deferred concrete backend `FetchIssuesChangedSince` / `FetchIssueKeysForView` / `ProbeIssueExists` overrides (Jira `expand=changelog`, GitHub, Plane — until then the default full-fetch fallback runs) and `FocusTicketInGrid` row-action wiring for ticket toasts. *(Status reconciled 2026-06-23: the implementation log had recorded S1 only; S2 had shipped via #1501 but was never logged here.)*
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules (plan-doc family, perf-gate section, scope-reduction sweep) and the Sync + Tracker leaf `AGENTS.md` files (strict lint zones).
 
@@ -217,6 +217,26 @@ S1c-3 lands the **reconcile** half of § Files-to-modify #10 on top of S1c-2's d
 
 The deferred concrete Jira `expand=changelog` HTTP override (with its `fields=*none` `FetchIssueKeysForView` + `GET /issue/{key}` `ProbeIssueExists` overrides) follows — until it lands, the defaulted `ProbeIssueExists=Ok(true)` keeps the reconcile on the non-destructive LeftView path (never a 404 cache delete).
 
+### S2 — toast-manager history ring + RowAction Push overload + open-center flag (#1501, logged retroactively 2026-06-23)
+Shipped via **#1501** but never recorded here (the log jumped from S1c-3 straight toward S3); back-filled during the 2026-06-23 status reconciliation. S2 is § Files-to-modify #13 — the toast-subsystem groundwork the Notification Center reads:
+
+- `Source/Core/include/Ui/ToastHistoryPure.h` *(new)* — the STL-only history core: `ToastType`, the optional per-entry `ToastRowAction`, `ToastHistoryEntry`, and `PushBoundedHistory` (bounded oldest-first eviction).
+- `Source/Core/include/Ui/SmatchetToast.h` + `src/Ui/SmatchetToast.cpp` *(modified)* — `SmatchetToastManager` records every `Push` into a bounded (~200) session history; a `Push(...)` overload takes an optional `ToastRowAction`; a clicked transient toast sets the open-center request; `History()` / `ClearHistory()` / `RequestOpenCenter()` / `ConsumeOpenCenterRequest()` exposed. Backward-compatible — existing call sites unchanged.
+- `tests/Core/ToastHistoryPure.test.cpp` *(new)* — bucket-A: bounded eviction + order + RowAction retention.
+
+### S3 — Notification Center window + View-menu item + `notifications` command (2026-06-23)
+S3 is § Files-to-modify #13a + the `notifications` half of #18, built on the S2 foundation (history ring + RowAction + open-center flag already present). The window is a generic toast-history log; the ticket-specific `FocusTicketInGrid` row action (§ Files-to-modify #11) is deferred — see § Deviations S3:
+
+- `Source/Core/include/Ui/NotificationCenterPure.h` *(new, header-only)* — pure row formatting: `ToastTypeShortLabel(ToastType)` + `FormatClockHMS(unixSeconds)` (UTC, deterministic), so the row text is bucket-A testable without a UI session.
+- `Source/Core/include/Ui/SmatchetNotificationCenterUi.h` + `src/Ui/SmatchetNotificationCenterUi.cpp` *(new)* — `SmatchetDrawNotificationCenterWindow(d)`: lists `SmatchetToastManager::History()` newest-first (timestamp · type tag · title · message), a *Clear all* button, and a per-row `Selectable` that captures the entry's `RowAction` and invokes it after `End()` (so an action that mutates the ring can't invalidate the iteration). Auto-compiled via the `CONFIGURE_DEPENDS` `Source/Core/src/*.cpp` glob — no CMake source edit.
+- `Source/Core/include/Ui/SmatchetUiSession.h` *(modified)* — `showNotificationCenterWindow` + `requestNotificationCenterFocus` flags.
+- `Source/Core/src/Ui/SmatchetUI.cpp` *(modified)* — in `drawSecondaryWindowsTail`: consume `ConsumeOpenCenterRequest()` (a clicked toast opens the center from any `Push` surface) → set the visibility flag → draw the window, wrapped in `SMATCHET_UI_PERF_SCOPE`.
+- `Source/Core/src/Ui/SmatchetUI_MainMenu.cpp` *(modified)* — a "Notifications" View-menu item.
+- `Source/Core/src/Commands/ViewToggleCommands.cpp` *(modified)* — the `notifications` command (show/hide/toggle) over the same visibility flag, surfaced across CLI / Palette / MCP / Lua via the unified registry.
+- `CLI_GUIDE.md` *(modified)* — `notifications` command row.
+- `tests/Core/NotificationCenterPure.test.cpp` *(new)* — bucket-A (7 cases): severity tags + HH:MM:SS formatting incl. pad / day-wrap / pre-epoch boundaries; registered in `tests/CMakeLists.txt`.
+- `tests/ui/notification_center.test.cpp` *(new)* — bucket-E: opens the center via the manager's open-center request (the toast-click path) and asserts the window renders its rows + *Clear all*, and that *Clear all* empties the ring; registered in `tests/ui/CMakeLists.txt` + `ui_tests_registry.cpp`.
+
 ## Deviations from plan
 *(populated per-slice as sub-PRs land)*
 
@@ -246,6 +266,11 @@ The deferred concrete Jira `expand=changelog` HTTP override (with its `fields=*n
 - **Probe cap: 25 vanished keys per cycle.** `ProbeIssueExists` is one GET per vanished key; a large membership drop is capped at `kMaxProbesPerCycle = 25` probes/cycle with the remainder logged and left in `RemovedKeys` for the next cycle to pick up. Bounds the per-cycle probe fan-out without losing rows.
 - **Destructive 404→Deleted path is inert until a concrete `ProbeIssueExists` override lands.** With the defaulted `ProbeIssueExists=Ok(true)` (S1b), every vanished key classifies as `stillExists=true` → `LeftView` (in-memory removal + toast, shared cache row kept). The `!stillExists && Cache` → `Cache->DeleteTicket` branch and the `Deleted` toast only fire once a backend overrides `ProbeIssueExists` to return false on a 404 (the deferred Jira `expand=changelog` slice). A probe *error* (not a clean false) also keeps `stillExists=true` — never destructive on an inconclusive probe.
 
+### S3
+- **`FocusTicketInGrid` (item 11) + ticket-toast `RowAction` binding deferred.** § Files-to-modify #11/#13a wire a clicked ticket row to focus the owning pane + row. There is no grid select-pane-and-row API today, and the S1c-2 notifier still uses the plain `Push` (toasts carry no `RowAction`), so center rows would be inert regardless. S3 ships the window with **generic** `RowAction` invocation (runs `entry.RowAction()` when present); `FocusTicketInGrid` + binding it onto ticket toasts rides a follow-up with the grid-selection plumbing. The window's core value — a newest-first chronological log of every toast with *Clear all* — is unaffected (§ Approach #5 already notes "others are informational").
+- **Window labels are plain English literals, not `SmatchetLocalization` keys.** Mirrors the existing `SmatchetDrawMcpServerWindow` precedent and deliberately avoids touching `Locales/*.json` (which would trip the AGENTS.md visual-validation exception). Localization can ride a later sweep.
+- **`notifications` registered via `ViewToggleCommands.cpp`'s `RegisterToggle`, not a bespoke handler.** The plan named a `notifications` command; reusing the view-toggle machinery gives show/hide/toggle + the focus latch for free and keeps it consistent with every other panel command.
+
 ## Verification (actual)
 *(populated per-slice as sub-PRs land)*
 
@@ -268,6 +293,12 @@ The deferred concrete Jira `expand=changelog` HTTP override (with its `fields=*n
 - **Bucket A**: no pure surface changed (the reconcile consumes the already-tested `RemovedKeys` / `ProbeIssueExists` default); the existing `MembershipDiffPure.test.cpp` covers `RemovedKeys`/`AddedKeys` and the full ticket-change-monitor subset stays green. No new doctest case is warranted (the new code is off-thread orchestration + cache mutation, not pure logic).
 - **Perf-gate (S1c-3)**: no new per-frame call site — the reconcile runs inside the *existing* off-thread `LaunchBackgroundTask` already gated by `ShouldPollForChanges`, adding one keys-only fetch + ≤25 probes per poll cycle (interval-gated, never per frame, never on the UI thread). The apply-side erase/republish is the same surgical `remove_if` + snapshot-republish the stale-delete path already runs. No new steady-state allocation. PR-fast CI scenario unchanged.
 - **Destructive path inert under the default backend**: with `ProbeIssueExists=Ok(true)`, the reconcile only ever produces non-destructive `LeftView` removals (in-memory + toast, shared cache row kept); the `Cache->DeleteTicket` 404 branch stays dormant until a concrete backend override lands. No manual/bucket-E coverage of the destructive branch is possible until then — called out in § Deviations S1c-3.
+
+### S3
+- **Bucket A**: `tests/Core/NotificationCenterPure.test.cpp` — 7 cases over `ToastTypeShortLabel` + `FormatClockHMS` (zero/pad/end-of-day/day-wrap/pre-epoch). The pure header compiles standalone under host clang `-std=c++14` and the assertions pass locally; registered in `tests/CMakeLists.txt` (the `check-test-list` guard passes).
+- **Bucket E**: `tests/ui/notification_center.test.cpp` — opens the center via `SmatchetToastManager::RequestOpenCenter()` (the toast-click path, consumed in `SmatchetUI::Draw`), asserts the window is live + `showNotificationCenterWindow` flipped, then asserts *Clear all* exists and empties the ring. Registered in `tests/ui/CMakeLists.txt` + `ui_tests_registry.cpp`. Runs in the MSVC UI-test CI lane (the local Mesa-GL lane cannot boot the exe in this environment).
+- **Lint gate**: `agents/scripts/project/test-lint-rules.sh --diff origin/develop` PASS. One `SMATCHET_DEVIATION(rule=duplication)` added above `SmatchetUI_MainMenu.cpp`'s includes — the dup gate flagged the two sibling UI TUs' shared `#include` list (a 73-token directive overlap, pre-existing on develop, surfaced only because both files are in this diff), not copy-pasted logic.
+- **Dual-target build + ctest**: deferred to CI's MSVC + DX12 lanes. This is a UI slice (not pure), but the remote Linux environment lacks the MSVC toolchain + FetchContent deps (SQLiteCpp/cpr/imgui), so a local app build was not possible; the new UI TU parses clean under host clang up to those third-party headers (no errors in first-party code). **Visual smoke not run** (no display in this environment) — the AGENTS.md visual-validation exception applies; bucket-E is the coverage artifact, and a human visual check of the window is recommended.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 1. flip § Status to `shipped`,

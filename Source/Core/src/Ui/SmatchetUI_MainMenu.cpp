@@ -8,6 +8,7 @@
 // consumers. Order matters: `imgui_internal.h` must be pulled BEFORE the
 // macro redefinition.
 
+// SMATCHET_DEVIATION(rule=duplication; reason=dup gate flags this TU's #include list as a clone of SmatchetUI.cpp's — sibling UI TUs sharing a common include set, both in this diff; directive overlap not copy-pasted logic; owner=ui; revisit=when the dup auditor scopes cross-file clones to logic blocks)
 #include "SmatchetUI.h"
 #include "AppController.h"
 #include "Commands/CommandPaletteUi.h"
@@ -575,6 +576,12 @@ void SmatchetUI::drawMenuBarViewWindowToggles(MainMenuDrawCtx& ctx) {
         d.showLogWindow = true;
         d.requestLogFocus = true;
         recentViews_.Touch("view.toggle.log");
+    }
+    if (ImGui::MenuItem("Notifications", MenuShortcut(ctx, "notifications", "").c_str(),
+                        d.showNotificationCenterWindow)) {
+        d.showNotificationCenterWindow = true;
+        d.requestNotificationCenterFocus = true;
+        recentViews_.Touch("notifications");
     }
     if (ImGui::MenuItem("Backend Audit", MenuShortcut(ctx, "view.toggle.backend_audit", "Ctrl+Shift+M").c_str(),
                         d.showAuditTrail)) {

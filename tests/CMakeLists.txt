@@ -949,6 +949,10 @@ add_executable(SmatchetTests
     # bounded oldest-first eviction + RowAction retention, the core of SmatchetToastManager::Push's
     # new history record. Pure STL (no ImGui), so it links in this pure block.
     Core/ToastHistoryPure.test.cpp
+    # ticket-change-monitor S3 — Notification Center row formatting (Ui/NotificationCenterPure.h,
+    # header-only): severity tag + UTC HH:MM:SS timestamp. Pure STL (no ImGui); the window body
+    # that consumes it is bucket-E (tests/ui/notification_center.test.cpp).
+    Core/NotificationCenterPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/Views.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetToast.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SmatchetLocalization.cpp"

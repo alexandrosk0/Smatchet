@@ -83,6 +83,8 @@ void OnOpenViewsDashboard(UiDrawSession& d) { d.requestViewsDashboardFocus = tru
 
 void OnOpenAuditTrail(UiDrawSession& d) { d.requestAuditTrailFocus = true; }
 
+void OnOpenNotificationCenter(UiDrawSession& d) { d.requestNotificationCenterFocus = true; }
+
 void OnOpenAnnotate(UiDrawSession& d) { d.showAnnotateAnalysis = true; }
 
 #if defined(SMATCHET_WITH_MCP)
@@ -107,6 +109,10 @@ void RegisterViewToggleCommands(CommandRegistry& reg, AppController& app) {
     RegisterToggle(reg, app, "view.toggle.source_annotate", "Annotate", &UiDrawSession::showAnnotateAnalysis,
                    &OnOpenAnnotate);
     RegisterToggle(reg, app, "view.toggle.log", "Log", &UiDrawSession::showLogWindow, nullptr);
+    // `notifications` (not view.toggle.*) — the plan-named ergonomic alias for the Notification
+    // Center; surfaces across CLI / Palette / MCP / Lua like every other view toggle.
+    RegisterToggle(reg, app, "notifications", "Notifications", &UiDrawSession::showNotificationCenterWindow,
+                   &OnOpenNotificationCenter, &UiDrawSession::requestNotificationCenterFocus);
     RegisterToggle(reg, app, "view.toggle.backend_audit", "Backend Audit", &UiDrawSession::showAuditTrail,
                    &OnOpenAuditTrail);
     RegisterToggle(reg, app, "view.toggle.performance", "Performance", &UiDrawSession::showPerformance, nullptr,
