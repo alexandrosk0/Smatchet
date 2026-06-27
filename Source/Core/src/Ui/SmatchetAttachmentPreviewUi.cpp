@@ -333,14 +333,19 @@ static bool DecodeImageFileToRgba32(const std::string& path, std::vector<unsigne
     int infoW = 0;
     int infoH = 0;
     int infoChannels = 0;
-    if (stbi_info_from_memory(fileBytes.data(), static_cast<int>(fileBytes.size()), &infoW, &infoH, &infoChannels) !=
+    // Fail closed: if the header can't be parsed we cannot enforce the decode budget before stbi_load
+    // allocates, so reject rather than decode an unbounded image. stbi_info and stbi_load take different
+    // code paths and can disagree, so a header that trips info must NOT silently skip the size gate.
+    if (stbi_info_from_memory(fileBytes.data(), static_cast<int>(fileBytes.size()), &infoW, &infoH, &infoChannels) ==
         0) {
-        const unsigned long long pixels =
-            static_cast<unsigned long long>(infoW) * static_cast<unsigned long long>(infoH);
-        if (infoW <= 0 || infoH <= 0 || pixels > kMaxThumbnailDecodePixels) {
-            outError = "Attachment image dimensions exceed the thumbnail decode budget.";
-            return false;
-        }
+        outError = "Attachment image header could not be read for the thumbnail decode budget check.";
+        return false;
+    }
+    const unsigned long long infoPixels =
+        static_cast<unsigned long long>(infoW) * static_cast<unsigned long long>(infoH);
+    if (infoW <= 0 || infoH <= 0 || infoPixels > kMaxThumbnailDecodePixels) {
+        outError = "Attachment image dimensions exceed the thumbnail decode budget.";
+        return false;
     }
 
     int w = 0;
@@ -353,6 +358,15 @@ static bool DecodeImageFileToRgba32(const std::string& path, std::vector<unsigne
             stbi_image_free(pix);
         }
         outError = "stb_image: attachment decode failed.";
+        return false;
+    }
+
+    // Defense in depth: the decoded dimensions can diverge from the header info path, so re-check the
+    // budget against the actual decode before the RGBA copy keeps the DoS guard intact.
+    const unsigned long long decodedPixels = static_cast<unsigned long long>(w) * static_cast<unsigned long long>(h);
+    if (decodedPixels > kMaxThumbnailDecodePixels) {
+        stbi_image_free(pix);
+        outError = "Attachment image dimensions exceed the thumbnail decode budget.";
         return false;
     }
 
