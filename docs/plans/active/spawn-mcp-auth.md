@@ -102,6 +102,14 @@ changes how the driver *captures* the scenario result (stdout envelope vs file),
 not what the scenario measures. The measured numbers come from the same
 `scenario.run` execution; only the transport of the result JSON changed.
 
+**PR B** touches **`Source/Plugins/Mcp/McpPlugin.cpp`** + **`Source/Standalone/CliCommandRunner.cpp`**
+— neither is `Source/Core/`, so the mandatory-Perf-gate trigger does not fire.
+Perf-inert regardless: the child change is one `std::getenv` + string compare in
+`McpPlugin::OnStart` (server boot, once per process, not a per-frame/per-command
+path); the parent change is token generation + an HTTP header on the `--spawn`
+CLI one-shot flow (never on the UI/render thread). No steady-state allocation,
+no grid/scroll/draw path. No perf scenario delta expected.
+
 ## Files to modify
 
 | File | Change | PR |
@@ -143,6 +151,26 @@ not what the scenario measures. The measured numbers come from the same
   default + `LOG_WARN`s the ignored value. (#3) corrected the test comment that
   falsely claimed `TestEnvGuard` restores the var. Added a `garbage`→default-true
   assertion locking fail-closed.
+- **2026-06-27 — PR B (product fix, branch `feat/spawn-mcp-token`)** — spawn
+  parent (`CliCommandRunner.cpp`) now provisions a per-spawn 128-bit token via
+  `std::random_device` (`SpawnAuthToken()`), injects it into the child env as
+  `SMATCHET_MCP_SPAWN_TOKEN` immediately before `CreateProcessA`/`execv` (Windows
+  branch clears it from the parent env unconditionally right after spawn; POSIX
+  sets it only in the forked child so the parent env is never touched), and sends
+  it as `X-Smatchet-Token` on every request (`set_default_headers` on the probe,
+  dispatch, async/sync result handlers, and `app.quit` teardown). Child
+  (`McpPlugin.cpp::OnStart`) adopts the env token as `auth_token` **only when
+  none is configured** — strengthens the secure-default child (empty→requires
+  this exact token), never overrides an operator token, never weakens the gate.
+  `WaitForMcpReady` now returns `enum McpReadyStatus {Ready,Timeout,AuthRejected}`
+  and **fast-fails on HTTP 401** instead of polling to the 30 s timeout
+  (a 401 on `/mcp/tools/call` unambiguously means token-rejected — Host/Origin
+  failures return 403). New hermetic regression test
+  `scripts/dev/test-spawn-mcp-default-auth.sh` (the test #1566 lacked): fresh
+  `SMATCHET_USER_DATA`, unsets the PR-A env opt-out, asserts `--spawn app.version`
+  returns `ok:true` under the compiled secure default. Build clean (596/596),
+  lint PASS, security-review verdict **SHIP** (no CRITICAL/HIGH; two optional LOW
+  hardening notes — see Deviations).
 
 ## Deviations
 
@@ -161,13 +189,40 @@ not what the scenario measures. The measured numbers come from the same
   `NormalizeOutPath` stops absolutizing now that the parent reads `data.outPath`)
   is deferred to **PR B**. `build-and-test.yml`'s `mobile-texture-guard` run
   passes no `--outPath` and is unaffected.
+- **PR B scope reduced — the `--outPath` PathConfinement contract threading is
+  deferred to a follow-up (PR C), NOT done in PR B.** The Files-to-modify row for
+  `CliCommandRunner.cpp` originally tagged PR B with "thread confined `--outPath`
+  contract for all `--spawn` callers." That was split off to keep PR B's
+  security-sensitive MCP-auth change focused and reviewable (a trust-boundary diff
+  the #1566 regression already burned us on once). The affected whisper/screenshot
+  `--outPath` callers remain bucket-C/E **masked** (don't block merge), so the
+  split costs no gate coverage. PR C will either thread `data.outPath` back to all
+  `--spawn` outPath callers or stop `NormalizeOutPath` absolutizing now the parent
+  reads the child-reported confined path. Removing PR A's CI env opt-out (now that
+  PR B proves the product fix) also rides PR C.
+- **Two LOW security-review hardening notes accepted, not actioned in PR B**
+  (both optional defense-in-depth, neither a ship-blocker): (1) `std::random_device`
+  is not *guaranteed* cryptographic by the standard — but is CSPRNG-backed on the
+  MSVC + Clang/libc++ + libstdc++-Linux matrix Smatchet ships (the deterministic
+  MinGW-libstdc++ footgun does not apply); the attacker who could brute a 128-bit
+  ephemeral loopback token in its sub-second lifetime already has same-user local
+  access (out of the threat model). (2) the child does not `unsetenv`
+  `SMATCHET_MCP_SPAWN_TOKEN` after adoption — already mitigated because
+  `IsSensitiveEnvName` matches the `TOKEN` substring (scrubbed by
+  `SubprocessCapturePure` + redacted in `config.path`) and `ObservedSmatchetEnv`'s
+  allow-list excludes it. Both tracked for PR C if revisited.
 
 ## Verification
 
 - [x] PR A: ctest `ConfigManager SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK env override` green — 4/4 assertions (default ON→true, env "false"→false, env "true"→true, env "garbage"→true fail-closed); full ConfigManager suite 28/28 cases
 - [x] PR A: all 3 CodeRabbit findings on #1574 addressed (breadcrumb removed, fail-closed parse, test comment corrected)
 - [x] PR A: security-review of the MCP-auth trust-boundary diff clean — no blocking findings; default unchanged outside CI, parse fail-secure, workflow env CI-scoped (no artifact/dev leakage)
-- [ ] PR A: own Perf PR-fast run green (self-validating)
-- [ ] PR #1571 / #1572 gates green after PR A merges to develop
-- [ ] PR B: `--spawn` reaches MCP-ready under default config (regression test)
-- [ ] Gate-escape postmortem for #1566 filed with a `### Preventing gate`
+- [x] PR A: own Perf PR-fast run green (self-validating) — PR #1574 merged to develop @ `ea9134e7`
+- [x] PR #1571 / #1572 gates green after PR A merges to develop
+- [x] PR B: build clean (596/596, SmatchetStandalone, `ninja-iter-msvc`) — both edited TUs compile (`set_default_headers`, `McpReadyStatus` enum, MSVC 4996 getenv pragmas)
+- [x] PR B: lint gate PASS (`test-lint-rules.sh --diff origin/develop`, exit 0)
+- [x] PR B: `--spawn app.version` reaches MCP-ready and returns `ok:true` under the **compiled secure default** — `scripts/dev/test-spawn-mcp-default-auth.sh` PASS (the regression test #1566 lacked; hermetic fresh `SMATCHET_USER_DATA`, env opt-out unset)
+- [x] PR B: security-review of the MCP-auth trust-boundary diff — verdict **SHIP**, no CRITICAL/HIGH; every threat-model claim traced clean (CSPRNG token, env-only never argv, 127.0.0.1-only, constant-time compare, name-scrubbed, parent-env cleared unconditionally, child adoption strictly strengthens); two optional LOW hardening notes recorded in Deviations
+- [x] Gate-escape postmortem for #1566 filed with a `### Preventing gate` — PR #1575
+- [ ] PR B: CI gates green on the PR (Perf PR-fast under the secure default proves the product fix; the PR-A env opt-out stays until PR C removes it)
+- [ ] PR C (follow-up): thread confined `--outPath` to all `--spawn` callers (un-mask whisper/screenshot) + remove PR A's CI env opt-out

@@ -489,6 +489,22 @@ std::string SpawnLogRandomToken() {
     return std::string(buf);
 }
 
+/// 32 hex chars (128 bits) of per-spawn entropy for the ephemeral MCP auth token.
+/// The --spawn parent hands this to its child via SMATCHET_MCP_SPAWN_TOKEN so the
+/// child (which has no persisted mcp_auth_token) requires + accepts exactly this
+/// token under the secure McpRequireTokenOnLoopback default — every other local
+/// caller is still denied. Ephemeral, never persisted, cleared from the parent
+/// env right after the child is spawned. std::random_device is non-deterministic
+/// on every supported host; four draws give 128 bits even from a 32-bit device.
+std::string SpawnAuthToken() {
+    std::random_device rd;
+    char buf[33];
+    for (int i = 0; i < 4; ++i) {
+        std::snprintf(buf + i * 8, 9, "%08x", static_cast<unsigned int>(rd()));
+    }
+    return std::string(buf, 32);
+}
+
 /// Compute a per-spawn log file path so child stdout/stderr survive the
 /// parent's --spawn redirection. Format:
 /// $TMPDIR/Smatchet-spawn-<pid>-<port>-<rand>.log. The random suffix makes the
@@ -519,7 +535,8 @@ std::string ComputeSpawnLogPath(int port) {
            std::to_string(port) + "-" + SpawnLogRandomToken() + ".log";
 }
 
-bool LaunchEphemeralInstance(const std::string& exePath, int port, std::string* outLogPath) {
+bool LaunchEphemeralInstance(const std::string& exePath, int port, std::string* outLogPath,
+                             const std::string& authToken) {
     if (exePath.empty())
         return false;
     const std::string portStr = std::to_string(port);
@@ -553,7 +570,16 @@ bool LaunchEphemeralInstance(const std::string& exePath, int port, std::string* 
         si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
     }
     PROCESS_INFORMATION pi = {};
+    // Hand the per-spawn MCP token to the child via its inherited environment
+    // (lpEnvironment=nullptr → child snapshots the parent's current env block).
+    // Set immediately before CreateProcessA to minimise the window, then clear it
+    // from the parent's own env right after — the child already has its copy, and
+    // the short-lived parent shouldn't keep the secret in its environment.
+    if (!authToken.empty())
+        SetEnvironmentVariableA("SMATCHET_MCP_SPAWN_TOKEN", authToken.c_str());
     BOOL ok = CreateProcessA(nullptr, &cmdLine[0], nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi);
+    if (!authToken.empty())
+        SetEnvironmentVariableA("SMATCHET_MCP_SPAWN_TOKEN", nullptr);
     if (hLog != INVALID_HANDLE_VALUE) {
         CloseHandle(hLog); // child holds its own dup; parent can release.
     }
@@ -584,6 +610,10 @@ bool LaunchEphemeralInstance(const std::string& exePath, int port, std::string* 
             dup2(fd, STDERR_FILENO);
             close(fd);
         }
+        // Hand the per-spawn MCP token to the child via its environment. Done in
+        // the forked child (before execv) so the parent's own env is never touched.
+        if (!authToken.empty())
+            setenv("SMATCHET_MCP_SPAWN_TOKEN", authToken.c_str(), 1);
         const char* args[] = {exePath.c_str(), "--ephemeral", "--mcp-port", portStr.c_str(), nullptr};
         execv(exePath.c_str(), const_cast<char* const*>(args));
         _exit(1);
@@ -592,22 +622,36 @@ bool LaunchEphemeralInstance(const std::string& exePath, int port, std::string* 
 #endif
 }
 
+/// Outcome of the MCP-ready probe: distinguishes a genuine startup timeout from a
+/// server that is up but rejected our auth token (a real handshake misconfig that
+/// must surface immediately, not be masked as a slow startup).
+enum class McpReadyStatus { Ready, Timeout, AuthRejected };
+
 /// Poll until the MCP endpoint at host:port becomes reachable or timeoutMs elapses.
-bool WaitForMcpReady(const std::string& host, int port, int timeoutMs) {
+/// Sends the per-spawn auth token so the secure-default child (which now requires a
+/// token) accepts the probe. A received HTTP 401 means the server is up but rejected
+/// the token — fast-fail rather than poll to the full timeout and mask the cause.
+McpReadyStatus WaitForMcpReady(const std::string& host, int port, int timeoutMs, const std::string& authToken) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
     while (std::chrono::steady_clock::now() < deadline) {
         httplib::Client cli(host, port);
         cli.set_connection_timeout(0, 200000); // 200 ms
         cli.set_read_timeout(1, 0);
+        if (!authToken.empty())
+            cli.set_default_headers({{"X-Smatchet-Token", authToken}});
         nlohmann::json body;
         body["name"] = "app.version";
         body["arguments"] = nlohmann::json::object();
         auto res = cli.Post("/mcp/tools/call", body.dump(), "application/json");
         if (res && res->status >= 200 && res->status < 300)
-            return true;
+            return McpReadyStatus::Ready;
+        // The server answered but rejected the token (auth gate). This is a real
+        // handshake failure, not a slow boot — surface it now.
+        if (res && res->status == 401)
+            return McpReadyStatus::AuthRejected;
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
     }
-    return false;
+    return McpReadyStatus::Timeout;
 }
 
 // Try to fetch the live catalog and print a categorised summary. Returns true on
@@ -751,13 +795,15 @@ void PostAppQuitBestEffort(httplib::Client& cli) {
     }
 }
 
-void PostAppQuitBestEffort(const std::string& host, int port) {
+void PostAppQuitBestEffort(const std::string& host, int port, const std::string& authToken) {
     if (host.empty() || port <= 0)
         return;
     try {
         httplib::Client cli(host, port);
         cli.set_connection_timeout(1, 0);
         cli.set_read_timeout(1, 0);
+        if (!authToken.empty())
+            cli.set_default_headers({{"X-Smatchet-Token", authToken}});
         PostAppQuitBestEffort(cli);
     } catch (...) { // catch-all-ok: exception cleanup is best-effort after a spawn failure.
     }
@@ -794,7 +840,8 @@ nlohmann::json NormalizeOutPath(const nlohmann::json& argsToSend) {
 /// Phase 1 of SpawnAndRun: discover exe path, bind a free port, launch ephemeral instance,
 /// and wait until its MCP endpoint is reachable. Returns kExitOk on success; an error exit
 /// code on failure (error envelope already emitted to stderr). Fills host and port out-params.
-int SpawnAndRunSetup(const std::string& commandName, std::string& outHost, int& outPort) {
+int SpawnAndRunSetup(const std::string& commandName, std::string& outHost, int& outPort,
+                     const std::string& authToken) {
     const std::string exePath = GetExePath();
     if (exePath.empty()) {
         nlohmann::json env;
@@ -818,7 +865,7 @@ int SpawnAndRunSetup(const std::string& commandName, std::string& outHost, int& 
     std::fprintf(stderr, "[spawn] launching ephemeral instance on port %d ...\n",
                  port); // CLI stdout — product output, not logging
     std::string childLogPath;
-    if (!LaunchEphemeralInstance(exePath, port, &childLogPath)) {
+    if (!LaunchEphemeralInstance(exePath, port, &childLogPath, authToken)) {
         nlohmann::json env;
         env["ok"] = false;
         env["command"] = commandName;
@@ -857,7 +904,18 @@ int SpawnAndRunSetup(const std::string& commandName, std::string& outHost, int& 
     const std::string host = "127.0.0.1";
     std::fprintf(stderr, "[spawn] waiting for MCP ready (up to %d s) ...\n",
                  readyTimeoutMs / 1000); // CLI stdout — product output, not logging
-    if (!WaitForMcpReady(host, port, readyTimeoutMs)) {
+    const McpReadyStatus ready = WaitForMcpReady(host, port, readyTimeoutMs, authToken);
+    if (ready == McpReadyStatus::AuthRejected) {
+        nlohmann::json env;
+        env["ok"] = false;
+        env["command"] = commandName;
+        env["error"] = {{"code", "not-connected"},
+                        {"message", "--spawn: ephemeral instance rejected the MCP auth token (HTTP 401) — "
+                                    "spawn token handshake failed."}};
+        EmitErrorToStderr(env);
+        return kExitNotConnected;
+    }
+    if (ready != McpReadyStatus::Ready) {
         nlohmann::json env;
         env["ok"] = false;
         env["command"] = commandName;
@@ -1026,12 +1084,16 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
     std::string host;
     int port = 0;
     bool spawnedReady = false;
+    // Per-spawn ephemeral MCP auth token. Provisioned here, handed to the child via
+    // its inherited env (LaunchEphemeralInstance), and sent on every request so the
+    // secure-default child (McpRequireTokenOnLoopback ON) accepts this parent only.
+    const std::string spawnToken = SpawnAuthToken();
     try {
         // Normalize outPath: relative paths must be made absolute so both processes agree on location.
         const nlohmann::json argsToSend = NormalizeOutPath(argsToSendRaw);
 
         // Phase 1: launch ephemeral instance and wait for MCP ready.
-        const int setupResult = SpawnAndRunSetup(commandName, host, port);
+        const int setupResult = SpawnAndRunSetup(commandName, host, port, spawnToken);
         if (setupResult != kExitOk)
             return setupResult;
         spawnedReady = true;
@@ -1048,6 +1110,9 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
         httplib::Client cli(host, port);
         cli.set_connection_timeout(2, 0);
         cli.set_read_timeout(30, 0);
+        // The default header rides every cli.Post below — dispatch, the async/sync
+        // result handlers, and the app.quit teardown — so each carries the token.
+        cli.set_default_headers({{"X-Smatchet-Token", spawnToken}});
         nlohmann::json envelope;
         const int dispatchResult = SpawnAndRunDispatch(cli, commandName, argsToSend, envelope);
         if (dispatchResult != kExitOk)
@@ -1077,7 +1142,7 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
         return kExitOk;
     } catch (const std::exception& e) {
         if (spawnedReady)
-            PostAppQuitBestEffort(host, port);
+            PostAppQuitBestEffort(host, port, spawnToken);
         nlohmann::json env =
             MakeErrorEnvelope(commandName, "handler-error", std::string("--spawn: internal error: ") + e.what());
         try {
@@ -1087,7 +1152,7 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
         return kExitHandler;
     } catch (...) { // catch-all-ok: unknown spawn-flow exception -> error JSON to stderr + app.quit
         if (spawnedReady)
-            PostAppQuitBestEffort(host, port);
+            PostAppQuitBestEffort(host, port, spawnToken);
         std::fprintf(stderr, // CLI stdout — product output, not logging
                      "{\"ok\":false,\"command\":\"%s\",\"error\":{\"code\":\"handler-error\","
                      "\"message\":\"--spawn: unknown internal exception.\"}}\n",
