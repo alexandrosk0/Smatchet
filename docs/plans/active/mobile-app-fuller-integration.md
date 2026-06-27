@@ -307,6 +307,20 @@ _(per-slice; appended as each PR ships)_
   doctest rig (WIC arm + pure helper) + real Android x86_64 NDK (stb arm compiles clean on Clang 17,
   `libSmatchetMobile.so` links). DRY exemption for the idiomatic ImGui-localization + Win32 preamble clone
   (see § Deviations).
+- **2026-06-27 — P1.4 CodeRabbit round on #1572: fail-closed thumbnail decode budget (`9247fc6e`).** CR
+  flagged the stb decode-budget gate: the original code wrapped the `kMaxThumbnailDecodePixels` dimension
+  check *inside* `if (stbi_info_from_memory(...) != 0)`, so a header that **failed** info-parse skipped the
+  budget entirely and fell through to an unbounded `stbi_load_from_memory` — a DoS hole (attacker crafts a
+  header `stbi_info` rejects but `stbi_load` decodes, bypassing the cap; `stbi_info`/`stbi_load` take
+  different code paths and can disagree). Fix: (1) **fail closed** — `stbi_info_from_memory == 0` now returns
+  an error instead of skipping the gate; (2) the budget check is **unconditional** (overflow-safe
+  `unsigned long long` product, rejects `infoW/H <= 0`); (3) **defense-in-depth** — re-checks decoded `w*h`
+  against the cap AFTER the decode (decoded dims can diverge from the header path) before the RGBA copy,
+  freeing `pix` on overflow. 1 file (`SmatchetAttachmentPreviewUi.cpp`, +21/-7). Compiled clean
+  (`SmatchetCore_DX12` object), lint diff-gate PASS, **security-review CLEAN** (no CRITICAL/HIGH/MEDIUM; the
+  reported hole genuinely fixed; one P3 awareness-only note — `STBI_MAX_DIMENSIONS` left at the stb default
+  `1<<24` per side vs the 16 MP area cap, backstopped by the existing 32 MiB file cap — out of scope for
+  this commit).
 
 ## Deviations from plan
 
@@ -697,3 +711,17 @@ _(per-slice)_
     Mesa-GL bucket-C/E lane is CI-blocked today); taps pinned `-s emulator-5554`, never coordinate-inject the
     physical device. The decode + downscale correctness is covered by the pure unit test above; the build
     proof confirms the arm compiles + links on the real target.
+- **P1.4 CodeRabbit round on #1572 — fail-closed decode budget (`9247fc6e`, 2026-06-27):**
+  - **Build** — rebuilt the exact object `CMakeFiles/SmatchetCore_DX12.dir/.../SmatchetAttachmentPreviewUi.cpp.obj`
+    (the doctest `SmatchetTests` target does NOT compile this TU; the flag is an in-file `#define`, not a
+    `-D`) → compiled clean.
+  - **Lint** — `test-lint-rules.sh --diff origin/develop` **PASS** (no new oversized functions / strict-zone
+    / comment-noise; the only WARN is the pre-existing backlog-tracked sync-`ifstream` at line 85, untouched).
+  - **Security-review** — `security-review` agent on the `9247fc6e` diff: **CLEAN**, no CRITICAL/HIGH/MEDIUM.
+    Confirmed the fail-closed control flow (exactly one fall-through to `stbi_load`, only reachable after
+    `infoW/H>0 && infoPixels<=16 MP`), both products done in `unsigned long long` (overflow-safe), the
+    post-decode RGBA copy bounded ≤64 MiB, and `stbi_image_free(pix)` on the reject path (no leak). One P3
+    awareness-only note (align `STBI_MAX_DIMENSIONS` to the area cap) deferred as codebase-wide hardening.
+  - **Perf-gate (touches `Source/Core/`)** — **perf-inert.** The change adds two integer comparisons + one
+    early return on the same off-UI-thread worker decode path described above; no new allocation, no per-frame
+    or UI-thread work. Pillar-1/Pillar-2 hold by the same construction as the parent P1.4 entry.
