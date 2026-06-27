@@ -10,8 +10,10 @@
 
 #include "doctest/doctest.h"
 
-#include <cmath> // std::nanf
+#include <cmath>  // std::nanf
+#include <limits> // std::numeric_limits
 
+using SmatchetTheme::ComposeFontDensityScale;
 using SmatchetTheme::ShouldApplyDensityScale;
 using SmatchetTheme::ShouldRescaleHostDensity;
 
@@ -84,4 +86,55 @@ TEST_CASE("ShouldRescaleHostDensity: non-positive / NaN new is rejected (self-co
     CHECK_FALSE(ShouldRescaleHostDensity(2.0f, -1.0f));
     CHECK_FALSE(ShouldRescaleHostDensity(2.0f, std::nanf("")));
     CHECK_FALSE(ShouldRescaleHostDensity(std::nanf(""), 2.0f));
+}
+
+// --- ComposeFontDensityScale: fold the OS accessibility font scale onto the DPI density ---
+//
+// The mobile host reads two independent scales (AConfiguration density bucket + the JNI-read
+// Configuration.fontScale) and multiplies them into the single scale used to size the font atlas.
+// Pure / ImGui-free, so it pins on the doctest rig. Covers the identity, the composite multiply, the
+// [kMinFontScale, kMaxFontScale] font clamp, and the non-finite / non-positive caller-error fallbacks
+// for BOTH inputs. The host feeds this into the atlas px only — density stays raw for HostDensityScale.
+
+TEST_CASE("ComposeFontDensityScale: identity (desktop default) is 1.0") {
+    CHECK(ComposeFontDensityScale(1.0f, 1.0f) == doctest::Approx(1.0f));
+}
+
+TEST_CASE("ComposeFontDensityScale: the two scales multiply") {
+    // A Large-font user (1.3) on a high-DPI phone (2.62) wants both bumps stacked.
+    CHECK(ComposeFontDensityScale(2.62f, 1.3f) == doctest::Approx(2.62f * 1.3f));
+    CHECK(ComposeFontDensityScale(2.0f, 1.5f) == doctest::Approx(3.0f));
+}
+
+TEST_CASE("ComposeFontDensityScale: font 1.0 passes the density through unchanged") {
+    // No accessibility bump → the result is exactly the DPI density (the pre-fontScale behaviour).
+    CHECK(ComposeFontDensityScale(2.62f, 1.0f) == doctest::Approx(2.62f));
+    CHECK(ComposeFontDensityScale(0.75f, 1.0f) == doctest::Approx(0.75f));
+}
+
+TEST_CASE("ComposeFontDensityScale: fontScale is clamped to [kMinFontScale, kMaxFontScale]") {
+    // Below "Small" (0.85) and above the Android-14 ceiling (2.0) are clamped so a pathological OEM
+    // value can't blow the atlas rebuild past the Pillar-2 budget or exhaust texture memory.
+    CHECK(ComposeFontDensityScale(1.0f, 0.5f) == doctest::Approx(SmatchetTheme::kMinFontScale));
+    CHECK(ComposeFontDensityScale(1.0f, 3.0f) == doctest::Approx(SmatchetTheme::kMaxFontScale));
+    // The bounds themselves are honoured exactly (no off-by-one clamp).
+    CHECK(ComposeFontDensityScale(1.0f, SmatchetTheme::kMinFontScale) == doctest::Approx(SmatchetTheme::kMinFontScale));
+    CHECK(ComposeFontDensityScale(1.0f, SmatchetTheme::kMaxFontScale) == doctest::Approx(SmatchetTheme::kMaxFontScale));
+}
+
+TEST_CASE("ComposeFontDensityScale: non-finite / non-positive fontScale falls back to no bump") {
+    // A bogus / absent accessibility value must degrade to the raw density, never a collapsed UI.
+    CHECK(ComposeFontDensityScale(2.0f, 0.0f) == doctest::Approx(2.0f));
+    CHECK(ComposeFontDensityScale(2.0f, -1.0f) == doctest::Approx(2.0f));
+    CHECK(ComposeFontDensityScale(2.0f, std::nanf("")) == doctest::Approx(2.0f));
+    CHECK(ComposeFontDensityScale(2.0f, std::numeric_limits<float>::infinity()) == doctest::Approx(2.0f));
+}
+
+TEST_CASE("ComposeFontDensityScale: non-finite / non-positive density falls back to 1.0") {
+    // Matches ResolveDensityScale's own default for the no-DPI AConfiguration buckets; the clamped
+    // font scale then stands alone.
+    CHECK(ComposeFontDensityScale(0.0f, 1.5f) == doctest::Approx(1.5f));
+    CHECK(ComposeFontDensityScale(-2.0f, 1.5f) == doctest::Approx(1.5f));
+    CHECK(ComposeFontDensityScale(std::nanf(""), 1.5f) == doctest::Approx(1.5f));
+    CHECK(ComposeFontDensityScale(std::numeric_limits<float>::infinity(), 1.5f) == doctest::Approx(1.5f));
 }

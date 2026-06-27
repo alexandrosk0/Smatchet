@@ -26,6 +26,7 @@
 #include "SmatchetUiModeIds.h"
 #include "Tracker/TrackerHttpPure.h"
 #include "Ui/SmatchetImGuiTextureGuardRuntime.h"
+#include "Ui/SmatchetThemeDensity.h"
 
 #include "imgui.h"
 #include "imgui_impl_android.h"
@@ -48,9 +49,10 @@
 
 namespace {
 
-// Base TTF pixel size at mdpi (scale 1.0); multiplied by display density so glyphs stay
-// finger-readable on high-dpi panels. Widget metrics are scaled separately via
-// SmatchetTheme::ApplyUiDensityScale.
+// Base TTF pixel size at mdpi (scale 1.0); multiplied by the composed display-density × accessibility
+// font-scale (SmatchetTheme::ComposeFontDensityScale) so glyphs stay finger-readable on high-dpi panels
+// and honour the OS "Font size" preference. Widget metrics are scaled separately via
+// SmatchetTheme::ApplyUiDensityScale (raw DPI only — the font scale is intentionally atlas-only).
 const float kBaseFontPx = 16.0f;
 
 // item 14: process-death save-state blob handed to native_app_glue on APP_CMD_SAVE_STATE and read
@@ -290,6 +292,9 @@ struct AndroidHostState {
     std::vector<unsigned char> fontBlob; // retained for process lifetime (injected by ref)
     std::string iniPath;                 // backs io.IniFilename for the context lifetime
     float densityScale = 1.0f;
+    float fontScale = 1.0f; // OS accessibility "Font size" multiplier (Configuration.fontScale); composed
+                            // into the atlas px only, NOT into densityScale — keeps HostDensityScale()
+                            // DPI-pure so the Auto UI-mode logical-width breakpoint stays correct
     bool coreBooted = false;
     bool imguiReady = false;
     bool imeReady = false; // item 8 (#1069): IME bridge init succeeded — false ⇒ degraded cue
@@ -476,6 +481,47 @@ bool QueryIsChromeOS(android_app* app) {
     return isChromeOs;
 }
 
+// Read the user's system "Font size" accessibility preference (Configuration.fontScale: 1.0 default,
+// 0.85 Small, up to ~2.0 with the accessibility ramps) via SmatchetActivity.getDisplayFontScale().
+// The NDK AConfiguration exposes no font-scale getter, so this is the only way to honour it. The host
+// composes the returned multiplier onto the DPI density scale to size the font atlas ONLY
+// (SmatchetTheme::ComposeFontDensityScale) — it deliberately does NOT enter ApplyUiDensityScale /
+// HostDensityScale, so the Auto UI-mode logical-width breakpoint stays DPI-pure. Returns 1.0 (no bump)
+// if the method is missing or the JVM is unreachable, so a failure degrades to default text size rather
+// than a collapsed UI. Mirrors QueryIsChromeOS's env-acquire and likewise leaves the thread attached.
+float QueryDisplayFontScale(android_app* app) {
+    if (app == nullptr || app->activity == nullptr || app->activity->vm == nullptr) {
+        return 1.0f;
+    }
+    JavaVM* vm = app->activity->vm;
+    JNIEnv* env = nullptr;
+    const jint getResult = vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6);
+    if (getResult == JNI_EDETACHED) {
+        if (vm->AttachCurrentThread(&env, nullptr) != JNI_OK) {
+            return 1.0f;
+        }
+    } else if (getResult != JNI_OK || env == nullptr) {
+        return 1.0f;
+    }
+    jclass clazz = env->GetObjectClass(app->activity->clazz);
+    if (clazz == nullptr) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+        }
+        return 1.0f;
+    }
+    float fontScale = 1.0f;
+    const jmethodID method = env->GetMethodID(clazz, "getDisplayFontScale", "()F");
+    if (method != nullptr) {
+        fontScale = static_cast<float>(env->CallFloatMethod(app->activity->clazz, method));
+    } else if (env->ExceptionCheck()) {
+        // Older Activity without the method: clear the pending NoSuchMethodError, treat as no bump.
+        env->ExceptionClear();
+    }
+    env->DeleteLocalRef(clazz);
+    return fontScale;
+}
+
 // One-time ImGui setup on the first INIT_WINDOW (context already current). Font bytes are
 // injected from the APK BEFORE the first atlas build (seam #12); density scaling is applied
 // AFTER the style so it is not wiped (seam #13 — persisted across later ApplyStyle by
@@ -504,7 +550,11 @@ void InitImGuiFirstTime(android_app* app, AndroidHostState& s) {
     ImGui::StyleColorsDark();
 
     s.densityScale = smatchet::mobile::ResolveDensityScale(app->config);
-    const float fontPx = kBaseFontPx * (s.densityScale > 0.0f ? s.densityScale : 1.0f);
+    s.fontScale = QueryDisplayFontScale(app);
+    // Compose the OS accessibility font scale onto the DPI density for the ATLAS pixel size only; the
+    // density seam below still gets the raw DPI scale so HostDensityScale() (the Auto UI-mode logical-
+    // width divisor + mobile band heights) stays font-scale-free.
+    const float fontPx = kBaseFontPx * SmatchetTheme::ComposeFontDensityScale(s.densityScale, s.fontScale);
     s.fontBlob = smatchet::mobile::ReadApkAsset(app->activity->assetManager, "fonts/Roboto-Medium.ttf");
     if (!s.fontBlob.empty()) {
         SmatchetSetInjectedFontBytes(s.fontBlob.data(), static_cast<int>(s.fontBlob.size()), fontPx);
@@ -531,7 +581,7 @@ void InitImGuiFirstTime(android_app* app, AndroidHostState& s) {
     g_insetBridge = &s.ime;
     ImGui::GetPlatformIO().Platform_GetWindowWorkAreaInsets = &PollWorkAreaInsets;
     s.imguiReady = true;
-    SLOG("ImGui ready (density=%.2f font=%.1fpx)", s.densityScale, fontPx);
+    SLOG("ImGui ready (density=%.2f fontScale=%.2f font=%.1fpx)", s.densityScale, s.fontScale, fontPx);
 }
 
 // item 12 (#1071): full GL-layer rebuild after an EGL_CONTEXT_LOST present failure. A GPU reset /
@@ -722,22 +772,28 @@ void RestoreSavedState(android_app* app, AndroidHostState& s) {
     SLOG("Restored from process-death save-state (resumeCount now %u)", s.resumeCount);
 }
 
-// item 15: APP_CMD_CONFIG_CHANGED — display density can move at runtime (fold/unfold, external
-// display, accessibility font scale). Re-resolve it; if it changed, rebuild the font atlas at the new
-// pixel size and re-assert the host density scale WITHOUT compounding (ReassertHostDensityScale, not
-// a second ApplyUiDensityScale which would stack scales). The atlas rebuild must stay under the
-// Pillar-2 100 ms UI-block budget — timed and logged so a regression is visible.
+// item 15: APP_CMD_CONFIG_CHANGED — the DPI density bucket (fold/unfold, external display) AND the OS
+// accessibility "Font size" (Configuration.fontScale) can both move at runtime. Re-resolve both; if
+// either changed, rebuild the font atlas at the new composed pixel size. The DPI density is re-asserted
+// onto the live style WITHOUT compounding (ReassertHostDensityScale, not a second ApplyUiDensityScale
+// which would stack scales); the font scale is atlas-only and never enters HostDensityScale, so the
+// Auto UI-mode breakpoint is unaffected by it. The atlas rebuild must stay under the Pillar-2 100 ms
+// UI-block budget — timed and logged so a regression is visible.
 void OnConfigChanged(android_app* app, AndroidHostState& s) {
     if (!s.imguiReady) {
         return;
     }
     const float newScale = smatchet::mobile::ResolveDensityScale(app->config);
-    if (!(newScale > 0.0f) || newScale == s.densityScale) {
+    const float newFontScale = QueryDisplayFontScale(app);
+    // Rebuild the atlas when EITHER the DPI bucket OR the accessibility font scale moved — a runtime
+    // "Font size" change lands here with the density bucket unchanged, so a density-only gate would
+    // silently ignore it.
+    if (!(newScale > 0.0f) || (newScale == s.densityScale && newFontScale == s.fontScale)) {
         return;
     }
     const std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
     ImGuiIO& io = ImGui::GetIO();
-    const float fontPx = kBaseFontPx * newScale;
+    const float fontPx = kBaseFontPx * SmatchetTheme::ComposeFontDensityScale(newScale, newFontScale);
     if (!s.fontBlob.empty()) {
         SmatchetSetInjectedFontBytes(s.fontBlob.data(), static_cast<int>(s.fontBlob.size()), fontPx);
     }
@@ -751,12 +807,16 @@ void OnConfigChanged(android_app* app, AndroidHostState& s) {
               newScale, s.densityScale);
         return;
     }
+    // Raw DPI only — the accessibility font scale never enters HostDensityScale (Auto-mode safe). No-op
+    // when the density bucket is unchanged (font-scale-only change); ShouldRescaleHostDensity gates it.
     SmatchetTheme::ReassertHostDensityScale(newScale);   // relative re-scale — no compounding
     s.densityScale = newScale;
+    s.fontScale = newFontScale;
 
     const std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
     const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-    SLOG("CONFIG_CHANGED density %.2f font=%.1fpx atlas-rebuild %.1fms", newScale, fontPx, ms);
+    SLOG("CONFIG_CHANGED density %.2f fontScale=%.2f font=%.1fpx atlas-rebuild %.1fms", newScale, newFontScale, fontPx,
+         ms);
     if (ms > 100.0) {
         SLOGE("CONFIG_CHANGED atlas rebuild %.1fms exceeded the 100ms UI-block budget (Pillar 2)", ms);
     }

@@ -19,7 +19,7 @@ done**. Corrected per-slice status (evidence = current-tree `file:line`):
 | **P1.3** Touch cell editors | ❌ **Not started** (the spike-first, highest-risk slice) | `kMobileInlineEditBuild=true` on Android (`TicketFieldEditor.cpp:71–73`) + `SingleClickToEditGridCells` default-on exist, but **no long-press detector** (`SmatchetAndroidImeBridge.cpp`) and **no touch Save/Cancel affordance** for the four combo/modal editors. |
 | **P1.4** Attachments | ✅ **Shipped** (decode cross-platform) | `SmatchetImageTextureCache.cpp:139–157` (`DecodeWithStb`, no `_WIN32` guard) + renderer-agnostic `RegisterUserTexture`; thumbnails enabled globally. **Residual:** the *optional* Win32-only bitmap thumbnail-to-file at `SmatchetAttachmentPreviewUi.cpp:112` (low priority). |
 | **P1.5** Multi-backend | ✅ **Shipped this PR** | `ITrackerBackend` abstraction + Jira / Plane / GitHub / Linear all in Core; the missing piece — a touch-first backend picker — now ships: `DrawTrackerBackendSelection` (`SmatchetPreferencesUi.cpp:234`) forks on `d.effectiveUiMode == EffectiveUiMode::Mobile` to render the four backends as full-width `ImGui::Selectable` rows (the drawer page-list touch idiom) instead of the tiny desktop `ImGui::Combo`, writing the **same** `d.trackerTypeBuf` so `DrawTrackerBackendConfig` + the multi-backend layer are inherited unchanged (a widget swap, not new backend code). |
-| **P1.6** Accessibility | ✅ **Research shipped 2026-06-20**; **accent-contrast fix shipped this PR** | Research: [`docs/mobile/PHASE1_ACCESSIBILITY_RESEARCH.md`](../../mobile/PHASE1_ACCESSIBILITY_RESEARCH.md) + Pillar-4 backlog [`debt/2026-06-20-mobile-accessibility-pillar4.md`](../../self-improvement/categories/debt/2026-06-20-mobile-accessibility-pillar4.md). **Code fix (this PR):** `SmatchetTheme.cpp::ApplySmatchetDark` accent darkened `(0.35,0.55,0.95)`→`(0.26,0.42,0.72)` (Finding 3, white-on-fill 2.90→4.67:1 AA, on-dark 3.16:1 UI-floor); doctest pin `tests/Core/SmatchetThemeAccentContrast.test.cpp`. **ModernDark follow-up shipped (stacked PR):** `ApplyModernDark` accent darkened `(0.45,0.65,0.95)`→its own `(0.29,0.42,0.62)` (dimmer Text needs a darker shade than SmatchetDark's; 2.12→4.61:1 AA, on-dark 3.16:1) — test now 4 cases / 43 assertions (all 14 re-tinted slots pinned RGBA). |
+| **P1.6** Accessibility | ✅ **Research shipped 2026-06-20**; **accent-contrast fix shipped**; **fontScale seam shipped this PR** | Research: [`docs/mobile/PHASE1_ACCESSIBILITY_RESEARCH.md`](../../mobile/PHASE1_ACCESSIBILITY_RESEARCH.md) + Pillar-4 backlog [`debt/2026-06-20-mobile-accessibility-pillar4.md`](../../self-improvement/categories/debt/2026-06-20-mobile-accessibility-pillar4.md). **Accent fix:** `SmatchetTheme.cpp::ApplySmatchetDark` accent darkened `(0.35,0.55,0.95)`→`(0.26,0.42,0.72)` (Finding 3, white-on-fill 2.90→4.67:1 AA, on-dark 3.16:1 UI-floor); doctest pin `tests/Core/SmatchetThemeAccentContrast.test.cpp`. **ModernDark follow-up (stacked PR):** `ApplyModernDark` accent darkened `(0.45,0.65,0.95)`→its own `(0.29,0.42,0.62)` — test 4 cases / 43 assertions (all 14 re-tinted slots pinned RGBA). **fontScale seam (P1.6b, this PR):** OS accessibility "Font size" (`Configuration.fontScale`) now scales mobile text — JNI reader `SmatchetActivity.getDisplayFontScale()` → `android_main.cpp` `QueryDisplayFontScale` → composed into the **font-atlas px only** via `SmatchetTheme::ComposeFontDensityScale` (header-only, `[0.85,2.0]` clamped); `ApplyUiDensityScale`/`HostDensityScale()` stay raw-DPI (Auto-mode safe). Doctest `tests/Core/SmatchetThemeDensity.test.cpp` (6 cases). Metrics-scaling = Scope-2 follow-up (Pillar-4 debt). |
 
 **Residual P1.0 finding — ✅ SHIPPED 2026-06-20:** the Android plaintext-token warning at
 `SmatchetPreferencesUi.cpp` (now line 275) was guarded `#if !defined(_WIN32)`, so it still told
@@ -125,6 +125,7 @@ Per [`docs/guides/perf-workflow.md`](../../guides/perf-workflow.md), each Source
 - **P1.3 Touch editors**: grid-scroll + cell-edit-open scenarios — Pillar-1 steady-state ≤6.94 ms, popup-open Pillar-2 <100 ms. Baseline = current grid-scroll scenario.
 - **P1.5 Backend picker**: no steady-state scenario (the picker is a `Combo`↔`Selectable` widget swap rendered only inside the `EffectiveUiMode::Mobile` fork, while the Preferences page is open — never on the grid/scroll hot path) — assert *absence* of per-frame cost: the four `Selectable`s are O(1) + allocation-free, and the desktop `Combo` arm's codegen is unchanged (zero desktop regression by construction). No mobile perf scenario exists yet (same gap as P1.2/P1.3); CI **Perf PR-fast** is the authoritative headless gate.
 - **P1.6 Accent-contrast fix (this PR)**: **zero hot-path delta — pure compile-time color constant.** The change replaces `ImVec4` literals inside `ApplySmatchetDark`, which runs once per theme-apply (boot + explicit theme switch), never per frame. No new branches, allocations, or call sites; the assignment count and codegen shape are identical to before (same `colors[ImGuiCol_*] = ImVec4(...)` writes, different constants). No steady-state scenario applies; no `perf-run.sh` subset needed. Per-frame UI cost is provably unchanged.
+- **P1.6b fontScale seam (this PR)**: **zero steady-state delta — the only new Core symbol (`ComposeFontDensityScale`) is a header-only pure multiply called exclusively from the Android host on boot (`InitImGuiFirstTime`) and on `APP_CMD_CONFIG_CHANGED`, never per frame.** Desktop never calls it (no `Configuration.fontScale`), so desktop codegen is untouched by construction. The one perf-sensitive path is the **CONFIG_CHANGED atlas rebuild** (now also triggered by a runtime font-size change, not just a DPI move) — already wrapped in the Pillar-2 100 ms UI-block timer + `SLOGE` over-budget guard, and the clamp `[0.85, 2.0]` bounds the atlas size so a pathological OEM value can't blow that budget or exhaust texture memory. No `perf-run.sh` subset applies (no steady-state surface); CI **Perf PR-fast** is the headless backstop.
 - Each slice's execution plan carries its own filled Perf-gate section; `perf-gatekeeper` runs the diff→scenario subset at PR time.
 
 ## Risks / non-goals
@@ -260,6 +261,27 @@ _(per-slice; appended as each PR ships)_
   assertions, SUCCESS** (`ninja-test-msvc`), incl. a guard pinning that the SmatchetDark shade fails on
   ModernDark's text. 2 files (`SmatchetTheme.cpp`, the test). Color-literal-only — zero hot-path delta. Built
   `SmatchetStandalone` clean; visual-validation pause raised (touches `SmatchetTheme.cpp` → exception 5).
+- **2026-06-27 — P1.6b fontScale seam: feed `Configuration.fontScale` into the atlas size (this PR).** Closed
+  the `Configuration.fontScale` seam gap the P1.6 research doc flagged. Honours the OS accessibility "Font
+  size" preference (0.85 Small … ~2.0) so mobile text scales with the user's system setting. **Three
+  layers, all additive:** (1) **Core pure helper** `SmatchetTheme::ComposeFontDensityScale(densityScale,
+  fontScale)` (header-only, ImGui-free, in `Ui/SmatchetThemeDensity.h`) — multiplies the DPI density by the
+  clamped font scale (`[kMinFontScale 0.85, kMaxFontScale 2.0]`), guards non-finite / non-positive inputs on
+  both args → fall back to no-bump / 1.0. (2) **Java JNI reader** `SmatchetActivity.getDisplayFontScale()`
+  returns `getResources().getConfiguration().fontScale` (1.0 if unavailable) — the NDK `AConfiguration` has
+  no font-scale getter, so JNI is the only path. (3) **Android host wiring** `android_main.cpp`:
+  `QueryDisplayFontScale(app)` (clone of `QueryIsChromeOS`, `()F` / `CallFloatMethod`, returns 1.0 on any
+  JNI failure) feeds the composed scale into the **font-atlas pixel size only** at `InitImGuiFirstTime` and
+  `OnConfigChanged`; `OnConfigChanged` now rebuilds the atlas when **either** the DPI bucket OR the font
+  scale moved (a runtime font-size change lands with the density bucket unchanged). **Key design choice
+  (see Deviations):** the font scale is **atlas-only** — it is deliberately NOT fed into
+  `ApplyUiDensityScale` / `HostDensityScale()`, which stay raw-DPI so the Auto UI-mode logical-width
+  breakpoint (`SmatchetMobileShellUi.cpp:64`) is unaffected. New `s.fontScale` host-state field tracks the
+  last applied value for the change-detection gate. Doctest: `tests/Core/SmatchetThemeDensity.test.cpp`
+  extended with 6 `ComposeFontDensityScale` cases (identity, composite multiply, density-passthrough, the
+  `[0.85,2.0]` clamp incl. exact bounds, non-finite/non-positive fallback for both args). 4 files
+  (`Ui/SmatchetThemeDensity.h`, `SmatchetActivity.java`, `android_main.cpp`, the test). Built + ran the
+  Core test rig on Windows (below); the Android host code compiles only via the NDK (verification note).
 
 ## Deviations from plan
 
@@ -375,6 +397,27 @@ _(per-slice)_
   *surface* — it only reads `ImGui::GetStyle().Colors` after `ApplyStyle`, the same pattern as the existing
   `SmatchetThemeAiColors.test.cpp`) that computes both WCAG ratios and pins the literal. `test-rig`'s
   ImGui-surface refusal doesn't apply (palette readback, not draw).
+- **P1.6b — font scale composed into the ATLAS only, NOT into `ApplyUiDensityScale` (2026-06-27).** The slice
+  was framed as "feed `Configuration.fontScale` into the existing `ApplyUiDensityScale` seam." Literal wiring
+  has a **side effect**: `ApplyUiDensityScale` owns `HostDensityScale()`, which the Auto UI-mode breakpoint
+  consumes as the logical-width divisor — `logicalWidth = io.DisplaySize.x / HostDensityScale()`
+  (`SmatchetMobileShellUi.cpp:64`). Folding the font factor in would shrink `logicalWidth` by up to 2× at the
+  max font scale and could wrongly flip a large-font tablet from the Desktop dockspace into the Mobile shell.
+  **Decision (user-confirmed via AskUserQuestion, "Text-only atlas"):** compose the font scale into the
+  **font-atlas pixel size only** (the platform-conventional behaviour — Android `fontScale` scales *text*);
+  keep `ApplyUiDensityScale` / `HostDensityScale()` on the raw DPI density so the Auto breakpoint + mobile
+  band heights stay correct. Style **metrics** (padding / hit-target sizes) are therefore NOT enlarged by the
+  font scale in this slice — a documented, bounded follow-up (Scope 2 "Text + metrics"): scale metrics too
+  via a new host-injection seam (`SmatchetSetHostFontScale`) composed into the existing `ApplyTouchScale`
+  path (Auto-safe — transient-on-top-of-base, persists across `ApplyStyle`), backlogged in the Pillar-4 debt
+  entry `debt/2026-06-20-mobile-accessibility-pillar4.md`.
+- **P1.6b — Android host + Java are NDK-only; not covered by the Windows build (2026-06-27).** The Core pure
+  helper + its doctest build and run on the Windows `ninja-test-msvc` rig (below). `android_main.cpp` +
+  `SmatchetActivity.java` compile only through the NDK / Gradle Android toolchain — the desktop MSVC build
+  excludes them, so the JNI wiring is verified by (a) cloning the proven `QueryIsChromeOS` JNI idiom
+  byte-for-byte (same env-acquire / `JNI_EDETACHED` attach, `ExceptionClear` on missing-method,
+  `DeleteLocalRef`, false-safe default), and (b) the Android `assembleDebug` build + on-emulator font-scale
+  confirmation recorded under § Verification (actual).
 
 ## Verification (actual)
 
@@ -392,6 +435,19 @@ _(per-slice)_
   The findings doc's WCAG contrast ratios are computed from the source palette values (deterministic,
   device-independent). On-device TalkBack / touch-target confirmation is a documented follow-up — no
   Android device/emulator in the authoring environment.
+- **P1.6b fontScale seam (this PR):**
+  - **Build** — configure + build `SmatchetTests` via `bash scripts/dev/with-msvc-env.sh cmake --preset
+    ninja-test-msvc` then `--build --preset ninja-test-msvc --target SmatchetTests` → exit 0, clean.
+  - **Unit** — `build/ninja-test-msvc/tests/SmatchetTests.exe --test-case="*ComposeFontDensityScale*"` →
+    **6 cases / 17 assertions, SUCCESS** (identity, composite multiply, density-passthrough, the
+    `[kMinFontScale 0.85, kMaxFontScale 2.0]` clamp incl. exact bounds, non-finite/non-positive fallback for
+    both args).
+  - **Android host / JNI** — NDK-only (see § Deviations); the desktop MSVC build excludes `android_main.cpp`
+    + `SmatchetActivity.java`. Residual manual step: `assembleDebug` → install `-r -t` on `emulator-5554` →
+    set Settings ▸ Display ▸ Font size to Largest → confirm Smatchet text grows while the Auto UI-mode
+    layout (Desktop-vs-Mobile shell selection) is unchanged; then change font size while the app is
+    foregrounded → confirm `CONFIG_CHANGED … atlas-rebuild` logcat line + live text re-scale within the
+    Pillar-2 100 ms budget.
 - **P1.2 touch view quick-switcher (2026-06-23):**
   - **Build** — desktop `SmatchetStandalone` (`cmake --build --preset ninja-iter-msvc`, light features)
     links clean; Android x86_64 `assembleDebug` → `app-debug.apk` BUILD SUCCESSFUL.
