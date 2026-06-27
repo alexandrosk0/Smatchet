@@ -27,6 +27,20 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-27 · PR #1566 (escape) · PR #1571, #1572, #1574 (collateral) · CANCELLED `Perf PR-fast` (meant-to-block, not GH-required) merged via a human native-merge
+
+### What escaped
+`fix(security): C++ security hardening — remediate SECURITY_AUDIT.md (6 slices)` (#1566, merge `32392e32378128a4b5341750ee19713fb2d680a9`, `2026-06-27T09:47:29Z`, `mergedBy:alexandrosk0`) merged to `develop` while its `Perf PR-fast (windows-2022)` check was terminal **CANCELLED** — a single rollup entry with no SUCCESS twin (the token-401 idle-to-`timeout-minutes` cancel signature, not a concurrency supersede). `Perf PR-fast` is on the custom poller's **meant-to-block** allow-list but is **not** a `branch_protection.required_contexts` entry. #1566 shipped two breaking changes to the `--spawn` perf harness (a) `McpRequireTokenOnLoopback` default `false→true` → tokenless `WaitForMcpReady` probe gets HTTP 401 → 30 s poll → job idle-cancelled; (b) `PathConfinement` rejects the perf harness's absolute `--outPath` → `kExitValidation`. Because CI builds the `pull_request` merge ref, the break landed on every open PR's `--spawn` gates the instant #1566 hit develop — #1571/#1572 wedged 250+ `merge-watcher` cycles.
+
+### Root cause
+Blameless — two compounding gate holes, one at prevention and one at detection. **(1) Prevention:** a native GitHub merge (human direct-merge here; also native auto-merge) does **not** consult the custom `merge-gates.sh` poller, so only GitHub's ~5 *required* contexts gate it. `Perf PR-fast` is meant-to-block in the poller but is not a required context, so its terminal CANCELLED never blocked the native merge. This is the same poller-bypass class as #1438/#1428 below, but for the perf gate rather than the intent gate. **(2) Detection:** the post-merge net was structurally blind too — `postmortem-owed.sh` trigger-1 deliberately excludes CANCELLED as a "supersede" (lines 314-326, to drop concurrency twins), and a human native-merge writes no `merge-snapshots.jsonl` line (the lossless authority at line 388), so the escape was invisible on BOTH the snapshot and the CANCELLED-excluding live path — `postmortem-owed --list` self-reported "clean." The CANCELLED-supersede heuristic is correct for a twin (a later SUCCESS for the same context wins the latest-run dedup), but wrong when the *latest and only* run for a meant-to-block context is CANCELLED.
+
+### Preventing gate
+PRIMARY (prevention) — promote `Perf PR-fast (windows-2022)` to a `branch_protection.required_contexts` entry on develop so native merges (human + auto) cannot bypass it; **precondition** (must land first or it wedges every non-perf PR): the check is gated by the `Detect perf-relevant changes` path filter, so it must emit a terminal neutral/success status on non-perf diffs before it can be required (the conditional-skip-wedge trap flagged in postmortem-owed.sh lines 314-318). COMPANION (detection, no precondition) — refine `postmortem-owed.sh` trigger-1 so a meant-to-block context whose collapsed latest-run conclusion is CANCELLED *with no later SUCCESS run for the same context* counts as an escape (the existing group_by-name/max-startedAt dedup already drops the concurrency twin, so this stays false-positive-safe). PR A (#1574) is the immediate unblock (env override + PathConfinement-safe harness capture); PR B carries the secure-by-default product fix.
+
+### Filed as
+[`docs/self-improvement/categories/infra/2026-06-27-perf-pr-fast-not-required-cancelled-escape.md`](categories/infra/2026-06-27-perf-pr-fast-not-required-cancelled-escape.md)
+
 ## 2026-06-20 · PR #1438 · red `Intent section` (block-allowlisted) merged — PR opened out-of-band via the GitHub API with no `## Intent` section
 
 ### What escaped
