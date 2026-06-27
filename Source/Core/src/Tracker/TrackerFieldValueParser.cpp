@@ -793,17 +793,26 @@ long long ParseWorkDurationToSeconds(const std::string& input) {
         if (pos >= s.size())
             break;
         char u = s[pos++];
+        long long addend = 0;
         if (u == 'w' || u == 'W') {
-            total += number * 5 * 8 * 60 * 60;
+            addend = number * 5 * 8 * 60 * 60;
         } else if (u == 'd' || u == 'D') {
-            total += number * 8 * 60 * 60;
+            addend = number * 8 * 60 * 60;
         } else if (u == 'h' || u == 'H') {
-            total += number * 60 * 60;
+            addend = number * 60 * 60;
         } else if (u == 'm' || u == 'M') {
-            total += number * 60;
+            addend = number * 60;
         } else {
             break;
         }
+        // Saturating add: clamping each `number` bounds a single addend, but a worklog
+        // string with thousands of tokens could still overflow the running `total`. Cap it
+        // at a ceiling far beyond any real duration so the accumulation can never wrap (UB).
+        constexpr long long kMaxTotalSeconds = 1000000000000000LL; // ~31.7 million years
+        if (total > kMaxTotalSeconds - addend)
+            total = kMaxTotalSeconds;
+        else
+            total += addend;
     }
     return total;
 }

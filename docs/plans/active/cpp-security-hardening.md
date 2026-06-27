@@ -18,7 +18,7 @@ The C++ security audit found **no RCE or remote memory corruption**, but a consi
 
 ## Approach
 
-Remediate in five implementation slices, sequenced low-risk-first, each shippable as its own PR (one PR per logical family, split along subsystem seams to respect the CR per-PR file ceiling). The **dominant fix is mechanical**: replace `nlohmann::json::parse(text[, nullptr, false])` with `smatchet::json_safe::ParseBounded(text, err, ...)` and branch on `err.empty()` — the helper already exists, is header-only, and is the established ingress parser for the MCP server and the Lua `decode_json` sink, so this is a *consistency* change, not new infrastructure.
+Remediate in six implementation slices (Slice 1–6, after the Slice 0 calibration prerequisite), sequenced low-risk-first, each shippable as its own PR (one PR per logical family, split along subsystem seams to respect the CR per-PR file ceiling). The **dominant fix is mechanical**: replace `nlohmann::json::parse(text[, nullptr, false])` with `smatchet::json_safe::ParseBounded(text, err, ...)` and branch on `err.empty()` — the helper already exists, is header-only, and is the established ingress parser for the MCP server and the Lua `decode_json` sink, so this is a *consistency* change, not new infrastructure.
 
 The non-obvious trade-off worth naming: the recursion-DoS class splits into **two sub-fixes** that look the same in the report but need different code. A *parse* site (`AnthropicClient` SSE, `JiraIssueSearch`, etc.) routes through `ParseBounded`. A *recursive walker* over an already-parsed `json` (`MarkdownConvert::AdfToMarkdown`, `TrackerFieldValueParser::NormalizeTrackerFieldValue`, `JsonParseUtil::TryParseJsonMaybeDoubleEncoded`) must instead carry a **depth counter** that aborts past a cap — bounding the parse alone does not bound a hand-written recursion. The plan tags each finding so the implementing agent picks the right fix.
 
@@ -133,3 +133,20 @@ N/A — this plan adds guards and one small helper; it does not extract/split an
 - **Build gate**: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target; Slice 2 touches the Whisper plugin + MCP strict zone, Slice 4 a Core header compiled by both targets).
 - **Doc validation**: `scripts/dev/test-docs.sh` green (this plan doc + the AGENTS.md contract-card edit in Slice 6).
 - **Plan stress-test — `grill-with-docs`**: **done (user grill, 2026-06-26)**. Resolved: (1) full 6-slice campaign — fix all 33, not Medium-only, not Issue-per-bug; (2) MCP posture = confine paths **and** require token on loopback, staged behind `McpRequireTokenOnLoopback` (default ON); (3) caps measured first via Slice 0, not defaulted blind; (4) delegate per subsystem. Sharpened domain term carried into § Approach: the **DW (depth-bounded walker) vs PB (bounded parse)** split — the audit's "recursion-DoS" label conflated two fixes; recursive walkers (`AdfToMarkdown`, `NormalizeTrackerFieldValue`, `TryParseJsonMaybeDoubleEncoded`) need a depth counter, not `ParseBounded`.
+
+## Implementation log
+
+All six slices shipped together in **alexandrosk0/Smatchet#1566** (branch `claude/cpp-security-audit-uw1bns`) rather than six sequential PRs — the local build is unavailable in this environment (FetchContent clones 403 through the proxy), so CI is the only build/test gate and splitting into six PRs would have serialized six full CI round-trips with no local pre-flight. The lint gate (`agents/scripts/project/test-lint-rules.sh`) runs locally and was the pre-push proxy gate.
+
+- **Slice 0 (caps)** — no captured fixtures committed (would contain provider tokens); kept `ParseBounded` defaults (depth 256 / nodes 200k / 4 MiB) except the config reader, which was raised to a 64 MiB byte bound to match its 64 MiB read cap (a real config in the 4–64 MiB window must still parse).
+- **Slice 1–3 (PB sweep)** — bare `nlohmann::json::parse` at the curated ingress TUs routed through `ParseBounded`; `CommandRegistry` recents read bounded at 64 KiB before parse.
+- **Slice 2/4 (DW walkers)** — depth counters added to `MarkdownConvert::EmitAdfBlock` (`kMaxAdfDepth=256`), `TrackerFieldValueParser::NormalizeTrackerFieldValueDepth` (>256 guard), and `JsonParseUtil::TryParseJsonMaybeDoubleEncoded` (both parses via `ParseBounded`); `LuaToJsonImpl` carries a node budget that stops both the array and object branches.
+- **Slice 4 (spot defects)** — `SmatchetLocalization::Format` validates translated-override format specifiers against the English fallback; `TrackerFieldValueParser` worklog clamp `kMaxDurationUnits=1e9`; `ScenarioRunner` localtime null-guard.
+- **Slice 5 (MCP/confinement)** — new `Source/Core/include/Commands/PathConfinement.h` (`ConfinePathUnderBase`); `perf.dump`, `UiTestScenario`, `ScenarioRunner`, and Whisper `--file` confined under dedicated `<userData>` subdirs; `McpRequireTokenOnLoopback` config knob (default ON) denies tokenless loopback with a 401.
+- **Slice 6 (lint graduation)** — `bare-json-parse-untrusted` flipped from WARN-first to blocking (`rc=1`); `BARE_JSON_INGRESS_TUS` curated set extended; AGENTS.md contract-card row updated.
+
+## Deviations
+
+- **One PR instead of six** — see § Implementation log rationale (no local build; CI-only gate). The per-PR file ceiling was relaxed by necessity; the diff is organized by slice for review.
+- **Slice 0 fixtures not committed** — provider responses carry auth tokens; observed maxima were used to confirm the defaults rather than recorded as committed fixtures.
+- **Path confinement deepened to per-feature subdirs** (`<userData>/perf/`, `<userData>/ui-tests/`, audio import dir) rather than the `<userData>` root, because the root holds `smatchet_config.json` — confining to the root would have left a write primitive over the config file.

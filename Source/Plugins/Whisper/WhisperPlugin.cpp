@@ -38,11 +38,14 @@
 // this reach.
 #include "imgui_internal.h"
 
+// SMATCHET_DEVIATION(rule=duplication; reason=standard-library + json/filesystem include block overlaps the McpPlugin include block; include lists are not factorable behind a helper and a shared umbrella header would couple two independent plugins; owner=security-audit; revisit=2026-09-30)
 #include <nlohmann/json.hpp>
 
 #include <ghc/filesystem.hpp>
 
+#include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <fstream>
@@ -450,15 +453,36 @@ smatchet::cmd::CommandResult AcquireTranscribeOnceAudio(const nlohmann::json& ar
     const std::string filePath = args.value("file", std::string());
     if (!filePath.empty()) {
         // SECURITY: `file` is caller-supplied and whisper.transcribe-once is reachable
-        // from the MCP command surface. Confine the read under the user-data dir so a
-        // caller cannot read an arbitrary file (which would then be uploaded to the
-        // cloud transcription endpoint). transcribe-once is a smoke/diagnostic path,
-        // so confining its --file input to the user-data dir is acceptable.
+        // from the MCP command surface. Confine the read under a dedicated
+        // <userData>/whisper-import/ subdir — not the user-data root, which holds
+        // smatchet_config.json and other state a caller has no business exfiltrating to
+        // the cloud transcription endpoint. transcribe-once is a smoke/diagnostic path,
+        // so a dedicated import directory is the right blast radius.
         std::string resolvedPath, confineErr;
-        if (!smatchet::cmd::ConfinePathUnderBase(ConfigManager::GetUserDataDirectory(), filePath, resolvedPath,
-                                                 confineErr)) {
+        if (!smatchet::cmd::ConfinePathUnderSubdir(ConfigManager::GetUserDataDirectory(), "whisper-import", filePath,
+                                                   resolvedPath, confineErr)) {
             return CommandResult::Failure(ErrorCode::ValidationError,
                                           "transcribe-once --file rejected: " + confineErr);
+        }
+        // Only accept .wav — ReadWavFile expects PCM WAV, and refusing other extensions
+        // keeps a caller from coaxing the diagnostic path into shipping arbitrary bytes.
+        {
+            std::string ext = ghc::filesystem::path(resolvedPath).extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(),
+                           [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+            if (ext != ".wav") {
+                return CommandResult::Failure(ErrorCode::ValidationError,
+                                              "transcribe-once --file must be a .wav file");
+            }
+        }
+        // Bound the read: a diagnostic WAV is small; reject an oversized file before it is
+        // slurped into memory and uploaded.
+        std::error_code sizeEc;
+        const auto fileSize = ghc::filesystem::file_size(resolvedPath, sizeEc);
+        constexpr std::uintmax_t kMaxTranscribeWavBytes = 256ull * 1024ull * 1024ull;
+        if (!sizeEc && fileSize > kMaxTranscribeWavBytes) {
+            return CommandResult::Failure(ErrorCode::ValidationError,
+                                          "transcribe-once --file exceeds the 256 MiB limit");
         }
         std::string err;
         if (!ReadWavFile(resolvedPath, outWav, err)) {

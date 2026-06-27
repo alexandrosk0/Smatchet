@@ -414,8 +414,15 @@ void CommandRegistry::LoadRecents() {
     std::string content;
     char buf[512];
     size_t n;
-    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0)
+    // The recents list is a short array of strings (capped at kRecentsMax). Bound
+    // the read at 64 KiB so a corrupt/hostile file can't balloon the heap before
+    // the bounded parse — well above any legitimate recents document.
+    constexpr size_t kRecentsReadCap = 64 * 1024;
+    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) {
         content.append(buf, n);
+        if (content.size() > kRecentsReadCap)
+            break;
+    }
     std::fclose(f);
     try {
         std::string parseErr;

@@ -1079,8 +1079,11 @@ void SmatchetImGuiHost::DrainCommandQueue(std::size_t maxCount) {
                 resultJson = result.ToWireJson(req.CommandName, req.DryRun).dump();
             }
         } catch (const std::exception& ex) {
-            resultJson = MakeCommandFailureResultJson(req.CommandName, smatchet::cmd::ErrorCode::ValidationError,
-                                                      std::string("Command arguments must be valid JSON: ") + ex.what(),
+            // ParseBounded never throws (failures surface via parseErr above), so any
+            // exception reaching here came from Dispatch/ToWireJson — a handler-side
+            // failure, not malformed arguments. Report it as such.
+            resultJson = MakeCommandFailureResultJson(req.CommandName, smatchet::cmd::ErrorCode::HandlerError,
+                                                      std::string("Command dispatch failed: ") + ex.what(),
                                                       std::string(), req.DryRun);
         } catch (...) { // catch-all-ok: unknown command failure is returned as JSON.
             resultJson = MakeCommandFailureResultJson(req.CommandName, smatchet::cmd::ErrorCode::HandlerError,

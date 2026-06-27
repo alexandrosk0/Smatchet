@@ -134,12 +134,16 @@ void RegisterPerfDumpCommand(CommandRegistry& reg) {
                             char ts[64] = {};
                             if (const std::tm* lt = std::localtime(&t))
                                 std::strftime(ts, sizeof(ts), "%Y%m%d-%H%M%S", lt);
-                            outPath = userDataDir + "perf-snapshot-" + ts + ".json";
+                            outPath = (fs::path(userDataDir) / "perf" / (std::string("perf-snapshot-") + ts + ".json"))
+                                          .string();
                         } else {
-                            // SECURITY: a caller-supplied outPath is untrusted (CLI/Lua/MCP). Confine
-                            // it under the user-data dir so perf.dump cannot write an arbitrary file.
+                            // SECURITY: a caller-supplied outPath is untrusted (CLI/Lua/MCP). Confine it
+                            // under a dedicated <userData>/perf/ subdir — not the user-data root, which
+                            // holds smatchet_config.json and other state — so perf.dump cannot write or
+                            // clobber an arbitrary file.
                             std::string resolved, confineErr;
-                            if (!smatchet::cmd::ConfinePathUnderBase(userDataDir, outPath, resolved, confineErr)) {
+                            if (!smatchet::cmd::ConfinePathUnderSubdir(userDataDir, "perf", outPath, resolved,
+                                                                       confineErr)) {
                                 return CommandResult::Failure(ErrorCode::ValidationError,
                                                               "perf.dump outPath rejected: " + confineErr);
                             }
@@ -174,7 +178,8 @@ void RegisterPerfDumpCommand(CommandRegistry& reg) {
                         out["count"] = static_cast<int>(rows.size());
                         return CommandResult::Success(std::move(out));
                     });
-    c.Params = {PString("outPath", "Output file path (default: <userData>/perf-snapshot-<ts>.json).")};
+    c.Params = {
+        PString("outPath", "Output file path, confined under <userData>/perf/ (default: perf-snapshot-<ts>.json).")};
     reg.Register(std::move(c));
 }
 

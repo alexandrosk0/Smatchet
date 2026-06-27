@@ -74,6 +74,12 @@ void ScanIssueActivities(const std::string& listBase, const std::string& issueId
                      parseErr.c_str());
             return;
         }
+        // json::value(key, default) throws type_error on a non-object; a hostile
+        // payload could be a top-level array/scalar, so guard before reading "results".
+        if (!activityPayload.is_object()) {
+            LOG_WARN("PlaneClient: activities payload not an object issue=%s", TruncateForLog(issueKey, 40).c_str());
+            return;
+        }
         std::vector<TrackerActivityEntry> entries =
             PlaneActivityFeed::EntriesFromActivitiesJson(activityPayload.value("results", nlohmann::json::array()),
                                                          accountId, dayFrom, dayTo, issueKey, issueSummary, issueUrl);
@@ -152,11 +158,19 @@ PlaneClient::FetchUserActivity(const TrackerConfig& cfg, const std::string& acco
             return FeedResult::Err(TrackerErrorFromHttpStatus(resp.status_code, outError));
         }
         std::string parseErr;
+        // SMATCHET_DEVIATION(rule=duplication; reason=ParseBounded + parseErr-check + is_object guard is the shared bounded-ingress shape surfaced across independent tracker clients by the security sweep; de-duping into a shared helper would couple unrelated Jira/Plane subsystems and is DRY-CRITICAL to avoid; owner=security-audit; revisit=2026-09-30)
         nlohmann::json listPayload = smatchet::json_safe::ParseBounded(resp.text, parseErr);
         if (!parseErr.empty()) {
             outError = std::string("activity discovery parse error: ") + parseErr;
             LOG_ERROR("PlaneClient: %s", outError.c_str());
             return FeedResult::Err(TrackerErrorParse(outError));
+        }
+        // json::value(key, default) throws type_error on a non-object; guard the
+        // discovery payload the same way before reading "results".
+        if (!listPayload.is_object()) {
+            LOG_WARN("PlaneClient: activity discovery payload not an object account=%s",
+                     TruncateForLog(accountId, 40).c_str());
+            break;
         }
         const auto results = listPayload.value("results", nlohmann::json::array());
         if (results.is_array()) {

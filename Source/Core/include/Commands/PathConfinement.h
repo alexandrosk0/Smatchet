@@ -73,5 +73,31 @@ inline bool ConfinePathUnderBase(const std::string& baseDir, const std::string& 
     return true;
 }
 
+// Confine `candidate` under `<baseDir>/<subdir>` — a dedicated per-feature directory
+// rather than the user-data root. The root itself holds smatchet_config.json and other
+// program state, so confining a caller-supplied write target to the root still leaves a
+// primitive to clobber those files; a dedicated subdir (e.g. "perf", "ui-tests",
+// "whisper-import") removes that overlap. Creates the subdir if missing so the caller can
+// write into it immediately. Returns false (with `errOut` set) on a confinement escape or
+// if the subdir cannot be created.
+inline bool ConfinePathUnderSubdir(const std::string& baseDir, const std::string& subdir,
+                                   const std::string& candidate, std::string& resolvedOut, std::string& errOut) {
+    namespace fs = ghc::filesystem;
+    resolvedOut.clear();
+    errOut.clear();
+    if (baseDir.empty()) {
+        errOut = "no base directory configured for confinement";
+        return false;
+    }
+    const fs::path subBase = fs::path(baseDir) / subdir;
+    std::error_code ec;
+    fs::create_directories(subBase, ec); // idempotent; ignore "already exists"
+    if (ec && !fs::exists(subBase)) {
+        errOut = "could not create confinement directory";
+        return false;
+    }
+    return ConfinePathUnderBase(subBase.string(), candidate, resolvedOut, errOut);
+}
+
 } // namespace cmd
 } // namespace smatchet

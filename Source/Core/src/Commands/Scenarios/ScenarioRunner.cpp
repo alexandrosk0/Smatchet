@@ -60,10 +60,11 @@ CommandResult ScenarioRunner::Start(const std::string& name, const nlohmann::jso
         outPath = userDataDir + "perf/" + name + "-" + ts + ".json";
     } else {
         // SECURITY: a caller-supplied outPath is untrusted (MCP/CLI/Lua can invoke
-        // scenario.run). Confine it under the user-data dir so it cannot write an
-        // arbitrary file.
+        // scenario.run). Confine it under the dedicated <userData>/perf/ subdir (matching
+        // the default branch above) — not the user-data root, which holds
+        // smatchet_config.json — so it cannot write or clobber an arbitrary file.
         std::string resolved, confineErr;
-        if (!ConfinePathUnderBase(ConfigManager::GetUserDataDirectory(), outPath, resolved, confineErr)) {
+        if (!ConfinePathUnderSubdir(ConfigManager::GetUserDataDirectory(), "perf", outPath, resolved, confineErr)) {
             return CommandResult::Failure(ErrorCode::ValidationError, "scenario.run outPath rejected: " + confineErr);
         }
         outPath = resolved;

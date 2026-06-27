@@ -184,8 +184,8 @@ bool McpPlugin::Authorize(const httplib::Request& req, httplib::Response& res) {
         if (impl_->require_token_on_loopback) {
             res.status = 401;
             res.set_header("WWW-Authenticate", "Token realm=\"Smatchet MCP\"");
-            res.set_content("MCP requires an auth token. Set McpAuthToken, or set "
-                            "McpRequireTokenOnLoopback=false to allow tokenless loopback access.",
+            res.set_content("MCP requires an auth token. Set mcp_auth_token, or set "
+                            "mcp_require_token_on_loopback=false to allow tokenless loopback access.",
                             "text/plain");
             AppendMcpActivityLine(impl_->app, std::string("MCP: auth denied remote=") + req.remote_addr +
                                                   " status=401 reason=token_required_on_loopback");

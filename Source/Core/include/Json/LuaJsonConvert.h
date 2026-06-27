@@ -117,6 +117,8 @@ inline nlohmann::json LuaToJsonImpl(sol::object obj, int depth, std::size_t& nod
         } else {
             nlohmann::json j = nlohmann::json::object();
             t.for_each([&](sol::object k, sol::object v) {
+                if (nodes == 0)
+                    return; // budget exhausted — stop materializing keys (matches the array branch)
                 if (k.is<std::string>()) {
                     j[k.as<std::string>()] = LuaToJsonImpl(v, depth + 1, nodes);
                 }

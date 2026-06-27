@@ -791,7 +791,10 @@ nlohmann::json ConfigManager::LoadJsonFile(const std::string& path) {
         // would otherwise stack-overflow the recursive ~json teardown (Pillar 3).
         // ParseBounded never throws — it signals failure via a non-empty errOut.
         std::string parseErr;
-        j = smatchet::json_safe::ParseBounded(raw, parseErr);
+        // Match the 64 MiB read cap above: a config in the 4–64 MiB window is
+        // legitimately large (e.g. many recents/boards), so raise the parse byte
+        // bound to the same ceiling instead of ParseBounded's 4 MiB default.
+        j = smatchet::json_safe::ParseBounded(raw, parseErr, 64u * 1024u * 1024u);
         if (!parseErr.empty()) {
             LOG_ERROR("ConfigManager: failed to parse config '%s': %s", path.c_str(), parseErr.c_str());
             j = nlohmann::json::object();
