@@ -174,15 +174,30 @@ check_cmake() {
 #       sha256 — the jar runs at build time, so a tampered jar is arbitrary code
 #       execution on every developer/CI build.
 check_wrapper() {
-    local props="$1" jar="$2" rc=0 got
+    local props="$1" jar="$2" rc=0 got sha_count url_count eff_sha
     if [ ! -r "$props" ]; then
         echo "test-mobile-security: unreadable gradle-wrapper.properties: $props" >&2
         return 2
     fi
-    # (a) distributionSha256Sum present AND pinning the exact official 8.7 dist sum.
-    if ! grep -Eq "^[[:space:]]*distributionSha256Sum[[:space:]]*=[[:space:]]*${GRADLE_DIST_SHA256}[[:space:]]*\$" "$props"; then
-        echo "FAIL (wrapper): $props does not pin distributionSha256Sum=${GRADLE_DIST_SHA256}" >&2
-        echo "             without it the wrapper runs whatever zip distributionUrl serves, unverified." >&2
+    # (a) distributionSha256Sum must pin the exact official 8.7 dist sum — checked against the
+    # EFFECTIVE value, not just "some line matches". gradle-wrapper.properties is parsed by Java's
+    # java.util.Properties, which keeps the LAST occurrence of a duplicate key. A grep that passes
+    # on any matching line would let a tampered file keep the good pin AND append a second
+    # distributionSha256Sum=<attacker> (or distributionUrl=<attacker>) that Gradle actually uses.
+    # So: reject duplicate keys outright, then verify the single effective value. (Match '=' or ':'
+    # separators — both are valid Java-properties key/value delimiters.)
+    sha_count="$(grep -Ec "^[[:space:]]*distributionSha256Sum[[:space:]]*[=:]" "$props" 2>/dev/null || true)"
+    url_count="$(grep -Ec "^[[:space:]]*distributionUrl[[:space:]]*[=:]" "$props" 2>/dev/null || true)"
+    if [ "${sha_count:-0}" -gt 1 ] || [ "${url_count:-0}" -gt 1 ]; then
+        echo "FAIL (wrapper): duplicate distributionUrl/distributionSha256Sum key in $props — Java" >&2
+        echo "             Properties keeps the LAST, which can smuggle an unverified distribution past this gate." >&2
+        rc=1
+    fi
+    eff_sha="$(grep -E "^[[:space:]]*distributionSha256Sum[[:space:]]*[=:]" "$props" 2>/dev/null | tail -n1 \
+        | sed -E 's/^[[:space:]]*distributionSha256Sum[[:space:]]*[=:][[:space:]]*//; s/[[:space:]]*$//')"
+    if [ "$eff_sha" != "$GRADLE_DIST_SHA256" ]; then
+        echo "FAIL (wrapper): effective distributionSha256Sum '${eff_sha:-<missing>}' != official 8.7 ${GRADLE_DIST_SHA256}" >&2
+        echo "             without the pin the wrapper runs whatever zip distributionUrl serves, unverified." >&2
         rc=1
     fi
     # (b) committed gradle-wrapper.jar == genuine, unmodified Gradle 8.7 wrapper jar.
@@ -202,11 +217,25 @@ check_wrapper() {
     return "$rc"
 }
 
+# merge_rc <current_rc> <check_status> — echo the merged exit code. Severity order:
+# infra error (2) outranks a policy violation (1) outranks success (0). This keeps the documented
+# 0/1/2 contract: a `rc=$?` chain would let a later policy 1 overwrite an earlier infra 2.
+merge_rc() {
+    local cur="$1" new="$2"
+    if [ "$cur" -eq 2 ] || [ "$new" -eq 2 ]; then
+        echo 2
+    elif [ "$cur" -eq 1 ] || [ "$new" -eq 1 ]; then
+        echo 1
+    else
+        echo 0
+    fi
+}
+
 run_check() {
     local rc=0
-    check_manifest "$ROOT/$MANIFEST_REL" || rc=$?
-    check_cmake    "$ROOT/$CMAKE_REL"    || rc=$?
-    check_wrapper  "$ROOT/$WRAPPER_PROPS_REL" "$ROOT/$WRAPPER_JAR_REL" || rc=$?
+    check_manifest "$ROOT/$MANIFEST_REL";                              rc="$(merge_rc "$rc" "$?")"
+    check_cmake    "$ROOT/$CMAKE_REL";                                 rc="$(merge_rc "$rc" "$?")"
+    check_wrapper  "$ROOT/$WRAPPER_PROPS_REL" "$ROOT/$WRAPPER_JAR_REL"; rc="$(merge_rc "$rc" "$?")"
     if [ "$rc" -eq 0 ]; then
         echo "PASS — Android security guardrails hold (#1067 allowBackup=false, #1068 OpenSSL fail-fast, gradle wrapper pinned)."
     fi
@@ -285,9 +314,24 @@ run_selftest() {
         echo "SELFTEST FAIL: tampered gradle-wrapper.jar slipped past the sha256 check" >&2
         miss=1
     fi
+    # 11. DUPLICATE-KEY BYPASS: a good pin followed by a second distributionSha256Sum=<attacker>
+    #     must FAIL — Java Properties uses the LAST value, so the appended line is the effective one.
+    printf 'distributionSha256Sum=%s\ndistributionSha256Sum=%s\n' "$GRADLE_DIST_SHA256" \
+        "0000000000000000000000000000000000000000000000000000000000000000" > "$tmp/dup.properties"
+    if check_wrapper "$tmp/dup.properties" "$ROOT/$WRAPPER_JAR_REL" >/dev/null 2>&1; then
+        echo "SELFTEST FAIL: duplicate distributionSha256Sum override (last-key-wins) slipped past the gate" >&2
+        miss=1
+    fi
+
+    # 12. merge_rc severity order: infra 2 must never be downgraded by a later policy 1.
+    if [ "$(merge_rc 2 1)" != "2" ] || [ "$(merge_rc 1 2)" != "2" ] || [ "$(merge_rc 0 1)" != "1" ] \
+        || [ "$(merge_rc 1 0)" != "1" ] || [ "$(merge_rc 0 0)" != "0" ]; then
+        echo "SELFTEST FAIL: merge_rc does not preserve the 2>1>0 exit-code severity order" >&2
+        miss=1
+    fi
 
     if [ "$miss" -eq 0 ]; then
-        echo "selftest: all three invariants enforced (manifest: live-attr + whitespace + comment-literal cases; cmake: WARNING-fallback + FATAL_ERROR→WARNING downgrade caught; wrapper: missing-pin + tampered-jar caught; clean fixtures pass)."
+        echo "selftest: all three invariants enforced (manifest: live-attr + whitespace + comment-literal cases; cmake: WARNING-fallback + FATAL_ERROR→WARNING downgrade caught; wrapper: missing-pin + tampered-jar + duplicate-key-override caught; merge_rc severity order; clean fixtures pass)."
         return 0
     fi
     return 1

@@ -965,6 +965,25 @@ bool ConfigManager::AtomicWriteTextFile(const std::string& path, const std::stri
         std::remove(tmp.c_str());
         return false;
     }
+    // Durability: fsync the parent directory so the rename's new dirent survives a crash / power
+    // loss. fsync(fd) above persists the file's data+metadata, but the directory entry that now
+    // points at it needs its own sync to be durable. Best-effort — a dir-sync miss is logged, not
+    // fatal, and never undoes a successful publish (the rename itself already happened atomically).
+    {
+        const std::string::size_type slash = path.find_last_of('/');
+        const std::string dir = (slash == std::string::npos)  ? std::string(".")
+                                : (slash == 0)                ? std::string("/")
+                                                              : path.substr(0, slash);
+        const int dfd = ::open(dir.c_str(), O_RDONLY | O_DIRECTORY);
+        if (dfd >= 0) {
+            if (::fsync(dfd) != 0) {
+                LOG_WARN("ConfigManager: fsync on parent dir '%s' failed errno=%d", dir.c_str(), errno);
+            }
+            ::close(dfd);
+        } else {
+            LOG_WARN("ConfigManager: open parent dir '%s' for fsync failed errno=%d", dir.c_str(), errno);
+        }
+    }
     return true;
 #else
     {
