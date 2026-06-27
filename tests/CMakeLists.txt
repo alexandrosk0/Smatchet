@@ -81,6 +81,16 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # vs UI-thread retire-erase / emplace). Seam-level fixture mirroring the map-mutex
         # discipline; header-only (no product .cpp), highest-value being the TSan pass.
         Core/GridContextsMapRace1457.test.cpp
+        # MainThreadDispatcher: the keystone of the UI-thread-marshalling discipline. Every
+        # cross-thread g_ui write (AiAssistant streaming MakeOnDelta, merge-watch notify, sync
+        # toasts) is race-free ONLY because workers PostToMainThread and the UI thread runs the
+        # lambda inside Drain(). This case hammers PostToMainThread from N producers + QueueLen()
+        # from a reader against a single Drain()-ing thread, with a NON-atomic canary that is
+        # race-free iff Drain serialises tasks onto one thread. Header-only product surface
+        # (MainThreadDispatcher.h); the SMATCHET_UI_PERF_SCOPE in Drain() pulls UiPerfMonitor.cpp
+        # (ImGui-free), linked just below.
+        Core/MainThreadDispatcherConcurrent.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/UiPerfMonitor.cpp"
         # --- LocalCacheManager: SQLite-backed ticket cache carrying std::mutex /
         #     std::atomic state — real ThreadSanitizer surface. ImGui-free closure:
         #     LocalCacheManager.cpp + IssueDraft.cpp + Logger.cpp (header deps only).
