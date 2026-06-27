@@ -230,6 +230,20 @@ public class SmatchetActivity extends NativeActivity {
     }
 
     /**
+     * Called from native code (JNI) at ImGui init and on every config change to read the user's
+     * system "Font size" accessibility preference ({@link android.content.res.Configuration#fontScale}:
+     * 1.0 default, 0.85 Small, up to ~2.0 with the accessibility ramps). The NDK {@code AConfiguration}
+     * has no font-scale getter, so the native host composes this multiplier onto the DPI density scale
+     * (ComposeFontDensityScale) to size the font atlas + UI metrics. Returns 1.0 if the configuration
+     * is unavailable, so a failure degrades to "no accessibility bump" rather than a collapsed UI.
+     */
+    @SuppressWarnings("unused")
+    public float getDisplayFontScale() {
+        android.content.res.Configuration config = getResources().getConfiguration();
+        return (config != null) ? config.fontScale : 1.0f;
+    }
+
+    /**
      * Called from native code (JNI) to seal a config secret at rest with the AndroidKeyStore AES-GCM
      * key (see {@link SmatchetSecretStore}). Runs synchronously on the calling (native) thread — the
      * caller needs the return value and KeyStore ops do not require the UI thread. Returns the empty
