@@ -98,7 +98,12 @@ inline bool ConfinePathUnderSubdir(const std::string& baseDir, const std::string
         errOut = "empty confinement directory";
         return false;
     }
-    const fs::path subdirPath(subdir);
+    // Normalize first so "perf/.." or "./perf" collapse before validation, then check
+    // the collapsed form. Comparing against the normalized subdir (rather than the
+    // joined base path) avoids a platform-dependent trailing-separator mismatch — on
+    // Windows `(base / ".").lexically_normal()` keeps a trailing separator, so an
+    // equality test against `base` would wrongly accept a "." subdir.
+    const fs::path subdirPath = fs::path(subdir).lexically_normal();
     if (subdirPath.is_absolute()) {
         errOut = "absolute confinement directories are not allowed";
         return false;
@@ -108,6 +113,10 @@ inline bool ConfinePathUnderSubdir(const std::string& baseDir, const std::string
             errOut = "confinement directory traversal ('..') is not allowed";
             return false;
         }
+    }
+    if (subdirPath.empty() || subdirPath == fs::path(".")) {
+        errOut = "confinement directory must be a real subdirectory"; // e.g. "." / "perf/.."
+        return false;
     }
     std::error_code ec;
     // Anchor the subdir to the canonical user-data dir so the base itself can't be
@@ -119,10 +128,6 @@ inline bool ConfinePathUnderSubdir(const std::string& baseDir, const std::string
     }
 
     const fs::path subBase = (canonBase / subdirPath).lexically_normal();
-    if (subBase == canonBase) {
-        errOut = "empty confinement directory"; // e.g. subdir was "." — no dedicated dir
-        return false;
-    }
     fs::create_directories(subBase, ec); // idempotent; ignore "already exists"
     if (ec && !fs::exists(subBase)) {
         errOut = "could not create confinement directory";
