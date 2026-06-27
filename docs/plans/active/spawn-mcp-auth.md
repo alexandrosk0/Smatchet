@@ -225,6 +225,19 @@ no grid/scroll/draw path. No perf scenario delta expected.
   (`_putenv_s(…,"")` on Windows / `::unsetenv` on POSIX) so no later subprocess
   inherits it — belt-and-suspenders over the existing `IsSensitiveEnvName` `TOKEN`
   substring scrub + `ObservedSmatchetEnv` allow-list exclusion.
+- **CR round-1 security-review (provision/request split) — verdict GO, two new
+  hardening items deferred to PR C** (neither merge-blocking): (a, **MEDIUM →
+  informational**) on Windows the spawn token is transiently written into the
+  *parent's* own env block (`SetEnvironmentVariableA` set→`CreateProcess`→clear)
+  so the child inherits it, opening a microsecond same-user read window; the POSIX
+  path is strictly better (sets it only inside the forked child). The threat needs
+  a same-user attacker who already holds the operator's full privilege (can read
+  the config token / DPAPI secrets directly), so it crosses no boundary. PR-C fix:
+  build an explicit merged `lpEnvironment` block so the parent env is never
+  mutated. (b, **LOW**) the child env scrub runs at `McpPlugin::OnStart`, so a
+  hypothetical subprocess forked *before* plugin start would inherit the unscrubbed
+  var — no current boot path does this (latent only); PR-C fix: scrub at process
+  entry in `main.cpp` if a pre-plugin subprocess is ever added.
 
 ## Verification
 
@@ -237,6 +250,8 @@ no grid/scroll/draw path. No perf scenario delta expected.
 - [x] PR B: lint gate PASS (`test-lint-rules.sh --diff origin/develop`, exit 0)
 - [x] PR B: `--spawn app.version` reaches MCP-ready and returns `ok:true` under the **compiled secure default** — `scripts/dev/test-spawn-mcp-default-auth.sh` PASS (the regression test #1566 lacked; hermetic fresh `SMATCHET_USER_DATA`, env opt-out unset)
 - [x] PR B: security-review of the MCP-auth trust-boundary diff — verdict **SHIP**, no CRITICAL/HIGH; every threat-model claim traced clean (CSPRNG token, env-only never argv, 127.0.0.1-only, constant-time compare, name-scrubbed, parent-env cleared unconditionally, child adoption strictly strengthens); two optional LOW hardening notes recorded in Deviations
+- [x] PR B: **CR round-1** (provision/request split) re-build clean + two-phase `test-spawn-mcp-default-auth.sh` PASS (Phase 1 mint+inject, **Phase 2 persisted operator token — locks the CR #4 configured-token path**, both `ok:true` under the secure default) + lint gate exit 0
+- [x] PR B: **CR round-1 security-review** of the provision/request split — verdict **GO** (no CRITICAL/HIGH): configured-token branch traced to inject nothing, no token logging, AuthRejected envelope leak-free, `--outPath` confinement byte-unchanged; one MEDIUM (Windows parent-env transient same-user window) + two LOW (`random_device`, scrub-timing) deferred to PR C, none merge-blocking
 - [x] Gate-escape postmortem for #1566 filed with a `### Preventing gate` — PR #1575
 - [ ] PR B: CI gates green on the PR (Perf PR-fast under the secure default proves the product fix; the PR-A env opt-out stays until PR C removes it)
 - [ ] PR C (follow-up): thread confined `--outPath` to all `--spawn` callers (un-mask whisper/screenshot) + remove PR A's CI env opt-out
