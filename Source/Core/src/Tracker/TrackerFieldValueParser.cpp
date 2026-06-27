@@ -1,6 +1,7 @@
 #include "TrackerFieldValueParser.h"
 #include "TrackerFieldValueUtils.h"
 
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "StringUtil.h"
 
@@ -252,7 +253,16 @@ TrackerFieldFamily ClassifyTrackerFieldFamily(const TrackerField& field) {
                 if (option.PayloadJson.empty()) {
                     return false;
                 }
-                nlohmann::json raw = nlohmann::json::parse(option.PayloadJson, nullptr, false);
+                // PayloadJson is a re-parse of a tracker-option value (or a value loaded from the
+                // on-disk field-catalog cache). A bare json::parse here — even the non-throwing
+                // 3-arg form — builds the full DOM and stack-overflows the recursive ~json teardown
+                // on a deeply-nested string (uncatchable). Route through the depth/node/byte-bounded
+                // ParseBounded; on failure treat the option as not-structured (graceful, Pillar 3).
+                std::string parseErr;
+                nlohmann::json raw = smatchet::json_safe::ParseBounded(option.PayloadJson, parseErr);
+                if (!parseErr.empty()) {
+                    return false;
+                }
                 return raw.is_object() && !IsSimpleOptionObject(raw);
             });
         if (likelyStructured) {
