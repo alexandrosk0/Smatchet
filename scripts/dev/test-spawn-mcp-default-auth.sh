@@ -39,11 +39,14 @@ fi
 TMP_DATA="$(mktemp -d 2>/dev/null || mktemp -d -t smatchet-spawn-auth)"
 cleanup() { rm -rf "$TMP_DATA"; }
 trap cleanup EXIT
+# Declare/assign separately (shellcheck SC2155: assigning a command
+# substitution inside `export` masks its exit status).
 if command -v cygpath >/dev/null 2>&1; then
-    export SMATCHET_USER_DATA="$(cygpath -m "$TMP_DATA")"
+    SMATCHET_USER_DATA="$(cygpath -m "$TMP_DATA")"
 else
-    export SMATCHET_USER_DATA="$TMP_DATA"
+    SMATCHET_USER_DATA="$TMP_DATA"
 fi
+export SMATCHET_USER_DATA
 # Crucial: force the SECURE default. PR A exports this =false at workflow level to
 # unblock CI; this test asserts the product fix works WITHOUT that opt-out.
 unset SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK
