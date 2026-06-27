@@ -55,6 +55,13 @@ bool ApproxEqRgb(const ImVec4& a, float r, float g, float b) {
     return std::fabs(a.x - r) <= 1e-5f && std::fabs(a.y - g) <= 1e-5f && std::fabs(a.z - b) <= 1e-5f;
 }
 
+// RGBA-exact variant: alpha matters for the chrome slots that share the accent
+// RGB at different opacities (Separator / ResizeGrip / Tab / Docking / selection),
+// so a re-tint can't silently flatten an alpha without a test catching it.
+bool ApproxEqRgba(const ImVec4& a, float r, float g, float b, float alpha) {
+    return ApproxEqRgb(a, r, g, b) && std::fabs(a.w - alpha) <= 1e-5f;
+}
+
 } // namespace
 
 TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetDark accent literal is the AA-fixed shade") {
@@ -105,4 +112,80 @@ TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetDark accent meets WCAG AA on white t
     // Regression guard: the OLD accent (0.35,0.55,0.95) must NOT satisfy (a).
     const ImVec4 oldAccent(0.35f, 0.55f, 0.95f, 1.00f);
     CHECK(ContrastRatio(text, oldAccent) < 4.5f);
+}
+
+// ----- ModernDark (opt-in, non-default theme) — accent-contrast follow-up -----
+// ModernDark had the SAME white-on-fill defect (old accent 0.45,0.65,0.95 →
+// 2.12:1) but needs its OWN darker shade: its dimmer Text(0.92,0.93,0.95) lands
+// the SmatchetDark shade (0.26,0.42,0.72) at only ~4.45:1 (<4.5). The shade
+// (0.29,0.42,0.62) is the hue-faithful value clearing both ModernDark floors.
+
+TEST_CASE_FIXTURE(ImGuiCtxFixture, "ModernDark accent literal is its own AA-fixed shade") {
+    SmatchetTheme::ApplyStyle(ThemeId::ModernDark);
+    const ImVec4* colors = ImGui::GetStyle().Colors;
+
+    // Every slot that used the old (0.45,0.65,0.95) accent now carries the
+    // ModernDark-specific (0.29,0.42,0.62). Pinned with full RGBA across ALL 13
+    // re-tinted slots so neither an omitted slot NOR an alpha drift can slip
+    // through — the alpha-varying chrome (Separator / ResizeGrip / Tab / Docking /
+    // TextSelectedBg) is exactly what a naive re-tint would silently flatten.
+    CHECK(ApproxEqRgba(colors[ImGuiCol_CheckMark], 0.29f, 0.42f, 0.62f, 1.00f));
+    CHECK(ApproxEqRgba(colors[ImGuiCol_SliderGrab], 0.29f, 0.42f, 0.62f, 1.00f));
+    CHECK(ApproxEqRgba(colors[ImGuiCol_ButtonActive], 0.29f, 0.42f, 0.62f, 1.00f));
+    CHECK(ApproxEqRgba(colors[ImGuiCol_HeaderActive], 0.29f, 0.42f, 0.62f, 1.00f));
+    CHECK(ApproxEqRgba(colors[ImGuiCol_SeparatorHovered], 0.29f, 0.42f, 0.62f, 0.78f));
+    CHECK(ApproxEqRgba(colors[ImGuiCol_SeparatorActive], 0.29f, 0.42f, 0.62f, 1.00f));
+    CHECK(ApproxEqRgba(colors[ImGuiCol_ResizeGrip], 0.29f, 0.42f, 0.62f, 0.20f));
+    CHECK(ApproxEqRgba(colors[ImGuiCol_ResizeGripHovered], 0.29f, 0.42f, 0.62f, 0.67f));
+    CHECK(ApproxEqRgba(colors[ImGuiCol_ResizeGripActive], 0.29f, 0.42f, 0.62f, 0.95f));
+    CHECK(ApproxEqRgba(colors[ImGuiCol_TabHovered], 0.29f, 0.42f, 0.62f, 0.80f));
+    CHECK(ApproxEqRgba(colors[ImGuiCol_DockingPreview], 0.29f, 0.42f, 0.62f, 0.70f));
+    CHECK(ApproxEqRgba(colors[ImGuiCol_TextSelectedBg], 0.29f, 0.42f, 0.62f, 0.35f));
+    CHECK(ApproxEqRgba(colors[ImGuiCol_NavHighlight], 0.29f, 0.42f, 0.62f, 1.00f));
+
+    // SliderGrabActive keeps the one-step-brighter (+.10,+.10,+.05) relationship, opaque.
+    CHECK(ApproxEqRgba(colors[ImGuiCol_SliderGrabActive], 0.39f, 0.52f, 0.67f, 1.00f));
+    CHECK(colors[ImGuiCol_SliderGrabActive].x > colors[ImGuiCol_SliderGrab].x);
+    CHECK(colors[ImGuiCol_SliderGrabActive].y > colors[ImGuiCol_SliderGrab].y);
+    CHECK(colors[ImGuiCol_SliderGrabActive].z > colors[ImGuiCol_SliderGrab].z);
+
+    // TabActive is a SEPARATE desaturated blue (0.28,0.38,0.55), NOT the accent —
+    // guard that the re-tint did not collapse it onto the accent shade.
+    CHECK(ApproxEqRgb(colors[ImGuiCol_TabActive], 0.28f, 0.38f, 0.55f));
+    CHECK_FALSE(ApproxEqRgb(colors[ImGuiCol_TabActive], 0.29f, 0.42f, 0.62f));
+
+    // The two accent shades must be distinct — ModernDark is darker on blue than SmatchetDark.
+    CHECK_FALSE(ApproxEqRgb(colors[ImGuiCol_ButtonActive], 0.26f, 0.42f, 0.72f));
+}
+
+TEST_CASE_FIXTURE(ImGuiCtxFixture, "ModernDark accent meets WCAG AA on its dimmer text AND the UI floor on dark") {
+    SmatchetTheme::ApplyStyle(ThemeId::ModernDark);
+    const ImVec4* colors = ImGui::GetStyle().Colors;
+
+    const ImVec4& text = colors[ImGuiCol_Text];         // (0.92,0.93,0.95) — dimmer than SmatchetDark's 0.95
+    const ImVec4& windowBg = colors[ImGuiCol_WindowBg]; // (0.10,0.11,0.13)
+    const ImVec4& accentFill = colors[ImGuiCol_ButtonActive];
+
+    // Constraint (a): ModernDark Text on the opaque accent fill >= 4.5:1.
+    const float whiteOnFill = ContrastRatio(text, accentFill);
+    INFO("ModernDark white-on-fill = ", whiteOnFill);
+    CHECK(whiteOnFill >= 4.5f);
+
+    // Constraint (b): opaque accent glyph on WindowBg >= 3.0:1 (UI-component floor).
+    const float accentOnDark = ContrastRatio(accentFill, windowBg);
+    INFO("ModernDark accent-on-WindowBg = ", accentOnDark);
+    CHECK(accentOnDark >= 3.0f);
+
+    CHECK(whiteOnFill == doctest::Approx(4.610f).epsilon(0.01f));
+    CHECK(accentOnDark == doctest::Approx(3.160f).epsilon(0.01f));
+
+    // Regression guard 1: ModernDark's OLD accent (0.45,0.65,0.95) failed (a).
+    const ImVec4 oldModernAccent(0.45f, 0.65f, 0.95f, 1.00f);
+    CHECK(ContrastRatio(text, oldModernAccent) < 4.5f);
+
+    // Regression guard 2: the SmatchetDark shade (0.26,0.42,0.72) is NOT reusable
+    // on ModernDark's dimmer Text (~4.45:1 < 4.5) — this is WHY ModernDark needs
+    // its own darker (0.29,0.42,0.62). Pins the per-theme-shade decision.
+    const ImVec4 sharedDarkShade(0.26f, 0.42f, 0.72f, 1.00f);
+    CHECK(ContrastRatio(text, sharedDarkShade) < 4.5f);
 }

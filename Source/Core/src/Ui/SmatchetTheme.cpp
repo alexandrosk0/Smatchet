@@ -203,33 +203,43 @@ void ApplyModernDark(ImGuiStyle& /*style*/, ImVec4* colors) {
     colors[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.40f, 0.42f, 0.46f, 1.00f);
     colors[ImGuiCol_ScrollbarGrabActive] = ImVec4(0.50f, 0.52f, 0.56f, 1.00f);
 
-    colors[ImGuiCol_CheckMark] = ImVec4(0.45f, 0.65f, 0.95f, 1.00f);
-    colors[ImGuiCol_SliderGrab] = ImVec4(0.45f, 0.65f, 0.95f, 1.00f);
-    colors[ImGuiCol_SliderGrabActive] = ImVec4(0.55f, 0.75f, 1.00f, 1.00f);
+    // Mobile P1.6 accent-contrast follow-up (sibling of the SmatchetDark fix):
+    // ModernDark's accent (0.45,0.65,0.95) was the OPAQUE fill behind
+    // Text(0.92,0.93,0.95) on ButtonActive/HeaderActive — white-on-fill only
+    // 2.12:1, below the 4.5 AA-normal floor. ModernDark needs its OWN darker
+    // shade: its dimmer Text(0.92) lands the SmatchetDark shade (0.26,0.42,0.72)
+    // at just 4.45:1 (<4.5). (0.29,0.42,0.62) is the hue-faithful shade clearing
+    // BOTH constraints — Text-on-fill 4.61:1 (>=4.5 AA-normal) and opaque
+    // accent-on-WindowBg(0.10,0.11,0.13) 3.16:1 (>=3.0 UI-component floor).
+    // Each slot keeps its original alpha. Pinned by SmatchetThemeAccentContrast.
+    colors[ImGuiCol_CheckMark] = ImVec4(0.29f, 0.42f, 0.62f, 1.00f);
+    colors[ImGuiCol_SliderGrab] = ImVec4(0.29f, 0.42f, 0.62f, 1.00f);
+    colors[ImGuiCol_SliderGrabActive] = ImVec4(0.39f, 0.52f, 0.67f, 1.00f); // one step brighter (+.10,+.10,+.05)
 
     colors[ImGuiCol_Button] = ImVec4(0.20f, 0.22f, 0.26f, 1.00f);
     colors[ImGuiCol_ButtonHovered] = ImVec4(0.28f, 0.32f, 0.40f, 1.00f);
-    colors[ImGuiCol_ButtonActive] = ImVec4(0.45f, 0.65f, 0.95f, 1.00f);
+    colors[ImGuiCol_ButtonActive] = ImVec4(0.29f, 0.42f, 0.62f, 1.00f);
 
     colors[ImGuiCol_Header] = ImVec4(0.20f, 0.22f, 0.26f, 1.00f);
     colors[ImGuiCol_HeaderHovered] = ImVec4(0.28f, 0.32f, 0.40f, 1.00f);
-    colors[ImGuiCol_HeaderActive] = ImVec4(0.45f, 0.65f, 0.95f, 1.00f);
+    colors[ImGuiCol_HeaderActive] = ImVec4(0.29f, 0.42f, 0.62f, 1.00f);
 
     colors[ImGuiCol_Separator] = ImVec4(0.22f, 0.24f, 0.28f, 0.55f);
-    colors[ImGuiCol_SeparatorHovered] = ImVec4(0.45f, 0.65f, 0.95f, 0.78f);
-    colors[ImGuiCol_SeparatorActive] = ImVec4(0.45f, 0.65f, 0.95f, 1.00f);
+    colors[ImGuiCol_SeparatorHovered] = ImVec4(0.29f, 0.42f, 0.62f, 0.78f);
+    colors[ImGuiCol_SeparatorActive] = ImVec4(0.29f, 0.42f, 0.62f, 1.00f);
 
-    colors[ImGuiCol_ResizeGrip] = ImVec4(0.45f, 0.65f, 0.95f, 0.20f);
-    colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.45f, 0.65f, 0.95f, 0.67f);
-    colors[ImGuiCol_ResizeGripActive] = ImVec4(0.45f, 0.65f, 0.95f, 0.95f);
+    colors[ImGuiCol_ResizeGrip] = ImVec4(0.29f, 0.42f, 0.62f, 0.20f);
+    colors[ImGuiCol_ResizeGripHovered] = ImVec4(0.29f, 0.42f, 0.62f, 0.67f);
+    colors[ImGuiCol_ResizeGripActive] = ImVec4(0.29f, 0.42f, 0.62f, 0.95f);
 
     colors[ImGuiCol_Tab] = ImVec4(0.16f, 0.17f, 0.20f, 0.86f);
-    colors[ImGuiCol_TabHovered] = ImVec4(0.45f, 0.65f, 0.95f, 0.80f);
-    colors[ImGuiCol_TabActive] = ImVec4(0.28f, 0.38f, 0.55f, 1.00f);
+    colors[ImGuiCol_TabHovered] = ImVec4(0.29f, 0.42f, 0.62f, 0.80f);
+    colors[ImGuiCol_TabActive] =
+        ImVec4(0.28f, 0.38f, 0.55f, 1.00f); // separate desaturated blue (5.34:1 white-on-tab), not accent
     colors[ImGuiCol_TabUnfocused] = ImVec4(0.10f, 0.11f, 0.13f, 0.97f);
     colors[ImGuiCol_TabUnfocusedActive] = ImVec4(0.16f, 0.17f, 0.20f, 1.00f);
 
-    colors[ImGuiCol_DockingPreview] = ImVec4(0.45f, 0.65f, 0.95f, 0.70f);
+    colors[ImGuiCol_DockingPreview] = ImVec4(0.29f, 0.42f, 0.62f, 0.70f);
     colors[ImGuiCol_DockingEmptyBg] = ImVec4(0.18f, 0.18f, 0.20f, 1.00f);
 
     colors[ImGuiCol_PlotLines] = ImVec4(0.61f, 0.61f, 0.61f, 1.00f);
@@ -243,18 +253,20 @@ void ApplyModernDark(ImGuiStyle& /*style*/, ImVec4* colors) {
     colors[ImGuiCol_TableRowBg] = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
     colors[ImGuiCol_TableRowBgAlt] = ImVec4(1.00f, 1.00f, 1.00f, 0.03f);
 
-    colors[ImGuiCol_TextSelectedBg] = ImVec4(0.45f, 0.65f, 0.95f, 0.35f);
+    colors[ImGuiCol_TextSelectedBg] = ImVec4(0.29f, 0.42f, 0.62f, 0.35f);
     colors[ImGuiCol_DragDropTarget] = ImVec4(1.00f, 1.00f, 0.00f, 0.90f);
-    colors[ImGuiCol_NavHighlight] = ImVec4(0.45f, 0.65f, 0.95f, 1.00f);
+    colors[ImGuiCol_NavHighlight] = ImVec4(0.29f, 0.42f, 0.62f, 1.00f);
     colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.00f, 1.00f, 1.00f, 0.70f);
     colors[ImGuiCol_NavWindowingDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.20f);
     colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.80f, 0.80f, 0.80f, 0.35f);
 
     // C++ syntax palette — same family as SmatchetDark; ModernDark only repaints chrome.
     SetSyntaxColors(SmatchetTheme::BuildSyntaxColorsForTheme(ThemeId::ModernDark));
-    // AI palette — accent is the desaturated ModernDark blue (CheckMark / Tab).
+    // AI palette — AiUserBubbleBg is a low-alpha (0.18) accent-blue tint, NOT an
+    // opaque fill, so it stays the brighter pre-darken blue (separately AA-fine)
+    // while the chrome accent above darkened to (0.29,0.42,0.62) for opaque fills.
     const SmatchetThemeAiColors ai = {
-        {0.45f, 0.65f, 0.95f, 0.18f}, // AiUserBubbleBg
+        {0.45f, 0.65f, 0.95f, 0.18f}, // AiUserBubbleBg — accent-blue tint, 0.18 alpha
         {0.55f, 0.75f, 1.00f, 1.00f}, // AiUserRoleLabel
         {0.80f, 0.72f, 1.00f, 1.00f}, // AiAssistantRoleLabel
         {0.48f, 0.50f, 0.54f, 1.00f}, // AiActionRowIcon — TextDisabled
