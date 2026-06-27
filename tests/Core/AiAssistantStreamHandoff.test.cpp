@@ -47,7 +47,7 @@ std::unique_ptr<IAiClient> MakeStub(AiProvider /*provider*/) {
     script.ProviderName = "stub";
     script.DeltaSequence = {"hel", "lo ", "wor", "ld"};
     script.PerDeltaSleepMs = 1;
-    return std::unique_ptr<IAiClient>(new smatchet_tests::StubAiClient(script));
+    return std::make_unique<smatchet_tests::StubAiClient>(script);
 }
 
 } // namespace
@@ -74,19 +74,28 @@ TEST_CASE("AiAssistantController: streaming worker→dispatcher→UI-state hand-
             }
         });
 
-        controller.Submit(1, "hello", std::vector<AiContextBlock>());
+        // The override was installed BEFORE construction, so the ctor's MakeAiClient() returns the
+        // stub and Submit() accepts the turn. If the factory seam ever broke, client_ would be null,
+        // Submit() would short-circuit to false (AiAssistantController.cpp:178), and the worker→UI
+        // hand-off would never run — so assert acceptance to keep this from silently no-op'ing.
+        const bool submitted = controller.Submit(1, "hello", std::vector<AiContextBlock>());
+        CHECK(submitted);
 
-        // Let the worker run its turn (stub stream ~4 ms; generous slack for CI jitter).
+        // Let the worker run its turn (stub stream ~5 ms; generous slack for CI jitter).
         std::this_thread::sleep_for(std::chrono::milliseconds(80));
 
         stopDrain.store(true, std::memory_order_release);
         drainer.join();
-        dispatcher.Drain(); // sweep anything posted after the drainer stopped
     } // controller dtor: flips its cancel atom + joins the worker (bounded) — no race, no deadlock
 
+    // Drain AFTER teardown: the dtor's worker-join can post the turn's final lambdas, so draining
+    // here (single-threaded, worker joined) flushes them deterministically — else QueueLen() flakes.
+    dispatcher.Drain();
     AiClientFactory::SetTestOverride(nullptr);
 
-    // TSan-cleanliness is the assertion; these guard against a crash / wildly-inconsistent state.
+    // Proves the worker→dispatcher→UI hand-off actually ran (not the no-client short-circuit): the
+    // stub's final delta pushes exactly one assistant message. TSan-cleanliness is the core assertion.
+    CHECK(ui.history.size() == 1u);
     CHECK(ui.history.size() == ui.historyRowIds.size()); // the two parallel vectors stay in lock-step
     CHECK(dispatcher.QueueLen() == 0u);
 }
@@ -109,7 +118,8 @@ TEST_CASE("AiAssistantController: Submit then Cancel racing the worker is race-f
             }
         });
 
-        controller.Submit(7, "race", std::vector<AiContextBlock>());
+        const bool submitted = controller.Submit(7, "race", std::vector<AiContextBlock>());
+        CHECK(submitted); // turn accepted → the worker runs → the Submit/Cancel race below is real
         // Cancel from this thread while the worker streams — exercises currentCancel_ (shared_ptr
         // swap on Submit vs store on Cancel vs load on the worker) + the state_ transitions.
         controller.Cancel();
@@ -117,10 +127,13 @@ TEST_CASE("AiAssistantController: Submit then Cancel racing the worker is race-f
         std::this_thread::sleep_for(std::chrono::milliseconds(40));
         stopDrain.store(true, std::memory_order_release);
         drainer.join();
-        dispatcher.Drain();
     }
 
+    // Drain AFTER teardown (see the hand-off test) so worker-join postings flush deterministically.
+    dispatcher.Drain();
     AiClientFactory::SetTestOverride(nullptr);
+    // Cancel timing is non-deterministic (it may land before or after deltas), so assert acceptance
+    // + post-drain consistency rather than a specific stream result; TSan-cleanliness is the point.
     CHECK(ui.history.size() == ui.historyRowIds.size());
     CHECK(dispatcher.QueueLen() == 0u);
 }
