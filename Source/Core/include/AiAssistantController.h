@@ -24,6 +24,7 @@
 
 class AppController;
 class MainThreadDispatcher;
+struct IAiAssistantUiState;
 struct TrackerConfig;
 
 namespace smatchet {
@@ -152,7 +153,7 @@ class AiAssistantController {
     /// thread updates the atomic when transitioning; the UI thread reads via `CurrentState()`.
     enum class State { Idle, InFlight, Cancelled, Errored };
 
-    explicit AiAssistantController(MainThreadDispatcher& dispatcher);
+    AiAssistantController(MainThreadDispatcher& dispatcher, IAiAssistantUiState& uiState);
     ~AiAssistantController();
 
     AiAssistantController(const AiAssistantController&) = delete;
@@ -287,6 +288,7 @@ class AiAssistantController {
                       const IAiClient::DeltaCallback& onDelta, const IAiClient::ErrorCallback& onError);
 
     MainThreadDispatcher& dispatcher_;
+    IAiAssistantUiState& uiState_;
 
     // Provider state. Constructed at controller init and rebuilt by the worker thread
     // at the top of every `RunRequest` when `ProviderFromConfig(cfg)` returns a value

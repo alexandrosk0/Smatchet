@@ -12,10 +12,10 @@
 #include "AppController.h"
 #include "BackendAuditTrail.h"
 #include "ConfigManager.h"
+#include "IAiAssistantUiState.h"
 #include "Logger.h"
 #include "MainThreadDispatcher.h"
 #include "SmatchetChatPersistWorker.h"
-#include "SmatchetUiSession.h"
 
 #include <algorithm>
 #include <atomic>
@@ -24,14 +24,11 @@
 #include <nlohmann/json.hpp>
 #include <utility>
 
-// `g_ui` is the UI-thread-owned UiDrawSession defined unconditionally in
-// SmatchetUI.cpp (line 51). SmatchetUiSession.h only declares it `extern`
-// behind `#if defined(SMATCHET_WITH_LUA_AUTOMATION)` because that header's
-// other consumer (Lua glue) was the historical-only worker that needed it.
-// Phase B's MainThreadDispatcher callbacks reach into the same global; we
-// declare it directly here so the TU compiles regardless of the
-// Lua-automation build flag.
-extern UiDrawSession g_ui;
+// The streaming worker→UI hand-off reaches the chat UI state through IAiAssistantUiState
+// (uiState_), NOT the global g_ui directly: production binds the process-lifetime
+// GetGlobalAiAssistantUiState() adapter (so a dispatcher task draining after this controller
+// is destroyed stays safe), while the ThreadSanitizer test binds a fake — keeping this TU
+// free of the ImGui-bound UiDrawSession. See docs/plans/active/tsan-imgui-linked-target.md.
 
 namespace {
 
@@ -127,7 +124,8 @@ AiClientConfig BuildClientConfig(const TrackerConfig& cfg, AiProvider provider) 
 
 } // namespace
 
-AiAssistantController::AiAssistantController(MainThreadDispatcher& dispatcher) : dispatcher_(dispatcher) {
+AiAssistantController::AiAssistantController(MainThreadDispatcher& dispatcher, IAiAssistantUiState& uiState)
+    : dispatcher_(dispatcher), uiState_(uiState) {
     const TrackerConfig cfg = ConfigManager::Load();
     const AiProvider provider = ProviderFromConfig(cfg);
     // Worker thread is not yet spawned, so the lock here is only for
@@ -348,10 +346,11 @@ void AiAssistantController::ResolveModelAndEffort(const TrackerConfig& cfg, cons
         // Capture by value: the task may run arbitrarily later on the UI thread
         // and must remain safe even if the controller (or worker locals) go away
         // between post and drain. No references to worker-thread state.
-        dispatcher_.PostToMainThread([]() {
-            g_ui.assistantHistory.clear();
-            g_ui.assistantStreamBuf.clear();
-            g_ui.assistantLastError = "[model changed - chat cleared]";
+        IAiAssistantUiState* ui = &uiState_;
+        dispatcher_.PostToMainThread([ui]() {
+            ui->AssistantHistory().clear();
+            ui->AssistantStreamBuf().clear();
+            ui->AssistantLastError() = "[model changed - chat cleared]";
         });
     }
     lastModelSignature_ = sigResult.NewSignature;
@@ -436,12 +435,13 @@ IAiClient::DeltaCallback AiAssistantController::MakeOnDelta(uint64_t turnGen) {
     // Capture turnGen by value so stale dispatcher tasks (after a newer Submit
     // or Cancel) can be dropped on the UI side via assistantTurnGen comparison.
     MainThreadDispatcher* dispatcher = &dispatcher_;
+    IAiAssistantUiState* ui = &uiState_;
 
-    return [dispatcher, turnGen](const AiStreamDelta& delta) {
+    return [dispatcher, ui, turnGen](const AiStreamDelta& delta) {
         const std::string chunk = delta.TokenChunk;
         const bool isFinal = delta.IsFinal;
-        dispatcher->PostToMainThread([turnGen, chunk, isFinal]() {
-            if (g_ui.assistantTurnGen != turnGen) {
+        dispatcher->PostToMainThread([ui, turnGen, chunk, isFinal]() {
+            if (ui->AssistantTurnGen() != turnGen) {
                 return; // stale callback — Cancel or newer Submit raced us
             }
             if (!chunk.empty()) {
@@ -449,20 +449,20 @@ IAiClient::DeltaCallback AiAssistantController::MakeOnDelta(uint64_t turnGen) {
                 // runaway provider that keeps streaming past any reasonable
                 // response size. 4 MiB mirrors the SSE/NDJSON parser caps.
                 constexpr std::size_t kMaxStreamBufBytes = 4u * 1024u * 1024u;
-                if (g_ui.assistantStreamBuf.size() < kMaxStreamBufBytes) {
-                    const std::size_t room = kMaxStreamBufBytes - g_ui.assistantStreamBuf.size();
+                if (ui->AssistantStreamBuf().size() < kMaxStreamBufBytes) {
+                    const std::size_t room = kMaxStreamBufBytes - ui->AssistantStreamBuf().size();
                     if (chunk.size() <= room) {
-                        g_ui.assistantStreamBuf.append(chunk);
+                        ui->AssistantStreamBuf().append(chunk);
                     } else {
-                        g_ui.assistantStreamBuf.append(chunk, 0, room);
-                        g_ui.assistantStreamBuf.append("\n[truncated — response exceeded 4 MiB cap]");
+                        ui->AssistantStreamBuf().append(chunk, 0, room);
+                        ui->AssistantStreamBuf().append("\n[truncated — response exceeded 4 MiB cap]");
                     }
                 }
             }
             if (isFinal) {
                 AiMessage assistantMsg;
                 assistantMsg.Role = "assistant";
-                assistantMsg.Content = g_ui.assistantStreamBuf;
+                assistantMsg.Content = ui->AssistantStreamBuf();
                 assistantMsg.CreatedAtUnixMs = smatchet::ai::NowUnixMs();
                 // Phase 3 of ai-chat-claude-desktop-parity. Persist snapshot taken
                 // before move; row-id slot grows in lock-step so the worker callback
@@ -470,10 +470,10 @@ IAiClient::DeltaCallback AiAssistantController::MakeOnDelta(uint64_t turnGen) {
                 // a turn that completed during the hydrate window doesn't write a
                 // duplicate that the hydrate will then re-load.
                 AiMessage persistCopy = assistantMsg;
-                const std::size_t newIdx = g_ui.assistantHistory.size();
-                g_ui.assistantHistory.push_back(std::move(assistantMsg));
-                g_ui.assistantHistoryRowIds.push_back(-1);
-                if (g_ui.assistantHistoryHydrated) {
+                const std::size_t newIdx = ui->AssistantHistory().size();
+                ui->AssistantHistory().push_back(std::move(assistantMsg));
+                ui->AssistantHistoryRowIds().push_back(-1);
+                if (ui->AssistantHistoryHydrated()) {
                     smatchet::ai::chat_persist::Op appendOp;
                     appendOp.kind = smatchet::ai::chat_persist::OpKind::Append;
                     appendOp.message = std::move(persistCopy);
@@ -482,11 +482,11 @@ IAiClient::DeltaCallback AiAssistantController::MakeOnDelta(uint64_t turnGen) {
                     smatchet::ai::chat_persist::Op trimOp;
                     trimOp.kind = smatchet::ai::chat_persist::OpKind::Trim;
                     trimOp.trimCap = static_cast<std::size_t>(
-                        g_ui.cfg.AssistantHistoryMaxRows > 0 ? g_ui.cfg.AssistantHistoryMaxRows : 500);
+                        ui->AssistantHistoryMaxRows() > 0 ? ui->AssistantHistoryMaxRows() : 500);
                     smatchet::ai::chat_persist::Enqueue(std::move(trimOp));
                 }
-                g_ui.assistantStreamBuf.clear();
-                g_ui.assistantInFlight = false;
+                ui->AssistantStreamBuf().clear();
+                ui->SetAssistantInFlight(false);
             }
         });
     };
@@ -494,8 +494,9 @@ IAiClient::DeltaCallback AiAssistantController::MakeOnDelta(uint64_t turnGen) {
 
 IAiClient::ErrorCallback AiAssistantController::MakeOnError(uint64_t turnGen) {
     MainThreadDispatcher* dispatcher = &dispatcher_;
+    IAiAssistantUiState* ui = &uiState_;
 
-    return [this, dispatcher, turnGen](const AiStreamError& err) {
+    return [this, dispatcher, ui, turnGen](const AiStreamError& err) {
         const int httpStatus = err.HttpStatus;
         const std::string message = err.Message;
         const bool wasCancelled = err.WasCancelled;
@@ -507,26 +508,26 @@ IAiClient::ErrorCallback AiAssistantController::MakeOnError(uint64_t turnGen) {
             LOG_ERROR("AiAssistantController: turn %llu errored httpStatus=%d message='%s'",
                       static_cast<unsigned long long>(turnGen), httpStatus, message.c_str());
         }
-        dispatcher->PostToMainThread([turnGen, httpStatus, message, wasCancelled]() {
-            if (g_ui.assistantTurnGen != turnGen) {
+        dispatcher->PostToMainThread([ui, turnGen, httpStatus, message, wasCancelled]() {
+            if (ui->AssistantTurnGen() != turnGen) {
                 return;
             }
-            g_ui.assistantInFlight = false;
+            ui->SetAssistantInFlight(false);
             if (wasCancelled) {
                 // Scenario 3 contract — partial text retained in history.
-                if (!g_ui.assistantStreamBuf.empty()) {
+                if (!ui->AssistantStreamBuf().empty()) {
                     AiMessage assistantMsg;
                     assistantMsg.Role = "assistant";
-                    assistantMsg.Content = g_ui.assistantStreamBuf + "\n[cancelled]";
+                    assistantMsg.Content = ui->AssistantStreamBuf() + "\n[cancelled]";
                     assistantMsg.CreatedAtUnixMs = smatchet::ai::NowUnixMs();
                     // Phase 3 of ai-chat-claude-desktop-parity. Same enqueue shape as
                     // the normal-finalisation site; cancelled-with-partial-text rows
                     // persist so the next launch shows the user where they stopped.
                     AiMessage persistCopy = assistantMsg;
-                    const std::size_t newIdx = g_ui.assistantHistory.size();
-                    g_ui.assistantHistory.push_back(std::move(assistantMsg));
-                    g_ui.assistantHistoryRowIds.push_back(-1);
-                    if (g_ui.assistantHistoryHydrated) {
+                    const std::size_t newIdx = ui->AssistantHistory().size();
+                    ui->AssistantHistory().push_back(std::move(assistantMsg));
+                    ui->AssistantHistoryRowIds().push_back(-1);
+                    if (ui->AssistantHistoryHydrated()) {
                         smatchet::ai::chat_persist::Op appendOp;
                         appendOp.kind = smatchet::ai::chat_persist::OpKind::Append;
                         appendOp.message = std::move(persistCopy);
@@ -535,17 +536,17 @@ IAiClient::ErrorCallback AiAssistantController::MakeOnError(uint64_t turnGen) {
                         smatchet::ai::chat_persist::Op trimOp;
                         trimOp.kind = smatchet::ai::chat_persist::OpKind::Trim;
                         trimOp.trimCap = static_cast<std::size_t>(
-                            g_ui.cfg.AssistantHistoryMaxRows > 0 ? g_ui.cfg.AssistantHistoryMaxRows : 500);
+                            ui->AssistantHistoryMaxRows() > 0 ? ui->AssistantHistoryMaxRows() : 500);
                         smatchet::ai::chat_persist::Enqueue(std::move(trimOp));
                     }
                 }
-                g_ui.assistantStreamBuf.clear();
-                g_ui.assistantLastError.clear();
+                ui->AssistantStreamBuf().clear();
+                ui->AssistantLastError().clear();
             } else {
                 char buf[64];
                 std::snprintf(buf, sizeof(buf), "API Error: %d ", httpStatus);
-                g_ui.assistantLastError = std::string(buf) + message;
-                g_ui.assistantStreamBuf.clear();
+                ui->AssistantLastError() = std::string(buf) + message;
+                ui->AssistantStreamBuf().clear();
             }
         });
     };
