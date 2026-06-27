@@ -18,7 +18,7 @@ What it structurally **cannot** reach is the one surface the deeper-audit playbo
 
 **Intended outcome (one sentence):** TSan instruments the real `MainThreadDispatcher` → `g_ui` hand-off and the `AiAssistantController` cancel/state machine on a runnable target, converting the playbook's two reasoned-only `g_ui` candidates into observed-race-free (or, if the discipline is broken anywhere, observed-and-fixed).
 
-## Slice 1 — keystone dispatcher (SHIPPED in this PR)
+## Slice 1 — keystone dispatcher (SHIPPED — PR #1567, merged)
 
 `tests/Core/MainThreadDispatcherConcurrent.test.cpp` + the `UiPerfMonitor.cpp` link line in `SmatchetTsanTests`. `MainThreadDispatcher` is header-only and ImGui-free, so the keystone of the *entire* marshalling discipline lands in the existing headless target with no ImGui dependency. The case hammers `PostToMainThread` from N producers + a concurrent `QueueLen()` reader against one `Drain()`-ing thread, using a **non-atomic canary** (a plain counter + `std::string::push_back`, mirroring `assistantStreamBuf.append`) that is data-race-free *only if* `Drain()` serialises every task onto the single draining thread — plus a `BeginShutdown()`-races-posters case for the shutdown re-check path. If any task ever executed off the drain thread, or two drains overlapped, TSan flags the non-atomic writes. This is the foundation slices 2–3 build on: if the dispatcher is race-free, every `g_ui` post that rides it is too.
 
@@ -26,26 +26,34 @@ What it structurally **cannot** reach is the one surface the deeper-audit playbo
 
 The blocker is purely link-surface: reaching `g_ui` / `AiAssistantController` pulls ImGui, and on desktop `ImGuiLib` (`CMakeLists.txt:1048`) bundles the GLFW + OpenGL3 backends (`imgui_impl_glfw.cpp` / `imgui_impl_opengl3.cpp`, appended `CMakeLists.txt:1037`), so a naive link drags GLFW/GL onto a headless runner. Two viable shapes — **resolve which at execution time (slice 2's first task), it is the load-bearing decision**:
 
-- **Option A — headless ImGui-core variant (preferred if the AppController cut is bounded).** Add an `ImGuiLibHeadless` STATIC lib = the core ImGui TUs only (no `imgui_impl_*` backend sources), create a context with `ImGui::CreateContext()` + a built font atlas and `io.DisplaySize` set, never calling a backend. Then link `AiAssistantController.cpp` + a **test-provided `g_ui`** + the dispatcher + a fake `IAiClient` that streams deltas from a real `std::thread`. Keeps the runner dependency-free (no GLFW/X11/GL/Mesa), consistent with the headless design intent of `ninja-tsan-linux`. **Risk/cost:** `AiAssistantController` takes `AppController& app_` and references `g_ui` directly; this option needs the controller exercised without linking the full `AppController` god-object — i.e. a narrow seam (a test double exposing only `mainThreadDispatcher` + the `g_ui` fields the delta path touches), or a small extraction. `UiDrawSession` itself hard-includes `imgui.h` + `AppController.h` (`SmatchetUiSession.h:3,29`), so a test `g_ui` still compiles ImGui but does not need a window.
+**User picked Option A (2026-06-27).** A coupling probe done at execution time made A *cheaper than the plan first assumed* and removed the need for `ImGuiLibHeadless` entirely:
 
-- **Option B — Mesa-on-runner app link (pragmatic, reuses existing infra).** A new `ninja-tsan-app-linux` preset (`SMATCHET_BUILD_APP=ON` + `SMATCHET_SANITIZER=tsan`) links the real app closure + `ImGuiLib` + `glfw`, provisions Mesa software GL on the runner exactly as the bucket-E lanes do (`.github/actions/install-mesa-gl`), boots a headless context, and drives the AiAssistant worker + dispatcher drain + `g_ui` reads under TSan. **Cost:** whole-app link + Mesa + GLFW build time on the runner, and it departs from the headless-no-GL design. **Benefit:** no seam extraction; closest to production link.
+- `AiAssistantController`'s only use of `AppController` is `app_.mainThreadDispatcher` (4 sites: ctor + `MakeOnDelta` + `MakeOnError` + the model-change clear). The dispatcher seam is therefore trivial (slice 2a, done).
+- Its only other UI coupling is the global `g_ui`: ~27 sites touching **8 fields** (`assistantStreamBuf`, `assistantHistory`, `assistantHistoryRowIds`, `assistantHistoryHydrated`, `assistantTurnGen`, `assistantInFlight`, `assistantLastError`, `cfg.AssistantHistoryMaxRows`), **all inside `PostToMainThread` lambdas** (already marshalled). Extracting those 8 fields behind a small `IAiAssistantUiState` seam — mirroring the existing `ITicketSyncDeps` / `IEditMetaDeps` pattern — makes the controller **both `g_ui`-free and ImGui-free**.
 
-**Recommendation:** attempt Option A; fall back to B only if the AppController seam proves larger than the target's value. Given slice 1 already certifies the dispatcher and the marshalling is verified-by-reading, the marginal value of the full app-linked target is real but bounded — keep the slice small and do not let it balloon into an AppController decomposition.
+**Consequence:** with the controller depending only on `MainThreadDispatcher&` + `IAiAssistantUiState&` (both ImGui-free), the TSan test needs **neither a test-provided `g_ui` nor `ImGuiLibHeadless` nor a headless ImGui context** — it links straight into the existing headless `SmatchetTsanTests`. The original "Option A — headless ImGui-core variant" and "Option B — Mesa-on-runner app link" are both **obsoleted** by the seam; no new preset, no new CMake target, no Mesa. (Kept here for provenance: B would have linked the whole app under Mesa; A would have built `ImGuiLibHeadless` + a test `g_ui`. The seam is strictly cheaper and cleaner than either.)
+
+**Recommendation:** the UI-state seam (slice 2b) is the load-bearing, perf-sensitive, architecturally-significant step (it changes how the controller writes results to the UI) — design-review the interface before rewiring the streaming hot path. It is a focused decoupling, NOT an `AppController` decomposition; keep it to the 8 fields + 2 behaviours (history-append-with-rowid, bounded-trim).
 
 ## Slices
 
-- **Slice 2 — target scaffold + g_ui delta hand-off.** Resolve Option A/B. Stand up the new target (`SmatchetTsanAppTests` or an extension of the chosen preset) + a concurrent test: a fake `IAiClient` streams N deltas from a worker thread (→ `MakeOnDelta` → `PostToMainThread`), while the test thread spins `mainThreadDispatcher.Drain()` and reads `g_ui.assistantStreamBuf` — the exact worker→UI hand-off, now TSan-instrumented. Assert the streamed text assembles intact and TSan is clean.
-- **Slice 3 — cancel/submit race.** Extend with `Submit()` / `Cancel()` racing the worker: per-turn `currentCancel_` shared_ptr swap (`AiAssistantController.cpp:208-222`), `state_` atomic transitions, and the `turnGen` staleness drop. Drives the playbook's "AI streaming cancel/submit race" candidate directly. Assert no race + Cancel deterministically halts a turn.
-- **Slice 4 (optional, gated) — MCP-thread→g_ui.** Only if Option B (app link) lands: a fake MCP `tools/call` dispatch on the MCP `std::thread` writing `g_ui` via a builtin command, vs the UI render read. The playbook's #3. Defer unless the app-link path is chosen and cheap.
+- **Slice 2a — dispatcher seam (DONE, this PR).** `AiAssistantController` now takes `MainThreadDispatcher&` instead of `AppController& app_`; the 4 `app_.mainThreadDispatcher` sites → `dispatcher_`, construction at `AppController.cpp:2313` passes `mainThreadDispatcher`. Pure decoupling, no behaviour change — removes the AppController god-object dependency and lets the controller be constructed in a test with just a dispatcher. (Still links `g_ui` until 2b.)
+- **Slice 2b — `IAiAssistantUiState` seam (architecturally significant — design-review first).** Extract the 8 `g_ui` chat fields behind a narrow interface; production wires it to `g_ui`, the test uses a fake. Makes the controller `g_ui`-free and ImGui-free. Touches the streaming hot path → carries the Perf-gate section. Mirror `GridContextDepsAdapter`/`ITicketSyncDeps`.
+- **Slice 2c — the TSan test.** In the existing `SmatchetTsanTests` (no new target): a fake `IAiClient` streams N deltas from a worker thread (→ `MakeOnDelta` → `PostToMainThread`) while the test thread spins `Drain()` and reads the fake UI-state — the worker→UI hand-off, TSan-instrumented. Assert the streamed text assembles intact and TSan is clean.
+- **Slice 3 — cancel/submit race.** Extend 2c with `Submit()` / `Cancel()` racing the worker: per-turn `currentCancel_` shared_ptr swap (`AiAssistantController.cpp:208-222`), `state_` atomic transitions, the `turnGen` staleness drop. Drives the playbook's "AI streaming cancel/submit race" candidate. Assert no race + Cancel deterministically halts a turn.
+- **Slice 4 (optional, gated) — MCP-thread→g_ui.** The playbook's #3 (MCP dispatch thread writing `g_ui` via a builtin command vs the UI read). Needs its own seam (the builtin-command → g_ui path); defer unless it proves cheap after 2b/2c.
 
 ## Files to modify
 
-- `tests/CMakeLists.txt` — slice 1: the new test + `UiPerfMonitor.cpp` link (done). Slices 2–3: the new ImGui-linked target block (guarded by the chosen preset var).
-- `CMakePresets.json` — slices 2–3: `ninja-tsan-app-linux` (Option B) or the headless-core wiring (Option A).
-- `CMakeLists.txt` — Option A only: `ImGuiLibHeadless` (core ImGui TUs, no backends).
-- `.github/workflows/tsan-linux-nightly.yml` — add the new target to the nightly + the paths-scoped `pull_request` trigger (add `Source/Core/src/AiAssistantController.cpp`, `Source/Core/src/Ui/SmatchetUI.cpp`). Option B also wires `install-mesa-gl`.
-- `tests/Core/AiAssistantStreamHandoff.test.cpp`, `tests/Core/AiAssistantCancelRace.test.cpp` (new) — slices 2–3.
-- `tests/support/FakeAiClient.h` (new or extend existing AI test doubles) — a streaming `IAiClient` that emits deltas from a real thread.
+The seam approach needs **no** new preset, CMake target, or CI-Mesa wiring (that was Options A/B, now obsoleted):
+
+- `Source/Core/include/AiAssistantController.h` + `…/src/AiAssistantController.cpp` — 2a: dispatcher seam (done). 2b: depend on `IAiAssistantUiState&`; replace the 27 `g_ui.*` sites with seam calls.
+- `Source/Core/include/IAiAssistantUiState.h` (new) — 2b: the 8-field + 2-behaviour interface.
+- `Source/Core/src/AppController.cpp` — 2a: construction passes `mainThreadDispatcher` (done). 2b: provide the production adapter binding the interface to `g_ui` (akin to `GridContextDepsAdapter`).
+- `tests/CMakeLists.txt` — 2c: add the new test (+ link `AiAssistantController.cpp` once it is `g_ui`/ImGui-free) into the existing `SmatchetTsanTests` — no new target.
+- `tests/support/FakeAiAssistantUiState.h`, `tests/support/FakeAiClient.h` (new) — 2c: a streaming `IAiClient` emitting deltas from a real thread + the fake UI-state.
+- `tests/Core/AiAssistantStreamHandoff.test.cpp`, `tests/Core/AiAssistantCancelRace.test.cpp` (new) — 2c / slice 3.
+- `.github/workflows/tsan-linux-nightly.yml` — add `Source/Core/src/AiAssistantController.cpp` to the paths-scoped `pull_request` trigger.
 
 ## Existing utilities reused
 
@@ -84,7 +92,8 @@ The blocker is purely link-surface: reaching `g_ui` / `AiAssistantController` pu
 - Promoting any TSan lane to a required merge gate — separate branch-protection decision.
 
 ## Implementation log
-- *(slice 1)* `tests/Core/MainThreadDispatcherConcurrent.test.cpp` + `UiPerfMonitor.cpp` linked into `SmatchetTsanTests`; syntax-checked clean against real headers (C++14, `-Wall -Wextra`). CI TSan lane is the compile/run authority.
+- *(slice 1)* PR #1567 (merged, squash `aeb3bd5`) — `tests/Core/MainThreadDispatcherConcurrent.test.cpp` + `UiPerfMonitor.cpp` linked into `SmatchetTsanTests`; the `TSan Linux subset` CI lane went green (compiled + ran race-clean).
+- *(slice 2a)* dispatcher seam — `AiAssistantController(MainThreadDispatcher&)` replaces `AppController& app_` (4 sites + ctor + member + fwd-decl; construction at `AppController.cpp:2313`). Pure decoupling, perf-neutral, no behaviour change. Probe finding: the controller's *only* AppController coupling was `mainThreadDispatcher`, and its only other UI coupling is 8 `g_ui` fields — which is why the 2b seam obsoletes the `ImGuiLibHeadless`/Mesa options.
 
 ## Deviations from plan
 *(populated post-ship)*

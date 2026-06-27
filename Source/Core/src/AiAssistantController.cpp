@@ -13,6 +13,7 @@
 #include "BackendAuditTrail.h"
 #include "ConfigManager.h"
 #include "Logger.h"
+#include "MainThreadDispatcher.h"
 #include "SmatchetChatPersistWorker.h"
 #include "SmatchetUiSession.h"
 
@@ -126,7 +127,7 @@ AiClientConfig BuildClientConfig(const TrackerConfig& cfg, AiProvider provider) 
 
 } // namespace
 
-AiAssistantController::AiAssistantController(AppController& app) : app_(app) {
+AiAssistantController::AiAssistantController(MainThreadDispatcher& dispatcher) : dispatcher_(dispatcher) {
     const TrackerConfig cfg = ConfigManager::Load();
     const AiProvider provider = ProviderFromConfig(cfg);
     // Worker thread is not yet spawned, so the lock here is only for
@@ -347,7 +348,7 @@ void AiAssistantController::ResolveModelAndEffort(const TrackerConfig& cfg, cons
         // Capture by value: the task may run arbitrarily later on the UI thread
         // and must remain safe even if the controller (or worker locals) go away
         // between post and drain. No references to worker-thread state.
-        app_.mainThreadDispatcher.PostToMainThread([]() {
+        dispatcher_.PostToMainThread([]() {
             g_ui.assistantHistory.clear();
             g_ui.assistantStreamBuf.clear();
             g_ui.assistantLastError = "[model changed - chat cleared]";
@@ -434,12 +435,12 @@ void AiAssistantController::BuildChatPayload(const TrackerConfig& cfg, const Req
 IAiClient::DeltaCallback AiAssistantController::MakeOnDelta(uint64_t turnGen) {
     // Capture turnGen by value so stale dispatcher tasks (after a newer Submit
     // or Cancel) can be dropped on the UI side via assistantTurnGen comparison.
-    AppController* app = &app_;
+    MainThreadDispatcher* dispatcher = &dispatcher_;
 
-    return [app, turnGen](const AiStreamDelta& delta) {
+    return [dispatcher, turnGen](const AiStreamDelta& delta) {
         const std::string chunk = delta.TokenChunk;
         const bool isFinal = delta.IsFinal;
-        app->mainThreadDispatcher.PostToMainThread([turnGen, chunk, isFinal]() {
+        dispatcher->PostToMainThread([turnGen, chunk, isFinal]() {
             if (g_ui.assistantTurnGen != turnGen) {
                 return; // stale callback — Cancel or newer Submit raced us
             }
@@ -492,9 +493,9 @@ IAiClient::DeltaCallback AiAssistantController::MakeOnDelta(uint64_t turnGen) {
 }
 
 IAiClient::ErrorCallback AiAssistantController::MakeOnError(uint64_t turnGen) {
-    AppController* app = &app_;
+    MainThreadDispatcher* dispatcher = &dispatcher_;
 
-    return [this, app, turnGen](const AiStreamError& err) {
+    return [this, dispatcher, turnGen](const AiStreamError& err) {
         const int httpStatus = err.HttpStatus;
         const std::string message = err.Message;
         const bool wasCancelled = err.WasCancelled;
@@ -506,7 +507,7 @@ IAiClient::ErrorCallback AiAssistantController::MakeOnError(uint64_t turnGen) {
             LOG_ERROR("AiAssistantController: turn %llu errored httpStatus=%d message='%s'",
                       static_cast<unsigned long long>(turnGen), httpStatus, message.c_str());
         }
-        app->mainThreadDispatcher.PostToMainThread([turnGen, httpStatus, message, wasCancelled]() {
+        dispatcher->PostToMainThread([turnGen, httpStatus, message, wasCancelled]() {
             if (g_ui.assistantTurnGen != turnGen) {
                 return;
             }
