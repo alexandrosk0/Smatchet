@@ -120,9 +120,10 @@ no grid/scroll/draw path. No perf scenario delta expected.
 | `.github/workflows/perf-full.yml` | workflow env `…=false` | A |
 | `.github/workflows/build-and-test.yml` | workflow env `…=false` | A |
 | `scripts/dev/perf-run.sh` | drop `--outPath`; capture spawn envelope `data` → `$ABS_OUT` (PathConfinement-safe) | A |
-| `Source/Standalone/CliCommandRunner.cpp` | parent provisions + sends spawn token; fast-fail 401; thread confined `--outPath` contract for all `--spawn` callers | B |
-| `Source/Plugins/Mcp/McpPlugin.cpp` | accept sanctioned ephemeral token | B |
+| `Source/Standalone/CliCommandRunner.cpp` | parent mints+sends ephemeral token when no operator token configured, else sends the configured token (no 401 for configured-token users); fast-fail 401 | B |
+| `Source/Plugins/Mcp/McpPlugin.cpp` | accept sanctioned ephemeral token; scrub it from the child env after adoption | B |
 | `tests/…` (CLI/integration) | `--spawn` reaches MCP-ready under default config | B |
+| `Source/Standalone/CliCommandRunner.cpp` | thread confined `--outPath` contract for all `--spawn` callers (or stop `NormalizeOutPath` absolutizing now the parent reads `data.outPath`) | C |
 
 ## Implementation log
 
@@ -171,6 +172,18 @@ no grid/scroll/draw path. No perf scenario delta expected.
   returns `ok:true` under the compiled secure default. Build clean (596/596),
   lint PASS, security-review verdict **SHIP** (no CRITICAL/HIGH; two optional LOW
   hardening notes — see Deviations).
+- **2026-06-27 — PR B (CodeRabbit round 1, #1576)** — addressed all 5 CR findings.
+  (#4, Major correctness) **configured-token users no longer 401**: the parent now
+  `ConfigManager::Load()`s and, when `McpAuthToken` is set, sends THAT token and
+  injects nothing — `SpawnAndRunSetup` split into `provisionToken` (child env) vs
+  `requestToken` (wire). Empty-config still mints + injects + sends the ephemeral
+  token. (#2, Major security) child now scrubs `SMATCHET_MCP_SPAWN_TOKEN` from its
+  env right after adoption (`_putenv_s(…,"")` / `::unsetenv`) so no subprocess can
+  inherit it — actions LOW note #2 below. (#3, DRY) extracted `RandomHexToken(int
+  draws)`; `SpawnLogRandomToken`=2 draws, `SpawnAuthToken`=4 — no second copy of
+  the random-device/hex pattern. (#5, style) the new `env["error"]` builds
+  member-by-member, no nlohmann brace-list reassign. (#1, doc) this plan's
+  Files-to-modify table + PR-A note now agree the `--outPath` threading is PR C.
 
 ## Deviations
 
@@ -187,8 +200,8 @@ no grid/scroll/draw path. No perf scenario delta expected.
   so they don't block merge). The general product-side contract fix (parent
   threads the confined path back to all `--spawn` outPath callers, or
   `NormalizeOutPath` stops absolutizing now that the parent reads `data.outPath`)
-  is deferred to **PR B**. `build-and-test.yml`'s `mobile-texture-guard` run
-  passes no `--outPath` and is unaffected.
+  is deferred to **PR C** (see the PR-B-scope note below). `build-and-test.yml`'s
+  `mobile-texture-guard` run passes no `--outPath` and is unaffected.
 - **PR B scope reduced — the `--outPath` PathConfinement contract threading is
   deferred to a follow-up (PR C), NOT done in PR B.** The Files-to-modify row for
   `CliCommandRunner.cpp` originally tagged PR B with "thread confined `--outPath`
@@ -200,17 +213,18 @@ no grid/scroll/draw path. No perf scenario delta expected.
   `--spawn` outPath callers or stop `NormalizeOutPath` absolutizing now the parent
   reads the child-reported confined path. Removing PR A's CI env opt-out (now that
   PR B proves the product fix) also rides PR C.
-- **Two LOW security-review hardening notes accepted, not actioned in PR B**
-  (both optional defense-in-depth, neither a ship-blocker): (1) `std::random_device`
-  is not *guaranteed* cryptographic by the standard — but is CSPRNG-backed on the
-  MSVC + Clang/libc++ + libstdc++-Linux matrix Smatchet ships (the deterministic
-  MinGW-libstdc++ footgun does not apply); the attacker who could brute a 128-bit
-  ephemeral loopback token in its sub-second lifetime already has same-user local
-  access (out of the threat model). (2) the child does not `unsetenv`
-  `SMATCHET_MCP_SPAWN_TOKEN` after adoption — already mitigated because
-  `IsSensitiveEnvName` matches the `TOKEN` substring (scrubbed by
-  `SubprocessCapturePure` + redacted in `config.path`) and `ObservedSmatchetEnv`'s
-  allow-list excludes it. Both tracked for PR C if revisited.
+- **Two LOW security-review hardening notes — #2 actioned in the PR B CR round, #1
+  still accepted** (both optional defense-in-depth, neither a ship-blocker):
+  (1, deferred) `std::random_device` is not *guaranteed* cryptographic by the
+  standard — but is CSPRNG-backed on the MSVC + Clang/libc++ + libstdc++-Linux
+  matrix Smatchet ships (the deterministic MinGW-libstdc++ footgun does not apply);
+  the attacker who could brute a 128-bit ephemeral loopback token in its sub-second
+  lifetime already has same-user local access (out of the threat model). Tracked for
+  PR C if revisited. (2, **DONE** in PR B — CodeRabbit Major) the child now scrubs
+  `SMATCHET_MCP_SPAWN_TOKEN` from its env right after adoption
+  (`_putenv_s(…,"")` on Windows / `::unsetenv` on POSIX) so no later subprocess
+  inherits it — belt-and-suspenders over the existing `IsSensitiveEnvName` `TOKEN`
+  substring scrub + `ObservedSmatchetEnv` allow-list exclusion.
 
 ## Verification
 

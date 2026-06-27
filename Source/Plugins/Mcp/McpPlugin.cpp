@@ -237,6 +237,14 @@ void McpPlugin::OnStart(AppController& app) {
 #endif
         if (spawnToken != nullptr && spawnToken[0] != '\0') {
             impl_->auth_token = spawnToken;
+            // Scrub the secret from this process's environment now that it has been
+            // adopted: leaving it set would let any subprocess we later spawn inherit
+            // it, or any same-user reader pull it from the process env block.
+#if defined(_WIN32)
+            _putenv_s("SMATCHET_MCP_SPAWN_TOKEN", ""); // empty value deletes the var on Windows
+#else
+            ::unsetenv("SMATCHET_MCP_SPAWN_TOKEN");
+#endif
         }
     }
     impl_->allow_lua_execution = cfg.McpAllowLuaExecution;

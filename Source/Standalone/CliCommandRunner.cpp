@@ -474,36 +474,35 @@ void EmitErrorToStderr(const nlohmann::json& envelope) {
 } // CLI stdout — product output, not logging
 
 #if defined(SMATCHET_WITH_MCP)
-/// 16 hex chars of randomness for the spawn-log filename. A predictable
-/// `<pid>-<port>` name let any same-user-or-not process pre-plant a file or
-/// symlink at the known path that the spawn redirect then wrote through (audit
-/// #19). std::random_device is non-deterministic on every supported host; we
-/// mix in two draws so a 32-bit device still yields 64 bits of entropy.
-std::string SpawnLogRandomToken() {
+/// `draws * 8` lowercase hex chars from std::random_device. random_device is
+/// non-deterministic on every supported host and each draw yields 32 bits, so the
+/// result carries `draws * 32` bits of entropy. Shared by the spawn-log filename
+/// suffix and the per-spawn MCP auth token so the two don't duplicate the
+/// random-device / hex-formatting pattern (DRY — no second copy vs origin/develop).
+std::string RandomHexToken(int draws) {
     std::random_device rd;
-    const uint64_t hi = static_cast<uint64_t>(rd());
-    const uint64_t lo = static_cast<uint64_t>(rd());
-    const uint64_t mixed = (hi << 32) ^ lo;
-    char buf[17];
-    std::snprintf(buf, sizeof(buf), "%016llx", static_cast<unsigned long long>(mixed));
-    return std::string(buf);
+    std::string out;
+    out.reserve(static_cast<size_t>(draws) * 8);
+    char buf[9];
+    for (int i = 0; i < draws; ++i) {
+        std::snprintf(buf, sizeof(buf), "%08x", static_cast<unsigned int>(rd()));
+        out += buf;
+    }
+    return out;
 }
+
+/// 16 hex chars (64 bits) of randomness for the spawn-log filename. A predictable
+/// `<pid>-<port>` name let any same-user-or-not process pre-plant a file or
+/// symlink at the known path that the spawn redirect then wrote through (audit #19).
+std::string SpawnLogRandomToken() { return RandomHexToken(2); }
 
 /// 32 hex chars (128 bits) of per-spawn entropy for the ephemeral MCP auth token.
 /// The --spawn parent hands this to its child via SMATCHET_MCP_SPAWN_TOKEN so the
 /// child (which has no persisted mcp_auth_token) requires + accepts exactly this
 /// token under the secure McpRequireTokenOnLoopback default — every other local
 /// caller is still denied. Ephemeral, never persisted, cleared from the parent
-/// env right after the child is spawned. std::random_device is non-deterministic
-/// on every supported host; four draws give 128 bits even from a 32-bit device.
-std::string SpawnAuthToken() {
-    std::random_device rd;
-    char buf[33];
-    for (int i = 0; i < 4; ++i) {
-        std::snprintf(buf + i * 8, 9, "%08x", static_cast<unsigned int>(rd()));
-    }
-    return std::string(buf, 32);
-}
+/// env right after the child is spawned.
+std::string SpawnAuthToken() { return RandomHexToken(4); }
 
 /// Compute a per-spawn log file path so child stdout/stderr survive the
 /// parent's --spawn redirection. Format:
@@ -676,7 +675,8 @@ bool TryAppendLiveCatalogToHelp(std::FILE* out, const std::string& host, int por
             return false;
         }
         std::string envErr;
-        const auto envelope = smatchet::json_safe::ParseBounded(parsed["content"][0]["text"].get<std::string>(), envErr);
+        const auto envelope =
+            smatchet::json_safe::ParseBounded(parsed["content"][0]["text"].get<std::string>(), envErr);
         if (!envErr.empty())
             return false;
         if (!envelope.value("ok", false))
@@ -840,8 +840,11 @@ nlohmann::json NormalizeOutPath(const nlohmann::json& argsToSend) {
 /// Phase 1 of SpawnAndRun: discover exe path, bind a free port, launch ephemeral instance,
 /// and wait until its MCP endpoint is reachable. Returns kExitOk on success; an error exit
 /// code on failure (error envelope already emitted to stderr). Fills host and port out-params.
+/// `provisionToken` is injected into the child env (empty when an operator-configured token is
+/// reused, so the child keeps its own); `requestToken` is the token the child will actually
+/// require, sent on the readiness probe.
 int SpawnAndRunSetup(const std::string& commandName, std::string& outHost, int& outPort,
-                     const std::string& authToken) {
+                     const std::string& provisionToken, const std::string& requestToken) {
     const std::string exePath = GetExePath();
     if (exePath.empty()) {
         nlohmann::json env;
@@ -865,7 +868,7 @@ int SpawnAndRunSetup(const std::string& commandName, std::string& outHost, int& 
     std::fprintf(stderr, "[spawn] launching ephemeral instance on port %d ...\n",
                  port); // CLI stdout — product output, not logging
     std::string childLogPath;
-    if (!LaunchEphemeralInstance(exePath, port, &childLogPath, authToken)) {
+    if (!LaunchEphemeralInstance(exePath, port, &childLogPath, provisionToken)) {
         nlohmann::json env;
         env["ok"] = false;
         env["command"] = commandName;
@@ -904,14 +907,16 @@ int SpawnAndRunSetup(const std::string& commandName, std::string& outHost, int& 
     const std::string host = "127.0.0.1";
     std::fprintf(stderr, "[spawn] waiting for MCP ready (up to %d s) ...\n",
                  readyTimeoutMs / 1000); // CLI stdout — product output, not logging
-    const McpReadyStatus ready = WaitForMcpReady(host, port, readyTimeoutMs, authToken);
+    const McpReadyStatus ready = WaitForMcpReady(host, port, readyTimeoutMs, requestToken);
     if (ready == McpReadyStatus::AuthRejected) {
         nlohmann::json env;
         env["ok"] = false;
         env["command"] = commandName;
-        env["error"] = {{"code", "not-connected"},
-                        {"message", "--spawn: ephemeral instance rejected the MCP auth token (HTTP 401) — "
-                                    "spawn token handshake failed."}};
+        nlohmann::json err;
+        err["code"] = "not-connected";
+        err["message"] = "--spawn: ephemeral instance rejected the MCP auth token (HTTP 401) — "
+                         "spawn token handshake failed.";
+        env["error"] = err;
         EmitErrorToStderr(env);
         return kExitNotConnected;
     }
@@ -1084,16 +1089,24 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
     std::string host;
     int port = 0;
     bool spawnedReady = false;
-    // Per-spawn ephemeral MCP auth token. Provisioned here, handed to the child via
-    // its inherited env (LaunchEphemeralInstance), and sent on every request so the
-    // secure-default child (McpRequireTokenOnLoopback ON) accepts this parent only.
-    const std::string spawnToken = SpawnAuthToken();
+    // Per-spawn MCP auth token, split into two roles so --spawn works under the secure
+    // McpRequireTokenOnLoopback default for BOTH config shapes:
+    //   * No operator token configured (fresh / secure default): mint a 128-bit
+    //     ephemeral token, inject it into the child env (provisionToken) so the child
+    //     adopts + requires it, and send it on every request (requestToken).
+    //   * Operator token configured: the child requires THAT token, so send the
+    //     configured token and provision nothing — injecting a different token would
+    //     make the child 401 the parent (the configured-token regression CR flagged).
+    const TrackerConfig spawnCfg = ConfigManager::Load();
+    const bool haveConfiguredToken = !spawnCfg.McpAuthToken.empty();
+    const std::string requestToken = haveConfiguredToken ? spawnCfg.McpAuthToken : SpawnAuthToken();
+    const std::string provisionToken = haveConfiguredToken ? std::string() : requestToken;
     try {
         // Normalize outPath: relative paths must be made absolute so both processes agree on location.
         const nlohmann::json argsToSend = NormalizeOutPath(argsToSendRaw);
 
         // Phase 1: launch ephemeral instance and wait for MCP ready.
-        const int setupResult = SpawnAndRunSetup(commandName, host, port, spawnToken);
+        const int setupResult = SpawnAndRunSetup(commandName, host, port, provisionToken, requestToken);
         if (setupResult != kExitOk)
             return setupResult;
         spawnedReady = true;
@@ -1112,7 +1125,7 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
         cli.set_read_timeout(30, 0);
         // The default header rides every cli.Post below — dispatch, the async/sync
         // result handlers, and the app.quit teardown — so each carries the token.
-        cli.set_default_headers({{"X-Smatchet-Token", spawnToken}});
+        cli.set_default_headers({{"X-Smatchet-Token", requestToken}});
         nlohmann::json envelope;
         const int dispatchResult = SpawnAndRunDispatch(cli, commandName, argsToSend, envelope);
         if (dispatchResult != kExitOk)
@@ -1142,7 +1155,7 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
         return kExitOk;
     } catch (const std::exception& e) {
         if (spawnedReady)
-            PostAppQuitBestEffort(host, port, spawnToken);
+            PostAppQuitBestEffort(host, port, requestToken);
         nlohmann::json env =
             MakeErrorEnvelope(commandName, "handler-error", std::string("--spawn: internal error: ") + e.what());
         try {
@@ -1152,7 +1165,7 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
         return kExitHandler;
     } catch (...) { // catch-all-ok: unknown spawn-flow exception -> error JSON to stderr + app.quit
         if (spawnedReady)
-            PostAppQuitBestEffort(host, port, spawnToken);
+            PostAppQuitBestEffort(host, port, requestToken);
         std::fprintf(stderr, // CLI stdout — product output, not logging
                      "{\"ok\":false,\"command\":\"%s\",\"error\":{\"code\":\"handler-error\","
                      "\"message\":\"--spawn: unknown internal exception.\"}}\n",
