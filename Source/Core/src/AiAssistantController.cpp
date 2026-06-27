@@ -349,6 +349,9 @@ void AiAssistantController::ResolveModelAndEffort(const TrackerConfig& cfg, cons
         IAiAssistantUiState* ui = &uiState_;
         dispatcher_.PostToMainThread([ui]() {
             ui->AssistantHistory().clear();
+            // Parallel to AssistantHistory (rowIds[i] is the SQLite id for history[i]) — must clear
+            // in lock-step or the next append misaligns history indices against persisted row ids.
+            ui->AssistantHistoryRowIds().clear();
             ui->AssistantStreamBuf().clear();
             ui->AssistantLastError() = "[model changed - chat cleared]";
         });
