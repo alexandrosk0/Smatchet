@@ -122,6 +122,7 @@
 #include "ConfigSaveWorker.h" // not AI-gated — config saves happen regardless of feature flags
 #if defined(SMATCHET_WITH_AI)
 #include "AiAssistantController.h"
+#include "AiAssistantUiStateAdapter.h"
 #include "SmatchetChatPersistWorker.h"
 #include "SmatchetUiSession.h"
 #endif
@@ -2310,7 +2311,7 @@ void AppController::InitCommands() {
     // controller spawns its worker thread in its own constructor — no further wiring
     // needed. Lifetime contract: destroyed at the top of ~AppController.
     try {
-        impl_->aiAssistant_ = std::make_unique<AiAssistantController>(*this);
+        impl_->aiAssistant_ = std::make_unique<AiAssistantController>(mainThreadDispatcher, GetGlobalAiAssistantUiState());
     } catch (const std::exception& ex) {
         LOG_ERROR("AppController::Initialize: AiAssistantController init failed: %s", ex.what());
         impl_->aiAssistant_.reset();
