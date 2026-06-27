@@ -474,16 +474,8 @@ IAiClient::DeltaCallback AiAssistantController::MakeOnDelta(uint64_t turnGen) {
                 ui->AssistantHistory().push_back(std::move(assistantMsg));
                 ui->AssistantHistoryRowIds().push_back(-1);
                 if (ui->AssistantHistoryHydrated()) {
-                    smatchet::ai::chat_persist::Op appendOp;
-                    appendOp.kind = smatchet::ai::chat_persist::OpKind::Append;
-                    appendOp.message = std::move(persistCopy);
-                    appendOp.messageIndex = newIdx;
-                    smatchet::ai::chat_persist::Enqueue(std::move(appendOp));
-                    smatchet::ai::chat_persist::Op trimOp;
-                    trimOp.kind = smatchet::ai::chat_persist::OpKind::Trim;
-                    trimOp.trimCap = static_cast<std::size_t>(
-                        ui->AssistantHistoryMaxRows() > 0 ? ui->AssistantHistoryMaxRows() : 500);
-                    smatchet::ai::chat_persist::Enqueue(std::move(trimOp));
+                    smatchet::ai::chat_persist::EnqueueAppendAndTrim(std::move(persistCopy), newIdx,
+                                                                     ui->AssistantHistoryMaxRows());
                 }
                 ui->AssistantStreamBuf().clear();
                 ui->SetAssistantInFlight(false);
@@ -528,16 +520,8 @@ IAiClient::ErrorCallback AiAssistantController::MakeOnError(uint64_t turnGen) {
                     ui->AssistantHistory().push_back(std::move(assistantMsg));
                     ui->AssistantHistoryRowIds().push_back(-1);
                     if (ui->AssistantHistoryHydrated()) {
-                        smatchet::ai::chat_persist::Op appendOp;
-                        appendOp.kind = smatchet::ai::chat_persist::OpKind::Append;
-                        appendOp.message = std::move(persistCopy);
-                        appendOp.messageIndex = newIdx;
-                        smatchet::ai::chat_persist::Enqueue(std::move(appendOp));
-                        smatchet::ai::chat_persist::Op trimOp;
-                        trimOp.kind = smatchet::ai::chat_persist::OpKind::Trim;
-                        trimOp.trimCap = static_cast<std::size_t>(
-                            ui->AssistantHistoryMaxRows() > 0 ? ui->AssistantHistoryMaxRows() : 500);
-                        smatchet::ai::chat_persist::Enqueue(std::move(trimOp));
+                        smatchet::ai::chat_persist::EnqueueAppendAndTrim(std::move(persistCopy), newIdx,
+                                                                         ui->AssistantHistoryMaxRows());
                     }
                 }
                 ui->AssistantStreamBuf().clear();

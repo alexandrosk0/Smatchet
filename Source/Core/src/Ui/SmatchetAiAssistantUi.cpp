@@ -1002,19 +1002,10 @@ void DispatchAiSend(AppController& app, UiDrawSession& d, const ViewDefinition* 
     d.assistantHistory.push_back(std::move(userMsg));
     d.assistantHistoryRowIds.push_back(-1);
     if (d.assistantHistoryHydrated) {
-        smatchet::ai::chat_persist::Op appendOp;
-        appendOp.kind = smatchet::ai::chat_persist::OpKind::Append;
-        appendOp.message = std::move(persistCopy);
-        appendOp.messageIndex = newIdx;
-        smatchet::ai::chat_persist::Enqueue(std::move(appendOp));
-        // Coalescing Trim — successive Appends collapse into a single Trim in the
-        // worker queue via the chat_persist Enqueue Trim-collapse path, so the cost
-        // here is one O(N) erase on the worker side, not a SQLite DELETE per send.
-        smatchet::ai::chat_persist::Op trimOp;
-        trimOp.kind = smatchet::ai::chat_persist::OpKind::Trim;
-        trimOp.trimCap =
-            static_cast<std::size_t>(d.cfg.AssistantHistoryMaxRows > 0 ? d.cfg.AssistantHistoryMaxRows : 500);
-        smatchet::ai::chat_persist::Enqueue(std::move(trimOp));
+        // Coalescing Trim — successive Appends collapse into a single Trim in the worker queue, so
+        // the cost is one O(N) erase on the worker side, not a SQLite DELETE per send.
+        smatchet::ai::chat_persist::EnqueueAppendAndTrim(std::move(persistCopy), newIdx,
+                                                         d.cfg.AssistantHistoryMaxRows);
     }
     d.assistantInputBuf.clear();
     std::memset(s_inputCharBuf.data(), 0, s_inputCharBuf.size());
