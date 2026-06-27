@@ -83,10 +83,11 @@ constexpr float kMaxFontScale = 2.0f;
  *     JNI; the NDK AConfiguration exposes no font-scale getter.
  *
  *  The two MULTIPLY: a Large-font user on a high-DPI phone wants both the DPI
- *  enlargement and the accessibility bump. Composing into the one density channel
- *  scales the atlas font px and the style metrics (padding / hit targets) by the
- *  same factor, so text and the controls around it grow together — scaling only the
- *  font would overflow finger-sized hit targets.
+ *  enlargement and the accessibility bump applied to the text. The composed scale
+ *  sizes the font-atlas pixel size ONLY; style metrics (padding / hit targets) stay
+ *  on the raw DPI density via ApplyUiDensityScale, so HostDensityScale() (the Auto
+ *  UI-mode logical-width divisor) is unaffected by the font scale. Growing metrics by
+ *  the font scale too is a Scope-2 follow-up (a separate host-injection seam).
  *
  *  Guards (the host passes raw JNI / NDK values, so harden here):
  *   - A non-finite or non-positive `densityScale` falls back to 1.0 (matches

@@ -234,8 +234,9 @@ public class SmatchetActivity extends NativeActivity {
      * system "Font size" accessibility preference ({@link android.content.res.Configuration#fontScale}:
      * 1.0 default, 0.85 Small, up to ~2.0 with the accessibility ramps). The NDK {@code AConfiguration}
      * has no font-scale getter, so the native host composes this multiplier onto the DPI density scale
-     * (ComposeFontDensityScale) to size the font atlas + UI metrics. Returns 1.0 if the configuration
-     * is unavailable, so a failure degrades to "no accessibility bump" rather than a collapsed UI.
+     * (ComposeFontDensityScale) to size the font atlas only (style metrics stay on the raw DPI density;
+     * metrics scaling is a Scope-2 follow-up). Returns 1.0 if the configuration is unavailable, so a
+     * failure degrades to "no accessibility bump" rather than a collapsed UI.
      */
     @SuppressWarnings("unused")
     public float getDisplayFontScale() {
