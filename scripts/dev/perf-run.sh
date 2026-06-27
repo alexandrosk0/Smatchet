@@ -120,24 +120,55 @@ echo "[perf-run] output -> $ABS_OUT"
 # docs/self-improvement/categories/tooling.md (2026-05-19 entry).
 rm -f "$ABS_OUT"
 
-# perf.reset clears the perf monitor's accumulators before the scenario runs;
-# scenario.run --outPath ensures the result JSON lands at our path.
+# perf.reset clears the perf monitor's accumulators before the scenario runs.
 "$EXE" cmd perf.reset --spawn --yes >/dev/null 2>&1 || true
-# The result FILE is the authoritative outcome, not the CLI exit code: on the
-# CI runner the post-scenario app.quit handshake can flake non-zero AFTER the
-# scenario completed and the child already wrote $ABS_OUT (observed on the
-# perf-gate-revival step-3 run: all 4 scenarios printed ok:true JSON + wrote
-# their files, then set -e killed this script on the CLI's exit code and the
-# workflow counted them as run_failures). Tolerate rc!=0 iff the file exists.
-rc=0
-"$EXE" cmd scenario.run --name="$SCENARIO_ID" --frames="$FRAMES" --outPath="$ABS_OUT" --spawn --yes || rc=$?
 
-if [[ ! -f "$ABS_OUT" ]]; then
-    echo "FAIL: scenario.run did not write $ABS_OUT (exit=$rc)." >&2
+# scenario.run --spawn no longer takes our --outPath: the child confines every
+# caller-supplied outPath under <userDataDir>/perf and REJECTS absolute / ".."
+# paths (PathConfinement, #1566) — an absolute --outPath now fails with
+# kExitValidation(3). Instead the spawn PARENT emits the confined result file's
+# full content back in the stdout envelope's `data` field
+# (CliCommandRunner SpawnAndRunHandleAsync reads the child-reported confined
+# path, then re-emits its content). We capture that envelope and write `data`
+# (the bare scenario result, identical to the legacy file format) to $ABS_OUT
+# ourselves. This keeps the security confinement intact (no bypass) while still
+# landing the result at the caller-visible path perf-compare.py expects. In
+# --spawn mode the child's own stdout/stderr go to its log file, so the parent's
+# stdout is exactly the one envelope line.
+#
+# The envelope is authoritative over the exit code: on the CI runner the
+# post-scenario app.quit handshake can flake non-zero AFTER the scenario
+# completed and emitted its ok:true envelope (observed on the perf-gate-revival
+# step-3 run: scenarios printed ok:true JSON, then set -e killed this script on
+# the CLI's exit code and the workflow counted them as run_failures). Tolerate
+# rc!=0 iff the envelope carries a usable data block.
+rc=0
+spawn_err="$(mktemp)"
+trap 'rm -f "$spawn_err"' EXIT
+spawn_out="$("$EXE" cmd scenario.run --name="$SCENARIO_ID" --frames="$FRAMES" --spawn --yes 2>"$spawn_err")" || rc=$?
+
+if ! printf '%s' "$spawn_out" | python -c "
+import json, sys
+try:
+    env = json.loads(sys.stdin.read())
+except Exception as e:
+    sys.stderr.write('scenario.run --spawn: stdout is not valid JSON: %s\n' % e)
+    sys.exit(1)
+data = env.get('data')
+rows = data.get('rows') if isinstance(data, dict) else None
+if not isinstance(data, dict) or not isinstance(rows, list) or not rows:
+    sys.stderr.write('scenario.run --spawn: envelope has no non-empty data.rows list\n')
+    sys.exit(1)
+with open(sys.argv[1], 'w', encoding='utf-8') as f:
+    json.dump(data, f)
+" "$ABS_OUT"; then
+    echo "FAIL: scenario.run --spawn produced no usable result envelope (exit=$rc)." >&2
+    printf '%s\n' "----- captured stdout -----" "$spawn_out" >&2
+    printf '%s\n' "----- captured stderr -----" >&2; cat "$spawn_err" >&2
     exit 1
 fi
 if [[ "$rc" -ne 0 ]]; then
-    echo "[perf-run] WARN: scenario.run exited rc=$rc but the result file exists (quit-handshake flake) — continuing." >&2
+    echo "[perf-run] WARN: scenario.run exited rc=$rc but the result envelope is valid (quit-handshake flake) — continuing." >&2
 fi
 # Guard against a torn/empty write: the file must parse as JSON with rows.
 # Mirrors extract_rows() in perf-compare.py: when `data` exists and carries
