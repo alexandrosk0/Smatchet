@@ -123,7 +123,9 @@ no grid/scroll/draw path. No perf scenario delta expected.
 | `Source/Standalone/CliCommandRunner.cpp` | parent mints+sends ephemeral token when no operator token configured, else sends the configured token (no 401 for configured-token users); fast-fail 401 | B |
 | `Source/Plugins/Mcp/McpPlugin.cpp` | accept sanctioned ephemeral token; scrub it from the child env after adoption | B |
 | `tests/…` (CLI/integration) | `--spawn` reaches MCP-ready under default config | B |
-| `Source/Standalone/CliCommandRunner.cpp` | thread confined `--outPath` contract for all `--spawn` callers (or stop `NormalizeOutPath` absolutizing now the parent reads `data.outPath`) | C |
+| `.github/workflows/{build-and-test,perf-pr-fast,perf-full}.yml` | **remove** the `SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK=false` opt-out (replace with a NOTE) — every `--spawn` CI gate now runs under the secure default on PR B's handshake | C |
+| `scripts/dev/test-spawn-mcp-default-auth.sh`, `tests/Core/ConfigManager.test.cpp` | refresh comments that claimed CI exports the opt-out (now removed); defensive env-unset kept | C |
+| `Source/Standalone/CliCommandRunner.cpp` | thread confined `--outPath` contract for all `--spawn` callers (or stop `NormalizeOutPath` absolutizing now the parent reads `data.outPath`); + optional hardening (`lpEnvironment` block, CSPRNG, scrub-at-entry) | D |
 
 ## Implementation log
 
@@ -184,6 +186,19 @@ no grid/scroll/draw path. No perf scenario delta expected.
   the random-device/hex pattern. (#5, style) the new `env["error"]` builds
   member-by-member, no nlohmann brace-list reassign. (#1, doc) this plan's
   Files-to-modify table + PR-A note now agree the `--outPath` threading is PR C.
+- **2026-06-28 — PR C (branch `feat/spawn-mcp-prc`)** — removed the workflow-wide
+  `SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK=false` opt-out from all three `--spawn`
+  workflows (`build-and-test.yml`, `perf-pr-fast.yml`, `perf-full.yml`), replacing
+  each with a NOTE that records the removal + names PR B (#1576) as the handshake
+  the gates now rely on. This is the **first** time the real `--spawn` CI gates
+  (bucket-C/E, Perf PR-fast `scenario.run`, launch-smoke, dx12-smoke,
+  texture-guard) run under the **secure default** — PR B's CI exercised the secure
+  default only via the dedicated `test-spawn-mcp-default-auth.sh`; the gates
+  themselves still inherited the opt-out. The PR's own green CI is the
+  self-validating proof + the standing #1566 regression guard. Refreshed two stale
+  comments (`test-spawn-mcp-default-auth.sh`, `tests/Core/ConfigManager.test.cpp`)
+  that claimed CI exports the opt-out; kept the defensive env-unset/-clear against a
+  developer-local override. No product code changed (CI-config + comments only).
 
 ## Deviations
 
@@ -238,6 +253,17 @@ no grid/scroll/draw path. No perf scenario delta expected.
   hypothetical subprocess forked *before* plugin start would inherit the unscrubbed
   var — no current boot path does this (latent only); PR-C fix: scrub at process
   entry in `main.cpp` if a pre-plugin subprocess is ever added.
+- **PR C narrowed to the opt-out removal; `--outPath` threading + the three
+  optional hardening items split to PR D.** The plan originally bundled both on PR
+  C. Split because (a) the opt-out removal is a pure CI-config change whose green CI
+  is an unambiguous signal — bundling product code would muddy "did removing the
+  opt-out break a `--spawn` gate?"; (b) the `--outPath` threading touches
+  `NormalizeOutPath` absolutization + **PathConfinement**, the exact #1566
+  arbitrary-file-write boundary, so it earns an isolated security-review + its own
+  clean CI signal (and the standing hard constraint: **no PathConfinement bypass
+  env**). PR D carries the `--outPath` contract fix + the deferred hardening
+  (Windows `lpEnvironment` block, CSPRNG over `random_device`,
+  scrub-at-process-entry).
 
 ## Verification
 
@@ -253,5 +279,6 @@ no grid/scroll/draw path. No perf scenario delta expected.
 - [x] PR B: **CR round-1** (provision/request split) re-build clean + two-phase `test-spawn-mcp-default-auth.sh` PASS (Phase 1 mint+inject, **Phase 2 persisted operator token — locks the CR #4 configured-token path**, both `ok:true` under the secure default) + lint gate exit 0
 - [x] PR B: **CR round-1 security-review** of the provision/request split — verdict **GO** (no CRITICAL/HIGH): configured-token branch traced to inject nothing, no token logging, AuthRejected envelope leak-free, `--outPath` confinement byte-unchanged; one MEDIUM (Windows parent-env transient same-user window) + two LOW (`random_device`, scrub-timing) deferred to PR C, none merge-blocking
 - [x] Gate-escape postmortem for #1566 filed with a `### Preventing gate` — PR #1575
-- [ ] PR B: CI gates green on the PR (Perf PR-fast under the secure default proves the product fix; the PR-A env opt-out stays until PR C removes it)
-- [ ] PR C (follow-up): thread confined `--outPath` to all `--spawn` callers (un-mask whisper/screenshot) + remove PR A's CI env opt-out
+- [x] PR B: CI gates green on the PR — #1576 merged to develop @ `870702de` (Perf PR-fast green with the PR-A env opt-out still in place; the gates themselves still ran tokenless — PR C is what runs them under the secure default)
+- [ ] PR C: removed PR A's CI env opt-out from all 3 `--spawn` workflows — the PR's own CI (every `--spawn` gate green under the SECURE default, the first time) is the self-validating proof + the standing #1566 regression guard
+- [ ] PR D (follow-up): thread confined `--outPath` to all `--spawn` callers (un-mask whisper/screenshot) + optional hardening (`lpEnvironment` block, CSPRNG, scrub-at-entry)

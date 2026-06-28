@@ -24,14 +24,11 @@ env:
   # actions/checkout, actions/cache, ilammy/msvc-dev-cmd, upload-artifact —
   # incl. third-party actions with no Node 24 release yet.
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  # Allow the --spawn ephemeral child's loopback MCP server to serve tokenless.
-  # #1566 flipped McpRequireTokenOnLoopback default ON, so the spawn parent's
-  # tokenless WaitForMcpReady probe gets 401 and polls to timeout — every
-  # scenario.run becomes a run-failure. The --spawn child inherits this env via
-  # CreateProcessA; single-tenant CI runner, so the default's co-resident-process
-  # risk does not apply. (Real product fix — auto-provision a spawn token —
-  # tracked separately; this is the fast unblock.)
-  SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK: "false"
+  # NOTE: the SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK=false opt-out (PR A / #1574,
+  # the #1566 fast-unblock) was REMOVED once PR B / #1576 landed the real product
+  # fix (the --spawn parent auto-provisions a per-spawn MCP token). These perf
+  # scenario.run --spawn paths now run under the SECURE default and rely on PR
+  # B's handshake — keeping them green is part of the #1566 regression guard.
 
 jobs:
   perf-full:
