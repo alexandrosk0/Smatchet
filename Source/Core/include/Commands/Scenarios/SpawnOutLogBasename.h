@@ -10,7 +10,6 @@ namespace cmd {
 /// (ConfinePathUnderSubdir) and rejects absolute or `..`-bearing paths, so a trusted spawn
 /// parent must forward only a leaf basename; the parent relocates the child's output back to
 /// the caller's absolute target afterwards.
-///
 /// The result is GUARANTEED confine-safe: it contains no path separators and no `..`. The leaf
 /// filename is extracted from @p requested (every directory component stripped); an empty / `.`
 /// / `..` leaf falls back to "outlog.txt". The leaf is prefixed with "spawn-<entropy>-" where
