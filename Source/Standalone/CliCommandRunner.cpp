@@ -828,13 +828,93 @@ void NormalizePathArgInPlace(nlohmann::json& out, const char* key) {
 }
 
 /// Normalize relative file-path arguments to absolute paths resolved against the CLI's CWD,
-/// since the spawned instance may have a different working directory. Covers both the scenario
-/// result file (`outPath`) and the bucket-E per-test log dump (`outLog`).
+/// since the spawned instance may have a different working directory. Covers the scenario
+/// result file (`outPath`) only. `outLog` is handled separately (basename-swap + copy-back)
+/// because #1566's child-side confinement (ConfinePathUnderSubdir, ui_test.run) rejects an
+/// absolute path: the child must receive a confine-safe relative basename and write under
+/// <userData>/ui-tests/, then the trusted parent relocates the result to the caller's path.
 nlohmann::json NormalizeOutPath(const nlohmann::json& argsToSend) {
     nlohmann::json out = argsToSend;
     NormalizePathArgInPlace(out, "outPath");
-    NormalizePathArgInPlace(out, "outLog");
     return out;
+}
+
+/// Swap a caller-supplied `outLog` for a confinement-safe basename before the command is
+/// forwarded to the spawned child. The child's ui_test.run confines `outLog` under
+/// <userData>/ui-tests/ and rejects absolute or `..`-bearing paths (#1566, 32392e32); a
+/// trusted --spawn parent therefore cannot forward the caller's path verbatim. We send only
+/// the leaf filename (timestamped to avoid collisions across runs), so the child anchors it
+/// inside its confinement base; SpawnAndRun copies the child's resolved output back to the
+/// caller's original path after the run. Returns the caller's ORIGINAL outLog (absolutized
+/// against the CLI's CWD) for the copy-back step, or empty if there is no outLog to relocate.
+std::string SwapOutLogForConfineSafeBasename(nlohmann::json& args) {
+    if (!args.contains("outLog") || !args["outLog"].is_string())
+        return std::string();
+    const std::string requested = args["outLog"].get<std::string>();
+    if (requested.empty())
+        return std::string();
+
+    // The caller's target, resolved to absolute against the CLI's CWD — this is the
+    // location the bucket-E driver / CI will read after the run (e.g. `cat $OUTLOG`).
+    fs::path requestedPath(requested);
+    std::string requestedAbs = requested;
+    if (!requestedPath.is_absolute()) {
+        std::error_code ec;
+        fs::path abs = fs::absolute(requestedPath, ec);
+        if (!ec)
+            requestedAbs = abs.string();
+    }
+
+    // Derive a confine-safe basename: the leaf filename only (no directory, no `..`),
+    // prefixed with a coarse timestamp so concurrent/successive spawns don't clobber each
+    // other inside the shared <userData>/ui-tests/ base. weakly_canonical is not needed —
+    // filename() already strips every directory component.
+    std::string leaf = fs::path(requested).filename().string();
+    if (leaf.empty() || leaf == "." || leaf == "..")
+        leaf = "outlog.txt";
+    const long long stamp =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
+            .count();
+    const std::string safeBasename = "spawn-" + std::to_string(stamp) + "-" + leaf;
+
+    args["outLog"] = safeBasename;
+    return requestedAbs;
+}
+
+/// Copy the spawned child's confinement-anchored outLog (the path the child reported in its
+/// result JSON, under <userData>/ui-tests/) back to the caller's originally-requested location
+/// `requestedOutLog`. This is the relocation half of the basename-swap performed before the
+/// command was forwarded: the child satisfied #1566 by writing inside its confinement base,
+/// and the trusted parent now fulfils the caller's absolute target. Best-effort + non-fatal —
+/// a missing/identical source only means there is nothing to relocate (e.g. no tests ran).
+void RelocateChildOutLog(const std::string& requestedOutLog, const std::string& childResolvedOutLog) {
+    if (requestedOutLog.empty() || childResolvedOutLog.empty())
+        return;
+    std::error_code ec;
+    const fs::path src(childResolvedOutLog);
+    const fs::path dst(requestedOutLog);
+    if (fs::equivalent(src, dst, ec)) // already the same file (e.g. caller targeted the base)
+        return;
+    ec.clear();
+    if (!fs::exists(src, ec) || ec) {
+        std::fprintf(stderr, "[spawn] outLog: child wrote no log at %s (nothing to relocate)\n",
+                     childResolvedOutLog.c_str()); // CLI stdout — product output, not logging
+        return;
+    }
+    const fs::path parent = dst.parent_path();
+    if (!parent.empty()) {
+        ec.clear();
+        fs::create_directories(parent, ec); // idempotent; copy below surfaces a real failure
+    }
+    ec.clear();
+    fs::copy_file(src, dst, fs::copy_options::overwrite_existing, ec);
+    if (ec) {
+        std::fprintf(stderr, "[spawn] outLog: could not relocate %s -> %s (%s)\n", childResolvedOutLog.c_str(),
+                     requestedOutLog.c_str(), ec.message().c_str()); // CLI stdout — product output, not logging
+        return;
+    }
+    std::fprintf(stderr, "[spawn] outLog: relocated child log -> %s\n",
+                 requestedOutLog.c_str()); // CLI stdout — product output, not logging
 }
 
 /// Phase 1 of SpawnAndRun: discover exe path, bind a free port, launch ephemeral instance,
@@ -980,7 +1060,8 @@ int SpawnAndRunDispatch(httplib::Client& cli, const std::string& commandName, co
 /// Returns kExitOk on success; 8 (timeout) or kExitHandler on failure.
 /// Sends app.quit on every failure path so the orchestrator's early-return is safe.
 int SpawnAndRunHandleAsync(const ParsedArgs& pa, httplib::Client& cli, const std::string& commandName,
-                           const std::string& outPath, int frames, int scenarioWaitMs) {
+                           const std::string& outPath, int frames, int scenarioWaitMs,
+                           const std::string& requestedOutLog) {
     std::fprintf(stderr, "[spawn] scenario running (%d frames / ~%d s) ...\n", frames,
                  frames / 60); // CLI stdout — product output, not logging
     const bool fileReady = WaitForFile(outPath, scenarioWaitMs);
@@ -1052,6 +1133,11 @@ int SpawnAndRunHandleAsync(const ParsedArgs& pa, httplib::Client& cli, const std
             WaitForFile(screenshotPath, 2000);
         }
 
+        // Relocate the child's confinement-anchored outLog to the caller's requested path.
+        // The child wrote it under <userData>/ui-tests/ (basename swapped in before forwarding,
+        // satisfying #1566); the trusted parent now fulfils the caller's absolute target.
+        RelocateChildOutLog(requestedOutLog, SafeString(fileData, "outLog"));
+
         nlohmann::json resultEnv;
         resultEnv["ok"] = true;
         resultEnv["command"] = commandName;
@@ -1103,7 +1189,12 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
     const std::string provisionToken = haveConfiguredToken ? std::string() : requestToken;
     try {
         // Normalize outPath: relative paths must be made absolute so both processes agree on location.
-        const nlohmann::json argsToSend = NormalizeOutPath(argsToSendRaw);
+        nlohmann::json argsToSend = NormalizeOutPath(argsToSendRaw);
+        // outLog: swap the caller's path for a confinement-safe basename before forwarding —
+        // the child confines outLog under <userData>/ui-tests/ and rejects absolute/`..` paths
+        // (#1566, 32392e32). The original (absolutized) target is relocated back from the
+        // child's confinement base after the run; empty when the command has no outLog.
+        const std::string requestedOutLog = SwapOutLogForConfineSafeBasename(argsToSend);
 
         // Phase 1: launch ephemeral instance and wait for MCP ready.
         const int setupResult = SpawnAndRunSetup(commandName, host, port, provisionToken, requestToken);
@@ -1139,7 +1230,7 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
         if (isAsync) {
             // Phase 3: wait for the output file and emit the result.
             const std::string outPath = SafeString(envData, "outPath");
-            resultCode = SpawnAndRunHandleAsync(pa, cli, commandName, outPath, frames, scenarioWaitMs);
+            resultCode = SpawnAndRunHandleAsync(pa, cli, commandName, outPath, frames, scenarioWaitMs, requestedOutLog);
             if (resultCode != kExitOk)
                 return resultCode; // async helper sends app.quit on every failure path
         } else {
