@@ -51,15 +51,11 @@ concurrency:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   SCCACHE_DIR: ${{ github.workspace }}\.sccache
-  # Allow the --spawn ephemeral child's loopback MCP server to serve tokenless.
-  # #1566 flipped McpRequireTokenOnLoopback default ON, so the spawn parent's
-  # tokenless WaitForMcpReady probe started getting 401 and polled to timeout —
-  # every perf scenario.run became a run-failure and the job timed out (30 min).
-  # The --spawn child inherits this env via CreateProcessA. CI runners are
-  # single-tenant throwaway VMs, so the co-resident-process risk the default
-  # guards against does not apply here. (Real product fix tracked separately:
-  # the spawn handshake should auto-provision a token; this is the fast unblock.)
-  SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK: "false"
+  # NOTE: the SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK=false opt-out (PR A / #1574,
+  # the #1566 fast-unblock) was REMOVED once PR B / #1576 landed the real product
+  # fix (the --spawn parent auto-provisions a per-spawn MCP token). This perf
+  # scenario.run --spawn path now runs under the SECURE default and relies on PR
+  # B's handshake — keeping it green is part of the #1566 regression guard.
 
 permissions:
   contents: read

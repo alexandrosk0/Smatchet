@@ -17,8 +17,9 @@
 #      provision/request split the parent always minted+sent a fresh token while
 #      the child required the configured one → 401. Phase 2 locks that fix.
 # Both force the secure default by UNSETTING any
-# SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK override (PR A sets it false workflow-wide;
-# this test must prove the product fix, not the CI opt-out) and point
+# SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK override (the CI opt-out PR A added was
+# removed once this product fix landed — see the workflow NOTEs; the unset stays
+# as a defensive guard against a developer-local override) and point
 # SMATCHET_USER_DATA at a fresh dir so no ambient operator token leaks in.
 #
 # Exit codes:

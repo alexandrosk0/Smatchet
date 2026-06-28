@@ -31,15 +31,12 @@ env:
   # this env; an explicit `--renderer=dx12` flag still overrides it for any future
   # DX12-specific job (flag > env > platform default).
   SMATCHET_RENDERER: "gl"
-  # Allow the --spawn ephemeral child's loopback MCP server to serve tokenless.
-  # #1566 flipped McpRequireTokenOnLoopback default ON, so the spawn parent's
-  # tokenless WaitForMcpReady probe gets 401 and polls to timeout — breaking the
-  # bucket-C/E, texture-guard, ARM64 DX12 smoke and the blocking launch-smoke
-  # gates (all --spawn a GUI+MCP child). The child inherits this env via
-  # CreateProcessA; single-tenant CI runner, so the default's co-resident-process
-  # risk does not apply. (Real product fix — auto-provision a spawn token —
-  # tracked separately; this is the fast unblock.)
-  SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK: "false"
+  # NOTE: the workflow-wide SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK=false opt-out
+  # (PR A / #1574, the #1566 fast-unblock) was REMOVED once the real product fix
+  # landed (PR B / #1576: the --spawn parent auto-provisions a per-spawn MCP token
+  # and sends it on the wire). Every --spawn CI gate below now runs under the
+  # SECURE default (require-token-on-loopback ON) and must stay green on PR B's
+  # handshake alone — that is the standing regression guard for #1566.
 
 on:
   # NO paths-ignore: required status checks (Windows + MSVC, Windows + MSVC
