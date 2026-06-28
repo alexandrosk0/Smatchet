@@ -9,6 +9,10 @@
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
 
+// SMATCHET_DEVIATION(rule=duplication; reason=idiomatic per-TU ImGui-localization preamble (imgui
+// includes + `#define ImGui SmatchetLocalizedImGui` wrapper + the Win32 lean-and-mean guard) shared
+// verbatim across localized-ImGui TUs; the `#define ImGui` must follow the imgui includes per-TU, so
+// it is not extractable into a shared header; owner=ui-host; revisit=2026-12-31)
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "SmatchetLocalizedImGui.h"
@@ -23,16 +27,33 @@
 #endif
 #include <windows.h>
 #include <wincodec.h>
+#endif
+
+// Bitmap attachment thumbnails are available on every platform with renderer texture support:
+// Windows decodes via WIC (decode-scaled by IWICBitmapScaler), other platforms via stb_image plus a
+// CPU area-average downscale (RgbaDownscalePure). The renderer-agnostic upload path (ImTextureData /
+// RegisterUserTexture) already works on GL / GLES3 / DX12, so only the DECODE was ever Win32-only.
 #define SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS 1
+
+#if !defined(_WIN32)
+// Declarations only — the single STB_IMAGE_IMPLEMENTATION lives in SmatchetImageTextureCache.cpp
+// (same Core lib, so the stbi_* symbols link there). STBI_NO_STDIO matches that TU; we decode from
+// a memory buffer, so the stdio entry points are unused regardless.
+#define STBI_NO_STDIO
+#include <stb/stb_image.h>
+
+#include "RgbaDownscalePure.h"
 #endif
 
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <mutex>
 #include <string>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -109,7 +130,19 @@ static AttachmentThumbnailSupport GetAttachmentThumbnailSupport() {
 #endif
 }
 
-#if defined(_WIN32) && defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
+#if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
+// S5 worker-side budget: cap a decoded thumbnail's longest side. Precedent: the icon cache's
+// kMaxIconDimension. A preview tooltip is drawn at a capped size anyway; the WIC backend passes this
+// to IWICBitmapScaler (decode-scale, #2) and the stb backend feeds it to the CPU area-average
+// downscale, so on neither platform does a multi-megapixel attachment keep a full-res RGBA texture.
+constexpr int kMaxThumbnailDimension = 2048;
+// Bound concurrent decode→upload tasks so many simultaneous completions can't spike the
+// single-frame dispatcher Drain() (producer-side rate limit, plan § S5 spike mitigation).
+constexpr std::size_t kMaxConcurrentThumbnailDecodes = 4;
+
+#if defined(_WIN32)
+// WIC backend (Windows): decode-scaled via IWICBitmapScaler, so the full-resolution image is never
+// materialised on the worker.
 static std::wstring Utf8ToWideLocal(const std::string& s) {
     if (s.empty()) {
         return std::wstring();
@@ -247,15 +280,118 @@ static bool DecodeImageFileToRgba32(const std::string& path, std::vector<unsigne
     return ok;
 }
 
-// S5 worker-side budget: cap a decoded thumbnail's longest side. Precedent: the icon cache's
-// kMaxIconDimension. A preview tooltip is drawn at a capped size anyway; passing this to
-// DecodeImageFileToRgba32 makes WIC decode-scale (#2) so a multi-megapixel attachment never
-// allocates a full-res RGBA buffer on the worker.
-constexpr int kMaxThumbnailDimension = 2048;
-// Bound concurrent decode→upload tasks so many simultaneous completions can't spike the
-// single-frame dispatcher Drain() (producer-side rate limit, plan § S5 spike mitigation).
-constexpr std::size_t kMaxConcurrentThumbnailDecodes = 4;
-#endif
+#else  // !_WIN32
+// stb_image backend (Android / Linux / macOS): stb has no decode-scale, so decode the full image
+// from a bounded file read, reject pathological dimensions before the alloc (memory-pressure DoS
+// guard, mirroring the icon cache), then CPU area-average downscale to kMaxThumbnailDimension. Runs
+// on the S5 worker pool (off the UI thread), so the transient full-res buffer never blocks a frame
+// and the downscaled result lands within the same budget the WIC scaler enforces on Windows.
+
+// Bounded read of the compressed source — not a whole-file slurp of an arbitrarily large attachment
+// — before stb sees a byte.
+constexpr unsigned long long kMaxThumbnailFileBytes = 32ull * 1024ull * 1024ull; // 32 MiB
+// Cap the decoded resolution. stb materialises the FULL-res RGBA buffer before the downscale (unlike
+// WIC, which decode-scales), so bound it: 4096*4096*4 = 64 MiB per in-flight decode. A larger source
+// degrades to "too large" rather than risking OOM on a memory-constrained phone (×kMaxConcurrent…).
+constexpr unsigned long long kMaxThumbnailDecodePixels = 4096ull * 4096ull; // 16 MP
+
+static bool DecodeImageFileToRgba32(const std::string& path, std::vector<unsigned char>& outPixels, int& outWidth,
+                                    int& outHeight, std::string& outError, int maxDimension) {
+    outPixels.clear();
+    outWidth = 0;
+    outHeight = 0;
+    outError.clear();
+    if (path.empty()) {
+        outError = "Attachment thumbnail path is empty.";
+        return false;
+    }
+
+    // Sole caller is the LaunchBackgroundTask lambda in MaybeKickThumbnailDecode (S5 worker pool),
+    // never the UI thread; read is bounded to kMaxThumbnailFileBytes (32 MiB).
+    /* PILLAR2_WORKER_ONLY */ // est-latency: 50ms
+    std::ifstream ifs(path.c_str(), std::ios::binary | std::ios::ate);
+    if (!ifs.is_open()) {
+        outError = "Failed to open attachment file for decode.";
+        return false;
+    }
+    const std::streamoff size = ifs.tellg();
+    if (size <= 0 || static_cast<unsigned long long>(size) > kMaxThumbnailFileBytes) {
+        outError = "Attachment file is empty or exceeds the thumbnail decode budget.";
+        return false;
+    }
+    ifs.seekg(0, std::ios::beg);
+    std::vector<unsigned char> fileBytes(static_cast<std::size_t>(size));
+    ifs.read(reinterpret_cast<char*>(fileBytes.data()), static_cast<std::streamsize>(size));
+    if (!ifs) {
+        outError = "Failed to read attachment file for decode.";
+        return false;
+    }
+
+    // Pre-validate dimensions from the header only (stbi_info allocates nothing) so a malicious
+    // oversized image is rejected before the full stbi_load decode/alloc (memory-pressure DoS,
+    // mirrors SmatchetImageTextureCache's pre-check).
+    int infoW = 0;
+    int infoH = 0;
+    int infoChannels = 0;
+    // Fail closed: if the header can't be parsed we cannot enforce the decode budget before stbi_load
+    // allocates, so reject rather than decode an unbounded image. stbi_info and stbi_load take different
+    // code paths and can disagree, so a header that trips info must NOT silently skip the size gate.
+    if (stbi_info_from_memory(fileBytes.data(), static_cast<int>(fileBytes.size()), &infoW, &infoH, &infoChannels) ==
+        0) {
+        outError = "Attachment image header could not be read for the thumbnail decode budget check.";
+        return false;
+    }
+    const unsigned long long infoPixels =
+        static_cast<unsigned long long>(infoW) * static_cast<unsigned long long>(infoH);
+    if (infoW <= 0 || infoH <= 0 || infoPixels > kMaxThumbnailDecodePixels) {
+        outError = "Attachment image dimensions exceed the thumbnail decode budget.";
+        return false;
+    }
+
+    int w = 0;
+    int h = 0;
+    int channels = 0;
+    unsigned char* pix =
+        stbi_load_from_memory(fileBytes.data(), static_cast<int>(fileBytes.size()), &w, &h, &channels, STBI_rgb_alpha);
+    if (pix == nullptr || w <= 0 || h <= 0) {
+        if (pix != nullptr) {
+            stbi_image_free(pix);
+        }
+        outError = "stb_image: attachment decode failed.";
+        return false;
+    }
+
+    // Defense in depth: the decoded dimensions can diverge from the header info path, so re-check the
+    // budget against the actual decode before the RGBA copy keeps the DoS guard intact.
+    const unsigned long long decodedPixels = static_cast<unsigned long long>(w) * static_cast<unsigned long long>(h);
+    if (decodedPixels > kMaxThumbnailDecodePixels) {
+        stbi_image_free(pix);
+        outError = "Attachment image dimensions exceed the thumbnail decode budget.";
+        return false;
+    }
+
+    std::vector<unsigned char> fullRgba(pix, pix + static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * 4u);
+    stbi_image_free(pix);
+
+    // Area-average downscale so the longest side is at most maxDimension. When it already fits, skip
+    // the helper's internal passthrough copy and move the full-res buffer straight out.
+    int dstW = 0;
+    int dstH = 0;
+    smatchet::image_scale::FitWithinLongestSide(w, h, maxDimension, dstW, dstH);
+    if (dstW == w && dstH == h) {
+        outPixels = std::move(fullRgba);
+        outWidth = w;
+        outHeight = h;
+        return true;
+    }
+    if (!smatchet::image_scale::DownscaleRgba32(fullRgba, w, h, maxDimension, outPixels, outWidth, outHeight)) {
+        outError = "Failed to downscale decoded attachment image.";
+        return false;
+    }
+    return true;
+}
+#endif // _WIN32
+#endif // SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS
 
 #if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
 // Pending-destroy bookkeeping: once we flip Status to ImTextureStatus_WantDestroy the renderer backend

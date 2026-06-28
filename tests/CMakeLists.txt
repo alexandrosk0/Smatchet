@@ -294,6 +294,10 @@ add_executable(SmatchetTests
     # SmatchetImageTextureCache's stbi_info pre-check. Header-only
     # (Source/Core/include/Persistence/IconDimensionsPolicy.h); no production .cpp to link.
     Core/IconDimensionsPolicy.test.cpp
+    # mobile P1.4 — pure area-average RGBA32 downscale behind the non-Windows attachment-thumbnail
+    # decode arm (stb_image cannot decode-scale; WIC does on Windows). Header-only
+    # (Source/Core/include/Ui/RgbaDownscalePure.h); no production .cpp to link.
+    Core/RgbaDownscalePure.test.cpp
     # multi-grid-tabs.md Slice 5a (plan item 21) — pure hidden-pane LRU eviction decision
     # (least-recently-visible first; visible + busy-sync never evicted). Header-only policy.
     Core/GridPaneEvictionPolicy.test.cpp
