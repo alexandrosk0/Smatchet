@@ -7,6 +7,7 @@
 #include "Commands/CommandRegistry.h"
 #include "AppController.h"
 #include "Commands/Scenarios/IScenario.h"
+#include "Commands/Scenarios/SpawnOutLogBasename.h"
 #include "ConfigManager.h"
 #include "Json/BoundedJsonParse.h"
 #include "SmatchetDefaults.h"
@@ -841,12 +842,13 @@ nlohmann::json NormalizeOutPath(const nlohmann::json& argsToSend) {
 
 /// Swap a caller-supplied `outLog` for a confinement-safe basename before the command is
 /// forwarded to the spawned child. The child's ui_test.run confines `outLog` under
-/// <userData>/ui-tests/ and rejects absolute or `..`-bearing paths (#1566, 32392e32); a
-/// trusted --spawn parent therefore cannot forward the caller's path verbatim. We send only
-/// the leaf filename (timestamped to avoid collisions across runs), so the child anchors it
-/// inside its confinement base; SpawnAndRun copies the child's resolved output back to the
-/// caller's original path after the run. Returns the caller's ORIGINAL outLog (absolutized
-/// against the CLI's CWD) for the copy-back step, or empty if there is no outLog to relocate.
+/// <userData>/ui-tests/ and rejects absolute or `..`-bearing paths; a trusted --spawn parent
+/// therefore cannot forward the caller's path verbatim. We send only an entropy-suffixed leaf
+/// basename (MakeConfineSafeSpawnOutLogBasename — no separators, no `..`), so the child anchors
+/// it inside its confinement base without colliding across successive/concurrent runs; SpawnAndRun
+/// copies the child's resolved output back to the caller's original path after the run. Returns the
+/// caller's ORIGINAL outLog (absolutized against the CLI's CWD) for the copy-back step, or empty if
+/// there is no outLog to relocate.
 std::string SwapOutLogForConfineSafeBasename(nlohmann::json& args) {
     if (!args.contains("outLog") || !args["outLog"].is_string())
         return std::string();
@@ -865,19 +867,11 @@ std::string SwapOutLogForConfineSafeBasename(nlohmann::json& args) {
             requestedAbs = abs.string();
     }
 
-    // Derive a confine-safe basename: the leaf filename only (no directory, no `..`),
-    // prefixed with a coarse timestamp so concurrent/successive spawns don't clobber each
-    // other inside the shared <userData>/ui-tests/ base. weakly_canonical is not needed —
-    // filename() already strips every directory component.
-    std::string leaf = fs::path(requested).filename().string();
-    if (leaf.empty() || leaf == "." || leaf == "..")
-        leaf = "outlog.txt";
-    const long long stamp =
-        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
-            .count();
-    const std::string safeBasename = "spawn-" + std::to_string(stamp) + "-" + leaf;
-
-    args["outLog"] = safeBasename;
+    // Derive a confine-safe basename via the tested Core helper: the leaf filename only (no
+    // directory, no `..`), prefixed with "spawn-<entropy>-" so concurrent/successive spawns don't
+    // clobber each other inside the shared <userData>/ui-tests/ base. Entropy (not a coarse
+    // millisecond stamp, which collides when two spawns start in the same tick).
+    args["outLog"] = smatchet::cmd::MakeConfineSafeSpawnOutLogBasename(requested);
     return requestedAbs;
 }
 

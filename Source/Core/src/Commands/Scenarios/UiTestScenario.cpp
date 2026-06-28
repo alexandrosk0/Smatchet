@@ -391,7 +391,7 @@ nlohmann::json UiTestScenario::OnFinish(AppController& /*app*/) {
     // Surface the RESOLVED, confinement-anchored outLog path (under <userData>/ui-tests/)
     // so the trusted spawn parent (CliCommandRunner) can copy it back to the caller's
     // originally-requested absolute location. The child never writes outside its
-    // confinement base (#1566); the parent relocates afterwards. Empty when no outLog arg.
+    // confinement base; the parent relocates afterwards. Empty when no outLog arg.
     out["outLog"] = outLog_;
     out["log"] = startedQueue_ ? "ui_test.run: completed" : "no tests registered";
 #else

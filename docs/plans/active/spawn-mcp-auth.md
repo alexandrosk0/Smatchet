@@ -126,6 +126,10 @@ no grid/scroll/draw path. No perf scenario delta expected.
 | `.github/workflows/{build-and-test,perf-pr-fast,perf-full}.yml` | **remove** the `SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK=false` opt-out (replace with a NOTE) — every `--spawn` CI gate now runs under the secure default on PR B's handshake | C |
 | `scripts/dev/test-spawn-mcp-default-auth.sh`, `tests/Core/ConfigManager.test.cpp` | refresh comments that claimed CI exports the opt-out (now removed); defensive env-unset kept | C |
 | `Source/Standalone/CliCommandRunner.cpp` | thread confined `--outPath` contract for all `--spawn` callers (or stop `NormalizeOutPath` absolutizing now the parent reads `data.outPath`); + optional hardening (`lpEnvironment` block, CSPRNG, scrub-at-entry) | D |
+| `Source/Core/include/Commands/Scenarios/SpawnOutLogBasename.h`, `Source/Core/src/Commands/Scenarios/SpawnOutLogBasename.cpp` | new Core helper `MakeConfineSafeSpawnOutLogBasename` — confine-safe `--spawn` outLog basename (leaf strip + entropy prefix), the tested trust boundary | E |
+| `Source/Standalone/CliCommandRunner.cpp` | `SwapOutLogForConfineSafeBasename` calls the Core helper; delete the inline ms-stamp + leaf logic (CR #2 ms-collision fix via entropy) | E |
+| `Source/Core/src/Commands/Scenarios/UiTestScenario.cpp` | drop the temporal `#1566` ref from the durable outLog comment (CR #1) | E |
+| `tests/Core/SpawnOutLogBasename.test.cpp`, `tests/CMakeLists.txt` | doctest for the helper (traversal collapse, absolute strip, fallback, prefix, entropy-uniqueness) | E |
 
 ## Implementation log
 
@@ -200,6 +204,39 @@ no grid/scroll/draw path. No perf scenario delta expected.
   comments (`test-spawn-mcp-default-auth.sh`, `tests/Core/ConfigManager.test.cpp`)
   that claimed CI exports the opt-out; kept the defensive env-unset/-clear against a
   developer-local override. No product code changed (CI-config + comments only).
+- **2026-06-28 — PR E (#1581, branch `fix-spawn-outlog-confinement`, Fixes #1579)** —
+  the `--spawn` outLog confinement-relocation fix (parent forwards a confine-safe
+  basename, child writes under `<userData>/ui-tests/`, parent copies back to the
+  caller's absolute target). This slice **extracts the confine-safe basename
+  derivation into a tested Core helper** and clears the two CodeRabbit findings:
+  * New pure Core helper `smatchet::cmd::MakeConfineSafeSpawnOutLogBasename`
+    (`Source/Core/{include,src}/Commands/Scenarios/SpawnOutLogBasename.{h,cpp}`) —
+    strips every directory component + `..` to the leaf (filename()), falls back to
+    `outlog.txt` for an empty/`.`/`..` leaf, and prefixes `spawn-<entropy>-` where
+    `<entropy>` is 16 hex chars (64 bits) from `std::random_device`. Result is
+    guaranteed to contain no path separators and no `..` (confine-safe). No I/O, no
+    logging; one random draw per spawn (not steady-state). This puts the
+    security-critical path-sanitization in the tested Core strict zone.
+  * `CliCommandRunner.cpp::SwapOutLogForConfineSafeBasename` now calls the Core
+    helper and the inline `std::chrono ... milliseconds` stamp + leaf logic is
+    **deleted** (removes the duplication, not adds it) — **CR Finding 2 (Minor)**:
+    the ms-timestamp basename collided when two spawns started in the same tick;
+    entropy fixes it.
+  * **CR Finding 1 (Major)**: dropped the temporal `#1566` PR-ref from the durable
+    `UiTestScenario.cpp` outLog comment (durable code comments stay present-tense,
+    no PR-history breadcrumbs in strict-zone source); the confinement invariant
+    wording is kept.
+  * New doctest `tests/Core/SpawnOutLogBasename.test.cpp` (registered in
+    `tests/CMakeLists.txt`, links the production `.cpp`): traversal collapse
+    (`../../etc/passwd` → `-passwd`, confine-safe), absolute strip
+    (`C:/Windows/system32/x.txt` → `-x.txt`), fallback (`.`/`..`/`""` →
+    `-outlog.txt`), normal-leaf preserved, `spawn-` prefix, and
+    entropy-uniqueness (two calls with the same input differ). This satisfies the
+    test-delta gate with a real test of the exact trust boundary (no
+    `tests-out-of-band` dodge). Security posture **unchanged**: child-side
+    `ConfinePathUnderSubdir` confinement untouched, absolute/`..` from MCP/Lua
+    still rejected, no PathConfinement bypass env/flag — the helper only generates
+    a confine-safe basename, never widens what the child accepts.
 
 ## Deviations
 
@@ -266,6 +303,19 @@ no grid/scroll/draw path. No perf scenario delta expected.
   env**). PR D carries the `--outPath` contract fix + the deferred hardening
   (Windows `lpEnvironment` block, CSPRNG over `random_device`,
   scrub-at-process-entry).
+- **PR E — the confine-safe basename logic now lives in a Core helper, not inline in
+  `CliCommandRunner.cpp`.** Moved to satisfy the test-delta gate with a real unit
+  test of the trust boundary (a strict-zone Core file is the right home for
+  security-critical path sanitization), and to fix CR Finding 2 by swapping the
+  collision-prone ms-stamp for `random_device` entropy. Net duplication is **lower**
+  (the inline derivation was deleted, not duplicated). The helper is pure and
+  one-shot per spawn — it never widens what the confined child accepts.
+  * **Perf-gate (Source/Core/ touched — PR E):** the new helper runs **once per
+    `--spawn`** invocation (one `std::random_device` draw + two `snprintf` + a string
+    concat in `SwapOutLogForConfineSafeBasename`, on the CLI one-shot spawn path).
+    It is **not** on the UI/render thread, not a per-frame / per-command / grid /
+    scroll / draw path, and adds no steady-state allocation. **Nil impact on the
+    6.94 ms / 144 Hz budget** — no perf scenario delta expected or measured.
 
 ## Verification
 
@@ -284,3 +334,8 @@ no grid/scroll/draw path. No perf scenario delta expected.
 - [x] PR B: CI gates green on the PR — #1576 merged to develop @ `870702de` (Perf PR-fast green with the PR-A env opt-out still in place; the gates themselves still ran tokenless — PR C is what runs them under the secure default)
 - [ ] PR C: removed PR A's CI env opt-out from all 3 `--spawn` workflows — the PR's own CI (every `--spawn` gate green under the SECURE default, the first time) is the self-validating proof + the standing #1566 regression guard
 - [ ] PR D (follow-up): thread confined `--outPath` to all `--spawn` callers (un-mask whisper/screenshot) + optional hardening (`lpEnvironment` block, CSPRNG, scrub-at-entry)
+- [x] PR E (#1581, Fixes #1579): doctest rig green — full `SmatchetTests` 2227/2227 cases (`ctest -R ^smatchet_tests$` PASS, 15.5 s); the new `SpawnOutLogBasename` cases run isolated 6/6, 12 assertions PASS (traversal collapse, absolute strip, `.`/`..`/`""` fallback, normal-leaf preserved, `spawn-` prefix, entropy-uniqueness)
+- [x] PR E: DX12 dual-target compile verify — `cmake --build --preset ninja-iter-msvc --target SmatchetCore_DX12 SmatchetStandalone` clean; `SpawnOutLogBasename.cpp` + `UiTestScenario.cpp` compiled in BOTH worlds, `SmatchetCore_DX12.lib` + `Smatchet.exe` linked (new Core header has no GLFW/GL pollution)
+- [x] PR E: lint gate PASS — `test-lint-rules.sh --diff origin/develop` exit 0 (strict-zone rules on the new Commands/ files clean, no new duplication, no oversized function); only pre-existing advisory `unused-symbol-under-config-guard` WARNs (unrelated MCP-gated helpers, non-blocking)
+- [x] PR E: spawn smoke both ways via `scripts/dev/test-ui-jira-deterministic-backend.sh` (ui-test exe rebuilt with the change) — **env-set** (`SMATCHET_UI_TEST_OUTLOG=<abs>`): passed=3 failed=0 `ok:true`, child wrote `...\ui-tests\spawn-36b5b5545e350945-smoke-outlog-*.txt` (entropy token from the new helper), `[spawn] outLog: relocated child log -> <abs>`, the absolute outLog populated (7115 bytes); **bare** (no env): passed=3 failed=0 `ok:true`, `outLog:""`, exit 0
+- [x] PR E: both CodeRabbit findings cleared — #1 (`UiTestScenario.cpp` `#1566` temporal ref dropped, invariant kept), #2 (`CliCommandRunner.cpp` ms-stamp → entropy via the Core helper; no `std::chrono ... milliseconds` remains in the basename path — only legit poll/timeout/sleep uses)
