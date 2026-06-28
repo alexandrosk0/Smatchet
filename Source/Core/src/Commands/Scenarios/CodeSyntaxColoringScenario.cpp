@@ -19,6 +19,7 @@
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "CodeColorView.h"
 #include "Commands/Scenarios/ScenarioCaptureSizing.h"
+#include "Commands/Scenarios/ScenarioScreenshotPath.h"
 #include "SmatchetImGuiFonts.h"
 #include "SmatchetUiSession.h"
 
@@ -72,7 +73,7 @@ int IntArg(const nlohmann::json& args, const char* key, int fallback) {
 // palette buckets — keyword, string, comment, number, preprocessor/variable.
 struct LangSample {
     smatchet::code_color::CodeLang lang;
-    const char* tag;  // langTagOrigin — drives the slice-4 badge tooltip text.
+    const char* tag; // langTagOrigin — drives the slice-4 badge tooltip text.
     const char* code;
 };
 
@@ -82,14 +83,12 @@ const std::vector<LangSample>& Samples() {
          "// delegate path\nint add(int a, int b) {\n    return a + b; // sum\n}"},
         {smatchet::code_color::CodeLang::Python, "python",
          "# hand-rolled LD\ndef greet(name):\n    print(\"hi\", name)\n    return True"},
-        {smatchet::code_color::CodeLang::Lua, "lua",
-         "-- vendored LD\nlocal function f(x)\n    return x * 2\nend"},
+        {smatchet::code_color::CodeLang::Lua, "lua", "-- vendored LD\nlocal function f(x)\n    return x * 2\nend"},
         {smatchet::code_color::CodeLang::Bash, "bash",
          "# shell vars\nfor i in 1 2 3; do\n    echo \"item ${i}\"\ndone"},
         {smatchet::code_color::CodeLang::Json, "json",
          "{\n  \"name\": \"smatchet\",\n  \"count\": 42,\n  \"ok\": true\n}"},
-        {smatchet::code_color::CodeLang::Plain, "",
-         "plain text — no language tag\nflat-orange fallback tint"},
+        {smatchet::code_color::CodeLang::Plain, "", "plain text — no language tag\nflat-orange fallback tint"},
     };
     return kSamples;
 }
@@ -109,6 +108,10 @@ class CodeSyntaxColoringScenario : public IScenario {
             outErr = "code-syntax-coloring: screenshotPath is required";
             return;
         }
+        // Confine the caller-supplied path under <userData>/screenshots/ — MCP/Lua-reachable
+        // scenario, so an unconfined path is an arbitrary-file-write primitive (#1566 class).
+        if (!ConfineScenarioScreenshotPathInPlace("code-syntax-coloring", screenshotPath_, outErr))
+            return;
 
         g_ui.requestWindowWidth = captureSize_.Width;
         g_ui.requestWindowHeight = captureSize_.Height;
@@ -121,15 +124,15 @@ class CodeSyntaxColoringScenario : public IScenario {
         // pos + size (ImGuiCond_Always) keep the layout deterministic.
         ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f), ImGuiCond_Always);
         ImGui::SetNextWindowSize(
-            ImVec2(static_cast<float>(captureSize_.Width), static_cast<float>(captureSize_.Height)),
-            ImGuiCond_Always);
+            ImVec2(static_cast<float>(captureSize_.Width), static_cast<float>(captureSize_.Height)), ImGuiCond_Always);
         // Fully opaque + raised above the dockspace every frame — otherwise the
         // main UI's full-viewport dockspace draws over this window and the
         // screenshot captures the app chrome instead of the code blocks.
         ImGui::SetNextWindowBgAlpha(1.0f);
         ImGui::SetNextWindowFocus();
         ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav;
+                                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
+                                 ImGuiWindowFlags_NoNav;
         if (ImGui::Begin("##scenario_code_syntax_coloring", nullptr, flags)) {
             const SmatchetPreviewFonts& fonts = SmatchetGetPreviewFonts();
             for (const LangSample& s : Samples()) {

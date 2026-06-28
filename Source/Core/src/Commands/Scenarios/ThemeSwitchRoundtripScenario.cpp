@@ -9,6 +9,7 @@
 
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+#include "Commands/Scenarios/ScenarioScreenshotPath.h"
 #include "ConfigManager.h"
 #include "Logger.h"
 #include "SmatchetThemeIds.h"
@@ -127,6 +128,11 @@ class ThemeSwitchRoundtripScenario : public IScenario {
             outErr = "theme-switch-roundtrip: screenshotPath is required";
             return;
         }
+        // Confine the caller-supplied path under <userData>/screenshots/ — MCP/Lua-reachable
+        // scenario, so an unconfined path is an arbitrary-file-write primitive (#1566 class).
+        // Confine before mutating any session/theme state below so a reject returns cleanly.
+        if (!ConfineScenarioScreenshotPathInPlace("theme-switch-roundtrip", screenshotPath_, outErr))
+            return;
 
         // Capture the user's theme so OnFinish/OnCancel can restore it. This
         // scenario deliberately mutates cfg.Theme in-memory; the ephemeral

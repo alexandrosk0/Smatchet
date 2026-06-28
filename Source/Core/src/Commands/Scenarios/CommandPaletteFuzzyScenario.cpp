@@ -10,6 +10,7 @@
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "Commands/Scenarios/ScenarioCaptureSizing.h"
+#include "Commands/Scenarios/ScenarioScreenshotPath.h"
 #include "Logger.h"
 #include "SmatchetUiSession.h"
 
@@ -74,6 +75,11 @@ class CommandPaletteFuzzyScenario : public IScenario {
             outErr = "command-palette-fuzzy: screenshotPath is required";
             return;
         }
+        // Confine the caller-supplied path under <userData>/screenshots/ — MCP/Lua-reachable
+        // scenario, so an unconfined path is an arbitrary-file-write primitive (#1566 class).
+        // Must precede the latch flip below so a rejected path leaves no session state mutated.
+        if (!ConfineScenarioScreenshotPathInPlace("command-palette-fuzzy", screenshotPath_, outErr))
+            return;
         // Latch flip must follow the error-return guard above — otherwise
         // an OnStart that errors out leaves BackendHasBeenReachable=true
         // for the session (OnCancel/OnFinish may never run).

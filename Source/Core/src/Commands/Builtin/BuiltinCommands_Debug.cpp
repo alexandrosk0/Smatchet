@@ -6,9 +6,11 @@
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 #include "Commands/MainThreadDispatch.h"
+#include "Commands/PathConfinement.h"
 
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+#include "ConfigManager.h"
 #include "Logger.h"
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetUI.h"
@@ -98,17 +100,16 @@ static void RegisterDebugMcpStatusCommand(CommandRegistry& reg, AppController& a
 
 // --- debug.thread_dump ------------------------------------------------------
 static void RegisterDebugThreadDumpCommand(CommandRegistry& reg, AppController& /*app*/) {
-    Command c =
-        MakeCommand("debug.thread_dump", "Return basic thread count and state information.",
-                    [](const nlohmann::json&, const CommandContext&) {
-                        // C++14 doesn't expose thread IDs without platform headers.
-                        // Return what we can without OS-specific code in Source/Core.
-                        nlohmann::json out;
-                        out["note"] =
-                            "Thread dump requires OS-specific APIs; counts are unavailable via this command.";
-                        out["hardwareConcurrency"] = static_cast<int>(std::thread::hardware_concurrency());
-                        return CommandResult::Success(std::move(out));
-                    });
+    Command c = MakeCommand("debug.thread_dump", "Return basic thread count and state information.",
+                            [](const nlohmann::json&, const CommandContext&) {
+                                // C++14 doesn't expose thread IDs without platform headers.
+                                // Return what we can without OS-specific code in Source/Core.
+                                nlohmann::json out;
+                                out["note"] =
+                                    "Thread dump requires OS-specific APIs; counts are unavailable via this command.";
+                                out["hardwareConcurrency"] = static_cast<int>(std::thread::hardware_concurrency());
+                                return CommandResult::Success(std::move(out));
+                            });
     c.Description = "Returns hardware_concurrency. Full OS thread dump not available cross-platform.";
     reg.Register(std::move(c));
 }
@@ -120,40 +121,40 @@ static void RegisterDebugThreadDumpCommand(CommandRegistry& reg, AppController& 
 // scriptingWindowOpenRequested_ flag state. Sinks persist after the call —
 // intended for ephemeral --spawn instances which exit between assertions.
 static void RegisterDebugLuaLogTestCommand(CommandRegistry& reg, AppController& app) {
-    Command c = MakeCommand(
-        "debug.lua_log_test",
-        "Run a Lua snippet capturing the automation log + error sinks. Returns JSON {log_lines, err_lines, "
-        "window_requested} for automated validation.",
-        [&app](const nlohmann::json& args, const CommandContext& /*ctx*/) {
+    Command c =
+        MakeCommand("debug.lua_log_test",
+                    "Run a Lua snippet capturing the automation log + error sinks. Returns JSON {log_lines, err_lines, "
+                    "window_requested} for automated validation.",
+                    [&app](const nlohmann::json& args, const CommandContext& /*ctx*/) {
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
-            const std::string code = args.value("code", std::string());
-            if (code.empty()) {
-                return CommandResult::Failure(ErrorCode::ValidationError, "code required");
-            }
-            auto logCaptured = std::make_shared<std::vector<std::string>>();
-            auto errCaptured = std::make_shared<std::vector<std::string>>();
-            app.AddAutomationLogSink([logCaptured](const std::string& m) { logCaptured->push_back(m); });
-            app.AddAutomationErrorSink([errCaptured](const std::string& m) { errCaptured->push_back(m); });
-            // Consume any prior request so we observe only this snippet's effect.
-            (void)app.ConsumeScriptingWindowRequest();
-            std::string outError;
-            std::string outResult;
-            const bool ok = app.ExecuteLuaConsoleSnippet(code, outError, outResult);
-            const bool windowReq = app.ConsumeScriptingWindowRequest();
-            nlohmann::json out;
-            out["ok_snippet"] = ok;
-            out["snippet_error"] = outError;
-            out["snippet_result"] = outResult;
-            out["log_lines"] = *logCaptured;
-            out["err_lines"] = *errCaptured;
-            out["window_requested"] = windowReq;
-            return CommandResult::Success(std::move(out));
+                        const std::string code = args.value("code", std::string());
+                        if (code.empty()) {
+                            return CommandResult::Failure(ErrorCode::ValidationError, "code required");
+                        }
+                        auto logCaptured = std::make_shared<std::vector<std::string>>();
+                        auto errCaptured = std::make_shared<std::vector<std::string>>();
+                        app.AddAutomationLogSink([logCaptured](const std::string& m) { logCaptured->push_back(m); });
+                        app.AddAutomationErrorSink([errCaptured](const std::string& m) { errCaptured->push_back(m); });
+                        // Consume any prior request so we observe only this snippet's effect.
+                        (void)app.ConsumeScriptingWindowRequest();
+                        std::string outError;
+                        std::string outResult;
+                        const bool ok = app.ExecuteLuaConsoleSnippet(code, outError, outResult);
+                        const bool windowReq = app.ConsumeScriptingWindowRequest();
+                        nlohmann::json out;
+                        out["ok_snippet"] = ok;
+                        out["snippet_error"] = outError;
+                        out["snippet_result"] = outResult;
+                        out["log_lines"] = *logCaptured;
+                        out["err_lines"] = *errCaptured;
+                        out["window_requested"] = windowReq;
+                        return CommandResult::Success(std::move(out));
 #else
             (void)app;
             (void)args;
             return CommandResult::Failure(ErrorCode::HandlerError, "Lua automation is not enabled in this build.");
 #endif
-        });
+                    });
     c.Destructive = true;
     c.Idempotent = false;
     c.Params = {PString("code", "Lua code to evaluate (snippet form, sandboxed).", true)};
@@ -282,29 +283,29 @@ static void RegisterDebugDockResetCommand(CommandRegistry& reg, AppController& a
 // Sets a transient flag; the main loop polls and calls glfwSetWindowSize.
 // Standalone-only; on the Unreal/DX12 build the flag is set but never consumed (harmless).
 static void RegisterDebugWindowResizeCommand(CommandRegistry& reg, AppController& app) {
-    Command c = MakeCommand("debug.window.resize", "Resize the GLFW window (standalone only).",
-                            [&app](const nlohmann::json& args, const CommandContext& /*ctx*/) {
-                                const int w = static_cast<int>(args.value("width", 0));
-                                const int h = static_cast<int>(args.value("height", 0));
-                                if (w <= 0 || h <= 0) {
-                                    return CommandResult::Failure(ErrorCode::ValidationError,
-                                                                  "width and height must be > 0");
-                                }
-                                // Marshal the g_ui request-flag writes to the UI thread. When this
-                                // command is dispatched from an MCP/Lua worker thread, writing the
-                                // non-atomic int/bool request fields would race the standalone main
-                                // loop that polls them each frame (data race / UB). The dock.* and
-                                // bug.report handlers in this TU follow the same seam.
-                                return RunOnUiThreadAsCommandResult(app, [w, h]() {
-                                    g_ui.requestWindowWidth = w;
-                                    g_ui.requestWindowHeight = h;
-                                    g_ui.requestWindowResize = true;
-                                    nlohmann::json out;
-                                    out["width"] = w;
-                                    out["height"] = h;
-                                    return CommandResult::Success(std::move(out));
-                                });
-                            });
+    Command c =
+        MakeCommand("debug.window.resize", "Resize the GLFW window (standalone only).",
+                    [&app](const nlohmann::json& args, const CommandContext& /*ctx*/) {
+                        const int w = static_cast<int>(args.value("width", 0));
+                        const int h = static_cast<int>(args.value("height", 0));
+                        if (w <= 0 || h <= 0) {
+                            return CommandResult::Failure(ErrorCode::ValidationError, "width and height must be > 0");
+                        }
+                        // Marshal the g_ui request-flag writes to the UI thread. When this
+                        // command is dispatched from an MCP/Lua worker thread, writing the
+                        // non-atomic int/bool request fields would race the standalone main
+                        // loop that polls them each frame (data race / UB). The dock.* and
+                        // bug.report handlers in this TU follow the same seam.
+                        return RunOnUiThreadAsCommandResult(app, [w, h]() {
+                            g_ui.requestWindowWidth = w;
+                            g_ui.requestWindowHeight = h;
+                            g_ui.requestWindowResize = true;
+                            nlohmann::json out;
+                            out["width"] = w;
+                            out["height"] = h;
+                            return CommandResult::Success(std::move(out));
+                        });
+                    });
     c.Params = {
         PInt("width", "Window width in pixels.", 0),
         PInt("height", "Window height in pixels.", 0),
@@ -319,24 +320,35 @@ static void RegisterDebugWindowResizeCommand(CommandRegistry& reg, AppController
 // Sets a transient flag + path; the main loop polls and writes PNG/PPM.
 // Standalone-only; on Unreal/DX12 the flag is set but never consumed.
 static void RegisterDebugWindowScreenshotCommand(CommandRegistry& reg, AppController& app) {
-    Command c = MakeCommand("debug.window.screenshot", "Save a PNG screenshot of the current viewport.",
-                            [&app](const nlohmann::json& args, const CommandContext& /*ctx*/) {
-                                const std::string path = args.value("path", std::string());
-                                if (path.empty()) {
-                                    return CommandResult::Failure(ErrorCode::ValidationError, "path is required");
-                                }
-                                // Marshal to the UI thread: requestScreenshotPath is a std::string
-                                // read by the standalone main loop each frame, so an unsynchronised
-                                // write from an MCP/Lua worker thread is a genuine data race (the
-                                // string buffer can reallocate under the reader — UB, not benign).
-                                return RunOnUiThreadAsCommandResult(app, [path]() {
-                                    g_ui.requestScreenshotPath = path;
-                                    g_ui.requestScreenshot = true;
-                                    nlohmann::json out;
-                                    out["path"] = path;
-                                    return CommandResult::Success(std::move(out));
-                                });
-                            });
+    Command c =
+        MakeCommand("debug.window.screenshot", "Save a PNG screenshot of the current viewport.",
+                    [&app](const nlohmann::json& args, const CommandContext& /*ctx*/) {
+                        const std::string path = args.value("path", std::string());
+                        if (path.empty()) {
+                            return CommandResult::Failure(ErrorCode::ValidationError, "path is required");
+                        }
+                        // Confine the caller-supplied path under <userData>/screenshots/.
+                        // This command is MCP- AND Lua-reachable; an unconfined path is an
+                        // arbitrary-file-write primitive (the #1566 class — SECURITY_AUDIT.md).
+                        // Reject absolute / '..' / escaping paths up front.
+                        std::string confinedPath;
+                        std::string confineErr;
+                        if (!ConfinePathUnderSubdir(ConfigManager::GetUserDataDirectory(), "screenshots", path,
+                                                    confinedPath, confineErr)) {
+                            return CommandResult::Failure(ErrorCode::ValidationError, "path rejected: " + confineErr);
+                        }
+                        // Marshal to the UI thread: requestScreenshotPath is a std::string
+                        // read by the standalone main loop each frame, so an unsynchronised
+                        // write from an MCP/Lua worker thread is a genuine data race (the
+                        // string buffer can reallocate under the reader — UB, not benign).
+                        return RunOnUiThreadAsCommandResult(app, [confinedPath]() {
+                            g_ui.requestScreenshotPath = confinedPath;
+                            g_ui.requestScreenshot = true;
+                            nlohmann::json out;
+                            out["path"] = confinedPath;
+                            return CommandResult::Success(std::move(out));
+                        });
+                    });
     c.Params = {
         PString("path", "Output file path (PNG if extension is .png, PPM otherwise).", /*required*/ true),
     };
@@ -349,24 +361,23 @@ static void RegisterDebugWindowScreenshotCommand(CommandRegistry& reg, AppContro
 // Next launch should open a pre-filled bug report. Destructive; requires --yes.
 // kind selects segv null-deref, abort, or throw.
 static void RegisterDebugCrashCommand(CommandRegistry& reg, AppController& /*app*/) {
-    Command c =
-        MakeCommand("debug.crash", "Deliberately crash the process (tests the crash reporter). Requires --yes.",
-                    [](const nlohmann::json& args, const CommandContext& ctx) -> CommandResult {
-                        const std::string kind = args.value("kind", std::string("segv"));
-                        if (ctx.DryRun) {
-                            return CommandResult::Success({{"wouldCrash", kind}});
-                        }
-                        LOG_ERROR("debug.crash: intentionally crashing the process (kind=%s)", kind.c_str());
-                        if (kind == "abort") {
-                            std::abort();
-                        } else if (kind == "throw") {
-                            throw std::runtime_error("debug.crash: intentional unhandled exception");
-                        }
-                        // Default: null dereference -> SIGSEGV / access violation.
-                        volatile int* p = nullptr;
-                        *p = 42;
-                        return CommandResult::Success({{"crashed", false}}); // unreachable
-                    });
+    Command c = MakeCommand("debug.crash", "Deliberately crash the process (tests the crash reporter). Requires --yes.",
+                            [](const nlohmann::json& args, const CommandContext& ctx) -> CommandResult {
+                                const std::string kind = args.value("kind", std::string("segv"));
+                                if (ctx.DryRun) {
+                                    return CommandResult::Success({{"wouldCrash", kind}});
+                                }
+                                LOG_ERROR("debug.crash: intentionally crashing the process (kind=%s)", kind.c_str());
+                                if (kind == "abort") {
+                                    std::abort();
+                                } else if (kind == "throw") {
+                                    throw std::runtime_error("debug.crash: intentional unhandled exception");
+                                }
+                                // Default: null dereference -> SIGSEGV / access violation.
+                                volatile int* p = nullptr;
+                                *p = 42;
+                                return CommandResult::Success({{"crashed", false}}); // unreachable
+                            });
     c.Params = {
         PString("kind", "Crash kind: segv (default) | abort | throw."),
     };
