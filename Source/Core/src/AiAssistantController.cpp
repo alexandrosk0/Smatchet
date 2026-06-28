@@ -9,7 +9,6 @@
 #include "AiEndpointPolicy.h"
 #include "AiEndpointSanitize.h"
 #include "AiModelSignature.h"
-#include "AppController.h"
 #include "BackendAuditTrail.h"
 #include "ConfigManager.h"
 #include "IAiAssistantUiState.h"
