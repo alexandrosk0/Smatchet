@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include "TrackerFieldValueParser.h"
+#include "TrackerFieldSchema.h"
 
 #include <string>
 
@@ -75,4 +76,39 @@ TEST_CASE("Parse + Format round-trip preserves whole-unit durations") {
         const long long reparsed = ParseWorkDurationToSeconds(formatted);
         CHECK(reparsed == seconds);
     }
+}
+
+// ClassifyTrackerFieldFamily re-parses each option's PayloadJson to decide select-vs-
+// structured. That re-parse must be depth/node/byte-bounded: a hostile or tampered
+// field-option payload (e.g. from the on-disk field-catalog cache) that is deeply
+// nested would otherwise stack-overflow the recursive ~json teardown — an uncatchable
+// crash, not a try/catch-able exception. These pin the bounded-parse behavior.
+TEST_CASE("ClassifyTrackerFieldFamily survives a depth-bomb option PayloadJson") {
+    TrackerField field;
+    field.Id = "customfield_1";
+    field.IsArray = false;
+    TrackerFieldOption opt;
+    opt.Id = "1";
+    opt.Value = "deep";
+    // ~100k nested arrays — far past the ParseBounded depth cap (256). A bare parse here
+    // would build the DOM and crash on teardown; ParseBounded rejects it instead.
+    opt.PayloadJson = std::string(100000, '[') + std::string(100000, ']');
+    field.AllowedValueOptions.push_back(opt);
+
+    // No crash; the rejected payload degrades to a plain select (not structured).
+    CHECK(ClassifyTrackerFieldFamily(field) == TrackerFieldFamily::SelectSingle);
+}
+
+TEST_CASE("ClassifyTrackerFieldFamily still detects a well-formed structured option") {
+    TrackerField field;
+    field.Id = "customfield_2";
+    field.IsArray = false;
+    TrackerFieldOption opt;
+    opt.Id = "1";
+    opt.Value = "v";
+    // A non-simple object (carries a key outside the simple-option set) -> structured.
+    opt.PayloadJson = R"({"id":"1","value":"v","extra":{"nested":true}})";
+    field.AllowedValueOptions.push_back(opt);
+
+    CHECK(ClassifyTrackerFieldFamily(field) == TrackerFieldFamily::StructuredSingle);
 }
