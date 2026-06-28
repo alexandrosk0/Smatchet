@@ -185,7 +185,8 @@ no grid/scroll/draw path. No perf scenario delta expected.
   draws)`; `SpawnLogRandomToken`=2 draws, `SpawnAuthToken`=4 — no second copy of
   the random-device/hex pattern. (#5, style) the new `env["error"]` builds
   member-by-member, no nlohmann brace-list reassign. (#1, doc) this plan's
-  Files-to-modify table + PR-A note now agree the `--outPath` threading is PR C.
+  Files-to-modify table + PR-A note now agree the `--outPath` threading is PR C
+  *(later re-split to PR D as the H1 sub-fix — see the split note in Deviations)*.
 - **2026-06-28 — PR C (branch `feat/spawn-mcp-prc`)** — removed the workflow-wide
   `SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK=false` opt-out from all three `--spawn`
   workflows (`build-and-test.yml`, `perf-pr-fast.yml`, `perf-full.yml`), replacing
@@ -215,19 +216,20 @@ no grid/scroll/draw path. No perf scenario delta expected.
   so they don't block merge). The general product-side contract fix (parent
   threads the confined path back to all `--spawn` outPath callers, or
   `NormalizeOutPath` stops absolutizing now that the parent reads `data.outPath`)
-  is deferred to **PR C** (see the PR-B-scope note below). `build-and-test.yml`'s
+  is deferred to **PR D** (it is the **H1** sub-fix; see the split note below).
+  `build-and-test.yml`'s
   `mobile-texture-guard` run passes no `--outPath` and is unaffected.
 - **PR B scope reduced — the `--outPath` PathConfinement contract threading is
-  deferred to a follow-up (PR C), NOT done in PR B.** The Files-to-modify row for
+  deferred to a follow-up (PR D), NOT done in PR B.** The Files-to-modify row for
   `CliCommandRunner.cpp` originally tagged PR B with "thread confined `--outPath`
   contract for all `--spawn` callers." That was split off to keep PR B's
   security-sensitive MCP-auth change focused and reviewable (a trust-boundary diff
   the #1566 regression already burned us on once). The affected whisper/screenshot
   `--outPath` callers remain bucket-C/E **masked** (don't block merge), so the
-  split costs no gate coverage. PR C will either thread `data.outPath` back to all
+  split costs no gate coverage. PR D will either thread `data.outPath` back to all
   `--spawn` outPath callers or stop `NormalizeOutPath` absolutizing now the parent
   reads the child-reported confined path. Removing PR A's CI env opt-out (now that
-  PR B proves the product fix) also rides PR C.
+  PR B proves the product fix) is what rides **PR C**.
 - **Two LOW security-review hardening notes — #2 actioned in the PR B CR round, #1
   still accepted** (both optional defense-in-depth, neither a ship-blocker):
   (1, deferred) `std::random_device` is not *guaranteed* cryptographic by the
@@ -235,23 +237,23 @@ no grid/scroll/draw path. No perf scenario delta expected.
   matrix Smatchet ships (the deterministic MinGW-libstdc++ footgun does not apply);
   the attacker who could brute a 128-bit ephemeral loopback token in its sub-second
   lifetime already has same-user local access (out of the threat model). Tracked for
-  PR C if revisited. (2, **DONE** in PR B — CodeRabbit Major) the child now scrubs
+  PR D if revisited. (2, **DONE** in PR B — CodeRabbit Major) the child now scrubs
   `SMATCHET_MCP_SPAWN_TOKEN` from its env right after adoption
   (`_putenv_s(…,"")` on Windows / `::unsetenv` on POSIX) so no later subprocess
   inherits it — belt-and-suspenders over the existing `IsSensitiveEnvName` `TOKEN`
   substring scrub + `ObservedSmatchetEnv` allow-list exclusion.
 - **CR round-1 security-review (provision/request split) — verdict GO, two new
-  hardening items deferred to PR C** (neither merge-blocking): (a, **MEDIUM →
+  hardening items deferred to PR D** (neither merge-blocking): (a, **MEDIUM →
   informational**) on Windows the spawn token is transiently written into the
   *parent's* own env block (`SetEnvironmentVariableA` set→`CreateProcess`→clear)
   so the child inherits it, opening a microsecond same-user read window; the POSIX
   path is strictly better (sets it only inside the forked child). The threat needs
   a same-user attacker who already holds the operator's full privilege (can read
-  the config token / DPAPI secrets directly), so it crosses no boundary. PR-C fix:
+  the config token / DPAPI secrets directly), so it crosses no boundary. PR-D fix:
   build an explicit merged `lpEnvironment` block so the parent env is never
   mutated. (b, **LOW**) the child env scrub runs at `McpPlugin::OnStart`, so a
   hypothetical subprocess forked *before* plugin start would inherit the unscrubbed
-  var — no current boot path does this (latent only); PR-C fix: scrub at process
+  var — no current boot path does this (latent only); PR-D fix: scrub at process
   entry in `main.cpp` if a pre-plugin subprocess is ever added.
 - **PR C narrowed to the opt-out removal; `--outPath` threading + the three
   optional hardening items split to PR D.** The plan originally bundled both on PR
@@ -277,7 +279,7 @@ no grid/scroll/draw path. No perf scenario delta expected.
 - [x] PR B: `--spawn app.version` reaches MCP-ready and returns `ok:true` under the **compiled secure default** — `scripts/dev/test-spawn-mcp-default-auth.sh` PASS (the regression test #1566 lacked; hermetic fresh `SMATCHET_USER_DATA`, env opt-out unset)
 - [x] PR B: security-review of the MCP-auth trust-boundary diff — verdict **SHIP**, no CRITICAL/HIGH; every threat-model claim traced clean (CSPRNG token, env-only never argv, 127.0.0.1-only, constant-time compare, name-scrubbed, parent-env cleared unconditionally, child adoption strictly strengthens); two optional LOW hardening notes recorded in Deviations
 - [x] PR B: **CR round-1** (provision/request split) re-build clean + two-phase `test-spawn-mcp-default-auth.sh` PASS (Phase 1 mint+inject, **Phase 2 persisted operator token — locks the CR #4 configured-token path**, both `ok:true` under the secure default) + lint gate exit 0
-- [x] PR B: **CR round-1 security-review** of the provision/request split — verdict **GO** (no CRITICAL/HIGH): configured-token branch traced to inject nothing, no token logging, AuthRejected envelope leak-free, `--outPath` confinement byte-unchanged; one MEDIUM (Windows parent-env transient same-user window) + two LOW (`random_device`, scrub-timing) deferred to PR C, none merge-blocking
+- [x] PR B: **CR round-1 security-review** of the provision/request split — verdict **GO** (no CRITICAL/HIGH): configured-token branch traced to inject nothing, no token logging, AuthRejected envelope leak-free, `--outPath` confinement byte-unchanged; one MEDIUM (Windows parent-env transient same-user window) + two LOW (`random_device`, scrub-timing) deferred to PR D, none merge-blocking
 - [x] Gate-escape postmortem for #1566 filed with a `### Preventing gate` — PR #1575
 - [x] PR B: CI gates green on the PR — #1576 merged to develop @ `870702de` (Perf PR-fast green with the PR-A env opt-out still in place; the gates themselves still ran tokenless — PR C is what runs them under the secure default)
 - [ ] PR C: removed PR A's CI env opt-out from all 3 `--spawn` workflows — the PR's own CI (every `--spawn` gate green under the SECURE default, the first time) is the self-validating proof + the standing #1566 regression guard
