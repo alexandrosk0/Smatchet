@@ -156,7 +156,7 @@ jobs:
         uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (perf-iter)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}\.sccache
           key: ${{ runner.os }}-sccache-perf-iter-${{ github.sha }}
@@ -165,7 +165,7 @@ jobs:
             ${{ runner.os }}-sccache-msvc-
 
       - name: Cache FetchContent _deps
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           # FETCHCONTENT_BASE_DIR defaults to .fetchcontent-src (CMakeLists.txt:280).
           # The previous path (build/ninja-iter-msvc/_deps) was wrong — that dir
@@ -195,7 +195,7 @@ jobs:
       # run_failure. Keep MESA_VERSION + cache key in lockstep with
       # build-and-test.yml. docs/plans/perf-gate-revival.md step 1.
       - name: Cache Mesa software-GL DLLs
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: mesa-cache
           key: mesa-dlls-24.2.5-v2

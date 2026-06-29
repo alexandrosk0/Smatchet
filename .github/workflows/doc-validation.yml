@@ -206,7 +206,7 @@ jobs:
           echo "::warning::INDEX autosync skipped — credentialed checkout could not authenticate (PLAN_INDEX_PAT absent/expired). This advisory auto-fixer is a no-op here; INDEX correctness stays hard-gated by the required test-plan-index check. Restore the PAT (see job header) to re-enable auto-fix."
       - name: Set up Python
         if: steps.shipped.outputs.changed == 'true' && steps.checkout.outcome == 'success'
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.11'
       - name: Regenerate INDEX + commit if drifted
@@ -279,7 +279,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.11'
 
