@@ -20,10 +20,14 @@ TEST_PORT="${SMATCHET_TEST_PORT:-58736}"
 FILTER="${UI_TEST_FILTER:-JiraDeterministic}"
 FIXTURE_DIR="${SMATCHET_FIXTURE_DIR:-tests/fixtures/jira_backend}"
 FIXTURE="${SMATCHET_TEST_JIRA_BACKEND_FIXTURE:-$FIXTURE_DIR/basic-grid.json}"
-# Per-test verbose-log dump. When SMATCHET_UI_TEST_OUTLOG is set, pass it through
-# to `ui_test.run --outLog=` so every test's Output.Log lands on disk; we `cat` it
-# on failure for diagnosis (the --spawn parent only prints pass/fail counts).
-OUTLOG="${SMATCHET_UI_TEST_OUTLOG:-}"
+# Per-test verbose-log dump. When SMATCHET_UI_TEST_OUTLOG is set it names the
+# CI-visible destination for every test's Output.Log; we `cat` it on failure for
+# diagnosis (the --spawn parent only prints pass/fail counts). NOTE: ui_test.run
+# confines --outLog under <userData>/ui-tests/ and REJECTS absolute paths
+# (Source/Core/include/Commands/PathConfinement.h — MCP-reachable arbitrary-write
+# hardening), so we hand the handler a bare basename and copy the confined file
+# back out to this destination after the run.
+OUTLOG_DEST="${SMATCHET_UI_TEST_OUTLOG:-}"
 
 if [ ! -f "$EXE" ]; then
     echo "FAIL: $EXE not found. Build with: cmake --build --preset ninja-ui-test-msvc --target SmatchetStandalone" >&2
@@ -43,9 +47,15 @@ echo "[test-ui-jira-deterministic-backend] launching ephemeral Smatchet (port $T
 echo "  fixture: $FIXTURE"
 
 OUTLOG_ARG=()
-if [ -n "$OUTLOG" ]; then
-    OUTLOG_ARG=(--outLog="$OUTLOG")
-    echo "  outLog: $OUTLOG"
+OUTLOG_CONFINED=""
+if [ -n "$OUTLOG_DEST" ]; then
+    # Bare basename → the handler resolves it under <userData>/ui-tests/. An
+    # absolute value here would be rejected by PathConfinement and the scenario
+    # would fail to start.
+    OUTLOG_NAME="$(basename "$OUTLOG_DEST")"
+    OUTLOG_ARG=(--outLog="$OUTLOG_NAME")
+    OUTLOG_CONFINED="$TMPDIR_DATA/ui-tests/$OUTLOG_NAME"
+    echo "  outLog: $OUTLOG_NAME (confined under the isolated user-data dir)"
 fi
 
 RAW_OUTPUT="$(SMATCHET_USER_DATA="$TMPDIR_DATA" \
@@ -56,12 +66,20 @@ RAW_OUTPUT="$(SMATCHET_USER_DATA="$TMPDIR_DATA" \
 
 echo "$RAW_OUTPUT" | tail -40
 
+# Copy the confined per-test log out to the CI-visible destination before the
+# TMPDIR_DATA trap wipes it. Best-effort: the log is a diagnostic aid, never a
+# gate, so a missing/unresolved source never fails the run.
+if [ -n "$OUTLOG_DEST" ] && [ -f "$OUTLOG_CONFINED" ]; then
+    mkdir -p "$(dirname "$OUTLOG_DEST")" 2>/dev/null || true
+    cp "$OUTLOG_CONFINED" "$OUTLOG_DEST" 2>/dev/null || true
+fi
+
 # Best-effort: on any non-clean run, surface the per-test verbose log if present.
 cat_outlog_on_failure() {
-    if [ -n "$OUTLOG" ] && [ -f "$OUTLOG" ]; then
+    if [ -n "$OUTLOG_DEST" ] && [ -f "$OUTLOG_DEST" ]; then
         echo
-        echo "===== ui_test per-test verbose log ($OUTLOG) ====="
-        cat "$OUTLOG"
+        echo "===== ui_test per-test verbose log ($OUTLOG_DEST) ====="
+        cat "$OUTLOG_DEST"
         echo "===== end per-test verbose log ====="
     fi
 }

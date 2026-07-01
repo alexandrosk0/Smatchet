@@ -1301,9 +1301,13 @@ jobs:
       # The HARD gate. NO continue-on-error: a persistent fixture-backend failure
       # reds this job's check-run and blocks merge. SMATCHET_TEST_JIRA_BACKEND_FIXTURE
       # is exported here (the driver also defaults it, but the explicit export is the
-      # deliverable's contract). --outLog captures every test's verbose log; on
-      # failure we cat it into the CI log for diagnosis. A single retry absorbs the
-      # known Mesa first-frame collapse without masking a real regression.
+      # deliverable's contract). SMATCHET_UI_TEST_OUTLOG names the CI-visible per-test
+      # log destination — it MUST be workspace-relative: ui_test.run confines --outLog
+      # under the isolated per-run user-data dir and rejects absolute paths
+      # (Source/Core/include/Commands/PathConfinement.h), so the driver hands the
+      # handler a basename and copies the confined log back here for the cat/upload
+      # steps. A single retry absorbs the known Mesa first-frame collapse without
+      # masking a real regression.
       - name: Run deterministic Jira fixture-backend bucket-E (hard)
         shell: bash
         env:
@@ -1311,10 +1315,10 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
           SMATCHET_EXE: build/ninja-ui-test-msvc/Smatchet.exe
           SMATCHET_TEST_JIRA_BACKEND_FIXTURE: tests/fixtures/jira_backend/basic-grid.json
-          SMATCHET_UI_TEST_OUTLOG: ${{ github.workspace }}/build/tmp/jira-fixture-outlog.txt
+          SMATCHET_UI_TEST_OUTLOG: build/tmp/jira-fixture-outlog.txt
         run: |
           set -uo pipefail
-          mkdir -p "${{ github.workspace }}/build/tmp"
+          mkdir -p build/tmp
           attempts=2
           rc=1
           for attempt in $(seq 1 "$attempts"); do
