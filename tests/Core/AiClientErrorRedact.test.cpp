@@ -1,6 +1,6 @@
-// AiClientErrorRedact.test.cpp — PR-12 `per-client-error-body-redaction-gate`.
+// AiClientErrorRedact.test.cpp — the `per-client-error-body-redaction-gate`.
 //
-// Regression gate closing the test.md gap: 26d3b6f + PR #176 both fixed sibling
+// Regression gate closing the test.md gap: earlier fixes patched sibling
 // AI clients that leaked a reflected API key into AiStreamError::Message because
 // each client wires RedactProviderErrorBody manually, with NO test enforcing
 // that EVERY IAiClient implementation routes its error body through the redactor.

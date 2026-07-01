@@ -2,7 +2,7 @@
 #define SMATCHET_TESTS_FAKE_SYNC_CACHE_H
 
 // FakeSyncCache — header-only in-memory ISyncCache for the doctest rig (ADR-0020, plan
-// ilocalcache-seam PR2). Replaces the real `:memory:` SQLite cache inside the deps fakes so
+// ilocalcache-seam). Replaces the real `:memory:` SQLite cache inside the deps fakes so
 // the service tests are SQLite-free at the construction/direct-include level.
 //
 // FIDELITY CONTRACT: this fake is implemented TO tests/Core/SyncCacheContract.test.cpp (the

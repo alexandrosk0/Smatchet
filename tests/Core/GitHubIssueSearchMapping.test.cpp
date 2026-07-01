@@ -157,7 +157,7 @@ TEST_CASE("EnrichPullRequestFieldsFromJson — non-object input is a no-op") {
     CHECK(t.fieldValues.empty());
 }
 
-// PR12 Strategy C — GraphQL node → REST shape adapter tests.
+// Strategy C — GraphQL node → REST shape adapter tests.
 
 TEST_CASE("MapGraphQlNodeToRestShape — Issue node maps to REST issue shape") {
     nlohmann::json node;
@@ -381,7 +381,7 @@ TEST_CASE("MapGraphQlPullRequestNodeToRestPrShape → Enrich — UNKNOWN encodes
     CHECK(GetField(t, "pr.mergeable") == "computing");
 }
 
-// ---- PR12 latency-fix tests — per-page streaming helper ----
+// ---- Latency-fix tests — per-page streaming helper ----
 
 namespace {
 nlohmann::json MakeIssueNode(int number, const std::string& title) {

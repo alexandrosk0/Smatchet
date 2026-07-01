@@ -4,7 +4,7 @@
 // in `tests/support/` so any test TU under `tests/Lua/` that links
 // `AppController_LuaBindingsCore.cpp` can drive `smatchet::lua::InitLuaCore`
 // without touching ImGui / GLFW / cpr / SQLite -- the Class-C prerequisite that
-// PR #144 lifted (see `_plan-locks` § Phase-6-unblocker).
+// the Lua-core seam lifted (see `_plan-locks` § Phase-6-unblocker).
 //
 // Lifecycle: one fixture per `TEST_CASE`. The fake holds no static state, so
 // adjacent cases never poison each other. `LuaCommands()` returns a static

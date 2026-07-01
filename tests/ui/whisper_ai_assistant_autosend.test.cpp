@@ -1,5 +1,5 @@
 // whisper_ai_assistant_autosend.test.cpp — bucket-E coverage for the
-// PR #249 (bf9ce67f) fix: the AI Assistant chat input must call
+// AI Assistant chat-input reload fix: the AI Assistant chat input must call
 // ImGuiInputTextState::ReloadUserBufAndMoveToEnd before its
 // InputTextMultiline draw whenever the dictation router has armed a pending
 // reload for the focused widget — otherwise ImGui silently overwrites the

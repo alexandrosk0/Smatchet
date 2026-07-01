@@ -1,4 +1,4 @@
-// BackgroundTaskFirewall.test.cpp — issue #1081 / PR #1080.
+// BackgroundTaskFirewall.test.cpp — issue #1081.
 //
 // Unit-tests the pure RunBackgroundTaskFirewalled helper that backs AppController's
 // background-worker exception firewall (an exception escaping a worker-thread function calls
@@ -45,7 +45,7 @@ TEST_CASE("done-flag stored after a throwing firewalled task still publishes") {
     // run and must execute even when the task throws — the reaper joins only done workers,
     // so a skipped store would leak the thread until shutdown. Exercised cross-thread like
     // the real pool: the worker runs firewall + release-store, the test thread joins and
-    // acquire-loads (CR finding on PR #1080 — the same-thread version was tautological).
+    // acquire-loads (per a CR finding — the same-thread version was tautological).
     std::atomic<bool> done(false);
     smatchet::BackgroundTaskOutcome outcome = smatchet::BackgroundTaskOutcome::Completed;
     std::string what;

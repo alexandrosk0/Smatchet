@@ -56,7 +56,7 @@ extern std::unique_ptr<smatchet::cmd::IScenario> MakeMobileTextureGuardScenario(
 #if defined(SMATCHET_WITH_AI)
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreamingHappyPathScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreamingTransportDownScenario();
-// PR-12 — S2/S4/S5 streaming via a REAL OpenAiClient over an in-process httplib
+// S2/S4/S5 streaming via a REAL OpenAiClient over an in-process httplib
 // loopback server (vs the stub-driven happy-path / transport-down scenarios above).
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantSendScenario();
 #endif
@@ -131,7 +131,7 @@ void RegisterAllScenarios(ScenarioRunner& runner) {
                            []() { return ::MakeAiAssistantStreamingHappyPathScenario(); });
     runner.RegisterFactory("ai-assistant-streaming-transport-down-within-5s",
                            []() { return ::MakeAiAssistantStreamingTransportDownScenario(); });
-    // PR-12 — real-client S2 (happy) / S4 (401 bad-key) / S5 (transport-down)
+    // Real-client S2 (happy) / S4 (401 bad-key) / S5 (transport-down)
     // streaming over an in-process httplib loopback server. See
     // AiAssistantSendScenario.cpp + scripts/dev/test-ai-assistant.sh.
     runner.RegisterFactory("ai-assistant-send-s2-s4-s5", []() { return ::MakeAiAssistantSendScenario(); });

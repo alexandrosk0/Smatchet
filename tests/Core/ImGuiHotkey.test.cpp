@@ -1,6 +1,6 @@
 // Pure-logic tests for the rebindable-shortcut hotkey grammar:
 // ParseImGuiHotkey / StringifyImGuiHotkey round-trip + FindShortcutConflict.
-// docs/plans/shipped/keyboard-shortcuts-rebindable.md (PR1 foundation).
+// docs/plans/shipped/keyboard-shortcuts-rebindable.md.
 // These three functions are ImGui-context-free (they only read the ImGuiKey
 // enum); MatchHotkey is excluded here — it needs a live ImGui IO frame and is
 // exercised by the bucket-E UI pass, not the doctest rig.

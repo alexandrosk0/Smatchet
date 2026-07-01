@@ -1,7 +1,7 @@
 // SyncCacheContract — the executable spec for ISyncCache (ADR-0020, plan ilocalcache-seam #3).
 //
 // Authored against the REAL LocalCacheManager(":memory:") first (it passes by definition — it IS
-// the contract). PR2 appends `FakeSyncCache` as a second TEST_CASE_TEMPLATE type so the identical
+// the contract). `FakeSyncCache` is appended as a second TEST_CASE_TEMPLATE type so the identical
 // assertions run against both impls; the fake is then built until this suite is green, which is
 // the per-method fake-fidelity gate. Every one of the 28 ISyncCache methods is touched here.
 //
@@ -26,7 +26,7 @@ struct RealCacheMaker {
     static std::unique_ptr<ISyncCache> Make() { return std::make_unique<LocalCacheManager>(":memory:"); }
 };
 
-// PR2: the fake is the second contract subject — identical assertions run against both, so
+// The fake is the second contract subject — identical assertions run against both, so
 // the fake cannot silently diverge from the production cache (the fidelity gate, grill Q3).
 struct FakeCacheMaker {
     static std::unique_ptr<ISyncCache> Make() { return std::make_unique<smatchet_tests::FakeSyncCache>(); }
@@ -194,7 +194,7 @@ TEST_CASE_TEMPLATE("ISyncCache: cache-meta flags are idempotent set-membership",
     CHECK_FALSE(c->HasCacheMetaFlag("other"));
 }
 
-// --- Archive field mapping + fresh-create restore scrub (PR2) -------------------------------
+// --- Archive field mapping + fresh-create restore scrub ------------------------------------
 TEST_CASE_TEMPLATE("ISyncCache: archive maps terminal fields; restore scrubs a fresh-create payload", M, RealCacheMaker,
                    FakeCacheMaker) {
     auto c = M::Make();
@@ -226,8 +226,8 @@ TEST_CASE_TEMPLATE("ISyncCache: archive maps terminal fields; restore scrubs a f
     CHECK(active[1].Payload == "not-json");
 }
 
-// --- Dead-letter key + merge-bases round-trip (moved up from OfflineQueueBackendKey.test.cpp
-// in PR2 — now pinned against BOTH impls) ---------------------------------------------------
+// --- Dead-letter key + merge-bases round-trip (pinned against BOTH impls here; service-level
+// siblings live in OfflineQueueBackendKey.test.cpp) -----------------------------------------
 TEST_CASE_TEMPLATE("ISyncCache: dead-letter rows carry the key; restore re-queues under the original key with bases", M,
                    RealCacheMaker, FakeCacheMaker) {
     auto c = M::Make();

@@ -1,7 +1,7 @@
 // help_marker_keyboard_focus.test.cpp — bucket-E regression gate for GitHub
 // Issue #1128 (a11y: keyboard-reachable (?) help-marker tooltips).
 //
-// Bug recap: PR #1124 moved ~38 long-form UI explanations into hover-only
+// Bug recap: ~38 long-form UI explanations live in hover-only
 // tooltips behind a (?) glyph rendered by SmatchetHelpMarker::RenderText.
 // Pre-fix the glyph was an ImGui::TextUnformatted item, which never
 // participates in keyboard nav and never receives focus — so a keyboard-only

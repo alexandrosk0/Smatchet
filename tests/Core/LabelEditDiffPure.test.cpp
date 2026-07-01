@@ -1,5 +1,5 @@
 // LabelEditDiffPure doctest — exhaustive set-diff coverage.
-// PR2 of docs/plans/shipped/github-tracker-backend.md.
+// Part of docs/plans/shipped/github-tracker-backend.md.
 
 #include "LabelEditDiffPure.h"
 

@@ -3,13 +3,13 @@
 // "Replay-matching rule").
 //
 // Covers the SERVICE-level bucket-A cases the design mandates (pure-logic on FakeSyncCache —
-// ADR-0020 / ilocalcache-seam PR2):
+// ADR-0020 / ilocalcache-seam):
 //   * Replay matching: with rows queued under two backend keys, context A's replay tick
 //     touches only A-rows; B-rows stay queued untouched (never replayed against a wrong
 //     backend, never dropped). An empty-key (corrupt) row is treated as no-match.
 //   * Dead-letter restore VIA THE SERVICE preserves the original key when the focused differs.
 //
-// The cache-IMPL siblings moved out in PR2: the ADD-COLUMN/stamp migration cases live in
+// The cache-IMPL siblings are covered separately: the ADD-COLUMN/stamp migration cases live in
 // LocalCacheTicketsV2Migration.test.cpp (file-backed DB + off-interface RunOneTime* methods);
 // the cache-level dead-letter key/bases round-trip is pinned dual-impl in
 // SyncCacheContract.test.cpp.
