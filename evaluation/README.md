@@ -3,6 +3,7 @@
 An independent, from-scratch evaluation of the Smatchet project through **nine expert lenses**. Each expert evaluated the project **twice** — once **ignoring** the agentic-governance meta-layer (`AGENTS.md` files, the `agents/` tree, `AI_POLICY.md`, `docs/agent-rules/**`, `docs/self-improvement/**`, `.coderabbit.yaml`) and once **with that layer fully loaded** — followed by a **comparison & critic** report dissecting what changed between the two passes.
 
 - **9 experts × 3 reports = 27 reports** (~77,000 words), each grounded in `file:line` evidence from the actual codebase.
+- **Plus a follow-up "Pass C" (`no-comments.md`)** for the three deep code-reading lenses (hacker, architect, AAA tools-lead): the same code re-judged against a **comment-stripped mirror** of `Source/**` (all 23,471 `//` + 1,124 `/* */` removed, line numbers preserved) to isolate how much each read leaned on the code's own self-documentation. See [§ Pass C](#pass-c--how-much-did-the-comments-matter) below.
 - Method: parallel independent sub-analyses; each pass was blind to the other so the "with / without `AGENTS.md`" contrast is real, not narrated.
 - Scores are each reporter's own 0–10 judgment. **Figures vary between reports** (e.g. postmortem-ledger size is quoted as "43 entries", "51 entries", "255 entries", and "2,013 lines" by different agents counting different things) — treat per-report numbers as that reporter's measurement, not a canonical fact.
 
@@ -53,11 +54,31 @@ Loading the agentic-governance layer **moved every score except two**, and the d
 - **Accessibility / interaction-craft gaps governance doesn't touch** — no screen-reader/AT-API surface, no onboarding/empty states. (09)
 - **`AppController` god-object** (1,465-line header, ~115–137 includers) — named, ratcheted, and being decomposed, but still the chief coupling risk; the 126–129 KB monolithic `CMakeLists.txt` contradicts the modularity enforced elsewhere. (04)
 
+## Pass C — how much did the comments matter?
+
+A third pass re-ran the three deepest code-reading lenses against a **comment-stripped mirror** of `Source/**` (comments replaced with blank space, line numbers preserved so `file:line` still resolves). This isolates a single variable — the code's own inline self-documentation — against each expert's code+comments (`without-agents`) baseline. Reports: `01/no-comments.md`, `04/no-comments.md`, `08/no-comments.md`.
+
+| Expert | Overall (code+comments → no-comments) | Self-documentation sub-score | Verdict on comment-dependence |
+|---|:--:|:--:|---|
+| White-hat hacker | 8.0 → **8.0** | auditability-without-comments **9/10** | Threat model survives stripping — invariants live in identifiers (`ConstantTimeStringEquals`) and runtime strings/enum tables ("blocked to prevent SSRF") |
+| Programming architect | 8.0 → **8.0** | legibility-without-comments **7.5/10** | Structure/types carry intent; comments load-bearing only at the god-object |
+| AAA tools-lead | 7.0 → **7.0** | forkability-without-comments **7/10** | All three lift-candidates remain reusable blind; ABI/threading seams degrade |
+
+**Finding: stripping comments moved no overall score.** The architecture and security posture are what the code *is* — encoded in naming, types, RAII, `k`-constants, the `*Pure`/`I*Deps`/`*Fixture` conventions, and (for security) descriptive runtime strings — none of which the strip could touch. Comments turn out to be **load-bearing only where C++ types cannot express intent**, and that dependence concentrates in exactly the risky places:
+
+- **Concurrency / init-ordering invariants** — `AppController.h` was **56% comment lines** (825/1,465); stripped, it collapses to ~150 bare declarations losing every threading-affinity and init-order contract (architect).
+- **Lock-lifetime contracts** — the deleted `CommandRegistry::FindLocked` comment warned its returned pointer is invalidated by concurrent `Register`; blind, the name misreads as "this locks," masking a latent use-after-free that `McpPlugin.cpp:592` only survives via an invisible startup-only-registration invariant (tools-lead).
+- **C-ABI seams** — the Unreal bridge's `void* rendererResource0/1/2` init slots go semantically opaque, adding a 2–4 day reverse-engineering tax (tools-lead).
+- **Accepted-risk vs oversight** — blind, you can't tell whether the AI-endpoint SSRF sanitizer's IP-literal-only coverage (no post-DNS re-check) is a deliberate trade-off or a gap; only dynamic testing resolves it (hacker).
+
+**Takeaway:** comments here matter for *safe change*, not for *comprehension of what exists* — and they cluster at the concurrency/ABI/god-object seams, which is precisely where a maintainer (human or AI) should tread carefully. A useful, actionable signal rather than a red flag.
+
 ## How to read this
 
 Each expert folder contains:
 - `without-agents.md` — the code/product-only pass.
 - `with-agents.md` — the same lens with the full agentic-governance layer loaded.
 - `comparison.md` — a critic report on the delta: score movement, what each pass saw or missed, contradictions, and a blended verdict (this report also critiques the two reports themselves for overclaim / persona drift).
+- `no-comments.md` *(experts 01, 04, 08 only)* — the Pass C re-evaluation against comment-stripped code, with an explicit delta vs the code+comments pass and a "self-documentation /10" sub-score.
 
 Start with this index, then `02` (agentic-infra) and `05` (tech-director) for the most dramatic with/without contrast, `01` (security) for the only score that *fell* with the meta-layer loaded, and `07` (indie CEO) for the only verdict *flip* (PASS → PILOT).
