@@ -809,34 +809,6 @@ void PostAppQuitBestEffort(const std::string& host, int port, const std::string&
     }
 }
 
-/// Resolve one relative path-valued arg to an absolute path against the CLI's CWD,
-/// in place. Pass-through for absent/non-string/empty/already-absolute values.
-void NormalizePathArgInPlace(nlohmann::json& out, const char* key) {
-    if (!out.contains(key) || !out[key].is_string())
-        return;
-    const std::string p = out[key].get<std::string>();
-    if (p.empty())
-        return;
-    fs::path path(p);
-    if (path.is_absolute())
-        return;
-    std::error_code ec;
-    fs::path abs = fs::absolute(path, ec);
-    if (!ec) {
-        out[key] = abs.string();
-    }
-}
-
-/// Normalize relative file-path arguments to absolute paths resolved against the CLI's CWD,
-/// since the spawned instance may have a different working directory. Covers both the scenario
-/// result file (`outPath`) and the bucket-E per-test log dump (`outLog`).
-nlohmann::json NormalizeOutPath(const nlohmann::json& argsToSend) {
-    nlohmann::json out = argsToSend;
-    NormalizePathArgInPlace(out, "outPath");
-    NormalizePathArgInPlace(out, "outLog");
-    return out;
-}
-
 /// Phase 1 of SpawnAndRun: discover exe path, bind a free port, launch ephemeral instance,
 /// and wait until its MCP endpoint is reachable. Returns kExitOk on success; an error exit
 /// code on failure (error envelope already emitted to stderr). Fills host and port out-params.
@@ -1102,8 +1074,14 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
     const std::string requestToken = haveConfiguredToken ? spawnCfg.McpAuthToken : SpawnAuthToken();
     const std::string provisionToken = haveConfiguredToken ? std::string() : requestToken;
     try {
-        // Normalize outPath: relative paths must be made absolute so both processes agree on location.
-        const nlohmann::json argsToSend = NormalizeOutPath(argsToSendRaw);
+        // Forward outPath/outLog as-is. The ui_test.run / scenario.run handlers confine them
+        // under <userData>/<subdir>/ (Source/Core/include/Commands/PathConfinement.h) — a
+        // CWD-independent location the spawned child shares via the inherited SMATCHET_USER_DATA —
+        // and echo the RESOLVED absolute path back in the response envelope, which is what
+        // WaitForFile polls below. Absolutizing these here (against the CLI's CWD) would instead
+        // be REJECTED by that confinement ("absolute paths are not allowed"), so the caller must
+        // pass them relative.
+        const nlohmann::json argsToSend = argsToSendRaw;
 
         // Phase 1: launch ephemeral instance and wait for MCP ready.
         const int setupResult = SpawnAndRunSetup(commandName, host, port, provisionToken, requestToken);
