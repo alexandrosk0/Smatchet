@@ -20,10 +20,18 @@ TEST_PORT="${SMATCHET_TEST_PORT:-58736}"
 FILTER="${UI_TEST_FILTER:-JiraDeterministic}"
 FIXTURE_DIR="${SMATCHET_FIXTURE_DIR:-tests/fixtures/jira_backend}"
 FIXTURE="${SMATCHET_TEST_JIRA_BACKEND_FIXTURE:-$FIXTURE_DIR/basic-grid.json}"
-# Per-test verbose-log dump. When SMATCHET_UI_TEST_OUTLOG is set, pass it through
-# to `ui_test.run --outLog=` so every test's Output.Log lands on disk; we `cat` it
-# on failure for diagnosis (the --spawn parent only prints pass/fail counts).
-OUTLOG="${SMATCHET_UI_TEST_OUTLOG:-}"
+# Per-test verbose-log dump. When SMATCHET_UI_TEST_OUTLOG is set it NAMES the log
+# file. ui_test.run confines --outLog under <userData>/ui-tests/ (SECURITY_AUDIT
+# #1566 — MCP-reachable arbitrary-write guard), so an absolute path is rejected;
+# we therefore pass only the BASENAME as a relative --outLog, then after the run
+# locate the confined file under the isolated user-data dir and copy it to
+# build/tmp/<name> so we can `cat` it on failure and CI can upload it.
+OUTLOG_NAME="${SMATCHET_UI_TEST_OUTLOG:-}"
+if [ -n "$OUTLOG_NAME" ]; then
+    OUTLOG_NAME="$(basename "$OUTLOG_NAME")"
+fi
+OUTLOG_DEST_DIR="build/tmp"
+OUTLOG_DEST="$OUTLOG_DEST_DIR/$OUTLOG_NAME"
 
 if [ ! -f "$EXE" ]; then
     echo "FAIL: $EXE not found. Build with: cmake --build --preset ninja-ui-test-msvc --target SmatchetStandalone" >&2
@@ -36,6 +44,7 @@ if [ ! -f "$FIXTURE" ]; then
 fi
 
 # Isolated user-data dir so this run never writes to the developer's real profile.
+# It is also the confinement root for ui_test.run's --outLog (see above).
 TMPDIR_DATA="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_DATA"' EXIT
 
@@ -43,9 +52,10 @@ echo "[test-ui-jira-deterministic-backend] launching ephemeral Smatchet (port $T
 echo "  fixture: $FIXTURE"
 
 OUTLOG_ARG=()
-if [ -n "$OUTLOG" ]; then
-    OUTLOG_ARG=(--outLog="$OUTLOG")
-    echo "  outLog: $OUTLOG"
+if [ -n "$OUTLOG_NAME" ]; then
+    # Relative name only — ui_test.run confines it under <userData>/ui-tests/.
+    OUTLOG_ARG=(--outLog="$OUTLOG_NAME")
+    echo "  outLog: $OUTLOG_NAME (confined under user-data/ui-tests; copied to $OUTLOG_DEST)"
 fi
 
 RAW_OUTPUT="$(SMATCHET_USER_DATA="$TMPDIR_DATA" \
@@ -56,12 +66,23 @@ RAW_OUTPUT="$(SMATCHET_USER_DATA="$TMPDIR_DATA" \
 
 echo "$RAW_OUTPUT" | tail -40
 
+# Copy the confined per-test log out to build/tmp BEFORE the temp user-data dir is
+# removed on EXIT, so cat_outlog_on_failure and the CI artifact upload can read it.
+# `find` locates it regardless of how the child canonicalized <userData>/ui-tests/.
+if [ -n "$OUTLOG_NAME" ]; then
+    found="$(find "$TMPDIR_DATA" -name "$OUTLOG_NAME" -type f 2>/dev/null | head -1 || true)"
+    if [ -n "$found" ]; then
+        mkdir -p "$OUTLOG_DEST_DIR" 2>/dev/null || true
+        cp "$found" "$OUTLOG_DEST" 2>/dev/null || true
+    fi
+fi
+
 # Best-effort: on any non-clean run, surface the per-test verbose log if present.
 cat_outlog_on_failure() {
-    if [ -n "$OUTLOG" ] && [ -f "$OUTLOG" ]; then
+    if [ -n "$OUTLOG_NAME" ] && [ -f "$OUTLOG_DEST" ]; then
         echo
-        echo "===== ui_test per-test verbose log ($OUTLOG) ====="
-        cat "$OUTLOG"
+        echo "===== ui_test per-test verbose log ($OUTLOG_DEST) ====="
+        cat "$OUTLOG_DEST"
         echo "===== end per-test verbose log ====="
     fi
 }

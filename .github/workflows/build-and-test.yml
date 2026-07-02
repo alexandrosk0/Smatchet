@@ -1307,6 +1307,9 @@ jobs:
       # deliverable's contract). --outLog captures every test's verbose log; on
       # failure we cat it into the CI log for diagnosis. A single retry absorbs the
       # known Mesa first-frame collapse without masking a real regression.
+      # SMATCHET_UI_TEST_OUTLOG is a plain FILENAME (not a path): ui_test.run confines
+      # --outLog under <userData>/ui-tests/ (audit #1566), so the driver passes the
+      # relative name and copies the confined file out to build/tmp/<name>.
       - name: Run deterministic Jira fixture-backend bucket-E (hard)
         shell: bash
         env:
@@ -1314,7 +1317,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
           SMATCHET_EXE: build/ninja-ui-test-msvc/Smatchet.exe
           SMATCHET_TEST_JIRA_BACKEND_FIXTURE: tests/fixtures/jira_backend/basic-grid.json
-          SMATCHET_UI_TEST_OUTLOG: ${{ github.workspace }}/build/tmp/jira-fixture-outlog.txt
+          SMATCHET_UI_TEST_OUTLOG: jira-fixture-outlog.txt
         run: |
           set -uo pipefail
           mkdir -p "${{ github.workspace }}/build/tmp"
@@ -1340,12 +1343,13 @@ jobs:
             fi
           done
           if [ "$rc" -ne 0 ]; then
-            if [ -f "$SMATCHET_UI_TEST_OUTLOG" ]; then
+            # The driver copies the confined per-test log out to build/tmp/<name>.
+            if [ -f "build/tmp/$SMATCHET_UI_TEST_OUTLOG" ]; then
               echo "===== deterministic Jira fixture-backend per-test log ====="
-              cat "$SMATCHET_UI_TEST_OUTLOG"
+              cat "build/tmp/$SMATCHET_UI_TEST_OUTLOG"
               echo "===== end per-test log ====="
             else
-              echo "::warning::jira-fixture: per-test outLog not found at $SMATCHET_UI_TEST_OUTLOG"
+              echo "::warning::jira-fixture: per-test outLog not found at build/tmp/$SMATCHET_UI_TEST_OUTLOG"
             fi
             echo "::error::jira-fixture: deterministic Jira backend bucket-E FAILED after ${attempts} attempt(s). This is a fixture-backend regression, not a render flake." >&2
             exit "$rc"
