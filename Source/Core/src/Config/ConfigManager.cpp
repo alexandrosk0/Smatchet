@@ -1390,11 +1390,14 @@ void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
 }
 
 // Route SMATCHET_TRACKER_TOKEN / SMATCHET_TRACKER_BASE_URL to the active backend's
-// credential + origin-URL slots. Plane's canonical TrackerType is exactly "Plane" so its
-// arm compares raw casing; GitHub and Linear both route off trackerTypeLower (GitHub's
-// canonical value is PascalCase "GitHub" — comparing raw "github" here silently fell
-// through to the Jira/default slot, see CPP_CODE_AUDIT.md #2). Extracted from
-// ApplyOverridesAndClamps to keep that function under the branch cap.
+// credential + origin-URL slots. All three non-Jira arms route off trackerTypeLower:
+// the in-app-persisted canonical value is PascalCase ("GitHub"/"Plane"/"Linear"), but
+// smatchet_config.json can be hand-edited with lowercase values — DefaultTrackerBackendFactory
+// already does a case-insensitive match when selecting the live backend (see
+// SmatchetPreferencesUi.cpp's "load path doesn't canonicalize" comment), so comparing raw
+// casing here silently fell through to the Jira/default slot for a hand-edited config, exactly
+// the CPP_CODE_AUDIT.md #2 class (originally reported for GitHub only; Plane has the same gap).
+// Extracted from ApplyOverridesAndClamps to keep that function under the branch cap.
 static void RouteTrackerEnvCredentials(TrackerConfig& cfg) {
     std::string trackerTypeLower = cfg.TrackerType;
     std::transform(trackerTypeLower.begin(), trackerTypeLower.end(), trackerTypeLower.begin(),
@@ -1403,7 +1406,7 @@ static void RouteTrackerEnvCredentials(TrackerConfig& cfg) {
     // SMATCHET_TRACKER_TOKEN — tracker API credential (Jira ApiToken / Plane ApiKey / GitHub PAT / Linear key).
     if (const char* envToken = std::getenv("SMATCHET_TRACKER_TOKEN")) {
         if (envToken[0] != '\0') {
-            if (cfg.TrackerType == "Plane") {
+            if (trackerTypeLower == "plane") {
                 cfg.PlaneApiKey = envToken;
             } else if (trackerTypeLower == "github") {
                 cfg.GitHubPat = envToken;
@@ -1419,7 +1422,7 @@ static void RouteTrackerEnvCredentials(TrackerConfig& cfg) {
     // Linear→LinearBaseUrl).
     if (const char* envBase = std::getenv("SMATCHET_TRACKER_BASE_URL")) {
         if (envBase[0] != '\0') {
-            if (cfg.TrackerType == "Plane") {
+            if (trackerTypeLower == "plane") {
                 cfg.PlaneUrl = envBase;
             } else if (trackerTypeLower == "github") {
                 cfg.GitHubBaseUrl = envBase;

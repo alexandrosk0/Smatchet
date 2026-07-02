@@ -153,12 +153,12 @@ void EnrichFromCreateMeta(const TrackerConfig& cfg, const std::string& projectKe
                           std::vector<TrackerField>& outFields, std::vector<TrackerComponent>& outComponents,
                           std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta,
                           std::set<std::string>& outUniqueIssueTypes) {
-    // SMATCHET_DEVIATION(rule=duplication; reason=ParseBounded clone #8; owner=cpp-audit; revisit=2026-09-30)
     const std::string metaUrl = base + "/rest/api/3/issue/createmeta?projectKeys=" + UrlEncode(projectKey) +
                                 "&expand=projects.issuetypes.fields";
     auto metaResponse = TrackerGetLogged("JiraClient", metaUrl, headers);
     if (metaResponse.status_code == 200) {
         try {
+            // SMATCHET_DEVIATION(rule=duplication; reason=ParseBounded clone #8; owner=cpp-audit; revisit=2026-09-30)
             std::string parseErr;
             auto metaJson = smatchet::json_safe::ParseBounded(metaResponse.text, parseErr);
             if (!parseErr.empty()) {

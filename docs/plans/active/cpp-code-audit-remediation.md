@@ -83,14 +83,21 @@ N/A — no file crosses a split threshold in this slice.
 ## Implementation log
 
 - Slice 1 (this PR, branch `claude/pr-1586-findings-697xkc`): #1, #2, #3, #8, #9, #19 — see § Files to modify for the per-file summary.
+- Post-implementation `/code-review` (4-angle, 1-vote verify) surfaced one additional real bug, folded into the same commit: `ConfigManager.cpp`'s `RouteTrackerEnvCredentials` had the identical raw-casing bug for Plane (`cfg.TrackerType == "Plane"`) that #2 fixed for GitHub — `DefaultTrackerBackendFactory::Create` case-insensitively matches all four backends (a hand-edited lowercase `"plane"` in `smatchet_config.json` still boots `PlaneClient`, per `SmatchetPreferencesUi.cpp`'s own "the load path doesn't canonicalize" comment), so the original audit's "only GitHub is affected" call was incomplete. Both Plane arms now route off `trackerTypeLower` like GitHub/Linear.
 
 ## Deviations from plan
 
 - #19 folded into Slice 1 opportunistically (same function as #3) rather than deferred to Slice 4 with the other Low integer-handling findings — avoids a second pass over the exact same lines.
+- The Plane credential-routing casing bug (see § Implementation log) was not in the original `CPP_CODE_AUDIT.md` #2 write-up; fixed in this PR anyway since it's the same mechanism, same file, same function.
+- `TrackerFieldCatalog.cpp`'s `#8` conversion changed `EnrichSprintFields`/`DiscoverSprintBoardIds` from all-or-nothing (a parse failure anywhere in Jira Agile board/sprint pagination threw, discarding every result collected in that call) to best-effort partial-result (a parse failure now only stops the current page loop, keeping whatever board IDs/sprint options were already collected) — because `ParseBounded` doesn't throw. This is a deliberate accepted side effect, not a regression: it makes JSON-parse failures behave the same as the pre-existing HTTP-status-failure handling in the same functions (which already `break`s/`continue`s on a bad page rather than aborting the whole enrichment), and using partial catalog data beats discarding it entirely on one bad page.
+- The `#3` infinite-loop fix (advance `pos` past an unrecognized unit char, per the audit's own prescribed fix) makes a decimal-formatted duration like `"2.5h"` parse as two tokens (`2` plain seconds + `5h`) instead of looping forever — a wrong sort key instead of a hang. This is strictly better than the pre-fix behavior (infinite loop) and matches the audit's literal fix ask; teaching the parser real decimal-hour semantics is a separate, out-of-scope correctness improvement not requested by finding #3.
 
 ## Verification (actual)
 
-- Not run — local build unavailable (`FetchContent` 403); CI is the gate for this PR. See § Manual residue.
+- Build/ctest — not run, local build unavailable (`FetchContent` 403); CI is the gate for this PR. See § Manual residue.
+- `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop` — PASS (strict-zone, function-size/branchy, duplication, include-cycle, AppController fan-in, agent-size gates all clean).
+- `bash scripts/dev/pre-ship.sh origin/develop` (format + delta lint + doc-validation mirror) — PASS.
+- `/code-review --diff origin/develop medium` (4 parallel finder angles: line-by-line, removed-behavior, cross-file tracer, conventions) — surfaced 5 candidates; 1 real bug fixed (Plane credential casing, folded into this PR — see § Implementation log), 2 marker-placement nits fixed (moved `SMATCHET_DEVIATION` comments to sit directly above their clone span per `cpp-rules.md`'s documented grammar), 2 accepted-as-designed behavior notes recorded in § Deviations (sprint-enrichment partial results, decimal-duration sort key) — no further code changes needed.
 
 ## Out of scope — deferral residue-sweep
 
