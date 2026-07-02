@@ -54,16 +54,15 @@ std::string ConfigManager::GetPanesPath() {
 PersistentPanesFile ConfigManager::LoadPanesFromDisk() {
     PersistentPanesFile disk;
     const std::string panesPath = GetPanesPath();
-    std::lock_guard<std::mutex> lock(GetIoMutexRef());
-    ScopedFileLock fileLock(panesPath);
-    std::ifstream file(panesPath);
-    if (!file.is_open()) {
-        return disk;
-    }
+    // CPP_CODE_AUDIT.md #11: was a bare `ifstream >> j` (nlohmann's stream-extraction operator
+    // drives the same recursive-descent parser as `json::parse`) — a deeply-nested
+    // smatchet_panes.json stack-overflows the recursive ~json teardown. LoadJsonFile is the
+    // hardened sibling (bounded parse + 64 MiB read cap + its own locking — do NOT also take
+    // GetIoMutexRef()/ScopedFileLock here, LoadJsonFile already does and the mutex is
+    // non-recursive).
     try {
-        nlohmann::json j;
-        file >> j;
-        if (!j.is_object()) {
+        const nlohmann::json j = LoadJsonFile(panesPath);
+        if (j.empty()) {
             return disk;
         }
         disk.Version = j.value("version", 1);

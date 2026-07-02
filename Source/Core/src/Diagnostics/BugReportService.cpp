@@ -11,6 +11,7 @@
 #include "GitHubClientHelpers.h"
 #include "IssueCreatePipeline.h"
 #include "IssueDraft.h"
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "TextRedaction.h"
 #include "TrackerHttpUtils.h"
@@ -236,7 +237,12 @@ bool EnsureAssetsBranch(const std::string& baseUrl, const std::string& pat, cons
             return false;
         }
         try {
-            defaultBranch = nlohmann::json::parse(repoMeta.text).value("default_branch", std::string());
+            std::string parseErr;
+            const nlohmann::json j = smatchet::json_safe::ParseBounded(repoMeta.text, parseErr);
+            if (!parseErr.empty()) {
+                return false;
+            }
+            defaultBranch = j.value("default_branch", std::string());
         } catch (const std::exception&) {
             return false;
         }
@@ -252,7 +258,17 @@ bool EnsureAssetsBranch(const std::string& baseUrl, const std::string& pat, cons
             return false;
         }
         try {
-            headSha = nlohmann::json::parse(baseRef.text)["object"].value("sha", std::string());
+            std::string parseErr;
+            const nlohmann::json j = smatchet::json_safe::ParseBounded(baseRef.text, parseErr);
+            if (!parseErr.empty()) {
+                return false;
+            }
+            // CPP_CODE_AUDIT.md #33: index-then-value on unvalidated network JSON — a response
+            // missing "object" (or where it's not an object) previously threw type_error, caught
+            // below and degraded to local staging (not a crash, but fragile vs guarded siblings).
+            if (j.contains("object") && j["object"].is_object()) {
+                headSha = j["object"].value("sha", std::string());
+            }
         } catch (const std::exception&) {
             return false;
         }
@@ -295,7 +311,11 @@ std::string UploadScreenshotAsset(const std::string& baseUrl, const std::string&
         return "";
     }
     try {
-        const nlohmann::json j = nlohmann::json::parse(resp.text);
+        std::string parseErr;
+        const nlohmann::json j = smatchet::json_safe::ParseBounded(resp.text, parseErr);
+        if (!parseErr.empty()) {
+            return "";
+        }
         if (j.contains("content") && j["content"].contains("download_url")) {
             return j["content"].value("download_url", std::string());
         }
@@ -325,7 +345,11 @@ std::string UploadCrashDumpRelease(const std::string& baseUrl, const std::string
         const cpr::Response existing = TrackerGetLogged("BugReport", relBase + "/tags/crash-dumps", headers);
         if (existing.status_code == 200) {
             try {
-                uploadUrl = nlohmann::json::parse(existing.text).value("upload_url", std::string());
+                std::string parseErr;
+                const nlohmann::json j = smatchet::json_safe::ParseBounded(existing.text, parseErr);
+                if (parseErr.empty()) {
+                    uploadUrl = j.value("upload_url", std::string());
+                }
             } catch (const std::exception&) {
             }
         } else if (existing.status_code == 404) {
@@ -337,7 +361,11 @@ std::string UploadCrashDumpRelease(const std::string& baseUrl, const std::string
             const cpr::Response made = TrackerPostLogged("BugReport", relBase, headers, create.dump());
             if (made.status_code == 201) {
                 try {
-                    uploadUrl = nlohmann::json::parse(made.text).value("upload_url", std::string());
+                    std::string parseErr;
+                    const nlohmann::json j = smatchet::json_safe::ParseBounded(made.text, parseErr);
+                    if (parseErr.empty()) {
+                        uploadUrl = j.value("upload_url", std::string());
+                    }
                 } catch (const std::exception&) {
                 }
             } else {
@@ -364,7 +392,12 @@ std::string UploadCrashDumpRelease(const std::string& baseUrl, const std::string
         return "";
     }
     try {
-        return nlohmann::json::parse(resp.text).value("browser_download_url", std::string());
+        std::string parseErr;
+        const nlohmann::json j = smatchet::json_safe::ParseBounded(resp.text, parseErr);
+        if (!parseErr.empty()) {
+            return "";
+        }
+        return j.value("browser_download_url", std::string());
     } catch (const std::exception&) {
         return "";
     }
@@ -417,8 +450,9 @@ SubmitResult SubmitViaRelay(const ResolvedBugTarget& target, const BugReportOpti
     if (resp.status_code < 200 || resp.status_code >= 300) {
         std::string msg = "HTTP " + std::to_string(resp.status_code);
         try {
-            const nlohmann::json j = nlohmann::json::parse(resp.text);
-            if (j.contains("error") && j["error"].is_string()) {
+            std::string parseErr;
+            const nlohmann::json j = smatchet::json_safe::ParseBounded(resp.text, parseErr);
+            if (parseErr.empty() && j.contains("error") && j["error"].is_string()) {
                 msg = j.value("error", msg);
             }
         } catch (const std::exception&) {
@@ -429,7 +463,12 @@ SubmitResult SubmitViaRelay(const ResolvedBugTarget& target, const BugReportOpti
     }
 
     try {
-        const nlohmann::json j = nlohmann::json::parse(resp.text);
+        std::string parseErr;
+        const nlohmann::json j = smatchet::json_safe::ParseBounded(resp.text, parseErr);
+        if (!parseErr.empty()) {
+            result.Error = "Bug-report relay: bad response: " + parseErr;
+            return result;
+        }
         if (!j.value("ok", false)) {
             result.Error = "Bug-report relay rejected: " + j.value("error", std::string("unknown error"));
             return result;

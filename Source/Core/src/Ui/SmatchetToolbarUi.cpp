@@ -19,6 +19,7 @@
 #include "ConfigSaveWorker.h"
 #include "ITrackerConnectivity.h"
 #include "IconsFontAwesome6.h"
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "SmatchetToolbarUi_detail.h"
 #include "Ui/SmatchetImGuiFonts.h"
@@ -97,9 +98,9 @@ void SmatchetToolbarUi::DispatchButton(AppController& app, TrackerConfig& cfg, c
 
     nlohmann::json args = nlohmann::json::object();
     if (!b.ArgsJson.empty()) {
-        try {
-            args = nlohmann::json::parse(b.ArgsJson);
-        } catch (...) { // catch-all-ok: invalid args JSON → dispatch with empty object
+        std::string parseErr;
+        args = smatchet::json_safe::ParseBounded(b.ArgsJson, parseErr);
+        if (!parseErr.empty()) { // invalid args JSON → dispatch with empty object
             args = nlohmann::json::object();
         }
     }

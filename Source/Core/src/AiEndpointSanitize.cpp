@@ -195,6 +195,27 @@ bool IsPrivateNetworkLiteral(const unsigned char o[4]) {
     return false;
 }
 
+// True when `host`'s first hextet falls in [0xfe80, 0xfebf] — the fe80::/10 link-local
+// range's fixed 10-bit prefix (1111111010). A plain string-prefix match ("fe80:") misses
+// fe90::/fea0::/febf:: etc., which are the same /10 block. CPP_CODE_AUDIT.md #16.
+bool IsIpv6LinkLocalHextet(const std::string& host) {
+    const std::size_t firstColon = host.find(':');
+    if (firstColon == std::string::npos || firstColon == 0 || firstColon > 4) {
+        return false;
+    }
+    const std::string firstHextet = host.substr(0, firstColon);
+    const bool allHex = std::all_of(firstHextet.begin(), firstHextet.end(),
+                                    [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); });
+    if (!allHex) {
+        return false;
+    }
+    unsigned int hextetValue = 0;
+    for (char c : firstHextet) {
+        hextetValue = hextetValue * 16u + static_cast<unsigned int>(c <= '9' ? c - '0' : c - 'a' + 10);
+    }
+    return hextetValue >= 0xfe80u && hextetValue <= 0xfebfu;
+}
+
 // Classify a bare (bracket-stripped, lowercased) IPv6 literal against the same
 // denylist, mapping each match onto the existing IPv4 verdicts. Returns true and
 // sets `out` when the host is an IPv6 literal we recognise (incl. IPv4-mapped /
@@ -237,7 +258,7 @@ bool ClassifyIpv6Literal(const std::string& host, EndpointVerdict& out, bool& is
         out = EndpointVerdict::Allowed; // loopback — consent gating handled by caller
         return true;
     }
-    if (host.compare(0, 5, "fe80:") == 0 || host == "fe80::") {
+    if (IsIpv6LinkLocalHextet(host)) {
         out = EndpointVerdict::RejectedLinkLocal;
         return true;
     }

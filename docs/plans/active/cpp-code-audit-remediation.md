@@ -19,7 +19,7 @@ Remediate in slices ordered by the audit's own § Recommended remediation order 
 - **Slice 1 (this PR)** — the top 3 hand-verified findings (#1 data-loss, #2 GitHub credential mis-routing, #3 duration-sort infinite loop) plus the two mechanical ParseBounded sweeps (#8 Jira field-catalog, #9 Plane) that are the same well-proven mechanical fix as the prior `cpp-security-hardening` campaign. Also folds in #19 (integer-overflow in the same `ParseDurationToSecondsForSort` function touched for #3 — same file, same function, trivial saturating-add addition, no reason to defer a second pass over identical lines).
 - **Slice 2 (this PR)** — #4 (AI cancel-atom rebind), #5 (TextMerge O(n·m) OOM), #6 (offline-replay latch leak) — the AI/offline-replay reliability cluster the audit groups together. Batched onto the same branch/PR as Slice 1 per `AGENTS.md` § Autonomous ship-loop default's PR-batching rule ("one PR per logical feature, not per slice") since the PR was still open/unmerged when Slice 2 started.
 - **Slice 3 (this PR)** — #7 (locale-override format-string on the `SmatchetLocalizedImGui` `Text*` sinks) — same specifier-validation mechanism the prior audit's finding #1 fix added to `SmatchetLocalization::Format`, applied to the `TranslateSource` wrapper path. Batched onto the same PR as Slices 1–2 (same rationale — PR still open).
-- **Slice 4 (follow-up)** — remaining Low findings #10–33, batched by subsystem (ParseBounded stragglers #10–13; SSRF/security #14–16; integer handling #17–18 — #19 already folds into Slice 1; memory safety #20–22; concurrency #23–27; resource management #28–31; error handling #32; logic cluster #33).
+- **Slice 4 (follow-up; Groups A+B on this PR, Groups C–H not yet started)** — remaining Low findings #10–33, batched by subsystem (Group A — ParseBounded stragglers #10–13 — done; Group B — SSRF/security #14–16, plus #22 folded in with #14 — done; Group C — integer handling #17–18 — #19 already folds into Slice 1; Group D — memory safety #20–21, #22 already folds into Group B; Group E — concurrency #23–27; Group F — resource management #28–31; Group G — error handling #32; Group H — logic cluster #33's remaining 4 sub-items, one already folded into Group A).
 
 ## Files to modify
 
@@ -44,9 +44,22 @@ Remediate in slices ordered by the audit's own § Recommended remediation order 
 11. `Source/Core/include/SmatchetLocalization.h`, `Source/Core/src/SmatchetLocalization.cpp` — **#7**: new `TranslateSourceAsFormat(englishSource)` — calls `TranslateSource`, then reuses the existing `FormatSpecifiersMatch`/`ConversionSpecifiers` guard (already used by `Format()` for keyed translations) to fall back to `englishSource` when the override's conversion-specifier sequence doesn't match; a pointer-equality fast path skips the specifier scan when `TranslateSource` returned its input unchanged (no override present).
 12. `Source/Core/include/SmatchetLocalizedImGui.h` — **#7**: the 7 audited `Text*`/`SetTooltip`/`SetItemTooltip` wrappers plus `SliderInt`'s `format` param switched from `TranslateSource(fmt)` to `TranslateSourceAsFormat(fmt)`. `InputTextWithHint`'s `hint` and `TextUnformatted`'s `text` deliberately left on plain `TranslateSource` — neither reaches a printf-family sink (`hint` is ImGui placeholder text; `TextUnformatted` takes no format arg).
 
-### Slice 4 (follow-up, not in this PR)
+### Slice 4 (follow-up; Groups A+B landed on this PR, Groups C–H not yet started)
 
-See `CPP_CODE_AUDIT.md` findings #10–33 for file:line citations — not re-listed here to avoid drift; this plan's § Deviations records the per-slice PR link once shipped.
+**Group A — ParseBounded stragglers (#10–13):**
+
+13. `Source/Core/src/Diagnostics/BugReportService.cpp` — **#10**: all 8 cited bare `nlohmann::json::parse` sites (GitHub-API response bodies) routed through `ParseBounded`. Also closed the "Also latent" `EnsureAssetsBranch` sub-item folded into **#33**'s cluster: `["object"].value(...)` on a non-object now guarded with `contains("object") && is_object()`, mirroring the sibling guarded sites.
+14. `Source/Core/src/Config/ConfigManager_Views.cpp` (`LoadPersistentViewsFromDisk`), `Source/Core/src/Config/ConfigManager_Panes.cpp` (`LoadPanesFromDisk`) — **#11**: both now read via the existing `ConfigManager::LoadJsonFile` (which already does a bounded parse with a 64 MiB cap plus its own `GetIoMutexRef()`/`ScopedFileLock` locking) instead of a manual `file >> j`, removing the now-redundant caller-side lock/lock-guard (kept would deadlock — the mutex is non-recursive).
+15. `Source/Core/src/Ui/SmatchetToolbarUi.cpp`, `Source/Core/src/Ui/SmatchetUI.cpp` — **#12**: the two cited `ArgsJson`/`argsJson` bare-parse sites routed through `ParseBounded`.
+16. `Source/Core/src/Persistence/BackendAuditTrail.cpp` — **#13**: `ReadRecentEvents`'s per-line parse routed through `ParseBounded`, skipping (not aborting on) a corrupt line — the inner try/catch is now redundant and removed; the function's outer try/catch (other exception sources) is unchanged.
+
+**Group B — SSRF/security (#14–16) + #22 (folded in, same file as #14):**
+
+17. `Source/Core/src/Ui/SmatchetFieldIconRender.cpp` — **#14**: new `ExtractUrlHost`/`IconUrlHostAllowed` helpers; `ResolveJiraIconUrlReference` now rejects an absolute/scheme-relative `iconUrl` whose host doesn't match the configured `jiraDomain`'s host (per the audit's own prescribed fix — "reject hosts ≠ `cfg.Domain`"), closing the SSRF where a malicious tracker points `iconUrl` at an internal/loopback endpoint. **#22** (same file): `DrawImagePathOrUrl` now guards `icon.Texture == nullptr` once, before branching on explicit-vs-zero size, so both branches return the same (false) result for a failed/zero-dim decode instead of only the zero-size branch (`DrawLoadedIconSized`) silently no-op'ing while the explicit-size branch null-derefed.
+18. `Source/Plugins/Whisper/WhisperPlugin.cpp` — **#15**: `whisper.transcribe-once` (mic-capture path only — `--file` is unaffected) and `whisper.simulate-press` now reject `CommandSource::Mcp` with a `ValidationError`, closing the silent-mic-trigger-via-loopback-MCP vector; verified via grep that CI's own usage of both commands is CLI/scenario-only (no MCP caller depends on the removed capability).
+19. `Source/Core/src/AiEndpointSanitize.cpp` — **#16**: new `IsIpv6LinkLocalHextet` (extracted to stay under the branch-count cap) range-checks the first hextet against `[0xfe80, 0xfebf]` instead of string-matching only the `"fe80:"` prefix, closing the fe80::/10 upper-half gap (`fe90::`–`febf::`).
+
+**Groups C–H — not yet started (integer handling #17–18, memory safety #20–21, concurrency #23–27, resource management #28–31, error handling #32, logic cluster #33's remaining 4 sub-items).** See `CPP_CODE_AUDIT.md` for file:line citations — not re-listed here to avoid drift; this plan's § Deviations records the per-slice PR link once shipped.
 
 ## Existing utilities reused
 
@@ -92,7 +105,7 @@ N/A — no file crosses a split threshold in this slice.
 
 ## Out of scope (flagged, not designed)
 
-- Slice 4 (findings #10–33) — deferred to a follow-up PR, tracked in § Approach above.
+- Slice 4 Groups C–H (findings #17–18, #20–21, #23–33) — not yet started, tracked in § Approach above.
 - `agents/scripts/project/*` lint-rule changes — this PR doesn't graduate any WARN-first gate (unlike `cpp-security-hardening` Slice 6); N/A.
 
 ## Implementation log
@@ -107,6 +120,11 @@ N/A — no file crosses a split threshold in this slice.
   - **Accepted as designed, documented**: `Cancel()`'s pending-token flip can cancel a Lua-`PromptAi`-queued turn the user didn't intend to stop — recorded in § Risks / non-goals rather than changed, since the alternative reintroduces a real race (see that entry for the full reasoning).
 - Slice 3 (same PR/branch): #7 — see § Files to modify for the per-file summary.
 - Post-implementation `/code-review` on Slice 3 (single targeted agent, given the small/contained diff reusing an already-proven mechanism) — zero findings; the fix was verified correct and complete, including confirming no other `TranslateSource` caller outside `SmatchetLocalizedImGui.h` feeds a printf sink and the pointer-equality fast path is sound.
+- Slice 4 Group A+B (same PR/branch): #10, #11, #12, #13, #14, #15, #16, #22 (folded in with #14, same file) — see § Files to modify for the per-file summary. The `EnsureAssetsBranch` "Also latent" sub-item of **#33**'s cluster was closed opportunistically alongside #10 (same file, same pre-existing guard pattern already used at sibling call sites).
+- Post-implementation `/code-review` on Slice 4 Group A+B (2 parallel finder angles: line-by-line + parse-conversion correctness, cross-file + conventions) — the line-by-line agent surfaced zero findings (all `ParseBounded` conversions verified 1:1 control-flow-preserving against the sites they replaced, including confirming `LoadJsonFile`'s internal locking makes the caller-side lock removal in #11 non-deadlocking). The cross-file agent surfaced 3 candidates:
+  - **Real, fixed inline**: `DrawImagePathOrUrl`'s two size branches disagreed on the return value for the identical `icon.Texture == nullptr` condition (the explicit-size branch's new #22 guard returned `false`; the zero-size branch's pre-existing `DrawLoadedIconSized` guard just no-op'ed, leaving `DrawImagePathOrUrl` to return `true`) — a Lua caller branching on the bool would incorrectly skip its fallback only in the zero-size case. Fixed by hoisting a single `icon.Texture == nullptr` guard above the branch, so both paths agree.
+  - **Test-coverage gap, fixed inline**: no regression test exercised the fe80::/10 upper-half range #16 actually fixes (`fe90::`/`fea0::`/`febf::` — only the already-covered `fe80::1` prefix case existed). Added `tests/Core/AiEndpointSanitize.test.cpp` cases for the three upper-half boundaries plus a `fec0::` (one hextet past the fixed /10) negative case guarding against the range check being accidentally widened.
+  - **Accepted as designed, no change**: the #14 host-pin rejects any absolute `iconUrl` whose host differs from `cfg.Domain`, which changes behavior for a hypothetical Jira deployment serving icons from a separate CDN/assets host — this is exactly the audit's own prescribed fix ("reject hosts ≠ `cfg.Domain`"), and the fallback chain (`LoadPriorityIconWithFallbacks`) already degrades gracefully to the bundled offline icon rather than failing loudly.
 
 ## Deviations from plan
 
@@ -124,6 +142,7 @@ N/A — no file crosses a split threshold in this slice.
 - Slice 2: same gate sequence re-run after each fix — `test-lint-rules.sh --diff origin/develop` PASS, `pre-ship.sh origin/develop` PASS (ack recorded), `agents/scripts/core/test-shell-lint.sh --diff origin/develop` PASS (249/249) for the driver-script edit. A minimal bash repro (`reader < <(producer)` vs `producer | reader`) was used earlier in this session to confirm the unrelated `coverage-delta-gate.sh` SIGPIPE mechanism — not re-run here, different file.
 - Slice 2 `/code-review` (3 parallel finder angles) — see § Implementation log for the 4 findings and how each was resolved.
 - Slice 3: `test-lint-rules.sh --diff origin/develop` PASS, `pre-ship.sh origin/develop` PASS (ack recorded), single-agent `/code-review` — zero findings (see § Implementation log).
+- Slice 4 Group A+B: `agents/scripts/project/test-lint-rules.sh --diff origin/develop` PASS (strict-zone, function-size/branchy, duplication, include-cycle, AppController fan-in gates clean — the two `SMATCHET_DEVIATION(rule=duplication; ...)` markers needed for the `SmatchetUI.cpp` include-block clone surfaced by adding one include line are documented inline in that file). `scripts/dev/pre-ship.sh --ack-review origin/develop` PASS (ack recorded after applying the 2 real fixes from `/code-review` — see § Implementation log).
 
 ## Out of scope — deferral residue-sweep
 
