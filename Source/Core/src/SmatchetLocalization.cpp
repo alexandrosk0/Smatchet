@@ -1186,6 +1186,23 @@ static bool FormatSpecifiersMatch(const char* translated, const char* englishLit
     return ConversionSpecifiers(translated) == ConversionSpecifiers(englishLiteral);
 }
 
+const char* TranslateSourceAsFormat(const char* englishSource) {
+    if (!englishSource) {
+        return "";
+    }
+    const char* translated = TranslateSource(englishSource);
+    // SECURITY: same guard as Format() (CPP_CODE_AUDIT.md #7) — TranslateSource's override
+    // is attacker-influenceable and this call's result is about to be handed to a printf-
+    // family sink (SmatchetLocalizedImGui's Text*/SetTooltip/SliderInt wrappers). Only use it
+    // as the format string when its conversion-specifier sequence is identical to the trusted
+    // englishSource; otherwise fall back to englishSource itself, whose specifiers the caller's
+    // varargs always match.
+    if (translated == englishSource || FormatSpecifiersMatch(translated, englishSource)) {
+        return translated;
+    }
+    return englishSource;
+}
+
 const char* Format(const char* key, const char* englishFallbackFmt, ...) {
     const char* translated = T(key, englishFallbackFmt);
     // SECURITY: a locale override (Locales/<lang>.json) is attacker-influenceable.

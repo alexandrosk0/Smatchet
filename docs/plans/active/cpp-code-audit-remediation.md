@@ -18,7 +18,7 @@ Remediate in slices ordered by the audit's own § Recommended remediation order 
 
 - **Slice 1 (this PR)** — the top 3 hand-verified findings (#1 data-loss, #2 GitHub credential mis-routing, #3 duration-sort infinite loop) plus the two mechanical ParseBounded sweeps (#8 Jira field-catalog, #9 Plane) that are the same well-proven mechanical fix as the prior `cpp-security-hardening` campaign. Also folds in #19 (integer-overflow in the same `ParseDurationToSecondsForSort` function touched for #3 — same file, same function, trivial saturating-add addition, no reason to defer a second pass over identical lines).
 - **Slice 2 (this PR)** — #4 (AI cancel-atom rebind), #5 (TextMerge O(n·m) OOM), #6 (offline-replay latch leak) — the AI/offline-replay reliability cluster the audit groups together. Batched onto the same branch/PR as Slice 1 per `AGENTS.md` § Autonomous ship-loop default's PR-batching rule ("one PR per logical feature, not per slice") since the PR was still open/unmerged when Slice 2 started.
-- **Slice 3 (follow-up)** — #7 (locale-override format-string on the `SmatchetLocalizedImGui` `Text*` sinks) — same specifier-validation mechanism the prior audit's finding #1 fix added to `SmatchetLocalization::Format`, applied to the `TranslateSource` wrapper path.
+- **Slice 3 (this PR)** — #7 (locale-override format-string on the `SmatchetLocalizedImGui` `Text*` sinks) — same specifier-validation mechanism the prior audit's finding #1 fix added to `SmatchetLocalization::Format`, applied to the `TranslateSource` wrapper path. Batched onto the same PR as Slices 1–2 (same rationale — PR still open).
 - **Slice 4 (follow-up)** — remaining Low findings #10–33, batched by subsystem (ParseBounded stragglers #10–13; SSRF/security #14–16; integer handling #17–18 — #19 already folds into Slice 1; memory safety #20–22; concurrency #23–27; resource management #28–31; error handling #32; logic cluster #33).
 
 ## Files to modify
@@ -39,9 +39,14 @@ Remediate in slices ordered by the audit's own § Recommended remediation order 
 9. `Source/Core/src/Sync/OfflineQueueService.cpp` — **#6** (half 2): new local `ScopeExit` RAII helper (anonymous namespace) so `TickOfflineCreates`'s background lambda always resets `offlineReplayInFlight_`/`nextOfflineReplayAt_` on every exit path (normal return or an exception unwinding out of `ReplayOneCreate`), not just the prior normal-completion tail.
 10. `scripts/dev/test-ui-jira-deterministic-backend.sh` + `Source/Standalone/CliCommandRunner.cpp` — unrelated CI break found while validating this slice, not a `CPP_CODE_AUDIT.md` finding: `ui_test.run --outLog` requires a relative path (confined under `<userData>/ui-tests/`, from the already-shipped `SECURITY_AUDIT.md` sweep, PR #1566), but (a) this driver script passed an absolute path, and (b) `CliCommandRunner.cpp`'s `SpawnAndRun` had a pre-#1566 step that re-absolutized any relative `outPath`/`outLog` arg before forwarding it to the `--spawn`ed child — silently reintroducing the absolute-path rejection for every `--spawn` caller. Fixed both: the script now passes a bare filename and copies the confined result back to the caller-requested path; `CliCommandRunner.cpp` no longer re-absolutizes `outPath`/`outLog` (every current handler confines them under `<userData>`, so CWD-relative resolution is obsolete and was actively wrong post-#1566).
 
-### Slice 3–4 (follow-up, not in this PR)
+### Slice 3 (this PR)
 
-See `CPP_CODE_AUDIT.md` findings #7, #10–33 for file:line citations — not re-listed here to avoid drift; this plan's § Deviations records the per-slice PR link once shipped.
+11. `Source/Core/include/SmatchetLocalization.h`, `Source/Core/src/SmatchetLocalization.cpp` — **#7**: new `TranslateSourceAsFormat(englishSource)` — calls `TranslateSource`, then reuses the existing `FormatSpecifiersMatch`/`ConversionSpecifiers` guard (already used by `Format()` for keyed translations) to fall back to `englishSource` when the override's conversion-specifier sequence doesn't match; a pointer-equality fast path skips the specifier scan when `TranslateSource` returned its input unchanged (no override present).
+12. `Source/Core/include/SmatchetLocalizedImGui.h` — **#7**: the 7 audited `Text*`/`SetTooltip`/`SetItemTooltip` wrappers plus `SliderInt`'s `format` param switched from `TranslateSource(fmt)` to `TranslateSourceAsFormat(fmt)`. `InputTextWithHint`'s `hint` and `TextUnformatted`'s `text` deliberately left on plain `TranslateSource` — neither reaches a printf-family sink (`hint` is ImGui placeholder text; `TextUnformatted` takes no format arg).
+
+### Slice 4 (follow-up, not in this PR)
+
+See `CPP_CODE_AUDIT.md` findings #10–33 for file:line citations — not re-listed here to avoid drift; this plan's § Deviations records the per-slice PR link once shipped.
 
 ## Existing utilities reused
 
@@ -87,7 +92,7 @@ N/A — no file crosses a split threshold in this slice.
 
 ## Out of scope (flagged, not designed)
 
-- Slices 3–4 (findings #7, #10–33) — deferred to follow-up PRs, tracked in § Approach above.
+- Slice 4 (findings #10–33) — deferred to a follow-up PR, tracked in § Approach above.
 - `agents/scripts/project/*` lint-rule changes — this PR doesn't graduate any WARN-first gate (unlike `cpp-security-hardening` Slice 6); N/A.
 
 ## Implementation log
@@ -100,6 +105,8 @@ N/A — no file crosses a split threshold in this slice.
   - **Doc-drift, fixed inline**: `Cancel()`'s header doc-comment still described only the pre-fix in-flight-only behavior; updated to document the new "also flips pending tokens" behavior and why it's necessary (not just thorough).
   - **Policy-tension, addressed with a comment**: the new `IssueCreatePipeline.cpp` catch uses LOG_WARN + swallow, which reads as a literal violation of `exception-handling-policy.md`'s Cache/DB tier (LOG_ERROR + rethrow-unless-destructor) — but it deliberately mirrors the pre-existing sibling `RunUpdateExisting` pattern, and rethrowing here would unwind past the already-set `result.Ok`/`result.IssueKey`, reintroducing this same finding's duplicate-issue bug via a different path. Added an inline comment explaining the deliberate divergence rather than changing the behavior.
   - **Accepted as designed, documented**: `Cancel()`'s pending-token flip can cancel a Lua-`PromptAi`-queued turn the user didn't intend to stop — recorded in § Risks / non-goals rather than changed, since the alternative reintroduces a real race (see that entry for the full reasoning).
+- Slice 3 (same PR/branch): #7 — see § Files to modify for the per-file summary.
+- Post-implementation `/code-review` on Slice 3 (single targeted agent, given the small/contained diff reusing an already-proven mechanism) — zero findings; the fix was verified correct and complete, including confirming no other `TranslateSource` caller outside `SmatchetLocalizedImGui.h` feeds a printf sink and the pointer-equality fast path is sound.
 
 ## Deviations from plan
 
@@ -116,6 +123,7 @@ N/A — no file crosses a split threshold in this slice.
 - `/code-review --diff origin/develop medium` (4 parallel finder angles: line-by-line, removed-behavior, cross-file tracer, conventions) — surfaced 5 candidates; 1 real bug fixed (Plane credential casing, folded into this PR — see § Implementation log), 2 marker-placement nits fixed (moved `SMATCHET_DEVIATION` comments to sit directly above their clone span per `cpp-rules.md`'s documented grammar), 2 accepted-as-designed behavior notes recorded in § Deviations (sprint-enrichment partial results, decimal-duration sort key) — no further code changes needed.
 - Slice 2: same gate sequence re-run after each fix — `test-lint-rules.sh --diff origin/develop` PASS, `pre-ship.sh origin/develop` PASS (ack recorded), `agents/scripts/core/test-shell-lint.sh --diff origin/develop` PASS (249/249) for the driver-script edit. A minimal bash repro (`reader < <(producer)` vs `producer | reader`) was used earlier in this session to confirm the unrelated `coverage-delta-gate.sh` SIGPIPE mechanism — not re-run here, different file.
 - Slice 2 `/code-review` (3 parallel finder angles) — see § Implementation log for the 4 findings and how each was resolved.
+- Slice 3: `test-lint-rules.sh --diff origin/develop` PASS, `pre-ship.sh origin/develop` PASS (ack recorded), single-agent `/code-review` — zero findings (see § Implementation log).
 
 ## Out of scope — deferral residue-sweep
 

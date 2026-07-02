@@ -138,7 +138,7 @@ inline bool InputInt(const char* label, int* v, int step = 1, int step_fast = 10
 inline bool SliderInt(const char* label, int* v, int v_min, int v_max, const char* format = "%d",
                       ImGuiSliderFlags flags = 0) {
     return ::ImGui::SliderInt(SmatchetLocalization::LabelFromSource(label), v, v_min, v_max,
-                              SmatchetLocalization::TranslateSource(format), flags);
+                              SmatchetLocalization::TranslateSourceAsFormat(format), flags);
 }
 
 inline bool Selectable(const char* label, bool selected = false, ImGuiSelectableFlags flags = 0,
@@ -188,49 +188,49 @@ inline void TextUnformatted(const char* text, const char* text_end = nullptr) {
 inline void Text(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    ::ImGui::TextV(SmatchetLocalization::TranslateSource(fmt), args);
+    ::ImGui::TextV(SmatchetLocalization::TranslateSourceAsFormat(fmt), args);
     va_end(args);
 }
 
 inline void TextColored(const ImVec4& col, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    ::ImGui::TextColoredV(col, SmatchetLocalization::TranslateSource(fmt), args);
+    ::ImGui::TextColoredV(col, SmatchetLocalization::TranslateSourceAsFormat(fmt), args);
     va_end(args);
 }
 
 inline void TextDisabled(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    ::ImGui::TextDisabledV(SmatchetLocalization::TranslateSource(fmt), args);
+    ::ImGui::TextDisabledV(SmatchetLocalization::TranslateSourceAsFormat(fmt), args);
     va_end(args);
 }
 
 inline void TextWrapped(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    ::ImGui::TextWrappedV(SmatchetLocalization::TranslateSource(fmt), args);
+    ::ImGui::TextWrappedV(SmatchetLocalization::TranslateSourceAsFormat(fmt), args);
     va_end(args);
 }
 
 inline void BulletText(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    ::ImGui::BulletTextV(SmatchetLocalization::TranslateSource(fmt), args);
+    ::ImGui::BulletTextV(SmatchetLocalization::TranslateSourceAsFormat(fmt), args);
     va_end(args);
 }
 
 inline void SetTooltip(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    ::ImGui::SetTooltipV(SmatchetLocalization::TranslateSource(fmt), args);
+    ::ImGui::SetTooltipV(SmatchetLocalization::TranslateSourceAsFormat(fmt), args);
     va_end(args);
 }
 
 inline void SetItemTooltip(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    ::ImGui::SetItemTooltipV(SmatchetLocalization::TranslateSource(fmt), args);
+    ::ImGui::SetItemTooltipV(SmatchetLocalization::TranslateSourceAsFormat(fmt), args);
     va_end(args);
 }
 
