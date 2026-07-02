@@ -829,9 +829,8 @@ void NormalizePathArgInPlace(nlohmann::json& out, const char* key) {
 
 /// Normalize relative file-path arguments to absolute paths resolved against the CLI's CWD,
 /// since the spawned instance may have a different working directory.
-///
 /// Covers `outPath` (the scenario result file the parent later reads back). It deliberately
-/// does NOT touch `outLog`: since PR #1566 the child confines `ui_test.run --outLog` under
+/// does NOT touch `outLog`: the child confines `ui_test.run --outLog` under
 /// <userDataDir>/ui-tests/ and REJECTS absolute paths (Source/Core/include/Commands/
 /// PathConfinement.h). outLog is a base-relative arg the child resolves against its own
 /// user-data dir — not a CWD-relative path — and is written purely child-side (the parent
