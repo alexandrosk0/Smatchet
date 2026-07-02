@@ -1,6 +1,7 @@
 #include "LinearClient.h"
 
 #include "ConfigManager.h"
+#include "Json/BoundedJsonParse.h"
 #include "LinearClientHelpers.h"
 #include "LinearIssueSearch.h"
 #include "LinearQueryFromJql.h"
@@ -166,7 +167,8 @@ TrackerReachabilityProbeResult LinearClient::ProbeReachability(const TrackerConf
     LogRateLimitHeaders(resp.header);
 
     const long sc = resp.status_code;
-    nlohmann::json parsed = nlohmann::json::parse(resp.text, nullptr, false);
+    // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
+    nlohmann::json parsed = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
     std::string errorMessage;
     const bool hasErrors = !parsed.is_discarded() && smatchet::linear::LinearResponseHasErrors(parsed, errorMessage);
 
@@ -235,7 +237,8 @@ std::vector<RemoteProject> LinearClient::ListProjects() {
     const cpr::Response resp = TrackerPostLogged("LinearClient", auth.ApiUrl, BuildLinearHeaders(auth.ApiKey), body);
     LogRateLimitHeaders(resp.header);
 
-    nlohmann::json parsed = nlohmann::json::parse(resp.text, nullptr, false);
+    // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
+    nlohmann::json parsed = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
     std::string errorMessage;
     if (resp.status_code != 200 || parsed.is_discarded() ||
         smatchet::linear::LinearResponseHasErrors(parsed, errorMessage)) {
@@ -445,7 +448,8 @@ std::string ResolveCatalogTeamId(const std::string& apiUrl, const std::string& a
         smatchet::linear::BuildGraphQLBody("query { teams(first: 100) { nodes { id key name } } }",
                                            nlohmann::json::object());
     const cpr::Response resp = TrackerPostLogged("LinearClient", apiUrl, BuildLinearHeaders(apiKey), body);
-    nlohmann::json parsed = nlohmann::json::parse(resp.text, nullptr, false);
+    // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
+    nlohmann::json parsed = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
     std::string errorMessage;
     if (resp.status_code != 200 || parsed.is_discarded() ||
         smatchet::linear::LinearResponseHasErrors(parsed, errorMessage) || !parsed.is_object() ||
@@ -493,7 +497,8 @@ Result<TrackerFieldCatalogResult, TrackerError> LinearClient::FetchFieldCatalog(
     const cpr::Response resp = TrackerPostLogged("LinearClient", auth.ApiUrl, BuildLinearHeaders(auth.ApiKey), body);
     LogRateLimitHeaders(resp.header);
 
-    nlohmann::json parsed = nlohmann::json::parse(resp.text, nullptr, false);
+    // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
+    nlohmann::json parsed = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
     std::string errorMessage;
     if (resp.status_code != 200 || parsed.is_discarded() ||
         smatchet::linear::LinearResponseHasErrors(parsed, errorMessage)) {
