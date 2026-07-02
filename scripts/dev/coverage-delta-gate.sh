@@ -800,9 +800,16 @@ fi
 # files is provably no-new-runtime-surface, PASS legitimately (no override). This
 # is what lets the gate run cleanly on a merge_group ref where PR labels (and so
 # tests-out-of-band) don't apply. CONSERVATIVE — any real statement falls through.
-EXEMPTION="$(git diff --diff-filter=ACMR "$MERGE_BASE"...HEAD -- \
-        Source/Core Source/Plugins Source/Standalone tests 2>/dev/null \
-    | _classify_diff)"
+# Process substitution (not a `|` pipe): `_classify_diff` intentionally `break`s out of its
+# read loop on the first real-surface line (see its body). Under a `|` pipe with `set -o
+# pipefail`, an early-closing reader sends `git diff` SIGPIPE (128+13=141) once its stdout
+# buffer fills, and pipefail propagates that 141 through the `EXEMPTION=$(...)` assignment,
+# tripping `set -e` and killing the script BEFORE it reaches the "FAIL: ... test deltas"
+# message below — a real diff that should cleanly fail the gate instead crashes it. Process
+# substitution runs `git diff` as a background job outside the pipeline `git diff`'s exit
+# status isn't tracked by `pipefail` or `$?`, so an early break here is inert.
+EXEMPTION="$(_classify_diff < <(git diff --diff-filter=ACMR "$MERGE_BASE"...HEAD -- \
+        Source/Core Source/Plugins Source/Standalone tests 2>/dev/null))"
 if [ "$EXEMPTION" = "EXEMPT" ]; then
     echo "[coverage-delta-gate] PASS — test-light exemption: every product-code"
     echo "[coverage-delta-gate]        change is no-new-runtime-surface"
