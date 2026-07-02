@@ -20,10 +20,20 @@ TEST_PORT="${SMATCHET_TEST_PORT:-58736}"
 FILTER="${UI_TEST_FILTER:-JiraDeterministic}"
 FIXTURE_DIR="${SMATCHET_FIXTURE_DIR:-tests/fixtures/jira_backend}"
 FIXTURE="${SMATCHET_TEST_JIRA_BACKEND_FIXTURE:-$FIXTURE_DIR/basic-grid.json}"
-# Per-test verbose-log dump. When SMATCHET_UI_TEST_OUTLOG is set, pass it through
-# to `ui_test.run --outLog=` so every test's Output.Log lands on disk; we `cat` it
-# on failure for diagnosis (the --spawn parent only prints pass/fail counts).
-OUTLOG="${SMATCHET_UI_TEST_OUTLOG:-}"
+# Per-test verbose-log dump. SMATCHET_UI_TEST_OUTLOG is the DURABLE destination path
+# the caller (CI step) later cats + uploads as an artifact. It is deliberately NOT
+# passed verbatim to `ui_test.run --outLog=`: since PR #1566 the app confines outLog
+# under <userDataDir>/ui-tests/ and REJECTS absolute paths / `..` traversal
+# (Source/Core/include/Commands/PathConfinement.h). So we pass only a confinement-legal
+# RELATIVE name (the basename) to the command, let the app write the resolved log under
+# the throwaway profile's ui-tests/ subdir, then copy it back out to OUTLOG_DEST (below)
+# so the caller's cat/upload — and this script's own on-failure dump — can find it. We
+# `cat` it on failure for diagnosis (the --spawn parent only prints pass/fail counts).
+OUTLOG_DEST="${SMATCHET_UI_TEST_OUTLOG:-}"
+OUTLOG_REL=""
+if [ -n "$OUTLOG_DEST" ]; then
+    OUTLOG_REL="$(basename "$OUTLOG_DEST")"
+fi
 
 if [ ! -f "$EXE" ]; then
     echo "FAIL: $EXE not found. Build with: cmake --build --preset ninja-ui-test-msvc --target SmatchetStandalone" >&2
@@ -43,9 +53,11 @@ echo "[test-ui-jira-deterministic-backend] launching ephemeral Smatchet (port $T
 echo "  fixture: $FIXTURE"
 
 OUTLOG_ARG=()
-if [ -n "$OUTLOG" ]; then
-    OUTLOG_ARG=(--outLog="$OUTLOG")
-    echo "  outLog: $OUTLOG"
+if [ -n "$OUTLOG_REL" ]; then
+    # Relative arg only — the app resolves it under <userDataDir>/ui-tests/ (confined).
+    OUTLOG_ARG=(--outLog="$OUTLOG_REL")
+    echo "  outLog (relative, confined under <userData>/ui-tests/): $OUTLOG_REL"
+    echo "  outLog durable destination: $OUTLOG_DEST"
 fi
 
 RAW_OUTPUT="$(SMATCHET_USER_DATA="$TMPDIR_DATA" \
@@ -56,12 +68,24 @@ RAW_OUTPUT="$(SMATCHET_USER_DATA="$TMPDIR_DATA" \
 
 echo "$RAW_OUTPUT" | tail -40
 
+# The app wrote the confined log to <userDataDir>/ui-tests/<relative>. Here the
+# user-data dir is the throwaway $TMPDIR_DATA (deleted by the EXIT trap), so copy the
+# resolved log out to the durable destination NOW — before this script exits — so both
+# the caller's cat/upload and cat_outlog_on_failure below can read it.
+if [ -n "$OUTLOG_REL" ]; then
+    RESOLVED_OUTLOG="$TMPDIR_DATA/ui-tests/$OUTLOG_REL"
+    if [ -f "$RESOLVED_OUTLOG" ]; then
+        mkdir -p "$(dirname "$OUTLOG_DEST")"
+        cp "$RESOLVED_OUTLOG" "$OUTLOG_DEST"
+    fi
+fi
+
 # Best-effort: on any non-clean run, surface the per-test verbose log if present.
 cat_outlog_on_failure() {
-    if [ -n "$OUTLOG" ] && [ -f "$OUTLOG" ]; then
+    if [ -n "$OUTLOG_DEST" ] && [ -f "$OUTLOG_DEST" ]; then
         echo
-        echo "===== ui_test per-test verbose log ($OUTLOG) ====="
-        cat "$OUTLOG"
+        echo "===== ui_test per-test verbose log ($OUTLOG_DEST) ====="
+        cat "$OUTLOG_DEST"
         echo "===== end per-test verbose log ====="
     fi
 }

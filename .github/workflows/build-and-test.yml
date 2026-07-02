@@ -1320,6 +1320,14 @@ jobs:
       # deliverable's contract). --outLog captures every test's verbose log; on
       # failure we cat it into the CI log for diagnosis. A single retry absorbs the
       # known Mesa first-frame collapse without masking a real regression.
+      #
+      # SMATCHET_UI_TEST_OUTLOG is the DURABLE destination the cat + upload-artifact
+      # steps below read. Since PR #1566 the app confines `ui_test.run --outLog` under
+      # <userDataDir>/ui-tests/ and REJECTS absolute paths (PathConfinement.h), so the
+      # driver does NOT pass this absolute value to the command: it passes the basename
+      # (a confinement-legal relative name), lets the app write under the throwaway
+      # profile, then copies the resolved log back out to this durable path. Keep this
+      # value in sync with the upload-artifact `path:` below.
       - name: Run deterministic Jira fixture-backend bucket-E (hard)
         shell: bash
         env:
