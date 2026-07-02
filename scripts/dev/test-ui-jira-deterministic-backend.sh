@@ -43,9 +43,19 @@ echo "[test-ui-jira-deterministic-backend] launching ephemeral Smatchet (port $T
 echo "  fixture: $FIXTURE"
 
 OUTLOG_ARG=()
+OUTLOG_RELATIVE=""
 if [ -n "$OUTLOG" ]; then
-    OUTLOG_ARG=(--outLog="$OUTLOG")
-    echo "  outLog: $OUTLOG"
+    # ui_test.run's --outLog is confined to a bare relative filename under
+    # <userData>/ui-tests/ (PathConfinement.h, shipped in the SECURITY_AUDIT.md
+    # sweep, PR #1566) — the caller-supplied $OUTLOG (an absolute path, e.g. CI's
+    # $GITHUB_WORKSPACE/build/tmp/...) is rejected outright since #1566 landed.
+    # Pass just the basename and copy the confined result back to $OUTLOG below,
+    # before $TMPDIR_DATA is removed — this keeps the external contract (a file at
+    # $OUTLOG afterward) unchanged for every caller, including this repo's own CI
+    # workflow's cat/upload-artifact steps.
+    OUTLOG_RELATIVE="$(basename "$OUTLOG")"
+    OUTLOG_ARG=(--outLog="$OUTLOG_RELATIVE")
+    echo "  outLog: $OUTLOG_RELATIVE (confined under \$SMATCHET_USER_DATA/ui-tests/; copied to $OUTLOG after the run)"
 fi
 
 RAW_OUTPUT="$(SMATCHET_USER_DATA="$TMPDIR_DATA" \
@@ -55,6 +65,16 @@ RAW_OUTPUT="$(SMATCHET_USER_DATA="$TMPDIR_DATA" \
     --mcp-port="$TEST_PORT" 2>&1 || true)"
 
 echo "$RAW_OUTPUT" | tail -40
+
+# Copy the confined outLog out of the ephemeral $TMPDIR_DATA (removed by the EXIT
+# trap above) to the caller-requested $OUTLOG, before anything below reads $OUTLOG.
+if [ -n "$OUTLOG_RELATIVE" ]; then
+    CONFINED_OUTLOG="$TMPDIR_DATA/ui-tests/$OUTLOG_RELATIVE"
+    if [ -f "$CONFINED_OUTLOG" ]; then
+        mkdir -p "$(dirname "$OUTLOG")"
+        cp "$CONFINED_OUTLOG" "$OUTLOG"
+    fi
+fi
 
 # Best-effort: on any non-clean run, surface the per-test verbose log if present.
 cat_outlog_on_failure() {

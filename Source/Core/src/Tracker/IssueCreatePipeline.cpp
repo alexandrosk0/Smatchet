@@ -366,7 +366,28 @@ IssueCreateResult Run(ITrackerIssueMutations& client, ISyncCache* cache, const s
     result.SeededTicket = SeedCachedTicketFromDraft(work, catalog, issueKey);
     MergePostStepDraftIntoCachedTicket(result.SeededTicket, work, catalog, postOutcome);
     if (cache) {
-        cache->SaveTicket(cacheBackendKey, result.SeededTicket);
+        // Wrapped like RunUpdateExisting's post-PUT cache save (above): SaveTicket is
+        // SQLiteCpp-backed and throws (DB locked / disk full / the TextMerge cell-budget
+        // bail-out surfacing upstream). Left bare, a throw here unwinds out of
+        // ReplayOneCreate past the point where OfflineQueueService resets its in-flight
+        // latch — the latch then stays true forever (replay silently dead until restart)
+        // and, since DeletePendingCreate never ran either, the next replay re-creates this
+        // same issue server-side. CPP_CODE_AUDIT.md #6.
+        //
+        // LOG_WARN + swallow (not the exception-handling-policy.md Cache/DB tier's default
+        // LOG_ERROR + rethrow) is deliberate here, matching RunUpdateExisting: result.Ok and
+        // result.IssueKey are already set above — the tracker-side create already succeeded.
+        // Rethrowing would unwind past that return, so ReplayOneCreate would never see
+        // result.Ok=true, never call DeletePendingCreate, and retry the create on the next
+        // tick — reintroducing this exact finding's "duplicate issue" failure mode via a
+        // different path. The local cache is a best-effort mirror of server truth here, not
+        // the source of truth, so a cache-only failure must not roll back a successful create.
+        try {
+            cache->SaveTicket(cacheBackendKey, result.SeededTicket);
+        } catch (const std::exception& ex) {
+            LOG_WARN("IssueCreatePipeline: cache save after Create failed issue=%s err=%s", issueKey.c_str(),
+                     ex.what());
+        }
     }
     return result;
 }
