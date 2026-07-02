@@ -3,6 +3,7 @@
 #include "PlaneCommentMappingPure.h"
 
 #include "IssueDraft.h"
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "MarkdownConvert.h"
 #include "StringUtil.h"
@@ -111,13 +112,17 @@ TrackerError PlaneClient::UpdateIssueFields(const std::string& issueId, const nl
     if (response.status_code != 200 && response.status_code != 204) {
         std::string detail;
         try {
-            auto j = nlohmann::json::parse(response.text);
-            if (j.is_object() && j.contains("error"))
-                detail = j["error"].dump();
-            else if (j.is_object() && j.contains("detail"))
-                detail = j["detail"].dump();
-            else
+            std::string parseErr;
+            auto j = smatchet::json_safe::ParseBounded(response.text, parseErr);
+            if (!parseErr.empty()) {
                 detail = response.text;
+            } else if (j.is_object() && j.contains("error")) {
+                detail = j["error"].dump();
+            } else if (j.is_object() && j.contains("detail")) {
+                detail = j["detail"].dump();
+            } else {
+                detail = response.text;
+            }
         } catch (...) { // catch-all-ok: error body not JSON — fall back to the raw response text
             detail = response.text;
         }
@@ -323,9 +328,12 @@ Result<std::string, TrackerError> PlaneClient::CreateIssue(const nlohmann::json&
     if (response.status_code != 200 && response.status_code != 201) {
         std::string detail;
         try {
-            auto j = nlohmann::json::parse(response.text);
+            std::string parseErr;
+            auto j = smatchet::json_safe::ParseBounded(response.text, parseErr);
             // Plane often returns {"error": "..."} or {"detail": "..."} or a dict of field errors
-            if (j.is_object()) {
+            if (!parseErr.empty()) {
+                detail = response.text;
+            } else if (j.is_object()) {
                 if (j.contains("error"))
                     detail = j["error"].dump();
                 else if (j.contains("detail"))
@@ -347,25 +355,34 @@ Result<std::string, TrackerError> PlaneClient::CreateIssue(const nlohmann::json&
     }
 
     try {
-        auto j = nlohmann::json::parse(response.text);
-        const std::string uuid = JsonFieldToString(j, "id");
-        const std::string seqId = JsonFieldToString(j, "sequence_id");
-
-        std::string visualKey;
-        if (!projectIdentifier.empty() && !seqId.empty()) {
-            visualKey = projectIdentifier + "-" + seqId;
-        } else if (!seqId.empty()) {
-            visualKey = "#" + seqId;
+        std::string parseErr;
+        auto j = smatchet::json_safe::ParseBounded(response.text, parseErr);
+        if (!parseErr.empty()) {
+            // Network/API tier (exception-handling-policy.md): the create succeeded server-side
+            // (2xx above) but its response body did not parse — surface it instead of swallowing,
+            // then fall through to an empty key so the caller treats it as "created, key unknown".
+            LOG_WARN("PlaneClient::CreateIssue: issue created but response JSON failed to parse: %s", parseErr.c_str());
         } else {
-            visualKey = uuid;
-        }
+            // SMATCHET_DEVIATION(rule=duplication; reason=ParseBounded clone #9; owner=cpp-audit; revisit=2026-09-30)
+            const std::string uuid = JsonFieldToString(j, "id");
+            const std::string seqId = JsonFieldToString(j, "sequence_id");
 
-        if (!uuid.empty() && !visualKey.empty()) {
-            std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
-            keyToId_[visualKey] = uuid;
-        }
+            std::string visualKey;
+            if (!projectIdentifier.empty() && !seqId.empty()) {
+                visualKey = projectIdentifier + "-" + seqId;
+            } else if (!seqId.empty()) {
+                visualKey = "#" + seqId;
+            } else {
+                visualKey = uuid;
+            }
 
-        return Result<std::string, TrackerError>::Ok(visualKey);
+            if (!uuid.empty() && !visualKey.empty()) {
+                std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
+                keyToId_[visualKey] = uuid;
+            }
+
+            return Result<std::string, TrackerError>::Ok(visualKey);
+        }
     } catch (const std::exception& ex) {
         // Network/API tier (exception-handling-policy.md): the create succeeded server-side
         // (2xx above) but its response body did not parse — surface it instead of swallowing,
@@ -517,9 +534,10 @@ Result<std::vector<TrackerIssueComment>, TrackerError> PlaneClient::FetchIssueCo
         return CommentsResult::Err(TrackerErrorFromHttpStatus(resp.status_code, msg));
     }
 
-    const nlohmann::json parsedJson = nlohmann::json::parse(resp.text, nullptr, false);
-    if (parsedJson.is_discarded()) {
-        LOG_ERROR("PlaneClient::FetchIssueComments: invalid JSON for %s", issueKey.c_str());
+    std::string parseErr;
+    const nlohmann::json parsedJson = smatchet::json_safe::ParseBounded(resp.text, parseErr);
+    if (!parseErr.empty()) {
+        LOG_ERROR("PlaneClient::FetchIssueComments: invalid JSON for %s: %s", issueKey.c_str(), parseErr.c_str());
         return CommentsResult::Err(TrackerErrorParse("Plane issue-comments response was not valid JSON."));
     }
     // Plane returns either a bare array or a paginated `{ "results": [...] }` envelope.
