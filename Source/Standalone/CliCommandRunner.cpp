@@ -828,12 +828,19 @@ void NormalizePathArgInPlace(nlohmann::json& out, const char* key) {
 }
 
 /// Normalize relative file-path arguments to absolute paths resolved against the CLI's CWD,
-/// since the spawned instance may have a different working directory. Covers both the scenario
-/// result file (`outPath`) and the bucket-E per-test log dump (`outLog`).
+/// since the spawned instance may have a different working directory.
+///
+/// Covers `outPath` (the scenario result file the parent later reads back). It deliberately
+/// does NOT touch `outLog`: since PR #1566 the child confines `ui_test.run --outLog` under
+/// <userDataDir>/ui-tests/ and REJECTS absolute paths (Source/Core/include/Commands/
+/// PathConfinement.h). outLog is a base-relative arg the child resolves against its own
+/// user-data dir — not a CWD-relative path — and is written purely child-side (the parent
+/// never reads it back), so absolutizing it here would (a) be semantically wrong and (b) trip
+/// the confinement, breaking `ui_test.run --outLog ... --spawn` outright. Keep it relative so
+/// the child confines it correctly.
 nlohmann::json NormalizeOutPath(const nlohmann::json& argsToSend) {
     nlohmann::json out = argsToSend;
     NormalizePathArgInPlace(out, "outPath");
-    NormalizePathArgInPlace(out, "outLog");
     return out;
 }
 
