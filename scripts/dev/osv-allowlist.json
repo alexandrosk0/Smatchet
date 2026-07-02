@@ -1,0 +1,4 @@
+{
+  "_comment": "OSV/GHSA/CVE IDs to treat as triaged-and-accepted for the dependency CVE gate (scripts/dev/osv-scan.py). Key = advisory ID (e.g. GHSA-xxxx-xxxx-xxxx or CVE-YYYY-NNNNN), value = one-line triage note (why it is accepted: not reachable, upstream-only, fix pending a pinned bump, etc.). An allowlisted finding is still reported in the job summary, just not counted toward a --fail-on threshold. Empty on introduction: the gate is advisory (no --fail-on), so nothing needs allowlisting yet. Populate this as findings are triaged when promoting the gate to blocking.",
+  "allow": {}
+}
