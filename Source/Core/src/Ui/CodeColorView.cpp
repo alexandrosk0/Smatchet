@@ -476,7 +476,12 @@ std::vector<CacheKey> g_cacheInsertionOrder;
 // public-API convention.
 std::size_t g_cacheRebuildCount = 0;
 
-const std::vector<Token>& TokenizeCached(const char* data, std::size_t len, CodeLang lang) {
+// CPP_CODE_AUDIT.md #24: returns by value (a copy taken under g_cacheMutex) rather
+// than a reference into g_cache. The mutex implies multi-thread intent even though
+// today's callers are UI-thread-only; a reference into the map would dangle if a
+// later concurrent call's FIFO eviction erases this exact key while the caller is
+// still iterating the (unlocked) returned tokens.
+std::vector<Token> TokenizeCached(const char* data, std::size_t len, CodeLang lang) {
     const CacheKey key{Fnv1a64(data, len), lang, SmatchetTheme::GetThemeRevision()};
     std::lock_guard<std::mutex> lk(g_cacheMutex);
     auto it = g_cache.find(key);
@@ -636,7 +641,7 @@ void DrawColoredCode(const char* utf8, CodeLang lang) {
     }
 
     const std::size_t len = std::strlen(utf8);
-    const std::vector<Token>& tokens = TokenizeCached(utf8, len, lang);
+    const std::vector<Token> tokens = TokenizeCached(utf8, len, lang);
 
     // Emit tokens with newline-aware ImGui::SameLine layout — same shape as
     // CppSyntaxHighlight's DrawColoredCppText so the rendered output looks
@@ -702,7 +707,7 @@ void ResetCacheForTest() {
     g_cacheRebuildCount = 0;
 }
 
-const std::vector<Token>& TokenizeCachedForTest(const char* utf8, std::size_t len, CodeLang lang) {
+std::vector<Token> TokenizeCachedForTest(const char* utf8, std::size_t len, CodeLang lang) {
     return TokenizeCached(utf8, len, lang);
 }
 

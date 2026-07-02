@@ -125,8 +125,10 @@ void ResetCacheForTest();
 /// Test-only — drives the production `TokenizeCached` path so slice-3 doctest
 /// can exercise the (content_hash, lang, theme_revision) cache key + invalidation
 /// without an ImGui context (DrawColoredCode is the production caller; needs ImGui).
-/// Returns the tokenized span vector for the input; caller may discard.
-const std::vector<Token>& TokenizeCachedForTest(const char* utf8, std::size_t len, CodeLang lang);
+/// Returns a copy of the tokenized span vector for the input (CPP_CODE_AUDIT.md #24 —
+/// TokenizeCached itself returns by value now, not a reference into the cache);
+/// caller may discard.
+std::vector<Token> TokenizeCachedForTest(const char* utf8, std::size_t len, CodeLang lang);
 
 } // namespace code_color
 } // namespace smatchet

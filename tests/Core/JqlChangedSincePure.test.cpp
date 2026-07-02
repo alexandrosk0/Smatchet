@@ -48,6 +48,19 @@ TEST_CASE("WrapJqlChangedWithin: only the trailing ORDER BY is repositioned") {
           "(text ~ \"order by\") AND updated >= -60m ORDER BY rank");
 }
 
+TEST_CASE("WrapJqlChangedWithin: a quoted 'order by' with NO real trailing clause is not "
+          "mistaken for one") {
+    // CPP_CODE_AUDIT.md #33: unlike the "rightmost wins" case above, THIS query has no real
+    // trailing ORDER BY at all — the quoted text is the only "order by" substring. The old
+    // context-blind scan would have split the query mid-string-literal here (there's no later
+    // real match to mask it), producing a malformed changed-since poll query.
+    CHECK(WrapJqlChangedWithin("summary ~ \"sort order by date\" AND status = Open", 60) ==
+          "(summary ~ \"sort order by date\" AND status = Open) AND updated >= -60m");
+    // Single-quoted variant — JQL accepts both quote styles.
+    CHECK(WrapJqlChangedWithin("summary ~ 'sort order by date' AND status = Open", 60) ==
+          "(summary ~ 'sort order by date' AND status = Open) AND updated >= -60m");
+}
+
 TEST_CASE("IsoSinceFromWindow: subtracts the window and formats UTC Z") {
     // 2026-06-20T12:00:00Z == 1781956800; minus 3600s -> 11:00:00Z.
     CHECK(IsoSinceFromWindow(1781956800, 3600) == "2026-06-20T11:00:00Z");

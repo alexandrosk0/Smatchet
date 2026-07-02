@@ -986,16 +986,22 @@ const char* StoreTempString(std::string value) {
     return result;
 }
 
+// CPP_CODE_AUDIT.md #25: return override strings through StoreTempString (a copy into a
+// thread-local ring) instead of `overrideIt->second.c_str()` — a pointer straight into
+// OverridesRef()'s map. The caller (T() / TranslateSource()) reads the returned pointer
+// AFTER releasing LocalizationMutex(); SetLanguage() -> LoadOverridesLocked() ->
+// OverridesRef().clear() destroys the strings the map owned, so a raw pointer into the
+// map dangles the moment a language switch races the caller's read.
 const char* TranslateEntryLocked(const TranslationEntry& entry, const char* fallback) {
     const auto& overrides = OverridesRef();
     auto overrideIt = overrides.find(entry.Key);
     if (overrideIt != overrides.end()) {
-        return overrideIt->second.c_str();
+        return StoreTempString(overrideIt->second);
     }
     if (entry.English) {
         overrideIt = overrides.find(entry.English);
         if (overrideIt != overrides.end()) {
-            return overrideIt->second.c_str();
+            return StoreTempString(overrideIt->second);
         }
     }
     if (CurrentLanguageRef() == "fr-FR" && entry.French && entry.French[0] != '\0') {
@@ -1104,7 +1110,9 @@ const char* T(const char* key, const char* englishFallback) {
     const auto& overrides = OverridesRef();
     auto overrideIt = overrides.find(key);
     if (overrideIt != overrides.end()) {
-        return overrideIt->second.c_str();
+        // CPP_CODE_AUDIT.md #25: copy via StoreTempString — see TranslateEntryLocked's
+        // doc comment for why a raw pointer into `overrides` can't outlive this lock.
+        return StoreTempString(overrideIt->second);
     }
     const auto& byKey = EntriesByKey();
     auto entryIt = byKey.find(key);
@@ -1125,7 +1133,9 @@ const char* TranslateSource(const char* englishSource) {
     const auto& overrides = OverridesRef();
     auto overrideIt = overrides.find(englishSource);
     if (overrideIt != overrides.end()) {
-        return overrideIt->second.c_str();
+        // CPP_CODE_AUDIT.md #25: copy via StoreTempString — see TranslateEntryLocked's
+        // doc comment for why a raw pointer into `overrides` can't outlive this lock.
+        return StoreTempString(overrideIt->second);
     }
     const auto& byEnglish = EntriesByEnglish();
     auto entryIt = byEnglish.find(englishSource);
