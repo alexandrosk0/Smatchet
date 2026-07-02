@@ -890,7 +890,12 @@ jobs:
     name: Bucket-C screenshot diff (Mesa headless GL)
     needs: windows-msvc
     runs-on: windows-2022
-    timeout-minutes: 20
+    # 20 -> 30: the llvmpipe (GALLIUM_DRIVER=llvmpipe) screenshot-diff step alone
+    # burned the whole 20-min budget on a slow-runner develop run (run 28289436753:
+    # setup ~0.3m, then the diff step ran 19.8m and GitHub cancelled it AT the cap).
+    # A healthy run is <1m; 30m gives comfortable headroom for the software-GL slow
+    # path without approaching the ~45-50 pipeline ceiling. Coverage unchanged.
+    timeout-minutes: 30
     continue-on-error: true
 
     steps:
@@ -1022,7 +1027,12 @@ jobs:
     name: Bucket-E UI tests (Mesa headless GL)
     needs: windows-msvc
     runs-on: windows-2022
-    timeout-minutes: 30
+    # 30 -> 45: build (~9.6m) + the retry-on-collapse test step (attempts=3, each
+    # `timeout 240` under llvmpipe) can exceed 30m on a slow runner — on develop run
+    # 28289436753 the ui_test.run step ran 20.1m on top of the ~9.6m build and hit
+    # the 30-min cap (cancelled). 45m lets all 3 retry attempts complete on the
+    # software-GL slow path; stays under the ~45-50 ceiling. Coverage unchanged.
+    timeout-minutes: 45
     continue-on-error: true
 
     steps:
@@ -1257,7 +1267,13 @@ jobs:
     name: Bucket-E Jira fixture-backend (Mesa GL, hard)
     needs: windows-msvc
     runs-on: windows-2022
-    timeout-minutes: 30
+    # 30 -> 45: this REQUIRED job builds (~9.5m) then runs the fixture-backend test
+    # step (attempts=2) under llvmpipe. On develop run 28289436753 the test step ran
+    # 20.4m on top of the ~9.5m build and GitHub cancelled the job AT the 30-min cap
+    # (conclusion=cancelled) — a repo-wide false-red on a merge-blocking gate. 45m
+    # gives the build + both retry attempts room on the software-GL slow path while
+    # staying under the ~45-50 pipeline ceiling. No gate weakened; coverage unchanged.
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -1493,7 +1509,12 @@ jobs:
     name: Bucket launch-smoke (Mesa GL)
     needs: windows-msvc
     runs-on: windows-2022
-    timeout-minutes: 15
+    # 15 -> 25: this REQUIRED gate downloads the prebuilt exe (setup ~0.3m) then boots
+    # it under llvmpipe. On develop run 28289436753 the boot step alone ran 14.8m and
+    # GitHub cancelled the job AT the 15-min cap (conclusion=cancelled), red-walling a
+    # merge-blocking gate repo-wide. A healthy boot is <1m; 25m gives generous headroom
+    # for a slow software-GL boot without nearing the ~45-50 ceiling. Coverage unchanged.
+    timeout-minutes: 25
 
     steps:
       - name: Checkout
