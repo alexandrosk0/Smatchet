@@ -1304,12 +1304,13 @@ jobs:
       # The HARD gate. NO continue-on-error: a persistent fixture-backend failure
       # reds this job's check-run and blocks merge. SMATCHET_TEST_JIRA_BACKEND_FIXTURE
       # is exported here (the driver also defaults it, but the explicit export is the
-      # deliverable's contract). --outLog captures every test's verbose log; on
-      # failure we cat it into the CI log for diagnosis. A single retry absorbs the
-      # known Mesa first-frame collapse without masking a real regression.
-      # SMATCHET_UI_TEST_OUTLOG is a plain FILENAME (not a path): ui_test.run confines
-      # --outLog under <userData>/ui-tests/ (audit #1566), so the driver passes the
-      # relative name and copies the confined file out to build/tmp/<name>.
+      # deliverable's contract). A single retry absorbs the known Mesa first-frame
+      # collapse without masking a real regression.
+      # NOTE: no --outLog per-test verbose dump — ui_test.run confines --outLog under
+      # <userData>/ui-tests/ and rejects absolute paths (audit #1566), and --spawn
+      # absolutizes a relative --outLog before forwarding it to the child, so the
+      # confinement rejects it. Restoring the dump needs the --spawn forwarder to
+      # preserve a relative path; until then the driver's JSON envelope is the signal.
       - name: Run deterministic Jira fixture-backend bucket-E (hard)
         shell: bash
         env:
@@ -1317,10 +1318,8 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
           SMATCHET_EXE: build/ninja-ui-test-msvc/Smatchet.exe
           SMATCHET_TEST_JIRA_BACKEND_FIXTURE: tests/fixtures/jira_backend/basic-grid.json
-          SMATCHET_UI_TEST_OUTLOG: jira-fixture-outlog.txt
         run: |
           set -uo pipefail
-          mkdir -p "${{ github.workspace }}/build/tmp"
           attempts=2
           rc=1
           for attempt in $(seq 1 "$attempts"); do
@@ -1343,25 +1342,9 @@ jobs:
             fi
           done
           if [ "$rc" -ne 0 ]; then
-            # The driver copies the confined per-test log out to build/tmp/<name>.
-            if [ -f "build/tmp/$SMATCHET_UI_TEST_OUTLOG" ]; then
-              echo "===== deterministic Jira fixture-backend per-test log ====="
-              cat "build/tmp/$SMATCHET_UI_TEST_OUTLOG"
-              echo "===== end per-test log ====="
-            else
-              echo "::warning::jira-fixture: per-test outLog not found at build/tmp/$SMATCHET_UI_TEST_OUTLOG"
-            fi
             echo "::error::jira-fixture: deterministic Jira backend bucket-E FAILED after ${attempts} attempt(s). This is a fixture-backend regression, not a render flake." >&2
             exit "$rc"
           fi
-
-      - name: Upload jira-fixture per-test log
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: jira-fixture-outlog-${{ github.run_id }}
-          path: build/tmp/jira-fixture-outlog.txt
-          if-no-files-found: ignore
 
   mobile-texture-guard-smoke:
     name: Mobile texture-guard smoke (Mesa headless GL)
