@@ -20,6 +20,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -125,10 +126,11 @@ void ResetCacheForTest();
 /// Test-only — drives the production `TokenizeCached` path so slice-3 doctest
 /// can exercise the (content_hash, lang, theme_revision) cache key + invalidation
 /// without an ImGui context (DrawColoredCode is the production caller; needs ImGui).
-/// Returns a copy of the tokenized span vector for the input (CPP_CODE_AUDIT.md #24 —
-/// TokenizeCached itself returns by value now, not a reference into the cache);
-/// caller may discard.
-std::vector<Token> TokenizeCachedForTest(const char* utf8, std::size_t len, CodeLang lang);
+/// Returns a shared, immutable handle to the tokenized span vector for the input
+/// (CPP_CODE_AUDIT.md #24 — TokenizeCached itself returns this shape now, not a
+/// reference into the cache, so a concurrent eviction can't dangle it); caller may
+/// discard.
+std::shared_ptr<const std::vector<Token>> TokenizeCachedForTest(const char* utf8, std::size_t len, CodeLang lang);
 
 } // namespace code_color
 } // namespace smatchet

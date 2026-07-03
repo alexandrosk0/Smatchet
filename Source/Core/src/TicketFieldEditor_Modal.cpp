@@ -499,10 +499,7 @@ void OpenLongTextEditor(AppController& app, const std::string& issueId, const Tr
         const std::string placeholder = "Loading description...";
         s_ActiveLongTextState.OriginalMarkdown.clear();
         s_ActiveLongTextState.Buffer.assign(ActiveLongTextEditorState::kBufferSize, '\0');
-        std::memcpy(s_ActiveLongTextState.Buffer.data(), placeholder.data(), placeholder.size());
-        s_ActiveLongTextState.Buffer[placeholder.size()] = '\0';
-        s_ActiveLongTextState.SeedTruncated = false;
-        s_ActiveLongTextState.BufferSeedShown = placeholder;
+        SeedLongTextBuffer(placeholder);
         s_ActiveLongTextState.LoadingMarkdown = true;
         const int capturedGen = s_ActiveLongTextState.LoadGen;
         const std::string capturedIssueId = issueId;

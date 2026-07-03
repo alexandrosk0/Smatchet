@@ -52,7 +52,7 @@ Remediate in slices ordered by the audit's own § Recommended remediation order 
 11. `Source/Core/include/SmatchetLocalization.h`, `Source/Core/src/SmatchetLocalization.cpp` — **#7**: new `TranslateSourceAsFormat(englishSource)` — calls `TranslateSource`, then reuses the existing `FormatSpecifiersMatch`/`ConversionSpecifiers` guard (already used by `Format()` for keyed translations) to fall back to `englishSource` when the override's conversion-specifier sequence doesn't match; a pointer-equality fast path skips the specifier scan when `TranslateSource` returned its input unchanged (no override present).
 12. `Source/Core/include/SmatchetLocalizedImGui.h` — **#7**: the 7 audited `Text*`/`SetTooltip`/`SetItemTooltip` wrappers plus `SliderInt`'s `format` param switched from `TranslateSource(fmt)` to `TranslateSourceAsFormat(fmt)`. `InputTextWithHint`'s `hint` and `TextUnformatted`'s `text` deliberately left on plain `TranslateSource` — neither reaches a printf-family sink (`hint` is ImGui placeholder text; `TextUnformatted` takes no format arg).
 
-### Slice 4 (follow-up; Groups A+B landed on this PR, Groups C–H not yet started)
+### Slice 4 (follow-up; all groups A–H landed on this PR)
 
 **Group A — ParseBounded stragglers (#10–13):**
 

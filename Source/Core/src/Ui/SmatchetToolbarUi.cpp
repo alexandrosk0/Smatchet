@@ -96,11 +96,13 @@ void SmatchetToolbarUi::DispatchButton(AppController& app, TrackerConfig& cfg, c
         return;
     }
 
+    // SMATCHET_DEVIATION(rule=duplication; reason=parity w/ SmatchetUI.cpp; owner=cpp-audit; revisit=2026-09-30)
     nlohmann::json args = nlohmann::json::object();
     if (!b.ArgsJson.empty()) {
         std::string parseErr;
         args = smatchet::json_safe::ParseBounded(b.ArgsJson, parseErr);
         if (!parseErr.empty()) { // invalid args JSON → dispatch with empty object
+            LOG_WARN("Toolbar: bad args JSON for command \"%s\": %s", b.CommandId.c_str(), parseErr.c_str());
             args = nlohmann::json::object();
         }
     }
