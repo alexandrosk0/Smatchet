@@ -11,6 +11,7 @@
 #include <array>
 #include <cctype>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <regex>
 #include <unordered_map>
@@ -467,7 +468,7 @@ struct CacheKeyHasher {
 constexpr std::size_t kCacheCap = 256;
 
 std::mutex g_cacheMutex;
-std::unordered_map<CacheKey, std::vector<Token>, CacheKeyHasher> g_cache;
+std::unordered_map<CacheKey, std::shared_ptr<const std::vector<Token>>, CacheKeyHasher> g_cache;
 std::vector<CacheKey> g_cacheInsertionOrder;
 
 // Cache-rebuild counter — bumped on every first-time tokenize for a (hash, lang)
@@ -476,15 +477,22 @@ std::vector<CacheKey> g_cacheInsertionOrder;
 // public-API convention.
 std::size_t g_cacheRebuildCount = 0;
 
-const std::vector<Token>& TokenizeCached(const char* data, std::size_t len, CodeLang lang) {
+// CPP_CODE_AUDIT.md #24: returns a shared_ptr into an immutable, ref-counted entry
+// rather than a reference into g_cache — a raw reference would dangle if a later
+// concurrent call's FIFO eviction erased this exact key while the caller was still
+// iterating the (unlocked) returned tokens. Unlike returning by value, the shared_ptr
+// keeps the DrawColoredCode hot path zero-copy on a cache hit (code review flagged the
+// by-value version as a per-frame vector<Token> copy against this dir's ≤6.94 ms/144 Hz
+// UI budget) while still giving every caller its own independent, never-mutated owner.
+std::shared_ptr<const std::vector<Token>> TokenizeCached(const char* data, std::size_t len, CodeLang lang) {
     const CacheKey key{Fnv1a64(data, len), lang, SmatchetTheme::GetThemeRevision()};
     std::lock_guard<std::mutex> lk(g_cacheMutex);
     auto it = g_cache.find(key);
     if (it != g_cache.end()) {
         return it->second;
     }
-    std::vector<Token> fresh;
-    Tokenize(data, len, lang, fresh);
+    auto fresh = std::make_shared<std::vector<Token>>();
+    Tokenize(data, len, lang, *fresh);
     auto inserted = g_cache.emplace(key, std::move(fresh));
     g_cacheInsertionOrder.push_back(key);
     ++g_cacheRebuildCount;
@@ -636,13 +644,13 @@ void DrawColoredCode(const char* utf8, CodeLang lang) {
     }
 
     const std::size_t len = std::strlen(utf8);
-    const std::vector<Token>& tokens = TokenizeCached(utf8, len, lang);
+    const std::shared_ptr<const std::vector<Token>> tokens = TokenizeCached(utf8, len, lang);
 
     // Emit tokens with newline-aware ImGui::SameLine layout — same shape as
     // CppSyntaxHighlight's DrawColoredCppText so the rendered output looks
     // identical to the existing C++ path for non-cpp languages.
     bool firstOnLine = true;
-    for (const Token& t : tokens) {
+    for (const Token& t : *tokens) {
         if (t.length <= 0) {
             continue;
         }
@@ -702,7 +710,7 @@ void ResetCacheForTest() {
     g_cacheRebuildCount = 0;
 }
 
-const std::vector<Token>& TokenizeCachedForTest(const char* utf8, std::size_t len, CodeLang lang) {
+std::shared_ptr<const std::vector<Token>> TokenizeCachedForTest(const char* utf8, std::size_t len, CodeLang lang) {
     return TokenizeCached(utf8, len, lang);
 }
 

@@ -158,6 +158,18 @@ class DictationInsertionRouter : public IDictationHost {
     // to it when entries_ is empty / activeId no longer matches. Cleared
     // only when the shadow's buf is the one being explicitly unregistered
     // (panel-close paths) so dangling-pointer aliasing is impossible.
+    //
+    // CPP_CODE_AUDIT.md #21: this invariant only holds because every current
+    // registration site (AI Assistant chat input, long-text editor buffer,
+    // Command Palette filter, focused-InputText catch-all) uses a buffer whose
+    // lifetime is process-static. If a future caller ever registers a non-static
+    // (heap/stack) buffer WITHOUT calling UnregisterInputText before that buffer
+    // is freed, the shadow fallback can splice into freed memory. Accepted as
+    // latent/unreachable rather than fixed with a validity-token mechanism
+    // (would require an IDictationHost interface change for a path zero current
+    // callers exercise) — see docs/plans/active/cpp-code-audit-remediation.md
+    // § Deviations. Any new non-static-buffer registration site MUST call
+    // UnregisterInputText in its owner's destructor, not just on blur.
     char* shadowBuf_ = nullptr;
     std::size_t shadowCap_ = 0;
     int* shadowCursor_ = nullptr;

@@ -2311,7 +2311,8 @@ void AppController::InitCommands() {
     // controller spawns its worker thread in its own constructor — no further wiring
     // needed. Lifetime contract: destroyed at the top of ~AppController.
     try {
-        impl_->aiAssistant_ = std::make_unique<AiAssistantController>(mainThreadDispatcher, GetGlobalAiAssistantUiState());
+        impl_->aiAssistant_ =
+            std::make_unique<AiAssistantController>(mainThreadDispatcher, GetGlobalAiAssistantUiState());
     } catch (const std::exception& ex) {
         LOG_ERROR("AppController::Initialize: AiAssistantController init failed: %s", ex.what());
         impl_->aiAssistant_.reset();
@@ -2371,13 +2372,30 @@ std::vector<AiContextBlock> AppController::GetAiContext() const {
 void AppController::PromptAi(const std::string& prompt) {
 #if defined(SMATCHET_WITH_AI)
     if (impl_->aiAssistant_) {
-        // Use a process-local counter so the panel-side and Lua-side turn-gens never
-        // collide. Reading `g_ui.assistantTurnGen` would be safer but pulls a UI-side
-        // global into AppController; for Phase B the controller's caller (the UI panel)
-        // owns the gen-counter mutation and Lua glue lands in Phase E.
-        static std::atomic<uint64_t> s_promptAiSeq{1ULL << 32};
-        const uint64_t turnGen = s_promptAiSeq.fetch_add(1, std::memory_order_relaxed);
-        impl_->aiAssistant_->Submit(turnGen, prompt, impl_->aiAssistant_->GetAiContext());
+        // CPP_CODE_AUDIT.md #33 (PromptAi turns always discarded): route through the SAME
+        // `g_ui.assistantTurnGen` counter the chat panel's own Send path bumps, via the
+        // GetGlobalAiAssistantUiState() seam — not a process-local counter seeded far above
+        // any value assistantTurnGen ever reaches. That old seeding (1<<32) meant the
+        // stale-turn gate (`ui->AssistantTurnGen() != turnGen`) was unconditionally true for
+        // every PromptAi turn, so every delta/final/error callback was silently dropped
+        // after spending real API quota — including wiping the visible chat if a delta
+        // landed mid-stream. Mirrors SmatchetAiAssistantUi.cpp's `++d.assistantTurnGen` /
+        // `--d.assistantTurnGen` bump-then-rollback-on-rejection shape.
+        //
+        // Threading: same pre-existing Phase B contract as `ai.*`'s other Lua-glue calls
+        // (see AppController_LuaBindings.cpp's "Threading expectation" comment above
+        // LuaAiAddContextGlue) — PromptAi is expected to run on the UI thread; a
+        // background-worker Lua script calling it races this write against the panel's
+        // own `++d.assistantTurnGen` the same way it already races `luaContext_`. Not a
+        // new risk introduced here, and no shipped script (SmatchetHooks.lua) calls
+        // `ai.prompt` off the UI thread today.
+        IAiAssistantUiState& uiState = GetGlobalAiAssistantUiState();
+        const uint64_t turnGen = uiState.BumpAssistantTurnGen();
+        const bool accepted = impl_->aiAssistant_->Submit(turnGen, prompt, impl_->aiAssistant_->GetAiContext());
+        if (!accepted) {
+            uiState.RollbackAssistantTurnGen();
+            LOG_WARN("AppController::PromptAi: Submit rejected (no live AI provider or shutting down)");
+        }
     }
 #else
     (void)prompt;

@@ -542,8 +542,8 @@ bool LaunchEphemeralInstance(const std::string& exePath, int port, std::string* 
     const std::string logPath = ComputeSpawnLogPath(port);
     if (outLogPath)
         *outLogPath = logPath;
-    // main.cpp parses `--mcp-port <port>` as two separate argv entries (space-separated),
-    // NOT `--mcp-port=<port>` — using the equals form would silently fall through.
+        // main.cpp parses `--mcp-port <port>` as two separate argv entries (space-separated),
+        // NOT `--mcp-port=<port>` — using the equals form would silently fall through.
 #if defined(_WIN32)
     // CommandLineToArgvW handles quoted whitespace; pass space-separated tokens.
     std::string cmdLine = "\"" + exePath + "\" --ephemeral --mcp-port " + portStr;
@@ -807,34 +807,6 @@ void PostAppQuitBestEffort(const std::string& host, int port, const std::string&
         PostAppQuitBestEffort(cli);
     } catch (...) { // catch-all-ok: exception cleanup is best-effort after a spawn failure.
     }
-}
-
-/// Resolve one relative path-valued arg to an absolute path against the CLI's CWD,
-/// in place. Pass-through for absent/non-string/empty/already-absolute values.
-void NormalizePathArgInPlace(nlohmann::json& out, const char* key) {
-    if (!out.contains(key) || !out[key].is_string())
-        return;
-    const std::string p = out[key].get<std::string>();
-    if (p.empty())
-        return;
-    fs::path path(p);
-    if (path.is_absolute())
-        return;
-    std::error_code ec;
-    fs::path abs = fs::absolute(path, ec);
-    if (!ec) {
-        out[key] = abs.string();
-    }
-}
-
-/// Normalize relative file-path arguments to absolute paths resolved against the CLI's CWD,
-/// since the spawned instance may have a different working directory. Covers both the scenario
-/// result file (`outPath`) and the bucket-E per-test log dump (`outLog`).
-nlohmann::json NormalizeOutPath(const nlohmann::json& argsToSend) {
-    nlohmann::json out = argsToSend;
-    NormalizePathArgInPlace(out, "outPath");
-    NormalizePathArgInPlace(out, "outLog");
-    return out;
 }
 
 /// Phase 1 of SpawnAndRun: discover exe path, bind a free port, launch ephemeral instance,
@@ -1102,8 +1074,19 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
     const std::string requestToken = haveConfiguredToken ? spawnCfg.McpAuthToken : SpawnAuthToken();
     const std::string provisionToken = haveConfiguredToken ? std::string() : requestToken;
     try {
-        // Normalize outPath: relative paths must be made absolute so both processes agree on location.
-        const nlohmann::json argsToSend = NormalizeOutPath(argsToSendRaw);
+        // `outPath`/`outLog` (ui_test.run, scenario.run, perf.dump) are no longer
+        // CLI-CWD-relative — every handler that reads them confines the value under a
+        // fixed <userData> subdir (SECURITY_AUDIT.md path-confinement sweep, #1566) and
+        // REJECTS an absolute path outright. There used to be a normalization step here
+        // that resolved a relative outPath/outLog to absolute against the CLI's CWD "so
+        // both processes agree on location" — that predates the confinement change and is
+        // now actively wrong: it silently turned a valid relative value into one every
+        // confined handler rejects, breaking --spawn for any caller passing a relative
+        // outPath/outLog (CPP_CODE_AUDIT.md #8/#9 follow-up; see
+        // scripts/dev/test-ui-jira-deterministic-backend.sh's outLog handling). Confinement
+        // resolves relative to <userData>, which both processes agree on without any CWD
+        // translation, so argsToSendRaw is forwarded to the spawned child unmodified.
+        const nlohmann::json& argsToSend = argsToSendRaw;
 
         // Phase 1: launch ephemeral instance and wait for MCP ready.
         const int setupResult = SpawnAndRunSetup(commandName, host, port, provisionToken, requestToken);

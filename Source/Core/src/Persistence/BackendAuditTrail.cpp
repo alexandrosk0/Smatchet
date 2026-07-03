@@ -1,6 +1,7 @@
 #include "BackendAuditTrail.h"
 
 #include "ConfigManager.h"
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "StringUtil.h"
 
@@ -399,9 +400,10 @@ std::vector<nlohmann::json> ReadRecentEvents(std::size_t maxEvents, std::string*
             if (line.empty()) {
                 continue;
             }
-            try {
-                cache.Events.push_back(nlohmann::json::parse(line));
-            } catch (...) { // catch-all-ok: skip corrupt partial audit lines
+            std::string parseErr;
+            nlohmann::json parsed = smatchet::json_safe::ParseBounded(line, parseErr);
+            if (parseErr.empty()) { // skip corrupt partial audit lines
+                cache.Events.push_back(std::move(parsed));
             }
         }
         cache.Offset = file.eof() ? end : file.tellg();

@@ -22,6 +22,15 @@
 namespace P4vLaunch {
 
 inline std::wstring QuoteWinArgWidePure(const std::wstring& arg) {
+    // CPP_CODE_AUDIT.md #33 (empty argument dropped): an empty `arg` also has no
+    // whitespace/quote, so it used to take the bare-token fast path below and return
+    // "" (zero characters) — CommandLineToArgvW needs the literal two-character `""`
+    // to preserve an empty argument as its own argv slot; returning nothing makes the
+    // argument vanish when the caller joins args with spaces, silently shifting every
+    // argument after it. Must be checked before the bare-token fast path.
+    if (arg.empty()) {
+        return L"\"\"";
+    }
     // Bare token with no whitespace and no quote: paste verbatim. (A trailing
     // backslash here is harmless because there is no wrap quote to collide
     // with — CommandLineToArgvW treats unquoted backslashes literally.)

@@ -118,9 +118,9 @@ void DrawCallstackViewToggle(AnnotateDrawCtx& ctx, bool streamlinedHide) {
     ImGui::Text("Callstack Frames: %zu", ctx.NRow);
     const ImGuiStyle& stBtn = ImGui::GetStyle();
     const float padH = stBtn.FramePadding.x * 2.f;
-    const float callstackViewBtnW = (std::max)(ImGui::CalcTextSize("Show Raw Text").x + padH,
-                                               (std::max)(ImGui::CalcTextSize("Show Table").x + padH,
-                                                          ImGui::CalcTextSize("Show raw callstack…").x + padH));
+    const float callstackViewBtnW = (std::max)(
+        ImGui::CalcTextSize("Show Raw Text").x + padH,
+        (std::max)(ImGui::CalcTextSize("Show Table").x + padH, ImGui::CalcTextSize("Show raw callstack…").x + padH));
     if (!streamlinedHide) {
         ImGui::SameLine();
         PushAnnotateLinkButtonColors(theme);
@@ -819,6 +819,9 @@ void DrawAssignIssueAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool commitI
                 std::string err;
                 const bool ok = app.SubmitFieldEdit(capturedIssueKey, fieldCopy, {capturedAccountId}, err);
                 app.mainThreadDispatcher.PostToMainThread([ok, err, capturedIssueKey]() {
+                    if (!HasLiveStateInstance()) {
+                        return;
+                    }
                     State().assignCommitInFlight = false;
                     if (ok) {
                         LOG_INFO("Annotate UI: assignee set on %s", capturedIssueKey.c_str());
@@ -853,6 +856,9 @@ void DrawAssignContextCommentAction(AnnotateDrawCtx& ctx, bool readOnlyMode, boo
                 capturedRow.Parsed.LineNumber, capturedRow.Annotate.Changelist, capturedRow.Annotate.Date,
                 capturedRow.Annotate.Approximate, capturedRow.Annotate.LineSnippet, err);
             app.mainThreadDispatcher.PostToMainThread([ok, err, capturedIssueKey]() {
+                if (!HasLiveStateInstance()) {
+                    return;
+                }
                 State().assignCommitInFlight = false;
                 if (ok) {
                     LOG_INFO("Annotate UI: posted annotate context comment for %s.", capturedIssueKey.c_str());
@@ -896,6 +902,9 @@ void DrawAssignQuickCommentTemplates(AnnotateDrawCtx& ctx, const TrackerConfig& 
                     std::string err;
                     const bool ok = app.AddIssueCommentPlain(capturedIssueKey, commentBody, err);
                     app.mainThreadDispatcher.PostToMainThread([ok, err, capturedTitle]() {
+                        if (!HasLiveStateInstance()) {
+                            return;
+                        }
                         State().assignCommitInFlight = false;
                         if (ok) {
                             State().lastUiStatus = "Posted '" + capturedTitle + "' comment.";
@@ -950,6 +959,9 @@ void DrawAssignAndContextAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool co
                 }
                 const bool ok = assigned && commented;
                 app.mainThreadDispatcher.PostToMainThread([ok, err, capturedIssueKey]() {
+                    if (!HasLiveStateInstance()) {
+                        return;
+                    }
                     State().assignCommitInFlight = false;
                     if (ok) {
                         LOG_INFO("Annotate UI: assigned %s and posted annotate context comment.",

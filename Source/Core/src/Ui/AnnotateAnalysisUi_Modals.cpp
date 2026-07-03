@@ -323,6 +323,9 @@ void OpenTrackerUserProfileForP4User(const AppController& app, const std::string
         const bool found = searchOk && !users.empty();
         appMut.mainThreadDispatcher.PostToMainThread(
             [capturedUser, found, bestDisplayName, bestEmail, groups, qerr, gerr]() {
+                if (!HasLiveStateInstance()) {
+                    return;
+                }
                 State().profileInFlight = false;
                 if (!found) {
                     State().profileName = "Past Employee";
@@ -382,6 +385,9 @@ void PrepareAssignModal(const AppController& app, const AnnotateRow& row, const 
         const bool foundAny = searchOk && !users.empty();
         appMut.mainThreadDispatcher.PostToMainThread(
             [capturedUser, foundAny, hasJiraAccount, accountId, displayName]() {
+                if (!HasLiveStateInstance()) {
+                    return;
+                }
                 State().assignInFlight = false;
                 if (!foundAny) {
                     State().assignTitle = std::string("Past Employee (") + capturedUser + ")";
