@@ -1,5 +1,7 @@
 #include "PlaneClient.h"
 #include "PlaneClient_Internal.h"
+
+#include "Json/BoundedJsonParse.h"
 #include "PlaneFieldCatalogPure.h"
 
 #include "Logger.h"
@@ -89,7 +91,8 @@ void AppendPagedResults(const std::string& listUrl, const cpr::Header& headers, 
             }
             return;
         }
-        const nlohmann::json j = nlohmann::json::parse(StripUtf8BomCopy(response.text), nullptr, false);
+        // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
+        const nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(StripUtf8BomCopy(response.text));
         if (j.is_discarded()) {
             if (outWarn && outWarn->empty()) {
                 *outWarn = (resourceLabel != nullptr && resourceLabel[0] != '\0')
@@ -324,7 +327,8 @@ void FetchPlaneCustomFields(const std::string& planeApi, const TrackerConfig& cf
                             " for type " + typeId.substr(0, 8));
             continue;
         }
-        const nlohmann::json pj = nlohmann::json::parse(StripUtf8BomCopy(pResp.text), nullptr, false);
+        // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
+        const nlohmann::json pj = smatchet::json_safe::ParseBoundedOrDiscarded(StripUtf8BomCopy(pResp.text));
         if (pj.is_discarded()) {
             warns.push_back("work-item-properties invalid JSON for type " + typeId.substr(0, 8));
             continue;

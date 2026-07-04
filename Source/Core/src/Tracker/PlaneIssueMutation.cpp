@@ -1,5 +1,7 @@
 #include "PlaneClient.h"
 #include "PlaneClient_Internal.h"
+
+#include "Json/BoundedJsonParse.h"
 #include "PlaneCommentMappingPure.h"
 
 #include "IssueDraft.h"
@@ -517,7 +519,8 @@ Result<std::vector<TrackerIssueComment>, TrackerError> PlaneClient::FetchIssueCo
         return CommentsResult::Err(TrackerErrorFromHttpStatus(resp.status_code, msg));
     }
 
-    const nlohmann::json parsedJson = nlohmann::json::parse(resp.text, nullptr, false);
+    // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
+    const nlohmann::json parsedJson = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
     if (parsedJson.is_discarded()) {
         LOG_ERROR("PlaneClient::FetchIssueComments: invalid JSON for %s", issueKey.c_str());
         return CommentsResult::Err(TrackerErrorParse("Plane issue-comments response was not valid JSON."));

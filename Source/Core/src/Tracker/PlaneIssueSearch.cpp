@@ -1,5 +1,7 @@
 #include "PlaneClient.h"
 #include "PlaneClient_Internal.h"
+
+#include "Json/BoundedJsonParse.h"
 #include "PlaneIssueMappingPure.h"
 
 #include "Logger.h"
@@ -182,7 +184,8 @@ FetchPlaneStatePairs(const std::string& planeApi, const std::string& workspaceSl
         return pairs;
     }
     const std::string statesBody = StripUtf8BomCopy(r.text);
-    nlohmann::json j = nlohmann::json::parse(statesBody, nullptr, false);
+    // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
+    nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(statesBody);
     if (j.is_discarded()) {
         return pairs;
     }
@@ -234,7 +237,8 @@ PlaneIssuePageFetch FetchPlaneIssuePage(const std::string& planeApi, const std::
         std::string apiDetail;
         {
             const std::string tb = StripUtf8BomCopy(response.text);
-            const nlohmann::json ej = nlohmann::json::parse(tb, nullptr, false);
+            // Bounded parse of the untrusted HTTP error body (discarded on failure) — audit: unbounded-recursion-DoS.
+            const nlohmann::json ej = smatchet::json_safe::ParseBoundedOrDiscarded(tb);
             if (!ej.is_discarded() && ej.is_object() && ej.contains("detail")) {
                 apiDetail = JsonFieldToString(ej, "detail");
             }
@@ -267,7 +271,8 @@ PlaneIssuePageFetch FetchPlaneIssuePage(const std::string& planeApi, const std::
         return out;
     }
 
-    nlohmann::json j = nlohmann::json::parse(bodyForJson, nullptr, false);
+    // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
+    nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(bodyForJson);
     if (j.is_discarded()) {
         out.Error = "Plane returned invalid JSON when fetching issues (HTTP 200). Verify Plane URL, workspace slug, "
                     "project UUID, and API key.";
@@ -667,7 +672,8 @@ std::vector<RemoteProject> PlaneClient::ListProjects() {
 
     std::vector<RemoteProject> projects;
     try {
-        const nlohmann::json j = nlohmann::json::parse(StripUtf8BomCopy(resp.text), nullptr, false);
+        // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
+        const nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(StripUtf8BomCopy(resp.text));
         if (j.is_discarded()) {
             LOG_WARN("PlaneClient::ListProjects: invalid JSON in response.");
             return {};
