@@ -94,6 +94,15 @@ void SmatchetUI::drawOmnibar(AppController& app, UiDrawSession& d) {
     if (ImGui::BeginViewportSideBar("##SmatchetOmnibar", viewport, ImGuiDir_Up, barHeight, barFlags)) {
         GridPane& pane = d.focusedPane();
 
+        // Open-frame focus grab: on the frame the omnibar window first appears, request keyboard
+        // focus for the input so the very first keystroke lands (no 1-frame-stale focus). The flag
+        // is consumed by DrawJqlQueryEditorEmbedded's SetKeyboardFocusHere on THIS same frame
+        // (it is checked before the InputText submit below), so focus is granted on the open-edge
+        // rather than a frame later.
+        if (ImGui::IsWindowAppearing()) {
+            d.omniJqlEditor.jqlAcpWantsJqlInputFocus = true;
+        }
+
         // Per-tab persistence: each pane keeps its own omnibar text. On a focus change, load the
         // newly-focused pane's saved text into the shared editor; edits are written back at the end
         // of the frame so switching tabs and returning restores what was typed for that tab. The
@@ -125,8 +134,13 @@ void SmatchetUI::drawOmnibar(AppController& app, UiDrawSession& d) {
         }
 
         // Write this frame's edits back to the focused pane so the text persists when the user
-        // switches tabs (the restore above reloads it when this pane regains focus).
-        pane.omnibarText.assign(d.omniJqlEditor.buf);
+        // switches tabs (the restore above reloads it when this pane regains focus). Only assign
+        // when the buffer actually differs — the bar redraws every frame, so an unconditional
+        // assign() copies (and can reallocate) the std::string each frame even when nothing was
+        // typed. The char-array compare is allocation-free and skips the write in the steady state.
+        if (pane.omnibarText != d.omniJqlEditor.buf) {
+            pane.omnibarText.assign(d.omniJqlEditor.buf);
+        }
     }
     ImGui::End();
 }
