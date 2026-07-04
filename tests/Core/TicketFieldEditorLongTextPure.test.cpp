@@ -2,6 +2,7 @@
 
 #include "TicketFieldEditorLongTextPure.h"
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -138,4 +139,65 @@ TEST_CASE("ComputeRoundTripPreview: Html kind round-trips through the HTML subse
 TEST_CASE("ComputeRoundTripPreview: empty markdown yields empty render, not lossy") {
     const RoundTripPreview rt = ComputeRoundTripPreview(LongTextRichKind::Adf, "");
     CHECK(rt.Lossy == false);
+}
+
+// --- Seed-copy truncation plan + Save-diff baseline (CPP_CODE_AUDIT.md #1 regression) ---
+//
+// The long-text modal loads at most kBufferSize - 1 bytes of the seed into its fixed edit
+// buffer. The Save diff MUST run against what was actually shown (LongTextSeedPlan::Shown):
+// pre-fix it diffed against the untruncated seed, so opening + saving an unmodified >64 KiB
+// GitHub/Jira description silently overwrote the tracker field with the truncated text.
+
+TEST_CASE("PlanSeedCopy: seed within capacity is shown verbatim, not truncated") {
+    const auto plan = TicketFieldEditorLongTextPure::PlanSeedCopy("hello", 64);
+    CHECK(plan.Shown == "hello");
+    CHECK(plan.Truncated == false);
+}
+
+TEST_CASE("PlanSeedCopy: seed exactly at capacity - 1 still fits") {
+    const std::string seed(63, 'x');
+    const auto plan = TicketFieldEditorLongTextPure::PlanSeedCopy(seed, 64);
+    CHECK(plan.Shown == seed);
+    CHECK(plan.Truncated == false);
+}
+
+TEST_CASE("PlanSeedCopy: seed at capacity is cut to capacity - 1 and flagged") {
+    const std::string seed(64, 'x');
+    const auto plan = TicketFieldEditorLongTextPure::PlanSeedCopy(seed, 64);
+    CHECK(plan.Shown.size() == 63);
+    CHECK(plan.Shown == seed.substr(0, 63));
+    CHECK(plan.Truncated == true);
+}
+
+TEST_CASE("PlanSeedCopy: 128 KiB seed against the modal's real 64 KiB buffer") {
+    const std::size_t kBufferSize = 64 * 1024; // ActiveLongTextEditorState::kBufferSize
+    const std::string seed(128 * 1024, 'y');
+    const auto plan = TicketFieldEditorLongTextPure::PlanSeedCopy(seed, kBufferSize);
+    CHECK(plan.Shown.size() == kBufferSize - 1);
+    CHECK(plan.Truncated == true);
+}
+
+TEST_CASE("PlanSeedCopy: zero and one-byte capacities degrade to an empty plan") {
+    CHECK(TicketFieldEditorLongTextPure::PlanSeedCopy("abc", 0).Shown.empty());
+    const auto one = TicketFieldEditorLongTextPure::PlanSeedCopy("abc", 1);
+    CHECK(one.Shown.empty());
+    CHECK(one.Truncated == true);
+}
+
+TEST_CASE("ShouldQueueLongTextEdit: unmodified truncated buffer never queues a write-back") {
+    const std::size_t kBufferSize = 64 * 1024;
+    const std::string fullSeed(100 * 1024, 'z');
+    const auto plan = TicketFieldEditorLongTextPure::PlanSeedCopy(fullSeed, kBufferSize);
+    // The buffer content on an untouched open-then-save is exactly plan.Shown.
+    const std::string& untouchedBuffer = plan.Shown;
+    // Regression: diffing against the SHOWN seed → no PUT. (Diffing against fullSeed — the
+    // pre-fix behaviour — would report a change and queue the truncating write-back.)
+    CHECK(TicketFieldEditorLongTextPure::ShouldQueueLongTextEdit(untouchedBuffer, plan.Shown) == false);
+    CHECK(untouchedBuffer != fullSeed);
+}
+
+TEST_CASE("ShouldQueueLongTextEdit: a real edit still queues") {
+    CHECK(TicketFieldEditorLongTextPure::ShouldQueueLongTextEdit("edited", "seed") == true);
+    CHECK(TicketFieldEditorLongTextPure::ShouldQueueLongTextEdit("", "seed") == true);
+    CHECK(TicketFieldEditorLongTextPure::ShouldQueueLongTextEdit("same", "same") == false);
 }

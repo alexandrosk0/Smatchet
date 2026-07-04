@@ -377,7 +377,7 @@ void CommitLongTextEdit(std::vector<PendingFieldEdit>& pendingEdits) {
     // equal its own untruncated seed), queuing a save that overwrites the tracker field with
     // truncated text purely because it was opened and closed — see CPP_CODE_AUDIT.md #1.
     const std::string& seed = s_ActiveLongTextState.BufferSeedShown;
-    if (newValue != seed) {
+    if (TicketFieldEditorLongTextPure::ShouldQueueLongTextEdit(newValue, seed)) {
         PendingFieldEdit edit;
         edit.IssueId = s_ActiveLongTextState.IssueId;
         edit.Field = s_ActiveLongTextState.Field;
@@ -450,13 +450,15 @@ void DrawLongTextFooter(const LongTextModalCtx& ctx, std::vector<PendingFieldEdi
 
 // Copies `seed` into Buffer, truncating to kBufferSize - 1 if needed, and records exactly
 // what was written (BufferSeedShown) plus whether truncation occurred (SeedTruncated). Buffer
-// must already be sized (assign'd) by the caller before this runs.
+// must already be sized (assign'd) by the caller before this runs. The truncation rule lives
+// in TicketFieldEditorLongTextPure::PlanSeedCopy so it stays unit-tested.
 void SeedLongTextBuffer(const std::string& seed) {
-    const size_t copyLen = (std::min)(seed.size(), ActiveLongTextEditorState::kBufferSize - 1);
-    std::memcpy(s_ActiveLongTextState.Buffer.data(), seed.data(), copyLen);
-    s_ActiveLongTextState.Buffer[copyLen] = '\0';
-    s_ActiveLongTextState.SeedTruncated = seed.size() > copyLen;
-    s_ActiveLongTextState.BufferSeedShown.assign(seed.data(), copyLen);
+    const TicketFieldEditorLongTextPure::LongTextSeedPlan plan =
+        TicketFieldEditorLongTextPure::PlanSeedCopy(seed, ActiveLongTextEditorState::kBufferSize);
+    std::memcpy(s_ActiveLongTextState.Buffer.data(), plan.Shown.data(), plan.Shown.size());
+    s_ActiveLongTextState.Buffer[plan.Shown.size()] = '\0';
+    s_ActiveLongTextState.SeedTruncated = plan.Truncated;
+    s_ActiveLongTextState.BufferSeedShown = plan.Shown;
 }
 
 } // namespace

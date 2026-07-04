@@ -543,6 +543,9 @@ add_executable(SmatchetTests
     # SSRF guard — Lua imgui.image http(s)-URL refusal allowlist. Header-only pure predicate.
     Core/LuaImagePathPolicyPure.test.cpp
     Core/TicketFieldEditorDurationPopupPure.test.cpp
+    # Time-tracking sort comparator lifted from TicketGridModel.cpp (TEST_COVERAGE_GAP_MAP.md
+    # Tier 1 #1) — dependency-light, so tests link it without the grid model's heavy deps.
+    Core/TicketGridDurationSortPure.test.cpp
     Core/IsDescriptionLikeFieldId.test.cpp
     Core/TrackerFieldPayloadPure.test.cpp
     Core/TrackerFieldCatalogPure.test.cpp
@@ -880,6 +883,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerLabelsPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerDateTimePure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/TicketFieldEditorLongTextPure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/TicketGridDurationSortPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldPayloadPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldCatalogPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlProjectScope.cpp"
