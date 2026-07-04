@@ -1,6 +1,7 @@
 #include "PlaneClient.h"
 #include "PlaneClient_Internal.h"
 
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "StringUtil.h"
 #include "TrackerHttpClient.h"
@@ -97,7 +98,8 @@ bool ResolvePlaneProject(const std::string& planeApi, const TrackerConfig& cfg, 
         return false;
     }
 
-    const nlohmann::json j = nlohmann::json::parse(StripUtf8BomCopy(response.text), nullptr, false);
+    // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
+    const nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(StripUtf8BomCopy(response.text));
     if (j.is_discarded()) {
         const std::string err =
             "Plane project list returned invalid JSON while resolving project '" + projectKey + "'.";

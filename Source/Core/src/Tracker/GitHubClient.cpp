@@ -6,6 +6,7 @@
 #include "GitHubCommentMappingPure.h"
 #include "GitHubIssueSearch.h"
 #include "IssueDraft.h"
+#include "Json/BoundedJsonParse.h"
 #include "LabelEditDiffPure.h"
 #include "Logger.h"
 #include "TrackerFieldSchema.h"
@@ -411,7 +412,8 @@ GitHubClient::FetchIssueComments(const std::string& issueKey) {
                       issueKey.c_str(), msg.c_str());
             return CommentsResult::Err(TrackerErrorFromHttpStatus(static_cast<int>(resp.status_code), msg));
         }
-        const nlohmann::json parsedJson = nlohmann::json::parse(resp.text, nullptr, false);
+        // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
+        const nlohmann::json parsedJson = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
         if (parsedJson.is_discarded() || !parsedJson.is_array()) {
             LOG_ERROR("GitHubClient::FetchIssueComments: invalid JSON / not an array on page %d for %s", page,
                       issueKey.c_str());

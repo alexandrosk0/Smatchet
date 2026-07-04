@@ -1,5 +1,7 @@
 #include "LinearClientHelpers.h"
 
+#include "Json/BoundedJsonParse.h"
+
 #include <cctype>
 #include <limits>
 #include <string>
@@ -191,7 +193,9 @@ std::string ExtractLinearErrorMessage(int httpStatus, const std::string& body) {
     if (body.empty()) {
         return fallback;
     }
-    nlohmann::json parsed = nlohmann::json::parse(body, nullptr, /*allow_exceptions=*/false);
+    // `body` is the untrusted HTTP error response — bounded parse (discarded on failure) so a
+    // depth bomb in an error body can't crash the process (audit: unbounded-recursion-DoS).
+    nlohmann::json parsed = smatchet::json_safe::ParseBoundedOrDiscarded(body);
     if (parsed.is_discarded()) {
         return fallback;
     }
