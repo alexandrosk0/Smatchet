@@ -163,3 +163,19 @@ TEST_CASE("ParseBoundedOrDiscarded · a literal JSON null is a SUCCESS (null, no
     CHECK_FALSE(j.is_discarded());
     CHECK(j.is_null());
 }
+
+TEST_CASE("ParseBoundedOrDiscarded · a discarded result answers tracker guard checks safely" *
+          doctest::test_suite("[high-risk]")) {
+    // Several throwing tracker sites (JiraClient::ListProjects, GitHubClient rate-limit banner /
+    // CreateIssue, JiraActivityFeed, ExtractGitHubErrorMessage) keep their existing try/catch and
+    // gate on is_array() / is_object() / contains() before touching the parsed value. Swapping the
+    // throwing json::parse for this helper is only safe if those type checks answer false WITHOUT
+    // throwing on a discarded (failed/depth-bombed) result — so a hostile body deterministically
+    // takes the failure path instead of ever building a deep DOM.
+    const nlohmann::json d = js::ParseBoundedOrDiscarded("{not json");
+    REQUIRE(d.is_discarded());
+    CHECK_FALSE(d.is_array());
+    CHECK_FALSE(d.is_object());
+    CHECK_FALSE(d.contains("resources"));
+    CHECK_FALSE(d.contains("message"));
+}

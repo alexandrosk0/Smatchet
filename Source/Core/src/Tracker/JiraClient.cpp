@@ -1,5 +1,6 @@
 #include "JiraClient.h"
 
+#include "Json/BoundedJsonParse.h"
 #include "JqlProjectScope.h"
 #include "Logger.h"
 #include "TrackerHttpUtils.h"
@@ -122,7 +123,9 @@ std::vector<RemoteProject> JiraClient::ListProjects() {
 
     std::vector<RemoteProject> projects;
     try {
-        const nlohmann::json j = nlohmann::json::parse(resp.text);
+        // Bounded parse — the try can't catch a depth-bomb's destructor-time SIGSEGV
+        // (audit: unbounded-recursion-DoS). Discarded on failure → !is_array() path below.
+        const nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
         if (!j.is_array()) {
             LOG_WARN("JiraClient::ListProjects: unexpected response shape (not an array).");
             return {};
