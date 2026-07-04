@@ -1091,12 +1091,11 @@ void DrawOutboundConsentModal(AppController& app, UiDrawSession& d, const ViewDe
     ImGui::SameLine();
     ImGui::TextDisabled("(audit-trail excluded; fetched on send if enabled)");
     if (ImGui::TreeNode("What gets sent")) {
-        ImGui::TextWrapped(
-            "selected_tickets, visible_rows, active_ticket and active_view are pulled from the focused "
-            "grid pane — issue ids, summaries, statuses and field values already visible on screen. "
-            "audit_trail (off by default) additionally includes assignee emails and freeform comments. "
-            "Your global/project agents.md is prepended as the system prompt, and your typed message is "
-            "sent verbatim. Nothing else leaves this machine.");
+        ImGui::TextWrapped("selected_tickets, visible_rows, active_ticket and active_view are pulled from the focused "
+                           "grid pane — issue ids, summaries, statuses and field values already visible on screen. "
+                           "audit_trail (off by default) additionally includes assignee emails and freeform comments. "
+                           "Your global/project agents.md is prepended as the system prompt, and your typed message is "
+                           "sent verbatim. Nothing else leaves this machine.");
         ImGui::TreePop();
     }
     ImGui::Spacing();
@@ -1131,8 +1130,7 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     // dropped suffix with no feedback. The callback records the dropped byte
     // count; we toast it below. (aiassistant-silent-8kib-paste-truncation)
     const ImGuiInputTextFlags inputFlags = ImGuiInputTextFlags_EnterReturnsTrue |
-                                           ImGuiInputTextFlags_CtrlEnterForNewLine |
-                                           ImGuiInputTextFlags_CallbackResize;
+                                           ImGuiInputTextFlags_CtrlEnterForNewLine | ImGuiInputTextFlags_CallbackResize;
     const bool enterSubmitted =
         ImGui::InputTextMultiline("##AiAssistantInput", s_inputCharBuf.data(), s_inputCharBuf.size(),
                                   ImVec2(-1.0f, inputH), inputFlags, &InputBufferResizeCallback);
@@ -1145,14 +1143,13 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     // hard 8 KB cap and the over-cap suffix is gone. Rounded to whole KB for the
     // message; the title is a plain translated string.
     if (s_inputTruncatedDroppedBytes > 0) {
-        const int droppedKb =
-            static_cast<int>((s_inputTruncatedDroppedBytes + 1023u) / 1024u); // round up, min 1 KB
+        const int droppedKb = static_cast<int>((s_inputTruncatedDroppedBytes + 1023u) / 1024u); // round up, min 1 KB
         const int limitKb = kInputBufCap / 1024;
-        SmatchetToastManager::Instance().Push(
-            SmatchetLocalization::T("ai.paste_truncated.title", "Paste truncated"),
-            SmatchetLocalization::Format("ai.paste_truncated.body", "%d KB dropped (input limit %d KB)", droppedKb,
-                                         limitKb),
-            ToastType::Warning, 5000);
+        SmatchetToastManager::Instance().Push(SmatchetLocalization::T("ai.paste_truncated.title", "Paste truncated"),
+                                              SmatchetLocalization::Format("ai.paste_truncated.body",
+                                                                           "%d KB dropped (input limit %d KB)",
+                                                                           droppedKb, limitKb),
+                                              ToastType::Warning, 5000);
         LOG_WARN("AiAssistantUi: paste truncated — %zu bytes dropped (input cap %d bytes).",
                  s_inputTruncatedDroppedBytes, kInputBufCap);
         s_inputTruncatedDroppedBytes = 0;

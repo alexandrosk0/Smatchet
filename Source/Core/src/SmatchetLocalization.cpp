@@ -657,8 +657,7 @@ const TranslationEntry kEntries[] = {
     {"ai.clear_context", "Clear Context", u8"Effacer le contexte"},
     {"ai.thinking", "AI is thinking...", u8"L'IA réfléchit..."},
     {"ai.paste_truncated.title", "Paste truncated", u8"Collage tronqué"},
-    {"ai.paste_truncated.body", "%d KB dropped (input limit %d KB)",
-     u8"%d Ko supprimés (limite de saisie %d Ko)"},
+    {"ai.paste_truncated.body", "%d KB dropped (input limit %d KB)", u8"%d Ko supprimés (limite de saisie %d Ko)"},
 
     {"log.min_level", "Min log level", u8"Niveau minimal du journal"},
     {"log.tracker_bodies", "Log Tracker HTTP bodies (truncated)", u8"Journaliser les corps HTTP du suivi (tronqués)"},
