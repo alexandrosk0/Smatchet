@@ -135,7 +135,9 @@ TrackerReachabilityProbeResult GitHubClient::ProbeReachability(const TrackerConf
         std::ostringstream oss;
         oss << "HTTP 200";
         try {
-            const nlohmann::json j = nlohmann::json::parse(resp.text);
+            // Bounded parse — the try can't catch a depth-bomb's destructor-time SIGSEGV
+            // (audit: unbounded-recursion-DoS). Discarded on failure → the guards below skip.
+            const nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
             if (j.contains("resources") && j["resources"].contains("core")) {
                 const auto& core = j["resources"]["core"];
                 const int limit = core.value("limit", 0);
@@ -638,7 +640,9 @@ Result<std::string, TrackerError> GitHubClient::CreateIssue(const nlohmann::json
     }
 
     try {
-        const nlohmann::json j = nlohmann::json::parse(resp.text);
+        // Bounded parse — the try can't catch a depth-bomb's destructor-time SIGSEGV
+        // (audit: unbounded-recursion-DoS). Discarded on failure → value() below hits the catch.
+        const nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
         const std::int64_t number = j.value("number", static_cast<std::int64_t>(0));
         if (number <= 0) {
             outError = "GitHubClient::CreateIssue: response missing issue 'number'";

@@ -1,5 +1,7 @@
 #include "GitHubClientHelpers.h"
 
+#include "Json/BoundedJsonParse.h"
+
 #include <nlohmann/json.hpp>
 
 #include <cctype>
@@ -268,7 +270,9 @@ std::string FormatGitHubIssueKey(const std::string& owner, const std::string& re
 std::string ExtractGitHubErrorMessage(int httpStatus, const std::string& body) {
     if (!body.empty()) {
         try {
-            const auto j = nlohmann::json::parse(body);
+            // Bounded parse — the try can't catch a depth-bomb's destructor-time SIGSEGV
+            // (audit: unbounded-recursion-DoS). Discarded on failure → !is_object() path below.
+            const auto j = smatchet::json_safe::ParseBoundedOrDiscarded(body);
             if (j.is_object() && j.contains("message") && j["message"].is_string()) {
                 return j["message"].get<std::string>();
             }

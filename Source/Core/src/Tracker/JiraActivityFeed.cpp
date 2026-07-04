@@ -1,6 +1,7 @@
 #include "JiraActivityFeed.h"
 
 #include "JiraClient.h"
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "StringUtil.h"
 #include "Tracker/JqlEscape.h"
@@ -220,7 +221,9 @@ JiraClient::FetchUserActivity(const TrackerConfig& cfg, const std::string& accou
             return FeedResult::Err(TrackerErrorFromHttpStatus(resp.status_code, outError));
         }
         try {
-            auto j = nlohmann::json::parse(resp.text);
+            // Bounded parse — the try can't catch a depth-bomb's destructor-time SIGSEGV
+            // (audit: unbounded-recursion-DoS). Discarded on failure → value() below hits the catch.
+            auto j = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
             const auto issues = j.value("issues", nlohmann::json::array());
             if (issues.is_array()) {
                 progress.Total.fetch_add(static_cast<int>(issues.size()));
