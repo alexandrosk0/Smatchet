@@ -84,7 +84,7 @@ std::string ResolveIssueUuid(const std::string& apiUrl, const std::string& apiKe
     // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
     // SMATCHET_DEVIATION(rule=duplication): the build-body → TrackerPostLogged → bounded-parse →
     // status/errors[] check is the standard Linear GraphQL call shape shared by the distinct
-    // read/resolve callers (ResolveIssueUuid here, ResolveTeamIdByKey in LinearClient); each has
+    // read/resolve callers (ResolveIssueUuid here, ResolveCatalogTeamId in LinearClient); each has
     // different downstream extraction, so per ADR-0015 an exemption is preferred over abstracting
     // the prefix across unrelated call sites.
     nlohmann::json parsed = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);

@@ -1,7 +1,7 @@
 // BoundedJsonParse.test.cpp — pure doctest for the shared depth/node-bounded JSON
 // parse helper (smatchet::json_safe::ParseBounded). This is the ONE bounded-parse
 // implementation that the decode_json Lua sink, the MCP REST / JSON-RPC POST
-// handlers, and the Lua-MCP-tool params path all route through (PR #1271). Testing
+// handlers, and the Lua-MCP-tool params path all route through this shared helper. Testing
 // the helper directly proves every ingress is depth/node bounded without standing
 // up each transport.
 //
