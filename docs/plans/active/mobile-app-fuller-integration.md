@@ -17,7 +17,7 @@ done**. Corrected per-slice status (evidence = current-tree `file:line`):
 | **P1.1** Offline replay | ✅ **Shipped** | The replay/sync drive runs every frame in the **shared Core loop** (not a separate Android hook): `SmatchetUI.cpp:470–473` calls `TickOfflineCreates` / `TickOfflineFieldEdits` / `SyncWithBackend`; reachability transitions `AppController_Connectivity.cpp:72–78,118–120`; dead-letter surface `SmatchetOfflineQueueUi.cpp`. Runs on Android because the loop is shared. |
 | **P1.2** Saved views + touch switcher | ✅ **Shipped this PR** | The missing piece — a dedicated touch tab-strip quick-switcher in the grid area — now ships: `drawMobileViewQuickSwitcher` (`SmatchetViewsDashboardUi.cpp`) draws a horizontal-scroll strip of saved-view tabs (active highlighted) + a trailing "+" between the app bar and content dock, reserved by `drawMobileShell` (`SmatchetMobileShellUi.cpp`, `kViewSwitcherBaseHeightPx`). Reuses the existing dirty-aware `viewsRequestActivate` / `viewsCreateNewView`; Grid-page-only (off-grid pages reserve no band). Emulator-verified (switch + dirty discard-confirm). Earlier pieces still hold: view commands (`ViewCommands.cpp:151–282`), mobile drawer + modals (`buildMobileViewsCtx` / `drawMobileDrawerViews` / `drawMobileViewsModals`). |
 | **P1.3** Touch cell editors | ❌ **Not started** (the spike-first, highest-risk slice) | `kMobileInlineEditBuild=true` on Android (`TicketFieldEditor.cpp:71–73`) + `SingleClickToEditGridCells` default-on exist, but **no long-press detector** (`SmatchetAndroidImeBridge.cpp`) and **no touch Save/Cancel affordance** for the four combo/modal editors. |
-| **P1.4** Attachments | ✅ **Shipped** (decode cross-platform) | `SmatchetImageTextureCache.cpp:139–157` (`DecodeWithStb`, no `_WIN32` guard) + renderer-agnostic `RegisterUserTexture`; thumbnails enabled globally. **Residual:** the *optional* Win32-only bitmap thumbnail-to-file at `SmatchetAttachmentPreviewUi.cpp:112` (low priority). |
+| **P1.4** Attachments | ✅ **Shipped** (decode cross-platform; residual ported this PR) | `SmatchetImageTextureCache.cpp:139–157` (`DecodeWithStb`, no `_WIN32` guard) + renderer-agnostic `RegisterUserTexture`; thumbnails enabled globally. **Residual now shipped:** the previously Win32-only bitmap thumbnail decode (`SmatchetAttachmentPreviewUi.cpp`) is cross-platform — WIC (with decode-scale) kept on Windows, a new stb full-decode + pure area-average `DownscaleRgba32` (`Source/Core/include/Ui/RgbaDownscalePure.h`, unit-tested `tests/Core/RgbaDownscalePure.test.cpp`) on non-Windows, bounded by a 32 MiB file read + 16 MP pre-decode cap, downscaling to ≤2048 px. Same thumbnail UX on every platform. |
 | **P1.5** Multi-backend | ✅ **Shipped this PR** | `ITrackerBackend` abstraction + Jira / Plane / GitHub / Linear all in Core; the missing piece — a touch-first backend picker — now ships: `DrawTrackerBackendSelection` (`SmatchetPreferencesUi.cpp:234`) forks on `d.effectiveUiMode == EffectiveUiMode::Mobile` to render the four backends as full-width `ImGui::Selectable` rows (the drawer page-list touch idiom) instead of the tiny desktop `ImGui::Combo`, writing the **same** `d.trackerTypeBuf` so `DrawTrackerBackendConfig` + the multi-backend layer are inherited unchanged (a widget swap, not new backend code). |
 | **P1.6** Accessibility | ✅ **Research shipped 2026-06-20**; **accent-contrast fix shipped**; **fontScale seam shipped this PR** | Research: [`docs/mobile/PHASE1_ACCESSIBILITY_RESEARCH.md`](../../mobile/PHASE1_ACCESSIBILITY_RESEARCH.md) + Pillar-4 backlog [`debt/2026-06-20-mobile-accessibility-pillar4.md`](../../self-improvement/categories/debt/2026-06-20-mobile-accessibility-pillar4.md). **Accent fix:** `SmatchetTheme.cpp::ApplySmatchetDark` accent darkened `(0.35,0.55,0.95)`→`(0.26,0.42,0.72)` (Finding 3, white-on-fill 2.90→4.67:1 AA, on-dark 3.16:1 UI-floor); doctest pin `tests/Core/SmatchetThemeAccentContrast.test.cpp`. **ModernDark follow-up (stacked PR):** `ApplyModernDark` accent darkened `(0.45,0.65,0.95)`→its own `(0.29,0.42,0.62)` — test 4 cases / 43 assertions (all 14 re-tinted slots pinned RGBA). **fontScale seam (P1.6b, this PR):** OS accessibility "Font size" (`Configuration.fontScale`) now scales mobile text — JNI reader `SmatchetActivity.getDisplayFontScale()` → `android_main.cpp` `QueryDisplayFontScale` → composed into the **font-atlas px only** via `SmatchetTheme::ComposeFontDensityScale` (header-only, `[0.85,2.0]` clamped); `ApplyUiDensityScale`/`HostDensityScale()` stay raw-DPI (Auto-mode safe). Doctest `tests/Core/SmatchetThemeDensity.test.cpp` (6 cases). Metrics-scaling = Scope-2 follow-up (Pillar-4 debt). |
 
@@ -94,7 +94,7 @@ Research slice: Android **TalkBack** / screen-reader exposure for an immediate-m
 | P1.1 | Offline replay | `Source/Mobile/Android/android_main.cpp` (frame-loop tick), `Source/Core/src/Sync/OfflineQueueService.*`, `TicketSyncService.*`, a dead-letter UI surface |
 | P1.2 | Saved views | `Source/Core/src/Ui/Smatchet*Ui*.cpp` (touch switcher), `Source/Core/src/Commands/ViewCommands.cpp` |
 | P1.3 | Touch editors | `Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp`, `Source/Core/src/TicketFieldEditor.cpp`, `Source/Core/src/Tracker/TrackerLabelsEditor.cpp`, `Source/Core/src/Tracker/TrackerDateTimeFieldEditor.cpp`, `Source/Core/include/TicketFieldEditorCommitPolicyPure.h`, `Source/Mobile/Android/android_main.cpp` (long-press), `SmatchetAndroidImeBridge.cpp` |
-| P1.4 | Attachments | verify-on-device of `Source/Core/src/Persistence/SmatchetImageTextureCache.cpp` (existing cross-platform stb_image path); `Source/Core/src/Ui/SmatchetAttachmentPreviewUi.cpp:112` only if the optional `SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS` thumbnail is in scope |
+| P1.4 | Attachments | ✅ shipped: `Source/Core/src/Ui/SmatchetAttachmentPreviewUi.cpp` (WIC kept `#if _WIN32`, new stb decode `#else` arm, `SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS` now unconditional), NEW `Source/Core/include/Ui/RgbaDownscalePure.h` (pure area-average downscale) + NEW `tests/Core/RgbaDownscalePure.test.cpp` + `tests/CMakeLists.txt` registration. Underlying cross-platform stb path `Source/Core/src/Persistence/SmatchetImageTextureCache.cpp` already shipped. |
 | P1.5 | Multi-backend | touch backend-selection UI (depends P1.3) |
 | P1.6 | a11y | research doc + Pillar-4 backlog entry only |
 
@@ -126,6 +126,7 @@ Per [`docs/guides/perf-workflow.md`](../../guides/perf-workflow.md), each Source
 - **P1.5 Backend picker**: no steady-state scenario (the picker is a `Combo`↔`Selectable` widget swap rendered only inside the `EffectiveUiMode::Mobile` fork, while the Preferences page is open — never on the grid/scroll hot path) — assert *absence* of per-frame cost: the four `Selectable`s are O(1) + allocation-free, and the desktop `Combo` arm's codegen is unchanged (zero desktop regression by construction). No mobile perf scenario exists yet (same gap as P1.2/P1.3); CI **Perf PR-fast** is the authoritative headless gate.
 - **P1.6 Accent-contrast fix (this PR)**: **zero hot-path delta — pure compile-time color constant.** The change replaces `ImVec4` literals inside `ApplySmatchetDark`, which runs once per theme-apply (boot + explicit theme switch), never per frame. No new branches, allocations, or call sites; the assignment count and codegen shape are identical to before (same `colors[ImGuiCol_*] = ImVec4(...)` writes, different constants). No steady-state scenario applies; no `perf-run.sh` subset needed. Per-frame UI cost is provably unchanged.
 - **P1.6b fontScale seam (this PR)**: **zero steady-state delta — the only new Core symbol (`ComposeFontDensityScale`) is a header-only pure multiply called exclusively from the Android host on boot (`InitImGuiFirstTime`) and on `APP_CMD_CONFIG_CHANGED`, never per frame.** Desktop never calls it (no `Configuration.fontScale`), so desktop codegen is untouched by construction. The one perf-sensitive path is the **CONFIG_CHANGED atlas rebuild** (now also triggered by a runtime font-size change, not just a DPI move) — already wrapped in the Pillar-2 100 ms UI-block timer + `SLOGE` over-budget guard, and the clamp `[0.85, 2.0]` bounds the atlas size so a pathological OEM value can't blow that budget or exhaust texture memory. No `perf-run.sh` subset applies (no steady-state surface); CI **Perf PR-fast** is the headless backstop.
+- **P1.4 Thumbnail decode (this PR)**: **zero UI-thread steady-state delta on every platform.** The decode (WIC on Windows, stb full-decode + `DownscaleRgba32` elsewhere) runs **off the UI thread** on the existing S5 worker-pool path (`MaybeKickThumbnailDecode` → `LaunchBackgroundTask`; upload posted back via `PostToMainThread`), rate-limited to `kMaxConcurrentThumbnailDecodes=4`, and **once per attachment** (cached after upload) — never per-frame, so Pillar-1 (≤6.94 ms) + Pillar-2 (no >100 ms freeze) hold by construction. The new `DownscaleRgba32` is O(srcW·srcH) bounded by the 16 MP pre-decode cap, on the worker. Windows codegen unchanged (WIC arm untouched) → zero desktop regression. Memory: the stb arm transiently holds full-res RGBA (≤16 MP ≈ 64 MiB per in-flight decode, ≤4 concurrent) before downscaling — a bounded worker-thread transient, not steady-state/UI cost (WIC decode-scales so it never materialises that buffer). No mobile perf scenario exists yet (same gap as P1.2/P1.3/P1.5); CI **Perf PR-fast** is authoritative.
 - Each slice's execution plan carries its own filled Perf-gate section; `perf-gatekeeper` runs the diff→scenario subset at PR time.
 
 ## Risks / non-goals
@@ -282,6 +283,44 @@ _(per-slice; appended as each PR ships)_
   `[0.85,2.0]` clamp incl. exact bounds, non-finite/non-positive fallback for both args). 4 files
   (`Ui/SmatchetThemeDensity.h`, `SmatchetActivity.java`, `android_main.cpp`, the test). Built + ran the
   Core test rig on Windows (below); the Android host code compiles only via the NDK (verification note).
+- **2026-06-27 — P1.4 residual: cross-platform bitmap attachment thumbnail decode (this PR).** Ported the
+  last Win32-only piece of P1.4 — the optional bitmap thumbnail-to-texture decode at
+  `SmatchetAttachmentPreviewUi.cpp` (was behind a `_WIN32`-only `SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS`).
+  **User-locked design ("Downscale (faithful)")**: keep the shipped **WIC** path (with its `IWICBitmapScaler`
+  decode-scale) untouched on Windows — zero desktop regression — and add a **stb_image** decode arm on every
+  other platform that reproduces the same UX. Because stb cannot decode-scale the way WIC does (no
+  `stb_image_resize` vendored), the stb arm full-decodes then **CPU area-average downscales** to the same
+  ≤2048 px longest-side budget the WIC scaler enforces. New pure seam
+  `Source/Core/include/Ui/RgbaDownscalePure.h` (`FitWithinLongestSide` + `DownscaleRgba32`: ImGui-free,
+  allocation-bounded box-average — unit-tested on the doctest rig). Restructured the decode TU:
+  `SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS` now **unconditional**; shared constants
+  (`kMaxThumbnailDimension = 2048`, `kMaxConcurrentThumbnailDecodes = 4`) hoisted above the platform split;
+  WIC under `#if defined(_WIN32)`, the new stb arm under `#else` with **memory-budget guards stb lacks
+  natively** — a 32 MiB bounded file read + a `stbi_info_from_memory` 16 MP pre-decode pixel cap (DoS guard
+  mirroring `SmatchetImageTextureCache.cpp`'s `DecodeWithStb`) before `stbi_load_from_memory`, then the
+  longest-side downscale. stb is included **declarations-only** (the single `STB_IMAGE_IMPLEMENTATION` lives in
+  `SmatchetImageTextureCache.cpp`, same Core lib, so the `stbi_*` symbols link there). The off-thread decode
+  scaffold (`MaybeKickThumbnailDecode` → worker pool → main-thread upload) and the renderer-agnostic upload
+  (`CreateAttachmentTextureFromRgba` / `RegisterUserTexture` / `ImTextureData`) were **already** cross-platform —
+  only the DECODE was Win32-only. 2 files modified (`SmatchetAttachmentPreviewUi.cpp`, `tests/CMakeLists.txt`)
+  + 2 new (`RgbaDownscalePure.h`, `tests/Core/RgbaDownscalePure.test.cpp`). Built both targets: Windows
+  doctest rig (WIC arm + pure helper) + real Android x86_64 NDK (stb arm compiles clean on Clang 17,
+  `libSmatchetMobile.so` links). DRY exemption for the idiomatic ImGui-localization + Win32 preamble clone
+  (see § Deviations).
+- **2026-06-27 — P1.4 CodeRabbit round on #1572: fail-closed thumbnail decode budget (`9247fc6e`).** CR
+  flagged the stb decode-budget gate: the original code wrapped the `kMaxThumbnailDecodePixels` dimension
+  check *inside* `if (stbi_info_from_memory(...) != 0)`, so a header that **failed** info-parse skipped the
+  budget entirely and fell through to an unbounded `stbi_load_from_memory` — a DoS hole (attacker crafts a
+  header `stbi_info` rejects but `stbi_load` decodes, bypassing the cap; `stbi_info`/`stbi_load` take
+  different code paths and can disagree). Fix: (1) **fail closed** — `stbi_info_from_memory == 0` now returns
+  an error instead of skipping the gate; (2) the budget check is **unconditional** (overflow-safe
+  `unsigned long long` product, rejects `infoW/H <= 0`); (3) **defense-in-depth** — re-checks decoded `w*h`
+  against the cap AFTER the decode (decoded dims can diverge from the header path) before the RGBA copy,
+  freeing `pix` on overflow. 1 file (`SmatchetAttachmentPreviewUi.cpp`, +21/-7). Compiled clean
+  (`SmatchetCore_DX12` object), lint diff-gate PASS, **security-review CLEAN** (no CRITICAL/HIGH/MEDIUM; the
+  reported hole genuinely fixed; one P3 awareness-only note — `STBI_MAX_DIMENSIONS` left at the stb default
+  `1<<24` per side vs the 16 MP area cap, backstopped by the existing 32 MiB file cap — out of scope for
+  this commit).
 
 ## Deviations from plan
 
@@ -418,6 +457,28 @@ _(per-slice)_
   byte-for-byte (same env-acquire / `JNI_EDETACHED` attach, `ExceptionClear` on missing-method,
   `DeleteLocalRef`, false-safe default), and (b) the Android `assembleDebug` build + on-emulator font-scale
   confirmation recorded under § Verification (actual).
+- **P1.4 — "no new decode code" premise was wrong; a pure downscale helper was required (2026-06-27).** The
+  re-scoped slice (plan line 79) predicted "**No new dependency, likely no new decode code**" — verify the
+  existing cross-platform `SmatchetImageTextureCache.cpp` path on device and *only* port the optional bitmap
+  thumbnail if in scope. The port itself **did** need new code: WIC decode-scales during the pixel pull, but
+  stb_image cannot (no `stb_image_resize` is vendored — confirmed against `Source/Core/ThirdParty/stb/`), so
+  faithfully matching the Windows UX on other platforms required a NEW pure area-average downscale helper
+  (`RgbaDownscalePure.h`) plus its unit test. Net file delta vs the §Files-to-modify P1.4 row (which named only
+  `SmatchetAttachmentPreviewUi.cpp`): **+2 new files** (`Source/Core/include/Ui/RgbaDownscalePure.h`,
+  `tests/Core/RgbaDownscalePure.test.cpp`) + the `tests/CMakeLists.txt` registration. No new third-party
+  dependency (stb is already vendored); the "no new dependency" half of the premise held.
+- **P1.4 — `duplication` (DRY Pillar 5) exemption, not extraction (2026-06-27).** Removing the in-`_WIN32`-block
+  `#define SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS` (it had to go unconditional) merged the file's
+  ImGui-localization + Win32 preamble into one contiguous matching run, tripping the now-**blocking** dup gate
+  (graduated 2026-06-21, ADR-0015) as an 80-token clone vs `TicketFieldEditor.cpp` (the
+  `#include "imgui.h"`/`imgui_internal.h`/`SmatchetLocalizedImGui.h` + `#define ImGui SmatchetLocalizedImGui` +
+  `WIN32_LEAN_AND_MEAN`/`NOMINMAX` guard preamble). Chose **exemption over extraction** (the opposite of P1.3's
+  arm-then-popup call) because this is *idiomatic per-TU boilerplate, not logic*: the `#define ImGui` wrapper
+  must follow the imgui includes per-TU, so it is not extractable into a shared header without breaking the
+  established localized-ImGui idiom (the same reasoning behind the existing `JiraClient.h` / `GitHubClient.h`
+  interface-symmetry dup exemptions). Marker placed within the clone span:
+  `SMATCHET_DEVIATION(rule=duplication; reason=idiomatic per-TU ImGui-localization preamble …; owner=ui-host;
+  revisit=2026-12-31)`.
 
 ## Verification (actual)
 
@@ -612,3 +673,55 @@ _(per-slice)_
     (which reflects both the SmatchetDark default + this ModernDark change) is surfaced for eyeball
     verification. ModernDark is opt-in (Settings ▸ Appearance), so verify by switching to it.
     Exe: `C:\Dev\trees\mobile-p1.6\build\ninja-iter-msvc\Smatchet.exe`.
+- **P1.4 cross-platform thumbnail decode (2026-06-27):**
+  - **Unit test (pure downscale seam)** — `tests/Core/RgbaDownscalePure.test.cpp` built into `SmatchetTests`
+    (`ninja-test-msvc`) and run: `SmatchetTests.exe --test-case="*DownscaleRgba32*,*FitWithinLongestSide*"`
+    → **11 cases / 46 assertions, 0 failed (SUCCESS)**. Pins the longest-side fit math (aspect preserved,
+    minor-side clamp ≥1), the already-fits / `maxDimension<=0` passthrough, box (area) averaging vs point
+    sampling (2×2→1×1 and 4×2→2×1 exact means), and the bad-input guards (non-positive dims, short buffer).
+  - **Build (Windows)** — the doctest rig compiles only the WIC `_WIN32` arm of the decode TU; it built green
+    (`SmatchetTests` linked), exercising the Windows decode path + the pure helper.
+  - **Build (Android — the arm the Windows rig can't see)** — to verify the previously-unexercised stb `#else`
+    arm and the now-always-compiled enable block on the real target, configured + built the NDK x86_64 target
+    directly (`cmake … -DANDROID_ABI=x86_64 -DANDROID_PLATFORM=android-24 …
+    -DSMATCHET_ANDROID_OPENSSL_BASE="C:/Android/openssl-android"`, the mobile-CI light-feature flags; Clang
+    17.0.2, C++14, `-Wall -Wextra -Wpedantic`). `SmatchetAttachmentPreviewUi.cpp.o` compiled clean and
+    `libSmatchetMobile.so` **linked** — proving the stb arm + `RgbaDownscalePure` compile *and* that the
+    `stbi_*` symbols resolve via the single `STB_IMAGE_IMPLEMENTATION` in `SmatchetImageTextureCache.cpp`
+    (same Core lib). The only build warning was pre-existing/unrelated (`g_openFilePathsHandlerInstalled`,
+    `SmatchetUI.cpp:70`).
+  - **Perf-gate (mandatory — touches `Source/Core/`)** — **zero UI-thread steady-state delta on every
+    platform.** The decode (WIC on Windows, stb+downscale elsewhere) runs **off the UI thread** on the
+    existing S5 worker-pool path (`MaybeKickThumbnailDecode` → `app.LaunchBackgroundTask`; the upload is
+    posted back via `mainThreadDispatcher.PostToMainThread`), is rate-limited to
+    `kMaxConcurrentThumbnailDecodes = 4`, and runs **once per attachment** (cached after upload) — never on a
+    per-frame path, so Pillar-1 (≤6.94 ms steady-state) and Pillar-2 (no >100 ms UI freeze) both hold by
+    construction. The new `DownscaleRgba32` is an O(srcW·srcH) box-average bounded by the 16 MP pre-decode
+    cap, executed on that worker, not the frame thread. Windows codegen is **unchanged** (WIC arm untouched)
+    → zero desktop regression. **Memory note (the WIC-vs-stb asymmetry):** WIC decode-scales so it never
+    materialises a multi-megapixel buffer; the stb arm transiently holds full-res RGBA (capped at 16 MP ≈
+    64 MiB per in-flight decode, ≤4 concurrent) before downscaling to ≤2048 px — a bounded worker-thread
+    transient, not a steady-state or UI-thread cost. No mobile perf scenario exists yet (same gap as
+    P1.2/P1.3/P1.5); CI **Perf PR-fast** is the authoritative headless gate.
+  - **Lint** — `agents/scripts/project/test-lint-rules.sh --diff origin/develop` green after the
+    `rule=duplication` exemption for the idiomatic ImGui-localization preamble (see § Deviations); no
+    strict-zone file touched (`Source/Core/src/Ui/` is the Light/ungated zone).
+  - **Emulator (on-device thumbnail render)** — confirming a real bitmap attachment renders its decoded
+    thumbnail on `emulator-5554` is a documented follow-up bundled with the bucket-E automation backlog (the
+    Mesa-GL bucket-C/E lane is CI-blocked today); taps pinned `-s emulator-5554`, never coordinate-inject the
+    physical device. The decode + downscale correctness is covered by the pure unit test above; the build
+    proof confirms the arm compiles + links on the real target.
+- **P1.4 CodeRabbit round on #1572 — fail-closed decode budget (`9247fc6e`, 2026-06-27):**
+  - **Build** — rebuilt the exact object `CMakeFiles/SmatchetCore_DX12.dir/.../SmatchetAttachmentPreviewUi.cpp.obj`
+    (the doctest `SmatchetTests` target does NOT compile this TU; the flag is an in-file `#define`, not a
+    `-D`) → compiled clean.
+  - **Lint** — `test-lint-rules.sh --diff origin/develop` **PASS** (no new oversized functions / strict-zone
+    / comment-noise; the only WARN is the pre-existing backlog-tracked sync-`ifstream` at line 85, untouched).
+  - **Security-review** — `security-review` agent on the `9247fc6e` diff: **CLEAN**, no CRITICAL/HIGH/MEDIUM.
+    Confirmed the fail-closed control flow (exactly one fall-through to `stbi_load`, only reachable after
+    `infoW/H>0 && infoPixels<=16 MP`), both products done in `unsigned long long` (overflow-safe), the
+    post-decode RGBA copy bounded ≤64 MiB, and `stbi_image_free(pix)` on the reject path (no leak). One P3
+    awareness-only note (align `STBI_MAX_DIMENSIONS` to the area cap) deferred as codebase-wide hardening.
+  - **Perf-gate (touches `Source/Core/`)** — **perf-inert.** The change adds two integer comparisons + one
+    early return on the same off-UI-thread worker decode path described above; no new allocation, no per-frame
+    or UI-thread work. Pillar-1/Pillar-2 hold by the same construction as the parent P1.4 entry.

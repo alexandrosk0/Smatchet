@@ -121,12 +121,18 @@ TEST_SUITE("P4vLaunch::QuoteWinArgWidePure") {
         RequireRoundTrip(L"a \\\\");            // two trailing backslashes (quoted)
         RequireRoundTrip(L"\" --inject /flag"); // attempted flag injection
         RequireRoundTrip(L"normal");
+        RequireRoundTrip(L""); // empty argument (CPP_CODE_AUDIT.md #33)
     }
 
-    TEST_CASE("empty input returns empty (no wrap) — matches the bare-token rule") {
-        // An empty string has no whitespace/quote so it passes through as-is.
-        // (P4vLaunch never passes an empty file/cl through this helper on the
-        // direct-p4vc path; documenting the behaviour, not relying on it.)
-        CHECK(QuoteWinArgWidePure(L"") == L"");
+    TEST_CASE("empty input is wrapped as \"\" so it survives as its own argv slot") {
+        // CPP_CODE_AUDIT.md #33: an empty string used to take the bare-token fast path
+        // (no whitespace/quote to force wrapping) and return "" (zero characters) — but
+        // CommandLineToArgvW requires the literal two-character `""` to preserve an
+        // empty argument as a distinct slot; returning nothing makes the argument
+        // vanish entirely once the caller joins args with spaces, silently shifting
+        // every argument after it. P4vLaunch never passes an empty file/cl through this
+        // helper on the direct-p4vc path today, but this is the exact bug class the
+        // pure helper exists to prevent for any future non-trailing caller.
+        CHECK(QuoteWinArgWidePure(L"") == L"\"\"");
     }
 }

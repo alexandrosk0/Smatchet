@@ -1246,7 +1246,7 @@ std::int64_t LocalCacheManager::AppendChatMessage(const AiMessage& msg) {
     try {
         SQLite::Statement ins(db, "INSERT INTO ai_chat_messages (created_at, role, content, pinned) "
                                   "VALUES (?, ?, ?, ?)");
-        ins.bind(1, static_cast<long long>(msg.CreatedAtUnixMs));
+        ins.bind(1, static_cast<std::int64_t>(msg.CreatedAtUnixMs));
         ins.bind(2, msg.Role);
         ins.bind(3, msg.Content);
         ins.bind(4, msg.Pinned ? 1 : 0);
@@ -1264,7 +1264,7 @@ void LocalCacheManager::UpdateChatMessagePin(std::int64_t id, bool pinned) {
     try {
         SQLite::Statement upd(db, "UPDATE ai_chat_messages SET pinned = ? WHERE id = ?");
         upd.bind(1, pinned ? 1 : 0);
-        upd.bind(2, static_cast<long long>(id));
+        upd.bind(2, static_cast<std::int64_t>(id));
         upd.exec();
         if (db.getChanges() == 0) {
             LOG_WARN("LocalCacheManager::UpdateChatMessagePin: no row id=%lld", static_cast<long long>(id));
@@ -1289,7 +1289,7 @@ void LocalCacheManager::LoadChatMessages(std::size_t cap, std::vector<AiMessage>
                                 "  SELECT id, created_at, role, content, pinned FROM ai_chat_messages "
                                 "  ORDER BY id DESC LIMIT ?) "
                                 "ORDER BY id ASC");
-        q.bind(1, static_cast<long long>(cap));
+        q.bind(1, static_cast<std::int64_t>(cap));
         while (q.executeStep()) {
             AiMessage m;
             const std::int64_t id = q.getColumn(0).getInt64();
@@ -1324,7 +1324,7 @@ void LocalCacheManager::TrimChatMessages(std::size_t maxRows) {
         SQLite::Statement del(db, "DELETE FROM ai_chat_messages WHERE pinned = 0 AND id NOT IN ("
                                   "  SELECT id FROM ai_chat_messages WHERE pinned = 0 "
                                   "  ORDER BY id DESC LIMIT ?)");
-        del.bind(1, static_cast<long long>(maxRows));
+        del.bind(1, static_cast<std::int64_t>(maxRows));
         del.exec();
     } catch (const std::exception& ex) {
         LOG_WARN("LocalCacheManager::TrimChatMessages failed maxRows=%zu err=%s", maxRows, ex.what());

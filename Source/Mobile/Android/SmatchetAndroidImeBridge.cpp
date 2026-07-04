@@ -19,10 +19,28 @@ bool SmatchetAndroidImeBridge::Init(JavaVM* vm, jobject activity) {
         return false;
     }
 
+    // CPP_CODE_AUDIT.md #32: mirror SecretBridge::Init's three-case handling —
+    // NewGlobalRef can return null (OOM, pending OutOfMemoryError) and passing
+    // that null jobject into GetObjectClass is UB; a failed GetObjectClass can
+    // also leave a pending exception that must be cleared (and the global ref
+    // released) before returning, or the next JNI call on this thread aborts
+    // under CheckJNI.
     activity_ = env->NewGlobalRef(activity);
+    if (activity_ == nullptr) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+        }
+        SLOGE("ImeBridge::Init: NewGlobalRef failed");
+        return false;
+    }
     jclass clazz = env->GetObjectClass(activity_);
     if (clazz == nullptr) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+        }
         SLOGE("ImeBridge::Init: GetObjectClass failed");
+        env->DeleteGlobalRef(activity_);
+        activity_ = nullptr;
         return false;
     }
 
@@ -43,6 +61,11 @@ bool SmatchetAndroidImeBridge::Init(JavaVM* vm, jobject activity) {
             env->ExceptionClear();
         }
         SLOGE("ImeBridge::Init: missing SmatchetActivity method(s) — IME disabled");
+        // Release the global ref on this failure path too, matching SecretBridge::Init —
+        // otherwise a later Shutdown() call sees a non-null activity_ from a bridge that
+        // never became ready and double-frees / leaks it.
+        env->DeleteGlobalRef(activity_);
+        activity_ = nullptr;
         return false;
     }
 

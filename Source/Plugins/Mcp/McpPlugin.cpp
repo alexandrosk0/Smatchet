@@ -18,7 +18,8 @@
 #include "Commands/Command.h"
 #include "Json/BoundedJsonParse.h" // smatchet::json_safe::ParseBounded — depth/node-bounded ingress parse (#1271)
 #include "McpJsonRpcPure.h"
-#include <cstdio> // std::remove, std::fopen/fwrite/fclose
+#include <cstdio>  // std::remove, std::fopen/fwrite/fclose
+#include <cstdlib> // std::getenv — spawn-token handshake (SMATCHET_MCP_SPAWN_TOKEN)
 #if !defined(_WIN32)
 #include <unistd.h> // getpid()
 #endif
@@ -216,6 +217,36 @@ void McpPlugin::OnStart(AppController& app) {
     const TrackerConfig cfg = ConfigManager::Load();
     impl_->bind_host = cfg.McpAllowRemote ? SmatchetDefaults::Mcp::kBindAny : SmatchetDefaults::Mcp::kBindLocalhost;
     impl_->auth_token = cfg.McpAuthToken;
+    // Spawn-handshake token adoption. An ephemeral instance launched by the CLI
+    // --spawn parent has no persisted mcp_auth_token, yet McpRequireTokenOnLoopback
+    // is ON by default -- so a tokenless loopback caller (the parent's probe) is
+    // denied 401. The parent provisions a per-spawn random token and hands it to
+    // this child via the inherited SMATCHET_MCP_SPAWN_TOKEN env var; adopt it as the
+    // auth token so the parent's authenticated requests are accepted while EVERY
+    // other local caller still needs the token (the secure default is preserved --
+    // this strengthens the child, never weakens it). Only when no token is already
+    // configured: never override an operator-set mcp_auth_token.
+    if (impl_->auth_token.empty()) {
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
+#endif
+        const char* spawnToken = std::getenv("SMATCHET_MCP_SPAWN_TOKEN");
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+        if (spawnToken != nullptr && spawnToken[0] != '\0') {
+            impl_->auth_token = spawnToken;
+            // Scrub the secret from this process's environment now that it has been
+            // adopted: leaving it set would let any subprocess we later spawn inherit
+            // it, or any same-user reader pull it from the process env block.
+#if defined(_WIN32)
+            _putenv_s("SMATCHET_MCP_SPAWN_TOKEN", ""); // empty value deletes the var on Windows
+#else
+            ::unsetenv("SMATCHET_MCP_SPAWN_TOKEN");
+#endif
+        }
+    }
     impl_->allow_lua_execution = cfg.McpAllowLuaExecution;
     impl_->require_token_on_loopback = cfg.McpRequireTokenOnLoopback;
     impl_->tracker_domain = NormalizeDomain(cfg.Domain);

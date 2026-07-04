@@ -209,6 +209,26 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/CompactDateFormatPure.cpp"
         # ConfigSaveConcurrency closure: ConfigSaveWorker (ConfigManager.cpp already linked).
         "${CMAKE_SOURCE_DIR}/Source/Core/src/ConfigSaveWorker.cpp"
+        # --- AiAssistant streaming hand-off (slice 2c — tsan-imgui-linked-target.md). After slices
+        #     2a/2b, AiAssistantController is g_ui-/ImGui-free (depends on MainThreadDispatcher +
+        #     IAiAssistantUiState only), so its worker→PostToMainThread→Drain hand-off + internal
+        #     cancel/state machine link here — the playbook's "AI streaming cancel/submit race".
+        #     cpr edge broken by tests/support/FakeAiClientFactory.cpp (the real AiClientFactory →
+        #     Anthropic/OpenAi/Ollama clients → cpr is NOT linked); the test injects StubAiClient via
+        #     SetTestOverride + a FakeAiAssistantUiState. The closure (AiContextBuilder/AgentsMdLoader/
+        #     AiModelSignature/AiEndpointPolicy/AiEndpointSanitize/AiChatTimestamp/SmatchetChatPersistWorker)
+        #     is cpr/ImGui-free; BackendAuditTrail + ConfigManager already linked above. Needs
+        #     SMATCHET_WITH_AI (target-wide below — ConfigManager carries one AI-gated field).
+        Core/AiAssistantStreamHandoff.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/AiAssistantController.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/AiContextBuilder.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/AgentsMdLoader.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/AiModelSignature.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/AiEndpointPolicy.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/AiEndpointSanitize.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/AiChatTimestamp.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/SmatchetChatPersistWorker.cpp"
+        "${CMAKE_SOURCE_DIR}/tests/support/FakeAiClientFactory.cpp"
     )
     target_include_directories(SmatchetTsanTests PRIVATE
         _helpers
@@ -227,7 +247,11 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/tests/support"
     )
     target_compile_definitions(SmatchetTsanTests PRIVATE
-        "SMATCHET_TESTS_REPO_ROOT=\"${CMAKE_SOURCE_DIR}\"")
+        "SMATCHET_TESTS_REPO_ROOT=\"${CMAKE_SOURCE_DIR}\""
+        # slice 2c: AiAssistantController + its closure are #if defined(SMATCHET_WITH_AI). Target-wide
+        # (NOT per-source): ConfigManager carries one AI-gated field, so a per-source flag would
+        # ODR-mismatch its struct layout against the other TUs that include ConfigManager.h.
+        SMATCHET_WITH_AI=1)
     target_link_libraries(SmatchetTsanTests PRIVATE
         doctest::doctest
         nlohmann_json::nlohmann_json
@@ -270,6 +294,10 @@ add_executable(SmatchetTests
     # SmatchetImageTextureCache's stbi_info pre-check. Header-only
     # (Source/Core/include/Persistence/IconDimensionsPolicy.h); no production .cpp to link.
     Core/IconDimensionsPolicy.test.cpp
+    # mobile P1.4 — pure area-average RGBA32 downscale behind the non-Windows attachment-thumbnail
+    # decode arm (stb_image cannot decode-scale; WIC does on Windows). Header-only
+    # (Source/Core/include/Ui/RgbaDownscalePure.h); no production .cpp to link.
+    Core/RgbaDownscalePure.test.cpp
     # multi-grid-tabs.md Slice 5a (plan item 21) — pure hidden-pane LRU eviction decision
     # (least-recently-visible first; visible + busy-sync never evicted). Header-only policy.
     Core/GridPaneEvictionPolicy.test.cpp

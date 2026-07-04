@@ -102,6 +102,20 @@ TEST_CASE("SanitizeAiEndpointUrl rejects link-local + private + IPv6 ranges (SSR
     CHECK(SanitizeAiEndpointUrl("http://[fc00::1]", out) == EndpointVerdict::RejectedPrivateNetwork);
 }
 
+TEST_CASE("SanitizeAiEndpointUrl rejects the full fe80::/10 IPv6 link-local range, not just the fe80: prefix" *
+          doctest::test_suite("[security]")) {
+    std::string out;
+    // CPP_CODE_AUDIT.md #16: the denylist used to string-match only "fe80:", letting the upper
+    // half of the /10 (fe90:: through febf::) slip through as Allowed. IsIpv6LinkLocalHextet now
+    // range-checks the first hextet against [0xfe80, 0xfebf] instead.
+    CHECK(SanitizeAiEndpointUrl("http://[fe90::1]", out) == EndpointVerdict::RejectedLinkLocal);
+    CHECK(SanitizeAiEndpointUrl("http://[fea0::1]", out) == EndpointVerdict::RejectedLinkLocal);
+    CHECK(SanitizeAiEndpointUrl("http://[febf::1]", out) == EndpointVerdict::RejectedLinkLocal);
+    // fec0:: is one hextet past the /10 boundary (old deprecated site-local, not link-local) —
+    // must stay Allowed so the range check isn't accidentally widened past fe80::/10.
+    CHECK(SanitizeAiEndpointUrl("http://[fec0::1]", out) == EndpointVerdict::Allowed);
+}
+
 TEST_CASE("SanitizeAiEndpointUrl: legitimate public host + IPv6 loopback accepted" *
           doctest::test_suite("[security]")) {
     std::string out;

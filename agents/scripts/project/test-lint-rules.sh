@@ -834,7 +834,7 @@ compute_unused_under_config_guard_violations() {
 #
 # The curated untrusted-ingress TU basename set. KEEP IN SYNC with the ParseBounded callers + the
 # transport ingress clients; extend when a NEW trust-boundary TU is added.
-BARE_JSON_INGRESS_TUS='McpPlugin|CommandRegistry|CliCommandRunner|AnthropicClient|OpenAiClient|AiNdjsonParser|SmatchetMergeWatchNotifyServer|AttachmentAppUpdateService|BugReportService|JiraIssueSearch|JiraIssueMutation|JiraUserAndMeta|PlaneActivityFeed|LinearIssueSearch|GitHubActivityFeed|GitHubCommitsParse|FieldCatalogCache|OfflineQueueService|SmatchetImGuiHost|SmatchetOfflineQueueUi|TicketFieldEditorLongTextPure|ConfigManager_PathUtils|TrackerGridFieldDisplay|WhisperApiClient'
+BARE_JSON_INGRESS_TUS='McpPlugin|CommandRegistry|CliCommandRunner|AnthropicClient|OpenAiClient|AiNdjsonParser|SmatchetMergeWatchNotifyServer|AttachmentAppUpdateService|BugReportService|JiraIssueSearch|JiraIssueMutation|JiraUserAndMeta|PlaneActivityFeed|LinearIssueSearch|GitHubActivityFeed|GitHubCommitsParse|FieldCatalogCache|OfflineQueueService|SmatchetImGuiHost|SmatchetOfflineQueueUi|TicketFieldEditorLongTextPure|ConfigManager_PathUtils|TrackerGridFieldDisplay|TrackerFieldValueParser|WhisperApiClient'
 
 scan_bare_json_parse_file() {
     # $1 = a first-party .cpp file whose basename is in the curated ingress set. Emits

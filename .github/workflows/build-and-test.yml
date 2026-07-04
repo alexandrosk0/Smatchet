@@ -31,15 +31,12 @@ env:
   # this env; an explicit `--renderer=dx12` flag still overrides it for any future
   # DX12-specific job (flag > env > platform default).
   SMATCHET_RENDERER: "gl"
-  # Allow the --spawn ephemeral child's loopback MCP server to serve tokenless.
-  # #1566 flipped McpRequireTokenOnLoopback default ON, so the spawn parent's
-  # tokenless WaitForMcpReady probe gets 401 and polls to timeout — breaking the
-  # bucket-C/E, texture-guard, ARM64 DX12 smoke and the blocking launch-smoke
-  # gates (all --spawn a GUI+MCP child). The child inherits this env via
-  # CreateProcessA; single-tenant CI runner, so the default's co-resident-process
-  # risk does not apply. (Real product fix — auto-provision a spawn token —
-  # tracked separately; this is the fast unblock.)
-  SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK: "false"
+  # NOTE: the workflow-wide SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK=false opt-out
+  # (PR A / #1574, the #1566 fast-unblock) was REMOVED once the real product fix
+  # landed (PR B / #1576: the --spawn parent auto-provisions a per-spawn MCP token
+  # and sends it on the wire). Every --spawn CI gate below now runs under the
+  # SECURE default (require-token-on-loopback ON) and must stay green on PR B's
+  # handshake alone — that is the standing regression guard for #1566.
 
 on:
   # NO paths-ignore: required status checks (Windows + MSVC, Windows + MSVC
@@ -893,7 +890,12 @@ jobs:
     name: Bucket-C screenshot diff (Mesa headless GL)
     needs: windows-msvc
     runs-on: windows-2022
-    timeout-minutes: 20
+    # 20 -> 30: the llvmpipe (GALLIUM_DRIVER=llvmpipe) screenshot-diff step alone
+    # burned the whole 20-min budget on a slow-runner develop run (run 28289436753:
+    # setup ~0.3m, then the diff step ran 19.8m and GitHub cancelled it AT the cap).
+    # A healthy run is <1m; 30m gives comfortable headroom for the software-GL slow
+    # path without approaching the ~45-50 pipeline ceiling. Coverage unchanged.
+    timeout-minutes: 30
     continue-on-error: true
 
     steps:
@@ -1025,7 +1027,12 @@ jobs:
     name: Bucket-E UI tests (Mesa headless GL)
     needs: windows-msvc
     runs-on: windows-2022
-    timeout-minutes: 30
+    # 30 -> 45: build (~9.6m) + the retry-on-collapse test step (attempts=3, each
+    # `timeout 240` under llvmpipe) can exceed 30m on a slow runner — on develop run
+    # 28289436753 the ui_test.run step ran 20.1m on top of the ~9.6m build and hit
+    # the 30-min cap (cancelled). 45m lets all 3 retry attempts complete on the
+    # software-GL slow path; stays under the ~45-50 ceiling. Coverage unchanged.
+    timeout-minutes: 45
     continue-on-error: true
 
     steps:
@@ -1260,7 +1267,13 @@ jobs:
     name: Bucket-E Jira fixture-backend (Mesa GL, hard)
     needs: windows-msvc
     runs-on: windows-2022
-    timeout-minutes: 30
+    # 30 -> 45: this REQUIRED job builds (~9.5m) then runs the fixture-backend test
+    # step (attempts=2) under llvmpipe. On develop run 28289436753 the test step ran
+    # 20.4m on top of the ~9.5m build and GitHub cancelled the job AT the 30-min cap
+    # (conclusion=cancelled) — a repo-wide false-red on a merge-blocking gate. 45m
+    # gives the build + both retry attempts room on the software-GL slow path while
+    # staying under the ~45-50 pipeline ceiling. No gate weakened; coverage unchanged.
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -1304,13 +1317,9 @@ jobs:
       # The HARD gate. NO continue-on-error: a persistent fixture-backend failure
       # reds this job's check-run and blocks merge. SMATCHET_TEST_JIRA_BACKEND_FIXTURE
       # is exported here (the driver also defaults it, but the explicit export is the
-      # deliverable's contract). A single retry absorbs the known Mesa first-frame
-      # collapse without masking a real regression.
-      # NOTE: no --outLog per-test verbose dump — ui_test.run confines --outLog under
-      # <userData>/ui-tests/ and rejects absolute paths (audit #1566), and --spawn
-      # absolutizes a relative --outLog before forwarding it to the child, so the
-      # confinement rejects it. Restoring the dump needs the --spawn forwarder to
-      # preserve a relative path; until then the driver's JSON envelope is the signal.
+      # deliverable's contract). --outLog captures every test's verbose log; on
+      # failure we cat it into the CI log for diagnosis. A single retry absorbs the
+      # known Mesa first-frame collapse without masking a real regression.
       - name: Run deterministic Jira fixture-backend bucket-E (hard)
         shell: bash
         env:
@@ -1318,8 +1327,10 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
           SMATCHET_EXE: build/ninja-ui-test-msvc/Smatchet.exe
           SMATCHET_TEST_JIRA_BACKEND_FIXTURE: tests/fixtures/jira_backend/basic-grid.json
+          SMATCHET_UI_TEST_OUTLOG: ${{ github.workspace }}/build/tmp/jira-fixture-outlog.txt
         run: |
           set -uo pipefail
+          mkdir -p "${{ github.workspace }}/build/tmp"
           attempts=2
           rc=1
           for attempt in $(seq 1 "$attempts"); do
@@ -1342,9 +1353,24 @@ jobs:
             fi
           done
           if [ "$rc" -ne 0 ]; then
+            if [ -f "$SMATCHET_UI_TEST_OUTLOG" ]; then
+              echo "===== deterministic Jira fixture-backend per-test log ====="
+              cat "$SMATCHET_UI_TEST_OUTLOG"
+              echo "===== end per-test log ====="
+            else
+              echo "::warning::jira-fixture: per-test outLog not found at $SMATCHET_UI_TEST_OUTLOG"
+            fi
             echo "::error::jira-fixture: deterministic Jira backend bucket-E FAILED after ${attempts} attempt(s). This is a fixture-backend regression, not a render flake." >&2
             exit "$rc"
           fi
+
+      - name: Upload jira-fixture per-test log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: jira-fixture-outlog-${{ github.run_id }}
+          path: build/tmp/jira-fixture-outlog.txt
+          if-no-files-found: ignore
 
   mobile-texture-guard-smoke:
     name: Mobile texture-guard smoke (Mesa headless GL)
@@ -1483,7 +1509,12 @@ jobs:
     name: Bucket launch-smoke (Mesa GL)
     needs: windows-msvc
     runs-on: windows-2022
-    timeout-minutes: 15
+    # 15 -> 25: this REQUIRED gate downloads the prebuilt exe (setup ~0.3m) then boots
+    # it under llvmpipe. On develop run 28289436753 the boot step alone ran 14.8m and
+    # GitHub cancelled the job AT the 15-min cap (conclusion=cancelled), red-walling a
+    # merge-blocking gate repo-wide. A healthy boot is <1m; 25m gives generous headroom
+    # for a slow software-GL boot without nearing the ~45-50 ceiling. Coverage unchanged.
+    timeout-minutes: 25
 
     steps:
       - name: Checkout

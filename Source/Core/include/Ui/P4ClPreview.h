@@ -4,6 +4,7 @@
 #include "ConfigManager.h"
 #include "P4Annotate.h"
 
+#include <chrono>
 #include <string>
 
 /**
@@ -34,6 +35,26 @@ void ReapDetached();
 
 /** Process-wide `p4 describe -s` cache shared by the tooltip and detail loaders. Thread-safe. */
 P4ChangelistDescribeCache& Cache();
+
+/**
+ * CPP_CODE_AUDIT.md #30: the hover/detached futures live in a Meyers singleton whose
+ * destructor runs at static-destruction time; a `p4 describe` still in flight there
+ * blocks process exit for however long that call takes, with no diagnostic. Call this
+ * explicitly from the app's shutdown path (BEFORE static destruction) so an unfinished
+ * fetch is waited on with a logged timeout instead.
+ *
+ * The default matches (with headroom) P4Annotate.cpp's own `kP4ProcessTimeoutMs`
+ * (120000 ms) — the hard cap SubprocessCapture::Run already enforces on every
+ * `p4 describe` call. That means this wait isn't just theater papering over the same
+ * eventual block: in every case except SubprocessCapture itself failing to honor its
+ * own timeout, the fetch WILL be ready before this returns, so the destructor at
+ * static-destruction time finds an already-ready future and doesn't block at all. This
+ * function intentionally does NOT reset/detach `HoverFut` on timeout — the future stays
+ * live so a later completion can still be observed, and so `Cache` (destroyed after
+ * these futures, in reverse member-declaration order) is never touched by a task whose
+ * future has already been discarded.
+ */
+void DrainForShutdown(std::chrono::milliseconds timeout = std::chrono::milliseconds(130000));
 
 } // namespace P4ClPreview
 

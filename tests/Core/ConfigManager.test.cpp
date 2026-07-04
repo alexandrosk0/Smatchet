@@ -289,12 +289,13 @@ TEST_CASE("ConfigManager CLI overrides win over env vars on Load") {
 TEST_CASE("ConfigManager SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK env override") {
     smatchet_tests::TestEnvGuard env;
 
-    // The CI --spawn workflows export SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK=false
-    // at job scope, so the var is already present when this test runs in CI.
-    // Clear it explicitly before the "default ON" assertion so we test the real
-    // compiled default, not the inherited CI override. (TestEnvGuard does NOT
-    // touch this env var — the final Cleanup block below is what restores a
-    // clean environment for later cases.)
+    // The CI --spawn workflows USED to export SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK
+    // =false at job scope (PR A / #1566 fast-unblock); that opt-out was removed once
+    // the spawn token handshake landed (PR B / #1576). Clear the var explicitly
+    // anyway before the "default ON" assertion so we test the real compiled default
+    // regardless of any ambient (developer-local or re-introduced) override.
+    // (TestEnvGuard does NOT touch this env var — the final Cleanup block below is
+    // what restores a clean environment for later cases.)
 #if defined(_WIN32)
     ::_putenv_s("SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK", "");
 #else

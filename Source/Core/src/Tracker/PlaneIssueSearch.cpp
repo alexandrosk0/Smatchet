@@ -1,9 +1,8 @@
 #include "PlaneClient.h"
 #include "PlaneClient_Internal.h"
-
-#include "Json/BoundedJsonParse.h"
 #include "PlaneIssueMappingPure.h"
 
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "ProjectResolver.h"
 #include "StringUtil.h"
@@ -184,9 +183,9 @@ FetchPlaneStatePairs(const std::string& planeApi, const std::string& workspaceSl
         return pairs;
     }
     const std::string statesBody = StripUtf8BomCopy(r.text);
-    // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
-    nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(statesBody);
-    if (j.is_discarded()) {
+    std::string parseErr;
+    nlohmann::json j = smatchet::json_safe::ParseBounded(statesBody, parseErr);
+    if (!parseErr.empty()) {
         return pairs;
     }
     outShouldCommit = true;
@@ -237,9 +236,9 @@ PlaneIssuePageFetch FetchPlaneIssuePage(const std::string& planeApi, const std::
         std::string apiDetail;
         {
             const std::string tb = StripUtf8BomCopy(response.text);
-            // Bounded parse of the untrusted HTTP error body (discarded on failure) — audit: unbounded-recursion-DoS.
-            const nlohmann::json ej = smatchet::json_safe::ParseBoundedOrDiscarded(tb);
-            if (!ej.is_discarded() && ej.is_object() && ej.contains("detail")) {
+            std::string detailParseErr;
+            const nlohmann::json ej = smatchet::json_safe::ParseBounded(tb, detailParseErr);
+            if (detailParseErr.empty() && ej.is_object() && ej.contains("detail")) {
                 apiDetail = JsonFieldToString(ej, "detail");
             }
         }
@@ -271,9 +270,9 @@ PlaneIssuePageFetch FetchPlaneIssuePage(const std::string& planeApi, const std::
         return out;
     }
 
-    // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
-    nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(bodyForJson);
-    if (j.is_discarded()) {
+    std::string parseErr;
+    nlohmann::json j = smatchet::json_safe::ParseBounded(bodyForJson, parseErr);
+    if (!parseErr.empty()) {
         out.Error = "Plane returned invalid JSON when fetching issues (HTTP 200). Verify Plane URL, workspace slug, "
                     "project UUID, and API key.";
         return out;
@@ -672,10 +671,10 @@ std::vector<RemoteProject> PlaneClient::ListProjects() {
 
     std::vector<RemoteProject> projects;
     try {
-        // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
-        const nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(StripUtf8BomCopy(resp.text));
-        if (j.is_discarded()) {
-            LOG_WARN("PlaneClient::ListProjects: invalid JSON in response.");
+        std::string parseErr;
+        const nlohmann::json j = smatchet::json_safe::ParseBounded(StripUtf8BomCopy(resp.text), parseErr);
+        if (!parseErr.empty()) {
+            LOG_WARN("PlaneClient::ListProjects: invalid JSON in response: %s", parseErr.c_str());
             return {};
         }
         const auto& arr = (j.is_object() && j.contains("results")) ? j["results"] : j;

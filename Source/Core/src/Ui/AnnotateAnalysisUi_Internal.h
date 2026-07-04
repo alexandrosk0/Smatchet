@@ -153,6 +153,15 @@ struct AnnotateAnalysisUi::AnnotateState {
 extern AnnotateAnalysisUi::AnnotateState* s_stateInstance;
 inline AnnotateAnalysisUi::AnnotateState& State() { return *s_stateInstance; }
 
+/// CPP_CODE_AUDIT.md #23: guard for PostToMainThread callbacks queued by a background
+/// task (LaunchBackgroundTask) before ~AnnotateAnalysisUi() nulls s_stateInstance. The
+/// destructor doesn't drain the dispatcher or join the launched task, so a callback can
+/// still be sitting in the main-thread queue when it runs; without this check it would
+/// dereference a null s_stateInstance (teardown) or write into a hot-reloaded instance's
+/// unrelated state (Unreal). Call this FIRST in every PostToMainThread lambda that reads
+/// State(); return early when false instead of calling State().
+inline bool HasLiveStateInstance() { return s_stateInstance != nullptr; }
+
 namespace AnnotateInternal {
 
 // CopyToBuffer — template, defined in header.

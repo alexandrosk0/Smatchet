@@ -19,6 +19,9 @@ class GlobalAiAssistantUiState final : public IAiAssistantUiState {
     bool AssistantHistoryHydrated() const override { return g_ui.assistantHistoryHydrated; }
     int AssistantHistoryMaxRows() const override { return g_ui.cfg.AssistantHistoryMaxRows; }
 
+    std::uint64_t BumpAssistantTurnGen() override { return ++g_ui.assistantTurnGen; }
+    void RollbackAssistantTurnGen() override { --g_ui.assistantTurnGen; }
+
     std::string& AssistantStreamBuf() override { return g_ui.assistantStreamBuf; }
     std::vector<AiMessage>& AssistantHistory() override { return g_ui.assistantHistory; }
     std::vector<std::int64_t>& AssistantHistoryRowIds() override { return g_ui.assistantHistoryRowIds; }

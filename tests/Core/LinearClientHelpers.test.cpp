@@ -24,13 +24,26 @@ TEST_CASE("ParseLinearIssueKey — canonical TEAM-123") {
 TEST_CASE("ParseLinearIssueKey — rejects malformed identifiers") {
     ParsedLinearIssueKey k;
     CHECK_FALSE(ParseLinearIssueKey("", k));
-    CHECK_FALSE(ParseLinearIssueKey("ENG", k));    // no dash
+    CHECK_FALSE(ParseLinearIssueKey("ENG", k));     // no dash
     CHECK_FALSE(ParseLinearIssueKey("-1", k));      // empty team key
     CHECK_FALSE(ParseLinearIssueKey("ENG-", k));    // empty number
     CHECK_FALSE(ParseLinearIssueKey("ENG-abc", k)); // non-numeric
     CHECK_FALSE(ParseLinearIssueKey("ENG-0", k));   // non-positive
     CHECK_FALSE(ParseLinearIssueKey("EN G-1", k));  // space
     CHECK_FALSE(ParseLinearIssueKey("2NG-1", k));   // team key must start with a letter
+}
+
+TEST_CASE("ParseLinearIssueKey — rejects an int64-overflowing number instead of wrapping (UB)") {
+    // CPP_CODE_AUDIT.md #18: an unbounded digit run used to accumulate past INT64_MAX
+    // (signed-overflow UB) instead of being rejected as an invalid key.
+    ParsedLinearIssueKey k;
+    CHECK_FALSE(ParseLinearIssueKey("ENG-99999999999999999999", k));
+    // one past int64 max is rejected too
+    CHECK_FALSE(ParseLinearIssueKey("ENG-9223372036854775808", k));
+    // int64 max itself still parses cleanly (boundary, not off-by-one)
+    ParsedLinearIssueKey kMax;
+    REQUIRE(ParseLinearIssueKey("ENG-9223372036854775807", kMax));
+    CHECK(kMax.Number == 9223372036854775807LL);
 }
 
 TEST_CASE("FormatLinearIssueKey — round-trips with the parser") {
@@ -50,7 +63,7 @@ TEST_CASE("NormalizeLinearApiUrl — empty defaults, trailing slash trimmed") {
 }
 
 TEST_CASE("IsValidLinearApiUrl — accepts empty + https, rejects http + non-url") {
-    CHECK(IsValidLinearApiUrl("").has_value());                                  // empty -> default
+    CHECK(IsValidLinearApiUrl("").has_value()); // empty -> default
     CHECK(IsValidLinearApiUrl("https://api.linear.app/graphql").has_value());
     CHECK_FALSE(IsValidLinearApiUrl("http://api.linear.app/graphql").has_value()); // not https
     CHECK_FALSE(IsValidLinearApiUrl("api.linear.app").has_value());                // no scheme
@@ -118,6 +131,16 @@ TEST_CASE("ParseLinearRateLimitHeaders — parses the documented headers") {
     LinearRateLimit absent = ParseLinearRateLimitHeaders(std::map<std::string, std::string>());
     CHECK(absent.RequestsLimit == -1);
     CHECK_FALSE(absent.Present());
+}
+
+TEST_CASE("ParseLinearRateLimitHeaders — an overflowing header falls back instead of wrapping (UB)") {
+    // CPP_CODE_AUDIT.md #18: ParseLongOr accumulates into a `long` (32-bit on Windows) from
+    // server-controlled headers; an unbounded digit run used to overflow (UB) instead of
+    // falling back to the documented "absent" sentinel (-1).
+    std::map<std::string, std::string> headers;
+    headers["x-complexity"] = "99999999999999999999";
+    LinearRateLimit rl = ParseLinearRateLimitHeaders(headers);
+    CHECK(rl.Complexity == -1);
 }
 
 TEST_CASE("ResolveLinearRequestAuth — live key authoritative, url falls back") {

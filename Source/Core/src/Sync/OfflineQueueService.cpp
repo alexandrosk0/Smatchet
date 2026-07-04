@@ -30,6 +30,29 @@
 #include <vector>
 
 namespace {
+
+// Minimal RAII "run this closure on scope exit" helper — fires on normal return AND on
+// exception unwind, unlike a bare tail statement. TickOfflineCreates uses it to guarantee
+// offlineReplayInFlight_ resets even if ReplayOneCreate throws mid-loop (a bare
+// cache->SaveTicket in IssueCreatePipeline::Run could do exactly this before that call
+// site was wrapped in try/catch — CPP_CODE_AUDIT.md #6). Without this, the
+// LaunchBackgroundTask firewall catches the exception (no crash) but the lambda tail that
+// resets the latch never runs, so offline replay goes silently dead until restart.
+class ScopeExit {
+  public:
+    explicit ScopeExit(std::function<void()> fn) : fn_(std::move(fn)) {}
+    ~ScopeExit() {
+        if (fn_) {
+            fn_();
+        }
+    }
+    ScopeExit(const ScopeExit&) = delete;
+    ScopeExit& operator=(const ScopeExit&) = delete;
+
+  private:
+    std::function<void()> fn_;
+};
+
 // Anonymous-namespace helpers (formerly in AppController_IssueCreateOffline.cpp). Used by the
 // Tick* replay loops below to format dead-letter audit lines.
 std::string SanitizeOfflineQueueDetail(std::string s) {
@@ -1402,6 +1425,20 @@ void OfflineQueueService::TickOfflineCreates() {
     IOfflineQueueDeps& depsRef = deps_;
     deps_.LaunchBackgroundTask(
         [this, &depsRef, pending, mutations2, cache, catalogCopy, capturedBackendKey, capturedGeneration]() {
+            // Guarantees offlineReplayInFlight_ resets on every exit path from this lambda —
+            // normal return, an early return, OR an exception unwinding out of
+            // ReplayOneCreate (LaunchBackgroundTask's own top-level catch prevents a crash but
+            // does NOT run this lambda's tail) — see the ScopeExit doc comment / #6. Defaults
+            // to a conservative 30s retry delay; the normal-completion path below overwrites
+            // it with the tally-computed delay before the guard fires.
+            std::chrono::seconds nextDelay{30};
+            ScopeExit resetInFlight([this, &nextDelay]() {
+                const auto nextAt = std::chrono::steady_clock::now() + nextDelay;
+                std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
+                nextOfflineReplayAt_ = nextAt;
+                offlineReplayInFlight_ = false;
+            });
+
             CreateReplayTally tally;
             for (const auto& pc : pending) {
                 ReplayOneCreate(pc, cache, mutations2.get(), *catalogCopy, capturedBackendKey, depsRef, tally);
@@ -1430,11 +1467,6 @@ void OfflineQueueService::TickOfflineCreates() {
             } else if (tally.Failures > 0 && tally.Successes == 0) {
                 delay = std::chrono::seconds(30);
             }
-            const auto nextAt = std::chrono::steady_clock::now() + delay;
-            {
-                std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
-                nextOfflineReplayAt_ = nextAt;
-                offlineReplayInFlight_ = false;
-            }
+            nextDelay = delay;
         });
 }
