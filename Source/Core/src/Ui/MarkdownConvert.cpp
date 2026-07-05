@@ -975,18 +975,66 @@ void EmitInlineRun(const json& contentArr, std::ostringstream& out) {
     }
 }
 
-static std::string MarkdownCellPlainInner(const json& cell) {
+// Flatten one inline run to a single line (GFM cells are single-line — collapse any newline).
+static std::string MarkdownCellFlattenInline(const json& inlineArr) {
     std::ostringstream o;
+    EmitInlineRun(inlineArr, o);
+    std::string t = o.str();
+    std::replace_if(t.begin(), t.end(), [](char ch) { return ch == '\n' || ch == '\r'; }, ' ');
+    return t;
+}
+
+// BACKLOG B5: a GFM table cell is single-line and holds no block content, so ADF cell blocks
+// must be flattened. The prior version emitted only first-level paragraphs — silently dropping
+// lists and running multiple paragraphs together. Instead, collect each block's inline text and
+// join blocks with an HTML `<br>` (the GFM-safe in-cell line break), and represent list items
+// with a marker, so multiple paragraphs and lists survive the ADF→Markdown conversion instead
+// of being merged or dropped. Deeper fidelity (code blocks, nested lists/tables inside a cell)
+// remains tracked in RICH_TEXT_EDITING_V2.
+static std::string MarkdownCellPlainInner(const json& cell) {
+    std::vector<std::string> segments;
     if (cell.contains("content") && cell["content"].is_array()) {
         for (const auto& blk : cell["content"]) {
-            if (blk.value("type", std::string()) == "paragraph") {
-                EmitInlineRun(blk.value("content", json::array()), o);
+            const std::string bt = blk.value("type", std::string());
+            if (bt == "paragraph") {
+                std::string t = MarkdownCellFlattenInline(blk.value("content", json::array()));
+                if (!t.empty())
+                    segments.push_back(std::move(t));
+            } else if (bt == "bulletList" || bt == "orderedList") {
+                const bool ordered = (bt == "orderedList");
+                int order = 1;
+                if (ordered && blk.contains("attrs") && blk["attrs"].is_object())
+                    order = blk["attrs"].value("order", 1);
+                if (blk.contains("content") && blk["content"].is_array()) {
+                    for (const auto& li : blk["content"]) {
+                        if (li.value("type", std::string()) != "listItem")
+                            continue;
+                        std::ostringstream lo;
+                        if (li.contains("content") && li["content"].is_array()) {
+                            for (const auto& lblk : li["content"]) {
+                                if (lblk.value("type", std::string()) == "paragraph")
+                                    EmitInlineRun(lblk.value("content", json::array()), lo);
+                            }
+                        }
+                        std::string t = lo.str();
+                        std::replace_if(t.begin(), t.end(), [](char ch) { return ch == '\n' || ch == '\r'; }, ' ');
+                        if (!t.empty())
+                            segments.push_back((ordered ? std::to_string(order) + ". " : "- ") + t);
+                        if (ordered)
+                            ++order;
+                    }
+                }
             }
+            // Other block types (codeBlock, nested table / mediaSingle) remain unrepresented — see B5.
         }
     }
-    std::string s = o.str();
-    std::replace_if(s.begin(), s.end(), [](char ch) { return ch == '\n' || ch == '\r'; }, ' ');
-    return s;
+    std::string joined;
+    for (size_t i = 0; i < segments.size(); ++i) {
+        if (i != 0)
+            joined += "<br>";
+        joined += segments[i];
+    }
+    return joined;
 }
 
 static void EmitMarkdownTable(const json& table, AdfWalkState& s) {
