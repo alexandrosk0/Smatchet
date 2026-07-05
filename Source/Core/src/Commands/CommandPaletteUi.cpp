@@ -10,6 +10,7 @@
 #include "Config/KeybindingsConfig.h"
 #include "DictationInsertionRouter.h"
 #include "Logger.h"
+#include "SmatchetLocalization.h"
 #include "SmatchetTheme.h"
 
 #include <algorithm>
@@ -157,7 +158,7 @@ void CommandPaletteUi::dispatchSelected(AppController& app) {
 
 void CommandPaletteUi::drawArgForm(AppController& app) {
     ImGui::Separator();
-    ImGui::TextUnformatted("Parameters:");
+    ImGui::TextUnformatted(SmatchetLocalization::T("cmdpalette.parameters", "Parameters:"));
     bool allFilled = true;
     for (size_t i = 0; i < argFormCmd_.Params.size(); ++i) {
         const ParamSpec& p = argFormCmd_.Params[i];
@@ -173,7 +174,8 @@ void CommandPaletteUi::drawArgForm(AppController& app) {
     const bool canRun = allFilled;
     if (!canRun)
         ImGui::BeginDisabled();
-    if (ImGui::Button("Run") || (canRun && ImGui::IsKeyPressed(ImGuiKey_Enter, false))) {
+    if (ImGui::Button(SmatchetLocalization::T("cmdpalette.run", "Run")) ||
+        (canRun && ImGui::IsKeyPressed(ImGuiKey_Enter, false))) {
         nlohmann::json args = nlohmann::json::object();
         for (size_t i = 0; i < argFormCmd_.Params.size(); ++i) {
             const ParamSpec& p = argFormCmd_.Params[i];
@@ -197,7 +199,8 @@ void CommandPaletteUi::drawArgForm(AppController& app) {
     if (!canRun)
         ImGui::EndDisabled();
     ImGui::SameLine();
-    if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+    if (ImGui::Button(SmatchetLocalization::T("common.cancel", "Cancel")) ||
+        ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
         Close();
     }
 }
@@ -229,7 +232,8 @@ void CommandPaletteUi::Draw(AppController& app) {
 
     // Filter text input.
     const bool filterChanged =
-        ImGui::InputTextWithHint("##cmdq", "Type a command or search...", filterBuf_, sizeof(filterBuf_));
+        ImGui::InputTextWithHint("##cmdq", SmatchetLocalization::T("cmdpalette.hint", "Type a command or search..."),
+                                 filterBuf_, sizeof(filterBuf_));
     if (filterChanged || filtered_.empty()) {
         rebuildFiltered(app);
     }
@@ -251,9 +255,12 @@ void CommandPaletteUi::Draw(AppController& app) {
     // Hint line.
     ImGui::Separator();
     if (!filtered_.empty() && filtered_[selected_].Destructive) {
-        ImGui::TextColored(SmatchetTheme::Colors::PriorityHigh, "Destructive — hold Shift+Enter to confirm");
+        ImGui::TextColored(
+            SmatchetTheme::Colors::PriorityHigh, "%s",
+            SmatchetLocalization::T("cmdpalette.destructive_hint", "Destructive — hold Shift+Enter to confirm"));
     } else {
-        ImGui::TextDisabled("Enter to run · Esc to close · Up/Down to navigate");
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("cmdpalette.footer_hint",
+                                                          "Enter to run · Esc to close · Up/Down to navigate"));
     }
 
     ImGui::End();
@@ -311,14 +318,13 @@ void CommandPaletteUi::drawCommandList(AppController& app, const ImGuiIO& io) {
         }
         // Per-row right-click: latch a "Set shortcut…" request for SmatchetUI's quick-bind modal.
         if (ImGui::BeginPopupContextItem()) {
-            if (ImGui::MenuItem("Set shortcut...")) {
+            if (ImGui::MenuItem(SmatchetLocalization::T("cmdpalette.set_shortcut", "Set shortcut..."))) {
                 requestQuickBindCommandId_ = c.Name;
             }
             ImGui::EndPopup();
         }
         // Surface the bound combo, dimmed, right-aligned on the same row.
-        const std::string combo =
-            keybindings_ != nullptr ? BoundHotkeyDisplay(*keybindings_, c.Name) : std::string();
+        const std::string combo = keybindings_ != nullptr ? BoundHotkeyDisplay(*keybindings_, c.Name) : std::string();
         if (!combo.empty()) {
             const float comboW = ImGui::CalcTextSize(combo.c_str()).x;
             ImGui::SameLine(rowWidth - comboW);

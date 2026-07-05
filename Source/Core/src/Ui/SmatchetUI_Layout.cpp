@@ -269,7 +269,9 @@ void SmatchetUI_ApplyDeferredLayoutReset(UiDrawSession& d) {
     // saved by SmatchetUI.cpp's end-of-frame SaveIniSettingsToDisk when the counter hits 0.
     d.layoutForceDefaultsFrames = 8;
 
-    SmatchetToastManager::Instance().Push("Layout reset", "Default layout restored.", ToastType::Info, 3000);
+    SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.layout_reset", "Layout reset"),
+                                          SmatchetLocalization::T("toast.layout_restored", "Default layout restored."),
+                                          ToastType::Info, 3000);
     smatchet::ui_detail::PersistWindowOpenPreferences(d);
 }
 

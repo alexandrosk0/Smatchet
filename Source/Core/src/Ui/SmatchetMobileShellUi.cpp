@@ -247,7 +247,8 @@ void SmatchetUI::drawMobilePageContent(AppController& app, UiDrawSession& d) {
         drawAiAssistantPanel(app, d, /*embedded=*/true);
 #else
         (void)app;
-        ::ImGui::TextDisabled("AI assistant is not built in this configuration.");
+        ::ImGui::TextDisabled(
+            "%s", SmatchetLocalization::T("mobile.ai.not_built", "AI assistant is not built in this configuration."));
 #endif
         break;
     }
@@ -324,7 +325,7 @@ void SmatchetUI::drawMobileDrawer(AppController& app, UiDrawSession& d) {
         ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNavFocus;
     if (::ImGui::Begin("##MobileDrawerPanel", nullptr, kPanelFlags)) {
-        ::ImGui::TextDisabled("Pages");
+        ::ImGui::TextDisabled("%s", SmatchetLocalization::T("mobile.drawer.pages", "Pages"));
         ::ImGui::Separator();
         // Full 5-page universe (not just the visible MobileNavPages subset) so a
         // page hidden from the bottom nav stays reachable from the drawer.
@@ -337,7 +338,7 @@ void SmatchetUI::drawMobileDrawer(AppController& app, UiDrawSession& d) {
             }
         }
         ::ImGui::Spacing();
-        ::ImGui::TextDisabled("Views");
+        ::ImGui::TextDisabled("%s", SmatchetLocalization::T("mobile.page.views", "Views"));
         ::ImGui::Separator();
         // Slice 6 — reuse the desktop Views sidebar (search / activate / rename /
         // duplicate / delete) inside the drawer; picking a view closes the drawer.
@@ -360,16 +361,19 @@ void SmatchetUI::drawMobileGridDockWindows(AppController& app, UiDrawSession& d,
     GridPane* focused = ensureFocusedMobileGridPane(d);
 
     const ImGuiWindowFlags kDockWinFlags = ImGuiWindowFlags_NoCollapse;
-    if (::ImGui::Begin("Tickets###MobileGridList", nullptr, kDockWinFlags)) {
+    // The aliased wrapper Begin translates the visible "Tickets"/"Details" title while the
+    // "###" suffix keeps the dock ID stable, so seedMobileGridDock's raw DockBuilder strings
+    // keep matching in every language.
+    if (ImGui::Begin("Tickets###MobileGridList", nullptr, kDockWinFlags)) {
         if (focused != nullptr) {
             drawEmbeddedFocusedGrid(app, d, *focused);
         } else {
-            ::ImGui::TextDisabled("No grid pane.");
+            ::ImGui::TextDisabled("%s", SmatchetLocalization::T("mobile.grid.no_pane", "No grid pane."));
         }
     }
     ::ImGui::End();
 
-    if (::ImGui::Begin("Details###MobileGridDetail", nullptr, kDockWinFlags)) {
+    if (ImGui::Begin("Details###MobileGridDetail", nullptr, kDockWinFlags)) {
         drawMobileGridDetail(app, d, focused);
     }
     ::ImGui::End();
@@ -396,18 +400,19 @@ void SmatchetUI::seedMobileGridDock(unsigned int gridDockId) {
 // (cells stay editable in the list); this is a compact master/detail preview for small screens.
 void SmatchetUI::drawMobileGridDetail(AppController& app, UiDrawSession& d, GridPane* focused) {
     if (focused == nullptr) {
-        ::ImGui::TextDisabled("No grid pane.");
+        ::ImGui::TextDisabled("%s", SmatchetLocalization::T("mobile.grid.no_pane", "No grid pane."));
         return;
     }
     GridPane& pane = *focused;
     const std::string& activeId = pane.gridState.ActiveIssueId;
     if (activeId.empty()) {
-        ::ImGui::TextDisabled("Select a ticket to see its details.");
+        ::ImGui::TextDisabled(
+            "%s", SmatchetLocalization::T("mobile.grid.select_ticket", "Select a ticket to see its details."));
         return;
     }
     const auto ticketsSnap = pane.ticketsSnapshot;
     if (!ticketsSnap) {
-        ::ImGui::TextDisabled("No tickets loaded.");
+        ::ImGui::TextDisabled("%s", SmatchetLocalization::T("mobile.grid.no_tickets", "No tickets loaded."));
         return;
     }
     const std::vector<CachedTicket>& tickets = *ticketsSnap;
@@ -419,7 +424,8 @@ void SmatchetUI::drawMobileGridDetail(AppController& app, UiDrawSession& d, Grid
         }
     }
     if (active == nullptr) {
-        ::ImGui::TextDisabled("Selected ticket is not in the current view.");
+        ::ImGui::TextDisabled("%s", SmatchetLocalization::T("mobile.grid.ticket_not_in_view",
+                                                            "Selected ticket is not in the current view."));
         return;
     }
 

@@ -1034,7 +1034,8 @@ void SmatchetUI::viewsApplyAndSync(AppController& app, UiDrawSession& d, const V
         d.viewsDirty = false;
         d.viewsHasOriginalSnapshot = false;
         d.pendingViewStateSave = false;
-        SmatchetToastManager::Instance().Push("View saved", updated.Name, ToastType::Success, 1800);
+        SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.view_saved", "View saved"), updated.Name,
+                                              ToastType::Success, 1800);
     }
 }
 
@@ -1052,7 +1053,8 @@ void SmatchetUI::viewsDiscardChanges(UiDrawSession& d) {
         LoadBuffersFromView(d, *a);
         d.viewsHasOriginalSnapshot = false;
         d.pendingViewStateSave = false;
-        SmatchetToastManager::Instance().Push("Discarded changes", a->Name, ToastType::Info, 1500);
+        SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.discarded_changes", "Discarded changes"),
+                                              a->Name, ToastType::Info, 1500);
     }
 }
 
@@ -1160,7 +1162,8 @@ void SmatchetUI::applyPendingViewDelete(AppController& app, UiDrawSession& d) {
         d.cfg.SelectedFields = nowActive->Fields;
         SmatchetViewsDashboardUiDetail::SyncWithCurrentView(app, d, ViewState.GetStore(), true);
     }
-    SmatchetToastManager::Instance().Push("View deleted", deletedName, ToastType::Info, 1800);
+    SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.view_deleted", "View deleted"), deletedName,
+                                          ToastType::Info, 1800);
 }
 
 // Window-level keyboard shortcuts: Ctrl+Enter = Apply, Ctrl+N = New. Split out of

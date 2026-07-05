@@ -918,6 +918,196 @@ const TranslationEntry kEntries[] = {
     {"whisper.preferences.rerunSetup.button", "Re-run setup banner", u8"Relancer la bannière de configuration"},
     {"whisper.preferences.rerunSetup.tooltip", "Forces WhisperSetupCompleted=false; banner appears next launch",
      u8"Force WhisperSetupCompleted=false ; la bannière réapparaît au prochain lancement"},
+
+    // user-facing-text-i18n-sweep — literals that previously bypassed the lookup
+    // (raw ImGui calls, toast titles/messages, combo item arrays).
+
+    // Grid field-edit pipeline toasts.
+    {"toast.tickets", "Tickets", u8"Tickets"},
+    {"toast.offline_error", "Offline Error", u8"Erreur hors ligne"},
+    {"toast.offline_queue_failed", "Failed to queue offline field edit.",
+     u8"Impossible de mettre en file la modification de champ hors ligne."},
+    {"toast.apply_error", "Apply Error", u8"Erreur d'application"},
+    {"toast.apply_queued_failed", "Failed to apply queued field edit.",
+     u8"Impossible d'appliquer la modification de champ en file."},
+    {"toast.field_edit_will_sync", "Field edit will sync when Tracker is reachable.",
+     u8"La modification du champ se synchronisera quand le suivi sera joignable."},
+    {"toast.save_error", "Save Error", u8"Erreur d'enregistrement"},
+    {"toast.apply_saved_failed", "Failed to apply saved field update.",
+     u8"Impossible d'appliquer la mise à jour de champ enregistrée."},
+    {"toast.save_field_failed", "Failed to save Tracker field update.",
+     u8"Impossible d'enregistrer la mise à jour du champ dans le suivi."},
+
+    // App-update check + modal (SmatchetUI.cpp).
+    {"toast.updates", "Updates", u8"Mises à jour"},
+    {"updates.already_latest", "You are already on the latest release.", u8"Vous êtes déjà sur la dernière version."},
+    {"updates.new_version", "New version found.", u8"Nouvelle version trouvée."},
+    {"updates.downloading_installer", "Downloading installer...", u8"Téléchargement de l'installateur..."},
+    {"updates.installer_launched", "Installer launched. Smatchet will close so the update can proceed.",
+     u8"Installateur lancé. Smatchet va se fermer pour laisser la mise à jour se poursuivre."},
+    {"updates.installer_launch_failed", "Failed to launch installer update.",
+     u8"Impossible de lancer l'installateur de mise à jour."},
+    {"window.update_available", "Update Available", u8"Mise à jour disponible"},
+    {"updates.current_version", "Current version: %s", u8"Version actuelle : %s"},
+    {"updates.latest_version", "Latest version:  %s", u8"Dernière version :  %s"},
+    {"updates.release_tag", "Release tag: %s", u8"Tag de version : %s"},
+    {"updates.open_release_page", "Open Release Page", u8"Ouvrir la page de la version"},
+    // (The modal's "A newer Smatchet release…" line translates via the pre-existing
+    // update.banner.short row — same English source; no second row needed.)
+    {"updates.release_notes", "Release notes", u8"Notes de version"},
+    {"updates.download_install", "Download and Install", u8"Télécharger et installer"},
+    {"updates.skip_version", "Skip This Version", u8"Ignorer cette version"},
+    {"updates.later", "Later", u8"Plus tard"},
+
+    // User Info window toasts.
+    {"toast.user_info", "User Info", u8"Infos utilisateur"},
+    {"userinfo.no_issue_key", "No issue key to add.", u8"Aucune clé de ticket à ajouter."},
+    {"userinfo.source_pane_gone", "Source pane is gone; cannot update its view query.",
+     u8"Le panneau source a disparu ; impossible de mettre à jour la requête de sa vue."},
+    {"userinfo.query_set", "View query set to %s.", u8"Requête de la vue définie sur %s."},
+    {"userinfo.view_unavailable", "Target view is unavailable; cannot update query.",
+     u8"La vue cible est indisponible ; impossible de mettre à jour la requête."},
+
+    // Views / layout toasts.
+    {"toast.layout_reset", "Layout reset", u8"Disposition réinitialisée"},
+    {"toast.layout_restored", "Default layout restored.", u8"Disposition par défaut restaurée."},
+    {"toast.view_saved", "View saved", u8"Vue enregistrée"},
+    {"toast.discarded_changes", "Discarded changes", u8"Modifications annulées"},
+    {"toast.view_deleted", "View deleted", u8"Vue supprimée"},
+    {"toast.reverted_layout", "Reverted layout", u8"Disposition rétablie"},
+
+    // Bug report / Lua action / quick comment / bulk import toasts.
+    {"toast.bug_report", "Bug report", u8"Rapport de bug"},
+    {"bugreport.filed", "Filed %s", u8"Ticket %s créé"},
+    {"toast.lua_queued", "Queued: %s", u8"En file : %s"},
+    {"comments.posting_to", "Posting to %s", u8"Publication sur %s"},
+    {"comments.added_to", "Added to %s", u8"Ajouté à %s"},
+    {"bulk.import_line_error", "Line %d: %s", u8"Ligne %d : %s"},
+    {"toast.ai_prompt_from_lua", "AI prompt from Lua", u8"Invite IA depuis Lua"},
+    {"toast.ai_prompt_from_lua_body", "A Lua script called ai.prompt — sending your AI context to %s.",
+     u8"Un script Lua a appelé ai.prompt — envoi de votre contexte IA à %s."},
+
+    // Omnibar (global search bar).
+    {"toast.search", "Search", u8"Recherche"},
+    {"omnibar.no_active_view", "No active view to search — open a grid pane first.",
+     u8"Aucune vue active à rechercher — ouvrez d'abord un panneau de grille."},
+    {"omnibar.apply_failed", "Could not apply the query.", u8"Impossible d'appliquer la requête."},
+    {"omnibar.mode.ticket_key", "Ticket key — Enter opens this issue.", u8"Clé de ticket — Entrée ouvre ce ticket."},
+    {"omnibar.mode.jql", "Filter query — Enter replaces the focused view's query.",
+     u8"Requête de filtre — Entrée remplace la requête de la vue active."},
+    {"omnibar.mode.title_search", "Title search — Enter filters the focused grid.",
+     u8"Recherche par titre — Entrée filtre la grille active."},
+
+    // Command palette.
+    {"cmdpalette.parameters", "Parameters:", u8"Paramètres :"},
+    {"cmdpalette.run", "Run", u8"Exécuter"},
+    {"cmdpalette.hint", "Type a command or search...", u8"Saisissez une commande ou recherchez..."},
+    {"cmdpalette.destructive_hint", "Destructive — hold Shift+Enter to confirm",
+     u8"Destructif — maintenez Maj+Entrée pour confirmer"},
+    {"cmdpalette.footer_hint", "Enter to run · Esc to close · Up/Down to navigate",
+     u8"Entrée pour exécuter · Échap pour fermer · Haut/Bas pour naviguer"},
+    {"cmdpalette.set_shortcut", "Set shortcut...", u8"Définir le raccourci..."},
+
+    // Selectable text-run context menu ("Copy" reuses common.copy via the source map).
+    {"selectable.select_all", "Select all", u8"Tout sélectionner"},
+
+    // Notification Center window.
+    {"window.notifications", "Notifications", u8"Notifications"},
+    {"notifCenter.clear_all", "Clear all", u8"Tout effacer"},
+    {"notifCenter.count_one", "%d notification", u8"%d notification"},
+    {"notifCenter.count_many", "%d notifications", u8"%d notifications"},
+    {"notifCenter.empty", "No notifications yet.", u8"Aucune notification pour le moment."},
+
+    // Icon picker modal (toolbar editor).
+    {"iconPicker.title", "Pick Icon", u8"Choisir une icône"},
+    {"iconPicker.search_hint", "Search icons...", u8"Rechercher des icônes..."},
+
+    // Mobile shell (drawer, bottom nav, grid master/detail).
+    {"mobile.page.tickets", "Tickets", u8"Tickets"},
+    {"mobile.page.views", "Views", u8"Vues"},
+    {"mobile.page.log", "Log", u8"Journal"},
+    {"mobile.page.settings", "Settings", u8"Paramètres"},
+    {"mobile.page.ai", "AI", u8"IA"},
+    {"mobile.drawer.pages", "Pages", u8"Pages"},
+    {"window.details", "Details", u8"Détails"},
+    {"mobile.grid.no_pane", "No grid pane.", u8"Aucun panneau de grille."},
+    {"mobile.grid.select_ticket", "Select a ticket to see its details.",
+     u8"Sélectionnez un ticket pour voir ses détails."},
+    {"mobile.grid.no_tickets", "No tickets loaded.", u8"Aucun ticket chargé."},
+    {"mobile.grid.ticket_not_in_view", "Selected ticket is not in the current view.",
+     u8"Le ticket sélectionné n'est pas dans la vue actuelle."},
+    {"mobile.ai.not_built", "AI assistant is not built in this configuration.",
+     u8"L'assistant IA n'est pas inclus dans cette configuration."},
+
+    // Toolbar bar + right-click menus + "Customize Toolbar" editor.
+    {"toolbar.command_not_found", "command not found", u8"commande introuvable"},
+    {"toolbar.append_loading", "Loading tracker toolbar buttons...",
+     u8"Chargement des boutons de barre d'outils du suivi..."},
+    {"toolbar.menu.customize", "Customize Toolbar...", u8"Personnaliser la barre d'outils..."},
+    {"toolbar.menu.hide", "Hide Toolbar", u8"Masquer la barre d'outils"},
+    {"toolbar.menu.edit", "Edit...", u8"Modifier..."},
+    {"toolbar.menu.move_left", "Move Left", u8"Déplacer à gauche"},
+    {"toolbar.menu.move_right", "Move Right", u8"Déplacer à droite"},
+    {"toolbar.menu.insert_separator", "Insert Separator", u8"Insérer un séparateur"},
+    {"toolbar.editor.title", "Customize Toolbar", u8"Personnaliser la barre d'outils"},
+    {"toolbar.editor.scope", "Scope:", u8"Portée :"},
+    {"toolbar.editor.scope_global", "Global", u8"Globale"},
+    {"toolbar.editor.scope_tracker", "Current tracker: %s", u8"Suivi actuel : %s"},
+    {"toolbar.editor.scope_tracker_none", "Current tracker: (none)", u8"Suivi actuel : (aucun)"},
+    {"toolbar.editor.scope_tracker_hint", "Appended for %s, shown after the global toolbar.",
+     u8"Ajouté pour %s, affiché après la barre d'outils globale."},
+    {"toolbar.editor.scope_global_hint", "Global toolbar, shown for every tracker.",
+     u8"Barre d'outils globale, affichée pour tous les suivis."},
+    {"toolbar.editor.add_command", "Add command", u8"Ajouter une commande"},
+    {"toolbar.editor.add_lua", "Add Lua", u8"Ajouter du Lua"},
+    {"toolbar.editor.add_separator", "Add separator", u8"Ajouter un séparateur"},
+    {"toolbar.editor.duplicate", "Duplicate", u8"Dupliquer"},
+    {"toolbar.editor.up", "Up", u8"Monter"},
+    {"toolbar.editor.down", "Down", u8"Descendre"},
+    {"toolbar.kind.command", "Command", u8"Commande"},
+    {"toolbar.kind.lua", "Lua", u8"Lua"},
+    {"toolbar.kind.separator", "Separator", u8"Séparateur"},
+    {"toolbar.editor.kind", "Kind", u8"Type"},
+    {"toolbar.editor.icon_name", "Icon name", u8"Nom de l'icône"},
+    {"toolbar.editor.pick", "Pick...", u8"Choisir..."},
+    {"toolbar.editor.tooltip", "Tooltip", u8"Infobulle"},
+    {"toolbar.editor.command_id", "Command id", u8"Identifiant de commande"},
+    {"toolbar.editor.pick_command", "Pick a command:", u8"Choisissez une commande :"},
+    {"toolbar.editor.filter_commands", "Filter commands...", u8"Filtrer les commandes..."},
+    {"toolbar.editor.args_json", "Args (JSON)", u8"Arguments (JSON)"},
+    {"toolbar.editor.lua_code", "Lua code", u8"Code Lua"},
+    {"toolbar.editor.separator_hint", "Separator (no settings).", u8"Séparateur (aucun réglage)."},
+    {"toolbar.editor.select_hint", "Select or add a button.", u8"Sélectionnez ou ajoutez un bouton."},
+    {"toolbar.editor.visibility_hint", "Visibility follows the global scope.",
+     u8"La visibilité suit la portée globale."},
+    {"toolbar.editor.show_toolbar", "Show toolbar", u8"Afficher la barre d'outils"},
+
+    // Preferences — storage mode, date format, UI mode (combo items + toasts).
+    {"toast.storage", "Storage", u8"Stockage"},
+    {"prefs.storage.portable", "Portable (next to runtime files)", u8"Portable (à côté des fichiers d'exécution)"},
+    {"prefs.storage.shared", "Shared (OS user-data folder)", u8"Partagé (dossier utilisateur du système)"},
+    {"prefs.storage.set_portable",
+     "Storage mode set to Portable. Restart Smatchet for the new writable-files location to take effect.",
+     u8"Mode de stockage défini sur Portable. Redémarrez Smatchet pour que le nouvel emplacement des fichiers "
+     u8"inscriptibles prenne effet."},
+    {"prefs.storage.set_shared",
+     "Storage mode set to Shared. Restart Smatchet for the new writable-files location to take effect.",
+     u8"Mode de stockage défini sur Partagé. Redémarrez Smatchet pour que le nouvel emplacement des fichiers "
+     u8"inscriptibles prenne effet."},
+    {"prefs.storage.marker_write_failed", "Could not write storage-mode marker file.",
+     u8"Impossible d'écrire le fichier marqueur du mode de stockage."},
+    {"prefs.storage.relaunch_failed", "Could not relaunch Smatchet — exit and restart manually.",
+     u8"Impossible de relancer Smatchet — quittez et redémarrez manuellement."},
+    {"prefs.uimode.desktop", "Desktop", u8"Bureau"},
+    {"prefs.uimode.mobile", "Mobile", u8"Mobile"},
+    {"prefs.uimode.auto", "Auto (by width)", u8"Auto (selon la largeur)"},
+
+    // Sync Audit window Action-filter items (the Result items reuse the pre-existing
+    // audit.all / audit.success / audit.failure rows; "Comments" reuses comments.title).
+    {"audit.creates", "Creates", u8"Créations"},
+    {"audit.updates_transitions", "Updates/Transitions", u8"Mises à jour/Transitions"},
+    {"audit.attachments", "Attachments", u8"Pièces jointes"},
+    {"audit.offline", "Offline", u8"Hors ligne"},
 };
 
 std::mutex& LocalizationMutex() {

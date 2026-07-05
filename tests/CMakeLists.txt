@@ -309,6 +309,9 @@ add_executable(SmatchetTests
     # typo (key resolves to English fallback under fr-FR) can't regress.
     # SmatchetLocalization.cpp already linked below.
     Core/PrefsAssistantLocalization.test.cpp
+    # user-facing-text-i18n-sweep — pin a sample of the keys added for literals that
+    # previously bypassed the lookup (toasts, palette, toolbar editor, mobile shell).
+    Core/I18nSweepLocalization.test.cpp
     Core/ConfigSaveConcurrency.test.cpp
     Core/MainThreadDispatcherDrain.test.cpp
     Core/CacheEvictionPolicy.test.cpp
@@ -413,7 +416,8 @@ add_executable(SmatchetTests
     # UI classes — no ImGui, no AppController — so the rig needs no extra .cpp link.
     Core/PreferencesDateFormatIndex.test.cpp
     # dual-ui-mode batch — pure inline string/scale converters for the UI
-    # layout-mode + mobile-shell enums (SmatchetUiModeIds.h). Header-only +
+    # layout-mode + mobile-shell enums (SmatchetUiModeIds.h). Header + the already-linked
+    # SmatchetLocalization.cpp (mobileNavPageLabel localizes); otherwise
     # ImGui-free, so no extra .cpp link.
     Core/UiModeIds.test.cpp
     # Issue #979 — pure credential-trim helper applied by onPreferencesSaveAndSync

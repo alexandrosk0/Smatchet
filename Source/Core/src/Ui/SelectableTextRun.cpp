@@ -4,6 +4,7 @@
 
 #include "SelectableTextRun_detail.h"
 
+#include "SmatchetLocalizedImGui.h"
 #include "imgui.h"
 #include "imgui_internal.h"
 
@@ -232,13 +233,15 @@ static void HandleSelectionKeyboardAndMenu(Context& ctx, bool hovered, int segCo
     }
     if (ImGui::BeginPopup("##selectable_text_menu")) {
         const bool canCopy = HasSelection(ctx);
-        if (ImGui::MenuItem("Copy", "Ctrl+C", false, canCopy)) {
+        // Explicit wrapper calls (no TU-wide alias): this TU renders user text runs, so only
+        // these two fixed menu labels route through localization.
+        if (SmatchetLocalizedImGui::MenuItem("Copy", "Ctrl+C", false, canCopy)) {
             const std::string sel = GetSelectedText(ctx);
             if (!sel.empty()) {
                 ImGui::SetClipboardText(sel.c_str());
             }
         }
-        if (ImGui::MenuItem("Select all", "Ctrl+A", false, segCount > 0)) {
+        if (SmatchetLocalizedImGui::MenuItem("Select all", "Ctrl+A", false, segCount > 0)) {
             detail::SelectAllSegments(ctx, segCount);
         }
         ImGui::EndPopup();

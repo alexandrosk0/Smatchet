@@ -13,6 +13,7 @@
 #include "FieldEditAuditSource.h"
 #include "IssueTableSerializer.h"
 #include "LuaAutomationHookPolicyPure.h"
+#include "SmatchetLocalization.h"
 #include "SmatchetToast.h"
 
 #include <algorithm>
@@ -706,7 +707,10 @@ bool AppController::Impl::TryBeginLuaAiPromptTurn(std::string& outError) {
         }
 #endif
         SmatchetToastManager::Instance().Push(
-            "AI prompt from Lua", "A Lua script called ai.prompt — sending your AI context to " + provider + ".",
+            SmatchetLocalization::T("toast.ai_prompt_from_lua", "AI prompt from Lua"),
+            SmatchetLocalization::Format("toast.ai_prompt_from_lua_body",
+                                         "A Lua script called ai.prompt — sending your AI context to %s.",
+                                         provider.c_str()),
             ToastType::Warning, 8000);
         LOG_INFO("[LUA] ai.prompt invoked from Lua for the first time this session (provider=%s)", provider.c_str());
     }

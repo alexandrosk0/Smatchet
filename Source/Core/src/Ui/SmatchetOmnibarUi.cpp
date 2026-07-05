@@ -50,12 +50,12 @@ const char* OmnibarModeGlyph(omni::OmnibarInputKind kind) {
 const char* OmnibarModeTooltip(omni::OmnibarInputKind kind) {
     switch (kind) {
     case omni::OmnibarInputKind::TicketKey:
-        return "Ticket key — Enter opens this issue.";
+        return SmatchetLocalization::T("omnibar.mode.ticket_key", "Ticket key — Enter opens this issue.");
     case omni::OmnibarInputKind::Jql:
-        return "Filter query — Enter replaces the focused view's query.";
+        return SmatchetLocalization::T("omnibar.mode.jql", "Filter query — Enter replaces the focused view's query.");
     case omni::OmnibarInputKind::TitleSearch:
     default:
-        return "Title search — Enter filters the focused grid.";
+        return SmatchetLocalization::T("omnibar.mode.title_search", "Title search — Enter filters the focused grid.");
     }
 }
 
@@ -170,11 +170,15 @@ void SmatchetUI::applyOmnibarEnter(AppController& app, UiDrawSession& d, GridPan
     case ApplyQueryResult::Ok:
         break; // happy path — the grid re-runs; no toast needed.
     case ApplyQueryResult::ViewUnavailable:
-        SmatchetToastManager::Instance().Push("Search", "No active view to search — open a grid pane first.",
-                                              ToastType::Warning);
+        SmatchetToastManager::Instance().Push(
+            SmatchetLocalization::T("toast.search", "Search"),
+            SmatchetLocalization::T("omnibar.no_active_view", "No active view to search — open a grid pane first."),
+            ToastType::Warning);
         break;
     case ApplyQueryResult::UpdateFailed:
-        SmatchetToastManager::Instance().Push("Search", "Could not apply the query.", ToastType::Warning);
+        SmatchetToastManager::Instance().Push(
+            SmatchetLocalization::T("toast.search", "Search"),
+            SmatchetLocalization::T("omnibar.apply_failed", "Could not apply the query."), ToastType::Warning);
         break;
     }
 }
