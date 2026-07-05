@@ -119,15 +119,19 @@ static void DrainAppUpdateCheck(UiDrawSession& d) {
     }
 
     d.appUpdateCheckInFlight = false;
+    const char* const checkFailedMsg = SmatchetLocalization::T(
+        "updates.check_failed", "Update check failed — check your network connection and try again. You can "
+                                "also download releases from the GitHub page.");
     try {
         d.appUpdateInfo = d.appUpdateFuture.get();
     } catch (const std::exception& ex) {
+        LOG_WARN("DrainAppUpdateCheck: %s", ex.what());
         d.appUpdateInfo = {};
-        d.appUpdateInfo.Error = std::string("Update check failed: ") + ex.what();
+        d.appUpdateInfo.Error = checkFailedMsg;
     } catch (...) {
         LOG_WARN("DrainAppUpdateCheck: unknown exception");
         d.appUpdateInfo = {};
-        d.appUpdateInfo.Error = "Update check failed with an unknown error.";
+        d.appUpdateInfo.Error = checkFailedMsg;
     }
 
     if (!d.appUpdateInfo.Error.empty()) {
@@ -468,6 +472,19 @@ void SmatchetUI::drawPerFrameTicksAndHandlers(AppController& app, UiDrawSession&
     if (d.cfgInitialized && !d.offlineLegacyStartupBannerConsumed) {
         d.offlineLegacyStartupBannerConsumed = true;
         d.offlineLegacyStartupBannerText = app.TakeLegacyPendingStartupBanner();
+        // One-shot corrupt-config notice (previously log-only: settings reverted to defaults
+        // with zero UI signal). Same startup seam as the legacy banner; UI thread only.
+        const std::string badConfigName = ConfigManager::TakeStartupConfigWarning();
+        if (!badConfigName.empty()) {
+            SmatchetToastManager::Instance().Push(
+                SmatchetLocalization::T("toast.settings", "Settings"),
+                SmatchetLocalization::Format(
+                    "config.parse_failed",
+                    "Your settings file (%s) could not be read, so defaults are in use. Fix the file, or open "
+                    "Preferences and Save to rewrite it.",
+                    badConfigName.c_str()),
+                ToastType::Warning, 12000);
+        }
     }
     if (d.cfgInitialized && d.cfg.UpdateCheckEnabled && !d.appUpdateStartupCheckStarted) {
         d.appUpdateStartupCheckStarted = true;

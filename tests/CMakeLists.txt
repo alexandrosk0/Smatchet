@@ -91,6 +91,8 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearIssueMappingPure.cpp"
         Core/LinearQueryFromJql.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearQueryFromJql.cpp"
+        Core/JiraErrorMessagePure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraErrorMessagePure.cpp"
         # multi-grid-tabs.md Slice 5a — pure hidden-pane LRU eviction decision
         # (header-only; no extra .cpp). No threads — proves the policy compiles +
         # links cleanly under -fsanitize=thread end-to-end on the runner.
@@ -136,6 +138,9 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/GridLiveContext.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/TicketSyncService.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpPure.cpp"
+        # RedactHttpBodyForLog (TrackerHttpPure.cpp, above) delegates to the cpr-free AI-side
+        # redactor — link its TU so the connectivity-banner scrub resolves in this target.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/AiErrorRedact.cpp"
         # --- EditMetaCacheService (AppController god-object decomposition Phase 1): per-issue +
         #     per-issue-type editmeta cache (editMetaMutex_) loaded from BOTH the UI thread and
         #     the background warm worker — a genuine cross-thread mutex, highest-value TSan
@@ -182,6 +187,10 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # with UiThreadAffinity::WarnIfOnUiThread. Both are cpr/ImGui/GL-free.
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/KeybindingsConfig.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/UiThreadAffinity.cpp"
+        # OfflineQueueService / FieldEditPipelineService now localize their cache-unavailable
+        # user messages (SmatchetLocalization::T). The localization TU is cpr/ImGui-free and
+        # its own closure (ConfigManager split + Logger + nlohmann) is already linked above.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/SmatchetLocalization.cpp"
         # TicketSyncService.test scripts its backend through the header-only
         # ScriptedTrackerBackendFactory, whose impl lives in JiraFakeTrackerFixture
         # (builds a header-only FakeTrackerClient — no real JiraClient, no cpr). The
@@ -825,6 +834,11 @@ add_executable(SmatchetTests
     # ParseIso8601ToUnixSec (GitHubClientHelpers.cpp) — both already linked above.
     Core/JiraCommentMappingPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraCommentMappingPure.cpp"
+    # error-message-quality-pass — pure Jira error-body extractor (errorMessages[]/errors{}
+    # → joined message, bounded parse, never the raw body). Jira counterpart of
+    # ExtractLinearErrorMessage; used by every JiraIssueMutation failure path.
+    Core/JiraErrorMessagePure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraErrorMessagePure.cpp"
     # issue-comments PR-C — pure JSON array → TrackerIssueComment mapping, split
     # out of PlaneClient.cpp (which pulls cpr). PlaneCommentMappingPure.cpp depends
     # on JsonGetStringIfString (TrackerFieldValueParser.cpp) + ParseIso8601ToUnixSec

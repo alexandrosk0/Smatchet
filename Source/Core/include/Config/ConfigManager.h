@@ -743,6 +743,12 @@ class ConfigManager {
                                          std::function<std::string(const std::string&)> unprotector);
 
     static nlohmann::json LoadJsonFile(const std::string& path);
+
+    /// One-shot startup notice: returns the user config file NAME (empty when none) if the
+    /// config existed but failed to parse this session, so defaults are silently in use.
+    /// Previously log-only — the user lost settings with zero UI signal. The UI consumes
+    /// this once at startup and raises a toast; clears on read.
+    static std::string TakeStartupConfigWarning();
     static nlohmann::json LoadMergedConfigJson();
     static std::string NormalizeUiLanguageCode(const std::string& code);
     static void WriteConfigJson(const nlohmann::json& j);

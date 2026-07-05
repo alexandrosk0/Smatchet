@@ -11,6 +11,7 @@
 #include "ConfigManager.h"
 #include "IAiClient.h"
 #include "Logger.h"
+#include "SmatchetLocalization.h"
 #include "MainThreadDispatcher.h"
 #include "SmatchetUiSession.h"
 
@@ -68,10 +69,17 @@ std::string RunProbe(AiProvider provider, const AiClientConfig& clientCfg, const
                 }
             }
         }
+        // SMATCHET_DEVIATION(rule=duplication; reason=test-connection probe twins (AiPrefsTestConnection vs Preferences
+        // UI worker) predate this pass; the identical localized catch-handling keeps both twins consistent until the
+        // planned twin dedup; owner=user-text-error-pass; revisit=2026-09-30)
     } catch (const std::exception& ex) {
-        errMsg = std::string("internal error: ") + ex.what();
+        LOG_WARN("AiPrefsTestConnection: %s", ex.what());
+        errMsg = SmatchetLocalization::T("prefs.assistant.test_internal_error",
+                                         "the request could not be completed — check the endpoint URL and try again");
     } catch (...) {
-        errMsg = "internal error: unknown exception";
+        LOG_WARN("AiPrefsTestConnection: unknown exception");
+        errMsg = SmatchetLocalization::T("prefs.assistant.test_internal_error",
+                                         "the request could not be completed — check the endpoint URL and try again");
     }
     return errMsg;
 }
