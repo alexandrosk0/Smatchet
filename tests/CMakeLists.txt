@@ -174,6 +174,10 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # with UiThreadAffinity::WarnIfOnUiThread. Both are cpr/ImGui/GL-free.
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/KeybindingsConfig.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/UiThreadAffinity.cpp"
+        # OfflineQueueService / FieldEditPipelineService now localize their cache-unavailable
+        # user messages (SmatchetLocalization::T). The localization TU is cpr/ImGui-free and
+        # its own closure (ConfigManager split + Logger + nlohmann) is already linked above.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/SmatchetLocalization.cpp"
         # TicketSyncService.test scripts its backend through the header-only
         # ScriptedTrackerBackendFactory, whose impl lives in JiraFakeTrackerFixture
         # (builds a header-only FakeTrackerClient — no real JiraClient, no cpr). The
