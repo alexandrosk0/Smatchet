@@ -42,6 +42,9 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h> // _NSGetExecutablePath (CPP_CODE_AUDIT.md #33g — was only transitively included)
+#endif
 #endif
 
 namespace fs = ghc::filesystem;
