@@ -38,6 +38,7 @@ std::set<std::string> ExpectedNames() {
     expected.insert("ai-chat-history-render");
 #endif
     expected.insert("idle");
+    expected.insert("command-contract-sweep");
     expected.insert("cell-edit-burst");
     expected.insert("attachment-preview-open");
     expected.insert("preferences-slider-drag");
