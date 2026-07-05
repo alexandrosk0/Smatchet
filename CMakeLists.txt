@@ -471,9 +471,19 @@ if(NOT DEFINED FETCHCONTENT_BASE_DIR)
 endif()
 
 # Re-configure should not hit the network to "update" already-populated deps (first clone still uses git).
+# CI is the exception: its .fetchcontent-src is restored from an actions/cache prefix fallback,
+# which after a dependency pin bump can predate the new ref — the disconnected update step then
+# FATALs the configure ("Requested git ref ... is not present locally"). In CI the update step
+# may contact the remote so a stale restored cache self-heals; local/IDE configures keep the
+# fast disconnected path.
 if(NOT DEFINED FETCHCONTENT_UPDATES_DISCONNECTED)
-    set(FETCHCONTENT_UPDATES_DISCONNECTED ON CACHE BOOL
-        "Skip FetchContent update step when content is already populated (faster IDE re-configure)")
+    if(DEFINED ENV{CI})
+        set(FETCHCONTENT_UPDATES_DISCONNECTED OFF CACHE BOOL
+            "Allow FetchContent update step to fetch in CI (stale restored caches self-heal)")
+    else()
+        set(FETCHCONTENT_UPDATES_DISCONNECTED ON CACHE BOOL
+            "Skip FetchContent update step when content is already populated (faster IDE re-configure)")
+    endif()
 endif()
 
 include(FetchContent)

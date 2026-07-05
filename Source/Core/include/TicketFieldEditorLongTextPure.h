@@ -67,6 +67,28 @@ RoundTripPreview ComputeRoundTripPreview(LongTextRichKind kind, const std::strin
 /// Falls back to `strippedFallback` when empty, plain, or HTML outside the supported subset.
 std::string RichValueToTooltipMarkdown(const std::string& rich, const std::string& strippedFallback);
 
+/// What SeedLongTextBuffer (TicketFieldEditor_Modal.cpp) actually loads into the fixed-size
+/// edit buffer: the seed's first `bufferCapacity - 1` bytes plus whether anything was cut.
+struct LongTextSeedPlan {
+    std::string Shown;
+    bool Truncated = false;
+};
+
+/**
+ * Plan the copy of `seed` into an edit buffer of `bufferCapacity` bytes (one reserved for the
+ * NUL terminator). `Shown` is the exact string the editor displays and MUST be the Save-diff
+ * baseline: diffing the buffer against the untruncated seed instead makes an unmodified
+ * over-limit document always look "changed", queuing a save that overwrites the tracker field
+ * with truncated text purely because it was opened and closed — CPP_CODE_AUDIT.md #1.
+ * `bufferCapacity == 0` yields an empty plan.
+ */
+LongTextSeedPlan PlanSeedCopy(const std::string& seed, std::size_t bufferCapacity);
+
+/// True when the Save action should queue a PendingFieldEdit: the edited buffer differs from
+/// `shownSeed` (the LongTextSeedPlan::Shown actually loaded, NOT the untruncated original).
+/// A no-op Save on a truncated seed must never PUT — CPP_CODE_AUDIT.md #1.
+bool ShouldQueueLongTextEdit(const std::string& newValue, const std::string& shownSeed);
+
 } // namespace TicketFieldEditorLongTextPure
 
 #endif
