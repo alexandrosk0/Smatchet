@@ -59,9 +59,32 @@ the rig.
    `LinearIssueSearch.cpp` into `SmatchetTests`; register both new test TUs. `SmatchetTsanTests` is
    untouched (both shells pull `<cpr/cpr.h>`, which the TSan subset excludes by design).
 
+### Slice 2 (second PR) — GitHub issue-search + client shells
+
+5. `tests/Core/GitHubIssueSearchHttp.test.cpp` — NEW suite driving the `smatchet::github` free
+   functions at the loopback: two-page GraphQL pagination + `after`-cursor wire threading + the
+   `repo:` scope in `variables.q`, fatal page classification (errors[]-on-200 / non-200 message
+   extraction / invalid JSON / missing `data.search`) with the single-terminal-emit contract, the
+   `endCursor`-missing early stop, the 10-page cap, the `key =` post-filter (pages and aggregate),
+   two-source orchestration (commits-only routes to REST `/commits` with zero GraphQL calls;
+   commit-fetch failure is a soft warning that still blocks the full-sync claim), and the per-key
+   single-issue GET error taxonomy (Auth / InvalidRequest / NotFound / Parse / success).
+6. `tests/Core/GitHubClientHttp.test.cpp` — NEW suite driving a real `GitHubClient` (ctor'd with a
+   deliberately bogus base URL so every hit proves the issue-#979 live-cfg resolution): the
+   `/rate_limit` probe classification matrix (missing-PAT fail-fast, 200 + core-quota diagnostic,
+   401/403 hints, 404 base-URL hint), comment-post wire shape + error taxonomy (2xx body, malformed
+   key, cleared-live-PAT-no-ctor-fallback, 422 message extraction), the streamed-fetch shim
+   (batches + summary wiring), and the per-key shim. The cfg-less paths (FetchIssueComments /
+   CreateIssue / UpdateField) resolve from on-disk ConfigManager and stay out of scope.
+7. `tests/support/HttpRequestCapture.h` — NEW shared thread-safe request-body capture (extracted
+   from the Slice-1 Linear suite's file-local struct so Slice 2 doesn't clone it; the Linear suite
+   now consumes it too).
+8. `tests/CMakeLists.txt` — register both suites; link `GitHubIssueSearch.cpp` + `GitHubClient.cpp` +
+   `GitHubActivityFeed.cpp` (the GitHubClient vtable spans the latter two; all other deps were
+   already in the rig).
+
 ### Later slices (not this PR)
 
-- `GitHubIssueSearch.cpp` / `GitHubClient.cpp` fixture suite (same pattern; largest remaining shell).
 - Mutation-side suites (`PlaneIssueMutation.cpp`, `LinearIssueMutation.cpp`) once the B2 batches reach
   the write paths.
 

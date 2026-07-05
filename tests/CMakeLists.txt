@@ -1125,6 +1125,17 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneFieldCatalog.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneActivityFeed.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearIssueSearch.cpp"
+    # Slice 2 (same plan) — the GitHub shells. GitHubIssueSearch.cpp is free functions;
+    # GitHubClientHttp.test.cpp instantiates GitHubClient, whose vtable spans
+    # GitHubClient.cpp + GitHubActivityFeed.cpp (both linked here). Their pure/support
+    # deps (GitHubClientHelpers, GitHubQueryFromJql, GitHubFetchPlan,
+    # GitHubIssueSearchMapping, GitHubCommentMappingPure, GitHubActivityFeedPure,
+    # GitHubCommitsParse, LabelEditDiffPure, BackendAuditTrail) are all already linked.
+    Core/GitHubIssueSearchHttp.test.cpp
+    Core/GitHubClientHttp.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubIssueSearch.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubClient.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubActivityFeed.cpp"
     # build-quality-velocity-hardening #32 — flaky-test quarantine mechanism self-test.
     # Demonstrates SMATCHET_QUARANTINED_TEST_CASE / SMATCHET_QT_CHECK env-flip behaviour.
     # Header-only (QuarantineTestCase.h in tests/support/); no extra .cpp source.
