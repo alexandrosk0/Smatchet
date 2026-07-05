@@ -91,7 +91,16 @@ crash. The harness below is the productionised version: 6 cases / 952 assertions
   at least one blocking CI lane runs it (exact lane TBD in the slice — if only the advisory
   posix-core-check lane can host it on day one, that is recorded as a deviation and a follow-up).
 
+## Implementation log
+
+- `fc86b5f9` · Slice 1: `SmatchetCommandsTests` target + `BuiltinCommandsDispatch.test.cpp`
+  (6 cases / 952 assertions green locally under the `posix-core-check` configure) + the
+  advisory-lane CI wiring. `SmatchetTests` rebuilt and unaffected; lint 11/11, docs 14/14,
+  clang-format clean.
+
 ## Deviations from plan
 
 - Plan-lock seed push to `refs/locks/*` remains blocked by the session git proxy (403) — logged per
   the seed contract, same as the Tier-1/Tier-2 plans.
+- Day-1 CI hosting is the advisory `mobile-posix-core-check` lane only (as the plan anticipated) —
+  promotion to a blocking lane is the recorded follow-up once the harness proves stable in CI.
