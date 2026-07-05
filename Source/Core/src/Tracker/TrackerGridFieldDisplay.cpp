@@ -27,6 +27,7 @@
 // anonymous namespace so the untrusted tracker-value parsing is unit-testable without ImGui
 // (tests/Core/TrackerGridFieldDisplayPure.test.cpp). This TU keeps the draw code + the
 // per-value render-model caches.
+// SMATCHET_DEVIATION(rule=duplication; reason=shared-helper using-block; owner=tracker-backend; revisit=2026-12-31)
 using TrackerGridFieldDisplayPure::AttachmentRenderModel;
 using TrackerGridFieldDisplayPure::BuildAttachmentRenderModel;
 using TrackerGridFieldDisplayPure::BuildIssueRestrictionRenderModel;

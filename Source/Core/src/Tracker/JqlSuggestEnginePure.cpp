@@ -13,20 +13,19 @@
 
 namespace {
 
-// clang-format off
-// SMATCHET_DEVIATION(rule=duplication; reason=shared-helper using-block, extraction artefact; owner=tracker-backend; revisit=2026-12-31)
-// clang-format on
+// SMATCHET_DEVIATION(rule=duplication; reason=shared-helper using-block; owner=tracker-backend; revisit=2026-12-31)
 using tracker_query_suggest::AddSuggestionUnique;
 using tracker_query_suggest::AppendFieldCatalog;
 using tracker_query_suggest::AppendTerms;
 using tracker_query_suggest::AsciiEqualsIgnoreCaseToLowered;
 using tracker_query_suggest::AsciiStartsWithIgnoreCase;
+using tracker_query_suggest::BeginQuerySuggestPass;
 using tracker_query_suggest::FindTrackerField;
 using tracker_query_suggest::InsertForValueToken;
 using tracker_query_suggest::IsQueryDateField;
 using tracker_query_suggest::IsQueryIdChar;
 using tracker_query_suggest::IsQueryUserField;
-using tracker_query_suggest::ScanStringStateToCursor;
+using tracker_query_suggest::SortAndCapQuerySuggestions;
 
 static bool IsJqlVersionField(const TrackerField& field) {
     return field.Type == "version" || field.ItemsType == "version";
@@ -404,41 +403,6 @@ static JqlSuggestMode DetermineJqlSuggestMode(const std::vector<JqlToken>& token
     return JqlSuggestMode::Logical;
 }
 
-// Resolve the [replaceStart, replaceEnd) span and the prefix the suggestions replace.
-// Mirrors the original three-way branch: active selection, open-string token, or
-// the identifier run straddling the cursor.
-void ResolveJqlReplaceRange(const char* buf, int bufLen, int cursor, int selStart, int selEnd, int& replaceStart,
-                            int& replaceEnd, std::string& prefix) {
-    if (selStart != selEnd) {
-        const int lo = (std::min)(selStart, selEnd);
-        const int hi = (std::max)(selStart, selEnd);
-        replaceStart = lo;
-        replaceEnd = hi;
-        prefix.assign(buf + lo, buf + hi);
-        return;
-    }
-    bool inString = false;
-    int stringOpen = -1;
-    ScanStringStateToCursor(buf, bufLen, cursor, inString, stringOpen);
-    if (inString && stringOpen >= 0 && cursor > stringOpen + 1) {
-        replaceStart = stringOpen + 1;
-        replaceEnd = cursor;
-        prefix.assign(buf + replaceStart, buf + replaceEnd);
-        return;
-    }
-    int L = cursor;
-    int R = cursor;
-    while (L > 0 && IsQueryIdChar(static_cast<unsigned char>(buf[L - 1]))) {
-        --L;
-    }
-    while (R < bufLen && IsQueryIdChar(static_cast<unsigned char>(buf[R]))) {
-        ++R;
-    }
-    replaceStart = L;
-    replaceEnd = R;
-    prefix.assign(buf + L, buf + R);
-}
-
 void AppendJqlValueModeSuggestions(const std::vector<TrackerUser>& users, const std::string& prefix,
                                    const TrackerField* valueField, QuerySuggestBuild& out,
                                    std::unordered_set<std::string>& seen, QuerySuggestMeta* metaOut) {
@@ -504,52 +468,20 @@ void AppendJqlSuggestionsForMode(JqlSuggestMode mode, const std::vector<TrackerF
 void BuildJqlSuggestionsPure(const char* buf, int bufLen, int cursor, int selStart, int selEnd,
                              const std::vector<TrackerField>& fields, const std::vector<TrackerUser>& users,
                              QuerySuggestBuild& out, QuerySuggestMeta* metaOut) {
-    if (metaOut != nullptr) {
-        metaOut->UserValueToken = false;
-        metaOut->UserSearchPrefix.clear();
-    }
-    out.Items.clear();
-    out.ReplaceStart = 0;
-    out.ReplaceEnd = 0;
+    // SMATCHET_DEVIATION(rule=duplication; reason=engine entry scaffolding; owner=tracker-backend; revisit=2026-12-31)
     std::unordered_set<std::string> seen;
-    if (buf == nullptr) {
-        return;
-    }
-    cursor = (std::max)(0, (std::min)(cursor, bufLen));
-    selStart = (std::max)(0, (std::min)(selStart, bufLen));
-    selEnd = (std::max)(0, (std::min)(selEnd, bufLen));
-
     int replaceStart = 0;
     int replaceEnd = 0;
     std::string prefix;
+    if (!BeginQuerySuggestPass(buf, bufLen, cursor, selStart, selEnd, out, metaOut, replaceStart, replaceEnd, prefix)) {
+        return;
+    }
     const TrackerField* valueField = nullptr;
-
-    ResolveJqlReplaceRange(buf, bufLen, cursor, selStart, selEnd, replaceStart, replaceEnd, prefix);
-
-    out.ReplaceStart = replaceStart;
-    out.ReplaceEnd = replaceEnd;
 
     const std::vector<JqlToken> leftTokens = TokenizeJqlPrefix(buf, replaceStart);
     const JqlSuggestMode mode = DetermineJqlSuggestMode(leftTokens, prefix, fields, &valueField);
 
     AppendJqlSuggestionsForMode(mode, fields, users, prefix, valueField, out, seen, metaOut);
 
-    auto labelLessAscii = [](const QuerySuggestion& a, const QuerySuggestion& b) {
-        size_t i = 0;
-        const size_t na = a.Label.size();
-        const size_t nb = b.Label.size();
-        for (; i < na && i < nb; ++i) {
-            const int ca = std::tolower(static_cast<unsigned char>(a.Label[i]));
-            const int cb = std::tolower(static_cast<unsigned char>(b.Label[i]));
-            if (ca != cb) {
-                return ca < cb;
-            }
-        }
-        return na < nb;
-    };
-    std::sort(out.Items.begin(), out.Items.end(), labelLessAscii);
-    constexpr int kMaxSuggestions = 80;
-    if (static_cast<int>(out.Items.size()) > kMaxSuggestions) {
-        out.Items.resize(static_cast<size_t>(kMaxSuggestions));
-    }
+    SortAndCapQuerySuggestions(out.Items);
 }
