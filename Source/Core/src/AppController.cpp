@@ -1129,6 +1129,15 @@ AppController::~AppController() {
     }
 
     JoinBackgroundTasks();
+
+    // A4 (BACKLOG_CODE_REVIEW.md): every background thread that can emit a log line is joined
+    // above, so flush the async file sink now — this guarantees the whole shutdown-sequence log
+    // trail reaches disk before member destruction and the riskier late-teardown steps
+    // (mainWindow/pluginHost reset, static-destructor time) run. The abrupt-CRASH path is
+    // deliberately NOT flushed through the logger: SmatchetCrashHandler is async-signal-safe and
+    // must not take the file-sink mutex / wait on its ack condvar mid-crash (deadlock risk) — a
+    // crash captures its trail via that handler's separate async-safe crash sink instead.
+    Logger::Instance().FlushFileSink();
 }
 
 std::shared_ptr<const std::vector<CachedTicket>> AppController::GetActiveTicketsSnapshot() const {

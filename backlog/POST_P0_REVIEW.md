@@ -21,7 +21,7 @@
 
 **Every numbered entry is closed on `develop`.** The one PARTIAL is item 24 (`FlushFileSink` is honest now but has no in-tree caller — not a bug as it stands; tracked for the eventual crash-handler wire-up).
 
-> **Re-confirmed 2026-07-05:** item 24 is still the lone PARTIAL. `Logger::FlushFileSink()` (`Source/Core/src/Logger.cpp`) still has no production caller — normal exit drains via the `Logger` destructor, but the `~AppController` + crash-handler wire-up remains undone. This is the same item tracked as **A4** in [`BACKLOG_CODE_REVIEW.md`](BACKLOG_CODE_REVIEW.md) (the last genuinely-open safety tail). No other claim in this doc has gone stale.
+> **Update 2026-07-05:** item 24 (the lone PARTIAL) is now **resolved on the graceful path** — `AppController::~AppController` calls `Logger::Instance().FlushFileSink()` after `JoinBackgroundTasks()`. The crash-handler half is intentionally omitted (superseded by the async-signal-safe `SmatchetCrashHandler`, which must not touch the logger mid-crash) — see **A4** in [`BACKLOG_CODE_REVIEW.md`](BACKLOG_CODE_REVIEW.md) for the full rationale. No other claim in this doc has gone stale.
 
 ### Validation still pending on develop tip (`0a79de5`)
 
