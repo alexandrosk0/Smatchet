@@ -23,6 +23,23 @@ inline bool BeginPopupModal(const char* name, bool* p_open = nullptr, ImGuiWindo
     return ::ImGui::BeginPopupModal(SmatchetLocalization::WindowTitleFromSource(name), p_open, flags);
 }
 
+// OpenPopup/BeginPopup run the same WindowTitleFromSource transform as BeginPopupModal so the
+// popup ID stays paired with its translated Begin* counterpart in every language. Without this,
+// a raw OpenPopup hashes the English literal while the wrapped BeginPopupModal hashes the
+// translated title the moment the string gains a catalog entry — the popup silently never opens
+// in that locale. ID-only names ("##x") and untranslated titles pass through unchanged.
+inline void OpenPopup(const char* str_id, ImGuiPopupFlags popup_flags = 0) {
+    ::ImGui::OpenPopup(SmatchetLocalization::WindowTitleFromSource(str_id), popup_flags);
+}
+
+// Forwarder: the const char* overload above would otherwise hide ImGui's ImGuiID overload
+// from qualified lookup in aliased TUs.
+inline void OpenPopup(ImGuiID id, ImGuiPopupFlags popup_flags = 0) { ::ImGui::OpenPopup(id, popup_flags); }
+
+inline bool BeginPopup(const char* str_id, ImGuiWindowFlags flags = 0) {
+    return ::ImGui::BeginPopup(SmatchetLocalization::WindowTitleFromSource(str_id), flags);
+}
+
 inline void SetWindowFocus(const char* name) {
     ::ImGui::SetWindowFocus(SmatchetLocalization::WindowTitleFromSource(name));
 }

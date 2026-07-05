@@ -56,7 +56,9 @@ static void DrawLuaTicketActionMenuItems(AppController* app, const UiDrawSession
     for (const auto& name : luaActions) {
         if (ImGui::MenuItem(name.c_str())) {
             app->ExecuteLuaTicketAction(name, issueKey);
-            SmatchetToastManager::Instance().Push("Lua Action", "Queued: " + name, ToastType::Success);
+            SmatchetToastManager::Instance().Push(
+                SmatchetLocalization::T("toast.lua_action", "Lua Action"),
+                SmatchetLocalization::Format("toast.lua_queued", "Queued: %s", name.c_str()), ToastType::Success);
         }
     }
 }
@@ -240,18 +242,27 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
                         const std::string commentBody =
                             BuildTemplateCommentBody(issueKey, t.Id, ui->cfg.QuickCommentTemplates);
                         AppController* appPtr = app;
-                        SmatchetToastManager::Instance().Push("Comment Queued", "Posting to " + capturedIssueKey,
-                                                              ToastType::Info);
+                        SmatchetToastManager::Instance().Push(
+                            SmatchetLocalization::T("comments.queued_title", "Comment Queued"),
+                            SmatchetLocalization::Format("comments.posting_to", "Posting to %s",
+                                                         capturedIssueKey.c_str()),
+                            ToastType::Info);
                         app->LaunchBackgroundTask([appPtr, capturedIssueKey, commentBody]() {
                             std::string err;
                             const bool ok = appPtr->AddIssueCommentPlain(capturedIssueKey, commentBody, err);
                             appPtr->mainThreadDispatcher.PostToMainThread([ok, err, capturedIssueKey]() {
                                 if (ok) {
                                     SmatchetToastManager::Instance().Push(
-                                        "Comment Posted", "Added to " + capturedIssueKey, ToastType::Success);
+                                        SmatchetLocalization::T("toast.comment_posted", "Comment Posted"),
+                                        SmatchetLocalization::Format("comments.added_to", "Added to %s",
+                                                                     capturedIssueKey.c_str()),
+                                        ToastType::Success);
                                 } else {
                                     SmatchetToastManager::Instance().Push(
-                                        "Comment Failed", err.empty() ? "Failed to post Jira comment." : err,
+                                        SmatchetLocalization::T("toast.comment_failed", "Comment Failed"),
+                                        err.empty() ? SmatchetLocalization::T("toast.failed_jira_comment",
+                                                                              "Failed to post Jira comment.")
+                                                    : err.c_str(),
                                         ToastType::Error);
                                 }
                             });

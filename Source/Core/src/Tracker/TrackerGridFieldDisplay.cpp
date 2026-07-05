@@ -150,7 +150,10 @@ void TrackerGridFieldDisplay::RenderAttachmentsField(AppController& app, const s
     }
 
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.35f, 0.65f, 1.0f, 1.0f));
-    ImGui::TextUnformatted(model.display.c_str());
+    // Raw (::) on purpose: model.display is tracker data. The aliased TextUnformatted would run
+    // it through TranslateSource, so a field value that exactly matches a catalog English
+    // string ("Offline", "All", ...) would render translated instead of as-is.
+    ::ImGui::TextUnformatted(model.display.c_str());
 
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("%s", model.tooltip.c_str());

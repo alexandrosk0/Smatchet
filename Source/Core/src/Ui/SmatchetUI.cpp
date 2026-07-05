@@ -132,14 +132,17 @@ static void DrainAppUpdateCheck(UiDrawSession& d) {
 
     if (!d.appUpdateInfo.Error.empty()) {
         if (d.appUpdateCheckManual) {
-            SmatchetToastManager::Instance().Push("Updates", d.appUpdateInfo.Error, ToastType::Error, 5000);
+            SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.updates", "Updates"),
+                                                  d.appUpdateInfo.Error, ToastType::Error, 5000);
         }
         return;
     }
     if (!d.appUpdateInfo.UpdateAvailable) {
         if (d.appUpdateCheckManual) {
-            SmatchetToastManager::Instance().Push("Updates", "You are already on the latest release.",
-                                                  ToastType::Success, 3500);
+            SmatchetToastManager::Instance().Push(
+                SmatchetLocalization::T("toast.updates", "Updates"),
+                SmatchetLocalization::T("updates.already_latest", "You are already on the latest release."),
+                ToastType::Success, 3500);
         }
         return;
     }
@@ -149,17 +152,20 @@ static void DrainAppUpdateCheck(UiDrawSession& d) {
     }
 
     d.appUpdateModalOpen = true;
-    ImGui::OpenPopup("Update Available");
+    ImGui::OpenPopup("Update Available###AppUpdateAvailable");
     if (d.appUpdateCheckManual) {
-        SmatchetToastManager::Instance().Push("Updates", "New version found.", ToastType::Info, 2500);
+        SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.updates", "Updates"),
+                                              SmatchetLocalization::T("updates.new_version", "New version found."),
+                                              ToastType::Info, 2500);
     }
 }
 
 static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
     if (d.appUpdateModalOpen) {
-        ImGui::OpenPopup("Update Available");
+        ImGui::OpenPopup("Update Available###AppUpdateAvailable");
     }
-    if (!ImGui::BeginPopupModal("Update Available", &d.appUpdateModalOpen, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (!ImGui::BeginPopupModal("Update Available###AppUpdateAvailable", &d.appUpdateModalOpen,
+                                ImGuiWindowFlags_AlwaysAutoResize)) {
         return;
     }
 
@@ -200,13 +206,15 @@ static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
             }
         }
     } else {
-        if (ImGui::Button("Download and Install", ImVec2(170.0f, 0.0f))) {
+        // Auto-size: the label translates, so a fixed 170px width clips the French text.
+        if (ImGui::Button("Download and Install")) {
             d.installerDownloadInFlight = true;
             d.installerDownloadCancel = std::make_shared<std::atomic<bool>>(false);
             const std::string downloadUrl = d.appUpdateInfo.InstallerAsset.DownloadUrl;
             const std::string assetName = d.appUpdateInfo.InstallerAsset.Name;
             std::shared_ptr<std::atomic<bool>> cancelFlag = d.installerDownloadCancel;
-            d.appUpdateActionStatus = "Downloading installer...";
+            d.appUpdateActionStatus =
+                SmatchetLocalization::T("updates.downloading_installer", "Downloading installer...");
             app.LaunchBackgroundTask([&app, downloadUrl, assetName, cancelFlag]() {
                 std::string err;
                 const bool ok = app.DownloadAndLaunchInstallerUpdate(downloadUrl, assetName, err, cancelFlag);
@@ -214,16 +222,20 @@ static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
                     g_ui.installerDownloadInFlight = false;
                     g_ui.installerDownloadCancel.reset();
                     if (ok) {
-                        g_ui.appUpdateActionStatus =
-                            "Installer launched. Smatchet will close so the update can proceed.";
+                        g_ui.appUpdateActionStatus = SmatchetLocalization::T(
+                            "updates.installer_launched",
+                            "Installer launched. Smatchet will close so the update can proceed.");
+                    } else if (err.empty()) {
+                        g_ui.appUpdateActionStatus = SmatchetLocalization::T("updates.installer_launch_failed",
+                                                                             "Failed to launch installer update.");
                     } else {
-                        g_ui.appUpdateActionStatus = err.empty() ? "Failed to launch installer update." : err;
+                        g_ui.appUpdateActionStatus = err;
                     }
                 });
             });
         }
         ImGui::SameLine();
-        if (ImGui::Button("Skip This Version", ImVec2(150.0f, 0.0f))) {
+        if (ImGui::Button("Skip This Version")) {
             d.cfg.UpdateSkipVersion = d.appUpdateInfo.LatestVersion;
             ConfigManager::Save(d.cfg);
             d.appUpdateModalOpen = false;
@@ -971,7 +983,9 @@ void SmatchetUI::drawSecondaryWindows(AppController& app, UiDrawSession& d) {
 void SmatchetUI::userInfoAddToQuery(AppController& app, UiDrawSession& d, const std::string& sourcePaneId,
                                     const std::string& issueKey) {
     if (issueKey.empty()) {
-        SmatchetToastManager::Instance().Push("User Info", "No issue key to add.", ToastType::Warning);
+        SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.user_info", "User Info"),
+                                              SmatchetLocalization::T("userinfo.no_issue_key", "No issue key to add."),
+                                              ToastType::Warning);
         return;
     }
     GridPane* target = FindGridPaneById(d.gridPanes, sourcePaneId);
@@ -979,8 +993,10 @@ void SmatchetUI::userInfoAddToQuery(AppController& app, UiDrawSession& d, const 
         target = FindGridPaneById(d.gridPanes, d.focusedPaneId);
     }
     if (!target) {
-        SmatchetToastManager::Instance().Push("User Info", "Source pane is gone; cannot update its view query.",
-                                              ToastType::Warning);
+        SmatchetToastManager::Instance().Push(
+            SmatchetLocalization::T("toast.user_info", "User Info"),
+            SmatchetLocalization::T("userinfo.source_pane_gone", "Source pane is gone; cannot update its view query."),
+            ToastType::Warning);
         return;
     }
     // Per-backend key clause: Plane filter syntax vs Jira JQL.
@@ -990,11 +1006,16 @@ void SmatchetUI::userInfoAddToQuery(AppController& app, UiDrawSession& d, const 
     // the original behaviour (ViewState.UpdateActive false → no toast).
     switch (applyQueryToPaneView(app, d, *target, query)) {
     case ApplyQueryResult::Ok:
-        SmatchetToastManager::Instance().Push("User Info", "View query set to " + issueKey + ".", ToastType::Success);
+        SmatchetToastManager::Instance().Push(
+            SmatchetLocalization::T("toast.user_info", "User Info"),
+            SmatchetLocalization::Format("userinfo.query_set", "View query set to %s.", issueKey.c_str()),
+            ToastType::Success);
         break;
     case ApplyQueryResult::ViewUnavailable:
-        SmatchetToastManager::Instance().Push("User Info", "Target view is unavailable; cannot update query.",
-                                              ToastType::Warning);
+        SmatchetToastManager::Instance().Push(
+            SmatchetLocalization::T("toast.user_info", "User Info"),
+            SmatchetLocalization::T("userinfo.view_unavailable", "Target view is unavailable; cannot update query."),
+            ToastType::Warning);
         break;
     case ApplyQueryResult::UpdateFailed:
         break;

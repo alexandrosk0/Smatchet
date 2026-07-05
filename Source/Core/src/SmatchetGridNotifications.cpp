@@ -38,15 +38,15 @@ void MaybeToastTrackerConnectivityBanner(const AppController& app, UiDrawSession
         return;
     }
     std::string body = banner.Message;
-    if (banner.Kind == Level::Error) {
+    const bool isError = banner.Kind == Level::Error;
+    if (isError) {
         body += "\n\n";
-        body += SmatchetLocalization::T(
-            "toast.tracker_reachable_required",
-            "Grid edits and quick comment actions stay disabled until Tracker is reachable.");
-        SmatchetToastManager::Instance().Push("Tracker", body, ToastType::Error, 7000);
-    } else {
-        SmatchetToastManager::Instance().Push("Tracker", body, ToastType::Warning, 5500);
+        body +=
+            SmatchetLocalization::T("toast.tracker_reachable_required",
+                                    "Grid edits and quick comment actions stay disabled until Tracker is reachable.");
     }
+    SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.tracker", "Tracker"), body,
+                                          isError ? ToastType::Error : ToastType::Warning, isError ? 7000 : 5500);
     d.lastToastedTrackerBannerKind = banner.Kind;
     d.lastToastedTrackerBannerMessage = banner.Message;
 }
@@ -69,11 +69,8 @@ void MaybeToastGridBannerFromSession(UiDrawSession& d) {
     if (curKind == d.lastToastedGridBannerKind && curMsg == d.lastToastedGridBannerMessage) {
         return;
     }
-    if (curKind == 1) {
-        SmatchetToastManager::Instance().Push("Active Project", curMsg, ToastType::Error);
-    } else {
-        SmatchetToastManager::Instance().Push("Active Project", curMsg, ToastType::Success);
-    }
+    SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.active_project", "Active Project"), curMsg,
+                                          curKind == 1 ? ToastType::Error : ToastType::Success);
     d.lastToastedGridBannerKind = curKind;
     d.lastToastedGridBannerMessage = std::move(curMsg);
 }
