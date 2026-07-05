@@ -1150,6 +1150,16 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubIssueSearch.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubActivityFeed.cpp"
+    # Slice 3 (same plan) — the Plane/Linear WRITE shells (the audit's data-loss class).
+    # PlaneIssueMutation.cpp is already linked above (PlaneClient vtable); the LinearClient
+    # vtable spans LinearClient.cpp + LinearIssueMutation.cpp (both here). Their deps
+    # (LinearMutationPure, LinearClientHelpers, LinearIssueSearch, BackendAuditTrail,
+    # MarkdownConvert, PlaneCommentMappingPure) are all already linked. The cfg-less write
+    # paths load ConfigManager per request, so these suites run under TestEnvGuard.
+    Core/PlaneIssueMutationHttp.test.cpp
+    Core/LinearIssueMutationHttp.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearClient.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearIssueMutation.cpp"
     # build-quality-velocity-hardening #32 — flaky-test quarantine mechanism self-test.
     # Demonstrates SMATCHET_QUARANTINED_TEST_CASE / SMATCHET_QT_CHECK env-flip behaviour.
     # Header-only (QuarantineTestCase.h in tests/support/); no extra .cpp source.
