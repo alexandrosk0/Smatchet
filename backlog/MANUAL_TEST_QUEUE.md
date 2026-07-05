@@ -3,7 +3,7 @@
 > Smoke tests that aren't covered by any PR's automated build verification. Each entry is something a human has to actually click / run / observe at a keyboard. Tests are grouped by the PR that introduced the behaviour they validate.
 >
 > When you complete a smoke, flip ⏳ → ✅ in place and add a one-line note (date + result + tester initials). If a smoke regresses, flip to ❌ and file a new backlog item.
-
+>
 > ## ⚠️ Staleness note (2026-07-05)
 >
 > **43 entries; ~40 still ⏳ PENDING** (1 ✅, 1 🟡, 1 ❌) — the queue has sat essentially unexercised. Every entry references early single/double-digit PRs (#12–#22) against develop tips `93f561b` / `0a79de5`, now buried ~1600 merged PRs deep (current tip ~#1620). In particular the **build-re-verify commands (B1/B2) pin a baseline (`93f561b`) that no longer means anything** — treat those as historical, not runnable as written. The per-PR runtime smokes below validate behaviours that mostly still exist but have been substantially reworked since. Before running any of these, re-baseline against current `develop`, or treat the pre-#22 batch as *superseded / historical*. This is a human-only queue; nothing here was auto-verifiable in the reconciliation pass.
