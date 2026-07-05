@@ -126,16 +126,21 @@ is **FALSE** (run the full desktop suite) on any uncertainty or any non-android,
 non-docs path. The two workflows compute `android_only` independently with the
 same tolerated set, so they agree on what counts as android-only.
 
-## Pattern D — advisory job (step-level `continue-on-error`, not job-level)
+## Pattern D — masked step inside a blocking check (step-level `continue-on-error`, not job-level)
 
-An **advisory** job (NOT a required branch-protection context; NOT on the
-merge-gate poller's meant-to-block allow-list) should keep its *real* signal
-visible while not red-walling the merge. The naive way — `continue-on-error:
-true` at the **job** level — masks **every** step, so even a broken harness /
-infra failure / "the lane ran nothing" goes green. Prefer **step-level**
-`continue-on-error` on the genuinely-flaky/advisory step **plus** an unmasked
-hard-fail step that catches the broken-lane class, plus artifact upload keyed on
-the step `outcome`/`always()` so the evidence survives a masked failure.
+Under block-on-any-red the CHECK always gates (any non-advisory-named red
+blocks the poller), so Pattern D is now about scoping WHAT reds the check: a
+genuinely-noisy step (golden diff on non-authoritative goldens, stochastic
+fuzzing, Mesa render-dependent per-test results, compile-DB-free cppcheck)
+keeps a **step-level** `continue-on-error` while an unmasked hard-fail step
+catches the broken-lane class — that unmasked step's failure DOES red the check
+and DOES block the merge. Job-level `continue-on-error` is banned for gate
+lanes: it masks **every** step, so a broken harness / infra failure / "the lane
+ran nothing" green-washes the workflow run. Keep artifact upload keyed on the
+step `outcome` / `failure()` so the evidence survives a masked failure. The
+current sanctioned masked steps: fuzz-smoke's stochastic fuzz run, bucket-C's
+per-scenario golden diff, bucket-E's per-test ImGui run, cpp-lint's cppcheck
+report (each documented at the step).
 
 Canonical snippet (this is exactly the shape `sanitizer-ubsan-pr` +
 `bucket-c-screenshot-diff` already use):
