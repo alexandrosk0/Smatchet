@@ -14,16 +14,16 @@
   "campaign": [
     { "status": "landed",      "title": "Finding‑class CI gates",
       "evidence": "Blocking <code style=\"font-family:var(--mono);font-size:11px\">bare‑json‑parse‑untrusted</code> lint gate + ranked mining record (#1608 → #1605)." },
-    { "status": "not-started", "title": "Mutation testing",
-      "evidence": "Measure test <em>quality</em>, not reach. No infra, branch, or PR yet." },
+    { "status": "partial",     "title": "Mutation testing", "label": "In review",
+      "evidence": "Pilot shipped a report (#1626): 68 mutants / 12 TUs → <b style=\"color:var(--ok)\">52 killed</b>, 16 survived; 3 worst survivors strengthened (SURVIVED→KILLED)." },
     { "status": "partial",     "title": "Outward‑facing product", "label": "Half shipped",
-      "evidence": "i18n sweep <b style=\"color:var(--ok)\">merged</b> (#1614); error‑message pass in review (#1615). Service‑extraction pending." },
+      "evidence": "i18n <b style=\"color:var(--ok)\">merged</b> (#1614) + error‑message pass <b style=\"color:var(--ok)\">merged</b> (#1615). AppController service‑extraction (2.8K LOC) pending." },
     { "status": "not-started", "title": "Performance win‑hunting",
-      "evidence": "Offensive perf pass — <code style=\"font-family:var(--mono);font-size:11px\">‑ftime‑trace</code> + hot‑path hunt. Untouched." },
-    { "status": "not-started", "title": "Fuzz‑surface expansion",
-      "evidence": "Widen beyond the current targets (MCP, config, cache). No new harness yet." },
+      "evidence": "Offensive perf pass — <code style=\"font-family:var(--mono);font-size:11px\">‑ftime‑trace</code> + hot‑path hunt. The one untouched item." },
+    { "status": "partial",     "title": "Fuzz‑surface expansion", "label": "In review",
+      "evidence": "3 new libFuzzer mapper drivers — github/plane/linear (#1627); ~30 min each, <b style=\"color:var(--ok)\">0 crashes</b>. (develop at 6 until merge.)" },
     { "status": "landed",      "title": "Long‑horizon execution",
-      "evidence": "Pilot #1604 merged · nightly triage routine live · Phase‑3 batches #1607/#1609 · this dashboard." }
+      "evidence": "Pilot #1604 merged · nightly triage routine live · Phase‑3 batches #1607/#1609 · dashboard <b style=\"color:var(--ok)\">merged</b> (#1625)." }
   ],
 
   "ci_lanes": [
@@ -36,12 +36,12 @@
   "triage_note": "Watched nightly by the <b style=\"color:var(--ink)\">smatchet‑nightly‑advisory‑lane‑triage</b> routine · 06:30 UTC.",
 
   "open_prs": [
-    { "id": "1615", "state": "ready", "label": "Ready",
-      "title": "Error‑message quality pass — what/why/next", "meta": "item 03 · track 2 · Jira extractor + redaction" },
-    { "id": "1621", "state": "green", "label": "Green",
-      "title": "Coverage campaign bookkeeping — Tier 3 archive", "meta": "docs‑only · gap‑map close‑out" },
-    { "id": "1583", "state": "draft", "label": "Draft",
-      "title": "Multi‑expert evaluation (9 experts × 2 passes)", "meta": "docs‑only · draft · parked for review" }
+    { "id": "1627", "state": "ready", "label": "Ready",
+      "title": "Fuzz‑surface expansion — 3 tracker‑mapper drivers", "meta": "item 05 · github/plane/linear · 0 crashes" },
+    { "id": "1626", "state": "ready", "label": "Ready",
+      "title": "Mutation‑testing pilot + 3 strengthened tests", "meta": "item 02 · 52 killed / 16 survived" },
+    { "id": "1624", "state": "green", "label": "Docs",
+      "title": "Docs reconciliation — audits / backlog / coverage / plans", "meta": "docs‑only · cr‑out‑of‑band" }
   ],
 
   "governance_list": [
