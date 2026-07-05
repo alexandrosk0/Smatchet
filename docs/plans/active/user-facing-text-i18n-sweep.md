@@ -214,8 +214,28 @@ N/A — no file split or extraction; adds catalog rows + call-site wraps only.
 
 ## Implementation log
 
-_(post-ship)_
+- `011d5290` · plan doc
+- `8223e50f` · sweep implementation — call-site conversions + ~120 catalog rows + doctest
+- `16b7d1ec` · code-review fixes — catalog dedup onto pre-existing keys, wrapper OpenPopup/BeginPopup overloads, bucket-E smoke-test title, raw data sinks, plural keys
 
 ## Deviations
 
-_(post-ship)_
+- `SmatchetIconPickerUi.cpp` / `SmatchetNotificationCenterUi.cpp` got the TU-wide
+  alias (chrome-only TUs) instead of explicit wraps; the mobile shell kept its
+  `::ImGui::` qualification with wrapped string arguments. § Approach was
+  rewritten to match before ship.
+- `notifCenter.count` became two keys (`count_one`/`count_many`) after review
+  flagged the append-"s" plural hack.
+- Review found the `prefs.dateformat.*`/`updates.newer_available` rows collided
+  with pre-existing entries (different French, first-entry-wins shadowing) —
+  resolved by reusing the old keys; the doctest now pins a collision-free set.
+
+## Verification
+
+- `posix-core-check` (Linux clang, 460 TU compile gate): green.
+- Standalone localization smoke harness (fr-FR key resolution, source-map
+  round-trips, popup-title pairing via `WindowTitle`, `Format` specifier guard):
+  green.
+- `test-lint-rules.sh --diff origin/develop`: all gates PASS.
+- Windows doctest rig + golden/ImGui-Test-Engine buckets: CI (the gate for this
+  PR); `funcsize_main_ui_smoke` updated for the editor modal's `###` title.
