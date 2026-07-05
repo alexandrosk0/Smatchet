@@ -102,7 +102,10 @@ the rig.
 
 - `e551c492` · Slice 1: Plane + Linear issue-search fixture suites + `ScriptRaw` fixture hook +
   rig registration (13 cases / 107 assertions; verified green on the Linux `SmatchetTests` build
-  described in § Verification, plus lint/docs/format gates).
+  described in § Verification, plus lint/docs/format gates). Merged in #1622 (`86ae8393`).
+- `fe7a3a58` · Slice 2: GitHub issue-search + client fixture suites + shared `HttpRequestCapture`
+  support header (13 cases / 117 assertions; same Linux verification + gates; full rig 2202/2203
+  with the sole failure the pre-existing `SubprocessCapturePure` wide-char case).
 
 ## Deviations from plan
 
