@@ -5,6 +5,7 @@
 
 #include <ctime>
 #include <string>
+#include <vector>
 
 /**
  * Pure-logic date helpers lifted from TrackerDateTimeFieldEditor.cpp's anonymous namespace so
@@ -76,6 +77,36 @@ std::string FormatFriendlyTime(const ParsedJiraDateTime& p);
  * out-of-range hour / minute. Returns false without touching outputs on parse miss.
  */
 bool ParseFriendlyTime(const std::string& s, int& outH, int& outM);
+
+/**
+ * Seed the date-picker working state when an edit session starts (lifted byte-identical from
+ * TrackerDateTimeFieldEditor.cpp's InitDatePickerWorking — gap map Tier 1 #4). Three modes:
+ * parseable `currentValue` → working = parsed (day clamped to the view month); empty →
+ * working = today (UTC; wall-time iff `!isDateOnly`); non-empty unparseable → only
+ * `forceTextMode` flips true (working / view outputs untouched, matching the widget's
+ * raw-ISO fallback branch).
+ */
+void InitDatePickerWorking(const std::string& currentValue, bool isDateOnly, ParsedJiraDateTime& working, int& viewYear,
+                           int& viewMonth, bool& forceTextMode);
+
+/** Decision output of PlanDateTimeCommit: whether to queue, and the values to queue. */
+struct DateTimeCommitPlan {
+    bool Queue = false;
+    std::vector<std::string> Values; // empty vector = clear the field
+};
+
+/**
+ * The Apply/Clear commit gate of the date-picker popup (lifted byte-identical from
+ * TrackerDateTimeFieldEditor.cpp — gap map Tier 1 #4). Gates the PUT on a REAL change so a
+ * re-Apply of an unchanged value or a Clear of an already-empty cell never fires a stray
+ * no-op PUT: Apply clamps `working`'s day (in-place, matching the widget), formats it via
+ * FormatJiraDateOrDateTimeForApi, and compares against the CANONICAL form of `currentValue`
+ * (both sides through the same formatter, so ms/seconds/zone-spelling differences in the wire
+ * value never read as a change; unparseable `currentValue` conservatively compares raw).
+ * Clear queues an empty value-list iff the current value is not already blank.
+ */
+DateTimeCommitPlan PlanDateTimeCommit(bool applyPressed, bool clearPressed, bool isDateOnly,
+                                      ParsedJiraDateTime& working, const std::string& currentValue);
 
 } // namespace TrackerDateTimePure
 

@@ -1,5 +1,7 @@
 #include "TrackerDateTimePure.h"
 
+#include "TicketFieldEditorCommitPolicyPure.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -137,6 +139,59 @@ std::string FormatFriendlyTime(const ParsedJiraDateTime& p) {
     char buf[16];
     std::snprintf(buf, sizeof(buf), "%02d:%02d %s", h, p.Minute, ampm);
     return std::string(buf);
+}
+
+void InitDatePickerWorking(const std::string& currentValue, bool isDateOnly, ParsedJiraDateTime& working, int& viewYear,
+                           int& viewMonth, bool& forceTextMode) {
+    ParsedJiraDateTime parsed;
+    if (TryParseJiraDateTime(currentValue, parsed)) {
+        working = parsed;
+        forceTextMode = false;
+        viewYear = parsed.Year;
+        viewMonth = parsed.Month;
+        ClampDayToMonth(working, viewYear, viewMonth);
+    } else if (currentValue.empty()) {
+        working = TodayUtcParsed(!isDateOnly);
+        forceTextMode = false;
+        viewYear = working.Year;
+        viewMonth = working.Month;
+    } else {
+        forceTextMode = true;
+    }
+}
+
+DateTimeCommitPlan PlanDateTimeCommit(bool applyPressed, bool clearPressed, bool isDateOnly,
+                                      ParsedJiraDateTime& working, const std::string& currentValue) {
+    DateTimeCommitPlan plan;
+    if (!applyPressed && !clearPressed) {
+        return plan;
+    }
+    std::string canon;
+    if (applyPressed) {
+        ClampDayToMonth(working, working.Year, working.Month);
+        canon = FormatJiraDateOrDateTimeForApi(isDateOnly, working);
+    }
+    const bool curBlank =
+        std::all_of(currentValue.begin(), currentValue.end(), [](unsigned char ch) { return std::isspace(ch) != 0; });
+    // Compare canon against the canonical form of currentValue, not its raw wire string:
+    // FormatJiraDateOrDateTimeForApi forces ".000" milliseconds and always emits seconds, so a
+    // re-Apply of an unchanged value whose Jira wire form differs only in ms/seconds/zone
+    // spelling (e.g. "...T10:00:00.123+0000") would otherwise read as changed and fire a stray
+    // no-op PUT. Both sides go through the same formatter, so equality means semantic identity.
+    // Unparseable currentValue falls back to the raw string (conservative — treats as changed).
+    std::string canonCurrent = currentValue;
+    ParsedJiraDateTime curParsed;
+    if (TryParseJiraDateTime(currentValue, curParsed)) {
+        canonCurrent = FormatJiraDateOrDateTimeForApi(isDateOnly, curParsed);
+    }
+    const bool valueChanged = clearPressed ? !curBlank : (canon != canonCurrent);
+    if (TicketFieldEditorCommitPolicyPure::ShouldCommitTouchPopupEdit(/*savePressed=*/true, valueChanged)) {
+        plan.Queue = true;
+        if (!clearPressed) {
+            plan.Values.push_back(canon);
+        }
+    }
+    return plan;
 }
 
 bool ParseFriendlyTime(const std::string& s, int& outH, int& outM) {
