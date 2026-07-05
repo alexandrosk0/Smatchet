@@ -40,12 +40,14 @@ void MaybeToastTrackerConnectivityBanner(const AppController& app, UiDrawSession
     std::string body = banner.Message;
     if (banner.Kind == Level::Error) {
         body += "\n\n";
-        body += SmatchetLocalization::T(
-            "toast.tracker_reachable_required",
-            "Grid edits and quick comment actions stay disabled until Tracker is reachable.");
-        SmatchetToastManager::Instance().Push("Tracker", body, ToastType::Error, 7000);
+        body +=
+            SmatchetLocalization::T("toast.tracker_reachable_required",
+                                    "Grid edits and quick comment actions stay disabled until Tracker is reachable.");
+        SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.tracker", "Tracker"), body,
+                                              ToastType::Error, 7000);
     } else {
-        SmatchetToastManager::Instance().Push("Tracker", body, ToastType::Warning, 5500);
+        SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.tracker", "Tracker"), body,
+                                              ToastType::Warning, 5500);
     }
     d.lastToastedTrackerBannerKind = banner.Kind;
     d.lastToastedTrackerBannerMessage = banner.Message;
@@ -70,9 +72,11 @@ void MaybeToastGridBannerFromSession(UiDrawSession& d) {
         return;
     }
     if (curKind == 1) {
-        SmatchetToastManager::Instance().Push("Active Project", curMsg, ToastType::Error);
+        SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.active_project", "Active Project"), curMsg,
+                                              ToastType::Error);
     } else {
-        SmatchetToastManager::Instance().Push("Active Project", curMsg, ToastType::Success);
+        SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.active_project", "Active Project"), curMsg,
+                                              ToastType::Success);
     }
     d.lastToastedGridBannerKind = curKind;
     d.lastToastedGridBannerMessage = std::move(curMsg);

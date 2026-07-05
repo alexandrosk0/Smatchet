@@ -6,6 +6,12 @@
 
 #include "imgui.h"
 
+#include "SmatchetLocalizedImGui.h"
+// Routes the window title / button / empty-state literals below through the localization
+// wrapper; data-bearing calls (row header Selectable, "%s" TextWrapped) pass through
+// untranslated because only exact catalog-English matches rewrite.
+#define ImGui SmatchetLocalizedImGui
+
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -47,8 +53,9 @@ void SmatchetDrawNotificationCenterWindow(UiDrawSession& d) {
         clearRequested = true;
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("%d notification%s", static_cast<int>(history.size()),
-                        history.size() == 1 ? "" : "s");
+    ImGui::TextDisabled("%s",
+                        SmatchetLocalization::Format("notifCenter.count", "%d notification%s",
+                                                     static_cast<int>(history.size()), history.size() == 1 ? "" : "s"));
     ImGui::Separator();
 
     // Deferred until after the row loop + End(): an action may mutate the history ring.

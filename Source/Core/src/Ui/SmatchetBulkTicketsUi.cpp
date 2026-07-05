@@ -233,8 +233,11 @@ void BulkImportReapCompletions(AppController& app, UiDrawSession& d) {
             const std::string msg = BulkImportFormatFailure(app, r);
             d.bulkImportStatus[i] = msg;
             const auto& bulkRow = d.bulkImportPreview.Rows[i];
-            SmatchetToastManager::Instance().Push(
-                "Import Error", "Line " + std::to_string(bulkRow.SourceLine) + ": " + msg, ToastType::Error);
+            SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.import_error", "Import Error"),
+                                                  SmatchetLocalization::Format("bulk.import_line_error", "Line %d: %s",
+                                                                               static_cast<int>(bulkRow.SourceLine),
+                                                                               msg.c_str()),
+                                                  ToastType::Error);
         }
         ++d.bulkImportCompleted;
     }
@@ -352,14 +355,13 @@ void DrawBulkImportParseControls(AppController& app, UiDrawSession& d) {
         ImGui::TextUnformatted(
             SmatchetLocalization::T("bulkImport.chooseProject.title", "Choose target project for bulk import"));
         ImGui::Separator();
-        const std::string backendKind = (d.cfg.TrackerType == "Plane")
-                                             ? std::string("Plane")
-                                             : (d.cfg.TrackerType == "Linear") ? std::string("Linear") : std::string("Jira");
+        const std::string backendKind = (d.cfg.TrackerType == "Plane")    ? std::string("Plane")
+                                        : (d.cfg.TrackerType == "Linear") ? std::string("Linear")
+                                                                          : std::string("Jira");
         const std::string endpoint =
-            (d.cfg.TrackerType == "Plane")
-                ? (d.cfg.PlaneUrl + std::string("|") + d.cfg.PlaneWorkspaceSlug)
-                : (d.cfg.TrackerType == "Linear") ? (d.cfg.LinearBaseUrl + std::string("|") + d.cfg.LinearTeamId)
-                                                  : d.cfg.Domain;
+            (d.cfg.TrackerType == "Plane")    ? (d.cfg.PlaneUrl + std::string("|") + d.cfg.PlaneWorkspaceSlug)
+            : (d.cfg.TrackerType == "Linear") ? (d.cfg.LinearBaseUrl + std::string("|") + d.cfg.LinearTeamId)
+                                              : d.cfg.Domain;
         ImGui::SetNextItemWidth(360.0f);
         SmatchetProjectPicker::Draw("bulk_project", d.bulkImportProjectPickerState, app, backendKind, endpoint,
                                     d.bulkImportProjectModalChosenKey);

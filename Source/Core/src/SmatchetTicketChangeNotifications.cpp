@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <string>
 
+#include "SmatchetLocalization.h"
 #include "Sync/TicketChangeDiffPure.h"
 #include "Ui/SmatchetToast.h"
 
@@ -55,5 +56,6 @@ void NotifyTicketChanges(const std::vector<smatchet::TicketChangeSummary>& chang
     if (body.empty()) {
         return;
     }
-    SmatchetToastManager::Instance().Push("Tickets", body, ToastType::Info, 5000);
+    SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.tickets", "Tickets"), body, ToastType::Info,
+                                          5000);
 }

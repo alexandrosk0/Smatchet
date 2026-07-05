@@ -292,6 +292,9 @@ add_executable(SmatchetTests
     # typo (key resolves to English fallback under fr-FR) can't regress.
     # SmatchetLocalization.cpp already linked below.
     Core/PrefsAssistantLocalization.test.cpp
+    # user-facing-text-i18n-sweep — pin a sample of the keys added for literals that
+    # previously bypassed the lookup (toasts, palette, toolbar editor, mobile shell).
+    Core/I18nSweepLocalization.test.cpp
     Core/ConfigSaveConcurrency.test.cpp
     Core/MainThreadDispatcherDrain.test.cpp
     Core/CacheEvictionPolicy.test.cpp

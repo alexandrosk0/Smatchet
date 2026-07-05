@@ -195,7 +195,8 @@ void DrawLocalDataStorageSection(AppController& app) {
     const ConfigManager::StoragePreference currentPref =
         ConfigManager::GetStoragePreference(runtimeAssetDir, kDefaultPref);
     int prefIndex = (currentPref == ConfigManager::StoragePreference::Portable) ? 0 : 1;
-    const char* items[] = {"Portable (next to runtime files)", "Shared (OS user-data folder)"};
+    const char* items[] = {SmatchetLocalization::T("prefs.storage.portable", "Portable (next to runtime files)"),
+                           SmatchetLocalization::T("prefs.storage.shared", "Shared (OS user-data folder)")};
     static bool s_storageModeChanged = false;
     if (ImGui::Combo("Storage mode", &prefIndex, items, IM_ARRAYSIZE(items))) {
         const ConfigManager::StoragePreference chosen =
@@ -204,19 +205,22 @@ void DrawLocalDataStorageSection(AppController& app) {
         if (ConfigManager::SetStoragePreference(runtimeAssetDir, chosen, err)) {
             s_storageModeChanged = true;
             SmatchetToastManager::Instance().Push(
-                std::string("Storage"),
-                std::string(chosen == ConfigManager::StoragePreference::Portable
-                                ? "Storage mode set to Portable. Restart Smatchet for the new "
-                                  "writable-files location to take effect."
-                                : "Storage mode set to Shared. Restart Smatchet for the new "
-                                  "writable-files location to take effect."),
+                SmatchetLocalization::T("toast.storage", "Storage"),
+                chosen == ConfigManager::StoragePreference::Portable
+                    ? SmatchetLocalization::T("prefs.storage.set_portable",
+                                              "Storage mode set to Portable. Restart Smatchet for the new "
+                                              "writable-files location to take effect.")
+                    : SmatchetLocalization::T("prefs.storage.set_shared",
+                                              "Storage mode set to Shared. Restart Smatchet for the new "
+                                              "writable-files location to take effect."),
                 ToastType::Info, 6000);
         } else {
-            SmatchetToastManager::Instance().Push(std::string("Storage"),
-                                                  err.empty() ? std::string("Could not write storage-mode "
-                                                                            "marker file.")
-                                                              : err,
-                                                  ToastType::Error, 6000);
+            SmatchetToastManager::Instance().Push(
+                SmatchetLocalization::T("toast.storage", "Storage"),
+                err.empty() ? std::string(SmatchetLocalization::T("prefs.storage.marker_write_failed",
+                                                                  "Could not write storage-mode marker file."))
+                            : err,
+                ToastType::Error, 6000);
         }
     }
     if (s_storageModeChanged) {
@@ -230,7 +234,9 @@ void DrawLocalDataStorageSection(AppController& app) {
                 app.RequestAppQuit();
             } else {
                 SmatchetToastManager::Instance().Push(
-                    std::string("Storage"), std::string("Could not relaunch Smatchet — exit and restart manually."),
+                    SmatchetLocalization::T("toast.storage", "Storage"),
+                    SmatchetLocalization::T("prefs.storage.relaunch_failed",
+                                            "Could not relaunch Smatchet — exit and restart manually."),
                     ToastType::Error, 6000);
             }
         }
@@ -346,7 +352,10 @@ void DrawAppearanceDateSection(UiDrawSession& d) {
     ImGui::Separator();
     ImGui::Spacing();
 
-    const char* dateFormats[] = {"Relative / Compact", "Always Relative", "Absolute ISO", "Absolute Friendly"};
+    const char* dateFormats[] = {SmatchetLocalization::T("prefs.dateformat.relative_compact", "Relative / Compact"),
+                                 SmatchetLocalization::T("prefs.dateformat.always_relative", "Always Relative"),
+                                 SmatchetLocalization::T("prefs.dateformat.absolute_iso", "Absolute ISO"),
+                                 SmatchetLocalization::T("prefs.dateformat.absolute_friendly", "Absolute Friendly")};
     int currentDateFormatIdx = SmatchetPreferencesUiDetail::DateFormatOptionToIndex(d.cfg.DateFormatOption);
 
     if (ImGui::Combo("Date Format Style", &currentDateFormatIdx, dateFormats, IM_ARRAYSIZE(dateFormats))) {
@@ -456,7 +465,9 @@ void DrawAppearanceUiModeSection(UiDrawSession& d) {
     ImGui::Spacing();
     ImGui::TextUnformatted("Layout mode");
     ImGui::Separator();
-    const char* modes[] = {"Desktop", "Mobile", "Auto (by width)"};
+    const char* modes[] = {SmatchetLocalization::T("prefs.uimode.desktop", "Desktop"),
+                           SmatchetLocalization::T("prefs.uimode.mobile", "Mobile"),
+                           SmatchetLocalization::T("prefs.uimode.auto", "Auto (by width)")};
     int currentMode = static_cast<int>(d.cfg.UiMode);
     if (ImGui::Combo("UI mode", &currentMode, modes, IM_ARRAYSIZE(modes))) {
         if (currentMode >= 0 && currentMode <= 2) {
@@ -568,8 +579,7 @@ void DrawAppearanceMobileSection(UiDrawSession& d) {
         homeLabelPtrs.push_back(label.c_str());
     }
     if (!homeLabelPtrs.empty() &&
-        ImGui::Combo("Home page", &homeIdx, homeLabelPtrs.data(),
-                     static_cast<int>(homeLabelPtrs.size()))) {
+        ImGui::Combo("Home page", &homeIdx, homeLabelPtrs.data(), static_cast<int>(homeLabelPtrs.size()))) {
         if (homeIdx >= 0 && homeIdx < static_cast<int>(nav.size())) {
             d.cfg.MobileHomePage = nav[static_cast<std::size_t>(homeIdx)];
             ConfigManager::SanitizeMobileNav(d.cfg);

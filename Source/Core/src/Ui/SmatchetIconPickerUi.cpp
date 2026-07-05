@@ -13,23 +13,31 @@
 #include "SmatchetImGuiFonts.h"
 #include "imgui.h"
 
+#include "SmatchetLocalizedImGui.h"
+// The alias routes the modal title, search hint, and Cancel button through the localization
+// wrapper. Glyph buttons and icon-name tooltips are data and pass through untranslated.
+#define ImGui SmatchetLocalizedImGui
+
 void SmatchetIconPickerUi::Open() { requestOpen_ = true; }
 
 bool SmatchetIconPickerUi::Draw(std::string& outName, std::string& outGlyph) {
     if (requestOpen_) {
         requestOpen_ = false;
         search_[0] = '\0';
-        ImGui::OpenPopup("Pick Icon##SmatchetIconPicker");
+        // "###" (not "##") so the popup ID survives title translation — OpenPopup is not
+        // wrapped, so the raw and translated titles must hash to the same ID.
+        ImGui::OpenPopup("Pick Icon###SmatchetIconPicker");
     }
 
     bool picked = false;
     ImGui::SetNextWindowSize(ImVec2(360.0f, 320.0f), ImGuiCond_Appearing);
-    if (ImGui::BeginPopupModal("Pick Icon##SmatchetIconPicker", nullptr, ImGuiWindowFlags_NoSavedSettings)) {
+    if (ImGui::BeginPopupModal("Pick Icon###SmatchetIconPicker", nullptr, ImGuiWindowFlags_NoSavedSettings)) {
         ImGui::SetNextItemWidth(-1.0f);
         ImGui::InputTextWithHint("##iconsearch", "Search icons...", search_, sizeof(search_));
 
         std::string q(search_);
-        std::transform(q.begin(), q.end(), q.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        std::transform(q.begin(), q.end(), q.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
         const bool fa = SmatchetAreFaIconsLoaded();
         ImGui::BeginChild("##icongrid", ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing()), true);
@@ -49,7 +57,8 @@ bool SmatchetIconPickerUi::Draw(std::string& outName, std::string& outGlyph) {
         const ImGuiStyle& style = ImGui::GetStyle();
         const float cell = ImGui::GetFrameHeight() + 10.0f;
         const float avail = ImGui::GetContentRegionAvail().x;
-        const int perRow = (std::max)(1, static_cast<int>((avail + style.ItemSpacing.x) / (cell + style.ItemSpacing.x)));
+        const int perRow =
+            (std::max)(1, static_cast<int>((avail + style.ItemSpacing.x) / (cell + style.ItemSpacing.x)));
         const int rowCount = (static_cast<int>(matches.size()) + perRow - 1) / perRow;
 
         ImGuiListClipper clipper;

@@ -71,7 +71,10 @@ void LaunchSubmit(AppController& app, UiDrawSession& d, const std::string& shotP
             d.bugReportResult = shared;
             d.bugReportInFlight = false;
             if (shared->Ok) {
-                SmatchetToastManager::Instance().Push("Bug report", "Filed " + shared->IssueKey, ToastType::Success);
+                SmatchetToastManager::Instance().Push(
+                    SmatchetLocalization::T("toast.bug_report", "Bug report"),
+                    SmatchetLocalization::Format("bugreport.filed", "Filed %s", shared->IssueKey.c_str()),
+                    ToastType::Success);
                 d.showBugReport = false; // close on success; failure keeps the modal open with a banner
                 d.bugReportDescBuf.clear();
                 d.bugReportPreviewBuf.clear();
