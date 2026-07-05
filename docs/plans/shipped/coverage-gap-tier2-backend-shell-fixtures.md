@@ -2,7 +2,7 @@
 
 > **Slug**: `coverage-gap-tier2-backend-shell-fixtures`
 >
-> **Status**: `active`
+> **Status**: `shipped`
 
 ## Context
 
@@ -129,6 +129,15 @@ the rig.
 - `9e039ce9` · Slice 3: Plane + Linear mutation-shell fixture suites (6 cases / 62 assertions;
   same Linux verification + gates; full rig 2216/2217, same pre-existing sole failure). First
   combined use of `TestEnvGuard` + the HTTP loopback fixture for the cfg-less write paths.
+  Merged in #1629 (`9cac1883`).
+
+## Campaign close-out
+
+All three slices merged (#1622, #1628, #1629): every Tier-2 shell the gap map flagged now has
+real-HTTP fixture coverage — read paths for all four backends (Jira pre-existing) and the
+Plane/Linear write paths. Residual Tier-2 churn belongs to the BACKLOG **B2** `TrackerHttpClient`
+migration track (its batches carry these suites as their regression net; batch 2B landed as
+#1640). The tiny `Vcs/GitHubCommits.cpp` (96 LOC) remains optional opportunistic cleanup.
 
 ## Deviations from plan
 

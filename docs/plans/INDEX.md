@@ -177,7 +177,9 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`cpp-security-hardening`](shipped/cpp-security-hardening.md) | 2026-06-27 | Plan — C++ security hardening (audit remediation) |
 | [`cpp-code-audit-remediation`](shipped/cpp-code-audit-remediation.md) | 2026-07-02 | Plan — C++ code audit remediation (CPP_CODE_AUDIT.md) |
 | [`all-gates-blocking`](shipped/all-gates-blocking.md) | 2026-07-05 | All gates blocking — flip every CI test gate to merge-blocking + fix the reds |
+| [`commands-invocation-harness`](shipped/commands-invocation-harness.md) | 2026-07-05 | Plan — Tier-3 Commands invocation harness: table-driven builtin-command dispatch tests |
 | [`coverage-gap-tier1-pure-extractions`](shipped/coverage-gap-tier1-pure-extractions.md) | 2026-07-05 | Plan — Coverage-gap Tier 1: pure extractions for the audit-fixed sort + long-text paths |
+| [`coverage-gap-tier2-backend-shell-fixtures`](shipped/coverage-gap-tier2-backend-shell-fixtures.md) | 2026-07-05 | Plan — Coverage-gap Tier 2: backend-shell fixture tests (Plane + Linear issue search) |
 | [`coverage-gap-tier3-command-contract`](shipped/coverage-gap-tier3-command-contract.md) | 2026-07-05 | Plan — Coverage-gap Tier 3: registry-wide command error-envelope contract sweep |
 | [`user-facing-text-i18n-sweep`](shipped/user-facing-text-i18n-sweep.md) | 2026-07-05 | Plan — user-facing text i18n completeness sweep |
 <!-- END auto-plan-index -->
