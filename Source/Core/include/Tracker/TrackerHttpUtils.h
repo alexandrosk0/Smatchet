@@ -29,6 +29,17 @@ std::string BuildTrackerBasicAuthHeader(const TrackerConfig& cfg);
  * already routed through the Tracker*Logged helpers (e.g. multipart attachment upload).
  */
 cpr::Redirect MakeTrackerRedirectPolicy();
+/**
+ * TLS trust options for every tracker request (WS2 / Issue #1068): reads the process-global
+ * CA-bundle path (set by the host at boot via TrackerHttpPure::SetCaBundlePath — empty on
+ * desktop) and turns it into cpr SSL options. Empty path -> default-constructed SslOptions
+ * (peer/host verification stays ON; libcurl uses its system store — desktop behaviour). Non-empty
+ * -> an explicit CURLOPT_CAINFO cafile (the Android private-dir cacert.pem). Never disables
+ * verification. Use this alongside MakeTrackerRedirectPolicy for any direct cpr verb not routed
+ * through the Tracker*Logged helpers (e.g. multipart attachment upload) so those calls get the
+ * same trust anchor as the rest of the tracker traffic.
+ */
+cpr::SslOptions MakeTrackerSslOptions();
 // `cancelled` (optional): polled by the retry wrapper before each attempt and after each backoff,
 // so a sync worker aborting mid-fetch is observed during the retry/backoff window (not only between
 // page GETs). When null, behaves exactly as before (no cancellation polling inside the retry loop).
