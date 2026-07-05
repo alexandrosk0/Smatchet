@@ -165,6 +165,16 @@ void SmatchetToolbarUi::RefreshTrackerAppendCache(AppController& app) {
     });
 }
 
+namespace {
+
+// Single source of the Customize Toolbar popup title: OpenPopup and BeginPopupModal must build
+// the byte-identical (translated) string or the popup ID never matches and the editor won't open.
+const char* ToolbarEditorPopupTitle() {
+    return SmatchetLocalization::WindowTitle("toolbar.editor.title", "Customize Toolbar", "SmatchetToolbarEditor");
+}
+
+} // namespace
+
 void SmatchetToolbarUi::RenderBar(AppController& app, TrackerConfig& cfg) {
     ImGuiViewport* vp = ImGui::GetMainViewport();
     const float barH = ImGui::GetFrameHeight() + ImGui::GetStyle().FramePadding.y * 2.0f;
@@ -392,8 +402,7 @@ void SmatchetToolbarUi::SyncEditorOpenRequest(AppController& app, TrackerConfig&
     cmdSearch_[0] = '\0';
     // WindowTitle appends "###SmatchetToolbarEditor" so the popup ID is stable across languages
     // (both OpenPopup and BeginPopupModal build the identical translated string).
-    ImGui::OpenPopup(
-        SmatchetLocalization::WindowTitle("toolbar.editor.title", "Customize Toolbar", "SmatchetToolbarEditor"));
+    ImGui::OpenPopup(ToolbarEditorPopupTitle());
 }
 
 SmatchetToolbarUi::EditorCtx SmatchetToolbarUi::DrawEditorScopeSelector() {
@@ -412,10 +421,10 @@ SmatchetToolbarUi::EditorCtx SmatchetToolbarUi::DrawEditorScopeSelector() {
     ImGui::SameLine();
     {
         const std::string trackerLabel =
-            (editHasTracker_ ? std::string(SmatchetLocalization::Format(
-                                   "toolbar.editor.scope_tracker", "Current tracker: %s", editTrackerType_.c_str()))
-                             : std::string(SmatchetLocalization::T("toolbar.editor.scope_tracker_none",
-                                                                   "Current tracker: (none)"))) +
+            std::string(editHasTracker_
+                            ? SmatchetLocalization::Format("toolbar.editor.scope_tracker", "Current tracker: %s",
+                                                           editTrackerType_.c_str())
+                            : SmatchetLocalization::T("toolbar.editor.scope_tracker_none", "Current tracker: (none)")) +
             "##scopeTracker";
         if (!editHasTracker_) {
             ImGui::BeginDisabled();
@@ -679,9 +688,7 @@ void SmatchetToolbarUi::RenderEditor(AppController& app, TrackerConfig& cfg) {
     SyncEditorOpenRequest(app, cfg);
 
     ImGui::SetNextWindowSize(ImVec2(620.0f, 460.0f), ImGuiCond_Appearing);
-    if (!ImGui::BeginPopupModal(
-            SmatchetLocalization::WindowTitle("toolbar.editor.title", "Customize Toolbar", "SmatchetToolbarEditor"),
-            nullptr, ImGuiWindowFlags_NoSavedSettings)) {
+    if (!ImGui::BeginPopupModal(ToolbarEditorPopupTitle(), nullptr, ImGuiWindowFlags_NoSavedSettings)) {
         return;
     }
 

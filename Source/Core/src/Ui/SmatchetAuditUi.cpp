@@ -223,18 +223,18 @@ void DrawAuditFilters(UiDrawSession& d, const std::string& readError) {
     ImGui::SetNextItemWidth(170.0f);
     // Item arrays (not "\0"-packed literals) so each entry routes through the catalog — the
     // wrapper Combo translates only the label.
-    const char* actionItems[] = {SmatchetLocalization::T("audit.filter.all", "All"),
-                                 SmatchetLocalization::T("audit.filter.creates", "Creates"),
-                                 SmatchetLocalization::T("audit.filter.updates", "Updates/Transitions"),
-                                 SmatchetLocalization::T("audit.filter.comments", "Comments"),
-                                 SmatchetLocalization::T("audit.filter.attachments", "Attachments"),
-                                 SmatchetLocalization::T("audit.filter.offline", "Offline")};
+    const char* actionItems[] = {SmatchetLocalization::T("audit.all", "All"),
+                                 SmatchetLocalization::T("audit.creates", "Creates"),
+                                 SmatchetLocalization::T("audit.updates_transitions", "Updates/Transitions"),
+                                 SmatchetLocalization::T("comments.title", "Comments"),
+                                 SmatchetLocalization::T("audit.attachments", "Attachments"),
+                                 SmatchetLocalization::T("audit.offline", "Offline")};
     ImGui::Combo("Action", &d.auditActionFilter, actionItems, IM_ARRAYSIZE(actionItems));
     ImGui::SameLine();
     ImGui::SetNextItemWidth(110.0f);
-    const char* resultItems[] = {SmatchetLocalization::T("audit.filter.all", "All"),
-                                 SmatchetLocalization::T("audit.filter.success", "Success"),
-                                 SmatchetLocalization::T("audit.filter.failure", "Failure")};
+    const char* resultItems[] = {SmatchetLocalization::T("audit.all", "All"),
+                                 SmatchetLocalization::T("audit.success", "Success"),
+                                 SmatchetLocalization::T("audit.failure", "Failure")};
     ImGui::Combo("Result", &d.auditResultFilter, resultItems, IM_ARRAYSIZE(resultItems));
     ImGui::SameLine();
     if (ImGui::Checkbox("Newest first", &d.auditNewestFirst)) {

@@ -399,7 +399,8 @@ add_executable(SmatchetTests
     # UI classes — no ImGui, no AppController — so the rig needs no extra .cpp link.
     Core/PreferencesDateFormatIndex.test.cpp
     # dual-ui-mode batch — pure inline string/scale converters for the UI
-    # layout-mode + mobile-shell enums (SmatchetUiModeIds.h). Header-only +
+    # layout-mode + mobile-shell enums (SmatchetUiModeIds.h). Header + the already-linked
+    # SmatchetLocalization.cpp (mobileNavPageLabel localizes); otherwise
     # ImGui-free, so no extra .cpp link.
     Core/UiModeIds.test.cpp
     # Issue #979 — pure credential-trim helper applied by onPreferencesSaveAndSync

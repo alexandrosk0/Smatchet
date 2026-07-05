@@ -25,23 +25,38 @@ dev-only debug windows.
 
 ## Approach
 
-Follow the two established conventions rather than inventing a third:
+Follow the established conventions, chosen per TU by how much user *data* the TU
+renders:
 
-1. **Never-aliased TUs** (including strict-zone `Commands/CommandPaletteUi.cpp`,
-   where the `#define ImGui SmatchetLocalizedImGui` alias is banned by the
-   `define-imgui` lint rule): wrap each visible literal explicitly —
+1. **Explicit wraps** for data-heavy or strict-zone TUs (`Commands/CommandPaletteUi.cpp`
+   — the `#define ImGui SmatchetLocalizedImGui` alias is banned there by the
+   `define-imgui` lint rule — plus `SmatchetToolbarUi.cpp`, `SelectableTextRun.cpp`,
+   `SmatchetOmnibarUi.cpp`, and the mobile shell's `::ImGui::` text sites):
    `SmatchetLocalization::T("key", "English")` for plain strings passed to raw
    ImGui calls / toast pushes, `SmatchetLocalization::Format` for printf-built
-   text, matching `SmatchetWhisperSetupBanner.cpp`'s existing pattern.
-2. **Aliased TUs** (mobile shell): flip the deliberate `::ImGui::` bypass to the
-   wrapper (`ImGui::`) for *visible text only*; plumbing (`##`-ID windows,
-   DockBuilder, GetIO) keeps the explicit `::ImGui::` qualification. Window
-   titles keep their `###` stable-ID suffixes so dock/layout IDs are
-   language-independent.
+   text, matching `SmatchetWhisperSetupBanner.cpp`'s existing pattern. In the
+   mobile shell the deliberate `::ImGui::` qualification is kept and only the
+   string argument is wrapped, so the TU keeps a single visual idiom.
+2. **TU-wide alias** for chrome-only TUs (`SmatchetIconPickerUi.cpp`,
+   `SmatchetNotificationCenterUi.cpp`): the standard
+   `#define ImGui SmatchetLocalizedImGui`; data-bearing calls inside them
+   (per-row history entries, glyph buttons) are explicitly `::`-qualified or use
+   `SelectableRaw` so tracker data never enters `TranslateSource`. Window
+   titles keep their `###` stable-ID suffixes so dock/layout/popup IDs are
+   language-independent. The wrapper gains `OpenPopup`/`BeginPopup` overloads so
+   a translated popup title keeps hashing to the same ID as its `Begin*`
+   counterpart — per-site pairing hacks are no longer load-bearing.
 3. **Combo item arrays**: translate each item via `T()`; items are display-only
    (indices are what is stored), so translation cannot corrupt persisted state.
    Arrays holding *persisted tokens* (`kEffortIds`, `kLayouts`) or format names
    (`CSV`/`TSV`/`JSON`) are left alone.
+
+Toast note: `SmatchetToastManager::Render` also runs title/message through
+`TranslateSource` at render time (exact-English match). Call-site translation is
+still the right layer — it covers `Format`-parameterized messages and the
+Notification Center history, and an already-translated string passes through the
+render-time lookup unchanged — but the render-time pass stays load-bearing for
+legacy routes (`TicketSyncService` sync toasts), so do not remove it.
 
 New catalog entries land in `kEntries` (both languages; French faithful to the
 existing register — vouvoiement, "tickets", "le suivi" for Tracker, "vues",
@@ -170,6 +185,32 @@ N/A — no file split or extraction; adds catalog rows + call-site wraps only.
   format names are proper nouns; only "Auto" is translatable → skipped as a set.
 - **`Source/Standalone/`** — no ImGui string literals; pre-logger stderr output
   is console/log, not UI → out of scope by charter.
+- **Generic-English source-map exposure (pre-existing design tension)**: every
+  catalog entry's English feeds `EntriesByEnglish`, so an aliased-TU widget fed
+  tracker *data* that exactly equals a catalog English string renders translated
+  ("Offline" → "Hors ligne"). The class predates this PR ("All", "Save",
+  "Success"…); this PR flips the one flagged data sink
+  (`TrackerGridFieldDisplay.cpp` attachment display) to raw `::ImGui::` and
+  keeps data out of the wrapper in the TUs it touches. Follow-up candidate: an
+  audit of aliased-TU wrapper calls fed non-literal strings + a
+  `TextUnformattedRaw` convention.
+- **Context-scoped duplicate rows kept deliberately**: `toast.tickets` /
+  `mobile.page.tickets` ("Tickets") and `mobile.page.views` / `window.views`
+  ("Views") stay separate keys — different UI contexts may legitimately need
+  different translations in future locales, matching existing catalog practice
+  (`common.clear` vs `lua.clear` vs `keybindings.editor.clear`). Exact
+  *same-context* duplicates found in review (audit filter items vs the
+  pre-existing `audit.*` rows, `prefs.dateformat.*` vs `prefs.date_*`,
+  `updates.newer_available` vs `update.banner.short`) were deduplicated onto the
+  pre-existing keys.
+- **Cell-status tokens** (`CellWriteFeedback.Message = "Queued"/"Saved"`,
+  `SmatchetOfflineQueueUi` state strings, `badgeTooltip = "Saved"`) — short
+  status tokens rendered through data paths; localizing them at set-time bakes a
+  language into session state. Left as-is, listed for a follow-up decision.
+- **Mobile nav button IDs follow the translated label** (raw `::ImGui::Button`
+  with `PushID(i)` scoping): ImGui Test Engine automation addressing nav
+  buttons by English label only works under en-US. CI buckets run en-US;
+  persisted config stores ids, not labels — accepted.
 
 ## Implementation log
 

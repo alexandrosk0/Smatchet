@@ -352,10 +352,10 @@ void DrawAppearanceDateSection(UiDrawSession& d) {
     ImGui::Separator();
     ImGui::Spacing();
 
-    const char* dateFormats[] = {SmatchetLocalization::T("prefs.dateformat.relative_compact", "Relative / Compact"),
-                                 SmatchetLocalization::T("prefs.dateformat.always_relative", "Always Relative"),
-                                 SmatchetLocalization::T("prefs.dateformat.absolute_iso", "Absolute ISO"),
-                                 SmatchetLocalization::T("prefs.dateformat.absolute_friendly", "Absolute Friendly")};
+    const char* dateFormats[] = {SmatchetLocalization::T("prefs.date_relative_compact", "Relative / Compact"),
+                                 SmatchetLocalization::T("prefs.date_always_relative", "Always Relative"),
+                                 SmatchetLocalization::T("prefs.date_absolute_iso", "Absolute ISO"),
+                                 SmatchetLocalization::T("prefs.date_absolute_friendly", "Absolute Friendly")};
     int currentDateFormatIdx = SmatchetPreferencesUiDetail::DateFormatOptionToIndex(d.cfg.DateFormatOption);
 
     if (ImGui::Combo("Date Format Style", &currentDateFormatIdx, dateFormats, IM_ARRAYSIZE(dateFormats))) {

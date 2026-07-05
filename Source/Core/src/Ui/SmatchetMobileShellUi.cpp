@@ -338,7 +338,7 @@ void SmatchetUI::drawMobileDrawer(AppController& app, UiDrawSession& d) {
             }
         }
         ::ImGui::Spacing();
-        ::ImGui::TextDisabled("%s", SmatchetLocalization::T("mobile.drawer.views", "Views"));
+        ::ImGui::TextDisabled("%s", SmatchetLocalization::T("mobile.page.views", "Views"));
         ::ImGui::Separator();
         // Slice 6 — reuse the desktop Views sidebar (search / activate / rename /
         // duplicate / delete) inside the drawer; picking a view closes the drawer.

@@ -952,8 +952,8 @@ const TranslationEntry kEntries[] = {
     {"updates.latest_version", "Latest version:  %s", u8"Dernière version :  %s"},
     {"updates.release_tag", "Release tag: %s", u8"Tag de version : %s"},
     {"updates.open_release_page", "Open Release Page", u8"Ouvrir la page de la version"},
-    {"updates.newer_available", "A newer Smatchet release is available on GitHub.",
-     u8"Une nouvelle version de Smatchet est disponible sur GitHub."},
+    // (The modal's "A newer Smatchet release…" line translates via the pre-existing
+    // update.banner.short row — same English source; no second row needed.)
     {"updates.release_notes", "Release notes", u8"Notes de version"},
     {"updates.download_install", "Download and Install", u8"Télécharger et installer"},
     {"updates.skip_version", "Skip This Version", u8"Ignorer cette version"},
@@ -1014,7 +1014,8 @@ const TranslationEntry kEntries[] = {
     // Notification Center window.
     {"window.notifications", "Notifications", u8"Notifications"},
     {"notifCenter.clear_all", "Clear all", u8"Tout effacer"},
-    {"notifCenter.count", "%d notification%s", u8"%d notification%s"},
+    {"notifCenter.count_one", "%d notification", u8"%d notification"},
+    {"notifCenter.count_many", "%d notifications", u8"%d notifications"},
     {"notifCenter.empty", "No notifications yet.", u8"Aucune notification pour le moment."},
 
     // Icon picker modal (toolbar editor).
@@ -1028,7 +1029,6 @@ const TranslationEntry kEntries[] = {
     {"mobile.page.settings", "Settings", u8"Paramètres"},
     {"mobile.page.ai", "AI", u8"IA"},
     {"mobile.drawer.pages", "Pages", u8"Pages"},
-    {"mobile.drawer.views", "Views", u8"Vues"},
     {"window.details", "Details", u8"Détails"},
     {"mobile.grid.no_pane", "No grid pane.", u8"Aucun panneau de grille."},
     {"mobile.grid.select_ticket", "Select a ticket to see its details.",
@@ -1098,23 +1098,16 @@ const TranslationEntry kEntries[] = {
      u8"Impossible d'écrire le fichier marqueur du mode de stockage."},
     {"prefs.storage.relaunch_failed", "Could not relaunch Smatchet — exit and restart manually.",
      u8"Impossible de relancer Smatchet — quittez et redémarrez manuellement."},
-    {"prefs.dateformat.relative_compact", "Relative / Compact", u8"Relatif / Compact"},
-    {"prefs.dateformat.always_relative", "Always Relative", u8"Toujours relatif"},
-    {"prefs.dateformat.absolute_iso", "Absolute ISO", u8"Absolu ISO"},
-    {"prefs.dateformat.absolute_friendly", "Absolute Friendly", u8"Absolu convivial"},
     {"prefs.uimode.desktop", "Desktop", u8"Bureau"},
     {"prefs.uimode.mobile", "Mobile", u8"Mobile"},
     {"prefs.uimode.auto", "Auto (by width)", u8"Auto (selon la largeur)"},
 
-    // Sync Audit window filter combos.
-    {"audit.filter.all", "All", u8"Tout"},
-    {"audit.filter.creates", "Creates", u8"Créations"},
-    {"audit.filter.updates", "Updates/Transitions", u8"Mises à jour/Transitions"},
-    {"audit.filter.comments", "Comments", u8"Commentaires"},
-    {"audit.filter.attachments", "Attachments", u8"Pièces jointes"},
-    {"audit.filter.offline", "Offline", u8"Hors ligne"},
-    {"audit.filter.success", "Success", u8"Succès"},
-    {"audit.filter.failure", "Failure", u8"Échec"},
+    // Sync Audit window Action-filter items (the Result items reuse the pre-existing
+    // audit.all / audit.success / audit.failure rows; "Comments" reuses comments.title).
+    {"audit.creates", "Creates", u8"Créations"},
+    {"audit.updates_transitions", "Updates/Transitions", u8"Mises à jour/Transitions"},
+    {"audit.attachments", "Attachments", u8"Pièces jointes"},
+    {"audit.offline", "Offline", u8"Hors ligne"},
 };
 
 std::mutex& LocalizationMutex() {

@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include "SmatchetLocalization.h"
 #include "SmatchetUiModeIds.h"
 
 #include <string>
@@ -47,6 +48,10 @@ TEST_CASE("mobilePage <-> string round-trips and falls back to Grid") {
 }
 
 TEST_CASE("mobileNavPageLabel maps known ids and echoes unknown ids verbatim") {
+    // mobileNavPageLabel now localizes the known labels (mobile.page.* keys), so pin
+    // the language explicitly — the English expectations below must not depend on
+    // which test flipped the global language last.
+    SmatchetLocalization::SetLanguage("en-US");
     CHECK(std::string(mobileNavPageLabel("grid")) == "Tickets");
     CHECK(std::string(mobileNavPageLabel("views")) == "Views");
     CHECK(std::string(mobileNavPageLabel("log")) == "Log");
@@ -54,6 +59,12 @@ TEST_CASE("mobileNavPageLabel maps known ids and echoes unknown ids verbatim") {
     CHECK(std::string(mobileNavPageLabel("ai")) == "AI");
     // Unknown id → raw id passthrough (custom nav pages).
     CHECK(std::string(mobileNavPageLabel("custom")) == "custom");
+
+    // fr-FR: known ids translate; unknown ids still pass through verbatim.
+    SmatchetLocalization::SetLanguage("fr-FR");
+    CHECK(std::string(mobileNavPageLabel("views")) == u8"Vues");
+    CHECK(std::string(mobileNavPageLabel("custom")) == "custom");
+    SmatchetLocalization::SetLanguage("en-US");
 }
 
 TEST_CASE("mobileNavPageLabel returns owning storage — labels survive past the call") {
@@ -63,6 +74,7 @@ TEST_CASE("mobileNavPageLabel returns owning storage — labels survive past the
     // id.c_str() for the echo branch — a pointer into the (now-destroyed) caller
     // argument. By value, the stored labels stay valid. This test mirrors that
     // collect-then-read pattern and would dangle (UB) under the old signature.
+    SmatchetLocalization::SetLanguage("en-US");
     std::vector<std::string> nav;
     nav.push_back("grid");
     nav.push_back("views");
@@ -99,25 +111,19 @@ TEST_CASE("resolveAutoEffectiveUiMode — width thresholds + hysteresis dead ban
 
 TEST_CASE("resolveEffectiveUiMode — explicit pin > host desktop hint > width auto") {
     // Explicit Desktop/Mobile pins win regardless of the host hint or viewport width.
-    CHECK(resolveEffectiveUiMode(UiMode::Desktop, false, 400.0f, EffectiveUiMode::Mobile) ==
-          EffectiveUiMode::Desktop);
+    CHECK(resolveEffectiveUiMode(UiMode::Desktop, false, 400.0f, EffectiveUiMode::Mobile) == EffectiveUiMode::Desktop);
     // The host "prefers desktop" hint does NOT override an explicit Mobile pin.
-    CHECK(resolveEffectiveUiMode(UiMode::Mobile, true, 1920.0f, EffectiveUiMode::Desktop) ==
-          EffectiveUiMode::Mobile);
+    CHECK(resolveEffectiveUiMode(UiMode::Mobile, true, 1920.0f, EffectiveUiMode::Desktop) == EffectiveUiMode::Mobile);
 
     // A6: on Auto, a host that prefers desktop (ChromeOS / ARC) resolves Desktop even at a
     // mobile-width viewport — the width auto is bypassed.
-    CHECK(resolveEffectiveUiMode(UiMode::Auto, true, 400.0f, EffectiveUiMode::Mobile) ==
-          EffectiveUiMode::Desktop);
+    CHECK(resolveEffectiveUiMode(UiMode::Auto, true, 400.0f, EffectiveUiMode::Mobile) == EffectiveUiMode::Desktop);
 
     // Auto WITHOUT the host hint falls through to the width hysteresis (phones / tablets / desktop).
-    CHECK(resolveEffectiveUiMode(UiMode::Auto, false, 400.0f, EffectiveUiMode::Desktop) ==
-          EffectiveUiMode::Mobile);
-    CHECK(resolveEffectiveUiMode(UiMode::Auto, false, 1920.0f, EffectiveUiMode::Mobile) ==
-          EffectiveUiMode::Desktop);
+    CHECK(resolveEffectiveUiMode(UiMode::Auto, false, 400.0f, EffectiveUiMode::Desktop) == EffectiveUiMode::Mobile);
+    CHECK(resolveEffectiveUiMode(UiMode::Auto, false, 1920.0f, EffectiveUiMode::Mobile) == EffectiveUiMode::Desktop);
     // Dead band still holds the prior decision when the hint is off.
-    CHECK(resolveEffectiveUiMode(UiMode::Auto, false, 800.0f, EffectiveUiMode::Mobile) ==
-          EffectiveUiMode::Mobile);
+    CHECK(resolveEffectiveUiMode(UiMode::Auto, false, 800.0f, EffectiveUiMode::Mobile) == EffectiveUiMode::Mobile);
 }
 
 TEST_CASE("mobileTouchDensity <-> string + scale factors") {

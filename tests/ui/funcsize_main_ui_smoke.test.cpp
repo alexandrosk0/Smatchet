@@ -105,7 +105,9 @@ void RegisterMainMenuBarRenderSmoke(ImGuiTestEngine* engine) {
 // that renders only once toolbar_.OpenEditor() has set requestEditorOpen_. The
 // production trigger is the View-menu item "Customize Toolbar..." — clicking it
 // exercises drawMainMenuBar AND RenderEditor in one flow. The modal title is
-// "Customize Toolbar##SmatchetToolbarEditor"; once live, the editor submits its
+// "Customize Toolbar###SmatchetToolbarEditor" (the "###" stable-ID suffix built by
+// SmatchetLocalization::WindowTitle so the popup ID survives title translation);
+// once live, the editor submits its
 // config-backed body (no project/ticket backend) and the engine traps any
 // in-draw IM_ASSERT.
 void RegisterToolbarEditorRenderSmoke(ImGuiTestEngine* engine) {
@@ -135,8 +137,9 @@ void RegisterToolbarEditorRenderSmoke(ImGuiTestEngine* engine) {
         ctx->ItemClick("//$FOCUSED/Customize Toolbar...");
 
         // The modal's draw fn ticks once the popup is live. Title carries the
-        // "##SmatchetToolbarEditor" suffix the production BeginPopupModal uses.
-        const char* kEditorTitle = "Customize Toolbar##SmatchetToolbarEditor";
+        // "###SmatchetToolbarEditor" suffix the production BeginPopupModal uses
+        // (SmatchetLocalization::WindowTitle joins with "###" for a language-stable ID).
+        const char* kEditorTitle = "Customize Toolbar###SmatchetToolbarEditor";
         const bool editorLive = YieldUntil(ctx, [&] { return WindowIsLive(kEditorTitle); });
         IM_CHECK_NO_RET(editorLive);
 

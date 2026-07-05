@@ -206,7 +206,8 @@ static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
             }
         }
     } else {
-        if (ImGui::Button("Download and Install", ImVec2(170.0f, 0.0f))) {
+        // Auto-size: the label translates, so a fixed 170px width clips the French text.
+        if (ImGui::Button("Download and Install")) {
             d.installerDownloadInFlight = true;
             d.installerDownloadCancel = std::make_shared<std::atomic<bool>>(false);
             const std::string downloadUrl = d.appUpdateInfo.InstallerAsset.DownloadUrl;
@@ -224,17 +225,17 @@ static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
                         g_ui.appUpdateActionStatus = SmatchetLocalization::T(
                             "updates.installer_launched",
                             "Installer launched. Smatchet will close so the update can proceed.");
+                    } else if (err.empty()) {
+                        g_ui.appUpdateActionStatus = SmatchetLocalization::T("updates.installer_launch_failed",
+                                                                             "Failed to launch installer update.");
                     } else {
-                        g_ui.appUpdateActionStatus = err.empty()
-                                                         ? SmatchetLocalization::T("updates.installer_launch_failed",
-                                                                                   "Failed to launch installer update.")
-                                                         : err.c_str();
+                        g_ui.appUpdateActionStatus = err;
                     }
                 });
             });
         }
         ImGui::SameLine();
-        if (ImGui::Button("Skip This Version", ImVec2(150.0f, 0.0f))) {
+        if (ImGui::Button("Skip This Version")) {
             d.cfg.UpdateSkipVersion = d.appUpdateInfo.LatestVersion;
             ConfigManager::Save(d.cfg);
             d.appUpdateModalOpen = false;

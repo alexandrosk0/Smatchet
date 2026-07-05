@@ -53,9 +53,13 @@ void SmatchetDrawNotificationCenterWindow(UiDrawSession& d) {
         clearRequested = true;
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("%s",
-                        SmatchetLocalization::Format("notifCenter.count", "%d notification%s",
-                                                     static_cast<int>(history.size()), history.size() == 1 ? "" : "s"));
+    // Raw (::) sink: Format already returns finished text. Singular/plural are separate catalog
+    // keys so translations are not forced into English append-"s" grammar.
+    ::ImGui::TextDisabled("%s", history.size() == 1
+                                    ? SmatchetLocalization::Format("notifCenter.count_one", "%d notification",
+                                                                   static_cast<int>(history.size()))
+                                    : SmatchetLocalization::Format("notifCenter.count_many", "%d notifications",
+                                                                   static_cast<int>(history.size())));
     ImGui::Separator();
 
     // Deferred until after the row loop + End(): an action may mutate the history ring.
@@ -74,7 +78,9 @@ void SmatchetDrawNotificationCenterWindow(UiDrawSession& d) {
             const std::string header = std::string("[") + smatchet::FormatClockHMS(unixSec) + "] " +
                                        smatchet::ToastTypeShortLabel(e.Type) + "  " + e.Title;
             const bool actionable = static_cast<bool>(e.RowAction);
-            if (ImGui::Selectable(header.c_str()) && actionable) {
+            // SelectableRaw: the row header is data (timestamp + type + toast title) — skip the
+            // per-row TranslateSource pass the aliased Selectable would pay (200-row cap, no clipper).
+            if (ImGui::SelectableRaw(header.c_str()) && actionable) {
                 pendingAction = e.RowAction;
             }
             if (actionable && ImGui::IsItemHovered()) {
@@ -82,7 +88,7 @@ void SmatchetDrawNotificationCenterWindow(UiDrawSession& d) {
             }
             if (!e.Message.empty()) {
                 ImGui::Indent();
-                ImGui::TextWrapped("%s", e.Message.c_str());
+                ::ImGui::TextWrapped("%s", e.Message.c_str());
                 ImGui::Unindent();
             }
             ImGui::Separator();

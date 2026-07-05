@@ -39,9 +39,9 @@ void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const Pen
         if (qid <= 0) {
             SmatchetToastManager::Instance().Push(
                 SmatchetLocalization::T("toast.offline_error", "Offline Error"),
-                qerr.empty()
-                    ? SmatchetLocalization::T("toast.offline_queue_failed", "Failed to queue offline field edit.")
-                    : qerr.c_str(),
+                qerr.empty() ? std::string(SmatchetLocalization::T("toast.offline_queue_failed",
+                                                                   "Failed to queue offline field edit."))
+                             : qerr,
                 ToastType::Error);
             CellWriteFeedback feedback;
             feedback.State = CellWriteState::Error;
@@ -51,9 +51,9 @@ void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const Pen
         } else if (!app.ApplyFieldEditResult(edit.IssueId, result.ApplyResult, applyError)) {
             SmatchetToastManager::Instance().Push(
                 SmatchetLocalization::T("toast.apply_error", "Apply Error"),
-                applyError.empty()
-                    ? SmatchetLocalization::T("toast.apply_queued_failed", "Failed to apply queued field edit.")
-                    : applyError.c_str(),
+                applyError.empty() ? std::string(SmatchetLocalization::T("toast.apply_queued_failed",
+                                                                         "Failed to apply queued field edit."))
+                                   : applyError,
                 ToastType::Error);
             CellWriteFeedback feedback;
             feedback.State = CellWriteState::Error;
@@ -77,9 +77,9 @@ void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const Pen
         if (!applied) {
             SmatchetToastManager::Instance().Push(
                 SmatchetLocalization::T("toast.save_error", "Save Error"),
-                applyError.empty()
-                    ? SmatchetLocalization::T("toast.apply_saved_failed", "Failed to apply saved field update.")
-                    : applyError.c_str(),
+                applyError.empty() ? std::string(SmatchetLocalization::T("toast.apply_saved_failed",
+                                                                         "Failed to apply saved field update."))
+                                   : applyError,
                 ToastType::Error);
             CellWriteFeedback feedback;
             feedback.State = CellWriteState::Error;

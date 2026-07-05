@@ -55,7 +55,8 @@ TEST_CASE("i18n-sweep keys resolve to French under fr-FR") {
     }
 
     SUBCASE("audit filters") {
-        CHECK(std::string(SmatchetLocalization::T("audit.filter.failure", kSentinel)) == u8"Échec");
+        // New Action-filter key; the Result items reuse the pre-existing audit.* rows.
+        CHECK(std::string(SmatchetLocalization::T("audit.offline", kSentinel)) == u8"Hors ligne");
     }
 
     SUBCASE("format keys keep their conversion specifiers") {

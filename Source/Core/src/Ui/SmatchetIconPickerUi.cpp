@@ -76,14 +76,16 @@ bool SmatchetIconPickerUi::Draw(std::string& outName, std::string& outGlyph) {
                     const SmatchetToolbarIconEntry& e = catalog[matches[mi]];
                     ImGui::PushID(e.Name);
                     const char* label = (fa && e.Glyph[0] != '\0') ? e.Glyph : "?";
-                    if (ImGui::Button(label, ImVec2(cell, cell))) {
+                    // Raw (::): glyph label is data; skips the wrapper's per-cell string pass
+                    // (~80 visible cells per frame under the clipper).
+                    if (::ImGui::Button(label, ImVec2(cell, cell))) {
                         outName = e.Name;
                         outGlyph = e.Glyph;
                         picked = true;
                         ImGui::CloseCurrentPopup();
                     }
                     if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("%s", e.Name);
+                        ::ImGui::SetTooltip("%s", e.Name);
                     }
                     ImGui::PopID();
                 }
