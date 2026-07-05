@@ -35,7 +35,7 @@
 |---|---|---|
 | A1 TrackerConfig caching | ✅ RESOLVED | `ConfigManager::Load()` returns `GetCachedConfigRef()` under `GetCacheMutexRef()` (valid-flag cache, invalidated on `Save()`) — kills the repeated disk read/parse. |
 | A2 Logger file-sink wiring | ✅ RESOLVED (differently) | Wired at startup in `Source/Standalone/main.cpp` + `android_main.cpp` via `Logger::SetFileSinkPath` (env `SMATCHET_DEBUG_LOG` / default path), **not** from `ConfigManager`; no `LogFilePath` key. Functional complaint closed. |
-| A4 FlushFileSink on crash | ⏳ OPEN | `Logger::FlushFileSink()` still has no production caller (only a test); normal exit drains via the `Logger` dtor, but the `~AppController` + crash-handler asks remain undone. **Last genuinely-open safety tail.** |
+| A4 FlushFileSink on shutdown | ✅ RESOLVED (graceful) | `~AppController` now calls `Logger::Instance().FlushFileSink()` after `JoinBackgroundTasks()`, persisting the whole shutdown-sequence log trail before late teardown. The crash-handler half is intentionally **not** done — `SmatchetCrashHandler` is async-signal-safe and must not take the file-sink mutex mid-crash (it uses its own async-safe crash sink). |
 | B1 LuaAutomationHost extraction | 🟡 REFRAMED (won't-do-as-written) | Ownership migration abandoned for a different design: `LuaAutomationHost` is now a 17-LOC log-sink coordinator; sol2 moved to a pImpl (see N10); the binding TU split 3 ways; `friend class LuaAutomationHost` removed; new `ILuaBindingHost` interface. |
 | B2 TrackerHttpClient migration | 🟡 PARTIAL | `ClassifyTrackerResponse` used in only ~3 files/7 sites; `IsTrackerTransportErrorText` still spans ~14 files (see N12). 2B–2E not complete. |
 | B3 ITrackerClient split | ✅ RESOLVED (exceeded) | `ITrackerClient` gone; replaced by `ITrackerBackend` composing 6 role interfaces (`ITrackerIssueReader`/`Connectivity`/`FieldCatalog`/`IssueMutations`/`Collaboration`/`Activity`). "Unsupported default-impl" pattern removed. |
@@ -56,7 +56,7 @@
 | N12 IsTrackerTransportErrorText | ⏳ OPEN | Still defined + used across ~14 files, shadowing `ClassifyTrackerResponse` (blocked on B2). |
 | N13 TryGetMcpStatusSnapshot | ⏳ OPEN (acceptable) | Still a gated virtual on `IPlugin`; no capability-tag system. As the doc itself said, acceptable today. |
 
-**Still genuinely open after this pass:** A4, B5, C4, C6, N3, N12 (+ N13 acceptable, B2/C5/N4 partial). Everything else on the A/B/C/N carry-over list is resolved. Items already ✅ in the doc (N2, C2, C7, N7, N11, N14) re-verified still true.
+**Still genuinely open after this pass:** B5, C4, C6, N3, N12 (+ N13 acceptable, B2/C5/N4 partial). A4's graceful-shutdown half was closed 2026-07-05 (crash-path half intentionally omitted — see A4). Everything else on the A/B/C/N carry-over list is resolved. Items already ✅ in the doc (N2, C2, C7, N7, N11, N14) re-verified still true.
 
 ---
 
@@ -82,8 +82,10 @@ Old item 6 tail. Header API + worker thread exist (`Source/Core/include/Logger.h
 ### A3. `TrackerField::IsRequired` not consumed by UI — shipped
 Old item 10 tail. Schema populated for Plane (`PlaneClient.cpp` `TrackerFieldFromPlaneProperty`); zero UI consumer in `TicketFieldEditor.cpp` / `SmatchetNewIssueDraftUi.cpp`. Required-field state is dead data. Add a `*` glyph + tooltip on required-field labels in the new-issue draft and in-line editor; refuse submit / show validation on blank required. — shipped on branch `feat/required-field-ui-glyph` (PR pending).
 
-### A4. `FlushFileSink` not called on shutdown / crash path — ⏳ OPEN (re-confirmed 2026-07-05, last open safety tail)
-POST_P0 item 24 (last open from that review). `Logger::FlushFileSink()` exists; no caller in `AppController::~AppController` or `Source/Standalone/main.cpp` exit path or signal handler. Async file sink can drop the last batch on abrupt exit. Call from `~AppController` and from a `std::set_terminate` / `SIGSEGV` handler in `main.cpp`.
+### A4. `FlushFileSink` not called on shutdown / crash path — ✅ RESOLVED (graceful half, 2026-07-05)
+POST_P0 item 24 (last open from that review). `Logger::FlushFileSink()` existed with no production caller. **Now wired** in `AppController::~AppController` immediately after `JoinBackgroundTasks()` — at that point every background thread that can emit a log line is joined, so the flush persists the entire shutdown-sequence trail to disk before member destruction and the riskier late-teardown steps run.
+
+The original "call it from a `std::set_terminate` / `SIGSEGV` handler" ask is **intentionally not done** and is now superseded: this codebase grew a dedicated async-signal-safe crash handler (`Source/Standalone/SmatchetCrashHandler.cpp`) *after* this item was filed. That handler deliberately avoids the logger mid-crash — `FlushFileSink()` takes `m_fileSinkLifecycleMutex`/`m_fileSinkMutex` and waits on `m_fileSinkAckCv`, none of which is async-signal-safe (deadlock/UB risk in a signal context). Crash-time diagnostics are instead captured by the crash handler's own async-safe crash sink (marker + breadcrumb + minidump). So the abrupt-crash log batch is covered by a *different, safe* mechanism, and the graceful-shutdown drop-the-last-batch gap this item was really about is closed.
 
 ---
 
