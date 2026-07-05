@@ -1,0 +1,191 @@
+name: Monkey nightly
+
+# Nightly "code monkey" for the command registry (plan: nightly-monkey-tester.md).
+# A seeded, reproducible fuzzer fires a long sequence of randomized-but-guaranteed-
+# pre-handler-reject dispatches at CommandRegistry::Dispatch under ASan+UBSan, shaking
+# out crashes / UB / contract breaks the scripted tests never reach. Like
+# sanitizer-nightly.yml this is NOT a per-PR required check — it is a safety-net gate
+# ("last nightly was clean"); a failure auto-opens a `bug` issue carrying the seed, so
+# the finding replays with a single command: SmatchetMonkeyCli --seed=<N> --steps=<same>.
+#
+# Runs on ubuntu-latest (unlike sanitizer-nightly's windows-2022): the monkey links the
+# Linux-only SmatchetCore_PosixCheck archive. The posix-core-check preset + host clang
+# gives ASan AND UBSan (-fsanitize=address,undefined); no MSVC needed.
+
+on:
+  schedule:
+    - cron: '47 4 * * *'   # 04:47 UTC daily — staggered off sanitizer-nightly's 04:00
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: 'Optional fixed seed to replay a specific finding (blank = random).'
+        required: false
+        default: ''
+      steps:
+        description: 'Max dispatch steps.'
+        required: false
+        default: '2000000'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: monkey-nightly
+  cancel-in-progress: false
+
+jobs:
+  monkey-nightly:
+    name: Monkey nightly (Linux Clang ASan+UBSan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout develop
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: develop
+          persist-credentials: false
+
+      - name: Install clang + X11/GL dev headers (glfw configure-time deps)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Same toolchain the mobile-posix-core-check lane uses: host clang/lld, plus
+          # the X11/GL headers GLFW 3.3.8 needs at CONFIGURE time (it is fetched but
+          # never built here — only SmatchetCore_PosixCheck + SmatchetMonkeyCli link).
+          sudo apt-get update
+          sudo apt-get install -y clang lld xorg-dev libgl1-mesa-dev
+
+      - name: Cache FetchContent _deps (posix-core-check asan)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .fetchcontent-src
+          key: ${{ runner.os }}-fetchcontent-monkey-asan-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-posixcheck-
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Configure posix-core-check + ASan/UBSan
+        # -DSMATCHET_SANITIZER=asan on the clang-linux toolchain applies BOTH
+        # -fsanitize=address AND -fsanitize=undefined with -fno-sanitize-recover=all
+        # (see cmake/Sanitizers.cmake). SMATCHET_BUILD_TESTS=ON declares SmatchetMonkeyCli.
+        run: cmake --preset posix-core-check -DSMATCHET_SANITIZER=asan -DSMATCHET_BUILD_TESTS=ON
+
+      - name: Build the monkey (instrumented archive + driver)
+        shell: bash
+        # Tee the build so the auto-issue step can tell a COMPILE break (build never
+        # produced an instrumented binary) from a sanitizer FINDING at run time — the two
+        # want different issue titles/labels (mirrors sanitizer-nightly.yml).
+        run: |
+          set -o pipefail
+          cmake --build --preset posix-core-check --target SmatchetMonkeyCli 2>&1 | tee build-monkey-asan.log
+
+      - name: Run the monkey under ASan+UBSan
+        id: run
+        shell: bash
+        env:
+          MONKEY_SEED: ${{ github.event.inputs.seed }}
+          MONKEY_STEPS: ${{ github.event.inputs.steps }}
+        run: |
+          set -uo pipefail
+          bin=./build/posix-core-check/tests/SmatchetMonkeyCli
+          steps="${MONKEY_STEPS:-2000000}"
+          seed_arg=""
+          if [ -n "${MONKEY_SEED:-}" ]; then seed_arg="--seed=${MONKEY_SEED}"; fi
+          export ASAN_OPTIONS="abort_on_error=1:detect_leaks=1:print_stats=0"
+          export UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"
+          # `timeout` bounds wall-clock: a genuine hang (exit 124) is itself a finding.
+          # The driver also self-bounds via --time-budget-ms (10 min) so a healthy run
+          # finishes well inside the 12-min hard cap below.
+          set +e
+          timeout 720 "$bin" ${seed_arg} --mode=prehandler --steps="${steps}" --time-budget-ms=600000 \
+            2>&1 | tee monkey.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "exit_code=${rc}" >> "$GITHUB_OUTPUT"
+          # Surface the reproducing seed regardless of outcome (first line: `monkey seed=N`).
+          seed="$(grep -m1 '^monkey seed=' monkey.log | sed 's/^monkey seed=//' || true)"
+          echo "seed=${seed}" >> "$GITHUB_OUTPUT"
+          if [ "${rc}" -eq 124 ]; then
+            echo "monkey: HANG — timeout after 720s (treated as a finding)" | tee -a monkey.log
+          fi
+          exit "${rc}"
+
+      - name: Surface monkey report in job summary
+        if: failure()
+        shell: bash
+        env:
+          SEED: ${{ steps.run.outputs.seed }}
+          RC: ${{ steps.run.outputs.exit_code }}
+        run: |
+          {
+            echo "## Monkey nightly failure (Linux Clang ASan+UBSan)"
+            echo ""
+            echo "- Reproducing seed: \`${SEED:-unknown}\`"
+            echo "- Driver exit code: \`${RC:-unknown}\` (2=exception, 3=unexpected-Ok, 4=malformed-envelope, 124=hang)"
+            echo "- Replay: \`SmatchetMonkeyCli --seed=${SEED:-<seed>} --steps=<same>\`"
+            echo ""
+            echo '```'
+            # The ASan/UBSan report + the driver's own VIOLATION line (with cmd/probe/args).
+            grep -A 30 -E 'ERROR: AddressSanitizer|runtime error:|UndefinedBehaviorSanitizer|monkey VIOLATION|monkey: HANG' monkey.log \
+              | head -160 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update bug issue on failure
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SEED: ${{ steps.run.outputs.seed }}
+        run: |
+          set -uo pipefail
+          # Distinguish a COMPILE break (no instrumented binary was produced) from a
+          # genuine runtime FINDING — a build break routes to build-doctor, not a monkey
+          # finding owner. Ninja emits `FAILED:` / `ninja: build stopped` only on a
+          # compile failure (never on a runtime sanitizer report). Same test as
+          # sanitizer-nightly.yml.
+          build_log="build-monkey-asan.log"
+          is_compile_fail=0
+          if [ -f "$build_log" ] && grep -qE '^FAILED:|ninja: build stopped' "$build_log"; then
+            is_compile_fail=1
+          fi
+          if [ "$is_compile_fail" = "1" ]; then
+            title="Monkey nightly BUILD BREAK (compile failure, not a monkey finding)"
+            label="build-break"
+            body="The nightly command-registry monkey on \`develop\` failed during the
+          COMPILE phase — no instrumented binary was produced, so this is a BUILD BREAK,
+          not a fuzzing finding.
+
+          Run: ${RUN_URL}
+
+          See \`build-monkey-asan.log\` in the run for the failing TU. Route to
+          build-doctor, not a monkey-finding owner."
+          else
+            title="Monkey nightly found a defect (ASan+UBSan / command-registry)"
+            label="bug"
+            body="The nightly command-registry monkey on \`develop\` tripped under ASan+UBSan.
+
+          Run: ${RUN_URL}
+          Reproducing seed: \`${SEED:-unknown}\`
+          Replay locally:
+          \`\`\`
+          cmake --preset posix-core-check -DSMATCHET_SANITIZER=asan -DSMATCHET_BUILD_TESTS=ON
+          cmake --build --preset posix-core-check --target SmatchetMonkeyCli
+          ./build/posix-core-check/tests/SmatchetMonkeyCli --seed=${SEED:-<seed>} --mode=prehandler --verbose
+          \`\`\`
+
+          See the job summary for the sanitizer report + the driver's VIOLATION line
+          (command, probe kind, and the exact fuzzed args). This is Layer 1a of
+          nightly-monkey-tester.md — a pre-handler pipeline defect (crash / UB / a probe
+          that should have been rejected but returned Ok / a malformed error envelope)."
+          fi
+          # De-dup: reuse the single open issue with this exact title if present.
+          existing=$(gh issue list --state open --label "$label" --search "$title in:title" \
+                       --json number --jq '.[0].number' 2>/dev/null || true)
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            gh issue comment "$existing" --body "Recurred: ${RUN_URL} (seed \`${SEED:-unknown}\`)" || true
+          else
+            gh issue create --title "$title" --label "$label" --body "$body" || true
+          fi

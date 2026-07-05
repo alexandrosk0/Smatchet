@@ -1659,5 +1659,47 @@ if(UNIX AND SMATCHET_BUILD_POSIX_CORE_CHECK)
         ghc_filesystem
         httplib::httplib
     )
+    # Keep this exe coherent with the (possibly sanitized) core archive: no-op unless
+    # SMATCHET_SANITIZER is set, but if the build dir IS configured for ASan (the monkey
+    # nightly does), the exe must link the runtime too or it fails at link time.
+    smatchet_apply_sanitizers(SmatchetCommandsTests)
     add_test(NAME smatchet_commands_tests COMMAND SmatchetCommandsTests)
+
+    # ============================================================================
+    # Nightly command-registry MONKEY (docs/plans/active/nightly-monkey-tester.md).
+    # Same headless archive + link recipe as SmatchetCommandsTests, but a standalone
+    # int main() (no doctest) so it takes --seed/--steps for reproducible replay. It
+    # fires a long SEEDED sequence of randomized-but-guaranteed-pre-handler-reject
+    # dispatches at CommandRegistry::Dispatch (see tests/monkey/), catching crashes /
+    # UB / contract breaks the scripted tests never reach. Linux-only by construction.
+    # ============================================================================
+    add_executable(SmatchetMonkeyCli monkey/monkey_command_registry.cpp)
+    target_include_directories(SmatchetMonkeyCli PRIVATE
+        "${CMAKE_SOURCE_DIR}/Source/Core/include"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Tracker"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Sync"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Persistence"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Config"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Ui"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Diagnostics"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Privacy"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Imaging"
+        "${CMAKE_CURRENT_SOURCE_DIR}/monkey" # CommandArgSynth.h
+    )
+    target_link_libraries(SmatchetMonkeyCli PRIVATE
+        nlohmann_json::nlohmann_json
+        SmatchetCore_PosixCheck
+        SmatchetTextEdit
+        ImGuiLib
+        md4c
+        cpr::cpr
+        SQLiteCpp
+        ghc_filesystem
+        httplib::httplib
+    )
+    smatchet_apply_sanitizers(SmatchetMonkeyCli)
+    # Bounded, fixed-seed smoke so the driver never bit-rots and stays reproducible. The
+    # nightly runs the binary directly with a large --steps/--time-budget-ms budget.
+    add_test(NAME monkey_command_registry_smoke
+             COMMAND SmatchetMonkeyCli --mode=prehandler --seed=1 --steps=500)
 endif()
