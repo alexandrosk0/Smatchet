@@ -32,6 +32,9 @@ extern std::unique_ptr<smatchet::cmd::IScenario> MakeThemeSwitchRoundtripScenari
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeAiChatHistoryRenderScenario();
 #endif
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeIdleScenario();
+// Gap map Tier 3 — registry-wide command error-envelope contract sweep (mutation-free:
+// every probe is rejected by the Dispatch guards before any handler runs).
+extern std::unique_ptr<smatchet::cmd::IScenario> MakeCommandContractSweepScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeCellEditBurstScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeAttachmentPreviewOpenScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakePreferencesSliderDragScenario();
@@ -98,6 +101,7 @@ void RegisterAllScenarios(ScenarioRunner& runner) {
     // shipped pillar-1 / pillar-2 fix doesn't regress, or establishes the
     // baseline floor against which other scenarios are compared.
     runner.RegisterFactory("idle", []() { return ::MakeIdleScenario(); });
+    runner.RegisterFactory("command-contract-sweep", []() { return ::MakeCommandContractSweepScenario(); });
     runner.RegisterFactory("cell-edit-burst", []() { return ::MakeCellEditBurstScenario(); });
     runner.RegisterFactory("attachment-preview-open", []() { return ::MakeAttachmentPreviewOpenScenario(); });
     runner.RegisterFactory("preferences-slider-drag", []() { return ::MakePreferencesSliderDragScenario(); });
