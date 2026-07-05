@@ -91,6 +91,8 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearIssueMappingPure.cpp"
         Core/LinearQueryFromJql.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearQueryFromJql.cpp"
+        Core/JiraErrorMessagePure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraErrorMessagePure.cpp"
         # multi-grid-tabs.md Slice 5a — pure hidden-pane LRU eviction decision
         # (header-only; no extra .cpp). No threads — proves the policy compiles +
         # links cleanly under -fsanitize=thread end-to-end on the runner.
@@ -136,6 +138,9 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/GridLiveContext.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/TicketSyncService.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpPure.cpp"
+        # RedactHttpBodyForLog (TrackerHttpPure.cpp, above) delegates to the cpr-free AI-side
+        # redactor — link its TU so the connectivity-banner scrub resolves in this target.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/AiErrorRedact.cpp"
         # --- EditMetaCacheService (AppController god-object decomposition Phase 1): per-issue +
         #     per-issue-type editmeta cache (editMetaMutex_) loaded from BOTH the UI thread and
         #     the background warm worker — a genuine cross-thread mutex, highest-value TSan
@@ -182,6 +187,10 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # with UiThreadAffinity::WarnIfOnUiThread. Both are cpr/ImGui/GL-free.
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/KeybindingsConfig.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/UiThreadAffinity.cpp"
+        # OfflineQueueService / FieldEditPipelineService now localize their cache-unavailable
+        # user messages (SmatchetLocalization::T). The localization TU is cpr/ImGui-free and
+        # its own closure (ConfigManager split + Logger + nlohmann) is already linked above.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/SmatchetLocalization.cpp"
         # TicketSyncService.test scripts its backend through the header-only
         # ScriptedTrackerBackendFactory, whose impl lives in JiraFakeTrackerFixture
         # (builds a header-only FakeTrackerClient — no real JiraClient, no cpr). The
@@ -825,6 +834,11 @@ add_executable(SmatchetTests
     # ParseIso8601ToUnixSec (GitHubClientHelpers.cpp) — both already linked above.
     Core/JiraCommentMappingPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraCommentMappingPure.cpp"
+    # error-message-quality-pass — pure Jira error-body extractor (errorMessages[]/errors{}
+    # → joined message, bounded parse, never the raw body). Jira counterpart of
+    # ExtractLinearErrorMessage; used by every JiraIssueMutation failure path.
+    Core/JiraErrorMessagePure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraErrorMessagePure.cpp"
     # issue-comments PR-C — pure JSON array → TrackerIssueComment mapping, split
     # out of PlaneClient.cpp (which pulls cpr). PlaneCommentMappingPure.cpp depends
     # on JsonGetStringIfString (TrackerFieldValueParser.cpp) + ParseIso8601ToUnixSec
@@ -1108,6 +1122,44 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraUserAndMeta.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraActivityFeed.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldCatalog.cpp"
+    # coverage-gap-tier2-backend-shell-fixtures.md Slice 1 — TEST_COVERAGE_GAP_MAP.md Tier 2
+    # fixture suites for the two flagged backend HTTP shells, driven at the same in-process
+    # httplib loopback as TrackerCatalogBuild.test.cpp. Instantiating PlaneClient needs the
+    # full vtable, so all five Plane implementation TUs link here (Jira-block precedent
+    # above); their pure/support deps (PlaneIssueMappingPure, PlaneFieldCatalogPure,
+    # PlaneCommentMappingPure, PlaneActivityFeedPure, PlaneProjectScope, ProjectResolver,
+    # IssueDraft, MarkdownConvert, TrackerHttp*, cpr) are all already in this rig.
+    # LinearIssueSearch.cpp is free functions — no LinearClient vtable — and its helper TUs
+    # (LinearClientHelpers / LinearIssueMappingPure / LinearQueryFromJql) are linked above.
+    Core/PlaneIssueSearchHttp.test.cpp
+    Core/LinearIssueSearchHttp.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneClient.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneIssueSearch.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneIssueMutation.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneFieldCatalog.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneActivityFeed.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearIssueSearch.cpp"
+    # Slice 2 (same plan) — the GitHub shells. GitHubIssueSearch.cpp is free functions;
+    # GitHubClientHttp.test.cpp instantiates GitHubClient, whose vtable spans
+    # GitHubClient.cpp + GitHubActivityFeed.cpp (both linked here). Their pure/support
+    # deps (GitHubClientHelpers, GitHubQueryFromJql, GitHubFetchPlan,
+    # GitHubIssueSearchMapping, GitHubCommentMappingPure, GitHubActivityFeedPure,
+    # GitHubCommitsParse, LabelEditDiffPure, BackendAuditTrail) are all already linked.
+    Core/GitHubIssueSearchHttp.test.cpp
+    Core/GitHubClientHttp.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubIssueSearch.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubClient.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubActivityFeed.cpp"
+    # Slice 3 (same plan) — the Plane/Linear WRITE shells (the audit's data-loss class).
+    # PlaneIssueMutation.cpp is already linked above (PlaneClient vtable); the LinearClient
+    # vtable spans LinearClient.cpp + LinearIssueMutation.cpp (both here). Their deps
+    # (LinearMutationPure, LinearClientHelpers, LinearIssueSearch, BackendAuditTrail,
+    # MarkdownConvert, PlaneCommentMappingPure) are all already linked. The cfg-less write
+    # paths load ConfigManager per request, so these suites run under TestEnvGuard.
+    Core/PlaneIssueMutationHttp.test.cpp
+    Core/LinearIssueMutationHttp.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearClient.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearIssueMutation.cpp"
     # build-quality-velocity-hardening #32 — flaky-test quarantine mechanism self-test.
     # Demonstrates SMATCHET_QUARANTINED_TEST_CASE / SMATCHET_QT_CHECK env-flip behaviour.
     # Header-only (QuarantineTestCase.h in tests/support/); no extra .cpp source.

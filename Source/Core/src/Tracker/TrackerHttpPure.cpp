@@ -1,5 +1,6 @@
 #include "TrackerHttpPure.h"
 
+#include "AiErrorRedact.h"
 #include "StringUtil.h"
 
 #include <algorithm>
@@ -203,4 +204,10 @@ bool IsTrackerTransportErrorText(const std::string& error) {
         }
     }
     return false;
+}
+
+std::string RedactHttpBodyForLog(const std::string& body) {
+    // Strip reflected tokens (Bearer / api_key / Authorization / sk- / ghp_ …) via the
+    // shared cpr-free redactor, which also caps length to kMaxProviderErrorBodyChars.
+    return smatchet::ai::pure::RedactProviderErrorBody(body);
 }

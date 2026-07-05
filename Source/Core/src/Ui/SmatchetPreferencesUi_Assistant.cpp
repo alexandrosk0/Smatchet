@@ -174,6 +174,9 @@ void RunProbeWorker(AiProvider provider, AiClientConfig clientCfg, std::shared_p
     // SSE parser code. An uncaught exception here would propagate out of the
     // background task and call `std::terminate`. Trap it, surface as a failure
     // result via the existing dispatcher path so UI state recovers.
+    const char* const internalErrMsg =
+        SmatchetLocalization::T("prefs.assistant.test_internal_error",
+                                "the request could not be completed — check the endpoint URL and try again");
     try {
         std::unique_ptr<IAiClient> client = AiClientFactory::MakeAiClient(provider);
         if (!client) {
@@ -217,10 +220,15 @@ void RunProbeWorker(AiProvider provider, AiClientConfig clientCfg, std::shared_p
                 }
             }
         }
+        // SMATCHET_DEVIATION(rule=duplication; reason=test-connection probe twins (AiPrefsTestConnection vs Preferences
+        // UI worker) predate this pass; the identical localized catch-handling keeps both twins consistent until the
+        // planned twin dedup; owner=user-text-error-pass; revisit=2026-09-30)
     } catch (const std::exception& ex) {
-        errMsg = std::string("internal error: ") + ex.what();
+        LOG_WARN("Assistant test-connection: %s", ex.what());
+        errMsg = internalErrMsg;
     } catch (...) {
-        errMsg = "internal error: unknown exception";
+        LOG_WARN("Assistant test-connection: unknown exception");
+        errMsg = internalErrMsg;
     }
     dispatcher.PostToMainThread([errMsg, cancel, provider, defaultedBaseUrl]() {
         if (cancel && cancel->load()) {
@@ -514,8 +522,8 @@ void RenderCustomEndpointConsent(UiDrawSession& d, AiProvider prov, bool& flag, 
 
 // Per-provider credential fields (key / model / base URL + custom-endpoint
 // consent), auto-saved on every edit. One branch per provider kind.
-void RenderProviderCredentials(UiDrawSession& d, TrackerConfig& work, AiProvider selectedKind,
-                               AssistantPrefsBuffers& b, int& consentModalProvider) {
+void RenderProviderCredentials(UiDrawSession& d, TrackerConfig& work, AiProvider selectedKind, AssistantPrefsBuffers& b,
+                               int& consentModalProvider) {
     if (selectedKind == AiProvider::OpenAi || selectedKind == AiProvider::OllamaOpenAiCompat) {
         const bool isLocalCompat = (selectedKind == AiProvider::OllamaOpenAiCompat);
         const char* keyLabel = isLocalCompat ? "API key (optional for local)" : "OpenAI API key";
@@ -702,8 +710,8 @@ void RenderAssistantSaveDiscard(AppController& app, UiDrawSession& d, bool dirty
     }
     ImGui::SameLine();
     if (dirty) {
-        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f),
-                           "%s", SmatchetLocalization::T("prefs.assistant.unsaved", "Unsaved changes"));
+        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f), "%s",
+                           SmatchetLocalization::T("prefs.assistant.unsaved", "Unsaved changes"));
     } else {
         ImGui::TextDisabled("%s", SmatchetLocalization::T("prefs.assistant.no_changes", "No unsaved changes"));
     }
