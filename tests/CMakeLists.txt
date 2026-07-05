@@ -709,6 +709,13 @@ add_executable(SmatchetTests
     # rejections + the symlinked-subdir escape regression from the security-audit
     # MCP file-command confinement. No extra .cpp source.
     Core/PathConfinement.test.cpp
+    # Confine-safe --spawn outLog basename derivation (MakeConfineSafeSpawnOutLogBasename) —
+    # the trust boundary the spawn parent crosses before forwarding outLog to a confined child:
+    # strips every directory component + `..` to a leaf, falls back to outlog.txt, and adds a
+    # random "spawn-<entropy>-" prefix so concurrent spawns never collide. Has a real .cpp source
+    # (random draw), so the production TU is linked here, not header-only.
+    Core/SpawnOutLogBasename.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Scenarios/SpawnOutLogBasename.cpp"
     # header-only; pins the screenshot-scenario confinement wrapper's fail-closed
     # escape rejections (absolute / ".." / empty) + scenario-prefixed reject message
     # (#1566 arbitrary-file-write class on the MCP/Lua-reachable screenshot scenarios).
