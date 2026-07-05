@@ -1104,6 +1104,23 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraUserAndMeta.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraActivityFeed.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldCatalog.cpp"
+    # coverage-gap-tier2-backend-shell-fixtures.md Slice 1 — TEST_COVERAGE_GAP_MAP.md Tier 2
+    # fixture suites for the two flagged backend HTTP shells, driven at the same in-process
+    # httplib loopback as TrackerCatalogBuild.test.cpp. Instantiating PlaneClient needs the
+    # full vtable, so all five Plane implementation TUs link here (Jira-block precedent
+    # above); their pure/support deps (PlaneIssueMappingPure, PlaneFieldCatalogPure,
+    # PlaneCommentMappingPure, PlaneActivityFeedPure, PlaneProjectScope, ProjectResolver,
+    # IssueDraft, MarkdownConvert, TrackerHttp*, cpr) are all already in this rig.
+    # LinearIssueSearch.cpp is free functions — no LinearClient vtable — and its helper TUs
+    # (LinearClientHelpers / LinearIssueMappingPure / LinearQueryFromJql) are linked above.
+    Core/PlaneIssueSearchHttp.test.cpp
+    Core/LinearIssueSearchHttp.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneClient.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneIssueSearch.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneIssueMutation.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneFieldCatalog.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneActivityFeed.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearIssueSearch.cpp"
     # build-quality-velocity-hardening #32 — flaky-test quarantine mechanism self-test.
     # Demonstrates SMATCHET_QUARANTINED_TEST_CASE / SMATCHET_QT_CHECK env-flip behaviour.
     # Header-only (QuarantineTestCase.h in tests/support/); no extra .cpp source.
