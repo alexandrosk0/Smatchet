@@ -14,7 +14,7 @@
 
 #include "Commands/Scenarios/IScenario.h"
 
-// SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=scenario driver needs AppController::Commands() — the IScenario contract passes AppController& and no narrower registry-access interface exists yet (same coupling as every sibling scenario TU); owner=command-system; revisit=2026-12-31)
+// SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=IScenario passes AppController& and Commands() has no narrower interface yet; owner=command-system; revisit=2026-12-31)
 #include "AppController.h"
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
@@ -63,13 +63,27 @@ nlohmann::json SynthValidValue(const ParamSpec& p) {
     }
 }
 
-const ParamSpec* FirstRequiredWithoutDefault(const Command& c) {
+// First Required param in declaration order — the one ValidateAndResolveArgs names when
+// the args object is empty (Required is checked before any Default is applied).
+const ParamSpec* FirstRequiredParam(const Command& c) {
     for (const ParamSpec& p : c.Params) {
-        if (p.Required && (!p.Default || p.Default->is_null())) {
+        if (p.Required) {
             return &p;
         }
     }
     return nullptr;
+}
+
+// Args object with every required param filled by SynthValidValue — shared by probes
+// B and C so the synthesis rule lives in one place.
+nlohmann::json SynthValidRequiredArgs(const Command& c) {
+    nlohmann::json args = nlohmann::json::object();
+    for (const ParamSpec& p : c.Params) {
+        if (p.Required) {
+            args[p.Name] = SynthValidValue(p);
+        }
+    }
+    return args;
 }
 
 const ParamSpec* FirstScalarParam(const Command& c) {
@@ -138,10 +152,11 @@ class CommandContractSweepScenario : public IScenario {
             bool probed = false;
 
             // Probe A: omit a required-without-default param entirely.
-            if (const ParamSpec* req = FirstRequiredWithoutDefault(c)) {
+            if (const ParamSpec* req = FirstRequiredParam(c)) {
                 const CommandResult r = reg.Dispatch(c.Name, nlohmann::json::object(), automationCtx);
-                if (r.Ok || r.Error.Code != ErrorCode::MissingRequiredArg) {
-                    AddViolation(c.Name, "missing-required:" + req->Name, "missing-required-arg", r);
+                const bool namesParam = r.Error.Message.find("'" + req->Name + "'") != std::string::npos;
+                if (r.Ok || r.Error.Code != ErrorCode::MissingRequiredArg || !namesParam) {
+                    AddViolation(c.Name, "missing-required:" + req->Name, "missing-required-arg naming the param", r);
                 }
                 probed = true;
             }
@@ -150,12 +165,7 @@ class CommandContractSweepScenario : public IScenario {
             // die in validation regardless of the other args (required ones are filled so
             // the failure is attributable to the probed param).
             if (const ParamSpec* scalar = FirstScalarParam(c)) {
-                nlohmann::json args = nlohmann::json::object();
-                for (const ParamSpec& p : c.Params) {
-                    if (p.Required) {
-                        args[p.Name] = SynthValidValue(p);
-                    }
-                }
+                nlohmann::json args = SynthValidRequiredArgs(c);
                 args[scalar->Name] = nlohmann::json::array();
                 const CommandResult r = reg.Dispatch(c.Name, args, automationCtx);
                 if (r.Ok || r.Error.Code != ErrorCode::ValidationError) {
@@ -169,13 +179,7 @@ class CommandContractSweepScenario : public IScenario {
             // aim to clear validation; when a spec is too constrained for the synthesizer
             // the probe is inconclusive (recorded, not a violation).
             if (c.Destructive) {
-                nlohmann::json args = nlohmann::json::object();
-                for (const ParamSpec& p : c.Params) {
-                    if (p.Required) {
-                        args[p.Name] = SynthValidValue(p);
-                    }
-                }
-                const CommandResult r = reg.Dispatch(c.Name, args, automationCtx);
+                const CommandResult r = reg.Dispatch(c.Name, SynthValidRequiredArgs(c), automationCtx);
                 if (r.Ok) {
                     // A destructive handler EXECUTED without confirmation — the exact
                     // failure mode the security-audit confirm gate exists to prevent.
