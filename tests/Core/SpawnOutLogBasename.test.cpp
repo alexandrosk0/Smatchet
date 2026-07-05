@@ -45,6 +45,16 @@ TEST_CASE("MakeConfineSafeSpawnOutLogBasename falls back to outlog.txt for no us
     CHECK(EndsWith(MakeConfineSafeSpawnOutLogBasename(""), "-outlog.txt"));
 }
 
+TEST_CASE("MakeConfineSafeSpawnOutLogBasename falls back when the leaf embeds `..`" *
+          doctest::test_suite("[security]")) {
+    // `foo..bar.txt` survives filename() (it is a single component, not a traversal segment) but
+    // still contains `..`, violating the confine-safe contract and tripping child-side `..`
+    // rejection — so it must fall back to the fixed safe name, not pass through.
+    const std::string out = MakeConfineSafeSpawnOutLogBasename("foo..bar.txt");
+    CHECK(EndsWith(out, "-outlog.txt"));
+    CHECK(IsConfineSafe(out));
+}
+
 TEST_CASE("MakeConfineSafeSpawnOutLogBasename preserves a normal leaf filename") {
     const std::string out = MakeConfineSafeSpawnOutLogBasename("jira-fixture-outlog.txt");
     CHECK(EndsWith(out, "-jira-fixture-outlog.txt"));

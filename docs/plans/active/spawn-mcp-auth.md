@@ -275,11 +275,12 @@ must stay green.
   derivation into a tested Core helper** and clears the two CodeRabbit findings:
   * New pure Core helper `smatchet::cmd::MakeConfineSafeSpawnOutLogBasename`
     (`Source/Core/{include,src}/Commands/Scenarios/SpawnOutLogBasename.{h,cpp}`) —
-    strips every directory component + `..` to the leaf (filename()), falls back to
-    `outlog.txt` for an empty/`.`/`..` leaf, and prefixes `spawn-<entropy>-` where
-    `<entropy>` is 16 hex chars (64 bits) from `std::random_device`. Result is
+    strips every directory component to the leaf (filename()), falls back to
+    `outlog.txt` for an empty/`.`/`..` leaf **or any leaf that still embeds `..`**
+    (e.g. `foo..bar.txt`), and prefixes `spawn-<entropy>-` where `<entropy>` is 16 hex
+    chars (64 bits) from `std::random_device` (**two 32-bit draws**). Result is
     guaranteed to contain no path separators and no `..` (confine-safe). No I/O, no
-    logging; one random draw per spawn (not steady-state). This puts the
+    logging; two random draws per spawn (not steady-state). This puts the
     security-critical path-sanitization in the tested Core strict zone.
   * `CliCommandRunner.cpp::SwapOutLogForConfineSafeBasename` now calls the Core
     helper and the inline `std::chrono ... milliseconds` stamp + leaf logic is
@@ -405,7 +406,7 @@ must stay green.
   (the inline derivation was deleted, not duplicated). The helper is pure and
   one-shot per spawn — it never widens what the confined child accepts.
   * **Perf-gate (Source/Core/ touched — PR E):** the new helper runs **once per
-    `--spawn`** invocation (one `std::random_device` draw + two `snprintf` + a string
+    `--spawn`** invocation (two `std::random_device` draws + two `snprintf` + a string
     concat in `SwapOutLogForConfineSafeBasename`, on the CLI one-shot spawn path).
     It is **not** on the UI/render thread, not a per-frame / per-command / grid /
     scroll / draw path, and adds no steady-state allocation. **Nil impact on the

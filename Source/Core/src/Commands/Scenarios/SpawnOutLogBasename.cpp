@@ -31,10 +31,12 @@ std::string RandomHexSuffix() {
 } // namespace
 
 std::string MakeConfineSafeSpawnOutLogBasename(const std::string& requested) {
-    // filename() strips every directory component, so the leaf can never carry a path
-    // separator or a `..` traversal segment. An empty / `.` / `..` leaf has no usable name.
+    // filename() strips every directory component, so the leaf carries no path separator.
+    // It can still contain `..` though — as a whole name (`.`/`..`) OR embedded in an otherwise
+    // ordinary name (`foo..bar.txt`). Any `..` substring violates the confine-safe contract and
+    // can trip the child's `..` rejection, so fall back to a fixed safe name whenever it appears.
     std::string leaf = fs::path(requested).filename().string();
-    if (leaf.empty() || leaf == "." || leaf == "..")
+    if (leaf.empty() || leaf == "." || leaf == ".." || leaf.find("..") != std::string::npos)
         leaf = "outlog.txt";
     return "spawn-" + RandomHexSuffix() + "-" + leaf;
 }
