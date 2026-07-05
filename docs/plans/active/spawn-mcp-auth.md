@@ -316,6 +316,23 @@ no grid/scroll/draw path. No perf scenario delta expected.
     It is **not** on the UI/render thread, not a per-frame / per-command / grid /
     scroll / draw path, and adds no steady-state allocation. **Nil impact on the
     6.94 ms / 144 Hz budget** — no perf scenario delta expected or measured.
+- **PR E — reworked to COEXIST with develop's forward-raw outLog (2026-07-05).** After PR E was
+  authored, develop's `8c425435` (remediate CPP_CODE_AUDIT #4/#5/#6) independently landed a
+  *mutually-exclusive* fix in the same `CliCommandRunner.cpp` region: it **removed**
+  `NormalizeOutPath`/`NormalizePathArgInPlace` entirely and forwards `outPath`/`outLog` **raw**
+  (child-side confinement resolves a relative value under `<userData>/ui-tests/`, which both
+  processes agree on without CWD translation). PR E's original design swapped **all** outLog for a
+  confine-safe basename + copy-back. Per the user's "rework to coexist" decision, the merge
+  resolution **keeps develop's forward-raw contract for `outPath` + a relative `outLog`** (the case
+  CI exercises) and makes `SwapOutLogForConfineSafeBasename` **ABSOLUTE-only**: an absolute `outLog`
+  (which the child rejects outright) is swapped for the tested `MakeConfineSafeSpawnOutLogBasename`
+  leaf + relocated back via `RelocateChildOutLog`; a relative outLog is a no-op (`requestedOutLog`
+  empty). Net: this **adds** absolute-outLog `--spawn` support without reverting develop's
+  forward-raw decision. The re-added `NormalizeOutPath`/`NormalizePathArgInPlace` helpers were
+  dropped (develop deleted them; `outPath` stays forward-raw); the Core helper +
+  `SpawnOutLogBasename.test.cpp` are retained (the absolute branch still uses them). So the
+  "second root cause" prose above (`NormalizeOutPath absolutizes even a relative path`) describes
+  the pre-`8c425435` world and no longer holds — the coexist code no longer absolutizes anything.
 
 ## Verification
 
