@@ -47,6 +47,17 @@ bool CommandRegistry::HasExact(const std::string& name) const {
     return byName_.find(name) != byName_.end();
 }
 
+bool CommandRegistry::Contains(const std::string& name) const {
+    // Same lookup FindLocked performs (canonical name, else a registered alias),
+    // returned as a bool under the lock so no pointer escapes to a caller that is
+    // not holding the registry mutex.
+    std::lock_guard<std::mutex> lk(mutex_);
+    if (byName_.find(name) != byName_.end())
+        return true;
+    auto a = aliasToName_.find(name);
+    return a != aliasToName_.end() && byName_.find(a->second) != byName_.end();
+}
+
 const Command* CommandRegistry::FindLocked(const std::string& name) const {
     // Caller must serialize externally if they want stable pointers.
     auto it = byName_.find(name);
