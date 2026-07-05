@@ -549,37 +549,9 @@ TrackerReachabilityProbeResult PlaneClient::ProbeReachability(const TrackerConfi
     // also fixes the second §2.1 P1: a 404 from a stale base URL was wrongly TransportDown.
     const cpr::Response resp =
         TrackerGetLogged("PlaneClient", url, headers, kTrackerProbeConnectTimeoutMs, kTrackerProbeOverallTimeoutMs);
-    const TrackerHttpResult classified = ClassifyTrackerResponse(resp);
-
-    switch (classified.Error.Kind) {
-    case TrackerErrorKind::None:
-        out.Kind = TrackerReachabilityProbeKind::AuthenticatedReachable;
-        out.Diagnostic = "HTTP 200";
-        break;
-    case TrackerErrorKind::Auth:
-        out.Kind = TrackerReachabilityProbeKind::ReachableAuthOrConfigError;
-        out.Diagnostic = "HTTP " + std::to_string(classified.Status()) + " (Auth Error)";
-        break;
-    case TrackerErrorKind::ServerError:
-        out.Kind = TrackerReachabilityProbeKind::ServiceUnavailable;
-        out.Diagnostic = "HTTP " + std::to_string(classified.Status()) + " (Server Error)";
-        break;
-    case TrackerErrorKind::NotFound:
-    case TrackerErrorKind::InvalidRequest:
-    case TrackerErrorKind::RateLimited:
-        // Reachable, but the response indicates a config / payload issue rather than transport
-        // failure. Surfaces as the auth-or-config banner so a stale base URL or rate-limited
-        // probe doesn't flip the connectivity banner to "offline".
-        out.Kind = TrackerReachabilityProbeKind::ReachableAuthOrConfigError;
-        out.Diagnostic = "HTTP " + std::to_string(classified.Status());
-        break;
-    case TrackerErrorKind::Transport:
-    default:
-        out.Kind = TrackerReachabilityProbeKind::TransportDown;
-        out.Diagnostic = resp.error.message.empty() ? classified.Error.Detail : resp.error.message;
-        break;
-    }
-    return out;
+    // §B2: shared reachability-probe classifier (see TrackerHttpClient.h). The per-backend switch
+    // was hoisted there so Jira / Plane (and future backends) share one status → probe-kind matrix.
+    return ClassifyReachabilityProbe(resp);
 }
 
 Result<std::vector<CachedTicket>, TrackerError>

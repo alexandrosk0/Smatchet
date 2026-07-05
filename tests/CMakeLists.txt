@@ -1116,6 +1116,9 @@ add_executable(SmatchetTests
     # their deps (cpr, TrackerHttpUtils, TrackerFieldCatalogPure, TrackerFieldPayload,
     # OfflineQueue, BackendAuditTrail, ghc_filesystem) are already in the rig.
     Core/TrackerCatalogBuild.test.cpp
+    # BACKLOG_CODE_REVIEW.md §B2 — JiraClient::ProbeReachability HTTP-status→kind
+    # characterization, same JiraCatalogHttpFixture loopback + linked JiraClient TUs.
+    Core/JiraClientHttp.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraIssueSearch.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraIssueMutation.cpp"
