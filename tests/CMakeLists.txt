@@ -244,6 +244,10 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiModelSignature.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiEndpointPolicy.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiEndpointSanitize.cpp"
+        # Gap map Tier 1 #8 — pre-network probe plan (no threads; Linux-runnable so the
+        # container sessions doing this work can validate locally).
+        Core/AiPrefsTestConnectionPure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/AiPrefsTestConnectionPure.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiChatTimestamp.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/SmatchetChatPersistWorker.cpp"
         "${CMAKE_SOURCE_DIR}/tests/support/FakeAiClientFactory.cpp"
@@ -681,6 +685,9 @@ add_executable(SmatchetTests
     Core/AiAgentsMdCacheValidity.test.cpp
     Core/AiPrefsValidator.test.cpp
     Core/AiEndpointSanitize.test.cpp
+    # Gap map Tier 1 #8 — Test-connection pre-network half (credential-slot routing,
+    # default-URL fallback, key strip, sanitiser gate).
+    Core/AiPrefsTestConnectionPure.test.cpp
     # First-send outbound-context consent gate (security audit 2026-05-17 P2).
     # Header-only pure logic in Source/Core/include/AiOutboundConsent.h — the
     # consent predicate + modal-row builder; no extra .cpp linked (the ImGui
@@ -1045,6 +1052,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AiClientFactory.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AiErrorRedact.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AiEndpointSanitize.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AiPrefsTestConnectionPure.cpp"
     # AiPrefsValidator.cpp now routes base-URL checks through EndpointPolicyForProvider
     # (security audit Item B); its TU lives here, so the doctest link needs it too.
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AiEndpointPolicy.cpp"
