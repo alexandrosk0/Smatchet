@@ -321,6 +321,11 @@ add_executable(SmatchetTests
     # user-facing-text-i18n-sweep — pin a sample of the keys added for literals that
     # previously bypassed the lookup (toasts, palette, toolbar editor, mobile shell).
     Core/I18nSweepLocalization.test.cpp
+    # localization-format-guard — the printf conversion-specifier guard (extracted
+    # into the header-only smatchet::l10n unit) that stops a Locales/<lang>.json
+    # override from smuggling extra/%n specifiers into vsnprintf (SECURITY_AUDIT #1).
+    # Header-only closure — no extra .cpp link (the header pulls only std).
+    Core/LocalizationFormatGuard.test.cpp
     Core/ConfigSaveConcurrency.test.cpp
     Core/MainThreadDispatcherDrain.test.cpp
     Core/CacheEvictionPolicy.test.cpp
