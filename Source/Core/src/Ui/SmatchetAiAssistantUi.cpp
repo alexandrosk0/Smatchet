@@ -1036,8 +1036,7 @@ void DispatchAiSend(AppController& app, UiDrawSession& d, const ViewDefinition* 
     if (d.assistantHistoryHydrated) {
         // Coalescing Trim — successive Appends collapse into a single Trim in the worker queue, so
         // the cost is one O(N) erase on the worker side, not a SQLite DELETE per send.
-        smatchet::ai::chat_persist::EnqueueAppendAndTrim(std::move(persistCopy), newIdx,
-                                                         d.cfg.AssistantHistoryMaxRows);
+        smatchet::ai::chat_persist::EnqueueAppendAndTrim(std::move(persistCopy), newIdx, d.cfg.AssistantHistoryMaxRows);
     }
     d.assistantInputBuf.clear();
     std::memset(s_inputCharBuf.data(), 0, s_inputCharBuf.size());
@@ -1126,8 +1125,14 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
         ImGui::InputTextMultiline("##AiAssistantInput", s_inputCharBuf.data(), s_inputCharBuf.size(),
                                   ImVec2(-1.0f, inputH), inputFlags, &InputBufferResizeCallback);
     // Mirror char-buf back into the string field every frame so the Send-button click
-    // below + the Lua glue see the latest value with no separate poke.
-    d.assistantInputBuf.assign(s_inputCharBuf.data());
+    // below + the Lua glue see the latest value with no separate poke. Only assign when the
+    // buffer actually differs — the panel redraws every frame, so an unconditional assign()
+    // copies (and can reallocate) the std::string each frame even when nothing was typed. The
+    // std::string vs const char* compare is allocation-free and skips the write in the steady
+    // state (same per-frame-alloc guard as the omnibar mirror, PR #1600).
+    if (d.assistantInputBuf != s_inputCharBuf.data()) {
+        d.assistantInputBuf.assign(s_inputCharBuf.data());
+    }
 
     // Surface any paste/splice truncation the resize callback flagged this frame.
     // Naming the dropped length restores visibility (UX Pillar) — the input has a
