@@ -5,6 +5,8 @@
 #include <nlohmann/json.hpp>
 
 #include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <set>
 #include <string>
 
@@ -87,14 +89,31 @@ NotifyPlan PlanMergeWatchNotify(const std::string& body) {
         plan.ResponseBody = "{\"error\":\"field type mismatch\"}";
         return plan;
     }
-    const int pr = j["pr"].get<int>();
+    // nlohmann's get<int>() is an unchecked static_cast — an out-of-range JSON integer would
+    // truncate (implementation-defined) into the toast title. Read wide, bound, then narrow
+    // (CR finding on this extraction; same idiom as ParseSemanticVersion's stoll+range gate).
+    const std::int64_t prWide = j["pr"].get<std::int64_t>();
+    if (prWide < static_cast<std::int64_t>((std::numeric_limits<int>::min)()) ||
+        prWide > static_cast<std::int64_t>((std::numeric_limits<int>::max)())) {
+        plan.HttpStatus = 400;
+        plan.ResponseBody = "{\"error\":\"field type mismatch\"}";
+        return plan;
+    }
+    const int pr = static_cast<int>(prWide);
     const std::string state = j["state"].get<std::string>();
     const std::string rawMessage = j["message"].get<std::string>();
     if (KnownStates().find(state) == KnownStates().end()) {
+        // Derive the allowed list from KnownStates() so the error text can't drift from the
+        // actual allow-list (CR nitpick on this extraction). std::set iteration = sorted.
+        std::string allowed;
+        for (const std::string& s : KnownStates()) {
+            if (!allowed.empty()) {
+                allowed += ", ";
+            }
+            allowed += s;
+        }
         plan.HttpStatus = 400;
-        plan.ResponseBody = "{\"error\":\"unknown state (allowed: CI_FAIL, GH_API_DOWN, "
-                            "PR_CLOSED_OR_MERGED, PAGINATION_OVERFLOW, TIMEOUT, "
-                            "TRIAGE_BUDGET_EXHAUSTED)\"}";
+        plan.ResponseBody = "{\"error\":\"unknown state (allowed: " + allowed + ")\"}";
         return plan;
     }
     plan.Ok = true;

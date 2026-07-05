@@ -67,6 +67,14 @@ TEST_CASE("shape validation — non-object / missing fields / wrong types") {
         CHECK_FALSE(plan.Ok);
         CHECK(plan.ResponseBody == "{\"error\":\"field type mismatch\"}");
     }
+    // Out-of-int-range pr must be rejected, never truncated into the toast title
+    // (nlohmann's get<int>() is an unchecked static_cast).
+    for (const char* body : {R"({"pr":99999999999,"state":"CI_FAIL","message":"m"})",
+                             R"({"pr":-99999999999,"state":"CI_FAIL","message":"m"})"}) {
+        const NotifyPlan plan = PlanMergeWatchNotify(body);
+        CHECK_FALSE(plan.Ok);
+        CHECK(plan.ResponseBody == "{\"error\":\"field type mismatch\"}");
+    }
 }
 
 TEST_CASE("state allow-list — anything off-list is rejected with the stable error body") {
