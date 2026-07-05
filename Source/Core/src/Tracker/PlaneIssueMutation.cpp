@@ -106,6 +106,12 @@ TrackerError PlaneClient::UpdateIssueFields(const std::string& issueId, const nl
     const std::string url = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" +
                             resolvedProjectId + "/work-items/" + targetUuid + "/";
 
+    // §B2 decision (2026-07-05): this stays a SINGLE HTTP attempt — do NOT wrap in
+    // TrackerHttpRequestWithRetry. UpdateIssueFields is driven by the offline-queue replay loop
+    // (OfflineQueueService::ReplayOneFieldEdit), which already retries transient failures on its
+    // own tick with attempt bookkeeping; adding per-call retry here would stack two retry loops
+    // and block the replay worker for the internal backoff. Direct (online) callers accept a
+    // single attempt and surface a retryable TrackerError to the user.
     auto response = TrackerPatchLogged("PlaneClient", url, headers, fields.dump(), cancelled);
     LogTrackerHttpResult("PlaneClient", "PATCH", url, response);
 
@@ -322,6 +328,10 @@ Result<std::string, TrackerError> PlaneClient::CreateIssue(const nlohmann::json&
     const std::string url =
         planeApi + "/api/v1/workspaces/" + workspaceSlug + "/projects/" + resolvedProjectId + "/work-items/";
 
+    // §B2 decision (2026-07-05): SINGLE HTTP attempt — do NOT add retry. CreateIssue is a
+    // non-idempotent POST: a retry after the server already committed the create (5xx / timeout
+    // after receipt) would duplicate the issue. Durability/retry for queued creates is owned by
+    // OfflineQueueService::ReplayOneCreate (which de-dups via the pending-create latch), not here.
     auto response = TrackerPostLogged("PlaneClient", url, headers, fields.dump());
     LogTrackerHttpResult("PlaneClient", "POST", url, response);
 
