@@ -128,7 +128,7 @@ trust-boundary fixes into **one** PR with a single security-review pass. Scope:
   mutated. The POSIX path (forked-child `setenv`) was already correct; unchanged.
 
 **No PathConfinement bypass env var** is added anywhere — that would re-open
-#1566. Every escape is compile-time / trusted-parent-CLI-only, never a
+`#1566`. Every escape is compile-time / trusted-parent-CLI-only, never a
 wire-reachable runtime toggle.
 
 ## Perf-gate

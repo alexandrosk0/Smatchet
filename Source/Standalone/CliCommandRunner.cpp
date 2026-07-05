@@ -542,8 +542,8 @@ bool LaunchEphemeralInstance(const std::string& exePath, int port, std::string* 
     const std::string logPath = ComputeSpawnLogPath(port);
     if (outLogPath)
         *outLogPath = logPath;
-        // main.cpp parses `--mcp-port <port>` as two separate argv entries (space-separated),
-        // NOT `--mcp-port=<port>` — using the equals form would silently fall through.
+    // main.cpp parses `--mcp-port <port>` as two separate argv entries (space-separated),
+    // NOT `--mcp-port=<port>` — using the equals form would silently fall through.
 #if defined(_WIN32)
     // CommandLineToArgvW handles quoted whitespace; pass space-separated tokens.
     std::string cmdLine = "\"" + exePath + "\" --ephemeral --mcp-port " + portStr;
@@ -583,7 +583,12 @@ bool LaunchEphemeralInstance(const std::string& exePath, int port, std::string* 
         if (parentEnv) {
             for (const char* p = parentEnv; *p; p += std::strlen(p) + 1) {
                 const size_t len = std::strlen(p);
-                if (len >= 25 && std::strncmp(p, "SMATCHET_MCP_SPAWN_TOKEN=", 25) == 0)
+                // Case-INSENSITIVE prefix match: Windows env-var names are case-insensitive
+                // (`smatchet_mcp_spawn_token=` and `SMATCHET_MCP_SPAWN_TOKEN=` name the same
+                // variable), so a case-mismatched inherited entry must be stripped too — a
+                // case-sensitive strncmp would leave a stale/attacker-planted duplicate in the
+                // child's block that resolves ahead of / alongside ours (CR security finding).
+                if (len >= 25 && _strnicmp(p, "SMATCHET_MCP_SPAWN_TOKEN=", 25) == 0)
                     continue; // drop any inherited token entry — we set our own below
                 envBlock.insert(envBlock.end(), p, p + len + 1); // copy entry incl. its NUL
             }
