@@ -131,8 +131,8 @@ Post-split was supposed to be ~1333 LOC. Growth = +440 LOC. Spot-check: new conf
 ### N6. `BuiltinCommands.cpp` at 1898 LOC (P2)
 New file — central registration of all CLI/Palette/MCP/Lua commands. Single `RegisterBuiltinCommands(reg, app)` function. At ~1900 LOC it's already a god-function risk. Split by category into `BuiltinCommands_View.cpp` / `_Perf.cpp` / `_Scenario.cpp` / `_Issue.cpp` / `_Field.cpp` etc. before it grows further; the existing `ViewCommands.cpp` precedent shows the pattern works.
 
-### N7. `MarkdownConvert.cpp` at 1700 LOC, still no golden tests (P1)
-Round-trip Markdown ↔ ADF / HTML continues to grow (`MarkdownToAdf`, `AdfToMarkdown`, `MarkdownToHtml`, `HtmlToMarkdown` + ~15 helpers). RICH_TEXT v2 backlog has asked for golden tests for **months**; until they exist every refactor (item 38, item 28, table-cell content) is a roll of the dice. Bootstrap a `tests/MarkdownConvert/` with doctest now — without tests these items stay frozen.
+### N7. `MarkdownConvert.cpp` at 1700 LOC, still no golden tests (P1) — ✅ DONE
+~~Round-trip Markdown ↔ ADF / HTML continues to grow; bootstrap golden tests.~~ Closed since: `tests/Core/MarkdownConvert.test.cpp` covers the round-trip converters in `SmatchetTests`, and `tests/fuzz/fuzz_markdown_adf.cpp` fuzzes the ADF path. Flagged stale by `TEST_COVERAGE_GAP_MAP.md` § Hygiene notes.
 
 ### N8. `OfflineQueueService` still friend-coupled to AppController (P1)
 `Source/Core/include/AppController.h:88-93` documents the friend-access boundary with a TODO to lift to interfaces. With Phase 1A→1C complete the service is at 1032 LOC of standalone logic plus AppController-private reach-throughs. Define the minimal access bundle (`IOfflineCacheAccess { Cache(), FindFieldById(), backendAuditTrail() }`) and convert. Same for `TicketSyncService` (currently friend-coupled).
@@ -143,16 +143,8 @@ Old §5.1 P1 was a duplicated payload (REST `:506` vs JSON-RPC `:666`). PR #41 /
 ### N10. `<sol/sol.hpp>` STILL PUBLIC on `AppController.h:11` (P1, item 14 dependency)
 Worth flagging on its own. Every TU including `AppController.h` (which is most of `Source/Core/`) drags ~1 MB of sol2 templates through the compiler. Phase 1C of item 14 is the only thing that unblocks this. The build-time win is real and measurable (`SmatchetPch.h` comments narrate sol2 as the heaviest header).
 
-### N11. No `tests/` directory still exists (P0 for any future refactor)
-Old §6.7 raised this. Still zero unit tests. Every structural change above (items 14, 16, 23 — and N6, N7) is gated on test infrastructure. **Bootstrap a minimal doctest target** (`tests/CMakeLists.txt` + `tests/test_main.cpp` + `tests/Core/<Unit>.test.cpp` per pure-logic unit) before any further extraction. Candidates with zero UI / I/O coupling that would survive doctest unit testing today:
-- `Source/Core/src/FuzzyMatch.cpp`
-- `Source/Core/src/MarkdownConvert.cpp` (round-trip cases)
-- `Source/Core/src/JqlProjectScope.cpp`
-- `Source/Core/src/TextMerge.cpp`
-- `Source/Core/src/CompactDateFormat.cpp`
-- `Source/Core/src/StringUtil.h` inlines
-
-This is the single highest-leverage open item — unblocks B1/B2/B3 and validates B5.
+### N11. No `tests/` directory still exists (P0 for any future refactor) — ✅ DONE
+~~Bootstrap a minimal doctest target before any further extraction.~~ Closed since: the doctest rig exists at scale (`tests/` holds 270+ test files across `SmatchetTests`, `SmatchetTsanTests`, UI, fuzz, Lua, and bats suites) and every candidate unit listed here (FuzzyMatch, MarkdownConvert, JqlProjectScope, TextMerge, CompactDateFormat) is covered. Flagged stale by `TEST_COVERAGE_GAP_MAP.md` § Hygiene notes; the remaining per-TU gaps are tracked there, not here.
 
 ### N12. `IsTrackerTransportErrorText` heuristic still classifies (P2)
 `Source/Core/src/TrackerHttpUtils.cpp:161-236` — string-pattern-matching error text. `TrackerError` now classifies properly via HTTP status. `IsTrackerTransportErrorText` should disappear once item 15 migration completes; until then it shadows the new mechanism and produces inconsistent classifications when callers mix the two.

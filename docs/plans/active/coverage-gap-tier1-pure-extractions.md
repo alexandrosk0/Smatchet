@@ -50,6 +50,14 @@ Apply the repo's established shell/core split: lift the byte-identical logic int
 26. `tests/Core/MergeWatchNotifyPure.test.cpp` — state→toast-type mapping + exact response bodies, bounded-parse rejection incl. the nesting bomb (the SECURITY_AUDIT class this listener was flagged for), shape/type validation, allow-list case-sensitivity, control-char sanitization + the 500-byte truncation cap.
 27. `tests/CMakeLists.txt` — all three suites + production TUs into `SmatchetTests` AND `SmatchetTsanTests`; the TSan block additionally gains the `TrackerQuerySuggestCommon.cpp` + `JqlEscape.cpp` closure (both cpr/ImGui-free).
 
+### Slice 4 (this PR) — gap map Tier 1 row #8 (Test-connection probe)
+
+28. `Source/Core/include/AiPrefsTestConnectionPure.h` + `Source/Core/src/AiPrefsTestConnectionPure.cpp` — NEW: the pre-network half of the preferences Test-connection probe lifted byte-identical from `AiPrefsTestConnection.cpp`'s anonymous namespace: `ResolveProbeTarget` (per-provider credential-slot / base-URL / model routing — the CPP_CODE_AUDIT.md #2 mis-routing class), `DefaultBaseUrlFor` (local-provider URL fallback), `BuildProbeClientConfig` (header-smuggling key strip + endpoint-sanitiser gate), plus a new `PlanProbe` composing them exactly as `TriggerProbe` did inline.
+29. `Source/Core/src/AiPrefsTestConnection.cpp` — shell: 241 → ~150 lines; `TriggerProbe` consumes `PlanProbe`; the network probe body (`RunProbe`) and the UI-thread result publish stay.
+30. `tests/Core/AiPrefsTestConnectionPure.test.cpp` — NEW bucket-A suite: per-provider slot routing (incl. the OllamaOpenAiCompat URL-slot fallback), canonical defaults, CR/LF/NUL key strip, sanitiser gate (loopback allowed / metadata-IP rejected → provider-default fallback), and `PlanProbe` default-URL recording.
+31. `tests/CMakeLists.txt` — wire into `SmatchetTests` + `SmatchetTsanTests`.
+32. `backlog/BACKLOG_CODE_REVIEW.md` — flip the stale N7/N11 rows per the gap map's hygiene notes (re-applied; the first attempt shipped in the superseded #1610).
+
 ## Existing utilities reused
 
 - `TicketFieldEditorLongTextPure` namespace + test file (`Source/Core/src/TicketFieldEditorLongTextPure.cpp`, `tests/Core/TicketFieldEditorLongTextPure.test.cpp`) — the seed/commit helpers join the unit that already owns the modal's pure logic instead of a new sibling.
@@ -105,6 +113,8 @@ Apply the repo's established shell/core split: lift the byte-identical logic int
 - Slice 1: shipped as PR #1604 (squash-merged to develop as `3447bd0`) — extraction + tests per § Files to modify items 1–10, plus two riders that PR picked up en route (the CI FetchContent self-heal and the cpp-httplib zstd auto-detect disable; see the PR body).
 - Slice 2 (PR #1607, squash-merged to develop as `b9489af`): gap map Tier 1 rows #3–#4 per § Files to modify items 11–18. Both lifts verified byte-identical against the removed blocks; the display shell shrank 1003 → ~500 lines with zero behaviour change.
 - Slice 3 (this PR, branch `claude/autonomous-agents-draft-pause-nuz43z` restarted from develop): gap map Tier 1 rows #5–#6 per § Files to modify items 19–27. The suggest-engine lifts are mechanical seam transforms (AppController getters → vector parameters) with the bodies otherwise untouched; the notify-endpoint lift is byte-identical. One test expectation was corrected against observed behaviour during local validation (open-string context resolves to Logical mode, not Value mode — pinned as the current semantics rather than "fixed", since changing it is a product decision out of scope for a coverage slice).
+
+- Slice 4 (this PR, branch `claude/fable-5-codebase-improvements-l90taa` restarted from develop): gap map Tier 1 row #8 per § Files to modify items 28–32. The prior branch iteration of this session (PR #1610, Tier 1 #5) was closed unmerged — superseded by the parallel session's #1609 which shipped the same rows first; only the backlog flips were salvaged into this slice.
 
 ## Deviations from plan
 
