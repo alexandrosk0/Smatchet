@@ -123,6 +123,9 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/GridLiveContext.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/TicketSyncService.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpPure.cpp"
+        # RedactHttpBodyForLog (TrackerHttpPure.cpp, above) delegates to the cpr-free AI-side
+        # redactor — link its TU so the connectivity-banner scrub resolves in this target.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/AiErrorRedact.cpp"
         # --- EditMetaCacheService (AppController god-object decomposition Phase 1): per-issue +
         #     per-issue-type editmeta cache (editMetaMutex_) loaded from BOTH the UI thread and
         #     the background warm worker — a genuine cross-thread mutex, highest-value TSan

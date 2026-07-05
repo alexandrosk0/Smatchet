@@ -116,8 +116,35 @@ N/A — adds one small pure TU; no split of an over-cap file.
 
 ## Implementation log
 
-_(post-ship)_
+- plan doc + inventory (`docs/guides/error-surface-inventory.md`)
+- fixes commit — extractor + ~12 surface fixes + catalog rows + doctest
+- review-fixes commit — 3-angle finder pass: AppendCapped underflow/UTF-8 cap
+  fix (+ regression tests), audit rows keep the REDACTED body/parse detail the
+  toasts no longer carry, `RedactHttpBodyForLog` moved to the cpr-free
+  `TrackerHttpPure` TU (TSan-target linkable; the connectivity scrub uses the
+  tracker-owned choke point, not a direct AI-subsystem include),
+  `FileNameOfPath` hoisted to `StringUtil.h`, the `AiPrefsTestConnection`
+  test-connection twin fixed alongside the Preferences UI worker.
 
 ## Deviations
 
-_(post-ship)_
+- The connectivity-banner scrub can mangle prose that looks like an auth header
+  ("Basic authentication…" → "Basic [REDACTED] with…"). Accepted: tracker
+  4xx bodies have been observed echoing real `Authorization` headers
+  (TrackerHttpPure.h doc), and the 401/403 banner now carries its own
+  check-credentials hint, so the redactor's false positive costs less than the
+  leak it prevents.
+- Test-connection probe twins (`AiPrefsTestConnection.cpp` vs
+  `SmatchetPreferencesUi_Assistant.cpp`) received identical fixes under
+  `SMATCHET_DEVIATION(rule=duplication)` markers — the twin dedup itself is a
+  follow-up (inventory doc gap list).
+- Tracker-layer `.Error` strings stay English (README § Localization contract);
+  only UI-layer fixed strings gained catalog rows.
+
+## Verification (result)
+
+- `posix-core-check` compile gate green; extractor smoke harness (cap
+  underflow boundary, UTF-8 lead-byte cut, basics) green locally.
+- `test-lint-rules.sh --diff origin/develop` + `dup_audit.py` clean.
+- Windows doctest rig (incl. the new `JiraErrorMessagePure` cases) + UI
+  buckets: CI.

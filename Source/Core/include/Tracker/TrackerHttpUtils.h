@@ -16,18 +16,8 @@ constexpr long kTrackerProbeOverallTimeoutMs = 5000;
 
 std::string UrlEncode(const std::string& value);
 std::string NormalizeBaseUrl(const std::string& domain);
-/**
- * Redact a tracker HTTP response/error body before it is written to a log line
- * (security synthesis #12). Tracker 4xx/5xx bodies have been observed reflecting
- * the request — a 401/403 can echo the `Authorization` header verbatim, and Jira
- * personal-access / GitHub PAT tokens surface in error payloads. The raw body was
- * previously logged through `TruncateForLog` (truncate-only, no key-name / token
- * redaction). This delegates the token-shape stripping to the cpr-free
- * `smatchet::ai::pure::RedactProviderErrorBody` (same Bearer / api_key /
- * Authorization / sk-/ghp_ heuristics) then caps the length — never invent a new
- * redactor. Returns a redacted, length-capped copy safe to log.
- */
-std::string RedactHttpBodyForLog(const std::string& body);
+// RedactHttpBodyForLog moved to TrackerHttpPure.h (cpr-free) so cpr-free targets
+// (TSan rig, ConnectivityMonitorService) can link it — still visible via the include above.
 bool EnsureTrackerAuthConfig(const TrackerConfig& cfg, std::string& outError);
 cpr::Header BuildTrackerHeaders(const TrackerConfig& cfg, bool includeJsonContentType = false);
 std::string BuildTrackerBasicAuthHeader(const TrackerConfig& cfg);

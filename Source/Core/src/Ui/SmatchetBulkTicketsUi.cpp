@@ -55,13 +55,6 @@ int BulkImportTextResizeCallback(ImGuiInputTextCallbackData* data) {
     return 0;
 }
 
-// File NAME only for user-facing errors (C++14 — no std::filesystem): the picker already
-// showed the directory; a full path in a toast leaks filesystem layout into screenshots.
-std::string FileNameOf(const std::string& path) {
-    const std::size_t sep = path.find_last_of("/\\");
-    return sep == std::string::npos ? path : path.substr(sep + 1);
-}
-
 bool ReadEntireFile(const std::string& path, std::string& outText, std::string& outError) {
     /* PILLAR2_WORKER_ONLY */ // est-latency: ~50ms — sole caller (line 172) inside app.LaunchBackgroundTask lambda.
     std::ifstream f(path, std::ios::binary);
@@ -70,7 +63,7 @@ bool ReadEntireFile(const std::string& path, std::string& outText, std::string& 
         // toast leaks the local filesystem layout into screenshots/bug reports.
         outError = SmatchetLocalization::Format("bulk.file_open_failed",
                                                 "Could not open \"%s\" — check that the file exists and is readable.",
-                                                FileNameOf(path).c_str());
+                                                FileNameOfPath(path).c_str());
         return false;
     }
     std::stringstream ss;
@@ -84,7 +77,7 @@ bool WriteEntireFile(const std::string& path, const std::string& text, std::stri
     if (!f.good()) {
         outError = SmatchetLocalization::Format("bulk.file_write_failed",
                                                 "Could not write \"%s\" — check permissions and free space.",
-                                                FileNameOf(path).c_str());
+                                                FileNameOfPath(path).c_str());
         return false;
     }
     f.write(text.data(), static_cast<std::streamsize>(text.size()));

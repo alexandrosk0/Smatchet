@@ -14,12 +14,6 @@
 constexpr std::size_t kMaxTrackerHttpBodyLogBytes = 65536;
 constexpr const char* kTrackerUserAgent = "Smatchet/1.0 Jira-Client";
 
-std::string RedactHttpBodyForLog(const std::string& body) {
-    // Strip reflected tokens (Bearer / api_key / Authorization / sk- / ghp_ …) via the
-    // shared cpr-free redactor, which also caps length to kMaxProviderErrorBodyChars.
-    return smatchet::ai::pure::RedactProviderErrorBody(body);
-}
-
 // Redact URL query for logging: keeps scheme://host/path, drops ?query and #fragment.
 std::string RedactUrlForLog(const std::string& url) {
     const size_t q = url.find_first_of("?#");

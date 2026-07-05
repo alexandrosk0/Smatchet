@@ -19,7 +19,6 @@
                              // Including TrackerHttpUtils.h dragged <cpr/cpr.h> into that target,
                              // so a cold FetchContent cache (no cpr-src) failed the build. The
                              // Pure header declares the only HTTP symbol this TU uses.
-#include "AiErrorRedact.h"
 #include "Logger.h"
 
 namespace {
@@ -245,13 +244,13 @@ std::string CatalogOfflineTechnicalSuffix(const std::string& cw) {
         if (cw.size() >= pl && cw.compare(0, pl, p) == 0) {
             // The suffix embeds the raw fetch error (cpr transport / backend text) — scrub
             // secret-shaped tokens before it reaches the banner (reuses the AI-side redactor).
-            return smatchet::ai::pure::RedactProviderErrorBody(cw.substr(pl));
+            return RedactHttpBodyForLog(cw.substr(pl));
         }
     }
     if (cw == kWorkingOfflineSnapshotCatalog) {
         return std::string();
     }
-    return TruncateTrackerBannerDetail(smatchet::ai::pure::RedactProviderErrorBody(cw), 100);
+    return TruncateTrackerBannerDetail(RedactHttpBodyForLog(cw), 100);
 }
 
 std::string TicketOfflineTechnicalSuffix(const std::string& tw) {
@@ -268,10 +267,10 @@ std::string TicketOfflineTechnicalSuffix(const std::string& tw) {
     for (const char* p : prefixes) {
         const size_t pl = std::strlen(p);
         if (tw.size() >= pl && tw.compare(0, pl, p) == 0) {
-            return smatchet::ai::pure::RedactProviderErrorBody(tw.substr(pl));
+            return RedactHttpBodyForLog(tw.substr(pl));
         }
     }
-    return TruncateTrackerBannerDetail(smatchet::ai::pure::RedactProviderErrorBody(tw), 100);
+    return TruncateTrackerBannerDetail(RedactHttpBodyForLog(tw), 100);
 }
 
 void AppendSessionCatalogNoteToBanner(std::string& out, const std::string* sessionNote) {

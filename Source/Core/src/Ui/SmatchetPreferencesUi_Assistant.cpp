@@ -217,6 +217,9 @@ void RunProbeWorker(AiProvider provider, AiClientConfig clientCfg, std::shared_p
                 }
             }
         }
+        // SMATCHET_DEVIATION(rule=duplication; reason=test-connection probe twins (AiPrefsTestConnection vs Preferences
+        // UI worker) predate this pass; the identical localized catch-handling keeps both twins consistent until the
+        // planned twin dedup; owner=user-text-error-pass; revisit=2026-09-30)
     } catch (const std::exception& ex) {
         LOG_WARN("Assistant test-connection: %s", ex.what());
         errMsg = SmatchetLocalization::T("prefs.assistant.test_internal_error",

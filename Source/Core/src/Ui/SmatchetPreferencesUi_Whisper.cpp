@@ -384,6 +384,9 @@ void DrawWhisperTestConnection(AppController& app, UiDrawSession& d, WhisperPref
                     } else {
                         okMsg = "Connected.";
                     }
+                    // SMATCHET_DEVIATION(rule=duplication; reason=same localized internal-error catch shape as the
+                    // Assistant test-connection twin — surface-specific keys, no shared seam worth coupling two
+                    // Preferences tabs for; owner=user-text-error-pass; revisit=2026-09-30)
                 } catch (const std::exception& ex) {
                     LOG_WARN("Whisper test-connection: %s", ex.what());
                     errMsg =

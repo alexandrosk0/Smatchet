@@ -12,6 +12,7 @@
 
 #include "Json/BoundedJsonParse.h"
 #include "Logger.h"
+#include "StringUtil.h"
 
 #include <nlohmann/json.hpp>
 
@@ -716,12 +717,6 @@ namespace {
 std::string& PendingStartupConfigWarningRef() {
     static std::string warning;
     return warning;
-}
-
-// File NAME only (C++14 — no std::filesystem): the notice must not echo the full path.
-std::string FileNameOfPath(const std::string& path) {
-    const std::size_t sep = path.find_last_of("/\\");
-    return sep == std::string::npos ? path : path.substr(sep + 1);
 }
 
 } // namespace

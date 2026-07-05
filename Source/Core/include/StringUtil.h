@@ -37,6 +37,13 @@ inline std::string JoinStrings(const std::vector<std::string>& items, const std:
     return out;
 }
 
+// File NAME component of a path (C++14 — no std::filesystem). For user-facing error
+// text: a full path in a toast leaks the local filesystem layout into screenshots.
+inline std::string FileNameOfPath(const std::string& path) {
+    const std::size_t sep = path.find_last_of("/\\");
+    return sep == std::string::npos ? path : path.substr(sep + 1);
+}
+
 inline std::string TruncateForLog(const std::string& input, size_t maxLen = 600) {
     if (input.size() <= maxLen) {
         return input;
@@ -45,21 +52,20 @@ inline std::string TruncateForLog(const std::string& input, size_t maxLen = 600)
 }
 
 inline bool ContainsCaseInsensitive(const std::string& haystack, const std::string& needle) {
-    if (needle.empty()) return true;
-    auto it = std::search(
-        haystack.begin(), haystack.end(),
-        needle.begin(), needle.end(),
-        [](char ch1, char ch2) { return std::tolower(static_cast<unsigned char>(ch1)) == std::tolower(static_cast<unsigned char>(ch2)); }
-    );
+    if (needle.empty())
+        return true;
+    auto it = std::search(haystack.begin(), haystack.end(), needle.begin(), needle.end(), [](char ch1, char ch2) {
+        return std::tolower(static_cast<unsigned char>(ch1)) == std::tolower(static_cast<unsigned char>(ch2));
+    });
     return it != haystack.end();
 }
 
 /** Case-insensitive string equality. */
 inline bool EqualsCaseInsensitive(const std::string& a, const std::string& b) {
-    if (a.size() != b.size()) return false;
-    return std::equal(a.begin(), a.end(), b.begin(), [](unsigned char c1, unsigned char c2) {
-        return std::tolower(c1) == std::tolower(c2);
-    });
+    if (a.size() != b.size())
+        return false;
+    return std::equal(a.begin(), a.end(), b.begin(),
+                      [](unsigned char c1, unsigned char c2) { return std::tolower(c1) == std::tolower(c2); });
 }
 
 /** Natural Jira issue key comparison: "PROJ-2" < "PROJ-10" (lexicographic prefix, then numeric suffix). */
@@ -81,7 +87,8 @@ inline bool CompareIssueKeyNatural(const std::string& a, const std::string& b) {
     };
     const auto pa = split(a);
     const auto pb = split(b);
-    if (pa.first != pb.first) return pa.first < pb.first;
+    if (pa.first != pb.first)
+        return pa.first < pb.first;
     return pa.second < pb.second;
 }
 
@@ -120,12 +127,15 @@ inline std::vector<std::string> SplitAndTrim(const std::string& input, char deli
     std::string current;
     auto flush = [&]() {
         std::string trimmed = TrimCopy(current);
-        if (!trimmed.empty()) result.push_back(trimmed);
+        if (!trimmed.empty())
+            result.push_back(trimmed);
         current.clear();
     };
     for (char ch : input) {
-        if (ch == delimiter) flush();
-        else current.push_back(ch);
+        if (ch == delimiter)
+            flush();
+        else
+            current.push_back(ch);
     }
     flush();
     return result;
@@ -136,23 +146,19 @@ inline std::string SanitizeForSpreadsheet(const std::string& s) {
     std::string out;
     out.reserve(s.size());
     for (char ch : s) {
-        if (ch == '\t' || ch == '\n' || ch == '\r') out.push_back(' ');
-        else out.push_back(ch);
+        if (ch == '\t' || ch == '\n' || ch == '\r')
+            out.push_back(' ');
+        else
+            out.push_back(ch);
     }
     return out;
 }
 
 /// Strip a leading UTF-8 BOM (EF BB BF) if present. Some HTTP servers prepend it to JSON bodies.
 inline std::string StripUtf8BomCopy(std::string s) {
-    if (s.size() >= 3 && static_cast<unsigned char>(s[0]) == 0xEFu &&
-        static_cast<unsigned char>(s[1]) == 0xBBu && static_cast<unsigned char>(s[2]) == 0xBFu) {
+    if (s.size() >= 3 && static_cast<unsigned char>(s[0]) == 0xEFu && static_cast<unsigned char>(s[1]) == 0xBBu &&
+        static_cast<unsigned char>(s[2]) == 0xBFu) {
         s.erase(0, 3);
     }
     return s;
 }
-
-
-
-
-
-

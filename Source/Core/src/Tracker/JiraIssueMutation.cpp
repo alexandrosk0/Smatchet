@@ -29,6 +29,22 @@
 
 namespace {
 
+// Audit/log detail: the user-facing error plus the REDACTED response body. The toast no
+// longer carries the raw body (ExtractJiraErrorMessage), but the persisted audit row and
+// the ERROR log line must keep the failure evidence — a proxy/WAF HTML page or a
+// non-Jira-shaped JSON body would otherwise be recorded nowhere at default verbosity
+// (LogTrackerHttpResult logs bodies only at Trace + opt-in).
+std::string WithRedactedBody(const std::string& userError, const std::string& body) {
+    if (body.empty()) {
+        return userError;
+    }
+    return userError + " | body: " + RedactHttpBodyForLog(body);
+}
+
+} // namespace
+
+namespace {
+
 // Returns the transition id leading to the requested status (status id → to.name →
 // transition-name fallback, prioritised GLOBALLY). The matcher is the pure,
 // unit-tested smatchet::jira::FindJiraTransitionId; the LOG_WARN for a name-fallback
@@ -123,8 +139,9 @@ bool JiraClient::UpdateIssueFieldsViaTransition(const std::string& issueId, cons
         // by the Tracker*Logged helpers; splicing it here leaked HTML/JSON dumps into toasts).
         outError = "Failed to fetch issue transitions: " +
                    smatchet::jira::ExtractJiraErrorMessage(transitionsResp.status_code, transitionsResp.text);
-        LOG_ERROR("JiraClient: %s", outError.c_str());
-        AppendTransitionFailure(issueId, auditOp, outError, targetStatusId, targetStatusName);
+        const std::string detail = WithRedactedBody(outError, transitionsResp.text);
+        LOG_ERROR("JiraClient: %s", detail.c_str());
+        AppendTransitionFailure(issueId, auditOp, detail, targetStatusId, targetStatusName);
         return false;
     }
 
@@ -135,7 +152,8 @@ bool JiraClient::UpdateIssueFieldsViaTransition(const std::string& issueId, cons
         if (!parseErr.empty()) {
             outError = "The Tracker returned an unreadable transitions response — try again.";
             LOG_ERROR("JiraClient: transitions parse failed: %s", parseErr.c_str());
-            AppendTransitionFailure(issueId, auditOp, outError, targetStatusId, targetStatusName);
+            AppendTransitionFailure(issueId, auditOp, outError + " | parse: " + parseErr, targetStatusId,
+                                    targetStatusName);
             return false;
         }
         if (!transitionsJson.contains("transitions") || !transitionsJson["transitions"].is_array()) {
@@ -149,7 +167,8 @@ bool JiraClient::UpdateIssueFieldsViaTransition(const std::string& issueId, cons
     } catch (const std::exception& ex) {
         outError = "The Tracker returned an unreadable transitions response — try again.";
         LOG_ERROR("JiraClient: transitions parse failed: %s", ex.what());
-        AppendTransitionFailure(issueId, auditOp, outError, targetStatusId, targetStatusName);
+        AppendTransitionFailure(issueId, auditOp, outError + std::string(" | parse: ") + ex.what(), targetStatusId,
+                                targetStatusName);
         return false;
     }
 
@@ -169,8 +188,9 @@ bool JiraClient::UpdateIssueFieldsViaTransition(const std::string& issueId, cons
         // by the Tracker*Logged helpers; splicing it here leaked HTML/JSON dumps into toasts).
         outError = "Failed to transition issue status: " +
                    smatchet::jira::ExtractJiraErrorMessage(transitionResp.status_code, transitionResp.text);
-        LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueId.c_str());
-        AppendTransitionFailure(issueId, auditOp, outError, targetStatusId, targetStatusName);
+        const std::string detail = WithRedactedBody(outError, transitionResp.text);
+        LOG_ERROR("JiraClient: %s issue=%s", detail.c_str(), issueId.c_str());
+        AppendTransitionFailure(issueId, auditOp, detail, targetStatusId, targetStatusName);
         return false;
     }
 
@@ -197,10 +217,11 @@ bool JiraClient::UpdateIssueFieldsViaPut(const std::string& issueId, const nlohm
         // by the Tracker*Logged helpers; splicing it here leaked HTML/JSON dumps into toasts).
         outError = "Failed to update issue fields: " +
                    smatchet::jira::ExtractJiraErrorMessage(response.status_code, response.text);
-        LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueId.c_str());
+        const std::string detail = WithRedactedBody(outError, response.text);
+        LOG_ERROR("JiraClient: %s issue=%s", detail.c_str(), issueId.c_str());
         LOG_DEBUG("JiraClient: update payload:\n%s", body.dump(2).c_str());
         BackendAuditTrail::AppendResult(
-            "issue_update_fields", "jira_client", issueId, auditOp, false, outError,
+            "issue_update_fields", "jira_client", issueId, auditOp, false, detail,
             nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fieldsAudited)}});
         return false;
     }
@@ -324,8 +345,9 @@ TrackerError JiraClient::AddIssueCommentPlain(const TrackerConfig& cfg, const st
         // by the Tracker*Logged helpers; splicing it here leaked HTML/JSON dumps into toasts).
         outError =
             "Add comment failed: " + smatchet::jira::ExtractJiraErrorMessage(response.status_code, response.text);
-        LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueKey.c_str());
-        BackendAuditTrail::AppendResult("issue_add_comment", "jira_client", issueKey, auditOp, false, outError,
+        const std::string detail = WithRedactedBody(outError, response.text);
+        LOG_ERROR("JiraClient: %s issue=%s", detail.c_str(), issueKey.c_str());
+        BackendAuditTrail::AppendResult("issue_add_comment", "jira_client", issueKey, auditOp, false, detail,
                                         nlohmann::json{{"comment_text", plainText}});
         if (response.status_code >= 200 && response.status_code < 300) {
             return TrackerErrorUnknown(outError, response.status_code);
@@ -387,8 +409,9 @@ TrackerError JiraClient::AddWorklog(const TrackerConfig& cfg, const std::string&
     if (response.status_code != 201 && response.status_code != 200) {
         outError =
             "Add worklog failed: " + smatchet::jira::ExtractJiraErrorMessage(response.status_code, response.text);
-        LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueKey.c_str());
-        BackendAuditTrail::AppendResult("issue_add_worklog", "jira_client", issueKey, auditOp, false, outError,
+        const std::string detail = WithRedactedBody(outError, response.text);
+        LOG_ERROR("JiraClient: %s issue=%s", detail.c_str(), issueKey.c_str());
+        BackendAuditTrail::AppendResult("issue_add_worklog", "jira_client", issueKey, auditOp, false, detail,
                                         auditData);
         if (response.status_code >= 200 && response.status_code < 300) {
             return TrackerErrorUnknown(outError, response.status_code);
@@ -469,8 +492,9 @@ TrackerError JiraClient::AddIssueCommentAnnotateContext(const TrackerConfig& cfg
         // by the Tracker*Logged helpers; splicing it here leaked HTML/JSON dumps into toasts).
         outError = "Add Annotate comment failed: " +
                    smatchet::jira::ExtractJiraErrorMessage(response.status_code, response.text);
-        LOG_ERROR("JiraClient: %s issue=%s", outError.c_str(), issueKey.c_str());
-        BackendAuditTrail::AppendResult("issue_add_comment", "jira_client", issueKey, auditOp, false, outError,
+        const std::string detail = WithRedactedBody(outError, response.text);
+        LOG_ERROR("JiraClient: %s issue=%s", detail.c_str(), issueKey.c_str());
+        BackendAuditTrail::AppendResult("issue_add_comment", "jira_client", issueKey, auditOp, false, detail,
                                         auditData);
         if (response.status_code >= 200 && response.status_code < 300) {
             return TrackerErrorUnknown(outError, response.status_code);
@@ -513,10 +537,11 @@ Result<std::string, TrackerError> JiraClient::CreateIssue(const nlohmann::json& 
         // by the Tracker*Logged helpers; splicing it here leaked HTML/JSON dumps into toasts).
         outError =
             "Create issue failed: " + smatchet::jira::ExtractJiraErrorMessage(response.status_code, response.text);
-        LOG_ERROR("JiraClient: %s", outError.c_str());
+        const std::string detail = WithRedactedBody(outError, response.text);
+        LOG_ERROR("JiraClient: %s", detail.c_str());
         LOG_DEBUG("JiraClient: create payload:\n%s", body.dump(2).c_str());
         BackendAuditTrail::AppendResult(
-            "issue_create", "jira_client", std::string(), auditOp, false, outError,
+            "issue_create", "jira_client", std::string(), auditOp, false, detail,
             // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
             nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
         // 2xx-but-not-200/201 (e.g. 202/204) reaches this failure branch; guard before FromHttpStatus
@@ -537,7 +562,7 @@ Result<std::string, TrackerError> JiraClient::CreateIssue(const nlohmann::json& 
             LOG_ERROR("JiraClient: create-response parse failed: %s body=%s", parseErr.c_str(),
                       RedactHttpBodyForLog(response.text).c_str());
             BackendAuditTrail::AppendResult(
-                "issue_create", "jira_client", std::string(), auditOp, false, outError,
+                "issue_create", "jira_client", std::string(), auditOp, false, outError + " | parse: " + parseErr,
                 nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
             return Result<std::string, TrackerError>::Err(TrackerErrorParse(outError));
         }
@@ -561,7 +586,8 @@ Result<std::string, TrackerError> JiraClient::CreateIssue(const nlohmann::json& 
         LOG_ERROR("JiraClient: create-response parse failed: %s body=%s", ex.what(),
                   RedactHttpBodyForLog(response.text).c_str());
         BackendAuditTrail::AppendResult(
-            "issue_create", "jira_client", std::string(), auditOp, false, outError,
+            "issue_create", "jira_client", std::string(), auditOp, false,
+            outError + std::string(" | parse: ") + ex.what(),
             nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
         return Result<std::string, TrackerError>::Err(TrackerErrorParse(outError));
     }
@@ -642,8 +668,8 @@ JiraClient::AttachFilesToIssue(const std::string& issueKey, const std::vector<st
             std::string msg = smatchet::jira::ExtractJiraErrorMessage(response.status_code, response.text);
             outFailures.emplace_back(path, std::move(msg));
             allOk = false;
-            LOG_WARN("JiraClient: attachment upload failed issue=%s path=%s HTTP=%d", issueKey.c_str(), path.c_str(),
-                     static_cast<int>(response.status_code));
+            LOG_WARN("JiraClient: attachment upload failed issue=%s path=%s HTTP=%d | body: %s", issueKey.c_str(),
+                     path.c_str(), static_cast<int>(response.status_code), RedactHttpBodyForLog(response.text).c_str());
             BackendAuditTrail::AppendResult(
                 "issue_attach_file", "jira_client", issueKey, auditOp, false, outFailures.back().second,
                 nlohmann::json{{"filename", ghc::filesystem::path(path).filename().string()}});
@@ -713,8 +739,9 @@ bool JiraClient::AddIssueToSprint(const TrackerConfig& cfg, const std::string& i
     if (response.status_code != 204 && response.status_code != 200) {
         outError = "Failed to add issue to sprint: " +
                    smatchet::jira::ExtractJiraErrorMessage(response.status_code, response.text);
-        LOG_ERROR("JiraClient: %s issue=%s sprint=%s", outError.c_str(), issueKey.c_str(), sprintId.c_str());
-        BackendAuditTrail::AppendResult("issue_add_to_sprint", "jira_client", issueKey, auditOp, false, outError,
+        const std::string detail = WithRedactedBody(outError, response.text);
+        LOG_ERROR("JiraClient: %s issue=%s sprint=%s", detail.c_str(), issueKey.c_str(), sprintId.c_str());
+        BackendAuditTrail::AppendResult("issue_add_to_sprint", "jira_client", issueKey, auditOp, false, detail,
                                         nlohmann::json{{"sprint_id", sprintId}});
         return false;
     }

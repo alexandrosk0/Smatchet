@@ -17,15 +17,24 @@ void AppendCapped(std::string& out, const std::string& piece) {
     if (piece.empty() || out.size() >= kMaxJoinedErrorLen) {
         return;
     }
-    if (!out.empty()) {
-        out += "; ";
-    }
-    if (out.size() + piece.size() > kMaxJoinedErrorLen) {
-        out.append(piece, 0, kMaxJoinedErrorLen - out.size());
-        out += "…";
+    // Separator is part of the budgeted candidate — appending it before the cap math let
+    // out.size() exceed the cap and underflow the subtraction below (review finding).
+    const std::string candidate = out.empty() ? piece : "; " + piece;
+    if (out.size() + candidate.size() <= kMaxJoinedErrorLen) {
+        out += candidate;
         return;
     }
-    out += piece;
+    // Entry guard keeps out.size() < kMaxJoinedErrorLen, so cut >= 1, and this branch
+    // implies candidate.size() > cut, so candidate[cut] is in range.
+    std::size_t cut = kMaxJoinedErrorLen - out.size();
+    // Back up to a UTF-8 lead byte so the cap never splits a multi-byte sequence — Jira
+    // instances localize errorMessages[], and an invalid-UTF-8 tail would both render as
+    // garbage in the toast and make BackendAuditTrail's json dump() throw.
+    while (cut > 0 && (static_cast<unsigned char>(candidate[cut]) & 0xC0u) == 0x80u) {
+        --cut;
+    }
+    out.append(candidate, 0, cut);
+    out += "…";
 }
 
 } // namespace
