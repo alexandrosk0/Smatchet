@@ -11,11 +11,17 @@
 // few warm-up frames inside the scenario eliminate that flake without
 // putting the warm-up policy in the bash script.
 
+// Scenario file-top scaffold — the shared include block + g_ui extern shim +
+// anon-namespace IntArg/StringArg arg parsers that every screenshot scenario carries.
+// dup_audit matches it against the sibling screenshot scenarios as a copy-paste run;
+// it is idiomatic per-scenario boilerplate, not shared logic to extract.
+// SMATCHET_DEVIATION(rule=duplication; reason=file-top scaffold clone; owner=command-system; revisit=2026-12-31)
 #include "Commands/Scenarios/IScenario.h"
 
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "Commands/Scenarios/ScenarioCaptureSizing.h"
+#include "Commands/Scenarios/ScenarioScreenshotPath.h"
 #include "Logger.h"
 #include "SmatchetUiSession.h"
 
@@ -61,6 +67,13 @@ std::string StringArg(const nlohmann::json& args, const char* key, const std::st
     return fallback;
 }
 
+// Scenario OnStart-prologue scaffold — the warmupFrames/captureSize/screenshotPath
+// parse + required-empty check plus the identical anon-namespace StringArg tail,
+// shared across screenshot scenarios. dup_audit matches it as a copy-paste run; the
+// shared confine chokepoint (ConfineScenarioScreenshotPathInPlace) already de-dups the
+// confine logic — a shared prologue helper for the parse tail is the remaining de-dup,
+// tracked in the duplication backlog.
+// SMATCHET_DEVIATION(rule=duplication; reason=prologue scaffold clone; owner=command-system; revisit=2026-12-31)
 class DockGapSentinelScenario : public IScenario {
   public:
     std::string Name() const override { return "dock-gap-sentinel"; }
@@ -76,6 +89,12 @@ class DockGapSentinelScenario : public IScenario {
             outErr = "dock-gap-sentinel: screenshotPath is required";
             return;
         }
+        // Confine the caller-supplied path under <userData>/screenshots/ — this scenario is
+        // MCP/Lua-reachable, so an unconfined path is an arbitrary-file-write primitive (the
+        // #1566 class). Absolute/'..'/escaping paths are rejected; --spawn callers are fulfilled
+        // by the trusted parent (CliCommandRunner) which swaps in a confine-safe basename.
+        if (!ConfineScenarioScreenshotPathInPlace("dock-gap-sentinel", screenshotPath_, outErr))
+            return;
 
         g_ui.requestWindowWidth = captureSize_.Width;
         g_ui.requestWindowHeight = captureSize_.Height;

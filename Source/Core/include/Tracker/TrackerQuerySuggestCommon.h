@@ -65,4 +65,20 @@ bool IsQueryUserField(const TrackerField& field);
 /// True for date / date-time fields.
 bool IsQueryDateField(const TrackerField& field);
 
+/// Resolve the [replaceStart, replaceEnd) span and the prefix the suggestions replace.
+/// Three-way branch shared verbatim by both engines: active selection, open-string token,
+/// or the identifier run straddling the cursor.
+void ResolveQueryReplaceRange(const char* buf, int bufLen, int cursor, int selStart, int selEnd, int& replaceStart,
+                              int& replaceEnd, std::string& prefix);
+
+/// Final presentation pass shared by both engines: case-insensitive label sort, then cap at
+/// 80 items so the popup stays bounded.
+void SortAndCapQuerySuggestions(std::vector<QuerySuggestion>& items);
+
+/// Shared entry prologue for both engines: reset `out` + `metaOut`, reject a null buffer,
+/// clamp cursor/selection into [0, bufLen], resolve the replace span + prefix, and publish
+/// the span onto `out`. Returns false (outputs already reset) when `buf` is null.
+bool BeginQuerySuggestPass(const char* buf, int bufLen, int cursor, int selStart, int selEnd, QuerySuggestBuild& out,
+                           QuerySuggestMeta* metaOut, int& replaceStart, int& replaceEnd, std::string& prefix);
+
 } // namespace tracker_query_suggest

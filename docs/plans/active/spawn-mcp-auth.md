@@ -86,6 +86,51 @@ Make the spawn handshake work **under the secure default** with no env opt-out:
   **default** config — the test that would have caught #1566.
 Once PR B lands, the CI env opt-out from PR A can be removed.
 
+### PR C — remove the CI env opt-out (branch `ci/spawn-drop-token-optout`, PR #1577)
+Now that PR B makes `--spawn` work under the secure default, delete the
+`SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK=false` workflow-env opt-out from the
+three `--spawn` workflows so CI runs the gates under the SAME secure default
+products + dev machines ship. This is the narrow, original meaning of "PR C"
+(the opt-out removal). The broader "thread confined `--outPath` / stop
+`NormalizeOutPath` absolutizing" work that the earlier Files-to-modify table +
+Deviations also filed under "PR C" was split out and shipped in **PR D** below
+(it is the **H1** sub-fix) — the two were conflated under one label and are
+disentangled here.
+
+### PR D — screenshot-path confinement (C1) + path-normalize removal (H1) + Windows env-block (M1) (branch `feat/spawn-mcp-prd`)
+Security-review of the PR-B/PR-C surface recommended folding the remaining
+trust-boundary fixes into **one** PR with a single security-review pass. Scope:
+- **C1 (CRITICAL) — screenshot-path confinement.** `screenshotPath` was an
+  unconfined, MCP/Lua-reachable arbitrary-file-write primitive (#1566 class): it
+  flows from the wire to `stbi_write_png` at 5 child-side sites
+  (`debug.window.screenshot` + the 4 screenshot scenarios). Fix: confine every
+  caller-supplied `screenshotPath` under `<userData>/screenshots/` via a new
+  single-chokepoint helper `ConfineScenarioScreenshotPath` →
+  `ConfinePathUnderSubdir` (rejects absolute / `..` / UNC / symlinked subdir).
+  **Parent-fulfill design (test harness unchanged):** the trusted `--spawn` CLI
+  parent saves the user's requested absolute path, swaps the wire arg to a
+  confine-safe unique basename (`spawn-shot-<token><ext>`), and after the run
+  copies the child-reported confined file back to the user's absolute path +
+  rewrites the envelope's `screenshotPath`. The untrusted MCP/Lua wire path is
+  hard-confined with no copy-back — an absolute/`..` path is rejected.
+- **H1 (HIGH) — remove `NormalizeOutPath` + `NormalizePathArgInPlace`.** These
+  were dead-and-harmful: the async parent reads the *child-reported*
+  `data.outPath`, so absolutizing the arg parent-side broke
+  `ConfinePathUnderSubdir`. This is the "thread confined `--outPath`" item that
+  was filed under "PR C" — removal is the correct fix (the parent already reads
+  the confined path the child reports).
+- **M1 (MED) — Windows token injection via explicit merged `lpEnvironment`
+  block.** Replaces the transient parent-env mutation
+  (`SetEnvironmentVariableA` set→`CreateProcess`→clear) that briefly exposed
+  `SMATCHET_MCP_SPAWN_TOKEN` to any concurrently-spawned process. The new path
+  copies the parent env, drops any inherited token entry, appends our own, and
+  hands the merged block to `CreateProcessA` — the parent's own env is never
+  mutated. The POSIX path (forked-child `setenv`) was already correct; unchanged.
+
+**No PathConfinement bypass env var** is added anywhere — that would re-open
+`#1566`. Every escape is compile-time / trusted-parent-CLI-only, never a
+wire-reachable runtime toggle.
+
 ## Perf-gate
 
 PR A touches `Source/Core/src/Config/ConfigManager.cpp` (strict zone).
@@ -110,6 +155,21 @@ path); the parent change is token generation + an HTTP header on the `--spawn`
 CLI one-shot flow (never on the UI/render thread). No steady-state allocation,
 no grid/scroll/draw path. No perf scenario delta expected.
 
+**PR D** touches `Source/Core/` (4 scenario `.cpp` under
+`Source/Core/src/Commands/Scenarios/`, `BuiltinCommands_Debug.cpp`, and the new
+header `Source/Core/include/Commands/Scenarios/ScenarioScreenshotPath.h`), so
+the **mandatory Perf-gate trigger fires**. **Perf-inert:** the C1 confine call
+is one path-validation (`ConfinePathUnderSubdir`: a few `fs::path` ops + a
+`create_directories` for the subdir) executed **once per scenario `OnStart`** /
+**once per `debug.window.screenshot` invocation** — not on the per-frame
+`OnFrame`/`Draw`/render path, not on a grid/scroll path. The scenarios' actual
+capture work (`requestScreenshot` in `OnFinish`) and the per-frame draw bodies
+are byte-unchanged. H1 only *removes* code (two helper functions); M1 touches
+the `--spawn` CLI one-shot launch path (process creation, never the UI thread).
+No steady-state allocation, no render-loop delta. No perf scenario regression
+expected; the spawn-driven bucket-C/E + perf gates exercise these scenarios and
+must stay green.
+
 ## Files to modify
 
 | File | Change | PR |
@@ -130,6 +190,10 @@ no grid/scroll/draw path. No perf scenario delta expected.
 | `Source/Standalone/CliCommandRunner.cpp` | `SwapOutLogForConfineSafeBasename` calls the Core helper; delete the inline ms-stamp + leaf logic (CR #2 ms-collision fix via entropy) | E |
 | `Source/Core/src/Commands/Scenarios/UiTestScenario.cpp` | drop the temporal `#1566` ref from the durable outLog comment (CR #1) | E |
 | `tests/Core/SpawnOutLogBasename.test.cpp`, `tests/CMakeLists.txt` | doctest for the helper (traversal collapse, absolute strip, fallback, prefix, entropy-uniqueness) | E |
+| `Source/Core/include/Commands/Scenarios/ScenarioScreenshotPath.h` | **new** — `ConfineScenarioScreenshotPath` single-chokepoint helper (confine under `<userData>/screenshots/`) | D (C1) |
+| `Source/Core/src/Commands/Scenarios/{ThemeSwitchRoundtrip,CommandPaletteFuzzy,CodeSyntaxColoring,DockGapSentinel}Scenario.cpp` | confine `screenshotPath_` in `OnStart` before any session/state mutation | D (C1) |
+| `Source/Core/src/Commands/Builtin/BuiltinCommands_Debug.cpp` | confine `screenshotPath` in `debug.window.screenshot` before the UI-thread marshal | D (C1) |
+| `Source/Standalone/CliCommandRunner.cpp` | **H1** remove dead/harmful `NormalizeOutPath` + `NormalizePathArgInPlace`; **C1** parent-fulfill (swap wire arg to confine-safe basename, copy confined→user path post-run); **M1** Windows explicit merged `lpEnvironment` block | D (C1+H1+M1) |
 
 ## Implementation log
 
@@ -237,6 +301,36 @@ no grid/scroll/draw path. No perf scenario delta expected.
     `ConfinePathUnderSubdir` confinement untouched, absolute/`..` from MCP/Lua
     still rejected, no PathConfinement bypass env/flag — the helper only generates
     a confine-safe basename, never widens what the child accepts.
+- **2026-06-28 — PR D (C1+H1+M1, branch `feat/spawn-mcp-prd`)** — folded the
+  three remaining trust-boundary fixes into one PR per security-review's
+  recommendation (single security pass).
+  **C1:** new `Source/Core/include/Commands/Scenarios/ScenarioScreenshotPath.h`
+  exposes `ConfineScenarioScreenshotPath(candidate, resolvedOut, errOut)` wrapping
+  `ConfinePathUnderSubdir(ConfigManager::GetUserDataDirectory(), "screenshots",
+  …)` — one chokepoint so the 5 confine sites carry no copy-paste block (DRY).
+  All 4 scenarios (`ThemeSwitchRoundtrip`, `CommandPaletteFuzzy`,
+  `CodeSyntaxColoring`, `DockGapSentinel`) confine `screenshotPath_` in `OnStart`
+  immediately after the empty-check, BEFORE any session/theme/latch mutation, so a
+  rejected path returns cleanly with no state change. `debug.window.screenshot`
+  (`BuiltinCommands_Debug.cpp`) confines between the empty-check and the UI-thread
+  marshal; the capture lambda captures the confined path; `out["path"]` reports
+  it. The trusted `--spawn` parent (`CliCommandRunner.cpp`) saves the user's
+  requested absolute path, swaps the wire `screenshotPath` arg to a confine-safe
+  unique basename `spawn-shot-<SpawnLogRandomToken()><ext>`, and after the run
+  `WaitForFile`s the child-reported confined abs path then `fs::copy_file`s it
+  back to the user's absolute path + rewrites `fileData["screenshotPath"]` — so
+  the bucket-C/E screenshot-diff harness (`[ -s "$captured" ]` on the user path)
+  is byte-for-byte unchanged.
+  **H1:** removed `NormalizeOutPath` + `NormalizePathArgInPlace` entirely (dead +
+  harmful — the async parent reads the child-reported `data.outPath`, so
+  absolutizing the arg parent-side broke `ConfinePathUnderSubdir`).
+  **M1:** Windows token injection now builds an explicit merged `lpEnvironment`
+  block (copy parent env via `GetEnvironmentStringsA`, drop any inherited
+  `SMATCHET_MCP_SPAWN_TOKEN=` entry, append our own, double-NUL terminate) handed
+  to `CreateProcessA` — the parent's own env is never mutated (closes the
+  transient same-user read window). POSIX forked-child `setenv` unchanged.
+  Build clean (596/596, `ninja-iter-msvc`), lint exit 0, clang-format applied to
+  all 7 files. Verification below.
 
 ## Deviations
 
@@ -335,6 +429,59 @@ no grid/scroll/draw path. No perf scenario delta expected.
   the pre-`8c425435` world and no longer holds — the coexist code no longer absolutizes anything.
 
 ## Verification
+- **The deferred MEDIUM (Windows parent-env transient window = M1) and the
+  `--outPath`/`NormalizeOutPath` HIGH (= H1) shipped in PR D, not "PR C".** The
+  prior deviation entries filed both under the "PR C" label; PR C (#1577) ended up
+  scoped to the workflow opt-out removal only, and the trust-boundary code fixes
+  (C1 + H1 + M1) were folded into PR D on security-review's recommendation (one
+  security pass over the whole trust-boundary surface). H1's resolution is
+  *removal* of `NormalizeOutPath`/`NormalizePathArgInPlace` (the parent already
+  reads the child-reported confined `data.outPath`), not threading.
+- **L2 — `debug.window.screenshot` not marked Destructive (`__confirm:true`) —
+  BACKLOGGED, not folded into PR D.** PR D's C1 confinement closes the
+  arbitrary-file-write hole; adding the Destructive flag would change the MCP tool
+  contract + every caller (CI bucket-C/E drivers, scenario harness, Lua) for
+  contract-hygiene only. Deferred to a standalone `mcp-toolsmith` PR. Backlog:
+  `docs/self-improvement/categories/security/2026-06-28-debug-window-screenshot-mark-destructive.md`.
+- **L1 — scrub `SMATCHET_MCP_SPAWN_TOKEN` at process entry in `main.cpp` —
+  BACKLOGGED (no trigger yet).** M1 removed the parent-env mutation entirely, so
+  the token no longer lives in the parent env; L1's scrub-at-entry only matters if
+  a pre-plugin subprocess is ever added to `main.cpp`. Backlog:
+  `docs/self-improvement/categories/security/2026-06-28-screenshot-scrub-at-entry-main-cpp.md`.
+- **M2 — `RandomHexToken` draws from `std::random_device` (not standard-guaranteed
+  cryptographic) — BACKLOGGED.** CSPRNG-backed on every shipped host; the 128-bit
+  ephemeral loopback token has no live exploit. Hardening (explicit OS CSPRNG)
+  deferred. Backlog:
+  `docs/self-improvement/categories/security/2026-06-28-spawn-token-random-device-not-guaranteed-crypto.md`.
+- **dup-gate is BLOCKING now (graduated 2026-06-21, ADR-0015 calibration
+  complete) — handled, exit 0.** The carried assumption that `duplication` was
+  WARN-first/non-blocking was stale; `dup_audit.py --diff origin/develop` exits 1
+  on any NEW non-exempt clone. PR D handled it in two moves: **(a) collapse** —
+  the C1 confine-and-reject boilerplate (the 4 per-scenario `confinedPath`/
+  `confineErr`/reject blocks) was folded into `ConfineScenarioScreenshotPathInPlace`
+  in `ScenarioScreenshotPath.h`, so each scenario's confine is now one guarded
+  line — genuine DRY, kills the confine-block clones outright. **(b) deviate** —
+  two residual clones are pre-existing scenario *scaffold* (the file-top
+  include + `g_ui` extern + anon-namespace `IntArg`/`StringArg` block, and the
+  `OnStart`-prologue `warmupFrames`/`captureSize`/`screenshotPath` parse), which
+  surfaced as "new" only because PR D's `#include` insertion + confine collapse
+  re-hashed the maximal token run. Both carry a `SMATCHET_DEVIATION(rule=duplication;
+  …)` marker in `DockGapSentinelScenario.cpp` (precedent: SideBySideNGrid /
+  InteractiveGridStress). The real de-dup (shared `OnStart`-prologue helper) is
+  backlogged: `docs/self-improvement/categories/debt/2026-06-28-shared-scenario-onstart-prologue-helper.md`.
+  Final `dup_audit.py --diff origin/develop` exit 0.
+- **Parent-fulfill is C1-only (`screenshotPath`); `outPath`/`outLog` are NOT
+  copied back to a user-absolute path — known limitation, OUT OF SCOPE for PR D.**
+  code-review flagged the asymmetry: the trusted `--spawn` parent swaps a
+  confine-safe basename + copies the confined capture back for `screenshotPath`,
+  but `scenario.run --outPath` / `ui_test.run --outPath`/`--outLog` stay
+  hard-confined under `<userData>/perf|ui-tests/` with no copy-back, so a
+  `--spawn` caller asking for an absolute `--outPath` gets the file inside the
+  sandbox, not at the requested path. This is intentional for PR D (C1 is the
+  arbitrary-file-write CRITICAL; the perf/ui-test out-paths were already confined
+  pre-PR-D and have no harness that needs the user-absolute path). If a future
+  `--spawn` perf/ui-test harness needs absolute out-paths, mirror the C1
+  parent-fulfill pattern for those args. No code change in PR D.
 
 - [x] PR A: ctest `ConfigManager SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK env override` green — 4/4 assertions (default ON→true, env "false"→false, env "true"→true, env "garbage"→true fail-closed); full ConfigManager suite 28/28 cases
 - [x] PR A: all 3 CodeRabbit findings on #1574 addressed (breadcrumb removed, fail-closed parse, test comment corrected)
@@ -356,3 +503,12 @@ no grid/scroll/draw path. No perf scenario delta expected.
 - [x] PR E: lint gate PASS — `test-lint-rules.sh --diff origin/develop` exit 0 (strict-zone rules on the new Commands/ files clean, no new duplication, no oversized function); only pre-existing advisory `unused-symbol-under-config-guard` WARNs (unrelated MCP-gated helpers, non-blocking)
 - [x] PR E: spawn smoke both ways via `scripts/dev/test-ui-jira-deterministic-backend.sh` (ui-test exe rebuilt with the change) — **env-set** (`SMATCHET_UI_TEST_OUTLOG=<abs>`): passed=3 failed=0 `ok:true`, child wrote `...\ui-tests\spawn-36b5b5545e350945-smoke-outlog-*.txt` (entropy token from the new helper), `[spawn] outLog: relocated child log -> <abs>`, the absolute outLog populated (7115 bytes); **bare** (no env): passed=3 failed=0 `ok:true`, `outLog:""`, exit 0
 - [x] PR E: both CodeRabbit findings cleared — #1 (`UiTestScenario.cpp` `#1566` temporal ref dropped, invariant kept), #2 (`CliCommandRunner.cpp` ms-stamp → entropy via the Core helper; no `std::chrono ... milliseconds` remains in the basename path — only legit poll/timeout/sleep uses)
+- [x] PR C (#1577): removed PR A's CI env opt-out from all 3 `--spawn` workflows — every `--spawn` gate green under the SECURE default (first time) is the self-validating proof + standing #1566 regression guard; merged to develop @ `14b77f4f`
+- [x] PR D: build clean (596/596, `ninja-iter-msvc`, full MCP-gated build) — all C1/H1/M1 edits compile under warnings-as-errors across the 7 touched files
+- [x] PR D: lint gate exit 0 (`test-lint-rules.sh --diff origin/develop`); clang-format applied to all 7 files; **dup gate (BLOCKING since 2026-06-21) exit 0** — C1 confine collapsed into `ConfineScenarioScreenshotPathInPlace` (kills the confine-block clones), 2 residual pre-existing scaffold clones (file-top include/`g_ui`/arg-parser + `OnStart`-prologue) carry `SMATCHET_DEVIATION(rule=duplication)` in `DockGapSentinelScenario.cpp`; real de-dup backlogged (`debt/2026-06-28-shared-scenario-onstart-prologue-helper.md`)
+- [x] PR D C1 (trusted parent round-trip, harness-preserving): `--spawn` screenshot → child confined to `<userData>/screenshots/spawn-shot-<token>.png` (155817 B), parent copied back to the user's absolute path (155817 B, byte-identical), envelope `screenshotPath` = user's absolute path → bucket-C/E `[ -s "$captured" ]` poll satisfied, harness unchanged
+- [x] PR D C1 (untrusted MCP wire rejection): `debug.window.screenshot` with an absolute path → `validation-error: path rejected: absolute paths are not allowed`; with `../../../../escape.png` → `path traversal ('..') is not allowed`; leak-check `C:/Windows/Temp/evil_pwn.png` absent → no arbitrary-file-write
+- [x] PR D M1: `test-spawn-mcp-default-auth.sh` 2/2 PASS (no-token mint+inject via the new merged `lpEnvironment` block + persisted operator token) under the compiled secure default
+- [x] PR D: security-review + code-review of the trust-boundary diff (mandatory — MCP/CLI/Lua surface) ran pre-open — findings triaged into Deviations (parent-fulfill asymmetry = OUT OF SCOPE, dup-gate handled, L1/L2/M2 backlogged); no unresolved CRITICAL/HIGH
+- [ ] PR D: CI gates green on the PR
+- [ ] PR D follow-ups (backlogged, not in this PR): L1 scrub-at-entry, L2 `debug.window.screenshot` Destructive, M2 OS-CSPRNG token (see Deviations + `docs/self-improvement/categories/security/2026-06-28-*`)

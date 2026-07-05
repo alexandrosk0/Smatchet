@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib> // std::strtoll (CPP_CODE_AUDIT.md #33f — was only transitively included)
 #include <string>
 #include <vector>
 
