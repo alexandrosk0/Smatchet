@@ -78,6 +78,8 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearIssueMappingPure.cpp"
         Core/LinearQueryFromJql.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearQueryFromJql.cpp"
+        Core/JiraErrorMessagePure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraErrorMessagePure.cpp"
         # multi-grid-tabs.md Slice 5a — pure hidden-pane LRU eviction decision
         # (header-only; no extra .cpp). No threads — proves the policy compiles +
         # links cleanly under -fsanitize=thread end-to-end on the runner.

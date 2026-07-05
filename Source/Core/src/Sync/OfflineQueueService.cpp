@@ -12,6 +12,7 @@
 #include "ISyncCache.h"
 #include "Json/BoundedJsonParse.h"
 #include "Logger.h"
+#include "SmatchetLocalization.h"
 #include "MarkdownConvert.h"
 #include "OfflineFieldConflictPolicy.h"
 #include "OfflineQueueReplayPolicy.h"
@@ -557,8 +558,9 @@ std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issue
         return 0;
     }
     if (!deps_.Cache()) {
-        outError = "Local cache is unavailable, so this edit cannot be queued offline. Restart Smatchet or check "
-                   "Settings -> Preferences -> Local data.";
+        outError = SmatchetLocalization::T("offline.cache_unavailable",
+                                           "Local cache is unavailable, so this edit cannot be queued offline. "
+                                           "Restart Smatchet or check Settings -> Preferences -> Local data.");
         return 0;
     }
     if (issueKey.empty() || fieldId.empty() || fieldsPayloadJson.empty()) {

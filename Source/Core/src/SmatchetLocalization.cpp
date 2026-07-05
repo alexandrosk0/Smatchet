@@ -663,6 +663,16 @@ const TranslationEntry kEntries[] = {
      u8"aussi télécharger les versions depuis la page GitHub."},
     {"prefs.assistant.test_internal_error", "the request could not be completed — check the endpoint URL and try again",
      u8"la requête n'a pas pu aboutir — vérifiez l'URL du point d'accès et réessayez"},
+    {"fieldedit.cache_unavailable",
+     "Local cache is unavailable, so this edit cannot be applied. Restart Smatchet or check Settings -> Preferences "
+     "-> Local data.",
+     u8"Le cache local est indisponible ; cette modification ne peut pas être appliquée. Redémarrez Smatchet ou "
+     u8"vérifiez Paramètres -> Préférences -> Données locales."},
+    {"offline.cache_unavailable",
+     "Local cache is unavailable, so this edit cannot be queued offline. Restart Smatchet or check Settings -> "
+     "Preferences -> Local data.",
+     u8"Le cache local est indisponible ; cette modification ne peut pas être mise en file hors ligne. Redémarrez "
+     u8"Smatchet ou vérifiez Paramètres -> Préférences -> Données locales."},
     {"prefs.whisper.test_internal_error", "the request could not be completed — check the API key and try again",
      u8"la requête n'a pas pu aboutir — vérifiez la clé API et réessayez"},
     {"bulk.create_failed_no_detail", "the Tracker rejected this row without details — check required fields and retry",

@@ -174,6 +174,9 @@ void RunProbeWorker(AiProvider provider, AiClientConfig clientCfg, std::shared_p
     // SSE parser code. An uncaught exception here would propagate out of the
     // background task and call `std::terminate`. Trap it, surface as a failure
     // result via the existing dispatcher path so UI state recovers.
+    const char* const internalErrMsg =
+        SmatchetLocalization::T("prefs.assistant.test_internal_error",
+                                "the request could not be completed — check the endpoint URL and try again");
     try {
         std::unique_ptr<IAiClient> client = AiClientFactory::MakeAiClient(provider);
         if (!client) {
@@ -222,12 +225,10 @@ void RunProbeWorker(AiProvider provider, AiClientConfig clientCfg, std::shared_p
         // planned twin dedup; owner=user-text-error-pass; revisit=2026-09-30)
     } catch (const std::exception& ex) {
         LOG_WARN("Assistant test-connection: %s", ex.what());
-        errMsg = SmatchetLocalization::T("prefs.assistant.test_internal_error",
-                                         "the request could not be completed — check the endpoint URL and try again");
+        errMsg = internalErrMsg;
     } catch (...) {
         LOG_WARN("Assistant test-connection: unknown exception");
-        errMsg = SmatchetLocalization::T("prefs.assistant.test_internal_error",
-                                         "the request could not be completed — check the endpoint URL and try again");
+        errMsg = internalErrMsg;
     }
     dispatcher.PostToMainThread([errMsg, cancel, provider, defaultedBaseUrl]() {
         if (cancel && cancel->load()) {

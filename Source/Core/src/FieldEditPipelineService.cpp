@@ -21,6 +21,7 @@
 #include "FieldEditAuditSource.h"
 
 #include "Logger.h"
+#include "SmatchetLocalization.h"
 #include "StringUtil.h" // TruncateForLog
 #include "TrackerFieldSchema.h"
 #include "TrackerFieldValueUtils.h"
@@ -694,8 +695,9 @@ bool FieldEditPipelineService::ApplyFieldEditResult(const std::string& issueId, 
         return false;
     }
     if (!deps_.HasCache()) {
-        outError = "Local cache is unavailable, so this edit cannot be applied. Restart Smatchet or check "
-                   "Settings -> Preferences -> Local data.";
+        outError = SmatchetLocalization::T("fieldedit.cache_unavailable",
+                                           "Local cache is unavailable, so this edit cannot be applied. Restart "
+                                           "Smatchet or check Settings -> Preferences -> Local data.");
         return false;
     }
     if (issueId.empty()) {

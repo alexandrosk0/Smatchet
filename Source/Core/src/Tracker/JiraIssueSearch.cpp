@@ -6,6 +6,7 @@
 #include "TrackerFieldValueParser.h"
 #include "TrackerHttpUtils.h"
 #include "JsonParseUtil.h"
+#include "Tracker/JiraErrorMessagePure.h"
 #include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "StringUtil.h"
@@ -256,7 +257,7 @@ std::string LogAndBuildPageFetchError(int page, const cpr::Response& response) {
     // Promote the auth hint into the user-facing summary — it was log-only, leaving the
     // banner a bare status code with no next step on the most common failure.
     if (response.status_code == 401 || response.status_code == 403) {
-        msg += " — authentication failed. Check Email and API token under Settings -> Preferences -> Tracker.";
+        msg += " — authentication failed. Check Email and API token under Settings → Preferences → Jira.";
     } else if (!response.error.message.empty()) {
         msg += std::string(" ") + response.error.message;
     }
@@ -444,7 +445,8 @@ JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::
 
         auto response = TrackerGetLogged("JiraClient", pageUrl, headers);
         if (response.status_code != 200) {
-            outError = "Fetch by key failed: HTTP " + std::to_string(response.status_code);
+            outError =
+                "Fetch by key failed: " + smatchet::jira::ExtractJiraErrorMessage(response.status_code, response.text);
             // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing clone; owner=security-audit; revisit=2026-09-30)
             LOG_WARN("JiraClient::FetchIssuesForKeys: %s", outError.c_str());
             // Guard the `!= 200` branch before FromHttpStatus: a 2xx-other (201/204) would map to

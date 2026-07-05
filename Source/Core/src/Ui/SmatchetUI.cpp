@@ -119,20 +119,19 @@ static void DrainAppUpdateCheck(UiDrawSession& d) {
     }
 
     d.appUpdateCheckInFlight = false;
+    const char* const checkFailedMsg = SmatchetLocalization::T(
+        "updates.check_failed", "Update check failed — check your network connection and try again. You can "
+                                "also download releases from the GitHub page.");
     try {
         d.appUpdateInfo = d.appUpdateFuture.get();
     } catch (const std::exception& ex) {
         LOG_WARN("DrainAppUpdateCheck: %s", ex.what());
         d.appUpdateInfo = {};
-        d.appUpdateInfo.Error = SmatchetLocalization::T(
-            "updates.check_failed", "Update check failed — check your network connection and try again. You can "
-                                    "also download releases from the GitHub page.");
+        d.appUpdateInfo.Error = checkFailedMsg;
     } catch (...) {
         LOG_WARN("DrainAppUpdateCheck: unknown exception");
         d.appUpdateInfo = {};
-        d.appUpdateInfo.Error = SmatchetLocalization::T(
-            "updates.check_failed", "Update check failed — check your network connection and try again. You can "
-                                    "also download releases from the GitHub page.");
+        d.appUpdateInfo.Error = checkFailedMsg;
     }
 
     if (!d.appUpdateInfo.Error.empty()) {

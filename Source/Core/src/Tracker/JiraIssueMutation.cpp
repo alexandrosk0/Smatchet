@@ -151,8 +151,10 @@ bool JiraClient::UpdateIssueFieldsViaTransition(const std::string& issueId, cons
         auto transitionsJson = smatchet::json_safe::ParseBounded(transitionsResp.text, parseErr);
         if (!parseErr.empty()) {
             outError = "The Tracker returned an unreadable transitions response — try again.";
-            LOG_ERROR("JiraClient: transitions parse failed: %s", parseErr.c_str());
-            AppendTransitionFailure(issueId, auditOp, outError + " | parse: " + parseErr, targetStatusId,
+            // nlohmann parse errors quote an excerpt of the input body — redact before log/audit.
+            const std::string redactedParseErr = RedactHttpBodyForLog(parseErr);
+            LOG_ERROR("JiraClient: transitions parse failed: %s", redactedParseErr.c_str());
+            AppendTransitionFailure(issueId, auditOp, outError + " | parse: " + redactedParseErr, targetStatusId,
                                     targetStatusName);
             return false;
         }
@@ -166,8 +168,9 @@ bool JiraClient::UpdateIssueFieldsViaTransition(const std::string& issueId, cons
         transitionId = FindTransitionIdInArray(transitionsJson["transitions"], targetStatusId, targetStatusName);
     } catch (const std::exception& ex) {
         outError = "The Tracker returned an unreadable transitions response — try again.";
-        LOG_ERROR("JiraClient: transitions parse failed: %s", ex.what());
-        AppendTransitionFailure(issueId, auditOp, outError + std::string(" | parse: ") + ex.what(), targetStatusId,
+        const std::string redactedWhat = RedactHttpBodyForLog(ex.what());
+        LOG_ERROR("JiraClient: transitions parse failed: %s", redactedWhat.c_str());
+        AppendTransitionFailure(issueId, auditOp, outError + " | parse: " + redactedWhat, targetStatusId,
                                 targetStatusName);
         return false;
     }
@@ -559,10 +562,12 @@ Result<std::string, TrackerError> JiraClient::CreateIssue(const nlohmann::json& 
         if (!parseErr.empty()) {
             outError = "The Tracker returned an unreadable create response — check whether the issue was "
                        "created before retrying.";
-            LOG_ERROR("JiraClient: create-response parse failed: %s body=%s", parseErr.c_str(),
+            const std::string redactedParseErr = RedactHttpBodyForLog(parseErr);
+            LOG_ERROR("JiraClient: create-response parse failed: %s body=%s", redactedParseErr.c_str(),
                       RedactHttpBodyForLog(response.text).c_str());
             BackendAuditTrail::AppendResult(
-                "issue_create", "jira_client", std::string(), auditOp, false, outError + " | parse: " + parseErr,
+                "issue_create", "jira_client", std::string(), auditOp, false,
+                outError + " | parse: " + redactedParseErr,
                 nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
             return Result<std::string, TrackerError>::Err(TrackerErrorParse(outError));
         }
@@ -583,11 +588,11 @@ Result<std::string, TrackerError> JiraClient::CreateIssue(const nlohmann::json& 
     } catch (const std::exception& ex) {
         outError = "The Tracker returned an unreadable create response — check whether the issue was "
                    "created before retrying.";
-        LOG_ERROR("JiraClient: create-response parse failed: %s body=%s", ex.what(),
+        const std::string redactedWhat = RedactHttpBodyForLog(ex.what());
+        LOG_ERROR("JiraClient: create-response parse failed: %s body=%s", redactedWhat.c_str(),
                   RedactHttpBodyForLog(response.text).c_str());
         BackendAuditTrail::AppendResult(
-            "issue_create", "jira_client", std::string(), auditOp, false,
-            outError + std::string(" | parse: ") + ex.what(),
+            "issue_create", "jira_client", std::string(), auditOp, false, outError + " | parse: " + redactedWhat,
             nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
         return Result<std::string, TrackerError>::Err(TrackerErrorParse(outError));
     }
