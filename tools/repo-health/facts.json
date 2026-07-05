@@ -1,0 +1,57 @@
+{
+  "_doc": "Session-maintained facts for the repo-health dashboard. generate.py computes every tree-derivable metric itself; this file carries only (a) judgment verdicts a script can't make and (b) live GitHub state only the MCP tools can fetch. Refresh CI lanes + open PRs from the GitHub Actions/PR APIs, re-run generate.py, then republish to the artifact URL below. See README.md.",
+
+  "artifact_url": "https://claude.ai/code/artifact/e1a28cab-afd3-4f31-8258-4efb2387806e",
+
+  "governance": { "loop_mode": "on", "auto_merge": "on" },
+
+  "audit_resolved": {
+    "fixed": 31,
+    "accepted": 2,
+    "_note": "CPP_CODE_AUDIT.md remediation (docs/plans/active/cpp-code-audit-remediation.md): 31 findings fixed, 2 accepted as documented deviations (#21 DictationInsertionRouter latent risk, #26 SubprocessCapture fork-safety half)."
+  },
+
+  "campaign": [
+    { "status": "landed",      "title": "Finding‑class CI gates",
+      "evidence": "Blocking <code style=\"font-family:var(--mono);font-size:11px\">bare‑json‑parse‑untrusted</code> lint gate + ranked mining record (#1608 → #1605)." },
+    { "status": "not-started", "title": "Mutation testing",
+      "evidence": "Measure test <em>quality</em>, not reach. No infra, branch, or PR yet." },
+    { "status": "partial",     "title": "Outward‑facing product", "label": "Half shipped",
+      "evidence": "i18n sweep <b style=\"color:var(--ok)\">merged</b> (#1614); error‑message pass in review (#1615). Service‑extraction pending." },
+    { "status": "not-started", "title": "Performance win‑hunting",
+      "evidence": "Offensive perf pass — <code style=\"font-family:var(--mono);font-size:11px\">‑ftime‑trace</code> + hot‑path hunt. Untouched." },
+    { "status": "not-started", "title": "Fuzz‑surface expansion",
+      "evidence": "Widen beyond the current targets (MCP, config, cache). No new harness yet." },
+    { "status": "landed",      "title": "Long‑horizon execution",
+      "evidence": "Pilot #1604 merged · nightly triage routine live · Phase‑3 batches #1607/#1609 · this dashboard." }
+  ],
+
+  "ci_lanes": [
+    { "name": "Sanitizer nightly",       "detail": "ASan/UBSan · 04:00 UTC",       "status": "pass",   "when": "run #38"  },
+    { "name": "Fuzz smoke",              "detail": "libFuzzer · 04:30 UTC",         "status": "pass",   "when": "run #152" },
+    { "name": "TSan Linux nightly",      "detail": "threading subset · 05:00 UTC",  "status": "pass",   "when": "run #319" },
+    { "name": "Fresh‑clone configure",   "detail": "cold bootstrap · 05:00 UTC",    "status": "pass",   "when": "run #27"  },
+    { "name": "Dep CVE / SBOM",          "detail": "OSV scan · Mondays 04:17",      "status": "weekly", "when": "Mon"      }
+  ],
+  "triage_note": "Watched nightly by the <b style=\"color:var(--ink)\">smatchet‑nightly‑advisory‑lane‑triage</b> routine · 06:30 UTC.",
+
+  "open_prs": [
+    { "id": "1615", "state": "ready", "label": "Ready",
+      "title": "Error‑message quality pass — what/why/next", "meta": "item 03 · track 2 · Jira extractor + redaction" },
+    { "id": "1621", "state": "green", "label": "Green",
+      "title": "Coverage campaign bookkeeping — Tier 3 archive", "meta": "docs‑only · gap‑map close‑out" },
+    { "id": "1583", "state": "draft", "label": "Draft",
+      "title": "Multi‑expert evaluation (9 experts × 2 passes)", "meta": "docs‑only · draft · parked for review" }
+  ],
+
+  "governance_list": [
+    { "icon": "on", "title": "Human‑on‑the‑loop",
+      "detail": "<code>loop_mode: on</code> — action‑biased autonomy; human monitors &amp; interrupts." },
+    { "icon": "✓", "title": "Standing auto‑merge grant",
+      "detail": "<code>auto_merge: on</code> — merges once the full gate poll passes; gates still bind." },
+    { "icon": "⛔", "title": "Block‑on‑any‑red",
+      "detail": "Every CI check gates the merge (#1619) — curated allow‑list retired." },
+    { "icon": "⏱", "title": "Nightly triage routine",
+      "detail": "Fresh session · <code>cron 30 6 * * *</code> · push+email · caps 2 items / 1 draft PR." }
+  ]
+}
