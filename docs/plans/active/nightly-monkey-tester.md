@@ -81,7 +81,7 @@ One EXTRACT: the four synth helpers (~55 lines) move from `CommandContractSweepS
 ## Out of scope (flagged, not designed)
 
 - **Layer 1b — handler-body execution** *(shipped)*: `--mode=handlers` boots a fully-initialized `AppController` vs the fake Jira backend (`ScriptedTrackerBackendFactory` + `JiraFakeTrackerFixture`, no network) and runs a small **allow-list** of read-only, `g_ui`-free, no-UI-hop commands (`commands.list`/`help`/`search`/`recents`, `config.get`/`path`, `perf.snapshot`/`frame_count`, `debug.thread_dump`), draining the main-thread dispatcher after each. Oracle: no crash + well-formed envelope. Grown only by reading handlers.
-- **Layer 2 — ImGui UI monkey**: a registered `imgui_test_engine` test random-walking the live UI on the Bucket-E/Mesa lane. Follow-up.
+- **Layer 2 — ImGui UI monkey** *(shipped)*: `tests/ui/ui_monkey.test.cpp` boots the real app under the ImGui Test Engine and sprays a seeded stream of random keyboard/mouse INPUT events at the live UI (no assertions — crash-only failure). Registration is **opt-in** (`SMATCHET_UI_MONKEY=1`) so it's inert under the required `ui_test.run --all`; the advisory `ui-monkey-nightly.yml` (windows-2022 + llvmpipe, mirrors bucket-E) runs it via `--name="UiMonkey/*"` and auto-files a `bug` issue with the seed. Uses only in-tree-verified engine primitives (no `GatherItems`).
 - **Layer 3 — parser fuzz drivers**: new `fuzz_*` targets via `smatchet_add_fuzz_target`, auto-picked-up by `fuzz-smoke.yml`. Follow-up.
 - **Layer 4 — AI-agent exploratory pass**: agent-driven nightly over CLI/MCP. Optional; revisit after 1–3 prove value.
 
