@@ -189,7 +189,7 @@ jobs:
           that should have been rejected but returned Ok / a malformed error envelope)."
           fi
           # De-dup: reuse the single open issue with this exact title if present.
-          existing=$(gh issue list --state open --label "$label" --search "$title in:title" \
+          existing=$(gh issue list --state open --label "$label" --search "\"$title\" in:title" \
                        --json number --jq '.[0].number' 2>/dev/null || true)
           if [ -n "$existing" ] && [ "$existing" != "null" ]; then
             gh issue comment "$existing" --body "Recurred: ${RUN_URL} (seed \`${SEED:-unknown}\`)" || true

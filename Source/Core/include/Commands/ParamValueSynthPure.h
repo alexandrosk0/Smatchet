@@ -46,8 +46,18 @@ inline nlohmann::json SynthValidValue(const ParamSpec& p) {
         }
         return v;
     }
-    case ParamType::Number:
-        return 1;
+    case ParamType::Number: {
+        // Bounds-aware, mirroring the Int branch — a required Number param with
+        // MinInt > 1 (or MaxInt < 1) must still get an in-bounds filler so it stays
+        // valid and the probe rejection remains attributable to the field under test.
+        long long v = 1;
+        if (p.MinInt) {
+            v = *p.MinInt;
+        } else if (p.MaxInt && *p.MaxInt < v) {
+            v = *p.MaxInt;
+        }
+        return v;
+    }
     case ParamType::Bool:
         return false;
     case ParamType::Json:

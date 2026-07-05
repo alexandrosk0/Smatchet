@@ -99,7 +99,9 @@ jobs:
           fi
           passed="$(printf '%s\n' "$out" | grep -aoE '"passed"[ :]+[0-9]+' | grep -oE '[0-9]+' | tail -1 || echo 0)"
           failed="$(printf '%s\n' "$out" | grep -aoE '"failed"[ :]+[0-9]+' | grep -oE '[0-9]+' | tail -1 || echo 0)"
-          seed="$(printf '%s\n' "$out" | grep -aoE 'ui-monkey seed=[0-9]+' | head -1 | sed 's/ui-monkey seed=//' || true)"
+          # The seed is logged by the SPAWNED CHILD (ui_monkey.test.cpp), not the parent —
+          # grep the combined ui-monkey.log (parent output + child log tee'd above), not $out.
+          seed="$(grep -aoE 'ui-monkey seed=[0-9]+' ../../ui-monkey.log | head -1 | sed 's/ui-monkey seed=//' || true)"
           echo "passed=${passed:-0} failed=${failed:-0} rc=${rc}"
           {
             echo "passed=${passed:-0}"
@@ -117,9 +119,11 @@ jobs:
           RC: ${{ steps.run.outputs.rc }}
         run: |
           set -uo pipefail
-          # A finding = the walk failed/crashed (failed>0) OR the harness never ran it
-          # (passed==0 with a non-timeout error). A clean run is passed>=1 && failed==0.
-          if [ "${FAILED:-0}" != "0" ] || { [ "${PASSED:-0}" = "0" ] && [ "${RC:-1}" != "0" ]; }; then
+          # A clean run is passed>=1 && failed==0. Anything else is a finding — including
+          # passed==0 (the walk never executed: a bad --name filter, an unregistered test,
+          # or the env var not propagating would otherwise report a false green). RC is kept
+          # only for the summary; passed==0 is a finding regardless of exit code.
+          if [ "${FAILED:-0}" != "0" ] || [ "${PASSED:-0}" = "0" ]; then
             echo "finding=1" >> "$GITHUB_OUTPUT"
           else
             echo "finding=0" >> "$GITHUB_OUTPUT"
@@ -164,7 +168,7 @@ jobs:
 
           See the job summary for the ImGui Test Engine error / assertion. This is Layer 2 of
           nightly-monkey-tester.md — a random-input UI defect (crash or Begin/End imbalance)."
-          existing=$(gh issue list --state open --label bug --search "$title in:title" \
+          existing=$(gh issue list --state open --label bug --search "\"$title\" in:title" \
                        --json number --jq '.[0].number' 2>/dev/null || true)
           if [ -n "$existing" ] && [ "$existing" != "null" ]; then
             gh issue comment "$existing" --body "Recurred: ${RUN_URL} (seed \`${SEED:-unknown}\`)" || true

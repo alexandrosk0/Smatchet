@@ -90,7 +90,10 @@ std::vector<Command> MakeCommands() {
         Command c;
         c.Name = "perf.set_budget";
         c.Category = "perf";
-        ParamSpec ms = Param("ms", ParamType::Number, false);
+        // Required + bounded Number — exercises SynthValidValue's Number branch through
+        // SynthValidRequiredArgs (regression guard for the ignored-bounds bug).
+        ParamSpec ms = Param("ms", ParamType::Number, true);
+        ms.MinInt = std::make_shared<long long>(10);
         ms.MaxInt = std::make_shared<long long>(5000);
         c.Params.push_back(ms);
         v.push_back(std::move(c));
@@ -170,6 +173,15 @@ TEST_CASE("SynthValidValue produces in-bounds, spec-respecting values") {
     std::string why;
     nlohmann::json detail = nlohmann::json::object();
     CHECK(ParamValueWithinBounds(limit, SynthValidValue(limit), why, detail) == true);
+
+    // A bounded Number must ALSO land inside its declared range — regression guard for the
+    // Number branch that previously ignored MinInt/MaxInt (always returned 1).
+    ParamSpec num = Param("ms", ParamType::Number, false);
+    num.MinInt = std::make_shared<long long>(10);
+    num.MaxInt = std::make_shared<long long>(5000);
+    why.clear();
+    detail = nlohmann::json::object();
+    CHECK(ParamValueWithinBounds(num, SynthValidValue(num), why, detail) == true);
 }
 
 TEST_CASE("BuildProbe is reproducible — a fixed seed replays an identical sequence") {
@@ -237,7 +249,12 @@ TEST_CASE("every applicable probe is a genuine pre-handler reject") {
                     CHECK(c.Destructive);
                     for (const ParamSpec& p : c.Params) {
                         if (p.Required) {
-                            CHECK(in.args.contains(p.Name)); // valid args -> the gate is the stopper
+                            REQUIRE(in.args.contains(p.Name)); // valid args -> the gate is the stopper
+                            // Every filled required arg must be VALID (in-bounds), so the
+                            // dispatch reaches the confirm gate rather than a validation error.
+                            std::string why;
+                            nlohmann::json detail = nlohmann::json::object();
+                            CHECK(ParamValueWithinBounds(p, in.args[p.Name], why, detail));
                         }
                     }
                     break;

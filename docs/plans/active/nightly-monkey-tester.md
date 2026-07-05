@@ -4,7 +4,7 @@
 >
 > **Status**: `active` — driving in-flight work. Values: `active` · `shipped` · `blocked` / `deferred`.
 >
-> **Usage**: Layer 1a (command-registry pre-handler fuzz) is the shipped slice; Layers 1b/2/3/4 are flagged follow-ups (see § Out of scope).
+> **Usage**: Layers 1a, 1b, 2, and 3 are shipped (see § Out of scope for the per-layer status); Layer 4 (AI-agent exploratory pass) is deferred pending infra + governance sign-off.
 
 ## Context
 
