@@ -455,7 +455,8 @@ ProgressRenderModel BuildProgressRenderModel(const std::string& currentValue) {
         return model;
     }
 
-    // High-performance zero-allocation fast-path scanner for typical progress JSON: {"progress":P,"total":T}
+    // High-performance zero-allocation fast-path scanner for the typical progress payload — a
+    // flat object carrying integer "progress" and "total" keys.
     const size_t progPos = trimmed.find("\"progress\"");
     const size_t totPos = trimmed.find("\"total\"");
     if (progPos != std::string::npos && totPos != std::string::npos) {
