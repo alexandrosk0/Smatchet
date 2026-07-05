@@ -62,11 +62,15 @@ mobile lanes. Unmask + block is therefore safe; only the emulator flake needed c
      Android APK / emulator smoke / ARM64 cross / WoA ×2 / C++ lint / CVE+SBOM).
    - Promote the OSV scan per its own recipe: `--fail-on HIGH` (allowlist already
      seeded: OSV-2022-126 md4c, no upstream fix).
-   - **Two deliberate step-level masks survive** (documented design, not debt):
+   - **Four deliberate step-level masks survive** (documented design, not debt):
      fuzz-smoke's stochastic fuzz step (#1301 — deterministic build/ctest still
-     red the check) and bucket-C's per-scenario golden-diff step (goldens are
+     red the check); bucket-C's per-scenario golden-diff step (goldens are
      per-developer GPU bootstraps — non-authoritative under llvmpipe; the
-     lane-integrity sentinel + `Bucket launch-smoke` carry that lane's teeth).
+     lane-integrity sentinel + `Bucket launch-smoke` carry that lane's teeth);
+     bucket-E's per-test ImGui run step (render-dependent failures under
+     llvmpipe, a good run is ~71/74; broken/passed-nothing hard-fails via the
+     unmasked lane-integrity step); cpp-lint's cppcheck step (compile-DB-free —
+     unavoidable false positives; the lint-catch-all [error] tier blocks).
 3. **Flip the poller to block-on-any-red** (`merge-gates.sh`):
    `MERGE_GATES_BLOCK_ALLOWLIST_RE="."` — every check name matches, so ANY
    non-required red **or pending** check blocks. The one exemption kept: a name
@@ -134,3 +138,26 @@ _(appended as shipped)_
   deviated (kept poller-only) because the workflow is path-filtered and a
   required-but-never-reporting check wedges unrelated PRs — recorded in the
   workflow header.
+- **Pre-ship code-review round (2026-07-05) reshaped the required-contexts set**
+  (4 HIGH findings, all applied):
+  - `Intent section` + `Plan-lock gate` NOT added to required_contexts after
+    all — ADR-0022 and plan-lock-enforcement Q7 explicitly rejected the
+    branch-protection route (the `*-out-of-band` label hatches cannot reach
+    GitHub protection, and `plan-lock-gate.yml` has no `labeled` re-trigger).
+    They block via the poller's block-on-any-red, where the hatches work.
+  - The four Mesa lanes (bucket-C / bucket-E ×2 / texture-guard) NOT added
+    either — their red mode is infra/dead-harness with a flake history; as
+    required contexts a recurrence would wedge with admin-merge as the only
+    escape (no `bucket-out-of-band` exists). Poller-blocking preserves triage
+    room. `Bucket launch-smoke` (stable, deliberately graduated) stays required.
+  - `High-integrity baseline/narrowing` NOT added — push-only jobs skip on
+    every PR (vacuously satisfied; implying protection that doesn't exist).
+  - `C++ lint` finished its deferred promotion (job-level mask dropped so the
+    lint-catch-all [error] tier has real teeth); the cppcheck step stays
+    report-only (fourth sanctioned survivor). bucket-E + texture-guard job-level
+    masks dropped (their step-level design carries the nuance).
+  - `MERGE_GATES_MAX_POLLS` default 60 → 90: the pending-hold now spans every
+    lane incl. bucket-E's 45-min cap.
+  - `pr-blocked-why.sh` fallback literal updated from the stale curated list to
+    "." (a silent source-failure no longer reverts the diagnostic to curated-era
+    semantics).

@@ -51,7 +51,10 @@ STUB
 
 # --- blocking-awareness: only a check that actually GATES merge fires RED -------
 
-@test "--once does NOT RED a non-required non-allow-listed advisory failure (noise suppressed)" {
+@test "--once does NOT RED an advisory-NAMED check failure (the block-on-any-red escape)" {
+    # Under block-on-any-red every non-required red gates EXCEPT a check whose
+    # name carries the "advisory" token (no production lane does; the fixture
+    # name below keeps the retired suffix precisely to exercise the escape).
     _stub_gh '{"state":"OPEN","labels":[],"statusCheckRollup":[{"name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS"},{"name":"C++ lint (catch-all + cppcheck, advisory)","status":"COMPLETED","conclusion":"FAILURE"}],"reviews":[{"author":{"login":"coderabbitai"},"state":"APPROVED","body":""}]}'
     run env PATH="$STUBDIR:$PATH" PR_STATUS_WATCH_REQUIRED_CONTEXTS=$'Windows + MSVC\nTest-delta gate' bash "$SCRIPT" --once 21
     [ "$status" -eq 0 ]

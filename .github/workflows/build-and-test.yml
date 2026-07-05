@@ -1011,8 +1011,10 @@ jobs:
     # 28289436753 the ui_test.run step ran 20.1m on top of the ~9.6m build and hit
     # the 30-min cap (cancelled). 45m lets all 3 retry attempts complete on the
     # software-GL slow path; stays under the ~45-50 ceiling. Coverage unchanged.
+    # No job-level continue-on-error (all-gates-blocking flip): infra steps
+    # (checkout / build / Mesa install / lane-integrity) red the check for real.
+    # The RUN step below keeps its step-level mask BY DESIGN — see its comment.
     timeout-minutes: 45
-    continue-on-error: true
 
     steps:
       - name: Checkout
@@ -1058,11 +1060,16 @@ jobs:
         with:
           target-dir: build/ninja-ui-test-msvc
 
-      # Launch-smoke moved OUT of this advisory job into the dedicated, hard-fail
-      # `Bucket launch-smoke (Mesa GL)` job (graduated 2026-06-18). bucket-E stays
-      # advisory for its flaky ImGui-Test-Engine purpose; the dead-harness boot
-      # check is now its own blocking check-run. The retry-on-collapse +
-      # lane-integrity teeth below still guard against a persistently broken lane.
+      # Launch-smoke moved OUT into the dedicated, hard-fail `Bucket launch-smoke
+      # (Mesa GL)` job (graduated 2026-06-18); the dead-harness boot check is its
+      # own blocking check-run. The RUN step below keeps a step-level
+      # continue-on-error BY DESIGN (a sanctioned survivor of the
+      # all-gates-blocking flip, like bucket-C's golden diff): under llvmpipe the
+      # ImGui-Test-Engine suite carries render-dependent per-test failures (a good
+      # run is ~71/74) plus a stochastic first-frame collapse the retry loop
+      # absorbs — per-test `status=fail` therefore informs, never gates, until the
+      # Mesa-dependent tests are fixed/skipped. The BROKEN class (passed-nothing /
+      # parse-miss / no sentinel) hard-fails via the unmasked lane-integrity step.
 
       - name: Run bucket-E ImGui Test Engine scenario
         id: run-bucket-e
@@ -1164,8 +1171,9 @@ jobs:
           echo "::notice::bucket-E used ${attempt}/${attempts} attempt(s); final status=${status} (passed=${passed} failed=${failed})."
           printf 'status=%s passed=%s failed=%s\n' "$status" "$passed" "$failed" > "$SMATCHET_LANE_STATUS_FILE"
           echo "bucket-E lane-status: $(cat "$SMATCHET_LANE_STATUS_FILE")"
-          # Stay advisory for the run itself (continue-on-error); the lane-integrity
-          # step below carries the real teeth for the broken case.
+          # The step-level mask above absorbs this exit (per-test failures inform,
+          # never gate — see the step comment); the unmasked lane-integrity step
+          # below carries the blocking teeth for the broken class.
           exit "$rc"
 
       # Lane-integrity (NOT continue-on-error): bucket-E broken-lane teeth. Reads
@@ -1228,13 +1236,14 @@ jobs:
   # ---------------------------------------------------------------------------
   # Dedicated, HARD-FAIL deterministic-backend fixture gate.
   # ---------------------------------------------------------------------------
-  # The flaky `bucket-e-ui-tests` job above is continue-on-error (advisory) for
-  # the whole ImGui-Test-Engine suite. The deterministic Jira backend fixture
-  # path (tests/ui/jira_deterministic_backend.test.cpp, driven by
-  # scripts/dev/test-ui-jira-deterministic-backend.sh) is the part we DO want to
-  # gate: a regression in the fixture-backed sync/grid path is a real product
-  # break, not a render flake. So it lives in its own job with NO job-level
-  # continue-on-error — its check-run conclusion blocks merge.
+  # The `bucket-e-ui-tests` job above masks only its RUN step (per-test Mesa
+  # render-dependent failures inform, never gate — see its comment). The
+  # deterministic Jira backend fixture path
+  # (tests/ui/jira_deterministic_backend.test.cpp, driven by
+  # scripts/dev/test-ui-jira-deterministic-backend.sh) needs stronger teeth:
+  # a regression in the fixture-backed sync/grid path is a real product
+  # break, not a render flake. So it lives in its own job with NO
+  # continue-on-error anywhere — its check-run conclusion blocks merge.
   #
   # Modeled on bucket-launch-smoke-mesa-gl (the dedicated hard gate decoupled
   # from the flaky advisory bucket jobs). Builds the ninja-ui-test-msvc exe (the
@@ -1353,24 +1362,18 @@ jobs:
 
   mobile-texture-guard-smoke:
     name: Mobile texture-guard smoke (Mesa headless GL)
-    # Issue #1133 — advisory headless gate for the #1122 dynamic-texture crash class.
-    # Builds the standalone exe with SMATCHET_ENABLE_TEXTURE_FAULT_INJECTION=ON (via the
+    # Issue #1133 — BLOCKING headless gate for the #1122 dynamic-texture crash class
+    # (graduated in the all-gates-blocking flip; the lane runs green). Builds the
+    # standalone exe with SMATCHET_ENABLE_TEXTURE_FAULT_INJECTION=ON (via the
     # ninja-ui-test-msvc preset) and drives the `mobile-texture-guard` scenario under
     # Mesa software GL: it forces the three #1122 fault states (atlas-grow orphan,
     # EGL-context-loss re-arm, rearm-disabled negative control) and asserts no SIGABRT +
     # a rendered frame after each + the shared GuardImGuiDynamicTextures recovery log.
-    # Advisory (continue-on-error) because it is a new exe-running Mesa-software-GL lane
-    # (same risk class as bucket-C/E), BUT it carries a NON-advisory launch-smoke first so
-    # it can never green-wash a dead harness (the bucket-lane-launch-smoke discipline).
-    #
-    # SEQUENCING NOTE (#1133): this lane is only honest once the in-flight CI gate-hardening
-    # PR's `bucket-lane-launch-smoke` lands (non-continue-on-error launch step + the driver's
-    # `Passed==0 && Failed>0` hard-exit). The launch-smoke step below is the SAME mechanism;
-    # the two compose once both merge. We do NOT block on it — ship; it composes on merge.
+    # The scenario step is deterministic forced-fault injection (not a golden diff)
+    # and is unmasked; a red here is a real texture-guard regression.
     needs: windows-msvc
     runs-on: windows-2022
     timeout-minutes: 30
-    continue-on-error: true
 
     steps:
       - name: Checkout
@@ -1471,11 +1474,12 @@ jobs:
   # This is the graduated, BLOCKING form of the dead-harness smoke that used to
   # live as an advisory STEP inside the continue-on-error bucket-C / bucket-E /
   # mobile-texture-guard jobs (infra.md `bucket-mesa-exe-boot` P1). It exists as
-  # its OWN job — with a stable, allow-list-matchable check-run name — so the
-  # merge-gate can block on "the provisioned exe cannot boot under Mesa GL"
-  # WITHOUT re-coupling to the flaky screenshot-diff / UI-test runs those bucket
-  # jobs also carry. Those bucket jobs STAY advisory (continue-on-error) for
-  # their flaky-rendering purpose; THIS job is the blocking dead-harness gate.
+  # its OWN job — with a stable check-run name — so the merge-gate can block on
+  # "the provisioned exe cannot boot under Mesa GL" WITHOUT re-coupling to the
+  # render-dependent screenshot-diff / per-test UI runs those bucket jobs also
+  # carry. Post-flip, the bucket jobs block too (block-on-any-red); only their
+  # golden-diff / per-test RUN steps stay masked (see each job's comment) —
+  # THIS job remains the dedicated dead-harness gate.
   #
   # Graduated 2026-06-18 after #1370 fixed the `--spawn` teardown exit-code bug:
   # the launch-smoke step has been reliably `success` across the last 6 runs, so
@@ -2335,18 +2339,19 @@ jobs:
     #      weight here; clang-tidy stays cppcheck-primary per .clang-tidy (only 3
     #      dead-code checks enabled) and is intentionally NOT run in this job.
     #
-    # ADVISORY (continue-on-error: true) — NOT a required branch-protection check
-    # and NOT on the merge-gate poller's meant-to-block allow-list. The current
-    # tree carries pre-existing catch/cppcheck debt that would wedge develop if
-    # this blocked; keeping it advisory first surfaces findings without breaking
-    # the ship-line. Promote to blocking (drop continue-on-error) in a follow-up
-    # once the standing debt is burned down. Gates on `changes.code` so docs-only
+    # BLOCKING (all-gates-blocking flip — the follow-up promotion the old header
+    # deferred): the job-level continue-on-error is gone, so the lint-catch-all
+    # `[error]` tier (unmarked empty catch(...) bodies — Pillar-3) reds the check
+    # and gates the merge; the check is also on branch_protection.required_contexts.
+    # The cppcheck STEP below stays report-only BY DESIGN (a sanctioned step-level
+    # survivor like fuzz-smoke's stochastic step): compile-DB-free cppcheck over a
+    # bare diff file list has unavoidable false positives (no include paths), so
+    # its findings inform rather than gate. Gates on `changes.code` so docs-only
     # PRs skip it; diffs against origin/develop so only NEW C++ is scanned.
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    continue-on-error: true
     permissions:
       contents: read
     steps:
@@ -2444,11 +2449,12 @@ jobs:
             echo "cppcheck: no first-party C++ in diff; skipping"
             exit 0
           fi
-          # --error-exitcode=0 keeps this STEP from hard-failing on findings (the
-          # job is advisory via continue-on-error, but we also want the findings
-          # printed rather than swallowed). The job-level continue-on-error is the
-          # real advisory switch; flip --error-exitcode=2 + drop continue-on-error
-          # to promote to blocking later.
+          # --error-exitcode=0 keeps this STEP report-only BY DESIGN (sanctioned
+          # step-level survivor of the all-gates-blocking flip): compile-DB-free
+          # cppcheck over a bare diff file list lacks include paths and carries
+          # unavoidable false positives, so its findings inform, never gate. The
+          # JOB blocks via the lint-catch-all [error] tier above. Flip
+          # --error-exitcode=2 only with a compile-DB-backed invocation.
           cppcheck \
             --enable=warning,performance,portability \
             --inline-suppr \

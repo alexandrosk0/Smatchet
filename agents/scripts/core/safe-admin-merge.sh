@@ -14,10 +14,10 @@
 # asserted in prose, not enforced by an exit code.
 #
 # (Historical note: `Bucket-*` was DROPPED from $MERGE_GATES_BLOCK_ALLOWLIST_RE
-# on 2026-06-15 — the Mesa-software-GL bucket-C/E lanes cannot boot the CI exe
-# (infra.md `bucket-mesa-exe-boot` P1), so a RED bucket lane no longer gates
-# this guard. The #1180 escape above predates that flip; re-add when the lane
-# graduates back to hard-fail.)
+# on 2026-06-15 while the Mesa-GL lanes could not boot the CI exe; the
+# all-gates-blocking flip re-armed it — the constant is now "." (every
+# non-advisory-named check gates), so a RED bucket lane blocks this guard
+# again, exactly the teeth the #1180 escape needed.)
 #
 # This guard makes the green assertion an EXIT CODE, not text:
 #   * reads the head's statusCheckRollup (`gh pr view --json statusCheckRollup`)
@@ -32,13 +32,14 @@
 #
 # A check BLOCKS the admin-merge when BOTH:
 #   (1) it is gating — REQUIRED (name ∈ branch_protection.required_contexts) OR
-#       allow-listed (name matches $MERGE_GATES_BLOCK_ALLOWLIST_RE, non-advisory)
+#       in the blocking scope (name matches $MERGE_GATES_BLOCK_ALLOWLIST_RE —
+#       "." post-flip, i.e. every name — AND does not contain "advisory")
 #   (2) it is non-green — a CheckRun that is not COMPLETED, or whose conclusion
 #       is not in {SUCCESS, NEUTRAL, SKIPPED}; or a StatusContext whose state is
 #       not SUCCESS. (Pending counts as non-green: a stale-BLOCKED-green PR has
 #       no pending gating checks left.)
-# A non-gating red (e.g. an advisory check, or a non-required non-allow-listed
-# one) does NOT block — mirroring the merge-gates $failing contract exactly.
+# The only non-gating red left is an advisory-NAMED check — mirroring the
+# merge-gates $failing contract exactly.
 #
 # CodeRabbit-completion gate (added 2026-06-17 — the #1332 "Review failed:
 # Pull request was closed or merged during review" race): a CI-green PR can be
