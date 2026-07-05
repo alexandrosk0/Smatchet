@@ -6,6 +6,17 @@
 
 **Coverage:** 625 first-party C++ files / ~130K LOC, partitioned into 41 LOC-balanced chunks.
 
+> ## ✅ Remediation status — REMEDIATED (verified 2026-07-05)
+>
+> **All 33 findings are fixed in the current tree.** Remediation landed via **PR #1566** ("C++ security hardening — remediate SECURITY_AUDIT.md", all six slices) plus follow-ups **#1574 / #1578 / #1581** (spawn-path + screenshot-confinement fixups), **#1592 / #1598** (additional untrusted-JSON bounding in the Linear/GitHub/Jira clients), tracked in [`docs/plans/shipped/cpp-security-hardening.md`](docs/plans/shipped/cpp-security-hardening.md). Verified against current source on 2026-07-05:
+> - **Untrusted-ingress DoS class (25 findings):** every cited network/file `nlohmann::json::parse` site now routes through `smatchet::json_safe::ParseBounded`; recursive ADF/field-value walkers carry a depth-256 cap. Slice 6 over-delivered — the `bare-json-parse-untrusted` lint is now **blocking, repo-wide default-deny** (`agents/scripts/project/test-lint-rules.sh`), so regressions are gated in CI.
+> - **Path-traversal / arbitrary-write (F2/F3/F19 etc.):** MCP file-touching commands (`whisper.transcribe-once --file`, `perf.dump`, `scenario.run`, `ui_test.run`, screenshots) confined via the shared `ConfinePathUnderSubdir` (`Source/Core/include/Commands/PathConfinement.h`); `localtime`/`strftime` results null-checked.
+> - **MCP authorization (F30):** `McpRequireTokenOnLoopback` config knob defaults **ON** — tokenless loopback is denied.
+> - **Format-string (F1):** the locale override is specifier-validated against the trusted English source before reaching `vsnprintf`.
+> - **Lua→JSON OOM (F20), integer-overflow (F17/F18), null-deref (F14), POSIX config 64 MiB cap (F33):** all guarded.
+>
+> **The per-finding "Verification (independent re-check)" lines below are the original *audit-time* skeptic re-checks (confirmed / partially-confirmed / refuted), NOT remediation status** — every finding was independently confirmed a real defect at audit time and has since been fixed. No finding remains open.
+
 ## Methodology
 
 Agentic deep search executed as a deterministic multi-agent workflow, then independently re-verified:

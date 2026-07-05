@@ -2,7 +2,7 @@
 
 > **Slug**: `cpp-code-audit-remediation`
 >
-> **Status**: `active`
+> **Status**: `shipped`
 >
 > **Source**: [`CPP_CODE_AUDIT.md`](../../../CPP_CODE_AUDIT.md) — 33 findings (High: 1, Medium: 8, Low: 24), complementary to the already-remediated `SECURITY_AUDIT.md` sweep ([`cpp-security-hardening.md`](../cpp-security-hardening.md) — see that plan for the prior JSON-DoS/MCP-auth campaign). Audit PR: alexandrosk0/Smatchet#1586.
 

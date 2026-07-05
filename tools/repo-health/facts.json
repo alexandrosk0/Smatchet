@@ -8,7 +8,7 @@
   "audit_resolved": {
     "fixed": 31,
     "accepted": 2,
-    "_note": "CPP_CODE_AUDIT.md remediation (docs/plans/active/cpp-code-audit-remediation.md): 31 findings fixed, 2 accepted as documented deviations (#21 DictationInsertionRouter latent risk, #26 SubprocessCapture fork-safety half)."
+    "_note": "CPP_CODE_AUDIT.md remediation (docs/plans/shipped/cpp-code-audit-remediation.md): 31 findings fixed, 2 accepted as documented deviations (#21 DictationInsertionRouter latent risk, #26 SubprocessCapture fork-safety half)."
   },
 
   "campaign": [

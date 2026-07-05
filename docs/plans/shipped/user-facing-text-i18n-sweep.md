@@ -2,7 +2,7 @@
 
 > **Slug**: `user-facing-text-i18n-sweep`
 >
-> **Status**: `active`
+> **Status**: `shipped`
 
 ## Context
 

@@ -2,7 +2,7 @@
 
 > **Slug**: `coverage-gap-tier3-command-contract`
 >
-> **Status**: `active`
+> **Status**: `shipped`
 
 ## Context
 
@@ -71,13 +71,13 @@ N/A — additive scenario + driver; nothing is split.
 - Gap-map Tier 2 (backend HTTP shells — owned by the B2 migration track) and Tier 5 (bucket-C/E re-blocking — a merge-gates policy change for the user to authorize).
 
 ## Implementation log
-*(populated post-ship)*
+- Shipped as **PR #1618** (`0f6a505`, "test(commands): registry-wide command error-envelope contract sweep (gap map Tier 3)"). All four planned files landed as designed: `Source/Core/src/Commands/Scenarios/CommandContractSweepScenario.cpp` (the mutation-free sweep with probes A–D), the `RegisterFactory("command-contract-sweep", …)` line in `SmatchetScenarioRegistry.cpp`, the linker stub + snapshot-name pin in `tests/Core/SmatchetScenarioRegistry.{stubs,test}.cpp`, and the auto-enrolled `scripts/dev/test-command-contract.sh` driver.
 
 ## Deviations from plan
-*(populated post-ship)*
+- None material. The scenario runs in the scenario/bats lane rather than compiling the 24 `BuiltinCommands_*` handler TUs into `SmatchetTests`, so the gap-map TU-membership metric is unchanged (documented in `TEST_COVERAGE_GAP_MAP.md` § Tier 3) — the sweep proves the guard-order/error-envelope contract end-to-end, which is what the plan scoped.
 
 ## Verification (actual)
-*(populated post-ship)*
+- `SmatchetScenarioRegistry.test.cpp` snapshot pins `command-contract-sweep` (the lock-step name contract). Build + driver run gated in CI on PR #1618; auto-enrolled in `test-all.sh`, self-skips without a built exe.
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-Flip § Status to `shipped`, populate the three sections above, `git mv` to `docs/plans/shipped/` in the same PR.
+## Archive
+Shipped and archived to `docs/plans/shipped/` on 2026-07-05 (Status flipped to `shipped`).

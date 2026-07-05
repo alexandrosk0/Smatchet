@@ -2,7 +2,7 @@
 
 > **Slug**: `cpp-security-hardening`
 >
-> **Status**: `active`
+> **Status**: `shipped`
 >
 > **Source**: [`SECURITY_AUDIT.md`](../../../SECURITY_AUDIT.md) — 33 findings (15 Medium / 17 Low / 1 Info), 0 refuted on independent re-verification. Audit PR: alexandrosk0/Smatchet#1565.
 

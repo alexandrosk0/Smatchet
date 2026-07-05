@@ -8,7 +8,7 @@
 ## Problem
 
 PR #1566 (`32392e32`, "fix(security): C++ security hardening", merged
-2026-06-27 09:47Z — Slice 5 of [`cpp-security-hardening.md`](cpp-security-hardening.md))
+2026-06-27 09:47Z — Slice 5 of [`cpp-security-hardening.md`](../shipped/cpp-security-hardening.md))
 flipped `McpRequireTokenOnLoopback` default `false → true`.
 
 This breaks the `--spawn` MCP handshake. The spawn **parent**'s
