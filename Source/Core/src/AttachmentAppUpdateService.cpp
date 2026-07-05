@@ -532,8 +532,33 @@ AppUpdateInfo AttachmentAppUpdateService::CheckForAppUpdate(bool includePrerelea
     const std::string url = "https://api.github.com/repos/" + repo + "/releases?per_page=10";
     cpr::Header headers{{"Accept", "application/vnd.github+json"},
                         {"User-Agent", "SmatchetUpdater/" + out.CurrentVersion}};
-    cpr::Response response =
-        cpr::Get(cpr::Url{url}, headers, cpr::Redirect{true, true}, cpr::ConnectTimeout{5000}, cpr::Timeout{15000});
+
+    // Bound the response body before it is buffered: a hostile / misconfigured endpoint could
+    // otherwise stream an unbounded body straight into memory (OOM) before ParseBounded ever
+    // runs. Abort the transfer once the cap is exceeded (mirrors the capped download at :155 and
+    // the Tracker attachment proxy in McpPlugin.cpp).
+    // SMATCHET_DEVIATION(rule=duplication; reason=capped cpr::WriteCallback body-writer is deliberately
+    // inlined per download site so each cap and error string stays local and tunable, per ADR-0015,
+    // rather than folded into a shared helper; owner=security-audit; revisit=2026-09-30)
+    constexpr size_t kMaxUpdateCheckBytes = 8u * 1024u * 1024u;
+    bool sizeExceeded = false;
+    std::string bodyAccum;
+    bodyAccum.reserve(64 * 1024);
+    cpr::WriteCallback writeCb{[&](std::string data, intptr_t) -> bool {
+        if (bodyAccum.size() + data.size() > kMaxUpdateCheckBytes) {
+            sizeExceeded = true;
+            return false;
+        }
+        bodyAccum.append(data);
+        return true;
+    }};
+
+    cpr::Response response = cpr::Get(cpr::Url{url}, headers, cpr::Redirect{true, true}, writeCb,
+                                      cpr::ConnectTimeout{5000}, cpr::Timeout{15000});
+    if (sizeExceeded) {
+        out.Error = "Update check failed: GitHub response exceeds the maximum allowed size.";
+        return out;
+    }
     if (response.error.code != cpr::ErrorCode::OK) {
         out.Error = "Update check failed: " + response.error.message;
         return out;
@@ -547,7 +572,7 @@ AppUpdateInfo AttachmentAppUpdateService::CheckForAppUpdate(bool includePrerelea
     // depth/node-bounded helper so a hostile / oversized body can't crash the process.
     // ParseBounded never throws; failure is a non-empty parseErr (stable, input-free).
     std::string parseErr;
-    nlohmann::json releases = smatchet::json_safe::ParseBounded(response.text, parseErr);
+    nlohmann::json releases = smatchet::json_safe::ParseBounded(bodyAccum, parseErr);
     if (!parseErr.empty()) {
         out.Error = std::string("Update check failed to parse GitHub response: ") + parseErr;
         return out;
