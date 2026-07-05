@@ -40,7 +40,7 @@
 | B2 TrackerHttpClient migration | 🟡 PARTIAL | `ClassifyTrackerResponse` used in only ~3 files/7 sites; `IsTrackerTransportErrorText` still spans ~14 files (see N12). 2B–2E not complete. |
 | B3 ITrackerClient split | ✅ RESOLVED (exceeded) | `ITrackerClient` gone; replaced by `ITrackerBackend` composing 6 role interfaces (`ITrackerIssueReader`/`Connectivity`/`FieldCatalog`/`IssueMutations`/`Collaboration`/`Activity`). "Unsupported default-impl" pattern removed. |
 | B4 Plane FetchIssuesForKeys | ✅ RESOLVED | Early-exit pagination in `Tracker/PlaneIssueSearch.cpp` stops once all keys matched. Server-side `sequence_id__in` filter is the remaining B4-v2 follow-up. |
-| B5 Markdown table-cell flatten | ⏳ OPEN | `MarkdownCellPlainInner` still flattens rich content (`Ui/MarkdownConvert.cpp`). |
+| B5 Markdown table-cell flatten | 🟡 IMPROVED | `MarkdownCellPlainInner` now joins cell blocks with `<br>` (GFM in-cell line break) and preserves list items instead of running paragraphs together / dropping lists. First ADF→Markdown table golden tests added. Deeper fidelity (code blocks, nested lists/tables in a cell) still deferred to RICH_TEXT_EDITING_V2. |
 | C1 Retry-after-400 dup | ✅ RESOLVED | Consolidated into `FieldEditPipelineService::ApplyFieldUpdateWithEditMetaRetry`; both submit paths route through it. |
 | C4 Plane customs dropped | ⏳ OPEN | `PlaneIssueMutation.cpp` `BuildCreatePayload` still ignores its `catalog` param; UUID custom props never emitted under `properties.<uuid>`. |
 | C5 FileIo extraction | 🟡 PARTIAL | No `FileIo.{h,cpp}`. `AtomicWriteTextFile` promoted to a public `ConfigManager` static (shared by 4 callers); `ScopedFileLock` still confined to `ConfigManager_Internal.h`. |
@@ -56,7 +56,7 @@
 | N12 IsTrackerTransportErrorText | ⏳ OPEN | Still defined + used across ~14 files, shadowing `ClassifyTrackerResponse` (blocked on B2). |
 | N13 TryGetMcpStatusSnapshot | ⏳ OPEN (acceptable) | Still a gated virtual on `IPlugin`; no capability-tag system. As the doc itself said, acceptable today. |
 
-**Still genuinely open after this pass:** B5, C4, C6, N12 (+ N13 acceptable, B2/C5/N4 partial). A4 (graceful half) and N3 were closed 2026-07-05. Everything else on the A/B/C/N carry-over list is resolved. Items already ✅ in the doc (N2, C2, C7, N7, N11, N14) re-verified still true.
+**Still genuinely open after this pass:** C4, C6, N12 (+ N13 acceptable, B2/B5/C5/N4 partial). A4 (graceful half) and N3 were closed 2026-07-05; B5 improved (multi-paragraph + list preservation) with fuller rich-cell fidelity deferred. Everything else on the A/B/C/N carry-over list is resolved. Items already ✅ in the doc (N2, C2, C7, N7, N11, N14) re-verified still true.
 
 ---
 
@@ -117,7 +117,8 @@ Phase 2A landed (PR #39) — helper + `PlaneClient::ProbeReachability`. **One** 
 ### B4. `PlaneClient::FetchIssuesForKeys` O(N×total) (item 23) — ✅ RESOLVED (2026-07-05; server-side filter = B4-v2 follow-up)
 `PlaneIssueSearch.cpp:556` (file split from `PlaneClient.cpp`) still pulled every page then filtered in memory. Early-exit pagination now stops fetching once every requested key has been matched — cuts the hot prefetch-open-links path from `O(total)` to `O(pages_until_keys_found)`. Server-side `sequence_id__in` filter would be the next win (requires `FetchIssuesStreamed` URL-builder rework); leave as B4-v2 follow-up.
 
-### B5. Markdown table-cell rich content lost on ADF→Markdown (item 28)
+### B5. Markdown table-cell rich content lost on ADF→Markdown (item 28) — 🟡 IMPROVED (2026-07-05)
+> `MarkdownCellPlainInner` (`Source/Core/src/Ui/MarkdownConvert.cpp`) now collects each cell block's inline text and joins blocks with an HTML `<br>` (GFM's single-line-cell line break), and represents `bulletList`/`orderedList` items with markers — so multiple paragraphs and lists survive instead of being merged into one run or silently dropped. Added the first ADF→Markdown table golden tests (`tests/Core/MarkdownConvertAdf.test.cpp`). Remaining (deferred to RICH_TEXT_EDITING_V2, needs full round-trip golden coverage): code blocks, nested lists, and nested tables inside a cell — GFM can't hold true block content in a cell, so those need a design decision on representation.
 `MarkdownConvert.cpp` `MarkdownCellPlainInner` flattens. Tracked partly in `RICH_TEXT_EDITING_V2_REMAINING.md`; promote to its own ticket once round-trip golden tests land.
 
 ---

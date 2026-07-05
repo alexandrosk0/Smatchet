@@ -293,3 +293,61 @@ TEST_CASE("MarkdownToAdf: attachment image keeps mediaInline with type=file") {
     CHECK((*media)["attrs"].value("id", std::string()) == "abc-123");
     CHECK((*media)["attrs"].value("alt", std::string()) == "Screenshot");
 }
+
+// BACKLOG B5 — table cells used to emit only first-level paragraphs, running multiple paragraphs
+// together and silently dropping lists. They now join blocks with <br> and represent list items.
+namespace {
+json AdfCell(const std::string& type, json content) {
+    json c;
+    c["type"] = type; // "tableCell" or "tableHeader"
+    c["content"] = std::move(content);
+    return c;
+}
+json AdfRow(json cells) {
+    json r;
+    r["type"] = "tableRow";
+    r["content"] = std::move(cells);
+    return r;
+}
+json AdfTable(json rows) {
+    json t;
+    t["type"] = "table";
+    t["content"] = std::move(rows);
+    return t;
+}
+json AdfListItemPara(const std::string& text) {
+    json li;
+    li["type"] = "listItem";
+    li["content"] = json::array({AdfPara(json::array({AdfText(text)}))});
+    return li;
+}
+} // namespace
+
+TEST_CASE("AdfToMarkdown: table cell with multiple paragraphs joins with <br> (BACKLOG B5)") {
+    json cell = AdfCell(
+        "tableCell", json::array({AdfPara(json::array({AdfText("line1")})), AdfPara(json::array({AdfText("line2")}))}));
+    const json table = AdfTable(json::array({AdfRow(json::array({cell}))}));
+    CHECK(Adf2Md(AdfDoc(json::array({table}))) == "| line1<br>line2 |\n| --- |");
+}
+
+TEST_CASE("AdfToMarkdown: table cell with a bulletList preserves items instead of dropping (BACKLOG B5)") {
+    json list;
+    list["type"] = "bulletList";
+    list["content"] = json::array({AdfListItemPara("a"), AdfListItemPara("b")});
+    json cell = AdfCell("tableCell", json::array({list}));
+    const json table = AdfTable(json::array({AdfRow(json::array({cell}))}));
+    CHECK(Adf2Md(AdfDoc(json::array({table}))) == "| - a<br>- b |\n| --- |");
+}
+
+TEST_CASE("AdfToMarkdown: table header + rich body row (BACKLOG B5)") {
+    json h1 = AdfCell("tableHeader", json::array({AdfPara(json::array({AdfText("Name")}))}));
+    json h2 = AdfCell("tableHeader", json::array({AdfPara(json::array({AdfText("Detail")}))}));
+    json body1 = AdfCell("tableCell",
+                         json::array({AdfPara(json::array({AdfText("l1")})), AdfPara(json::array({AdfText("l2")}))}));
+    json list;
+    list["type"] = "bulletList";
+    list["content"] = json::array({AdfListItemPara("x")});
+    json body2 = AdfCell("tableCell", json::array({list}));
+    const json table = AdfTable(json::array({AdfRow(json::array({h1, h2})), AdfRow(json::array({body1, body2}))}));
+    CHECK(Adf2Md(AdfDoc(json::array({table}))) == "| Name | Detail |\n| --- | --- |\n| l1<br>l2 | - x |");
+}
