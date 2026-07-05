@@ -435,7 +435,7 @@ Build with the arm64 ABI present (full both-ABI build, or `-Pandroid.injected.bu
 - **Name:** `Mobile — Android NDK arm64-v8a (.so configure+link)`
 - **Runner:** `ubuntu-latest` · **timeout:** 45 min · **permissions:** `contents: read`
 - **Gating:** `needs: changes` and runs only when `needs.changes.outputs.code == 'true'`. The change-detector treats `*.md`, `docs/*`, `agents/*`, etc. as docs-class (no build); a `Source/Mobile/**` change hits the catch-all and sets `code=true`, so this job runs. (An empty/failed diff defaults `code=true`, fail-safe.)
-- **Advisory:** **not** on the `develop` merge-gate.
+- **Blocking:** a branch-protection required context on `develop` + poller-blocked under block-on-any-red (see § Mobile CI jobs below).
 
 **Pins (env):**
 

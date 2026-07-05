@@ -72,7 +72,7 @@
 #   ORCH_USER                    — orchestrator GitHub login (required)
 #   MERGE_GATES_POLL_INTERVAL    — seconds between polls (default 60)
 #   MERGE_GATES_MAX_POLLS        — max poll count (default 90; raised from 60 at the all-gates-blocking flip — the pending-hold now spans every lane incl. the 45-min bucket-E cap)
-#   MERGE_GATES_TIMEOUT_SECONDS  — wall-clock budget (default 3600)
+#   MERGE_GATES_TIMEOUT_SECONDS  — wall-clock budget (default derives from MAX_POLLS x POLL_INTERVAL, i.e. 5400 at the 90x60 defaults, so the two knobs can't cap each other)
 #   MERGE_GATES_QUERY_FILE       — override GraphQL document path
 #   MERGE_GATES_FLIP_READY       — when "true", flip PR ready-for-review at
 #                                  poll start (authorized-merge callers only)
@@ -297,7 +297,11 @@ poll_merge_gates() {
     # slowest (bucket-E, 45-min job cap + runner queue time) could overrun the
     # old 60-min budget and fire a spurious GATES_TIMEOUT on a healthy PR.
     local MAX_POLLS="${MERGE_GATES_MAX_POLLS:-90}"
-    local TIMEOUT_SECONDS="${MERGE_GATES_TIMEOUT_SECONDS:-3600}"
+    # Default timeout DERIVES from the poll budget (poll count x interval) so the
+    # two knobs cannot silently cap each other — a fixed 3600 while MAX_POLLS grew
+    # to 90 kept firing GATES_TIMEOUT at ~60 polls anyway (CR finding on the
+    # all-gates-blocking flip). An explicit MERGE_GATES_TIMEOUT_SECONDS still wins.
+    local TIMEOUT_SECONDS="${MERGE_GATES_TIMEOUT_SECONDS:-$(( MAX_POLLS * POLL_INTERVAL ))}"
     local QUERY_FILE="${MERGE_GATES_QUERY_FILE:-$DEFAULT_QUERY_FILE}"
     # When CR state is STALE_WITH_FINDINGS / STALE_UNKNOWN on the same HEAD for
     # this many consecutive polls, post `@coderabbitai review` once per HEAD to
