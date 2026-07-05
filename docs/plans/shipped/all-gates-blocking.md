@@ -1,7 +1,7 @@
 # All gates blocking — flip every CI test gate to merge-blocking + fix the reds
 
 > **Slug**: `all-gates-blocking`
-> **Status**: `active`
+> **Status**: `shipped`
 > **Created**: 2026-07-05 · **Owner**: orchestrator (merge-gates + CI workflows)
 > <!-- index-summary: Retire the curated meant-to-block allow-list: the poller blocks on ANY red/pending check; every advisory lane unmasked + renamed; the two genuine reds (emulator boot-race, httplib zstd) fixed; required-contexts set extended for native auto-merge parity. -->
 

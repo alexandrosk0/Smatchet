@@ -1,8 +1,8 @@
 # Smatchet — `Source/Core` Test-Coverage Gap Map
 
-**Date:** 2026-07-02
+**Date:** 2026-07-02 · **numbers recomputed 2026-07-05**
 **Branch:** `claude/fable-5-codebase-improvements-l90taa`
-**Scope:** All 297 first-party `.cpp` translation units under `Source/Core/src/` (~99.3K LOC). Headers, `Source/Plugins`, `Source/Standalone`, `Source/Mobile`, and vendored `ThirdParty/` are out of scope (plugins have their own suites under `tests/Plugins/`).
+**Scope:** All first-party `.cpp` translation units under `Source/Core/src/` — **304** TUs / **~100.8K LOC** as of 2026-07-05 (was 297 / ~99.3K on 2026-07-02; the +7 are the new Tier-1 pure-seam TUs, all immediately tested). Headers, `Source/Plugins`, `Source/Standalone`, `Source/Mobile`, and vendored `ThirdParty/` are out of scope (plugins have their own suites under `tests/Plugins/`).
 **Companions:** [`CPP_CODE_AUDIT.md`](CPP_CODE_AUDIT.md) (2026-07-01), [`SECURITY_AUDIT.md`](SECURITY_AUDIT.md) (2026-06-26), [`backlog/BACKLOG_CODE_REVIEW.md`](backlog/BACKLOG_CODE_REVIEW.md), [`backlog/MANUAL_TEST_QUEUE.md`](backlog/MANUAL_TEST_QUEUE.md).
 
 ## Method (and why TU membership is ground truth here)
@@ -13,11 +13,14 @@ Granularity caveat: "TU is compiled into a test target" does not mean "TU is wel
 
 ## Headline numbers
 
-| Metric | Value |
-|---|---|
-| Core TUs compiled into ≥1 test target | **137 / 297 (46%)** |
-| Core src LOC compiled into ≥1 test target | **40.4K / 99.3K (41%)** |
-| Stale CMake test references (phantom TUs) | 0 |
+| Metric | Value (2026-07-05) | (was 2026-07-02) |
+|---|---|---|
+| Core TUs compiled into ≥1 test target | **144 / 304 (47%)** | 137 / 297 (46%) |
+| Core src LOC compiled into ≥1 test target | **~42.7K / 100.8K (42%)** | 40.4K / 99.3K (41%) |
+| Untested TUs | **160** | 160 |
+| Stale CMake test references (phantom TUs) | 0 | 0 |
+
+> The untested-TU backlog is still **160**: the 7 new Tier-1 seam TUs are both new TUs and immediately tested, so numerator and denominator each moved +7 while the untested set held. Their parent shells (`TrackerGridFieldDisplay.cpp`, `TrackerDateTimeFieldEditor.cpp`, `JqlSuggestEngine.cpp`, `SmatchetMergeWatchNotifyServer.cpp`, `AiPrefsTestConnection.cpp`, …) remain untested by design — the pure logic was extracted out of them.
 
 ## The structural blind spot: untested TUs are invisible to every coverage gate
 
@@ -27,7 +30,7 @@ The three coverage gates are all denominator-blind to unlinked code:
 2. **Per-file ≥90% gate** (`coverage-perfile-gate.sh`): pins exactly 4 named units (`AiEndpointSanitize`, `AiErrorRedact`, `JqlEscape`, `TrackerHttpPure`) and deliberately fails-open on units absent from the XML.
 3. **Delta gate** (`coverage-delta-gate.sh`): requires a test-file delta when `Source/Core/src` changes — it stops *new* untested surface but never drains the existing 160-TU backlog.
 
-Additionally, the bucket-C/E scenario lanes (the intended coverage story for the UI draw layer and the 30 `Commands/Scenarios/*` TUs) were **dropped from the blocking check set on 2026-06-15** because the Mesa-GL CI runner couldn't boot the exe (`AGENTS.md` § Merge gates). *Update 2026-07-05:* the lanes boot and pass again on PR CI (observed green across launch-smoke, Bucket-C screenshot diff, Bucket-E UI tests, and the Jira fixture-backend lane) — the remaining step is restoring them to the meant-to-block allow-list, at which point 28.5K LOC of UI draw code and the 22 pending V-series manual smokes regain an automated gate.
+Additionally, the bucket-C/E scenario lanes (the intended coverage story for the UI draw layer and the 30 `Commands/Scenarios/*` TUs) were **dropped from the blocking check set on 2026-06-15** because the Mesa-GL CI runner couldn't boot the exe (`AGENTS.md` § Merge gates). *Resolved 2026-07-05:* the lanes boot and pass again, and **PR #1619 (`05f1f2f`, "block-on-any-red") retired the curated meant-to-block allow-list entirely** — `agents/scripts/core/merge-gates.sh` now sets `MERGE_GATES_BLOCK_ALLOWLIST_RE="."`, so every red/pending CI check (including the bucket-C/E launch-smoke + lane-integrity teeth) gates the merge. The 28.5K LOC of UI draw code and the pending V-series manual smokes have an automated gate again. (Only the stochastic golden-diff / per-test Mesa *steps* remain step-level advisory by design.)
 
 ## Where the 160 untested TUs are (by category)
 
@@ -43,7 +46,7 @@ The codebase has a healthy, consistently-applied pattern: extract pure logic int
 
 ## Tier 1 — high-risk uncovered logic (do these first)
 
-> **Campaign status (2026-07-05, PRs #1604 / #1607 / #1609 / #1616):** rows #1–#6 and #8 are DONE — each extracted behind a tested pure seam (`TicketGridDurationSortPure`, `TicketFieldEditorLongTextPure` seed/commit, `TrackerGridFieldDisplayPure`, `TrackerDateTimePure` picker/commit, `JqlSuggestEnginePure` + `PlaneQuerySuggestEnginePure`, `MergeWatchNotifyPure`, `AiPrefsTestConnectionPure`). Rows #7/#9/#10 were assessed and closed without extraction: their decision logic already lives in tested units (`BugReportBody`, `CacheEvictionPolicy`/`IconDimensionsPolicy`/`ImageDimensionsPure`, `FieldEditPipelineService`/`OfflineQueueService`/`IssueDraftHelpers`); the residue is AppController/ImGui glue covered by the Tier-4 service-extraction track. Plan doc: `docs/plans/coverage-gap-tier1-pure-extractions.md`. The per-file ≥90% ratchet additions (sequencing step 6) remain deferred until CI publishes measured rates for the new units.
+> **Campaign status (2026-07-05, PRs #1604 / #1607 / #1609 / #1616):** rows #1–#6 and #8 are DONE — each extracted behind a tested pure seam (`TicketGridDurationSortPure`, `TicketFieldEditorLongTextPure` seed/commit, `TrackerGridFieldDisplayPure`, `TrackerDateTimePure` picker/commit, `JqlSuggestEnginePure` + `PlaneQuerySuggestEnginePure`, `MergeWatchNotifyPure`, `AiPrefsTestConnectionPure`). Rows #7/#9/#10 were assessed and closed without extraction: their decision logic already lives in tested units (`BugReportBody`, `CacheEvictionPolicy`/`IconDimensionsPolicy`/`ImageDimensionsPure`, `FieldEditPipelineService`/`OfflineQueueService`/`IssueDraftHelpers`); the residue is AppController/ImGui glue covered by the Tier-4 service-extraction track. **Campaign closed 2026-07-05 (PR #1617)**; plan doc archived to [`docs/plans/shipped/coverage-gap-tier1-pure-extractions.md`](docs/plans/shipped/coverage-gap-tier1-pure-extractions.md). The per-file ≥90% ratchet additions (sequencing step 6) remain deferred until CI publishes measured rates for the new units.
 
 
 Ranked by (audit findings × ingress exposure × LOC). Every file below has **zero** automated test compilation today.
@@ -69,7 +72,7 @@ The mapping/JQL-translation halves of all three backends are well covered (`*Map
 
 ## Tier 3 — Commands strict zone (24 TUs, 4.6K LOC)
 
-`Commands/` is a strict lint zone and the single registry feeding four frontends (CLI, palette, MCP, Lua), yet no `Builtin/BuiltinCommands_*.cpp` handler TU is compiled into a test target (registry plumbing — `CommandRegistry`, `Command`, `FuzzyMatch`, `PaneCommands_detail` — is tested; MCP dispatch is tested on the plugin side). One table-driven harness that registers all builtins against the fixture backend and invokes each command with (a) valid args, (b) missing/extra args, (c) wrong-typed args would cover the 4.6K LOC in one PR and de-risk backlog item **N6** (splitting `BuiltinCommands.cpp` — already partially done) plus the `ui-request-flag-off-thread` race class the lint gate exists for.
+`Commands/` is a strict lint zone and the single registry feeding four frontends (CLI, palette, MCP, Lua), yet no `Builtin/BuiltinCommands_*.cpp` handler TU is compiled into a test target (registry plumbing — `CommandRegistry`, `Command`, `FuzzyMatch`, `PaneCommands_detail` — is tested; MCP dispatch is tested on the plugin side). *Update 2026-07-05:* PR #1618 added exactly the recommended table-driven harness — `Commands/Scenarios/CommandContractSweepScenario.cpp` registers every builtin against the fixture backend and asserts the error-envelope contract — but it runs in the **scenario lane**, so the 24 `BuiltinCommands_*` handler TUs are still not compiled into `SmatchetTests` (the TU metric is unchanged). It de-risks backlog item **N6** (splitting `BuiltinCommands.cpp` — done, see below) plus the `ui-request-flag-off-thread` race class the lint gate exists for; a per-TU direct-compilation harness would still push the 4.6K LOC into the OpenCppCoverage denominator.
 
 ## Tier 4 — AppController family (~7.2K LOC)
 
@@ -77,23 +80,23 @@ The mapping/JQL-translation halves of all three backends are well covered (`*Map
 
 ## Tier 5 — UI draw layer (62 TUs, 28.5K LOC)
 
-Excluded from ctest coverage by explicit policy (`coverage.sh` excludes `Source*Core*src*Ui`; coverage-threshold-graduation Slice 1). The sanctioned mechanisms are (a) the `_detail.cpp` extraction pattern — 10 tested `_detail`/pure UI TUs already exist (`SmatchetGridHeaderUi_detail`, `SmatchetAutocompleteUi_detail`, `AnnotateAnalysisUi_Window_detail`, …) — and (b) the bucket-C/E scenario lanes, currently **non-blocking** (Mesa-GL boot failure). Two consequences:
+Excluded from ctest coverage by explicit policy (`coverage.sh` excludes `Source*Core*src*Ui`; coverage-threshold-graduation Slice 1). The sanctioned mechanisms are (a) the `_detail.cpp` extraction pattern — 10 tested `_detail`/pure UI TUs already exist (`SmatchetGridHeaderUi_detail`, `SmatchetAutocompleteUi_detail`, `AnnotateAnalysisUi_Window_detail`, …) — and (b) the bucket-C/E scenario lanes, **blocking again as of 2026-07-05** (PR #1619 block-on-any-red; the Mesa-GL boot failure is resolved). Two consequences:
 
-- Highest-leverage UI action is not writing UI tests — it's **restoring a bootable bucket-C/E lane** (software-GL or headless backend), which re-arms 30 scenario TUs + 5.3K LOC of existing harness at once and closes the Pillar-4 visual-validation gap that currently falls to humans.
-- Until then, prefer `_detail` extraction whenever a UI TU is touched; `SmatchetFieldIconRender.cpp` (737 LOC, 2 audit findings) and `AnnotateAnalysisUi_Modals.cpp` (428, audit-flagged) are the two UI TUs with known defects and no extracted core.
+- The bucket-C/E lane is bootable and gating merges again, re-arming 30 scenario TUs + 5.3K LOC of existing harness and closing the Pillar-4 visual-validation gap that previously fell to humans. (Historically this section's highest-leverage action was *restoring* that lane — now done.) The residual UI-coverage work is continued `_detail` extraction to pull draw-layer logic into the ctest-instrumented denominator.
+- Prefer `_detail` extraction whenever a UI TU is touched; `SmatchetFieldIconRender.cpp` (737 LOC, 2 audit findings — both now fixed, see `CPP_CODE_AUDIT.md` #14/#22) and `AnnotateAnalysisUi_Modals.cpp` (428, audit-flagged #23, fixed) are the two UI TUs with recently-fixed defects and no extracted core.
 
 ## Hygiene notes
 
-- `Source/Core/src/Test_JqlProjectScope.cpp` (49 LOC) is a pre-harness relic ("the project has no test harness yet" — untrue since the doctest rig landed) compiled by **no** target; `tests/Core/JqlProjectScope.test.cpp` supersedes it. Delete it.
+- ~~`Source/Core/src/Test_JqlProjectScope.cpp` (49 LOC) is a pre-harness relic … Delete it.~~ **Done 2026-07-05** — the file no longer exists; `tests/Core/JqlProjectScope.test.cpp` is the surviving coverage.
 - Backlog reconciliation: `BACKLOG_CODE_REVIEW.md` **N11** ("no tests/ directory exists", "single highest-leverage open item") is fully stale — 273 test files across 8 suites now exist; every N11 candidate unit (FuzzyMatch, MarkdownConvert, JqlProjectScope, TextMerge, CompactDateFormat) is covered. **N7** (MarkdownConvert golden tests) is likewise closed (`MarkdownConvert.test.cpp` + `fuzz_markdown_adf`). Both entries should be flipped on the next backlog pass.
 
 ## Recommended sequencing
 
-1. **Pair with the audit remediation** — findings #1 (long-text truncation) and #3 (duration-sort loop) land in Tier-1 TUs; fix + Pure-extraction + regression test in the same PR each (2 PRs).
+1. ~~**Pair with the audit remediation** — findings #1 (long-text truncation) and #3 (duration-sort loop) land in Tier-1 TUs; fix + Pure-extraction + regression test in the same PR each.~~ **Done 2026-07-05** — both fixed (PR #1593) and pinned behind pure seams (`TicketFieldEditorLongTextPure`, `TicketGridDurationSortPure`, PR #1604).
 2. **`TrackerGridFieldDisplay` + `TrackerDateTimeFieldEditor` extraction tests** (Tier 1 #3–#4) — the two big untested untrusted-input formatters/parsers (2 PRs).
 3. **Backend-shell fixture tests ahead of each B2 batch** (Tier 2) — sequence with the existing backlog plan rather than as standalone work.
 4. **One command-invocation harness PR** (Tier 3).
-5. **Bucket-C/E lane restoration** (Tier 5) — infra work, biggest single unlock (28.5K LOC + 22 queued manual smokes become automatable).
+5. ~~**Bucket-C/E lane restoration** (Tier 5) — infra work, biggest single unlock.~~ **Done 2026-07-05** — lanes boot and gate merges again (PR #1619 block-on-any-red). Residual: continued `_detail` extraction to move UI draw logic into the ctest denominator.
 6. Opportunistic: add each newly-tested trust-boundary unit to the `coverage-perfile-gate.sh` `HIGH_RISK_UNITS` ratchet so it can't rot back (the gate's own contract: "add a unit only with a test that brings it to ≥90% in the SAME change").
 
 ## Prior-state corrections recorded

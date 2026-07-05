@@ -167,7 +167,7 @@ class DictationInsertionRouter : public IDictationHost {
     // is freed, the shadow fallback can splice into freed memory. Accepted as
     // latent/unreachable rather than fixed with a validity-token mechanism
     // (would require an IDictationHost interface change for a path zero current
-    // callers exercise) — see docs/plans/active/cpp-code-audit-remediation.md
+    // callers exercise) — see docs/plans/shipped/cpp-code-audit-remediation.md
     // § Deviations. Any new non-static-buffer registration site MUST call
     // UnregisterInputText in its owner's destructor, not just on blur.
     char* shadowBuf_ = nullptr;

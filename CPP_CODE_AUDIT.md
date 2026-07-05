@@ -7,6 +7,28 @@
 
 This is a broad correctness/robustness/security audit, **complementary to** the prior `SECURITY_AUDIT.md` (2026-06-26). That audit focused on the untrusted-JSON DoS class, MCP authorization, the locale format-string, and the Lua→JSON allocation bug. Findings already documented there (and new instances of the same bare-`json::parse` DoS pattern at sites *listed* in that doc) are **not** re-reported here. Several prior findings were independently confirmed **already remediated** in the current tree (see "Remediation confirmations" below).
 
+> ## ✅ Remediation status — REMEDIATED (verified 2026-07-05)
+>
+> **32 of 33 findings are fixed in the current tree; 2 are accepted as documented latent risk; 1 folded sub-item remains open.** Remediation landed via **PR #1593** (Slices 1–4, commits `0aa6dc9`/`8c42543`/`af5536f`/`5276f79`/`8ad4860`) and **PR #1613** (`fefa11f`, the `#33f`/`#33g` missing includes), tracked in [`docs/plans/shipped/cpp-code-audit-remediation.md`](docs/plans/shipped/cpp-code-audit-remediation.md). Recurring finding-classes were subsequently turned into standing CI lint gates (PR #1605). Each finding was re-verified against the current source on 2026-07-05 (not against the commit messages).
+>
+> | Finding | Status | Finding | Status | Finding | Status |
+> |---|---|---|---|---|---|
+> | #1 long-text truncation | ✅ Fixed | #12 toolbar/keybind ArgsJson | ✅ Fixed | #23 annotate callback deref | ✅ Fixed |
+> | #2 GitHub credential routing | ✅ Fixed | #13 audit-jsonl parse | ✅ Fixed | #24 TokenizeCached ref | ✅ Fixed |
+> | #3 duration-sort infinite loop | ✅ Fixed | #14 priority iconUrl SSRF | ✅ Fixed | #25 TranslateSource UAF | ✅ Fixed |
+> | #4 AI cancel-atom rebind | ✅ Fixed | #15 whisper mic via MCP | ✅ Fixed | #26 fork/exec + zero-timeout | ⚠️ Split: hang fixed / fork-safety accepted-risk |
+> | #5 TextMerge LCS OOM | ✅ Fixed | #16 IPv6 fe80::/10 denylist | ✅ Fixed | #27 DrainCapturedPcm unlocked read | ✅ Fixed |
+> | #6 replay latch leak | ✅ Fixed | #17 ParseSemanticVersion atoi | ✅ Fixed | #28 injected-font atlas UAF | ✅ Fixed |
+> | #7 locale format-string sinks | ✅ Fixed | #18 Linear key int accumulation | ✅ Fixed | #29 ImGui Shutdown without Init | ✅ Fixed |
+> | #8 Jira field-catalog parse (10) | ✅ Fixed | #19 duration unit int overflow | ✅ Fixed | #30 p4 future never joined | ✅ Fixed |
+> | #9 Plane parse (9) | ✅ Fixed | #20 Lua cyclic-array recursion | ✅ Fixed | #31 DispatchLines unbounded pending | ✅ Fixed |
+> | #10 BugReportService parse (8) | ✅ Fixed | #21 dictation shadow-buffer UAF | ⚠️ Accepted-risk (unreachable; documented) | #32 Android IME JNI | ✅ Fixed |
+> | #11 views/panes bare parse | ✅ Fixed | #22 icon.Texture null-deref | ✅ Fixed | #33 logic cluster (5 + 4 latent) | ✅ Fixed **except** the folded `CommandPaletteUi::rebuildFiltered` perf sub-item — see below |
+>
+> **Still open (1):** finding #33's folded "Also latent" performance sub-item — `CommandPaletteUi::rebuildFiltered` still calls `app.Commands().All()` inside the recents loop (`Source/Core/src/Commands/CommandPaletteUi.cpp:62`, plus `:70`/`:89`), the same up-to-9×-per-invocation full-table rebuild the audit flagged. Harmless correctness-wise (UI-thread, ≤8 recents), never entered any remediation slice. The other 8 components of #33 (year-boundary offset, JQL quoted "order by", single-select combo clear, `PromptAi` turn-gen, `QuoteWinArgWidePure` empty arg, `EnsureAssetsBranch` guard, `<cstdlib>`/`<mach-o/dyld.h>` includes) are all fixed.
+>
+> **Accepted as documented latent risk (2), not code-fixed:** #21 (all 4 registration sites use process-static buffers — unreachable today; the header documents the invariant) and the fork/exec async-signal-safety **half** of #26 (a prebuilt-argv/envp rewrite of the P4/Git spawn path was judged disproportionate for a Low finding; the *other* half — a zero-timeout `Run()` hang — is fixed with a safety-net timeout). See [`cpp-code-audit-remediation.md`](docs/plans/shipped/cpp-code-audit-remediation.md) § Deviations.
+
 ## Methodology
 
 1. **Fan-out** — 12 independent auditors, one per LOC-balanced partition, each reading every file in its partition in full and hunting across ten angles: memory safety, undefined behavior, integer handling, concurrency, RAII/resource management, error handling, security, logic/correctness, performance, and API-misuse/portability. Auditors were permitted to read callers/callees outside their partition to confirm or refute a suspicion.
@@ -163,7 +185,7 @@ The build is well-configured and not a source of findings: `CMAKE_CXX_STANDARD 1
 **Also latent (build/robustness):**
 - **[Low][API misuse] `StringUtil.h` calls `std::strtoll` without `#include <cstdlib>`** (`include/StringUtil.h:74`). Compiles via transitive includes today; a stricter/modular stdlib breaks every TU including this 75+-includer foundation header. Fix: add the include.
 - **[Low][API misuse] `CliCommandRunner.cpp` uses `_NSGetExecutablePath` without `#include <mach-o/dyld.h>`** (`Source/Standalone/CliCommandRunner.cpp:227-230`). macOS build with MCP enabled → compile error (`main.cpp` includes it; this TU doesn't). Fix: add the guarded include.
-- **[Low][Performance] `CommandPaletteUi::rebuildFiltered` rebuilds the full command table up to 9× per invocation** (`Commands/CommandPaletteUi.cpp:59-80`). `All()` (locks + deep-copies + sorts the whole table) is called once per recent (≤8) plus once more, where one snapshot suffices. Fix: call `All()` once and cache locally.
+- **[Low][Performance] `CommandPaletteUi::rebuildFiltered` rebuilds the full command table up to 9× per invocation** (`Source/Core/src/Commands/CommandPaletteUi.cpp:55-91`). `All()` (locks + deep-copies + sorts the whole table) is called once per recent (≤8) plus once more, where one snapshot suffices. Fix: call `All()` once and cache locally. — **⏳ STILL OPEN as of 2026-07-05** (the only un-remediated finding; `All()` still called at `:62`/`:70`/`:89`). Harmless correctness-wise (UI-thread, ≤8 recents).
 - **[Low][Error handling] `EnsureAssetsBranch` does index-then-value on unvalidated network JSON** (`Diagnostics/BugReportService.cpp:255`). `["object"].value(...)` on a non-object throws `type_error`; caught → degrades to local staging (not a crash), but fragile vs guarded siblings. Fix: `contains("object") && is_object()` guard.
 
 > These last four are folded under finding #33's cluster for the count; each is an independent Low.

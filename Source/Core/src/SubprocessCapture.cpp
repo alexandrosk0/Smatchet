@@ -484,7 +484,7 @@ bool RunWindows(const CaptureOptions& opts, CaptureResult& out, std::string& out
 // window is a narrow race that has not manifested in practice, and rewriting
 // this file's env-scrub allow-list / PATH-search semantics carries real
 // regression risk for every P4 and Git subprocess call site for a Low-severity
-// finding. See docs/plans/active/cpp-code-audit-remediation.md § Deviations.
+// finding. See docs/plans/shipped/cpp-code-audit-remediation.md § Deviations.
 // The safety-net timeout in Run() (CPP_CODE_AUDIT.md #26's other half — a
 // zero-timeout caller with no cancel token could hang forever) IS fixed.
 //

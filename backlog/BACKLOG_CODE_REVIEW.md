@@ -27,9 +27,44 @@
 
 ---
 
+## Reconciliation pass — 2026-07-05 (develop tip ~PR #1620)
+
+> This doc was written on 2026-05-16; the tree has since advanced ~1500 merged PRs, with major decomposition of the god-objects it tracks. Each still-open/partial item below was re-checked against current source. Item headings now carry a status marker (✅ RESOLVED · 🟡 PARTIAL · ⏳ OPEN). Note the file relocations: `ConfigManager.cpp`→`Config/`, `BuiltinCommands.cpp`→`Commands/Builtin/`, `PlaneClient.cpp`→`Tracker/Plane*.cpp`, the field-edit pipeline→`FieldEditPipelineService.cpp`.
+
+| Item | Verdict | Current state |
+|---|---|---|
+| A1 TrackerConfig caching | ✅ RESOLVED | `ConfigManager::Load()` returns `GetCachedConfigRef()` under `GetCacheMutexRef()` (valid-flag cache, invalidated on `Save()`) — kills the repeated disk read/parse. |
+| A2 Logger file-sink wiring | ✅ RESOLVED (differently) | Wired at startup in `Source/Standalone/main.cpp` + `android_main.cpp` via `Logger::SetFileSinkPath` (env `SMATCHET_DEBUG_LOG` / default path), **not** from `ConfigManager`; no `LogFilePath` key. Functional complaint closed. |
+| A4 FlushFileSink on crash | ⏳ OPEN | `Logger::FlushFileSink()` still has no production caller (only a test); normal exit drains via the `Logger` dtor, but the `~AppController` + crash-handler asks remain undone. **Last genuinely-open safety tail.** |
+| B1 LuaAutomationHost extraction | 🟡 REFRAMED (won't-do-as-written) | Ownership migration abandoned for a different design: `LuaAutomationHost` is now a 17-LOC log-sink coordinator; sol2 moved to a pImpl (see N10); the binding TU split 3 ways; `friend class LuaAutomationHost` removed; new `ILuaBindingHost` interface. |
+| B2 TrackerHttpClient migration | 🟡 PARTIAL | `ClassifyTrackerResponse` used in only ~3 files/7 sites; `IsTrackerTransportErrorText` still spans ~14 files (see N12). 2B–2E not complete. |
+| B3 ITrackerClient split | ✅ RESOLVED (exceeded) | `ITrackerClient` gone; replaced by `ITrackerBackend` composing 6 role interfaces (`ITrackerIssueReader`/`Connectivity`/`FieldCatalog`/`IssueMutations`/`Collaboration`/`Activity`). "Unsupported default-impl" pattern removed. |
+| B4 Plane FetchIssuesForKeys | ✅ RESOLVED | Early-exit pagination in `Tracker/PlaneIssueSearch.cpp` stops once all keys matched. Server-side `sequence_id__in` filter is the remaining B4-v2 follow-up. |
+| B5 Markdown table-cell flatten | ⏳ OPEN | `MarkdownCellPlainInner` still flattens rich content (`Ui/MarkdownConvert.cpp`). |
+| C1 Retry-after-400 dup | ✅ RESOLVED | Consolidated into `FieldEditPipelineService::ApplyFieldUpdateWithEditMetaRetry`; both submit paths route through it. |
+| C4 Plane customs dropped | ⏳ OPEN | `PlaneIssueMutation.cpp` `BuildCreatePayload` still ignores its `catalog` param; UUID custom props never emitted under `properties.<uuid>`. |
+| C5 FileIo extraction | 🟡 PARTIAL | No `FileIo.{h,cpp}`. `AtomicWriteTextFile` promoted to a public `ConfigManager` static (shared by 4 callers); `ScopedFileLock` still confined to `ConfigManager_Internal.h`. |
+| C6 LooksSensitiveKey blocklist | ⏳ OPEN | Unchanged (a product call, no code change resolves it). |
+| N1 LuaBindings LOC | ✅ number stale | Now **1540** (not 2648) — the file shrank via the 3-way split, opposite the doc's "grew" narrative. |
+| N3 CommandRegistry::FindLocked | ⏳ OPEN | `HasExact()` added (one offered remedy) but the two `McpPlugin.cpp` worker-thread callers still use `FindLocked(name) != nullptr`; not renamed. |
+| N4 AppController.h size/friends | 🟡 MIXED | Now **1465 LOC** (+430); but friend-coupling largely resolved — three friends collapsed to one `GridContextDepsAdapter`; sol2 friend gone. No `TrackerActions` interface yet. |
+| N5 ConfigManager.cpp size | ✅ number stale | Split into `Config/` (`ConfigManager.cpp` 1617 + `_PathUtils` + `_Views` + `_Panes` + `_Internal.h`). Per-concern split partly done. |
+| N6 BuiltinCommands split | ✅ RESOLVED | Now a 72-LOC dispatcher + ~20 category files under `Commands/Builtin/`, exactly as proposed. |
+| N8 OfflineQueueService friend | ✅ RESOLVED | Decoupled via `GridContextDepsAdapter` (see `AppController.h` comment). |
+| N9 McpPlugin tools/list divergence | ✅ RESOLVED | Both REST + JSON-RPC paths registry-driven from `Commands().All()` + shared `BuildRunLuaToolEntry()`; can't diverge data-wise (cosmetic lambda dup remains). |
+| N10 sol/sol.hpp public | ✅ RESOLVED | `AppController.h` no longer includes `<sol/sol.hpp>` — sol2 storage moved to a pImpl; only forward decls remain. |
+| N12 IsTrackerTransportErrorText | ⏳ OPEN | Still defined + used across ~14 files, shadowing `ClassifyTrackerResponse` (blocked on B2). |
+| N13 TryGetMcpStatusSnapshot | ⏳ OPEN (acceptable) | Still a gated virtual on `IPlugin`; no capability-tag system. As the doc itself said, acceptable today. |
+
+**Still genuinely open after this pass:** A4, B5, C4, C6, N3, N12 (+ N13 acceptable, B2/C5/N4 partial). Everything else on the A/B/C/N carry-over list is resolved. Items already ✅ in the doc (N2, C2, C7, N7, N11, N14) re-verified still true.
+
+---
+
 ## A. P0 / safety tails — finish these first
 
-### A1. `TrackerConfig` caching — kill ~19 disk re-reads per UI action
+### A1. `TrackerConfig` caching — kill ~19 disk re-reads per UI action — ✅ RESOLVED (2026-07-05)
+> `ConfigManager::Load()` now returns a cached `GetCachedConfigRef()` under `GetCacheMutexRef()` (valid-flag cache, invalidated on `Save()`); the repeated disk read/parse is gone. Cited line numbers below are stale (logic moved to `Config/ConfigManager.cpp` + `FieldEditPipelineService.cpp`).
+
 Old item 3 tail. `ConfigManager::Load()` still hit on every field-edit submit and per-mutation:
 - `Source/Core/src/AppController_CatalogAndFieldEdit.cpp` — **17 sites** (line 70, 137, 493, 598, 612, 871, 1009, 1075, 1094, 1112, 1126, 1135, 1150, 1159, 1176, 1185, 1205).
 - `Source/Core/src/AppController_LuaBindings.cpp:676, 921`.
@@ -39,20 +74,24 @@ Each `Load()` opens + reads + parses ~50-field JSON. Plumb a `const TrackerConfi
 
 **Severity:** P1 (it's perf + lock churn, not correctness). Listed P0 because §6.3 of old doc tagged it that.
 
-### A2. `Logger::SetFileSinkPath` never wired from `ConfigManager`
+### A2. `Logger::SetFileSinkPath` never wired from `ConfigManager` — ✅ RESOLVED (2026-07-05, differently)
+> The file sink is no longer dark: it's wired at startup in `Source/Standalone/main.cpp` + `android_main.cpp` (env `SMATCHET_DEBUG_LOG` / default path), not from `ConfigManager::Load()`, and there is no `LogFilePath` key. The functional gap is closed; the doc's specific prescription was not followed.
+
 Old item 6 tail. Header API + worker thread exist (`Source/Core/include/Logger.h:72`, `Source/Core/src/Logger.cpp:197`); `ConfigManager.cpp` never calls it. File sink stays dark unless a test path is set manually. Wire on `ConfigManager::Load()` post-parse with the chosen log path; honour a new `LogFilePath` config key (or default `<userdata>/smatchet_runtime.log`).
 
 ### A3. `TrackerField::IsRequired` not consumed by UI — shipped
 Old item 10 tail. Schema populated for Plane (`PlaneClient.cpp` `TrackerFieldFromPlaneProperty`); zero UI consumer in `TicketFieldEditor.cpp` / `SmatchetNewIssueDraftUi.cpp`. Required-field state is dead data. Add a `*` glyph + tooltip on required-field labels in the new-issue draft and in-line editor; refuse submit / show validation on blank required. — shipped on branch `feat/required-field-ui-glyph` (PR pending).
 
-### A4. `FlushFileSink` not called on shutdown / crash path
+### A4. `FlushFileSink` not called on shutdown / crash path — ⏳ OPEN (re-confirmed 2026-07-05, last open safety tail)
 POST_P0 item 24 (last open from that review). `Logger::FlushFileSink()` exists; no caller in `AppController::~AppController` or `Source/Standalone/main.cpp` exit path or signal handler. Async file sink can drop the last batch on abrupt exit. Call from `~AppController` and from a `std::set_terminate` / `SIGSEGV` handler in `main.cpp`.
 
 ---
 
 ## B. P1 structural — open big wins
 
-### B1. LuaAutomationHost Phase 1B → 1D (item 14)
+### B1. LuaAutomationHost Phase 1B → 1D (item 14) — 🟡 REFRAMED (2026-07-05, won't-do-as-written)
+> The ownership migration below was abandoned for a different design: `LuaAutomationHost` is now a 17-LOC log-sink coordinator, sol2 moved to a pImpl (N10), the binding TU split 3 ways (`AppController_LuaBindings.cpp` **1540 LOC** + `_LuaBindingsCore.cpp` + `_LuaBindings_Draw.cpp`), the `friend` was removed, and a new `ILuaBindingHost` interface was introduced. The structural pain is addressed; the literal 1B/1C/1D extraction did not happen.
+
 `Source/Core/src/AppController_LuaBindings.cpp` grew from 1453 → **2648 LOC** since the old review — Phase 1A migrated only log-sinks. Remaining:
 - **1B** `InitLua` / `InitLuaCore` (~150–300 LOC). `<sol/sol.hpp>` stays PUBLIC on `AppController.h:11` until 1C; 1B alone is plumbing (low PR-value in isolation — see N1).
 - **1C** ~18 `Lua*Bind` methods + free-function glue (~1500 LOC at current size). High-risk: patched-metatable contract per `CMakeLists.txt:355-411`.
@@ -68,10 +107,12 @@ Phase 2A landed (PR #39) — helper + `PlaneClient::ProbeReachability`. **One** 
 - **2D** `JiraIssueMutation.cpp` mutation paths.
 - **2E** `JiraIssueSearch.cpp` paginated fetches.
 
-### B3. Split `ITrackerClient` into role interfaces (item 16)
+### B3. Split `ITrackerClient` into role interfaces (item 16) — ✅ RESOLVED (2026-07-05, exceeded)
+> `ITrackerClient` no longer exists; replaced by `ITrackerBackend` composing 6 role interfaces (`ITrackerIssueReader`/`Connectivity`/`FieldCatalog`/`IssueMutations`/`Collaboration`/`Activity`). The "unsupported default-impl" pattern is gone (optional roles return `nullptr` accessors).
+
 `ITrackerSearch` / `ITrackerMutation` / `ITrackerSchema` / `ITrackerUserDirectory` / `ITrackerWorkflow` (Jira-only). Removes the "unsupported default-impl" pattern (~7 virtuals). Stage with `dynamic_cast` at call sites. Mechanical PR.
 
-### B4. `PlaneClient::FetchIssuesForKeys` O(N×total) (item 23) — 🟡 partial (branch `feat/plane-fetchissuesforkeys-filter`)
+### B4. `PlaneClient::FetchIssuesForKeys` O(N×total) (item 23) — ✅ RESOLVED (2026-07-05; server-side filter = B4-v2 follow-up)
 `PlaneIssueSearch.cpp:556` (file split from `PlaneClient.cpp`) still pulled every page then filtered in memory. Early-exit pagination now stops fetching once every requested key has been matched — cuts the hot prefetch-open-links path from `O(total)` to `O(pages_until_keys_found)`. Server-side `sequence_id__in` filter would be the next win (requires `FetchIssuesStreamed` URL-builder rework); leave as B4-v2 follow-up.
 
 ### B5. Markdown table-cell rich content lost on ADF→Markdown (item 28)
@@ -81,7 +122,9 @@ Phase 2A landed (PR #39) — helper + `PlaneClient::ProbeReachability`. **One** 
 
 ## C. P2 polish — leftovers
 
-### C1. Two retry-after-HTTP-400 blocks (item 34)
+### C1. Two retry-after-HTTP-400 blocks (item 34) — ✅ RESOLVED (2026-07-05)
+> Consolidated into `FieldEditPipelineService::ApplyFieldUpdateWithEditMetaRetry`; both submit paths route through it (`ErrorTextContainsHttpStatus` moved into the pipeline service).
+
 `AppController_CatalogAndFieldEdit.cpp:837` and `:1009` both `if (!updateOk && ErrorTextContainsHttpStatus(outError, 400)) { ... refetch edit-meta ... retry }`. Extract `SubmitWithEditMetaRetry(issueId, field, payload, ...)` helper.
 
 ### C2. `MarkdownConvert::EmitInlineText` per-node vector allocs (item 38) — ✅ shipped (branch `feat/markdown-emitinlinetext-scratch`)
@@ -93,7 +136,9 @@ Rebuilds `openWrap` / `closeWrap` vectors per text node. Reuse a scratch buffer 
 ### C4. `PlaneClient::BuildCreatePayload` / `BuildUpdatePayload` drop customs (item 40)
 `PlaneClient.cpp:1459-1501` handles 6 core IDs (`summary`/`description`/`priority`/`status`/`type`/`parent`/`assignee`). Any `TrackerField.Id` that's a UUID (custom property) is silently dropped. Iterate `catalog` for custom props and emit under `properties.<uuid>` or whichever shape Plane v1 accepts.
 
-### C5. Extract `ScopedFileLock` + `AtomicWriteTextFile` (item 41)
+### C5. Extract `ScopedFileLock` + `AtomicWriteTextFile` (item 41) — 🟡 PARTIAL (2026-07-05)
+> No `FileIo.{h,cpp}` module. `AtomicWriteTextFile` was promoted to a public `ConfigManager` static (shared by `FieldCatalogCache`, `SmatchetUI`, `_Views`, `_Panes`); `ScopedFileLock` is still confined to `ConfigManager_Internal.h`.
+
 Both still defined in `Source/Core/src/ConfigManager.cpp` anonymous namespace (lines 179+, ~700+). `BackendAuditTrail` uses raw `ofstream`; export paths re-implement atomic-write. Promote to `Source/Core/{src,include}/FileIo.{h,cpp}` so all three share. Win32-only work.
 
 ### C6. `BackendAuditTrail::LooksSensitiveKey` blocklist (item 43)
@@ -106,18 +151,24 @@ Redacts `summary` / `assignee` / `body` / `text` etc. Likely too broad — audit
 
 ## N. New findings (2026-05-16 pass)
 
-### N1. `AppController_LuaBindings.cpp` at 2648 LOC — almost 2× since baseline (P1)
+### N1. `AppController_LuaBindings.cpp` at 2648 LOC — almost 2× since baseline (P1) — ✅ number stale (now **1540 LOC**, 2026-07-05)
+> The file shrank via a 3-way split (`_LuaBindings.cpp` 1540 + `_LuaBindingsCore.cpp` 329 + `_LuaBindings_Draw.cpp` 1294) — the opposite of the "grew" narrative below. See B1.
+
 Was 1453, now **2648**. Phase 1A of item 14 was supposed to start shrinking it; instead it grew. New surface includes `commands.invoke` glue, `RunAutoScript`, `RunFlatScriptAsync`, ~6 new `LuaUi*Bind`, window-op queue. The pre-existing extraction plan now has more to move; Phase 1C bundle is bigger than the doc predicted. Re-scope before committing.
 
 ### N2. `BlameAnalysisUi.cpp` split landed but not noted (✅)
 Old item 9 step (c) was OPEN. Now done: `BlameAnalysisUi_Config.cpp` / `_Launch.cpp` / `_Modals.cpp` / `_Preferences.cpp` / `_Window.cpp` / `_Worker.cpp` + `BlameAnalysisUi_Internal.h`. Move from OPEN → done in tracker. Unreal hot-reload survival check still pending (no test infra).
 
-### N3. `CommandRegistry::FindLocked` is a footgun (P2)
+### N3. `CommandRegistry::FindLocked` is a footgun (P2) — ⏳ OPEN (partly mitigated, 2026-07-05)
+> `HasExact(name)` was added (one of the two offered remedies), but the two `McpPlugin.cpp` httplib-worker callers still use `FindLocked(name) != nullptr`; not renamed to `FindUnlocked`.
+
 `Source/Core/include/Commands/CommandRegistry.h:46` and `src/Commands/CommandRegistry.cpp:45-58`. Method name implies lock held but the impl is **lockless** — the comment says "Caller must serialize externally if they want stable pointers." External callers do NOT serialize: `Source/Plugins/Mcp/McpPlugin.cpp:629, :860` call it from httplib worker threads checking `!= nullptr` only. Race is benign today (pointer-equality test) but the API will bite future callers that dereference. Either:
 - Rename to `FindUnlocked` + add `Has(name)` for the only existing real use, **or**
 - Take the mutex internally and return a copy (`Optional<Command>`-style via `bool Find(name, Command& out)`).
 
-### N4. `AppController.h` grew to 1035 LOC (was 729) (P1)
+### N4. `AppController.h` grew to 1035 LOC (was 729) (P1) — 🟡 MIXED (now **1465 LOC**; friends resolved, 2026-07-05)
+> Size grew further (1465), but the friend-coupling half is largely resolved — the three friends collapsed into one `GridContextDepsAdapter`, and the sol2 friend is gone (N10). No `TrackerActions` interface yet (the "Phase 2" step remains).
+
 Net +306 lines of public surface — `friend` declarations, forward decls, new structs (`CommandRegistry` accessors, `ScenarioRunner`, `MainThreadDispatcher`), `IsOnUiThread()`, etc. Old §1.3 P1 (cross-concern struct definitions forcing TU recompile) is now worse. With three services already extracted (`Ticket/Offline/Lua`), each service's own DTOs can move into its own header. Concrete refactor:
 - `TrackerConnectivityBannerForUi` → already small, keep here.
 - `TrackerIssueFetchPack` → move to `TicketSyncService.h`.
@@ -125,22 +176,32 @@ Net +306 lines of public surface — `friend` declarations, forward decls, new s
 - All `*Summary` structs the §1.3 P1 callout listed → matching service header.
 - Forward declarations of `OfflineQueueService` / `TicketSyncService` / `LuaAutomationHost` are fine; but `friend` of all three is a code-smell siren — every `private:` member is effectively public to ~70% of the codebase. The Phase 2 step (per old §1.7 design proposal #4: `TrackerActions` interface) is overdue.
 
-### N5. `ConfigManager.cpp` grew to 1773 LOC (was 1333) (P2)
+### N5. `ConfigManager.cpp` grew to 1773 LOC (was 1333) (P2) — ✅ number stale (split into `Config/`, 2026-07-05)
+> Split into a `Config/` directory: `ConfigManager.cpp` 1617 + `_PathUtils.cpp` + `_Views.cpp` + `_Panes.cpp` + `_Internal.h`. The per-concern split this item anticipated partly happened.
+
 Post-split was supposed to be ~1333 LOC. Growth = +440 LOC. Spot-check: new config keys + bootstrap helpers. No structural issue, but the file is approaching the size threshold (~2000 LOC) where it should split per-concern (Tracker / Views / Config-file-IO / DPAPI). Track and split next time it hits 2000.
 
-### N6. `BuiltinCommands.cpp` at 1898 LOC (P2)
+### N6. `BuiltinCommands.cpp` at 1898 LOC (P2) — ✅ RESOLVED (2026-07-05)
+> Now a 72-LOC dispatcher + ~20 category files under `Commands/Builtin/` (`_View`/`_Perf`/`_Scenario`/`_Fields`/`_Tickets`/…), exactly the split proposed below.
+
 New file — central registration of all CLI/Palette/MCP/Lua commands. Single `RegisterBuiltinCommands(reg, app)` function. At ~1900 LOC it's already a god-function risk. Split by category into `BuiltinCommands_View.cpp` / `_Perf.cpp` / `_Scenario.cpp` / `_Issue.cpp` / `_Field.cpp` etc. before it grows further; the existing `ViewCommands.cpp` precedent shows the pattern works.
 
 ### N7. `MarkdownConvert.cpp` at 1700 LOC, still no golden tests (P1) — ✅ DONE
 ~~Round-trip Markdown ↔ ADF / HTML continues to grow; bootstrap golden tests.~~ Closed since: `tests/Core/MarkdownConvert.test.cpp` covers the round-trip converters in `SmatchetTests`, and `tests/fuzz/fuzz_markdown_adf.cpp` fuzzes the ADF path. Flagged stale by `TEST_COVERAGE_GAP_MAP.md` § Hygiene notes.
 
-### N8. `OfflineQueueService` still friend-coupled to AppController (P1)
+### N8. `OfflineQueueService` still friend-coupled to AppController (P1) — ✅ RESOLVED (2026-07-05)
+> `OfflineQueueService` + `TicketSyncService` friends were replaced by a single `GridContextDepsAdapter` friend during the item 11/12 Phase 2 extraction (see `AppController.h` comment).
+
 `Source/Core/include/AppController.h:88-93` documents the friend-access boundary with a TODO to lift to interfaces. With Phase 1A→1C complete the service is at 1032 LOC of standalone logic plus AppController-private reach-throughs. Define the minimal access bundle (`IOfflineCacheAccess { Cache(), FindFieldById(), backendAuditTrail() }`) and convert. Same for `TicketSyncService` (currently friend-coupled).
 
-### N9. `McpPlugin.cpp` REST `tools/list` + JSON-RPC `tools/list` may have diverged again (P2)
+### N9. `McpPlugin.cpp` REST `tools/list` + JSON-RPC `tools/list` may have diverged again (P2) — ✅ RESOLVED (2026-07-05)
+> Both paths are registry-driven from `Commands().All()` + shared `BuildRunLuaToolEntry()` — no hardcoded duplicated payload; they can't diverge data-wise (only a cosmetic copy-pasted `std::transform` lambda remains).
+
 Old §5.1 P1 was a duplicated payload (REST `:506` vs JSON-RPC `:666`). PR #41 / #52 added `BuildRunLuaToolEntry()` for the `run_lua` row. Re-check: are the rest of the tool-list rows also shared, or did the registry-driven approach drift? Audit current `McpPlugin.cpp:586` (REST) vs JSON-RPC handler.
 
-### N10. `<sol/sol.hpp>` STILL PUBLIC on `AppController.h:11` (P1, item 14 dependency)
+### N10. `<sol/sol.hpp>` STILL PUBLIC on `AppController.h:11` (P1, item 14 dependency) — ✅ RESOLVED (2026-07-05)
+> `AppController.h` no longer includes `<sol/sol.hpp>` — sol2 storage moved to a pImpl (`Impl`), so the ~100 header includers no longer drag sol2 through the compiler. Only forward decls remain.
+
 Worth flagging on its own. Every TU including `AppController.h` (which is most of `Source/Core/`) drags ~1 MB of sol2 templates through the compiler. Phase 1C of item 14 is the only thing that unblocks this. The build-time win is real and measurable (`SmatchetPch.h` comments narrate sol2 as the heaviest header).
 
 ### N11. No `tests/` directory still exists (P0 for any future refactor) — ✅ DONE
