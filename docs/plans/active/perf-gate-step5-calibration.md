@@ -49,10 +49,12 @@ Neither is a bug — both are the consciously-deferred "step 5" from the revival
 ## Implementation log
 
 - 2026-07-05 — plan created from the perf-gate health audit ("is the perf gate mandatory / okay"). Confirmed: gate required + blocking + p99/max armed + p99 emitter landed; mean budget null + baselines shallow are the residue. No code touched yet.
+- 2026-07-05 — **Phase 1 COMPLETE** ([`docs/perf/calibration-observations.md`](../../perf/calibration-observations.md)). Harvested 6 green `Perf PR-fast` runs (18 samples/scenario). **Result:** zero scopes exceed the 6.94 ms mean budget — hottest is `SmatchetUI::Draw` at ~0.53 ms (13–15× headroom); worst p99 0.857 ms vs the 10 ms ceiling. Arming `mean_abs_ceiling_ms = 6.94` is safe with an **empty `perScenario` map** (no legitimately-heavy scope exists). Phase-2 baseline-deepening **downgraded to optional** — scenarios already run `frames = 600` and the p99/max ceilings gate on the full 600-frame ring; the `calls = 1` was a once-per-frame *snapshot artifact*, not a shallow run (T2 corrected).
 
 ## Deviations
 
-- (none yet)
+- **Phase 2 downgraded from required to optional.** Phase-1 data showed the absolute p99/max ceilings already operate on 600-frame aggregates (not single frames), so deepening baselines is no longer load-bearing for arming the mean budget — it only matters if the *relative* %-delta gate is later wanted for once-per-frame umbrella scopes. Recorded rather than silently dropped.
+- **Phase 3 arming is ready but held for user sign-off.** Evidence supports a direct (non-WARN) arm, but flipping a live gate's numeric threshold is a human-judgment call (plan preamble + AI_POLICY § escalate-when-unvalidatable). This PR ships the evidence; the one-line policy flip awaits an explicit go.
 
 ## Verification
 
