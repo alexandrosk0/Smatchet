@@ -4,6 +4,7 @@
 #include "GitHubFetchPlan.h"
 #include "GitHubIssueSearchMapping.h"
 #include "GitHubQueryFromJql.h"
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "TrackerHttpUtils.h"
 
@@ -178,7 +179,8 @@ GraphQlPageParse ParseGraphQlSearchPage(const std::string& responseText, const s
                                         const std::string& repo, bool includePullRequests) {
     GraphQlPageParse out;
 
-    nlohmann::json parsed = nlohmann::json::parse(responseText, nullptr, false);
+    // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
+    nlohmann::json parsed = smatchet::json_safe::ParseBoundedOrDiscarded(responseText);
     if (parsed.is_discarded()) {
         out.Fatal = true;
         out.Error = "GitHub returned invalid JSON";
@@ -338,7 +340,8 @@ bool RunCommitFetch(const std::string& baseUrl, const cpr::Header& headers, cons
         return false;
     }
 
-    nlohmann::json parsed = nlohmann::json::parse(resp.text, nullptr, false);
+    // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
+    nlohmann::json parsed = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
     if (parsed.is_discarded() || !parsed.is_array()) {
         AppendOutWarning(outWarning, "GitHub commit fetch returned invalid JSON — cached commit rows preserved.");
         LOG_ERROR("GitHubIssueSearch::RunCommitFetch invalid JSON / not an array");
@@ -609,7 +612,8 @@ FetchIssuesForKeysViaRestApi(const std::string& baseUrl, const std::string& pat,
             }
             return FetchResult::Err(TrackerErrorFromHttpStatus(static_cast<int>(resp.status_code), outError));
         }
-        nlohmann::json parsed_json = nlohmann::json::parse(resp.text, nullptr, false);
+        // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
+        nlohmann::json parsed_json = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
         if (parsed_json.is_discarded() || !parsed_json.is_object()) {
             return FetchResult::Err(TrackerErrorParse(std::string("Invalid JSON in single-issue response for ") + key));
         }

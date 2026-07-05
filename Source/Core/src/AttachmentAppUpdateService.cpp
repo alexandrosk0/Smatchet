@@ -5,11 +5,12 @@
 
 #include <algorithm>
 #include <array>
-// SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
+// SMATCHET_DEVIATION(rule=duplication; reason=include clone; owner=security-audit; revisit=2026-09-30)
 #include <atomic>
-// SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
+// SMATCHET_DEVIATION(rule=duplication; reason=include clone; owner=security-audit; revisit=2026-09-30)
 #include <cctype>
 #include <chrono>
+#include <climits>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -326,7 +327,19 @@ SemanticVersion ParseSemanticVersion(const std::string& raw) {
             !std::all_of(token.begin(), token.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) {
             return out;
         }
-        parts[static_cast<size_t>(i)] = std::atoi(token.c_str());
+        // CPP_CODE_AUDIT.md #17: std::atoi on an unbounded digit run is UB past INT_MAX
+        // (e.g. a GitHub release tag like "v99999999999.0.0"); std::stoll + range-check
+        // mirrors CallstackParser::ParseLineNumberInRange's guard for the same class of
+        // untrusted-digit-run input.
+        try {
+            const long long value = std::stoll(token);
+            if (value < 0 || value > static_cast<long long>(INT_MAX)) {
+                return out;
+            }
+            parts[static_cast<size_t>(i)] = static_cast<int>(value);
+        } catch (...) { // catch-all-ok: stoll on untrusted release-tag digits (e.g. > LLONG_MAX)
+            return out;
+        }
         if (dot == std::string::npos) {
             if (i != 2) {
                 return out;
@@ -387,7 +400,7 @@ void AttachmentAppUpdateService::ShowAttachmentCollection(const std::vector<Atta
 }
 
 void AttachmentAppUpdateService::OpenAttachment(const std::string& url, const std::string& filename,
-                                               const std::string& mimeType) {
+                                                const std::string& mimeType) {
     if (url.empty()) {
         return;
     }
@@ -426,7 +439,7 @@ void AttachmentAppUpdateService::OpenAttachment(const std::string& url, const st
 }
 
 void AttachmentAppUpdateService::OpenAttachmentInSystemViewer(const std::string& url, const std::string& filename,
-                                                             const std::string& mimeType) {
+                                                              const std::string& mimeType) {
     if (url.empty()) {
         return;
     }
@@ -460,7 +473,7 @@ void AttachmentAppUpdateService::OpenAttachmentInSystemViewer(const std::string&
 }
 
 bool AttachmentAppUpdateService::DownloadAttachmentForPreview(const std::string& url, const std::string& filename,
-                                                             const std::string& mimeType, std::string* outError) {
+                                                              const std::string& mimeType, std::string* outError) {
     auto fail = [outError](const std::string& errorMessage) {
         if (outError != nullptr) {
             *outError = errorMessage;
@@ -600,8 +613,8 @@ AppUpdateInfo AttachmentAppUpdateService::CheckForAppUpdate(bool includePrerelea
 }
 
 bool AttachmentAppUpdateService::DownloadAndLaunchInstallerUpdate(const std::string& downloadUrl,
-                                                                 const std::string& assetName, std::string& outError,
-                                                                 std::shared_ptr<std::atomic<bool>> cancelFlag) const {
+                                                                  const std::string& assetName, std::string& outError,
+                                                                  std::shared_ptr<std::atomic<bool>> cancelFlag) const {
     outError.clear();
     if (downloadUrl.empty()) {
         outError = "Missing installer download URL.";

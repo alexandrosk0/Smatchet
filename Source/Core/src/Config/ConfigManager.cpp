@@ -187,7 +187,7 @@ constexpr char kDefaultImGuiDockLayoutIni[] =
 
 template <typename T> struct FieldDesc {
     const char* key;
-    T TrackerConfig::* member;
+    T TrackerConfig::*member;
 };
 
 // Plain string / bool / int fields: `cfg.member = j.value(key, cfg.member)` on Load,
@@ -1390,10 +1390,14 @@ void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
 }
 
 // Route SMATCHET_TRACKER_TOKEN / SMATCHET_TRACKER_BASE_URL to the active backend's
-// credential + origin-URL slots. Linear reports PascalCase "Linear" while the legacy
-// Plane/GitHub arms compare raw casing, so Linear routes off a lowercased copy (both
-// "Linear" and "linear" match). Extracted from ApplyOverridesAndClamps to keep that
-// function under the branch cap.
+// credential + origin-URL slots. All three non-Jira arms route off trackerTypeLower:
+// the in-app-persisted canonical value is PascalCase ("GitHub"/"Plane"/"Linear"), but
+// smatchet_config.json can be hand-edited with lowercase values — DefaultTrackerBackendFactory
+// already does a case-insensitive match when selecting the live backend (see
+// SmatchetPreferencesUi.cpp's "load path doesn't canonicalize" comment), so comparing raw
+// casing here silently fell through to the Jira/default slot for a hand-edited config, exactly
+// the CPP_CODE_AUDIT.md #2 class (originally reported for GitHub only; Plane has the same gap).
+// Extracted from ApplyOverridesAndClamps to keep that function under the branch cap.
 static void RouteTrackerEnvCredentials(TrackerConfig& cfg) {
     std::string trackerTypeLower = cfg.TrackerType;
     std::transform(trackerTypeLower.begin(), trackerTypeLower.end(), trackerTypeLower.begin(),
@@ -1402,9 +1406,9 @@ static void RouteTrackerEnvCredentials(TrackerConfig& cfg) {
     // SMATCHET_TRACKER_TOKEN — tracker API credential (Jira ApiToken / Plane ApiKey / GitHub PAT / Linear key).
     if (const char* envToken = std::getenv("SMATCHET_TRACKER_TOKEN")) {
         if (envToken[0] != '\0') {
-            if (cfg.TrackerType == "Plane") {
+            if (trackerTypeLower == "plane") {
                 cfg.PlaneApiKey = envToken;
-            } else if (cfg.TrackerType == "github") {
+            } else if (trackerTypeLower == "github") {
                 cfg.GitHubPat = envToken;
             } else if (trackerTypeLower == "linear") {
                 cfg.LinearApiKey = envToken;
@@ -1418,9 +1422,9 @@ static void RouteTrackerEnvCredentials(TrackerConfig& cfg) {
     // Linear→LinearBaseUrl).
     if (const char* envBase = std::getenv("SMATCHET_TRACKER_BASE_URL")) {
         if (envBase[0] != '\0') {
-            if (cfg.TrackerType == "Plane") {
+            if (trackerTypeLower == "plane") {
                 cfg.PlaneUrl = envBase;
-            } else if (cfg.TrackerType == "github") {
+            } else if (trackerTypeLower == "github") {
                 cfg.GitHubBaseUrl = envBase;
             } else if (trackerTypeLower == "linear") {
                 cfg.LinearBaseUrl = envBase;
@@ -1466,8 +1470,9 @@ void ApplyOverridesAndClamps(const ConfigManager::CliOverrides& cli, TrackerConf
         } else if (s == "false" || s == "0") {
             cfg.McpRequireTokenOnLoopback = false;
         } else if (!s.empty()) {
-            LOG_WARN("ConfigManager: ignoring invalid SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK=%s (keeping secure default)",
-                     s.c_str());
+            LOG_WARN(
+                "ConfigManager: ignoring invalid SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK=%s (keeping secure default)",
+                s.c_str());
         }
     }
 

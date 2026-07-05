@@ -5,6 +5,7 @@
 #include "TrackerHttpUtils.h"
 
 #include "JsonParseUtil.h"
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "StringUtil.h"
 
@@ -42,9 +43,10 @@ bool MergeProjectComponentsFromEndpoint(const TrackerConfig& /*cfg*/, const std:
             return mergedAny;
         }
 
-        auto json = nlohmann::json::parse(response.text, nullptr, false);
-        if (json.is_discarded() || !json.is_object()) {
-            LOG_WARN("JiraClient: project components response parse failed.");
+        std::string parseErr;
+        auto json = smatchet::json_safe::ParseBounded(response.text, parseErr);
+        if (!parseErr.empty() || !json.is_object()) {
+            LOG_WARN("JiraClient: project components response parse failed: %s", parseErr.c_str());
             return mergedAny;
         }
 
@@ -84,8 +86,14 @@ void EnrichGlobalCatalogFields(const std::string& base, const cpr::Header& heade
         if (priorityFieldIt != fieldIndexById.end()) {
             auto priorityResp = TrackerGetLogged("JiraClient", base + "/rest/api/3/priority", headers);
             if (priorityResp.status_code == 200) {
-                auto priorityJson = nlohmann::json::parse(priorityResp.text);
-                TrackerFieldCatalogPure::BuildSimpleCatalogOptions(priorityJson, outFields[priorityFieldIt->second]);
+                std::string parseErr;
+                auto priorityJson = smatchet::json_safe::ParseBounded(priorityResp.text, parseErr);
+                if (!parseErr.empty()) {
+                    LOG_WARN("JiraClient: priority catalog parse failed: %s", parseErr.c_str());
+                } else {
+                    TrackerFieldCatalogPure::BuildSimpleCatalogOptions(priorityJson,
+                                                                       outFields[priorityFieldIt->second]);
+                }
             } else {
                 LOG_WARN("JiraClient: priority catalog enrichment failed. HTTP %d", priorityResp.status_code);
             }
@@ -99,8 +107,11 @@ void EnrichGlobalCatalogFields(const std::string& base, const cpr::Header& heade
         if (issueTypeFieldIt != fieldIndexById.end()) {
             auto issueTypeResp = TrackerGetLogged("JiraClient", base + "/rest/api/3/issuetype", headers);
             if (issueTypeResp.status_code == 200) {
-                auto issueTypeJson = nlohmann::json::parse(issueTypeResp.text);
-                if (issueTypeJson.is_array()) {
+                std::string parseErr;
+                auto issueTypeJson = smatchet::json_safe::ParseBounded(issueTypeResp.text, parseErr);
+                if (!parseErr.empty()) {
+                    LOG_WARN("JiraClient: issuetype catalog parse failed: %s", parseErr.c_str());
+                } else if (issueTypeJson.is_array()) {
                     TrackerField& issueTypeField = outFields[issueTypeFieldIt->second];
                     TrackerFieldCatalogPure::BuildDedupedIssueTypeOptions(issueTypeJson, issueTypeField.AllowedValues,
                                                                           issueTypeField.AllowedValueOptions);
@@ -119,8 +130,13 @@ void EnrichGlobalCatalogFields(const std::string& base, const cpr::Header& heade
         if (statusFieldIt != fieldIndexById.end()) {
             auto statusResp = TrackerGetLogged("JiraClient", base + "/rest/api/3/status", headers);
             if (statusResp.status_code == 200) {
-                auto statusJson = nlohmann::json::parse(statusResp.text);
-                TrackerFieldCatalogPure::BuildSimpleCatalogOptions(statusJson, outFields[statusFieldIt->second]);
+                std::string parseErr;
+                auto statusJson = smatchet::json_safe::ParseBounded(statusResp.text, parseErr);
+                if (!parseErr.empty()) {
+                    LOG_WARN("JiraClient: status catalog parse failed: %s", parseErr.c_str());
+                } else {
+                    TrackerFieldCatalogPure::BuildSimpleCatalogOptions(statusJson, outFields[statusFieldIt->second]);
+                }
             } else {
                 LOG_WARN("JiraClient: status catalog enrichment failed. HTTP %d", statusResp.status_code);
             }
@@ -142,9 +158,15 @@ void EnrichFromCreateMeta(const TrackerConfig& cfg, const std::string& projectKe
     auto metaResponse = TrackerGetLogged("JiraClient", metaUrl, headers);
     if (metaResponse.status_code == 200) {
         try {
-            auto metaJson = nlohmann::json::parse(metaResponse.text);
-            TrackerFieldCatalogPure::ApplyCreateMetaToCatalog(metaJson, projectKey, fieldIndexById, outFields,
-                                                              outComponents, outIssueTypeMeta, outUniqueIssueTypes);
+            // SMATCHET_DEVIATION(rule=duplication; reason=ParseBounded clone #8; owner=cpp-audit; revisit=2026-09-30)
+            std::string parseErr;
+            auto metaJson = smatchet::json_safe::ParseBounded(metaResponse.text, parseErr);
+            if (!parseErr.empty()) {
+                LOG_WARN("JiraClient: createmeta parse failed: %s", parseErr.c_str());
+            } else {
+                TrackerFieldCatalogPure::ApplyCreateMetaToCatalog(metaJson, projectKey, fieldIndexById, outFields,
+                                                                  outComponents, outIssueTypeMeta, outUniqueIssueTypes);
+            }
         } catch (const std::exception& ex) {
             LOG_WARN("JiraClient: createmeta parse failed: %s", ex.what());
         }
@@ -177,13 +199,18 @@ void EnrichIssueTypeFromProject(const std::string& projectKey, const std::string
         const std::string projectUrl = base + "/rest/api/3/project/" + UrlEncode(projectKey);
         auto projectResp = TrackerGetLogged("JiraClient", projectUrl, headers);
         if (projectResp.status_code == 200) {
-            auto projectJson = nlohmann::json::parse(projectResp.text);
-            std::vector<TrackerFieldOption> opts;
-            if (TrackerFieldCatalogPure::BuildIssueTypeOptionsFromProjectJson(projectJson, opts)) {
-                issueTypeField.AllowedValueOptions = std::move(opts);
-                RefreshTrackerAllowedValuesFromOptions(issueTypeField);
-                issueTypeField.Family = ClassifyTrackerFieldFamily(issueTypeField);
-                filledFromProject = true;
+            std::string parseErr;
+            auto projectJson = smatchet::json_safe::ParseBounded(projectResp.text, parseErr);
+            if (!parseErr.empty()) {
+                LOG_WARN("JiraClient: project issueTypes parse failed: %s", parseErr.c_str());
+            } else {
+                std::vector<TrackerFieldOption> opts;
+                if (TrackerFieldCatalogPure::BuildIssueTypeOptionsFromProjectJson(projectJson, opts)) {
+                    issueTypeField.AllowedValueOptions = std::move(opts);
+                    RefreshTrackerAllowedValuesFromOptions(issueTypeField);
+                    issueTypeField.Family = ClassifyTrackerFieldFamily(issueTypeField);
+                    filledFromProject = true;
+                }
             }
         } else {
             LOG_WARN("JiraClient: project fetch for issue types failed. HTTP %d", projectResp.status_code);
@@ -223,8 +250,10 @@ std::vector<int> DiscoverSprintBoardIds(const std::string& projectKey, const std
             LOG_WARN("JiraClient: sprint board discovery failed (HTTP %d).", boardsResp.status_code);
             break;
         }
-        auto boardsJson = nlohmann::json::parse(boardsResp.text);
-        if (!boardsJson.is_object() || !boardsJson.contains("values") || !boardsJson["values"].is_array()) {
+        std::string parseErr;
+        auto boardsJson = smatchet::json_safe::ParseBounded(boardsResp.text, parseErr);
+        if (!parseErr.empty() || !boardsJson.is_object() || !boardsJson.contains("values") ||
+            !boardsJson["values"].is_array()) {
             LOG_WARN("JiraClient: sprint board discovery response missing values array.");
             break;
         }
@@ -254,7 +283,11 @@ void EnrichSprintFields(const std::vector<std::string>& sprintFieldIds, const st
             if (sprintResp.status_code != 200) {
                 continue;
             }
-            auto sprintJson = nlohmann::json::parse(sprintResp.text);
+            std::string sprintParseErr;
+            auto sprintJson = smatchet::json_safe::ParseBounded(sprintResp.text, sprintParseErr);
+            if (!sprintParseErr.empty()) {
+                continue;
+            }
             TrackerFieldCatalogPure::CollectSprintOptionsFromPage(sprintJson, seenSprintIds, sprintOptions);
         }
 
@@ -291,6 +324,7 @@ void EnrichSprintFields(const std::vector<std::string>& sprintFieldIds, const st
 // Fetch + parse the global /field list into the catalog, collecting sprint custom-field ids.
 bool FetchAndParseFieldList(const std::string& base, const cpr::Header& headers, std::vector<TrackerField>& outFields,
                             std::vector<std::string>& outSprintFieldIds, std::string& outError) {
+    // SMATCHET_DEVIATION(rule=duplication; reason=ParseBounded clone #8; owner=cpp-audit; revisit=2026-09-30)
     const std::string fieldsListUrl = base + "/rest/api/3/field";
     auto fieldsResponse = TrackerGetLogged("JiraClient", fieldsListUrl, headers);
     if (fieldsResponse.status_code != 200) {
@@ -300,7 +334,13 @@ bool FetchAndParseFieldList(const std::string& base, const cpr::Header& headers,
     }
 
     try {
-        auto response = nlohmann::json::parse(fieldsResponse.text);
+        std::string parseErr;
+        auto response = smatchet::json_safe::ParseBounded(fieldsResponse.text, parseErr);
+        if (!parseErr.empty()) {
+            outError = "Failed to parse /field response: " + parseErr;
+            LOG_ERROR("JiraClient: %s", outError.c_str());
+            return false;
+        }
         if (!response.is_array()) {
             outError = "Unexpected /field response shape.";
             LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), RedactHttpBodyForLog(fieldsResponse.text).c_str());
@@ -461,9 +501,11 @@ Result<TrackerProjectComponents, TrackerError> JiraClient::FetchProjectComponent
                 TrackerErrorFromHttpStatus(response.status_code, std::move(detail)));
         }
 
-        auto json = nlohmann::json::parse(response.text, nullptr, false);
-        if (json.is_discarded() || !json.is_object()) {
-            LOG_WARN("JiraClient: per-project components response parse failed for %s.", projectKey.c_str());
+        std::string parseErr;
+        auto json = smatchet::json_safe::ParseBounded(response.text, parseErr);
+        if (!parseErr.empty() || !json.is_object()) {
+            LOG_WARN("JiraClient: per-project components response parse failed for %s: %s", projectKey.c_str(),
+                     parseErr.c_str());
             return Result<TrackerProjectComponents, TrackerError>::Err(
                 TrackerErrorParse("Per-project components response parse failed."));
         }

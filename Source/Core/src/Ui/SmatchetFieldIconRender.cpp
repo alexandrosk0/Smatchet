@@ -108,20 +108,66 @@ std::string TryBundledPriorityPngPath(const std::string& slug) {
     return std::string();
 }
 
-/** Absolute URL from Jira `iconUrl`, or relative path joined with Jira site domain. */
+// Lowercased host (no scheme, no port, no path) from an absolute "scheme://host[:port]/..."
+// URL. Empty on a schemeless/malformed input. CPP_CODE_AUDIT.md #14 — same-origin comparison
+// only; not a general URL parser.
+std::string ExtractUrlHost(const std::string& url) {
+    const std::size_t schemeEnd = url.find("://");
+    if (schemeEnd == std::string::npos) {
+        return std::string();
+    }
+    const std::size_t hostStart = schemeEnd + 3;
+    std::size_t hostEnd = url.find_first_of("/?#", hostStart);
+    if (hostEnd == std::string::npos) {
+        hostEnd = url.size();
+    }
+    std::string hostPort = url.substr(hostStart, hostEnd - hostStart);
+    if (!hostPort.empty() && hostPort.front() == '[') {
+        // Bracketed IPv6 literal — keep the brackets, drop any trailing ":port".
+        const std::size_t close = hostPort.find(']');
+        if (close != std::string::npos) {
+            hostPort = hostPort.substr(0, close + 1);
+        }
+    } else {
+        const std::size_t colon = hostPort.rfind(':');
+        if (colon != std::string::npos) {
+            hostPort = hostPort.substr(0, colon);
+        }
+    }
+    return ToLowerAsciiCopy(std::move(hostPort));
+}
+
+// True when `absoluteUrl`'s host matches `jiraDomain`'s host. CPP_CODE_AUDIT.md #14: a
+// malicious/compromised tracker's priority `iconUrl` must not be able to drive
+// HttpGetBinary's GET at an arbitrary host (e.g. the cloud-metadata IP) — confine icon
+// fetches to the tracker's own configured origin.
+bool IconUrlHostAllowed(const std::string& absoluteUrl, const std::string& jiraDomain) {
+    const std::string urlHost = ExtractUrlHost(absoluteUrl);
+    if (urlHost.empty()) {
+        return false; // not a well-formed absolute URL — reject rather than guess
+    }
+    const std::string domainWithScheme =
+        jiraDomain.find("://") != std::string::npos ? jiraDomain : "https://" + jiraDomain;
+    const std::string domainHost = ExtractUrlHost(domainWithScheme);
+    return !domainHost.empty() && urlHost == domainHost;
+}
+
+/** Absolute URL from Jira `iconUrl`, or relative path joined with Jira site domain. Absolute
+ * references are confined to the tracker's own origin — see IconUrlHostAllowed. */
 std::string ResolveJiraIconUrlReference(const std::string& iconUrl, const std::string& jiraDomain) {
     const std::string t = TrimCopyAsciiWhitespace(iconUrl);
     if (t.empty()) {
         return std::string();
     }
     if (t.rfind("https://", 0) == 0 || t.rfind("http://", 0) == 0) {
-        return t;
+        return IconUrlHostAllowed(t, jiraDomain) ? t : std::string();
     }
     if (t.rfind("//", 0) == 0) {
-        return std::string("https:") + t;
+        const std::string absolute = std::string("https:") + t;
+        return IconUrlHostAllowed(absolute, jiraDomain) ? absolute : std::string();
     }
     if (!t.empty() && t[0] == '/') {
-        return JoinDomainAndPath(jiraDomain, t);
+        return JoinDomainAndPath(jiraDomain, t); // relative — already same-origin by construction
     }
     return std::string();
 }
@@ -575,6 +621,12 @@ bool DrawImagePathOrUrl(AppController& app, const std::string& pathOrUrl, float 
     std::string err;
     SmatchetLoadedIconTexture icon;
     if (!LoadTextureForResolvedPath(app, resolved, icon, err)) {
+        return false;
+    }
+    // CPP_CODE_AUDIT.md #22: a cache entry can report success with a null Texture
+    // (a failed/zero-dim decode). Guard once here so both the zero-size and
+    // explicit-size branches below agree on the return value for that failure.
+    if (icon.Texture == nullptr) {
         return false;
     }
     float drawW = width;

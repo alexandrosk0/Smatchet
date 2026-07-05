@@ -12,7 +12,7 @@ exposes two viable runtimes) followed by a port to whichever is chosen. Both can
 from validation *in this environment*: the Android path needs an NDK + an ARC-capable device, and the
 Linux path needs the desktop app to build on Linux for the first time (the cloud authoring box has no
 X11 dev headers — a `find_package(X11 REQUIRED)` configure failure, the same blocker noted in
-[`mobile-app-fuller-integration.md`](../plans/active/mobile-app-fuller-integration.md) § Validation
+[`mobile-app-fuller-integration.md`](../plans/shipped/mobile-app-fuller-integration.md) § Validation
 blocker). Per [`AI_POLICY.md`](../../AI_POLICY.md) *escalate-when-unvalidatable*, the deliverable is a
 findings doc + a backlog entry, not blind-shipped code.
 
@@ -176,8 +176,8 @@ Android toolchain ([`ANDROID_BUILD.md`](ANDROID_BUILD.md)) and a Linux desktop b
   [`docs/self-improvement/categories/`](../self-improvement/categories/) (e.g. a `debt/` entry, mirroring
   the Pillar-4 mobile a11y entry) and, if a port is greenlit, promoted to a `docs/plans/active/` execution
   plan per [`AGENTS.md`](../../AGENTS.md) § Process rules.
-- Path A overlaps the active Android roadmap
-  ([`mobile-app-fuller-integration.md`](../plans/active/mobile-app-fuller-integration.md)) — the
+- Path A overlaps the Android roadmap
+  ([`mobile-app-fuller-integration.md`](../plans/shipped/mobile-app-fuller-integration.md)) — the
   desktop-input shim (A1–A5) is reusable by any external-keyboard Android user, not just Chromebooks, so
   it could ride that plan rather than a separate one.
 - Path B overlaps the (shipped) cross-platform CMake work

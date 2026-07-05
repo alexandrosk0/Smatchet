@@ -26,7 +26,9 @@
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetHelpMarker.h"
 #include "SmatchetImGuiFonts.h"
+#include "SmatchetLocalization.h"
 #include "SmatchetTheme.h"
+#include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
 #include "SpreadsheetState.h"
 #include "UiPerfMonitor.h"
@@ -81,6 +83,36 @@ const char* const kOutboundConsentPopupId = "##AiOutboundConsent";
 // and on panel close.
 std::array<char, kInputBufCap> s_inputCharBuf{};
 bool s_inputCharBufSeeded = false;
+
+// Bytes the most recent InputText frame had to drop because a paste / splice
+// would have pushed the text past the fixed `s_inputCharBuf` cap. Set inside
+// InputBufferResizeCallback (ImGui's CallbackResize path), consumed + cleared
+// by DrawInputAndButtons after the InputText call to raise the user-facing
+// truncation toast. Single-threaded UI-thread access — no atomic needed.
+std::size_t s_inputTruncatedDroppedBytes = 0;
+
+// CallbackResize handler for the chat input. ImGui invokes this when a paste (or
+// the dictation splice-reload) would grow the text past the buffer capacity. The
+// stdlib pattern would resize a std::string here, but we keep a hard fixed cap
+// on purpose (the buffer is process-static and dictation-spliced). So instead of
+// growing we measure the would-be overflow via the pure
+// AiTruncatedPasteDroppedBytes helper, stash it for the draw code to toast, and
+// leave Buf and BufTextLen untouched — ImGui then clamps the insert to the
+// existing capacity exactly as it did before this callback existed
+// (behaviour-preserving for the non-overflow path).
+int InputBufferResizeCallback(ImGuiInputTextCallbackData* data) {
+    if (data != nullptr && data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
+        // data->BufSize is the requested new capacity (capacity+1); BufTextLen is
+        // the desired text length in bytes (excludes the NUL). Both already exceed
+        // our fixed cap here, hence the callback firing.
+        const std::size_t dropped = smatchet::ai::AiTruncatedPasteDroppedBytes(data->BufTextLen, kInputBufCap);
+        if (dropped > 0) {
+            s_inputTruncatedDroppedBytes = dropped;
+        }
+    }
+    // Return 0: we did NOT resize. ImGui keeps the original buffer + clamps.
+    return 0;
+}
 
 // Phase F — auto-send-on-punctuation hand-off slot. The dictation router calls
 // the registered send callback from `RunHotkeyRelease_Worker`'s UI-thread
@@ -1050,12 +1082,11 @@ void DrawOutboundConsentModal(AppController& app, UiDrawSession& d, const ViewDe
     ImGui::SameLine();
     ImGui::TextDisabled("(audit-trail excluded; fetched on send if enabled)");
     if (ImGui::TreeNode("What gets sent")) {
-        ImGui::TextWrapped(
-            "selected_tickets, visible_rows, active_ticket and active_view are pulled from the focused "
-            "grid pane — issue ids, summaries, statuses and field values already visible on screen. "
-            "audit_trail (off by default) additionally includes assignee emails and freeform comments. "
-            "Your global/project agents.md is prepended as the system prompt, and your typed message is "
-            "sent verbatim. Nothing else leaves this machine.");
+        ImGui::TextWrapped("selected_tickets, visible_rows, active_ticket and active_view are pulled from the focused "
+                           "grid pane — issue ids, summaries, statuses and field values already visible on screen. "
+                           "audit_trail (off by default) additionally includes assignee emails and freeform comments. "
+                           "Your global/project agents.md is prepended as the system prompt, and your typed message is "
+                           "sent verbatim. Nothing else leaves this machine.");
         ImGui::TreePop();
     }
     ImGui::Spacing();
@@ -1085,13 +1116,35 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     // ImGuiInputTextFlags_CtrlEnterForNewLine inverts the default multiline Enter
     // semantics so a bare Enter submits and Ctrl+Enter inserts a line break — see
     // imgui.h flag docs. EnterReturnsTrue makes the call return true on submit.
-    const ImGuiInputTextFlags inputFlags =
-        ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CtrlEnterForNewLine;
-    const bool enterSubmitted = ImGui::InputTextMultiline("##AiAssistantInput", s_inputCharBuf.data(),
-                                                          s_inputCharBuf.size(), ImVec2(-1.0f, inputH), inputFlags);
+    // CallbackResize lets us DETECT (not honour) an over-cap paste: a paste
+    // bigger than the fixed buffer was previously clamped silently, losing the
+    // dropped suffix with no feedback. The callback records the dropped byte
+    // count; we toast it below. (aiassistant-silent-8kib-paste-truncation)
+    const ImGuiInputTextFlags inputFlags = ImGuiInputTextFlags_EnterReturnsTrue |
+                                           ImGuiInputTextFlags_CtrlEnterForNewLine | ImGuiInputTextFlags_CallbackResize;
+    const bool enterSubmitted =
+        ImGui::InputTextMultiline("##AiAssistantInput", s_inputCharBuf.data(), s_inputCharBuf.size(),
+                                  ImVec2(-1.0f, inputH), inputFlags, &InputBufferResizeCallback);
     // Mirror char-buf back into the string field every frame so the Send-button click
     // below + the Lua glue see the latest value with no separate poke.
     d.assistantInputBuf.assign(s_inputCharBuf.data());
+
+    // Surface any paste/splice truncation the resize callback flagged this frame.
+    // Naming the dropped length restores visibility (UX Pillar) — the input has a
+    // hard 8 KB cap and the over-cap suffix is gone. Rounded to whole KB for the
+    // message; the title is a plain translated string.
+    if (s_inputTruncatedDroppedBytes > 0) {
+        const int droppedKb = static_cast<int>((s_inputTruncatedDroppedBytes + 1023u) / 1024u); // round up, min 1 KB
+        const int limitKb = kInputBufCap / 1024;
+        SmatchetToastManager::Instance().Push(SmatchetLocalization::T("ai.paste_truncated.title", "Paste truncated"),
+                                              SmatchetLocalization::Format("ai.paste_truncated.body",
+                                                                           "%d KB dropped (input limit %d KB)",
+                                                                           droppedKb, limitKb),
+                                              ToastType::Warning, 5000);
+        LOG_WARN("AiAssistantUi: paste truncated — %zu bytes dropped (input cap %d bytes).",
+                 s_inputTruncatedDroppedBytes, kInputBufCap);
+        s_inputTruncatedDroppedBytes = 0;
+    }
 
     AiAssistantController* ctrl = app.HasAiAssistantController() ? &app.GetAiAssistantController() : nullptr;
 

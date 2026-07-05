@@ -27,6 +27,20 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-06-28 · PR #1574 (introducer), #1576, #1577 (rode past) · red non-required, OFF-meant-to-block-allow-list `Bucket-E Jira fixture-backend (Mesa GL, hard)` merged on 3 PRs
+
+### What escaped
+`Bucket-E Jira fixture-backend (Mesa GL, hard)` went red on `develop` at #1574 (`ea9134e7`, `2026-06-27T17:18:40Z`) and stayed red through #1576 (`870702de`, `2026-06-28T07:57:13Z`) and #1577 (`14b77f4f`, `2026-06-28T11:44:47Z`) — all three squash-merged past it. The lane is a **deterministic** fixture-backend `ui_test.run --spawn` check (its driver declares failures "a fixture-backend regression, not a render flake"), but it sits OFF the poller's meant-to-block allow-list, so `merge-gates.sh` treated its terminal `failure` as advisory and emitted `GATES_PASSED`. `postmortem-owed --list` read "clean" — an off-allow-list non-required red is never recorded as an escape, so the post-merge net was blind too. The underlying product break: #1566's `PathConfinement` hardening (`32392e32`) makes the spawned child reject the parent-absolutized `--outLog` (the same parent-absolutizes / child-confines collision class as the perf-harness `--outPath` break in the 2026-06-27 sibling entry below) — child exits with `handler-error / "outLog rejected: absolute paths are not allowed"` ~0.4 s in, before MCP. Product fix tracked as GitHub Issue #1579 (fix PR in flight). NOT a Mesa/GL boot failure (every other Mesa bucket passes on the same runner), NOT the #1566 loopback-token 401 (child dies before MCP auth).
+
+### Root cause
+Blameless — **over-broad allow-list pruning**. The broad `Bucket-` token was deliberately removed from `MERGE_GATES_BLOCK_ALLOWLIST_RE` on 2026-06-15 to stop the poller-jam from the *flaky* Mesa lanes (`Bucket-C screenshot diff`, `Bucket-E UI tests`) whose software-GL exe can't boot (`bucket-mesa-exe-boot` P1; remedy for those = the `bucket-out-of-band` downgrade label, #1218 below). The pruning was correct for the flaky lanes but **collateral** for `Bucket-E Jira fixture-backend (Mesa GL, hard)`, which shares the `Bucket-E` prefix yet is the opposite kind of lane — deterministic and boot-capable. The allow-list re-added exactly one bucket lane afterward (`Bucket launch-smoke (Mesa GL)`, #1370) but not the fixture-backend lane, so a deterministic, regression-catching check was left advisory. Compounding: #1574 fixed the *sibling* `--outPath` confinement collision (perf harness) but not this `--outLog` one, so the same class of break survived in a lane that could no longer block.
+
+### Preventing gate
+PRIMARY (prevention) — add the literal `Bucket-E Jira fixture-backend (Mesa GL, hard)` job name to `MERGE_GATES_BLOCK_ALLOWLIST_RE` (`merge-gates.sh:163`), beside the already-blocking `Bucket launch-smoke (Mesa GL)`. This lane is deterministic + boot-capable (unlike the genuinely-advisory `Bucket-E UI tests` / `Bucket-C screenshot diff` lanes kept advisory by #1218's `bucket-out-of-band` remedy), so blocking it does NOT re-introduce the stochastic-flake jam the 2026-06-15 removal protected against. **Sequencing precondition: land only AFTER the #1579 product fix makes the lane green** — adding it while red blocks every PR. COMPANION (test) — a `merge_gates.bats` case asserting the deterministic fixture-backend lane IS allow-listed while the flaky bucket-C/E render lanes are NOT, so a future blanket `Bucket-` edit can't silently re-advisory it.
+
+### Filed as
+[`docs/self-improvement/categories/infra/2026-06-28-bucket-e-fixture-lane-advisory-by-prefix.md`](categories/infra/2026-06-28-bucket-e-fixture-lane-advisory-by-prefix.md)
+
 ## 2026-06-27 · PR #1566 (escape) · PR #1571, #1572, #1574 (collateral) · CANCELLED `Perf PR-fast` (meant-to-block, not GH-required) merged via a human native-merge
 
 ### What escaped

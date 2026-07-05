@@ -1,6 +1,9 @@
 #include "LinearClientHelpers.h"
 
+#include "Json/BoundedJsonParse.h"
+
 #include <cctype>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -31,15 +34,33 @@ long ParseLongOr(const std::map<std::string, std::string>& headers, const char* 
     if (i >= s.size()) {
         return fallback;
     }
-    long value = 0;
+    // CPP_CODE_AUDIT.md #18: checked accumulation — `long` is 32-bit on Windows and these
+    // headers (x-ratelimit-*, x-complexity) are server-controlled; unchecked `value*10+digit`
+    // is signed-overflow UB on a hostile/buggy header value. Accumulate the unsigned magnitude
+    // (not `long` directly) so the negative side's extra representable value (LONG_MIN, whose
+    // magnitude is LONG_MAX+1) doesn't get rejected as a false overflow.
+    using UMag = unsigned long;
+    const UMag kMaxMagnitude = negative ? static_cast<UMag>((std::numeric_limits<long>::max)()) + 1UL
+                                        : static_cast<UMag>((std::numeric_limits<long>::max)());
+    UMag magnitude = 0;
     for (; i < s.size(); ++i) {
         const char c = s[i];
         if (c < '0' || c > '9') {
             return fallback;
         }
-        value = value * 10 + (c - '0');
+        const UMag digit = static_cast<UMag>(c - '0');
+        if (magnitude > kMaxMagnitude / 10 || (magnitude == kMaxMagnitude / 10 && digit > kMaxMagnitude % 10)) {
+            return fallback;
+        }
+        magnitude = magnitude * 10 + digit;
     }
-    return negative ? -value : value;
+    if (!negative) {
+        return static_cast<long>(magnitude);
+    }
+    if (magnitude == kMaxMagnitude) {
+        return (std::numeric_limits<long>::min)();
+    }
+    return -static_cast<long>(magnitude);
 }
 
 } // namespace
@@ -63,14 +84,22 @@ bool ParseLinearIssueKey(const std::string& issueKey, ParsedLinearIssueKey& out)
         }
     }
 
-    // Number: all digits, parsed as a positive int64.
+    // Number: all digits, parsed as a positive int64. CPP_CODE_AUDIT.md #18: checked
+    // accumulation — an attacker-supplied issue key (e.g. from a deep-link or webhook
+    // payload) with an unbounded digit run would otherwise hit signed-overflow UB before
+    // the value ever reaches the GraphQL `number.eq` filter.
     std::int64_t number = 0;
     for (std::string::size_type i = 0; i < numberPart.size(); ++i) {
         const char c = numberPart[i];
         if (c < '0' || c > '9') {
             return false;
         }
-        number = number * 10 + (c - '0');
+        const std::int64_t digit = c - '0';
+        constexpr std::int64_t kMax = (std::numeric_limits<std::int64_t>::max)();
+        if (number > kMax / 10 || (number == kMax / 10 && digit > kMax % 10)) {
+            return false;
+        }
+        number = number * 10 + digit;
     }
     if (number <= 0) {
         return false;
@@ -164,7 +193,9 @@ std::string ExtractLinearErrorMessage(int httpStatus, const std::string& body) {
     if (body.empty()) {
         return fallback;
     }
-    nlohmann::json parsed = nlohmann::json::parse(body, nullptr, /*allow_exceptions=*/false);
+    // `body` is the untrusted HTTP error response — bounded parse (discarded on failure) so a
+    // depth bomb in an error body can't crash the process (audit: unbounded-recursion-DoS).
+    nlohmann::json parsed = smatchet::json_safe::ParseBoundedOrDiscarded(body);
     if (parsed.is_discarded()) {
         return fallback;
     }

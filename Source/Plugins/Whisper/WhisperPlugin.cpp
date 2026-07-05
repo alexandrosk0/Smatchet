@@ -38,7 +38,9 @@
 // this reach.
 #include "imgui_internal.h"
 
-// SMATCHET_DEVIATION(rule=duplication; reason=standard-library + json/filesystem include block overlaps the McpPlugin include block; include lists are not factorable behind a helper and a shared umbrella header would couple two independent plugins; owner=security-audit; revisit=2026-09-30)
+// SMATCHET_DEVIATION(rule=duplication; reason=standard-library + json/filesystem include block overlaps the McpPlugin
+// include block; include lists are not factorable behind a helper and a shared umbrella header would couple two
+// independent plugins; owner=security-audit; revisit=2026-09-30)
 #include <nlohmann/json.hpp>
 
 #include <ghc/filesystem.hpp>
@@ -461,8 +463,7 @@ smatchet::cmd::CommandResult AcquireTranscribeOnceAudio(const nlohmann::json& ar
         std::string resolvedPath, confineErr;
         if (!smatchet::cmd::ConfinePathUnderSubdir(ConfigManager::GetUserDataDirectory(), "whisper-import", filePath,
                                                    resolvedPath, confineErr)) {
-            return CommandResult::Failure(ErrorCode::ValidationError,
-                                          "transcribe-once --file rejected: " + confineErr);
+            return CommandResult::Failure(ErrorCode::ValidationError, "transcribe-once --file rejected: " + confineErr);
         }
         // Only accept .wav — ReadWavFile expects PCM WAV, and refusing other extensions
         // keeps a caller from coaxing the diagnostic path into shipping arbitrary bytes.
@@ -471,8 +472,7 @@ smatchet::cmd::CommandResult AcquireTranscribeOnceAudio(const nlohmann::json& ar
             std::transform(ext.begin(), ext.end(), ext.begin(),
                            [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
             if (ext != ".wav") {
-                return CommandResult::Failure(ErrorCode::ValidationError,
-                                              "transcribe-once --file must be a .wav file");
+                return CommandResult::Failure(ErrorCode::ValidationError, "transcribe-once --file must be a .wav file");
             }
         }
         // Fail closed before the file can reach the cloud path: require a regular file
@@ -487,8 +487,7 @@ smatchet::cmd::CommandResult AcquireTranscribeOnceAudio(const nlohmann::json& ar
         const auto fileSize = ghc::filesystem::file_size(resolvedPath, sizeEc);
         constexpr std::uintmax_t kMaxTranscribeWavBytes = 256ull * 1024ull * 1024ull;
         if (sizeEc) {
-            return CommandResult::Failure(ErrorCode::ValidationError,
-                                          "transcribe-once --file could not be statted");
+            return CommandResult::Failure(ErrorCode::ValidationError, "transcribe-once --file could not be statted");
         }
         if (fileSize > kMaxTranscribeWavBytes) {
             return CommandResult::Failure(ErrorCode::ValidationError,
@@ -672,7 +671,19 @@ smatchet::cmd::Command BuildTranscribeOnceCommand() {
     modeParam.Enum = {"cloud", "auto", "local"};
     c.Params = {std::move(fileParam), std::move(secondsParam), std::move(modeParam)};
 
-    c.Handler = [](const nlohmann::json& args, const CommandContext& /*ctx*/) -> CommandResult {
+    c.Handler = [](const nlohmann::json& args, const CommandContext& ctx) -> CommandResult {
+        // CPP_CODE_AUDIT.md #15: consent::CanCaptureMic only checks Whisper is enabled +
+        // set up — it has no notion of WHO is asking. Without `--file`, this command starts
+        // real WASAPI mic capture, and it's reachable from the loopback MCP surface with no
+        // hotkey press or visible prompt: a local MCP client could silently record up to 600 s
+        // of audio. Gate the capture path (not `--file`, which is separately confined) behind
+        // a non-MCP CommandSource — MCP automation must go through `--file` instead.
+        const bool isCapturePath = args.value("file", std::string()).empty();
+        if (isCapturePath && ctx.Source == smatchet::cmd::CommandSource::Mcp) {
+            return CommandResult::Failure(ErrorCode::ValidationError,
+                                          "whisper.transcribe-once mic capture is not available over MCP — pass "
+                                          "--file to transcribe a WAV instead.");
+        }
         return RunTranscribeOnce(args);
     };
 
@@ -1003,6 +1014,7 @@ smatchet::cmd::Command BuildSimulatePressCommand(WhisperPlugin::PhaseEState* sta
     using smatchet::cmd::Command;
     using smatchet::cmd::CommandContext;
     using smatchet::cmd::CommandResult;
+    using smatchet::cmd::ErrorCode;
 
     Command c;
     c.Name = "whisper.simulate-press";
@@ -1016,7 +1028,17 @@ smatchet::cmd::Command BuildSimulatePressCommand(WhisperPlugin::PhaseEState* sta
     c.Idempotent = true;
     c.AsyncSafe = true;
     c.DryRunSupported = false;
-    c.Handler = [state](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) -> CommandResult {
+    c.Handler = [state](const nlohmann::json& /*args*/, const CommandContext& ctx) -> CommandResult {
+        // CPP_CODE_AUDIT.md #15: this is registered AsyncSafe=true in the global command
+        // registry and starts real WASAPI mic capture with no hotkey press or visible
+        // prompt — reachable from the loopback MCP surface, so a local MCP client could
+        // silently trigger the mic. It's a bucket-E test helper (CI drives it via CLI
+        // --spawn); block the MCP source specifically rather than every non-UI source, so
+        // CLI-driven CI keeps working.
+        if (ctx.Source == smatchet::cmd::CommandSource::Mcp) {
+            return CommandResult::Failure(ErrorCode::ValidationError,
+                                          "whisper.simulate-press is not available over MCP.");
+        }
         if (state == nullptr) {
             return CommandResult::Success(nlohmann::json{{"started", false}, {"error", "Phase E state unavailable"}});
         }

@@ -1,7 +1,7 @@
 # Mobile accessibility — research findings (Phase-1 slice P1.6)
 
 > **Status**: research findings, not shipped code. This is the deliverable of slice **P1.6** of
-> [`docs/plans/active/mobile-app-fuller-integration.md`](../plans/active/mobile-app-fuller-integration.md)
+> [`docs/plans/shipped/mobile-app-fuller-integration.md`](../plans/shipped/mobile-app-fuller-integration.md)
 > (Pillar-4 is backlogged — no auto-fail yet). Code grounded against `develop` HEAD on **2026-06-20**.
 > On-device confirmation (real TalkBack pass) is itself a follow-up — see § Validation gaps.
 

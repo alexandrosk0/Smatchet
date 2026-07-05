@@ -46,8 +46,7 @@ void DrawClTooltipAsync(const std::string& cl, const AnnotateAnalysisConfig& cfg
         // Detach a still-pending previous fetch before overwriting: HoverFut comes from
         // std::async, so destroying the last reference to an unready state blocks until the
         // task finishes — a p4-describe-length stall on the UI thread (Pillar 2).
-        if (S().HoverFut.valid() &&
-            S().HoverFut.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+        if (S().HoverFut.valid() && S().HoverFut.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
             S().DetachedHoverFuts.push_back(S().HoverFut);
         }
         S().HoverCl = cl;
@@ -114,6 +113,24 @@ void ReapDetached() {
                        static_cast<std::vector<std::shared_future<P4ChangelistDetails>>::difference_type>(i));
         } else {
             ++i;
+        }
+    }
+}
+
+void DrainForShutdown(std::chrono::milliseconds timeout) {
+    // CPP_CODE_AUDIT.md #30: give the in-flight fetch (if any) up to `timeout` to finish
+    // on its own, logging either outcome, instead of silently hanging inside the
+    // ClPreviewState Meyers singleton's destructor at static-destruction time with zero
+    // diagnostic. See the header doc comment for why the default timeout value makes
+    // this a real bound (not just a shorter wait before the same eventual block).
+    if (S().HoverFut.valid() && S().HoverFut.wait_for(timeout) != std::future_status::ready) {
+        LOG_WARN("P4ClPreview: shutdown drain timed out (%lld ms) waiting on hover CL '%s' describe fetch",
+                 static_cast<long long>(timeout.count()), S().HoverCl.c_str());
+    }
+    for (const std::shared_future<P4ChangelistDetails>& fut : S().DetachedHoverFuts) {
+        if (fut.valid() && fut.wait_for(timeout) != std::future_status::ready) {
+            LOG_WARN("P4ClPreview: shutdown drain timed out (%lld ms) waiting on a detached describe fetch",
+                     static_cast<long long>(timeout.count()));
         }
     }
 }

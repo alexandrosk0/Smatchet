@@ -156,6 +156,15 @@ AiAssistantController::~AiAssistantController() {
         if (currentCancel_) {
             currentCancel_->store(true, std::memory_order_release);
         }
+        // Also flip every still-queued turn's own token — CPP_CODE_AUDIT.md #4:
+        // without this, a turn that hasn't been popped by WorkerLoop yet would
+        // stream to completion after currentCancel_ moves on to it (a shutdown
+        // hang, not just a Cancel no-op).
+        for (Request& queued : pending_) {
+            if (queued.Cancel) {
+                queued.Cancel->store(true, std::memory_order_release);
+            }
+        }
     }
     queueCv_.notify_all();
     if (worker_.joinable()) {
@@ -196,6 +205,11 @@ bool AiAssistantController::Submit(uint64_t turnGen, std::string prompt, std::ve
     req.TurnGen = turnGen;
     req.ModelOverride = std::move(modelOverride);
     req.EffortOverride = std::move(effortOverride);
+    // Each queued turn owns its own cancel token from the moment it's created —
+    // CPP_CODE_AUDIT.md #4: the token must NOT be shared/rebound via currentCancel_
+    // here, or a later Submit() would silently steal the in-flight field out from
+    // under an earlier turn that's still streaming.
+    req.Cancel = std::make_shared<std::atomic<bool>>(false);
     {
         std::lock_guard<std::mutex> lk(queueMutex_);
         if (shuttingDown_) {
@@ -203,11 +217,6 @@ bool AiAssistantController::Submit(uint64_t turnGen, std::string prompt, std::ve
                      static_cast<unsigned long long>(turnGen));
             return false;
         }
-        // Replace cancel atom — each turn owns its own atom so a Cancel of the
-        // previous turn cannot flip the next turn's flag (a race the shared_ptr
-        // ownership model neutralises: worker captures the previous shared_ptr;
-        // UI rebinds currentCancel_ to a fresh shared_ptr for the new turn).
-        currentCancel_ = std::make_shared<std::atomic<bool>>(false);
         pending_.push_back(std::move(req));
     }
     queueCv_.notify_one();
@@ -218,6 +227,14 @@ void AiAssistantController::Cancel() {
     std::lock_guard<std::mutex> lk(queueMutex_);
     if (currentCancel_) {
         currentCancel_->store(true, std::memory_order_release);
+    }
+    // Also flip every still-queued turn's own token, not just the in-flight one —
+    // otherwise a Cancel() that lands while a turn is queued but not yet popped
+    // by WorkerLoop would be silently dropped for that turn (CPP_CODE_AUDIT.md #4).
+    for (Request& queued : pending_) {
+        if (queued.Cancel) {
+            queued.Cancel->store(true, std::memory_order_release);
+        }
     }
 }
 
@@ -233,7 +250,12 @@ void AiAssistantController::WorkerLoop() {
             }
             req = std::move(pending_.front());
             pending_.pop_front();
-            cancel = currentCancel_;
+            cancel = req.Cancel;
+            // Publish this turn's token as THE in-flight token, under the same lock
+            // Cancel()/the destructor take — so a Cancel() that arrives right after
+            // this pop always reaches the turn that's actually about to run, never a
+            // stale or not-yet-existing token (CPP_CODE_AUDIT.md #4).
+            currentCancel_ = cancel;
         }
         // Pre-cancel check — Cancel might have fired between Submit and WorkerLoop pickup.
         if (cancel && cancel->load(std::memory_order_acquire)) {
@@ -314,7 +336,7 @@ bool AiAssistantController::RefreshProviderForTurn(const TrackerConfig& cfg) {
 }
 
 void AiAssistantController::ResolveModelAndEffort(const TrackerConfig& cfg, const Request& req,
-                                                 AiChatRequest& chatReq) {
+                                                  AiChatRequest& chatReq) {
     // Model + reasoning effort for this turn come from the single per-turn config
     // snapshot taken in RunRequest. Per-turn overrides (chat-window Model + Effort
     // Combos) win when non-empty; otherwise the snapshot Preferences value applies.
@@ -408,9 +430,9 @@ void AiAssistantController::BuildChatPayload(const TrackerConfig& cfg, const Req
         // snapshot threaded from RunRequest.
         std::lock_guard<std::mutex> lk(agentsMdMutex_);
         const bool cacheUsable = smatchet::ai::pure::AgentsMdCacheStillValid(
-            agentsMdCacheValid_.load(std::memory_order_acquire), agentsMdCachedGlobalPath_,
-            agentsMdCachedProjectPath_, agentsMdCachedAutoDiscover_, cfg.AgentsMdGlobalPath,
-            cfg.ProjectAgentsMdPath, cfg.AgentsMdAutoDiscoverProject);
+            agentsMdCacheValid_.load(std::memory_order_acquire), agentsMdCachedGlobalPath_, agentsMdCachedProjectPath_,
+            agentsMdCachedAutoDiscover_, cfg.AgentsMdGlobalPath, cfg.ProjectAgentsMdPath,
+            cfg.AgentsMdAutoDiscoverProject);
         if (cacheUsable) {
             agentsMd = agentsMdCachedBody_;
         } else {

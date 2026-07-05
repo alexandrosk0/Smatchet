@@ -542,8 +542,8 @@ bool LaunchEphemeralInstance(const std::string& exePath, int port, std::string* 
     const std::string logPath = ComputeSpawnLogPath(port);
     if (outLogPath)
         *outLogPath = logPath;
-    // main.cpp parses `--mcp-port <port>` as two separate argv entries (space-separated),
-    // NOT `--mcp-port=<port>` — using the equals form would silently fall through.
+        // main.cpp parses `--mcp-port <port>` as two separate argv entries (space-separated),
+        // NOT `--mcp-port=<port>` — using the equals form would silently fall through.
 #if defined(_WIN32)
     // CommandLineToArgvW handles quoted whitespace; pass space-separated tokens.
     std::string cmdLine = "\"" + exePath + "\" --ephemeral --mcp-port " + portStr;
@@ -1116,6 +1116,19 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
     const std::string requestToken = haveConfiguredToken ? spawnCfg.McpAuthToken : SpawnAuthToken();
     const std::string provisionToken = haveConfiguredToken ? std::string() : requestToken;
     try {
+        // `outPath`/`outLog` (ui_test.run, scenario.run, perf.dump) are no longer
+        // CLI-CWD-relative — every handler that reads them confines the value under a
+        // fixed <userData> subdir (SECURITY_AUDIT.md path-confinement sweep, #1566) and
+        // REJECTS an absolute path outright. There used to be a normalization step here
+        // that resolved a relative outPath/outLog to absolute against the CLI's CWD "so
+        // both processes agree on location" — that predates the confinement change and is
+        // now actively wrong: it silently turned a valid relative value into one every
+        // confined handler rejects, breaking --spawn for any caller passing a relative
+        // outPath/outLog (CPP_CODE_AUDIT.md #8/#9 follow-up; see
+        // scripts/dev/test-ui-jira-deterministic-backend.sh's outLog handling). Confinement
+        // resolves relative to <userData>, which both processes agree on without any CWD
+        // translation, so outPath/outLog are forwarded to the spawned child unmodified.
+        //
         // C1 parent-fulfill (screenshotPath confinement). The spawned child confines any
         // caller-supplied screenshotPath under its own <userData>/screenshots/ dir and REJECTS
         // absolute / '..' paths — closing the #1566-class arbitrary-file-write on the

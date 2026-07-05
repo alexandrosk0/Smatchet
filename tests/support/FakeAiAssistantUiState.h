@@ -19,6 +19,9 @@ class FakeAiAssistantUiState : public IAiAssistantUiState {
     bool AssistantHistoryHydrated() const override { return hydrated; }
     int AssistantHistoryMaxRows() const override { return maxRows; }
 
+    std::uint64_t BumpAssistantTurnGen() override { return ++turnGen; }
+    void RollbackAssistantTurnGen() override { --turnGen; }
+
     std::string& AssistantStreamBuf() override { return streamBuf; }
     std::vector<AiMessage>& AssistantHistory() override { return history; }
     std::vector<std::int64_t>& AssistantHistoryRowIds() override { return historyRowIds; }

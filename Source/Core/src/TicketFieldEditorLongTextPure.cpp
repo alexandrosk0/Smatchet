@@ -6,6 +6,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -101,6 +103,21 @@ std::string RichValueToTooltipMarkdown(const std::string& rich, const std::strin
         return strippedFallback;
     }
     return md;
+}
+
+LongTextSeedPlan PlanSeedCopy(const std::string& seed, std::size_t bufferCapacity) {
+    LongTextSeedPlan plan;
+    if (bufferCapacity == 0) {
+        return plan;
+    }
+    const std::size_t copyLen = (std::min)(seed.size(), bufferCapacity - 1);
+    plan.Shown.assign(seed.data(), copyLen);
+    plan.Truncated = seed.size() > copyLen;
+    return plan;
+}
+
+bool ShouldQueueLongTextEdit(const std::string& newValue, const std::string& shownSeed) {
+    return newValue != shownSeed;
 }
 
 } // namespace TicketFieldEditorLongTextPure

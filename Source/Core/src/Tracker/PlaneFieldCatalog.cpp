@@ -2,6 +2,7 @@
 #include "PlaneClient_Internal.h"
 #include "PlaneFieldCatalogPure.h"
 
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "StringUtil.h"
 #include "TrackerHttpClient.h"
@@ -89,8 +90,9 @@ void AppendPagedResults(const std::string& listUrl, const cpr::Header& headers, 
             }
             return;
         }
-        const nlohmann::json j = nlohmann::json::parse(StripUtf8BomCopy(response.text), nullptr, false);
-        if (j.is_discarded()) {
+        std::string parseErr;
+        const nlohmann::json j = smatchet::json_safe::ParseBounded(StripUtf8BomCopy(response.text), parseErr);
+        if (!parseErr.empty()) {
             if (outWarn && outWarn->empty()) {
                 *outWarn = (resourceLabel != nullptr && resourceLabel[0] != '\0')
                                ? std::string(resourceLabel) + ": invalid JSON response"
@@ -319,13 +321,14 @@ void FetchPlaneCustomFields(const std::string& planeApi, const TrackerConfig& cf
             if (IsPlanePlanGatedCatalogStatus(static_cast<int>(pResp.status_code))) {
                 continue;
             }
-            warns.push_back(FormatPlaneCatalogResourceWarn("Custom field properties",
-                                                           static_cast<int>(pResp.status_code)) +
-                            " for type " + typeId.substr(0, 8));
+            warns.push_back(
+                FormatPlaneCatalogResourceWarn("Custom field properties", static_cast<int>(pResp.status_code)) +
+                " for type " + typeId.substr(0, 8));
             continue;
         }
-        const nlohmann::json pj = nlohmann::json::parse(StripUtf8BomCopy(pResp.text), nullptr, false);
-        if (pj.is_discarded()) {
+        std::string parseErr;
+        const nlohmann::json pj = smatchet::json_safe::ParseBounded(StripUtf8BomCopy(pResp.text), parseErr);
+        if (!parseErr.empty()) {
             warns.push_back("work-item-properties invalid JSON for type " + typeId.substr(0, 8));
             continue;
         }

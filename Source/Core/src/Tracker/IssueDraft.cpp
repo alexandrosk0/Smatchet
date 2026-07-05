@@ -241,6 +241,7 @@ bool FromJson(const std::string& json, IssueDraft& outDraft, std::string& outErr
     outDraft = IssueDraft{};
     outError.clear();
     try {
+        // SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; reason=draft blob is app-serialised by ToJson in this TU and stored locally, not external ingress; owner=security-audit; revisit=2026-12-31)
         auto j = nlohmann::json::parse(json);
         outDraft.ProjectKey = j.value("projectKey", std::string());
         outDraft.IssueTypeId = j.value("issueTypeId", std::string());

@@ -1,6 +1,8 @@
+// SMATCHET_DEVIATION(rule=duplication; reason=include-block clone, audit #12; owner=cpp-audit; revisit=2026-09-30)
 #include "SmatchetUI.h"
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+// SMATCHET_DEVIATION(rule=duplication; reason=include-block clone, audit #12; owner=cpp-audit; revisit=2026-09-30)
 #include "SmatchetViewVisibility.h"
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetStatusBarUi.h"
@@ -11,6 +13,7 @@
 #include "Commands/ViewCommands.h"
 #include "ConfigManager.h"
 #include "ConfigSaveWorker.h"
+#include "Json/BoundedJsonParse.h"
 #include "TrackerGridFieldDisplay.h"
 #include "SmatchetGridUiSupport.h"
 #include "SmatchetImageTextureCache.h"
@@ -822,10 +825,10 @@ void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
         }
         nlohmann::json args = nlohmann::json::object();
         if (!pk.argsJson.empty()) {
-            try {
-                args = nlohmann::json::parse(pk.argsJson);
-            } catch (const std::exception& e) {
-                LOG_WARN("Keybindings: bad args JSON for command \"%s\": %s", pk.commandId.c_str(), e.what());
+            std::string parseErr;
+            args = smatchet::json_safe::ParseBounded(pk.argsJson, parseErr);
+            if (!parseErr.empty()) {
+                LOG_WARN("Keybindings: bad args JSON for command \"%s\": %s", pk.commandId.c_str(), parseErr.c_str());
                 args = nlohmann::json::object();
             }
         }

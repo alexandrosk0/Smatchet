@@ -66,6 +66,11 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerLabelsPure.cpp"
         Core/TrackerDateTimePure.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerDateTimePure.cpp"
+        # Gap map Tier 1 #3 — grid-cell render-model builders (untrusted tracker-value parsing).
+        # No threads; proves the pure TU compiles/links under TSan and runs its doctests on the
+        # Linux subset (TrackerFieldValueParser/Utils closure already linked below).
+        Core/TrackerGridFieldDisplayPure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerGridFieldDisplayPure.cpp"
         # linear-tracker-backend.md Slice 1 — pure GraphQL/parse helpers.
         Core/LinearClientHelpers.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearClientHelpers.cpp"
@@ -294,6 +299,10 @@ add_executable(SmatchetTests
     # SmatchetImageTextureCache's stbi_info pre-check. Header-only
     # (Source/Core/include/Persistence/IconDimensionsPolicy.h); no production .cpp to link.
     Core/IconDimensionsPolicy.test.cpp
+    # mobile P1.4 — pure area-average RGBA32 downscale behind the non-Windows attachment-thumbnail
+    # decode arm (stb_image cannot decode-scale; WIC does on Windows). Header-only
+    # (Source/Core/include/Ui/RgbaDownscalePure.h); no production .cpp to link.
+    Core/RgbaDownscalePure.test.cpp
     # multi-grid-tabs.md Slice 5a (plan item 21) — pure hidden-pane LRU eviction decision
     # (least-recently-visible first; visible + busy-sync never evicted). Header-only policy.
     Core/GridPaneEvictionPolicy.test.cpp
@@ -539,6 +548,12 @@ add_executable(SmatchetTests
     # SSRF guard — Lua imgui.image http(s)-URL refusal allowlist. Header-only pure predicate.
     Core/LuaImagePathPolicyPure.test.cpp
     Core/TicketFieldEditorDurationPopupPure.test.cpp
+    # Time-tracking sort comparator lifted from TicketGridModel.cpp (TEST_COVERAGE_GAP_MAP.md
+    # Tier 1 #1) — dependency-light, so tests link it without the grid model's heavy deps.
+    Core/TicketGridDurationSortPure.test.cpp
+    # Grid-cell render-model builders lifted from TrackerGridFieldDisplay.cpp (gap map Tier 1
+    # #3) — the untrusted tracker-value parse/format layer, ImGui-free after the extraction.
+    Core/TrackerGridFieldDisplayPure.test.cpp
     Core/IsDescriptionLikeFieldId.test.cpp
     Core/TrackerFieldPayloadPure.test.cpp
     Core/TrackerFieldCatalogPure.test.cpp
@@ -674,6 +689,10 @@ add_executable(SmatchetTests
     # rejections + the symlinked-subdir escape regression from the security-audit
     # MCP file-command confinement. No extra .cpp source.
     Core/PathConfinement.test.cpp
+    # header-only; pins the screenshot-scenario confinement wrapper's fail-closed
+    # escape rejections (absolute / ".." / empty) + scenario-prefixed reject message
+    # (#1566 arbitrary-file-write class on the MCP/Lua-reachable screenshot scenarios).
+    Core/ScenarioScreenshotPath.test.cpp
     Core/DictationInsertionRouter.test.cpp
     Core/AiAssistantInputSeedDecision.test.cpp
     Core/AiAssistantSendButton.test.cpp
@@ -876,6 +895,8 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerLabelsPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerDateTimePure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/TicketFieldEditorLongTextPure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/TicketGridDurationSortPure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerGridFieldDisplayPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldPayloadPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldCatalogPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlProjectScope.cpp"

@@ -110,8 +110,16 @@ std::string SanitizeLogText(const std::string& s) {
     return out;
 }
 
+// CPP_CODE_AUDIT.md #20: dense-array join recursion depth cap, mirroring
+// lua_json_detail::kJsonToLuaMaxDepth — without it a cyclic dense array
+// (`local t={}; t[1]=t`) recurses without bound (stack overflow, SIGSEGV).
+constexpr int kLuaObjectToIssueFieldStringMaxDepth = 64;
+
 /** Flatten Lua values the same way as JSON import cells (strings, numbers, bools, simple arrays). */
-static std::string LuaObjectToIssueFieldString(const sol::object& v, std::size_t maxDump = 4096) {
+static std::string LuaObjectToIssueFieldString(const sol::object& v, std::size_t maxDump = 4096, int depth = 0) {
+    if (depth > kLuaObjectToIssueFieldStringMaxDepth) {
+        return std::string("?");
+    }
     if (!v.valid() || v.get_type() == sol::type::lua_nil) {
         return std::string();
     }
@@ -170,7 +178,7 @@ static std::string LuaObjectToIssueFieldString(const sol::object& v, std::size_t
                     if (!joined.empty()) {
                         joined.push_back(',');
                     }
-                    joined += LuaObjectToIssueFieldString(tbl[i], maxDump / (maxIdx + 1));
+                    joined += LuaObjectToIssueFieldString(tbl[i], maxDump / (maxIdx + 1), depth + 1);
                 }
                 return joined;
             }

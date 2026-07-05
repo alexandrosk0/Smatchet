@@ -61,6 +61,15 @@ struct ActiveLongTextEditorState {
 
     static constexpr size_t kBufferSize = 64 * 1024;
     std::vector<char> Buffer;
+    /// True when the seed (OriginalMarkdown, or OriginalRichValue in RawMode) exceeded
+    /// kBufferSize - 1 and had to be truncated to fit Buffer. CommitLongTextEdit diffs
+    /// against BufferSeedShown (the truncated copy actually loaded into Buffer) rather
+    /// than the full untruncated seed, so an unmodified over-limit document is never
+    /// re-saved — that would silently overwrite the tracker field with truncated text.
+    bool SeedTruncated = false;
+    /// Exact string written into Buffer at seed time (== seed, or its first kBufferSize-1
+    /// bytes when SeedTruncated). The Save-diff baseline — see SeedTruncated.
+    std::string BufferSeedShown;
     bool Active = false;
     bool JustOpened = false;
     /// Three-way preview mode. Ctrl+P cycles Edit -> Split -> Preview -> Edit.
@@ -133,6 +142,17 @@ void DrawLongTextBanners() {
     if (s_ActiveLongTextState.LoadingMarkdown) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.6f, 0.85f, 1.0f, 1.0f));
         ImGui::TextUnformatted("Loading description...");
+        ImGui::PopStyleColor();
+    }
+
+    // Content exceeds the editor's fixed buffer — anything past kBufferSize - 1 bytes is not
+    // loaded and is NOT part of the Save diff baseline (BufferSeedShown), so editing and saving
+    // here will drop the untruncated tail. See CPP_CODE_AUDIT.md #1.
+    if (s_ActiveLongTextState.SeedTruncated) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
+        ImGui::TextWrapped("This description is too large for the editor (over 64 KB) — only the "
+                           "first 64 KB is shown. Saving will overwrite the tracker field with just "
+                           "the truncated text below; edit elsewhere for the full document.");
         ImGui::PopStyleColor();
     }
 
@@ -350,11 +370,14 @@ void DrawLongTextPreviewPane(const LongTextModalCtx& ctx) {
 // closes the modal. Extracted from RenderLongTextModal's save branch; byte-identical.
 void CommitLongTextEdit(std::vector<PendingFieldEdit>& pendingEdits) {
     const std::string newValue(s_ActiveLongTextState.Buffer.data());
-    // Diff against the seeded markdown (or raw HTML in RawMode) — skip null edits that
-    // would re-emit through the payload converter and reshape unchanged formatting.
-    const std::string& seed = s_ActiveLongTextState.RawMode ? s_ActiveLongTextState.OriginalRichValue
-                                                            : s_ActiveLongTextState.OriginalMarkdown;
-    if (newValue != seed) {
+    // Diff against BufferSeedShown — exactly what was loaded into Buffer at seed time (the
+    // seeded markdown, or raw HTML in RawMode), truncated the same way if the seed exceeded
+    // kBufferSize - 1. Diffing against the untruncated OriginalMarkdown/OriginalRichValue
+    // instead would make an unmodified over-limit document always look "changed" (it can never
+    // equal its own untruncated seed), queuing a save that overwrites the tracker field with
+    // truncated text purely because it was opened and closed — see CPP_CODE_AUDIT.md #1.
+    const std::string& seed = s_ActiveLongTextState.BufferSeedShown;
+    if (TicketFieldEditorLongTextPure::ShouldQueueLongTextEdit(newValue, seed)) {
         PendingFieldEdit edit;
         edit.IssueId = s_ActiveLongTextState.IssueId;
         edit.Field = s_ActiveLongTextState.Field;
@@ -425,6 +448,19 @@ void DrawLongTextFooter(const LongTextModalCtx& ctx, std::vector<PendingFieldEdi
     }
 }
 
+// Copies `seed` into Buffer, truncating to kBufferSize - 1 if needed, and records exactly
+// what was written (BufferSeedShown) plus whether truncation occurred (SeedTruncated). Buffer
+// must already be sized (assign'd) by the caller before this runs. The truncation rule lives
+// in TicketFieldEditorLongTextPure::PlanSeedCopy so it stays unit-tested.
+void SeedLongTextBuffer(const std::string& seed) {
+    const TicketFieldEditorLongTextPure::LongTextSeedPlan plan =
+        TicketFieldEditorLongTextPure::PlanSeedCopy(seed, ActiveLongTextEditorState::kBufferSize);
+    std::memcpy(s_ActiveLongTextState.Buffer.data(), plan.Shown.data(), plan.Shown.size());
+    s_ActiveLongTextState.Buffer[plan.Shown.size()] = '\0';
+    s_ActiveLongTextState.SeedTruncated = plan.Truncated;
+    s_ActiveLongTextState.BufferSeedShown = plan.Shown;
+}
+
 } // namespace
 
 void OpenLongTextEditor(AppController& app, const std::string& issueId, const TrackerField& field,
@@ -459,16 +495,13 @@ void OpenLongTextEditor(AppController& app, const std::string& issueId, const Tr
                                 s_ActiveLongTextState.DroppedAdfNodeTypes, s_ActiveLongTextState.RawMode);
         s_ActiveLongTextState.OriginalMarkdown = seed;
         s_ActiveLongTextState.Buffer.assign(ActiveLongTextEditorState::kBufferSize, '\0');
-        const size_t copyLen = (std::min)(seed.size(), ActiveLongTextEditorState::kBufferSize - 1);
-        std::memcpy(s_ActiveLongTextState.Buffer.data(), seed.data(), copyLen);
-        s_ActiveLongTextState.Buffer[copyLen] = '\0';
+        SeedLongTextBuffer(seed);
     } else {
         // Show a placeholder so the modal renders immediately; worker replaces it on post-back.
         const std::string placeholder = "Loading description...";
         s_ActiveLongTextState.OriginalMarkdown.clear();
         s_ActiveLongTextState.Buffer.assign(ActiveLongTextEditorState::kBufferSize, '\0');
-        std::memcpy(s_ActiveLongTextState.Buffer.data(), placeholder.data(), placeholder.size());
-        s_ActiveLongTextState.Buffer[placeholder.size()] = '\0';
+        SeedLongTextBuffer(placeholder);
         s_ActiveLongTextState.LoadingMarkdown = true;
         const int capturedGen = s_ActiveLongTextState.LoadGen;
         const std::string capturedIssueId = issueId;
@@ -490,9 +523,7 @@ void OpenLongTextEditor(AppController& app, const std::string& issueId, const Tr
                 s_ActiveLongTextState.DroppedAdfNodeTypes = std::move(droppedNodes);
                 s_ActiveLongTextState.RawMode = rawMode;
                 s_ActiveLongTextState.Buffer.assign(ActiveLongTextEditorState::kBufferSize, '\0');
-                const size_t copyLen = (std::min)(seed.size(), ActiveLongTextEditorState::kBufferSize - 1);
-                std::memcpy(s_ActiveLongTextState.Buffer.data(), seed.data(), copyLen);
-                s_ActiveLongTextState.Buffer[copyLen] = '\0';
+                SeedLongTextBuffer(seed);
                 s_ActiveLongTextState.LoadingMarkdown = false;
             });
         });

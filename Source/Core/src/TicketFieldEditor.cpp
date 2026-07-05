@@ -98,9 +98,20 @@ std::string GetCurrentJiraDateTimeString() {
     int localMin = tmLocal.tm_hour * 60 + tmLocal.tm_min;
     int utcMin = tmUtc.tm_hour * 60 + tmUtc.tm_min;
 
-    if (tmLocal.tm_yday > tmUtc.tm_yday || (tmLocal.tm_yday == 0 && tmUtc.tm_yday > 300)) {
+    // CPP_CODE_AUDIT.md #33 (year-boundary UTC-offset inverted): compare full civil dates
+    // (year + day-of-year), not bare tm_yday. tm_yday resets to 0 every January 1st, so
+    // comparing it alone conflates "local is a calendar day ahead of UTC" with "local and
+    // UTC are in different years" — e.g. Dec 31 (tm_yday=364) vs the following Jan 1
+    // (tm_yday=0) used to compare as local-ahead (364 > 0) even for a NEGATIVE-offset user
+    // whose local time is actually BEHIND UTC across that boundary, producing a nonsense
+    // ~48h-off offset (e.g. "+43:00") in the worklog DateStarted sent to Jira. Multiplying
+    // tm_year by 366 (>= any possible tm_yday) keeps the combined ordinal strictly
+    // increasing across a year boundary while local/UTC can differ by at most one day.
+    const long localOrdinal = static_cast<long>(tmLocal.tm_year) * 366L + tmLocal.tm_yday;
+    const long utcOrdinal = static_cast<long>(tmUtc.tm_year) * 366L + tmUtc.tm_yday;
+    if (localOrdinal > utcOrdinal) {
         localMin += 24 * 60;
-    } else if (tmLocal.tm_yday < tmUtc.tm_yday || (tmUtc.tm_yday == 0 && tmLocal.tm_yday > 300)) {
+    } else if (localOrdinal < utcOrdinal) {
         utcMin += 24 * 60;
     }
     const int offsetSec = (localMin - utcMin) * 60;
@@ -683,7 +694,12 @@ void RenderSingleSelectComboBody(const CachedTicket& ticket, const TrackerField&
         const bool isSelected = (option.Id == currentId);
         ImGui::PushID(optionId.c_str());
         if (ImGui::Selectable(option.Value.c_str(), isSelected)) {
-            QueueEdit(ticket.id, field, {option.Id}, pendingEdits, ticket.GetFieldValue(field.Id));
+            // CPP_CODE_AUDIT.md #33 (single-select combo clears the field for id-less
+            // options): queue `optionId` (the same Id-or-Value fallback used for the
+            // widget's own ImGui id above), not the raw `option.Id` — an id-less option
+            // has `option.Id.empty()`, so queuing it directly sent {""} (a field clear)
+            // instead of the option the user actually clicked.
+            QueueEdit(ticket.id, field, {optionId}, pendingEdits, ticket.GetFieldValue(field.Id));
             ImGui::CloseCurrentPopup();
         }
         ImGui::PopID();
@@ -694,7 +710,8 @@ void RenderSingleSelectComboBody(const CachedTicket& ticket, const TrackerField&
     // Pressing enter commits when the filter narrows to a single match. When several still match,
     // the top one is committed as a least-surprise default that mirrors typeahead pickers.
     if (submitOnEnter && firstMatch != nullptr) {
-        QueueEdit(ticket.id, field, {firstMatch->Id}, pendingEdits, ticket.GetFieldValue(field.Id));
+        const std::string firstMatchId = firstMatch->Id.empty() ? firstMatch->Value : firstMatch->Id;
+        QueueEdit(ticket.id, field, {firstMatchId}, pendingEdits, ticket.GetFieldValue(field.Id));
         ImGui::CloseCurrentPopup();
     }
 }

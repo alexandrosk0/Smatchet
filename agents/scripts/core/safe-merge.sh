@@ -48,6 +48,16 @@
 #   agents/scripts/core/safe-merge.sh --selftest
 #
 # Env knobs (this wrapper; merge-gates.sh knobs also apply — ORCH_USER etc.):
+#   MERGE_GATES_FLIP_READY      — draft→ready flip before the poll (consumed by
+#                                 merge-gates.sh). DEFAULTED TO "true" here when
+#                                 unset: invoking safe-merge IS the merge
+#                                 authorization (AGENTS.md § Merge gates), so a
+#                                 draft PR must not pause an autonomous merge —
+#                                 CR's auto_review.drafts:false skips drafts (the
+#                                 C4 class → CR gate wedges on NONE) and
+#                                 `gh pr merge` refuses drafts outright. An
+#                                 explicit caller value (e.g. "false") is
+#                                 preserved for poll-only semantics.
 #   SAFE_MERGE_DRY_RUN          — "true": print the merge command instead of
 #                                 executing it (the gate still runs). Also set
 #                                 implicitly when SAFE_MERGE_STUB_GATE is used.
@@ -258,6 +268,25 @@ maybe_file_obligations() {
 }
 
 # ----------------------------------------------------------------------------
+# default_flip_ready — safe-merge is BY CONTRACT an authorized-merge caller
+# (invoking it IS the per-PR / standing merge authorization — AGENTS.md § Merge
+# gates), so the draft→ready flip defaults ON here. A PR opened draft (remote /
+# web harnesses open drafts by default) must not pause an autonomous merge:
+# without the flip, CodeRabbit's auto_review.drafts:false never reviews the
+# draft (the C4 draft-PR bypass class), the CR gate blocks on NONE past the
+# grace window, and the standing governance.auto_merge grant wedges — and even
+# a passing poll would then fail the arm step (`gh pr merge` refuses drafts).
+# An EXPLICIT caller value (including empty) is preserved, so poll-only
+# semantics remain reachable via MERGE_GATES_FLIP_READY=false.
+# ----------------------------------------------------------------------------
+default_flip_ready() {
+    if [ -z "${MERGE_GATES_FLIP_READY+x}" ]; then
+        export MERGE_GATES_FLIP_READY=true
+        echo "safe-merge: MERGE_GATES_FLIP_READY defaulted to true (authorized-merge caller — a draft PR is flipped ready, not left to wedge the poll)."
+    fi
+}
+
+# ----------------------------------------------------------------------------
 # run_gate <pr> — run poll_merge_gates (or the stub). Writes the poll's stdout to
 # the global GATE_OUT and its return code to the global GATE_RC. Globals (not a
 # `$(...)` capture) so the rc propagates to the caller — a subshell capture would
@@ -421,8 +450,27 @@ run_selftest() {
         fails=$((fails + 1))
     fi
 
+    # CASE 12 — default_flip_ready sets MERGE_GATES_FLIP_READY=true when unset
+    # (authorized-merge caller: a draft PR is flipped ready, never a pause).
+    if (unset MERGE_GATES_FLIP_READY; default_flip_ready >/dev/null; \
+        [ "${MERGE_GATES_FLIP_READY:-}" = "true" ]); then
+        echo "selftest CASE12 PASS — flip-ready defaults to true when unset"
+    else
+        echo "selftest CASE12 FAIL — flip-ready should default to true" >&2
+        fails=$((fails + 1))
+    fi
+
+    # CASE 13 — an EXPLICIT caller value is preserved (opt-out stays reachable).
+    if (export MERGE_GATES_FLIP_READY=false; default_flip_ready >/dev/null; \
+        [ "$MERGE_GATES_FLIP_READY" = "false" ]); then
+        echo "selftest CASE13 PASS — explicit flip-ready=false is preserved"
+    else
+        echo "selftest CASE13 FAIL — explicit caller value must not be overridden" >&2
+        fails=$((fails + 1))
+    fi
+
     if [ "$fails" -eq 0 ]; then
-        echo "PASS — safe-merge --selftest (11/11)"
+        echo "PASS — safe-merge --selftest (13/13)"
         return 0
     fi
     echo "FAIL — safe-merge --selftest ($fails failing case(s))" >&2
@@ -447,6 +495,10 @@ main() {
     if [ -z "${SAFE_MERGE_STUB_GATE:-}" ]; then
         command -v gh >/dev/null 2>&1 || { echo "safe-merge: gh required" >&2; exit 2; }
     fi
+
+    # 0. Draft never pauses an authorized merge — default the flip-ready knob ON
+    #    (explicit caller values, including "false", are preserved).
+    default_flip_ready
 
     # 1. Run the FULL merge-gates poll. This is the gate that a bare
     #    `gh pr merge --auto` skips (CR + user-comment + Bugbot are not
@@ -486,6 +538,13 @@ main() {
         echo "DRY-RUN: would run: gh pr merge $pr --squash --auto"
         exit 0
     fi
+    # Belt-and-braces: never arm on a lingering draft. The poll's flip (step 1,
+    # via MERGE_GATES_FLIP_READY) covers the normal path; this covers a flip
+    # WARN plus a pass that never probed draft state (e.g. a CR-exempt
+    # self-improvement docs-only PR). Mirrors merge-watcher.py's unconditional
+    # ensure_pr_ready_for_review before its merge call.
+    gh_pr_ready_idempotent "$pr" || \
+        echo "WARN: gh_pr_ready_idempotent returned non-zero; arming may fail if PR #$pr is still draft." >&2
     exec gh pr merge "$pr" --squash --auto
 }
 

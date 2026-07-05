@@ -289,7 +289,7 @@ jobs:
         uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (msvc)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}\.sccache
           key: ${{ runner.os }}-sccache-msvc-${{ github.sha }}
@@ -297,7 +297,7 @@ jobs:
             ${{ runner.os }}-sccache-msvc-
 
       - name: Cache FetchContent _deps (msvc)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-msvc-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
@@ -423,7 +423,7 @@ jobs:
         uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (msvc-arm64)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}\.sccache
           key: ${{ runner.os }}-sccache-msvc-arm64-${{ github.sha }}
@@ -431,7 +431,7 @@ jobs:
             ${{ runner.os }}-sccache-msvc-arm64-
 
       - name: Cache FetchContent _deps (msvc-arm64)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .fetchcontent-src
           # Sources are arch-independent; fall back to the shared prefix so this
@@ -512,7 +512,7 @@ jobs:
 
       - name: Cache sccache objects (msvc-arm64-native)
         continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}\.sccache
           key: ${{ runner.os }}-sccache-msvc-arm64-native-${{ github.sha }}
@@ -521,7 +521,7 @@ jobs:
 
       - name: Cache FetchContent _deps (msvc-arm64-native)
         continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .fetchcontent-src
           # Sources are arch-independent; fall back to the shared prefix to reuse
@@ -724,7 +724,7 @@ jobs:
 
       - name: Cache sccache objects (msvc-arm64-installer)
         continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}\.sccache
           # Share the native leg's object cache (same ninja-publish-msvc-arm64
@@ -735,7 +735,7 @@ jobs:
 
       - name: Cache FetchContent _deps (msvc-arm64-installer)
         continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-msvc-arm64-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
@@ -846,7 +846,7 @@ jobs:
         uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (msvc-light)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}\.sccache
           key: ${{ runner.os }}-sccache-msvc-light-${{ github.sha }}
@@ -854,7 +854,7 @@ jobs:
             ${{ runner.os }}-sccache-msvc-light-
 
       - name: Cache FetchContent _deps (msvc-light)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-msvc-light-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
@@ -890,7 +890,12 @@ jobs:
     name: Bucket-C screenshot diff (Mesa headless GL)
     needs: windows-msvc
     runs-on: windows-2022
-    timeout-minutes: 20
+    # 20 -> 30: the llvmpipe (GALLIUM_DRIVER=llvmpipe) screenshot-diff step alone
+    # burned the whole 20-min budget on a slow-runner develop run (run 28289436753:
+    # setup ~0.3m, then the diff step ran 19.8m and GitHub cancelled it AT the cap).
+    # A healthy run is <1m; 30m gives comfortable headroom for the software-GL slow
+    # path without approaching the ~45-50 pipeline ceiling. Coverage unchanged.
+    timeout-minutes: 30
     continue-on-error: true
 
     steps:
@@ -1022,7 +1027,12 @@ jobs:
     name: Bucket-E UI tests (Mesa headless GL)
     needs: windows-msvc
     runs-on: windows-2022
-    timeout-minutes: 30
+    # 30 -> 45: build (~9.6m) + the retry-on-collapse test step (attempts=3, each
+    # `timeout 240` under llvmpipe) can exceed 30m on a slow runner — on develop run
+    # 28289436753 the ui_test.run step ran 20.1m on top of the ~9.6m build and hit
+    # the 30-min cap (cancelled). 45m lets all 3 retry attempts complete on the
+    # software-GL slow path; stays under the ~45-50 ceiling. Coverage unchanged.
+    timeout-minutes: 45
     continue-on-error: true
 
     steps:
@@ -1036,7 +1046,7 @@ jobs:
         uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (ui-test)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}\.sccache
           key: ${{ runner.os }}-sccache-ui-test-${{ github.sha }}
@@ -1044,7 +1054,7 @@ jobs:
             ${{ runner.os }}-sccache-ui-test-
 
       - name: Cache FetchContent _deps (ui-test preset)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-ui-test-msvc-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
@@ -1257,7 +1267,13 @@ jobs:
     name: Bucket-E Jira fixture-backend (Mesa GL, hard)
     needs: windows-msvc
     runs-on: windows-2022
-    timeout-minutes: 30
+    # 30 -> 45: this REQUIRED job builds (~9.5m) then runs the fixture-backend test
+    # step (attempts=2) under llvmpipe. On develop run 28289436753 the test step ran
+    # 20.4m on top of the ~9.5m build and GitHub cancelled the job AT the 30-min cap
+    # (conclusion=cancelled) — a repo-wide false-red on a merge-blocking gate. 45m
+    # gives the build + both retry attempts room on the software-GL slow path while
+    # staying under the ~45-50 pipeline ceiling. No gate weakened; coverage unchanged.
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -1270,7 +1286,7 @@ jobs:
         uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (jira-fixture ui-test)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}\.sccache
           key: ${{ runner.os }}-sccache-ui-test-${{ github.sha }}
@@ -1278,7 +1294,7 @@ jobs:
             ${{ runner.os }}-sccache-ui-test-
 
       - name: Cache FetchContent _deps (ui-test preset)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-ui-test-msvc-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
@@ -1388,7 +1404,7 @@ jobs:
         uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (texture-guard)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}\.sccache
           key: ${{ runner.os }}-sccache-ui-test-${{ github.sha }}
@@ -1396,7 +1412,7 @@ jobs:
             ${{ runner.os }}-sccache-ui-test-
 
       - name: Cache FetchContent _deps (ui-test preset)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-ui-test-msvc-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
@@ -1493,7 +1509,12 @@ jobs:
     name: Bucket launch-smoke (Mesa GL)
     needs: windows-msvc
     runs-on: windows-2022
-    timeout-minutes: 15
+    # 15 -> 25: this REQUIRED gate downloads the prebuilt exe (setup ~0.3m) then boots
+    # it under llvmpipe. On develop run 28289436753 the boot step alone ran 14.8m and
+    # GitHub cancelled the job AT the 15-min cap (conclusion=cancelled), red-walling a
+    # merge-blocking gate repo-wide. A healthy boot is <1m; 25m gives generous headroom
+    # for a slow software-GL boot without nearing the ~45-50 ceiling. Coverage unchanged.
+    timeout-minutes: 25
 
     steps:
       - name: Checkout
@@ -1580,7 +1601,7 @@ jobs:
         uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (msvc-asan)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}\.sccache
           key: ${{ runner.os }}-sccache-msvc-asan-${{ github.sha }}
@@ -1588,7 +1609,7 @@ jobs:
             ${{ runner.os }}-sccache-msvc-asan-
 
       - name: Cache FetchContent _deps (msvc-asan)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-msvc-asan-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
@@ -1731,7 +1752,7 @@ jobs:
         uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (clang-ubsan-pr)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}\.sccache
           key: ${{ runner.os }}-sccache-clang-ubsan-pr-${{ github.sha }}
@@ -1739,7 +1760,7 @@ jobs:
             ${{ runner.os }}-sccache-clang-ubsan-pr-
 
       - name: Cache FetchContent _deps (clang-ubsan-pr)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-clang-ubsan-pr-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
@@ -1834,7 +1855,7 @@ jobs:
         uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (packaging-smoke)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}\.sccache
           key: ${{ runner.os }}-sccache-packaging-smoke-${{ github.sha }}
@@ -1842,7 +1863,7 @@ jobs:
             ${{ runner.os }}-sccache-packaging-smoke-
 
       - name: Cache FetchContent _deps (packaging-smoke)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-packaging-smoke-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
@@ -1995,7 +2016,7 @@ jobs:
           sudo apt-get install -y clang lld xorg-dev libgl1-mesa-dev
 
       - name: Cache FetchContent _deps (posix-core-check)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-posixcheck-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
@@ -2073,7 +2094,7 @@ jobs:
 
       - name: Cache prebuilt OpenSSL (arm64-v8a)
         id: openssl-cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/openssl-android/arm64-v8a
           key: openssl-${{ env.OPENSSL_VERSION }}-ndk-${{ env.NDK_VERSION }}-arm64-v8a-api${{ env.ANDROID_API }}
@@ -2110,7 +2131,7 @@ jobs:
           ls -l "${OPENSSL_PREFIX}/lib"
 
       - name: Cache FetchContent _deps (android-ndk)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-android-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
@@ -2164,7 +2185,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up JDK 17 (AGP 8.5 toolchain)
-        uses: actions/setup-java@ad2b38190b15e4d6bdf0c97fb4fca8412226d287 # v5.3.0
+        uses: actions/setup-java@1bcf9fb12cf4aa7d266a90ae39939e61372fe520 # v5.4.0
         with:
           distribution: temurin
           java-version: "17"
@@ -2194,7 +2215,7 @@ jobs:
 
       - name: Cache prebuilt OpenSSL (arm64-v8a)
         id: openssl-cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/openssl-android/arm64-v8a
           # Same key as mobile-android-ndk → this restores that job's build (needs: orders it first).
@@ -2226,7 +2247,7 @@ jobs:
           test -f "${OPENSSL_PREFIX}/lib/libcrypto.a" || { echo "::error::libcrypto.a missing"; exit 1; }
 
       - name: Cache FetchContent _deps (android-ndk)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-android-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}

@@ -80,6 +80,7 @@ std::string BoundHotkeyDisplayForArgs(const std::vector<Keybinding>& bindings, c
     // Semantic (order-independent) args comparison via nlohmann ==. Parse with the
     // non-throwing overload + is_discarded() — this is the strict Config zone where
     // an empty catch is a CRITICAL finding, so no try/catch around json::parse.
+    // SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; reason=keybinding args are app-serialised local config bytes loaded via the bounded config reader, not external ingress; owner=security-audit; revisit=2026-12-31)
     nlohmann::json want = nlohmann::json::parse(argsJson.empty() ? "{}" : argsJson, nullptr, false);
     if (want.is_discarded()) {
         want = nlohmann::json::object();
@@ -88,6 +89,7 @@ std::string BoundHotkeyDisplayForArgs(const std::vector<Keybinding>& bindings, c
         if (b.CommandId != commandId || !b.Enabled || b.Hotkey.empty()) {
             continue;
         }
+        // SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; reason=keybinding args are app-serialised local config bytes loaded via the bounded config reader, not external ingress; owner=security-audit; revisit=2026-12-31)
         nlohmann::json have = nlohmann::json::parse(b.ArgsJson.empty() ? "{}" : b.ArgsJson, nullptr, false);
         if (have.is_discarded()) {
             have = nlohmann::json::object();
