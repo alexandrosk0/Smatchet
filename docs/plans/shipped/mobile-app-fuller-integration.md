@@ -1,22 +1,25 @@
 # Mobile app — fuller integration (Phase 1)
 
 > **Slug**: `mobile-app-fuller-integration`
-> **Status**: `active` — **reconciled 2026-06-20**: the original "no Phase-1 slices started" status was **stale**. P1.0 / P1.1 / P1.4 are shipped, P1.2 / P1.5 partial, **P1.6 ships in this PR** (research doc); **P1.3** (touch editors — spike-first) is the main unstarted slice. Per-slice evidence in § Current state. The `d8ea206c` "Today" analyses below are **historical** (that commit is no longer in `develop`'s history — re-verify per anchor).
+> **Status**: `shipped` — **all seven Phase-1 slices merged to `develop`** (P1.0 #1357, P1.1, P1.2 #1547, P1.3 #1552, P1.4 #1572, P1.5 #1568, P1.6 #1563 + P1.6b #1571). Closed out + archived active→shipped 2026-07-04. Residual follow-ups (bucket-E ImGui-Test-Engine automation for P1.2/P1.3/P1.5 — CI-blocked on the Mesa-GL lane; P1.6b metrics-scaling Scope-2; golden refresh; on-device emulator confirmations) are tracked outside this plan in `docs/self-improvement/categories/{test,debt}/`, not as open plan slices. The `d8ea206c` "Today" analyses below are **historical** (that commit is no longer in `develop`'s history).
 > <!-- index-summary: Phase-1 Android app: Keystore-encrypted token, offline-cache replay on device, touch cell editors + explicit-commit interaction model, attachments, multi-backend, a11y research. -->
 
-## Current state (verified 2026-06-20 @ `develop` HEAD)
+## Current state (all slices shipped — verified 2026-07-04 @ `develop` `b2cd88a9`)
 
-**This plan was authored at Phase-0 close; its per-slice "Today" analyses are anchored to `d8ea206c`,
-which is no longer in `develop`'s history.** A fresh code audit on 2026-06-20 found the original
-"no Phase-1 slices started" status materially wrong — **four of the seven slices are wholly or largely
-done**. Corrected per-slice status (evidence = current-tree `file:line`):
+**Final reconciliation 2026-07-04:** all seven Phase-1 slices are now merged to `develop`. The 2026-06-20
+snapshot below (which had four slices done and P1.3 unstarted) is superseded — P1.2 (#1547), P1.3 (#1552),
+P1.5 (#1568), P1.6 (#1563), P1.6b (#1571), and the P1.4 residual (#1572) all landed 2026-06-23…06-27. Code
+re-verified against the tree (e.g. `TouchCellEditGesture.h` present; `ArmThenPopupCellGate` wired at
+`TicketFieldEditor.cpp:748`; the P1.3 merge `c1ce8721` in develop's first-parent history). The per-slice
+"Today" analyses are anchored to `d8ea206c` (no longer in `develop`'s history). Per-slice shipped evidence
+(current-tree `file:line`):
 
 | Slice | Status | Evidence (current tree) |
 |---|---|---|
 | **P1.0** Keystore token | ✅ **Shipped** (audit H2 / CR #1357) | `Source/Mobile/Android/SmatchetAndroidSecretBridge.{h,cpp}` (JNI AES-GCM Keystore bridge, fail-closed, StrongBox, Shutdown-vs-Protect race fix); `ConfigManager.cpp:506–544` (`__ANDROID__` `WriteSecretFields` seals every secret, **no plaintext fallback**) + `:971–1007` (`__ANDROID__` `LoadSecretFields` `unsealSecret` + `migrate.LegacyPlaintext` scrub); installed at boot `android_main.cpp:285,379–386`. The migration scrub the plan called "mandatory/missing" exists. |
 | **P1.1** Offline replay | ✅ **Shipped** | The replay/sync drive runs every frame in the **shared Core loop** (not a separate Android hook): `SmatchetUI.cpp:470–473` calls `TickOfflineCreates` / `TickOfflineFieldEdits` / `SyncWithBackend`; reachability transitions `AppController_Connectivity.cpp:72–78,118–120`; dead-letter surface `SmatchetOfflineQueueUi.cpp`. Runs on Android because the loop is shared. |
 | **P1.2** Saved views + touch switcher | ✅ **Shipped this PR** | The missing piece — a dedicated touch tab-strip quick-switcher in the grid area — now ships: `drawMobileViewQuickSwitcher` (`SmatchetViewsDashboardUi.cpp`) draws a horizontal-scroll strip of saved-view tabs (active highlighted) + a trailing "+" between the app bar and content dock, reserved by `drawMobileShell` (`SmatchetMobileShellUi.cpp`, `kViewSwitcherBaseHeightPx`). Reuses the existing dirty-aware `viewsRequestActivate` / `viewsCreateNewView`; Grid-page-only (off-grid pages reserve no band). Emulator-verified (switch + dirty discard-confirm). Earlier pieces still hold: view commands (`ViewCommands.cpp:151–282`), mobile drawer + modals (`buildMobileViewsCtx` / `drawMobileDrawerViews` / `drawMobileViewsModals`). |
-| **P1.3** Touch cell editors | ❌ **Not started** (the spike-first, highest-risk slice) | `kMobileInlineEditBuild=true` on Android (`TicketFieldEditor.cpp:71–73`) + `SingleClickToEditGridCells` default-on exist, but **no long-press detector** (`SmatchetAndroidImeBridge.cpp`) and **no touch Save/Cancel affordance** for the four combo/modal editors. |
+| **P1.3** Touch cell editors | ✅ **Shipped** (#1552, 2026-06-23 — was the spike-first, highest-risk slice) | New shared header `Source/Core/include/Ui/TouchCellEditGesture.h` (`ShouldOpenCellEditorOnGesture` + `ArmThenPopupCellGate`, consuming the unit-tested pure `ShouldOpenCellEditorByLongPress` / `ShouldCommitTouchPopupEdit` in `TicketFieldEditorCommitPolicyPure.h`), wired into the five live cell editors: `TicketFieldEditor.cpp:638` (inline-text open gesture), `:748`/`:897` (SingleSelect/MultiSelect/Cascading arm-then-popup), `TrackerLabelsEditor.cpp` (Labels), `TrackerDateTimeFieldEditor.cpp` (DateTime, phone-centered modal + explicit Apply/Clear/Cancel/Back). `kMobileTouchBuild` (`__ANDROID__` constexpr) dead-eliminates the touch branch on desktop → byte-identical desktop codegen. The long-press timer reuses ImGui's own `io.MouseDownDuration[0]` (no custom Android-input code needed — see § Deviations). Emulator-verified discard matrix (no stray PUT); live-PUT recorded as user-authorised but emulator-input-blocked (§ Verification). |
 | **P1.4** Attachments | ✅ **Shipped** (decode cross-platform; residual ported this PR) | `SmatchetImageTextureCache.cpp:139–157` (`DecodeWithStb`, no `_WIN32` guard) + renderer-agnostic `RegisterUserTexture`; thumbnails enabled globally. **Residual now shipped:** the previously Win32-only bitmap thumbnail decode (`SmatchetAttachmentPreviewUi.cpp`) is cross-platform — WIC (with decode-scale) kept on Windows, a new stb full-decode + pure area-average `DownscaleRgba32` (`Source/Core/include/Ui/RgbaDownscalePure.h`, unit-tested `tests/Core/RgbaDownscalePure.test.cpp`) on non-Windows, bounded by a 32 MiB file read + 16 MP pre-decode cap, downscaling to ≤2048 px. Same thumbnail UX on every platform. |
 | **P1.5** Multi-backend | ✅ **Shipped this PR** | `ITrackerBackend` abstraction + Jira / Plane / GitHub / Linear all in Core; the missing piece — a touch-first backend picker — now ships: `DrawTrackerBackendSelection` (`SmatchetPreferencesUi.cpp:234`) forks on `d.effectiveUiMode == EffectiveUiMode::Mobile` to render the four backends as full-width `ImGui::Selectable` rows (the drawer page-list touch idiom) instead of the tiny desktop `ImGui::Combo`, writing the **same** `d.trackerTypeBuf` so `DrawTrackerBackendConfig` + the multi-backend layer are inherited unchanged (a widget swap, not new backend code). |
 | **P1.6** Accessibility | ✅ **Research shipped 2026-06-20**; **accent-contrast fix shipped**; **fontScale seam shipped this PR** | Research: [`docs/mobile/PHASE1_ACCESSIBILITY_RESEARCH.md`](../../mobile/PHASE1_ACCESSIBILITY_RESEARCH.md) + Pillar-4 backlog [`debt/2026-06-20-mobile-accessibility-pillar4.md`](../../self-improvement/categories/debt/2026-06-20-mobile-accessibility-pillar4.md). **Accent fix:** `SmatchetTheme.cpp::ApplySmatchetDark` accent darkened `(0.35,0.55,0.95)`→`(0.26,0.42,0.72)` (Finding 3, white-on-fill 2.90→4.67:1 AA, on-dark 3.16:1 UI-floor); doctest pin `tests/Core/SmatchetThemeAccentContrast.test.cpp`. **ModernDark follow-up (stacked PR):** `ApplyModernDark` accent darkened `(0.45,0.65,0.95)`→its own `(0.29,0.42,0.62)` — test 4 cases / 43 assertions (all 14 re-tinted slots pinned RGBA). **fontScale seam (P1.6b, this PR):** OS accessibility "Font size" (`Configuration.fontScale`) now scales mobile text — JNI reader `SmatchetActivity.getDisplayFontScale()` → `android_main.cpp` `QueryDisplayFontScale` → composed into the **font-atlas px only** via `SmatchetTheme::ComposeFontDensityScale` (header-only, `[0.85,2.0]` clamped); `ApplyUiDensityScale`/`HostDensityScale()` stay raw-DPI (Auto-mode safe). Doctest `tests/Core/SmatchetThemeDensity.test.cpp` (6 cases). Metrics-scaling = Scope-2 follow-up (Pillar-4 debt). |
@@ -321,6 +324,16 @@ _(per-slice; appended as each PR ships)_
   reported hole genuinely fixed; one P3 awareness-only note — `STBI_MAX_DIMENSIONS` left at the stb default
   `1<<24` per side vs the 16 MP area cap, backstopped by the existing 32 MiB file cap — out of scope for
   this commit).
+- **2026-07-04 — Phase-1 closeout + archive (this PR, docs-only).** All seven slices are merged; this PR
+  reconciles the stale bookkeeping that survived the per-slice PRs: the top-of-file "Current state" table
+  still carried P1.3 as "❌ Not started" (its 2026-06-20 snapshot, before #1552 landed 2026-06-23), which
+  misled a later re-audit into believing P1.3 was outstanding. Corrected the P1.3 row to ✅ Shipped (#1552)
+  with the shipped `file:line` evidence, updated the § Status + § Current-state headers to the all-shipped
+  reality, and **archived the plan active→shipped** (all inbound `../plans/active/…` links repointed to
+  `../plans/shipped/…`; `test-docs.sh` green). No code change — the code plan was already 100 % complete on
+  `develop`; the only defect was the plan's own out-of-date front matter. Residual automation/verification
+  follow-ups remain tracked in `docs/self-improvement/categories/{test,debt}/` (bucket-E lane CI-blocked;
+  P1.6b metrics Scope-2; golden refresh; on-device confirmations) — none are open plan slices.
 
 ## Deviations from plan
 
