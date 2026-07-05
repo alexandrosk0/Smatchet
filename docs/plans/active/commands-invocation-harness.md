@@ -56,16 +56,32 @@ app-mutating handler bodies:
   out of scope for Slice 1 (they need the fixture backend wired through `GridLiveContext`, a later
   slice if wanted).
 
+## Feasibility probe result (gating step — PASSED)
+
+A scratch binary linked `libSmatchetCore_PosixCheck.a` + the `SmatchetTextEdit` object (the only
+missing symbol cluster — 25 `TextEditor::*` references) + ImGuiLib/md4c/cpr/curl/SQLiteCpp/system
+OpenSSL, constructed `AppController` headless, registered **88 builtins** with zero duplicate-name
+throws, and drove `Dispatch` through unknown-command + 28 missing-required-arg failures without a
+crash. The harness below is the productionised version: 6 cases / 952 assertions green locally.
+
 ## Files to modify
 
-_(final list confirmed after the link probe; expected shape)_
+### Slice 1 (this PR)
 
-1. `CMakeLists.txt` / `tests/CMakeLists.txt` — a new `SmatchetCommandsTests` doctest target linking
-   the existing full-core archive (Linux: `SmatchetCore_PosixCheck` gating; Windows: the analogous
-   `CORE_SOURCES` archive) — NOT added to `SmatchetTests` (which compiles many core TUs directly;
-   linking the archive there would duplicate symbols).
-2. `tests/Commands/BuiltinCommandsDispatch.test.cpp` — the harness described above.
-3. This plan doc — implementation log + deviations.
+1. `tests/CMakeLists.txt` — new `SmatchetCommandsTests` doctest target, guarded
+   `UNIX AND SMATCHET_BUILD_POSIX_CORE_CHECK`, linking the existing full-core archive +
+   `SmatchetTextEdit` + the app's third-party set — NOT added to `SmatchetTests` (which compiles
+   many core TUs directly; linking the archive there would duplicate symbols). Registered in ctest
+   as `smatchet_commands_tests`.
+2. `tests/Commands/BuiltinCommandsDispatch.test.cpp` — the harness described above. Reality pins
+   discovered while landing it: one legacy dotless command exists (`notifications`, category
+   `view` — now pinned so a second dotless name can't slip in), and the real category set is 19
+   strong (`app attach automation bug commands config debug fields grid offline perf scenario sync
+   ticket tickets ui ui_test users view` — all pinned as the floor).
+3. `.github/workflows/build-and-test.yml` — the `mobile-posix-core-check` job configures with
+   `-DSMATCHET_BUILD_TESTS=ON` and gains one step building + running `SmatchetCommandsTests`
+   (advisory lane; the archive it links is built by the existing compile step).
+4. This plan doc — implementation log + deviations.
 
 ## Verification
 
