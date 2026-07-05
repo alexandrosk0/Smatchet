@@ -2,7 +2,7 @@
 
 > **Slug**: `coverage-gap-tier1-pure-extractions`
 >
-> **Status**: `active`
+> **Status**: `shipped`
 
 ## Context
 
@@ -115,6 +115,8 @@ Apply the repo's established shell/core split: lift the byte-identical logic int
 - Slice 3 (this PR, branch `claude/autonomous-agents-draft-pause-nuz43z` restarted from develop): gap map Tier 1 rows #5–#6 per § Files to modify items 19–27. The suggest-engine lifts are mechanical seam transforms (AppController getters → vector parameters) with the bodies otherwise untouched; the notify-endpoint lift is byte-identical. One test expectation was corrected against observed behaviour during local validation (open-string context resolves to Logical mode, not Value mode — pinned as the current semantics rather than "fixed", since changing it is a product decision out of scope for a coverage slice).
 
 - Slice 4 (this PR, branch `claude/fable-5-codebase-improvements-l90taa` restarted from develop): gap map Tier 1 row #8 per § Files to modify items 28–32. The prior branch iteration of this session (PR #1610, Tier 1 #5) was closed unmerged — superseded by the parallel session's #1609 which shipped the same rows first; only the backlog flips were salvaged into this slice.
+
+- Slice 5 (this PR, closing the campaign): Tier 1 rows #7/#9/#10 assessed — no extraction warranted. #7 `BugReportService.cpp`: the pure body (`BugReportBody.cpp`) is already tested; the shell is cpr/AppController orchestration. #9 `SmatchetImageTextureCache.cpp`: its decision logic already lives in tested pure units (`CacheEvictionPolicy`, `IconDimensionsPolicy`, `ImageDimensionsPure`); the remainder is ImGui texture plumbing (the class the coverage policy excludes by design). #10 `SmatchetGridFieldEditPipeline` / `GridContextDepsAdapter` / `AppController_IssueCreateOffline`: thin AppController member/adapter glue whose logic halves are in tested services (`FieldEditPipelineService`, `OfflineQueueService`, `IssueDraftHelpers`, `TextMerge`) — per the gap map's Tier-4 guidance, further coverage arrives via the backlog B1/N4/N8 service-extraction track, not direct unit tests. With no flagged next slice, the § Archive step executes in this PR.
 
 ## Deviations from plan
 

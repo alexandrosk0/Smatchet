@@ -27,7 +27,7 @@ The three coverage gates are all denominator-blind to unlinked code:
 2. **Per-file ≥90% gate** (`coverage-perfile-gate.sh`): pins exactly 4 named units (`AiEndpointSanitize`, `AiErrorRedact`, `JqlEscape`, `TrackerHttpPure`) and deliberately fails-open on units absent from the XML.
 3. **Delta gate** (`coverage-delta-gate.sh`): requires a test-file delta when `Source/Core/src` changes — it stops *new* untested surface but never drains the existing 160-TU backlog.
 
-Additionally, the bucket-C/E scenario lanes (the intended coverage story for the UI draw layer and the 30 `Commands/Scenarios/*` TUs) were **dropped from the blocking check set on 2026-06-15** because the Mesa-GL CI runner can't boot the exe (`AGENTS.md` § Merge gates). Until they're restored, the UI layer's automated safety net is `tests/ui/` plus the human queue in `backlog/MANUAL_TEST_QUEUE.md` (22 pending V-series smokes).
+Additionally, the bucket-C/E scenario lanes (the intended coverage story for the UI draw layer and the 30 `Commands/Scenarios/*` TUs) were **dropped from the blocking check set on 2026-06-15** because the Mesa-GL CI runner couldn't boot the exe (`AGENTS.md` § Merge gates). *Update 2026-07-05:* the lanes boot and pass again on PR CI (observed green across launch-smoke, Bucket-C screenshot diff, Bucket-E UI tests, and the Jira fixture-backend lane) — the remaining step is restoring them to the meant-to-block allow-list, at which point 28.5K LOC of UI draw code and the 22 pending V-series manual smokes regain an automated gate.
 
 ## Where the 160 untested TUs are (by category)
 
@@ -42,6 +42,9 @@ Additionally, the bucket-C/E scenario lanes (the intended coverage story for the
 The codebase has a healthy, consistently-applied pattern: extract pure logic into a `*Pure.cpp` / `*_detail.cpp` sibling and doctest it, leaving a thin I/O shell (e.g. `PlaneActivityFeed.cpp` shell vs tested `PlaneActivityFeedPure.cpp`). The gap list below is, to first order, **the units where that extraction hasn't happened yet**.
 
 ## Tier 1 — high-risk uncovered logic (do these first)
+
+> **Campaign status (2026-07-05, PRs #1604 / #1607 / #1609 / #1616):** rows #1–#6 and #8 are DONE — each extracted behind a tested pure seam (`TicketGridDurationSortPure`, `TicketFieldEditorLongTextPure` seed/commit, `TrackerGridFieldDisplayPure`, `TrackerDateTimePure` picker/commit, `JqlSuggestEnginePure` + `PlaneQuerySuggestEnginePure`, `MergeWatchNotifyPure`, `AiPrefsTestConnectionPure`). Rows #7/#9/#10 were assessed and closed without extraction: their decision logic already lives in tested units (`BugReportBody`, `CacheEvictionPolicy`/`IconDimensionsPolicy`/`ImageDimensionsPure`, `FieldEditPipelineService`/`OfflineQueueService`/`IssueDraftHelpers`); the residue is AppController/ImGui glue covered by the Tier-4 service-extraction track. Plan doc: `docs/plans/coverage-gap-tier1-pure-extractions.md`. The per-file ≥90% ratchet additions (sequencing step 6) remain deferred until CI publishes measured rates for the new units.
+
 
 Ranked by (audit findings × ingress exposure × LOC). Every file below has **zero** automated test compilation today.
 
