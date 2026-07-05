@@ -65,4 +65,20 @@ bool IsQueryUserField(const TrackerField& field);
 /// True for date / date-time fields.
 bool IsQueryDateField(const TrackerField& field);
 
+/// Shared entry prologue for a suggest pass: resets `metaOut` (when non-null), clears `out`,
+/// and clamps cursor/selection into [0, bufLen]. Returns false on a null buffer — the caller
+/// returns immediately with the cleared (empty) build.
+bool BeginSuggestBuild(const char* buf, int bufLen, int& cursor, int& selStart, int& selEnd, QuerySuggestBuild& out,
+                       QuerySuggestMeta* metaOut);
+
+/// Resolve the [ReplaceStart, ReplaceEnd) span into `out` and return the prefix the
+/// suggestions replace. Three-way: active selection wins; else an open string literal spans
+/// from its opening quote to the cursor; else the identifier run straddling the cursor.
+std::string ResolveQueryReplaceRange(const char* buf, int bufLen, int cursor, int selStart, int selEnd,
+                                     QuerySuggestBuild& out);
+
+/// Shared exit epilogue: case-insensitive label sort (ties break shorter-first) and the
+/// popup-size cap (80 items) so the suggestion list stays scannable and cheap to render.
+void SortAndCapSuggestions(std::vector<QuerySuggestion>& items);
+
 } // namespace tracker_query_suggest

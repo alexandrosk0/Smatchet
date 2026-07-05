@@ -154,4 +154,81 @@ bool IsQueryDateField(const TrackerField& field) {
     return field.Family == TrackerFieldFamily::Date || field.Family == TrackerFieldFamily::DateTime;
 }
 
+bool BeginSuggestBuild(const char* buf, int bufLen, int& cursor, int& selStart, int& selEnd, QuerySuggestBuild& out,
+                       QuerySuggestMeta* metaOut) {
+    if (metaOut != nullptr) {
+        metaOut->UserValueToken = false;
+        metaOut->UserSearchPrefix.clear();
+    }
+    out.Items.clear();
+    out.ReplaceStart = 0;
+    out.ReplaceEnd = 0;
+    if (buf == nullptr) {
+        return false;
+    }
+    cursor = (std::max)(0, (std::min)(cursor, bufLen));
+    selStart = (std::max)(0, (std::min)(selStart, bufLen));
+    selEnd = (std::max)(0, (std::min)(selEnd, bufLen));
+    return true;
+}
+
+std::string ResolveQueryReplaceRange(const char* buf, int bufLen, int cursor, int selStart, int selEnd,
+                                     QuerySuggestBuild& out) {
+    std::string prefix;
+    int replaceStart = 0;
+    int replaceEnd = 0;
+    if (selStart != selEnd) {
+        const int lo = (std::min)(selStart, selEnd);
+        const int hi = (std::max)(selStart, selEnd);
+        replaceStart = lo;
+        replaceEnd = hi;
+        prefix.assign(buf + lo, buf + hi);
+    } else {
+        bool inString = false;
+        int stringOpen = -1;
+        ScanStringStateToCursor(buf, bufLen, cursor, inString, stringOpen);
+        if (inString && stringOpen >= 0 && cursor > stringOpen + 1) {
+            replaceStart = stringOpen + 1;
+            replaceEnd = cursor;
+            prefix.assign(buf + replaceStart, buf + replaceEnd);
+        } else {
+            int L = cursor;
+            int R = cursor;
+            while (L > 0 && IsQueryIdChar(static_cast<unsigned char>(buf[L - 1]))) {
+                --L;
+            }
+            while (R < bufLen && IsQueryIdChar(static_cast<unsigned char>(buf[R]))) {
+                ++R;
+            }
+            replaceStart = L;
+            replaceEnd = R;
+            prefix.assign(buf + L, buf + R);
+        }
+    }
+    out.ReplaceStart = replaceStart;
+    out.ReplaceEnd = replaceEnd;
+    return prefix;
+}
+
+void SortAndCapSuggestions(std::vector<QuerySuggestion>& items) {
+    auto labelLessAscii = [](const QuerySuggestion& a, const QuerySuggestion& b) {
+        size_t i = 0;
+        const size_t na = a.Label.size();
+        const size_t nb = b.Label.size();
+        for (; i < na && i < nb; ++i) {
+            const int ca = std::tolower(static_cast<unsigned char>(a.Label[i]));
+            const int cb = std::tolower(static_cast<unsigned char>(b.Label[i]));
+            if (ca != cb) {
+                return ca < cb;
+            }
+        }
+        return na < nb;
+    };
+    std::sort(items.begin(), items.end(), labelLessAscii);
+    constexpr int kMaxSuggestions = 80;
+    if (static_cast<int>(items.size()) > kMaxSuggestions) {
+        items.resize(static_cast<size_t>(kMaxSuggestions));
+    }
+}
+
 } // namespace tracker_query_suggest

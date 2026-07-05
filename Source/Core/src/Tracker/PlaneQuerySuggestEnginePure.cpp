@@ -115,59 +115,16 @@ namespace PlaneQuerySuggestEnginePure {
 void BuildPlaneQuerySuggestions(const char* buf, int bufLen, int cursor, int selStart, int selEnd,
                                 const std::vector<TrackerField>& fields, QuerySuggestBuild& out,
                                 QuerySuggestMeta* metaOut) {
-    if (metaOut != nullptr) {
-        metaOut->UserValueToken = false;
-        metaOut->UserSearchPrefix.clear();
-    }
-    out.Items.clear();
-    out.ReplaceStart = 0;
-    out.ReplaceEnd = 0;
-    std::unordered_set<std::string> seen;
-    if (buf == nullptr) {
+    if (!tracker_query_suggest::BeginSuggestBuild(buf, bufLen, cursor, selStart, selEnd, out, metaOut)) {
         return;
     }
-    cursor = (std::max)(0, (std::min)(cursor, bufLen));
-    selStart = (std::max)(0, (std::min)(selStart, bufLen));
-    selEnd = (std::max)(0, (std::min)(selEnd, bufLen));
+    std::unordered_set<std::string> seen;
 
-    int replaceStart = 0;
-    int replaceEnd = 0;
-    std::string prefix;
-
-    if (selStart != selEnd) {
-        const int lo = (std::min)(selStart, selEnd);
-        const int hi = (std::max)(selStart, selEnd);
-        replaceStart = lo;
-        replaceEnd = hi;
-        prefix.assign(buf + lo, buf + hi);
-    } else {
-        bool inString = false;
-        int stringOpen = -1;
-        ScanStringStateToCursor(buf, bufLen, cursor, inString, stringOpen);
-        if (inString && stringOpen >= 0 && cursor > stringOpen + 1) {
-            replaceStart = stringOpen + 1;
-            replaceEnd = cursor;
-            prefix.assign(buf + replaceStart, buf + replaceEnd);
-        } else {
-            int L = cursor;
-            int R = cursor;
-            while (L > 0 && IsQueryIdChar(static_cast<unsigned char>(buf[L - 1]))) {
-                --L;
-            }
-            while (R < bufLen && IsQueryIdChar(static_cast<unsigned char>(buf[R]))) {
-                ++R;
-            }
-            replaceStart = L;
-            replaceEnd = R;
-            prefix.assign(buf + L, buf + R);
-        }
-    }
-
-    out.ReplaceStart = replaceStart;
-    out.ReplaceEnd = replaceEnd;
+    const std::string prefix =
+        tracker_query_suggest::ResolveQueryReplaceRange(buf, bufLen, cursor, selStart, selEnd, out);
 
     const TrackerField* valueField = nullptr;
-    if (ParsePlaneValueContext(buf, bufLen, replaceStart, fields, &valueField)) {
+    if (ParsePlaneValueContext(buf, bufLen, out.ReplaceStart, fields, &valueField)) {
         if (valueField != nullptr && (!valueField->AllowedValueOptions.empty() || !valueField->AllowedValues.empty())) {
             AppendValueSuggestions(*valueField, prefix, out.Items, seen);
         }
@@ -183,24 +140,7 @@ void BuildPlaneQuerySuggestions(const char* buf, int bufLen, int cursor, int sel
         AppendFieldCatalog(fields, prefix, out.Items, seen);
     }
 
-    auto labelLessAscii = [](const QuerySuggestion& a, const QuerySuggestion& b) {
-        size_t i = 0;
-        const size_t na = a.Label.size();
-        const size_t nb = b.Label.size();
-        for (; i < na && i < nb; ++i) {
-            const int ca = std::tolower(static_cast<unsigned char>(a.Label[i]));
-            const int cb = std::tolower(static_cast<unsigned char>(b.Label[i]));
-            if (ca != cb) {
-                return ca < cb;
-            }
-        }
-        return na < nb;
-    };
-    std::sort(out.Items.begin(), out.Items.end(), labelLessAscii);
-    constexpr int kMaxSuggestions = 80;
-    if (static_cast<int>(out.Items.size()) > kMaxSuggestions) {
-        out.Items.resize(static_cast<size_t>(kMaxSuggestions));
-    }
+    tracker_query_suggest::SortAndCapSuggestions(out.Items);
 }
 
 } // namespace PlaneQuerySuggestEnginePure
