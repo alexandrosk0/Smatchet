@@ -302,6 +302,6 @@ TEST_CASE("FieldEditPipelineService::ApplyFieldEditResult fails when no cache is
     const bool ok = rig.svc.ApplyFieldEditResult("ABC-1", result, err);
 
     CHECK_FALSE(ok);
-    CHECK(err.find("Cache is not initialized") != std::string::npos);
+    CHECK(err.find("Local cache is unavailable") != std::string::npos);
     CHECK(rig.fieldDeps.UpdatedTickets.empty());
 }

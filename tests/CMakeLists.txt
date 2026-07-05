@@ -783,6 +783,11 @@ add_executable(SmatchetTests
     # ParseIso8601ToUnixSec (GitHubClientHelpers.cpp) — both already linked above.
     Core/JiraCommentMappingPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraCommentMappingPure.cpp"
+    # error-message-quality-pass — pure Jira error-body extractor (errorMessages[]/errors{}
+    # → joined message, bounded parse, never the raw body). Jira counterpart of
+    # ExtractLinearErrorMessage; used by every JiraIssueMutation failure path.
+    Core/JiraErrorMessagePure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraErrorMessagePure.cpp"
     # issue-comments PR-C — pure JSON array → TrackerIssueComment mapping, split
     # out of PlaneClient.cpp (which pulls cpr). PlaneCommentMappingPure.cpp depends
     # on JsonGetStringIfString (TrackerFieldValueParser.cpp) + ParseIso8601ToUnixSec

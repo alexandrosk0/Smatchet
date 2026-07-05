@@ -466,7 +466,8 @@ SubmitResult SubmitViaRelay(const ResolvedBugTarget& target, const BugReportOpti
         std::string parseErr;
         const nlohmann::json j = smatchet::json_safe::ParseBounded(resp.text, parseErr);
         if (!parseErr.empty()) {
-            result.Error = "Bug-report relay: bad response: " + parseErr;
+            LOG_WARN("BugReportService: relay response parse failed: %s", parseErr.c_str());
+            result.Error = "The bug-report relay returned an unexpected response — try again in a few minutes.";
             return result;
         }
         if (!j.value("ok", false)) {
@@ -484,7 +485,8 @@ SubmitResult SubmitViaRelay(const ResolvedBugTarget& target, const BugReportOpti
         result.Ok = true;
         return result;
     } catch (const std::exception& ex) {
-        result.Error = std::string("Bug-report relay: bad response: ") + ex.what();
+        LOG_WARN("BugReportService: relay response parse failed: %s", ex.what());
+        result.Error = "The bug-report relay returned an unexpected response — try again in a few minutes.";
         return result;
     }
 }

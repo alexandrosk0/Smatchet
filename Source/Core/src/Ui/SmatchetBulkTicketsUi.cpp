@@ -55,11 +55,22 @@ int BulkImportTextResizeCallback(ImGuiInputTextCallbackData* data) {
     return 0;
 }
 
+// File NAME only for user-facing errors (C++14 — no std::filesystem): the picker already
+// showed the directory; a full path in a toast leaks filesystem layout into screenshots.
+std::string FileNameOf(const std::string& path) {
+    const std::size_t sep = path.find_last_of("/\\");
+    return sep == std::string::npos ? path : path.substr(sep + 1);
+}
+
 bool ReadEntireFile(const std::string& path, std::string& outText, std::string& outError) {
     /* PILLAR2_WORKER_ONLY */ // est-latency: ~50ms — sole caller (line 172) inside app.LaunchBackgroundTask lambda.
     std::ifstream f(path, std::ios::binary);
     if (!f.good()) {
-        outError = "Failed to open file: " + path;
+        // File NAME only — the picker already showed the user the directory; a full path in a
+        // toast leaks the local filesystem layout into screenshots/bug reports.
+        outError = SmatchetLocalization::Format("bulk.file_open_failed",
+                                                "Could not open \"%s\" — check that the file exists and is readable.",
+                                                FileNameOf(path).c_str());
         return false;
     }
     std::stringstream ss;
@@ -71,7 +82,9 @@ bool ReadEntireFile(const std::string& path, std::string& outText, std::string& 
 bool WriteEntireFile(const std::string& path, const std::string& text, std::string& outError) {
     std::ofstream f(path, std::ios::binary);
     if (!f.good()) {
-        outError = "Failed to open file for write: " + path;
+        outError = SmatchetLocalization::Format("bulk.file_write_failed",
+                                                "Could not write \"%s\" — check permissions and free space.",
+                                                FileNameOf(path).c_str());
         return false;
     }
     f.write(text.data(), static_cast<std::streamsize>(text.size()));
@@ -173,7 +186,12 @@ size_t BulkImportPickNextRow(AppController& app, UiDrawSession& d, const std::ve
 
 /** Build a human-readable failure status from a create result (transport hint + missing fields). */
 std::string BulkImportFormatFailure(AppController& app, const IssueCreateResult& r) {
-    std::string msg = r.Error.empty() ? "failed" : r.Error;
+    std::string msg =
+        r.Error.empty()
+            ? std::string(SmatchetLocalization::T("bulk.create_failed_no_detail",
+                                                  "the Tracker rejected this row without details — check required "
+                                                  "fields and retry"))
+            : r.Error;
     if (IsTrackerTransportErrorText(msg)) {
         msg = "Network/unreachable: " + msg + " — retry when Jira is reachable.";
     }
@@ -352,14 +370,13 @@ void DrawBulkImportParseControls(AppController& app, UiDrawSession& d) {
         ImGui::TextUnformatted(
             SmatchetLocalization::T("bulkImport.chooseProject.title", "Choose target project for bulk import"));
         ImGui::Separator();
-        const std::string backendKind = (d.cfg.TrackerType == "Plane")
-                                             ? std::string("Plane")
-                                             : (d.cfg.TrackerType == "Linear") ? std::string("Linear") : std::string("Jira");
+        const std::string backendKind = (d.cfg.TrackerType == "Plane")    ? std::string("Plane")
+                                        : (d.cfg.TrackerType == "Linear") ? std::string("Linear")
+                                                                          : std::string("Jira");
         const std::string endpoint =
-            (d.cfg.TrackerType == "Plane")
-                ? (d.cfg.PlaneUrl + std::string("|") + d.cfg.PlaneWorkspaceSlug)
-                : (d.cfg.TrackerType == "Linear") ? (d.cfg.LinearBaseUrl + std::string("|") + d.cfg.LinearTeamId)
-                                                  : d.cfg.Domain;
+            (d.cfg.TrackerType == "Plane")    ? (d.cfg.PlaneUrl + std::string("|") + d.cfg.PlaneWorkspaceSlug)
+            : (d.cfg.TrackerType == "Linear") ? (d.cfg.LinearBaseUrl + std::string("|") + d.cfg.LinearTeamId)
+                                              : d.cfg.Domain;
         ImGui::SetNextItemWidth(360.0f);
         SmatchetProjectPicker::Draw("bulk_project", d.bulkImportProjectPickerState, app, backendKind, endpoint,
                                     d.bulkImportProjectModalChosenKey);

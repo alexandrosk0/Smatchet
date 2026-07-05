@@ -557,11 +557,13 @@ std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issue
         return 0;
     }
     if (!deps_.Cache()) {
-        outError = "Cache is not initialized.";
+        outError = "Local cache is unavailable, so this edit cannot be queued offline. Restart Smatchet or check "
+                   "Settings -> Preferences -> Local data.";
         return 0;
     }
     if (issueKey.empty() || fieldId.empty() || fieldsPayloadJson.empty()) {
-        outError = "Invalid offline field edit enqueue parameters.";
+        outError = "This edit could not be queued offline (incomplete edit data). Retry the edit once Tracker is "
+                   "reachable.";
         return 0;
     }
     try {
@@ -577,7 +579,8 @@ std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issue
                                         nlohmann::json{{"pending_field_edit_id", id}, {"field_id", fieldId}});
         return id;
     } catch (const std::exception& ex) {
-        outError = ex.what();
+        outError = "Saving this edit to the offline queue failed (local database error). Retry the edit once "
+                   "Tracker is reachable.";
         LOG_ERROR("OfflineQueueService::QueueFieldEditOffline failed: %s", ex.what());
         BackendAuditTrail::AppendResult("offline_queue_field_edit", "ui", issueKey,
                                         BackendAuditTrail::MakeOperationId("offline-field-queue"), false, ex.what(),

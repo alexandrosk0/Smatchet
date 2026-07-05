@@ -99,7 +99,8 @@ ProcessJiraSearchPage(int page, const std::string& responseText, const std::stri
             outcome.Stop = true;
             outcome.EndedCleanly = false;
             outcome.HadFetchError = true;
-            outcome.FetchError = std::string("JSON parse error: ") + parseErr;
+            // Parser detail stays in the log line above; the banner shows actionable text.
+            outcome.FetchError = "the Tracker returned an unreadable response (invalid JSON)";
             return outcome;
         }
         if (!json.contains("issues")) {
@@ -164,7 +165,7 @@ ProcessJiraSearchPage(int page, const std::string& responseText, const std::stri
         outcome.Stop = true;
         outcome.EndedCleanly = false;
         outcome.HadFetchError = true;
-        outcome.FetchError = std::string("JSON parse error: ") + ex.what();
+        outcome.FetchError = "the Tracker returned an unreadable response (invalid JSON)";
     }
     return outcome;
 }
@@ -252,7 +253,11 @@ std::string LogAndBuildPageFetchError(int page, const cpr::Response& response) {
     }
     LOG_DEBUG("JiraClient: response error message: %s", response.error.message.c_str());
     std::string msg = "HTTP " + std::to_string(response.status_code);
-    if (!response.error.message.empty()) {
+    // Promote the auth hint into the user-facing summary — it was log-only, leaving the
+    // banner a bare status code with no next step on the most common failure.
+    if (response.status_code == 401 || response.status_code == 403) {
+        msg += " — authentication failed. Check Email and API token under Settings -> Preferences -> Tracker.";
+    } else if (!response.error.message.empty()) {
         msg += std::string(" ") + response.error.message;
     }
     return msg;
@@ -432,9 +437,10 @@ JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::
         const size_t n = (std::min)(kMaxKeysPerRequest, keys.size() - offset);
         const std::string jql = BuildKeyInJql(keys, offset, n);
         const std::string jqlEncoded = UrlEncode(jql);
-        const std::string pageUrl = base + "/rest/api/3/search/jql?jql=" + jqlEncoded +
-                                    // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
-                                    "&maxResults=" + std::to_string(n) + "&fields=" + fields + "&expand=changelog";
+        const std::string pageUrl =
+            base + "/rest/api/3/search/jql?jql=" + jqlEncoded +
+            // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
+            "&maxResults=" + std::to_string(n) + "&fields=" + fields + "&expand=changelog";
 
         auto response = TrackerGetLogged("JiraClient", pageUrl, headers);
         if (response.status_code != 200) {
@@ -453,7 +459,8 @@ JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::
             std::string parseErr;
             auto json = smatchet::json_safe::ParseBounded(response.text, parseErr);
             if (!parseErr.empty()) {
-                outError = std::string("Fetch by key parse error: ") + parseErr;
+                LOG_ERROR("JiraClient: fetch-by-key parse failed: %s", parseErr.c_str());
+                outError = "The Tracker returned an unreadable response for this issue — try again.";
                 return FetchResult::Err(TrackerErrorParse(outError));
             }
             if (!json.contains("issues") || !json["issues"].is_array()) {
@@ -500,7 +507,8 @@ JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::
                 }
             }
         } catch (const std::exception& ex) {
-            outError = std::string("Fetch by key parse error: ") + ex.what();
+            LOG_ERROR("JiraClient: fetch-by-key parse failed: %s", ex.what());
+            outError = "The Tracker returned an unreadable response for this issue — try again.";
             return FetchResult::Err(TrackerErrorParse(outError));
         }
     }

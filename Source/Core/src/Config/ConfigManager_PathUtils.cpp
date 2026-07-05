@@ -103,12 +103,7 @@ void SanitizeHeaderBoundConfigKeys(nlohmann::json& j) {
     // here; ai_*_base_url -> AI endpoint URLs. Secret keys are intentionally absent — their on-disk form
     // is DPAPI ciphertext (no CR/LF) or POSIX plaintext already sanitized in Save before encryption.
     static const char* const kHeaderBoundKeys[] = {
-        "domain",
-        "plane_url",
-        "plane_workspace_slug",
-        "ai_base_url",
-        "ai_ollama_base_url",
-        "ai_deepseek_base_url",
+        "domain", "plane_url", "plane_workspace_slug", "ai_base_url", "ai_ollama_base_url", "ai_deepseek_base_url",
     };
     for (const char* key : kHeaderBoundKeys) {
         nlohmann::json::iterator it = j.find(key);
@@ -135,7 +130,7 @@ bool EnsureDirectoryExists(const std::string& path) {
     }
     return GetLastError() == ERROR_ALREADY_EXISTS;
 #else
-    struct stat st{};
+    struct stat st {};
     if (::stat(path.c_str(), &st) == 0) {
         return S_ISDIR(st.st_mode) != 0;
     }
@@ -205,7 +200,7 @@ bool FileExists(const std::string& path) {
     const DWORD attrs = GetFileAttributesW(wPath.c_str());
     return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;
 #else
-    struct stat st{};
+    struct stat st {};
     return ::stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode) != 0;
 #endif
 }
@@ -715,6 +710,29 @@ std::string ConfigManager::GetPlatformSharedUserDataDirectory() {
 #endif
 }
 
+namespace {
+
+// Latched user-config parse-failure notice (file name only); guarded by GetIoMutexRef().
+std::string& PendingStartupConfigWarningRef() {
+    static std::string warning;
+    return warning;
+}
+
+// File NAME only (C++14 — no std::filesystem): the notice must not echo the full path.
+std::string FileNameOfPath(const std::string& path) {
+    const std::size_t sep = path.find_last_of("/\\");
+    return sep == std::string::npos ? path : path.substr(sep + 1);
+}
+
+} // namespace
+
+std::string ConfigManager::TakeStartupConfigWarning() {
+    std::lock_guard<std::mutex> lock(GetIoMutexRef());
+    std::string out;
+    out.swap(PendingStartupConfigWarningRef());
+    return out;
+}
+
 nlohmann::json ConfigManager::LoadJsonFile(const std::string& path) {
     if (!FileExists(path)) {
         return nlohmann::json::object();
@@ -798,6 +816,12 @@ nlohmann::json ConfigManager::LoadJsonFile(const std::string& path) {
         j = smatchet::json_safe::ParseBounded(raw, parseErr, 64u * 1024u * 1024u);
         if (!parseErr.empty()) {
             LOG_ERROR("ConfigManager: failed to parse config '%s': %s", path.c_str(), parseErr.c_str());
+            if (path == GetConfigPath()) {
+                // User config specifically (this loader also reads default-settings and locale
+                // files): latch the one-shot startup warning so the UI can tell the user their
+                // settings silently reverted to defaults. Already under GetIoMutexRef().
+                PendingStartupConfigWarningRef() = FileNameOfPath(path);
+            }
             j = nlohmann::json::object();
         }
     }
@@ -950,7 +974,7 @@ bool ConfigManager::AtomicWriteTextFile(const std::string& path, const std::stri
             const ssize_t n = ::write(fd, data, remaining);
             if (n < 0) {
                 if (errno == EINTR) {
-                    continue;  // interrupted before any byte moved — retry the same chunk.
+                    continue; // interrupted before any byte moved — retry the same chunk.
                 }
                 LOG_ERROR("ConfigManager: failed to write temp file '%s' errno=%d", tmp.c_str(), errno);
                 writeOk = false;
@@ -982,9 +1006,9 @@ bool ConfigManager::AtomicWriteTextFile(const std::string& path, const std::stri
     // fatal, and never undoes a successful publish (the rename itself already happened atomically).
     {
         const std::string::size_type slash = path.find_last_of('/');
-        const std::string dir = (slash == std::string::npos)  ? std::string(".")
-                                : (slash == 0)                ? std::string("/")
-                                                              : path.substr(0, slash);
+        const std::string dir = (slash == std::string::npos) ? std::string(".")
+                                : (slash == 0)               ? std::string("/")
+                                                             : path.substr(0, slash);
         const int dfd = ::open(dir.c_str(), O_RDONLY | O_DIRECTORY);
         if (dfd >= 0) {
             if (::fsync(dfd) != 0) {

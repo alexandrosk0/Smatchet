@@ -694,7 +694,8 @@ bool FieldEditPipelineService::ApplyFieldEditResult(const std::string& issueId, 
         return false;
     }
     if (!deps_.HasCache()) {
-        outError = "Cache is not initialized.";
+        outError = "Local cache is unavailable, so this edit cannot be applied. Restart Smatchet or check "
+                   "Settings -> Preferences -> Local data.";
         return false;
     }
     if (issueId.empty()) {

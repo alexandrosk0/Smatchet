@@ -648,6 +648,30 @@ const TranslationEntry kEntries[] = {
     {"audit.copy_filtered", "Copy filtered table (TSV)", u8"Copier le tableau filtré (TSV)"},
     {"audit.copy_row_json", "Copy audit row JSON", u8"Copier la ligne d'audit JSON"},
 
+    // error-message-quality-pass — UI-layer error strings (tracker-layer .Error text stays
+    // English by the README § Localization contract: backend error details render as-is).
+    {"toast.settings", "Settings", u8"Paramètres"},
+    {"config.parse_failed",
+     "Your settings file (%s) could not be read, so defaults are in use. Fix the file, or open Preferences and "
+     "Save to rewrite it.",
+     u8"Votre fichier de paramètres (%s) n'a pas pu être lu ; les valeurs par défaut sont utilisées. Corrigez le "
+     u8"fichier, ou ouvrez les Préférences et enregistrez pour le réécrire."},
+    {"updates.check_failed",
+     "Update check failed — check your network connection and try again. You can also download releases from the "
+     "GitHub page.",
+     u8"Échec de la vérification des mises à jour — vérifiez votre connexion réseau et réessayez. Vous pouvez "
+     u8"aussi télécharger les versions depuis la page GitHub."},
+    {"prefs.assistant.test_internal_error", "the request could not be completed — check the endpoint URL and try again",
+     u8"la requête n'a pas pu aboutir — vérifiez l'URL du point d'accès et réessayez"},
+    {"prefs.whisper.test_internal_error", "the request could not be completed — check the API key and try again",
+     u8"la requête n'a pas pu aboutir — vérifiez la clé API et réessayez"},
+    {"bulk.create_failed_no_detail", "the Tracker rejected this row without details — check required fields and retry",
+     u8"le suivi a rejeté cette ligne sans détails — vérifiez les champs obligatoires et réessayez"},
+    {"bulk.file_open_failed", "Could not open \"%s\" — check that the file exists and is readable.",
+     u8"Impossible d'ouvrir « %s » — vérifiez que le fichier existe et qu'il est lisible."},
+    {"bulk.file_write_failed", "Could not write \"%s\" — check permissions and free space.",
+     u8"Impossible d'écrire « %s » — vérifiez les autorisations et l'espace disponible."},
+
     {"ai.select_ticket", "Select a ticket to see AI insights.", u8"Sélectionnez un ticket pour voir les analyses IA."},
     {"ai.analyzing", "Analyzing: %s", u8"Analyse : %s"},
     {"ai.selected_fields", "Selected Fields", u8"Champs sélectionnés"},
