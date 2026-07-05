@@ -6,11 +6,18 @@ name: Mobile emulator smoke
 # real EGL/GLES3 surface + frame loop end-to-end on a (software-rendered) GPU; the
 # .so-link and assembleDebug jobs stop at link/package time.
 #
-# ADVISORY: the job name keeps the "Mobile — " prefix and is intentionally NOT on
-# the merge-gate poller allow-list, so a flaky emulator boot can never block merge.
-# It is path-filtered (heavy: builds x86_64 OpenSSL + APK + boots an AVD) so it only
-# runs when mobile/native/cmake surfaces change — unlike the seconds-fast
-# always-on Android security gate.
+# BLOCKING: this check merge-blocks like every other gate (the poller blocks on ANY
+# red check — all-gates-blocking). Boot determinism: the emulator COLD-boots every
+# run (-no-snapshot-load on the smoke leg) — quick-boot restored a cached
+# default_boot snapshot whose sys.boot_completed=1 predated service registration,
+# so the runner action's own `input keyevent 82` hit
+# ServiceNotFoundException("input") ~23% of runs (e.g. run 28730560601). A cold
+# boot only sets sys.boot_completed after system services are genuinely up, which
+# removes that race for ~60-90 s of extra wall clock. The AVD cache below still
+# saves the system-image download + AVD creation; only the snapshot fast-path is
+# forgone. It is path-filtered (heavy: builds x86_64 OpenSSL + APK + boots an AVD)
+# so it only runs when mobile/native/cmake surfaces change — unlike the
+# seconds-fast always-on Android security gate.
 
 on:
   pull_request:
@@ -41,7 +48,7 @@ env:
 
 jobs:
   mobile-emulator-smoke:
-    name: Mobile — Android emulator smoke (x86_64, boot APK + first frame, advisory)
+    name: Mobile — Android emulator smoke (x86_64, boot APK + first frame)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -220,6 +227,12 @@ jobs:
           arch: x86_64
           target: google_apis
           force-avd-creation: false
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot-save
+          # -no-snapshot-load: COLD boot (see header). Quick-booting the cached
+          # default_boot snapshot resumed a state where sys.boot_completed=1 but the
+          # input/settings services weren't registered yet, and the runner action's
+          # post-boot `input keyevent 82` crashed with ServiceNotFoundException —
+          # the ~23% flake this gate had while advisory. Cold boot makes
+          # boot_completed imply services-up.
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot-save -no-snapshot-load
           disable-animations: true
           script: bash .github/scripts/mobile-emulator-smoke.sh

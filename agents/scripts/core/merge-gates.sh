@@ -5,9 +5,10 @@
 #
 # Polls four conditions on a PR via one `gh api graphql` call:
 #   1. CI — every required check passes (CheckRun terminal SUCCESS/NEUTRAL/SKIPPED;
-#      StatusContext state == SUCCESS) PLUS any non-required check on the
-#      meant-to-block allow-list (name ~ Coverage|Sanitizer, non-advisory)
-#      — see $failing below + postmortems.md 2026-06-06 "#923".
+#      StatusContext state == SUCCESS) PLUS every non-required check whose name
+#      does not contain "advisory" (block-on-any-red; the all-gates-blocking
+#      flip of the former curated allow-list) — see $failing below +
+#      postmortems.md 2026-06-06 "#923".
 #   2. CodeRabbit — latest review on current headRefOid is not CHANGES_REQUESTED;
 #      zero unresolved non-outdated review threads contain a CodeRabbit comment.
 #      A CR rate-limit skip (TEMPORARY, distinct from a terminal "Review skipped")
@@ -148,46 +149,34 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_QUERY_FILE="$SCRIPT_DIR/merge-gates.graphql"
 
 # ----------------------------------------------------------------------------
-# Meant-to-block allow-list — SINGLE SOURCE OF TRUTH.
-# A non-required RED check still BLOCKS a merge when its name matches this
-# regex AND is not explicitly "advisory" (see the $failing jq sub-expression
-# below, which splices __BLOCK_ALLOWLIST_RE__ from this constant). Closes the
-# #923 gate-escape (watcher auto-merged past a RED non-required "Coverage").
-# Other tooling that must apply the IDENTICAL allow-list (e.g.
-# safe-admin-merge.sh) sources this file and reads MERGE_GATES_BLOCK_ALLOWLIST_RE
-# rather than duplicating the regex — change it HERE and every consumer follows.
-#   Coverage / Sanitizer / Perf PR-fast / Android security gate / Fuzz smoke / Intent section
-# (history: Perf PR-fast 2026-06-07; Android security gate 2026-06-09;
-#  Fuzz smoke 2026-06-16 — gates the #1301 class (a fuzz-relevant PR that breaks
-#  the DETERMINISTIC configure/build/ctest of the libFuzzer drivers). Only safe
-#  because fuzz-smoke.yml's time-boxed fuzz STEP is continue-on-error on PRs
-#  (advisory) while those build steps stay hard-fail — so the one check name
-#  reds on a real build break but NOT on stochastic crash discovery. Adding it
-#  here WITHOUT that step-guard would re-introduce the Bucket-style poller jam;
-#  the two ship together (see fuzz-smoke.yml + postmortems.md 2026-06-16 #1301);
-#  Bucket launch-smoke (Mesa GL) ADDED 2026-06-18 — the GRADUATED, DEDICATED form
-#  of the Mesa dead-harness gate. The broad `Bucket-` token is DELIBERATELY NOT
-#  here: the continue-on-error bucket-C / bucket-E jobs ALSO run flaky
-#  screenshot-diff / ImGui-Test-Engine lanes (infra.md `bucket-mesa-exe-boot` P1 /
-#  `ci-infra-flake-reds-masquerade-as-real-breakage` item (c)), so matching
-#  `Bucket-` would re-block merges on stochastic rendering flake — the exact jam
-#  the 2026-06-15 advisory-flip solved. Instead the dead-harness boot check now
-#  lives in its OWN hard-fail job named `Bucket launch-smoke (Mesa GL)` (see
-#  build-and-test.yml; NO continue-on-error), and ONLY that stable name is on the
-#  allow-list. bucket-C/E stay advisory; this one blocks. #1370 fixed the `--spawn`
-#  teardown exit-code that previously red-walled the smoke, so it is now reliably
-#  green and safe to block on. postmortem-owed.sh sources this constant (no
-#  separate copy to keep in sync since the de-dup), so one edit here covers both.)
-#  "Intent section" added 2026-06-18 (pr-intent-capture-hardening #5, ADR-0022):
-#  the doc-validation Intent gate now exits non-zero on a missing/empty `## Intent`;
-#  routed onto the blocking path here rather than project.config.json
-#  branch_protection (which would need merge_group reporting or deadlock the queue).
-#  Override hatch: the `intent-out-of-band` label.
-#  "Plan-lock gate" added 2026-06-20 (plan-lock-enforcement Layer C, items 5-7):
-#  the server-side fail-closed hard net for cross-branch plan-lock collisions.
-#  Routed here (not branch_protection) via the #923 mechanism — zero
-#  branch-protection mutation. Override hatch: the `plan-lock-out-of-band` label.
-MERGE_GATES_BLOCK_ALLOWLIST_RE="Coverage|Sanitizer|Perf PR-fast|Android security gate|Fuzz smoke|Bucket launch-smoke [(]Mesa GL[)]|Intent section|Plan-lock gate"
+# Meant-to-block scope — SINGLE SOURCE OF TRUTH.
+# BLOCK-ON-ANY-RED (all-gates-blocking flip): the regex matches EVERY check
+# name, so any non-required check that reaches a failing terminal state blocks
+# the merge exactly like a required one, and any still-pending check holds
+# GATES_PASSED. This is the mechanised form of the AGENTS.md invariant
+# "Never merge past ANY red check — required or not" (previously curated:
+# Coverage|Sanitizer|Perf PR-fast|Android security gate|Fuzz smoke|
+# Bucket launch-smoke|Intent section|Plan-lock gate, grown one #923-class
+# gate-escape at a time — this flip retires the curation).
+# The ONE remaining exemption is the `advisory`-NAME exclusion in the jq below:
+# a check whose name literally contains "advisory" does not block. After the
+# all-gates-blocking rename sweep NO lane carries that token; it survives as the
+# sanctioned, name-visible convention for any future deliberately-advisory lane
+# (an invisible poller-side list is exactly what this flip removes).
+# Prereqs that made block-all safe (each lane genuinely green first):
+#  * emulator smoke — cold-boot fix removed the ~23% snapshot-restore boot race;
+#  * Android NDK — httplib zstd auto-detect pinned OFF (#1604, hermetic);
+#  * fuzz smoke — the stochastic fuzz STEP stays continue-on-error on PRs
+#    (#1301 design) so only the deterministic build/ctest reds the check;
+#  * bucket-C — the per-scenario golden-diff STEP stays advisory-by-design
+#    (per-developer GPU goldens; lane-integrity + launch-smoke carry the teeth),
+#    so the CHECK reds only on real infra/dead-harness breakage.
+# Override hatches, unchanged: tests-/perf-/intent-/plan-lock-out-of-band labels
+# downgrade their named checks; SKIP_MERGE_GATES=true is the global bypass.
+# Other tooling applies the IDENTICAL scope by sourcing this file
+# (safe-admin-merge.sh, postmortem-owed.sh) — change it HERE and every consumer
+# follows.
+MERGE_GATES_BLOCK_ALLOWLIST_RE="."
 
 # Source prompt shim so `ask_user_question` is callable from the caller's
 # integration flow. Lazy — only if available.
@@ -550,15 +539,15 @@ poll_merge_gates() {
                    else ["StatusContext", (.context // "")] end)})
    | group_by(._k) | map(sort_by(.startedAt // "") | .[-1]) | map(del(._k))) as $ctx
 | ([$ctx[] | select(.isRequired == true)]) as $req
-# $blocking — the set the gate must wait on: REQUIRED contexts PLUS the
-# non-required meant-to-block allow-list (Coverage / Sanitizer /
-# Perf PR-fast / Android security gate / Fuzz smoke, non-advisory). The $failing set below
-# already unions these (the #923 fix), but the PENDING count historically
-# counted only $req — so a non-required allow-listed check still IN_PROGRESS
-# (not yet terminal) was invisible: not failing (not terminal) and not pending
-# (not required) → GATES_PASSED fired before ASAN/Coverage/Bucket finished and
-# the merge beat the sanitizer to the line (#1237/#1232/#1227/#1220/#1198
-# ASAN/Coverage escapes). Counting $blocking (not $req) for pending closes it.
+# $blocking — the set the gate must wait on: REQUIRED contexts PLUS every
+# non-required, non-advisory-named check (block-on-any-red — the allow-list
+# regex now matches all names). The $failing set below already unions these
+# (the #923 fix), but the PENDING count historically counted only $req — so a
+# non-required blocking check still IN_PROGRESS (not yet terminal) was
+# invisible: not failing (not terminal) and not pending (not required) →
+# GATES_PASSED fired before ASAN/Coverage/Bucket finished and the merge beat
+# the sanitizer to the line (#1237/#1232/#1227/#1220/#1198 ASAN/Coverage
+# escapes). Counting $blocking (not $req) for pending closes it.
 | ([$ctx[] | select(
       (.isRequired == true)
       or ((if .__typename == "CheckRun" then (.name // "") else (.context // "") end)
@@ -571,28 +560,20 @@ poll_merge_gates() {
       ((.__typename == "CheckRun" and .status == "COMPLETED" and ((.conclusion // "") | IN("FAILURE","TIMED_OUT","CANCELLED","ACTION_REQUIRED","STARTUP_FAILURE"))) or
        (.__typename == "StatusContext" and ((.state // "") | IN("FAILURE","ERROR"))))
       and
-      # A failing check blocks if it is REQUIRED (unchanged), OR it is a
-      # non-required check that is meant-to-block: its name matches the curated
-      # allow-list AND is not explicitly "advisory". This closes the gate-escape
-      # where the watcher auto-merged #923 past a RED non-required "Coverage"
-      # check (postmortems.md 2026-06-06 "#923", option B). The allow-list is
-      # deliberately tight (Coverage / Sanitizer / Perf PR-fast /
-      # Android security gate / Fuzz smoke) — a non-allow-listed non-required red (e.g. the
-      # `non-required-fail` test fixture, or "Duplication scanner (advisory)")
-      # still passes, preserving the prior "non-required → pass" contract.
-      # Extend the regex to gate more checks. "Perf PR-fast" added 2026-06-07
-      # (perf-gate-revival step 6a) — armed now that ci-windows-latest baselines
-      # exist; the perf-out-of-band downgrade below remains the override hatch.
-      # "Android security gate" added 2026-06-09 (mobile-mvp-completion WS1,
-      # Issues #1067/#1068): the advisory mobile jobs (posix-core / android-ndk /
-      # apk) let a green develop ship mobile breakage (precedent #1021/#1064), so
-      # the manifest-allowBackup + OpenSSL-fail-fast regression gate is routed
-      # onto the blocking path here, NOT left advisory. "Fuzz smoke" added
-      # 2026-06-16 (#1301 merged past a RED fuzz-smoke whose libFuzzer driver
-      # FAILED TO COMPILE — a real broken develop build the poller waved through
-      # because the check is non-required): paired with a continue-on-error guard
-      # on the stochastic time-boxed fuzz STEP in the workflow so only the
-      # deterministic build/ctest reds the check (see fuzz-smoke.yml).
+      # A failing check blocks if it is REQUIRED (unchanged), OR it is ANY
+      # non-required check whose name does not contain "advisory"
+      # (block-on-any-red — the spliced regex matches every name; see the
+      # MERGE_GATES_BLOCK_ALLOWLIST_RE comment for the full rationale + the
+      # curated-era history: #923 Coverage escape closed 2026-06-06; Perf
+      # PR-fast 2026-06-07; Android security gate 2026-06-09 — the advisory
+      # mobile jobs let a green develop ship mobile breakage #1021/#1064; Fuzz
+      # smoke 2026-06-16 — #1301 merged past a RED fuzz-smoke whose libFuzzer
+      # driver failed to compile, paired with the continue-on-error guard on
+      # the stochastic fuzz STEP so only the deterministic build/ctest reds the
+      # check). The curated list grew one gate-escape at a time; the flip
+      # retires the curation so the next escape class is impossible by
+      # construction. A red on an "advisory"-named check (none exist post-
+      # rename; the token is the sanctioned future escape) still passes.
       ((.isRequired == true)
        or ((if .__typename == "CheckRun" then (.name // "") else (.context // "") end)
            | (test("__BLOCK_ALLOWLIST_RE__"; "i")

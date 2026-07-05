@@ -367,24 +367,25 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "non-required Bucket-E FAILURE does NOT block (flaky screenshot/UI lane stays advisory)" {
-    # `Bucket-` was DROPPED from the meant-to-block allow-list 2026-06-15 and was
-    # DELIBERATELY NOT re-added at the 2026-06-18 graduation: the Mesa-software-GL
-    # bucket-C/E lanes ALSO run flaky screenshot-diff / ImGui-Test-Engine tests, so
-    # blocking on the broad `Bucket-` token would revive the stochastic-flake jam
-    # the advisory-flip solved. The dead-harness boot check graduated to its OWN
-    # dedicated blocking check instead (`Bucket launch-smoke (Mesa GL)`, see the
-    # BLOCKS test below). A red bucket-C/E must therefore STILL NOT block — it is a
-    # non-allow-listed advisory lane. Required check kept green so the bucket
-    # failure is the sole non-required red.
+@test "non-required Bucket-E FAILURE blocks (block-on-any-red flip)" {
+    # HISTORY: `Bucket-` was dropped from the curated allow-list 2026-06-15
+    # (Mesa lanes could not boot the CI exe — stochastic-flake jam) and this test
+    # pinned "a red bucket-C/E must NOT block". The all-gates-blocking flip
+    # inverts that contract: the lanes are genuinely green (Mesa boot fixed;
+    # #1370 fixed the --spawn teardown exit-code), the blocking regex now
+    # matches every name, and a red Bucket-E is a real UI-test regression that
+    # must BLOCK like any other check. The only non-blocking reds left are
+    # checks whose NAME carries the "advisory" token (see the advisory-name
+    # escape tests). Required check kept green so the bucket failure is the
+    # sole non-required red.
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
         "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
         '[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS","isRequired":true},{"__typename":"CheckRun","name":"Bucket-E UI tests (Mesa headless GL)","status":"COMPLETED","conclusion":"FAILURE","isRequired":false}]')"
     set_fixture "$f"
     run poll_merge_gates org repo 1
-    [ "$status" -eq 0 ]
-    [[ "$output" == *"GATES_PASSED"* ]]
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"1 fail"* ]]
     rm -f "$f"
 }
 
@@ -448,10 +449,26 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "non-required NON-allow-listed advisory IN_PROGRESS does NOT block (preserves prior contract)" {
-    # Converse of the #1237 fix: a non-required check that is NOT on the
-    # meant-to-block allow-list (e.g. an advisory job) stays non-blocking even
-    # while in progress — the gate must not start waiting on every advisory job.
+@test "arbitrary non-required check IN_PROGRESS blocks as pending (block-on-any-red)" {
+    # The flip's core pending semantic: a non-required check whose name was NEVER
+    # on the curated-era allow-list (CodeQL here) must hold GATES_PASSED while
+    # in flight — every gate is a gate. Twin of the #1237 Sanitizer test above,
+    # generalised from the curated names to any non-advisory name.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json"         "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes"         '[{"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS","isRequired":true},{"__typename":"CheckRun","name":"CodeQL analyze (c-cpp)","status":"IN_PROGRESS","conclusion":null,"isRequired":false}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"1 pending"* ]]
+    rm -f "$f"
+}
+
+@test "advisory-NAMED check IN_PROGRESS does NOT block (the one block-on-any-red escape)" {
+    # Under block-on-any-red every non-required check blocks (pending or red) —
+    # EXCEPT a check whose name literally contains "advisory": the sanctioned,
+    # name-visible convention for a deliberately non-gating lane. No production
+    # lane carries the token today (all-gates-blocking rename sweep); this pins
+    # the escape so a future deliberately-advisory lane has a working contract.
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
         "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \

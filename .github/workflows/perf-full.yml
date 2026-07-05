@@ -273,25 +273,27 @@ jobs:
             docs/perf/baselines/*.ci-windows-latest.json
 
       # Slice 5 — Pillar 2 visible-cue invariant via bucket-E ImGui Test
-      # Engine. Optional / advisory final stage. Builds the ninja-ui-test-msvc
-      # preset (separate binaryDir, no conflict with the iter build above) and
-      # runs the GoodOrder + BadOrder variants. Failure is reported but does
-      # NOT fail the full-suite job — the existing perf gates are the
-      # block-merge surface.
+      # Engine. BLOCKING final stage (all-gates-blocking flip): a visible-cue
+      # regression is a Pillar-2 UX invariant break, and this nightly is the only
+      # lane exercising it — masking it made the invariant unenforced. Builds the
+      # ninja-ui-test-msvc preset (separate binaryDir, no conflict with the iter
+      # build above) and runs the GoodOrder + BadOrder variants; a red here reds
+      # the nightly full-suite run (never a PR — this workflow is schedule-driven).
       - name: Configure ninja-ui-test-msvc (visible-cue harness)
-        continue-on-error: true
         run: cmake --preset ninja-ui-test-msvc
 
       - name: Build SmatchetStandalone (ui-test preset)
-        continue-on-error: true
         run: cmake --build --preset ninja-ui-test-msvc --target SmatchetStandalone
 
       - name: Run visible-cue bucket-E driver
-        continue-on-error: true
         run: bash scripts/dev/test-ui-sync-stall-visible-cue.sh
 
+      # always() on the three follow-up steps below: the visible-cue stage above is
+      # now unmasked (blocking), and these read the PERF step's outputs — a
+      # visible-cue red must not swallow a perf-regression issue / baseline bump
+      # (the implicit success() would skip them once any earlier step fails).
       - name: Open regression issue
-        if: steps.perf.outputs.regression_count > 0
+        if: ${{ always() && steps.perf.outputs.regression_count > 0 }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -301,7 +303,7 @@ jobs:
             --body-file /tmp/perf-report.md
 
       - name: Open scenario-run-failure issue
-        if: steps.perf.outputs.run_failure_count > 0
+        if: ${{ always() && steps.perf.outputs.run_failure_count > 0 }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -311,7 +313,7 @@ jobs:
             --body "One or more scenarios in the full-suite run failed to produce output (build / exe / scenario-runner plumbing). See run ${{ github.run_id }} logs."
 
       - name: Open baseline-bump PR for improvements
-        if: steps.perf.outputs.improvement_count > 0
+        if: ${{ always() && steps.perf.outputs.improvement_count > 0 }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

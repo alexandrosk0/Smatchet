@@ -210,22 +210,38 @@ JSON
     [[ "$output" != *"PR #2006"* ]]
 }
 
-# --- sourced-scope proof (de-dup of the allow-list constant) ----------------
-# The allow-list regex is now SOURCED from merge-gates.sh's
-# MERGE_GATES_BLOCK_ALLOWLIST_RE rather than hand-copied. These two pin the
-# sourced content: Coverage IS owed (above), a dropped Bucket-* is NOT.
+# --- sourced-scope proof (de-dup of the blocking-scope constant) -------------
+# The blocking-scope regex is SOURCED from merge-gates.sh's
+# MERGE_GATES_BLOCK_ALLOWLIST_RE rather than hand-copied (#1258 drift guard).
+# Under block-on-any-red the sourced scope covers every non-advisory-named
+# check, so a merged-red Bucket-E now OWES; an advisory-NAMED red does not.
 
-@test "non-allowlist non-required (Bucket-E UI tests) red owes nothing - #1258 regression guard" {
-    # The #1258 false-flag: a stale branch's hand-synced copy still carried
-    # `Bucket-|`, so a red Bucket-E lane (Mesa-GL, can't boot the exe) was
-    # mis-flagged. The sourced list dropped Bucket-* in lock-step → not owed.
+@test "merged-red non-required (Bucket-E UI tests) OWES a postmortem (block-on-any-red)" {
+    # Was the #1258 "owes nothing" guard while Bucket-* sat off the curated
+    # list. The sourced scope now blocks every non-advisory-named check, so a
+    # PR merged past a red Bucket-E is a genuine gate-escape → owed. The
+    # sourced-constant lock-step (the actual #1258 lesson) is still proven:
+    # this expectation flipped BECAUSE the sourced constant flipped, with no
+    # hand-synced copy to drift.
     prlist <<'JSON'
 [{"number":2008,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"a8"},"labels":[],
   "statusCheckRollup":[{"__typename":"CheckRun","name":"Bucket-E UI tests (Mesa headless GL)","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
 JSON
     run_detector
     [ "$status" -eq 0 ]
-    [[ "$output" != *"PR #2008"* ]]
+    [[ "$output" == *"PR #2008"* ]]
+}
+
+@test "merged-red advisory-NAMED check owes nothing (the block-on-any-red escape)" {
+    # The one non-gating shape left: a check whose NAME carries the "advisory"
+    # token. A red on it is not a gate-escape (it never gated).
+    prlist <<'JSON'
+[{"number":2009,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"a9"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Duplication scanner (advisory)","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"PR #2009"* ]]
 }
 
 @test "allow-list is sourced from merge-gates.sh, not hand-duplicated (drift guard)" {

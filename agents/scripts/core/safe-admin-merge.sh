@@ -363,12 +363,11 @@ evaluate_cr() {
 run_selftest() {
     local fails=0
 
-    # CASE 1 — REFUSES on a RED allow-listed check, AND proves the Mesa-GL
-    # bucket lanes are now advisory. `Coverage` (still allow-listed) is FAILURE
-    # -> must block; `Bucket-C` is FAILURE but `Bucket-` was dropped from the
-    # allow-list 2026-06-15 (infra.md `bucket-mesa-exe-boot` P1) -> must NOT
-    # block. Re-add the `&& grep Bucket-C` blocker assertion when the bucket
-    # lane graduates back to hard-fail.
+    # CASE 1 — REFUSES on RED checks under block-on-any-red (all-gates-blocking
+    # flip): BOTH `Coverage` (required-era allow-list) AND `Bucket-C` (never on
+    # the curated list; the 2026-06-15 advisory era pinned it non-blocking) must
+    # now block — every non-advisory-named red gates the admin-merge. The
+    # advisory-NAME escape is covered by CASE 2's `Duplication scanner (advisory)`.
     local red_rollup
     red_rollup='{"state":"OPEN","labels":[],"statusCheckRollup":[
       {"__typename":"CheckRun","name":"Coverage","status":"COMPLETED","conclusion":"FAILURE"},
@@ -377,10 +376,10 @@ run_selftest() {
     local blockers
     blockers=$(evaluate_rollup "$red_rollup" "Windows + MSVC")
     if [ -n "$blockers" ] && printf '%s' "$blockers" | grep -q 'Coverage' \
-       && ! printf '%s' "$blockers" | grep -q 'Bucket-C'; then
-        echo "selftest CASE1 PASS — refuses on RED allow-listed Coverage; advisory Bucket-C ignored"
+       && printf '%s' "$blockers" | grep -q 'Bucket-C'; then
+        echo "selftest CASE1 PASS — refuses on RED Coverage AND RED Bucket-C (block-on-any-red)"
     else
-        echo "selftest CASE1 FAIL — Coverage must block, Bucket-C must NOT (got: '$blockers')" >&2
+        echo "selftest CASE1 FAIL — Coverage AND Bucket-C must both block (got: '$blockers')" >&2
         fails=$((fails + 1))
     fi
 

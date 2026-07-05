@@ -394,18 +394,18 @@ jobs:
           if-no-files-found: ignore
 
   windows-msvc-arm64:
-    name: Windows + MSVC (ARM64 cross-compile, advisory)
+    name: Windows + MSVC (ARM64 cross-compile)
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' && needs.changes.outputs.android_only != 'true' }}
     runs-on: windows-2022
-    # Advisory compile-only ARM64 cross leg (docs/plans/dx12-standalone-win-arm64.md
-    # Phase 4 row 11). msvc-dev-cmd `arch: amd64_arm64` sources the cross vcvars so
-    # cl.exe targets ARM64; ninja-iter-msvc-arm64 then builds SmatchetStandalone.
-    # The ARM64 binary cannot execute on the x64 runner, so this gate is compile +
-    # link only — test execution + runtime validation ride a windows-11-arm runner
-    # in Phase 3. continue-on-error keeps a brand-new-arch break advisory (the x64
-    # windows-msvc job above remains the blocking Windows gate).
-    continue-on-error: true
+    # BLOCKING compile-only ARM64 cross leg (docs/plans/dx12-standalone-win-arm64.md
+    # Phase 4 row 11; graduated from advisory in the all-gates-blocking flip — the
+    # lane had been genuinely green, so an ARM64 compile/link break is a real
+    # regression signal, gated like every other check). msvc-dev-cmd
+    # `arch: amd64_arm64` sources the cross vcvars so cl.exe targets ARM64;
+    # ninja-iter-msvc-arm64 then builds SmatchetStandalone. The ARM64 binary cannot
+    # execute on the x64 runner, so this gate is compile + link only — test
+    # execution + runtime validation ride the windows-11-arm native legs below.
     timeout-minutes: 45
 
     steps:
@@ -463,7 +463,7 @@ jobs:
         run: sccache --show-stats
 
   windows-arm64-native:
-    name: Windows-on-ARM native build + ctest (atomics gate, advisory, runner-gated)
+    name: Windows-on-ARM native build + ctest (atomics gate, runner-gated)
     needs: changes
     # Phase 3 of docs/plans/dx12-standalone-win-arm64.md. The plan's
     # headline ARM64 risk is std::atomic memory-ordering: ~310 memory_order sites
@@ -479,39 +479,36 @@ jobs:
     # unschedulable runner queues until timeout. Activate by setting the repository
     # variable ENABLE_WIN_ARM64_RUNNER=true (Settings → Secrets and variables →
     # Actions → Variables) once a windows-11-arm runner is confirmed available.
-    # continue-on-error keeps a first-run break advisory (matching the cross leg).
+    # BLOCKING (all-gates-blocking flip): bring-up completed — the lane runs green
+    # end-to-end on the windows-11-arm runner, so every continue-on-error mask
+    # (job + per-step "green-with-annotation") is removed. A red here is a real
+    # ARM64 regression (the atomics surface this leg exists for) and reds the
+    # develop-push check like any other gate.
     # Follow-on steps for the live leg (tracked in tooling.md): DX12-on-WARP launch
     # smoke and the -Arch arm64 Inno installer smoke.
-    # Skip on pull_request: these runner-gated ARM legs EXECUTE on the windows-11-arm
-    # runner and fail during ARM64 bring-up (Phase 3), and job-level continue-on-error
-    # does NOT make a check-run green (only the workflow) — so they red every PR for a
-    # non-review reason. Run them on develop push + merge_group instead (post-merge
-    # advisory signal, the strict-off backstop model); PRs stay green. Goal:
-    # docs/agent-rules/ci-local-parity.md "advisory runner-gated lanes skip cleanly on PR".
+    # Skip on pull_request: these runner-gated ARM legs run on develop push +
+    # merge_group only (the post-merge backstop model — PR wall-clock stays flat and
+    # an unschedulable runner can never wedge a PR). Post-merge reds are triaged as
+    # develop breakage per the strict-off backstop contract.
     if: ${{ vars.ENABLE_WIN_ARM64_RUNNER == 'true' && needs.changes.outputs.code == 'true' && needs.changes.outputs.android_only != 'true' && github.event_name != 'pull_request' }}
     runs-on: windows-11-arm
-    continue-on-error: true
     timeout-minutes: 60
 
     steps:
       - name: Checkout
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
       - name: Setup MSVC dev environment (ARM64 native)
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: arm64
 
       - name: Setup sccache (object cache)
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (msvc-arm64-native)
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}\.sccache
@@ -520,7 +517,6 @@ jobs:
             ${{ runner.os }}-sccache-msvc-arm64-native-
 
       - name: Cache FetchContent _deps (msvc-arm64-native)
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .fetchcontent-src
@@ -531,7 +527,6 @@ jobs:
             ${{ runner.os }}-fetchcontent-
 
       - name: Fetch Font Awesome 6 Solid TTF (pinned + checksum-verified)
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         shell: bash
         env:
           FA_TAG: "6.7.2"
@@ -544,7 +539,6 @@ jobs:
           echo "${FA_SHA256}  assets/fonts/fa-solid-900.ttf" | sha256sum -c -
 
       - name: Confirm native ARM64 host (guard against an x64 fallback runner)
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         shell: pwsh
         run: |
           # Assert the leg is on a real ARM core before the expensive build —
@@ -564,15 +558,12 @@ jobs:
           Write-Host 'Confirmed: native ARM64 host.'
 
       - name: Configure ninja-publish-msvc-arm64 (native)
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         run: cmake --preset ninja-publish-msvc-arm64
 
       - name: Build SmatchetStandalone + SmatchetTests (ARM64 native)
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         run: cmake --build --preset ninja-publish-msvc-arm64
 
       - name: Run ctest — bucket-A doctest rig on native ARM64 (atomics gate)
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         working-directory: build/ninja-publish-msvc-arm64
         run: ctest --output-on-failure
 
@@ -586,7 +577,6 @@ jobs:
       # --mcp-port). DX12 falls back to the WARP adapter when no hardware D3D12 exists
       # (Dx12Bootstrap SelectAdapterAndCreateDevice -> EnumWarpAdapter).
       - name: DX12-on-WARP launch smoke (ARM64)
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         shell: bash
         env:
           SMATCHET_RENDERER: "dx12"
@@ -631,7 +621,6 @@ jobs:
       # are produced as an ARTEFACT for a human to commit in a follow-up bootstrap PR
       # (same flow as the ci-windows-latest set) — NOT auto-committed here.
       - name: Perf PR-fast bootstrap (ci-windows-arm64, DX12/WARP)
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         shell: bash
         env:
           SMATCHET_RENDERER: "dx12"
@@ -659,7 +648,6 @@ jobs:
           done
 
       - name: Upload ARM64 perf baselines (for human bootstrap commit)
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -668,46 +656,41 @@ jobs:
           if-no-files-found: ignore
 
       - name: Report sccache stats
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         if: always()
         run: sccache --show-stats
 
   windows-arm64-installer:
-    name: Windows-on-ARM ARM64 installer smoke (advisory, runner-gated)
+    name: Windows-on-ARM ARM64 installer smoke (runner-gated)
     needs: changes
     # Phase 3 follow-on (dx12-standalone-win-arm64): build the NATIVE ARM64 Inno
     # installer (release_github.ps1 -Arch arm64 -> ninja-publish-msvc-arm64 LTO
     # publish + iscc with ArchitecturesAllowed=arm64) and smoke it (silent install
     # + launch under DX12/WARP). Kept SEPARATE from windows-arm64-native because it
     # needs Inno Setup provisioning (choco) and a heavier LTO publish build; the
-    # atomics-gate job shouldn't carry that. Advisory + dormant behind
-    # ENABLE_WIN_ARM64_RUNNER like the other ARM64 legs.
-    # Skip on pull_request: these runner-gated ARM legs EXECUTE on the windows-11-arm
-    # runner and fail during ARM64 bring-up (Phase 3), and job-level continue-on-error
-    # does NOT make a check-run green (only the workflow) — so they red every PR for a
-    # non-review reason. Run them on develop push + merge_group instead (post-merge
-    # advisory signal, the strict-off backstop model); PRs stay green. Goal:
-    # docs/agent-rules/ci-local-parity.md "advisory runner-gated lanes skip cleanly on PR".
+    # atomics-gate job shouldn't carry that. BLOCKING (all-gates-blocking flip:
+    # bring-up completed, the lane runs green — masks removed so a red is a real
+    # installer/DX12-WARP regression); dormant behind ENABLE_WIN_ARM64_RUNNER like
+    # the other ARM64 legs.
+    # Skip on pull_request: these runner-gated ARM legs run on develop push +
+    # merge_group only (the post-merge backstop model — PR wall-clock stays flat and
+    # an unschedulable runner can never wedge a PR). Post-merge reds are triaged as
+    # develop breakage per the strict-off backstop contract.
     if: ${{ vars.ENABLE_WIN_ARM64_RUNNER == 'true' && needs.changes.outputs.code == 'true' && needs.changes.outputs.android_only != 'true' && github.event_name != 'pull_request' }}
     runs-on: windows-11-arm
-    continue-on-error: true
     timeout-minutes: 75
 
     steps:
       - name: Checkout
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
       - name: Setup MSVC dev environment (ARM64 native)
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         with:
           arch: arm64
 
       - name: Confirm native ARM64 host
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         shell: pwsh
         run: |
           $hostArch = $env:PROCESSOR_ARCHITEW6432
@@ -719,11 +702,9 @@ jobs:
           }
 
       - name: Setup sccache (object cache)
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
 
       - name: Cache sccache objects (msvc-arm64-installer)
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ github.workspace }}\.sccache
@@ -734,7 +715,6 @@ jobs:
             ${{ runner.os }}-sccache-msvc-arm64-native-
 
       - name: Cache FetchContent _deps (msvc-arm64-installer)
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .fetchcontent-src
@@ -743,7 +723,6 @@ jobs:
             ${{ runner.os }}-fetchcontent-
 
       - name: Fetch Font Awesome 6 Solid TTF (pinned + checksum-verified)
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         shell: bash
         env:
           FA_TAG: "6.7.2"
@@ -756,7 +735,6 @@ jobs:
           echo "${FA_SHA256}  assets/fonts/fa-solid-900.ttf" | sha256sum -c -
 
       - name: Install Inno Setup 6 (ISCC.exe)
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         shell: pwsh
         run: |
           # release_github.ps1 requires Inno Setup's ISCC.exe (x86 binary, runs under
@@ -767,7 +745,6 @@ jobs:
           else { Write-Host "::warning::ISCC.exe not on PATH after choco; release_github.ps1 also searches fixed install dirs + the uninstall registry." }
 
       - name: Build ARM64 installer (release_github.ps1 -Arch arm64)
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         shell: pwsh
         run: |
           # No -Publish (no gh/secrets) and no -Sign (no signing cert in CI). -Arch
@@ -780,7 +757,6 @@ jobs:
             -OutDir out/arm64-installer
 
       - name: Silent-install + launch smoke (DX12/WARP)
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         shell: pwsh
         env:
           SMATCHET_RENDERER: "dx12"
@@ -816,7 +792,6 @@ jobs:
           Write-Host "ARM64 installer smoke OK — installed + launched the native arm64 build."
 
       - name: Upload ARM64 installer (for inspection)
-        continue-on-error: true  # advisory ARM bring-up lane: green-with-annotation, never red (PR-skipped via if:; this covers develop push)
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -895,8 +870,12 @@ jobs:
     # setup ~0.3m, then the diff step ran 19.8m and GitHub cancelled it AT the cap).
     # A healthy run is <1m; 30m gives comfortable headroom for the software-GL slow
     # path without approaching the ~45-50 pipeline ceiling. Coverage unchanged.
+    # No job-level continue-on-error (all-gates-blocking flip): infrastructure steps
+    # (checkout / artifact download / Mesa install / lane-integrity) red the check
+    # for real. The one remaining mask is the per-scenario golden-diff STEP below —
+    # advisory BY DESIGN until CI-native goldens exist (goldens are per-developer
+    # GPU bootstraps; llvmpipe output diffing against them is not authoritative).
     timeout-minutes: 30
-    continue-on-error: true
 
     steps:
       - name: Checkout
@@ -1439,14 +1418,15 @@ jobs:
 
       # Launch-smoke moved OUT into the dedicated, hard-fail `Bucket launch-smoke
       # (Mesa GL)` job (graduated 2026-06-18). That job blocks on the iter-msvc
-      # artefact exe booting under Mesa GL — the same dead-harness class. This job
-      # stays advisory for the #1122 texture-fault scenario; its scenario step
-      # below still hard-asserts `passed==0 && failed>0` (dead-harness) via python,
-      # so a silently-dead texture-fault build cannot green-wash here either.
+      # artefact exe booting under Mesa GL — the same dead-harness class. The #1122
+      # texture-fault scenario below is BLOCKING (all-gates-blocking flip): it is a
+      # deterministic forced-fault-injection scenario (not a golden diff), its
+      # script hard-asserts both the dead-harness sentinel (`passed==0 && failed>0`)
+      # and `ok` (all 3 forced-fault sub-steps), and the lane has been green — a red
+      # is a real texture-guard regression.
 
-      - name: Run mobile-texture-guard scenario (advisory)
+      - name: Run mobile-texture-guard scenario
         id: run-texture-guard
-        continue-on-error: true
         shell: bash
         timeout-minutes: 5
         env:
@@ -1477,7 +1457,9 @@ jobs:
           assert ok, 'mobile-texture-guard scenario did not pass all 3 forced-fault sub-steps'"
 
       - name: Upload texture-guard exe on failure
-        if: ${{ steps.run-texture-guard.outcome == 'failure' }}
+        # failure() is required: without a status function the implicit success()
+        # would skip this diagnostic upload now that the scenario step is unmasked.
+        if: ${{ failure() && steps.run-texture-guard.outcome == 'failure' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: mobile-texture-guard-exe-${{ github.run_id }}
@@ -1988,7 +1970,7 @@ jobs:
   # ===========================================================================
 
   mobile-posix-core-check:
-    name: Mobile — POSIX core compile gate (Linux clang, advisory)
+    name: Mobile — POSIX core compile gate (Linux clang)
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' && needs.changes.outputs.android_only != 'true' }}
     runs-on: ubuntu-latest
@@ -2039,7 +2021,7 @@ jobs:
         run: cmake --build --preset posix-core-check --target SmatchetCore_PosixCheck -- -k 0
 
   mobile-android-ndk:
-    name: Mobile — Android NDK arm64-v8a (.so configure+link, advisory)
+    name: Mobile — Android NDK arm64-v8a (.so configure+link)
     needs: changes
     if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
@@ -2160,11 +2142,12 @@ jobs:
         run: cmake --build --preset android-ndk-arm64 --target SmatchetMobile -- -k 0
 
   mobile-android-apk:
-    name: Mobile — Android APK (Gradle assembleDebug arm64-v8a, advisory)
+    name: Mobile — Android APK (Gradle assembleDebug arm64-v8a)
     # Validates Slice 4 — the full Gradle externalNativeBuild path that the .so-only
     # mobile-android-ndk job stops short of: it drives the same root CMakeLists through
-    # AGP, links the SHARED .so into an installable debug APK, and uploads it. Advisory
-    # (never required) — same pins as mobile-android-ndk; restored OpenSSL cache wins.
+    # AGP, links the SHARED .so into an installable debug APK, and uploads it. BLOCKING
+    # via the merge-gate poller (all-gates-blocking flip) — same pins as
+    # mobile-android-ndk; restored OpenSSL cache wins.
     needs: [changes, mobile-android-ndk]
     if: ${{ needs.changes.outputs.code == 'true' }}
     runs-on: ubuntu-latest
@@ -2339,7 +2322,7 @@ jobs:
           retention-days: 14
 
   cpp-lint-advisory:
-    name: C++ lint (catch-all + cppcheck, advisory)
+    name: C++ lint (catch-all + cppcheck)
     # The C++ lint gate that previously ran ONLY as a local Claude-Code hook
     # (tooling.md P2: "C++ lint runs only as local hooks, never in CI"). Two
     # checks over the PR diff's first-party C++:
