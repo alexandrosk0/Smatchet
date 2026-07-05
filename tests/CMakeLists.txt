@@ -1615,3 +1615,49 @@ add_test(NAME android_openssl_failfast_no_base
 set_tests_properties(android_openssl_failfast_no_base PROPERTIES
     PASS_REGULAR_EXPRESSION "PROBE_OK"
     ENVIRONMENT "SMATCHET_ANDROID_OPENSSL_BASE=")
+
+# ============================================================================
+# Tier-3 Commands invocation harness (commands-invocation-harness.md Slice 1).
+#
+# The 24 Builtin/BuiltinCommands_*.cpp TUs register against the AppController
+# god-object, so they can never join SmatchetTests (which compiles core TUs
+# directly — linking the full-core archive there would duplicate symbols).
+# This SEPARATE doctest target links the existing SmatchetCore_PosixCheck
+# STATIC archive (the whole CORE_SOURCES set minus the GL-host TU) plus the
+# same third-party set the app links, constructs a real headless AppController
+# (its ctor is an Impl back-reference + one GridLiveContext — no GL, no I/O),
+# registers ALL builtins, and drives CommandRegistry::Dispatch through the
+# pre-handler pipeline. Linux-only by construction (the archive exists only
+# under SMATCHET_BUILD_POSIX_CORE_CHECK=ON); the mobile-posix-core-check CI
+# lane builds + runs it with -DSMATCHET_BUILD_TESTS=ON.
+# ============================================================================
+if(UNIX AND SMATCHET_BUILD_POSIX_CORE_CHECK)
+    add_executable(SmatchetCommandsTests Commands/BuiltinCommandsDispatch.test.cpp)
+    target_include_directories(SmatchetCommandsTests PRIVATE
+        "${CMAKE_SOURCE_DIR}/Source/Core/include"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Tracker"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Sync"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Persistence"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Config"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Ui"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Diagnostics"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Privacy"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Imaging"
+    )
+    # Link order: the archive first, then the third parties its objects reference.
+    # SmatchetTextEdit is the OBJECT lib carrying ImGuiColorTextEdit's TextEditor
+    # (deliberately outside CORE_SOURCES — see the root CMakeLists per-world note).
+    target_link_libraries(SmatchetCommandsTests PRIVATE
+        doctest::doctest
+        nlohmann_json::nlohmann_json
+        SmatchetCore_PosixCheck
+        SmatchetTextEdit
+        ImGuiLib
+        md4c
+        cpr::cpr
+        SQLiteCpp
+        ghc_filesystem
+        httplib::httplib
+    )
+    add_test(NAME smatchet_commands_tests COMMAND SmatchetCommandsTests)
+endif()

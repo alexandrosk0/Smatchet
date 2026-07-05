@@ -2038,7 +2038,11 @@ jobs:
         # SMATCHET_BUILD_POSIX_CORE_CHECK=ON (via the preset) declares the
         # SmatchetCore_PosixCheck STATIC EXCLUDE_FROM_ALL lib over CORE_SOURCES.
         # cpr auto-detects the host's system OpenSSL here (no NDK cross-TLS yet).
-        run: cmake --preset posix-core-check
+        # SMATCHET_BUILD_TESTS=ON additionally declares SmatchetCommandsTests (the
+        # Tier-3 builtin-command dispatch harness), which LINKS the archive — the
+        # only lane where the full core links on Linux. It does NOT build the
+        # SmatchetTests rig (only the explicitly named targets below are built).
+        run: cmake --preset posix-core-check -DSMATCHET_BUILD_TESTS=ON
 
       - name: Compile CORE_SOURCES (host Linux clang, compile-only)
         # A static archive only compiles its objects; it never links, so there is
@@ -2048,6 +2052,16 @@ jobs:
         # of stopping at the first — so a fresh portability sweep enumerates all
         # LP64/#else errors at once rather than one CI round-trip per fix.
         run: cmake --build --preset posix-core-check --target SmatchetCore_PosixCheck -- -k 0
+
+      - name: Build + run the builtin-command dispatch harness
+        # commands-invocation-harness.md Slice 1 — links the archive just built,
+        # constructs a headless AppController, registers all builtins, and drives
+        # CommandRegistry::Dispatch through the pre-handler pipeline (registration
+        # inventory, missing/wrong-typed-arg matrices, destructive-confirm gate).
+        # Advisory like the rest of this lane (not on the develop merge gate).
+        run: |
+          cmake --build --preset posix-core-check --target SmatchetCommandsTests
+          ./build/posix-core-check/tests/SmatchetCommandsTests
 
   mobile-android-ndk:
     name: Mobile — Android NDK arm64-v8a (.so configure+link)
