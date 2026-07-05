@@ -95,19 +95,26 @@ jobs:
           export ASAN_OPTIONS="abort_on_error=1:detect_leaks=1:print_stats=0"
           export UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1"
           # `timeout` bounds wall-clock: a genuine hang (exit 124) is itself a finding.
-          # The driver also self-bounds via --time-budget-ms (10 min) so a healthy run
-          # finishes well inside the 12-min hard cap below.
+          # The driver also self-bounds via --time-budget-ms so a healthy run finishes well
+          # inside the hard cap. Run BOTH modes: 1a (pre-handler fuzz, large budget) then 1b
+          # (allow-listed handler execution vs the fake Jira backend). Fail on the first trip.
+          rc=0
           set +e
-          timeout 720 "$bin" ${seed_arg} --mode=prehandler --steps="${steps}" --time-budget-ms=600000 \
+          timeout 720 "$bin" ${seed_arg} --mode=prehandler --steps="${steps}" --time-budget-ms=540000 \
             2>&1 | tee monkey.log
           rc=${PIPESTATUS[0]}
+          if [ "${rc}" -eq 0 ]; then
+            timeout 240 "$bin" ${seed_arg} --mode=handlers --steps=200000 --time-budget-ms=120000 \
+              --fixture=tests/fixtures/jira_backend/basic-grid.json 2>&1 | tee -a monkey.log
+            rc=${PIPESTATUS[0]}
+          fi
           set -e
           echo "exit_code=${rc}" >> "$GITHUB_OUTPUT"
           # Surface the reproducing seed regardless of outcome (first line: `monkey seed=N`).
           seed="$(grep -m1 '^monkey seed=' monkey.log | sed 's/^monkey seed=//' || true)"
           echo "seed=${seed}" >> "$GITHUB_OUTPUT"
           if [ "${rc}" -eq 124 ]; then
-            echo "monkey: HANG — timeout after 720s (treated as a finding)" | tee -a monkey.log
+            echo "monkey: HANG — timeout (treated as a finding)" | tee -a monkey.log
           fi
           exit "${rc}"
 

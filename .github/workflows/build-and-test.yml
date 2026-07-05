@@ -2071,6 +2071,11 @@ jobs:
         run: |
           cmake --build --preset posix-core-check --target SmatchetMonkeyCli
           ./build/posix-core-check/tests/SmatchetMonkeyCli --mode=prehandler --seed=1 --steps=2000
+          # Layer 1b — boot a fully-initialized headless AppController vs the fake Jira
+          # backend and run the read-only handler allow-list (fixture path is repo-relative;
+          # the job's working dir is the repo root).
+          ./build/posix-core-check/tests/SmatchetMonkeyCli --mode=handlers --seed=1 --steps=500 \
+            --fixture=tests/fixtures/jira_backend/basic-grid.json
 
   mobile-android-ndk:
     name: Mobile — Android NDK arm64-v8a (.so configure+link)

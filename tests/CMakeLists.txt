@@ -1681,7 +1681,13 @@ if(UNIX AND SMATCHET_BUILD_POSIX_CORE_CHECK)
     # dispatches at CommandRegistry::Dispatch (see tests/monkey/), catching crashes /
     # UB / contract breaks the scripted tests never reach. Linux-only by construction.
     # ============================================================================
-    add_executable(SmatchetMonkeyCli monkey/monkey_command_registry.cpp)
+    # Layer 1b (handler mode) links the fake Jira backend fixture so the driver can boot a
+    # fully-initialized AppController with no network. JiraFakeTrackerFixture.cpp is the only
+    # tests/support .cpp needed (ScriptedTrackerBackendFactory.h / FakeTrackerClient.h are
+    # header-only; the Jira mapper it calls is already in SmatchetCore_PosixCheck).
+    add_executable(SmatchetMonkeyCli
+        monkey/monkey_command_registry.cpp
+        support/JiraFakeTrackerFixture.cpp)
     target_include_directories(SmatchetMonkeyCli PRIVATE
         "${CMAKE_SOURCE_DIR}/Source/Core/include"
         "${CMAKE_SOURCE_DIR}/Source/Core/include/Tracker"
@@ -1692,7 +1698,8 @@ if(UNIX AND SMATCHET_BUILD_POSIX_CORE_CHECK)
         "${CMAKE_SOURCE_DIR}/Source/Core/include/Diagnostics"
         "${CMAKE_SOURCE_DIR}/Source/Core/include/Privacy"
         "${CMAKE_SOURCE_DIR}/Source/Core/include/Imaging"
-        "${CMAKE_CURRENT_SOURCE_DIR}/monkey" # CommandArgSynth.h
+        "${CMAKE_CURRENT_SOURCE_DIR}/monkey"   # CommandArgSynth.h
+        "${CMAKE_CURRENT_SOURCE_DIR}/support"  # JiraFakeTrackerFixture.h / ScriptedTrackerBackendFactory.h
     )
     target_link_libraries(SmatchetMonkeyCli PRIVATE
         nlohmann_json::nlohmann_json
@@ -1710,4 +1717,9 @@ if(UNIX AND SMATCHET_BUILD_POSIX_CORE_CHECK)
     # nightly runs the binary directly with a large --steps/--time-budget-ms budget.
     add_test(NAME monkey_command_registry_smoke
              COMMAND SmatchetMonkeyCli --mode=prehandler --seed=1 --steps=500)
+    # Layer 1b handler-mode smoke — absolute fixture path so it resolves under ctest's build
+    # working dir. Boots a fully-initialized headless AppController vs the fake Jira backend.
+    add_test(NAME monkey_command_handlers_smoke
+             COMMAND SmatchetMonkeyCli --mode=handlers --seed=1 --steps=300
+                     --fixture=${CMAKE_SOURCE_DIR}/tests/fixtures/jira_backend/basic-grid.json)
 endif()
