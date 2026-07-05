@@ -471,9 +471,19 @@ if(NOT DEFINED FETCHCONTENT_BASE_DIR)
 endif()
 
 # Re-configure should not hit the network to "update" already-populated deps (first clone still uses git).
+# CI is the exception: its .fetchcontent-src is restored from an actions/cache prefix fallback,
+# which after a dependency pin bump can predate the new ref — the disconnected update step then
+# FATALs the configure ("Requested git ref ... is not present locally"). In CI the update step
+# may contact the remote so a stale restored cache self-heals; local/IDE configures keep the
+# fast disconnected path.
 if(NOT DEFINED FETCHCONTENT_UPDATES_DISCONNECTED)
-    set(FETCHCONTENT_UPDATES_DISCONNECTED ON CACHE BOOL
-        "Skip FetchContent update step when content is already populated (faster IDE re-configure)")
+    if(DEFINED ENV{CI})
+        set(FETCHCONTENT_UPDATES_DISCONNECTED OFF CACHE BOOL
+            "Allow FetchContent update step to fetch in CI (stale restored caches self-heal)")
+    else()
+        set(FETCHCONTENT_UPDATES_DISCONNECTED ON CACHE BOOL
+            "Skip FetchContent update step when content is already populated (faster IDE re-configure)")
+    endif()
 endif()
 
 include(FetchContent)
@@ -586,10 +596,13 @@ endif()
 
 smatchet_fetch_status("Fetching cpp-httplib...")
 smatchet_prepare_httplib()
-# Pinned to the exact commit the v0.14.1 lightweight tag resolves to (reproducible
-# builds / supply chain) — same content the floating tag points to today, zero
-# behaviour change. Lightweight tag; resolved via:
-# git ls-remote https://github.com/yhirose/cpp-httplib.git refs/tags/v0.14.1
+# Pinned to the exact commit the v0.49.0 lightweight tag resolves to (reproducible
+# builds / supply chain). Bumped from v0.14.1 to clear the OSV/CVE findings on the
+# older pin (CVE-2025-46728/-52887/-53628/-53629/-66570/-66577 and
+# CVE-2026-21428/-22776/-28434/-28435/-29076/-31870/-32627/-33745/-34441); the
+# latest of these is fixed upstream in v0.40.0, so v0.49.0 clears all of them.
+# Lightweight tag; resolved via:
+# git ls-remote https://github.com/yhirose/cpp-httplib.git refs/tags/v0.49.0
 # GIT_SUBMODULES "" — cpp-httplib has no submodules we link, but FetchContent's
 # generated gitclone script runs `git submodule update --recursive --init`
 # UNCONDITIONALLY (it does not pre-check `.gitmodules`). On a fresh worktree/CI
@@ -598,7 +611,7 @@ smatchet_prepare_httplib()
 # "git-sh-setup: file not found" → "Failed to update submodules". Empirically
 # confirmed: httplib fails the fresh fetch with NO `.gitmodules` present. Skip
 # the step. Same fix as json/cpr/sqlitecpp/sol2 above.
-FetchContent_Declare(httplib GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git GIT_TAG a609330e4c6374f741d3b369269f7848255e1954  # cpp-httplib v0.14.1
+FetchContent_Declare(httplib GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git GIT_TAG 2132205e1a69c9fce8096f085b1b8d72efc759fa  # cpp-httplib v0.49.0
     GIT_SUBMODULES "")
 FetchContent_MakeAvailable(httplib)
 

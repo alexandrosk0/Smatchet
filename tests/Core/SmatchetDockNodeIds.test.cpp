@@ -7,7 +7,7 @@
 using namespace SmatchetDockNodeIds;
 
 // Pure-logic coverage for the default dock-slot table that drives both initial docking and the
-// live layout-reset force-redock. Regression guard for PR #1198 (reset-layout left windows
+// live layout-reset force-redock. Regression guard for the reset-layout float bug (reset-layout left windows
 // floating because the iteration accessors below were the seam the reset relied on).
 
 TEST_CASE("DefaultDockSlotForLayoutKey maps known keys to their dock slot") {

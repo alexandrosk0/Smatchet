@@ -1,6 +1,7 @@
 #include "TrackerFieldPayloadPure.h"
 
 #include "CompactDateFormat.h"
+#include "Json/BoundedJsonParse.h"
 #include "MarkdownConvert.h"
 #include "StringUtil.h"
 
@@ -144,7 +145,10 @@ Optional<nlohmann::json> BuildStructuredOptionPayload(const TrackerFieldOption& 
     if (option.PayloadJson.empty()) {
         return Optional<nlohmann::json>();
     }
-    const nlohmann::json raw = nlohmann::json::parse(option.PayloadJson, nullptr, false);
+    // PayloadJson round-trips through the on-disk field-catalog cache, so a tampered
+    // cache can plant a depth bomb inside this string leaf — bound the re-parse
+    // (same class as the DetectFieldFamily fix; graceful not-structured on failure).
+    const nlohmann::json raw = smatchet::json_safe::ParseBoundedOrDiscarded(option.PayloadJson);
     if (raw.is_discarded()) {
         return Optional<nlohmann::json>();
     }
@@ -220,7 +224,9 @@ void BuildUserFieldPayload(const TrackerField& field, const std::string& scalarV
         return;
     }
     if (trimmed.front() == '{') {
-        const nlohmann::json j = nlohmann::json::parse(trimmed, nullptr, false);
+        // The scalar can arrive from grid edits, Lua automation, or a tracker-sourced
+        // round-trip — bound the parse so a deep string can't crash DOM teardown.
+        const nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(trimmed);
         if (!j.is_discarded() && j.is_object()) {
             if (j.contains("accountId") && j["accountId"].is_string()) {
                 outValue = MinimalPayloadForStructuredOption(j);

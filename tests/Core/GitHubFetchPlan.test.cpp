@@ -1,5 +1,5 @@
 // GitHubFetchPlan doctest — ComputeGitHubFetchPlan pure helper.
-// PR4 follow-up of docs/plans/shipped/github-tracker-backend.md.
+// Part of docs/plans/shipped/github-tracker-backend.md.
 //
 // The helper decides whether to take the repo-scoped /repos/{o}/{r}/issues
 // path or the cross-repo /search/issues path, and emits a single
@@ -81,7 +81,7 @@ TEST_CASE("ComputeGitHubFetchPlan — partial config + empty query → combined 
     CHECK(Contains(plan.warning, "No GitHub Owner/Repo"));
 }
 
-// PR12 — `includePullRequests` propagation from translator output.
+// `includePullRequests` propagation from translator output.
 
 TEST_CASE("ComputeGitHubFetchPlan — repo-scoped + isPullRequestQuery=true keeps flag set") {
     const GitHubFetchPlan plan =

@@ -2,8 +2,8 @@
 //
 // This test rig exercises the pure GitHub JSON → CachedTicket mapping path
 // end-to-end against a fixture file loaded by tests/support/FakeGitHubFixture.h
-// (no HTTP, no PAT, no cpr). The underlying pure helpers — extracted in PR12
-// of github-tracker-backend.md — already have direct-call coverage in
+// (no HTTP, no PAT, no cpr). The underlying pure helpers from
+// github-tracker-backend.md already have direct-call coverage in
 // GitHubIssueSearchMapping.test.cpp. This file adds the slice-1 V1.1 cases:
 //
 //   * basic field mapping (key/summary/status/labels/assignee/author/created)

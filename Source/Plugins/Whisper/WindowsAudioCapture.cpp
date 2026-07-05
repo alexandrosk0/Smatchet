@@ -507,17 +507,25 @@ void WindowsAudioCapture::Stop() {
 bool WindowsAudioCapture::DrainCapturedPcm(std::vector<std::int16_t>& out) {
     out.clear();
 #if defined(_WIN32)
-    if (!running_.load(std::memory_order_acquire) && pcmBuffer_.empty()) {
-        // Surface any worker-thread init error so the caller can report it.
-        std::lock_guard<std::mutex> lk(errorMutex_);
-        if (!deferredError_.empty()) {
-            return false;
+    // CPP_CODE_AUDIT.md #27: check pcmBuffer_.empty() under pcmMutex_ instead of
+    // unlocked — the capture thread only ever mutates pcmBuffer_ under this same
+    // mutex, so reading it outside the lock was benign only via an implicit
+    // ordering invariant ("the worker never writes after clearing running_").
+    // This is a once-per-poll call, not a hot path, so the extra lock is free.
+    const bool isRunning = running_.load(std::memory_order_acquire);
+    {
+        std::lock_guard<std::mutex> lk(pcmMutex_);
+        if (isRunning || !pcmBuffer_.empty()) {
+            out.swap(pcmBuffer_);
+            return true;
         }
+    }
+    // Surface any worker-thread init error so the caller can report it.
+    std::lock_guard<std::mutex> lk(errorMutex_);
+    if (!deferredError_.empty()) {
         return false;
     }
-    std::lock_guard<std::mutex> lk(pcmMutex_);
-    out.swap(pcmBuffer_);
-    return true;
+    return false;
 #else
     return false;
 #endif

@@ -232,4 +232,10 @@ function(smatchet_prepare_httplib)
     set(HTTPLIB_USE_OPENSSL_IF_AVAILABLE OFF CACHE BOOL "Disable optional cpp-httplib OpenSSL auto-linking" FORCE)
     set(HTTPLIB_USE_ZLIB_IF_AVAILABLE OFF CACHE BOOL "Disable optional cpp-httplib zlib auto-linking" FORCE)
     set(HTTPLIB_USE_BROTLI_IF_AVAILABLE OFF CACHE BOOL "Disable optional cpp-httplib brotli auto-linking" FORCE)
+    # cpp-httplib >= v0.20 adds a zstd auto-detect (v0.49 bump, #1588). Same
+    # rationale as the three above — plus a cross-compile hazard: find_package
+    # on a host with zstd dev headers marks the INTERFACE target
+    # CPPHTTPLIB_ZSTD_SUPPORT, and the Android NDK sysroot then fails
+    # `#include <zstd.h>` while compiling SmatchetMergeWatchNotifyServer.cpp.
+    set(HTTPLIB_USE_ZSTD_IF_AVAILABLE OFF CACHE BOOL "Disable optional cpp-httplib zstd auto-linking" FORCE)
 endfunction()

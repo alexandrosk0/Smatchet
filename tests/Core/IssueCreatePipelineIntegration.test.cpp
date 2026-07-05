@@ -1,7 +1,7 @@
 // IssueCreatePipeline end-to-end integration tests.
 //
 // Pairs a scripted `FakeTrackerClient` with the in-memory `FakeSyncCache` (ADR-0020 /
-// ilocalcache-seam PR2 — contract-suite-verified against the real cache) so each test runs
+// ilocalcache-seam — contract-suite-verified against the real cache) so each test runs
 // the full IssueCreatePipeline::Run flow without touching network, disk, OR SQLite. Covers:
 //   * Create path — POST succeeds, cache row seeded.
 //   * Update path — PUT succeeds, cache row merged via MergeDraftIntoCachedTicketForUpdate.

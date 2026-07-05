@@ -1,5 +1,5 @@
 // LuaBindings.test.cpp -- end-to-end round-trip of the `smatchet::lua::InitLuaCore`
-// surface lifted by PR #144 (`_plan-locks` § Phase-6-unblocker).
+// surface (`_plan-locks` § Phase-6-unblocker).
 // Drives the `Ticket` usertype + `smatchet` / `tracker` / `mcp` / `commands`
 // global tables through a `FakeLuaBindingHost`, asserting:
 //   - `CachedTicket` round-trips C++ -> Lua -> C++ via `smatchet.get_ticket`
@@ -485,7 +485,7 @@ TEST_CASE("Lua bindings · tracker.get_type returns config tracker type") {
 // Sandbox-closure regression smoke (after InitLuaCore runs against the fake)
 // =============================================================================
 
-// PR #144 self-improvement notes the [high-risk] closure invariant from
+// Self-improvement notes flag the [high-risk] closure invariant from
 // `LuaSandbox.test.cpp` -- assert here that running `InitLuaCore` against a
 // FakeLuaBindingHost does NOT regress the closure (i.e. doesn't accidentally
 // open `sol::lib::os` or expose `os.execute`). The dedicated [high-risk] case

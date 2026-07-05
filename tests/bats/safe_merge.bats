@@ -53,10 +53,10 @@ teardown() {
 
 # ----------------------------------------------------------------------------
 
-@test "--selftest passes (11/11) and dogfoods arm/refuse/obligation" {
+@test "--selftest passes (13/13) and dogfoods arm/refuse/obligation" {
     run bash "$SCRIPT" --selftest
     [ "$status" -eq 0 ]
-    [[ "$output" == *"PASS — safe-merge --selftest (11/11)"* ]]
+    [[ "$output" == *"PASS — safe-merge --selftest (13/13)"* ]]
 }
 
 @test "arms auto-merge when the gate PASSES (exit 0)" {
@@ -159,6 +159,29 @@ teardown() {
     [ "$status" -eq 0 ]
     [[ "$output" != *"OBLIGATION"* ]]
     [ -z "$(ls -A "$OBLIG_DIR" 2>/dev/null)" ]
+}
+
+@test "defaults MERGE_GATES_FLIP_READY=true (a draft PR never pauses an authorized merge)" {
+    # Under the standing governance.auto_merge grant the orchestrator calls
+    # safe-merge on PRs a remote harness may have opened DRAFT. The wrapper is
+    # the authorization boundary, so it must default the draft→ready flip on —
+    # otherwise CR (auto_review.drafts:false) never reviews and the poll wedges.
+    export SAFE_MERGE_STUB_GATE=PASS
+    export SAFE_MERGE_STUB_GATE_OUT="GATES_PASSED"
+    unset MERGE_GATES_FLIP_READY
+    run bash "$SCRIPT" 1408
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"MERGE_GATES_FLIP_READY defaulted to true"* ]]
+    [[ "$output" == *"arming squash auto-merge"* ]]
+}
+
+@test "an explicit MERGE_GATES_FLIP_READY=false is honoured (no default override)" {
+    export SAFE_MERGE_STUB_GATE=PASS
+    export SAFE_MERGE_STUB_GATE_OUT="GATES_PASSED"
+    export MERGE_GATES_FLIP_READY=false
+    run bash "$SCRIPT" 1409
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"defaulted to true"* ]]
 }
 
 @test "rejects a non-numeric PR arg (exit 2)" {

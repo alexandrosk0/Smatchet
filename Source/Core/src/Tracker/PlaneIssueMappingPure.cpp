@@ -219,6 +219,7 @@ std::string ExtractKeyFromPlaneQuery(const std::string& planeQueryJson) {
         return std::string();
     }
     try {
+        // SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; reason=the Plane structured-query blob is app-serialised program-internal bytes, not tracker-response ingress; owner=security-audit; revisit=2026-12-31)
         const nlohmann::json j = nlohmann::json::parse(planeQueryJson);
         if (j.is_object()) {
             auto it = j.find("key");

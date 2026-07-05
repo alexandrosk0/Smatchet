@@ -543,8 +543,8 @@ bool LaunchEphemeralInstance(const std::string& exePath, int port, std::string* 
     const std::string logPath = ComputeSpawnLogPath(port);
     if (outLogPath)
         *outLogPath = logPath;
-    // main.cpp parses `--mcp-port <port>` as two separate argv entries (space-separated),
-    // NOT `--mcp-port=<port>` — using the equals form would silently fall through.
+        // main.cpp parses `--mcp-port <port>` as two separate argv entries (space-separated),
+        // NOT `--mcp-port=<port>` — using the equals form would silently fall through.
 #if defined(_WIN32)
     // CommandLineToArgvW handles quoted whitespace; pass space-separated tokens.
     std::string cmdLine = "\"" + exePath + "\" --ephemeral --mcp-port " + portStr;
@@ -810,45 +810,19 @@ void PostAppQuitBestEffort(const std::string& host, int port, const std::string&
     }
 }
 
-/// Resolve one relative path-valued arg to an absolute path against the CLI's CWD,
-/// in place. Pass-through for absent/non-string/empty/already-absolute values.
-void NormalizePathArgInPlace(nlohmann::json& out, const char* key) {
-    if (!out.contains(key) || !out[key].is_string())
-        return;
-    const std::string p = out[key].get<std::string>();
-    if (p.empty())
-        return;
-    fs::path path(p);
-    if (path.is_absolute())
-        return;
-    std::error_code ec;
-    fs::path abs = fs::absolute(path, ec);
-    if (!ec) {
-        out[key] = abs.string();
-    }
-}
-
-/// Normalize relative file-path arguments to absolute paths resolved against the CLI's CWD,
-/// since the spawned instance may have a different working directory. Covers the scenario
-/// result file (`outPath`) only. `outLog` is handled separately (basename-swap + copy-back)
-/// because #1566's child-side confinement (ConfinePathUnderSubdir, ui_test.run) rejects an
-/// absolute path: the child must receive a confine-safe relative basename and write under
-/// <userData>/ui-tests/, then the trusted parent relocates the result to the caller's path.
-nlohmann::json NormalizeOutPath(const nlohmann::json& argsToSend) {
-    nlohmann::json out = argsToSend;
-    NormalizePathArgInPlace(out, "outPath");
-    return out;
-}
-
-/// Swap a caller-supplied `outLog` for a confinement-safe basename before the command is
-/// forwarded to the spawned child. The child's ui_test.run confines `outLog` under
-/// <userData>/ui-tests/ and rejects absolute or `..`-bearing paths; a trusted --spawn parent
-/// therefore cannot forward the caller's path verbatim. We send only an entropy-suffixed leaf
-/// basename (MakeConfineSafeSpawnOutLogBasename — no separators, no `..`), so the child anchors
-/// it inside its confinement base without colliding across successive/concurrent runs; SpawnAndRun
-/// copies the child's resolved output back to the caller's original path after the run. Returns the
-/// caller's ORIGINAL outLog (absolutized against the CLI's CWD) for the copy-back step, or empty if
-/// there is no outLog to relocate.
+/// Swap an ABSOLUTE caller-supplied `outLog` for a confinement-safe basename before the command
+/// is forwarded to the spawned child, returning the caller's absolute target for the post-run
+/// copy-back. A RELATIVE `outLog` is left untouched (returns empty): develop's forward-raw
+/// contract already covers it — the child confines a relative value under <userData>/ui-tests/,
+/// which both processes resolve identically without CWD translation. Only an ABSOLUTE outLog is
+/// rejected outright by the child's #1566 confinement (ConfinePathUnderSubdir, ui_test.run —
+/// absolute / `..` rejected), so only that case needs the trusted --spawn parent to send a
+/// confine-safe leaf basename (MakeConfineSafeSpawnOutLogBasename — no separators, entropy-suffixed
+/// so concurrent/successive spawns don't collide inside the shared base) and relocate the child's
+/// result back to the caller's path afterwards (RelocateChildOutLog). `outPath` and a relative
+/// `outLog` are forwarded RAW, unchanged — this COEXISTS with, rather than reverts, develop's
+/// forward-raw decision (the relative case CI exercises); it only adds absolute-path support that
+/// forward-raw fails closed on.
 std::string SwapOutLogForConfineSafeBasename(nlohmann::json& args) {
     if (!args.contains("outLog") || !args["outLog"].is_string())
         return std::string();
@@ -856,31 +830,24 @@ std::string SwapOutLogForConfineSafeBasename(nlohmann::json& args) {
     if (requested.empty())
         return std::string();
 
-    // The caller's target, resolved to absolute against the CLI's CWD — this is the
-    // location the bucket-E driver / CI will read after the run (e.g. `cat $OUTLOG`).
-    fs::path requestedPath(requested);
-    std::string requestedAbs = requested;
-    if (!requestedPath.is_absolute()) {
-        std::error_code ec;
-        fs::path abs = fs::absolute(requestedPath, ec);
-        if (!ec)
-            requestedAbs = abs.string();
-    }
+    // Relative outLog: forwarded RAW (develop forward-raw contract — the child confines it under
+    // <userData>/ui-tests/). Nothing to swap and nothing to relocate afterwards.
+    if (!fs::path(requested).is_absolute())
+        return std::string();
 
-    // Derive a confine-safe basename via the tested Core helper: the leaf filename only (no
-    // directory, no `..`), prefixed with "spawn-<entropy>-" so concurrent/successive spawns don't
-    // clobber each other inside the shared <userData>/ui-tests/ base. Entropy (not a coarse
-    // millisecond stamp, which collides when two spawns start in the same tick).
+    // Absolute outLog: the child's confinement rejects it, so send a confine-safe basename the
+    // child accepts and return the caller's (already-absolute) target for the copy-back step.
     args["outLog"] = smatchet::cmd::MakeConfineSafeSpawnOutLogBasename(requested);
-    return requestedAbs;
+    return requested;
 }
 
 /// Copy the spawned child's confinement-anchored outLog (the path the child reported in its
 /// result JSON, under <userData>/ui-tests/) back to the caller's originally-requested location
 /// `requestedOutLog`. This is the relocation half of the basename-swap performed before the
-/// command was forwarded: the child satisfied #1566 by writing inside its confinement base,
-/// and the trusted parent now fulfils the caller's absolute target. Best-effort + non-fatal —
-/// a missing/identical source only means there is nothing to relocate (e.g. no tests ran).
+/// command was forwarded (absolute-outLog case only): the child satisfied #1566 by writing inside
+/// its confinement base, and the trusted parent now fulfils the caller's absolute target.
+/// Best-effort + non-fatal — a missing/identical source only means there is nothing to relocate
+/// (e.g. no tests ran, or the caller passed a relative outLog that was forwarded raw).
 void RelocateChildOutLog(const std::string& requestedOutLog, const std::string& childResolvedOutLog) {
     if (requestedOutLog.empty() || childResolvedOutLog.empty())
         return;
@@ -1182,12 +1149,21 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
     const std::string requestToken = haveConfiguredToken ? spawnCfg.McpAuthToken : SpawnAuthToken();
     const std::string provisionToken = haveConfiguredToken ? std::string() : requestToken;
     try {
-        // Normalize outPath: relative paths must be made absolute so both processes agree on location.
-        nlohmann::json argsToSend = NormalizeOutPath(argsToSendRaw);
-        // outLog: swap the caller's path for a confinement-safe basename before forwarding —
-        // the child confines outLog under <userData>/ui-tests/ and rejects absolute/`..` paths
-        // (#1566, 32392e32). The original (absolutized) target is relocated back from the
-        // child's confinement base after the run; empty when the command has no outLog.
+        // `outPath` and a RELATIVE `outLog`/`outPath` are forwarded RAW: every child handler
+        // confines them under a fixed <userData> subdir (SECURITY_AUDIT.md path-confinement sweep,
+        // #1566), and confinement resolves a relative value relative to <userData> — which both
+        // processes agree on without any CWD translation. The old CLI-CWD normalization that used
+        // to sit here was actively wrong (it turned a valid relative value into an absolute one the
+        // confined handler then rejects — CPP_CODE_AUDIT.md #8/#9; see
+        // scripts/dev/test-ui-jira-deterministic-backend.sh's outLog handling), so it was removed.
+        //
+        // The ONE exception the trusted --spawn parent still fulfils: an ABSOLUTE `outLog`. The
+        // child rejects it outright, so SwapOutLogForConfineSafeBasename swaps it for a confine-safe
+        // basename before forwarding and returns the caller's absolute target; RelocateChildOutLog
+        // copies the child's confinement-anchored result back afterwards. A relative outLog / any
+        // outPath is left untouched (the swap is a no-op → requestedOutLog empty), preserving the
+        // forward-raw contract; this ADDS absolute-outLog support without reverting it.
+        nlohmann::json argsToSend = argsToSendRaw;
         const std::string requestedOutLog = SwapOutLogForConfineSafeBasename(argsToSend);
 
         // Phase 1: launch ephemeral instance and wait for MCP ready.

@@ -1,5 +1,5 @@
 // GitHubQueryFromJql doctest — JQL → GitHub /search/issues `q=` translator.
-// PR5 of docs/plans/shipped/github-tracker-backend.md.
+// Part of docs/plans/shipped/github-tracker-backend.md.
 
 #include "GitHubQueryFromJql.h"
 
@@ -95,7 +95,7 @@ TEST_CASE("TranslateJqlToGitHubSearch — ORDER BY clause dropped with warning")
 }
 
 TEST_CASE("TranslateJqlToGitHubSearch — ORDER BY substring inside quoted text NOT stripped") {
-    // Regression for CR finding on PR #387: pre-tokenize lower.find("order by")
+    // Regression for a CR finding: pre-tokenize lower.find("order by")
     // was context-blind and would corrupt the quoted phrase. Token-aware
     // detection only matches bare Word tokens.
     const auto r = TranslateJqlToGitHubSearch("text ~ \"work order by priority\"", "", "");
@@ -151,7 +151,7 @@ TEST_CASE("TranslateJqlToGitHubSearch — unsupported field emits warning") {
     CHECK(Contains(r.Warning, "sprint"));
 }
 
-// PR12 — `type:` token recognition.
+// `type:` token recognition.
 
 TEST_CASE("TranslateJqlToGitHubSearch — type:pr sets is:pr + IsPullRequestQuery") {
     const auto r = TranslateJqlToGitHubSearch("type:pr", "", "");

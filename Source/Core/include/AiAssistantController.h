@@ -135,8 +135,8 @@ inline bool AgentsMdCacheStillValid(bool cacheValid, const std::string& cachedGl
 ///   * `IAiClient` delta + error callbacks fire on the worker thread. They MUST hand off
 ///     to the UI thread via `AppController::mainThreadDispatcher.PostToMainThread(...)`
 ///     — never touch `UiDrawSession` state directly from a worker callback.
-///   * `~AiAssistantController` raises the shutdown atom, flips the current cancel atom,
-///     signals the queue cv, and joins the worker. Members are destroyed after the
+///   * `~AiAssistantController` raises the shutdown atom, flips the in-flight AND every
+///     pending turn's cancel atom, signals the queue cv, and joins the worker. Members are destroyed after the
 ///     join returns, so any worker reference is stable for the entire active lifetime.
 ///   * The owning `AppController` must hold this controller in a `std::unique_ptr` and
 ///     destroy it (via `aiAssistant_.reset()`) at the *top* of `~AppController` before
@@ -180,10 +180,20 @@ class AiAssistantController {
     bool Submit(uint64_t turnGen, std::string prompt, std::vector<AiContextBlock> context,
                 std::string modelOverride = std::string(), std::string effortOverride = std::string());
 
-    /// UI-thread only. Sets the in-flight turn's cancel atom to `true`. cpr's
-    /// `WriteCallback` polls the atom every chunk and returns `false`, which aborts
-    /// the HTTP session and causes `SendStreaming` to invoke `onError` with
-    /// `WasCancelled = true`.
+    /// UI-thread only. Sets the in-flight turn's cancel atom to `true` — cpr's
+    /// `WriteCallback` polls it every chunk and returns `false`, which aborts the HTTP
+    /// session and causes `SendStreaming` to invoke `onError` with `WasCancelled = true`.
+    /// ALSO flips every still-QUEUED turn's own token (not just the in-flight one).
+    /// This is necessary, not just thorough: a turn Submit() just enqueued may not have
+    /// been popped by WorkerLoop yet, so it has no representation in `currentCancel_` —
+    /// without also flipping `pending_` tokens here, a Cancel() that lands in that window
+    /// would silently fail to stop it. The one caller that can have more than one turn
+    /// queued at once is the ungated `AppController::PromptAi` (Lua/automation) path — a
+    /// panel Cancel() click while a Lua-submitted turn is queued behind the visible one
+    /// will also cancel that queued turn, not just the visible one. Accepted: there is no
+    /// per-turn Cancel UI, and `PromptAi` turns are already dropped by the UI's stale-turn
+    /// gate regardless (CPP_CODE_AUDIT.md #33) — cancelling one changes what silently
+    /// discards it, not whether it was ever visible to the user.
     void Cancel();
 
     /// UI-thread only. Returns the current state. Reads an atomic — cheap.
@@ -226,6 +236,12 @@ class AiAssistantController {
         /// Submit() doc-comment for semantics.
         std::string ModelOverride;
         std::string EffortOverride;
+        /// This request's own cancel token, created at Submit() time. Each queued
+        /// turn owns its token independently of whichever turn is currently
+        /// in-flight — see `currentCancel_` (CPP_CODE_AUDIT.md #4: a later Submit
+        /// used to rebind the single shared `currentCancel_` while an earlier turn
+        /// was still streaming, so Cancel()/the destructor flipped the wrong atom).
+        AiCancelToken Cancel;
     };
 
     void WorkerLoop();
@@ -307,8 +323,13 @@ class AiAssistantController {
     std::deque<Request> pending_;
     bool shuttingDown_ = false;
 
-    // The cancel atom for the currently-flighting turn. Lives until the next
-    // Submit replaces it. shared_ptr is captured by the worker callback so the
+    // The cancel atom for whichever turn is CURRENTLY in flight (or about to run).
+    // Set by WorkerLoop, under queueMutex_, to the popped Request's own `Cancel`
+    // token at the moment it starts that turn — NOT by Submit(), which would let a
+    // later-queued turn's Submit silently steal this field out from under an
+    // earlier turn still streaming (CPP_CODE_AUDIT.md #4). Cancel()/the destructor
+    // flip this token (the in-flight turn) AND every still-pending request's own
+    // token (see Cancel()). shared_ptr is captured by the worker callback so the
     // pointer outlives the controller's mutex acquisition; the cheap
     // shared_ptr<atomic<bool>>->load() runs on every libcurl WriteCallback chunk
     // (per the AGENTS.md UX-pillar-2 cancel-atom-poll cadence contract).

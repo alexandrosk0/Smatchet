@@ -1,0 +1,6 @@
+{
+  "_comment": "OSV/GHSA/CVE IDs to treat as triaged-and-accepted for the dependency CVE gate (scripts/dev/osv-scan.py). Key = advisory ID (e.g. GHSA-xxxx-xxxx-xxxx or CVE-YYYY-NNNNN), value = one-line triage note (why it is accepted: not reachable, upstream-only, fix pending a pinned bump, etc.). An allowlisted finding is still reported in the job summary, just not counted toward a --fail-on threshold. Empty on introduction: the gate is advisory (no --fail-on), so nothing needs allowlisting yet. Populate this as findings are triaged when promoting the gate to blocking.",
+  "allow": {
+    "OSV-2022-126": "md4c heap-buffer-overflow in md_analyze_inlines (OSS-Fuzz). No upstream fix exists: the OSV record has no fixed event and lists release-0.5.3 + current master as still affected, so no md4c pin can clear it. Smatchet parses untrusted markdown (AI/tracker content) through this path, but it is continuously exercised by the fuzz_markdown_adf libFuzzer target in CI. Risk accepted pending an upstream md4c fix; revisit if mity/md4c ships a fixed release."
+  }
+}

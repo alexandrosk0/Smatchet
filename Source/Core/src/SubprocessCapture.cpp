@@ -26,6 +26,14 @@ namespace SubprocessCapture {
 namespace {
 
 constexpr int kKillExitCode = 124;
+// CPP_CODE_AUDIT.md #26: safety-net timeout applied only when a caller passed
+// a zero timeout budget AND no cancel token — the one combination with no way
+// to ever interrupt the pump loop (e.g. a p4/git command stuck against a dead
+// server hangs the worker thread forever). Callers that supplied a cancel
+// token keep their existing unbounded-until-cancelled behavior unchanged. Ten
+// minutes covers the slowest legitimate p4/git operations in this codebase's
+// call sites while still bounding a truly stuck child.
+constexpr int kFallbackTimeoutMsWhenUnguarded = 10 * 60 * 1000;
 #ifndef _WIN32
 constexpr int kCancelExitCode = 130; // 128 + SIGINT — conventional cancel exit on POSIX (unused on Windows).
 #endif
@@ -46,6 +54,14 @@ void AppendCapped(std::string& dst, const char* src, size_t count, size_t cap, b
     }
 }
 
+// CPP_CODE_AUDIT.md #31: hard cap on a single accumulated (newline-free) line.
+// `AppendCapped`'s byte cap bounds the aggregate `dst` text but not `pending` —
+// a child that never emits '\n' would otherwise grow `pending` without bound
+// (host OOM) even while `dst` is already capped. 16 MiB matches the default
+// `stdoutByteCap` magnitude; no current caller's line-oriented protocol
+// (NDJSON/stream-json) legitimately produces a single line anywhere near it.
+constexpr size_t kMaxPendingLineBytes = 16u * 1024u * 1024u;
+
 // Newline-terminated line dispatcher. Accumulates inter-chunk bytes in
 // `pending` and fires `cb` once per complete line (trailing '\n' stripped).
 // CR before LF is also stripped so Windows children that emit "\r\n" deliver
@@ -64,6 +80,15 @@ void DispatchLines(const char* src, size_t count, std::string& pending,
             }
             cb(pending);
             pending.clear();
+        } else if (pending.size() >= kMaxPendingLineBytes) {
+            // Overflow: flush what's accumulated (flagged, not silently dropped) and
+            // start fresh rather than growing further. The flushed chunk isn't a real
+            // line — callers parsing NDJSON will simply fail to parse it, same as any
+            // other malformed line.
+            pending.append("...[line capped]");
+            cb(pending);
+            pending.clear();
+            pending.push_back(c); // don't drop the byte that triggered the flush
         } else {
             pending.push_back(c);
         }
@@ -446,6 +471,23 @@ bool RunWindows(const CaptureOptions& opts, CaptureResult& out, std::string& out
 // write ends, closes inherited descriptors, optionally changes directory,
 // applies the env policy, then execs. Never returns on success — it either
 // execs or exits. Runs in the forked child only.
+//
+// CPP_CODE_AUDIT.md #26: this function does non-async-signal-safe work between
+// fork() and exec() — the argv std::vector build, string parsing for the env
+// scrub allow-list, and setenv/unsetenv/clearenv all potentially call malloc.
+// In this multithreaded process, if another thread held the allocator's arena
+// lock at the instant of fork(), the child's single surviving thread inherits
+// that lock already held (and un-unlockable) — the next allocation here can
+// deadlock. A fully correct fix prebuilds argv/envp in the parent (before
+// fork()) so the child does only async-signal-safe calls (dup2/close/chdir/
+// execve). Accepted as latent risk rather than rewritten here: the deadlock
+// window is a narrow race that has not manifested in practice, and rewriting
+// this file's env-scrub allow-list / PATH-search semantics carries real
+// regression risk for every P4 and Git subprocess call site for a Low-severity
+// finding. See docs/plans/active/cpp-code-audit-remediation.md § Deviations.
+// The safety-net timeout in Run() (CPP_CODE_AUDIT.md #26's other half — a
+// zero-timeout caller with no cancel token could hang forever) IS fixed.
+//
 // Env overrides apply additively in the child via setenv rather than
 // rebuilding envp, because execvpe is glibc-only while setenv plus execvp
 // works on every POSIX. An empty opts.env inherits the parent's environment
@@ -702,6 +744,18 @@ bool Run(const CaptureOptions& opts, CaptureResult& out, std::string& outError) 
     if (opts.argv0.empty()) {
         outError = "empty argv0";
         return false;
+    }
+    // CPP_CODE_AUDIT.md #26: a zero timeout budget with no cancel token can never
+    // be interrupted; apply the safety-net fallback for that one combination only
+    // (see the constant's doc comment).
+    if (opts.timeoutMs == 0 && !opts.cancelToken) {
+        CaptureOptions guarded = opts;
+        guarded.timeoutMs = kFallbackTimeoutMsWhenUnguarded;
+#ifdef _WIN32
+        return RunWindows(guarded, out, outError);
+#else
+        return RunPosix(guarded, out, outError);
+#endif
     }
 #ifdef _WIN32
     return RunWindows(opts, out, outError);

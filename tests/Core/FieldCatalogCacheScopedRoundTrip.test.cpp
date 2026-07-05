@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-// Regression coverage for the Fix C plumbing in PR #672:
+// Regression coverage for the Fix C plumbing:
 //   the Jira `components` field renders as plain text in the ticket grid because the
 //   project-scoped catalog (which carries Phase-3 component options) was persisted under
 //   the UNSCOPED ("") cache key and lost. The fix saves + reloads the catalog under the
@@ -24,7 +24,7 @@ TrackerField MakeComponentsField(bool withOptions) {
     f.Name = "Components";
     f.IsArray = true; // Jira components schema is type=array, items=component
     f.ItemsType = "component";
-    f.Family = TrackerFieldFamily::SelectMulti; // PR #672 classifies opts-independently
+    f.Family = TrackerFieldFamily::SelectMulti; // classified opts-independently
     if (withOptions) {
         TrackerFieldOption opt;
         opt.Id = "10001";

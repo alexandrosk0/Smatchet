@@ -259,3 +259,106 @@ TEST_CASE("FormatFriendlyTime / ParseFriendlyTime — 12-hour wrap + AM/PM + mal
         CHECK(m == 9999);
     }
 }
+
+// --- Gap map Tier 1 #4 — picker seed + Apply/Clear commit gate lifted from
+// TrackerDateTimeFieldEditor.cpp (the untested editor TU). These pin the no-op-PUT rule:
+// a re-Apply of an unchanged value (even when the wire form differs only in ms/seconds/zone
+// spelling) and a Clear of an already-blank cell must never queue an edit.
+
+TEST_CASE("InitDatePickerWorking — parseable / empty / unparseable seed modes") {
+    using TrackerDateTimePure::InitDatePickerWorking;
+
+    SUBCASE("parseable current value seeds working + view from the parse") {
+        ParsedJiraDateTime working{};
+        int viewYear = 0, viewMonth = 0;
+        bool forceTextMode = true;
+        InitDatePickerWorking("2026-03-05T10:20:30.000Z", /*isDateOnly=*/false, working, viewYear, viewMonth,
+                              forceTextMode);
+        CHECK_FALSE(forceTextMode);
+        CHECK(working.Year == 2026);
+        CHECK(working.Month == 3);
+        CHECK(working.Day == 5);
+        CHECK(viewYear == 2026);
+        CHECK(viewMonth == 3);
+    }
+    SUBCASE("empty current value seeds today (UTC); wall time iff not date-only") {
+        ParsedJiraDateTime working{};
+        int viewYear = 0, viewMonth = 0;
+        bool forceTextMode = true;
+        InitDatePickerWorking("", /*isDateOnly=*/true, working, viewYear, viewMonth, forceTextMode);
+        CHECK_FALSE(forceTextMode);
+        CHECK(working.Year >= 2026); // "today" — sanity floor, not an exact clock assertion
+        CHECK_FALSE(working.HasWallTime);
+        CHECK(viewYear == working.Year);
+        CHECK(viewMonth == working.Month);
+
+        ParsedJiraDateTime workingDt{};
+        bool forceTextModeDt = true;
+        InitDatePickerWorking("", /*isDateOnly=*/false, workingDt, viewYear, viewMonth, forceTextModeDt);
+        CHECK(workingDt.HasWallTime);
+    }
+    SUBCASE("non-empty unparseable value flips text mode and touches nothing else") {
+        ParsedJiraDateTime working{};
+        working.Year = 1234; // sentinels prove the outputs stay untouched
+        int viewYear = -7, viewMonth = -8;
+        bool forceTextMode = false;
+        InitDatePickerWorking("not a date", /*isDateOnly=*/false, working, viewYear, viewMonth, forceTextMode);
+        CHECK(forceTextMode);
+        CHECK(working.Year == 1234);
+        CHECK(viewYear == -7);
+        CHECK(viewMonth == -8);
+    }
+}
+
+TEST_CASE("PlanDateTimeCommit — Apply/Clear gate PUTs on real change only") {
+    using TrackerDateTimePure::DateTimeCommitPlan;
+    using TrackerDateTimePure::PlanDateTimeCommit;
+
+    SUBCASE("neither pressed never queues") {
+        ParsedJiraDateTime working{};
+        const DateTimeCommitPlan plan = PlanDateTimeCommit(false, false, true, working, "2026-01-01");
+        CHECK_FALSE(plan.Queue);
+    }
+    SUBCASE("Apply with a real change queues the canonical value") {
+        ParsedJiraDateTime working{};
+        REQUIRE(TryParseJiraDateTime("2026-03-05", working));
+        const DateTimeCommitPlan plan = PlanDateTimeCommit(true, false, /*isDateOnly=*/true, working, "2026-03-04");
+        REQUIRE(plan.Queue);
+        REQUIRE(plan.Values.size() == 1);
+        CHECK(plan.Values[0] == "2026-03-05");
+    }
+    SUBCASE("re-Apply of an unchanged value is a no-op even when the wire form differs") {
+        // The stored wire value carries non-zero milliseconds + the +0000 offset spelling; the
+        // picker's working copy is the parse of that same instant. Raw-string comparison would
+        // read "changed" (".123" vs ".000"); the canonical-form comparison must not.
+        const std::string wire = "2026-03-05T10:00:00.123+0000";
+        ParsedJiraDateTime working{};
+        REQUIRE(TryParseJiraDateTime(wire, working));
+        const DateTimeCommitPlan plan = PlanDateTimeCommit(true, false, /*isDateOnly=*/false, working, wire);
+        CHECK_FALSE(plan.Queue);
+    }
+    SUBCASE("Apply clamps an out-of-range day before formatting (in-place, like the widget)") {
+        ParsedJiraDateTime working{};
+        REQUIRE(TryParseJiraDateTime("2026-02-10", working));
+        working.Day = 31; // month navigation can leave a day past the target month's end
+        const DateTimeCommitPlan plan = PlanDateTimeCommit(true, false, /*isDateOnly=*/true, working, "");
+        REQUIRE(plan.Queue);
+        CHECK(plan.Values[0] == "2026-02-28"); // 2026 is not a leap year
+        CHECK(working.Day == 28);              // clamp mutates the working copy, byte-identical to the original
+    }
+    SUBCASE("Clear on an already-blank cell never queues; Clear on a populated cell queues empty") {
+        ParsedJiraDateTime working{};
+        const DateTimeCommitPlan blankPlan = PlanDateTimeCommit(false, true, true, working, "   ");
+        CHECK_FALSE(blankPlan.Queue);
+        const DateTimeCommitPlan popPlan = PlanDateTimeCommit(false, true, true, working, "2026-03-04");
+        REQUIRE(popPlan.Queue);
+        CHECK(popPlan.Values.empty());
+    }
+    SUBCASE("unparseable current value is conservatively treated as changed") {
+        ParsedJiraDateTime working{};
+        REQUIRE(TryParseJiraDateTime("2026-03-05", working));
+        const DateTimeCommitPlan plan =
+            PlanDateTimeCommit(true, false, /*isDateOnly=*/true, working, "not a date at all");
+        CHECK(plan.Queue);
+    }
+}

@@ -5,7 +5,7 @@
 // production AI clients (OpenAiClient / AnthropicClient / OllamaClient) over a
 // real cpr HTTP round-trip, with NO real provider traffic.
 //
-// PR-12 (backlog-pr-roadmap). Closes the test.md gaps:
+// Closes the test.md gaps:
 //   * `aiclientcancel-per-client-regression` — start a stream, cancel
 //     mid-stream, assert WasCancelled within K chunks. Needs a server that
 //     dribbles frames slowly enough that the cancel-atom flips before the

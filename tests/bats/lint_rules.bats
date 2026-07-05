@@ -278,10 +278,11 @@ setup() {
     fi
 }
 
-# ---------- bare-json-parse-untrusted (PR-5; WARN-first, curated ingress TUs) ----------
-# A bare nlohmann::json::parse( on an untrusted-ingress TU not routed via ParseBounded
-# stack-overflows the recursive parser before any try/catch (#1271/#1287). WARN-first;
-# --scan-bare-json emits the detected set for the bats harness.
+# ---------- bare-json-parse-untrusted (BLOCKING; ALL first-party C++, repo-wide) ----------
+# A bare nlohmann::json::parse( (or stream>>json slurp) not routed via ParseBounded crashes
+# uncatchably on a depth bomb (#1271/#1287). Repo-wide default-deny — the old curated-TU
+# allow-list lagged the code every time the class recurred (#1573/#1592/#1598); headers are
+# in scope too. --scan-bare-json emits the detected set for the bats harness.
 
 @test "--scan-bare-json fires on a bare json::parse in an ingress TU (McpPlugin)" {
     tmp="$(mktemp -d)"
@@ -308,7 +309,7 @@ setup() {
     rm -rf "$tmp"
 }
 
-@test "--scan-bare-json ignores a bare parse in a NON-ingress (non-curated) TU" {
+@test "--scan-bare-json fires on a bare parse in ANY first-party TU (repo-wide default-deny)" {
     tmp="$(mktemp -d)"
     mkdir -p "$tmp/Source/Core/src"
     printf 'void f(const std::string& s) {\n    auto j = nlohmann::json::parse(s);\n    (void)j;\n}\n' \
@@ -316,7 +317,58 @@ setup() {
     ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
     run bash "$LINT" --root "$tmp" --scan-bare-json
     [ "$status" -eq 0 ]
+    [[ "$output" == *"bare-json-parse-untrusted"* ]]
+    [[ "$output" == *"SomeUnrelatedThing.cpp"* ]]
+    rm -rf "$tmp"
+}
+
+@test "--scan-bare-json fires on a bare parse in a HEADER" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/include"
+    printf 'inline void f(const std::string& s) {\n    auto j = nlohmann::json::parse(s, nullptr, false);\n    (void)j;\n}\n' \
+        > "$tmp/Source/Core/include/SomeInlineHelper.h"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-bare-json
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"SomeInlineHelper.h"* ]]
+    rm -rf "$tmp"
+}
+
+@test "--scan-bare-json fires on the stream>>json slurp form" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    printf 'void f(std::ifstream& file) {\n    nlohmann::json j;\n    file >> j;\n    (void)j;\n}\n' \
+        > "$tmp/Source/Core/src/SlurpThing.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-bare-json
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"SlurpThing.cpp:3"* ]]
+    rm -rf "$tmp"
+}
+
+@test "--scan-bare-json ignores a >> into a non-json identifier" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    printf 'static nlohmann::json g_unrelated;\nvoid f(std::ifstream& file) {\n    int count = 0;\n    file >> count;\n    (void)count;\n}\n' \
+        > "$tmp/Source/Core/src/NotASlurp.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-bare-json
+    [ "$status" -eq 0 ]
     [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-bare-json still fires when a trailing quoted comment mentions json::parse" {
+    # Masking regression: the string-literal exemption must be evaluated on the comment-stripped
+    # view — a real bare parse followed by `// logs "json::parse"` must NOT be skipped.
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    printf 'void f(const std::string& s) {\n    auto j = nlohmann::json::parse(s); // logs "json::parse" on failure\n    (void)j;\n}\n' \
+        > "$tmp/Source/Core/src/MaskedParse.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-bare-json
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"MaskedParse.cpp:2"* ]]
     rm -rf "$tmp"
 }
 
@@ -332,12 +384,96 @@ setup() {
     rm -rf "$tmp"
 }
 
-@test "--scan-bare-json runs clean (rc 0) on the real first-party tree" {
-    # WARN-first calibration: the real tree carries a KNOWN advisory residual (the curated
-    # ingress TUs whose ParseBounded migration is incremental). The scan mode must run to
-    # completion with rc 0; the diff gate only WARNs (never blocks) on CHANGED ingress TUs.
+@test "--scan-bare-json is EMPTY on the real first-party tree (repo-wide clean invariant)" {
+    # The repo-wide default-deny gate only works because the tree is clean: every remaining
+    # bare parse was either routed through ParseBounded or carries an explicit
+    # SMATCHET_DEVIATION. A non-empty set here means a bare parse landed without either —
+    # fix it before it ships (this is the whole-tree backstop for the diff-scoped CI gate).
     run bash "$LINT" --scan-bare-json
     [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+# ---------- catch-all-swallow (BLOCKING; ALL first-party C++, absolute-0) ----------
+# An EMPTY catch (...) body silently swallows every exception — exception-handling-policy.md
+# hard rule 1 (review CRITICAL). The editor hook flags it per-edit; this is the CI gate.
+
+@test "--scan-catch-all fires on an empty catch (...) body" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    printf 'void f() {\n    try {\n        g();\n    } catch (...) {}\n}\n' \
+        > "$tmp/Source/Core/src/Swallower.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-catch-all
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"catch-all-swallow"* ]]
+    [[ "$output" == *"Swallower.cpp:4"* ]]
+    rm -rf "$tmp"
+}
+
+@test "--scan-catch-all ignores a commented / logged / catch-all-ok body and a deviation" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    printf 'void a() {\n    try { g(); } catch (...) {\n        // best-effort stringify; failure renders "?"\n    }\n}\nvoid b() {\n    try { g(); } catch (...) {\n        LOG_WARN("g failed");\n    }\n}\nvoid c() {\n    try { g(); } catch (...) {} // catch-all-ok: thread-exit path\n}\nvoid d() {\n    // SMATCHET_DEVIATION(rule=catch-all-swallow; reason=test; owner=x; revisit=2099-01-01)\n    try { g(); } catch (...) {}\n}\n' \
+        > "$tmp/Source/Core/src/Justified.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-catch-all
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-catch-all is EMPTY on the real first-party tree (absolute-0 invariant)" {
+    run bash "$LINT" --scan-catch-all
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+# ---------- unbounded-recursive-json-walker (WARN-first; the DW class) ----------
+
+@test "--scan-json-walkers fires on an unbounded self-recursive json walker" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    printf 'static void Walk(const nlohmann::json& n) {\n    for (const auto& c : n) {\n        Walk(c);\n    }\n}\n' \
+        > "$tmp/Source/Core/src/Walker.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-json-walkers
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"unbounded-recursive-json-walker"* ]]
+    [[ "$output" == *"Walker.cpp:1"* ]]
+    rm -rf "$tmp"
+}
+
+@test "--scan-json-walkers ignores a depth-bounded walker and a deviation" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    printf 'static void Walk(const nlohmann::json& n, int depth) {\n    if (depth > 256) {\n        return;\n    }\n    for (const auto& c : n) {\n        Walk(c, depth + 1);\n    }\n}\n' \
+        > "$tmp/Source/Core/src/Bounded.cpp"
+    printf '// SMATCHET_DEVIATION(rule=unbounded-recursive-json-walker; reason=test; owner=x; revisit=2099-01-01)\nstatic void Walk2(const nlohmann::json& n) {\n    for (const auto& c : n) {\n        Walk2(c);\n    }\n}\n' \
+        > "$tmp/Source/Core/src/Exempt.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-json-walkers
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+# ---------- unbounded-file-slurp (WARN-first) ----------
+
+@test "--scan-slurps fires on rdbuf()/istreambuf slurps, respects a deviation" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    printf 'void f(std::ifstream& in) {\n    std::stringstream ss;\n    ss << in.rdbuf();\n}\nvoid g(std::ifstream& in) {\n    std::string s((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());\n}\n' \
+        > "$tmp/Source/Core/src/Slurper.cpp"
+    printf 'void h(std::ifstream& in) {\n    std::stringstream ss;\n    // SMATCHET_DEVIATION(rule=unbounded-file-slurp; reason=test; owner=x; revisit=2099-01-01)\n    ss << in.rdbuf();\n}\n' \
+        > "$tmp/Source/Core/src/ExemptSlurp.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-slurps
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Slurper.cpp:3"* ]]
+    [[ "$output" == *"Slurper.cpp:6"* ]]
+    [[ "$output" != *"ExemptSlurp.cpp"* ]]
+    rm -rf "$tmp"
 }
 
 # ---------- ui-request-flag-off-thread (PR-5; strict-zone, absolute-0) ----------

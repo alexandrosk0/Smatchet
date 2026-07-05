@@ -6,6 +6,7 @@
 #include "GitHubCommentMappingPure.h"
 #include "GitHubIssueSearch.h"
 #include "IssueDraft.h"
+#include "Json/BoundedJsonParse.h"
 #include "LabelEditDiffPure.h"
 #include "Logger.h"
 #include "TrackerFieldSchema.h"
@@ -134,7 +135,9 @@ TrackerReachabilityProbeResult GitHubClient::ProbeReachability(const TrackerConf
         std::ostringstream oss;
         oss << "HTTP 200";
         try {
-            const nlohmann::json j = nlohmann::json::parse(resp.text);
+            // Bounded parse — the try can't catch a depth-bomb's destructor-time SIGSEGV
+            // (audit: unbounded-recursion-DoS). Discarded on failure → the guards below skip.
+            const nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
             if (j.contains("resources") && j["resources"].contains("core")) {
                 const auto& core = j["resources"]["core"];
                 const int limit = core.value("limit", 0);
@@ -411,7 +414,8 @@ GitHubClient::FetchIssueComments(const std::string& issueKey) {
                       issueKey.c_str(), msg.c_str());
             return CommentsResult::Err(TrackerErrorFromHttpStatus(static_cast<int>(resp.status_code), msg));
         }
-        const nlohmann::json parsedJson = nlohmann::json::parse(resp.text, nullptr, false);
+        // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
+        const nlohmann::json parsedJson = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
         if (parsedJson.is_discarded() || !parsedJson.is_array()) {
             LOG_ERROR("GitHubClient::FetchIssueComments: invalid JSON / not an array on page %d for %s", page,
                       issueKey.c_str());
@@ -636,7 +640,9 @@ Result<std::string, TrackerError> GitHubClient::CreateIssue(const nlohmann::json
     }
 
     try {
-        const nlohmann::json j = nlohmann::json::parse(resp.text);
+        // Bounded parse — the try can't catch a depth-bomb's destructor-time SIGSEGV
+        // (audit: unbounded-recursion-DoS). Discarded on failure → value() below hits the catch.
+        const nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
         const std::int64_t number = j.value("number", static_cast<std::int64_t>(0));
         if (number <= 0) {
             outError = "GitHubClient::CreateIssue: response missing issue 'number'";

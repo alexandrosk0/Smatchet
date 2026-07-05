@@ -3,7 +3,7 @@
 // `MergeProjectComponentsFromEndpoint`) against scripted loopback HTTP, before
 // the multi-pane refactor touches anything near it. Closes the test.md P2
 // (2026-06-01): the pre-built-catalog fake exercised catalog *consumption* but
-// never catalog *build*, which hid the PR #672 "components rendered as text"
+// never catalog *build*, which hid the "components rendered as text"
 // bug class. These are characterization tests — they pin CURRENT behaviour
 // (including the surprising bits, flagged inline) and must not be "fixed"
 // without a deliberate production change.
@@ -47,7 +47,7 @@ nlohmann::json ArraySystemField(const char* id, const char* name, const char* it
 }
 
 // The /rest/api/3/field baseline served by most cases below: the system fields
-// from the PR #672 incident plus three customfield_* shapes (multi-select
+// from the components-as-text incident plus three customfield_* shapes (multi-select
 // option array, number, user array) for the per-schema classification asserts.
 nlohmann::json BaselineFieldList() {
     nlohmann::json customMulti;

@@ -230,8 +230,20 @@ std::atomic<bool> g_FontReloadRequested{false};
 // SmatchetSetInjectedFontBytes with a raw TTF blob *before* the first font build; the bytes
 // are copied into this Core-owned buffer and loaded via AddFontFromMemoryTTF on any platform.
 // Empty buffer means "no injection — use the per-platform default font path below".
+//
+// CPP_CODE_AUDIT.md #28: the live atlas holds a raw pointer into this buffer
+// (FontDataOwnedByAtlas=false — see ApplyInjectedFontIfPresent below), valid for the
+// atlas's lifetime, i.e. until the next SmatchetApplyImGuiFont call Clear()s it. A
+// SmatchetSetInjectedFontBytes call that mutates g_InjectedFontBytes in place while a
+// built atlas still references the OLD bytes would dangle that pointer (reallocation).
+// Host re-injections therefore land in g_PendingInjectedFontBytes instead; the swap into
+// the live buffer happens in SmatchetApplyImGuiFont right after io.Fonts->Clear(), by
+// which point nothing references the old buffer anymore.
 std::vector<unsigned char> g_InjectedFontBytes;
 float g_InjectedFontSizePixels = 0.0f;
+std::vector<unsigned char> g_PendingInjectedFontBytes;
+float g_PendingInjectedFontSizePixels = 0.0f;
+bool g_HasPendingInjectedFontBytes = false;
 
 // Set by SmatchetApplyImGuiFont after the atlas rebuild. Pointers remain valid
 // until the next SmatchetApplyImGuiFont call clears the atlas. Consumers go
@@ -364,25 +376,23 @@ bool TryBuildInjectedFont(ImGuiIO& io, const ImFontConfig& main_cfg, const ImWch
         return false;
     }
     const unsigned char* magicBytes = g_InjectedFontBytes.data();
-    const unsigned int sfntMagic = (static_cast<unsigned int>(magicBytes[0]) << 24) |
-                                   (static_cast<unsigned int>(magicBytes[1]) << 16) |
-                                   (static_cast<unsigned int>(magicBytes[2]) << 8) |
-                                   static_cast<unsigned int>(magicBytes[3]);
+    const unsigned int sfntMagic =
+        (static_cast<unsigned int>(magicBytes[0]) << 24) | (static_cast<unsigned int>(magicBytes[1]) << 16) |
+        (static_cast<unsigned int>(magicBytes[2]) << 8) | static_cast<unsigned int>(magicBytes[3]);
     const bool sfntMagicOk = sfntMagic == 0x00010000u || // TrueType outlines
                              sfntMagic == 0x4F54544Fu || // 'OTTO' — OpenType / CFF
                              sfntMagic == 0x74727565u || // 'true' — legacy Apple TrueType
                              sfntMagic == 0x74797031u || // 'typ1' — PostScript Type 1
                              sfntMagic == 0x74746366u;   // 'ttcf' — TrueType Collection
     if (!sfntMagicOk) {
-        LOG_WARN("Injected font blob has no valid sfnt magic (0x%08X); falling back to default font",
-                 sfntMagic);
+        LOG_WARN("Injected font blob has no valid sfnt magic (0x%08X); falling back to default font", sfntMagic);
         return false;
     }
     ImFontConfig mem_cfg = main_cfg;
     mem_cfg.FontDataOwnedByAtlas = false; // bytes live in g_InjectedFontBytes for the atlas lifetime
-    ImFont* newFont = io.Fonts->AddFontFromMemoryTTF(g_InjectedFontBytes.data(),
-                                                     static_cast<int>(g_InjectedFontBytes.size()),
-                                                     g_InjectedFontSizePixels, &mem_cfg, glyph_ranges);
+    ImFont* newFont =
+        io.Fonts->AddFontFromMemoryTTF(g_InjectedFontBytes.data(), static_cast<int>(g_InjectedFontBytes.size()),
+                                       g_InjectedFontSizePixels, &mem_cfg, glyph_ranges);
     if (!newFont) {
         LOG_WARN("Injected font bytes failed to load (%d bytes); falling back to default font",
                  static_cast<int>(g_InjectedFontBytes.size()));
@@ -404,14 +414,20 @@ bool TryBuildInjectedFont(ImGuiIO& io, const ImFontConfig& main_cfg, const ImWch
 } // namespace
 
 void SmatchetSetInjectedFontBytes(const void* data, int dataSize, float sizePixels) {
+    // CPP_CODE_AUDIT.md #28: stage into g_PendingInjectedFontBytes rather than mutating
+    // g_InjectedFontBytes directly — see the comment on that declaration for why. The
+    // pending buffer swaps into the live one inside SmatchetApplyImGuiFont, right after
+    // io.Fonts->Clear() has already invalidated any atlas pointer into the old bytes.
     if (!data || dataSize <= 0 || sizePixels <= 0.0f) {
-        g_InjectedFontBytes.clear();
-        g_InjectedFontSizePixels = 0.0f;
+        g_PendingInjectedFontBytes.clear();
+        g_PendingInjectedFontSizePixels = 0.0f;
+        g_HasPendingInjectedFontBytes = true;
         return;
     }
     const unsigned char* bytes = static_cast<const unsigned char*>(data);
-    g_InjectedFontBytes.assign(bytes, bytes + dataSize);
-    g_InjectedFontSizePixels = sizePixels;
+    g_PendingInjectedFontBytes.assign(bytes, bytes + dataSize);
+    g_PendingInjectedFontSizePixels = sizePixels;
+    g_HasPendingInjectedFontBytes = true;
 }
 
 void SmatchetApplyImGuiFont(ImGuiIO& io, const std::string& fontName, float fontSizePixels) {
@@ -434,6 +450,15 @@ void SmatchetApplyImGuiFont(ImGuiIO& io, const std::string& fontName, float font
 
     io.Fonts->Clear();
     g_PreviewFonts = SmatchetPreviewFonts{};
+
+    // Safe to swap in a pending re-injection now — Clear() just dropped every atlas
+    // pointer into the old g_InjectedFontBytes buffer (CPP_CODE_AUDIT.md #28).
+    if (g_HasPendingInjectedFontBytes) {
+        g_InjectedFontBytes = std::move(g_PendingInjectedFontBytes);
+        g_InjectedFontSizePixels = g_PendingInjectedFontSizePixels;
+        g_PendingInjectedFontBytes.clear();
+        g_HasPendingInjectedFontBytes = false;
+    }
 
     ImFont* newFont = nullptr;
 
