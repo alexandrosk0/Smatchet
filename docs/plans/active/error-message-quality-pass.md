@@ -6,7 +6,8 @@
 
 ## Context
 
-Track 2 of the user-facing-text session (Track 1: `docs/plans/user-facing-text-i18n-sweep.md`).
+Track 2 of the user-facing-text session (Track 1: PR #1614, the `user-facing-text-i18n-sweep`
+plan on its own branch — the plan-doc link lands when that PR merges).
 A full inventory of user-visible error surfaces (tracker/backend failures,
 config load, connection failures, Lua errors, AI/update/bug-report/import
 surfaces) was built and audited against three questions — does the message say

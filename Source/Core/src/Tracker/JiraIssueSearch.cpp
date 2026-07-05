@@ -439,13 +439,13 @@ JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::
         const std::string jqlEncoded = UrlEncode(jql);
         const std::string pageUrl =
             base + "/rest/api/3/search/jql?jql=" + jqlEncoded +
-            // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
+            // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing clone; owner=security-audit; revisit=2026-09-30)
             "&maxResults=" + std::to_string(n) + "&fields=" + fields + "&expand=changelog";
 
         auto response = TrackerGetLogged("JiraClient", pageUrl, headers);
         if (response.status_code != 200) {
             outError = "Fetch by key failed: HTTP " + std::to_string(response.status_code);
-            // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
+            // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing clone; owner=security-audit; revisit=2026-09-30)
             LOG_WARN("JiraClient::FetchIssuesForKeys: %s", outError.c_str());
             // Guard the `!= 200` branch before FromHttpStatus: a 2xx-other (201/204) would map to
             // Ok() and yield an Err(Kind::None) with empty Detail (FIX-1 / Slice-2). Detail is
