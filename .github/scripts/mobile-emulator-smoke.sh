@@ -31,6 +31,15 @@ until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = "1"
     sleep 2
 done
 
+echo "==> uninstalling any stale $PKG (cached-AVD userdata may carry an older install)"
+# The cached AVD's userdata can contain a previous run's install signed with THAT
+# runner's auto-generated debug keystore — a different key than this run's APK, so
+# a bare `install -r` fails INSTALL_FAILED_UPDATE_INCOMPATIBLE. Quick-boot used to
+# hide this by rewinding the disk to the pre-install snapshot; the deterministic
+# cold boot (-no-snapshot-load) exposes it. Uninstall-if-present keeps the install
+# hermetic regardless of cache state; `|| true` — absent package is the clean case.
+adb uninstall "$PKG" >/dev/null 2>&1 || true
+
 echo "==> installing $APK"
 # -t: debug APKs are stamped android:testOnly="true" by AGP, and adb rejects a
 # testOnly package without it (INSTALL_FAILED_TEST_ONLY). Benign for a debug
