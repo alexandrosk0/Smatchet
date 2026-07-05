@@ -138,7 +138,7 @@ one-glance summary.
 3. **No fuzz / property tests.** Parsers eat untrusted input (tracker JSON, AI
    SSE/NDJSON, p4 annotate, callstacks, markdown/ADF, WAV, image dims) — all
    example-tested only. Direct miss against the "Never crash" pillar.
-   (`grep fuzz` hits only `FuzzyMatch`.) — **[partial]** security.md tracks PNG-dims fuzz only; rest of the parser set unbacklogged.
+   (`grep fuzz` hits only `FuzzyMatch`.) — **[partial]** `tests/fuzz/` now covers image-dims, cpp-lex, callstack, markdown/ADF, AI SSE/NDJSON (E2a/E2b) and the tracker-response *consuming* layer — GitHub/Plane/Linear JSON→`CachedTicket` mappers (E2c); MCP-dispatch + config/locale-override + p4-annotate + WAV parsers still unbacklogged (E2d note: `test/2026-07-05-fuzz-surfaces-next-batch.md`).
 4. **Test-delta gate ≠ assertion quality.** Gate checks a test file *changed*,
    not that it *exercises* the diff — a no-op assertion passes. No mutation signal.
    — **[partial]** infra.md tracks the *inverse* (false-RED on no-runtime-surface); the false-GREEN / mutation-signal half unbacklogged.
@@ -173,7 +173,7 @@ the false-GREEN/mutation half of Gap 4 stays unbacklogged.
 |---|---|---|---|
 | 1 — visual/interaction non-gating | `bucket-lane-launch-smoke` P1 (+ Mesa-GL CI setup, step-level `continue-on-error` postmortem) | [`infra.md`](../self-improvement/categories/infra.md):40, [`tooling.md`](../self-improvement/categories/tooling.md):282, [`infra.md`](../self-improvement/categories/infra.md):121 | open |
 | 2 — no HTTP-transport tests | extend scripted-HTTP fixture (`JiraCatalogHttpFixture.h`) to search/mutation/user-meta paths | [`debt.md`](../self-improvement/categories/debt.md):65 | open — **partial**: catalog-path coverage only; no general `FakeHttpTransport` fault injection |
-| 3 — no fuzz / property tests | crafted-PNG-dims fuzz against `GoldenImage.h` cap | [`security.md`](../self-improvement/categories/security.md):59-60 | open — **partial**: image-dims only; SSE/NDJSON/p4/callstack/ADF/WAV parsers unbacklogged |
+| 3 — no fuzz / property tests | crafted-PNG-dims fuzz against `GoldenImage.h` cap | [`security.md`](../self-improvement/categories/security.md):59-60 | open — **partial**: image-dims/cpp-lex/callstack/ADF/SSE/NDJSON + tracker GitHub/Plane/Linear mappers (E2a-c) covered; MCP-dispatch/config-locale/p4/WAV unbacklogged ([`test/2026-07-05-fuzz-surfaces-next-batch.md`](../self-improvement/categories/test/2026-07-05-fuzz-surfaces-next-batch.md)) |
 | 4 — test-delta ≠ assertion quality | auto-PASS classifier for no-runtime-surface diffs | [`infra.md`](../self-improvement/categories/infra.md):60-61 | open — **inverse direction**: tracks false-RED, not the false-GREEN/mutation-signal half (unbacklogged) |
 | 5 — agent fleet near-untested | subagent-eval harness graduation + trace flywheel | [`tooling.md`](../self-improvement/categories/tooling.md):505-507 + plan [`subagent-eval-agentic-coverage.md`](../plans/active/subagent-eval-agentic-coverage.md) | open — Phase 2 (flywheel) gated on Phase 0 judge calibration |
 | 6 — persistence corruption untested | Slice G — cache-open corruption: Phase 1 characterization (this slice) → Phase 2 graceful-rebuild fix → G2 `SQLITE_BUSY` | plan [`slice-g-db-corruption.md`](../plans/active/slice-g-db-corruption.md) | open — **partial**: Phase 1 characterizes `LocalCacheManager` corrupt/truncated/empty-on-open ([`LocalCacheManagerCorruption.test.cpp`](../../tests/Core/LocalCacheManagerCorruption.test.cpp), in review); Phase 2 fix + the config open path + `SQLITE_BUSY` (G2) still open |

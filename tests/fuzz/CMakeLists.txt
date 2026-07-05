@@ -9,7 +9,9 @@
 #
 # The remaining five parsers ship across two PRs (no preset/workflow edits — the
 # CI lane auto-discovers fuzz_* binaries): PR 2a adds cpp_lex, callstack, and
-# markdown_adf (below); PR 2b adds ai_sse and ai_ndjson.
+# markdown_adf (below); PR 2b adds ai_sse and ai_ndjson. PR 3 (Slice E2c) adds the
+# tracker-response *consuming* layer: github_map, plane_map, linear_map — the pure
+# JSON -> CachedTicket mappers that walk an already-ParseBounded DOM.
 
 set(_fuzz_core "${CMAKE_SOURCE_DIR}/Source/Core")
 
@@ -139,3 +141,59 @@ smatchet_add_fuzz_target(fuzz_ai_ndjson
     LIBS
         nlohmann_json::nlohmann_json
     CORPUS ai_ndjson)
+
+# --- PR 3 -------------------------------------------------------------------
+# Tracker-response *consuming* layer (Slice E2c). The raw json::parse on every
+# tracker HTTP body is already depth/node-bounded by json_safe::ParseBounded (the
+# bare-json-parse-untrusted lint), so these three drivers fuzz the layer ABOVE the
+# parser: the pure JSON -> CachedTicket mappers that walk an already-parsed DOM
+# with structural assumptions (labels as objects-or-strings, detail-vs-flat
+# fallbacks, nested state/assignee sub-objects, string-sliced url ids). Each maps
+# a single tracker backend and links only its cpr-free `*MappingPure.cpp` closure
+# (the network TU that pulls cpr / ConfigManager / SQLite stays out) + nlohmann.
+# The driver feeds fuzz bytes through ParseBounded first — exactly what the
+# production fetcher hands the mapper — then drives every pure entry point.
+
+# smatchet::github::Map*JsonToCachedTicket + GraphQL->REST adapters over untrusted
+# GitHub REST/GraphQL issue/PR/commit bodies. Closure: GitHubIssueSearchMapping.cpp
+# only (deliberately Logger-free for doctest purity — no logger srcs needed).
+smatchet_add_fuzz_target(fuzz_github_map
+    SOURCES
+        fuzz_github_map.cpp
+        "${_fuzz_core}/src/Tracker/GitHubIssueSearchMapping.cpp"
+    INCLUDES
+        "${_fuzz_core}/include"
+        "${_fuzz_core}/include/Tracker"
+    LIBS
+        nlohmann_json::nlohmann_json
+    CORPUS github_map)
+
+# smatchet::plane::MapPlaneWorkItem*ToCachedTicket + pagination/query helpers over
+# untrusted Plane REST work-item bodies (the richest detail-vs-flat type-confusion
+# surface). Closure: PlaneIssueMappingPure.cpp (+ the header-only PlaneJsonFieldPure.h
+# it includes from src/Tracker — hence that dir on the include path).
+smatchet_add_fuzz_target(fuzz_plane_map
+    SOURCES
+        fuzz_plane_map.cpp
+        "${_fuzz_core}/src/Tracker/PlaneIssueMappingPure.cpp"
+    INCLUDES
+        "${_fuzz_core}/include"
+        "${_fuzz_core}/include/Tracker"
+        "${_fuzz_core}/src/Tracker"
+    LIBS
+        nlohmann_json::nlohmann_json
+    CORPUS plane_map)
+
+# smatchet::linear::MapLinearIssueNode(s)ToCachedTicket over untrusted Linear
+# GraphQL issue nodes. Closure: LinearIssueMappingPure.cpp only (header + <string>,
+# no logger). Robustness check on its documented never-throw Pillar-3 contract.
+smatchet_add_fuzz_target(fuzz_linear_map
+    SOURCES
+        fuzz_linear_map.cpp
+        "${_fuzz_core}/src/Tracker/LinearIssueMappingPure.cpp"
+    INCLUDES
+        "${_fuzz_core}/include"
+        "${_fuzz_core}/include/Tracker"
+    LIBS
+        nlohmann_json::nlohmann_json
+    CORPUS linear_map)
