@@ -119,6 +119,34 @@ TEST_CASE("builtins — registration inventory invariants over every command tab
     }
 }
 
+TEST_CASE("registry — Contains is alias-aware and mirrors FindLocked existence (BACKLOG N3)") {
+    BuiltinsFixture fx;
+
+    // Contains must agree with FindLocked's existence result for every canonical name AND
+    // every alias. This is the invariant the MCP tools/call dispatch relies on after moving
+    // its existence check off the FindLocked-pointer footgun: a legacy tool name registered
+    // as an alias must still route to the registry, not fall through to a fallback handler.
+    for (const Command& c : fx.Reg.All()) {
+        CAPTURE(c.Name);
+        CHECK(fx.Reg.Contains(c.Name));
+        CHECK(fx.Reg.HasExact(c.Name)); // canonical names are also exact hits
+        for (const std::string& alias : c.Aliases) {
+            CAPTURE(alias);
+            CHECK(fx.Reg.Contains(alias));       // alias-aware — the whole point
+            CHECK_FALSE(fx.Reg.HasExact(alias)); // distinct from HasExact, which is exact-only
+        }
+    }
+
+    // Pin the concrete legacy-MCP aliases the migration must not regress.
+    CHECK(fx.Reg.Contains("list_active_tickets"));
+    CHECK(fx.Reg.Contains("search_active_tickets"));
+
+    // Misses: an unregistered name resolves to neither.
+    CHECK_FALSE(fx.Reg.Contains("nope.not.a.command"));
+    CHECK_FALSE(fx.Reg.Contains(""));
+    CHECK_FALSE(fx.Reg.HasExact("nope.not.a.command"));
+}
+
 TEST_CASE("builtins — every command with a required param rejects {} before its handler") {
     BuiltinsFixture fx;
     int exercised = 0;

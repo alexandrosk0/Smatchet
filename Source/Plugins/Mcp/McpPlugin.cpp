@@ -589,7 +589,7 @@ void McpPlugin::HandleToolsCall(const httplib::Request& req, httplib::Response& 
         // with a canonical envelope {ok, command, data|error} in content[0].text —
         // even for structured errors (confirm-required, not-found, etc.). This lets
         // callers parse the envelope rather than treating every error as a transport fail.
-        if (impl_->app->Commands().FindLocked(name) != nullptr) {
+        if (impl_->app->Commands().Contains(name)) {
             DispatchRegistryToolsCall(name, arguments, remote, res);
             return;
         } else
@@ -813,7 +813,7 @@ void McpPlugin::HandleJsonRpcToolsCall(const std::string& remote, const nlohmann
     const std::string rpcRemote = remote;
     LOG_TRACE("MCP: JSON-RPC tools/call tool=%s", name.c_str());
 
-    if (impl_->app->Commands().FindLocked(name) != nullptr) {
+    if (impl_->app->Commands().Contains(name)) {
         HandleJsonRpcRegistryCall(name, params, rpcRemote, jres);
     } else if (name == "run_lua") {
         HandleJsonRpcRunLua(params, rpcRemote, jres);

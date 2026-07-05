@@ -36,10 +36,18 @@ class CommandRegistry {
     /// Has a command with this exact name (no alias resolution).
     bool HasExact(const std::string& name) const;
 
+    /// Alias-aware existence check — true when a command with this name is registered
+    /// (an exact name, or a registered alias resolved the same way FindLocked resolves).
+    /// Computed under the registry lock, so it is safe to call from a worker thread that
+    /// does not hold it. Prefer this to calling FindLocked purely to null-check its
+    /// result: it never hands back a pointer a concurrent Register could invalidate.
+    bool Contains(const std::string& name) const;
+
     /// Resolve a name (alias-aware) to the canonical command. Returns `nullptr` if
     /// not found. **The returned pointer is invalidated by any concurrent
     /// `Register` call**, so callers must either hold the registry lock or copy
-    /// the data they need immediately.
+    /// the data they need immediately. For a pure existence test off the lock, use
+    /// `Contains` instead.
     const Command* FindLocked(const std::string& name) const;
 
     /// Thread-safe copy of all registered commands (alphabetical by name).

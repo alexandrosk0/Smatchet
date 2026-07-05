@@ -46,7 +46,7 @@
 | C5 FileIo extraction | 🟡 PARTIAL | No `FileIo.{h,cpp}`. `AtomicWriteTextFile` promoted to a public `ConfigManager` static (shared by 4 callers); `ScopedFileLock` still confined to `ConfigManager_Internal.h`. |
 | C6 LooksSensitiveKey blocklist | ⏳ OPEN | Unchanged (a product call, no code change resolves it). |
 | N1 LuaBindings LOC | ✅ number stale | Now **1540** (not 2648) — the file shrank via the 3-way split, opposite the doc's "grew" narrative. |
-| N3 CommandRegistry::FindLocked | ⏳ OPEN | `HasExact()` added (one offered remedy) but the two `McpPlugin.cpp` worker-thread callers still use `FindLocked(name) != nullptr`; not renamed. |
+| N3 CommandRegistry::FindLocked | ✅ RESOLVED | New alias-aware `Contains()` (locks internally, mirrors `FindLocked(name) != nullptr`); both `McpPlugin.cpp` worker-thread callers migrated to it — no registry pointer escapes to an httplib thread anymore. Regression-tested (alias resolution pinned). |
 | N4 AppController.h size/friends | 🟡 MIXED | Now **1465 LOC** (+430); but friend-coupling largely resolved — three friends collapsed to one `GridContextDepsAdapter`; sol2 friend gone. No `TrackerActions` interface yet. |
 | N5 ConfigManager.cpp size | ✅ number stale | Split into `Config/` (`ConfigManager.cpp` 1617 + `_PathUtils` + `_Views` + `_Panes` + `_Internal.h`). Per-concern split partly done. |
 | N6 BuiltinCommands split | ✅ RESOLVED | Now a 72-LOC dispatcher + ~20 category files under `Commands/Builtin/`, exactly as proposed. |
@@ -56,7 +56,7 @@
 | N12 IsTrackerTransportErrorText | ⏳ OPEN | Still defined + used across ~14 files, shadowing `ClassifyTrackerResponse` (blocked on B2). |
 | N13 TryGetMcpStatusSnapshot | ⏳ OPEN (acceptable) | Still a gated virtual on `IPlugin`; no capability-tag system. As the doc itself said, acceptable today. |
 
-**Still genuinely open after this pass:** B5, C4, C6, N3, N12 (+ N13 acceptable, B2/C5/N4 partial). A4's graceful-shutdown half was closed 2026-07-05 (crash-path half intentionally omitted — see A4). Everything else on the A/B/C/N carry-over list is resolved. Items already ✅ in the doc (N2, C2, C7, N7, N11, N14) re-verified still true.
+**Still genuinely open after this pass:** B5, C4, C6, N12 (+ N13 acceptable, B2/C5/N4 partial). A4 (graceful half) and N3 were closed 2026-07-05. Everything else on the A/B/C/N carry-over list is resolved. Items already ✅ in the doc (N2, C2, C7, N7, N11, N14) re-verified still true.
 
 ---
 
@@ -161,8 +161,8 @@ Was 1453, now **2648**. Phase 1A of item 14 was supposed to start shrinking it; 
 ### N2. `BlameAnalysisUi.cpp` split landed but not noted (✅)
 Old item 9 step (c) was OPEN. Now done: `BlameAnalysisUi_Config.cpp` / `_Launch.cpp` / `_Modals.cpp` / `_Preferences.cpp` / `_Window.cpp` / `_Worker.cpp` + `BlameAnalysisUi_Internal.h`. Move from OPEN → done in tracker. Unreal hot-reload survival check still pending (no test infra).
 
-### N3. `CommandRegistry::FindLocked` is a footgun (P2) — ⏳ OPEN (partly mitigated, 2026-07-05)
-> `HasExact(name)` was added (one of the two offered remedies), but the two `McpPlugin.cpp` httplib-worker callers still use `FindLocked(name) != nullptr`; not renamed to `FindUnlocked`.
+### N3. `CommandRegistry::FindLocked` is a footgun (P2) — ✅ RESOLVED (2026-07-05)
+> Closed via the second offered remedy (lock internally, return a value not a pointer). Added `CommandRegistry::Contains(name)` — alias-aware, takes the registry mutex internally, and returns a `bool` that exactly mirrors `FindLocked(name) != nullptr`. Both `McpPlugin.cpp` httplib-worker callers now use `Contains(name)`, so no `FindLocked` pointer escapes to a worker thread. `HasExact` was **not** the right substitute here: it is exact-only, so it would have broken the legacy-MCP aliases (`list_active_tickets` / `search_active_tickets`) by routing them to a fallback handler instead of the registry — a regression the new `Contains` test pins against. `FindLocked` is kept (renamed not needed) for the UI/Dispatch callers that legitimately dereference the command under the UI thread / internal lock.
 
 `Source/Core/include/Commands/CommandRegistry.h:46` and `src/Commands/CommandRegistry.cpp:45-58`. Method name implies lock held but the impl is **lockless** — the comment says "Caller must serialize externally if they want stable pointers." External callers do NOT serialize: `Source/Plugins/Mcp/McpPlugin.cpp:629, :860` call it from httplib worker threads checking `!= nullptr` only. Race is benign today (pointer-equality test) but the API will bite future callers that dereference. Either:
 - Rename to `FindUnlocked` + add `Has(name)` for the only existing real use, **or**
