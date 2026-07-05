@@ -1,0 +1,1 @@
+[{"id":"33333333-0000-0000-0000-000000000003","sequence_id":3,"name":"a","state_detail":{"id":"s","name":"Done"},"assignees":[],"labels":[],"created_at":"2026-05-20T10:00:00Z","updated_at":"2026-05-20T10:00:00Z"},{"id":"44444444-0000-0000-0000-000000000004","sequence_id":4,"name":"b","state":"todo","assignees":["u1"],"labels":["x"]}]
