@@ -358,6 +358,20 @@ setup() {
     rm -rf "$tmp"
 }
 
+@test "--scan-bare-json still fires when a trailing quoted comment mentions json::parse" {
+    # Masking regression: the string-literal exemption must be evaluated on the comment-stripped
+    # view — a real bare parse followed by `// logs "json::parse"` must NOT be skipped.
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    printf 'void f(const std::string& s) {\n    auto j = nlohmann::json::parse(s); // logs "json::parse" on failure\n    (void)j;\n}\n' \
+        > "$tmp/Source/Core/src/MaskedParse.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-bare-json
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"MaskedParse.cpp:2"* ]]
+    rm -rf "$tmp"
+}
+
 @test "--scan-bare-json respects an in-window SMATCHET_DEVIATION" {
     tmp="$(mktemp -d)"
     mkdir -p "$tmp/Source/Plugins/Mcp"

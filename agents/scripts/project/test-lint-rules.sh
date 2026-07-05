@@ -881,29 +881,36 @@ scan_bare_json_parse_file() {
         local suppress="$prev_dev_rule"; prev_dev_rule=""
         # Skip pure-comment lines (prose mentions of json::parse don't fire).
         if [[ "$line" =~ ^[[:space:]]*(//|\*|/\*) ]]; then continue; fi
+        # Strip a trailing // comment before matching: otherwise a real parse followed by a
+        # quoted mention in the trailing comment (`json::parse(x); // logs "json::parse"`) would
+        # match the string-literal exemption and be silently skipped — a false negative in a
+        # blocking gate — and, conversely, a trailing-comment mention would false-positive the
+        # match itself. (A `//` inside a string literal truncates early; that only narrows an
+        # EXEMPTION, so the gate fails closed and a deviation escapes it.)
+        local code_only="${line%%//*}"
         # Record `nlohmann::json <ident>` declarations for the slurp form below.
-        if [[ "$line" =~ (^|[^A-Za-z_:])nlohmann::json[[:space:]]+([A-Za-z_][A-Za-z0-9_]*) ]]; then
+        if [[ "$code_only" =~ (^|[^A-Za-z_:])nlohmann::json[[:space:]]+([A-Za-z_][A-Za-z0-9_]*) ]]; then
             jv_names+=("${BASH_REMATCH[2]}"); jv_lines+=("$lineno")
         fi
         # Match a bare json::parse( call. ParseBounded / ParseBoundedOrDiscarded are the mandated
         # forms, so a line that already routes through them is clean.
-        case "$line" in
+        case "$code_only" in
             *ParseBounded*) continue ;;
             *'"'*'json::parse'*'"'*) continue ;;   # `json::parse` inside a string literal
         esac
-        if [[ "$line" =~ (^|[^A-Za-z_:])(nlohmann::)?json::parse[[:space:]]*\( ]]; then
+        if [[ "$code_only" =~ (^|[^A-Za-z_:])(nlohmann::)?json::parse[[:space:]]*\( ]]; then
             if [ "$suppress" != "bare-json-parse-untrusted" ]; then
                 printf 'bare-json-parse-untrusted\t%s:%s\n' "$f" "$lineno"
             fi
             continue
         fi
         # operator>> slurp into a json var declared within the preceding 8 lines.
-        if [[ "$line" == *'>>'* ]] && [ "${#jv_names[@]}" -gt 0 ]; then
+        if [[ "$code_only" == *'>>'* ]] && [ "${#jv_names[@]}" -gt 0 ]; then
             local vi slurpre
             for ((vi = ${#jv_names[@]} - 1; vi >= 0; vi--)); do
                 [ $((lineno - jv_lines[vi])) -le 8 ] || break
                 slurpre='>>[[:space:]]*'"${jv_names[vi]}"'([^A-Za-z0-9_]|$)'
-                if [[ "$line" =~ $slurpre ]]; then
+                if [[ "$code_only" =~ $slurpre ]]; then
                     if [ "$suppress" != "bare-json-parse-untrusted" ]; then
                         printf 'bare-json-parse-untrusted\t%s:%s\n' "$f" "$lineno"
                     fi
@@ -914,14 +921,18 @@ scan_bare_json_parse_file() {
     done < "$f"
 }
 
+# Shared first-party C++ file listing for the whole-tree compute_* sweeps below (one place so the
+# four sweeps cannot drift; ThirdParty excluded, tests out of scope by root).
+list_first_party_cpp_files() {
+    git ls-files \
+        'Source/Core/**' 'Source/Plugins/**' 'Source/Standalone/**' \
+        2>/dev/null \
+        | grep -E '\.(cpp|h|hpp)$' | grep -vE '(^|/)ThirdParty/' || true
+}
+
 compute_bare_json_parse_violations() {
     local files=() f
-    while IFS= read -r f; do files+=("$f"); done < <(
-        git ls-files \
-            'Source/Core/**' 'Source/Plugins/**' 'Source/Standalone/**' \
-            2>/dev/null \
-            | grep -E '\.(cpp|h|hpp)$' | grep -vE '(^|/)ThirdParty/' || true
-    )
+    while IFS= read -r f; do files+=("$f"); done < <(list_first_party_cpp_files)
     [ "${#files[@]}" -gt 0 ] || return 0
     for f in "${files[@]}"; do scan_bare_json_parse_file "$f"; done
 }
@@ -955,11 +966,14 @@ scan_catch_all_swallow_file() {
     local n=${#lines[@]} i
     for ((i = 0; i < n; i++)); do
         local raw="${lines[$i]}"
-        [[ "$raw" =~ catch[[:space:]]*\([[:space:]]*\.\.\.[[:space:]]*\) ]] || continue
         local s="${raw#"${raw%%[![:space:]]*}"}"
         case "$s" in '//'*|'*'*|'/*'*) continue ;; esac          # comment mention, not code
-        case "$raw" in *'"'*catch*'"'*) continue ;; esac         # string-literal mention
-        case "$raw" in *'catch-all-ok:'*) continue ;; esac       # hook-vocabulary escape
+        # Match on the comment-stripped view so a trailing `// ... catch (...) ...` mention can
+        # neither fire the rule nor (via its quotes) mask a real catch on the same line.
+        local code_only="${raw%%//*}"
+        [[ "$code_only" =~ catch[[:space:]]*\([[:space:]]*\.\.\.[[:space:]]*\) ]] || continue
+        case "$code_only" in *'"'*catch*'"'*) continue ;; esac   # string-literal mention
+        case "$raw" in *'catch-all-ok:'*) continue ;; esac       # hook-vocabulary escape (a comment)
         # SMATCHET_DEVIATION(rule=catch-all-swallow) on the nearest preceding non-blank lines.
         local k dev=0 cnt=0
         for ((k = i - 1; k >= 0 && cnt < 3; k--)); do
@@ -999,12 +1013,7 @@ scan_catch_all_swallow_file() {
 
 compute_catch_all_violations() {
     local files=() f
-    while IFS= read -r f; do files+=("$f"); done < <(
-        git ls-files \
-            'Source/Core/**' 'Source/Plugins/**' 'Source/Standalone/**' \
-            2>/dev/null \
-            | grep -E '\.(cpp|h|hpp)$' | grep -vE '(^|/)ThirdParty/' || true
-    )
+    while IFS= read -r f; do files+=("$f"); done < <(list_first_party_cpp_files)
     [ "${#files[@]}" -gt 0 ] || return 0
     for f in "${files[@]}"; do scan_catch_all_swallow_file "$f"; done
 }
@@ -1046,9 +1055,10 @@ scan_json_walker_file() {
         case "$params" in *nlohmann::json*|*sol::object*) ;; *) continue ;; esac
         usc_is_def_line "$raw" || continue                        # free-function def shape
         local name="$USC_DEF_NAME"
-        # Depth/budget token in the signature = bounded walker.
-        local bounded=0
-        case "$raw" in *depth*|*Depth*|*budget*|*Budget*) bounded=1 ;; esac
+        # Depth/budget token in the signature = bounded walker (comment-stripped view, so a
+        # trailing `// TODO add depth cap` cannot mark an unbounded walker as bounded).
+        local bounded=0 def_code="${raw%%//*}"
+        case "$def_code" in *depth*|*Depth*|*budget*|*Budget*) bounded=1 ;; esac
         # SMATCHET_DEVIATION above the definition escapes.
         local k dev=0 cnt=0
         for ((k = i - 1; k >= 0 && cnt < 3; k--)); do
@@ -1064,8 +1074,9 @@ scan_json_walker_file() {
             case "$b" in '}'*) break ;; esac
             local bs="${b#"${b%%[![:space:]]*}"}"
             case "$bs" in '//'*|'*'*|'/*'*) continue ;; esac
-            case "$b" in *depth*|*Depth*|*budget*|*Budget*) bounded=1 ;; esac
-            if [[ "$b" =~ $callre ]]; then selfcall=1; fi
+            local b_code="${b%%//*}"
+            case "$b_code" in *depth*|*Depth*|*budget*|*Budget*) bounded=1 ;; esac
+            if [[ "$b_code" =~ $callre ]]; then selfcall=1; fi
         done
         if [ "$selfcall" -eq 1 ] && [ "$bounded" -eq 0 ]; then
             printf 'unbounded-recursive-json-walker\t%s:%s\n' "$f" "$((i + 1))"
@@ -1075,12 +1086,7 @@ scan_json_walker_file() {
 
 compute_json_walker_violations() {
     local files=() f
-    while IFS= read -r f; do files+=("$f"); done < <(
-        git ls-files \
-            'Source/Core/**' 'Source/Plugins/**' 'Source/Standalone/**' \
-            2>/dev/null \
-            | grep -E '\.(cpp|h|hpp)$' | grep -vE '(^|/)ThirdParty/' || true
-    )
+    while IFS= read -r f; do files+=("$f"); done < <(list_first_party_cpp_files)
     [ "${#files[@]}" -gt 0 ] || return 0
     for f in "${files[@]}"; do scan_json_walker_file "$f"; done
 }
@@ -1113,8 +1119,11 @@ scan_file_slurp_file() {
         if [[ "$line" =~ ^[[:space:]]*$ ]]; then continue; fi
         local suppress="$prev_dev_rule"; prev_dev_rule=""
         if [[ "$line" =~ ^[[:space:]]*(//|\*|/\*) ]]; then continue; fi
-        case "$line" in *'"'*rdbuf*'"'*|*'"'*istreambuf*'"'*) continue ;; esac
-        if [[ "$line" =~ (\<\<[[:space:]]*[A-Za-z_][A-Za-z0-9_]*(\.|-\>)rdbuf\(\)|istreambuf_iterator\<[[:space:]]*char[[:space:]]*\>) ]]; then
+        # Comment-stripped view: a trailing `// ... "rdbuf()" ...` mention can neither fire nor
+        # mask a real slurp on the same line.
+        local code_only="${line%%//*}"
+        case "$code_only" in *'"'*rdbuf*'"'*|*'"'*istreambuf*'"'*) continue ;; esac
+        if [[ "$code_only" =~ (\<\<[[:space:]]*[A-Za-z_][A-Za-z0-9_]*(\.|-\>)rdbuf\(\)|istreambuf_iterator\<[[:space:]]*char[[:space:]]*\>) ]]; then
             if [ "$suppress" != "unbounded-file-slurp" ]; then
                 printf 'unbounded-file-slurp\t%s:%s\n' "$f" "$lineno"
             fi
@@ -1124,12 +1133,7 @@ scan_file_slurp_file() {
 
 compute_file_slurp_violations() {
     local files=() f
-    while IFS= read -r f; do files+=("$f"); done < <(
-        git ls-files \
-            'Source/Core/**' 'Source/Plugins/**' 'Source/Standalone/**' \
-            2>/dev/null \
-            | grep -E '\.(cpp|h|hpp)$' | grep -vE '(^|/)ThirdParty/' || true
-    )
+    while IFS= read -r f; do files+=("$f"); done < <(list_first_party_cpp_files)
     [ "${#files[@]}" -gt 0 ] || return 0
     for f in "${files[@]}"; do scan_file_slurp_file "$f"; done
 }
@@ -1485,6 +1489,11 @@ case "$MODE" in
     printf 'void f(const std::string& body) {\n    // SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; reason=test; owner=x; revisit=2099-01-01)\n    auto j = nlohmann::json::parse(body);\n    (void)j;\n}\n' > "$_bj_ingress"
     if [ -n "$(scan_bare_json_parse_file "$_bj_ingress")" ]; then
         echo "SELFTEST FAIL: bare-json-parse-untrusted fired despite an in-window SMATCHET_DEVIATION" >&2; miss=1; fi
+    # A REAL bare parse with a trailing quoted-comment mention must STILL fire (the string-literal
+    # exemption is evaluated on the comment-stripped view, so the comment cannot mask it).
+    printf 'void f(const std::string& body) {\n    auto j = nlohmann::json::parse(body); // logs "json::parse" on failure\n    (void)j;\n}\n' > "$_bj_ingress"
+    if [ -z "$(scan_bare_json_parse_file "$_bj_ingress")" ]; then
+        echo "SELFTEST FAIL: bare-json-parse-untrusted was masked by a quoted trailing-comment mention" >&2; miss=1; fi
     rm -f "$_bj_tmp" "$_bj_ingress" "$_bj_other" "$_bj_hdr" 2>/dev/null || true
     # --- catch-all-swallow — assert the rule is documented + fires on an EMPTY catch (...) body and
     # stays quiet for a commented body / catch-all-ok / a LOG body / a deviation. ---
