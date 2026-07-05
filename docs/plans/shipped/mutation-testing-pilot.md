@@ -1,7 +1,7 @@
 # Plan — Mutation-testing pilot (assertion-strength probe)
 
 > **Slug**: `mutation-testing-pilot`.
-> **Status**: `active` — report + strengthening PR shipped; flip to `shipped` + `git mv` once the PR merges.
+> **Status**: `shipped` — report + strengthening PR merged (#1626, squash `44ea33d`); this file lives in `docs/plans/shipped/`.
 > **Owner**: orchestrator. **Created / executed**: 2026-07-05.
 
 ## Context
@@ -44,6 +44,7 @@ N/A — no `Source/Core/` **production** change (test-only + docs). The three ed
 - 2026-07-05 — Phase 0: 52 TUs reachable via `SmatchetTsanTests` (17 with dedicated in-rig tests); fuzz = crash-only, posix-core = compile-only. Scope fixed at 52 TUs.
 - 2026-07-05 — Phase 1: 12 TUs, 68 mutants — 52 killed / 16 survived (76.5 % raw, 82.5 % equivalent-adjusted).
 - 2026-07-05 — Phase 2: `MUTATION_PILOT.md` written; 3 worst survivors fixed (each proven SURVIVED→KILLED); 7 residual + infra + tooling backlogged.
+- 2026-07-05 — Shipped: PR #1626 squash-merged to `develop` (`44ea33d`). The one unrelated flaky Mesa-GL `Mobile texture-guard smoke` lane was downgraded via the `tests-out-of-band` label; all in-scope lanes green. Plan archived active → shipped in this follow-up.
 
 ## Deviations
 
