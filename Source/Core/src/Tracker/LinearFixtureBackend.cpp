@@ -4,6 +4,7 @@
 #include "LinearFixtureBackend.h"
 
 #include "ITrackerBackendFactory.h"
+#include "Json/BoundedJsonParse.h"
 #include "LinearIssueMappingPure.h"
 #include "Logger.h"
 
@@ -48,6 +49,7 @@ const nlohmann::json* FindNodesArray(const nlohmann::json& root) {
     return nullptr;
 }
 
+// SMATCHET_DEVIATION(rule=duplication; reason=per-backend fixture-factory boilerplate deliberately mirrors the Plane sibling — the standing per-backend *Client/fixture exemption class; folding them would couple independent tracker backends; owner=security-audit; revisit=2026-12-31)
 class LinearFixtureBackendFactory : public ITrackerBackendFactory {
   public:
     explicit LinearFixtureBackendFactory(std::string fixturePath) : fixturePath_(std::move(fixturePath)) {}
@@ -87,8 +89,11 @@ LinearFixtureBackend::LinearFixtureBackend(const std::string& fixturePath) : fix
         return;
     }
     std::stringstream buf;
+    // SMATCHET_DEVIATION(rule=unbounded-file-slurp; reason=developer-authored local fixture file, small by construction; owner=security-audit; revisit=2026-12-31)
     buf << in.rdbuf();
-    const nlohmann::json j = nlohmann::json::parse(buf.str(), nullptr, false);
+    // Bounded parse: the fixture path is env-var-selectable (SMATCHET_TEST_LINEAR_BACKEND_FIXTURE),
+    // so cap depth/nodes/bytes rather than trust wherever it points.
+    const nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(buf.str());
     if (j.is_discarded()) {
         loadError_ = "invalid JSON in fixture file";
         return;

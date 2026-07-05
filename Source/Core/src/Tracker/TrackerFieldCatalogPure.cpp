@@ -2,6 +2,7 @@
 
 #include "TrackerFieldValueParser.h"
 
+#include "Json/BoundedJsonParse.h"
 #include "JsonParseUtil.h"
 #include "Logger.h"
 #include "StringUtil.h"
@@ -163,7 +164,7 @@ void BuildDedupedIssueTypeOptions(const nlohmann::json& issueTypeArray, std::vec
             TrackerFieldOption& prior = outOptions[existing->second];
             const nlohmann::json priorJson = prior.PayloadJson.empty()
                                                  ? nlohmann::json(nullptr)
-                                                 : nlohmann::json::parse(prior.PayloadJson, nullptr, false);
+                                                 : smatchet::json_safe::ParseBoundedOrDiscarded(prior.PayloadJson);
             const bool priorHasScope = priorJson.is_object() && priorJson.contains("scope") &&
                                        priorJson["scope"].is_object() && priorJson["scope"].contains("project");
             if (hasProjectScope && !priorHasScope) {

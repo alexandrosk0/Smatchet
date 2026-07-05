@@ -390,3 +390,23 @@ TEST_CASE("SerializeTickets: Auto format defaults to CSV") {
     const std::string out = SerializeTickets(tickets, {"summary"}, Format::Auto);
     CHECK(out.find("key,summary") != std::string::npos);
 }
+
+TEST_CASE("ParseDrafts: JSON depth bomb is rejected by the bounded import parse (no deep DOM)") {
+    // Import files are user-chosen but often externally-originated bytes, so the JSON import
+    // routes through json_safe::ParseBounded with import-sized caps: a deeply-nested payload
+    // must come back as a clean ImportResult error, not build a deep DOM whose recursive ~json
+    // teardown can overflow the stack.
+    std::string bomb;
+    for (int i = 0; i < 300; ++i) bomb += "[";
+    for (int i = 0; i < 300; ++i) bomb += "]";
+    const ImportResult r = ParseDrafts(bomb, Format::Json, {}, "PROJ", "10001", "Task");
+    CHECK(r.Rows.empty());
+    CHECK(r.Error.find("JSON parse error") != std::string::npos);
+}
+
+TEST_CASE("ParseDrafts: well-formed JSON import still parses under the bounded caps") {
+    const std::string text = "[{\"summary\":\"From import\"}]";
+    const ImportResult r = ParseDrafts(text, Format::Json, {}, "PROJ", "10001", "Task");
+    CHECK(r.Error.empty());
+    REQUIRE(r.Rows.size() == 1);
+}

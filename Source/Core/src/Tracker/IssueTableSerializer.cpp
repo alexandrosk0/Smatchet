@@ -1,5 +1,7 @@
 #include "IssueTableSerializer.h"
 
+#include "Json/BoundedJsonParse.h"
+
 #include <algorithm>
 #include <cctype>
 #include <set>
@@ -265,11 +267,17 @@ ImportResult ParseJson(const std::string& text, const std::vector<TrackerField>&
     ImportResult result;
     result.DetectedFormat = Format::Json;
 
-    nlohmann::json root;
-    try {
-        root = nlohmann::json::parse(text);
-    } catch (const std::exception& ex) {
-        result.Error = std::string("JSON parse error: ") + ex.what();
+    // Import files are user-chosen but often externally-originated bytes (a shared issue-table
+    // dump), so a depth bomb here is a real crash vector — bound the parse with import-sized
+    // caps: 64 MiB (matches ConfigManager::LoadJsonFile's file cap), default depth 256, and a
+    // 2M-node budget (~10x the default; a bulk import row is ~60 nodes, so this clears tens of
+    // thousands of issues while still bounding heap growth).
+    std::string parseErr;
+    nlohmann::json root = smatchet::json_safe::ParseBounded(
+        text, parseErr, /*maxBytes=*/64u * 1024u * 1024u, smatchet::json_safe::kDefaultMaxDepth,
+        /*maxNodes=*/2000000u);
+    if (!parseErr.empty()) {
+        result.Error = std::string("JSON parse error: ") + parseErr;
         return result;
     }
 

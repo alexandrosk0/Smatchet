@@ -4,6 +4,7 @@
 #include "PlaneFixtureBackend.h"
 
 #include "ITrackerBackendFactory.h"
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 
 #include <nlohmann/json.hpp>
@@ -56,8 +57,11 @@ PlaneFixtureBackend::PlaneFixtureBackend(const std::string& fixturePath) : fixtu
         return;
     }
     std::stringstream buf;
+    // SMATCHET_DEVIATION(rule=unbounded-file-slurp; reason=developer-authored local fixture file, small by construction; owner=security-audit; revisit=2026-12-31)
     buf << in.rdbuf();
-    const nlohmann::json j = nlohmann::json::parse(buf.str(), nullptr, false);
+    // Bounded parse: the fixture path is env-var-selectable (SMATCHET_TEST_PLANE_BACKEND_FIXTURE),
+    // so cap depth/nodes/bytes rather than trust wherever it points.
+    const nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(buf.str());
     if (j.is_discarded()) {
         loadError_ = "invalid JSON in fixture file";
         return;
