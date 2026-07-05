@@ -54,12 +54,16 @@ void CommandPaletteUi::SetFilterText(const char* query) {
 
 void CommandPaletteUi::rebuildFiltered(AppController& app) {
     const std::string q = filterBuf_;
+    // Snapshot the command table once. All() takes a lock, deep-copies, and sorts
+    // the whole registry, so the empty-query branch below must reuse this snapshot
+    // rather than re-fetching it once per recent (was up to 9 All() calls per
+    // rebuild — CPP_CODE_AUDIT.md #33 perf sub-item).
+    const std::vector<Command> all = app.Commands().All();
     if (q.empty()) {
         // Empty query: show recent commands first, then all sorted by name.
         filtered_.clear();
         const std::vector<std::string> recents = app.Commands().Recents(8);
         for (const std::string& r : recents) {
-            std::vector<Command> all = app.Commands().All();
             for (const Command& c : all) {
                 if (c.Name == r) {
                     filtered_.push_back(c);
@@ -67,7 +71,6 @@ void CommandPaletteUi::rebuildFiltered(AppController& app) {
                 }
             }
         }
-        std::vector<Command> all = app.Commands().All();
         for (const Command& c : all) {
             bool alreadyIn = false;
             for (const Command& f : filtered_) {
@@ -86,7 +89,6 @@ void CommandPaletteUi::rebuildFiltered(AppController& app) {
             Command cmd;
         };
         std::vector<Scored> scored;
-        std::vector<Command> all = app.Commands().All();
         scored.reserve(all.size());
         for (const Command& c : all) {
             const int s = FuzzyScore(q, c.Name + " " + c.Summary);
