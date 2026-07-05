@@ -11,6 +11,7 @@
 //   - Phase 2B/2C: incrementally migrate JiraClient / PlaneClient mutation sites and
 //     JiraIssueSearch so retry on 429/5xx becomes uniform across the codebase.
 
+#include "ITrackerConnectivity.h" // TrackerReachabilityProbeResult / Kind
 #include "TrackerError.h"
 
 #include <cpr/cpr.h>
@@ -38,6 +39,13 @@ struct TrackerHttpResult {
 /// InvalidRequest, status<=0 = Transport). The detail string is the upstream body if non-empty,
 /// otherwise the cpr error message, otherwise a generic "HTTP <code>" string.
 TrackerHttpResult ClassifyTrackerResponse(const cpr::Response& response);
+
+/// Classify a reachability-probe response into a TrackerReachabilityProbeResult, shared by every
+/// backend's `ProbeReachability` so the HTTP-status → probe-kind matrix lives in one place:
+/// 2xx → AuthenticatedReachable, 401/403 → ReachableAuthOrConfigError, 404/429/other-4xx →
+/// ReachableAuthOrConfigError (the host answered — don't flip the banner to offline), 5xx →
+/// ServiceUnavailable, transport (status ≤ 0) → TransportDown.
+TrackerReachabilityProbeResult ClassifyReachabilityProbe(const cpr::Response& response);
 
 /// Retry loop wrapping a request function. Invokes `requestFn` up to `maxAttempts` times,
 /// backing off `kTrackerHttpBaseRetryDelayMs * 2^(attempt-1)` (capped at

@@ -37,7 +37,7 @@
 | A2 Logger file-sink wiring | ✅ RESOLVED (differently) | Wired at startup in `Source/Standalone/main.cpp` + `android_main.cpp` via `Logger::SetFileSinkPath` (env `SMATCHET_DEBUG_LOG` / default path), **not** from `ConfigManager`; no `LogFilePath` key. Functional complaint closed. |
 | A4 FlushFileSink on shutdown | ✅ RESOLVED (graceful) | `~AppController` now calls `Logger::Instance().FlushFileSink()` after `JoinBackgroundTasks()`, persisting the whole shutdown-sequence log trail before late teardown. The crash-handler half is intentionally **not** done — `SmatchetCrashHandler` is async-signal-safe and must not take the file-sink mutex mid-crash (it uses its own async-safe crash sink). |
 | B1 LuaAutomationHost extraction | 🟡 REFRAMED (won't-do-as-written) | Ownership migration abandoned for a different design: `LuaAutomationHost` is now a 17-LOC log-sink coordinator; sol2 moved to a pImpl (see N10); the binding TU split 3 ways; `friend class LuaAutomationHost` removed; new `ILuaBindingHost` interface. |
-| B2 TrackerHttpClient migration | 🟡 PARTIAL | `ClassifyTrackerResponse` used in only ~3 files/7 sites; `IsTrackerTransportErrorText` still spans ~14 files (see N12). 2B–2E not complete. |
+| B2 TrackerHttpClient migration | 🟡 IN PROGRESS | Harness-first restart 2026-07-05: added a `JiraClient` HTTP-status characterization suite (`tests/Core/JiraClientHttp.test.cpp`, via the existing `JiraCatalogHttpFixture` loopback) + migrated **2B** (`JiraClient::ProbeReachability` → `ClassifyTrackerResponse`, mirroring the Plane Phase-2A pattern). 2C–2E next; `IsTrackerTransportErrorText` removal (N12) is the final consumer-side step. |
 | B3 ITrackerClient split | ✅ RESOLVED (exceeded) | `ITrackerClient` gone; replaced by `ITrackerBackend` composing 6 role interfaces (`ITrackerIssueReader`/`Connectivity`/`FieldCatalog`/`IssueMutations`/`Collaboration`/`Activity`). "Unsupported default-impl" pattern removed. |
 | B4 Plane FetchIssuesForKeys | ✅ RESOLVED | Early-exit pagination in `Tracker/PlaneIssueSearch.cpp` stops once all keys matched. Server-side `sequence_id__in` filter is the remaining B4-v2 follow-up. |
 | B5 Markdown table-cell flatten | 🟡 IMPROVED | `MarkdownCellPlainInner` now joins cell blocks with `<br>` (GFM in-cell line break) and preserves list items instead of running paragraphs together / dropping lists. First ADF→Markdown table golden tests added. Deeper fidelity (code blocks, nested lists/tables in a cell) still deferred to RICH_TEXT_EDITING_V2. |
@@ -102,12 +102,14 @@ The original "call it from a `std::set_terminate` / `SIGSEGV` handler" ask is **
 
 **Recommendation:** bundle 1B+1C as one PR with golden tests for each binding before move (testless extraction = lottery).
 
-### B2. `TrackerHttpClient` migration follow-on (item 15)
-Phase 2A landed (PR #39) — helper + `PlaneClient::ProbeReachability`. **One** call site uses `ClassifyTrackerResponse`; ~30 hand-rolled error-status branches remain. Migrate in batches:
-- **2B** `JiraClient::ProbeReachability` — already classifies right; gain consistency + retry option.
+### B2. `TrackerHttpClient` migration follow-on (item 15) — 🟡 IN PROGRESS (harness-first restart 2026-07-05)
+Phase 2A landed (PR #39) — helper + `PlaneClient::ProbeReachability`. ~30 hand-rolled error-status branches remain. Restarted "harness-first" 2026-07-05: `tests/Core/JiraClientHttp.test.cpp` now characterizes the real `JiraClient` HTTP-status→kind matrix over the `JiraCatalogHttpFixture` loopback (the harness already existed — used by `TrackerCatalogBuild`/`*Http` suites), so each migration batch has a regression guard. Migrate in batches:
+- **2B** `JiraClient::ProbeReachability` — ✅ **done 2026-07-05** (routed through `ClassifyTrackerResponse`, mirrors Plane's Phase-2A switch; characterization test pins the status matrix).
 - **2C** `PlaneClient::UpdateIssueFields` / `CreateIssue` / `FetchIssueEditMeta` — light up 429/5xx retry.
 - **2D** `JiraIssueMutation.cpp` mutation paths.
 - **2E** `JiraIssueSearch.cpp` paginated fetches.
+
+Once 2B–2E land, the tracker clients return structured `TrackerError` everywhere and the consumer-side `IsTrackerTransportErrorText` string heuristic can be retired (**N12**).
 
 ### B3. Split `ITrackerClient` into role interfaces (item 16) — ✅ RESOLVED (2026-07-05, exceeded)
 > `ITrackerClient` no longer exists; replaced by `ITrackerBackend` composing 6 role interfaces (`ITrackerIssueReader`/`Connectivity`/`FieldCatalog`/`IssueMutations`/`Collaboration`/`Activity`). The "unsupported default-impl" pattern is gone (optional roles return `nullptr` accessors).

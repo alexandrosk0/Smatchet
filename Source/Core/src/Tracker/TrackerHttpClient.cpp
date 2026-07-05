@@ -30,6 +30,40 @@ TrackerHttpResult ClassifyTrackerResponse(const cpr::Response& response) {
     return out;
 }
 
+TrackerReachabilityProbeResult ClassifyReachabilityProbe(const cpr::Response& response) {
+    const TrackerHttpResult classified = ClassifyTrackerResponse(response);
+    TrackerReachabilityProbeResult out;
+    switch (classified.Error.Kind) {
+    case TrackerErrorKind::None:
+        out.Kind = TrackerReachabilityProbeKind::AuthenticatedReachable;
+        out.Diagnostic = "HTTP 200";
+        break;
+    case TrackerErrorKind::Auth:
+        out.Kind = TrackerReachabilityProbeKind::ReachableAuthOrConfigError;
+        out.Diagnostic = "HTTP " + std::to_string(classified.Status()) + " (Auth Error)";
+        break;
+    case TrackerErrorKind::ServerError:
+        out.Kind = TrackerReachabilityProbeKind::ServiceUnavailable;
+        out.Diagnostic = "HTTP " + std::to_string(classified.Status()) + " (Server Error)";
+        break;
+    case TrackerErrorKind::NotFound:
+    case TrackerErrorKind::InvalidRequest:
+    case TrackerErrorKind::RateLimited:
+        // Reachable, but the response indicates a config / payload issue rather than a transport
+        // failure — surface the auth-or-config banner so a stale base URL or a rate-limited probe
+        // doesn't flip the connectivity banner to "offline".
+        out.Kind = TrackerReachabilityProbeKind::ReachableAuthOrConfigError;
+        out.Diagnostic = "HTTP " + std::to_string(classified.Status());
+        break;
+    case TrackerErrorKind::Transport:
+    default:
+        out.Kind = TrackerReachabilityProbeKind::TransportDown;
+        out.Diagnostic = response.error.message.empty() ? classified.Error.Detail : response.error.message;
+        break;
+    }
+    return out;
+}
+
 TrackerHttpResult TrackerHttpRequestWithRetry(const std::function<TrackerHttpResult()>& requestFn, int maxAttempts,
                                               const std::function<bool()>& cancelled,
                                               const std::function<bool(const TrackerError&)>& shouldRetry) {
