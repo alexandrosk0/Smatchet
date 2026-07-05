@@ -124,7 +124,11 @@ the rig.
   described in § Verification, plus lint/docs/format gates). Merged in #1622 (`86ae8393`).
 - `fe7a3a58` · Slice 2: GitHub issue-search + client fixture suites + shared `HttpRequestCapture`
   support header (13 cases / 117 assertions; same Linux verification + gates; full rig 2202/2203
-  with the sole failure the pre-existing `SubprocessCapturePure` wide-char case).
+  with the sole failure the pre-existing `SubprocessCapturePure` wide-char case). Merged in #1628
+  (`5b92ad45`).
+- `9e039ce9` · Slice 3: Plane + Linear mutation-shell fixture suites (6 cases / 62 assertions;
+  same Linux verification + gates; full rig 2216/2217, same pre-existing sole failure). First
+  combined use of `TestEnvGuard` + the HTTP loopback fixture for the cfg-less write paths.
 
 ## Deviations from plan
 
