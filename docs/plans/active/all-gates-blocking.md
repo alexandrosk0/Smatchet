@@ -113,21 +113,47 @@ fixtures, config, docs only. No perf surface.
 
 ## Verification
 
-- [ ] `merge_gates.bats` full suite green after the contract flips (incl. the new
-      arbitrary-pending test + flipped Bucket-E test).
-- [ ] `osv-scan.py --fail-on HIGH` green locally against the generated SBOM
+- [x] `merge_gates.bats` 164/164 green after the contract flips (incl. the new
+      arbitrary-pending test + flipped Bucket-E test); safe_admin_merge 22/22,
+      postmortem_owed 31/31, safe_merge 14/14, pr_status_watch 13/13;
+      safe-admin-merge --selftest 18/18.
+- [x] `osv-scan.py --fail-on HIGH` green locally against the generated SBOM
       (allowlist absorbs OSV-2022-126).
-- [ ] All edited workflow YAML parses (python yaml.safe_load).
-- [ ] `test-lint-rules.sh --diff origin/develop` + doc-validation green.
-- [ ] PR's own CI: the renamed checks report under their new names and pass; the
-      poller (new logic, from this branch) gates the merge.
-- [ ] Post-merge: `setup-branch-protection.sh` applied (live protection = config);
-      first mobile-touching develop push boots the emulator cold and passes.
-- [ ] Post-merge watch: one full develop push cycle with zero new reds.
+- [x] All edited workflow YAML parses (python yaml.safe_load).
+- [x] doc-validation green (test-docs 14/0); pre-ship gates clean at every push.
+- [x] PR #1619's own CI: renamed checks reported under the new names and passed —
+      including **Mobile — Android emulator smoke (7m26s PASS)** validating both
+      lane fixes (cold boot + stale-APK uninstall) end-to-end.
+- [x] Post-merge: `setup-branch-protection.sh` applied — live protection = the
+      22-context config, verified via the protection API.
+- [ ] Post-merge watch: develop push green. **First push surfaced the WoA
+      truth** (see Implementation log 2026-07-05 — whisper/ggml cannot compile
+      under native MSVC-ARM64; fix in flight, validated via workflow_dispatch).
 
 ## Implementation log
 
-_(appended as shipped)_
+- **2026-07-05 — shipped as PR #1619** (squash `05f1f2f4`). Three CR findings
+  triaged across two rounds (poll-timeout cap derived from the poll budget;
+  stale ANDROID_BUILD bullet); the emulator lane failed once on the PR head and
+  exposed a SECOND latent bug the quick-boot snapshot had been hiding — the
+  cached AVD userdata carried a previous runner's install signed with a
+  different debug keystore (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`); fixed with
+  uninstall-before-install in the smoke script. Branch protection applied
+  post-merge (22 contexts live).
+- **2026-07-05 — first develop push surfaced the WoA lanes' real state.** Both
+  Windows-on-ARM legs failed at configure: whisper.cpp's ggml hard-errors
+  "MSVC is not supported for ARM, use clang" on a native ARM64 host
+  (`CMAKE_SYSTEM_PROCESSOR=ARM64`). The step-level masks had green-washed this
+  since the lanes' creation — step `continue-on-error` rewrites the step's API
+  *conclusion* to success, which is exactly why the pre-flip "zero failed step
+  conclusions" verification read healthy (a false negative this plan's Problem
+  section overstated as "genuinely green"; the CROSS leg truly was — CMake on an
+  x64 host reports AMD64 so ggml's ARM branch never fires). Fix:
+  `SMATCHET_WITH_WHISPER=OFF` on `ninja-publish-msvc-arm64` (a native-MSVC ARM64
+  Whisper build was never possible; preset description records the ggml
+  citation + re-enable conditions) + a `workflow_dispatch` trigger on
+  build-and-test.yml so the push-only WoA legs are testable from a topic branch
+  instead of merge-and-watch.
 
 ## Deviations
 
