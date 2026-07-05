@@ -545,8 +545,8 @@ bool LaunchEphemeralInstance(const std::string& exePath, int port, std::string* 
     const std::string logPath = ComputeSpawnLogPath(port);
     if (outLogPath)
         *outLogPath = logPath;
-        // main.cpp parses `--mcp-port <port>` as two separate argv entries (space-separated),
-        // NOT `--mcp-port=<port>` — using the equals form would silently fall through.
+    // main.cpp parses `--mcp-port <port>` as two separate argv entries (space-separated),
+    // NOT `--mcp-port=<port>` — using the equals form would silently fall through.
 #if defined(_WIN32)
     // CommandLineToArgvW handles quoted whitespace; pass space-separated tokens.
     std::string cmdLine = "\"" + exePath + "\" --ephemeral --mcp-port " + portStr;
@@ -572,16 +572,38 @@ bool LaunchEphemeralInstance(const std::string& exePath, int port, std::string* 
         si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
     }
     PROCESS_INFORMATION pi = {};
-    // Hand the per-spawn MCP token to the child via its inherited environment
-    // (lpEnvironment=nullptr → child snapshots the parent's current env block).
-    // Set immediately before CreateProcessA to minimise the window, then clear it
-    // from the parent's own env right after — the child already has its copy, and
-    // the short-lived parent shouldn't keep the secret in its environment.
-    if (!authToken.empty())
-        SetEnvironmentVariableA("SMATCHET_MCP_SPAWN_TOKEN", authToken.c_str());
-    BOOL ok = CreateProcessA(nullptr, &cmdLine[0], nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi);
-    if (!authToken.empty())
-        SetEnvironmentVariableA("SMATCHET_MCP_SPAWN_TOKEN", nullptr);
+    // M1: hand the per-spawn MCP token to the child via an explicit merged environment
+    // block — NEVER by mutating the parent's own global env. The old path called
+    // SetEnvironmentVariableA on the parent around CreateProcessA, which (a) raced any
+    // concurrent thread reading the parent's env and (b) briefly exposed the secret in
+    // the long-lived parent's environment. Here we snapshot the parent's block, strip
+    // any inherited SMATCHET_MCP_SPAWN_TOKEN= entry, append our own, and pass it as
+    // lpEnvironment so only the child ever sees the token. When there is no token we
+    // pass nullptr (plain inherit) — the CLI parent carries no token of its own to leak.
+    std::vector<char> envBlock;
+    if (!authToken.empty()) {
+        char* parentEnv = GetEnvironmentStringsA();
+        if (parentEnv) {
+            for (const char* p = parentEnv; *p; p += std::strlen(p) + 1) {
+                const size_t len = std::strlen(p);
+                // Case-INSENSITIVE prefix match: Windows env-var names are case-insensitive
+                // (`smatchet_mcp_spawn_token=` and `SMATCHET_MCP_SPAWN_TOKEN=` name the same
+                // variable), so a case-mismatched inherited entry must be stripped too — a
+                // case-sensitive strncmp would leave a stale/attacker-planted duplicate in the
+                // child's block that resolves ahead of / alongside ours (CR security finding).
+                if (len >= 25 && _strnicmp(p, "SMATCHET_MCP_SPAWN_TOKEN=", 25) == 0)
+                    continue; // drop any inherited token entry — we set our own below
+                envBlock.insert(envBlock.end(), p, p + len + 1); // copy entry incl. its NUL
+            }
+            FreeEnvironmentStringsA(parentEnv);
+        }
+        const std::string tokenEntry = "SMATCHET_MCP_SPAWN_TOKEN=" + authToken;
+        envBlock.insert(envBlock.end(), tokenEntry.begin(), tokenEntry.end());
+        envBlock.push_back('\0'); // terminate the token entry
+        envBlock.push_back('\0'); // double-NUL terminate the block
+    }
+    LPVOID lpEnvironment = envBlock.empty() ? nullptr : static_cast<LPVOID>(envBlock.data());
+    BOOL ok = CreateProcessA(nullptr, &cmdLine[0], nullptr, nullptr, TRUE, 0, lpEnvironment, nullptr, &si, &pi);
     if (hLog != INVALID_HANDLE_VALUE) {
         CloseHandle(hLog); // child holds its own dup; parent can release.
     }
@@ -954,8 +976,14 @@ int SpawnAndRunDispatch(httplib::Client& cli, const std::string& commandName, co
 /// Waits for the output file, reads it, and emits the result envelope.
 /// Returns kExitOk on success; 8 (timeout) or kExitHandler on failure.
 /// Sends app.quit on every failure path so the orchestrator's early-return is safe.
+/// userScreenshotPath: C1 parent-fulfill. When non-empty, the trusted --spawn parent
+/// asked for a screenshot at this (often absolute) path but sent the child a confine-safe
+/// basename instead (the child rejects absolute / '..' paths). After the child reports its
+/// confined capture path, copy it back to the user's requested location and rewrite the
+/// emitted screenshotPath so the envelope still names the path the caller asked for.
 int SpawnAndRunHandleAsync(const ParsedArgs& pa, httplib::Client& cli, const std::string& commandName,
-                           const std::string& outPath, int frames, int scenarioWaitMs) {
+                           const std::string& outPath, int frames, int scenarioWaitMs,
+                           const std::string& userScreenshotPath) {
     std::fprintf(stderr, "[spawn] scenario running (%d frames / ~%d s) ...\n", frames,
                  frames / 60); // CLI stdout — product output, not logging
     const bool fileReady = WaitForFile(outPath, scenarioWaitMs);
@@ -1004,7 +1032,7 @@ int SpawnAndRunHandleAsync(const ParsedArgs& pa, httplib::Client& cli, const std
     std::fclose(f);
     try {
         std::string parseErr;
-        const nlohmann::json fileData = smatchet::json_safe::ParseBounded(content, parseErr);
+        nlohmann::json fileData = smatchet::json_safe::ParseBounded(content, parseErr);
         if (!parseErr.empty()) {
             nlohmann::json errEnv;
             errEnv["ok"] = false;
@@ -1025,6 +1053,25 @@ int SpawnAndRunHandleAsync(const ParsedArgs& pa, httplib::Client& cli, const std
             std::fprintf(stderr,
                          "[spawn] waiting for screenshot capture ...\n"); // CLI stdout — product output, not logging
             WaitForFile(screenshotPath, 2000);
+            // C1 parent-fulfill copy-back: the child confined the capture under its own
+            // <userData>/screenshots/ (screenshotPath); the trusted parent honours the user's
+            // requested location by copying it there + reporting that path. On copy failure we
+            // keep the confined path in the envelope so the caller still has a valid file.
+            if (!userScreenshotPath.empty() && userScreenshotPath != screenshotPath) {
+                std::error_code ec;
+                const fs::path destParent = fs::path(userScreenshotPath).parent_path();
+                if (!destParent.empty())
+                    fs::create_directories(destParent, ec);
+                ec.clear();
+                fs::copy_file(screenshotPath, userScreenshotPath, fs::copy_options::overwrite_existing, ec);
+                if (ec) {
+                    std::fprintf(stderr, "[spawn] WARN: could not copy capture to %s (%s); reporting confined path\n",
+                                 userScreenshotPath.c_str(),
+                                 ec.message().c_str()); // CLI stdout — product output, not logging
+                } else {
+                    fileData["screenshotPath"] = userScreenshotPath;
+                }
+            }
         }
 
         nlohmann::json resultEnv;
@@ -1088,8 +1135,28 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
         // outPath/outLog (CPP_CODE_AUDIT.md #8/#9 follow-up; see
         // scripts/dev/test-ui-jira-deterministic-backend.sh's outLog handling). Confinement
         // resolves relative to <userData>, which both processes agree on without any CWD
-        // translation, so argsToSendRaw is forwarded to the spawned child unmodified.
-        const nlohmann::json& argsToSend = argsToSendRaw;
+        // translation, so outPath/outLog are forwarded to the spawned child unmodified.
+        //
+        // C1 parent-fulfill (screenshotPath confinement). The spawned child confines any
+        // caller-supplied screenshotPath under its own <userData>/screenshots/ dir and REJECTS
+        // absolute / '..' paths — closing the #1566-class arbitrary-file-write on the
+        // MCP/Lua-reachable scenarios + debug.window.screenshot. The directly-invoked --spawn CLI
+        // parent is trusted, so we still honour the user's (often absolute) --screenshotPath: swap
+        // in a confine-safe unique basename the child will accept, then copy the child's confined
+        // capture back to the user's path after the run (SpawnAndRunHandleAsync). outPath is NOT
+        // absolutized — the parent reads the child-reported data.outPath, and absolutizing a
+        // relative --outPath would make the child's own ConfinePathUnderSubdir reject it (H1).
+        nlohmann::json argsToSend = argsToSendRaw;
+        std::string userScreenshotPath;
+        if (argsToSend.contains("screenshotPath") && argsToSend["screenshotPath"].is_string()) {
+            const std::string requested = argsToSend["screenshotPath"].get<std::string>();
+            if (!requested.empty()) {
+                userScreenshotPath = requested;
+                const std::string ext = fs::path(requested).extension().string();
+                argsToSend["screenshotPath"] =
+                    "spawn-shot-" + SpawnLogRandomToken() + (ext.empty() ? std::string(".png") : ext);
+            }
+        }
 
         // Phase 1: launch ephemeral instance and wait for MCP ready.
         const int setupResult = SpawnAndRunSetup(commandName, host, port, provisionToken, requestToken);
@@ -1125,7 +1192,8 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
         if (isAsync) {
             // Phase 3: wait for the output file and emit the result.
             const std::string outPath = SafeString(envData, "outPath");
-            resultCode = SpawnAndRunHandleAsync(pa, cli, commandName, outPath, frames, scenarioWaitMs);
+            resultCode =
+                SpawnAndRunHandleAsync(pa, cli, commandName, outPath, frames, scenarioWaitMs, userScreenshotPath);
             if (resultCode != kExitOk)
                 return resultCode; // async helper sends app.quit on every failure path
         } else {

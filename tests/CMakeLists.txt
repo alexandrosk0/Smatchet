@@ -709,6 +709,10 @@ add_executable(SmatchetTests
     # rejections + the symlinked-subdir escape regression from the security-audit
     # MCP file-command confinement. No extra .cpp source.
     Core/PathConfinement.test.cpp
+    # header-only; pins the screenshot-scenario confinement wrapper's fail-closed
+    # escape rejections (absolute / ".." / empty) + scenario-prefixed reject message
+    # (#1566 arbitrary-file-write class on the MCP/Lua-reachable screenshot scenarios).
+    Core/ScenarioScreenshotPath.test.cpp
     Core/DictationInsertionRouter.test.cpp
     Core/AiAssistantInputSeedDecision.test.cpp
     Core/AiAssistantSendButton.test.cpp
