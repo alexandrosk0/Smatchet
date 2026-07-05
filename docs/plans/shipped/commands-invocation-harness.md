@@ -2,7 +2,7 @@
 
 > **Slug**: `commands-invocation-harness`
 >
-> **Status**: `active`
+> **Status**: `shipped`
 
 ## Context
 
@@ -102,5 +102,6 @@ crash. The harness below is the productionised version: 6 cases / 952 assertions
 
 - Plan-lock seed push to `refs/locks/*` remains blocked by the session git proxy (403) — logged per
   the seed contract, same as the Tier-1/Tier-2 plans.
-- Day-1 CI hosting is the advisory `mobile-posix-core-check` lane only (as the plan anticipated) —
-  promotion to a blocking lane is the recorded follow-up once the harness proves stable in CI.
+- Day-1 CI hosting is the advisory `mobile-posix-core-check` lane only (as the plan anticipated).
+  The planned promotion follow-up is MOOT: PR #1619 ("block-on-any-red") retired the curated
+  meant-to-block allow-list, so a red in this lane already gates merges.
