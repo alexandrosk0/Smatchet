@@ -48,7 +48,7 @@ class FakeOfflineQueueDeps : public IOfflineQueueDeps {
     /// generation matched at apply time — mirroring production, where the checked overload's
     /// under-lock re-check drops the replace on mismatch).
     int RefreshLocalDataCalls = 0;
-    /// Checked-overload bookkeeping (issue #1081 / PR #1104 review HIGH): how many checked
+    /// Checked-overload bookkeeping (issue #1081): how many checked
     /// refreshes arrived, and how many were dropped by the apply-time generation re-check.
     int CheckedRefreshLocalDataCalls = 0;
     int CheckedRefreshLocalDataDrops = 0;

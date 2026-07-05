@@ -1,7 +1,7 @@
 // UiPerfMonitor warmup-frame exclusion — the snapshot p99 seam that arms
 // Quality Pillar 1's absolute p99 ceiling (scripts/dev/perf-compare.py
 // p99_abs_ceiling_ms). These cases pin the contract behind
-// tooling.md `p99-gate-warmup-frame-exclusion` (PR #963, postmortems.md
+// tooling.md `p99-gate-warmup-frame-exclusion` (postmortems.md
 // 2026-06-07): the uniform runner-level UiPerfMonitor::Reset() that
 // ScenarioRunner::Tick fires after WarmupFrames() frames must drop cold-start
 // spikes from the ring that feeds ComputeP99, WITHOUT defanging the ceiling —
@@ -46,7 +46,7 @@ TEST_CASE("UiPerfMonitor warmup: a one-time cold-start spike before Reset is exc
 
     // WARMUP window: a single huge cold-start spike (font-atlas / first-frame /
     // initial-sync shape) plus a few quiet frames — exactly the population that
-    // dominated cell-edit-burst's p99 on PR #963 (p99 ~12 ms, steady max
+    // dominated cell-edit-burst's p99 (p99 ~12 ms, steady max
     // ~0.0002 ms). Because cell-edit-burst's ring held ONLY these, ComputeP99
     // returned the spike.
     RecordMs(kScope, 42.0); // cold-start spike (>> the 10 ms ceiling)

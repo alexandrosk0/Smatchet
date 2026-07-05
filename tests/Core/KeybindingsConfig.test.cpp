@@ -1,7 +1,7 @@
 // Pure-logic tests for the rebindable keybinding table: KeybindingsConfig::Defaults()
 // parity with the migrated hardcoded shortcut set, JSON round-trip, and the
 // malformed-binding skip / missing-field default behaviour of from_json.
-// docs/plans/shipped/keyboard-shortcuts-rebindable.md (PR1 foundation).
+// docs/plans/shipped/keyboard-shortcuts-rebindable.md.
 
 #include <doctest/doctest.h>
 

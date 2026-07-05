@@ -280,7 +280,7 @@ TEST_CASE("tickets_v2 namespacing: same numeric id under two backend keys stays 
 
 // ============================================================================
 // Pending-queue backend_key migrations — moved here from OfflineQueueBackendKey.test.cpp
-// (ilocalcache-seam PR2): these are LocalCacheManager IMPL tests (file-backed DB, raw legacy
+// (ilocalcache-seam): these are LocalCacheManager IMPL tests (file-backed DB, raw legacy
 // writer, off-interface RunOneTimePendingQueueBackendKeyStamp) and belong with the migration
 // suite, keeping the service TU pure (ADR-0020). Reuses this TU's TempDbFile.
 // ============================================================================

@@ -1,13 +1,13 @@
 // annotate_prefs_persist_flow.test.cpp — bucket-E coverage for the Annotate
 // Preferences tab's edit → persist → reload round-trip (follow-up "item 5"
 // from the Annotate prefs cleanup; the last manual-residue verification after
-// PR #568 / N14).
+// the N14 async-save cutover).
 //
 // What the data layer ALREADY covers (tests/Core/AnnotateAnalysisConfig.test.cpp,
 // doctest): clamp, show_raw_callstack, multi-rule path_remaps Save/Load
 // round-trip; plus a [high-risk] concurrent-write valid-JSON gate. What is NOT
 // covered there is the UI-interaction → persistence → reload path, and in
-// particular the N14 timing change: after PR #568 a prefs edit routes the save
+// particular the N14 timing change: a prefs edit routes the save
 // through a DETACHED worker thread (value-snapshot → ConfigManager::
 // SaveAnnotateAnalysis), so persistence is ASYNCHRONOUS — the test must
 // bounded-wait for the write to land, never assume a synchronous save.

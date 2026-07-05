@@ -1,4 +1,5 @@
-// callstack_tooltip_hover.test.cpp — bucket-E regression gate for PR #147.
+// callstack_tooltip_hover.test.cpp — bucket-E regression gate for the
+// callstack-cell tooltip hover fix.
 //
 // Bug recap: Source/Core/src/SmatchetFieldRender.cpp::RenderClippedFieldText
 // emits one ImGui::TextUnformatted per token via DrawColoredCppLine for

@@ -1,4 +1,4 @@
-// AiAssistantSendScenario — PR-12 `aiassistant-streaming-scenarios-s2-s4-s5`.
+// AiAssistantSendScenario — the `aiassistant-streaming-scenarios-s2-s4-s5` gate.
 //
 // Headless streaming regression closing the deferred live-API verification
 // scenarios from docs/plans/shipped/ai-assistant-side-panel.md § Verification:

@@ -538,7 +538,7 @@ TEST_CASE("TicketSyncService kind change clears in-memory active tickets and pub
     REQUIRE(deps.ActiveTicketsPublishedImpl != nullptr);
     CHECK(deps.ActiveTicketsPublishedImpl->empty());
     CHECK(deps.ActiveTicketsRevisionImpl == 1);
-    // Every ActiveTickets-mutating path flips the Lua window bump (PR #386 invariant).
+    // Every ActiveTickets-mutating path flips the Lua window bump (invariant).
     CHECK(deps.PendingLuaWindowBumpImpl == true);
     // SQLite rows are untouched by the in-memory clear.
     CachedTicket got;

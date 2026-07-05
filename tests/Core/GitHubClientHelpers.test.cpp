@@ -1,5 +1,5 @@
 // GitHubClientHelpers doctest — pure helper round-trips.
-// PR2 of docs/plans/shipped/github-tracker-backend.md.
+// Part of docs/plans/shipped/github-tracker-backend.md.
 
 #include "GitHubClientHelpers.h"
 
@@ -68,7 +68,7 @@ TEST_CASE("IsValidGitHubBaseUrl — strict: only api.github.com or <host>/api/v3
     const auto trailing = IsValidGitHubBaseUrl("https://api.github.com/");
     CHECK_FALSE(trailing);
     CHECK(trailing.error().find("trailing slash") != std::string::npos);
-    // Per CodeRabbit on PR #357 — reject arbitrary https paths.
+    // Per CodeRabbit review — reject arbitrary https paths.
     CHECK_FALSE(IsValidGitHubBaseUrl("https://github.com")); // not /api/v3
     CHECK_FALSE(IsValidGitHubBaseUrl("https://example.com/somewhere"));
     CHECK_FALSE(IsValidGitHubBaseUrl("https:///api/v3")); // empty host
@@ -141,7 +141,7 @@ TEST_CASE("ParseIso8601ToUnixSec — timezone-aware (Z + ±HH:MM + ±HHMM)") {
         REQUIRE(r);
         CHECK(r.value() == 1705276800);
     }
-    // Per CodeRabbit on PR #357 — non-zero offset now adjusts the epoch.
+    // Per CodeRabbit review — non-zero offset now adjusts the epoch.
     // 2024-01-15T12:00:00 +05:30 = 2024-01-15T06:30:00 UTC.
     // 1705276800 (Jan 15 00:00 UTC) + 12*3600 (12h) - 19800 (5h30m offset) = 1705300200.
     {
@@ -180,7 +180,7 @@ TEST_CASE("ParseIso8601ToUnixSec — timezone-aware (Z + ±HH:MM + ±HHMM)") {
         CHECK_FALSE(r);
         CHECK_FALSE(r.error().empty());
     }
-    // Per CodeRabbit nitpick on PR #358 — out-of-range offsets rejected (max real-world is +14:00).
+    // Per CodeRabbit nitpick — out-of-range offsets rejected (max real-world is +14:00).
     {
         const auto r = ParseIso8601ToUnixSec("2024-01-15T00:00:00+53:99");
         CHECK_FALSE(r);

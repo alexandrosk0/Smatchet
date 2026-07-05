@@ -1,5 +1,5 @@
 // keybindings_editor_rebind.test.cpp — bucket-E (ImGui Test Engine) coverage
-// for the rebindable keyboard-shortcut feature's visible UX (PR2 of
+// for the rebindable keyboard-shortcut feature's visible UX (per
 // docs/plans/shipped/keyboard-shortcuts-rebindable.md).
 //
 // Two real-UI assertions, each driven against the LIVE app (no replica window):

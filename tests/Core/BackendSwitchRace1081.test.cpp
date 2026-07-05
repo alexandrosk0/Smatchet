@@ -132,7 +132,7 @@ TEST_CASE("issue #1081 control: offline field-edit replay still refreshes when t
 
     CHECK(deps.RefreshLocalDataCalls == 1);
     // And the refresh went through the CHECKED overload — the captured generation must reach
-    // the apply-time under-lock re-check, not just the worker-side pre-check (PR #1104 HIGH).
+    // the apply-time under-lock re-check, not just the worker-side pre-check.
     CHECK(deps.CheckedRefreshLocalDataCalls == 1);
 }
 

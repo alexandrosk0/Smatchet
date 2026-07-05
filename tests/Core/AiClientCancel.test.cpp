@@ -1,4 +1,4 @@
-// AiClientCancel.test.cpp — PR-12 `aiclientcancel-per-client-regression`.
+// AiClientCancel.test.cpp — the `aiclientcancel-per-client-regression`.
 //
 // Per-client mid-stream cancellation regression, parameterised across the three
 // REAL production AI clients (OpenAiClient / AnthropicClient / OllamaClient)

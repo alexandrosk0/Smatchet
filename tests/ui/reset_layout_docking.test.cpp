@@ -22,7 +22,7 @@
 //      asserts it LATCHED but did NOT do the heavy work inline. Fails the
 //      instant anyone re-inlines the dock work into the mid-frame entry point
 //      (the exact shape of the original bug). No host-window dependency — this
-//      is the robust CI gate that survives Mesa-headless GL (PR #1180 lesson).
+//      is the robust CI gate that survives Mesa-headless GL.
 //   2. LiveHostProbe_TreeRebuildsNoOrphans (SECONDARY, informational) — drives
 //      the LIVE host: triggers a reset on g_ui, Yields for the end-of-frame
 //      drain + force-redock to settle, then asserts the canonical nodes stay

@@ -1,4 +1,4 @@
-// SmatchetThemeDensity.test.cpp — mobile host-injection seam #13 (PR #1043).
+// SmatchetThemeDensity.test.cpp — mobile host-injection seam #13.
 //
 // Unit-tests the pure ShouldApplyDensityScale predicate that ReapplyHostDensityScale
 // uses to decide whether to re-assert the host-injected UI density scale on a freshly

@@ -303,7 +303,7 @@ void DrawLongTextPreviewPane(const LongTextModalCtx& ctx) {
     ::ImGuiWindow* previewWin = ::ImGui::GetCurrentWindow();
     const std::string md(s_ActiveLongTextState.Buffer.data());
 
-    // PR-5: round-trip the buffer through the same converter that runs on save
+    // Round-trip the buffer through the same converter that runs on save
     // (Markdown -> ADF / HTML -> Markdown), then render the result. Any conversion loss
     // surfaces here before the user clicks Save. Debounced: arm a 100 ms timer on each
     // buffer change; fire only when idle so rapid keystrokes don't re-convert every frame.

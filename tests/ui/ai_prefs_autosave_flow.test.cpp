@@ -152,14 +152,14 @@ void RegisterAutosaveDebounceVariant(ImGuiTestEngine* engine) {
 
 // --- Variants 2 & 3: live coverage via AiPrefsTestConnection seam --------
 //
-// Lifted from deferred placeholders in PR #214 once the seam landed
+// Lifted from deferred placeholders once the seam landed
 // (`AiClientFactory::SetTestOverride` + `AiPrefsTestConnection::TriggerProbe`
 // extraction). Both variants bypass the Preferences UI entirely — the probe
 // runs against a stub IAiClient injected via the factory override, and we
 // drive `TriggerProbe` directly without traversing
 // `Preferences -> Assistant tab -> Test connection click` (engine-side
 // ItemClick on `BeginTabItem("Assistant")` sub-items is not reachable in the
-// current bucket-E harness, per PR #214 hot-lead).
+// current bucket-E harness).
 
 class StubAiClient : public IAiClient {
   public:
