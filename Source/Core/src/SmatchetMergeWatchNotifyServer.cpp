@@ -1,68 +1,15 @@
 #include "SmatchetMergeWatchNotifyServer.h"
 
 #include "AppController.h"
-#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
+#include "MergeWatchNotifyPure.h"
 #include "SmatchetToast.h"
 
 #include <httplib.h>
-#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <atomic>
-#include <set>
 #include <string>
-
-namespace {
-
-// Per Phase 4a's NOTIFY_STATES set in scripts/dev/merge-watcher.py.
-// Server-side allow-list — reject any other state string so a compromised
-// (or buggy) caller can't inject arbitrary toast text under an arbitrary
-// state label.
-const std::set<std::string>& KnownStates() {
-    static const std::set<std::string> s = {
-        "CI_FAIL", "GH_API_DOWN", "PR_CLOSED_OR_MERGED", "PAGINATION_OVERFLOW", "TIMEOUT", "TRIAGE_BUDGET_EXHAUSTED",
-    };
-    return s;
-}
-
-// Cap message length so a runaway payload can't flood the toast surface OR
-// the dispatcher queue. 500 chars matches the per-line cap in
-// SmatchetToastManager::Render's wrap path.
-constexpr std::size_t kMaxMessageBytes = 500;
-
-// Strip control characters (< 0x20 except \t \r \n) — ImGui renders text
-// verbatim + control chars can hose layout. Doesn't escape HTML / markdown
-// because ToastManager doesn't render either.
-std::string SanitizeText(const std::string& raw) {
-    std::string out;
-    out.reserve(raw.size());
-    for (char c : raw) {
-        unsigned char uc = static_cast<unsigned char>(c);
-        if (uc < 0x20 && uc != '\t' && uc != '\n' && uc != '\r') {
-            out.push_back('?');
-        } else {
-            out.push_back(c);
-        }
-    }
-    if (out.size() > kMaxMessageBytes) {
-        out.resize(kMaxMessageBytes);
-        out.append("...");
-    }
-    return out;
-}
-
-ToastType TypeForState(const std::string& state) {
-    if (state == "CI_FAIL" || state == "PAGINATION_OVERFLOW" || state == "TRIAGE_BUDGET_EXHAUSTED") {
-        return ToastType::Error;
-    }
-    if (state == "PR_CLOSED_OR_MERGED") {
-        return ToastType::Success;
-    }
-    return ToastType::Warning;
-}
-
-} // namespace
 
 SmatchetMergeWatchNotifyServer::SmatchetMergeWatchNotifyServer() : running_(false) {}
 
@@ -74,48 +21,23 @@ void SmatchetMergeWatchNotifyServer::RegisterRoutes(AppController& app) {
     MainThreadDispatcher& dispatcher = app.mainThreadDispatcher;
 
     server_->Post("/merge-watch/notify", [&dispatcher](const httplib::Request& req, httplib::Response& res) {
-        // Pillar 3: depth/node-bounded parse + validate before any toast dispatch. The
-        // request body is attacker-controlled (localhost POST), so ParseBounded guards
-        // against a hostile / oversized payload. It never throws; failure is a non-empty
-        // parseErr holding a stable, input-free message (safe to embed in the response).
-        std::string parseErr;
-        nlohmann::json j = smatchet::json_safe::ParseBounded(req.body, parseErr);
-        if (!parseErr.empty()) {
-            res.status = 400;
-            res.set_content(std::string("{\"error\":\"bad JSON: ") + parseErr + "\"}", "application/json");
+        // The whole attacker-reachable decision surface (bounded parse → shape/type
+        // validation → state allow-list → sanitize → toast plan) lives in
+        // MergeWatchNotifyPure::PlanMergeWatchNotify (gap map Tier 1 #6 — doctested in
+        // tests/Core/MergeWatchNotifyPure.test.cpp). This handler owns transport only.
+        const MergeWatchNotifyPure::NotifyPlan plan = MergeWatchNotifyPure::PlanMergeWatchNotify(req.body);
+        res.status = plan.HttpStatus;
+        res.set_content(plan.ResponseBody, "application/json");
+        if (!plan.Ok) {
             return;
         }
-        if (!j.is_object() || !j.contains("pr") || !j.contains("state") || !j.contains("message")) {
-            res.status = 400;
-            res.set_content("{\"error\":\"missing required field (pr / state / message)\"}", "application/json");
-            return;
-        }
-        if (!j["pr"].is_number_integer() || !j["state"].is_string() || !j["message"].is_string()) {
-            res.status = 400;
-            res.set_content("{\"error\":\"field type mismatch\"}", "application/json");
-            return;
-        }
-        const int pr = j["pr"].get<int>();
-        const std::string state = j["state"].get<std::string>();
-        const std::string rawMessage = j["message"].get<std::string>();
-        if (KnownStates().find(state) == KnownStates().end()) {
-            res.status = 400;
-            res.set_content("{\"error\":\"unknown state (allowed: CI_FAIL, GH_API_DOWN, "
-                            "PR_CLOSED_OR_MERGED, PAGINATION_OVERFLOW, TIMEOUT, "
-                            "TRIAGE_BUDGET_EXHAUSTED)\"}",
-                            "application/json");
-            return;
-        }
-        const std::string message = SanitizeText(rawMessage);
-        const ToastType type = TypeForState(state);
 
         // Post to UI thread — dispatcher is thread-safe + bounded.
-        const std::string title = std::string("Smatchet watcher · PR #") + std::to_string(pr) + " · " + state;
+        const std::string title = plan.Title;
+        const std::string message = plan.Message;
+        const ToastType type = plan.Type;
         dispatcher.PostToMainThread(
             [title, message, type]() { SmatchetToastManager::Instance().Push(title, message, type, 6000); });
-
-        res.status = 200;
-        res.set_content("{\"ok\":true}", "application/json");
     });
 
     // Health probe — daemon's smatchet-notify.sh can use to detect endpoint
