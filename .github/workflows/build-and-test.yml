@@ -58,6 +58,13 @@ on:
   # step below forces code=true on merge_group so BOTH MSVC required contexts
   # always run + report a terminal status on the queued merge.
   merge_group:
+  # Manual dispatch: lets the push-only, runner-gated Windows-on-ARM legs run on
+  # a topic branch BEFORE merging (they skip on pull_request by design, so the
+  # only pre-dispatch way to test an ARM64 bring-up fix was merging to develop
+  # and watching the push run — a slow, merge-noisy loop the all-gates-blocking
+  # WoA whisper fix hit first). `github.event_name != 'pull_request'` in the WoA
+  # job `if:` admits dispatch runs.
+  workflow_dispatch:
 
 # Cancel in-flight runs for the same branch on a new push.
 concurrency:
