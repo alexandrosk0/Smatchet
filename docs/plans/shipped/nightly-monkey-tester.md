@@ -2,7 +2,7 @@
 
 > **Slug**: `nightly-monkey-tester` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — driving in-flight work. Values: `active` · `shipped` · `blocked` / `deferred`.
+> **Status**: `shipped` — Layers 1a/1b/2/3 merged (PR #1637, develop `aaa52574`); Layer 4 deferred. Values: `active` · `shipped` · `blocked` / `deferred`.
 >
 > **Usage**: Layers 1a, 1b, 2, and 3 are shipped (see § Out of scope for the per-layer status); Layer 4 (AI-agent exploratory pass) is deferred pending infra + governance sign-off.
 
@@ -86,15 +86,15 @@ One EXTRACT: the four synth helpers (~55 lines) move from `CommandContractSweepS
 - **Layer 4 — AI-agent exploratory pass** *(deferred — needs infra/governance, not shippable autonomously)*: a nightly that drives an LLM agent over the CLI (`Smatchet cmd …`) / MCP (`tools/list` + `tools/call`) surface, lets it explore like a user, and files issues for what looks broken. Deferred deliberately: it requires (1) an agent runtime + a provider **API-key secret** in CI (real per-run cost), (2) maintainer governance sign-off under `AI_POLICY.md` (an autonomous agent acting on the repo), and (3) human triage of non-deterministic findings — none of which should be provisioned without an explicit owner decision. Ready-to-pick-up shape when greenlit: a `workflow_dispatch` + weekly-cron job that builds the CLI, seeds the agent with `CLI_GUIDE.md` + `MCP_GUIDE.md` and a fixed fake-backend fixture, caps turns/tokens, and posts a single summarized issue per run (label `agent-explore`). Layers 1–3 (deterministic monkeys) are the value floor; Layer 4 only earns its keep once they've soaked.
 
 ## Implementation log
-*(populated post-ship — bullet per shipped commit: `<sha> · <one-line summary>`)*
+- `aaa52574` · Nightly "code monkey" fuzzers — Layers 1a/1b/2/3 (PR #1637, squash): command-registry pre-handler fuzz (`SmatchetMonkeyCli --mode=prehandler`), allow-listed handler execution (`--mode=handlers`) vs a fake Jira backend, opt-in random-input ImGui UI monkey (`tests/ui/ui_monkey.test.cpp`), three parser fuzz drivers (JQL escape / AI error-redact / AI endpoint sanitize), and two nightly workflows (`monkey-nightly.yml`, `ui-monkey-nightly.yml`) that auto-file a `bug` issue carrying the reproducing seed.
 
 ## Deviations from plan
-*(populated post-ship)*
+- **Layer 2 shipped as a random-INPUT monkey, not a `GatherItems` widget-walker.** The plan proposed enumerating widgets via `ctx->GatherItems`; that API is unused elsewhere in `tests/ui/` and couldn't be compile-verified in the egress-blocked sandbox, and the natural lane (Bucket-E) is required + time-tight. Shipped a compile-safe random keyboard/mouse-input monkey (only in-tree-verified engine primitives), **env-gated opt-in** (`SMATCHET_UI_MONKEY=1`) so it's inert under the required `ui_test.run --all`, exercised by a separate advisory `ui-monkey-nightly.yml`.
+- **Layer 4 deferred** (not shipped) — needs a provider API-key secret + `AI_POLICY.md` governance sign-off + human triage; ready-to-pick-up design recorded above.
+- **Fixed a pre-existing `SynthValidValue` `Number`-bounds bug** (the `Number` branch ignored `MinInt`/`MaxInt`, unlike `Int`) surfaced by CodeRabbit review of the extraction; added a regression test.
+- **Reused the existing `posix-core-check` preset + `-DSMATCHET_SANITIZER=asan`** (which gives ASan+UBSan on clang-linux) instead of adding a new `ninja-monkey-linux` preset — the composition check confirmed it works.
 
 ## Verification (actual)
-*(populated post-ship)*
-
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. flip the § Status header to `shipped`,
-2. `git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,
-3. regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.
+- **Local (ASan/UBSan, `g++ -fsanitize=address,undefined`)**: the arg synthesizer + fuzz generators + all three fuzz drivers compile/link/run clean on adversarial seeds; same seed → byte-identical sequence; `tests/Core/CommandArgSynth.test.cpp` passes (4 cases / 10,215 assertions). **Passed.**
+- **CI (all green on the merged HEAD)**: `mobile-posix-core-check` (1a + 1b — first headless `Initialize` on Linux + fake-Jira handler smoke), `Bucket-E UI tests` (2 — `ui_monkey.test.cpp` compiled into `SmatchetStandalone`), `Fuzz smoke (Linux libFuzzer)` (3 — 3 new targets built + smoked), `Windows + MSVC`, `Coverage`, Sanitizers, TSan, CodeQL, C++ lint, Duplication, Test-delta gate. **Passed.**
+- **Nightly `workflow_dispatch` dry-runs**: **not-run** — deferred to a post-merge manual dispatch of `monkey-nightly.yml` / `ui-monkey-nightly.yml` to confirm the auto-issue path end-to-end.

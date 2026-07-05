@@ -2,7 +2,7 @@
 #define SMATCHET_TESTS_MONKEY_COMMAND_ARG_SYNTH_H
 
 // CommandArgSynth — seeded argument fuzzers for the nightly command-registry monkey
-// (tests/monkey/monkey_command_registry.cpp). See docs/plans/active/nightly-monkey-tester.md.
+// (tests/monkey/monkey_command_registry.cpp). See docs/plans/nightly-monkey-tester.md.
 //
 // DESIGN INVARIANT (the reason this monkey is false-positive-free):
 // every probe this header builds is GUARANTEED to be rejected by
