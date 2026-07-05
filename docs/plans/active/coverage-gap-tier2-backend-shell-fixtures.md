@@ -83,10 +83,29 @@ the rig.
    `GitHubActivityFeed.cpp` (the GitHubClient vtable spans the latter two; all other deps were
    already in the rig).
 
+### Slice 3 (third PR) — Plane + Linear mutation (write) shells
+
+9. `tests/Core/PlaneIssueMutationHttp.test.cpp` — NEW suite driving the real `PlaneClient` write
+   surface at the loopback: PATCH wire shape (payload verbatim to the work-item route), the
+   visual-key→UUID cache miss (`InvalidRequest` + refresh hint, zero HTTP), non-2xx error-body
+   extraction + status-kind mapping, create visual-key derivation (`SMT-<seq>`) **and** the
+   create→cache-warm→immediate-visual-key-edit seam, the created-key-unknown `Ok(empty)` contract,
+   comment-post markdown→`comment_html` conversion, comments-fetch envelope unwrap + status mapping.
+   The cfg-less paths run under `TestEnvGuard` with the loopback config saved into the guard's dir.
+10. `tests/Core/LinearIssueMutationHttp.test.cpp` — NEW suite for the GraphQL write shell: the
+    identifier→UUID resolve hop fronting every write (wire shapes of both requests asserted from
+    captured bodies), resolve-miss `InvalidRequest` naming the identifier (mutation never fires),
+    `success=false` + `errors[]` taxonomies, create payload guard / identifier extraction /
+    created-key-unknown, comment resolve+`commentCreate` wire shape (markdown verbatim), and the
+    issue-#979 cleared-live-key-no-ctor-fallback rule. Same `TestEnvGuard` pattern for cfg-less paths.
+11. `tests/CMakeLists.txt` — register both suites; link `LinearClient.cpp` + `LinearIssueMutation.cpp`
+    (the LinearClient vtable; every other dep, including the already-linked `PlaneIssueMutation.cpp`,
+    was in the rig).
+
 ### Later slices (not this PR)
 
-- Mutation-side suites (`PlaneIssueMutation.cpp`, `LinearIssueMutation.cpp`) once the B2 batches reach
-  the write paths.
+- `GitHubCommits.cpp` (Vcs, 96 LOC) and the remaining small shells if a future batch wants them;
+  otherwise the Tier-2 lane is complete and the map's item 4 (Commands harness) is next.
 
 ## Verification
 
@@ -105,7 +124,11 @@ the rig.
   described in § Verification, plus lint/docs/format gates). Merged in #1622 (`86ae8393`).
 - `fe7a3a58` · Slice 2: GitHub issue-search + client fixture suites + shared `HttpRequestCapture`
   support header (13 cases / 117 assertions; same Linux verification + gates; full rig 2202/2203
-  with the sole failure the pre-existing `SubprocessCapturePure` wide-char case).
+  with the sole failure the pre-existing `SubprocessCapturePure` wide-char case). Merged in #1628
+  (`5b92ad45`).
+- `9e039ce9` · Slice 3: Plane + Linear mutation-shell fixture suites (6 cases / 62 assertions;
+  same Linux verification + gates; full rig 2216/2217, same pre-existing sole failure). First
+  combined use of `TestEnvGuard` + the HTTP loopback fixture for the cfg-less write paths.
 
 ## Deviations from plan
 
