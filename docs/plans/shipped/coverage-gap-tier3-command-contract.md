@@ -2,7 +2,7 @@
 
 > **Slug**: `coverage-gap-tier3-command-contract`
 >
-> **Status**: `active`
+> **Status**: `shipped`
 
 ## Context
 
@@ -71,13 +71,19 @@ N/A — additive scenario + driver; nothing is split.
 - Gap-map Tier 2 (backend HTTP shells — owned by the B2 migration track) and Tier 5 (bucket-C/E re-blocking — a merge-gates policy change for the user to authorize).
 
 ## Implementation log
-*(populated post-ship)*
+
+- Shipped as PR #1618 (squash-merged to develop as `0f6a505`) — scenario + registry/stub/snapshot wiring + auto-enrolled driver per § Files to modify, plus two review findings applied in-flight (shared `SynthValidRequiredArgs`; probe A asserts the envelope names the param — which surfaced and fixed a probe-target bug: validation names the first Required param regardless of Default).
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- Probe A's helper changed from "first required WITHOUT default" to "first required" — `ValidateAndResolveArgs` checks `Required` before applying any `Default`, so the original filter could target the wrong param on required-with-default specs.
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- New TU: clean `clang -fsyntax-only -Wall -Wextra` against the real header closure (local); full compile via CI's POSIX core gate + dual-target Windows builds — all green on the merged head.
+- `SmatchetScenarioRegistry` snapshot suite: 42 assertions green locally; Windows ctest green in CI.
+- `shellcheck` clean; all repo gates (lint/dup/docs) green locally and in CI.
+- First scenario execution lands wherever `test-all.sh` runs with a built exe (self-skips elsewhere) — the driver passed CI's bats aggregate in skip mode as designed.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 Flip § Status to `shipped`, populate the three sections above, `git mv` to `docs/plans/shipped/` in the same PR.

@@ -175,6 +175,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`plan-lock-enforcement`](shipped/plan-lock-enforcement.md) | 2026-06-19 | Plan — Force plan-lock filing before file edits (force-on-contention, 3-layer) |
 | [`perf-interactive-grid-stress`](shipped/perf-interactive-grid-stress.md) | 2026-06-20 | Plan — interactive-grid-stress (active 8-pane mixed-backend perf probe) |
 | [`coverage-gap-tier1-pure-extractions`](shipped/coverage-gap-tier1-pure-extractions.md) | 2026-07-05 | Plan — Coverage-gap Tier 1: pure extractions for the audit-fixed sort + long-text paths |
+| [`coverage-gap-tier3-command-contract`](shipped/coverage-gap-tier3-command-contract.md) | 2026-07-05 | Plan — Coverage-gap Tier 3: registry-wide command error-envelope contract sweep |
 <!-- END auto-plan-index -->
 
 ### Notes
