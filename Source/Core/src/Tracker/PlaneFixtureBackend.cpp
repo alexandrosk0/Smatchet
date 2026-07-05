@@ -56,7 +56,9 @@ PlaneFixtureBackend::PlaneFixtureBackend(const std::string& fixturePath) : fixtu
         return;
     }
     std::stringstream buf;
+    // SMATCHET_DEVIATION(rule=unbounded-file-slurp; reason=developer-authored local fixture file, small by construction; owner=security-audit; revisit=2026-12-31)
     buf << in.rdbuf();
+    // SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; reason=deterministic fixture backend parses a developer-authored local fixture file, not hostile ingress; owner=security-audit; revisit=2026-12-31)
     const nlohmann::json j = nlohmann::json::parse(buf.str(), nullptr, false);
     if (j.is_discarded()) {
         loadError_ = "invalid JSON in fixture file";

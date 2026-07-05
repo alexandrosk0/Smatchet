@@ -30,6 +30,13 @@
 #   (advisory)             [func-size] WARN on > 100 lines / > 20 branches — never blocks
 #   agent-too-long         agent prompt > 250 lines / AGENTS.md > 150 (delta-gated; agent_size_audit.py)
 #   (advisory)             [agent-size] WARN — soft tiers + the docs/agent-rules + skills sinks (~400)
+#   bare-json-parse-untrusted  bare json::parse( / stream>>json slurp not routed via
+#                          json_safe::ParseBounded (ALL first-party .cpp/.h/.hpp; blocking)
+#   catch-all-swallow      EMPTY catch (...) body — no statement, no justifying comment
+#                          (all first-party C++; absolute-0; exception-handling-policy hard rule 1)
+#   (advisory)             unbounded-recursive-json-walker — self-recursive fn over a
+#                          nlohmann::json/sol::object param with no depth/budget token (WARN)
+#   (advisory)             unbounded-file-slurp — rdbuf()/istreambuf whole-file read (WARN)
 #
 # Modes:
 #   (no args) / --diff [<ref>]   delta gate: fail only on (rule,basename,hash)
@@ -182,10 +189,20 @@ INCLUDECYCLE_RULES=(include-cycle)
 # AGENTS.md § Tiered enforcement.
 FANIN_RULES=(app-controller-fan-in)
 
-# PR-5 — bare json::parse on untrusted ingress (WARN-first, curated ingress TUs) + g_ui request-flag
-# off-thread write (strict-zone, absolute-0). KEEP IN SYNC with AGENTS.md § Enforcement contract-card.
+# PR-5 — bare json::parse (repo-wide default-deny since the recurring-findings gate hardening) +
+# g_ui request-flag off-thread write (strict-zone, absolute-0). KEEP IN SYNC with AGENTS.md §
+# Enforcement contract-card.
 BAREJSON_RULES=(bare-json-parse-untrusted)
 UIREQFLAG_RULES=(ui-request-flag-off-thread)
+
+# recurring-findings gate — classes mined from SECURITY_AUDIT.md / CPP_CODE_AUDIT.md /
+# docs/self-improvement/postmortems.md that kept recurring across remediation PRs. catch-all-swallow
+# is BLOCKING absolute-0 (exception-handling-policy.md hard rule 1; the tree is clean today); the
+# walker + slurp rules are WARN-first (calibration, same path as the original duplication gate).
+# KEEP IN SYNC with AGENTS.md § Enforcement contract-card.
+CATCHALL_RULES=(catch-all-swallow)
+JSONWALKER_RULES=(unbounded-recursive-json-walker)
+SLURP_RULES=(unbounded-file-slurp)
 
 ratio_warn_for() {
     # Advisory soft warning (never blocks): delegate to comment_audit.py --ratio-warn, which warns
@@ -810,44 +827,46 @@ compute_unused_under_config_guard_violations() {
     for f in "${files[@]}"; do scan_unused_under_config_guard_file "$f"; done
 }
 
-# bare-json-parse-untrusted — BLOCKING over UNTRUSTED-INGRESS first-party .cpp TUs.
-# A bare `nlohmann::json::parse(` (or `json::parse(`) on an UNTRUSTED ingress payload that does
-# NOT route through smatchet::json_safe::ParseBounded is a DoS vector: the recursive parser
-# stack-overflows on a deeply-nested payload ("[[[[...]]]]") BEFORE any try/catch can fire (issues
-# #1271 / #1287 / #1290). ParseBounded caps depth + node count + byte size and never throws, so it
-# is the mandated parse for any payload that crosses a CLI / MCP / Lua / HTTP / network-response
-# trust boundary. The cleanup that introduced ParseBounded already migrated the known ingress sites
-# (McpPlugin, CommandRegistry, BuiltinCommands_Config, the Lua bindings); this gate keeps a NEW
-# untrusted-ingress TU from re-introducing a bare parse.
+# bare-json-parse-untrusted — BLOCKING over ALL first-party C++ (.cpp/.h/.hpp), repo-wide.
+# A bare `nlohmann::json::parse(` (or `json::parse(`) on bytes that cross a trust boundary and do
+# NOT route through smatchet::json_safe::ParseBounded is a DoS vector: nlohmann builds the DOM
+# iteratively, but a deeply-nested payload ("[[[[...]]]]") overflows the C++ stack in the RECURSIVE
+# ~json DOM teardown — an uncatchable crash no try/catch intercepts (issues #1271/#1287/#1290; the
+# 3-arg non-throwing form still builds the full DOM). ParseBounded caps depth + node count + byte
+# size and never throws, so it is the mandated parse wherever the bytes are not provably
+# program-internal.
 #
-# "Untrusted ingress" is identified by TU NAME (a curated allow-list of the files that handle a
-# trust boundary) rather than data-flow analysis (a bash linter cannot trace taint). The list is
-# the set of TUs that ALREADY call ParseBounded plus the obvious network/transport ingress clients
-# — i.e. the files where a bare parse is unambiguously parsing attacker-influenced bytes. A
-# `nlohmann::json::parse(..., nullptr, false)` (the non-throwing 3-arg form) STILL builds the full
-# DOM and STILL stack-overflows on depth, so the 3-arg form is NOT an escape — only ParseBounded is.
+# Why repo-wide default-deny replaced the old curated BARE_JSON_INGRESS_TUS basename allow-list:
+# the list lagged the code every time the class recurred — the SECURITY_AUDIT.md sweep (#1566) had
+# to extend it, #1573 found an uncurated sibling (TrackerFieldValueParser), and #1592/#1598 then
+# fixed bare parses in LinearClient / GitHubClient / JiraClient / PlaneClient, none of which were
+# in the curated set, so a regression there would have landed silently. CPP_CODE_AUDIT.md also
+# found the class in a HEADER (JsonParseUtil.h) and in the `file >> j` operator>> form the parse
+# regex cannot see. Default-deny inverts the maintenance burden: EVERY first-party parse is gated,
+# and a site whose bytes ARE program-internal carries an explicit, audit-able
+# `// SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; ...)` on the line above. The tree is
+# clean today (bounded, or deviation-annotated), so any hit is a regression.
 #
-# BLOCKING (sets $rc=1; graduated from WARN-first after the SECURITY_AUDIT.md ParseBounded sweep
-# cleared the backlog) and scoped to the curated ingress set. A
-# `// SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; ...)` above the parse suppresses (e.g. a
-# parse of a value the program itself just serialised, not external bytes).
-#
-# The curated untrusted-ingress TU basename set. KEEP IN SYNC with the ParseBounded callers + the
-# transport ingress clients; extend when a NEW trust-boundary TU is added.
-BARE_JSON_INGRESS_TUS='McpPlugin|CommandRegistry|CliCommandRunner|AnthropicClient|OpenAiClient|AiNdjsonParser|SmatchetMergeWatchNotifyServer|AttachmentAppUpdateService|BugReportService|JiraIssueSearch|JiraIssueMutation|JiraUserAndMeta|PlaneActivityFeed|LinearIssueSearch|GitHubActivityFeed|GitHubCommitsParse|FieldCatalogCache|OfflineQueueService|SmatchetImGuiHost|SmatchetOfflineQueueUi|TicketFieldEditorLongTextPure|ConfigManager_PathUtils|TrackerGridFieldDisplay|TrackerFieldValueParser|WhisperApiClient'
+# Also matched: the `<stream> >> <json-var>` slurp form (operator>> builds the same unbounded DOM;
+# CPP_CODE_AUDIT #11 — ConfigManager_Views/Panes bypassed LoadJsonFile's 64 MiB cap this way). To
+# keep false positives ~0 the slurp form fires only when <json-var> was declared `nlohmann::json`
+# within the preceding 8 lines (the idiomatic declare-then-slurp shape).
 
 scan_bare_json_parse_file() {
-    # $1 = a first-party .cpp file whose basename is in the curated ingress set. Emits
-    # `bare-json-parse-untrusted\t<f>:<line>` per bare json::parse( not routed via ParseBounded.
-    # .cpp only — the ingress decode happens in a TU, not a header.
+    # $1 = a first-party C++ file (.cpp/.h/.hpp — headers hold inline ingress helpers too). Emits
+    # `bare-json-parse-untrusted\t<f>:<line>` per bare json::parse( / stream>>json slurp not routed
+    # via ParseBounded.
     local f="$1"
     [ -f "$f" ] || return 0
-    case "$f" in *.cpp) ;; *) return 0 ;; esac
-    local bn; bn="$(basename "$f" .cpp)"
-    # Curated ingress-TU basename match (portable — no extglob): exact whole-basename match
-    # against the pipe-delimited allow-list.
-    [[ "$bn" =~ ^($BARE_JSON_INGRESS_TUS)$ ]] || return 0
+    case "$f" in *.cpp|*.h|*.hpp) ;; *) return 0 ;; esac
+    # Cheap pre-filter: a file with no json token at all cannot violate — keeps the whole-tree
+    # campaign sweep and the --diff base-worktree scan fast (most files skip here).
+    grep -qE 'json::parse|nlohmann::json' "$f" 2>/dev/null || return 0
     local lineno=0 prev_dev_rule=""
+    # Declare-then-slurp tracking for the operator>> form: the identifiers declared as
+    # `nlohmann::json <name>` and the line each was last declared on (parallel indexed arrays —
+    # no bash-4 associative-array dependency for the git-bash toolchain).
+    local -a jv_names=() jv_lines=()
     while IFS= read -r line || [ -n "$line" ]; do
         lineno=$((lineno+1))
         # Capture a SMATCHET_DEVIATION on the line ABOVE to suppress the next non-blank line.
@@ -862,8 +881,12 @@ scan_bare_json_parse_file() {
         local suppress="$prev_dev_rule"; prev_dev_rule=""
         # Skip pure-comment lines (prose mentions of json::parse don't fire).
         if [[ "$line" =~ ^[[:space:]]*(//|\*|/\*) ]]; then continue; fi
-        # Match a bare json::parse( call. ParseBounded is the mandated form, so a line that already
-        # routes through it is clean (the `ParseBounded(` token is what discriminates).
+        # Record `nlohmann::json <ident>` declarations for the slurp form below.
+        if [[ "$line" =~ (^|[^A-Za-z_:])nlohmann::json[[:space:]]+([A-Za-z_][A-Za-z0-9_]*) ]]; then
+            jv_names+=("${BASH_REMATCH[2]}"); jv_lines+=("$lineno")
+        fi
+        # Match a bare json::parse( call. ParseBounded / ParseBoundedOrDiscarded are the mandated
+        # forms, so a line that already routes through them is clean.
         case "$line" in
             *ParseBounded*) continue ;;
             *'"'*'json::parse'*'"'*) continue ;;   # `json::parse` inside a string literal
@@ -872,6 +895,21 @@ scan_bare_json_parse_file() {
             if [ "$suppress" != "bare-json-parse-untrusted" ]; then
                 printf 'bare-json-parse-untrusted\t%s:%s\n' "$f" "$lineno"
             fi
+            continue
+        fi
+        # operator>> slurp into a json var declared within the preceding 8 lines.
+        if [[ "$line" == *'>>'* ]] && [ "${#jv_names[@]}" -gt 0 ]; then
+            local vi slurpre
+            for ((vi = ${#jv_names[@]} - 1; vi >= 0; vi--)); do
+                [ $((lineno - jv_lines[vi])) -le 8 ] || break
+                slurpre='>>[[:space:]]*'"${jv_names[vi]}"'([^A-Za-z0-9_]|$)'
+                if [[ "$line" =~ $slurpre ]]; then
+                    if [ "$suppress" != "bare-json-parse-untrusted" ]; then
+                        printf 'bare-json-parse-untrusted\t%s:%s\n' "$f" "$lineno"
+                    fi
+                    break
+                fi
+            done
         fi
     done < "$f"
 }
@@ -882,10 +920,218 @@ compute_bare_json_parse_violations() {
         git ls-files \
             'Source/Core/**' 'Source/Plugins/**' 'Source/Standalone/**' \
             2>/dev/null \
-            | grep -E '\.cpp$' | grep -vE '(^|/)ThirdParty/' || true
+            | grep -E '\.(cpp|h|hpp)$' | grep -vE '(^|/)ThirdParty/' || true
     )
     [ "${#files[@]}" -gt 0 ] || return 0
     for f in "${files[@]}"; do scan_bare_json_parse_file "$f"; done
+}
+
+# catch-all-swallow — BLOCKING absolute-0 over ALL first-party C++ (.cpp/.h/.hpp).
+# An EMPTY `catch (...) { }` body silently swallows every exception — including the ones the
+# exception-handling-policy tiers require to be logged/rethrown — and is a review CRITICAL
+# (docs/agent-rules/exception-handling-policy.md hard rule 1: "must log or have inline comment
+# justifying silence"). CPP_CODE_AUDIT.md found the missing-guard sibling of this class in the
+# Cache/DB tier (#6), and the editor-side hook (docs/harness/claude-code/hooks/lint-catch-all.py)
+# already flags it — but a Claude-Code hook is not a CI merge gate, so nothing mechanically
+# blocked the pattern from landing. The tree is at 0 empty catch-all bodies today, so any hit is
+# a regression (absolute-0, no grandfathering — same model as no-glfw / no-raw-new).
+#
+# Escapes (matching the policy + the existing hook vocabulary):
+#   - a comment INSIDE the body (documented, justified silence) — does not fire;
+#   - `// catch-all-ok: <reason>` on the catch line — does not fire;
+#   - `// SMATCHET_DEVIATION(rule=catch-all-swallow; ...)` above the catch — does not fire.
+# A body with any statement does not fire either (the "catch without LOG" tier stays advisory in
+# the editor hook — this CI rule gates only the unambiguous empty-swallow shape).
+
+scan_catch_all_swallow_file() {
+    # $1 = a first-party C++ file. Emits `catch-all-swallow\t<f>:<line>` per EMPTY catch (...) body.
+    local f="$1"
+    [ -f "$f" ] || return 0
+    case "$f" in *.cpp|*.h|*.hpp) ;; *) return 0 ;; esac
+    grep -qE 'catch[[:space:]]*\([[:space:]]*\.\.\.' "$f" 2>/dev/null || return 0
+    local -a lines=()
+    local line
+    while IFS= read -r line || [ -n "$line" ]; do lines+=("$line"); done < "$f"
+    local n=${#lines[@]} i
+    for ((i = 0; i < n; i++)); do
+        local raw="${lines[$i]}"
+        [[ "$raw" =~ catch[[:space:]]*\([[:space:]]*\.\.\.[[:space:]]*\) ]] || continue
+        local s="${raw#"${raw%%[![:space:]]*}"}"
+        case "$s" in '//'*|'*'*|'/*'*) continue ;; esac          # comment mention, not code
+        case "$raw" in *'"'*catch*'"'*) continue ;; esac         # string-literal mention
+        case "$raw" in *'catch-all-ok:'*) continue ;; esac       # hook-vocabulary escape
+        # SMATCHET_DEVIATION(rule=catch-all-swallow) on the nearest preceding non-blank lines.
+        local k dev=0 cnt=0
+        for ((k = i - 1; k >= 0 && cnt < 3; k--)); do
+            case "${lines[$k]}" in '') continue ;; esac
+            cnt=$((cnt + 1))
+            case "${lines[$k]}" in *'SMATCHET_DEVIATION(rule=catch-all-swallow'*) dev=1; break ;; esac
+        done
+        [ "$dev" -eq 1 ] && continue
+        # Body = text between the `{` after the catch closer and the FIRST `}` (an empty body has
+        # no nested braces, so the first close IS the close). Window 10 lines; no close found in
+        # the window -> a long body -> not empty -> skip.
+        local after="${raw#*catch}"
+        after="${after#*\)}"
+        local bodytext="" found_open=0 closed=0 j2 seg
+        for ((j2 = i; j2 < n && j2 <= i + 10; j2++)); do
+            if [ "$j2" -eq "$i" ]; then seg="$after"; else seg="${lines[$j2]}"; fi
+            if [ "$found_open" -eq 0 ]; then
+                case "$seg" in
+                    *'{'*) found_open=1; seg="${seg#*\{}" ;;
+                    *) continue ;;
+                esac
+            fi
+            case "$seg" in
+                *'}'*) bodytext="$bodytext${seg%%\}*}"; closed=1; break ;;
+                *)     bodytext="$bodytext$seg"$'\n' ;;
+            esac
+        done
+        [ "$closed" -eq 1 ] || continue
+        # A comment inside the body is the policy's documented-silence escape; the catch-all-ok
+        # vocabulary inside the body also escapes.
+        case "$bodytext" in *'//'*|*'/*'*) continue ;; esac
+        if [[ "$bodytext" =~ ^[[:space:]]*$ ]]; then
+            printf 'catch-all-swallow\t%s:%s\n' "$f" "$((i + 1))"
+        fi
+    done
+}
+
+compute_catch_all_violations() {
+    local files=() f
+    while IFS= read -r f; do files+=("$f"); done < <(
+        git ls-files \
+            'Source/Core/**' 'Source/Plugins/**' 'Source/Standalone/**' \
+            2>/dev/null \
+            | grep -E '\.(cpp|h|hpp)$' | grep -vE '(^|/)ThirdParty/' || true
+    )
+    [ "${#files[@]}" -gt 0 ] || return 0
+    for f in "${files[@]}"; do scan_catch_all_swallow_file "$f"; done
+}
+
+# unbounded-recursive-json-walker — WARN-first over first-party C++ (calibration; never blocks).
+# The "DW" (depth-bounded walker) class from the security campaign: a hand-rolled recursive walk
+# over attacker-influenced JSON/Lua (AdfToMarkdown, NormalizeTrackerFieldValue, LuaObjectToIssue-
+# FieldString) overflows the C++ stack on deep nesting even when the PARSE was bounded — "bounding
+# the parse alone does not bound a hand-written recursion" (docs/plans/active/cpp-security-
+# hardening.md § Approach; recurrences #1220 / #1237). The bare-json gate is structurally blind to
+# this shape, so it gets its own rule.
+#
+# Heuristic (text proxy, NOT an AST): a COLUMN-0 free-function definition whose PARAMETER LIST
+# carries a `nlohmann::json` / `sol::object` token, whose body (up to the next column-0 `}`)
+# calls the function's own name, and where neither signature nor body mentions a depth/budget
+# token — i.e. a self-recursive JSON walker with no visible bound. Overloaded bounded wrappers,
+# mutual recursion, and multi-line signatures are out of scope (WARN tier; the calibration run
+# decides whether to graduate). A `// SMATCHET_DEVIATION(rule=unbounded-recursive-json-walker; ...)`
+# above the definition escapes.
+
+scan_json_walker_file() {
+    # $1 = a first-party C++ file. Emits `unbounded-recursive-json-walker\t<f>:<line>` per
+    # unbounded self-recursive json/sol walker definition.
+    local f="$1"
+    [ -f "$f" ] || return 0
+    case "$f" in *.cpp|*.h|*.hpp) ;; *) return 0 ;; esac
+    grep -qE 'nlohmann::json|sol::object' "$f" 2>/dev/null || return 0
+    local -a lines=()
+    local line
+    while IFS= read -r line || [ -n "$line" ]; do lines+=("$line"); done < "$f"
+    local n=${#lines[@]} i
+    for ((i = 0; i < n; i++)); do
+        local raw="${lines[$i]}"
+        case "$raw" in [![:space:]]*) ;; *) continue ;; esac     # column-0 defs only
+        case "$raw" in *'('*) ;; *) continue ;; esac
+        # The json/sol token must sit in the PARAMS (after the first open paren), not just the
+        # return type.
+        local params="${raw#*\(}"
+        case "$params" in *nlohmann::json*|*sol::object*) ;; *) continue ;; esac
+        usc_is_def_line "$raw" || continue                        # free-function def shape
+        local name="$USC_DEF_NAME"
+        # Depth/budget token in the signature = bounded walker.
+        local bounded=0
+        case "$raw" in *depth*|*Depth*|*budget*|*Budget*) bounded=1 ;; esac
+        # SMATCHET_DEVIATION above the definition escapes.
+        local k dev=0 cnt=0
+        for ((k = i - 1; k >= 0 && cnt < 3; k--)); do
+            case "${lines[$k]}" in '') continue ;; esac
+            cnt=$((cnt + 1))
+            case "${lines[$k]}" in *'SMATCHET_DEVIATION(rule=unbounded-recursive-json-walker'*) dev=1; break ;; esac
+        done
+        [ "$dev" -eq 1 ] && continue
+        # Body = up to the next column-0 `}`. Look for a self-call + any depth/budget token.
+        local selfcall=0 j2 callre='(^|[^A-Za-z0-9_:.>"])'"$name"'[[:space:]]*\('
+        for ((j2 = i + 1; j2 < n; j2++)); do
+            local b="${lines[$j2]}"
+            case "$b" in '}'*) break ;; esac
+            local bs="${b#"${b%%[![:space:]]*}"}"
+            case "$bs" in '//'*|'*'*|'/*'*) continue ;; esac
+            case "$b" in *depth*|*Depth*|*budget*|*Budget*) bounded=1 ;; esac
+            if [[ "$b" =~ $callre ]]; then selfcall=1; fi
+        done
+        if [ "$selfcall" -eq 1 ] && [ "$bounded" -eq 0 ]; then
+            printf 'unbounded-recursive-json-walker\t%s:%s\n' "$f" "$((i + 1))"
+        fi
+    done
+}
+
+compute_json_walker_violations() {
+    local files=() f
+    while IFS= read -r f; do files+=("$f"); done < <(
+        git ls-files \
+            'Source/Core/**' 'Source/Plugins/**' 'Source/Standalone/**' \
+            2>/dev/null \
+            | grep -E '\.(cpp|h|hpp)$' | grep -vE '(^|/)ThirdParty/' || true
+    )
+    [ "${#files[@]}" -gt 0 ] || return 0
+    for f in "${files[@]}"; do scan_json_walker_file "$f"; done
+}
+
+# unbounded-file-slurp — WARN-first over first-party C++ (calibration; never blocks).
+# A whole-file slurp with no byte cap (`ss << f.rdbuf()`, `std::istreambuf_iterator<char>`
+# construction) reads an arbitrarily large file into memory before any validation — the class
+# behind the Win32-vs-POSIX config-read asymmetry (SECURITY_AUDIT.md #33: the Win32 arm caps at
+# 64 MiB, the POSIX arm slurps unbounded) and CPP_CODE_AUDIT #31's unbounded accumulator. Most
+# residual sites read developer-authored fixtures — hence WARN-first, diff-scoped, deviation-
+# suppressible (`// SMATCHET_DEVIATION(rule=unbounded-file-slurp; ...)` above the read). Prefer a
+# size-capped read (stat/tellg + reject, or LoadJsonFile which already caps) for new code.
+
+scan_file_slurp_file() {
+    # $1 = a first-party C++ file. Emits `unbounded-file-slurp\t<f>:<line>` per uncapped slurp.
+    local f="$1"
+    [ -f "$f" ] || return 0
+    case "$f" in *.cpp|*.h|*.hpp) ;; *) return 0 ;; esac
+    grep -qE 'rdbuf\(\)|istreambuf_iterator' "$f" 2>/dev/null || return 0
+    local lineno=0 prev_dev_rule=""
+    while IFS= read -r line || [ -n "$line" ]; do
+        lineno=$((lineno+1))
+        if [[ "$line" =~ $DEV_RE ]]; then
+            local body="${BASH_REMATCH[1]}" kv
+            prev_dev_rule=""
+            IFS=';' read -ra kvs <<< "$body"
+            for kv in "${kvs[@]}"; do kv="${kv# }"; case "$kv" in rule=*) prev_dev_rule="${kv#rule=}" ;; esac; done
+            continue
+        fi
+        if [[ "$line" =~ ^[[:space:]]*$ ]]; then continue; fi
+        local suppress="$prev_dev_rule"; prev_dev_rule=""
+        if [[ "$line" =~ ^[[:space:]]*(//|\*|/\*) ]]; then continue; fi
+        case "$line" in *'"'*rdbuf*'"'*|*'"'*istreambuf*'"'*) continue ;; esac
+        if [[ "$line" =~ (\<\<[[:space:]]*[A-Za-z_][A-Za-z0-9_]*(\.|-\>)rdbuf\(\)|istreambuf_iterator\<[[:space:]]*char[[:space:]]*\>) ]]; then
+            if [ "$suppress" != "unbounded-file-slurp" ]; then
+                printf 'unbounded-file-slurp\t%s:%s\n' "$f" "$lineno"
+            fi
+        fi
+    done < "$f"
+}
+
+compute_file_slurp_violations() {
+    local files=() f
+    while IFS= read -r f; do files+=("$f"); done < <(
+        git ls-files \
+            'Source/Core/**' 'Source/Plugins/**' 'Source/Standalone/**' \
+            2>/dev/null \
+            | grep -E '\.(cpp|h|hpp)$' | grep -vE '(^|/)ThirdParty/' || true
+    )
+    [ "${#files[@]}" -gt 0 ] || return 0
+    for f in "${files[@]}"; do scan_file_slurp_file "$f"; done
 }
 
 # ui-request-flag-off-thread — strict-zone rule over command-dispatch TUs (Source/Core/src/Commands/
@@ -1107,11 +1353,14 @@ case "${1:-}" in
     --scan-cmake-ci) MODE=scancmakeci ;;
     --scan-unused-cfg) MODE=scanunusedcfg ;;
     --scan-bare-json) MODE=scanbarejson ;;
+    --scan-catch-all) MODE=scancatchall ;;
+    --scan-json-walkers) MODE=scanjsonwalkers ;;
+    --scan-slurps) MODE=scanslurps ;;
     --scan-ui-reqflag) MODE=scanuireqflag ;;
     --scan-pr-comments) MODE=scanprcomments ;;
     --selftest)    MODE=selftest ;;
     "")            MODE=diff ;;
-    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--agentsize-baseline|--dup-baseline|--include-cycle-baseline|--scan-file[=]<f>|--full|--scan-wide|--scan-glfw|--scan-cmake-ci|--scan-unused-cfg|--scan-bare-json|--scan-ui-reqflag|--scan-pr-comments|--selftest]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--agentsize-baseline|--dup-baseline|--include-cycle-baseline|--scan-file[=]<f>|--full|--scan-wide|--scan-glfw|--scan-cmake-ci|--scan-unused-cfg|--scan-bare-json|--scan-catch-all|--scan-json-walkers|--scan-slurps|--scan-ui-reqflag|--scan-pr-comments|--selftest]" >&2; exit 2 ;;
 esac
 
 case "$MODE" in
@@ -1199,11 +1448,12 @@ case "$MODE" in
     if [ -n "$(scan_unused_under_config_guard_file "$_uscg_tmp")" ]; then
         echo "SELFTEST FAIL: unused-symbol-under-config-guard fired despite an in-window SMATCHET_DEVIATION" >&2; miss=1; fi
     rm -f "$_uscg_tmp" 2>/dev/null || true
-    # --- bare-json-parse-untrusted (PR-5) — assert the rule is documented + fires on a bare parse in
-    # an ingress TU and stays quiet for a ParseBounded route / a non-ingress TU / a deviation. ---
+    # --- bare-json-parse-untrusted — assert the rule is documented + fires on a bare parse in ANY
+    # first-party TU (repo-wide default-deny), in a HEADER, and on the stream>>json slurp form; and
+    # stays quiet for a ParseBounded route / a deviation. ---
     if ! grep -qF "bare-json-parse-untrusted" AGENTS.md; then echo "SELFTEST FAIL: 'bare-json-parse-untrusted' rule missing from AGENTS.md" >&2; miss=1; fi
-    # selftest: asserts-failure — a bare json::parse in an ingress TU must fire; ParseBounded / a
-    # non-ingress basename / a deviation must not.
+    # selftest: asserts-failure — a bare json::parse in ANY TU must fire; ParseBounded / a
+    # deviation must not.
     _bj_tmp="$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/bj_selftest.$$")"
     _bj_ingress="$(dirname "$_bj_tmp")/McpPlugin.cpp"
     printf 'void f(const std::string& body) {\n    auto j = nlohmann::json::parse(body);\n    (void)j;\n}\n' > "$_bj_ingress"
@@ -1212,16 +1462,90 @@ case "$MODE" in
     printf 'void f(const std::string& body) {\n    std::string err;\n    auto j = smatchet::json_safe::ParseBounded(body, err);\n    (void)j;\n}\n' > "$_bj_ingress"
     if [ -n "$(scan_bare_json_parse_file "$_bj_ingress")" ]; then
         echo "SELFTEST FAIL: bare-json-parse-untrusted fired on a ParseBounded-routed ingress parse" >&2; miss=1; fi
-    # A non-ingress basename (not in the curated set) must NOT fire even on a bare parse.
+    # Repo-wide default-deny: a NON-curated basename MUST fire too (the curated allow-list is
+    # retired — it lagged the code every time the class recurred; #1573/#1592/#1598).
     _bj_other="$(dirname "$_bj_tmp")/SomeUnrelatedThing.cpp"
     printf 'void f(const std::string& s) {\n    auto j = nlohmann::json::parse(s);\n    (void)j;\n}\n' > "$_bj_other"
+    if [ -z "$(scan_bare_json_parse_file "$_bj_other")" ]; then
+        echo "SELFTEST FAIL: bare-json-parse-untrusted did not fire on a bare parse in a non-curated TU (repo-wide default-deny)" >&2; miss=1; fi
+    # Headers are in scope (the JsonParseUtil.h class): a bare parse in a .h must fire.
+    _bj_hdr="$(dirname "$_bj_tmp")/SomeInlineHelper.h"
+    printf 'inline void f(const std::string& s) {\n    auto j = nlohmann::json::parse(s, nullptr, false);\n    (void)j;\n}\n' > "$_bj_hdr"
+    if [ -z "$(scan_bare_json_parse_file "$_bj_hdr")" ]; then
+        echo "SELFTEST FAIL: bare-json-parse-untrusted did not fire on a bare parse in a header" >&2; miss=1; fi
+    # The `stream >> json` slurp form (declare-then-slurp within 8 lines) must fire.
+    printf 'void f(std::ifstream& file) {\n    nlohmann::json j;\n    file >> j;\n    (void)j;\n}\n' > "$_bj_other"
+    if [ -z "$(scan_bare_json_parse_file "$_bj_other")" ]; then
+        echo "SELFTEST FAIL: bare-json-parse-untrusted did not fire on a stream>>json slurp" >&2; miss=1; fi
+    # ...but a >> into a non-json identifier must NOT fire.
+    printf 'void f(std::ifstream& file) {\n    int count = 0;\n    file >> count;\n    (void)count;\n}\n' > "$_bj_other"
     if [ -n "$(scan_bare_json_parse_file "$_bj_other")" ]; then
-        echo "SELFTEST FAIL: bare-json-parse-untrusted fired on a non-ingress (non-curated) TU" >&2; miss=1; fi
+        echo "SELFTEST FAIL: bare-json-parse-untrusted fired on a >> into a non-json identifier" >&2; miss=1; fi
     # An in-line SMATCHET_DEVIATION above the parse must escape.
     printf 'void f(const std::string& body) {\n    // SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; reason=test; owner=x; revisit=2099-01-01)\n    auto j = nlohmann::json::parse(body);\n    (void)j;\n}\n' > "$_bj_ingress"
     if [ -n "$(scan_bare_json_parse_file "$_bj_ingress")" ]; then
         echo "SELFTEST FAIL: bare-json-parse-untrusted fired despite an in-window SMATCHET_DEVIATION" >&2; miss=1; fi
-    rm -f "$_bj_tmp" "$_bj_ingress" "$_bj_other" 2>/dev/null || true
+    rm -f "$_bj_tmp" "$_bj_ingress" "$_bj_other" "$_bj_hdr" 2>/dev/null || true
+    # --- catch-all-swallow — assert the rule is documented + fires on an EMPTY catch (...) body and
+    # stays quiet for a commented body / catch-all-ok / a LOG body / a deviation. ---
+    for r in "${CATCHALL_RULES[@]}" "${JSONWALKER_RULES[@]}" "${SLURP_RULES[@]}"; do
+        if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: recurring-findings rule '$r' missing from AGENTS.md" >&2; miss=1; fi
+    done
+    _ca_tmp="$(mktemp --suffix=.cpp 2>/dev/null || echo "${TMPDIR:-/tmp}/ca_selftest.$$.cpp")"
+    case "$_ca_tmp" in *.cpp) ;; *) mv -f "$_ca_tmp" "$_ca_tmp.cpp" 2>/dev/null && _ca_tmp="$_ca_tmp.cpp" ;; esac
+    # Positive: single-line and multi-line empty bodies must fire.
+    printf 'void f() {\n    try {\n        g();\n    } catch (...) {}\n}\n' > "$_ca_tmp"
+    if [ -z "$(scan_catch_all_swallow_file "$_ca_tmp")" ]; then
+        echo "SELFTEST FAIL: catch-all-swallow did not fire on a single-line empty catch (...) body" >&2; miss=1; fi
+    printf 'void f() {\n    try {\n        g();\n    } catch (...) {\n    }\n}\n' > "$_ca_tmp"
+    if [ -z "$(scan_catch_all_swallow_file "$_ca_tmp")" ]; then
+        echo "SELFTEST FAIL: catch-all-swallow did not fire on a multi-line empty catch (...) body" >&2; miss=1; fi
+    # Negative: a justifying comment inside the body (policy escape) must NOT fire.
+    printf 'void f() {\n    try {\n        g();\n    } catch (...) {\n        // best-effort stringify for logging; failure renders "?"\n    }\n}\n' > "$_ca_tmp"
+    if [ -n "$(scan_catch_all_swallow_file "$_ca_tmp")" ]; then
+        echo "SELFTEST FAIL: catch-all-swallow fired despite a justifying comment inside the body" >&2; miss=1; fi
+    # Negative: the hook vocabulary `// catch-all-ok:` on the catch line must NOT fire.
+    printf 'void f() {\n    try {\n        g();\n    } catch (...) {} // catch-all-ok: destructor path\n}\n' > "$_ca_tmp"
+    if [ -n "$(scan_catch_all_swallow_file "$_ca_tmp")" ]; then
+        echo "SELFTEST FAIL: catch-all-swallow fired despite a catch-all-ok marker" >&2; miss=1; fi
+    # Negative: a body with a statement must NOT fire (the no-LOG tier stays editor-hook-advisory).
+    printf 'void f() {\n    try {\n        g();\n    } catch (...) {\n        LOG_WARN("g failed");\n    }\n}\n' > "$_ca_tmp"
+    if [ -n "$(scan_catch_all_swallow_file "$_ca_tmp")" ]; then
+        echo "SELFTEST FAIL: catch-all-swallow fired on a non-empty catch body" >&2; miss=1; fi
+    # Negative: an in-window SMATCHET_DEVIATION above the catch must escape.
+    printf 'void f() {\n    try {\n        g();\n    // SMATCHET_DEVIATION(rule=catch-all-swallow; reason=test; owner=x; revisit=2099-01-01)\n    } catch (...) {}\n}\n' > "$_ca_tmp"
+    if [ -n "$(scan_catch_all_swallow_file "$_ca_tmp")" ]; then
+        echo "SELFTEST FAIL: catch-all-swallow fired despite an in-window SMATCHET_DEVIATION" >&2; miss=1; fi
+    rm -f "$_ca_tmp" 2>/dev/null || true
+    # --- unbounded-recursive-json-walker — asserts-failure + bounded/deviation negatives. ---
+    _jw_tmp="$(mktemp --suffix=.cpp 2>/dev/null || echo "${TMPDIR:-/tmp}/jw_selftest.$$.cpp")"
+    case "$_jw_tmp" in *.cpp) ;; *) mv -f "$_jw_tmp" "$_jw_tmp.cpp" 2>/dev/null && _jw_tmp="$_jw_tmp.cpp" ;; esac
+    printf 'static void Walk(const nlohmann::json& n) {\n    for (const auto& c : n) {\n        Walk(c);\n    }\n}\n' > "$_jw_tmp"
+    if [ -z "$(scan_json_walker_file "$_jw_tmp")" ]; then
+        echo "SELFTEST FAIL: unbounded-recursive-json-walker did not fire on an unbounded self-recursive json walker" >&2; miss=1; fi
+    printf 'static void Walk(const nlohmann::json& n, int depth) {\n    if (depth > 256) {\n        return;\n    }\n    for (const auto& c : n) {\n        Walk(c, depth + 1);\n    }\n}\n' > "$_jw_tmp"
+    if [ -n "$(scan_json_walker_file "$_jw_tmp")" ]; then
+        echo "SELFTEST FAIL: unbounded-recursive-json-walker fired on a depth-bounded walker" >&2; miss=1; fi
+    printf '// SMATCHET_DEVIATION(rule=unbounded-recursive-json-walker; reason=test; owner=x; revisit=2099-01-01)\nstatic void Walk(const nlohmann::json& n) {\n    for (const auto& c : n) {\n        Walk(c);\n    }\n}\n' > "$_jw_tmp"
+    if [ -n "$(scan_json_walker_file "$_jw_tmp")" ]; then
+        echo "SELFTEST FAIL: unbounded-recursive-json-walker fired despite an in-window SMATCHET_DEVIATION" >&2; miss=1; fi
+    rm -f "$_jw_tmp" 2>/dev/null || true
+    # --- unbounded-file-slurp — asserts-failure + comment/deviation negatives. ---
+    _sl_tmp="$(mktemp --suffix=.cpp 2>/dev/null || echo "${TMPDIR:-/tmp}/sl_selftest.$$.cpp")"
+    case "$_sl_tmp" in *.cpp) ;; *) mv -f "$_sl_tmp" "$_sl_tmp.cpp" 2>/dev/null && _sl_tmp="$_sl_tmp.cpp" ;; esac
+    printf 'void f(std::ifstream& in) {\n    std::stringstream ss;\n    ss << in.rdbuf();\n}\n' > "$_sl_tmp"
+    if [ -z "$(scan_file_slurp_file "$_sl_tmp")" ]; then
+        echo "SELFTEST FAIL: unbounded-file-slurp did not fire on an rdbuf() slurp" >&2; miss=1; fi
+    printf 'void f(std::ifstream& in) {\n    std::string s((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());\n}\n' > "$_sl_tmp"
+    if [ -z "$(scan_file_slurp_file "$_sl_tmp")" ]; then
+        echo "SELFTEST FAIL: unbounded-file-slurp did not fire on an istreambuf_iterator slurp" >&2; miss=1; fi
+    printf 'void f(std::ifstream& in) {\n    // a comment mentioning ss << in.rdbuf() must not fire\n    int x = 0;\n    (void)x;\n}\n' > "$_sl_tmp"
+    if [ -n "$(scan_file_slurp_file "$_sl_tmp")" ]; then
+        echo "SELFTEST FAIL: unbounded-file-slurp fired on a comment mention" >&2; miss=1; fi
+    printf 'void f(std::ifstream& in) {\n    std::stringstream ss;\n    // SMATCHET_DEVIATION(rule=unbounded-file-slurp; reason=test; owner=x; revisit=2099-01-01)\n    ss << in.rdbuf();\n}\n' > "$_sl_tmp"
+    if [ -n "$(scan_file_slurp_file "$_sl_tmp")" ]; then
+        echo "SELFTEST FAIL: unbounded-file-slurp fired despite an in-window SMATCHET_DEVIATION" >&2; miss=1; fi
+    rm -f "$_sl_tmp" 2>/dev/null || true
     # --- ui-request-flag-off-thread (PR-5) — assert the rule is documented + fires on an unwrapped
     # request-flag write and stays quiet inside a RunOnUiThread closure / behind a deviation. ---
     if ! grep -qF "ui-request-flag-off-thread" AGENTS.md; then echo "SELFTEST FAIL: 'ui-request-flag-off-thread' rule missing from AGENTS.md" >&2; miss=1; fi
@@ -1333,9 +1657,27 @@ case "$MODE" in
     ;;
 
   scanbarejson)
-    # bare-json-parse-untrusted set over the curated untrusted-ingress .cpp TUs (debug + bats
-    # harness). `--root <dir>` (handled above) points this at an arbitrary tree.
+    # bare-json-parse-untrusted set over ALL first-party C++ (.cpp/.h/.hpp) — whole-tree campaign
+    # sweep (debug + bats harness). `--root <dir>` (handled above) points this at an arbitrary tree.
     compute_bare_json_parse_violations
+    ;;
+
+  scancatchall)
+    # catch-all-swallow absolute-0 set over first-party C++ (debug + bats harness).
+    # `--root <dir>` (handled above) points this at an arbitrary tree.
+    compute_catch_all_violations
+    ;;
+
+  scanjsonwalkers)
+    # unbounded-recursive-json-walker WARN set over first-party C++ — whole-tree campaign sweep
+    # (debug + bats harness). `--root <dir>` (handled above) points this at an arbitrary tree.
+    compute_json_walker_violations
+    ;;
+
+  scanslurps)
+    # unbounded-file-slurp WARN set over first-party C++ — whole-tree campaign sweep (debug +
+    # bats harness). `--root <dir>` (handled above) points this at an arbitrary tree.
+    compute_file_slurp_violations
     ;;
 
   scanuireqflag)
@@ -1630,22 +1972,23 @@ case "$MODE" in
         fi
     fi
 
-    # --- bare-json-parse-untrusted (curated untrusted-ingress .cpp TUs; BLOCKING) ---
-    # A bare nlohmann::json::parse( on an untrusted ingress payload (CLI / MCP / Lua / HTTP / network
-    # response) that does NOT route through smatchet::json_safe::ParseBounded stack-overflows the
-    # recursive parser on a deeply-nested payload BEFORE any try/catch can fire (issues #1271/#1287).
-    # The 3-arg non-throwing form (..., nullptr, false) still builds the DOM and still overflows, so
-    # only ParseBounded escapes. BLOCKING (sets $rc=1; graduated from WARN-first after the
-    # SECURITY_AUDIT.md ParseBounded sweep cleared the backlog), scoped to the curated ingress TU set
-    # (BARE_JSON_INGRESS_TUS). A SMATCHET_DEVIATION(rule=bare-json-parse-
-    # untrusted; ...) above the parse suppresses (e.g. parsing bytes the program itself serialised).
-    # Diff-scoped to the CHANGED ingress TUs (mirrors the unused-symbol WARN): the real tree carries
-    # a known residual of pre-existing bare-ingress parses (the ParseBounded migration is incremental);
-    # WARNing on the whole tree every diff would drown the signal, so the gate WARNs only on the files
-    # this diff touched. The whole-tree set is available via --scan-bare-json for a campaign sweep.
+    # --- bare-json-parse-untrusted (ALL first-party C++, repo-wide default-deny; BLOCKING) ---
+    # A bare nlohmann::json::parse( — or a `stream >> json` slurp — that does NOT route through
+    # smatchet::json_safe::ParseBounded crashes uncatchably on a deeply-nested payload: nlohmann
+    # builds the DOM iteratively but the RECURSIVE ~json teardown overflows the stack before any
+    # try/catch can fire (issues #1271/#1287). The 3-arg non-throwing form (..., nullptr, false)
+    # still builds the DOM and still overflows, so only ParseBounded escapes. BLOCKING (sets $rc=1).
+    # Repo-wide default-deny (replaced the curated BARE_JSON_INGRESS_TUS allow-list, which lagged
+    # the code every time the class recurred — #1573/#1592/#1598 all fixed TUs the list did not
+    # watch); headers are in scope too (the JsonParseUtil.h class). A SMATCHET_DEVIATION(rule=
+    # bare-json-parse-untrusted; ...) above the parse suppresses (bytes the program itself
+    # serialised). The tree is clean today, so any hit in a changed file is a regression.
+    # Diff-scoped to the CHANGED files (fast path); the whole-tree set is available via
+    # --scan-bare-json for a campaign sweep and is asserted empty by the gate's bats.
     barejson_mb="$(git merge-base "$BASE" HEAD 2>/dev/null || echo "$BASE")"
     barejson_changed="$(git diff --name-only --diff-filter=d "$barejson_mb" 2>/dev/null \
-        | grep -E '\.cpp$' | grep -vE '(^|/)ThirdParty/' || true)"
+        | grep -E '\.(cpp|h|hpp)$' | grep -vE '(^|/)ThirdParty/' \
+        | grep -E '^Source/(Core|Plugins|Standalone)/' || true)"
     barejson_out=""
     if [ -n "$barejson_changed" ]; then
         while IFS= read -r barejson_f; do
@@ -1656,13 +1999,85 @@ case "$MODE" in
     fi
     if [ -n "$barejson_out" ]; then
         {
-            echo "[bare-json-parse-untrusted] FAIL: a bare nlohmann::json::parse( appears in an untrusted-ingress TU without routing through smatchet::json_safe::ParseBounded — a deeply-nested payload stack-overflows the recursive ~json DOM teardown before any try/catch can fire (#1271/#1287). Blocking (graduated from WARN-first after the SECURITY_AUDIT.md ParseBounded sweep cleared the backlog):"
+            echo "[bare-json-parse-untrusted] FAIL: a bare nlohmann::json::parse( (or stream>>json slurp) appears in first-party C++ without routing through smatchet::json_safe::ParseBounded — a deeply-nested payload stack-overflows the recursive ~json DOM teardown before any try/catch can fire (#1271/#1287). Blocking, repo-wide (the curated-TU allow-list is retired):"
             printf '%s\n' "$barejson_out" | sed 's/^/  /'
-            echo "  Route the ingress decode through smatchet::json_safe::ParseBounded(text, errOut[, maxBytes]) (#include \"Json/BoundedJsonParse.h\")."
-            echo "  If the bytes are program-internal (not external input): add"
+            echo "  Route the decode through smatchet::json_safe::ParseBounded(text, errOut[, maxBytes]) or ParseBoundedOrDiscarded(text) (#include \"Json/BoundedJsonParse.h\")."
+            echo "  If the bytes are provably program-internal (not external input): add"
             echo "  // SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; reason=...; owner=...; revisit=...) above the parse."
         } >&2
         rc=1
+    fi
+
+    # --- catch-all-swallow (ALL first-party C++; ABSOLUTE-0, BLOCKING) ---
+    # An EMPTY catch (...) {} body silently swallows every exception — exception-handling-policy.md
+    # hard rule 1 (review CRITICAL). The editor hook (lint-catch-all.py) flags it per-edit but is
+    # not a merge gate; this closes that hole. The tree is at 0 today, so any hit is a regression
+    # (absolute-0, no grandfathering — same model as no-glfw / no-raw-new). A comment inside the
+    # body (documented silence), `// catch-all-ok: <reason>` on the catch line, or a
+    # SMATCHET_DEVIATION(rule=catch-all-swallow; ...) above it escapes.
+    catchall_out="$(compute_catch_all_violations)"
+    if [ -n "$catchall_out" ]; then
+        rc=1
+        echo
+        echo "FAIL: empty catch (...) body (swallows every exception silently — exception-handling-policy.md hard rule 1):"
+        printf '%s\n' "$catchall_out" | sed 's/^/  /'
+        echo "  Log with operation context (LOG_WARN/LOG_ERROR + function/key/backend), rethrow, or document the"
+        echo "  silence with an inline comment / '// catch-all-ok: <reason>' per the policy's escape hatches,"
+        echo "  or add SMATCHET_DEVIATION(rule=catch-all-swallow; reason=...; owner=...; revisit=...) above the catch."
+    else
+        echo "[test-lint-rules] PASS — no empty catch (...) body in first-party C++ (whole tree)"
+    fi
+
+    # --- unbounded-recursive-json-walker (CHANGED first-party C++; WARN-first) ---
+    # The DW class from the security campaign (#1220/#1237): a self-recursive walker over a
+    # nlohmann::json / sol::object parameter with no depth/budget bound overflows the stack on deep
+    # nesting even when the parse was bounded. WARN-FIRST / ADVISORY (calibration, mirrors the
+    # duplication precedent; never touches $rc) and diff-scoped to changed files — the two known
+    # residuals (FieldCatalogCache::OptionFromJson, TrackerFieldValueParser::TrackerFieldOptionFromJson)
+    # are transitively depth-bounded by ParseBounded's 256 cap upstream, so they warn only when
+    # touched. Whole-tree sweep via --scan-json-walkers. A SMATCHET_DEVIATION(rule=
+    # unbounded-recursive-json-walker; ...) above the definition suppresses.
+    jw_changed="$(printf '%s\n' "$barejson_changed" | grep -E . || true)"
+    jw_out=""
+    if [ -n "$jw_changed" ]; then
+        while IFS= read -r jw_f; do
+            [ -n "$jw_f" ] || continue
+            jw_out="$jw_out$(scan_json_walker_file "$jw_f")"$'\n'
+        done <<< "$jw_changed"
+        jw_out="$(printf '%s' "$jw_out" | grep -E . || true)"
+    fi
+    if [ -n "$jw_out" ]; then
+        {
+            echo "[unbounded-recursive-json-walker] WARN: a self-recursive function over a nlohmann::json / sol::object parameter carries no depth/budget bound — a deeply-nested value overflows the C++ stack even when the parse was bounded (the DW class; #1220/#1237). Advisory (calibration); not blocking:"
+            printf '%s\n' "$jw_out" | sed 's/^/  /'
+            echo "  Thread an int depth parameter (bail past ~256, mirroring kMaxAdfRecursionDepth) or rewrite to an explicit work-stack."
+            echo "  If a false positive (bounded wrapper / mutual recursion misread): add"
+            echo "  // SMATCHET_DEVIATION(rule=unbounded-recursive-json-walker; reason=...; owner=...; revisit=...) above the definition."
+        } >&2
+    fi
+
+    # --- unbounded-file-slurp (CHANGED first-party C++; WARN-first) ---
+    # A whole-file rdbuf()/istreambuf slurp with no byte cap reads an arbitrarily large file into
+    # memory (the SECURITY_AUDIT #33 Win32-vs-POSIX cap asymmetry class). WARN-FIRST / ADVISORY
+    # (calibration; never touches $rc), diff-scoped; residual sites warn only when touched.
+    # Whole-tree sweep via --scan-slurps. A SMATCHET_DEVIATION(rule=unbounded-file-slurp; ...)
+    # above the read suppresses.
+    slurp_out=""
+    if [ -n "$jw_changed" ]; then
+        while IFS= read -r slurp_f; do
+            [ -n "$slurp_f" ] || continue
+            slurp_out="$slurp_out$(scan_file_slurp_file "$slurp_f")"$'\n'
+        done <<< "$jw_changed"
+        slurp_out="$(printf '%s' "$slurp_out" | grep -E . || true)"
+    fi
+    if [ -n "$slurp_out" ]; then
+        {
+            echo "[unbounded-file-slurp] WARN: a whole-file rdbuf()/istreambuf_iterator slurp has no byte cap — an oversized file is read fully into memory before any validation (SECURITY_AUDIT #33 class). Advisory (calibration); not blocking:"
+            printf '%s\n' "$slurp_out" | sed 's/^/  /'
+            echo "  Prefer a size-capped read (stat/tellg + reject over-limit, or ConfigManager::LoadJsonFile which caps at 64 MiB)."
+            echo "  If the file is trusted/small by construction: add"
+            echo "  // SMATCHET_DEVIATION(rule=unbounded-file-slurp; reason=...; owner=...; revisit=...) above the read."
+        } >&2
     fi
 
     # --- pr-numbered-temporal-comments (CHANGED first-party C++ comments; WARN-first) ---

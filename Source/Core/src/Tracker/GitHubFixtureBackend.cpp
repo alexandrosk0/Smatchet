@@ -22,6 +22,7 @@ bool ReadFileToString(const std::string& path, std::string& out) {
         return false;
     }
     std::ostringstream ss;
+    // SMATCHET_DEVIATION(rule=unbounded-file-slurp; reason=developer-authored local fixture file, small by construction; owner=security-audit; revisit=2026-12-31)
     ss << in.rdbuf();
     out = ss.str();
     return true;
@@ -45,6 +46,7 @@ GitHubFixtureBackend::GitHubFixtureBackend(const std::string& fixturePath, const
         LOG_ERROR("GitHubFixtureBackend: %s", loadError_.c_str());
         return;
     }
+    // SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; reason=deterministic fixture backend parses a developer-authored local fixture file, not hostile ingress; owner=security-audit; revisit=2026-12-31)
     nlohmann::json parsed = nlohmann::json::parse(contents, nullptr, false);
     if (parsed.is_discarded() || !parsed.is_object()) {
         loadError_ = std::string("Fixture JSON parse failed or root is not an object: ") + fixturePath_;

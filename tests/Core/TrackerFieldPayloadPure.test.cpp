@@ -152,6 +152,48 @@ TEST_CASE("BuildValue: option family — structured payload vs label fallback") 
     }
 }
 
+TEST_CASE("BuildValue: depth-bomb PayloadJson / scalar is rejected by the bounded parse (no deep DOM)") {
+    // The PayloadJson re-parse routes through json_safe::ParseBoundedOrDiscarded (depth cap 256):
+    // a deeply-nested payload — e.g. planted via a tampered field-catalog cache — must degrade to
+    // the not-structured fallback instead of building a deep DOM whose recursive ~json teardown
+    // can overflow the stack. Same contract as the DetectFieldFamily fix.
+    std::string bomb;
+    for (int i = 0; i < 300; ++i) bomb += "[";
+    for (int i = 0; i < 300; ++i) bomb += "]";
+
+    SUBCASE("option family: over-deep PayloadJson falls back to {id: scalar}") {
+        TrackerField f = MakeField("customfield_10010");
+        f.Family = TrackerFieldFamily::SelectSingle;
+        f.AllowedValueOptions.push_back(MakeOption("10001", "High", bomb));
+        json out;
+        std::string err;
+        CHECK(BuildValue(f, {"High"}, out, err));
+        REQUIRE(out.is_object());
+        REQUIRE(out.contains("id"));
+        // Bounded parse rejects the bomb -> not-structured fallback keeps the raw label,
+        // instead of the pre-fix behaviour of adopting the 300-deep parsed payload.
+        CHECK(out["id"].get<std::string>() == "High");
+    }
+
+    SUBCASE("user family: over-deep pre-encoded JSON scalar degrades to raw {accountId}") {
+        std::string deepObj = "{\"accountId\":\"x\",\"pad\":";
+        for (int i = 0; i < 300; ++i) deepObj += "{\"a\":";
+        deepObj += "1";
+        for (int i = 0; i < 300; ++i) deepObj += "}";
+        deepObj += "}";
+        TrackerField f = MakeField("assignee");
+        f.IsUserType = true;
+        json out;
+        std::string err;
+        CHECK(BuildValue(f, {deepObj}, out, err));
+        REQUIRE(out.is_object());
+        // The bounded parse rejects the bomb, so the accountId embedded past the depth cap is
+        // NOT extracted; the scalar passes through the raw-string tail path unchanged.
+        REQUIRE(out.contains("accountId"));
+        CHECK(out["accountId"].get<std::string>() == deepObj);
+    }
+}
+
 TEST_CASE("BuildValue: multi-option / array family — collect + skip empties") {
     TrackerField f = MakeField("customfield_components");
     f.IsArray = true;

@@ -267,6 +267,7 @@ ImportResult ParseJson(const std::string& text, const std::vector<TrackerField>&
 
     nlohmann::json root;
     try {
+        // SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; reason=user-chosen local import file, and legitimate bulk imports can exceed the default ParseBounded node cap; owner=security-audit; revisit=2026-12-31)
         root = nlohmann::json::parse(text);
     } catch (const std::exception& ex) {
         result.Error = std::string("JSON parse error: ") + ex.what();
