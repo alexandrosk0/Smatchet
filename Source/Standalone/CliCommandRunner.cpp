@@ -1198,28 +1198,14 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
     const std::string requestToken = haveConfiguredToken ? spawnCfg.McpAuthToken : SpawnAuthToken();
     const std::string provisionToken = haveConfiguredToken ? std::string() : requestToken;
     try {
-        // `outPath` and a RELATIVE `outLog`/`outPath` are forwarded RAW: every child handler
-        // confines them under a fixed <userData> subdir (SECURITY_AUDIT.md path-confinement sweep,
-        // #1566), and confinement resolves a relative value relative to <userData> — which both
-        // processes agree on without any CWD translation. The old CLI-CWD normalization that used
-        // to sit here was actively wrong (it turned a valid relative value into an absolute one the
-        // confined handler then rejects — CPP_CODE_AUDIT.md #8/#9; see
-        // scripts/dev/test-ui-jira-deterministic-backend.sh's outLog handling), so it was removed (H1).
-        //
-        // C1 parent-fulfill (screenshotPath confinement). The spawned child confines any
-        // caller-supplied screenshotPath under its own <userData>/screenshots/ dir and REJECTS
-        // absolute / '..' paths — closing the #1566-class arbitrary-file-write on the
-        // MCP/Lua-reachable scenarios + debug.window.screenshot. The directly-invoked --spawn CLI
-        // parent is trusted, so we still honour the user's (often absolute) --screenshotPath: swap
-        // in a confine-safe unique basename the child will accept, then copy the child's confined
-        // capture back to the user's path after the run (SpawnAndRunHandleAsync).
-        //
-        // The parallel exception for an ABSOLUTE `outLog`: the child rejects it outright, so
-        // SwapOutLogForConfineSafeBasename swaps it for a confine-safe basename before forwarding
-        // and returns the caller's absolute target; RelocateChildOutLog copies the child's
-        // confinement-anchored result back afterwards. A relative outLog / any outPath is left
-        // untouched (the swap is a no-op → requestedOutLog empty), preserving the forward-raw
-        // contract; this ADDS absolute-outLog support without reverting it.
+        // outPath + a relative outLog are forwarded RAW — child-side confinement resolves them
+        // under <userData>, which both processes agree on without CWD translation (the old CLI-CWD
+        // normalization here was actively wrong, so #1566/H1 removed it). Two trusted-parent
+        // exceptions honour a user's ABSOLUTE path the child would otherwise reject: screenshotPath
+        // (swap→confine-safe basename, copy child's capture back in SpawnAndRunHandleAsync — the
+        // #1566 arbitrary-file-write class fix) and, in parallel, an absolute outLog (swap via
+        // SwapOutLogForConfineSafeBasename, relocate via RelocateChildOutLog). Both helpers carry
+        // the full rationale at their definitions; a relative value leaves the swap a no-op.
         nlohmann::json argsToSend = argsToSendRaw;
         std::string userScreenshotPath;
         if (argsToSend.contains("screenshotPath") && argsToSend["screenshotPath"].is_string()) {
@@ -1267,8 +1253,8 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
         if (isAsync) {
             // Phase 3: wait for the output file and emit the result.
             const std::string outPath = SafeString(envData, "outPath");
-            resultCode = SpawnAndRunHandleAsync(pa, cli, commandName, outPath, frames, scenarioWaitMs,
-                                                requestedOutLog, userScreenshotPath);
+            resultCode = SpawnAndRunHandleAsync(pa, cli, commandName, outPath, frames, scenarioWaitMs, requestedOutLog,
+                                                userScreenshotPath);
             if (resultCode != kExitOk)
                 return resultCode; // async helper sends app.quit on every failure path
         } else {
