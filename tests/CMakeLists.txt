@@ -71,6 +71,15 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # Linux subset (TrackerFieldValueParser/Utils closure already linked below).
         Core/TrackerGridFieldDisplayPure.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerGridFieldDisplayPure.cpp"
+        # Gap map Tier 1 #5 — JQL + Plane autocomplete cores (parse-per-keystroke over
+        # tracker-supplied catalog values). No threads; runs on the Linux subset so the
+        # container sessions doing this work can validate locally.
+        Core/JqlSuggestEnginePure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlSuggestEnginePure.cpp"
+        Core/PlaneQuerySuggestEnginePure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneQuerySuggestEnginePure.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerQuerySuggestCommon.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlEscape.cpp"
         # linear-tracker-backend.md Slice 1 — pure GraphQL/parse helpers.
         Core/LinearClientHelpers.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearClientHelpers.cpp"
@@ -363,6 +372,12 @@ add_executable(SmatchetTests
     # helpers bucket-A-testable; the TU pulls only StringUtil (header-inline) + TrackerFieldSchema.
     Core/TrackerQuerySuggestCommon.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerQuerySuggestCommon.cpp"
+    # Gap map Tier 1 #5 — full JQL + Plane autocomplete cores, reparametrized off
+    # AppController to the same vector seam the common helpers above already use.
+    Core/JqlSuggestEnginePure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlSuggestEnginePure.cpp"
+    Core/PlaneQuerySuggestEnginePure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneQuerySuggestEnginePure.cpp"
     # Fix C of jira-components-multiselect (PR #672) — scoped catalog save→load round-trip
     # asserting `components.AllowedValueOptions` survive under the project-scoped cache key
     # (and that the unscoped key never sees them). FieldCatalogCache.cpp depends only on

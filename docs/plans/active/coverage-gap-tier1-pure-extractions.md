@@ -38,6 +38,17 @@ Apply the repo's established shell/core split: lift the byte-identical logic int
 17. `tests/Core/TrackerDateTimePure.test.cpp` — append seed-mode cases + the commit-gate cases (wire-format-only difference never queues; Clear-on-blank never queues; clamp-in-place; unparseable-current conservative).
 18. `tests/CMakeLists.txt` — wire the display-pure test + production TU into `SmatchetTests` AND `SmatchetTsanTests` (the Linux-runnable subset — its TrackerFieldValueParser/Utils + CompactDateFormatPure closure already links there, which is what makes this slice locally verifiable in a Linux-only container).
 
+### Slice 3 (this PR) — gap map Tier 1 row #5 (query-suggest engines)
+
+19. `Source/Core/include/Tracker/JqlSuggestEnginePure.h` + `Source/Core/src/Tracker/JqlSuggestEnginePure.cpp` — NEW: the whole JQL autocomplete core (tokenizer, suggest-mode resolver, family-gated function catalog, non-system user filter, value/ORDER-BY appenders) lifted from `JqlSuggestEngine.cpp` and reparametrized `const AppController&` → `const std::vector<TrackerField>&` + `const std::vector<TrackerUser>&` (the cluster-A seam `TrackerQuerySuggestCommon` already uses; 5 call sites changed, logic otherwise byte-identical).
+20. `Source/Core/src/Tracker/JqlSuggestEngine.cpp` — shell: 552 → 10 lines; the `AppController` overload forwards `GetAvailableFields()`/`GetAvailableUsers()` into the pure core.
+21. `Source/Core/include/Tracker/PlaneQuerySuggestEnginePure.h` + `Source/Core/src/Tracker/PlaneQuerySuggestEnginePure.cpp` — NEW: same split for the Plane `fieldId:value` mini-language engine (fields vector only; 2 call sites changed).
+22. `Source/Core/src/Tracker/PlaneQuerySuggestEngine.cpp` — shell: 202 → 10 lines.
+23. `tests/Core/JqlSuggestEnginePure.test.cpp` — NEW bucket-A suite encoding the V21/V22 manual smokes from `backlog/MANUAL_TEST_QUEUE.md` (family-gated functions incl. the `membersOf("…")` caret sentinel, app/customer/inactive user suppression, email-prefix match) plus mode-resolution (operator/IS/logical/ORDER-BY chain), value quoting, JQL-escape of hostile display names, replace-span (selection + open-string), null-buffer/cursor-clamp, and the 80-item sort/cap.
+24. `tests/Core/PlaneQuerySuggestEnginePure.test.cpp` — NEW bucket-A suite: `:`/`=` context parse with whitespace, value quoting, user-field live-search meta + "(display)" labels, logical fallback, null-buffer.
+25. `tests/CMakeLists.txt` — wire both suites + pure TUs into `SmatchetTests` AND `SmatchetTsanTests` (+ `TrackerQuerySuggestCommon.cpp`/`JqlEscape.cpp` into the TSan subset, per the Slice-2 local-validation precedent).
+26. `backlog/BACKLOG_CODE_REVIEW.md` — flip the stale N7/N11 rows the gap map flagged (tests rig + MarkdownConvert goldens exist since).
+
 ## Existing utilities reused
 
 - `TicketFieldEditorLongTextPure` namespace + test file (`Source/Core/src/TicketFieldEditorLongTextPure.cpp`, `tests/Core/TicketFieldEditorLongTextPure.test.cpp`) — the seed/commit helpers join the unit that already owns the modal's pure logic instead of a new sibling.
@@ -91,7 +102,8 @@ Apply the repo's established shell/core split: lift the byte-identical logic int
 ## Implementation log
 
 - Slice 1: shipped as PR #1604 (squash-merged to develop as `3447bd0`) — extraction + tests per § Files to modify items 1–10, plus two riders that PR picked up en route (the CI FetchContent self-heal and the cpp-httplib zstd auto-detect disable; see the PR body).
-- Slice 2 (this PR, branch `claude/autonomous-agents-draft-pause-nuz43z`): gap map Tier 1 rows #3–#4 per § Files to modify items 11–18. Both lifts verified byte-identical against the removed blocks; the display shell shrank 1003 → ~500 lines with zero behaviour change.
+- Slice 2 (PR #1607, squash-merged to develop as `b9489af`): gap map Tier 1 rows #3–#4 per § Files to modify items 11–18. Both lifts verified byte-identical against the removed blocks; the display shell shrank 1003 → ~500 lines with zero behaviour change.
+- Slice 3 (this PR, branch `claude/fable-5-codebase-improvements-l90taa`): gap map Tier 1 row #5 per § Files to modify items 19–26. Mechanical reparametrization scripted with asserted single-occurrence replacements; both suites executed locally (23 cases / 81 assertions green) before wiring.
 
 ## Deviations from plan
 
