@@ -197,3 +197,42 @@ smatchet_add_fuzz_target(fuzz_linear_map
     LIBS
         nlohmann_json::nlohmann_json
     CORPUS linear_map)
+
+# --- nightly-monkey-tester Layer 3 ------------------------------------------
+# Three security-sensitive pure string parsers with clean single-.cpp closures (no
+# Logger / nlohmann / cpr) — the raw-string trust-boundary functions that scripted
+# tests exercise with a handful of cases but never with adversarial bytes.
+
+# tracker_jql::QuoteLiteral — escapes a foreign value before it is spliced into a
+# double-quoted JQL literal (JQL-injection boundary, security H3 + E1). Closure:
+# JqlEscape.cpp only (own header + <string>). Raw-string entry point.
+smatchet_add_fuzz_target(fuzz_jql_escape
+    SOURCES
+        fuzz_jql_escape.cpp
+        "${_fuzz_core}/src/Tracker/JqlEscape.cpp"
+    INCLUDES
+        "${_fuzz_core}/include"
+    CORPUS jql_escape)
+
+# smatchet::ai::pure::RedactProviderErrorBody — strips secrets/ids from an untrusted
+# AI-provider error body before it reaches UI/logs (also redacts nlohmann parse-error
+# text, #1286). Closure: AiErrorRedact.cpp only (own header + <cctype>/<cstring>).
+smatchet_add_fuzz_target(fuzz_ai_error_redact
+    SOURCES
+        fuzz_ai_error_redact.cpp
+        "${_fuzz_core}/src/AiErrorRedact.cpp"
+    INCLUDES
+        "${_fuzz_core}/include"
+    CORPUS ai_error_redact)
+
+# smatchet::ai::pure::SanitizeAiEndpointUrl + ExtractUrlHost — validates an
+# attacker-controlled AI endpoint URL against config-write SSRF (cloud-metadata /
+# link-local / RFC1918 / header-smuggling). The densest raw-URL byte surface in the
+# AI layer. Closure: AiEndpointSanitize.cpp only (own header + std).
+smatchet_add_fuzz_target(fuzz_ai_endpoint_sanitize
+    SOURCES
+        fuzz_ai_endpoint_sanitize.cpp
+        "${_fuzz_core}/src/AiEndpointSanitize.cpp"
+    INCLUDES
+        "${_fuzz_core}/include"
+    CORPUS ai_endpoint_sanitize)
