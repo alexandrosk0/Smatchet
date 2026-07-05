@@ -75,7 +75,14 @@ the rig.
 - CI (the real gate): the Windows `SmatchetTests` lanes compile + run both suites; repo lint gates
   (`test-lint-rules.sh --diff`, docs gate, clang-format) run locally before push.
 
-## Deviations
+## Implementation log
+
+- `e551c492` · Slice 1: Plane + Linear issue-search fixture suites + `ScriptRaw` fixture hook +
+  rig registration (13 cases / 107 assertions; verified green on the Linux `SmatchetTests` build
+  described in § Verification, plus lint/docs/format gates).
+
+## Deviations from plan
 
 - Plan-lock seed push to `refs/locks/*` is blocked by the session git proxy (403), same as Slices 1–3
   of the Tier-1 plan; logged here per the seed contract and continued.
+- None functional — the slice landed as planned.
