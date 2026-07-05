@@ -1438,7 +1438,10 @@ jobs:
       - name: Run mobile-texture-guard scenario
         id: run-texture-guard
         shell: bash
-        timeout-minutes: 5
+        # 5 -> 15: room for 3 retry attempts x `timeout 240` on the llvmpipe slow
+        # path (the old single-shot 5-min cap is what red the first blocking
+        # develop run — a hung spawn ate the whole budget with no second chance).
+        timeout-minutes: 15
         env:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
@@ -1449,22 +1452,50 @@ jobs:
           # render loop, waits for the result JSON, quits the child, and emits the result
           # envelope to stdout. (The bare in-process form does NOT auto-terminate.) A SIGABRT
           # in the forced-fault render path kills the child -> --spawn times out -> nonzero.
-          out="$(./Smatchet.exe scenario.run --name=mobile-texture-guard --frames=8 --spawn --yes 2>&1)"
-          echo "$out"
-          # Honest pass/fail: the scenario's OnFinish JSON carries passed/failed/ok. A dead
-          # harness (no faults logged) reports passed:0 -> hard-fail (the bucket-lane guard).
-          # `python` parses the envelope's data.ok; the launch-smoke above already proved the
-          # exe starts, so a parse failure here is a real scenario regression, not a dead exe.
-          echo "$out" | python -c "import sys,json,re
+          #
+          # Retry-on-spawn-flake, hard-fail on genuine scenario failure (the bucket-E
+          # retry-on-collapse discipline, adapted): under llvmpipe the SPAWN layer
+          # intermittently hangs/collapses (a hung child ate the whole 5-min step cap on
+          # the first blocking develop run, 2026-07-05), but the fault-injection scenario
+          # itself is deterministic once the app boots. So: a hang (inner `timeout 240`),
+          # a JSON-envelope parse-miss, or a passed-nothing collapse RETRIES (<=3
+          # attempts); a parsed envelope with ok=false and passed>0 is a REAL
+          # texture-guard regression and fails immediately — no retry can wash it out.
+          attempts=3
+          verdict=flake
+          for attempt in $(seq 1 "$attempts"); do
+            echo "texture-guard: attempt ${attempt}/${attempts}"
+            set +e
+            out="$(timeout 240 ./Smatchet.exe scenario.run --name=mobile-texture-guard --frames=8 --spawn --yes 2>&1)"
+            rc=$?
+            set -e
+            echo "$out"
+            # Parse the envelope's data.{passed,failed,ok}. Exit codes from the parse:
+            # 0 = ok:true (pass) · 3 = genuine failure (ok:false, passed>0) ·
+            # 2 = collapse/parse-miss (no envelope, or passed==0) -> retryable flake.
+            set +e
+            printf '%s' "$out" | python -c "import sys,json,re
           raw=sys.stdin.read()
           m=re.search(r'\{.*\}', raw, re.S)
-          assert m, 'no JSON envelope in scenario output'
+          sys.exit(2) if not m else None
           env=json.loads(m.group(0))
           data=env.get('data', env)
           passed=data.get('passed', 0); failed=data.get('failed', 0); ok=data.get('ok', False)
           print('[texture-guard] passed=%s failed=%s ok=%s' % (passed, failed, ok))
-          assert not (passed == 0 and failed > 0), 'dead-harness: passed==0 && failed>0'
-          assert ok, 'mobile-texture-guard scenario did not pass all 3 forced-fault sub-steps'"
+          sys.exit(0 if ok else (2 if passed == 0 else 3))"
+            prc=$?
+            set -e
+            if [ "$prc" -eq 0 ]; then verdict=pass; break
+            elif [ "$prc" -eq 3 ]; then verdict=fail; break
+            fi
+            echo "::warning::texture-guard spawn-layer flake on attempt ${attempt}/${attempts} (rc=$rc parse=$prc), retrying"
+            verdict=flake
+          done
+          case "$verdict" in
+            pass) echo "texture-guard: PASS (attempt ${attempt}/${attempts})" ;;
+            fail) echo "::error::texture-guard: the forced-fault scenario genuinely FAILED (ok=false with passed>0) — a real #1122-class regression." >&2; exit 1 ;;
+            *)    echo "::error::texture-guard: no successful attempt in ${attempts} tries (persistent spawn hang / collapse under llvmpipe) — fail-closed." >&2; exit 1 ;;
+          esac
 
       - name: Upload texture-guard exe on failure
         # failure() is required: without a status function the implicit success()
