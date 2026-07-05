@@ -9,6 +9,7 @@
 // or-disjunction with its `first` clamp. Characterization tests — they pin CURRENT
 // behaviour of the shipped shell.
 
+#include "HttpRequestCapture.h"
 #include "JiraCatalogHttpFixture.h"
 #include "LinearIssueSearch.h"
 
@@ -16,7 +17,6 @@
 
 #include <nlohmann/json.hpp>
 
-#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -40,22 +40,6 @@ nlohmann::json IssuesPage(const nlohmann::json& nodes, bool hasNext, const std::
         {"data", {{"issues", {{"nodes", nodes}, {"pageInfo", {{"hasNextPage", hasNext}, {"endCursor", endCursor}}}}}}}};
 }
 
-// Thread-safe capture of the GraphQL request bodies the shell actually sends —
-// asserted on the test thread after the call returns (doctest is not thread-safe).
-struct BodyCapture {
-    std::mutex Mutex;
-    std::vector<std::string> Bodies;
-
-    void Push(const std::string& body) {
-        std::lock_guard<std::mutex> lock(Mutex);
-        Bodies.push_back(body);
-    }
-    std::vector<std::string> Snapshot() {
-        std::lock_guard<std::mutex> lock(Mutex);
-        return Bodies;
-    }
-};
-
 std::string LoopbackUrl(const JiraCatalogHttpFixture& fx) {
     return "http://127.0.0.1:" + std::to_string(fx.Port()) + kGraphQlPath;
 }
@@ -64,7 +48,7 @@ std::string LoopbackUrl(const JiraCatalogHttpFixture& fx) {
 
 TEST_CASE("Linear fetch — two-page pagination, onPage/isLast protocol, cursor threading") {
     JiraCatalogHttpFixture fx;
-    BodyCapture capture;
+    smatchet_tests::HttpRequestCapture capture;
     fx.ScriptHandler(
         kGraphQlPath,
         [&capture](const httplib::Request& req) {
@@ -195,7 +179,7 @@ TEST_CASE("Linear key fetch — invalid key is an InvalidRequest error with zero
 
 TEST_CASE("Linear key fetch — or-disjunction wire shape and result mapping") {
     JiraCatalogHttpFixture fx;
-    BodyCapture capture;
+    smatchet_tests::HttpRequestCapture capture;
     fx.ScriptHandler(
         kGraphQlPath,
         [&capture](const httplib::Request& req) {
