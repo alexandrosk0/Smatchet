@@ -719,6 +719,12 @@ add_executable(SmatchetTests
     # command-input-hardening Phase 0 — pure opt-in numeric-range + max-length arg
     # bounds (Source/Core/include/Commands/ParamBoundsPure.h); header-only, no .cpp link.
     Core/ParamBoundsPure.test.cpp
+    # nightly-monkey-tester Layer 1a — the monkey's shared arg synthesizer
+    # (Source/Core/include/Commands/ParamValueSynthPure.h) + seeded fuzz generators
+    # (tests/monkey/CommandArgSynth.h): pins seed-replay determinism and that every probe
+    # genuinely fails the real ParamValueWithinBounds/required rule (pre-handler reject).
+    # Header-only, no .cpp link; needs tests/monkey on the include path (added below).
+    Core/CommandArgSynth.test.cpp
     # json-fwd-swap-by-value-carriers: pins the std::shared_ptr<nlohmann::json>
     # boxing of Command.h's Default/Details/Data members + the readers' null-ptr
     # guards (Success/ToWireJson/ToJson/BuildJsonSchema). Links Command.cpp, which
@@ -1278,6 +1284,8 @@ if(SMATCHET_BUILD_AGENT_DEBUG_TESTS)
 endif()
 
 target_include_directories(SmatchetTests PRIVATE _helpers)
+# tests/monkey — CommandArgSynth.h, shared by the monkey driver + Core/CommandArgSynth.test.cpp.
+target_include_directories(SmatchetTests PRIVATE monkey)
 target_include_directories(SmatchetTests PRIVATE
     "${CMAKE_SOURCE_DIR}/Source/Plugins/LuaConsole")
 target_compile_definitions(SmatchetTests PRIVATE
