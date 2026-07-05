@@ -1574,6 +1574,13 @@ endif()
 if(SMATCHET_BUILD_POSIX_CORE_CHECK)
     add_library(SmatchetCore_PosixCheck STATIC EXCLUDE_FROM_ALL ${CORE_SOURCES})
     smatchet_configure_core_impl_target(SmatchetCore_PosixCheck)
+    # Instrument the core archive when a sanitizer is requested (no-op otherwise, so the
+    # plain posix-core-check portability gate is unchanged). The nightly command-registry
+    # monkey (.github/workflows/monkey-nightly.yml) configures this preset with
+    # -DSMATCHET_SANITIZER=asan so ASan+UBSan actually cover the dispatch/validation code
+    # it fuzzes. NOTE: any executable that links this archive under a sanitizer must ALSO
+    # call smatchet_apply_sanitizers() on itself (to link the runtime) — see the test exes.
+    smatchet_apply_sanitizers(SmatchetCore_PosixCheck)
     target_include_directories(SmatchetCore_PosixCheck PRIVATE
             ${imgui_SOURCE_DIR}
             ${imgui_SOURCE_DIR}/backends

@@ -2063,6 +2063,20 @@ jobs:
           cmake --build --preset posix-core-check --target SmatchetCommandsTests
           ./build/posix-core-check/tests/SmatchetCommandsTests
 
+      - name: Build + smoke the command-registry monkey (fixed seed)
+        # nightly-monkey-tester.md Layer 1a — bounded, fixed-seed run so the seeded
+        # fuzz driver never bit-rots and stays reproducible on every PR. The nightly
+        # (.github/workflows/monkey-nightly.yml) runs it under ASan+UBSan with a large
+        # budget; here it is a plain smoke (no sanitizer). Advisory like this lane.
+        run: |
+          cmake --build --preset posix-core-check --target SmatchetMonkeyCli
+          ./build/posix-core-check/tests/SmatchetMonkeyCli --mode=prehandler --seed=1 --steps=2000
+          # Layer 1b — boot a fully-initialized headless AppController vs the fake Jira
+          # backend and run the read-only handler allow-list (fixture path is repo-relative;
+          # the job's working dir is the repo root).
+          ./build/posix-core-check/tests/SmatchetMonkeyCli --mode=handlers --seed=1 --steps=500 \
+            --fixture=tests/fixtures/jira_backend/basic-grid.json
+
   mobile-android-ndk:
     name: Mobile — Android NDK arm64-v8a (.so configure+link)
     needs: changes

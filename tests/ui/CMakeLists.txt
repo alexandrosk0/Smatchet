@@ -56,6 +56,9 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/annotate_before_cl_cue.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/toolbar_append_cache_cue.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/attachment_thumbnail_loading_cue.test.cpp"
+    # nightly-monkey-tester Layer 2 — random-input UI monkey (opt-in via SMATCHET_UI_MONKEY=1;
+    # inert under `ui_test.run --all`). Compiled here so the Bucket-E build type-checks it.
+    "${CMAKE_CURRENT_SOURCE_DIR}/ui_monkey.test.cpp"
 )
 
 # Link the test source list into both Standalone (live runner) and the DX12

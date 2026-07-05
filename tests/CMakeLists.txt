@@ -719,6 +719,12 @@ add_executable(SmatchetTests
     # command-input-hardening Phase 0 — pure opt-in numeric-range + max-length arg
     # bounds (Source/Core/include/Commands/ParamBoundsPure.h); header-only, no .cpp link.
     Core/ParamBoundsPure.test.cpp
+    # nightly-monkey-tester Layer 1a — the monkey's shared arg synthesizer
+    # (Source/Core/include/Commands/ParamValueSynthPure.h) + seeded fuzz generators
+    # (tests/monkey/CommandArgSynth.h): pins seed-replay determinism and that every probe
+    # genuinely fails the real ParamValueWithinBounds/required rule (pre-handler reject).
+    # Header-only, no .cpp link; needs tests/monkey on the include path (added below).
+    Core/CommandArgSynth.test.cpp
     # json-fwd-swap-by-value-carriers: pins the std::shared_ptr<nlohmann::json>
     # boxing of Command.h's Default/Details/Data members + the readers' null-ptr
     # guards (Success/ToWireJson/ToJson/BuildJsonSchema). Links Command.cpp, which
@@ -1281,6 +1287,8 @@ if(SMATCHET_BUILD_AGENT_DEBUG_TESTS)
 endif()
 
 target_include_directories(SmatchetTests PRIVATE _helpers)
+# tests/monkey — CommandArgSynth.h, shared by the monkey driver + Core/CommandArgSynth.test.cpp.
+target_include_directories(SmatchetTests PRIVATE monkey)
 target_include_directories(SmatchetTests PRIVATE
     "${CMAKE_SOURCE_DIR}/Source/Plugins/LuaConsole")
 target_compile_definitions(SmatchetTests PRIVATE
@@ -1662,5 +1670,59 @@ if(UNIX AND SMATCHET_BUILD_POSIX_CORE_CHECK)
         ghc_filesystem
         httplib::httplib
     )
+    # Keep this exe coherent with the (possibly sanitized) core archive: no-op unless
+    # SMATCHET_SANITIZER is set, but if the build dir IS configured for ASan (the monkey
+    # nightly does), the exe must link the runtime too or it fails at link time.
+    smatchet_apply_sanitizers(SmatchetCommandsTests)
     add_test(NAME smatchet_commands_tests COMMAND SmatchetCommandsTests)
+
+    # ============================================================================
+    # Nightly command-registry MONKEY (docs/plans/active/nightly-monkey-tester.md).
+    # Same headless archive + link recipe as SmatchetCommandsTests, but a standalone
+    # int main() (no doctest) so it takes --seed/--steps for reproducible replay. It
+    # fires a long SEEDED sequence of randomized-but-guaranteed-pre-handler-reject
+    # dispatches at CommandRegistry::Dispatch (see tests/monkey/), catching crashes /
+    # UB / contract breaks the scripted tests never reach. Linux-only by construction.
+    # ============================================================================
+    # Layer 1b (handler mode) links the fake Jira backend fixture so the driver can boot a
+    # fully-initialized AppController with no network. JiraFakeTrackerFixture.cpp is the only
+    # tests/support .cpp needed (ScriptedTrackerBackendFactory.h / FakeTrackerClient.h are
+    # header-only; the Jira mapper it calls is already in SmatchetCore_PosixCheck).
+    add_executable(SmatchetMonkeyCli
+        monkey/monkey_command_registry.cpp
+        support/JiraFakeTrackerFixture.cpp)
+    target_include_directories(SmatchetMonkeyCli PRIVATE
+        "${CMAKE_SOURCE_DIR}/Source/Core/include"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Tracker"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Sync"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Persistence"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Config"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Ui"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Diagnostics"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Privacy"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Imaging"
+        "${CMAKE_CURRENT_SOURCE_DIR}/monkey"   # CommandArgSynth.h
+        "${CMAKE_CURRENT_SOURCE_DIR}/support"  # JiraFakeTrackerFixture.h / ScriptedTrackerBackendFactory.h
+    )
+    target_link_libraries(SmatchetMonkeyCli PRIVATE
+        nlohmann_json::nlohmann_json
+        SmatchetCore_PosixCheck
+        SmatchetTextEdit
+        ImGuiLib
+        md4c
+        cpr::cpr
+        SQLiteCpp
+        ghc_filesystem
+        httplib::httplib
+    )
+    smatchet_apply_sanitizers(SmatchetMonkeyCli)
+    # Bounded, fixed-seed smoke so the driver never bit-rots and stays reproducible. The
+    # nightly runs the binary directly with a large --steps/--time-budget-ms budget.
+    add_test(NAME monkey_command_registry_smoke
+             COMMAND SmatchetMonkeyCli --mode=prehandler --seed=1 --steps=500)
+    # Layer 1b handler-mode smoke — absolute fixture path so it resolves under ctest's build
+    # working dir. Boots a fully-initialized headless AppController vs the fake Jira backend.
+    add_test(NAME monkey_command_handlers_smoke
+             COMMAND SmatchetMonkeyCli --mode=handlers --seed=1 --steps=300
+                     --fixture=${CMAKE_SOURCE_DIR}/tests/fixtures/jira_backend/basic-grid.json)
 endif()
