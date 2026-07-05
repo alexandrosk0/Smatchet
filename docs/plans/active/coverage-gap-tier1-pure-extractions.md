@@ -38,6 +38,18 @@ Apply the repo's established shell/core split: lift the byte-identical logic int
 17. `tests/Core/TrackerDateTimePure.test.cpp` — append seed-mode cases + the commit-gate cases (wire-format-only difference never queues; Clear-on-blank never queues; clamp-in-place; unparseable-current conservative).
 18. `tests/CMakeLists.txt` — wire the display-pure test + production TU into `SmatchetTests` AND `SmatchetTsanTests` (the Linux-runnable subset — its TrackerFieldValueParser/Utils + CompactDateFormatPure closure already links there, which is what makes this slice locally verifiable in a Linux-only container).
 
+### Slice 3 (this PR) — gap map Tier 1 rows #5–#6
+
+19. `Source/Core/include/Tracker/JqlSuggestEnginePure.h` + `Source/Core/src/Tracker/JqlSuggestEnginePure.cpp` — NEW: the ENTIRE JQL suggest engine (tokenizer, mode resolver, replace-range logic, function/user/value appenders) moved byte-identical behind a catalog-vector seam: the two AppController getters it consumed (`GetAvailableFields()` / `GetAvailableUsers()`) become explicit `std::vector` parameters. This TU was ImGui-free all along — the AppController include was the only thing keeping 552 lines of per-keystroke untrusted-input parsing out of the test rigs.
+20. `Source/Core/src/Tracker/JqlSuggestEngine.cpp` — now a 15-line shell resolving the two getters and forwarding to the pure entry point (public signature unchanged).
+21. `Source/Core/include/Tracker/PlaneQuerySuggestEnginePure.h` + `Source/Core/src/Tracker/PlaneQuerySuggestEnginePure.cpp` + `Source/Core/src/Tracker/PlaneQuerySuggestEngine.cpp` — same seam for the Plane filter mini-language engine (one getter).
+22. `Source/Core/include/MergeWatchNotifyPure.h` + `Source/Core/src/MergeWatchNotifyPure.cpp` — NEW: the merge-watch notify endpoint's request-validation pipeline (bounded parse → shape/type validation → state allow-list → sanitize/truncate → toast plan incl. exact HTTP status/response bodies) lifted byte-identical out of the POST handler. `ToastType` comes from the already-pure `Ui/ToastHistoryPure.h`.
+23. `Source/Core/src/SmatchetMergeWatchNotifyServer.cpp` — the handler now owns transport only: map the plan onto the httplib response, post the toast when `Ok`.
+24. `tests/Core/JqlSuggestEnginePure.test.cpp` — modes (field/operator/value/IS-operand/logical/ORDER BY/sort-direction), family-gated JQL functions, user-catalog filtering (app/inactive excluded) + the H3/E1 escape-proof-insert regression, replace-range semantics (incl. the pinned open-string Logical-mode quirk), null-buffer/cursor-clamp robustness, the 80-suggestion cap.
+25. `tests/Core/PlaneQuerySuggestEnginePure.test.cpp` — colon/equals value-context resolution, quote-on-demand inserts, user-field live-search meta + the " (display)" Plane label divergence, unknown-field catalog fallback, robustness.
+26. `tests/Core/MergeWatchNotifyPure.test.cpp` — state→toast-type mapping + exact response bodies, bounded-parse rejection incl. the nesting bomb (the SECURITY_AUDIT class this listener was flagged for), shape/type validation, allow-list case-sensitivity, control-char sanitization + the 500-byte truncation cap.
+27. `tests/CMakeLists.txt` — all three suites + production TUs into `SmatchetTests` AND `SmatchetTsanTests`; the TSan block additionally gains the `TrackerQuerySuggestCommon.cpp` + `JqlEscape.cpp` closure (both cpr/ImGui-free).
+
 ## Existing utilities reused
 
 - `TicketFieldEditorLongTextPure` namespace + test file (`Source/Core/src/TicketFieldEditorLongTextPure.cpp`, `tests/Core/TicketFieldEditorLongTextPure.test.cpp`) — the seed/commit helpers join the unit that already owns the modal's pure logic instead of a new sibling.
@@ -91,7 +103,8 @@ Apply the repo's established shell/core split: lift the byte-identical logic int
 ## Implementation log
 
 - Slice 1: shipped as PR #1604 (squash-merged to develop as `3447bd0`) — extraction + tests per § Files to modify items 1–10, plus two riders that PR picked up en route (the CI FetchContent self-heal and the cpp-httplib zstd auto-detect disable; see the PR body).
-- Slice 2 (this PR, branch `claude/autonomous-agents-draft-pause-nuz43z`): gap map Tier 1 rows #3–#4 per § Files to modify items 11–18. Both lifts verified byte-identical against the removed blocks; the display shell shrank 1003 → ~500 lines with zero behaviour change.
+- Slice 2 (PR #1607, squash-merged to develop as `b9489af`): gap map Tier 1 rows #3–#4 per § Files to modify items 11–18. Both lifts verified byte-identical against the removed blocks; the display shell shrank 1003 → ~500 lines with zero behaviour change.
+- Slice 3 (this PR, branch `claude/autonomous-agents-draft-pause-nuz43z` restarted from develop): gap map Tier 1 rows #5–#6 per § Files to modify items 19–27. The suggest-engine lifts are mechanical seam transforms (AppController getters → vector parameters) with the bodies otherwise untouched; the notify-endpoint lift is byte-identical. One test expectation was corrected against observed behaviour during local validation (open-string context resolves to Logical mode, not Value mode — pinned as the current semantics rather than "fixed", since changing it is a product decision out of scope for a coverage slice).
 
 ## Deviations from plan
 

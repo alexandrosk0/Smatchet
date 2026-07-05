@@ -71,6 +71,19 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # Linux subset (TrackerFieldValueParser/Utils closure already linked below).
         Core/TrackerGridFieldDisplayPure.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerGridFieldDisplayPure.cpp"
+        # Gap map Tier 1 #5 — the JQL / Plane query-suggest engines behind their catalog-vector
+        # seams (keystroke-frequency untrusted-input parsers), + their shared-helper closure
+        # (TrackerQuerySuggestCommon + JqlEscape — cpr/ImGui-free). No threads.
+        Core/JqlSuggestEnginePure.test.cpp
+        Core/PlaneQuerySuggestEnginePure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlSuggestEnginePure.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneQuerySuggestEnginePure.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerQuerySuggestCommon.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlEscape.cpp"
+        # Gap map Tier 1 #6 — the merge-watch notify endpoint's request-validation core
+        # (SECURITY_AUDIT-flagged localhost listener). Pure decision surface; no httplib.
+        Core/MergeWatchNotifyPure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/MergeWatchNotifyPure.cpp"
         # linear-tracker-backend.md Slice 1 — pure GraphQL/parse helpers.
         Core/LinearClientHelpers.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearClientHelpers.cpp"
@@ -554,6 +567,13 @@ add_executable(SmatchetTests
     # Grid-cell render-model builders lifted from TrackerGridFieldDisplay.cpp (gap map Tier 1
     # #3) — the untrusted tracker-value parse/format layer, ImGui-free after the extraction.
     Core/TrackerGridFieldDisplayPure.test.cpp
+    # Gap map Tier 1 #5 — the JQL / Plane query-suggest engines behind their catalog-vector
+    # seams (the whole per-keystroke tokenizer/mode/suggestion pipeline; shells forward from
+    # AppController). TrackerQuerySuggestCommon.cpp + JqlEscape.cpp already linked below.
+    Core/JqlSuggestEnginePure.test.cpp
+    Core/PlaneQuerySuggestEnginePure.test.cpp
+    # Gap map Tier 1 #6 — merge-watch notify endpoint request-validation core.
+    Core/MergeWatchNotifyPure.test.cpp
     Core/IsDescriptionLikeFieldId.test.cpp
     Core/TrackerFieldPayloadPure.test.cpp
     Core/TrackerFieldCatalogPure.test.cpp
@@ -893,6 +913,9 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/TicketFieldEditorLongTextPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/TicketGridDurationSortPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerGridFieldDisplayPure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlSuggestEnginePure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneQuerySuggestEnginePure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/MergeWatchNotifyPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldPayloadPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldCatalogPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlProjectScope.cpp"
