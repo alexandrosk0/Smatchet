@@ -116,6 +116,10 @@ TEST_CASE("value context — user field sets the live-search meta + Plane displa
         return s.Label.find(" (display) -> ") != std::string::npos;
     });
     CHECK(hasDisplayAnnotated);
+    // Typing the DISPLAY-name prefix ("Ali") — which does NOT prefix-match the account id
+    // "u-123" — must still offer the account-id insert. This pins the OR in matchesPrefix
+    // (raw-prefix OR label-prefix); an AND regression silently drops the id-insert suggestion.
+    CHECK(HasInsert(out, "u-123"));
 }
 
 TEST_CASE("unknown field before the separator falls back to the field catalog") {

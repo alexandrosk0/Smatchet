@@ -172,6 +172,9 @@ TEST_CASE("BuildWorklogRenderModel — totals, partial-page marker, tooltip entr
         CHECK(model.tooltip.find("W11") != std::string::npos);
         CHECK(model.tooltip.find("W12") == std::string::npos);
         CHECK(model.tooltip.find("... +8 on this page") != std::string::npos);
+        // A FULL page (WorklogsOnPage == Total == 20) must NOT carry the "*" partial-load
+        // marker; that asterisk means "more work logs exist in Tracker than are shown".
+        CHECK(model.line.back() != '*');
     }
     SUBCASE("missing worklogs array is unparsed") { CHECK_FALSE(BuildWorklogRenderModel(R"({"total":3})").parsed); }
 }

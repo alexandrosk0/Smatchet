@@ -160,6 +160,21 @@ TEST_CASE("value mode — user field surfaces catalog humans only, with escape-p
         const auto out = Run(typed, static_cast<int>(typed.size()), fields, users, &meta);
         CHECK(HasInsert(out, "\"Eve\\\" OR 1=1 \\\\\"")); // escaped, still one literal
     }
+    {
+        // Email-prefix fallback: a user whose DISPLAY name does not prefix-match but whose
+        // EMAIL does must still surface. Every other user case here matches by display name,
+        // so without this the emailMatch branch (AppendJqlUserCatalogSuggestions) is unasserted.
+        auto emailUsers = DefaultUsers();
+        TrackerUser byEmail;
+        byEmail.AccountId = "z1";
+        byEmail.DisplayName = "Bob Jones";        // does NOT start with "zoe"
+        byEmail.EmailAddress = "zoe@example.com"; // DOES start with "zoe"
+        emailUsers.push_back(byEmail);
+        const std::string typed = buf + "zoe";
+        const auto out = Run(typed, static_cast<int>(typed.size()), fields, emailUsers, &meta);
+        CHECK(HasInsert(out, "\"Bob Jones\""));
+        CHECK(HasLabel(out, "Bob Jones (zoe@example.com)"));
+    }
 }
 
 TEST_CASE("value mode — family-gated JQL functions") {
