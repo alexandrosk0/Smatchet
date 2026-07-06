@@ -111,13 +111,20 @@ N/A for LOC-of-AppController.h (facets don't shrink the header materially — th
 **Deferral residue-sweep**: no doc marks Phase 5 as "current/in-progress" — the parent plan records it as deferred-to-own-plan; this plan now IS that owner. No stale refs to clear.
 
 ## Implementation log
-*(populated post-ship, per slice)*
+
+- **Pilot — `IAppOfflineQueue`** (PR [#1663](https://github.com/alexandrosk0/Smatchet/pull/1663), squash `4d38335a`; fix `95247116` over `b9e19d07`). New rank-0 leaf `Source/Core/include/Interfaces/IAppOfflineQueue.h` — 9 pure virtuals (`TickOffline{Creates,FieldEdits}`, `Get{Pending,DeadPending}{Creates,FieldEdits}`, `GetPendingCreateCount`, `DeleteDeadPending{Creates,FieldEdits}`). Collection element types come from the rank-0 `CachedTicketTypes.h` (included); the two `Sync/OfflineQueueTypes.h` delete-summary return types (rank 2) are **forward-declared** — a rank-0 header can't include a `Sync/` header without a low→high back-edge, and a by-value return of an incomplete type is valid in a pure-virtual declaration. `AppController` implements the facet (base + `override` on the 9 existing decls). `BuiltinCommands_Offline.cpp` migrated off `AppController.h` → the facet + `CachedTicketTypes.h` + `Sync/OfflineQueueTypes.h`; `RegisterOfflineCommands` now takes `IAppOfflineQueue&`. **The rank-0-facet pattern (incl. the fwd-decl-the-higher-rank-return-type technique) is validated** — the include-cycle/layer-rank gate passes.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **The dispatcher is the irreducible orchestrator-includer → facet #1 is NET-ZERO on the fan-in count, not −1.** The plan's § Files-to-modify pilot claimed "Fan-in count −1". Implementation surfaced that the thin dispatcher `Source/Core/src/Commands/BuiltinCommands.cpp` only *forward-declares* `AppController` (fine for the 21 registrars taking `AppController&`), but the `AppController& → IAppOfflineQueue&` derived-to-base conversion for a facet-migrated registrar needs the **complete** type. So the dispatcher must `#include "AppController.h"` (with a `SMATCHET_DEVIATION(rule=app-controller-fan-in)` — CI caught this as an incomplete-type error on the first push). Net for the pilot: `BuiltinCommands_Offline.cpp` −1, dispatcher +1 = **0**. This is a one-time cost that **unlocks a clean −1 for every subsequent facet** (the dispatcher already includes it; each further leaf command TU just drops off). The campaign still targets ~14 command-TU includers → 1 orchestrator. **Plan implication:** the fan-in *reduction* begins at facet #2; facet #1 is foundational (validates the pattern + establishes the orchestrator include).
+- **`BASELINE_FAN_IN` constant left unchanged** (documented 115 vs live ~119 — already stale, drifted up by prior features). The merge-base `--diff` set-difference ratchet is the real enforcement and it passes; resyncing the informational constant is a separate cleanup.
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- **Build gate (the real verification — no Core TU compiles in this Linux container):** CI on the pilot fix SHA `95247116` was **fully green** — `Windows + MSVC` (full), `Windows + MSVC (Smatchet light)`, `Windows + MSVC (ARM64 cross-compile)`, `Mobile — POSIX core compile gate (Linux clang)` (compiles `BuiltinCommands_Offline.cpp` against the facet under Lua-OFF), `Mobile — Android NDK / APK / emulator smoke`, `Sanitizer (ASAN)` + `(UBSan)`, `Bucket-C` + `Bucket-E ×2`, `Perf PR-fast`, `Coverage`, `CodeQL`, `Duplication scanner`, `C++ lint`. CodeRabbit: "Review completed" + "CR findings (0 actionable)". Cursor Bugbot: neutral (usage-cap, no wedge).
+- **The 9 `override` signatures were cross-checked** against the facet's pure virtuals before push (`size_t` ≡ `std::size_t`; const / return-type / params all match).
+- **Local:** repo lint gate green — include-cycle/layer-rank (rank-0 facet, no back-edge), fan-in ratchet (dispatcher's new include deviation-suppressed; `BuiltinCommands_Offline.cpp` removed), dup, comment-noise.
+- **First-push CI catch:** the dispatcher incomplete-type error (see § Deviations) — fixed in one round-trip; the fast Android lane surfaced it in ~1.5 min.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 1. flip § Status to `shipped`,
