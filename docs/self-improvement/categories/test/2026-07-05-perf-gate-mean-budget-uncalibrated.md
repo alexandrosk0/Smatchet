@@ -3,7 +3,7 @@
 - **Category:** test
 - **Priority:** P2
 - **Date:** 2026-07-05
-- **Status:** open (plan: [`docs/plans/active/perf-gate-step5-calibration.md`](../../../plans/active/perf-gate-step5-calibration.md))
+- **Status:** RESOLVED 2026-07-06 — mean budget armed (`mean_abs_ceiling_ms = 6.94`); plan shipped: [`docs/plans/shipped/perf-gate-step5-calibration.md`](../../../plans/shipped/perf-gate-step5-calibration.md)
 
 ## What I hit
 

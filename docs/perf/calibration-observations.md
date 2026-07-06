@@ -1,6 +1,6 @@
 # Perf-gate step-5 calibration — observed CI distribution (Phase 1)
 
-**Date:** 2026-07-05 · **Plan:** [`docs/plans/active/perf-gate-step5-calibration.md`](../plans/active/perf-gate-step5-calibration.md)
+**Date:** 2026-07-05 · **Plan:** [`docs/plans/shipped/perf-gate-step5-calibration.md`](../plans/shipped/perf-gate-step5-calibration.md)
 **Method:** harvested the `perf-pr-fast-snapshots` artifact from **6 green `Perf PR-fast (windows-2022)` runs** on `develop`-based branches (2026-07-05, run IDs 28754543733 / 28755096721 / 28755729852 / 28756059521 / 28757855251 / 28758047020). Each run captures **3 repetitions × 6 scenarios** = 18 snapshots → 18 samples per scenario per scope. Raw metric = `build/perf-runs/<scenario>-<ts>.json` rows (`avgPerCallMs`, `p99Ms`, `maxMs`, `calls`).
 
 ## Headline result — the mean budget can be armed safely, with no overrides
