@@ -361,11 +361,17 @@ jobs:
       # failure; the baseline-file loop keeps it to the 6 real baselines.
       - name: Open baseline-recapture PR (manual dispatch)
         if: ${{ !cancelled() && github.event_name == 'workflow_dispatch' && inputs.recapture_baselines }}
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           branch="bot/perf-baseline-recapture-${{ github.run_id }}"
           git checkout -b "$branch"
+          # The full-suite step bootstrap-WRITES a baseline for any non-baselined
+          # scenario that produced output — those must NOT land in the recapture
+          # PR. Restore the committed set first so the glob + staging see exactly
+          # the checked-in baselines, then bump + stage only those.
+          git checkout -- docs/perf/baselines/ 2>/dev/null || true
           shopt -s nullglob
           baselines=(docs/perf/baselines/*.ci-windows-latest.json)
           if [ ${#baselines[@]} -eq 0 ]; then
@@ -379,7 +385,9 @@ jobs:
           done
           git config user.email "smatchet-perf-bot@noreply.local"
           git config user.name  "smatchet-perf-bot"
-          git add docs/perf/baselines/
+          # stage ONLY the recaptured baselines, never a wholesale add that could
+          # sweep in a bootstrap file for a non-baselined scenario.
+          git add "${baselines[@]}"
           if git diff --cached --quiet; then
             echo "::notice::recapture produced no baseline changes — nothing to PR."
             exit 0
