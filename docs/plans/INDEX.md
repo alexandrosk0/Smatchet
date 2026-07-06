@@ -183,6 +183,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`coverage-gap-tier3-command-contract`](shipped/coverage-gap-tier3-command-contract.md) | 2026-07-05 | Plan — Coverage-gap Tier 3: registry-wide command error-envelope contract sweep |
 | [`mutation-testing-pilot`](shipped/mutation-testing-pilot.md) | 2026-07-05 | Plan — Mutation-testing pilot (assertion-strength probe) |
 | [`user-facing-text-i18n-sweep`](shipped/user-facing-text-i18n-sweep.md) | 2026-07-05 | Plan — user-facing text i18n completeness sweep |
+| [`appcontroller-fan-in-phase5-facets`](shipped/appcontroller-fan-in-phase5-facets.md) | 2026-07-06 | Phase 5 of the AppController fan-in reduction — carve stable IApp* interface facets so includer-clusters depend on a narrow interface instead of the concrete class, cutting the fan-in COUNT. Design-only; excludes all per-frame inline getters; each slice CI-gated. |
 | [`appcontroller-service-extraction`](shipped/appcontroller-service-extraction.md) | 2026-07-06 | Behavior-preserving extraction of cohesive responsibility clusters out of AppController.cpp (~2862 LOC) into focused companion TUs; carries forward the still-relevant Phase 2 items from the archived large-files-and-phase-2 plan. |
 | [`nightly-monkey-tester`](shipped/nightly-monkey-tester.md) | 2026-07-06 | Plan — Nightly "code monkey" tester |
 | [`perf-gate-step5-calibration`](shipped/perf-gate-step5-calibration.md) | 2026-07-06 | Perf gate — step-5 calibration (arm the mean budget + deepen coverage) |
