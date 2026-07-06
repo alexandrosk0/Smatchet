@@ -2,7 +2,7 @@
 
 > **Slug**: `appcontroller-fan-in-phase5-facets`
 >
-> **Status**: `active` — design-only scoping; no code lands from this plan until a slice is explicitly approved. Continuation of `docs/plans/appcontroller-fan-in.md` (Phases 1–4 shipped).
+> **Status**: `shipped` — the pilot + 5 slices landed (PRs #1663 / #1665 / #1668 / #1670 / #1673), carving 8 `IApp*` facets and cutting the AppController.h includer fan-in by **−10**. The cleanly-migratable command-TU cluster is exhausted; the remaining includers are structurally blocked (see § Implementation log). Continuation of `docs/plans/appcontroller-fan-in.md` (Phases 1–4 shipped).
 
 <!-- index-summary: Phase 5 of the AppController fan-in reduction — carve stable IApp* interface facets so includer-clusters depend on a narrow interface instead of the concrete class, cutting the fan-in COUNT. Design-only; excludes all per-frame inline getters; each slice CI-gated. -->
 
@@ -134,6 +134,21 @@ N/A for LOC-of-AppController.h (facets don't shrink the header materially — th
   - **`Ai` include-drop (no facet):** `BuiltinCommands_Ai.cpp`'s registrar takes an *unused* `AppController&` (satisfied by the `class AppController;` fwd-decl in `BuiltinCommands_Internal.h`), and all `ConfigManager`/`TrackerConfig` use is inside the `#if SMATCHET_WITH_AI` block which includes `ConfigManager.h` directly. So `AppController.h` is simply removed — a clean −1 with no facet. The transitive-include safety was validated by the green **full `Windows + MSVC`** lane (which compiles the AI block).
   - **Blocked / excluded (documented so future slices don't re-attempt without first narrowing the free functions):** `BugReport` (`SubmitBugReport(AppController&)` free fn), `Ui` (`AdjustFontSize(AppController&)` free fn), `Perf` (public `mainThreadDispatcher` member + `ProcessGridFieldEdits(AppController&)`). `TicketMutations` remains the one migratable candidate but needs rank-3 `Tracker` (`TrackerField`) + Sync draft/future types forward-declared — its own slice.
   - **Cumulative fan-in reduction: pilot 0 + batch 2 −4 + batch 3 −2 + batch 4 −3 = −9.**
+
+- **Batch 5 — `IAppTicketMutations`** (PR [#1673](https://github.com/alexandrosk0/Smatchet/pull/1673), squash `d783ea31`). One new rank-0 leaf migrating the last cleanly-migratable command TU off `AppController.h` — a clean **−1**, and the most type-heavy facet of the campaign.
+  - `IAppTicketMutations` (`FindFieldById`, `SubmitFieldEdit`, `AddIssueCommentPlain`, `SubmitWorklog`, `QueueCreateOffline`, `CreateIssueAsync`, plus `GetActiveTicketsSnapshot` for `ticket.set_field`'s dry-run diff) ← `BuiltinCommands_TicketMutations.cpp`.
+  - **fwd-decl technique extended to a by-value `std::future<incomplete>` RETURN + a by-value defaulted param:** the three rank-3 `Tracker/` payload types (`TrackerField`, `IssueDraft`, `IssueCreateResult`) are forward-declared — pointer / const-ref params **and** the by-value `std::future<IssueCreateResult>` return don't require completeness at the declaration point (naming the `std::future` specialization doesn't instantiate it); the TU includes the full types. `smatchet::ui::CancelToken` and `CachedTicket` turned out to be **root-level rank-0** headers (`CancelToken.h` / `CachedTicketTypes.h`) despite the `smatchet::ui` namespace, so they are `#include`d directly — which cleanly handles `CreateIssueAsync`'s defaulted by-value `CancelToken` param.
+  - **`CancelToken` default mirrored on both facet + override** (same rule as batch-4 `RunAutoScript`): concrete-typed callers (`AppController_LuaBindings`, `SmatchetNewIssueDraftUi`) use the 1-arg form via static binding, so the concrete default can't be dropped.
+  - **shared read method, no diamond:** `GetActiveTicketsSnapshot` is declared on both `IAppTicketData` (batch 4) and `IAppTicketMutations`, so this TU needs only the single mutations facet. One `AppController` override is the final overrider for both **independent** interfaces (no diamond — neither facet inherits the other; virtual inheritance avoided).
+  - **duplication deviation:** adding `override` to `SubmitFieldEdit` re-hashed the token window of the field-edit **delegator** block, tripping the delta duplication scanner against `FieldEditPipelineService`'s **verbatim signature mirror** (an intentional god-object-decomposition Phase-2 forwarder — "Signature preserved verbatim" on both sides). Suppressed with `SMATCHET_DEVIATION(rule=duplication)` placed **within** the cloned span (the nearest-line-above slot was occupied by the `// clang-format on` guard).
+  - **Cumulative fan-in reduction: pilot 0 + batch 2 −4 + batch 3 −2 + batch 4 −3 + batch 5 −1 = −10.**
+
+- **Campaign complete — the cleanly-migratable command cluster is exhausted.** The remaining command TUs are structurally blocked and left on `AppController.h` (documented here so a future effort doesn't re-attempt them without first doing the prerequisite work):
+  - **BugReport** — `diagnostics::SubmitBugReport(AppController&)` free function needs the complete type.
+  - **Ui** — `AdjustFontSize(AppController&)` free function needs the complete type.
+  - **Perf** — reads the **public** `mainThreadDispatcher` data member directly and passes `AppController&` to the free function `ProcessGridFieldEdits`.
+  - **Fields / Sync** — deferred: they consume the ~10 per-frame inline getters (`GetActiveTicketsRevision`, `GetFieldCatalog*`, `GetAvailable*`, `GetTrackerBackend`, `GetLastTrackerConnectivityState`, …) that must stay non-virtual for Pillar-1 inlining.
+  - Non-command includers (`Ui/*`, plugins, `Standalone/*`, `android_main`) were always out of scope — they legitimately hold a concrete `AppController` and drive its full lifecycle.
 
 ## Deviations from plan
 
