@@ -653,11 +653,16 @@ JiraClient::AttachFilesToIssue(const std::string& issueKey, const std::vector<st
         cpr::Multipart multipart{{"file", cpr::File{path}}};
         // Same cross-host credential-forwarding guard as the Tracker*Logged helpers (H4 / E2):
         // this multipart upload carries the Basic Authorization header but can't route through
-        // TrackerPostLogged (string body), so apply the shared no-follow redirect policy here.
+        // TrackerPostLogged (string body), so apply the shared no-follow redirect policy AND the
+        // shared TLS trust anchor (WS2 / Issue #1068 — the Android private-dir cacert.pem) here.
+        // Without MakeTrackerSslOptions() this upload would fall back to libcurl's default CA store
+        // and fail TLS verification on Android, where every other tracker call pins the app bundle.
+        // Single attempt by design: a non-idempotent attachment POST that landed then 5xx'd must not
+        // re-send (would duplicate the attachment), so it deliberately skips the retry wrapper.
         cpr::Redirect redirect = MakeTrackerRedirectPolicy();
         cpr::Response response =
             cpr::Post(cpr::Url{url}, headers, multipart, redirect, cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
-                      cpr::Timeout{kTrackerOverallTimeoutMs});
+                      cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
         std::uint64_t approxBytes = 0;
         try {
             approxBytes = static_cast<std::uint64_t>(ghc::filesystem::file_size(path, ec));
