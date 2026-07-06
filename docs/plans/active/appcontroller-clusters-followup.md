@@ -8,7 +8,7 @@
 
 ## Context
 
-[`docs/plans/shipped/appcontroller-service-extraction.md`](../shipped/appcontroller-service-extraction.md)
+[`docs/plans/appcontroller-service-extraction.md`](../appcontroller-service-extraction.md)
 shipped two slices (bootstrap → `AppController_Init.cpp`, pane-context →
 `AppController_PaneContexts.cpp`) via PR #1653, dropping `AppController.cpp` **2862 → 1518
 LOC**, then closed at its 2-PR cap. It flagged the **remaining clusters as § Out of scope

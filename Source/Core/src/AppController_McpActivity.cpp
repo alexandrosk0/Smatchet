@@ -1,6 +1,6 @@
 // AppController_McpActivity.cpp — MCP client-activity plumbing extracted from
 // AppController.cpp (behavior-preserving TU split, plan
-// docs/plans/active/appcontroller-clusters-followup.md). Method DECLARATIONS stay in
+// docs/plans/appcontroller-clusters-followup.md). Method DECLARATIONS stay in
 // AppController.h; only the definitions moved, so linkage and behavior are identical.
 // The whole cluster is guarded by SMATCHET_WITH_MCP (empty TU when MCP is off). Includes
 // mirror the AppController_Init.cpp companion-TU idiom (full subsystem superset — the
