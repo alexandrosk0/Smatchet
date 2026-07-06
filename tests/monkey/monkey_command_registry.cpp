@@ -1,5 +1,5 @@
 // monkey_command_registry — the nightly "code monkey" for Smatchet's command registry.
-// See docs/plans/active/nightly-monkey-tester.md.
+// See docs/plans/nightly-monkey-tester.md.
 //
 // Two modes:
 //

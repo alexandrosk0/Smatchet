@@ -1,5 +1,5 @@
 // ui_monkey.test.cpp — Layer 2 of the nightly "code monkey"
-// (docs/plans/active/nightly-monkey-tester.md): a random-INPUT UI monkey.
+// (docs/plans/nightly-monkey-tester.md): a random-INPUT UI monkey.
 //
 // It boots the REAL app (via UiTestScenario, same as funcsize_main_ui_smoke.test.cpp)
 // and fires a long SEEDED stream of random keyboard/mouse INPUT events at the live ImGui

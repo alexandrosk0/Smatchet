@@ -1682,7 +1682,7 @@ if(UNIX AND SMATCHET_BUILD_POSIX_CORE_CHECK)
     add_test(NAME smatchet_commands_tests COMMAND SmatchetCommandsTests)
 
     # ============================================================================
-    # Nightly command-registry MONKEY (docs/plans/active/nightly-monkey-tester.md).
+    # Nightly command-registry MONKEY (docs/plans/nightly-monkey-tester.md).
     # Same headless archive + link recipe as SmatchetCommandsTests, but a standalone
     # int main() (no doctest) so it takes --seed/--steps for reproducible replay. It
     # fires a long SEEDED sequence of randomized-but-guaranteed-pre-handler-reject
