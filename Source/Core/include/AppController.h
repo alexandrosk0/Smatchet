@@ -106,6 +106,11 @@ class AiAssistantController;
 #include "Types/AttachmentTypes.h"
 #include "Types/HostCallbacks.h"
 
+// Fan-in Phase 5 (docs/plans/appcontroller-fan-in-phase5-facets.md): narrow interface
+// facets AppController implements so includer-clusters can depend on them instead of the
+// full class. Rank-0 leaf headers (Interfaces/); see each header for its facet scope.
+#include "Interfaces/IAppOfflineQueue.h"
+
 class ITrackerBackendFactory;
 class LocalCacheManager; // fan-in Phase 1: fwd-decl (was a direct heavy include); `std::unique_ptr<LocalCacheManager>
                          // Cache` member is fine with the incomplete type since ~AppController is out-of-line. Defining
@@ -132,7 +137,7 @@ class ScenarioRunner;
 }
 } // namespace smatchet
 
-class AppController : public IMainThreadPoster {
+class AppController : public IMainThreadPoster, public IAppOfflineQueue {
     /// `GridContextDepsAdapter` implements `IOfflineQueueDeps` + `ITicketSyncDeps` against
     /// this AppController + one `GridLiveContext` and forwards every method either to the
     /// per-context state (`Backend`, `ActiveTickets*`) or to AppController-shared state
@@ -756,14 +761,14 @@ class AppController : public IMainThreadPoster {
      * Replay any queued offline creates. No-op when the queue is empty or the
      * backend is unreachable. Intended to be polled from the main tick.
      */
-    void TickOfflineCreates();
+    void TickOfflineCreates() override;
 
     /** Current depth of the offline create queue (SQLite row count). */
-    size_t GetPendingCreateCount() const;
+    size_t GetPendingCreateCount() const override;
     /** Active offline create rows (`pending_creates`), oldest first. */
-    std::vector<PendingCreate> GetPendingCreates() const;
+    std::vector<PendingCreate> GetPendingCreates() const override;
     size_t GetDeadPendingCreateCount() const;
-    std::vector<DeadPendingCreate> GetDeadPendingCreates() const;
+    std::vector<DeadPendingCreate> GetDeadPendingCreates() const override;
 
     using DeadLetterRestoreSummary = ::DeadLetterRestoreSummary; // moved to Sync/OfflineQueueTypes.h
     /** Move selected dead-letter rows back to the active offline queue (attempts reset to 0). */
@@ -773,7 +778,7 @@ class AppController : public IMainThreadPoster {
 
     using DeadLetterDeleteSummary = ::DeadLetterDeleteSummary; // moved to Sync/OfflineQueueTypes.h
     /** Permanently remove dead-letter rows by `pending_creates_dead.dead_id`. */
-    DeadLetterDeleteSummary DeleteDeadPendingCreates(const std::vector<std::int64_t>& deadIds);
+    DeadLetterDeleteSummary DeleteDeadPendingCreates(const std::vector<std::int64_t>& deadIds) override;
 
     using PendingQueueDeleteSummary = ::PendingQueueDeleteSummary; // moved to Sync/OfflineQueueTypes.h
     /** Permanently remove active offline-queue rows by `pending_creates.id`. */
@@ -792,10 +797,10 @@ class AppController : public IMainThreadPoster {
                                        const std::string& originalValue = std::string(), bool hasOriginalValue = false);
 
     /** Replay queued offline field edits (rate-limited; called from UI tick). */
-    void TickOfflineFieldEdits();
+    void TickOfflineFieldEdits() override;
 
-    std::vector<PendingFieldEditRecord> GetPendingFieldEdits() const;
-    std::vector<DeadPendingFieldEdit> GetDeadPendingFieldEdits() const;
+    std::vector<PendingFieldEditRecord> GetPendingFieldEdits() const override;
+    std::vector<DeadPendingFieldEdit> GetDeadPendingFieldEdits() const override;
     /// Replace the queued payload with a user-resolved version and clear the conflict flag.
     /// The edit will be retried on the next TickOfflineFieldEdits pass. `kind` (text|scalar|
     /// unverified, per ADR-0016) selects how the resolution is applied: `text` reconverts
@@ -810,7 +815,7 @@ class AppController : public IMainThreadPoster {
     PendingFieldEditDeleteSummary DeletePendingFieldEdits(const std::vector<std::int64_t>& ids);
 
     using DeadFieldEditDeleteSummary = ::DeadFieldEditDeleteSummary; // moved to Sync/OfflineQueueTypes.h
-    DeadFieldEditDeleteSummary DeleteDeadPendingFieldEdits(const std::vector<std::int64_t>& deadIds);
+    DeadFieldEditDeleteSummary DeleteDeadPendingFieldEdits(const std::vector<std::int64_t>& deadIds) override;
 
     using DeadFieldEditRestoreSummary = ::DeadFieldEditRestoreSummary; // moved to Sync/OfflineQueueTypes.h
     /** Move selected dead-letter field-edit rows back to the active queue (attempts reset to
