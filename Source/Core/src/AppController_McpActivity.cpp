@@ -1,28 +1,94 @@
-// AppController — MCP client-activity plumbing. Behavior-preserving TU split out of
-// AppController.cpp (declarations stay in AppController.h; moved bodies are byte-identical).
-// The whole cluster is guarded by SMATCHET_WITH_MCP, so this TU is empty when MCP is off.
-// Continues docs/plans/shipped/appcontroller-service-extraction.md § Out of scope
-// (further AppController.cpp clusters) — see docs/plans/active/appcontroller-clusters-followup.md.
-#if defined(_WIN32)
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <winsock2.h>
-#endif
-
+// AppController_McpActivity.cpp — MCP client-activity plumbing extracted from
+// AppController.cpp (behavior-preserving TU split, plan
+// docs/plans/active/appcontroller-clusters-followup.md). Method DECLARATIONS stay in
+// AppController.h; only the definitions moved, so linkage and behavior are identical.
+// The whole cluster is guarded by SMATCHET_WITH_MCP (empty TU when MCP is off). Includes
+// mirror the AppController_Init.cpp companion-TU idiom (full subsystem superset — the
+// pImpl inline ctor forces complete types for every owned-service unique_ptr member).
+// clang-format off
+// SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=behavior-preserving TU split of AppController.cpp, a companion TU defining AppController MCP client-activity methods needs the full class definition and adds no new coupling; owner=orchestrator; revisit=when AppController.h is narrowed per ADR-0020 / debt.md)
 #include "AppController.h"
+// clang-format on
 #include "AppControllerImpl.h"
+#include "GridContextDepsAdapter.h"
+#include "LocalCacheManager.h" // direct: AppController.h fwd-decls LocalCacheManager (fan-in Phase 1); this TU calls Cache-> methods.
 
-#include <atomic>
+#include <nlohmann/json.hpp> // direct: AppController.h dropped json.hpp for json_fwd (fan-in Phase 1); this TU constructs nlohmann::json.
+
+#include <algorithm>
+#include <array>
 #include <chrono>
+#include <cctype>
 #include <cstdint>
+#include <cerrno>
+#include <cstdio>
+#include <cstdlib>
 #include <ctime>
+#include <exception>
+#include <fstream>
 #include <mutex>
+#include <sstream>
 #include <string>
+#include <thread>
+#include <unordered_set>
+#include <utility>
 #include <vector>
+
+// clang-format off
+// SMATCHET_DEVIATION(rule=duplication; reason=a companion TU of the AppController god-class necessarily shares its subsystem include set (ConfigManager / backends / owned services); no shared header to factor into without worse coupling, and the DRY gate doc endorses an exemption over cross-context abstraction; owner=orchestrator; revisit=when AppController.h fan-in is narrowed per ADR-0020 / debt.md)
+// clang-format on
+#include "ConfigManager.h"
+#include "ConfigSaveWorker.h" // not AI-gated — config saves happen regardless of feature flags
+
+#include "Commands/BuiltinCommands.h"
+#include "Commands/CommandRegistry.h"
+#include "Commands/Scenarios/IScenario.h"
+#include "Commands/Scenarios/SmatchetScenarioRegistry.h"
+
+#include "FieldCatalogCache.h"
+#include "JqlProjectScope.h"
+
+#include "DefaultTrackerBackendFactory.h"
+#include "GitHubFixtureBackend.h"
+#include "ITrackerBackendFactory.h"
+#include "ITrackerIssueMutations.h"
+#include "LinearFixtureBackend.h"
+#include "PlaneFixtureBackend.h"
+
+#include "LuaAutomationHost.h"
+#include "OfflineQueueService.h"
+#include "EditMetaCacheService.h"
+#include "FieldEditPipelineService.h"
+#include "ConnectivityMonitorService.h"
+#include "AttachmentAppUpdateService.h"
+#include "TicketSyncService.h"
+
+#include "Logger.h"
+#include "StringUtil.h"
+#include "UiThreadAffinity.h"
+#include "Views.h"
+
+#include "SmatchetUI.h"
+#include "SmatchetToast.h"
+#include "SmatchetMergeWatchNotifyServer.h"
+#include "Ui/SmatchetFieldRender.h" // RunLegacyStartupSweeps calls the free fn SetCallstackFieldIdHint declared here
+
+#include <ghc/filesystem.hpp>
+
+#if defined(_WIN32)
+#include <windows.h>
+#include <shellapi.h>
+#elif defined(__APPLE__) || defined(__linux__)
+#include <unistd.h>
+#endif
+
+#include "AiTypes.h"
+#if defined(SMATCHET_WITH_AI)
+#include "AiAssistantController.h"
+#include "AiAssistantUiStateAdapter.h"
+#include "SmatchetChatPersistWorker.h"
+#include "SmatchetUiSession.h"
+#endif
 
 #if defined(SMATCHET_WITH_MCP)
 
