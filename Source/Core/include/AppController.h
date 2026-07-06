@@ -113,6 +113,8 @@ class AiAssistantController;
 #include "Interfaces/IAppMeta.h"
 #include "Interfaces/IAppAttachments.h"
 #include "Interfaces/IAppScenarios.h"
+#include "Interfaces/IAppUsers.h"
+#include "Interfaces/IAppDebug.h"
 
 class ITrackerBackendFactory;
 class LocalCacheManager; // fan-in Phase 1: fwd-decl (was a direct heavy include); `std::unique_ptr<LocalCacheManager>
@@ -144,7 +146,9 @@ class AppController : public IMainThreadPoster,
                       public IAppOfflineQueue,
                       public IAppMeta,
                       public IAppAttachments,
-                      public IAppScenarios {
+                      public IAppScenarios,
+                      public IAppUsers,
+                      public IAppDebug {
     /// `GridContextDepsAdapter` implements `IOfflineQueueDeps` + `ITicketSyncDeps` against
     /// this AppController + one `GridLiveContext` and forwards every method either to the
     /// per-context state (`Backend`, `ActiveTickets*`) or to AppController-shared state
@@ -318,7 +322,7 @@ class AppController : public IMainThreadPoster,
     std::unique_ptr<SmatchetMergeWatchNotifyServer> mergeWatchNotifyServer_;
 
     /** Call from plugins in OnEarlyInit only (before Initialize completes InitLua). */
-    void AddAutomationLogSink(std::function<void(const std::string&)> sink);
+    void AddAutomationLogSink(std::function<void(const std::string&)> sink) override;
     /** Drop all sinks. Call before destroying plugins to avoid dangling `[this]` captures. */
     void ClearAutomationLogSinks();
 
@@ -327,12 +331,12 @@ class AppController : public IMainThreadPoster,
     /// is responsible for presentation. Safe to call from any thread (the background
     /// automation worker may invoke it); sinks themselves are expected to be UI-thread-safe
     /// (e.g. via mainThreadDispatcher). Call from OnEarlyInit only.
-    void AddAutomationErrorSink(std::function<void(const std::string&)> sink);
+    void AddAutomationErrorSink(std::function<void(const std::string&)> sink) override;
 
     /// Atomically reads and clears the "open Scripting window" request that the background
     /// automation worker sets on a Lua error. UI-thread: call once per frame in OnDraw.
     /// Returns true if the plugin should bring the Scripting window to the foreground.
-    bool ConsumeScriptingWindowRequest();
+    bool ConsumeScriptingWindowRequest() override;
 
     /**
      * Optional host callback for launching URLs.
@@ -359,11 +363,11 @@ class AppController : public IMainThreadPoster,
 #if defined(SMATCHET_WITH_MCP)
     /** Bounded ring buffer of MCP-related actions (thread-safe). */
     void AppendMcpActivity(const std::string& line);
-    std::vector<std::string> CopyMcpActivityLog() const;
+    std::vector<std::string> CopyMcpActivityLog() const override;
     /** MCP HTTP server: any routed request after auth gate (worker threads). */
     void NotifyMcpClientHttpActivity();
     /** @return false if no client request has been recorded yet this process. */
-    bool TryGetMcpLastClientHttpActivity(std::chrono::steady_clock::time_point* out) const;
+    bool TryGetMcpLastClientHttpActivity(std::chrono::steady_clock::time_point* out) const override;
     /** Increments once per MCP HTTP request after the auth pre-hook (distinct from activity-log lines). */
     std::uint64_t GetMcpHttpTrafficEpoch() const;
 #endif
@@ -477,7 +481,8 @@ class AppController : public IMainThreadPoster,
      * On failure sets @p outError; on success clears @p outError and may set @p outResultSummary from the
      * first return value (short string / JSON, truncated when long).
      */
-    bool ExecuteLuaConsoleSnippet(const std::string& code, std::string& outError, std::string& outResultSummary);
+    bool ExecuteLuaConsoleSnippet(const std::string& code, std::string& outError,
+                                  std::string& outResultSummary) override;
     /** Lua `register_field_icon_map`; returns false when Lua automation is disabled. */
     bool TryGetFieldIconMapTarget(const std::string& fieldId, const TrackerField* field, const std::string& rawValue,
                                   std::string& outPathOrUrl) const;
@@ -923,15 +928,16 @@ class AppController : public IMainThreadPoster,
     void WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker);
 
     bool FetchIssueWatchers(const std::string& issueKey, std::vector<TrackerUser>& outWatchers,
-                            std::string& outError) const;
+                            std::string& outError) const override;
 
     bool AddIssueWatcher(const std::string& issueKey, std::string& outError);
 
+    // defaults for outVoteCount / outHasVoted / outVotersInResponse live on IAppUsers::FetchIssueVotes
     bool FetchIssueVotes(const std::string& issueKey, std::vector<TrackerUser>& outVoters, std::string& outError,
-                         int* outVoteCount = nullptr, bool* outHasVoted = nullptr,
-                         bool* outVotersInResponse = nullptr) const;
+                         int* outVoteCount, bool* outHasVoted, bool* outVotersInResponse) const override;
 
-    bool SearchUsersByQuery(const std::string& query, std::vector<TrackerUser>& outUsers, std::string& outError) const;
+    bool SearchUsersByQuery(const std::string& query, std::vector<TrackerUser>& outUsers,
+                            std::string& outError) const override;
 
     bool AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText, std::string& outError);
 

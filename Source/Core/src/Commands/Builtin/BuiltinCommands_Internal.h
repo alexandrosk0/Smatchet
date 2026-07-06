@@ -23,6 +23,8 @@ class IAppOfflineQueue;
 class IAppMeta;
 class IAppAttachments;
 class IAppScenarios;
+class IAppUsers;
+class IAppDebug;
 
 namespace smatchet {
 namespace cmd {
@@ -63,10 +65,10 @@ void RegisterConfigCommands(CommandRegistry& reg, AppController& app);
 void RegisterPerfCommands(CommandRegistry& reg, AppController& app);
 void RegisterTicketsCommands(CommandRegistry& reg, AppController& app);
 void RegisterTicketMutationCommands(CommandRegistry& reg, AppController& app);
-void RegisterDebugCommands(CommandRegistry& reg, AppController& app);
+void RegisterDebugCommands(CommandRegistry& reg, IAppDebug& app, IMainThreadPoster& poster);
 void RegisterSyncCommands(CommandRegistry& reg, AppController& app);
 void RegisterFieldsCommands(CommandRegistry& reg, AppController& app);
-void RegisterUsersCommands(CommandRegistry& reg, AppController& app);
+void RegisterUsersCommands(CommandRegistry& reg, IAppUsers& app);
 void RegisterOfflineCommands(CommandRegistry& reg, IAppOfflineQueue& app);
 void RegisterScenarioCommands(CommandRegistry& reg, IAppScenarios& app, IMainThreadPoster& poster);
 void RegisterUiTestCommands(CommandRegistry& reg, IAppScenarios& app, IMainThreadPoster& poster);

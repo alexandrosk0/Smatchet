@@ -52,7 +52,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
     RegisterConfigCommands(reg, app);
     RegisterPerfCommands(reg, app);
     RegisterTicketsCommands(reg, app);
-    RegisterDebugCommands(reg, app);
+    RegisterDebugCommands(reg, app, app);
     RegisterSyncCommands(reg, app);
     RegisterTicketMutationCommands(reg, app);
     RegisterFieldsCommands(reg, app);
