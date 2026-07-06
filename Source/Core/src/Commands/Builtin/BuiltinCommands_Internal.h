@@ -17,7 +17,12 @@
 #include <vector>
 
 class AppController;
-class IAppOfflineQueue; // fan-in Phase 5: RegisterOfflineCommands takes the narrow facet, not AppController
+class IMainThreadPoster; // fan-in Phase 5: a migrated registrar that marshals to the UI thread takes this alongside its domain facet
+// fan-in Phase 5: the migrated per-category registrars take a narrow IApp* facet, not AppController.
+class IAppOfflineQueue;
+class IAppMeta;
+class IAppAttachments;
+class IAppScenarios;
 
 namespace smatchet {
 namespace cmd {
@@ -53,7 +58,7 @@ ParamSpec PString(std::string name, std::string desc, bool required = false);
 // BuiltinCommands.cpp calls them in order.
 
 void RegisterMetaCommands(CommandRegistry& reg, AppController& app);
-void RegisterAppCommands(CommandRegistry& reg, AppController& app);
+void RegisterAppCommands(CommandRegistry& reg, IAppMeta& app);
 void RegisterConfigCommands(CommandRegistry& reg, AppController& app);
 void RegisterPerfCommands(CommandRegistry& reg, AppController& app);
 void RegisterTicketsCommands(CommandRegistry& reg, AppController& app);
@@ -63,9 +68,9 @@ void RegisterSyncCommands(CommandRegistry& reg, AppController& app);
 void RegisterFieldsCommands(CommandRegistry& reg, AppController& app);
 void RegisterUsersCommands(CommandRegistry& reg, AppController& app);
 void RegisterOfflineCommands(CommandRegistry& reg, IAppOfflineQueue& app);
-void RegisterScenarioCommands(CommandRegistry& reg, AppController& app);
-void RegisterUiTestCommands(CommandRegistry& reg, AppController& app);
-void RegisterAttachCommands(CommandRegistry& reg, AppController& app);
+void RegisterScenarioCommands(CommandRegistry& reg, IAppScenarios& app, IMainThreadPoster& poster);
+void RegisterUiTestCommands(CommandRegistry& reg, IAppScenarios& app, IMainThreadPoster& poster);
+void RegisterAttachCommands(CommandRegistry& reg, IAppAttachments& app);
 void RegisterAiCommands(CommandRegistry& reg, AppController& app);
 void RegisterAutomationCommands(CommandRegistry& reg, AppController& app);
 void RegisterBugReportCommands(CommandRegistry& reg, AppController& app);

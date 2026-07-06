@@ -59,8 +59,8 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
     RegisterUsersCommands(reg, app);
     RegisterOfflineCommands(reg, app);
     RegisterAttachCommands(reg, app);
-    RegisterScenarioCommands(reg, app);
-    RegisterUiTestCommands(reg, app);
+    RegisterScenarioCommands(reg, app, app);
+    RegisterUiTestCommands(reg, app, app);
     RegisterAiCommands(reg, app);
     RegisterAutomationCommands(reg, app);
     RegisterBugReportCommands(reg, app);

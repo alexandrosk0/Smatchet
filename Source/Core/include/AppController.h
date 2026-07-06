@@ -110,6 +110,9 @@ class AiAssistantController;
 // facets AppController implements so includer-clusters can depend on them instead of the
 // full class. Rank-0 leaf headers (Interfaces/); see each header for its facet scope.
 #include "Interfaces/IAppOfflineQueue.h"
+#include "Interfaces/IAppMeta.h"
+#include "Interfaces/IAppAttachments.h"
+#include "Interfaces/IAppScenarios.h"
 
 class ITrackerBackendFactory;
 class LocalCacheManager; // fan-in Phase 1: fwd-decl (was a direct heavy include); `std::unique_ptr<LocalCacheManager>
@@ -137,7 +140,11 @@ class ScenarioRunner;
 }
 } // namespace smatchet
 
-class AppController : public IMainThreadPoster, public IAppOfflineQueue {
+class AppController : public IMainThreadPoster,
+                      public IAppOfflineQueue,
+                      public IAppMeta,
+                      public IAppAttachments,
+                      public IAppScenarios {
     /// `GridContextDepsAdapter` implements `IOfflineQueueDeps` + `ITicketSyncDeps` against
     /// this AppController + one `GridLiveContext` and forwards every method either to the
     /// per-context state (`Backend`, `ActiveTickets*`) or to AppController-shared state
@@ -257,8 +264,8 @@ class AppController : public IMainThreadPoster, public IAppOfflineQueue {
 
     /// Scenario runner — feeds from scenario.run / scenario.cancel / scenario.list.
     /// Tick is driven per-frame by SmatchetUI::Draw.
-    smatchet::cmd::ScenarioRunner& Scenarios();
-    const smatchet::cmd::ScenarioRunner& Scenarios() const;
+    smatchet::cmd::ScenarioRunner& Scenarios() override;
+    const smatchet::cmd::ScenarioRunner& Scenarios() const override;
 
     /** Path passed to `Initialize` (may be relative to the process working directory). */
     const std::string& GetLocalCacheDbPath() const { return localCacheDbPath_; }
@@ -343,7 +350,7 @@ class AppController : public IMainThreadPoster, public IAppOfflineQueue {
     void SetCloseEmbeddedUiHandler(std::function<void()> handler);
     void CloseEmbeddedUi();
     void SetRequestAppQuitHandler(std::function<void()> handler);
-    void RequestAppQuit() const;
+    void RequestAppQuit() const override;
 
     /** Standalone / embedded host: set so Preferences can start or stop MCP without app restart. */
     void SetRuntimePluginHost(PluginHost* host);
@@ -416,14 +423,14 @@ class AppController : public IMainThreadPoster, public IAppOfflineQueue {
      * - Otherwise, for image mime types: downloads and offers in-app preview handler.
      * - If no host/in-app handler path is available: falls back to OpenUrl(url).
      */
-    void OpenAttachment(const std::string& url, const std::string& filename, const std::string& mimeType);
+    void OpenAttachment(const std::string& url, const std::string& filename, const std::string& mimeType) override;
     /** Download to temp then open local file in OS default app (matches Unreal attachment viewer). */
     void OpenAttachmentInSystemViewer(const std::string& url, const std::string& filename, const std::string& mimeType);
     bool DownloadAttachmentForPreview(const std::string& url, const std::string& filename, const std::string& mimeType,
-                                      std::string* outError = nullptr);
-    std::string GetAppVersion() const;
-    std::string GetGitHubReleaseRepo() const;
-    AppUpdateInfo CheckForAppUpdate(bool includePrerelease = false) const;
+                                      std::string* outError) override; // default (=nullptr) lives on IAppAttachments
+    std::string GetAppVersion() const override;
+    std::string GetGitHubReleaseRepo() const override;
+    AppUpdateInfo CheckForAppUpdate(bool includePrerelease) const override; // default (=false) lives on IAppMeta
     /// Downloads + launches the installer. Blocking — callers must dispatch this on a worker
     /// thread via `LaunchBackgroundTask`. The optional `cancelFlag` is polled inside the cpr
     /// write callback; when set to `true` the download aborts cleanly and the partial file is
