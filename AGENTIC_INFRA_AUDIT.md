@@ -77,7 +77,7 @@ The agentic layer is unusually large and unusually disciplined for a solo prerel
 |---|---|---|---|
 | C1 | P1 | `agentic-selftests.yml` — the only CI lane running the 56-suite bats layer — is not a required branch-protection context | already tracked |
 | C2 | P2 | Monoliths: `test-lint-rules.sh` ~139 KB, `merge-gates.sh` ~97 KB, `build-and-test.yml` ~132 KB | backlog entry |
-| C3 | P2 | Linux-container agents have no reproducible test signal beyond lint + compile gates (no bats/gh/shellcheck/doctest) | backlog entry (folded into C2's sibling + P5 proposal) |
+| C3 | P2 | Linux-container agents have no reproducible test signal beyond lint + compile gates (no bats/gh/shellcheck/doctest) | proposal (P5/P6 below) |
 | C4 | P2 | Agent-eval harness holds 3 cases — regression scoring for prompt changes is built but unpopulated | already tracked |
 | C5 | P2 | Fresh-clone bootstrap hole: every session hook/guard is inert until `setup-harness.sh` runs; only a manual probe warns | backlog entry |
 | C6 | P2 | MCP live-HTTP `Authorize` path (DNS-rebind gate, SSE cap) tested only via pure helpers, never over a real socket | backlog entry |
@@ -137,4 +137,4 @@ Findings from this sweep that dedupe to an existing tracker — cross-referenced
 - **Filed as self-improvement entries (11):** `security/2026-07-06-ai-autocontext-prompt-injection.md` (B1), `security/2026-07-06-mcp-tools-call-rate-limit.md` (B3), `security/2026-07-06-ai-dump-request-skips-sanitizers.md` (B4), `process/2026-07-06-cost-ceiling-gate-unbuilt.md` (A6), `process/2026-07-06-agents-md-over-own-cap-trim.md` (A1), `tooling/2026-07-06-test-lint-rules-monolith-split.md` (C2), `infra/2026-07-06-fresh-clone-bootstrap-hole.md` (C5), `test/2026-07-06-mcp-live-http-auth-direct-test.md` (C6), `tooling/2026-07-06-repo-health-facts-staleness.md` (C8), `tooling/2026-07-06-sourcetrail-dead-db-retire.md` (C7), `debt/2026-07-06-required-contexts-derive-single-source.md` (A5).
 - **GitHub Issue candidate (1):** B5 — the Lua `ai.*` cross-thread race is a shipped-behaviour defect; per ADR-0014 it belongs in the issue tracker, not this backlog. Not auto-filed by this docs PR; flagged here for triage.
 - **Cross-referenced only (5):** C1, C4, C9, A4, B2 (see § Already tracked).
-- **Noted, deliberately unfiled (2):** B6 protocol primitives and B7 registry polish — captured as Proposals P2/P3 and inline; they are opportunities, not defects.
+- **Noted, deliberately unfiled (3):** C3 environment parity (captured as Proposals P5/P6), B6 protocol primitives, and B7 registry polish (captured as Proposals P2/P3 and inline) — they are opportunities, not defects.
