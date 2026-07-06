@@ -17,6 +17,7 @@
 #include <vector>
 
 class AppController;
+class IAppOfflineQueue; // fan-in Phase 5: RegisterOfflineCommands takes the narrow facet, not AppController
 
 namespace smatchet {
 namespace cmd {
@@ -61,7 +62,7 @@ void RegisterDebugCommands(CommandRegistry& reg, AppController& app);
 void RegisterSyncCommands(CommandRegistry& reg, AppController& app);
 void RegisterFieldsCommands(CommandRegistry& reg, AppController& app);
 void RegisterUsersCommands(CommandRegistry& reg, AppController& app);
-void RegisterOfflineCommands(CommandRegistry& reg, AppController& app);
+void RegisterOfflineCommands(CommandRegistry& reg, IAppOfflineQueue& app);
 void RegisterScenarioCommands(CommandRegistry& reg, AppController& app);
 void RegisterUiTestCommands(CommandRegistry& reg, AppController& app);
 void RegisterAttachCommands(CommandRegistry& reg, AppController& app);
