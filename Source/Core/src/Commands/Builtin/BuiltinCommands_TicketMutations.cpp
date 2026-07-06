@@ -6,10 +6,14 @@
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 
-#include "AppController.h"
-#include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+// fan-in Phase 5: depend on the narrow IAppTicketMutations facet, not the full AppController.h.
+// The facet forward-declares the rank-3 Tracker payload types; this TU includes their full
+// definitions (below) since it constructs/derefs them and reads IssueCreateResult from the future.
+#include "Interfaces/IAppTicketMutations.h"
+#include <nlohmann/json.hpp> // this TU constructs nlohmann::json directly.
 #include "IssueDraft.h"
 #include "LocalCacheManager.h"
+#include "IssueCreatePipeline.h" // IssueCreateResult (returned by CreateIssueAsync().get())
 #include "TrackerFieldSchema.h"
 
 #include <algorithm>
@@ -25,7 +29,7 @@ using builtin_detail::PString;
 
 namespace {
 
-static void RegisterSetFieldCommand(CommandRegistry& reg, AppController& app) {
+static void RegisterSetFieldCommand(CommandRegistry& reg, IAppTicketMutations& app) {
     Command c = MakeCommand(
         "ticket.set_field", "Update a single field on a ticket.",
         [&app](const nlohmann::json& args, const CommandContext& ctx) {
@@ -37,8 +41,8 @@ static void RegisterSetFieldCommand(CommandRegistry& reg, AppController& app) {
                 auto snap = app.GetActiveTicketsSnapshot();
                 std::string from;
                 if (snap) {
-                    auto it = std::find_if(snap->begin(), snap->end(),
-                                           [&id](const CachedTicket& t) { return t.id == id; });
+                    auto it =
+                        std::find_if(snap->begin(), snap->end(), [&id](const CachedTicket& t) { return t.id == id; });
                     if (it != snap->end()) {
                         auto fit = it->fieldValues.find(field);
                         if (fit != it->fieldValues.end())
@@ -72,19 +76,18 @@ static void RegisterSetFieldCommand(CommandRegistry& reg, AppController& app) {
     reg.Register(std::move(c));
 }
 
-static void RegisterAddCommentCommand(CommandRegistry& reg, AppController& app) {
-    Command c =
-        MakeCommand("ticket.add_comment", "Post a plain-text comment on a ticket.",
-                    [&app](const nlohmann::json& args, const CommandContext&) {
-                        const std::string id = args.value("id", std::string());
-                        const std::string body = args.value("body", std::string());
-                        std::string err;
-                        const bool ok = app.AddIssueCommentPlain(id, body, err);
-                        if (!ok) {
-                            return CommandResult::Failure(ErrorCode::BackendError, "Comment failed: " + err);
-                        }
-                        return CommandResult::Success({{"ok", true}});
-                    });
+static void RegisterAddCommentCommand(CommandRegistry& reg, IAppTicketMutations& app) {
+    Command c = MakeCommand("ticket.add_comment", "Post a plain-text comment on a ticket.",
+                            [&app](const nlohmann::json& args, const CommandContext&) {
+                                const std::string id = args.value("id", std::string());
+                                const std::string body = args.value("body", std::string());
+                                std::string err;
+                                const bool ok = app.AddIssueCommentPlain(id, body, err);
+                                if (!ok) {
+                                    return CommandResult::Failure(ErrorCode::BackendError, "Comment failed: " + err);
+                                }
+                                return CommandResult::Success({{"ok", true}});
+                            });
     c.Destructive = true;
     c.Idempotent = false;
     c.Params = {
@@ -94,34 +97,33 @@ static void RegisterAddCommentCommand(CommandRegistry& reg, AppController& app) 
     reg.Register(std::move(c));
 }
 
-static void RegisterAddWorklogCommand(CommandRegistry& reg, AppController& app) {
-    Command c =
-        MakeCommand("ticket.add_worklog", "Log time worked on a ticket.",
-                    [&app](const nlohmann::json& args, const CommandContext&) {
-                        const int seconds = args.value("seconds", 0);
-                        const std::string id = args.value("id", std::string());
-                        const std::string comment = args.value("comment", std::string());
-                        const std::string started = args.value("started", std::string());
-                        // timeSpent format: "1h 30m" — build from seconds.
-                        const int h = seconds / 3600;
-                        const int m = (seconds % 3600) / 60;
-                        const int s = seconds % 60;
-                        char timeSpent[64] = {};
-                        if (h > 0 && m > 0)
-                            std::snprintf(timeSpent, sizeof(timeSpent), "%dh %dm", h, m);
-                        else if (h > 0)
-                            std::snprintf(timeSpent, sizeof(timeSpent), "%dh", h);
-                        else if (m > 0)
-                            std::snprintf(timeSpent, sizeof(timeSpent), "%dm", m);
-                        else
-                            std::snprintf(timeSpent, sizeof(timeSpent), "%ds", s);
-                        std::string err;
-                        const bool ok = app.SubmitWorklog(id, timeSpent, "", "auto", comment, started, err);
-                        if (!ok) {
-                            return CommandResult::Failure(ErrorCode::BackendError, "Worklog failed: " + err);
-                        }
-                        return CommandResult::Success({{"ok", true}, {"timeSpent", std::string(timeSpent)}});
-                    });
+static void RegisterAddWorklogCommand(CommandRegistry& reg, IAppTicketMutations& app) {
+    Command c = MakeCommand("ticket.add_worklog", "Log time worked on a ticket.",
+                            [&app](const nlohmann::json& args, const CommandContext&) {
+                                const int seconds = args.value("seconds", 0);
+                                const std::string id = args.value("id", std::string());
+                                const std::string comment = args.value("comment", std::string());
+                                const std::string started = args.value("started", std::string());
+                                // timeSpent format: "1h 30m" — build from seconds.
+                                const int h = seconds / 3600;
+                                const int m = (seconds % 3600) / 60;
+                                const int s = seconds % 60;
+                                char timeSpent[64] = {};
+                                if (h > 0 && m > 0)
+                                    std::snprintf(timeSpent, sizeof(timeSpent), "%dh %dm", h, m);
+                                else if (h > 0)
+                                    std::snprintf(timeSpent, sizeof(timeSpent), "%dh", h);
+                                else if (m > 0)
+                                    std::snprintf(timeSpent, sizeof(timeSpent), "%dm", m);
+                                else
+                                    std::snprintf(timeSpent, sizeof(timeSpent), "%ds", s);
+                                std::string err;
+                                const bool ok = app.SubmitWorklog(id, timeSpent, "", "auto", comment, started, err);
+                                if (!ok) {
+                                    return CommandResult::Failure(ErrorCode::BackendError, "Worklog failed: " + err);
+                                }
+                                return CommandResult::Success({{"ok", true}, {"timeSpent", std::string(timeSpent)}});
+                            });
     c.Destructive = true;
     c.Idempotent = false;
     {
@@ -138,7 +140,7 @@ static void RegisterAddWorklogCommand(CommandRegistry& reg, AppController& app) 
     reg.Register(std::move(c));
 }
 
-static void RegisterTransitionCommand(CommandRegistry& reg, AppController& app) {
+static void RegisterTransitionCommand(CommandRegistry& reg, IAppTicketMutations& app) {
     Command c =
         MakeCommand("ticket.transition", "Transition a ticket to a new status.",
                     [&app](const nlohmann::json& args, const CommandContext& ctx) {
@@ -169,7 +171,7 @@ static void RegisterTransitionCommand(CommandRegistry& reg, AppController& app) 
     reg.Register(std::move(c));
 }
 
-static void RegisterSetFieldsCommand(CommandRegistry& reg, AppController& app) {
+static void RegisterSetFieldsCommand(CommandRegistry& reg, IAppTicketMutations& app) {
     Command c =
         MakeCommand("ticket.set_fields", "Update multiple fields on a ticket in one call.",
                     [&app](const nlohmann::json& args, const CommandContext& ctx) {
@@ -214,7 +216,7 @@ static void RegisterSetFieldsCommand(CommandRegistry& reg, AppController& app) {
     reg.Register(std::move(c));
 }
 
-static void RegisterCreateCommand(CommandRegistry& reg, AppController& app) {
+static void RegisterCreateCommand(CommandRegistry& reg, IAppTicketMutations& app) {
     Command c = MakeCommand(
         "ticket.create", "Create a new ticket (live or queued offline).",
         [&app](const nlohmann::json& args, const CommandContext& ctx) {
@@ -269,7 +271,7 @@ static void RegisterCreateCommand(CommandRegistry& reg, AppController& app) {
 
 } // namespace
 
-void RegisterTicketMutationCommands(CommandRegistry& reg, AppController& app) {
+void RegisterTicketMutationCommands(CommandRegistry& reg, IAppTicketMutations& app) {
     RegisterSetFieldCommand(reg, app);
     RegisterAddCommentCommand(reg, app);
     RegisterAddWorklogCommand(reg, app);

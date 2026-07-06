@@ -117,6 +117,7 @@ class AiAssistantController;
 #include "Interfaces/IAppDebug.h"
 #include "Interfaces/IAppAutomation.h"
 #include "Interfaces/IAppTicketData.h"
+#include "Interfaces/IAppTicketMutations.h"
 
 class ITrackerBackendFactory;
 class LocalCacheManager; // fan-in Phase 1: fwd-decl (was a direct heavy include); `std::unique_ptr<LocalCacheManager>
@@ -152,7 +153,8 @@ class AppController : public IMainThreadPoster,
                       public IAppUsers,
                       public IAppDebug,
                       public IAppAutomation,
-                      public IAppTicketData {
+                      public IAppTicketData,
+                      public IAppTicketMutations {
     /// `GridContextDepsAdapter` implements `IOfflineQueueDeps` + `ITicketSyncDeps` against
     /// this AppController + one `GridLiveContext` and forwards every method either to the
     /// per-context state (`Backend`, `ActiveTickets*`) or to AppController-shared state
@@ -767,15 +769,18 @@ class AppController : public IMainThreadPoster,
      * hydration — so a bulk-import `.clear()` or app shutdown drains promptly.
      * Defaulted so non-bulk callers (Lua) need not supply one.
      */
-    std::future<IssueCreateResult> CreateIssueAsync(const IssueDraft& draft,
-                                                    smatchet::ui::CancelToken cancel = smatchet::ui::CancelToken());
+    // CancelToken default mirrored on IAppTicketMutations::CreateIssueAsync (kept here too:
+    // concrete-typed callers — AppController_LuaBindings, SmatchetNewIssueDraftUi — use the
+    // 1-arg form, which static-binds this declaration's default).
+    std::future<IssueCreateResult>
+    CreateIssueAsync(const IssueDraft& draft, smatchet::ui::CancelToken cancel = smatchet::ui::CancelToken()) override;
 
     /**
      * Persist `draft` to SQLite and return the queued row id. Useful when the
      * user wants to stage creates before going online, or when a create fails
      * due to connectivity errors. Replayed by `TickOfflineCreates`.
      */
-    std::int64_t QueueCreateOffline(const IssueDraft& draft);
+    std::int64_t QueueCreateOffline(const IssueDraft& draft) override;
 
     /**
      * Replay any queued offline creates. No-op when the queue is empty or the
@@ -850,7 +855,7 @@ class AppController : public IMainThreadPoster,
     void PrefetchIssueTicketsForKeys(const std::vector<std::string>& issueKeys, bool includeAlreadyActive = false);
     bool IsBulkImportPrefetchInFlight(const std::string& issueKey) const;
 
-    const TrackerField* FindFieldById(const std::string& fieldId) const;
+    const TrackerField* FindFieldById(const std::string& fieldId) const override;
 
     /** Component options valid for one Jira project key (e.g. "PROJ"), warmed async for cross-project
      *  grid views. Returns a by-value copy taken under availableFieldsMutex_; empty when the project
@@ -895,7 +900,10 @@ class AppController : public IMainThreadPoster,
     // ApplyFieldUpdateWithEditMetaRetry + SubmitSprint/TimetrackingFieldEditNetworkOnly had no
     // external callers and are now service-private (not re-exposed here).
     bool SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
-                         const std::vector<std::string>& rawValues, std::string& outError);
+                         const std::vector<std::string>& rawValues, std::string& outError) override;
+    // clang-format off
+    // SMATCHET_DEVIATION(rule=duplication; reason=these field-edit delegator declarations are BY DESIGN a verbatim signature mirror of FieldEditPipelineService's SubmitFieldEdit/SubmitFieldEditNetworkOnly (the god-object decomposition Phase 2 forwarders — "Signature preserved verbatim" on both sides); the pre-existing structural clone only crossed the delta-scanner threshold because adding `override` to SubmitFieldEdit (fan-in Phase 5) re-hashed the token window; owner=orchestrator; revisit=if the delegators are ever removed or the service signatures diverge)
+    // clang-format on
     bool SubmitFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
                                     const std::vector<std::string>& rawValues,
                                     const std::string& originalEstimateSnapshot,
@@ -947,7 +955,8 @@ class AppController : public IMainThreadPoster,
     bool SearchUsersByQuery(const std::string& query, std::vector<TrackerUser>& outUsers,
                             std::string& outError) const override;
 
-    bool AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText, std::string& outError);
+    bool AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText,
+                              std::string& outError) override;
 
     /// issue-comments PR-A — off-UI read wrapper around
     /// `ITrackerCollaboration::FetchIssueComments`. Latches the focused backend,
@@ -965,7 +974,7 @@ class AppController : public IMainThreadPoster,
 
     bool SubmitWorklog(const std::string& issueId, const std::string& timeSpent, const std::string& timeRemaining,
                        const std::string& adjustEstimate, const std::string& workDescription,
-                       const std::string& startedDate, std::string& outError);
+                       const std::string& startedDate, std::string& outError) override;
 
     bool AddIssueCommentAnnotateContext(const std::string& issueKey, const std::string& p4User,
                                         const std::string& functionName, const std::string& filePath, int lineNumber,
