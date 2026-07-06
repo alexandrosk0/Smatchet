@@ -182,6 +182,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`coverage-gap-tier2-backend-shell-fixtures`](shipped/coverage-gap-tier2-backend-shell-fixtures.md) | 2026-07-05 | Plan — Coverage-gap Tier 2: backend-shell fixture tests (Plane + Linear issue search) |
 | [`coverage-gap-tier3-command-contract`](shipped/coverage-gap-tier3-command-contract.md) | 2026-07-05 | Plan — Coverage-gap Tier 3: registry-wide command error-envelope contract sweep |
 | [`user-facing-text-i18n-sweep`](shipped/user-facing-text-i18n-sweep.md) | 2026-07-05 | Plan — user-facing text i18n completeness sweep |
+| [`appcontroller-service-extraction`](shipped/appcontroller-service-extraction.md) | 2026-07-06 | Behavior-preserving extraction of cohesive responsibility clusters out of AppController.cpp (~2862 LOC) into focused companion TUs; carries forward the still-relevant Phase 2 items from the archived large-files-and-phase-2 plan. |
 <!-- END auto-plan-index -->
 
 ### Notes

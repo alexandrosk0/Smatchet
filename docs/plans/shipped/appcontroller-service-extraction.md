@@ -2,7 +2,7 @@
 
 > **Slug**: `appcontroller-service-extraction` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `shipped` — both slices merged via PR #1653 (`1ec340c`); post-ship sections populated below.
 
 <!-- index-summary: Behavior-preserving extraction of cohesive responsibility clusters out of AppController.cpp (~2862 LOC) into focused companion TUs; carries forward the still-relevant Phase 2 items from the archived large-files-and-phase-2 plan. -->
 
@@ -169,15 +169,60 @@ AI-context) are named in § Out of scope for a future slice, respecting the 2-PR
 plan already recorded Track B as shipped; nothing to un-stale.
 
 ## Implementation log
-*(populated post-ship)*
+
+Both slices shipped in a single PR ([#1653](https://github.com/alexandrosk0/Smatchet/pull/1653), squash-merge `1ec340c`):
+
+- `c19c07d` · **Slice 1** · extracted the bootstrap cluster (`Initialize`, `WireCoreServices`,
+  `InitConfig`, `InitBackends`, `MaybeInstallGitHubFixtureFactory`, `RunLegacyStartupSweeps`,
+  `InitFieldCatalog`, `ResolveActiveViewProjectKeyForCatalog`, `ApplyStartupFieldCatalogSnapshot`,
+  `InitPlugins`, `InitCommands`) + the two startup-diagnostics anon helpers used only by it into
+  `AppController_Init.cpp`. `AppController.cpp` 2862 → 2171 LOC.
+- `4101155` · **Slice 1 fix** · restored `Ui/SmatchetFieldRender.h` — the curated include set
+  dropped it, but `RunLegacyStartupSweeps` calls the free function `SetCallstackFieldIdHint`
+  declared there. Caught by CI (Android emulator smoke / Windows MSVC) as an undeclared-identifier
+  error; no local Core compile is possible in this container.
+- `eafd546` · **Slice 2** · extracted the multi-grid / pane-context cluster (`refreshFocusedContextPtr_`
+  through `retireExpiredHiddenContexts_`, 16 methods) + the `kHiddenContextGrace` anon constant into
+  `AppController_PaneContexts.cpp`. `AppController.cpp` 2171 → **1518 LOC**.
+
+Net: **`AppController.cpp` 2862 → 1518 LOC (−1344, −47%)**; two new companion TUs (~770 + ~680 LOC).
+Both moves verified byte-exact (source = original minus moved regions; moved bodies byte-identical to
+originals bar one Slice-1 comment reworded to prose).
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **Plan-lock never claimed.** `bash agents/scripts/core/lock-claim.sh` push to `refs/locks/*` returned
+  HTTP 403 — this session's git host does not permit the custom ref namespace. In a solo single-session
+  repo the lock's coordination purpose is moot; no conflicting lock existed (`locks-show` empty). Recorded
+  and proceeded rather than block.
+- **Curated includes, not the full replicated superset.** The plan's § Approach said "replicate
+  `AppController.cpp`'s full include block (superset)". In practice the superset tripped the blocking DRY
+  duplication gate (the winsock preamble + include list cloned `AppController.cpp`). Switched to the
+  established companion-TU idiom (curated includes, no winsock preamble — no other `AppController_*.cpp`
+  companion has it). Slice 1 still carries one `duplication` `SMATCHET_DEVIATION` for the residual
+  subsystem-include overlap; Slice 2's smaller/reordered set cloned nothing, so it needed none. Each TU
+  carries one `app-controller-fan-in` deviation (a companion TU defining `AppController::` methods must
+  include `AppController.h`).
+- **Curation risk materialised once (Slice 1).** Trimming by a symbol-usage heuristic missed a free
+  function (`SetCallstackFieldIdHint`) → one CI round-trip. Slice 2 was then curated by verifying *every*
+  free-function call site, namespace-qualified call, and type against the moved bodies, and landed clean.
+- **Both slices shipped in one PR, not two.** The designated single working branch
+  (`claude/appcontroller-service-extraction-ynqhq1`) carried both cohesive slices as separate commits under
+  one PR (≤ the 2-PR session cap; CI verified the combined head).
 
 ## Verification (actual)
-*(populated post-ship)*
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. flip § Status to `shipped`,
-2. `git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,
-3. regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.
+- **Build gate (the real verification — no Core TU compiles in this Linux container):** CI on the combined
+  head `eafd546` was **fully green** — `Windows + MSVC` (full), `Windows + MSVC (Smatchet light)`,
+  `Windows + MSVC (ARM64 cross-compile)`, `Mobile — POSIX core compile gate (Linux clang)` (compiles both
+  new TUs under Lua-OFF), `Mobile — Android NDK arm64-v8a`, `Android APK`, `Android emulator smoke`,
+  `Sanitizer (ASAN)`, `Sanitizer (UBSan)`, `Bucket-C screenshot diff`, `Bucket-E UI tests`,
+  `Bucket-E Jira fixture-backend`, `Bucket launch-smoke`, `Perf PR-fast`, `Coverage`, `Duplication scanner`,
+  `C++ lint`. CodeRabbit: "Review completed" + "CR findings (0 actionable)". Cursor Bugbot: neutral
+  (usage-cap, no wedge).
+- **Source-level behavior-preservation proof:** `diff` confirmed `AppController.cpp` equals the pre-slice
+  original minus exactly the two moved line ranges, and each moved cluster is byte-identical to its origin
+  (one Slice-1 comment reworded to prose; Slice 2 zero content change).
+- **Local:** repo lint gate (`test-lint-rules.sh --diff origin/develop`) green for both slices.
+- **Plan stress-test (`grill-with-docs`):** not run as a separate pass — the plan's own § Verification and
+  the byte-exact-diff discipline served as the forcing function; noted as a minor process deviation.
