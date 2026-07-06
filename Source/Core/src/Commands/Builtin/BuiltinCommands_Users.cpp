@@ -5,8 +5,10 @@
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 
-#include "AppController.h"
-#include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+// fan-in Phase 5: depend on the narrow IAppUsers facet, not the full AppController.h.
+#include "Interfaces/IAppUsers.h"
+#include "Tracker/TrackerFieldSchema.h" // TrackerUser (the facet only forward-declares it)
+#include <nlohmann/json.hpp>            // this TU constructs nlohmann::json directly.
 
 #include <string>
 #include <utility>
@@ -20,7 +22,7 @@ using builtin_detail::PaginateJsonArray;
 using builtin_detail::PInt;
 using builtin_detail::PString;
 
-void RegisterUsersCommands(CommandRegistry& reg, AppController& app) {
+void RegisterUsersCommands(CommandRegistry& reg, IAppUsers& app) {
     {
         Command c = MakeCommand("users.search", "Search tracker users by display-name substring.",
                                 [&app](const nlohmann::json& args, const CommandContext&) {

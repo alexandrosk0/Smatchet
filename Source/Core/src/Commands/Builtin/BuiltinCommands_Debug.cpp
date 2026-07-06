@@ -8,8 +8,10 @@
 #include "Commands/MainThreadDispatch.h"
 #include "Commands/PathConfinement.h"
 
-#include "AppController.h"
-#include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+// fan-in Phase 5: depend on the narrow IAppDebug facet (+ IMainThreadPoster via
+// MainThreadDispatch.h for the dock/window UI-marshaling commands), not AppController.h.
+#include "Interfaces/IAppDebug.h"
+#include <nlohmann/json.hpp> // this TU constructs nlohmann::json directly.
 #include "ConfigManager.h"
 #include "Logger.h"
 #include "SmatchetDockNodeIds.h"
@@ -44,7 +46,7 @@ using builtin_detail::ToLowerAscii;
 namespace {
 
 // --- debug.log --------------------------------------------------------------
-static void RegisterDebugLogCommand(CommandRegistry& reg, AppController& /*app*/) {
+static void RegisterDebugLogCommand(CommandRegistry& reg) {
     Command c = MakeCommand("debug.log", "Emit a one-shot Logger entry (info/warn/error). For agent breadcrumbs.",
                             [](const nlohmann::json& args, const CommandContext&) {
                                 const std::string level = ToLowerAscii(args.value("level", std::string("info")));
@@ -74,7 +76,7 @@ static void RegisterDebugLogCommand(CommandRegistry& reg, AppController& /*app*/
 }
 
 // --- debug.mcp_status -------------------------------------------------------
-static void RegisterDebugMcpStatusCommand(CommandRegistry& reg, AppController& app) {
+static void RegisterDebugMcpStatusCommand(CommandRegistry& reg, IAppDebug& app) {
     Command c = MakeCommand("debug.mcp_status", "MCP server reachability and last-client-activity timestamp.",
                             [&app](const nlohmann::json&, const CommandContext&) {
                                 nlohmann::json out;
@@ -99,7 +101,7 @@ static void RegisterDebugMcpStatusCommand(CommandRegistry& reg, AppController& a
 }
 
 // --- debug.thread_dump ------------------------------------------------------
-static void RegisterDebugThreadDumpCommand(CommandRegistry& reg, AppController& /*app*/) {
+static void RegisterDebugThreadDumpCommand(CommandRegistry& reg) {
     Command c = MakeCommand("debug.thread_dump", "Return basic thread count and state information.",
                             [](const nlohmann::json&, const CommandContext&) {
                                 // C++14 doesn't expose thread IDs without platform headers.
@@ -120,7 +122,7 @@ static void RegisterDebugThreadDumpCommand(CommandRegistry& reg, AppController& 
 // snippet through ExecuteLuaConsoleSnippet, returns captured lines + the
 // scriptingWindowOpenRequested_ flag state. Sinks persist after the call —
 // intended for ephemeral --spawn instances which exit between assertions.
-static void RegisterDebugLuaLogTestCommand(CommandRegistry& reg, AppController& app) {
+static void RegisterDebugLuaLogTestCommand(CommandRegistry& reg, IAppDebug& app) {
     Command c =
         MakeCommand("debug.lua_log_test",
                     "Run a Lua snippet capturing the automation log + error sinks. Returns JSON {log_lines, err_lines, "
@@ -162,7 +164,7 @@ static void RegisterDebugLuaLogTestCommand(CommandRegistry& reg, AppController& 
 }
 
 // --- debug.lua_eval ---------------------------------------------------------
-static void RegisterDebugLuaEvalCommand(CommandRegistry& reg, AppController& app) {
+static void RegisterDebugLuaEvalCommand(CommandRegistry& reg, IAppDebug& app) {
     Command c =
         MakeCommand("debug.lua_eval", "Evaluate a Lua code snippet and return the result summary.",
                     [&app](const nlohmann::json& args, const CommandContext& /*ctx*/) {
@@ -191,10 +193,10 @@ static void RegisterDebugLuaEvalCommand(CommandRegistry& reg, AppController& app
 // --- debug.dock.dump --------------------------------------------------------
 // Handler runs on the UI thread because ImGui::DockBuilderGetNode reads
 // the imgui dock-node table which is owned by the UI thread.
-static void RegisterDebugDockDumpCommand(CommandRegistry& reg, AppController& app) {
+static void RegisterDebugDockDumpCommand(CommandRegistry& reg, IMainThreadPoster& poster) {
     Command c = MakeCommand("debug.dock.dump", "Log all dock nodes to the runtime log.",
-                            [&app](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
-                                return RunOnUiThreadAsCommandResult(app, []() {
+                            [&poster](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
+                                return RunOnUiThreadAsCommandResult(poster, []() {
                                     static const ImGuiID kNodes[] = {
                                         SmatchetDockNodeIds::kPrimarySideBar,
                                         SmatchetDockNodeIds::kBottomPanel,
@@ -264,10 +266,10 @@ static void RegisterDebugDockDumpCommand(CommandRegistry& reg, AppController& ap
 
 // --- debug.dock.reset -------------------------------------------------------
 // Must run on the UI thread — SmatchetUI_ResetLayoutToDefault touches ImGui + g_ui.
-static void RegisterDebugDockResetCommand(CommandRegistry& reg, AppController& app) {
+static void RegisterDebugDockResetCommand(CommandRegistry& reg, IMainThreadPoster& poster) {
     Command c = MakeCommand("debug.dock.reset", "Force reset dock layout to VS shell default.",
-                            [&app](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
-                                return RunOnUiThreadAsCommandResult(app, []() {
+                            [&poster](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
+                                return RunOnUiThreadAsCommandResult(poster, []() {
                                     SmatchetUI_ResetLayoutToDefault(g_ui);
                                     nlohmann::json out;
                                     out["reset"] = true;
@@ -282,10 +284,10 @@ static void RegisterDebugDockResetCommand(CommandRegistry& reg, AppController& a
 // --- debug.window.resize ----------------------------------------------------
 // Sets a transient flag; the main loop polls and calls glfwSetWindowSize.
 // Standalone-only; on the Unreal/DX12 build the flag is set but never consumed (harmless).
-static void RegisterDebugWindowResizeCommand(CommandRegistry& reg, AppController& app) {
+static void RegisterDebugWindowResizeCommand(CommandRegistry& reg, IMainThreadPoster& poster) {
     Command c =
         MakeCommand("debug.window.resize", "Resize the GLFW window (standalone only).",
-                    [&app](const nlohmann::json& args, const CommandContext& /*ctx*/) {
+                    [&poster](const nlohmann::json& args, const CommandContext& /*ctx*/) {
                         const int w = static_cast<int>(args.value("width", 0));
                         const int h = static_cast<int>(args.value("height", 0));
                         if (w <= 0 || h <= 0) {
@@ -296,7 +298,7 @@ static void RegisterDebugWindowResizeCommand(CommandRegistry& reg, AppController
                         // non-atomic int/bool request fields would race the standalone main
                         // loop that polls them each frame (data race / UB). The dock.* and
                         // bug.report handlers in this TU follow the same seam.
-                        return RunOnUiThreadAsCommandResult(app, [w, h]() {
+                        return RunOnUiThreadAsCommandResult(poster, [w, h]() {
                             g_ui.requestWindowWidth = w;
                             g_ui.requestWindowHeight = h;
                             g_ui.requestWindowResize = true;
@@ -319,10 +321,10 @@ static void RegisterDebugWindowResizeCommand(CommandRegistry& reg, AppController
 // --- debug.window.screenshot ------------------------------------------------
 // Sets a transient flag + path; the main loop polls and writes PNG/PPM.
 // Standalone-only; on Unreal/DX12 the flag is set but never consumed.
-static void RegisterDebugWindowScreenshotCommand(CommandRegistry& reg, AppController& app) {
+static void RegisterDebugWindowScreenshotCommand(CommandRegistry& reg, IMainThreadPoster& poster) {
     Command c =
         MakeCommand("debug.window.screenshot", "Save a PNG screenshot of the current viewport.",
-                    [&app](const nlohmann::json& args, const CommandContext& /*ctx*/) {
+                    [&poster](const nlohmann::json& args, const CommandContext& /*ctx*/) {
                         const std::string path = args.value("path", std::string());
                         if (path.empty()) {
                             return CommandResult::Failure(ErrorCode::ValidationError, "path is required");
@@ -341,7 +343,7 @@ static void RegisterDebugWindowScreenshotCommand(CommandRegistry& reg, AppContro
                         // read by the standalone main loop each frame, so an unsynchronised
                         // write from an MCP/Lua worker thread is a genuine data race (the
                         // string buffer can reallocate under the reader — UB, not benign).
-                        return RunOnUiThreadAsCommandResult(app, [confinedPath]() {
+                        return RunOnUiThreadAsCommandResult(poster, [confinedPath]() {
                             g_ui.requestScreenshotPath = confinedPath;
                             g_ui.requestScreenshot = true;
                             nlohmann::json out;
@@ -360,7 +362,7 @@ static void RegisterDebugWindowScreenshotCommand(CommandRegistry& reg, AppContro
 // Deliberately crashes the process to validate the phase-2 crash reporter.
 // Next launch should open a pre-filled bug report. Destructive; requires --yes.
 // kind selects segv null-deref, abort, or throw.
-static void RegisterDebugCrashCommand(CommandRegistry& reg, AppController& /*app*/) {
+static void RegisterDebugCrashCommand(CommandRegistry& reg) {
     Command c = MakeCommand("debug.crash", "Deliberately crash the process (tests the crash reporter). Requires --yes.",
                             [](const nlohmann::json& args, const CommandContext& ctx) -> CommandResult {
                                 const std::string kind = args.value("kind", std::string("segv"));
@@ -389,17 +391,17 @@ static void RegisterDebugCrashCommand(CommandRegistry& reg, AppController& /*app
 
 } // namespace
 
-void RegisterDebugCommands(CommandRegistry& reg, AppController& app) {
-    RegisterDebugLogCommand(reg, app);
+void RegisterDebugCommands(CommandRegistry& reg, IAppDebug& app, IMainThreadPoster& poster) {
+    RegisterDebugLogCommand(reg);
     RegisterDebugMcpStatusCommand(reg, app);
-    RegisterDebugThreadDumpCommand(reg, app);
+    RegisterDebugThreadDumpCommand(reg);
     RegisterDebugLuaLogTestCommand(reg, app);
     RegisterDebugLuaEvalCommand(reg, app);
-    RegisterDebugDockDumpCommand(reg, app);
-    RegisterDebugDockResetCommand(reg, app);
-    RegisterDebugWindowResizeCommand(reg, app);
-    RegisterDebugWindowScreenshotCommand(reg, app);
-    RegisterDebugCrashCommand(reg, app);
+    RegisterDebugDockDumpCommand(reg, poster);
+    RegisterDebugDockResetCommand(reg, poster);
+    RegisterDebugWindowResizeCommand(reg, poster);
+    RegisterDebugWindowScreenshotCommand(reg, poster);
+    RegisterDebugCrashCommand(reg);
 }
 
 } // namespace cmd
