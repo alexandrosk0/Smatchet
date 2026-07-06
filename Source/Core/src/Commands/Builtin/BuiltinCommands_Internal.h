@@ -25,6 +25,8 @@ class IAppAttachments;
 class IAppScenarios;
 class IAppUsers;
 class IAppDebug;
+class IAppAutomation;
+class IAppTicketData;
 
 namespace smatchet {
 namespace cmd {
@@ -63,7 +65,7 @@ void RegisterMetaCommands(CommandRegistry& reg, AppController& app);
 void RegisterAppCommands(CommandRegistry& reg, IAppMeta& app);
 void RegisterConfigCommands(CommandRegistry& reg, AppController& app);
 void RegisterPerfCommands(CommandRegistry& reg, AppController& app);
-void RegisterTicketsCommands(CommandRegistry& reg, AppController& app);
+void RegisterTicketsCommands(CommandRegistry& reg, IAppTicketData& app);
 void RegisterTicketMutationCommands(CommandRegistry& reg, AppController& app);
 void RegisterDebugCommands(CommandRegistry& reg, IAppDebug& app, IMainThreadPoster& poster);
 void RegisterSyncCommands(CommandRegistry& reg, AppController& app);
@@ -74,7 +76,7 @@ void RegisterScenarioCommands(CommandRegistry& reg, IAppScenarios& app, IMainThr
 void RegisterUiTestCommands(CommandRegistry& reg, IAppScenarios& app, IMainThreadPoster& poster);
 void RegisterAttachCommands(CommandRegistry& reg, IAppAttachments& app);
 void RegisterAiCommands(CommandRegistry& reg, AppController& app);
-void RegisterAutomationCommands(CommandRegistry& reg, AppController& app);
+void RegisterAutomationCommands(CommandRegistry& reg, IAppAutomation& app);
 void RegisterBugReportCommands(CommandRegistry& reg, AppController& app);
 void RegisterUiInteractionCommands(CommandRegistry& reg, AppController& app);
 
