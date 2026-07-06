@@ -115,6 +115,8 @@ class AiAssistantController;
 #include "Interfaces/IAppScenarios.h"
 #include "Interfaces/IAppUsers.h"
 #include "Interfaces/IAppDebug.h"
+#include "Interfaces/IAppAutomation.h"
+#include "Interfaces/IAppTicketData.h"
 
 class ITrackerBackendFactory;
 class LocalCacheManager; // fan-in Phase 1: fwd-decl (was a direct heavy include); `std::unique_ptr<LocalCacheManager>
@@ -148,7 +150,9 @@ class AppController : public IMainThreadPoster,
                       public IAppAttachments,
                       public IAppScenarios,
                       public IAppUsers,
-                      public IAppDebug {
+                      public IAppDebug,
+                      public IAppAutomation,
+                      public IAppTicketData {
     /// `GridContextDepsAdapter` implements `IOfflineQueueDeps` + `ITicketSyncDeps` against
     /// this AppController + one `GridLiveContext` and forwards every method either to the
     /// per-context state (`Backend`, `ActiveTickets*`) or to AppController-shared state
@@ -461,20 +465,24 @@ class AppController : public IMainThreadPoster,
     // processAll=true runs the script across every loaded ticket (ignores selectedIds).
     // With an empty selectedIds and processAll=false the job refuses to run (Issue #824):
     // no silent mass-modify, no silent no-op.
+    // processAll default is intentionally mirrored on BOTH IAppAutomation::RunAutoScript and
+    // this override: LuaConsolePlugin.cpp calls through a concrete AppController& with the
+    // 2-arg form (static binding needs the default here), while automation.* calls through the
+    // facet (needs it there). Keep the two in sync if the default ever changes.
     void RunAutoScript(const std::string& scriptPath, const std::vector<std::string>& selectedIds,
-                       bool processAll = false);
-    void RunFlatScriptAsync(const std::string& scriptPath);
+                       bool processAll = false) override;
+    void RunFlatScriptAsync(const std::string& scriptPath) override;
 
     std::string GetAutomationScriptContent();
     bool SaveAutomationScriptContent(const std::string& content, std::string& outError);
 
     /** Run a Lua file once (e.g. SmatchetHooks.lua) to register UI hooks; errors go to automation log sinks. */
-    void RunLuaSetupScript(const std::string& scriptPath);
+    void RunLuaSetupScript(const std::string& scriptPath) override;
 
     /** Present with or without Lua build; no-op / empty when `SMATCHET_WITH_LUA_AUTOMATION` is off. */
     std::vector<std::string> GetLuaTicketActionNames() const;
     void ExecuteLuaTicketAction(const std::string& name, const std::string& issueId);
-    std::vector<std::string> GetLuaGlobalActionNames() const;
+    std::vector<std::string> GetLuaGlobalActionNames() const override;
     void ExecuteLuaGlobalAction(const std::string& name);
     /**
      * Run a one-off Lua chunk from the automation UI (same globals as hooks: smatchet, ui, tracker, …).
@@ -612,7 +620,7 @@ class AppController : public IMainThreadPoster,
 
     std::vector<CachedTicket> GetActiveTickets() const;
     /** Cheap read: shared_ptr to last published ticket list (thread-safe with MCP / workers). */
-    std::shared_ptr<const std::vector<CachedTicket>> GetActiveTicketsSnapshot() const;
+    std::shared_ptr<const std::vector<CachedTicket>> GetActiveTicketsSnapshot() const override;
     std::uint64_t GetActiveTicketsRevision() const { return focusedContext().ActiveTicketsRevision.load(); }
     /// De-inlined as of item 11 Phase 1C: the streaming-sync state lives on TicketSyncService.
     /// Defined in AppController.cpp where TicketSyncService.h is included; delegates to

@@ -4,7 +4,8 @@
 
 #include "BuiltinCommands_Internal.h"
 
-#include "AppController.h"
+// fan-in Phase 5: depend on the narrow IAppAutomation facet, not the full AppController.h.
+#include "Interfaces/IAppAutomation.h"
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 
@@ -60,7 +61,7 @@ std::vector<std::string> ExtractIdsArray(const nlohmann::json& args) {
 
 } // namespace
 
-void RegisterAutomationCommands(CommandRegistry& reg, AppController& app) {
+void RegisterAutomationCommands(CommandRegistry& reg, IAppAutomation& app) {
     {
         Command c = MakeCommand("automation.run-script",
                                 "Queue a Lua automation script for execution on the given ticket IDs "

@@ -19,8 +19,10 @@
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 
-#include "AppController.h"
-#include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+// fan-in Phase 5: this TU never touches the AppController (its registrar takes an unused
+// AppController& satisfied by the fwd-decl in BuiltinCommands_Internal.h), so AppController.h
+// is dropped — one includer off the fan-in count with no facet needed.
+#include <nlohmann/json.hpp> // this TU constructs nlohmann::json directly.
 #include "Logger.h"
 
 #if defined(SMATCHET_WITH_AI)

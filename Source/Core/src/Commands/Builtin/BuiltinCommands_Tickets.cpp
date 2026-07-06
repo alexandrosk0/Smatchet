@@ -5,9 +5,11 @@
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 
-#include "AppController.h"
-#include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
-#include "LocalCacheManager.h"
+// fan-in Phase 5: depend on the narrow IAppTicketData facet, not the full AppController.h.
+// (CachedTicket — the snapshot element — comes from the facet's rank-0 CachedTicketTypes.h.)
+#include "Interfaces/IAppTicketData.h"
+#include <nlohmann/json.hpp>   // this TU constructs nlohmann::json directly.
+#include "LocalCacheManager.h" // pre-existing direct include (kept; carries CachedTicketTypes.h + cache decls)
 
 #include <algorithm>
 #include <string>
@@ -24,7 +26,7 @@ using builtin_detail::ToLowerAscii;
 
 namespace {
 
-void RegisterTicketsListActiveCommand(CommandRegistry& reg, AppController& app) {
+void RegisterTicketsListActiveCommand(CommandRegistry& reg, IAppTicketData& app) {
     {
         Command c = MakeCommand("tickets.list_active", "Tickets currently loaded in the active project grid.",
                                 [&app](const nlohmann::json& args, const CommandContext&) {
@@ -59,7 +61,7 @@ void RegisterTicketsListActiveCommand(CommandRegistry& reg, AppController& app) 
     }
 }
 
-void RegisterTicketsSearchActiveCommand(CommandRegistry& reg, AppController& app) {
+void RegisterTicketsSearchActiveCommand(CommandRegistry& reg, IAppTicketData& app) {
     {
         Command c = MakeCommand("tickets.search_active",
                                 "Case-insensitive substring search across active-view tickets (id + field values).",
@@ -102,7 +104,7 @@ void RegisterTicketsSearchActiveCommand(CommandRegistry& reg, AppController& app
     }
 }
 
-void RegisterTicketsGetCommand(CommandRegistry& reg, AppController& app) {
+void RegisterTicketsGetCommand(CommandRegistry& reg, IAppTicketData& app) {
     {
         Command c =
             MakeCommand("tickets.get", "Full field map for a single active-view ticket.",
@@ -132,7 +134,7 @@ void RegisterTicketsGetCommand(CommandRegistry& reg, AppController& app) {
     }
 }
 
-void RegisterTicketsExistsCommand(CommandRegistry& reg, AppController& app) {
+void RegisterTicketsExistsCommand(CommandRegistry& reg, IAppTicketData& app) {
     {
         Command c = MakeCommand("tickets.exists", "Whether a ticket id is present in the active view.",
                                 [&app](const nlohmann::json& args, const CommandContext&) {
@@ -155,7 +157,7 @@ void RegisterTicketsExistsCommand(CommandRegistry& reg, AppController& app) {
 
 } // namespace
 
-void RegisterTicketsCommands(CommandRegistry& reg, AppController& app) {
+void RegisterTicketsCommands(CommandRegistry& reg, IAppTicketData& app) {
     RegisterTicketsListActiveCommand(reg, app);
     RegisterTicketsSearchActiveCommand(reg, app);
     RegisterTicketsGetCommand(reg, app);
