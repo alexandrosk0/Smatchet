@@ -75,6 +75,7 @@
 #include "SmatchetUI.h"
 #include "SmatchetToast.h"
 #include "SmatchetMergeWatchNotifyServer.h"
+#include "Ui/SmatchetFieldRender.h" // RunLegacyStartupSweeps calls the free fn SetCallstackFieldIdHint declared here
 
 #include <ghc/filesystem.hpp>
 
