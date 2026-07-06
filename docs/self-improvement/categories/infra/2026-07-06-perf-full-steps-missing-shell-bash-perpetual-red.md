@@ -34,6 +34,10 @@ Just adding `shell: bash` to `Open scenario-run-failure issue` makes it *work* �
 
 The step-5 recapture dispatch works around this: its step declares `shell: bash` and runs under `!cancelled()`, so it creates the baseline PR even while the job stays red from the pre-existing broken issue step.
 
+## Addendum (2026-07-06) — second latent failure in the same steps
+
+Even with `shell: bash`, the PR/issue-creating steps hit a **second** wall: this repo disables **Settings → Actions → General → "Allow GitHub Actions to create and approve pull requests"**, so `gh pr create` (and `gh issue create`) via `GITHUB_TOKEN` fail with `GraphQL: GitHub Actions is not permitted to create or approve pull requests (createPullRequest)`. So `Open baseline-bump PR for improvements` would fail here **even after** the shell fix. Two fixes possible: (a) enable that repo setting (one-time, admin), or (b) have the workflow only **push the branch** and let a human/orchestrator open the PR. The step-5 recapture step took path (b). The improvement-bump step still needs one of them.
+
 ## Self-improvement
 
 Empty.
