@@ -17,6 +17,7 @@
 #include <vector>
 
 class AppController;
+class IMainThreadPoster; // fan-in Phase 5: a migrated registrar that marshals to the UI thread takes this alongside its domain facet
 // fan-in Phase 5: the migrated per-category registrars take a narrow IApp* facet, not AppController.
 class IAppOfflineQueue;
 class IAppMeta;
@@ -67,8 +68,8 @@ void RegisterSyncCommands(CommandRegistry& reg, AppController& app);
 void RegisterFieldsCommands(CommandRegistry& reg, AppController& app);
 void RegisterUsersCommands(CommandRegistry& reg, AppController& app);
 void RegisterOfflineCommands(CommandRegistry& reg, IAppOfflineQueue& app);
-void RegisterScenarioCommands(CommandRegistry& reg, IAppScenarios& app);
-void RegisterUiTestCommands(CommandRegistry& reg, IAppScenarios& app);
+void RegisterScenarioCommands(CommandRegistry& reg, IAppScenarios& app, IMainThreadPoster& poster);
+void RegisterUiTestCommands(CommandRegistry& reg, IAppScenarios& app, IMainThreadPoster& poster);
 void RegisterAttachCommands(CommandRegistry& reg, IAppAttachments& app);
 void RegisterAiCommands(CommandRegistry& reg, AppController& app);
 void RegisterAutomationCommands(CommandRegistry& reg, AppController& app);

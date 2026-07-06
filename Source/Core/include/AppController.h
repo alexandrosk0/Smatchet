@@ -427,10 +427,10 @@ class AppController : public IMainThreadPoster,
     /** Download to temp then open local file in OS default app (matches Unreal attachment viewer). */
     void OpenAttachmentInSystemViewer(const std::string& url, const std::string& filename, const std::string& mimeType);
     bool DownloadAttachmentForPreview(const std::string& url, const std::string& filename, const std::string& mimeType,
-                                      std::string* outError = nullptr) override;
+                                      std::string* outError) override; // default (=nullptr) lives on IAppAttachments
     std::string GetAppVersion() const override;
     std::string GetGitHubReleaseRepo() const override;
-    AppUpdateInfo CheckForAppUpdate(bool includePrerelease = false) const override;
+    AppUpdateInfo CheckForAppUpdate(bool includePrerelease) const override; // default (=false) lives on IAppMeta
     /// Downloads + launches the installer. Blocking — callers must dispatch this on a worker
     /// thread via `LaunchBackgroundTask`. The optional `cancelFlag` is polled inside the cpr
     /// write callback; when set to `true` the download aborts cleanly and the partial file is

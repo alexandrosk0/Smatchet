@@ -21,7 +21,7 @@ namespace cmd {
 using builtin_detail::MakeCommand;
 using builtin_detail::PString;
 
-void RegisterUiTestCommands(CommandRegistry& reg, IAppScenarios& app) {
+void RegisterUiTestCommands(CommandRegistry& reg, IAppScenarios& app, IMainThreadPoster& poster) {
     {
         // ui_test.run wraps ui-test scenario start. Registered unconditionally
         // so production builds (SMATCHET_BUILD_UI_TESTS=OFF) still expose the
@@ -29,9 +29,9 @@ void RegisterUiTestCommands(CommandRegistry& reg, IAppScenarios& app) {
         // The scenario handler internally pivots on the build gate.
         Command c = MakeCommand("ui_test.run",
                                 "Run ImGui Test Engine UI tests (bucket E). --name=<test> for one; --all for every.",
-                                [&app](const nlohmann::json& args, const CommandContext& ctx) {
+                                [&app, &poster](const nlohmann::json& args, const CommandContext& ctx) {
                                     CommandContext ctxCopy = ctx;
-                                    return RunOnUiThreadAsCommandResult(app, [&app, args, ctxCopy]() {
+                                    return RunOnUiThreadAsCommandResult(poster, [&app, args, ctxCopy]() {
                                         nlohmann::json injectedArgs = args;
                                         injectedArgs["name"] = args.value("name", std::string());
                                         return app.Scenarios().Start("ui-test", injectedArgs, ctxCopy);
