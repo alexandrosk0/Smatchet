@@ -19,6 +19,11 @@
 
 #include "Builtin/BuiltinCommands_Internal.h"
 
+// clang-format off
+// SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=this thin dispatcher is the single orchestrator that routes the concrete AppController to the per-domain IApp* facet interfaces (fan-in Phase 5); it needs AppController's complete definition for the AppController& -> IApp*& derived-to-base conversion when calling a facet-migrated registrar. It is the ONE-TIME orchestrator includer that replaces the N per-category leaf command TUs each dropping AppController.h as facets land; owner=orchestrator; revisit=when the builtin-command wiring moves to an AppController-side call site that already holds a complete *this)
+#include "AppController.h"
+// clang-format on
+
 #include "Logger.h"
 
 #if !defined(SMATCHET_WITH_AI)
