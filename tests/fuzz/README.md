@@ -43,9 +43,13 @@ ctest --preset ninja-fuzzer-linux                # -runs=0 smoke (loads seeds, e
 | `fuzz_markdown_adf` | `MarkdownConvert::MarkdownToAdf` (md4c) | E2b PR 2a (#1301) |
 | `fuzz_ai_sse` | `AiSseParser::Feed` (SSE stream) | E2b PR 2b (#1301) |
 | `fuzz_ai_ndjson` | `AiNdjsonParser::Feed` (NDJSON stream) | E2b PR 2b (#1301) |
-| `fuzz_github_map` | `smatchet::github::Map*JsonToCachedTicket` + GraphQL→REST adapters | E2c PR 3 (this PR) |
-| `fuzz_plane_map` | `smatchet::plane::MapPlaneWorkItem*ToCachedTicket` + pagination/query | E2c PR 3 (this PR) |
-| `fuzz_linear_map` | `smatchet::linear::MapLinearIssueNode(s)ToCachedTicket` | E2c PR 3 (this PR) |
+| `fuzz_github_map` | `smatchet::github::Map*JsonToCachedTicket` + GraphQL→REST adapters | E2c PR 3 (#1627) |
+| `fuzz_plane_map` | `smatchet::plane::MapPlaneWorkItem*ToCachedTicket` + pagination/query | E2c PR 3 (#1627) |
+| `fuzz_linear_map` | `smatchet::linear::MapLinearIssueNode(s)ToCachedTicket` | E2c PR 3 (#1627) |
+| `fuzz_jql_escape` | `tracker_jql::QuoteLiteral` (JQL-injection escaper) | monkey Layer 3 (#1637) |
+| `fuzz_ai_error_redact` | `smatchet::ai::pure::RedactProviderErrorBody` (secret redaction) | monkey Layer 3 (#1637) |
+| `fuzz_ai_endpoint_sanitize` | `SanitizeAiEndpointUrl` / `ExtractUrlHost` (config-write SSRF) | monkey Layer 3 (#1637) |
+| `fuzz_locale_format_guard` | `smatchet::l10n::ConversionSpecifiers` / `FormatSpecifiersMatch` (locale format-string guard) | E2d (this PR) |
 
 The three E2c drivers fuzz the tracker-response **consuming** layer — the pure
 JSON→`CachedTicket` mappers that walk an already-parsed DOM with structural
