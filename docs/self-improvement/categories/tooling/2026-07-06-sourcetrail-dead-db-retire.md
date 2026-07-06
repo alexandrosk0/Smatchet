@@ -1,0 +1,5 @@
+- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [tooling] · P3 — `tools/sourcetrail/st_query.py` is documented as the primary semantic-nav tool but needs a prebuilt DB absent from fresh checkouts
+  Details: AGENTS.md sells `st_query.py` as the first stop before grep, but Sourcetrail is discontinued upstream and the required symbol DB is neither in the repo nor buildable by any checked-in script — in a fresh clone (and in every Linux container session) the "primary" nav tool is a no-op with extra steps. A rulebook recommending a tool that cannot run erodes trust in its other recommendations. AGENTIC_INFRA_AUDIT.md finding C7 / proposal P9.
+  Concrete next action: pick one: (a) retire — remove `tools/sourcetrail/` and the AGENTS.md claim, leaving grep + compile_commands-based tooling as the documented path; or (b) re-bootstrap — replace with a `clangd`-index-backed query script (clangd is alive and `compile_commands.json` already exists per preset) and update the rulebook pointer. Either way, stop documenting the dead path. Effort S (retire) / M (replace).
+  Status: open
+  Last-reviewed: 2026-07-06

@@ -1,0 +1,5 @@
+- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [security] · P2 — debug `ai.dump-request` path re-implements AI client config/URL building and skips the production sanitizers
+  Details: `BuildClientConfigForProvider` + the debug body/URL builders in `Source/Core/src/Commands/Builtin/BuiltinCommands_Ai.cpp` are near-clones of the controller's `BuildClientConfig` and the per-client `ResolveBaseUrl`/`JoinUrl`/body builders — and the debug path runs keys through neither `SanitizeHeaderValue` nor the endpoint sanitize-with-consent policy the controller applies. The drift risk is proven: the archived 2026-05-17 entry records `ai.dump-request` already misreporting the wire once (fixed post-PR #184). Three parallel builders means the next divergence is a matter of time. AGENTIC_INFRA_AUDIT.md finding B4 / proposal P4.
+  Concrete next action: collapse the clones into one shared request-builder seam that the sanitizers live inside, consumed by the controller, the per-client code, and `ai.dump-request` — the debug command then provably dumps the production wire because it calls the production builder. Effort M.
+  Status: open
+  Last-reviewed: 2026-07-06

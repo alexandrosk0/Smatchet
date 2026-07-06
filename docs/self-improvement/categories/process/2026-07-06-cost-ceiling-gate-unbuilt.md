@@ -1,0 +1,5 @@
+- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [process] · P2 — AI_POLICY.md promises an automated cost-ceiling gate that was descoped and never re-tracked
+  Details: `AI_POLICY.md` § Cost control states the automated cost-ceiling gate is "not yet built"; the shipped charter plan (`docs/plans/ai-control-policy.md` § Out of scope) descoped it to "a follow-up (pairs with token-tracking)" — and no live backlog entry or plan carries it since. A stated-but-untracked control is worse than an honest gap: the charter reads as if enforcement is imminent while nothing is queued to build it. AGENTIC_INFRA_AUDIT.md finding A6.
+  Concrete next action: decide and act one way: (a) build the gate — a session/loop token budget sourced from `agents/_shared/token-tracking/`, escalating via AskUserQuestion when the ceiling nears (the charter's "escalate before unbounded runs" invariant, automated); or (b) amend AI_POLICY.md § Cost control to state plainly that cost control is a manual human control with no automated backstop planned. Effort S (doc) / M (gate).
+  Status: open
+  Last-reviewed: 2026-07-06

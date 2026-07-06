@@ -1,0 +1,5 @@
+- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [process] · P2 — AGENTS.md is 159 lines against its own ≤150 contract budget (grandfathered, never trims)
+  Details: `AGENTS.md` declares `contract_budget_lines: 150` and the `agent-too-long` lint enforces that token — but the file is 159 lines and `agent_size_audit.py`'s delta gate grandfathers keys already over-cap at the merge base, so the violation persists indefinitely and even growth never fires. The doc that anchors the enforcement contract-card being durably over its own budget is the self-description-drift class in miniature. AGENTIC_INFRA_AUDIT.md finding A1.
+  Concrete next action: judgment trim, not mechanical — extract detail-heavy prose (inline PR-number citations, per-exception detail already duplicated in `docs/agent-rules/ship-loops.md`) into the pointed-to `docs/agent-rules/` docs until AGENTS.md is ≤150 lines; then consider a one-time baseline refresh so the cap becomes binding again for this key. Effort M.
+  Status: open
+  Last-reviewed: 2026-07-06
