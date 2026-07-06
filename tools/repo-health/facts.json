@@ -14,14 +14,14 @@
   "campaign": [
     { "status": "landed",      "title": "Finding‑class CI gates",
       "evidence": "Blocking <code style=\"font-family:var(--mono);font-size:11px\">bare‑json‑parse‑untrusted</code> lint gate + ranked mining record (#1608 → #1605)." },
-    { "status": "partial",     "title": "Mutation testing", "label": "In review",
-      "evidence": "Pilot shipped a report (#1626): 68 mutants / 12 TUs → <b style=\"color:var(--ok)\">52 killed</b>, 16 survived; 3 worst survivors strengthened (SURVIVED→KILLED)." },
+    { "status": "landed",      "title": "Mutation testing",
+      "evidence": "Pilot <b style=\"color:var(--ok)\">merged</b> (#1626): 68 mutants / 12 TUs → 52 killed, 16 survived; 3 worst survivors strengthened. Plan archived (#1641)." },
     { "status": "partial",     "title": "Outward‑facing product", "label": "Half shipped",
       "evidence": "i18n <b style=\"color:var(--ok)\">merged</b> (#1614) + error‑message pass <b style=\"color:var(--ok)\">merged</b> (#1615). AppController service‑extraction (2.8K LOC) pending." },
-    { "status": "not-started", "title": "Performance win‑hunting",
-      "evidence": "Offensive perf pass — <code style=\"font-family:var(--mono);font-size:11px\">‑ftime‑trace</code> + hot‑path hunt. The one untouched item." },
-    { "status": "partial",     "title": "Fuzz‑surface expansion", "label": "In review",
-      "evidence": "3 new libFuzzer mapper drivers — github/plane/linear (#1627); ~30 min each, <b style=\"color:var(--ok)\">0 crashes</b>. (develop at 6 until merge.)" },
+    { "status": "landed",      "title": "Performance win‑hunting",
+      "evidence": "Hunt <b style=\"color:var(--ok)\">shipped</b>: PERF_WIN_HUNT.md + CommandPaletteUi snapshot (#1633, closed audit #33) + AI‑input alloc guard (#1632)." },
+    { "status": "landed",      "title": "Fuzz‑surface expansion",
+      "evidence": "Fuzz surface <b style=\"color:var(--ok)\">6 → 12 targets</b> — tracker mappers (#1627) + nightly code‑monkey fuzzers (#1637); E2d locale guard in review (#1645)." },
     { "status": "landed",      "title": "Long‑horizon execution",
       "evidence": "Pilot #1604 merged · nightly triage routine live · Phase‑3 batches #1607/#1609 · dashboard <b style=\"color:var(--ok)\">merged</b> (#1625)." }
   ],
@@ -36,12 +36,12 @@
   "triage_note": "Watched nightly by the <b style=\"color:var(--ink)\">smatchet‑nightly‑advisory‑lane‑triage</b> routine · 06:30 UTC.",
 
   "open_prs": [
-    { "id": "1627", "state": "ready", "label": "Ready",
-      "title": "Fuzz‑surface expansion — 3 tracker‑mapper drivers", "meta": "item 05 · github/plane/linear · 0 crashes" },
-    { "id": "1626", "state": "ready", "label": "Ready",
-      "title": "Mutation‑testing pilot + 3 strengthened tests", "meta": "item 02 · 52 killed / 16 survived" },
-    { "id": "1624", "state": "green", "label": "Docs",
-      "title": "Docs reconciliation — audits / backlog / coverage / plans", "meta": "docs‑only · cr‑out‑of‑band" }
+    { "id": "1646", "state": "ready", "label": "Ready",
+      "title": "Bound the app‑update check response body", "meta": "SECURITY_AUDIT #31 · 8 MiB cap" },
+    { "id": "1645", "state": "ready", "label": "Ready",
+      "title": "Fuzz E2d — locale format‑specifier guard", "meta": "item 05 follow‑on · 13th target" },
+    { "id": "1643", "state": "ready", "label": "Ready",
+      "title": "Backlog B2 2C/2D — Plane mutations single‑attempt", "meta": "docs + in‑code guardrail" }
   ],
 
   "governance_list": [
