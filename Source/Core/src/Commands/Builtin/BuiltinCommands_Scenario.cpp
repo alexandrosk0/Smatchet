@@ -7,8 +7,10 @@
 #include "Commands/MainThreadDispatch.h"
 #include "Commands/Scenarios/IScenario.h"
 
-#include "AppController.h"
-#include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+// fan-in Phase 5: depend on the narrow IAppScenarios facet, not the full AppController.h
+// (ScenarioRunner's full definition comes from Commands/Scenarios/IScenario.h, included above).
+#include "Interfaces/IAppScenarios.h"
+#include <nlohmann/json.hpp> // this TU constructs nlohmann::json directly.
 
 #include <string>
 #include <utility>
@@ -22,7 +24,7 @@ using builtin_detail::PaginateString;
 using builtin_detail::PInt;
 using builtin_detail::PString;
 
-void RegisterScenarioCommands(CommandRegistry& reg, AppController& app) {
+void RegisterScenarioCommands(CommandRegistry& reg, IAppScenarios& app) {
     // Register scenario factories on the runner owned by AppController.
     // The PriorityGridScrollScenario is the first built-in; others can be
     // added by appending more RegisterFactory calls here.

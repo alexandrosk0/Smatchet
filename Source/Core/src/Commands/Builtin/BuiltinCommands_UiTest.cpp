@@ -7,8 +7,10 @@
 #include "Commands/MainThreadDispatch.h"
 #include "Commands/Scenarios/IScenario.h"
 
-#include "AppController.h"
-#include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+// fan-in Phase 5: depend on the narrow IAppScenarios facet, not the full AppController.h
+// (ScenarioRunner's full definition comes from Commands/Scenarios/IScenario.h, included above).
+#include "Interfaces/IAppScenarios.h"
+#include <nlohmann/json.hpp> // this TU constructs nlohmann::json directly.
 
 #include <string>
 #include <utility>
@@ -19,7 +21,7 @@ namespace cmd {
 using builtin_detail::MakeCommand;
 using builtin_detail::PString;
 
-void RegisterUiTestCommands(CommandRegistry& reg, AppController& app) {
+void RegisterUiTestCommands(CommandRegistry& reg, IAppScenarios& app) {
     {
         // ui_test.run wraps ui-test scenario start. Registered unconditionally
         // so production builds (SMATCHET_BUILD_UI_TESTS=OFF) still expose the

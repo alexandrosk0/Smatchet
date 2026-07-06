@@ -5,8 +5,9 @@
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 
-#include "AppController.h"
-#include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+// fan-in Phase 5: depend on the narrow IAppAttachments facet, not the full AppController.h.
+#include "Interfaces/IAppAttachments.h"
+#include <nlohmann/json.hpp> // this TU constructs nlohmann::json directly.
 
 #include <string>
 #include <utility>
@@ -17,7 +18,7 @@ namespace cmd {
 using builtin_detail::MakeCommand;
 using builtin_detail::PString;
 
-void RegisterAttachCommands(CommandRegistry& reg, AppController& app) {
+void RegisterAttachCommands(CommandRegistry& reg, IAppAttachments& app) {
     {
         Command c = MakeCommand("attach.open", "Open a ticket attachment (downloads then launches viewer).",
                                 [&app](const nlohmann::json& args, const CommandContext&) {
