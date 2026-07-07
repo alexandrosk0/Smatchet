@@ -351,3 +351,29 @@ TEST_CASE("AdfToMarkdown: table header + rich body row (BACKLOG B5)") {
     const json table = AdfTable(json::array({AdfRow(json::array({h1, h2})), AdfRow(json::array({body1, body2}))}));
     CHECK(Adf2Md(AdfDoc(json::array({table}))) == "| Name | Detail |\n| --- | --- |\n| l1<br>l2 | - x |");
 }
+
+TEST_CASE("AdfToMarkdown: listItem text node without a string 'text' does not throw (DR33)") {
+    // A malformed node with type "text" but no string "text" member used to make
+    // MatchStoredTaskPrefix call .at("text"), throwing nlohmann::type_error out
+    // through AdfToMarkdown and aborting the offline-queue merge. It must be tolerated.
+    json missing;
+    missing["type"] = "text"; // no "text" member at all
+    json li1;
+    li1["type"] = "listItem";
+    li1["content"] = json::array({AdfPara(json::array({missing}))});
+    json list1;
+    list1["type"] = "bulletList";
+    list1["content"] = json::array({li1});
+    CHECK_NOTHROW(Adf2Md(AdfDoc(json::array({list1}))));
+
+    json nonString;
+    nonString["type"] = "text";
+    nonString["text"] = 42; // present but not a string
+    json li2;
+    li2["type"] = "listItem";
+    li2["content"] = json::array({AdfPara(json::array({nonString}))});
+    json list2;
+    list2["type"] = "bulletList";
+    list2["content"] = json::array({li2});
+    CHECK_NOTHROW(Adf2Md(AdfDoc(json::array({list2}))));
+}

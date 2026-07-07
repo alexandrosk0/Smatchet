@@ -39,7 +39,7 @@ DR17 (BACKLOG A1) — each is a hole the prior fix left open. DR30 overlaps BACK
 
 ## P0 — data loss / security / crash
 
-### DR1. Three-way merge silently drops edits while reporting "clean" — ⏳ OPEN
+### DR1. Three-way merge silently drops edits while reporting "clean" — ✅ DONE (fix pushed on branch)
 `Source/Core/src/TextMerge.cpp:189`. The hunk-discard loop advances past any hunk with
 `baseEnd <= cursor` **without** setting `isClean=false`. For base `"a"`, mine `"a\nx"`
 (queued offline append), theirs `"A"` (server edit): theirs applies, then mine's insertion
@@ -52,7 +52,7 @@ resolution offered. Symmetric loss in the reverse direction.
 - **Related:** `TextMerge.cpp:14` `SplitLines` keeps `\r` and `JoinLines` drops the trailing
   newline, so CRLF-vs-LF inputs conflict spuriously and clean merges lose the final `\n` (P1; fold in here).
 
-### DR2. AI endpoint validator bypassed by URL userinfo + IPv4-mapped IPv6 — ⏳ OPEN
+### DR2. AI endpoint validator bypassed by URL userinfo + IPv4-mapped IPv6 — ✅ DONE (fix pushed on branch)
 `Source/Core/src/AiEndpointSanitize.cpp:38,66`. `ExtractHostPort` returns everything between
 `://` and the first `/?#` and never strips the `user:pass@` userinfo (no `@` handling exists
 in the file); `StripPort` then splits at the first `:`. So `https://api.openai.com:x@evil.com/`
@@ -231,13 +231,13 @@ subsequent `Load` returns the stale config until the next invalidation.
 
 ## P1 — significant correctness
 
-### DR18. GitHub owner/repo key truncated at first dash — ⏳ OPEN
+### DR18. GitHub owner/repo key truncated at first dash — ✅ DONE (fix pushed on branch)
 `Source/Core/src/Tracker/IssueDraft.cpp:127`. `FromCachedTicket` derives `ProjectKey` by cutting
 `ticket.id` at the first `-`, so `acme/react-native#12` → `acme/react`; `GitHubClient::BuildCreatePayload`
 then targets the wrong repo (or 404s).
 - **Fix:** parse GitHub ids by the `owner/repo#N` shape, not a first-dash split.
 
-### DR19. DeepSeek provider enum drift → misrouted to OpenAI — ⏳ OPEN
+### DR19. DeepSeek provider enum drift → misrouted to OpenAI — ✅ DONE (fix pushed on branch)
 `DeepSeek=4` is a fully-supported, user-selectable provider (`ClampProvider`, `ProviderFromConfig`,
 prefs UI all handle case 4), but two consumers enumerate only 0–3 and fall through to OpenAI:
 `Source/Core/include/Ui/SmatchetAiAssistantUi_detail.h` (`AiResolveProvider`) and
@@ -296,7 +296,7 @@ can never be resolved and is cached incomplete for 5 min. `PlaneIssueMutation.cp
 parses only the first comments page (never follows `next_cursor`).
 - **Fix:** loop pages via the shared `AppendPagedResults`/cursor pattern used elsewhere.
 
-### DR26. Ollama system prompt silently ignored — ⏳ OPEN
+### DR26. Ollama system prompt silently ignored — ✅ DONE (fix pushed on branch)
 `Source/Core/src/OllamaClient.cpp:42`. `BuildChatBody` sends the system prompt as a top-level `"system"`
 field, which `/api/chat` ignores (it takes system text only as a `{role:"system"}` message) → agents.md
 instructions and context blocks are dropped with no error.
@@ -351,13 +351,13 @@ throwing move escapes `noexcept` → `std::terminate`. Only bites payload types 
 - **Fix:** construct-then-swap (or guard `ok_` so the destructor skips unconstructed storage); drop the
   `noexcept` or constrain to nothrow-movable `T`.
 
-### DR32. Invalid calendar dates submitted to trackers — ⏳ OPEN
+### DR32. Invalid calendar dates submitted to trackers — ✅ DONE (fix pushed on branch)
 `Source/Core/src/Tracker/TrackerDateTimePure.cpp:119` `ParseFriendlyDate` accepts any day 1–31 for any
 month and the date-picker commit (`TrackerDateTimeFieldEditor.cpp:627`) formats without `ClampDayToMonth`
 → `2026-02-31` is submitted (400 or undefined server normalisation).
 - **Fix:** validate day-in-month (or clamp) before formatting for the API.
 
-### DR33. Markdown / text rendering edge cases — ⏳ OPEN
+### DR33. Markdown / text rendering edge cases — ✅ DONE (fix pushed on branch)
 `Source/Core/src/Ui/MarkdownConvert.cpp:930` `MatchStoredTaskPrefix` uses `.at("text")` which throws on
 an ADF list-item whose first text node lacks a string `text` (uncaught in the offline-queue merge path,
 `MineValueToMarkdown`). `Ui/SelectableTextRun.cpp:44` selects on raw byte offsets → Ctrl+C can copy a

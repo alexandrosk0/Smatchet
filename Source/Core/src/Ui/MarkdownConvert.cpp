@@ -927,7 +927,12 @@ static bool MatchStoredTaskPrefix(const json& paraContent, bool* doneOut) {
         return false;
     if (paraContent[0].value("type", std::string()) != "text")
         return false;
-    const std::string& t = paraContent[0].at("text").get_ref<const std::string&>();
+    // A malformed node can carry type "text" without a string "text" member;
+    // .at("text") would throw nlohmann::type_error out through AdfToMarkdown (which
+    // has no catch) and abort the offline-queue merge. Guard instead of throwing.
+    if (!paraContent[0].contains("text") || !paraContent[0]["text"].is_string())
+        return false;
+    const std::string& t = paraContent[0]["text"].get_ref<const std::string&>();
     if (t.size() >= 4 && t.compare(0, 4, "[ ] ") == 0) {
         *doneOut = false;
         return true;

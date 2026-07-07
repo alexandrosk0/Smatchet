@@ -690,6 +690,9 @@ add_executable(SmatchetTests
     # cpr-free (delegates body redaction to AiErrorRedact), linked in the CORE
     # source block below; this entry adds the doctest TU.
     Core/OllamaStreamError.test.cpp
+    # DR26 — Ollama /api/chat request-body shape: the system prompt must be a
+    # leading {role:"system"} message, not the ignored top-level `system` field.
+    Core/OllamaRequestBody.test.cpp
     Core/AiModelCatalog.test.cpp
     Core/AiModelSignature.test.cpp
     # Pure helpers extracted from AiAssistantController::RunRequest (monoliths

@@ -35,11 +35,6 @@ nlohmann::json BuildChatBody(const AiChatRequest& req) {
     nlohmann::json body;
     body["model"] = req.Model;
     body["stream"] = true;
-    // Ollama native /api/chat consumes `system` either via a leading {role:"system"}
-    // message or via a top-level `system` field. Emit top-level for symmetry with
-    // the Anthropic + OpenAI clients.
-    if (!req.SystemPrompt.empty())
-        body["system"] = req.SystemPrompt;
 
     // Ollama supports an `options` block for sampling parameters.
     if (req.Temperature >= 0.0f) {
@@ -55,6 +50,15 @@ nlohmann::json BuildChatBody(const AiChatRequest& req) {
     }
 
     nlohmann::json messages = nlohmann::json::array();
+    // Ollama's /api/chat takes the system prompt as a leading {role:"system"} message.
+    // A top-level `system` field is an /api/generate parameter that /api/chat ignores,
+    // so emit it as a message to guarantee agents.md + context reach the model.
+    if (!req.SystemPrompt.empty()) {
+        nlohmann::json sys;
+        sys["role"] = "system";
+        sys["content"] = req.SystemPrompt;
+        messages.push_back(std::move(sys));
+    }
     for (const auto& h : req.History) {
         nlohmann::json m;
         m["role"] = h.Role;
@@ -93,6 +97,8 @@ void DispatchOllamaLine(const nlohmann::json& j, const IAiClient::DeltaCallback&
 }
 
 } // namespace
+
+std::string OllamaBuildRequestBodyJson(const AiChatRequest& req) { return BuildChatBody(req).dump(); }
 
 std::string OllamaClient::GetProviderName() const { return "ollama"; }
 
