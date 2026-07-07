@@ -132,7 +132,7 @@ TrackerError PlaneClient::UpdateIssueFields(const std::string& issueId, const nl
         } catch (...) { // catch-all-ok: error body not JSON — fall back to the raw response text
             detail = response.text;
         }
-        outError = "Plane API error: " + std::to_string(response.status_code) + " " + detail;
+        outError = "Plane API error: " + std::to_string(response.status_code) + " " + RedactHttpBodyForLog(detail);
         // 2xx-but-not-200/204 (e.g. 206) reaches this failure branch; guard before FromHttpStatus,
         // which would map a 2xx to Ok() and silently drop the detail (plan FIX-1 / Slice-2 precedent).
         if (response.status_code >= 200 && response.status_code < 300) {
@@ -356,7 +356,7 @@ Result<std::string, TrackerError> PlaneClient::CreateIssue(const nlohmann::json&
         } catch (...) { // catch-all-ok: error body not JSON — fall back to the raw response text
             detail = response.text;
         }
-        outError = "Plane API error: " + std::to_string(response.status_code) + " " + detail;
+        outError = "Plane API error: " + std::to_string(response.status_code) + " " + RedactHttpBodyForLog(detail);
         // 2xx-but-not-200/201 reaches this failure branch; guard before FromHttpStatus (FIX-1 / Slice-2).
         if (response.status_code >= 200 && response.status_code < 300) {
             return Result<std::string, TrackerError>::Err(TrackerErrorUnknown(outError, response.status_code));
