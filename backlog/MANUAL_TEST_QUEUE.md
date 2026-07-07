@@ -1,5 +1,7 @@
 # Manual test queue
 
+> **Deprecated as a work queue (2026-07-06).** Historical, essentially unexercised (see the staleness note below) — do not add new entries. New agent-facing items go to the live self-improvement backlog ([`docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`](../docs/self-improvement/AGENT_SELF_IMPROVEMENT.md)); product bugs become GitHub Issues (ADR-0014).
+>
 > Smoke tests that aren't covered by any PR's automated build verification. Each entry is something a human has to actually click / run / observe at a keyboard. Tests are grouped by the PR that introduced the behaviour they validate.
 >
 > When you complete a smoke, flip ⏳ → ✅ in place and add a one-line note (date + result + tester initials). If a smoke regresses, flip to ❌ and file a new backlog item.

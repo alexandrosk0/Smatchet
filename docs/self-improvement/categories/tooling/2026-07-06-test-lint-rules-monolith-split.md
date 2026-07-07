@@ -1,0 +1,5 @@
+- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [tooling] · P2 — `test-lint-rules.sh` (~139 KB) and `merge-gates.sh` (~97 KB) are monoliths an agent cannot review as diffs
+  Details: the two most load-bearing harness scripts — the strict-zone lint scanner and the merge-gate poller — plus `build-and-test.yml` (~132 KB) are each effectively unreviewable in one sitting and are exactly the files an agent most needs to understand before trusting or extending a gate. The lint scanner at least carries `--selftest` + bats; the workflow has nothing equivalent. The shipped `split-scripts-build-vs-agentic` plan separated the *trees*, not the monolith internals. AGENTIC_INFRA_AUDIT.md finding C2.
+  Concrete next action: decompose `test-lint-rules.sh` into per-rule (or per-rule-family) sourced modules behind the existing single entry point, preserving the `--selftest`/`--diff`/`--catalog` CLI contract and the AGENTS.md contract-card assertion; same pattern for `merge-gates.sh` (gate-condition modules). Land incrementally, one extraction per PR, bats green at each step. Effort L (staged).
+  Status: open
+  Last-reviewed: 2026-07-06

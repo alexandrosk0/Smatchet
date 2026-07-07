@@ -1,5 +1,7 @@
 # Smatchet — Code Review Backlog (2026-05-16 full rewrite)
 
+> **Deprecated as a work queue (2026-07-06).** This is a closed historical ledger (last reconciled 2026-07-05) — do not file or hunt new work here. New agent-facing items go to the live self-improvement backlog ([`docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`](../docs/self-improvement/AGENT_SELF_IMPROVEMENT.md)); product bugs become GitHub Issues (ADR-0014).
+>
 > Scope: first-party C++ in `Source/Core/`, `Source/Plugins/`, `Source/Standalone/`.
 > Method: skeleton + targeted reads + symbol grep against develop tip `7597fd7+` (post PR #39).
 > Previous doc (2026-05-10..11) accumulated 62 numbered items, 87% of which landed. This rewrite drops all `✅ DONE` items and re-audits the remainder against current code.

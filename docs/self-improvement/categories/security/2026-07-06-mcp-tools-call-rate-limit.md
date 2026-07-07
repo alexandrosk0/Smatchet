@@ -1,0 +1,5 @@
+- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [security] · P2 — MCP `tools/call` has no rate limit; only SSE connection count is bounded
+  Details: every MCP `tools/call` (JSON-RPC and the REST equivalent) dispatches into the command registry with bounded parsing and destructive gating, but no frequency bound — a buggy or hostile local client can hot-loop non-destructive commands (`tickets.search*`, `perf.dump`, ...) unthrottled. `CanAcceptSseConnection` bounds SSE streams (503 over-cap) but nothing bounds tool-call rate. Distinct from the archived "MCP registry dispatch un-gated after Authorize" entry (its destructive-confirm half shipped in PR #1246; its residual is capability *scoping*, not rate). AGENTIC_INFRA_AUDIT.md finding B3.
+  Concrete next action: add a token-bucket at `DispatchRegistryToolsCall` in `Source/Plugins/Mcp/McpPlugin.cpp` (one chokepoint covers JSON-RPC + REST + legacy routes); return a structured `rate-limited` error envelope; make bucket size/refill configurable via `TrackerConfig` with a sane default; extract the decision to a pure helper for doctest coverage. Effort M.
+  Status: open
+  Last-reviewed: 2026-07-06
