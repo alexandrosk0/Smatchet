@@ -331,7 +331,7 @@ into one binary — link-order-dependent destructor (one skips audit cleanup).
 - **Fix:** point these tests at the production symbol; rename one `TestEnvGuard` (or merge the two).
 - **Related:** `TEST_COVERAGE_GAP_MAP.md` hygiene notes track adjacent gaps; add these there too.
 
-### DR30. Credentials leaked into logs via unredacted error bodies — ⏳ OPEN
+### DR30. Credentials leaked into logs via unredacted error bodies — ✅ DONE (fix pushed on branch)
 Raw HTTP error bodies are spliced into user-facing/log strings, bypassing `RedactHttpBodyForLog`:
 `Source/Core/src/Tracker/JiraUserAndMeta.cpp:206` (first 200 B of the watchers response),
 `Source/Core/src/Tracker/PlaneIssueSearch.cpp:247` and `PlaneClient.cpp:95` (`response.text.substr(0,300)`

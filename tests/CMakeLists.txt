@@ -1027,6 +1027,9 @@ add_executable(SmatchetTests
     # mapping, retry-recovers / exhaustion-count / POST-predicate-stops semantics via
     # stateful requestFn lambdas (no socket). No extra production TU.
     Core/TrackerHttpRetry.test.cpp
+    # DR30 — tracker error paths route raw response bodies through RedactHttpBodyForLog
+    # before logging, so a 401/403 body reflecting Authorization / x-api-key can't leak.
+    Core/TrackerHttpRedact.test.cpp
     # Integration coverage of the live D3 wiring: drives TrackerGet/Post/PutLogged at a
     # scripted httplib loopback (JiraCatalogHttpFixture) and asserts retry counts prove
     # GET/PUT retry-on-5xx while POST is single-shot (Transport-only). Needs only
