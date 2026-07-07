@@ -286,6 +286,34 @@ bool ExpandIpv6Hextets(const std::string& host, std::uint16_t out[8]) {
     return true;
 }
 
+// Decode the pure-hextet IPv4-mapped (::ffff:HHHH:HHHH) / IPv4-compatible
+// (::HHHH:HHHH) forms — which have NO dotted tail — and run the IPv4 denylist.
+// Sets `out` and returns true ONLY for a DENIED address, so the caller's pure-IPv6
+// handling stays untouched for loopback / public / non-mapped literals.
+bool TryClassifyMappedIpv6Hextets(const std::string& host, EndpointVerdict& out) {
+    std::uint16_t h[8];
+    if (!ExpandIpv6Hextets(host, h))
+        return false;
+    if (!(h[0] == 0 && h[1] == 0 && h[2] == 0 && h[3] == 0 && h[4] == 0 && (h[5] == 0 || h[5] == 0xffff)))
+        return false;
+    const unsigned char o[4] = {
+        static_cast<unsigned char>((h[6] >> 8) & 0xFF), static_cast<unsigned char>(h[6] & 0xFF),
+        static_cast<unsigned char>((h[7] >> 8) & 0xFF), static_cast<unsigned char>(h[7] & 0xFF)};
+    if (IsCloudMetadataLiteral(o)) {
+        out = EndpointVerdict::RejectedCloudMetadata;
+        return true;
+    }
+    if (IsLinkLocalLiteral(o)) {
+        out = EndpointVerdict::RejectedLinkLocal;
+        return true;
+    }
+    if (IsPrivateNetworkLiteral(o)) {
+        out = EndpointVerdict::RejectedPrivateNetwork;
+        return true;
+    }
+    return false;
+}
+
 // Classify a bare (bracket-stripped, lowercased) IPv6 literal against the same
 // denylist, mapping each match onto the existing IPv4 verdicts. Returns true and
 // sets `out` when the host is an IPv6 literal we recognise (incl. IPv4-mapped /
@@ -326,30 +354,10 @@ bool ClassifyIpv6Literal(const std::string& host, EndpointVerdict& out, bool& is
     // Pure-hextet IPv4-mapped (::ffff:HHHH:HHHH) / IPv4-compatible (::HHHH:HHHH)
     // forms embed the v4 address in the last two hextets with NO dotted tail, so
     // the dotted extractor above misses them — e.g. ::ffff:a9fe:a9fe == the
-    // 169.254.169.254 metadata IP. Decode and run the IPv4 denylist; only
-    // short-circuit on a DENIED address so pure-IPv6 handling below is untouched
-    // (a mapped public v4 falls through to the host-pin like the dotted form).
-    {
-        std::uint16_t h[8];
-        if (ExpandIpv6Hextets(host, h) && h[0] == 0 && h[1] == 0 && h[2] == 0 && h[3] == 0 && h[4] == 0 &&
-            (h[5] == 0 || h[5] == 0xffff)) {
-            const unsigned char o[4] = {
-                static_cast<unsigned char>((h[6] >> 8) & 0xFF), static_cast<unsigned char>(h[6] & 0xFF),
-                static_cast<unsigned char>((h[7] >> 8) & 0xFF), static_cast<unsigned char>(h[7] & 0xFF)};
-            if (IsCloudMetadataLiteral(o)) {
-                out = EndpointVerdict::RejectedCloudMetadata;
-                return true;
-            }
-            if (IsLinkLocalLiteral(o)) {
-                out = EndpointVerdict::RejectedLinkLocal;
-                return true;
-            }
-            if (IsPrivateNetworkLiteral(o)) {
-                out = EndpointVerdict::RejectedPrivateNetwork;
-                return true;
-            }
-        }
-    }
+    // 169.254.169.254 metadata IP. Only a DENIED mapped address short-circuits;
+    // a mapped public v4 falls through to the host-pin like the dotted form.
+    if (TryClassifyMappedIpv6Hextets(host, out))
+        return true;
 
     // Pure-IPv6 prefixes: loopback ::1, link-local fe80::/10, ULA fc00::/7.
     if (host == "::1") {
