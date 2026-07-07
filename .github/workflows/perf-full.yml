@@ -306,6 +306,7 @@ jobs:
         if: ${{ !cancelled() && steps.perf.outputs.regression_count > 0 }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
           gh issue create \
             --title "perf-regression: full-suite run ${{ github.run_id }}" \
@@ -316,6 +317,7 @@ jobs:
         if: ${{ !cancelled() && steps.perf.outputs.run_failure_count > 0 }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
           gh issue create \
             --title "perf-run-failure: full-suite run ${{ github.run_id }}" \
@@ -326,6 +328,7 @@ jobs:
         if: ${{ !cancelled() && steps.perf.outputs.improvement_count > 0 }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
           branch="bot/perf-baseline-bump-${{ github.run_id }}"
           git checkout -b "$branch"
