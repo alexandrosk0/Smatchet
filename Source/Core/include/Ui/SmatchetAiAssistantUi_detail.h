@@ -80,6 +80,8 @@ inline AiProvider AiResolveProvider(int providerKind) {
         return AiProvider::OllamaOpenAiCompat;
     case 3:
         return AiProvider::OllamaNative;
+    case 4:
+        return AiProvider::DeepSeek;
     case 0:
     default:
         return AiProvider::OpenAi;

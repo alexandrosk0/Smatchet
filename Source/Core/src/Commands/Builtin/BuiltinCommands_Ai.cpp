@@ -566,6 +566,9 @@ void RegisterValidatePrefsCommand(CommandRegistry& reg) {
                 case 3:
                     effective = AiProvider::OllamaNative;
                     break;
+                case 4:
+                    effective = AiProvider::DeepSeek;
+                    break;
                 default:
                     effective = AiProvider::OpenAi;
                     break;

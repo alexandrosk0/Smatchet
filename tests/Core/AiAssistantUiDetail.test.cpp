@@ -46,6 +46,9 @@ TEST_CASE("AiResolveProvider: maps cfg int to enum, clamps out-of-range to OpenA
     CHECK(AiResolveProvider(1) == AiProvider::Anthropic);
     CHECK(AiResolveProvider(2) == AiProvider::OllamaOpenAiCompat);
     CHECK(AiResolveProvider(3) == AiProvider::OllamaNative);
+    // DR19: DeepSeek (kind 4) is a real selectable provider — it must not fall
+    // through to OpenAi, or the per-turn model picker offers the wrong catalog.
+    CHECK(AiResolveProvider(4) == AiProvider::DeepSeek);
     CHECK(AiResolveProvider(99) == AiProvider::OpenAi);
     CHECK(AiResolveProvider(-1) == AiProvider::OpenAi);
 }
