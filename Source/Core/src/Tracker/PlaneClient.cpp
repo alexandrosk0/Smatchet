@@ -92,7 +92,7 @@ bool ResolvePlaneProject(const std::string& planeApi, const TrackerConfig& cfg, 
     auto response = TrackerGetLogged("PlaneClient", projectsUrl, headers, params);
     if (response.status_code != 200) {
         const std::string err = "Plane API error " + std::to_string(response.status_code) + " resolving project '" +
-                                projectKey + "': " + response.text.substr(0, 300);
+                                projectKey + "': " + RedactHttpBodyForLog(response.text).substr(0, 300);
         if (outError)
             *outError = err;
         return false;

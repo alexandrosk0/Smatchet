@@ -186,10 +186,16 @@ MergeResult ThreeWayMerge(const std::string& base, const std::string& mine, cons
         // Discard hunks whose base range was already consumed by a previous hunk.
         // These represent overlapping changes from different start positions — flag as conflict
         // but don't try to apply them (the previously-applied hunk already replaced that region).
-        while (mi < mHunks.size() && mHunks[mi].baseEnd <= cursor)
+        // Discarding a hunk drops one side's edit, so the merge is NOT clean: mark it unclean
+        // so callers record a conflict for resolution instead of silently losing the change.
+        while (mi < mHunks.size() && mHunks[mi].baseEnd <= cursor) {
+            isClean = false;
             ++mi;
-        while (ti < tHunks.size() && tHunks[ti].baseEnd <= cursor)
+        }
+        while (ti < tHunks.size() && tHunks[ti].baseEnd <= cursor) {
+            isClean = false;
             ++ti;
+        }
         // If a hunk starts BEFORE cursor but ends after, the region partially overlaps — conflict.
         if (mi < mHunks.size() && mHunks[mi].baseStart < cursor) {
             isClean = false;

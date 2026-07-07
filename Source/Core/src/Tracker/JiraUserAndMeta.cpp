@@ -203,7 +203,9 @@ TrackerError JiraClient::AddIssueWatcher(const TrackerConfig& cfg, const std::st
     if (response.status_code != 204 && response.status_code != 200) {
         outError = "Failed to add watcher: HTTP " + std::to_string(response.status_code);
         if (!response.text.empty()) {
-            outError += " - " + response.text.substr(0, 200);
+            // Redact tokens before splicing the raw body into the error / log — a
+            // 401/403 body can reflect the request's Authorization / x-api-key.
+            outError += " - " + RedactHttpBodyForLog(response.text).substr(0, 200);
         }
         LOG_ERROR("JiraClient::AddIssueWatcher failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
         if (response.status_code >= 200 && response.status_code < 300) {

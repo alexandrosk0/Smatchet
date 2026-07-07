@@ -176,6 +176,24 @@ TEST_CASE("FormatFriendlyDate / ParseFriendlyDate — round-trip + range gates")
         int y = 0, m = 0, d = 0;
         CHECK_FALSE(ParseFriendlyDate("5/32/2026", y, m, d));
     }
+    SUBCASE("DR32: Parse rejects days beyond the month's real length") {
+        int y = 9999, m = 9999, d = 9999;
+        CHECK_FALSE(ParseFriendlyDate("2/31/2026", y, m, d));  // Feb never has 31
+        CHECK_FALSE(ParseFriendlyDate("2/29/2026", y, m, d));  // 2026 is not a leap year
+        CHECK_FALSE(ParseFriendlyDate("4/31/2026", y, m, d));  // Apr has 30
+        CHECK_FALSE(ParseFriendlyDate("6/31/2026", y, m, d));  // Jun has 30
+        // rejection leaves outputs untouched
+        CHECK(y == 9999);
+        CHECK(m == 9999);
+        CHECK(d == 9999);
+    }
+    SUBCASE("DR32: Parse accepts the real last day, incl. leap-year Feb 29") {
+        int y = 0, m = 0, d = 0;
+        CHECK(ParseFriendlyDate("2/28/2026", y, m, d));
+        CHECK(ParseFriendlyDate("2/29/2024", y, m, d)); // 2024 is a leap year
+        CHECK(ParseFriendlyDate("4/30/2026", y, m, d));
+        CHECK(ParseFriendlyDate("12/31/2026", y, m, d));
+    }
     SUBCASE("Parse rejects year < 1900 and > 3000") {
         int y = 0, m = 0, d = 0;
         CHECK_FALSE(ParseFriendlyDate("5/16/1899", y, m, d));

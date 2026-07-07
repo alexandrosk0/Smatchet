@@ -552,24 +552,9 @@ void RegisterValidatePrefsCommand(CommandRegistry& reg) {
                 out["ok"] = v.IsOk();
                 out["errors"] = std::move(errs);
                 out["warnings"] = std::move(warns);
-                AiProvider effective;
-                switch (cfg.AiProviderKind) {
-                case 0:
-                    effective = AiProvider::OpenAi;
-                    break;
-                case 1:
-                    effective = AiProvider::Anthropic;
-                    break;
-                case 2:
-                    effective = AiProvider::OllamaOpenAiCompat;
-                    break;
-                case 3:
-                    effective = AiProvider::OllamaNative;
-                    break;
-                default:
-                    effective = AiProvider::OpenAi;
-                    break;
-                }
+                // Single source of truth (AiTypes.h) — do not re-implement the
+                // kind->enum switch here; that duplication is what let DR19 drift.
+                const AiProvider effective = AiProviderFromKind(cfg.AiProviderKind);
                 out["active_provider"] = AiProviderDisplayName(effective);
                 return CommandResult::Success(std::move(out));
             });

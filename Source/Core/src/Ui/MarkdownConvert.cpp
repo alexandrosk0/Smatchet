@@ -820,7 +820,11 @@ void CollectInlineMarks(const json& node, std::vector<const char*>& openWrap, st
 }
 
 void EmitInlineTextNode(const json& node, std::ostringstream& out) {
-    std::string text = node.value("text", std::string());
+    // nlohmann value() throws type_error when the key exists but is not a string
+    // (e.g. a malformed server node with a numeric "text"), which would escape
+    // AdfToMarkdown and abort the offline-queue merge. Read it type-safely.
+    std::string text =
+        (node.contains("text") && node["text"].is_string()) ? node["text"].get<std::string>() : std::string();
     // Apply marks innermost-first when emitting; ADF stores marks innermost-last in its array.
     // Scratch buffers are thread_local + const char* (no std::string heap churn on the hot
     // text-node path); capacity persists across calls within a thread.
@@ -927,7 +931,12 @@ static bool MatchStoredTaskPrefix(const json& paraContent, bool* doneOut) {
         return false;
     if (paraContent[0].value("type", std::string()) != "text")
         return false;
-    const std::string& t = paraContent[0].at("text").get_ref<const std::string&>();
+    // A malformed node can have the text type but no string text value. Reading it as a
+    // string would raise a JSON type error that escapes the ADF-to-Markdown conversion,
+    // which has no catch, and aborts the offline-queue merge — so guard first.
+    if (!paraContent[0].contains("text") || !paraContent[0]["text"].is_string())
+        return false;
+    const std::string& t = paraContent[0]["text"].get_ref<const std::string&>();
     if (t.size() >= 4 && t.compare(0, 4, "[ ] ") == 0) {
         *doneOut = false;
         return true;

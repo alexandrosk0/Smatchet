@@ -28,6 +28,7 @@
 #
 # Pure stdlib.
 
+import math
 import argparse
 import json
 import os
@@ -81,26 +82,68 @@ def load_components(sbom_path):
     return comps
 
 
+def cvss3_base_from_vector(vector):
+    """Compute the CVSS v3.x base score from a vector string, or None if it is not
+    a parseable CVSS v3 vector. OSV's `severity[].score` for type CVSS_V3 is the
+    VECTOR string (e.g. "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"), not a
+    number — float() raised and the caller fell through to UNKNOWN (rank 0),
+    letting a real HIGH/CRITICAL CVE evade a `--fail-on HIGH` gate."""
+    if not isinstance(vector, str) or not vector.upper().startswith("CVSS:3"):
+        return None
+    metrics = {}
+    for part in vector.split("/")[1:]:
+        key, sep, val = part.partition(":")
+        if sep:
+            metrics[key.upper()] = val.upper()
+    changed = metrics.get("S") == "C"
+    try:
+        av = {"N": 0.85, "A": 0.62, "L": 0.55, "P": 0.2}[metrics["AV"]]
+        ac = {"L": 0.77, "H": 0.44}[metrics["AC"]]
+        ui = {"N": 0.85, "R": 0.62}[metrics["UI"]]
+        pr = ({"N": 0.85, "L": 0.68, "H": 0.5} if changed else {"N": 0.85, "L": 0.62, "H": 0.27})[metrics["PR"]]
+        cia = {"H": 0.56, "L": 0.22, "N": 0.0}
+        conf, integ, avail = cia[metrics["C"]], cia[metrics["I"]], cia[metrics["A"]]
+    except KeyError:
+        return None
+    iss = 1 - (1 - conf) * (1 - integ) * (1 - avail)
+    impact = (7.52 * (iss - 0.029) - 3.25 * (iss - 0.02) ** 15) if changed else (6.42 * iss)
+    if impact <= 0:
+        return 0.0
+    exploitability = 8.22 * av * ac * pr * ui
+    raw = (1.08 * (impact + exploitability)) if changed else (impact + exploitability)
+    # CVSS roundup: smallest 1-decimal value >= raw (capped at 10.0).
+    return min(math.ceil(raw * 10) / 10.0, 10.0)
+
+
+def _bucket_score(v):
+    if v >= 9.0:
+        return "CRITICAL"
+    if v >= 7.0:
+        return "HIGH"
+    if v >= 4.0:
+        return "MODERATE"
+    if v > 0:
+        return "LOW"
+    return None
+
+
 def severity_of(vuln):
     """Best-effort severity label from an OSV record."""
     ds = vuln.get("database_specific", {})
     if isinstance(ds, dict) and ds.get("severity"):
         return str(ds["severity"]).upper()
-    # CVSS vector present but no label: bucket by base score if it is a bare number.
+    # No label: bucket by base score — a bare number, or a CVSS v3 vector we score.
     for s in vuln.get("severity", []):
         score = str(s.get("score", ""))
         try:
             v = float(score)
         except ValueError:
-            continue
-        if v >= 9.0:
-            return "CRITICAL"
-        if v >= 7.0:
-            return "HIGH"
-        if v >= 4.0:
-            return "MODERATE"
-        if v > 0:
-            return "LOW"
+            v = cvss3_base_from_vector(score)
+            if v is None:
+                continue
+        bucket = _bucket_score(v)
+        if bucket is not None:
+            return bucket
     return "UNKNOWN"
 
 

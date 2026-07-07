@@ -240,11 +240,12 @@ PlaneIssuePageFetch FetchPlaneIssuePage(const std::string& planeApi, const std::
             std::string detailParseErr;
             const nlohmann::json ej = smatchet::json_safe::ParseBounded(tb, detailParseErr);
             if (detailParseErr.empty() && ej.is_object() && ej.contains("detail")) {
-                apiDetail = JsonFieldToString(ej, "detail");
+                apiDetail = RedactHttpBodyForLog(JsonFieldToString(ej, "detail"));
             }
         }
         std::string err = "Plane API error " + std::to_string(response.status_code) +
-                          " fetching issues (URL: " + urlHint + "): " + response.text.substr(0, 300);
+                          " fetching issues (URL: " + urlHint +
+                          "): " + RedactHttpBodyForLog(response.text).substr(0, 300);
         if (!apiDetail.empty()) {
             err += " [detail: " + apiDetail + "]";
         }

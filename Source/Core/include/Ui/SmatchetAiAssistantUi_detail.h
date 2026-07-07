@@ -72,19 +72,7 @@ inline std::size_t AiTruncatedPasteDroppedBytes(int requestedTextLen, int bufCap
 /// Maps the persisted `cfg.AiProviderKind` int onto the AiProvider enum,
 /// clamping any out-of-range value to OpenAi (same policy as
 /// AiPrefsValidator::ClampProvider).
-inline AiProvider AiResolveProvider(int providerKind) {
-    switch (providerKind) {
-    case 1:
-        return AiProvider::Anthropic;
-    case 2:
-        return AiProvider::OllamaOpenAiCompat;
-    case 3:
-        return AiProvider::OllamaNative;
-    case 0:
-    default:
-        return AiProvider::OpenAi;
-    }
-}
+inline AiProvider AiResolveProvider(int providerKind) { return AiProviderFromKind(providerKind); }
 
 /// Result of resolving the per-turn model picker against the active provider's
 /// catalog. `useFreeformInput` is true when the catalog is empty OR the saved

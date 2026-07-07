@@ -187,9 +187,18 @@ def evaluate(
     # float()/int() casts crashed with KeyError or TypeError and bypassed
     # the documented exit-2 input-error path. (CodeRabbit PR #322 #5.)
     min_calls = _to_int(policy.get("min_baseline_calls", 10), "policy.min_baseline_calls")
-    mean_pct = _to_float(policy.get("mean_delta_pct", 10.0), "policy.mean_delta_pct") or 10.0
-    p99_cap = _to_float(policy.get("p99_abs_ceiling_ms", 10.0), "policy.p99_abs_ceiling_ms") or 10.0
-    max_cap = _to_float(policy.get("max_abs_ceiling_ms", 50.0), "policy.max_abs_ceiling_ms") or 50.0
+
+    # Substitute the default only for an absent/null knob — NOT for an explicit 0.
+    # `X or DEFAULT` treated `mean_delta_pct: 0` (gate on ANY regression) as falsy
+    # and silently loosened it to the permissive default. `.get(key, default)`
+    # already covers absence; the None-check only rescues an explicit JSON null.
+    def _knob(key, default):
+        v = _to_float(policy.get(key, default), "policy.%s" % key)
+        return default if v is None else v
+
+    mean_pct = _knob("mean_delta_pct", 10.0)
+    p99_cap = _knob("p99_abs_ceiling_ms", 10.0)
+    max_cap = _knob("max_abs_ceiling_ms", 50.0)
     # None ⇒ knob disabled (ships off until perf-gate-revival step-5 calibration).
     mean_cap = _to_float(policy.get("mean_abs_ceiling_ms"), "policy.mean_abs_ceiling_ms")
     min_abs_delta = _to_float(

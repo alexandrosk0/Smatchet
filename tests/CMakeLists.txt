@@ -690,6 +690,9 @@ add_executable(SmatchetTests
     # cpr-free (delegates body redaction to AiErrorRedact), linked in the CORE
     # source block below; this entry adds the doctest TU.
     Core/OllamaStreamError.test.cpp
+    # DR26 — Ollama /api/chat request-body shape: the system prompt must be a
+    # leading {role:"system"} message, not the ignored top-level `system` field.
+    Core/OllamaRequestBody.test.cpp
     Core/AiModelCatalog.test.cpp
     Core/AiModelSignature.test.cpp
     # Pure helpers extracted from AiAssistantController::RunRequest (monoliths
@@ -1024,6 +1027,9 @@ add_executable(SmatchetTests
     # mapping, retry-recovers / exhaustion-count / POST-predicate-stops semantics via
     # stateful requestFn lambdas (no socket). No extra production TU.
     Core/TrackerHttpRetry.test.cpp
+    # DR30 — tracker error paths route raw response bodies through RedactHttpBodyForLog
+    # before logging, so a 401/403 body reflecting Authorization / x-api-key can't leak.
+    Core/TrackerHttpRedact.test.cpp
     # Integration coverage of the live D3 wiring: drives TrackerGet/Post/PutLogged at a
     # scripted httplib loopback (JiraCatalogHttpFixture) and asserts retry counts prove
     # GET/PUT retry-on-5xx while POST is single-shot (Transport-only). Needs only
