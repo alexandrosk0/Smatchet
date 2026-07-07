@@ -312,12 +312,23 @@ _classify_diff() {
         line="${line#"${line%%[![:space:]]*}"}"
         line="${line%"${line##*[![:space:]]}"}"
 
-        # In a block comment: stays a comment until the close `*/`.
+        # In a block comment: stays a comment until the close `*/`. If real code
+        # trails the close on the same line (`... */ launchTask();`), it must still
+        # be classified — don't blanket-continue past it (mirrors the LOG-statement
+        # close handling below; the single-line `/* */ code` path already does this).
         if [ "$in_block_comment" -eq 1 ]; then
             case "$line" in
-                *'*/'*) in_block_comment=0 ;;
+                *'*/'*)
+                    in_block_comment=0
+                    line="${line#*'*/'}"                       # drop through the close
+                    line="${line#"${line%%[![:space:]]*}"}"    # ltrim the remainder
+                    case "$line" in
+                        ''|'//'*) continue ;;                  # nothing (or a line comment) follows
+                    esac
+                    ;;                                          # else fall through to classify trailing code
+                *)
+                    continue ;;                                 # still inside the block comment
             esac
-            continue
         fi
         # Opening of a block comment that does not close on this line.
         case "$line" in

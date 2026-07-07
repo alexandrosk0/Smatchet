@@ -183,7 +183,7 @@ tokenless (`require_token_on_loopback=true`) and every subsequent parent request
   writer); make delete/rename target the right-clicked view id, and resolve the dirty-editor case before
   latching the delete.
 
-### DR14. CI gates silently pass on real violations — ⏳ OPEN
+### DR14. CI gates silently pass on real violations — ✅ DONE (fix pushed on branch)
 - `scripts/dev/coverage-delta-gate.sh:316`: a block comment closing with code on the same line
   (`/* … */ stmt();`) is classified EXEMPT → untested runtime code passes the required test-delta gate
   on `merge_group`. (Same `/* */ code` class as the single-line fix in #918; the multi-line close was missed.)
