@@ -26,20 +26,6 @@
 
 namespace {
 
-// Reads the noexcept-ness baked into a member-function's type (C++17 makes
-// noexcept part of the type). Used to inspect Optional::operator=' declared
-// spec directly, without the by-value parameter's own construction (Optional's
-// move ctor is not noexcept) muddying a call-expression noexcept() probe.
-template <typename> struct MemFnNoexcept;
-template <typename R, typename C, typename A>
-struct MemFnNoexcept<R (C::*)(A)> {
-    static constexpr bool value = false;
-};
-template <typename R, typename C, typename A>
-struct MemFnNoexcept<R (C::*)(A) noexcept> {
-    static constexpr bool value = true;
-};
-
 struct ThrowState {
     static int liveCount;      // net live objects (ctor +1, dtor -1)
     static int doubleDestroys; // dtor entered on an already-dead object
@@ -138,12 +124,14 @@ TEST_CASE("DR31 Optional::operator= propagates a throwing move instead of termin
 }
 
 TEST_CASE("DR31 noexcept contract tracks the payload move") {
-    // Throwing-move payload: operator= is NOT advertised noexcept, so the throw
-    // escapes instead of hitting std::terminate.
+    // A throwing-move payload must NOT yield a nothrow assignment: if it did, a
+    // throwing move would escape a noexcept boundary and call std::terminate (the
+    // bug). The common nothrow payload keeps a nothrow assignment. Probed via the
+    // type trait rather than the C++17 noexcept-in-the-member-type form, which is
+    // not distinguishable under the project's MSVC C++14 build.
     CHECK_FALSE(std::is_nothrow_move_constructible<ThrowingMover>::value);
-    CHECK_FALSE(MemFnNoexcept<decltype(&Optional<ThrowingMover>::operator=)>::value);
-    // Nothrow payload (the common case): operator= keeps its noexcept guarantee.
-    CHECK(MemFnNoexcept<decltype(&Optional<int>::operator=)>::value);
+    CHECK_FALSE(std::is_nothrow_move_assignable<Optional<ThrowingMover>>::value);
+    CHECK(std::is_nothrow_move_assignable<Optional<int>>::value);
 }
 
 TEST_CASE("DR31 common nothrow move-assign path is preserved") {

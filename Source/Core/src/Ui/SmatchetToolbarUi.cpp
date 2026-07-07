@@ -33,25 +33,29 @@ namespace {
 // DR23 — std::string-backed InputText so an editor field (LuaCode / ArgsJson / CommandId / Tooltip)
 // is never rounded through a fixed char buffer that silently truncates on the first keystroke.
 // Mirrors misc/cpp/imgui_stdlib.h: the buffer IS the std::string's storage and CallbackResize grows
-// it as the user types past capacity. C++17 std::string::data() is a mutable, NUL-terminated buffer.
+// it as the user types past capacity. The mutable pointer is taken via a c_str cast, matching
+// imgui_stdlib, so it stays valid under the project's C++14 build where the non-const data overload
+// is unavailable.
 int InputTextStdStringResize(ImGuiInputTextCallbackData* data) {
     if (data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
         auto* str = static_cast<std::string*>(data->UserData);
         str->resize(static_cast<size_t>(data->BufTextLen));
-        data->Buf = str->data();
+        data->Buf = const_cast<char*>(str->c_str());
     }
     return 0;
 }
 
 bool InputTextStdString(const char* label, std::string& str, ImGuiInputTextFlags flags = 0) {
     flags |= ImGuiInputTextFlags_CallbackResize;
-    return ImGui::InputText(label, str.data(), str.capacity() + 1, flags, InputTextStdStringResize, &str);
+    return ImGui::InputText(label, const_cast<char*>(str.c_str()), str.capacity() + 1, flags,
+                            InputTextStdStringResize, &str);
 }
 
 bool InputTextMultilineStdString(const char* label, std::string& str, const ImVec2& size,
                                  ImGuiInputTextFlags flags = 0) {
     flags |= ImGuiInputTextFlags_CallbackResize;
-    return ImGui::InputTextMultiline(label, str.data(), str.capacity() + 1, size, flags, InputTextStdStringResize, &str);
+    return ImGui::InputTextMultiline(label, const_cast<char*>(str.c_str()), str.capacity() + 1, size, flags,
+                                     InputTextStdStringResize, &str);
 }
 
 bool IsUiPseudoCommand(const std::string& id) {

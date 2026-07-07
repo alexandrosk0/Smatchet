@@ -13,7 +13,7 @@
 // fallback (gated on a failed connection) never engaged.
 
 #include "CliCommandRunner.h"
-#include "McpPlugin.h"
+#include "McpAuthTokenPure.h"
 
 #include <doctest/doctest.h>
 
