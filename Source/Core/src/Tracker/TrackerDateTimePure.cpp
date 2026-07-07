@@ -116,7 +116,10 @@ std::string FormatFriendlyDate(const ParsedJiraDateTime& p) {
 bool ParseFriendlyDate(const std::string& s, int& outY, int& outM, int& outD) {
     int m = 0, d = 0, y = 0;
     if (std::sscanf(s.c_str(), "%d/%d/%d", &m, &d, &y) == 3) {
-        if (m >= 1 && m <= 12 && d >= 1 && d <= 31 && y >= 1900 && y <= 3000) {
+        // Validate the day against the actual length of that month/year (leap years
+        // included) rather than a blanket <= 31, so impossible dates like "2/31/2026"
+        // are rejected here instead of being formatted and submitted to the tracker.
+        if (m >= 1 && m <= 12 && y >= 1900 && y <= 3000 && d >= 1 && d <= DaysInMonth(y, m)) {
             outY = y;
             outM = m;
             outD = d;

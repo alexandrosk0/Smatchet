@@ -351,11 +351,11 @@ bool ClassifyIpv6Literal(const std::string& host, EndpointVerdict& out, bool& is
         }
     }
 
-    // Pure-hextet IPv4-mapped (::ffff:HHHH:HHHH) / IPv4-compatible (::HHHH:HHHH)
-    // forms embed the v4 address in the last two hextets with NO dotted tail, so
-    // the dotted extractor above misses them — e.g. ::ffff:a9fe:a9fe == the
-    // 169.254.169.254 metadata IP. Only a DENIED mapped address short-circuits;
-    // a mapped public v4 falls through to the host-pin like the dotted form.
+    // Pure-hextet IPv4-mapped and IPv4-compatible forms embed the v4 address in the
+    // last two hextets with no dotted tail, so the dotted extractor above misses the
+    // compressed mapped form of a metadata or private address. Only a denied mapped
+    // address short-circuits here, so a mapped public address still falls through to
+    // the host-pin like the dotted form does.
     if (TryClassifyMappedIpv6Hextets(host, out))
         return true;
 
