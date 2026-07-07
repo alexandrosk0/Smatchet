@@ -820,7 +820,11 @@ void CollectInlineMarks(const json& node, std::vector<const char*>& openWrap, st
 }
 
 void EmitInlineTextNode(const json& node, std::ostringstream& out) {
-    std::string text = node.value("text", std::string());
+    // nlohmann value() throws type_error when the key exists but is not a string
+    // (e.g. a malformed server node with a numeric "text"), which would escape
+    // AdfToMarkdown and abort the offline-queue merge. Read it type-safely.
+    std::string text =
+        (node.contains("text") && node["text"].is_string()) ? node["text"].get<std::string>() : std::string();
     // Apply marks innermost-first when emitting; ADF stores marks innermost-last in its array.
     // Scratch buffers are thread_local + const char* (no std::string heap churn on the hot
     // text-node path); capacity persists across calls within a thread.
