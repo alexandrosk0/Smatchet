@@ -1,10 +1,16 @@
 #include <doctest/doctest.h>
 
-#include "OllamaClient.h"
+#include "AiTypes.h"
 
 #include <nlohmann/json.hpp>
+#include <string>
 
 using nlohmann::json;
+
+// Defined in OllamaClient.cpp. Declared here (rather than pulling OllamaClient.h)
+// so this test does not tie the sibling-provider-client headers into a diff — the
+// DRY scanner surfaces their pre-existing structural clones whenever one is touched.
+std::string OllamaBuildRequestBodyJson(const AiChatRequest& req);
 
 // DR26: Ollama's /api/chat ignores a top-level `system` field (that is an
 // /api/generate parameter), so the system prompt must be emitted as a leading

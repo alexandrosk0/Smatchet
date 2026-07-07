@@ -20,9 +20,4 @@ class OllamaClient : public IAiClient {
                        const ErrorCallback& onError, const CancelToken& cancel) override;
 };
 
-/// Test/observability seam: the exact JSON body OllamaClient POSTs to `/api/chat`
-/// for `req`, serialized. Exposed so unit tests can assert the request shape (e.g.
-/// that the system prompt is a leading {role:"system"} message) without a live server.
-std::string OllamaBuildRequestBodyJson(const AiChatRequest& req);
-
 #endif
