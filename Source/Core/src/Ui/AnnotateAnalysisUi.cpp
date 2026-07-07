@@ -18,7 +18,19 @@ using namespace AnnotateInternal;
 AnnotateAnalysisUi::AnnotateState* s_stateInstance = nullptr;
 
 AnnotateAnalysisUi::AnnotateAnalysisUi() : state_(std::make_unique<AnnotateState>()) { s_stateInstance = state_.get(); }
-AnnotateAnalysisUi::~AnnotateAnalysisUi() { s_stateInstance = nullptr; }
+AnnotateAnalysisUi::~AnnotateAnalysisUi() {
+    // DR8: the worker thread (WorkerThreadMain) dereferences State() -> s_stateInstance on every
+    // loop iteration. Cancel and join it while s_stateInstance still points at live state, BEFORE
+    // clearing the pointer, so an in-flight worker never derefs null during teardown. The later
+    // ~AnnotateState join then finds the thread already joined and is a no-op.
+    if (state_) {
+        state_->worker.Cancel.store(true, std::memory_order_release);
+        if (state_->worker.Thread.joinable()) {
+            state_->worker.Thread.join();
+        }
+    }
+    s_stateInstance = nullptr;
+}
 
 void AnnotateAnalysisUi::SetAnnotatePanelOpen(bool open) { annotatePanelOpen_ = open; }
 

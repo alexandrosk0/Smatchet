@@ -61,6 +61,7 @@
 namespace {
 
 using namespace TrackerFieldValueUtils;
+using TicketFieldEditorCommitPolicyPure::InlineEditLoadedTruncated;
 using TicketFieldEditorCommitPolicyPure::ShouldCommitInlineFieldEdit;
 using TicketFieldEditorCommitPolicyPure::ShouldEndInlineEdit;
 
@@ -534,9 +535,20 @@ void RenderTextInlineEdit(const CachedTicket& ticket, const TrackerField& field,
     // spurious PUT. EditInitialValue is captured once at edit-start, so the dirty verdict reflects
     // only what the USER typed, never an out-of-band store change.
     const bool valueChanged = state.EditInitialValue != std::string(state.EditBuffer);
+    // DR23: if the stored value was longer than EditBuffer it was truncated on seed. Committing the
+    // truncated copy would silently overwrite the field, destroying the untruncated tail — refuse the
+    // commit (the value stays intact) and warn. The single-line inline cap stays; edit long values in
+    // the long-text modal, which loads the full document.
+    const bool loadedTruncated = InlineEditLoadedTruncated(originalValue.size(), sizeof(state.EditBuffer));
+    if (loadedTruncated && ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", SmatchetLocalization::T("field_editor.inline_too_long",
+                                                        "Value too long to edit inline — the change will not be "
+                                                        "saved (it would truncate the field). Edit it elsewhere."));
+    }
     if (escapePressed) {
         state.ClearEditing(); // cancel — never PUT
-    } else if (ShouldCommitInlineFieldEdit(explicitSubmit, deactivated, kMobileInlineEditBuild, valueChanged)) {
+    } else if (!loadedTruncated &&
+               ShouldCommitInlineFieldEdit(explicitSubmit, deactivated, kMobileInlineEditBuild, valueChanged)) {
         QueueEdit(ticket.id, field, {state.EditBuffer}, pendingEdits, originalValue);
         state.ClearEditing();
     } else if (ShouldEndInlineEdit(escapePressed, explicitSubmit, deactivated)) {

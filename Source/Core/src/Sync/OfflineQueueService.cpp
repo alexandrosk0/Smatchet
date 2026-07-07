@@ -865,6 +865,20 @@ void OfflineQueueService::TickOfflineFieldEdits() {
 
     IOfflineQueueDeps& depsRef = deps_;
     deps_.LaunchBackgroundTask([this, &depsRef, pending, cache, reader, mutations, capturedGeneration]() {
+        // Guarantees offlineFieldEditReplayInFlight_ resets on every exit path from this lambda —
+        // normal return OR an exception unwinding out of ReplayOneFieldEdit (RefreshLocalData
+        // rethrows SQLite errors; the clean-merge MarkdownToAdf path can also throw), mirroring
+        // the creates path. Without it a throw leaves the in-flight flag latched, every later tick
+        // short-circuits at the in-flight guard, and queued edits never replay until restart (DR5).
+        // Defaults to a conservative 30s retry delay; the normal-completion path overwrites it.
+        std::chrono::seconds nextDelay{30};
+        ScopeExit resetInFlight([this, &nextDelay]() {
+            const auto nextAt = std::chrono::steady_clock::now() + nextDelay;
+            std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
+            nextOfflineFieldEditReplayAt_ = nextAt;
+            offlineFieldEditReplayInFlight_ = false;
+        });
+
         FieldEditReplayTally tally;
         for (const auto& row : pending) {
             if (row.HasMergeConflict) {
@@ -897,12 +911,7 @@ void OfflineQueueService::TickOfflineFieldEdits() {
         } else if (tally.Failures > 0 && tally.Successes == 0) {
             delay = std::chrono::seconds(30);
         }
-        const auto nextAt = std::chrono::steady_clock::now() + delay;
-        {
-            std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
-            nextOfflineFieldEditReplayAt_ = nextAt;
-            offlineFieldEditReplayInFlight_ = false;
-        }
+        nextDelay = delay;
     });
 }
 
@@ -1425,6 +1434,14 @@ void OfflineQueueService::TickOfflineCreates() {
     // LATCHED strong mutation handle (debt 2026-06-07): captured into the background task so
     // a live backend swap / pane-context retirement mid-replay cannot dangle it.
     std::shared_ptr<ITrackerIssueMutations> mutations2 = deps_.MutationsShared();
+    if (!mutations2) {
+        // Mirror the null guard in TickOfflineFieldEdits: a latched backend with no mutations
+        // support must release the in-flight latch before bailing, otherwise ReplayOneCreate
+        // dereferences a null mutation handle and every later tick short-circuits (DR5).
+        std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
+        offlineReplayInFlight_ = false;
+        return;
+    }
     ISyncCache* cache = deps_.Cache();
 
     IOfflineQueueDeps& depsRef = deps_;

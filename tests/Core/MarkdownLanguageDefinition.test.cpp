@@ -74,76 +74,77 @@ TEST_CASE("Markdown LD heading regex requires space after hashes") {
     CHECK(AnyRegexMatches(md, P::Keyword, "# H1"));
     CHECK(AnyRegexMatches(md, P::Keyword, "## H2"));
     CHECK(AnyRegexMatches(md, P::Keyword, "###### H6"));
-    // No space → must NOT match the heading regex.
-    {
-        const std::string s = "#foo";
-        std::regex headingRe("^#{1,6}[ \\t].*$");
-        CHECK_FALSE(std::regex_search(s, headingRe));
-    }
+    // No space → must NOT match the heading regex. Heading is the sole P::Keyword token.
+    CHECK_FALSE(AnyRegexMatches(md, P::Keyword, "#foo"));
 }
 
 TEST_CASE("Markdown LD blockquote regex matches `> ` prefix") {
-    std::regex quoteRe("^>[ \\t].*$");
-    CHECK(std::regex_search(std::string("> a quote"), quoteRe));
-    CHECK(std::regex_search(std::string(">\tindented"), quoteRe));
+    const LD& md = LD::Markdown();
+    // Blockquote is the sole P::Comment token in the production LD.
+    CHECK(AnyRegexMatches(md, P::Comment, "> a quote"));
+    CHECK(AnyRegexMatches(md, P::Comment, ">\tindented"));
     // Bare `>` without space — not a blockquote.
-    CHECK_FALSE(std::regex_search(std::string(">noSpace"), quoteRe));
+    CHECK_FALSE(AnyRegexMatches(md, P::Comment, ">noSpace"));
 }
 
 TEST_CASE("Markdown LD list marker regex matches both unordered and ordered") {
-    std::regex listRe("^[ \\t]*([-*+]|\\d+\\.)[ \\t]");
-    CHECK(std::regex_search(std::string("- one"), listRe));
-    CHECK(std::regex_search(std::string("* two"), listRe));
-    CHECK(std::regex_search(std::string("+ three"), listRe));
-    CHECK(std::regex_search(std::string("1. first"), listRe));
-    CHECK(std::regex_search(std::string("  10. nested"), listRe));
+    const LD& md = LD::Markdown();
+    // List markers are tagged P::Punctuation (shared with the horizontal-rule
+    // token); none of the inputs below collide with the `^(-{3,}|…)$` rule regex.
+    CHECK(AnyRegexMatches(md, P::Punctuation, "- one"));
+    CHECK(AnyRegexMatches(md, P::Punctuation, "* two"));
+    CHECK(AnyRegexMatches(md, P::Punctuation, "+ three"));
+    CHECK(AnyRegexMatches(md, P::Punctuation, "1. first"));
+    CHECK(AnyRegexMatches(md, P::Punctuation, "  10. nested"));
     // Missing trailing space.
-    CHECK_FALSE(std::regex_search(std::string("-noSpace"), listRe));
-    CHECK_FALSE(std::regex_search(std::string("1.noSpace"), listRe));
+    CHECK_FALSE(AnyRegexMatches(md, P::Punctuation, "-noSpace"));
+    CHECK_FALSE(AnyRegexMatches(md, P::Punctuation, "1.noSpace"));
 }
 
 TEST_CASE("Markdown LD link regex matches [text](url) and ![alt](url)") {
-    std::regex linkRe("!?\\[[^\\]]+\\]\\([^)]+\\)");
-    CHECK(std::regex_search(std::string("see [example](https://example.org)"), linkRe));
-    CHECK(std::regex_search(std::string("![alt](pic.png)"), linkRe));
+    const LD& md = LD::Markdown();
+    // Link/image is the sole P::KnownIdentifier token.
+    CHECK(AnyRegexMatches(md, P::KnownIdentifier, "see [example](https://example.org)"));
+    CHECK(AnyRegexMatches(md, P::KnownIdentifier, "![alt](pic.png)"));
     // Missing url paren — not a link.
-    CHECK_FALSE(std::regex_search(std::string("[just text]"), linkRe));
+    CHECK_FALSE(AnyRegexMatches(md, P::KnownIdentifier, "[just text]"));
 }
 
 TEST_CASE("Markdown LD bold wins over italic when both apply") {
-    std::regex boldRe("\\*\\*[^\\*]+\\*\\*");
-    std::regex italicRe("\\*[^\\*\\n]+\\*");
-    const std::string s = "**bold**";
-    // Both patterns can technically match in the input — the LD ordering puts
-    // bold before italic so the colorizer takes bold first. Here we assert
-    // that bold matches the canonical bold input AND that italic on `*x*`
-    // matches independently.
-    CHECK(std::regex_search(s, boldRe));
-    CHECK(std::regex_search(std::string("*x*"), italicRe));
+    const LD& md = LD::Markdown();
+    // Bold is P::Identifier, italic is P::String — distinct tokens. The LD orders
+    // bold before italic so the colorizer takes bold first on `**…**`. Assert bold
+    // matches the canonical bold input AND italic matches `*x*` independently.
+    CHECK(AnyRegexMatches(md, P::Identifier, "**bold**"));
+    CHECK(AnyRegexMatches(md, P::String, "*x*"));
     // Italic body class excludes `*` so the unmatched single `**foo*` does
     // not produce a bold match.
-    CHECK_FALSE(std::regex_search(std::string("**foo*"), boldRe));
+    CHECK_FALSE(AnyRegexMatches(md, P::Identifier, "**foo*"));
 }
 
 TEST_CASE("Markdown LD inline code regex matches a single backtick pair") {
-    std::regex codeRe("`[^`\\n]+`");
-    CHECK(std::regex_search(std::string("inline `code` here"), codeRe));
+    const LD& md = LD::Markdown();
+    // Inline code is the sole P::Number token.
+    CHECK(AnyRegexMatches(md, P::Number, "inline `code` here"));
     // No closer — not inline code.
-    CHECK_FALSE(std::regex_search(std::string("backtick `but no close"), codeRe));
+    CHECK_FALSE(AnyRegexMatches(md, P::Number, "backtick `but no close"));
 }
 
 TEST_CASE("Markdown LD horizontal rule regex requires three or more of one char") {
-    std::regex hrRe("^(-{3,}|\\*{3,}|_{3,})$");
-    CHECK(std::regex_search(std::string("---"), hrRe));
-    CHECK(std::regex_search(std::string("****"), hrRe));
-    CHECK(std::regex_search(std::string("_________"), hrRe));
-    CHECK_FALSE(std::regex_search(std::string("--"), hrRe));
+    const LD& md = LD::Markdown();
+    // Horizontal rule is tagged P::Punctuation (shared with the list-marker token);
+    // the bare-rule inputs below are not matched by the list regex.
+    CHECK(AnyRegexMatches(md, P::Punctuation, "---"));
+    CHECK(AnyRegexMatches(md, P::Punctuation, "****"));
+    CHECK(AnyRegexMatches(md, P::Punctuation, "_________"));
+    CHECK_FALSE(AnyRegexMatches(md, P::Punctuation, "--"));
 }
 
 TEST_CASE("Markdown LD strikethrough regex matches ~~text~~") {
-    std::regex strikeRe("~~[^~]+~~");
-    CHECK(std::regex_search(std::string("plain ~~struck~~ ok"), strikeRe));
-    CHECK_FALSE(std::regex_search(std::string("just ~one~ tilde"), strikeRe));
+    const LD& md = LD::Markdown();
+    // Strikethrough is the sole P::Preprocessor token.
+    CHECK(AnyRegexMatches(md, P::Preprocessor, "plain ~~struck~~ ok"));
+    CHECK_FALSE(AnyRegexMatches(md, P::Preprocessor, "just ~one~ tilde"));
 }
 
 TEST_CASE("Markdown LD declares fence as same-token block comment") {

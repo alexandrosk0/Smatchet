@@ -19,8 +19,14 @@ class LuaConsolePlugin : public IPlugin {
     bool luaLangReady_ = false;
 
     std::vector<std::string> scriptList_;
-    int selectedScriptIndex_ = 0;
-    int pendingScriptIndex_ = -1;
+    /// Identity of the selected script (its list name/path). Source of truth for
+    /// the selection so a background re-sort of `scriptList_` can never retarget
+    /// a save at an unrelated file (DR11). The combo re-derives its display index
+    /// from this name each frame via ResolveSelectedScriptIndex.
+    std::string selectedScriptName_;
+    /// Pending selection while the unsaved-switch modal is open. Tracked by name
+    /// (not index) because a refresh can reorder the list before the user picks.
+    std::string pendingScriptName_;
     std::string diskSnapshot_;
 
     /// Clamped height for `BeginChild` (script pane) this frame.
@@ -43,6 +49,11 @@ class LuaConsolePlugin : public IPlugin {
 
     void EnsureLuaLanguageDef();
     void RefreshScriptList(const AppController& app, bool forceRescan = false);
+    /// Reconcile `selectedScriptName_` with the current `scriptList_`. Keeps the
+    /// name when its file is still present; defaults to the first entry only when
+    /// nothing has been selected yet; clears the selection when a tracked file
+    /// vanished (so a save cannot fall through to an unrelated file -- DR11).
+    void SyncSelectionToList();
     bool LoadSelectedScriptIntoEditor(const AppController& app, std::string& outErr);
     bool SaveCurrentScript(const AppController& app, std::string& outErr);
     void ApplyErrorMarkersFromMessage(const std::string& errMsg);

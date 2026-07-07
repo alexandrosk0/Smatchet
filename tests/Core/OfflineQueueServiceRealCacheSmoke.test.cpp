@@ -25,7 +25,7 @@
 #include <string>
 
 using smatchet_tests::FakeOfflineQueueDeps;
-using smatchet_tests::TestEnvGuard;
+using smatchet_tests::OfflineQueueTestEnvGuard;
 
 namespace {
 
@@ -46,7 +46,7 @@ class RealCacheOfflineQueueDeps : public FakeOfflineQueueDeps {
 
 TEST_CASE("real-cache smoke: offline create queues, replays, seeds the ticket, and consumes the row" *
           doctest::test_suite("[high-risk]")) {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     RealCacheOfflineQueueDeps deps; // context key "Jira"
     deps.BackendImpl->SetBuildCreatePayloadResult(true, nlohmann::json{{"fields", {{"summary", "X"}}}});
     TrackerField f;

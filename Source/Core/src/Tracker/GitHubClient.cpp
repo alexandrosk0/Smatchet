@@ -5,6 +5,7 @@
 #include "GitHubClientHelpers.h"
 #include "GitHubCommentMappingPure.h"
 #include "GitHubIssueSearch.h"
+#include "GitHubQueryFromJql.h"
 #include "IssueDraft.h"
 #include "Json/BoundedJsonParse.h"
 #include "LabelEditDiffPure.h"
@@ -412,6 +413,13 @@ GitHubClient::FetchIssueComments(const std::string& issueKey) {
                 smatchet::github::ExtractGitHubErrorMessage(static_cast<int>(resp.status_code), resp.text);
             LOG_ERROR("GitHubClient::FetchIssueComments: HTTP %ld on page %d for %s — %s", resp.status_code, page,
                       issueKey.c_str(), msg.c_str());
+            // A 2xx-non-200 (201/202/204) reaches this failure branch; for a 2xx
+            // TrackerErrorFromHttpStatus returns Ok() (Kind==None, detail discarded).
+            // Carry the verbatim detail under an explicit non-OK kind (DR20).
+            // SMATCHET_DEVIATION(rule=duplication; reason=the 2xx-non-200 guard idiom (LOG_ERROR + `if 2xx return TrackerErrorUnknown(detail,status)` else FromHttpStatus) is deliberately uniform across the tracker read paths (mirrors GitHubIssueSearch + GitHubClient::CreateIssue + JiraUserAndMeta) so the swallow-as-Ok bug is fixed identically everywhere; extracting a helper would need a Result-type-generic wrapper spanning independent client TUs; owner=deep-review; revisit=2026-10-01)
+            if (resp.status_code >= 200 && resp.status_code < 300) {
+                return CommentsResult::Err(TrackerErrorUnknown(msg, static_cast<int>(resp.status_code)));
+            }
             return CommentsResult::Err(TrackerErrorFromHttpStatus(static_cast<int>(resp.status_code), msg));
         }
         // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
@@ -665,12 +673,10 @@ Result<std::string, TrackerError> GitHubClient::CreateIssue(const nlohmann::json
 std::string GitHubClient::ExtractProjectFromQuery(const std::string& query) const {
     // GitHub backend's "project" anchor is `owner/repo` — extracted from the
     // query string if formatted as such (e.g. user typed `owner/repo` in the
-    // tracker query field). No multi-repo cross product yet.
-    const std::size_t slash = query.find('/');
-    if (slash != std::string::npos && slash > 0 && slash < query.size() - 1) {
-        return query.substr(0, query.find(' '));
-    }
-    return "";
+    // tracker query field). Delegates to the pure, unit-tested anchor extractor,
+    // which anchors on the leading `owner/repo` token by STRUCTURE so a stray '/'
+    // inside a value (e.g. a `ui/ux` label) is never mistaken for a repo anchor.
+    return smatchet::github::ExtractGitHubProjectAnchor(query);
 }
 
 std::vector<RemoteProject> GitHubClient::ListProjects() {

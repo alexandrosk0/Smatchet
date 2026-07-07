@@ -23,6 +23,17 @@
 
 TicketSyncService::TicketSyncService(ITicketSyncDeps& deps) : deps_(deps) {}
 
+bool TicketSyncService::ShouldSkipMassDeletionOnEmptyFullSync(std::size_t keepCount, std::size_t cachedRowCount,
+                                                              int consecutiveEmptyFullSyncs, int emptyWipeThreshold) {
+    if (keepCount > 0) {
+        return false;
+    }
+    if (cachedRowCount == 0) {
+        return false;
+    }
+    return consecutiveEmptyFullSyncs < emptyWipeThreshold;
+}
+
 void TicketSyncService::CancelAndJoinActiveStreamingSync() {
     activeStreamingSync_.Cancelled = true;
     activeStreamingSync_.Superseded = true;
@@ -403,14 +414,38 @@ void TicketSyncService::FinalizeStreamingSessionIfDone() {
     staleDeletedSoFar_ = 0;
     staleIdsToDelete_.clear();
 
+    // Track consecutive zero-keep full syncs (UI thread only), mirroring ApplyIssueFetchPack.
+    // A full sync that kept at least one ticket resets the streak; a partial fetch leaves it
+    // untouched. The streak feeds the empty-full-sync wipe guard below.
+    const std::size_t keptThisSession = activeStreamingSync_.KeepIds.size();
+    if (fullSyncCompleted && keptThisSession == 0) {
+        ++consecutiveEmptyFullSyncs_;
+    } else if (keptThisSession > 0) {
+        consecutiveEmptyFullSyncs_ = 0;
+    }
+
     if (fullSyncCompleted) {
         std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
-        staleIdsToDelete_ = std::move(activeStreamingSync_.BackgroundStaleIds);
+        // Empty-full-sync guard (finding DR4): a completed full sync that kept zero tickets marks
+        // every cached row stale, which would wipe the entire offline cache. Treat a zero-keep
+        // full sync as suspect and hold off the mass deletion until the empty result repeats
+        // kEmptyFullSyncWipeThreshold times, so a transient glitch cannot erase offline data.
+        const bool skipWipe = ShouldSkipMassDeletionOnEmptyFullSync(
+            keptThisSession, activeStreamingSync_.BackgroundStaleIds.size(), consecutiveEmptyFullSyncs_,
+            kEmptyFullSyncWipeThreshold);
+        if (skipWipe) {
+            LOG_WARN("TicketSyncService::TickStreamingApply skipped mass stale deletion on suspect empty full sync "
+                     "(cached=%zu, consecutive_empty=%d).",
+                     activeStreamingSync_.BackgroundStaleIds.size(), consecutiveEmptyFullSyncs_);
+            activeStreamingSync_.BackgroundStaleIds.clear();
+        } else {
+            staleIdsToDelete_ = std::move(activeStreamingSync_.BackgroundStaleIds);
 
-        if (!staleIdsToDelete_.empty()) {
-            isDeletingStale_.store(true);
-            totalStaleToDelete_ = staleIdsToDelete_.size();
-            staleDeletedSoFar_ = 0;
+            if (!staleIdsToDelete_.empty()) {
+                isDeletingStale_.store(true);
+                totalStaleToDelete_ = staleIdsToDelete_.size();
+                staleDeletedSoFar_ = 0;
+            }
         }
     }
 
@@ -552,9 +587,6 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
     if (activeStreamingSync_.WorkerThread.joinable()) {
         activeStreamingSync_.WorkerThread.join();
     }
-    // Reset per-session empty-sync counter so stale state from a previous run
-    // doesn't carry over and trigger an unexpected wipe on the very first batch.
-    consecutiveEmptyFullSyncs_ = 0;
 
     deps_.NotifySyncStatus("Syncing", "Refreshing issues from Tracker...", ITicketSyncDeps::SyncNotifyLevel::Info,
                            2500);

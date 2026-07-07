@@ -43,17 +43,50 @@ void AddWarning(JqlToLinearResult& r, const std::string& w) {
     r.Warning += w;
 }
 
-// Split on a whitespace-delimited, case-insensitive `AND` connector. Quoted
-// values containing the literal word are an accepted limitation of the subset.
+// Find the first occurrence of `needle` in `hay` at index >= `from` that lies
+// OUTSIDE any quoted span. Quote spans open on `'`/`"` and close on the matching
+// quote (no escape handling — mirrors StripQuotes). Quote state is tracked from
+// the start of `hay` so a `from` past a balanced split point is safe. Returns
+// npos when no top-level match exists. This keeps connector/operator substrings
+// that live inside quoted values (e.g. `"work in progress"`) from being treated
+// as structural tokens.
+std::string::size_type FindTopLevel(const std::string& hay, const std::string& needle,
+                                    std::string::size_type from = 0) {
+    if (needle.empty() || needle.size() > hay.size()) {
+        return std::string::npos;
+    }
+    char quote = 0;
+    for (std::string::size_type i = 0; i < hay.size(); ++i) {
+        const char c = hay[i];
+        if (quote != 0) {
+            if (c == quote) {
+                quote = 0;
+            }
+            continue;
+        }
+        if (c == '"' || c == '\'') {
+            quote = c;
+            continue;
+        }
+        if (i >= from && i + needle.size() <= hay.size() && hay.compare(i, needle.size(), needle) == 0) {
+            return i;
+        }
+    }
+    return std::string::npos;
+}
+
+// Split on a whitespace-delimited, case-insensitive `AND` connector. Quote-aware:
+// an ` and ` inside a quoted value (e.g. `summary ~ "cut and paste"`) is treated
+// atomically and does not split the clause.
 void SplitTopLevelAnd(const std::string& s, std::vector<std::string>& out) {
     const std::string lower = ToLower(s);
     const std::string token = " and ";
     std::string::size_type start = 0;
-    std::string::size_type pos = lower.find(token, 0);
+    std::string::size_type pos = FindTopLevel(lower, token, start);
     while (pos != std::string::npos) {
         out.push_back(s.substr(start, pos - start));
         start = pos + token.size();
-        pos = lower.find(token, start);
+        pos = FindTopLevel(lower, token, start);
     }
     out.push_back(s.substr(start));
 }
@@ -101,24 +134,28 @@ enum ClauseOp { kEq, kNeq, kIn, kNotIn, kContains };
 // false when no recognized operator is present.
 bool DetectOperator(const std::string& clause, const std::string& lower, ClauseOp& op, std::string& field,
                     std::string& valueRaw) {
+    // All operator scans are quote-aware (FindTopLevel) so an operator substring
+    // inside a quoted value (e.g. the ` in ` of `summary ~ "x in y"`, or the `=`
+    // of `text ~ "a = b"`) is never mistaken for the clause operator — which
+    // previously corrupted the split and silently dropped the text search.
     std::string::size_type p;
-    if ((p = lower.find(" not in ")) != std::string::npos) {
+    if ((p = FindTopLevel(lower, " not in ")) != std::string::npos) {
         op = kNotIn;
         field = clause.substr(0, p);
         valueRaw = clause.substr(p + 8);
-    } else if ((p = lower.find(" in ")) != std::string::npos) {
+    } else if ((p = FindTopLevel(lower, " in ")) != std::string::npos) {
         op = kIn;
         field = clause.substr(0, p);
         valueRaw = clause.substr(p + 4);
-    } else if ((p = clause.find("!=")) != std::string::npos) {
+    } else if ((p = FindTopLevel(clause, "!=")) != std::string::npos) {
         op = kNeq;
         field = clause.substr(0, p);
         valueRaw = clause.substr(p + 2);
-    } else if ((p = clause.find('~')) != std::string::npos) {
+    } else if ((p = FindTopLevel(clause, "~")) != std::string::npos) {
         op = kContains;
         field = clause.substr(0, p);
         valueRaw = clause.substr(p + 1);
-    } else if ((p = clause.find('=')) != std::string::npos) {
+    } else if ((p = FindTopLevel(clause, "=")) != std::string::npos) {
         op = kEq;
         field = clause.substr(0, p);
         valueRaw = clause.substr(p + 1);
@@ -221,7 +258,10 @@ void ProcessClause(const std::string& clauseRaw, JqlToLinearResult& r) {
     const std::string valueLower = ToLower(value);
 
     // Reject an OR buried inside a single clause rather than guess its meaning.
-    if (op != kIn && op != kNotIn && valueLower.find(" or ") != std::string::npos) {
+    // Quote-aware (scan the full clause, not the stripped value) so an ` or `
+    // inside a quoted text value (e.g. `summary ~ "cats or dogs"`) is treated
+    // atomically and the text search survives instead of being dropped.
+    if (op != kIn && op != kNotIn && FindTopLevel(lower, " or ") != std::string::npos) {
         AddWarning(r, "OR is not supported (clause '" + clause + "' dropped)");
         return;
     }

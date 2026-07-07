@@ -504,6 +504,28 @@ add_executable(SmatchetTests
     # test rig links just that one TU.
     Core/CppSyntaxLex.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/CppSyntaxLex.cpp"
+    # Deep-review 2026-07-07 batch 2 (DR3-DR31) regression tests. Production TUs they
+    # exercise (ConfigManager, TicketSyncService, LocalCacheManager, ScenarioRunner, the
+    # Plane/GitHub/Linear query pure TUs) are already linked elsewhere in this target;
+    # the rest assert against header-inline pure helpers, so no new source links are needed.
+    Core/ConfigCredentialLoad.test.cpp
+    Core/SyncEmptyFullSyncGuard.test.cpp
+    Core/OfflineReplayResolveClearsCapturedBase.test.cpp
+    Core/AppControllerFieldCatalogLock.test.cpp
+    Core/ScenarioRunnerReplaceActive.test.cpp
+    Core/ShutdownFutureDrain.test.cpp
+    Core/UpdateInstallerFilenameSanitize.test.cpp
+    Core/MainThreadDispatchShutdown.test.cpp
+    Core/TrackerPostTimeoutClassify.test.cpp
+    Core/Tracker2xxErrorGuard.test.cpp
+    Core/JqlQuoteAware.test.cpp
+    Core/PlanePagination.test.cpp
+    Core/CommandPaletteFilterReset.test.cpp
+    Core/IconNegativeCacheBackoff.test.cpp
+    Core/ResultExceptionSafety.test.cpp
+    Core/McpSpawnTokenRetention.test.cpp
+    Core/ViewsSaveMergeAndDelete.test.cpp
+    Core/FieldEditorInlineTruncateGuard.test.cpp
     Core/LocalCacheManager.test.cpp
     # multi-grid-tabs.md Slice 5 TSan pass — concurrent seed-read (GetAllTickets) +
     # write (SaveTicket) from two std::threads; also in SmatchetTsanTests for TSan.
@@ -955,6 +977,7 @@ add_executable(SmatchetTests
     Plugins/Mcp/McpDispatch.test.cpp
     Plugins/Mcp/McpHostOrigin.test.cpp
     Plugins/LuaConsole/LuaConsoleSelection.test.cpp
+    Plugins/LuaConsole/LuaConsoleSelectionByPath.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Plugins/Mcp/McpJsonRpcPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/CallstackParser.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/P4AnnotateParse.cpp"

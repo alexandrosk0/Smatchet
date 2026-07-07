@@ -758,7 +758,10 @@ std::tuple<sol::object, std::string> AppController::Impl::LuaGetTicketBind(sol::
     CachedTicket ticket;
     // CacheBackendKeyCopy is mutex-guarded — this bind runs on the Lua automation / MCP
     // worker thread while the UI thread may re-stamp the key on a tracker swap (Slice 1b).
-    if (app_.Cache->TryGetTicket(app_.focusedContext().CacheBackendKeyCopy(), issueId, ticket)) {
+    // DR6: null-check Cache before dereferencing. RecreateLocalCacheDatabase resets Cache on
+    // the UI thread while this worker runs, so the pointer can be null here; a missing ticket
+    // (nil return) is the correct graceful degradation rather than a crash (Pillar 3).
+    if (app_.Cache && app_.Cache->TryGetTicket(app_.focusedContext().CacheBackendKeyCopy(), issueId, ticket)) {
         return {sol::make_object(sv, ticket), ""};
     }
     return {sol::make_object(sv, sol::nil), "Ticket not found in local cache"};

@@ -67,9 +67,18 @@ TEST_CASE("AiAssistantController: streaming worker→dispatcher→UI-state hand-
         // `ui`) concurrently with the worker producing them. `ui` is touched ONLY here + after the
         // join below — never from the worker directly — mirroring the g_ui UI-thread-only contract.
         std::atomic<bool> stopDrain(false);
+        std::atomic<bool> handoffDone(false);
         std::thread drainer([&]() {
             while (!stopDrain.load(std::memory_order_acquire)) {
                 dispatcher.Drain();
+                // The final delta's drained lambda commits exactly one assistant message
+                // (AiAssistantController.cpp MakeOnDelta, isFinal branch). Reading ui.history
+                // HERE is race-free: this drainer is the only thread that touches `ui`, and
+                // only inside the Drain() above. Publishing the completion via an atomic lets
+                // the UI-thread wait below key off the real hand-off instead of a fixed sleep.
+                if (!ui.history.empty()) {
+                    handoffDone.store(true, std::memory_order_release);
+                }
                 std::this_thread::yield();
             }
         });
@@ -81,8 +90,17 @@ TEST_CASE("AiAssistantController: streaming worker→dispatcher→UI-state hand-
         const bool submitted = controller.Submit(1, "hello", std::vector<AiContextBlock>());
         CHECK(submitted);
 
-        // Let the worker run its turn (stub stream ~5 ms; generous slack for CI jitter).
-        std::this_thread::sleep_for(std::chrono::milliseconds(80));
+        // Deterministic hand-off wait, replacing a fixed 80 ms sleep that flaked under TSan's
+        // thread-scheduling slowdown: block until the drainer signals the assistant message landed
+        // (i.e. the worker→dispatcher→UI post-back actually ran). The wall-clock deadline is a
+        // SAFETY bound, not a timing budget — the stub streams in ~5 ms, so a healthy run signals
+        // almost immediately; a regression that breaks the post-back falls through and fails the
+        // CHECKs below instead of hanging CI.
+        const auto handoffDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!handoffDone.load(std::memory_order_acquire) &&
+               std::chrono::steady_clock::now() < handoffDeadline) {
+            std::this_thread::yield();
+        }
 
         stopDrain.store(true, std::memory_order_release);
         drainer.join();

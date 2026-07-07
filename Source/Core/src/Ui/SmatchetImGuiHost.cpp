@@ -748,11 +748,12 @@ void SmatchetImGuiHost::BeginFrame(float deltaTimeSeconds, float viewportWidth, 
 
     ImGui_ImplDX12_NewFrame();
     smatchet::ui::RouteWheelToScrollableTooltipBeforeNewFrame();
-    ImGui::NewFrame();
 
     ImGuiIO& io = ImGui::GetIO();
     io.DeltaTime = (deltaTimeSeconds > 0.0f) ? deltaTimeSeconds : (1.0f / 60.0f);
     io.DisplaySize = ImVec2(viewportWidth, viewportHeight);
+
+    ImGui::NewFrame();
 
     ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_None);
     ImplData->FrameActive.store(true, std::memory_order_relaxed);

@@ -1653,6 +1653,16 @@ int RunCmdAttachDispatch(const ParsedArgs& pa, const std::string& host, int port
     httplib::Client cli(host, port);
     cli.set_connection_timeout(2, 0);
     cli.set_read_timeout(readTimeoutSec, 0);
+    // Present the configured MCP token on the direct attach path (finding DR12b), mirroring how
+    // the --spawn path sets X-Smatchet-Token. Without it, a server guarding loopback with an
+    // operator token 401s this request (res is set, so the !res --spawn fallback never engages).
+    {
+        std::string hdrName;
+        std::string hdrValue;
+        if (McpAttachAuthHeader(ConfigManager::Load().McpAuthToken, hdrName, hdrValue)) {
+            cli.set_default_headers({{hdrName, hdrValue}});
+        }
+    }
 
     auto res = cli.Post("/mcp/tools/call", body.dump(), "application/json");
     if (!res) {

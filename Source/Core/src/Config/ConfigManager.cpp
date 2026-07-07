@@ -447,10 +447,20 @@ void PurgeLegacyAgenticKeys(nlohmann::json& j) {
 // secret/erase contract is unchanged. See each arm's inline notes.
 #if defined(_WIN32)
 void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
-    j.erase("token");
-    j.erase("plane_api_key");
-    j["token_enc"] = ProtectSecretForConfig(config.ApiToken);
-    j["plane_api_key_enc"] = ProtectSecretForConfig(config.PlaneApiKey);
+    // API token — same DPAPI + plaintext-fallback pattern as the secrets below. Only erase the
+    // plaintext `token` when DPAPI protection succeeded (or there was nothing to protect); if
+    // protection failed keep the plaintext so the user does not lose the only copy.
+    const std::string tokenEnc = ProtectSecretForConfig(config.ApiToken);
+    if (config.ApiToken.empty() || !tokenEnc.empty()) {
+        j.erase("token");
+    }
+    j["token_enc"] = tokenEnc;
+    // Plane API key — same DPAPI + plaintext-fallback pattern as the API token above.
+    const std::string planeApiKeyEnc = ProtectSecretForConfig(config.PlaneApiKey);
+    if (config.PlaneApiKey.empty() || !planeApiKeyEnc.empty()) {
+        j.erase("plane_api_key");
+    }
+    j["plane_api_key_enc"] = planeApiKeyEnc;
     // GitHub PAT — same plaintext-fallback pattern as McpAuthToken / AiApiKey / WhisperApiKey
     // below. Only erase the plaintext `github_pat` when DPAPI protection succeeded; otherwise
     // keep the plaintext so the user doesn't lose the only copy.
@@ -607,10 +617,6 @@ const char* ConfigManager::GetDefaultImGuiDockLayoutIni() { return kDefaultImGui
 // ConfigManager — Save(TrackerConfig).
 
 void ConfigManager::Save(const TrackerConfig& config) {
-    {
-        std::lock_guard<std::mutex> lock(GetCacheMutexRef());
-        GetHasCachedConfigRef() = false;
-    }
     // Serialize the whole read-modify-write so a concurrent writer (the config-save worker, or
     // SaveAnnotateAnalysis on another thread) can't lose-update. Distinct from GetIoMutexRef that
     // WriteConfigJson holds internally — no recursive-lock deadlock.
@@ -677,6 +683,13 @@ void ConfigManager::Save(const TrackerConfig& config) {
     SaveInheritFieldIds(j, config);
     SaveSecretsAndPurgeLegacy(j, config);
     WriteConfigJson(j);
+
+    // Invalidate the cache only after the new file has been written, still under the
+    // read-modify-write lock. Clearing the flag before the write left a window in which a racing
+    // Load could re-populate the cache from the pre-save file and leave that stale entry marked
+    // valid after the new file landed, so every later Load returned old data.
+    std::lock_guard<std::mutex> cacheLock(GetCacheMutexRef());
+    GetHasCachedConfigRef() = false;
 }
 
 // ConfigManager — annotate-analysis persistence.
@@ -1538,19 +1551,27 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
     SecretMigrationFlags migrate;
 
     if (!j.empty()) {
-        try {
-            LoadScalarFields(j, cfg);
-            LoadSecretFields(j, cfg, migrate);
-            LoadEnumAndClampedFields(j, cfg);
+        // Load each field group under its own try/catch so a single type-mismatched key (for
+        // example a string where a number is expected) can drop only that one group, never abort
+        // the secret or list groups that follow. A shared try/catch previously let one bad scalar
+        // skip secret loading, leaving the secrets empty, which a later save then persisted as
+        // empty and permanently wiped the stored tokens.
+        const auto loadGroup = [](const char* group, auto&& fn) {
+            try {
+                fn();
+            } catch (const std::exception& ex) {
+                LOG_ERROR("ConfigManager: Load() parse error in %s: %s", group, ex.what());
+            } catch (...) {
+                LOG_ERROR("ConfigManager: Load() parse error in %s (unknown)", group);
+            }
+        };
+        loadGroup("scalar fields", [&] { LoadScalarFields(j, cfg); });
+        loadGroup("secret fields", [&] { LoadSecretFields(j, cfg, migrate); });
+        loadGroup("enum and clamped fields", [&] { LoadEnumAndClampedFields(j, cfg); });
 #if defined(SMATCHET_WITH_WHISPER)
-            LoadWhisperFields(j, cfg);
+        loadGroup("whisper fields", [&] { LoadWhisperFields(j, cfg); });
 #endif
-            LoadListFields(j, cfg);
-        } catch (const std::exception& ex) {
-            LOG_ERROR("ConfigManager: Load() parse error: %s", ex.what());
-        } catch (...) {
-            LOG_ERROR("ConfigManager: Load() parse error (unknown)");
-        }
+        loadGroup("list fields", [&] { LoadListFields(j, cfg); });
     }
 
     if (!hasSetupConfig && !j.contains("read_only_mode")) {

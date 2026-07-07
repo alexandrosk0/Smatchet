@@ -407,7 +407,7 @@ void DrawCallstackRowUserCell(AnnotateDrawCtx& ctx, const AnnotateRow& row, bool
     }
     if (ImGui::IsMouseClicked(1) && ImGui::IsItemHovered()) {
         PrepareAssignModal(app, row, pending ? std::string() : row.Annotate.User);
-        ImGui::OpenPopup("annotate_assign");
+        State().openAssignModal = true;
     }
 }
 
@@ -720,7 +720,7 @@ void DrawEntryLineCopyMenu(const EntryLineCtx& lc, const P4AnnotatedLine& ln) {
                 br.Annotate.Approximate = false;
                 PrepareAssignModal(lc.App, br, ln.User);
                 ImGui::CloseCurrentPopup();
-                ImGui::OpenPopup("annotate_assign");
+                State().openAssignModal = true;
             }
         }
         ImGui::EndPopup();
@@ -1014,6 +1014,10 @@ void DrawAssignModalBody(AnnotateDrawCtx& ctx, const TrackerConfig& cfg, bool re
 void DrawAnnotateAssignModal(AnnotateDrawCtx& ctx) {
     AppController& app = ctx.App;
     const AnnotateUiThemeColors& theme = ctx.Theme;
+    if (State().openAssignModal) {
+        ImGui::OpenPopup("annotate_assign");
+        State().openAssignModal = false;
+    }
     if (!ImGui::BeginPopupModal("annotate_assign", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         return;
     }

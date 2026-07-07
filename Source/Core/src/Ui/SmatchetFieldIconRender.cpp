@@ -277,6 +277,57 @@ void ClearIconUrlFetchInFlight(const std::string& url) {
     IconUrlFetchInFlightSet().erase(url);
 }
 
+// DR28 — URL-level negative fetch cache with time-based backoff. A worker whose HTTP GET fails
+// records the steady-clock time of failure here; LoadOrFetchUrlImage consults it before deferring
+// another (up to 3s) cpr GET so an unresolvable icon URL backs off instead of re-fetching (and the
+// grid cell re-parsing JSON + re-stat'ing disk) every single frame for the whole session. Keyed by
+// URL; capped so a tracker returning many distinct bad URLs cannot grow it without bound.
+constexpr auto kIconFetchNegativeBackoff = std::chrono::minutes(5);
+constexpr size_t kIconFetchNegativeCap = 256;
+
+std::mutex& IconUrlFetchNegativeMutex() {
+    static std::mutex m;
+    return m;
+}
+std::unordered_map<std::string, std::chrono::steady_clock::time_point>& IconUrlFetchNegativeMap() {
+    static std::unordered_map<std::string, std::chrono::steady_clock::time_point> m;
+    return m;
+}
+
+long long SteadyMillis(std::chrono::steady_clock::time_point tp) {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(tp.time_since_epoch()).count();
+}
+
+// True when `url` failed a fetch recently enough to still be inside the backoff window.
+bool IconUrlFetchInBackoff(const std::string& url) {
+    const auto now = std::chrono::steady_clock::now();
+    const long long backoffMs = std::chrono::duration_cast<std::chrono::milliseconds>(kIconFetchNegativeBackoff).count();
+    std::lock_guard<std::mutex> lock(IconUrlFetchNegativeMutex());
+    const auto& m = IconUrlFetchNegativeMap();
+    const auto it = m.find(url);
+    const bool have = it != m.end();
+    const long long lastMs = have ? SteadyMillis(it->second) : 0;
+    return !SmatchetFieldIconRender::ShouldAttemptIconResolve(have, lastMs, SteadyMillis(now), backoffMs);
+}
+
+void RecordIconUrlFetchFailure(const std::string& url) {
+    if (url.empty()) {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lock(IconUrlFetchNegativeMutex());
+    auto& m = IconUrlFetchNegativeMap();
+    if (m.size() >= kIconFetchNegativeCap) {
+        m.clear();
+    }
+    m[url] = now;
+}
+
+void ClearIconUrlFetchFailure(const std::string& url) {
+    std::lock_guard<std::mutex> lock(IconUrlFetchNegativeMutex());
+    IconUrlFetchNegativeMap().erase(url);
+}
+
 // In-flight file-read set. Mirrors the URL fetch set shape — the URL-disk-cache-hit branch and
 // the file-path branch both defer their ifstream off the UI thread; the worker's PostToMainThread
 // invokes GetOrLoadFromMemory on the bytes (GPU texture upload requires UI thread). Keyed by the
@@ -375,6 +426,14 @@ bool LoadOrFetchUrlImage(AppController& app, const std::string& url, SmatchetLoa
     }
     // No cache, no disk → defer HTTP fetch to a worker thread (Pillar 2 — finding #1).
     // The grid-render path was blocking up to 3s per priority icon on first frame.
+    // DR28: if this URL failed to fetch recently, report a genuine (non-deferred) failure so the
+    // caller negative-memos the cell instead of re-issuing the 3s cpr GET every frame. Backoff
+    // expiry lets a transient outage recover on a later frame.
+    if (IconUrlFetchInBackoff(url)) {
+        outError = "Icon fetch in backoff after a prior failure.";
+        outDeferred = false;
+        return false;
+    }
     if (IconUrlFetchInFlight(url)) {
         outDeferred = true;
         return false;
@@ -402,8 +461,13 @@ bool LoadOrFetchUrlImage(AppController& app, const std::string& url, SmatchetLoa
         app.mainThreadDispatcher.PostToMainThread([capturedUrl, capturedUrlKey, bytes, fetchOk, fetchError]() {
             ClearIconUrlFetchInFlight(capturedUrl);
             if (!fetchOk || bytes.empty()) {
+                // DR28: memoise the failure so subsequent frames back off (see IconUrlFetchInBackoff)
+                // rather than re-fetching this URL every frame for the rest of the session.
+                (void)fetchError;
+                RecordIconUrlFetchFailure(capturedUrl);
                 return;
             }
+            ClearIconUrlFetchFailure(capturedUrl);
             SmatchetLoadedIconTexture loaded;
             std::string err;
             (void)SmatchetImageTextureCache::GetOrLoadFromMemory(capturedUrlKey, bytes.data(), bytes.size(), loaded,
@@ -751,14 +815,21 @@ bool TryDrawFieldValueIcon(const AppController& app, const std::string& fieldId,
     {
         const auto& memo = PriorityRawValueToCacheKey();
         const auto it = memo.find(rawValue);
-        if (it != memo.end() && SmatchetImageTextureCache::TryGetCached(it->second.CacheKey, icon)) {
-            const float maxEdge = ImGui::GetFrameHeight();
-            const std::string& memoLabel = it->second.Label;
-            DrawLoadedIconWithLazyTooltip(icon, maxEdge, tooltipsEnabled, [&]() {
-                return field ? DisplayValueForTrackerDateField(fieldId, field, rawValue)
-                             : (memoLabel.empty() ? rawValue : memoLabel);
-            });
-            return true;
+        if (it != memo.end()) {
+            // DR28: a known-negative cell short-circuits — no re-parse, no re-fetch this frame.
+            if (it->second.Negative) {
+                return false;
+            }
+            if (SmatchetImageTextureCache::TryGetCached(it->second.CacheKey, icon)) {
+                const float maxEdge = ImGui::GetFrameHeight();
+                const std::string& memoLabel = it->second.Label;
+                DrawLoadedIconWithLazyTooltip(icon, maxEdge, tooltipsEnabled, [&]() {
+                    return field ? DisplayValueForTrackerDateField(fieldId, field, rawValue)
+                                 : (memoLabel.empty() ? rawValue : memoLabel);
+                });
+                return true;
+            }
+            // Texture evicted — fall through to the slow path, which re-loads and refreshes the memo.
         }
     }
 
@@ -766,6 +837,8 @@ bool TryDrawFieldValueIcon(const AppController& app, const std::string& fieldId,
     std::string label;
     std::string slug;
     if (!ParsePriorityJson(rawValue, iconUrl, label, slug)) {
+        // DR28: malformed / unparseable priority JSON — negative-memo so we stop re-parsing it.
+        RememberNegativePriorityResolution(rawValue, label);
         return false;
     }
 
@@ -774,6 +847,11 @@ bool TryDrawFieldValueIcon(const AppController& app, const std::string& fieldId,
     bool anyDeferred = false;
     if (!LoadPriorityIconWithFallbacks(const_cast<AppController&>(app), iconUrl, slug, icon, resolvedKey, err,
                                        anyDeferred)) {
+        // DR28: record a negative only when nothing is mid-download — a deferred candidate will hit
+        // the cache on a later frame, so negative-memoing it would suppress a load that is coming.
+        if (!anyDeferred) {
+            RememberNegativePriorityResolution(rawValue, label);
+        }
         return false;
     }
     RememberPriorityResolution(rawValue, resolvedKey, label);

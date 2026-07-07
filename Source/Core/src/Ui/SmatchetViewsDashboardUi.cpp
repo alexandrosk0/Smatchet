@@ -175,8 +175,18 @@ void SmatchetUI::drawViewsSidebar(ViewsDashboardDrawCtx& ctx) {
             // Hover-revealed context menu for rename / duplicate / delete.
             if (ImGui::BeginPopupContextItem("##ViewRowMenu")) {
                 if (ImGui::MenuItem("Rename...")) {
-                    ctx.requestActivate(view.Id);
-                    d.viewsTitleEditing = true;
+                    // DR13b: the inline title editor is bound to the ACTIVE view, so a rename must
+                    // switch to the right-clicked row first. A dirty editor defers that switch behind
+                    // the discard-confirm; arming the rename here would rename the still-active
+                    // (wrong) view. Begin editing only once a clean switch has actually landed.
+                    if (view.Id == activeView->Id) {
+                        d.viewsTitleEditing = true;
+                    } else {
+                        ctx.requestActivate(view.Id);
+                        if (!d.viewsShowDiscardConfirm) {
+                            d.viewsTitleEditing = true;
+                        }
+                    }
                 }
                 if (ImGui::MenuItem("Duplicate")) {
                     // DEFERRED create (Pillar 3 crash fix): creating here would reallocate
@@ -197,7 +207,12 @@ void SmatchetUI::drawViewsSidebar(ViewsDashboardDrawCtx& ctx) {
                     ImGui::BeginDisabled();
                 }
                 if (ImGui::MenuItem("Delete view...")) {
-                    ctx.requestActivate(view.Id);
+                    // DR13b: delete targets the RIGHT-CLICKED view id, independent of which view is
+                    // active or whether the active view's editor is dirty. Previously this force-
+                    // activated the row (which a dirty editor defers) yet the confirm + latch still
+                    // targeted the active view — deleting the wrong view. Deleting a non-active view
+                    // leaves the current editing context untouched.
+                    d.viewsPendingDeleteId = view.Id;
                     d.viewsShowDeleteConfirm = true;
                 }
                 if (!canDelete) {
@@ -389,6 +404,7 @@ void SmatchetUI::drawViewsEditorHeader(ViewsDashboardDrawCtx& ctx) {
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.22f, 0.22f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.80f, 0.25f, 0.25f, 1.0f));
     if (ImGui::Button("Delete view")) {
+        d.viewsPendingDeleteId = activeView->Id; // DR13b: header button deletes the active view.
         d.viewsShowDeleteConfirm = true;
     }
     ImGui::PopStyleColor(3);
@@ -870,24 +886,29 @@ void SmatchetUI::drawViewsModals(ViewsDashboardDrawCtx& ctx) {
         d.viewsShowDeleteConfirm = false;
     }
     if (ImGui::BeginPopupModal("Delete view?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Delete view \"%s\"? This cannot be undone.", activeView->Name.c_str());
+        // DR13b: the confirm + latch target d.viewsPendingDeleteId (the right-clicked view), which
+        // may NOT be the active view. Resolve its name from the store for the prompt + toast; an
+        // empty target falls back to the active view (back-compat for callers that only set the
+        // show flag).
+        const std::string targetId = d.viewsPendingDeleteId.empty() ? activeView->Id : d.viewsPendingDeleteId;
+        const std::string targetName = SmatchetViewsDashboardUiDetail::FindViewName(ctx.store, targetId, activeView->Name);
+        ImGui::Text("Delete view \"%s\"? This cannot be undone.", targetName.c_str());
         ImGui::Spacing();
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.18f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.22f, 0.22f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.80f, 0.25f, 0.25f, 1.0f));
         if (ImGui::Button("Delete")) {
-            // Defer the erase to top-of-next-frame: Views::DeleteActive erases from
-            // store.Views — same pointer-invalidation class as the create latch, and
-            // ctx.activeView IS the erased element (pre-latch it was safe only
-            // because this modal happened to be the frame's last view-pointer
-            // reader — delta-review HIGH). Copy the name now, mutate next frame.
+            // Defer the erase to top-of-next-frame: Views::Delete erases from store.Views — same
+            // pointer-invalidation class as the create latch. Copy the name now, mutate next frame.
+            // viewsPendingDeleteId carries the target through to applyPendingViewDelete.
             d.viewsPendingDeleteActive = true;
-            d.viewsPendingDeleteToastName = activeView->Name;
+            d.viewsPendingDeleteToastName = targetName;
             ImGui::CloseCurrentPopup();
         }
         ImGui::PopStyleColor(3);
         ImGui::SameLine();
         if (ImGui::Button("Cancel")) {
+            d.viewsPendingDeleteId.clear();
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -1152,15 +1173,27 @@ void SmatchetUI::applyPendingViewDelete(AppController& app, UiDrawSession& d) {
     d.viewsPendingDeleteActive = false;
     const std::string deletedName = d.viewsPendingDeleteToastName;
     d.viewsPendingDeleteToastName.clear();
-    if (!ViewState.DeleteActive()) {
+    const std::string targetId = d.viewsPendingDeleteId;
+    d.viewsPendingDeleteId.clear();
+
+    // DR13b: delete the explicitly-targeted view. An empty target (or a target that IS the active
+    // view) uses the DeleteActive path so the editor + grid re-home onto the new active view.
+    // Deleting a NON-active view leaves the current editing context and grid untouched.
+    const ViewDefinition* activeBefore = ViewState.GetActiveView();
+    const std::string activeIdBefore = activeBefore ? activeBefore->Id : std::string();
+    const bool deletingActive = targetId.empty() || targetId == activeIdBefore;
+    const bool ok = deletingActive ? ViewState.DeleteActive() : ViewState.Delete(targetId);
+    if (!ok) {
         return;
     }
-    const ViewDefinition* nowActive = ViewState.GetActiveView();
-    if (nowActive) {
-        LoadBuffersFromView(d, *nowActive);
-        d.cfg.JqlQuery = nowActive->Jql;
-        d.cfg.SelectedFields = nowActive->Fields;
-        SmatchetViewsDashboardUiDetail::SyncWithCurrentView(app, d, ViewState.GetStore(), true);
+    if (deletingActive) {
+        const ViewDefinition* nowActive = ViewState.GetActiveView();
+        if (nowActive) {
+            LoadBuffersFromView(d, *nowActive);
+            d.cfg.JqlQuery = nowActive->Jql;
+            d.cfg.SelectedFields = nowActive->Fields;
+            SmatchetViewsDashboardUiDetail::SyncWithCurrentView(app, d, ViewState.GetStore(), true);
+        }
     }
     SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.view_deleted", "View deleted"), deletedName,
                                           ToastType::Info, 1800);

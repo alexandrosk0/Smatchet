@@ -302,6 +302,13 @@ void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app) {
         d.prefsDirty = false;
     }
 
+    // DR8: the app-update-check worker (StartAppUpdateCheckAsync) captures AppController& by
+    // reference. Its future was previously only joined by g_ui's static destructor, which runs
+    // after main() returns and after AppController is gone — a use-after-free if a check is still
+    // in flight at shutdown. Drain it here while AppController is still alive (teardown ordering).
+    DrainFutureJoinQuiet(d.appUpdateFuture);
+    d.appUpdateCheckInFlight = false;
+
     DrainFutureJoinQuiet(d.fieldCatalogFuture);
     d.fieldCatalogLoading = false;
     d.fieldCatalogFetchStarted = false;

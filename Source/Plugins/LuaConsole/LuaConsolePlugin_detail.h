@@ -43,6 +43,25 @@ inline std::vector<std::string> CollectSelectedTicketIds(const RowContainer& row
     return selectedIds;
 }
 
+/// Resolve the display index of a tracked selection (identified by its script
+/// name/path) within the freshly refreshed, re-sorted script list. Returns the
+/// matching index, or -1 when the tracked name is empty or no longer present in
+/// the list (e.g. a background rescan dropped a file). Callers treat -1 as
+/// "no valid selection" and must NOT fall through to a stale integer index --
+/// doing so overwrote whichever unrelated file happened to sit at that index
+/// after a re-sort (DR11 silent data loss). Tracking identity by name keeps the
+/// selection anchored to the same file across insert/delete/reorder.
+inline int ResolveSelectedScriptIndex(const std::vector<std::string>& scriptList, const std::string& selectedName) {
+    if (selectedName.empty()) {
+        return -1;
+    }
+    const auto it = std::find(scriptList.begin(), scriptList.end(), selectedName);
+    if (it == scriptList.end()) {
+        return -1;
+    }
+    return static_cast<int>(it - scriptList.begin());
+}
+
 /// Join action names into the wrapped display string shown under the run row.
 inline std::string JoinRegisteredActionNames(const std::vector<std::string>& names) {
     std::string joined;
