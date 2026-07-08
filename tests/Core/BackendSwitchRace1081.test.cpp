@@ -40,7 +40,7 @@
 
 using smatchet_tests::FakeOfflineQueueDeps;
 using smatchet_tests::FakeTicketSyncDeps;
-using smatchet_tests::TestEnvGuard;
+using smatchet_tests::OfflineQueueTestEnvGuard;
 
 namespace {
 
@@ -66,7 +66,7 @@ void PrimeCreateHappy(FakeOfflineQueueDeps& deps) {
 
 TEST_CASE("issue #1081: backend-kind swap publishes the cleared ActiveTickets snapshot UNDER the mutex" *
           doctest::test_suite("[high-risk]")) {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeTicketSyncDeps deps; // default backend reports Jira
     TicketSyncService svc(deps);
 
@@ -89,7 +89,7 @@ TEST_CASE("issue #1081: backend-kind swap publishes the cleared ActiveTickets sn
 
 TEST_CASE("issue #1081: offline field-edit replay drops RefreshLocalData when the generation moved mid-replay" *
           doctest::test_suite("[high-risk]")) {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     deps.BackendImpl->EnqueueUpdateIssueFieldsSuccess();
 
@@ -114,7 +114,7 @@ TEST_CASE("issue #1081: offline field-edit replay drops RefreshLocalData when th
 }
 
 TEST_CASE("issue #1081 control: offline field-edit replay still refreshes when the generation is unchanged") {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     deps.BackendImpl->EnqueueUpdateIssueFieldsSuccess();
 
@@ -139,7 +139,7 @@ TEST_CASE("issue #1081 control: offline field-edit replay still refreshes when t
 TEST_CASE("issue #1081: post-replay refresh is dropped when the generation moves MID-refresh "
           "(after the worker pre-check, before the locked swap-in)" *
           doctest::test_suite("[high-risk]")) {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     deps.BackendImpl->EnqueueUpdateIssueFieldsSuccess();
 
@@ -169,7 +169,7 @@ TEST_CASE("issue #1081: post-replay refresh is dropped when the generation moves
 
 TEST_CASE("issue #1081: offline create replay writes under the CAPTURED key after a mid-replay key switch" *
           doctest::test_suite("[high-risk]")) {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps; // context key "Jira"
     PrimeCreateHappy(deps);
     deps.BackendImpl->EnqueueCreateIssueSuccess("PROJ-9");

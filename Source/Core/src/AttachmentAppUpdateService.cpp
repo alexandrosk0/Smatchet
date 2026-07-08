@@ -166,6 +166,16 @@ bool DownloadAttachmentToLocalFile(const std::string& url, const std::string& fi
         outError = "Attachment exceeds max allowed size.";
         return false;
     }
+    // cpr followed redirects (Redirect(true,false)) but only the INITIAL url was allowlisted above.
+    // A tracker 30x to an internal host would otherwise be fetched and written to a local file
+    // (limited SSRF). Re-validate the effective url libcurl actually landed on before persisting
+    // anything, mirroring the post-redirect host recheck in Whisper/ModelDownloader.cpp.
+    const std::string finalHost = ExtractHostFromUrl(resp.url.str());
+    if (finalHost.empty() || !IsAllowedJiraAttachmentHost(finalHost, jiraDomain)) {
+        // Fail closed: an unparseable/empty effective host is as suspect as a non-allowlisted one.
+        outError = "Attachment redirected to a non-allowlisted host.";
+        return false;
+    }
     if (resp.error.code != cpr::ErrorCode::OK || resp.status_code < 200 || resp.status_code >= 300) {
         outError = "Download failed: HTTP " + std::to_string(static_cast<int>(resp.status_code));
         return false;
@@ -653,10 +663,11 @@ bool AttachmentAppUpdateService::DownloadAndLaunchInstallerUpdate(const std::str
         return false;
     }
 
-    std::string filename = assetName.empty() ? FileNameFromUrl(downloadUrl) : assetName;
-    if (filename.empty()) {
-        filename = "SmatchetUpdateSetup.exe";
-    }
+    const std::string rawFilename = assetName.empty() ? FileNameFromUrl(downloadUrl) : assetName;
+    // The asset name is attacker-influenced (GitHub release metadata) and is concatenated onto the
+    // temp dir below. Sanitize to a bare basename so a name like "..\\..\\...\\Startup\\x-windows-
+    // setup.exe" cannot escape %TEMP% and be ShellExecute-launched from an arbitrary location.
+    const std::string filename = smatchet::app_update::SanitizeInstallerFilename(rawFilename);
     const std::string localPath = std::string(tempPathBuf) + filename;
     std::ofstream ofs(localPath, std::ios::binary | std::ios::trunc);
     if (!ofs.is_open()) {

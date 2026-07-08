@@ -221,6 +221,12 @@ void EmitSub(nlohmann::json& out, const char* key, const SubResult& r) {
 
 class AiAssistantSendScenario : public IScenario {
   public:
+    // DR7 joining destructor. If this scenario is destroyed while its worker is
+    // still joinable (e.g. the runner replaces the active scenario), join the
+    // thread here so ~std::thread never runs on a joinable thread and calls
+    // std::terminate.
+    ~AiAssistantSendScenario() override { JoinWorker(); }
+
     std::string Name() const override { return "ai-assistant-send-s2-s4-s5"; }
 
     void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& /*outErr*/) override {

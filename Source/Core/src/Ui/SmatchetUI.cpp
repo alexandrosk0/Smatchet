@@ -8,6 +8,7 @@
 #include "SmatchetStatusBarUi.h"
 #include "Commands/CommandPaletteUi.h"
 #include "Commands/CommandRegistry.h"
+#include "Commands/PaletteOpenLatch.h"
 #include "Commands/Scenarios/IScenario.h"
 #include "Commands/PaneCommands.h"
 #include "Commands/ViewCommands.h"
@@ -574,11 +575,12 @@ void SmatchetUI::drawPreWindowOverlays(AppController& app, UiDrawSession& d) {
         // before its Draw runs this frame. Consume-once: the scenario sets the
         // flag, we drain it here. Subsequent frames render the steady palette
         // state, which is what the screenshot diff golden captures.
-        if (g_ui.requestCommandPaletteOpen) {
-            g_ui.requestCommandPaletteOpen = false;
+        const smatchet::cmd::PaletteOpenDecision paletteOpen =
+            smatchet::cmd::ConsumePaletteOpenLatch(g_ui.requestCommandPaletteOpen, g_ui.requestCommandPaletteFilter);
+        if (paletteOpen.Open) {
             commandPalette_.Open();
-            if (!g_ui.requestCommandPaletteFilter.empty()) {
-                commandPalette_.SetFilterText(g_ui.requestCommandPaletteFilter.c_str());
+            if (!paletteOpen.Filter.empty()) {
+                commandPalette_.SetFilterText(paletteOpen.Filter.c_str());
             }
         }
         // Borrow the live keybinding table so palette rows surface their bound combo.

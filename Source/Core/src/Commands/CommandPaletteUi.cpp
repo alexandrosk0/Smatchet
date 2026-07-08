@@ -27,6 +27,11 @@ void CommandPaletteUi::Open() {
     selected_ = 0;
     argFormStep_ = -1;
     std::memset(filterBuf_, 0, sizeof(filterBuf_));
+    // DR27: drop the list built for the previous session so the first Draw after
+    // opening rebuilds from the now-empty filter buffer. Without this a reopened
+    // palette could show — and dispatch — a stale filtered list (e.g. the
+    // `view.toggle.` set from a prior ui.open_view) while its input box reads empty.
+    filtered_.clear();
     // Register the filter buffer with the dictation router for the duration
     // of the palette being open. The palette's ::ImGui::InputText call below
     // bypasses the SmatchetLocalizedImGui wrapper (raw ImGui by design — the

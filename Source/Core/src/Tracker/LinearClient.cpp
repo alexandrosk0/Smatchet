@@ -507,6 +507,14 @@ Result<TrackerFieldCatalogResult, TrackerError> LinearClient::FetchFieldCatalog(
                 ? smatchet::linear::ExtractLinearErrorMessage(static_cast<int>(resp.status_code), resp.text)
                 : errorMessage;
         LOG_ERROR("LinearClient::FetchFieldCatalog: HTTP %ld — %s", resp.status_code, msg.c_str());
+        // This branch also fires on a 2xx (200-with-GraphQL-errors, or a
+        // 2xx-non-200) — cases TrackerErrorFromHttpStatus would classify as Ok()
+        // (Kind==None, detail discarded), silently swallowing the failure. Carry
+        // the detail under an explicit non-OK kind (DR20).
+        // SMATCHET_DEVIATION(rule=duplication; reason=the 2xx-non-200 guard idiom (LOG_ERROR + `if 2xx return TrackerErrorUnknown(detail,status)` else FromHttpStatus) is deliberately uniform across the tracker read paths (mirrors GitHubIssueSearch + GitHubClient::CreateIssue + JiraUserAndMeta) so the swallow-as-Ok bug is fixed identically everywhere; extracting a helper would need a Result-type-generic wrapper spanning independent client TUs; owner=deep-review; revisit=2026-10-01)
+        if (resp.status_code >= 200 && resp.status_code < 300) {
+            return CatalogResult::Err(TrackerErrorUnknown(msg, static_cast<int>(resp.status_code)));
+        }
         return CatalogResult::Err(TrackerErrorFromHttpStatus(static_cast<int>(resp.status_code), msg));
     }
     if (!parsed.is_object() || !parsed.contains("data") || !parsed["data"].is_object() ||

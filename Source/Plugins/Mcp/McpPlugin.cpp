@@ -93,6 +93,10 @@ struct McpPlugin::Impl {
     bool routes_installed = false;
     std::string bind_host = SmatchetDefaults::Mcp::kBindLocalhost;
     std::string auth_token;
+    // Spawn token adopted from SMATCHET_MCP_SPAWN_TOKEN on a prior OnStart (finding DR12a).
+    // Retained because the env var is scrubbed after first adoption, so a restart re-adopts
+    // this value instead of coming back tokenless and 401ing every parent request.
+    std::string adopted_spawn_token;
     std::string tracker_domain;
     std::vector<std::string> export_fields;
     bool allow_lua_execution = false;
@@ -127,7 +131,7 @@ bool McpPlugin::AuthTokenMatches(const std::string& cfgToken) const {
     if (!impl_) {
         return true;
     }
-    return impl_->auth_token == cfgToken;
+    return smatchet::mcp::McpAuthTokenSatisfiesConfig(impl_->auth_token, cfgToken, impl_->adopted_spawn_token);
 }
 
 bool McpPlugin::LuaExecutionEnabledMatches(const bool enabled) const {
@@ -216,7 +220,6 @@ void McpPlugin::OnStart(AppController& app) {
     impl_->shuttingDown.store(false);
     const TrackerConfig cfg = ConfigManager::Load();
     impl_->bind_host = cfg.McpAllowRemote ? SmatchetDefaults::Mcp::kBindAny : SmatchetDefaults::Mcp::kBindLocalhost;
-    impl_->auth_token = cfg.McpAuthToken;
     // Spawn-handshake token adoption. An ephemeral instance launched by the CLI
     // --spawn parent has no persisted mcp_auth_token, yet McpRequireTokenOnLoopback
     // is ON by default -- so a tokenless loopback caller (the parent's probe) is
@@ -225,27 +228,33 @@ void McpPlugin::OnStart(AppController& app) {
     // auth token so the parent's authenticated requests are accepted while EVERY
     // other local caller still needs the token (the secure default is preserved --
     // this strengthens the child, never weakens it). Only when no token is already
-    // configured: never override an operator-set mcp_auth_token.
-    if (impl_->auth_token.empty()) {
+    // configured: never override an operator-set mcp_auth_token. The adopted token is retained
+    // in impl_->adopted_spawn_token so a later restart (SyncMcpPluginWithConfig) re-adopts it
+    // even though the env var below is scrubbed after the first read (finding DR12a) -- otherwise
+    // the restart would come back tokenless under require_token_on_loopback and 401 every parent
+    // request.
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
 #endif
-        const char* spawnToken = std::getenv("SMATCHET_MCP_SPAWN_TOKEN");
+    const char* spawnTokenEnv = std::getenv("SMATCHET_MCP_SPAWN_TOKEN");
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
-        if (spawnToken != nullptr && spawnToken[0] != '\0') {
-            impl_->auth_token = spawnToken;
-            // Scrub the secret from this process's environment now that it has been
-            // adopted: leaving it set would let any subprocess we later spawn inherit
-            // it, or any same-user reader pull it from the process env block.
+    const std::string envSpawnToken = (spawnTokenEnv != nullptr) ? std::string(spawnTokenEnv) : std::string();
+    const smatchet::mcp::McpAuthTokenPlan tokenPlan =
+        smatchet::mcp::PlanMcpAuthToken(cfg.McpAuthToken, envSpawnToken, impl_->adopted_spawn_token);
+    impl_->auth_token = tokenPlan.effectiveToken;
+    impl_->adopted_spawn_token = tokenPlan.retainedSpawnToken;
+    if (tokenPlan.scrubSpawnEnv) {
+        // Scrub the secret from this process's environment now that it has been adopted and
+        // retained: leaving it set would let any subprocess we later spawn inherit it, or any
+        // same-user reader pull it from the process env block.
 #if defined(_WIN32)
-            _putenv_s("SMATCHET_MCP_SPAWN_TOKEN", ""); // empty value deletes the var on Windows
+        _putenv_s("SMATCHET_MCP_SPAWN_TOKEN", ""); // empty value deletes the var on Windows
 #else
-            ::unsetenv("SMATCHET_MCP_SPAWN_TOKEN");
+        ::unsetenv("SMATCHET_MCP_SPAWN_TOKEN");
 #endif
-        }
     }
     impl_->allow_lua_execution = cfg.McpAllowLuaExecution;
     impl_->require_token_on_loopback = cfg.McpRequireTokenOnLoopback;

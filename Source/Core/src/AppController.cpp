@@ -1278,6 +1278,22 @@ bool AppController::RecreateLocalCacheDatabase(std::string& outError) {
     // 11 extraction: the cancel-and-join clears PendingBatches / BackgroundStaleIds /
     // FetchError / Warning / KeepIds; ResetStaleDeletionState clears the stale-delete
     // counters. Both are no-ops if the service was never `Initialize`d.
+    //
+    // DR6: quiesce EVERY live pane's streaming-sync worker, not just the focused one. Each
+    // non-focused GridLiveContext runs its own TicketSyncService std::thread that dereferences
+    // Cache; those must be joined before Cache.reset() below or they race the freed cache.
+    // gridContexts_ is a UI-thread-owned map and RecreateLocalCacheDatabase runs on the UI
+    // thread, so iterating it here is free of concurrent structural mutation. Per context the
+    // cancel-and-join is idempotent (a second call finds no active thread).
+    for (auto& entry : gridContexts_) {
+        if (entry.second && entry.second->ticketSync_) {
+            entry.second->ticketSync_->CancelAndJoinActiveStreamingSync();
+            entry.second->ticketSync_->ResetStaleDeletionState();
+        }
+    }
+    // Explicit focused pass in case focusedContextPtr_ currently resolves to a retired husk
+    // (ADR-0012 graveyard) that is no longer in the live gridContexts_ map. Idempotent with
+    // the loop above when focused is a live entry.
     if (focusedContext().ticketSync_) {
         focusedContext().ticketSync_->CancelAndJoinActiveStreamingSync();
         focusedContext().ticketSync_->ResetStaleDeletionState();

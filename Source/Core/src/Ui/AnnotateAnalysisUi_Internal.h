@@ -107,6 +107,11 @@ struct AnnotateAnalysisUi::AnnotateState {
     std::string profileErr;
     std::vector<std::string> profileGroups;
     bool openProfileModal = false;
+    /// DR22 — the assign / quick-comment modal is opened from row cells and the Entry-tab
+    /// row menu, both of which live inside a child window. OpenPopup issued there resolves
+    /// to a different id than BeginPopupModal at the parent scope, so the modal never
+    /// appeared. This flag defers the OpenPopup to the same scope as BeginPopupModal.
+    bool openAssignModal = false;
     /// Pillar 2 — finding #5: profile + assign-modal HTTP runs on a worker. These gates
     /// suppress duplicate dispatches while a fetch is in flight, and the modal renders a
     /// "Loading..." status until the post-back populates the fields.

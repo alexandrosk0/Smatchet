@@ -31,7 +31,7 @@
 
 using smatchet_tests::FakeOfflineQueueDeps;
 using smatchet_tests::FakeTrackerClient;
-using smatchet_tests::TestEnvGuard;
+using smatchet_tests::OfflineQueueTestEnvGuard;
 
 namespace {
 
@@ -57,7 +57,7 @@ void PrimeCreateHappy(FakeOfflineQueueDeps& deps) {
 
 TEST_CASE("offline create replay survives a backend swap mid-replay: completes against the latched backend" *
           doctest::test_suite("[high-risk]")) {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps; // context key "Jira"
     PrimeCreateHappy(deps);
     deps.BackendImpl->EnqueueCreateIssueSuccess("PROJ-9");
@@ -97,7 +97,7 @@ TEST_CASE("offline create replay survives a backend swap mid-replay: completes a
 
 TEST_CASE("offline field-edit replay survives a swap-to-null (context-retirement shape) mid-replay" *
           doctest::test_suite("[high-risk]")) {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps; // context key "Jira"
     deps.BackendImpl->EnqueueUpdateIssueFieldsSuccess();
 

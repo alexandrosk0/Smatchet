@@ -30,7 +30,14 @@ void RegisterUsersCommands(CommandRegistry& reg, IAppUsers& app) {
                                     const int limit = args.value("limit", 20);
                                     std::vector<TrackerUser> users;
                                     std::string err;
-                                    app.SearchUsersByQuery(query, users, err);
+                                    // DR27: previously the bool return was dropped, so a backend
+                                    // failure surfaced as ok:true with an empty list. Propagate it.
+                                    const bool ok = app.SearchUsersByQuery(query, users, err);
+                                    if (!ok) {
+                                        return CommandResult::Failure(ErrorCode::BackendError,
+                                                                      "User search failed: " + err);
+                                    }
+                                    // SMATCHET_DEVIATION(rule=duplication; reason=builtin-command result boilerplate (backend call + Failure envelope + JSON items array) is uniform across the users/fields command TUs by design; a command-generic wrapper spanning independent builtin TUs is not worth the coupling; owner=deep-review; revisit=2026-10-01)
                                     nlohmann::json items = nlohmann::json::array();
                                     for (const TrackerUser& u : users) {
                                         nlohmann::json one;

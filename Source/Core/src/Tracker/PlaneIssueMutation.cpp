@@ -1,6 +1,7 @@
 #include "PlaneClient.h"
 #include "PlaneClient_Internal.h"
 #include "PlaneCommentMappingPure.h"
+#include "PlaneIssueMappingPure.h"
 
 #include "IssueDraft.h"
 #include "Json/BoundedJsonParse.h"
@@ -16,6 +17,7 @@
 #include <cctype>
 #include <cpr/cpr.h>
 #include <cstdio>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -532,28 +534,45 @@ Result<std::vector<TrackerIssueComment>, TrackerError> PlaneClient::FetchIssueCo
         return CommentsResult::Err(resolved);
     }
 
-    const cpr::Response resp =
-        TrackerGetLogged("PlaneClient", commentsUrl, headers, kTrackerConnectTimeoutMs, kTrackerOverallTimeoutMs);
-    LogTrackerHttpResult("PlaneClient", "GET", commentsUrl, resp);
-    if (resp.status_code != 200) {
-        const std::string msg = "Plane API error: " + std::to_string(resp.status_code);
-        LOG_ERROR("PlaneClient::FetchIssueComments: HTTP %ld for %s", resp.status_code, issueKey.c_str());
-        if (resp.status_code >= 200 && resp.status_code < 300) {
-            return CommentsResult::Err(TrackerErrorUnknown(msg, resp.status_code));
+    std::vector<TrackerIssueComment> mapped;
+    // SMATCHET_DEVIATION(rule=duplication; reason=DR25 Plane cursor-pagination loop is the uniform tracker idiom (mirrors PlaneIssueSearch/PlaneActivityFeed); the per-page bodies differ, so a shared callback helper across independent fetches is not worth the coupling; owner=deep-review; revisit=2026-10-01)
+    std::string cursor;
+    // Follow Plane's cursor pagination so comments beyond the first page are returned (DR25).
+    // The page cap bounds a cursor that never signals end-of-list.
+    for (int page = 0; page < 100; ++page) {
+        cpr::Parameters params;
+        params.Add({"per_page", "100"});
+        if (!cursor.empty()) {
+            params.Add({"cursor", cursor});
         }
-        return CommentsResult::Err(TrackerErrorFromHttpStatus(resp.status_code, msg));
-    }
+        const cpr::Response resp = TrackerGetLogged("PlaneClient", commentsUrl, headers, params);
+        LogTrackerHttpResult("PlaneClient", "GET", commentsUrl, resp);
+        if (resp.status_code != 200) {
+            const std::string msg = "Plane API error: " + std::to_string(resp.status_code);
+            LOG_ERROR("PlaneClient::FetchIssueComments: HTTP %ld for %s", resp.status_code, issueKey.c_str());
+            if (resp.status_code >= 200 && resp.status_code < 300) {
+                return CommentsResult::Err(TrackerErrorUnknown(msg, resp.status_code));
+            }
+            return CommentsResult::Err(TrackerErrorFromHttpStatus(resp.status_code, msg));
+        }
 
-    std::string parseErr;
-    const nlohmann::json parsedJson = smatchet::json_safe::ParseBounded(resp.text, parseErr);
-    if (!parseErr.empty()) {
-        LOG_ERROR("PlaneClient::FetchIssueComments: invalid JSON for %s: %s", issueKey.c_str(), parseErr.c_str());
-        return CommentsResult::Err(TrackerErrorParse("Plane issue-comments response was not valid JSON."));
+        std::string parseErr;
+        const nlohmann::json parsedJson = smatchet::json_safe::ParseBounded(StripUtf8BomCopy(resp.text), parseErr);
+        if (!parseErr.empty()) {
+            LOG_ERROR("PlaneClient::FetchIssueComments: invalid JSON for %s: %s", issueKey.c_str(), parseErr.c_str());
+            return CommentsResult::Err(TrackerErrorParse("Plane issue-comments response was not valid JSON."));
+        }
+        // Plane returns either a bare array or a paginated `{ "results": [...] }` envelope.
+        const nlohmann::json& nodes =
+            (parsedJson.is_object() && parsedJson.contains("results")) ? parsedJson["results"] : parsedJson;
+        std::vector<TrackerIssueComment> pageComments = smatchet::plane::MapPlaneIssueComments(nodes);
+        mapped.insert(mapped.end(), std::make_move_iterator(pageComments.begin()),
+                      std::make_move_iterator(pageComments.end()));
+        cursor = smatchet::plane::NextPaginationCursor(parsedJson);
+        if (cursor.empty()) {
+            break;
+        }
     }
-    // Plane returns either a bare array or a paginated `{ "results": [...] }` envelope.
-    const nlohmann::json& nodes =
-        (parsedJson.is_object() && parsedJson.contains("results")) ? parsedJson["results"] : parsedJson;
-    std::vector<TrackerIssueComment> mapped = smatchet::plane::MapPlaneIssueComments(nodes);
     LOG_INFO("PlaneClient::FetchIssueComments: %s → %zu comments", issueKey.c_str(), mapped.size());
     return CommentsResult::Ok(std::move(mapped));
 }

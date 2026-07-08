@@ -113,6 +113,19 @@ std::unique_ptr<IAiClient> StubFactory(AiProvider /*provider*/) {
 
 class AiAssistantStreamingHappyPathScenario : public IScenario {
   public:
+    // DR7 joining destructor. If this scenario is ever destroyed while its
+    // worker is still joinable (e.g. the runner replaces the active scenario),
+    // signal the cancel token, join the thread, and clear the factory override
+    // here so ~std::thread never runs on a joinable thread (std::terminate) and
+    // the stub-backed AiClientFactory override never dangles into freed state.
+    ~AiAssistantStreamingHappyPathScenario() override {
+        if (cancel_) {
+            cancel_->store(true, std::memory_order_release);
+        }
+        JoinWorker();
+        ClearOverride();
+    }
+
     std::string Name() const override { return "ai-assistant-streaming-happy-path"; }
 
     void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& outErr) override {

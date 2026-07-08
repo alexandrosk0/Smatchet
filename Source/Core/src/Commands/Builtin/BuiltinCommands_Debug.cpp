@@ -373,7 +373,18 @@ static void RegisterDebugCrashCommand(CommandRegistry& reg) {
                                 if (kind == "abort") {
                                     std::abort();
                                 } else if (kind == "throw") {
-                                    throw std::runtime_error("debug.crash: intentional unhandled exception");
+                                    // DR27: CommandRegistry::Dispatch wraps every handler in
+                                    // try/catch, so a direct throw here is swallowed and the crash
+                                    // reporter never runs. Let the exception escape a worker thread's
+                                    // top-level function instead: an exception propagating out of a
+                                    // std::thread entry calls std::terminate (with the exception in
+                                    // flight), firing the terminate handler installed by
+                                    // InstallCrashHandlers — the unhandled-exception path this kind
+                                    // exercises — with no noexcept-throws boundary that MSVC /WX
+                                    // rejects as C4297.
+                                    std::thread([]() {
+                                        throw std::runtime_error("debug.crash: intentional unhandled exception");
+                                    }).join();
                                 }
                                 // Default: null dereference -> SIGSEGV / access violation.
                                 volatile int* p = nullptr;

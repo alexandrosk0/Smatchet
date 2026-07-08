@@ -79,3 +79,37 @@ class AttachmentAppUpdateService {
   private:
     IAttachmentAppUpdateDeps& deps_;
 };
+
+namespace smatchet {
+namespace app_update {
+
+// Reduce an untrusted GitHub release-asset name to a bare, separator-free filename that is safe to
+// concatenate directly onto the %TEMP% directory before the installer is written and ShellExecute-
+// launched. Strips any directory prefix (both '/' and '\\'), neutralizes Windows path/reserved
+// metacharacters and control bytes, and rejects pure-traversal tokens ("." / ".."), substituting a
+// fixed fallback when nothing safe remains. This blocks a crafted asset such as
+// "..\\..\\...\\Startup\\x-windows-setup.exe" (which still satisfies the "-windows-setup.exe"
+// substring filter) from escaping %TEMP%. Pure string logic: lives inline in the header so the
+// doctest rig exercises it without linking the cpr-coupled service TU.
+inline std::string SanitizeInstallerFilename(const std::string& rawName) {
+    std::string base = rawName;
+    const std::string::size_type lastSep = base.find_last_of("/\\");
+    if (lastSep != std::string::npos) {
+        base = base.substr(lastSep + 1);
+    }
+    for (char& ch : base) {
+        const unsigned char uch = static_cast<unsigned char>(ch);
+        const bool reserved = ch == '/' || ch == '\\' || ch == ':' || ch == '*' || ch == '?' ||
+                              ch == '"' || ch == '<' || ch == '>' || ch == '|';
+        if (reserved || uch < 0x20) {
+            ch = '_';
+        }
+    }
+    if (base.empty() || base == "." || base == "..") {
+        return std::string("SmatchetUpdateSetup.exe");
+    }
+    return base;
+}
+
+} // namespace app_update
+} // namespace smatchet

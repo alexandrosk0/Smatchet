@@ -1,6 +1,7 @@
 #pragma once
 
 #include "IPlugin.h"
+#include "McpAuthTokenPure.h"
 #include "SmatchetDefaults.h"
 #include "McpServerStatus.h"
 #include <memory>

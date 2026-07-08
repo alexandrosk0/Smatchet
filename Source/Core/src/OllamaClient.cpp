@@ -135,10 +135,23 @@ void OllamaClient::SendStreaming(const AiClientConfig& cfg, const AiChatRequest&
     AiNdjsonParser parser;
     bool sawFinal = false;
     bool cancelObserved = false;
+    bool sawStreamError = false;
+    std::string streamErrorMessage;
 
     auto onLine = [&](const nlohmann::json& j) {
         if (cancelObserved || sawFinal)
             return;
+        // A mid-stream NDJSON `{"error": "..."}` line on an otherwise-200 stream is a
+        // real failure. Record it and mark the stream terminated (sawFinal) exactly as
+        // a normal terminal line does, leaving the shared post-response tail untouched.
+        // The trailing sawStreamError branch then reports it via onError instead of
+        // synthesizing a success `eof` that would commit truncated text (DR20).
+        if (j.is_object() && j.contains("error") && j["error"].is_string()) {
+            streamErrorMessage = smatchet::ai::pure::RedactProviderErrorBody(j["error"].get<std::string>());
+            sawStreamError = true;
+            sawFinal = true;
+            return;
+        }
         DispatchOllamaLine(j, onDelta, sawFinal);
     };
     auto onParseError = [](const std::string& rawLine) {
@@ -208,5 +221,15 @@ void OllamaClient::SendStreaming(const AiClientConfig& cfg, const AiChatRequest&
         d.IsFinal = true;
         d.FinishReason = "eof";
         onDelta(d);
+    }
+
+    if (sawStreamError) {
+        // Mid-stream provider `error` line on a 200 stream: transport/HTTP above saw
+        // a clean 200 and the eof above was suppressed by the sawFinal flag set at
+        // detection, so surface the failure here rather than as success (DR20).
+        AiStreamError err;
+        err.HttpStatus = r.status_code;
+        err.Message = streamErrorMessage.empty() ? std::string("provider stream error") : streamErrorMessage;
+        onError(err);
     }
 }

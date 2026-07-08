@@ -593,6 +593,11 @@ struct UiDrawSession {
     /// by SmatchetUI::applyPendingViewDelete, immediately after the create latch.
     bool viewsPendingDeleteActive = false;
     std::string viewsPendingDeleteToastName;
+    /// DR13b — the id of the view targeted by the delete-confirm modal + delete latch. Set at
+    /// right-click "Delete view..." (the right-clicked row) or the editor-header Delete button
+    /// (the active view). Lets deletion hit the right-clicked view regardless of which view is
+    /// active or whether the active view's editor is dirty. Empty falls back to the active view.
+    std::string viewsPendingDeleteId;
 
     // ---- Grid panes (multi-grid-tabs Slice 2, ADR-0018) ----
     // The per-pane grid runtime that used to live here as singleton fields

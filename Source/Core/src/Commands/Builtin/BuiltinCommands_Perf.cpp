@@ -192,21 +192,39 @@ void RegisterPerfResetCommand(CommandRegistry& reg) {
     reg.Register(std::move(c));
 }
 
-void RegisterPerfTogglePanelCommand(CommandRegistry& reg) {
+void RegisterPerfTogglePanelCommand(CommandRegistry& reg, AppController& app) {
     Command c = MakeCommand("perf.toggle_panel", "Show or hide the Performance Monitor panel (persists to config).",
-                            [](const nlohmann::json& args, const CommandContext& ctx) {
-                                // Read current value to compute toggle if `open` not supplied.
-                                TrackerConfig cfg = ConfigManager::Load();
-                                const bool currentlyOpen = cfg.ShowPerformanceWindow;
-                                const bool newOpen = args.contains("open") ? args.value("open", false) : !currentlyOpen;
+                            [&app](const nlohmann::json& args, const CommandContext& ctx) -> CommandResult {
+                                const bool hasOpen = args.contains("open");
+                                const bool wantOpen = args.value("open", false);
                                 if (ctx.DryRun) {
+                                    const bool current = ConfigManager::Load().ShowPerformanceWindow;
+                                    const bool newOpen = hasOpen ? wantOpen : !current;
                                     return CommandResult::Success({{"wouldDo", {{"showPerformance", newOpen}}}});
                                 }
-                                nlohmann::json cfgJson = ConfigManager::LoadMergedConfigJson();
-                                cfgJson["show_performance_window"] = newOpen;
-                                ConfigManager::WriteConfigJson(cfgJson);
-                                ConfigManager::InvalidateCache();
-                                return CommandResult::Success({{"showPerformance", newOpen}});
+                                // DR27: writing only the config left the RUNNING panel untouched
+                                // (g_ui.showPerformance is read once at startup). Flip the live flag
+                                // on the UI thread — g_ui is UI-thread-owned and this handler may run
+                                // on an MCP / Lua worker thread — then persist OFF the UI thread.
+                                // WriteConfigJson does blocking file I/O; running it inside the UI
+                                // callback would stall the render-thread Drain() (Pillar 2), so only
+                                // the flag flip is marshalled and the write happens on this handler's
+                                // (worker / CLI) thread.
+                                try {
+                                    const bool newOpen = RunOnUiThread<bool>(app, [hasOpen, wantOpen]() -> bool {
+                                        const bool v = hasOpen ? wantOpen : !g_ui.showPerformance;
+                                        g_ui.showPerformance = v;
+                                        return v;
+                                    });
+                                    nlohmann::json cfgJson = ConfigManager::LoadMergedConfigJson();
+                                    cfgJson["show_performance_window"] = newOpen;
+                                    ConfigManager::WriteConfigJson(cfgJson);
+                                    ConfigManager::InvalidateCache();
+                                    return CommandResult::Success({{"showPerformance", newOpen}});
+                                } catch (const std::exception& e) {
+                                    return CommandResult::Failure(ErrorCode::HandlerError,
+                                                                  std::string("perf.toggle_panel failed: ") + e.what());
+                                }
                             });
     c.DryRunSupported = true;
     c.Params = {
@@ -355,7 +373,7 @@ void RegisterPerfCommands(CommandRegistry& reg, AppController& app) {
     RegisterPerfFrameCountCommand(reg);
     RegisterPerfDumpCommand(reg);
     RegisterPerfResetCommand(reg);
-    RegisterPerfTogglePanelCommand(reg);
+    RegisterPerfTogglePanelCommand(reg, app);
     RegisterDebugGridEditBurstCommand(reg, app);
 }
 

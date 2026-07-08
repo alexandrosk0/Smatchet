@@ -41,7 +41,7 @@
 
 using smatchet_tests::FakeOfflineQueueDeps;
 using smatchet_tests::FakeTrackerClient;
-using smatchet_tests::TestEnvGuard;
+using smatchet_tests::OfflineQueueTestEnvGuard;
 
 namespace {
 
@@ -84,7 +84,7 @@ std::string FieldPayload(const std::string& v) { return nlohmann::json{{"summary
 TEST_CASE("two-backend interleaved offline replay: each backend replays ONLY its own backend_key rows; "
           "the other backend's rows stay queued untouched (multi-grid Slice 4 isolation)" *
           doctest::test_suite("[high-risk]")) {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     smatchet_tests::FakeSyncCache sharedCache; // ONE shared queue store for both panes
 
     SharedCacheDeps jira(&sharedCache, "Jira");
@@ -198,7 +198,7 @@ TEST_CASE("two-backend interleaved offline replay: each backend replays ONLY its
 TEST_CASE("two-backend dead-letter coexistence: dead rows under both keys restore under their OWN backend_key, "
           "restoring one never disturbs the other (multi-grid Slice 4)" *
           doctest::test_suite("[high-risk]")) {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     smatchet_tests::FakeSyncCache sharedCache;
 
     SharedCacheDeps jira(&sharedCache, "Jira");
@@ -264,7 +264,7 @@ TEST_CASE("two-backend dead-letter coexistence: dead rows under both keys restor
 TEST_CASE("two-backend swap-mid-replay: a deferred Jira replay completes ONLY against Jira rows even after the "
           "Jira backend is swapped; GitHub rows + the GitHub backend are never touched (multi-grid Slice 4)" *
           doctest::test_suite("[high-risk]")) {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     smatchet_tests::FakeSyncCache sharedCache;
 
     SharedCacheDeps jira(&sharedCache, "Jira");

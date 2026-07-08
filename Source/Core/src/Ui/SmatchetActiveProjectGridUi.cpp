@@ -883,7 +883,7 @@ void SmatchetUI::drawActiveProjectUnsavedStrip(ActiveProjectDrawCtx& ctx) {
         }
         ImGui::SameLine();
         if (ImGui::Button("Save as new...")) {
-            ImGui::OpenPopup("Save view as new");
+            activeProjectState_.openSaveAsNewModal = true;
         }
         ImGui::SameLine();
         if (ImGui::Button("Discard")) {
@@ -931,6 +931,11 @@ void SmatchetUI::drawActiveProjectSaveAsNewModal(ActiveProjectDrawCtx& ctx) {
     UiDrawSession& d = ctx.d;
     ViewDefinition* activeViewForGrid = ctx.activeViewForGrid;
     char* s_newViewName = activeProjectState_.newViewNameBuf; // hoisted from `static char s_newViewName[128]`
+
+    if (activeProjectState_.openSaveAsNewModal) {
+        ImGui::OpenPopup("Save view as new");
+        activeProjectState_.openSaveAsNewModal = false;
+    }
 
     // Save-as-new modal: name input + Save / Cancel.
     if (ImGui::BeginPopupModal("Save view as new", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {

@@ -27,9 +27,18 @@
 
 | Severity | Count | State |
 |----------|-------|-------|
-| **P0** — data-loss / security / crash | 17 | 17 ⏳ |
-| **P1** — significant correctness | 13 | 13 ⏳ |
-| **P2** — polish / consistency | 3 | 3 ⏳ |
+| **P0** — data-loss / security / crash | 17 | 16 ✅ · 1 🟡 (DR6) |
+| **P1** — significant correctness | 13 | 12 ✅ · 1 🟡 (DR29) |
+| **P2** — polish / consistency | 3 | 3 ✅ |
+
+All findings are now addressed: batch 1 (DR1/DR2/DR14/DR18/DR19/DR26/DR30/DR32/DR33) landed via
+PR #1676; batch 2 (the remaining 24) landed in a follow-up PR from parallel fix agents. Two are
+🟡 PARTIAL — **DR6** (the AvailableFields lock discipline + Cache null-guard + all-context streaming
+join landed; the long-lived Lua/MCP worker raw-`Cache` race and the `SaveFieldCatalogSnapshot`
+snapshot-under-lock refinement need a TSan/runtime pass) and **DR29** (the ODR rename + three vacuous
+guards are fixed; the remaining self-referential guards target ImGui/AppController-coupled symbols not
+linkable in the focused test rig, or would surface a distinct latent bug — each flagged inline for
+follow-up rather than force-changed).
 
 **Cross-references into resolved companion items:** DR15 (POST_P0 #16), DR16 (BACKLOG B2),
 DR17 (BACKLOG A1) — each is a hole the prior fix left open. DR30 overlaps BACKLOG **N12**
@@ -67,7 +76,7 @@ check requires a dot.
   host extraction; canonicalise IPv4-mapped IPv6 (`::ffff:x`) through `CanonicalizeIpv4` regardless
   of dotted form. Add denied-URL unit cases for both.
 
-### DR3. Config load/save can permanently wipe stored credentials — ⏳ OPEN
+### DR3. Config load/save can permanently wipe stored credentials — ✅ DONE (batch 2)
 `Source/Core/src/Config/ConfigManager.cpp:1541`. `Load` wraps every field loader in one
 try/catch, so a single type-mismatched key (`"window_x":"abc"`) aborts secret/list loading,
 leaving `cfg` with empty secrets; a later `Save` writes empty `*_enc` and erases the plaintext
@@ -78,7 +87,7 @@ plaintext `token`/`plane_api_key` and writes a possibly-empty `token_enc` even w
   in `WriteSecretFields`, keep the existing value / plaintext fallback when encryption returns empty,
   matching the `github_pat`/`linear_api_key`/`mcp_auth_token` paths.
 
-### DR4. Streaming full-sync of zero tickets deletes the whole cache — ⏳ OPEN
+### DR4. Streaming full-sync of zero tickets deletes the whole cache — ✅ DONE (batch 2)
 `Source/Core/src/Sync/TicketSyncService.cpp:618`. The streaming stale computation lacks the
 empty-full-sync guard that `ApplyIssueFetchPack` has (`kEmptyFullSyncWipeThreshold`). A
 `FullSyncCompleted=true` with an empty body (200-with-empty-body glitch, transiently-broken JQL)
@@ -87,7 +96,7 @@ the entire SQLite ticket cache and empties `ActiveTickets` — wiping offline-av
 - **Fix:** port the empty-result threshold guard to the streaming path; treat a zero-ticket full
   sync as suspect and skip mass deletion.
 
-### DR5. Offline-queue replay: stuck latch, null-deref, and infinite resolve loop — ⏳ OPEN
+### DR5. Offline-queue replay: stuck latch, null-deref, and infinite resolve loop — ✅ DONE (batch 2)
 - `Source/Core/src/Sync/OfflineQueueService.cpp:867`: the field-edit background lambda lacks the
   `ScopeExit` reset the creates path has; any throw (`RefreshLocalData` rethrows SQLite errors,
   `MarkdownToAdf` in the clean-merge path) leaves `offlineFieldEditReplayInFlight_` latched → queued
@@ -102,7 +111,7 @@ the entire SQLite ticket cache and empties `ActiveTickets` — wiping offline-av
 - **Fix:** add the `ScopeExit` latch reset; null-check `MutationsShared()` in `TickOfflineCreates`;
   reset `has_original_value=0` alongside `original_value` in `ResolveFieldEditConflict`.
 
-### DR6. AppController Cache-reset UAF + unlocked field-catalog access — ⏳ OPEN
+### DR6. AppController Cache-reset UAF + unlocked field-catalog access — 🟡 PARTIAL (batch 2)
 Cluster of threading/lifetime races (worker threads reach these off the UI thread via MCP/automation):
 - `Source/Core/src/AppController.cpp:1286`: `RecreateLocalCacheDatabase` resets `Cache` while
   non-focused panes' streaming-sync `std::thread`s (spawned outside `backgroundWorkers_`), the Lua
@@ -116,7 +125,7 @@ Cluster of threading/lifetime races (worker threads reach these off the UI threa
   route every `Cache` read through a null-checked accessor; take `availableFieldsMutex_` in every
   `AvailableFields` reader/writer, including the create/draft paths.
 
-### DR7. ScenarioRunner replace-active → std::terminate + stub UAF — ⏳ OPEN
+### DR7. ScenarioRunner replace-active → std::terminate + stub UAF — ✅ DONE (batch 2)
 `Source/Core/src/Commands/Scenarios/ScenarioRunner.cpp:97`. `active_ = std::move(scenario)`
 destroys a running scenario without `OnCancel`/`OnFinish`; the streaming scenarios own joinable
 `std::thread` members with no joining destructor (`AiAssistantStreaming*Scenario.cpp`,
@@ -125,7 +134,7 @@ The `AiClientFactory::SetTestOverride` stub is also left pointing into the freed
 - **Fix:** on replace, call the outgoing scenario's cancel/finish + join and clear the factory
   override before assigning; give each scenario a joining destructor.
 
-### DR8. Shutdown UAF / null-deref on undrained futures — ⏳ OPEN
+### DR8. Shutdown UAF / null-deref on undrained futures — ✅ DONE (batch 2)
 - `Source/Core/src/Ui/SmatchetUI_Layout.cpp:305`: `DrainUiDrawSessionFuturesBeforeAppTeardown`
   never drains `d.appUpdateFuture`, whose `std::async` worker captures `AppController&`
   (`SmatchetUI.cpp:93`, `SmatchetPreferencesUi_Local.cpp:421`) → UAF during shutdown if an update
@@ -135,7 +144,7 @@ The `AiClientFactory::SetTestOverride` stub is also left pointing into the freed
 - **Fix:** add `appUpdateFuture` to the teardown drain set; join the annotate worker before clearing
   `s_stateInstance` (or drop the static and thread the state pointer).
 
-### DR9. Unreal plugin shutdown UAF — no render-thread flush — ⏳ OPEN
+### DR9. Unreal plugin shutdown UAF — no render-thread flush — ✅ DONE (batch 2)
 `Source/UnrealPlugins/SmatchetImGuiPlugin/.../SmatchetImGuiPluginModule.cpp:199`. `ShutdownModule`
 destroys the native host and render backend on the game thread with no `FlushRenderingCommands()`,
 while `OnBackBufferReadyToPresent` and already-enqueued RHI lambdas capturing `this`/`Host`
@@ -143,7 +152,7 @@ while `OnBackBufferReadyToPresent` and already-enqueued RHI lambdas capturing `t
 - **Fix:** `FlushRenderingCommands()` (or unregister the present callback + flush) before
   `SmatchetHost_Destroy`.
 
-### DR10. Auto-update installer path traversal + attachment redirect SSRF — ⏳ OPEN
+### DR10. Auto-update installer path traversal + attachment redirect SSRF — ✅ DONE (batch 2)
 `Source/Core/src/AttachmentAppUpdateService.cpp:656`: the release asset filename is concatenated
 into the `%TEMP%` path without the `SanitizeFilename()` applied elsewhere, so an asset named
 `..\..\...\Startup\x-windows-setup.exe` (passes the `-windows-setup.exe` substring filter) is
@@ -154,14 +163,14 @@ follows redirects (`cpr::Redirect(true,false)`) but only allowlists the initial 
   temp path; re-validate the post-redirect host against the allowlist (or disable redirects and
   re-issue against the validated Location).
 
-### DR11. LuaConsole saves editor buffer over the wrong file — ⏳ OPEN
+### DR11. LuaConsole saves editor buffer over the wrong file — ✅ DONE (batch 2)
 `Source/Plugins/LuaConsole/LuaConsolePlugin.cpp:269`. The selected script is tracked by integer
 index while `RefreshScriptList()` re-sorts every ~0.35 s; a file appearing/disappearing shifts the
 index and `SaveCurrentScript` overwrites whichever path now sits at that index — silent data loss
 of two files (the edited one and the clobbered one).
 - **Fix:** track the selection by path/identity, not list index; re-resolve the index after each refresh.
 
-### DR12. MCP spawn-token lockout + CLI attach sends no token — ⏳ OPEN
+### DR12. MCP spawn-token lockout + CLI attach sends no token — ✅ DONE (batch 2)
 `Source/Plugins/Mcp/McpPlugin.cpp:239`: adopting and scrubbing `SMATCHET_MCP_SPAWN_TOKEN` makes
 `AuthTokenMatches` permanently false, so any later `SyncMcpPluginWithConfig` restarts the server
 tokenless (`require_token_on_loopback=true`) and every subsequent parent request 401s.
@@ -171,7 +180,7 @@ tokenless (`require_token_on_loopback=true`) and every subsequent parent request
 - **Fix:** persist/retain the adopted spawn token for restart re-adoption (or don't scrub until after
   config carries it); send `X-Smatchet-Token` from the attach path using `spawnCfg.McpAuthToken`.
 
-### DR13. Persistent-views file clobber + delete-wrong-view — ⏳ OPEN
+### DR13. Persistent-views file clobber + delete-wrong-view — ✅ DONE (batch 2)
 - `Source/Core/src/Ui/Views.cpp:107`: `Views::Save` rewrites the whole file from the boot-time
   `Disk` snapshot, reverting the tracker-scope `ToolbarAppend` that `SmatchetToolbarUi`'s save worker
   (`SmatchetToolbarUi.cpp:669`) wrote out-of-band → toolbar buttons vanish on next restart/backend swap.
@@ -197,7 +206,7 @@ tokenless (`require_token_on_loopback=true`) and every subsequent parent request
   pointer-deref line; use an explicit `None` sentinel (not `or`) for the perf knobs; parse CVSS vectors
   in `severity_of`.
 
-### DR15. UI-thread dispatcher can hang shutdown forever — ⏳ OPEN (hole in POST_P0 #16)
+### DR15. UI-thread dispatcher can hang shutdown forever — ✅ DONE (batch 2) (hole in POST_P0 #16)
 `Source/Core/include/Commands/MainThreadDispatch.h:63`. `RunOnUiThread` blocks in `future.get()`,
 but the #16 hardening made `PostToMainThread` silently no-op after `BeginShutdown()` (called *first*
 in `~AppController`, before `JoinBackgroundTasks`) and enforce a 4096-entry drop-oldest cap. A worker's
@@ -208,7 +217,7 @@ join forever. #16 closed a UAF and opened a deadlock.
   cancelled/failed status so `RunOnUiThread` unblocks; or make `RunOnUiThread` wait with a deadline and
   return a shutdown error.
 
-### DR16. Non-idempotent POST retried on post-send timeout → duplicate — ⏳ OPEN (hole in BACKLOG B2)
+### DR16. Non-idempotent POST retried on post-send timeout → duplicate — ✅ DONE (batch 2) (hole in BACKLOG B2)
 `Source/Core/src/Tracker/TrackerHttpUtils.cpp:240`. `TrackerPostLogged` retries only on
 `TrackerErrorKind::Transport`, and its comment claims Transport = "provably never reached the server."
 But `TrackerErrorFromHttpStatus` (`TrackerError.h:101`) maps `status <= 0` → Transport, and cpr uses
@@ -219,7 +228,7 @@ times out awaiting the response, is reclassified Transport and re-sent → dupli
 - **Fix:** distinguish connect/pre-send timeout from read/post-send timeout before classifying Transport
   (inspect `response.error.code` for `OPERATION_TIMEDOUT` after send), or make POST strictly single-attempt.
 
-### DR17. Config cache re-populated stale during Save — ⏳ OPEN (hole in BACKLOG A1)
+### DR17. Config cache re-populated stale during Save — ✅ DONE (batch 2) (hole in BACKLOG A1)
 `Source/Core/src/Config/ConfigManager.cpp:611`. `Save` invalidates the cache *before* taking the RMW
 lock and writing, so a concurrent `Load` between invalidation and `WriteConfigJson` re-caches the
 pre-save config with `hasCached=true`, which then survives after the new file is written → every
@@ -246,7 +255,7 @@ model picker offers the OpenAI catalog and the validator reports the wrong provi
 - **Fix:** add `case 4 → AiProvider::DeepSeek` to both; consider a single shared `ResolveProvider`
   so future providers can't drift again.
 
-### DR20. Mid-stream / 2xx provider errors swallowed as success — ⏳ OPEN
+### DR20. Mid-stream / 2xx provider errors swallowed as success — ✅ DONE (batch 2)
 `AnthropicClient.cpp:66` and `OllamaClient.cpp:68` discard SSE `error` events / NDJSON `error` lines,
 so a mid-stream failure on an HTTP-200 stream ends with a synthesized successful `eof` final delta —
 truncated text committed and persisted as a completed reply. Linear/GitHub read paths route 2xx-non-200
@@ -257,13 +266,13 @@ and 200-with-errors responses through `TrackerErrorFromHttpStatus`, which return
 - **Fix:** dispatch stream `error` events to a real failure result; add a 2xx-non-200 → Unknown guard at
   the tracker call sites (or centralise it).
 
-### DR21. ImGui `NewFrame()` called before `DisplaySize`/`DeltaTime` set — ⏳ OPEN
+### DR21. ImGui `NewFrame()` called before `DisplaySize`/`DeltaTime` set — ✅ DONE (batch 2)
 `Source/Core/src/Ui/SmatchetImGuiHost.cpp:751`. First frame runs `NewFrame` with `DisplaySize=(-1,-1)`
 → `IM_ASSERT` abort in asserts-enabled builds (the ASan CI preset); later frames lay out with the
 previous frame's size and delta.
 - **Fix:** assign `io.DisplaySize`/`io.DeltaTime` before `ImGui::NewFrame()`.
 
-### DR22. Popup ID-stack mismatch makes modals unreachable — ⏳ OPEN
+### DR22. Popup ID-stack mismatch makes modals unreachable — ✅ DONE (batch 2)
 `OpenPopup` is called inside a child window while `BeginPopupModal` runs at the parent level, so the
 relative IDs never match: `Source/Core/src/Ui/AnnotateAnalysisUi_Window.cpp:410` (and `:723`) — the
 assign / quick-comment modal never opens; `Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp:886` —
@@ -271,7 +280,7 @@ assign / quick-comment modal never opens; `Source/Core/src/Ui/SmatchetActiveProj
 - **Fix:** issue `OpenPopup` and `BeginPopupModal` at the same ID-stack level (raise the open to the
   parent scope, or push a matching id), consistent with the working modals.
 
-### DR23. Fixed-buffer edit round-trips truncate-on-commit — ⏳ OPEN
+### DR23. Fixed-buffer edit round-trips truncate-on-commit — ✅ DONE (batch 2)
 Editors round stored values through fixed buffers and commit the `min()`-truncated copy on the first
 keystroke (no truncation banner, because it happens post-seed): `TicketFieldEditor.cpp:529,540`
 (512 B inline), `TicketFieldEditor_Modal.cpp:257` (64 KB long-text), `Ui/SmatchetToolbarUi.cpp:632`
@@ -279,7 +288,7 @@ keystroke (no truncation banner, because it happens post-seed): `TicketFieldEdit
 - **Fix:** size buffers to the value (or use `std::string`-backed `InputText` callbacks) and gate commit
   on a real dirty check against the untruncated original; surface a truncation banner where a hard cap stays.
 
-### DR24. JQL→native query translation bugs — ⏳ OPEN
+### DR24. JQL→native query translation bugs — ✅ DONE (batch 2)
 `Source/Core/src/Tracker/GitHubQueryFromJql.cpp`: tokenizer drops `@` so `@me` → literal `me` (`:163`);
 `MaybeQuote` wraps whitespace values without escaping embedded `"` (`:234`); `GitHubClient.cpp:670`
 `ExtractProjectFromQuery` mis-anchors the project on any query containing `/` (e.g. a `ui/ux` label).
@@ -289,7 +298,7 @@ search is silently dropped.
 - **Fix:** make the tokenizers quote-aware and preserve `@`; escape embedded quotes; anchor the project
   extraction on structure, not a bare `/` scan.
 
-### DR25. Plane single-page pagination drops data — ⏳ OPEN
+### DR25. Plane single-page pagination drops data — ✅ DONE (batch 2)
 `Source/Core/src/Tracker/PlaneClient.cpp:90` `ResolvePlaneProject` and `PlaneIssueSearch.cpp:637`
 `ListProjects` fetch only the first page of `/projects/` (no cursor loop) → a project past the first 100
 can never be resolved and is cached incomplete for 5 min. `PlaneIssueMutation.cpp:548` `FetchIssueComments`
@@ -302,7 +311,7 @@ field, which `/api/chat` ignores (it takes system text only as a `{role:"system"
 instructions and context blocks are dropped with no error.
 - **Fix:** prepend a `{role:"system"}` message instead of the top-level field.
 
-### DR27. Commands report success but don't affect the running instance — ⏳ OPEN
+### DR27. Commands report success but don't affect the running instance — ✅ DONE (batch 2)
 `BuiltinCommands_Perf.cpp:205` `perf.toggle_panel` only writes config (UI reads `g_ui.showPerformance`
 once at startup); the palette filter latch (`BuiltinCommands_Ui.cpp:101` + `CommandPaletteUi.cpp:239`)
 sticks `view.toggle.` for the session and the reopened palette dispatches a stale list;
@@ -313,13 +322,13 @@ crash-reporter path is never exercised.
   rebuild `filtered_` on open; surface `users.search`'s error; route `kind=throw` outside the dispatcher
   catch (or document it as untestable).
 
-### DR28. Per-frame icon fetch/parse retry storm — ⏳ OPEN
+### DR28. Per-frame icon fetch/parse retry storm — ✅ DONE (batch 2)
 `Source/Core/src/Ui/SmatchetFieldIconRender.cpp:402,754`. Failed icon fetches never record a negative
 result and the deferred path skips `RememberNegativePriorityResolution`, so an unresolvable icon
 re-fetches (3 s cpr each) and re-parses JSON + fs::exists every frame for the whole session.
 - **Fix:** memoise negative results (with the `Negative` flag honoured in the lookup) and back off failed fetches.
 
-### DR29. Test suite has vacuous / self-referential regression guards + ODR violation — ⏳ OPEN
+### DR29. Test suite has vacuous / self-referential regression guards + ODR violation — 🟡 PARTIAL (batch 2)
 Several "regression" tests assert against a local re-implementation of the production logic, so the real
 code can regress green: `tests/Core/UserInfoActivityCancelUaf.test.cpp:140,197`, `tests/Lua/LuaTimeout.test.cpp:28`,
 `tests/Core/BulkImportAbandonNonBlocking.test.cpp:59`, `tests/Core/MarkdownLanguageDefinition.test.cpp:85`,
@@ -343,7 +352,7 @@ the persistent log.
 
 ## P2 — polish / consistency
 
-### DR31. `SmatchetResult` / `Optional` exception-safety holes — ⏳ OPEN
+### DR31. `SmatchetResult` / `Optional` exception-safety holes — ✅ DONE (batch 2)
 `Source/Core/include/SmatchetResult.h:169`: `Result` move-assignment `Destroy()`s the stored object and
 sets `ok_` before a placement-new that can throw → on throw, `~Result` double-destroys unconstructed
 storage. `:41`: `Optional::operator=` is `noexcept` but its swap placement-new-constructs `T`, so a
