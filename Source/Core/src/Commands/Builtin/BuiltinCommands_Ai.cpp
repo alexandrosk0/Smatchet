@@ -29,6 +29,7 @@
 #include "AiClientFactory.h"
 #include "AiModelCatalog.h"
 #include "AiPrefsValidator.h"
+#include "AiRequestBuilder.h"
 #include "AiTypes.h"
 #include "ConfigManager.h"
 #include "IAiClient.h"
@@ -73,34 +74,6 @@ const char* AiProviderDisplayName(AiProvider p) {
         return "deepseek";
     }
     return "unknown";
-}
-
-AiClientConfig BuildClientConfigForProvider(const TrackerConfig& cfg, AiProvider provider) {
-    AiClientConfig out;
-    switch (provider) {
-    case AiProvider::Anthropic:
-        out.ApiKey = cfg.AiAnthropicApiKey;
-        out.BaseUrl = cfg.AiBaseUrl;
-        break;
-    case AiProvider::OllamaNative:
-        out.ApiKey.clear();
-        out.BaseUrl = cfg.AiOllamaBaseUrl;
-        break;
-    case AiProvider::OllamaOpenAiCompat:
-        out.ApiKey = cfg.AiApiKey;
-        out.BaseUrl = cfg.AiBaseUrl.empty() ? cfg.AiOllamaBaseUrl : cfg.AiBaseUrl;
-        break;
-    case AiProvider::DeepSeek:
-        out.ApiKey = cfg.AiDeepSeekApiKey;
-        out.BaseUrl = cfg.AiDeepSeekBaseUrl.empty() ? std::string("https://api.deepseek.com") : cfg.AiDeepSeekBaseUrl;
-        break;
-    case AiProvider::OpenAi:
-    default:
-        out.ApiKey = cfg.AiApiKey;
-        out.BaseUrl = cfg.AiBaseUrl;
-        break;
-    }
-    return out;
 }
 
 std::string ResolveModelId(const TrackerConfig& cfg, AiProvider provider) {
@@ -283,7 +256,7 @@ void RegisterDumpRequestCommand(CommandRegistry& reg) {
                 const std::string systemPrompt = args.value("system", std::string());
 
                 const TrackerConfig cfg = ConfigManager::Load();
-                const AiClientConfig clientCfg = BuildClientConfigForProvider(cfg, provider);
+                const AiClientConfig clientCfg = smatchet::ai::BuildClientConfig(cfg, provider);
                 const std::string model = args.value("model", ResolveModelId(cfg, provider));
 
                 nlohmann::json body;
@@ -357,7 +330,7 @@ void RegisterProbeCommand(CommandRegistry& reg) {
                                                       "'");
                 }
                 const TrackerConfig cfg = ConfigManager::Load();
-                AiClientConfig clientCfg = BuildClientConfigForProvider(cfg, provider);
+                AiClientConfig clientCfg = smatchet::ai::BuildClientConfig(cfg, provider);
                 // Tight probe timeouts: don't hold the CLI on a half-open host.
                 clientCfg.ConnectTimeoutMs = 5000;
                 clientCfg.TotalTimeoutMs = 10000;
@@ -477,7 +450,7 @@ CommandResult RunSendOnce(const nlohmann::json& args) {
     }
 
     const TrackerConfig cfg = ConfigManager::Load();
-    AiClientConfig clientCfg = BuildClientConfigForProvider(cfg, provider);
+    AiClientConfig clientCfg = smatchet::ai::BuildClientConfig(cfg, provider);
     clientCfg.ConnectTimeoutMs = 5000;
     clientCfg.TotalTimeoutMs = (timeoutMs > 0) ? timeoutMs : 30000;
 

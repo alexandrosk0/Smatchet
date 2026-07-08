@@ -1,3 +1,9 @@
+#if defined(_WIN32)
+// rand_s (OS CSPRNG via the CRT) — the define must precede the first <stdlib.h>
+// include anywhere in this TU (spawn-token hardening, backlog 2026-06-28).
+#define _CRT_RAND_S
+#endif
+
 #include "CliCommandRunner.h"
 
 #include "CliArgCoercion.h"
@@ -45,6 +51,10 @@
 #include <unistd.h>
 #if defined(__APPLE__)
 #include <mach-o/dyld.h> // _NSGetExecutablePath (CPP_CODE_AUDIT.md #33g — was only transitively included)
+#endif
+#if defined(__linux__)
+#include <cerrno>
+#include <sys/random.h> // getrandom — spawn-token CSPRNG (backlog 2026-06-28)
 #endif
 #endif
 
@@ -478,18 +488,65 @@ void EmitErrorToStderr(const nlohmann::json& envelope) {
 } // CLI stdout — product output, not logging
 
 #if defined(SMATCHET_WITH_MCP)
-/// `draws * 8` lowercase hex chars from std::random_device. random_device is
-/// non-deterministic on every supported host and each draw yields 32 bits, so the
-/// result carries `draws * 32` bits of entropy. Shared by the spawn-log filename
-/// suffix and the per-spawn MCP auth token so the two don't duplicate the
-/// random-device / hex-formatting pattern (DRY — no second copy vs origin/develop).
+/// Fill `buf` with `n` bytes from the explicit OS CSPRNG — rand_s (Windows CRT),
+/// arc4random_buf (macOS/BSD), getrandom (Linux). Returns false only when the
+/// platform call failed or no platform branch applies; the caller then falls back
+/// to std::random_device, which the C++ standard does not guarantee to be
+/// crypto-secure or even non-deterministic (backlog 2026-06-28 — the shipped hosts
+/// all take an explicit branch, so the fallback never runs there).
+bool FillOsCsprng(unsigned char* buf, size_t n) {
+#if defined(_WIN32)
+    for (size_t i = 0; i < n; i += sizeof(unsigned int)) {
+        unsigned int v = 0;
+        if (rand_s(&v) != 0) {
+            return false;
+        }
+        std::memcpy(buf + i, &v, (n - i < sizeof(unsigned int)) ? n - i : sizeof(unsigned int));
+    }
+    return true;
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+    arc4random_buf(buf, n);
+    return true;
+#elif defined(__linux__)
+    size_t off = 0;
+    while (off < n) {
+        const ssize_t got = getrandom(buf + off, n - off, 0);
+        if (got < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return false;
+        }
+        off += static_cast<size_t>(got);
+    }
+    return true;
+#else
+    (void)buf;
+    (void)n;
+    return false;
+#endif
+}
+
+/// `draws * 8` lowercase hex chars (`draws * 32` bits) from the OS CSPRNG, with a
+/// std::random_device fallback only if the platform call fails — never weaker than
+/// the previous random_device-only draw. Shared by the spawn-log filename suffix
+/// and the per-spawn MCP auth token so the two don't duplicate the RNG /
+/// hex-formatting pattern (DRY — single chokepoint).
 std::string RandomHexToken(int draws) {
-    std::random_device rd;
+    const size_t byteCount = static_cast<size_t>(draws) * 4u;
+    std::vector<unsigned char> bytes(byteCount, 0);
+    if (!FillOsCsprng(bytes.data(), byteCount)) {
+        std::random_device rd;
+        for (size_t i = 0; i < byteCount; i += 4) {
+            const unsigned int v = static_cast<unsigned int>(rd());
+            std::memcpy(&bytes[i], &v, 4);
+        }
+    }
     std::string out;
-    out.reserve(static_cast<size_t>(draws) * 8);
-    char buf[9];
-    for (int i = 0; i < draws; ++i) {
-        std::snprintf(buf, sizeof(buf), "%08x", static_cast<unsigned int>(rd()));
+    out.reserve(byteCount * 2);
+    char buf[3];
+    for (size_t i = 0; i < byteCount; ++i) {
+        std::snprintf(buf, sizeof(buf), "%02x", static_cast<unsigned int>(bytes[i]));
         out += buf;
     }
     return out;

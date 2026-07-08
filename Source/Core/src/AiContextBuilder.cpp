@@ -1,5 +1,6 @@
 #include "AiContextBuilder.h"
 
+#include "AiXmlAttrEscape.h"
 #include "BackendAuditTrail.h"
 #include "CachedTicketTypes.h"
 #include "ConfigManager.h"
@@ -67,8 +68,10 @@ void AppendBlock(std::string& out, const AiContextBlock& block) {
     out.append("<smatchet_context block=\"");
     out.append(block.Name);
     out.append("\">\n");
-    out.append(block.Body);
-    if (!block.Body.empty() && block.Body.back() != '\n') {
+    // Same breakout guard as ComposeSystemPrompt — bodies are tracker-influenceable.
+    const std::string body = smatchet::ai::pure::NeutralizeContextBody(block.Body);
+    out.append(body);
+    if (!body.empty() && body.back() != '\n') {
         out.push_back('\n');
     }
     out.append("</smatchet_context>\n");
