@@ -11,7 +11,7 @@
 The agentic layer is unusually large and unusually disciplined for a solo prerelease project: ~150 core harness scripts, 56 bats suites, 30 CI workflows, 17+9 agent definitions, 15 skills, a 4-condition merge-gate poller, and a self-improvement backlog with its own gates. The 2026-06 campaign's systemic thesis — **self-description drift: declarations diverge from implementation because almost nothing fails CI when they do** — still holds, and this sweep found fresh instances (the rulebook exceeds its own line cap; a retired lint glob survives in the rulebook's prose; the governance charter promises a cost-ceiling gate that was explicitly descoped). But the frontier has moved. The three highest-leverage clusters now are:
 
 1. **In-app runtime hardening** — the MCP/AI/command surface has excellent authorization engineering (see § Strengths) but a soft spot the harness gates cannot see: untrusted tracker content flows into the AI system prompt with only attribute-level escaping (B1), the debug `ai.dump-request` path skips the sanitizers the production path applies (B4), and `tools/call` has no rate limit (B3).
-2. **Environment parity** — a Linux-container agent (the environment this audit ran in) cannot run bats, `gh`, shellcheck, or the doctest rig; its reproducible signal is lint + `posix-core-check` + TSan. The most valuable agentic gate (`agentic-selftests`) is neither locally runnable there nor a required branch-protection context (C1, C3).
+2. **Environment parity** — a Linux-container agent (the environment this audit ran in) cannot run bats, `gh`, shellcheck, or the doctest rig; its reproducible signal is lint + `posix-core-check` + TSan. The most valuable agentic gate (`agentic-selftests`) is not locally runnable there (C3). *(This paragraph originally also claimed it was not a required branch-protection context — see the C1 correction: that was already resolved by PR #1619.)*
 3. **Trust-but-cannot-verify residue** — the fresh-clone bootstrap hole leaves every session guard inert until `setup-harness.sh` runs (C5); the "primary code-nav tool" depends on a database that does not exist in a fresh checkout (C7); `repo-health/facts.json` rots silently between sessions (C8).
 
 **Numbers:** 22 findings — 3 P1 · 11 P2 · 8 P3. Of these, 5 were already tracked (cross-referenced, not re-filed), 2 are fixed in this PR, 11 are filed as new self-improvement entries, 1 routes to a GitHub Issue candidate, and 3 are proposals folded into § Proposals.
@@ -75,7 +75,7 @@ The agentic layer is unusually large and unusually disciplined for a solo prerel
 
 | ID | Sev | Finding | Disposition |
 |---|---|---|---|
-| C1 | P1 | `agentic-selftests.yml` — the only CI lane running the 56-suite bats layer — is not a required branch-protection context | already tracked |
+| C1 | P1 | `agentic-selftests.yml` — the only CI lane running the 56-suite bats layer — is not a required branch-protection context | ~~already tracked~~ **corrected 2026-07-07: resolved upstream by PR #1619** |
 | C2 | P2 | Monoliths: `test-lint-rules.sh` ~139 KB, `merge-gates.sh` ~97 KB, `build-and-test.yml` ~132 KB | backlog entry |
 | C3 | P2 | Linux-container agents have no reproducible test signal beyond lint + compile gates (no bats/gh/shellcheck/doctest) | proposal (P5/P6 below) |
 | C4 | P2 | Agent-eval harness holds 3 cases — regression scoring for prompt changes is built but unpopulated | already tracked |
@@ -86,6 +86,8 @@ The agentic layer is unusually large and unusually disciplined for a solo prerel
 | C9 | P3 | Mutation-smoke gate (roadmap Slice F) remains manual-pilot-only | already tracked |
 
 **C1 — the harness's own test suite cannot block a merge on its own.** `agentic-selftests.yml` exists precisely because the bats layer "gated nowhere"; it still is not in `branch_protection.required_contexts`, so it binds only through the merge-gate poller's block-on-any-red. An admin merge or a poller bug ships past 56 suites. Already tracked — the 2026-06-22 denylist entry's next action (a) is exactly this promotion, gated on soak; the soak is now two weeks old. Cross-referenced with a nudge, not re-filed.
+
+> **Correction (2026-07-07): C1 was stale at publication.** PR #1619 ("block-on-any-red", merged 2026-07-05 — one day before this audit) had already added `Agentic self-tests (bats)` to `branch_protection.required_contexts`, and `docs/plans/all-gates-blocking.md` records `setup-branch-protection.sh` applied post-merge. The finding survived because *neither self-description was updated when #1619 landed*: the `agentic-selftests.yml` header still claimed "not yet a branch-protection REQUIRED context", and the 2026-06-22 backlog entry still carried the promotion as an open next action. Both misled this audit's exploration — a textbook instance of the drift class this report's thesis names. Both stale claims are fixed alongside this correction. Residual from C1: only the denylist retirements (the 2026-06-22 entry's next actions (b)/(c)) remain open.
 
 **C2 — three files carry a disproportionate share of the harness.** The 139 KB lint scanner, 97 KB merge-gate poller, and 132 KB build workflow are each effectively unreviewable as diffs and are the three files an agent most needs to understand. The lint scanner at least carries `--selftest`; the workflow has nothing equivalent. Filed as `tooling/2026-07-06-test-lint-rules-monolith-split.md` (decomposition, preserving the single-entry-point contract).
 
@@ -124,7 +126,7 @@ Findings from this sweep that dedupe to an existing tracker — cross-referenced
 
 | This audit | Existing tracker |
 |---|---|
-| C1 agentic-selftests promotion | `docs/self-improvement/categories/tooling/2026-06-22-agentic-selftests-ci-lane-denylist.md` — next action (a), soak condition now met |
+| C1 agentic-selftests promotion | resolved by PR #1619 before publication (see C1 correction); denylist residue stays in `docs/self-improvement/categories/tooling/2026-06-22-agentic-selftests-ci-lane-denylist.md` next actions (b)/(c) |
 | C4 agent-eval corpus | [`docs/plans/subagent-eval-agentic-coverage.md`](docs/plans/subagent-eval-agentic-coverage.md) (active) + deferred flywheel plan |
 | C9 mutation-smoke gate | [`docs/plans/mutation-testing-pilot.md`](docs/plans/mutation-testing-pilot.md) + [`docs/plans/testing-surface-roadmap.md`](docs/plans/testing-surface-roadmap.md) Slice F; pilot shipped as [`MUTATION_PILOT.md`](MUTATION_PILOT.md) |
 | A4 portable-purity literals / stale counts | `docs/STRUCTURE.md` § Known follow-up + campaign `rule-docs-drift-07` (slice C3) |
@@ -135,6 +137,6 @@ Findings from this sweep that dedupe to an existing tracker — cross-referenced
 
 - **Fixed in this PR:** A2 (stale `Locales/*.json` token removed from `AGENTS.md`), A3 (deprecation banners on the three `backlog/` ledgers).
 - **Filed as self-improvement entries (11):** `security/2026-07-06-ai-autocontext-prompt-injection.md` (B1), `security/2026-07-06-mcp-tools-call-rate-limit.md` (B3), `security/2026-07-06-ai-dump-request-skips-sanitizers.md` (B4), `process/2026-07-06-cost-ceiling-gate-unbuilt.md` (A6), `process/2026-07-06-agents-md-over-own-cap-trim.md` (A1), `tooling/2026-07-06-test-lint-rules-monolith-split.md` (C2), `infra/2026-07-06-fresh-clone-bootstrap-hole.md` (C5), `test/2026-07-06-mcp-live-http-auth-direct-test.md` (C6), `tooling/2026-07-06-repo-health-facts-staleness.md` (C8), `tooling/2026-07-06-sourcetrail-dead-db-retire.md` (C7), `debt/2026-07-06-required-contexts-derive-single-source.md` (A5).
-- **GitHub Issue candidate (1):** B5 — the Lua `ai.*` cross-thread race is a shipped-behaviour defect; per ADR-0014 it belongs in the issue tracker, not this backlog. Not auto-filed by this docs PR; flagged here for triage.
+- **GitHub Issue candidate (1):** B5 — the Lua `ai.*` cross-thread race is a shipped-behaviour defect; per ADR-0014 it belongs in the issue tracker, not this backlog. → filed as Issue #1678 (2026-07-07).
 - **Cross-referenced only (5):** C1, C4, C9, A4, B2 (see § Already tracked).
 - **Noted, deliberately unfiled (3):** C3 environment parity (captured as Proposals P5/P6), B6 protocol primitives, and B7 registry polish (captured as Proposals P2/P3 and inline) — they are opportunities, not defects.
