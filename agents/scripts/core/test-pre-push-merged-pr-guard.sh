@@ -114,11 +114,15 @@ run_hook() {
     #     (not the stubbed `git rev-parse`), so a real feature-branch checkout
     #     with plan-locked changed files can refuse before the guard runs.
     #     -> ALLOW_UNLOCKED_PUSH.
+    #   - protected-branch stop (A) is stdin-driven and inert on the empty
+    #     stdin here; neutralised anyway per the stage-neutraliser lint
+    #     (test-pre-push-stage-neutralisers.sh). -> ALLOW_DEVELOP_PUSH.
     local out exit_code
     set +e
     out=$(env -i \
         PATH="$sandbox_path" \
         HOME="$HOME" \
+        SMATCHET_ALLOW_DEVELOP_PUSH=1 \
         SMATCHET_SKIP_PRESHIP_GATE=1 \
         SMATCHET_ALLOW_UNLOCKED_PUSH=1 \
         SMATCHET_ALLOW_MERGED_PR_PUSH="${extra_env#SMATCHET_ALLOW_MERGED_PR_PUSH=}" \

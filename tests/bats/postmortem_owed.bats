@@ -96,7 +96,8 @@ exit 99
 STUB
     chmod +x "$STUB_BIN_DIR/gh"
 
-    # --- stub git (only intercept `git log`; pass everything else through) ---
+    # --- stub git (intercept `git log` + the origin/develop ledger `show`;
+    #     pass everything else through) ---
     cat > "$STUB_BIN_DIR/git" <<'STUB'
 #!/usr/bin/env bash
 if [ "${1:-}" = "log" ]; then
@@ -105,6 +106,13 @@ if [ "${1:-}" = "log" ]; then
         *--no-merges*) cat "$PM_DATA/gitlog_directpush.txt" 2>/dev/null || true; exit 0 ;;
     esac
     exit 0
+fi
+if [ "${1:-}" = "show" ]; then
+    case "${2:-}" in
+        origin/develop:*)
+            if [ -f "$PM_DATA/develop_ledger.md" ]; then cat "$PM_DATA/develop_ledger.md"; exit 0; fi
+            exit 128 ;;
+    esac
 fi
 exec "$REAL_GIT" "$@"
 STUB
@@ -497,4 +505,47 @@ JSON
     run_detector
     [[ "$output" != *"PR #7003"* ]]
     [[ "$output" == *"no gate escapes owed"* ]]
+}
+
+# ============================================================================
+# Ledger pinned to origin/develop (tooling 2026-06-19 — phantom owes /
+# false suppression). POSTMORTEM_LEDGER unset → has_entry reads the ref the
+# merge scans trust, not the cwd working-tree file.
+# ============================================================================
+
+@test "entry on origin/develop dedupes even when the working tree lacks it (no phantom owe)" {
+    unset POSTMORTEM_LEDGER
+    # origin/develop ledger (git-show stub) HAS the postmortem for #8001.
+    echo "## 2026-06-19 · PR #8001 — gate escape RCA" > "$PM_DATA/develop_ledger.md"
+    prlist <<'JSON'
+[{"number":8001,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"f1"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"PR #8001"* ]]
+}
+
+@test "entry only in the working tree does NOT suppress an owed postmortem (false-negative guard)" {
+    unset POSTMORTEM_LEDGER
+    # Fixture repo whose WORKING-TREE ledger carries the entry while the
+    # origin/develop ledger (git-show stub) is empty — the pre-fix code read
+    # the working file and silently suppressed the owe.
+    : > "$PM_DATA/develop_ledger.md"
+    FIX_REPO="$PM_DATA/repo"
+    mkdir -p "$FIX_REPO/agents/scripts/core" "$FIX_REPO/docs/self-improvement"
+    cp "$REPO_ROOT/agents/scripts/core/postmortem-owed.sh" \
+       "$REPO_ROOT/agents/scripts/core/merge-gates.sh" "$FIX_REPO/agents/scripts/core/"
+    if [ -f "$REPO_ROOT/agents/scripts/core/merge-gates-prompt.sh" ]; then
+        cp "$REPO_ROOT/agents/scripts/core/merge-gates-prompt.sh" "$FIX_REPO/agents/scripts/core/"
+    fi
+    echo "## 2026-06-19 · PR #8002 — local-only RCA draft" \
+        > "$FIX_REPO/docs/self-improvement/postmortems.md"
+    prlist <<'JSON'
+[{"number":8002,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"f2"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run bash "$FIX_REPO/agents/scripts/core/postmortem-owed.sh" --list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"postmortem owed: PR #8002"* ]]
 }

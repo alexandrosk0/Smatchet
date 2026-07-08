@@ -51,6 +51,10 @@ All four bit multiple agents during the multi-grid Slice-0/1 + perf-gate-revival
 
 > **Resolved (don't re-add):** the old "never configure under bash+vcvars — cpr's FetchContent `git submodule` dies with `git-sh-setup: file not found`" workaround is **obsolete** — fixed at the source by **#1031** (`GIT_SUBMODULES ""` on every git `FetchContent_Declare`; FetchContent runs `git submodule update` unconditionally and that flag skips it). Configuring under bash+vcvars via `scripts/dev/with-msvc-env.sh` is now correct, including fresh clones. The scheduled fresh-clone-configure CI (close-gate-gaps Slice 4) is the standing gate that keeps it that way.
 
+## Remote-container (cloud sandbox) posix-core-check bootstrap
+
+In the Claude Code remote container the network policy allows `git clone` but **403s GitHub release-asset / codeload tarball downloads**, so a bare `cmake --preset posix-core-check` dies at cpr's internal FetchContent of `curl-7.80.0.tar.xz`; glfw's configure also needs `xorg-dev` + `libgl1-mesa-dev` (never built in this preset, but `find_package(X11 REQUIRED)` runs). Run `bash scripts/dev/remote-container-bootstrap.sh` once per container — it shallow-clones curl at the pinned tag into `.fetchcontent-src/curl-manual`, apt-installs the two packages, and configures the preset with `-DFETCHCONTENT_SOURCE_DIR_CURL` pointing at the clone (idempotent; `--no-configure` provisions only). Origin: infra `remote-container-fetchcontent-403` (2026-07-05 session, PRs #1614/#1615).
+
 ## ASan over the test rig
 
 The `ninja-msvc-asan` preset does not enable tests; to run the doctest rig under ASan, override at configure: `cmake --preset ninja-msvc-asan -DSMATCHET_BUILD_TESTS=ON`. (The `CallstackParser` ReDoS *timing* sentinel is now ASan-aware — #1215 (`36521f72`) guards it with `#if defined(__SANITIZE_ADDRESS__)` and widens the wall-clock cap 2000 ms→20000 ms, so the full suite runs clean under ASan; the old "exceeds its 2000 ms cap under ASan slowdown" caveat no longer applies.)
