@@ -603,8 +603,8 @@ bool LaunchEphemeralInstance(const std::string& exePath, int port, std::string* 
     const std::string logPath = ComputeSpawnLogPath(port);
     if (outLogPath)
         *outLogPath = logPath;
-    // main.cpp parses `--mcp-port <port>` as two separate argv entries (space-separated),
-    // NOT `--mcp-port=<port>` — using the equals form would silently fall through.
+        // main.cpp parses `--mcp-port <port>` as two separate argv entries (space-separated),
+        // NOT `--mcp-port=<port>` — using the equals form would silently fall through.
 #if defined(_WIN32)
     // CommandLineToArgvW handles quoted whitespace; pass space-separated tokens.
     std::string cmdLine = "\"" + exePath + "\" --ephemeral --mcp-port " + portStr;

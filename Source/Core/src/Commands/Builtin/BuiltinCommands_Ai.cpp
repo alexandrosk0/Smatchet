@@ -60,6 +60,8 @@ namespace {
 
 bool ResolveProvider(const std::string& key, AiProvider& out) { return AiClientFactory::ProviderFromString(key, out); }
 
+// Pre-existing mapper; token-run re-bounded by the BuildClientConfigForProvider deletion, not a new copy-paste.
+// SMATCHET_DEVIATION(rule=duplication; reason=unrelated enum-name mappers; owner=orchestrator; revisit=2026-10-01)
 const char* AiProviderDisplayName(AiProvider p) {
     switch (p) {
     case AiProvider::OpenAi:
