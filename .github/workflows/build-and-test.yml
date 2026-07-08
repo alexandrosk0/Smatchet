@@ -854,8 +854,10 @@ jobs:
       - name: Build SmatchetStandalone (Smatchet light)
         run: cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
 
-      # The DX12 / Unreal-embedded core compiles with the light feature set:
-      # SMATCHET_EMBEDDED_IN_UNREAL forces Whisper off (CMakeLists.txt), and the
+      # The DX12 / Unreal-embedded core compiles with the light feature set: the
+      # explicit -DSMATCHET_WITH_WHISPER=OFF on the configure step above keeps
+      # Whisper off (SMATCHET_EMBEDDED_IN_UNREAL is a per-target compile define,
+      # not a CMake variable — it gates nothing at configure time), and the
       # Unreal plugin ships AI + MCP off too (SMATCHET_WITH_MCP_UNREAL). The
       # SmatchetCore_DX12 target is gated only by if(WIN32) — not by any feature
       # flag — so it still builds with AI/Whisper/MCP off. Keeping the dual-target
