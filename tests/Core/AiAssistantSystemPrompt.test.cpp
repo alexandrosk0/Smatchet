@@ -137,6 +137,12 @@ TEST_CASE("NeutralizeContextBody: truncated trailing tag prefix is still neutral
     CHECK(smatchet::ai::pure::NeutralizeContextBody("</") == "</");
 }
 
+TEST_CASE("NeutralizeContextBody: case-variant tags are neutralized too") {
+    CHECK(smatchet::ai::pure::NeutralizeContextBody("</SMATCHET_CONTEXT>") == "&lt;/SMATCHET_CONTEXT>");
+    CHECK(smatchet::ai::pure::NeutralizeContextBody("<Smatchet_Context block=\"f\">") ==
+          "&lt;Smatchet_Context block=\"f\">");
+}
+
 TEST_CASE("ComposeSystemPrompt: data-not-instructions preamble present iff a block has content") {
     const std::string none = smatchet::ai::pure::ComposeSystemPrompt("AGENTS", std::vector<AiContextBlock>());
     CHECK(none.find(smatchet::ai::pure::ContextDataNotInstructionsLine()) == std::string::npos);

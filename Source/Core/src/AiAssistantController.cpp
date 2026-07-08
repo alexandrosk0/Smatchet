@@ -15,7 +15,6 @@
 #include "MainThreadDispatcher.h"
 #include "SmatchetChatPersistWorker.h"
 
-#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <memory>

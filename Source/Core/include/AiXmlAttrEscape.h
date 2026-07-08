@@ -47,9 +47,10 @@ inline std::string EscapeXmlAttr(const std::string& value) {
 /// attacker-influenceable via the tracker backend — a body containing the closing tag
 /// would otherwise break out of its wrapper and smuggle instructions into the system
 /// prompt. The leading `<` of each matched sequence becomes `&lt;`, which preserves the
-/// text for the model while making a tag-boundary parse impossible. Everything else is
-/// copied verbatim. `inline` for the same link-without-the-controller-TU rationale as
-/// `EscapeXmlAttr` above.
+/// text for the model while making a tag-boundary parse impossible. The stem match is
+/// ASCII-case-insensitive — a model's fuzzy parse could accept `</SMATCHET_CONTEXT>` as
+/// a boundary too. Everything else is copied verbatim. `inline` for the same
+/// link-without-the-controller-TU rationale as `EscapeXmlAttr` above.
 inline std::string NeutralizeContextBody(const std::string& body) {
     static const char kTagStem[] = "smatchet_context";
     static const std::string::size_type kStemLen = sizeof(kTagStem) - 1;
@@ -61,7 +62,12 @@ inline std::string NeutralizeContextBody(const std::string& body) {
             if (stemPos < body.size() && body[stemPos] == '/') {
                 ++stemPos;
             }
-            if (body.compare(stemPos, kStemLen, kTagStem) == 0) {
+            bool match = stemPos + kStemLen <= body.size();
+            for (std::string::size_type i = 0; match && i < kStemLen; ++i) {
+                const char c = body[stemPos + i];
+                match = (((c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c) == kTagStem[i]);
+            }
+            if (match) {
                 out.append("&lt;");
                 continue;
             }
