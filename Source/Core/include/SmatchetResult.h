@@ -126,6 +126,9 @@ template <typename T, typename E = std::string> class Result {
     }
 
     Result(const Result& other) : ok_(other.ok_), valueless_(true) {
+        if (other.valueless_) {
+            return; // source's storage is empty (a throwing move-assign left it so) — stay valueless
+        }
         if (ok_) {
             // placement-new into in-object storage (copying T may itself allocate, e.g. vector/json)
             ::new (static_cast<void*>(&storage_)) T(*other.ValuePtr());
@@ -137,6 +140,9 @@ template <typename T, typename E = std::string> class Result {
     }
 
     Result(Result&& other) : ok_(other.ok_), valueless_(true) {
+        if (other.valueless_) {
+            return; // source's storage is empty (a throwing move-assign left it so) — stay valueless
+        }
         if (ok_) {
             // placement-new into in-object storage — no heap allocation
             ::new (static_cast<void*>(&storage_)) T(std::move(*other.ValuePtr()));
@@ -159,6 +165,12 @@ template <typename T, typename E = std::string> class Result {
                       "Result copy-assignment commits via a noexcept move; T and E must be "
                       "nothrow-move-constructible (vector/string/json/TrackerError all are).");
         if (this != &other) {
+            if (other.valueless_) {
+                Destroy(); // propagate the source's empty state instead of reading dead storage
+                ok_ = other.ok_;
+                valueless_ = true;
+                return *this;
+            }
             if (other.ok_) {
                 T tmp(*other.ValuePtr()); // may throw — *this still intact (strong guarantee)
                 Destroy();
@@ -189,6 +201,10 @@ template <typename T, typename E = std::string> class Result {
         if (this != &other) {
             Destroy();
             valueless_ = true;
+            if (other.valueless_) {
+                ok_ = other.ok_; // source empty — leave *this valueless too, no dereference
+                return *this;
+            }
             if (other.ok_) {
                 // placement-new into in-object storage — no heap allocation
                 ::new (static_cast<void*>(&storage_)) T(std::move(*other.ValuePtr()));

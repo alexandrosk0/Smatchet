@@ -171,7 +171,8 @@ bool DownloadAttachmentToLocalFile(const std::string& url, const std::string& fi
     // (limited SSRF). Re-validate the effective url libcurl actually landed on before persisting
     // anything, mirroring the post-redirect host recheck in Whisper/ModelDownloader.cpp.
     const std::string finalHost = ExtractHostFromUrl(resp.url.str());
-    if (!finalHost.empty() && !IsAllowedJiraAttachmentHost(finalHost, jiraDomain)) {
+    if (finalHost.empty() || !IsAllowedJiraAttachmentHost(finalHost, jiraDomain)) {
+        // Fail closed: an unparseable/empty effective host is as suspect as a non-allowlisted one.
         outError = "Attachment redirected to a non-allowlisted host.";
         return false;
     }

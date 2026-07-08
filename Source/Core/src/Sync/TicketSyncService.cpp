@@ -101,7 +101,7 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
     } else if (!freshTickets.empty()) {
         consecutiveEmptyFullSyncs_ = 0;
     }
-    if (fullSyncCompleted && (!freshTickets.empty() || consecutiveEmptyFullSyncs_ >= kEmptyFullSyncWipeThreshold)) {
+    if (fullSyncCompleted) {
         std::unordered_set<std::string> keepIds;
         keepIds.reserve(freshTickets.size());
         for (const auto& t : freshTickets) {
@@ -110,10 +110,15 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
             }
         }
         std::vector<CachedTicket> existing = deps_.Cache()->GetAllTickets(backendKey);
-        for (const auto& row : existing) {
-            if (keepIds.find(row.id) == keepIds.end()) {
-                deps_.Cache()->DeleteTicket(backendKey, row.id);
-                ++deleted;
+        // Single source of truth for the wipe decision — the same helper the streaming path uses,
+        // so the empty-full-sync data-loss guard can never drift between the two apply paths.
+        if (!ShouldSkipMassDeletionOnEmptyFullSync(keepIds.size(), existing.size(), consecutiveEmptyFullSyncs_,
+                                                   kEmptyFullSyncWipeThreshold)) {
+            for (const auto& row : existing) {
+                if (keepIds.find(row.id) == keepIds.end()) {
+                    deps_.Cache()->DeleteTicket(backendKey, row.id);
+                    ++deleted;
+                }
             }
         }
     }

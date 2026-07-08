@@ -306,9 +306,11 @@ JqlToLinearResult TranslateJqlToLinearFilter(const std::string& jql) {
         return r;
     }
 
-    // Strip a trailing ORDER BY (Linear ordering is set elsewhere).
+    // Strip a trailing ORDER BY (Linear ordering is set elsewhere). Quote-aware so an
+    // " order by " inside a quoted value (e.g. text ~ "work order by priority") is not
+    // mistaken for the structural clause and truncated mid-value.
     const std::string lower = ToLower(s);
-    const std::string::size_type ob = lower.find(" order by ");
+    const std::string::size_type ob = FindTopLevel(lower, " order by ");
     if (ob != std::string::npos) {
         AddWarning(r, "ORDER BY ignored");
         s = Trim(s.substr(0, ob));

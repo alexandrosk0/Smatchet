@@ -557,7 +557,7 @@ Result<std::vector<TrackerIssueComment>, TrackerError> PlaneClient::FetchIssueCo
         }
 
         std::string parseErr;
-        const nlohmann::json parsedJson = smatchet::json_safe::ParseBounded(resp.text, parseErr);
+        const nlohmann::json parsedJson = smatchet::json_safe::ParseBounded(StripUtf8BomCopy(resp.text), parseErr);
         if (!parseErr.empty()) {
             LOG_ERROR("PlaneClient::FetchIssueComments: invalid JSON for %s: %s", issueKey.c_str(), parseErr.c_str());
             return CommentsResult::Err(TrackerErrorParse("Plane issue-comments response was not valid JSON."));

@@ -204,18 +204,27 @@ void RegisterPerfTogglePanelCommand(CommandRegistry& reg, AppController& app) {
                                 }
                                 // DR27: writing only the config left the RUNNING panel untouched
                                 // (g_ui.showPerformance is read once at startup). Flip the live flag
-                                // on the UI thread, then persist so the choice survives a restart.
-                                // Marshalling is mandatory — g_ui is UI-thread-owned and this handler
-                                // may run on an MCP / Lua worker thread.
-                                return RunOnUiThreadAsCommandResult(app, [hasOpen, wantOpen]() {
-                                    const bool newOpen = hasOpen ? wantOpen : !g_ui.showPerformance;
-                                    g_ui.showPerformance = newOpen;
+                                // on the UI thread — g_ui is UI-thread-owned and this handler may run
+                                // on an MCP / Lua worker thread — then persist OFF the UI thread.
+                                // WriteConfigJson does blocking file I/O; running it inside the UI
+                                // callback would stall the render-thread Drain() (Pillar 2), so only
+                                // the flag flip is marshalled and the write happens on this handler's
+                                // (worker / CLI) thread.
+                                try {
+                                    const bool newOpen = RunOnUiThread<bool>(app, [hasOpen, wantOpen]() -> bool {
+                                        const bool v = hasOpen ? wantOpen : !g_ui.showPerformance;
+                                        g_ui.showPerformance = v;
+                                        return v;
+                                    });
                                     nlohmann::json cfgJson = ConfigManager::LoadMergedConfigJson();
                                     cfgJson["show_performance_window"] = newOpen;
                                     ConfigManager::WriteConfigJson(cfgJson);
                                     ConfigManager::InvalidateCache();
                                     return CommandResult::Success({{"showPerformance", newOpen}});
-                                });
+                                } catch (const std::exception& e) {
+                                    return CommandResult::Failure(ErrorCode::HandlerError,
+                                                                  std::string("perf.toggle_panel failed: ") + e.what());
+                                }
                             });
     c.DryRunSupported = true;
     c.Params = {
