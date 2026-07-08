@@ -135,21 +135,66 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           set -e
-          # The full suite is whatever scenario.list reports — keeps the
-          # workflow in sync with new IScenario registrations automatically.
-          # --quiet returns one name per line; jq pulls them out.
-          mapfile -t scen_list < <(
+          # Enumerate the full IScenario universe (keeps us aware of every
+          # registration), then SCOPE the perf sweep to the committed
+          # ci-windows-latest baseline set. --quiet returns one name per line.
+          mapfile -t all_scen < <(
             ./build/ninja-iter-msvc/Smatchet.exe cmd scenario.list --spawn --yes --quiet 2>/dev/null \
               | grep -v '^$' || true
           )
-          if [ "${#scen_list[@]}" -eq 0 ]; then
+          if [ "${#all_scen[@]}" -eq 0 ]; then
             echo "FAIL: scenario.list returned no scenarios."
             exit 1
           fi
+
+          # In-scope = scenarios that have a committed baseline file. This is
+          # the SAME source of truth the recapture step uses (git ls-files —
+          # tracked files only) and it matches reality on two axes:
+          #   * only these 6 emit UiPerfMonitor `rows` via a plain
+          #     `scenario.run --spawn` (no --screenshotPath), so only these
+          #     produce a gate-able perf sample; and
+          #   * only these have a baseline to compare against.
+          # The other ~8 discovered scenarios are legitimately non-perf-runnable
+          # via this path — bucket-C screenshot scenarios (require
+          # --screenshotPath: command-palette-fuzzy, dock-gap-sentinel,
+          # code-syntax-coloring, theme-switch-roundtrip), the bucket-E ui-test
+          # (needs SMATCHET_BUILD_UI_TESTS, OFF here), and functional/contract
+          # gates that emit their own result JSON with no perf `rows`
+          # (command-contract-sweep, mobile-texture-guard,
+          # ai-assistant-send-s2-s4-s5). Iterating them made run_failure_count
+          # perpetually > 0 and (via the failure-issue step) kept this nightly
+          # RED for weeks. Scoping to the baseline set makes run_failure_count
+          # reflect ONLY real breakage of an in-scope scenario.
+          declare -A have_baseline=()
+          while IFS= read -r f; do
+            scen="$(basename "$f" .ci-windows-latest.json)"
+            have_baseline["$scen"]=1
+          done < <(git ls-files 'docs/perf/baselines/*.ci-windows-latest.json')
+
+          scen_list=()
+          skipped=()
+          for scen in "${all_scen[@]}"; do
+            if [ "${have_baseline[$scen]:-}" = "1" ]; then
+              scen_list+=("$scen")
+            else
+              skipped+=("$scen")
+            fi
+          done
+
+          if [ "${#scen_list[@]}" -eq 0 ]; then
+            echo "FAIL: no discovered scenario has a committed ci-windows-latest baseline."
+            exit 1
+          fi
+
           printf '%s\n' "${scen_list[@]}" > /tmp/scenarios.txt
           echo "count=${#scen_list[@]}" >> "$GITHUB_OUTPUT"
-          echo "Discovered scenarios:"
+          echo "In-scope scenarios (have a committed baseline):"
           cat /tmp/scenarios.txt
+          # NEVER silently drop — log every out-of-scope scenario so a newly
+          # baselined (or newly broken) registration is visible in the log.
+          if [ "${#skipped[@]}" -gt 0 ]; then
+            echo "::notice title=perf-full scope::Skipped ${#skipped[@]} discovered scenario(s) with no committed ci-windows-latest baseline (not perf-runnable via scenario.run --spawn): ${skipped[*]}"
+          fi
 
       - name: Run full suite + compare against baselines
         id: perf
@@ -306,25 +351,57 @@ jobs:
         if: ${{ !cancelled() && steps.perf.outputs.regression_count > 0 }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         shell: bash
         run: |
-          gh issue create \
-            --title "perf-regression: full-suite run ${{ github.run_id }}" \
-            --label "perf-regression" \
-            --body-file /tmp/perf-report.md
+          # Stable title (NO per-run-id) so this upserts a single tracking
+          # issue instead of spamming one per run. Find-then-comment mirrors
+          # the sibling nightlies (sanitizer / fuzz / monkey).
+          title="perf-regression: full-suite baseline exceeded"
+          label="perf-regression"
+          existing=$(gh issue list --state open --label "$label" --search "$title in:title" \
+                       --json number --jq '.[0].number' 2>/dev/null || true)
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            {
+              echo "Recurred: ${RUN_URL}"
+              echo ""
+              cat /tmp/perf-report.md
+            } | gh issue comment "$existing" --body-file - || true
+          else
+            {
+              echo "One or more in-scope scenarios exceeded their ci-windows-latest baseline."
+              echo ""
+              echo "Run: ${RUN_URL}"
+              echo ""
+              cat /tmp/perf-report.md
+            } | gh issue create --title "$title" --label "$label" --body-file - || true
+          fi
 
       - name: Open scenario-run-failure issue
         if: ${{ !cancelled() && steps.perf.outputs.run_failure_count > 0 }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         shell: bash
         run: |
-          gh issue create \
-            --title "perf-run-failure: full-suite run ${{ github.run_id }}" \
-            --label "perf-regression" \
-            --body "One or more scenarios in the full-suite run failed to produce output (build / exe / scenario-runner plumbing). See run ${{ github.run_id }} logs."
+          # Stable title (NO per-run-id) so this upserts a single tracking
+          # issue. Scope is now the committed-baseline set, so a run_failure
+          # here is a REAL plumbing break of an in-scope scenario (not the old
+          # "8 non-baselined scenarios always fail to spawn" noise that kept
+          # this nightly perpetually RED).
+          title="perf-run-failure: in-scope scenario produced no output"
+          label="perf-regression"
+          body="One or more IN-SCOPE scenarios (those with a committed ci-windows-latest baseline) failed to produce output — a build / exe / scenario-runner plumbing break. See the run logs for the failing scenario(s)."
+          existing=$(gh issue list --state open --label "$label" --search "$title in:title" \
+                       --json number --jq '.[0].number' 2>/dev/null || true)
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            gh issue comment "$existing" --body "Recurred: ${RUN_URL}" || true
+          else
+            gh issue create --title "$title" --label "$label" \
+              --body "${body}"$'\n\n'"Run: ${RUN_URL}" || true
+          fi
 
-      - name: Open baseline-bump PR for improvements
+      - name: Push baseline-bump branch for improvements
         if: ${{ !cancelled() && steps.perf.outputs.improvement_count > 0 }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -332,20 +409,33 @@ jobs:
         run: |
           branch="bot/perf-baseline-bump-${{ github.run_id }}"
           git checkout -b "$branch"
+          # Bump ONLY the improved scenarios' baselines. All improved scenarios
+          # are in-scope (they came out of the perf loop, which now iterates the
+          # committed-baseline set), so each bump targets a tracked file.
+          bumped=()
           while IFS= read -r scen; do
             [ -z "$scen" ] && continue
             bash scripts/dev/perf-baseline.sh bump "$scen" --host=ci-windows-latest --yes
+            bumped+=("docs/perf/baselines/${scen}.ci-windows-latest.json")
           done < /tmp/improved.txt
           git config user.email "smatchet-perf-bot@noreply.local"
           git config user.name  "smatchet-perf-bot"
-          git add docs/perf/baselines/
+          # Stage ONLY the tracked baselines we just bumped — never a broad
+          # `git add docs/perf/baselines/` (that would also sweep in any
+          # untracked bootstrap writes). Mirrors the recapture step.
+          git add "${bumped[@]}"
+          if git diff --cached --quiet; then
+            echo "::notice::improvement bump produced no baseline changes — nothing to push."
+            exit 0
+          fi
           git commit -m "chore(perf): bump ci-windows-latest baselines after improvement"
           git push -u origin "$branch"
-          gh pr create \
-            --title "chore(perf): bump baselines after improvement" \
-            --base develop \
-            --body "Auto-generated by .github/workflows/perf-full.yml run ${{ github.run_id }}. Reviews the improvement deltas + merges to lock in the new floor." \
-            --draft
+          # NOTE: no `gh pr create` here — this repo disables "Allow GitHub
+          # Actions to create and approve pull requests", so GITHUB_TOKEN can't
+          # open a PR (GraphQL: not permitted, createPullRequest). Push the
+          # branch; the orchestrator opens the review PR from it. Same push-only
+          # pattern as the recapture step below.
+          echo "::notice title=baseline-bump branch pushed::$branch — open the review PR from this branch to lock in the improved floor (gh Actions cannot create PRs on this repo)."
 
       # Manual recapture (perf-gate step-5 Phase 2): refresh the EXISTING
       # ci-windows-latest baselines from this on-runner run — not gated on an
