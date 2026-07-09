@@ -41,8 +41,21 @@ setup() {
     else
         LOCALAPPDATA="$SMATCHET_TEST_TMP"
     fi
-    export LOCALAPPDATA
+    # POSIX watcher root — without this the CLI writes into the REAL
+    # $HOME/.local/state and the tests read $LOCALAPPDATA, so every case
+    # false-failed headless AND leaked registry state across runs (the same
+    # both-env-vars rule merge_watcher.bats setup() documents).
+    XDG_STATE_HOME="$SMATCHET_TEST_TMP"
+    export LOCALAPPDATA XDG_STATE_HOME
     export PYTHONIOENCODING=utf-8
+
+    # WATCH_ROOT = where watcher_root() actually lands per-OS (Windows Python
+    # reads LOCALAPPDATA/Smatchet; POSIX reads XDG_STATE_HOME/smatchet).
+    case "$OSTYPE" in
+        msys*|cygwin*|win*) WATCH_ROOT="$LOCALAPPDATA/Smatchet/merge-watch" ;;
+        *) WATCH_ROOT="$XDG_STATE_HOME/smatchet/merge-watch" ;;
+    esac
+    export WATCH_ROOT
 }
 
 teardown() {
@@ -66,7 +79,7 @@ import sys, os, importlib.util, json, types
 os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
-clone = json.load(open(os.path.join(r'$LOCALAPPDATA','Smatchet','merge-watch','active.json')))[0]['clone_path']
+clone = json.load(open(os.path.join(r'$WATCH_ROOT', 'active.json')))[0]['clone_path']
 # Patch every gh seam poll_one touches so it reaches the gates-parse path
 # deterministically + offline. A CR-finding gates result is returncode 1 -> BLOCKED.
 m._pr_lifecycle_state = lambda pr, cp: 'OPEN'
@@ -96,7 +109,7 @@ import sys, os, importlib.util, json
 os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
-entry = json.load(open(os.path.join(r'$LOCALAPPDATA','Smatchet','merge-watch','active.json')))[0]
+entry = json.load(open(os.path.join(r'$WATCH_ROOT', 'active.json')))[0]
 m._gh_owner_repo = lambda cp: ('acme', 'smatchet')
 m.ensure_pr_ready_for_review = lambda owner, repo, pr: True
 m.detect_merged_branch_name = lambda owner, repo, pr: 'feat/x'
@@ -125,7 +138,7 @@ import sys, os, importlib.util, json
 os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
-entry = json.load(open(os.path.join(r'$LOCALAPPDATA','Smatchet','merge-watch','active.json')))[0]
+entry = json.load(open(os.path.join(r'$WATCH_ROOT', 'active.json')))[0]
 m._gh_owner_repo = lambda cp: ('acme', 'smatchet')
 m.ensure_pr_ready_for_review = lambda owner, repo, pr: True
 m.detect_merged_branch_name = lambda owner, repo, pr: 'feat/x'
@@ -158,7 +171,7 @@ import sys, os, importlib.util, json, types
 os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
-entry = json.load(open(os.path.join(r'$LOCALAPPDATA','Smatchet','merge-watch','active.json')))[0]
+entry = json.load(open(os.path.join(r'$WATCH_ROOT', 'active.json')))[0]
 m._pr_lifecycle_state = lambda pr, cp: 'OPEN'
 m._poll_owner_repo = lambda pr, cp: ('acme', 'smatchet')
 m.ensure_pr_ready_for_review = lambda owner, repo, pr: True
@@ -173,11 +186,11 @@ print('OK')
     [[ "$output" == *"last_state: BLOCKED"* ]]
     [[ "$output" == *"OK"* ]]
     # State file should exist after write_state.
-    [ -f "$LOCALAPPDATA/Smatchet/merge-watch/state/100.json" ]
+    [ -f "$WATCH_ROOT/state/100.json" ]
     # Unregister wipes the entry + its state file.
     run watch_cli unregister 100
     [ "$status" -eq 0 ]
-    [ ! -f "$LOCALAPPDATA/Smatchet/merge-watch/state/100.json" ]
+    [ ! -f "$WATCH_ROOT/state/100.json" ]
     run watch_cli list
     [ "$status" -eq 0 ]
     [[ "$output" == "[]" ]]

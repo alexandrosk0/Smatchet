@@ -1153,7 +1153,7 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     // buffer actually differs — the panel redraws every frame, so an unconditional assign()
     // copies (and can reallocate) the std::string each frame even when nothing was typed. The
     // std::string vs const char* compare is allocation-free and skips the write in the steady
-    // state (same per-frame-alloc guard as the omnibar mirror, PR #1600).
+    // state (same per-frame-alloc guard as the omnibar mirror).
     if (d.assistantInputBuf != s_inputCharBuf.data()) {
         d.assistantInputBuf.assign(s_inputCharBuf.data());
     }

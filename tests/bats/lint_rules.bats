@@ -664,8 +664,10 @@ setup() {
     printf '#pragma once\n// header line one\n' > "$tmp/Source/Core/include/X.h"
     ( cd "$tmp" && git init -q && git config user.email a@b.c && git config user.name t \
         && git add -A && git commit -qm base ) >/dev/null 2>&1
-    # Add a bare // (blank-run, auto-strippable) + prose + commented-out code (NOT auto-strippable).
-    printf '//\n// kept prose paragraph here\n// foo(bar);\n' >> "$tmp/Source/Core/include/X.h"
+    # Add a RUN of two bare // (auto-strippable) + prose + commented-out code (NOT
+    # auto-strippable). Two, not one: a LONE bare // flanked by textual comment lines
+    # is the allowed intra-block paragraph separator, which --fix deliberately keeps.
+    printf '//\n//\n// kept prose paragraph here\n// foo(bar);\n' >> "$tmp/Source/Core/include/X.h"
     run bash -c "cd '$tmp' && '$PY' '$AUDIT' --fix HEAD"
     [ "$status" -eq 0 ]
     # The bare // is gone; the prose + the code-like line (manual reword) stay; header intact.
