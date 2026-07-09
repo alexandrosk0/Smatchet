@@ -44,6 +44,14 @@ TEST_PORT="${SMATCHET_TEST_PORT:-58745}"
 # imgui_test_engine's filter is substring-match (NOT a glob). "ConcurrentReloadHooks"
 # matches AutomationReloadHooksRace/ConcurrentReloadHooks_ConcurrentDrawLuaWindows.
 FILTER="${UI_TEST_FILTER:-ConcurrentReloadHooks}"
+# Hard wall-clock cap so a hung worker join / UI-thread hop (e.g. a regression
+# reintroducing the automation.reload-hooks wedge this test guards against)
+# never wedges CI — the test's own bounded frame loop cannot force a stuck
+# std::thread::join() to return (no-detach is an absolute rule here), so the
+# process-level timeout is the actual backstop. Same convention as
+# test-ui-ai-assistant-model-change.sh; guarded on `timeout` being present
+# (git-bash on Windows may lack it).
+RUN_TIMEOUT_SECS="${SMATCHET_RUN_TIMEOUT_SECS:-180}"
 
 if [ ! -f "$EXE" ]; then
     echo "FAIL: $EXE not found. Build with:" >&2
@@ -56,8 +64,14 @@ echo "[test-ui-automation-reload-hooks-race] launching ephemeral Smatchet (exe=$
 export ASAN_OPTIONS="${ASAN_OPTIONS:-abort_on_error=1:halt_on_error=1:symbolize=1}"
 export UBSAN_OPTIONS="${UBSAN_OPTIONS:-print_stacktrace=1:halt_on_error=1}"
 
-RAW_OUTPUT="$("$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
-    --mcp-port="$TEST_PORT" 2>&1 || true)"
+if command -v timeout >/dev/null 2>&1; then
+    RAW_OUTPUT="$(timeout "$RUN_TIMEOUT_SECS" "$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
+        --mcp-port="$TEST_PORT" 2>&1 || true)"
+else
+    echo "[test-ui-automation-reload-hooks-race] warning: 'timeout' not found — running without wall-clock guard." >&2
+    RAW_OUTPUT="$("$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
+        --mcp-port="$TEST_PORT" 2>&1 || true)"
+fi
 
 echo "$RAW_OUTPUT" | tail -60
 

@@ -217,6 +217,20 @@ void RegisterAutomationReloadHooksRaceVariant(ImGuiTestEngine* engine) {
             }
         }
 
+        // A worker that's still not `done` here means the safety valve tripped — the
+        // UI-thread hop wedged (the exact regression this test exists to catch). Log it
+        // loudly BEFORE the blocking join() below: if the wedge is real, join() itself
+        // can't be made non-blocking (no-detach is an absolute rule), so the actual
+        // CI backstop is the process-level wall-clock timeout in
+        // scripts/dev/test-ui-automation-reload-hooks-race.sh (SMATCHET_RUN_TIMEOUT_SECS)
+        // — this log line is what a human sees in the truncated output once that timeout
+        // kills the process (CodeRabbit PR #1695 review).
+        if (!s->worker.done.load(std::memory_order_acquire)) {
+            ctx->LogError("automation.reload-hooks worker did not complete within the frame "
+                          "budget — the UI-thread hop appears wedged; joining now may block "
+                          "until the process-level test timeout kills it.");
+        }
+
         worker.join();
 
         // Liveness / sanity (the sanitizer is the real oracle). Both bounded loops must have
