@@ -33,6 +33,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <memory>
 #include <string>
 #include <thread>
@@ -50,6 +51,18 @@ std::unique_ptr<IAiClient> MakeStub(AiProvider /*provider*/) {
     return std::make_unique<smatchet_tests::StubAiClient>(script);
 }
 
+constexpr std::size_t kManyChunks = 64;
+
+// Stub for the coalescing test: many tiny chunks emitted back-to-back (no per-delta
+// sleep) so they land well inside one 80 ms flush window on the worker side.
+std::unique_ptr<IAiClient> MakeManyChunkStub(AiProvider /*provider*/) {
+    smatchet_tests::StubAiClientScript script;
+    script.ProviderName = "stub";
+    script.DeltaSequence.assign(kManyChunks, "x");
+    script.PerDeltaSleepMs = 0;
+    return std::make_unique<smatchet_tests::StubAiClient>(script);
+}
+
 } // namespace
 
 TEST_CASE("AiAssistantController: streaming worker→dispatcher→UI-state hand-off is race-free") {
@@ -57,8 +70,8 @@ TEST_CASE("AiAssistantController: streaming worker→dispatcher→UI-state hand-
 
     MainThreadDispatcher dispatcher;
     smatchet_tests::FakeAiAssistantUiState ui;
-    ui.hydrated = false;          // skip the SQLite persist enqueue path (no LocalCacheManager wired)
-    ui.turnGen = 1;               // match Submit's turnGen so posted callbacks are not dropped as stale
+    ui.hydrated = false; // skip the SQLite persist enqueue path (no LocalCacheManager wired)
+    ui.turnGen = 1;      // match Submit's turnGen so posted callbacks are not dropped as stale
 
     {
         AiAssistantController controller(dispatcher, ui);
@@ -97,8 +110,7 @@ TEST_CASE("AiAssistantController: streaming worker→dispatcher→UI-state hand-
         // almost immediately; a regression that breaks the post-back falls through and fails the
         // CHECKs below instead of hanging CI.
         const auto handoffDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-        while (!handoffDone.load(std::memory_order_acquire) &&
-               std::chrono::steady_clock::now() < handoffDeadline) {
+        while (!handoffDone.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < handoffDeadline) {
             std::this_thread::yield();
         }
 
@@ -116,6 +128,47 @@ TEST_CASE("AiAssistantController: streaming worker→dispatcher→UI-state hand-
     CHECK(ui.history.size() == 1u);
     CHECK(ui.history.size() == ui.historyRowIds.size()); // the two parallel vectors stay in lock-step
     CHECK(dispatcher.QueueLen() == 0u);
+}
+
+TEST_CASE("AiAssistantController: worker-side coalescing posts far fewer dispatcher tasks than chunks") {
+    AiClientFactory::SetTestOverride(&MakeManyChunkStub);
+
+    MainThreadDispatcher dispatcher;
+    smatchet_tests::FakeAiAssistantUiState ui;
+    ui.hydrated = false;
+    ui.turnGen = 3;
+
+    std::size_t drainedTasks = 0;
+    {
+        AiAssistantController controller(dispatcher, ui);
+        const bool submitted = controller.Submit(3, "many chunks", std::vector<AiContextBlock>());
+        CHECK(submitted);
+
+        // Drain on this thread only and count every task that ran. The final delta's
+        // task commits the assistant message, and it is the last post the stream can
+        // produce — once history is non-empty the drained-task total equals the total
+        // posts the worker made for the whole stream.
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (ui.history.empty() && std::chrono::steady_clock::now() < deadline) {
+            dispatcher.Drain();
+            drainedTasks += dispatcher.LastDrainTaskCount();
+            std::this_thread::yield();
+        }
+    }
+
+    dispatcher.Drain();
+    AiClientFactory::SetTestOverride(nullptr);
+
+    // Coalescing must not reorder or drop content: exactly one committed message
+    // carrying every streamed byte.
+    REQUIRE(ui.history.size() == 1u);
+    CHECK(ui.history[0].Content == std::string(kManyChunks, 'x'));
+    // Pre-coalescing behaviour posted one task per chunk (kManyChunks + final = 65).
+    // A tight no-sleep stream coalesces into 1-2 flush windows; the loose bound
+    // absorbs scheduler pauses (each >80 ms stall adds one post) without letting a
+    // per-chunk-post regression pass.
+    CHECK(drainedTasks >= 1u);
+    CHECK(drainedTasks <= 8u);
 }
 
 TEST_CASE("AiAssistantController: Submit then Cancel racing the worker is race-free") {

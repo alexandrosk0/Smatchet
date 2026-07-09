@@ -289,9 +289,10 @@ class AiAssistantController {
     // captured by value so stale callbacks (after a newer Submit or Cancel) drop
     // via the `assistantTurnGen` comparison on the UI side.
 
-    /// Build the per-delta callback: appends streamed chunks to the UI stream
-    /// buffer (4 MiB hard cap) and, on the final delta, commits the assistant
-    /// message to history + the persist queue.
+    /// Build the per-delta callback: coalesces streamed chunks on the worker
+    /// (flushing per 4 KB / 80 ms window or on the final delta), appends them to
+    /// the UI stream buffer (4 MiB hard cap) and, on the final delta, commits
+    /// the assistant message to history + the persist queue.
     IAiClient::DeltaCallback MakeOnDelta(uint64_t turnGen);
 
     /// Build the error/cancel callback: records the terminal state, then on the

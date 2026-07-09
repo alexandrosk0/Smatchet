@@ -38,20 +38,41 @@
 #include <unordered_set>
 #include <iterator>
 
+// Include-list scaffold — dup_audit token-normalizes every include to the same
+// `# include LIT` run, so touching this block re-hashes a maximal run that matches
+// sibling AppController TUs' include blocks. Idiomatic boilerplate, not shared logic.
+// SMATCHET_DEVIATION(rule=duplication; reason=include-block scaffold clone; owner=lua-automation; revisit=2026-12-31)
 #include <nlohmann/json.hpp>
 
 #include "Json/BoundedJsonParse.h"
 
+#include "DictationInsertionRouter.h"
 #include "imgui.h"
 #include "Logger.h"
 #include "LuaImagePathPolicyPure.h"
 #include "SmatchetFieldIconRender.h"
+#include "SmatchetLocalizedImGui.h"
 #include "StringUtil.h"
 #include "TicketGridModel.h"
 #include "TrackerFieldValueUtils.h"
 #include "UiPerfMonitor.h"
 
 #include "AppController_LuaBindings_detail.h"
+
+namespace smatchet {
+namespace lua {
+
+// See the declaration comment in AppController_LuaTypes.h — blur-time unregister alone
+// leaves a dangling router entry when the owning cmd list is rebuilt while the widget
+// holds focus. Unregistering a never-registered buffer is a cheap no-op scan.
+ImCmd::~ImCmd() {
+    if (op == Op::InputText && !textBuf.empty()) {
+        g_dictationRouter.UnregisterInputText(textBuf.data());
+    }
+}
+
+} // namespace lua
+} // namespace smatchet
 
 // LuaDrawList method definitions — class declared in AppController_LuaBindings_detail.h.
 // See docs/plans/shipped/lua-recorded-cmd-list.md § Crash-safety hardening for per-method
@@ -403,6 +424,12 @@ void ReplayInputText(ReplayCtx& ctx, smatchet::lua::ImCmd& c) {
     const ImGuiInputTextFlags flags = ctx.isReadOnly ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_None;
     ImGui::InputText(c.str.c_str(), c.textBuf.data(), c.textBuf.size(), flags);
     if (!ctx.isReadOnly) {
+        // Dictation parity with the SmatchetLocalizedImGui wrappers (whisper Phase D):
+        // register the replay buffer while the widget is focused, unregister on blur.
+        // ReadOnly widgets are skipped — a router splice writes into the buffer
+        // directly and would bypass the ReadOnly flag. ~ImCmd unregisters on
+        // cmd-list rebuild so the router never holds a freed textBuf pointer.
+        SmatchetLocalizedImGui::HookDictationOnLastItem(c.textBuf.data(), c.textBuf.size());
         if (ImGui::IsItemDeactivatedAfterEdit() && c.callback) {
             InvokeLuaCallbackSandboxed3(ctx.lua, c.callback, ctx.cbArg1, ctx.cbArg2, std::string(c.textBuf.data()));
             ctx.fired |= static_cast<std::uint8_t>(K::Commit);

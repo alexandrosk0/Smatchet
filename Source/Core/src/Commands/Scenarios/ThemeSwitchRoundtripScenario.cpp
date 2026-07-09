@@ -15,14 +15,15 @@
 #include "SmatchetThemeIds.h"
 #include "SmatchetUiSession.h"
 
-#include <algorithm>
-#include <cctype>
 #include <string>
 
 // Same singleton extern shim as DockGapSentinelScenario.cpp + BuiltinCommands_
 // Debug.cpp — the SmatchetUiSession.h-side extern is gated on
 // SMATCHET_WITH_LUA_AUTOMATION while g_ui itself is defined unconditionally
 // in SmatchetUI.cpp.
+// File-top scaffold clone across sibling scenarios — see the matching marker in
+// DockGapSentinelScenario.cpp; the extractable parts now live in ScenarioArgs.h.
+// SMATCHET_DEVIATION(rule=duplication; reason=file-top scaffold clone; owner=command-system; revisit=2026-12-31)
 extern UiDrawSession g_ui;
 
 namespace smatchet {
@@ -30,56 +31,8 @@ namespace cmd {
 
 namespace {
 
-// CLI args land as JSON strings (Source/Standalone/CliCommandRunner.cpp § ParseArgs
-// stores --key=value as `string`). Scenarios must coerce defensively or risk
-// nlohmann::json::type_error.302 when args.value<int>(...) hits a string.
-int IntArg(const nlohmann::json& args, const char* key, int fallback) {
-    if (!args.contains(key))
-        return fallback;
-    const auto& v = args[key];
-    if (v.is_number())
-        return v.get<int>();
-    if (v.is_string()) {
-        try {
-            return std::stoi(v.get<std::string>());
-        } catch (...) {
-            return fallback;
-        }
-    }
-    return fallback;
-}
-// Booleans show up as JSON bools when the runner forwards a Lua/MCP-side
-// boolean directly, but the CLI flow stringifies every `--flag=value` so we
-// also accept the textual forms "true" / "1" (case-insensitive). Anything
-// else falls back to the supplied default, matching the IntArg pattern above.
-bool BoolArg(const nlohmann::json& args, const char* key, bool fallback) {
-    if (!args.contains(key))
-        return fallback;
-    const auto& v = args[key];
-    if (v.is_boolean())
-        return v.get<bool>();
-    if (v.is_number())
-        return v.get<int>() != 0;
-    if (v.is_string()) {
-        std::string s = v.get<std::string>();
-        std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(::tolower(c)); });
-        if (s == "true" || s == "1" || s == "yes")
-            return true;
-        if (s == "false" || s == "0" || s == "no")
-            return false;
-    }
-    return fallback;
-}
-std::string StringArg(const nlohmann::json& args, const char* key, const std::string& fallback) {
-    if (!args.contains(key))
-        return fallback;
-    const auto& v = args[key];
-    if (v.is_string())
-        return v.get<std::string>();
-    if (v.is_number())
-        return std::to_string(v.get<long long>());
-    return fallback;
-}
+// IntArg/BoolArg/StringArg come from the shared Commands/Scenarios/ScenarioArgs.h
+// (via ScenarioScreenshotPath.h) — the per-scenario anon-namespace copies are gone.
 
 class ThemeSwitchRoundtripScenario : public IScenario {
   public:

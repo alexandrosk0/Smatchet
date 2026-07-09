@@ -51,6 +51,17 @@ struct ImCmd {
     sol::protected_function onDeactivatedAfterEdit;
     std::vector<char> textBuf;
     ImCmd() : op(Op::Separator), f1(0), f2(0), f3(0), f4(0), i1(0) {}
+    // Unregisters textBuf from the dictation router (CPP_CODE_AUDIT.md #21: non-static
+    // registered buffers must unregister in their owner's destructor, not just on blur —
+    // a cmd-list rebuild mid-focus would otherwise leave the router holding a freed
+    // pointer). Defined in AppController_LuaBindings_Draw.cpp to keep the router include
+    // out of this header. Copy/move stay defaulted: a moved-from textBuf is empty, so
+    // vector reallocation never unregisters a live buffer.
+    ~ImCmd();
+    ImCmd(const ImCmd&) = default;
+    ImCmd& operator=(const ImCmd&) = default;
+    ImCmd(ImCmd&&) = default;
+    ImCmd& operator=(ImCmd&&) = default;
 };
 
 struct LuaFieldCacheEntry {
