@@ -83,20 +83,20 @@ fi
 TESTALL_CI="${SMATCHET_TESTALL_CI:-0}"
 if [ "${1:-}" = "--ci" ]; then TESTALL_CI=1; shift; fi
 # Suites skipped in the CI lane. Each entry needs a reason; trim as follow-ups land.
-#   *-bats merge-watcher / pr-status-watch — registry/state-machine + live `gh`
-#     seams fail headless (tracked: agentic-selftests CI follow-up).
 #   p4-dual-vcs — needs a p4d server (self-skips anyway; listed for clarity).
-#   lint-rules-bats — one `comment_audit.py --fix HEAD` case fails headless
-#     (tracked); the same rules are gated by test-lint-rules.sh in doc-validation.
-#   bucket-lane-launch-smoke-bats — needs the Mesa GL bucket harness.
 #   doctor — dev-env doctor demanding the Windows C++ toolchain (cl.exe/clang-cl).
 #   plan-index / docs — need full git history (shallow-clone drifts); already
 #     gated on full history by doc-validation.yml (no coverage loss here).
 #   guard-head-drift-bats / guard-plan-lock-bats / session-registry-bats — one
 #     assertion each is sensitive to the headless CI checkout (git worktree /
-#     PID-liveness / run-as-non-root) in a way that does not reproduce locally;
+#     PID-liveness / run-as-non-root) in a way that does not reproduce locally
+#     (retried: non-root user + fresh detached-HEAD clone still all-green);
 #     tracked for hardening + un-skip (the rest of each suite passes).
-CI_SKIP_RE='(test-merge-watcher-bats|test-merge-watcher-integration-bats|test-pr-status-watch-bats|test-p4-dual-vcs|test-lint-rules-bats|test-bucket-lane-launch-smoke-bats|test-doctor|test-plan-index|test-docs|test-guard-head-drift-bats|test-guard-plan-lock-bats|test-session-registry-bats)'
+# Retired (now green headless): merge-watcher-bats + merge-watcher-integration-bats
+# (POSIX watcher-root sandboxing + seam stubs), pr-status-watch-bats (fixed by the
+# block-on-any-red rework), lint-rules-bats (fixture made a genuine blank-run),
+# bucket-lane-launch-smoke-bats (stub emits a real decodable PNG).
+CI_SKIP_RE='(test-p4-dual-vcs|test-doctor|test-plan-index|test-docs|test-guard-head-drift-bats|test-guard-plan-lock-bats|test-session-registry-bats)'
 
 # Collect test scripts across all roots that hold them. Product/build tests
 # stay under scripts/dev/; the agentic test-* suites live under
