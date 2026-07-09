@@ -146,21 +146,21 @@ void RegisterMainLuaDriver(RaceTestState& s) {
     }
     std::string err;
     std::string summary;
-    const bool ok =
-        s.app->ExecuteLuaConsoleSnippet("ui.register_window('__reload_hooks_race_window', function(draw)\n"
-                                        "  local total = 0\n"
-                                        "  for i = 1, 16 do total = total + i end\n"
-                                        "  local t = { a = total, b = 'race-' .. tostring(total) }\n"
-                                        "  draw:text('sum=' .. tostring(t.a))\n"
-                                        "  draw:text_unformatted(t.b)\n"
-                                        "  draw:separator()\n"
-                                        "end)\n",
-                                        err, summary);
+    const bool ok = s.app->ExecuteLuaConsoleSnippet("ui.register_window('__reload_hooks_race_window', function(draw)\n"
+                                                    "  local total = 0\n"
+                                                    "  for i = 1, 16 do total = total + i end\n"
+                                                    "  local t = { a = total, b = 'race-' .. tostring(total) }\n"
+                                                    "  draw:text('sum=' .. tostring(t.a))\n"
+                                                    "  draw:text_unformatted(t.b)\n"
+                                                    "  draw:separator()\n"
+                                                    "end)\n",
+                                                    err, summary);
     s.windowRegistered = ok;
 }
 
 void RegisterAutomationReloadHooksRaceVariant(ImGuiTestEngine* engine) {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "AutomationReloadHooksRace", "ConcurrentReloadHooks_ConcurrentDrawLuaWindows");
+    ImGuiTest* t =
+        IM_REGISTER_TEST(engine, "AutomationReloadHooksRace", "ConcurrentReloadHooks_ConcurrentDrawLuaWindows");
     t->UserData = &g_reloadHooksRaceState;
 
     // GuiFunc runs INSIDE the ImGui frame on the UI thread every yielded frame — the exact

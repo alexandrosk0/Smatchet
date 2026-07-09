@@ -17,7 +17,8 @@
 #include <vector>
 
 class AppController;
-class IMainThreadPoster; // fan-in Phase 5: a migrated registrar that marshals to the UI thread takes this alongside its domain facet
+class IMainThreadPoster; // fan-in Phase 5: a migrated registrar that marshals to the UI thread takes this alongside its
+                         // domain facet
 // fan-in Phase 5: the migrated per-category registrars take a narrow IApp* facet, not AppController.
 class IAppOfflineQueue;
 class IAppMeta;
