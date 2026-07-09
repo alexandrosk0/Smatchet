@@ -912,8 +912,8 @@ const TranslationEntry kEntries[] = {
     {"whisper.preferences.hotkeyRebindButton", "Click to rebind", u8"Cliquez pour redéfinir"},
     {"whisper.preferences.hotkeyCapturing", "Press a key combo... (Esc to cancel)",
      u8"Appuyez sur une combinaison... (Échap pour annuler)"},
-    {"whisper.preferences.hotkeyErrorModifiersOnly", "Hotkey must include a non-modifier key",
-     u8"La combinaison doit inclure une touche autre que modificateur"},
+    {"whisper.preferences.hotkeyErrorModifiersOnly", "Hotkey must include a modifier key (Ctrl, Alt, Shift, or Win)",
+     u8"La combinaison doit inclure une touche modificatrice (Ctrl, Alt, Maj ou Win)"},
     {"whisper.preferences.hotkeyErrorReserved", "That combo is reserved by the operating system",
      u8"Cette combinaison est réservée par le système d'exploitation"},
     {"whisper.preferences.hotkeyErrorParse", "Could not parse the captured key combo",
@@ -953,6 +953,9 @@ const TranslationEntry kEntries[] = {
     {"whisper.preferences.rerunSetup.button", "Re-run setup banner", u8"Relancer la bannière de configuration"},
     {"whisper.preferences.rerunSetup.tooltip", "Forces WhisperSetupCompleted=false; banner appears next launch",
      u8"Force WhisperSetupCompleted=false ; la bannière réapparaît au prochain lancement"},
+    {"whisper.preferences.testE2E.hint",
+     "(records 4 s; the cloud route uploads audio to OpenAI, the local route stays on-device)",
+     u8"(enregistre 4 s ; la voie cloud envoie l'audio à OpenAI, la voie locale reste sur l'appareil)"},
 
     // user-facing-text-i18n-sweep — literals that previously bypassed the lookup
     // (raw ImGui calls, toast titles/messages, combo item arrays).

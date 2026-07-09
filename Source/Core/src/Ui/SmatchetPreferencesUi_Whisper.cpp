@@ -108,6 +108,16 @@ void DrawWhisperEnableAndMode(UiDrawSession& d) {
     }
 }
 
+// Persist the Recommended default the combo displays when no model is
+// configured, so the presence check + Download button act on the model the
+// user sees.
+void SeedDefaultWhisperModel(UiDrawSession& d, const std::vector<smatchet::whisper::catalog::Entry>& catalog) {
+    if (d.cfg.WhisperModel.empty() && catalog.size() > 1) {
+        d.cfg.WhisperModel = catalog[1].Id;
+        MarkPrefsDirty(d);
+    }
+}
+
 void DrawWhisperModelPicker(AppController& app, UiDrawSession& d) {
     // Model picker + download button.
     const std::string sharedDir = ConfigManager::GetPlatformSharedUserDataDirectory();
@@ -120,6 +130,7 @@ void DrawWhisperModelPicker(AppController& app, UiDrawSession& d) {
         modelDir += "whisper";
     }
     const auto& catalog = smatchet::whisper::catalog::All();
+    SeedDefaultWhisperModel(d, catalog);
     int selIdx = 1; // default Recommended
     const auto selectedModelIt =
         std::find_if(catalog.begin(), catalog.end(),
@@ -238,7 +249,7 @@ void CommitCapturedHotkey(UiDrawSession& d, WhisperPrefsTabState& state, unsigne
     // Reject combos with no modifier — a bare key is a global hotkey landmine.
     if (hk.mods == 0) {
         state.hotkeyError = SmatchetLocalization::T("whisper.preferences.hotkeyErrorModifiersOnly",
-                                                    "Hotkey must include a non-modifier key");
+                                                    "Hotkey must include a modifier key (Ctrl, Alt, Shift, or Win)");
         state.capturing = false;
         return;
     }
@@ -553,7 +564,7 @@ struct WhisperE2ERoute {
 // self-contained). Pick effective route per the user's spec:
 //   - cloud: require key
 //   - local: require model file present
-//   - auto:  prefer cloud when key present, fall back to local
+//   - auto:  prefer local when present, fall back to cloud (per the mode label)
 WhisperE2ERoute ResolveE2ERoute(const TrackerConfig& cfgSnap) {
     WhisperE2ERoute route;
     const std::string requestedMode = cfgSnap.WhisperMode.empty() ? std::string("auto") : cfgSnap.WhisperMode;
@@ -583,10 +594,10 @@ WhisperE2ERoute ResolveE2ERoute(const TrackerConfig& cfgSnap) {
             route.effectiveMode = "local";
         }
     } else { // auto
-        if (!route.resolvedKey.empty()) {
-            route.effectiveMode = "cloud";
-        } else if (localPresent) {
+        if (localPresent) {
             route.effectiveMode = "local";
+        } else if (!route.resolvedKey.empty()) {
+            route.effectiveMode = "cloud";
         } else {
             route.fastFail = "Auto mode needs either an API key (for cloud) or a "
                              "downloaded local model. Neither was found.";
@@ -747,7 +758,9 @@ void DrawWhisperTestE2E(AppController& app, UiDrawSession& d, WhisperPrefsTabSta
         ImGui::EndDisabled();
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("(records 4 s + uploads to whisper for end-to-end check)");
+    ImGui::TextDisabled("%s", SmatchetLocalization::T("whisper.preferences.testE2E.hint",
+                                                      "(records 4 s; the cloud route uploads audio to OpenAI, "
+                                                      "the local route stays on-device)"));
     if (!state.e2eResult.empty()) {
         ImVec4 col(0.85f, 0.85f, 0.85f, 1.0f);
         if (state.e2eResultType == 1)

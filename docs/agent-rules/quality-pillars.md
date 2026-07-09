@@ -64,9 +64,9 @@ Five north-star quality invariants in two sub-groups. **UX Pillars** (1-4) are u
 
 **Pillar 5** (the first **Engineering Pillar**; [ADR-0015](../adr/0015-dry-quality-pillar-duplication-gate.md)): no NEW copy-paste duplication enters first-party C++. Unlike UX 1-4, this governs code *maintainability*, not user-facing behaviour — but it is enforced like UX 1-3, delta-gated against `origin/develop`.
 
-**Enforceable invariant (WARN-first, calibration phase):**
+**Enforceable invariant (blocking):**
 - `dup_audit.py --diff` (token-shingle + rolling-hash clone detector; identifier + literal normalized, so copy-then-rename is caught; min ~70 tokens / ~8 lines) flags any NEW cross-file copy-paste clone vs the merge-base. All existing duplication is grandfathered (snapshot `docs/high-integrity/dup-baseline.md`).
-- **WARN-first today**: a `[dup] WARN` line on stderr (via `test-lint-rules.sh --diff`, the `dup-scan.yml` advisory CI job, and `pre-ship.sh`); it does **not** block a merge yet. Graduation to a hard block is gated on a measured false-positive rate **< 10% over ~20 PRs** (plan `docs/plans/shipped/dry-pillar-dup-gate.md` § Verification).
+- **Blocking since 2026-06-21** (ADR-0015 calibration complete — graduated from the WARN-first phase): a `[dup] FAIL` fails `test-lint-rules.sh --diff` closed, and with it the required `Duplication scanner` CI context (`dup-scan.yml`); `pre-ship.sh` runs the same gate locally. Exempt a genuine new clone with a `SMATCHET_DEVIATION(rule=duplication; …)` marker on/above either occurrence.
 
 **Double-edged-DRY guardrail (co-equal with the gate):** the gate flags **copy-paste only**, never structural similarity. An exemption is **cheap and preferred over abstracting across unrelated contexts** — `SMATCHET_DEVIATION(rule=duplication; reason=…; owner=…; revisit=…)` on/above the clone. A DRY-motivated refactor that introduces a shared helper **coupling two otherwise-independent subsystems is a code-review CRITICAL**, not an improvement. Standing exemptions: dual-target forward-decls, per-backend `*Client` boilerplate, generated code.
 
@@ -80,4 +80,4 @@ Five north-star quality invariants in two sub-groups. **UX Pillars** (1-4) are u
 | 2. UI never freezes | `code-review` (sync-on-UI sniff), `spike-hunter` (p99 enforcement), `debug-detective` (root-cause when a freeze ships) | UI-thread budget: any call reachable from `ImGui::*`-frame stack. |
 | 3. Never crash | `debug-detective` (diagnose), `code-review` (RAII / bounds / nullptr review), `build-doctor` (sanitizer build gate) | Crashes block merge unconditionally. |
 | 4. Accessibility | none today | Flag in backlog; reassess pillar hardening when keyboard-nav / zoom / contrast checks have automated test support. |
-| 5. DRY (Engineering) | `code-review` (reviewer-of-record + exemption sign-off) | `dup_audit.py` delta-gate is WARN-first; duplication triage + the coupling-CRITICAL guardrail are the reviewer's. |
+| 5. DRY (Engineering) | `code-review` (reviewer-of-record + exemption sign-off) | `dup_audit.py` delta-gate is blocking; duplication triage + the coupling-CRITICAL guardrail are the reviewer's. |

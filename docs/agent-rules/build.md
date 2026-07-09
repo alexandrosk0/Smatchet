@@ -10,6 +10,14 @@ Trigger: **building** the project (configuring presets, the light build, the dua
 
 `CMakePresets.json` carries a `testPresets` section so `ctest --preset <name>` resolves for every test-bearing configure preset (`ninja-test-{msvc,clang}`, `ninja-debug-{msvc,clang}`, `ninja-{msvc,clang}-asan`, `ninja-publish-msvc`, `ninja-publish-msvc-arm64`, `ninja-tsan-linux`, `ninja-fuzzer-linux`); each sets `output.outputOnFailure: true` to match the bare `ctest --output-on-failure` the CI workflows run. The two forms are equivalent: `ctest --preset <name>` from the repo root, or `cd build/<preset> && ctest --output-on-failure` (the `working-directory` form the CI YAMLs use). Verify a preset resolves without running anything via `ctest --preset <name> -N` (list-only). `tests/fuzz/README.md` documents both forms for the fuzzer lane.
 
+## TSan on Linux (`ninja-tsan-linux`) — install the Clang TSan runtime first
+
+`SmatchetTsanTests` is the only assertion-based test executable that builds + runs headless on Linux (the primary doctest/UI rigs need MSVC ABI or ImGui/GLFW/X11/GL). On a fresh Linux container `clang-18` ships WITHOUT the compiler-rt sanitizer archives — all TUs compile but the link fails (`ld.lld: cannot open .../libclang_rt.tsan-x86_64.a`). Install the toolchain-matched runtime first:
+
+`sudo apt-get install -y libclang-rt-18-dev` (generally `libclang-rt-$LLVM_VERSION-dev`)
+
+Then `cmake --preset ninja-tsan-linux && cmake --build --preset ninja-tsan-linux && ctest --preset ninja-tsan-linux`. The preset's FetchContent deps are all git-clone based, so it configures through the agent proxy without the release-tarball 403 workaround other presets need (infra `remote-container-fetchcontent-403`). Verified end-to-end in a remote container 2026-07-09: package install → configure → 97-target build → link → suite green.
+
 ## Warnings as errors
 
 **First-party warnings are errors** (`/WX` MSVC, `-Werror` clang) — force-ON via `SMATCHET_WARNINGS_AS_ERRORS=ON` in the `_smatchet-msvc-base` / `_smatchet-clang-base` presets, so every dev + CI + light build enforces it; the CMake option itself defaults OFF for external/raw-cmake/Unreal (`vs-unreal-msvc`) consumers. FetchContent deps + vendored object libs are never passed through the strict-warning helper, so third-party warnings can't break the build.
@@ -50,6 +58,10 @@ All four bit multiple agents during the multi-grid Slice-0/1 + perf-gate-revival
 6. **Worktree-isolated build agents: redirect FetchContent at the shared cache to skip the re-fetch (optional).** A fresh worktree's `.fetchcontent-src` is empty, so its first configure cold-clones every dep. As of **#1166** (`GIT_EXEC_PATH` restore in `scripts/dev/with-msvc-env.sh`) a cold configure THROUGH the wrapper now succeeds on its own — submodule-bearing deps (cpr→curl, sol2→Catch) clone cleanly — so the redirect is no longer required for correctness. To avoid re-fetching, pass `-DFETCHCONTENT_BASE_DIR=<main-repo>/.fetchcontent-src` (e.g. `C:/Development/Smatchet/.fetchcontent-src`) on the FIRST configure so the worktree reuses the main checkout's populated dep sources. The orchestrator pre-seeds this flag in worktree-build delegation packets so agents don't rediscover it (infra `worktree-FetchContent-cache`).
 
 > **Resolved (don't re-add):** the old "never configure under bash+vcvars — cpr's FetchContent `git submodule` dies with `git-sh-setup: file not found`" workaround is **obsolete** — fixed at the source by **#1031** (`GIT_SUBMODULES ""` on every git `FetchContent_Declare`; FetchContent runs `git submodule update` unconditionally and that flag skips it). Configuring under bash+vcvars via `scripts/dev/with-msvc-env.sh` is now correct, including fresh clones. The scheduled fresh-clone-configure CI (close-gate-gaps Slice 4) is the standing gate that keeps it that way.
+
+## Remote-container (cloud sandbox) posix-core-check bootstrap
+
+In the Claude Code remote container the network policy allows `git clone` but **403s GitHub release-asset / codeload tarball downloads**, so a bare `cmake --preset posix-core-check` dies at cpr's internal FetchContent of `curl-7.80.0.tar.xz`; glfw's configure also needs `xorg-dev` + `libgl1-mesa-dev` (never built in this preset, but `find_package(X11 REQUIRED)` runs). Run `bash scripts/dev/remote-container-bootstrap.sh` once per container — it shallow-clones curl at the pinned tag into `.fetchcontent-src/curl-manual`, apt-installs the two packages, and configures the preset with `-DFETCHCONTENT_SOURCE_DIR_CURL` pointing at the clone (idempotent; `--no-configure` provisions only). Origin: infra `remote-container-fetchcontent-403` (2026-07-05 session, PRs #1614/#1615).
 
 ## ASan over the test rig
 

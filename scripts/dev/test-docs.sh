@@ -34,6 +34,10 @@ cd "$ROOT" || { echo "test-docs: cannot cd to repo root" >&2; exit 2; }
 
 CORE="agents/scripts/core"
 
+# md_lint is pure in-tree Python; the mirror needs the same interpreter CI has.
+command -v python3 >/dev/null 2>&1 || {
+  echo "test-docs: python3 not on PATH (md_lint step needs it)" >&2; exit 2; }
+
 # Ordered to match doc-validation.yml. project.config.json schema validation is
 # the workflow's one Python-jsonschema step; replicate it inline so a malformed
 # config is caught locally too.
@@ -43,6 +47,7 @@ STEPS=(
   "test-plan-index|bash $CORE/test-plan-index.sh"
   "test-plan-ref-integrity|bash $CORE/test-plan-ref-integrity.sh"
   "test-plan-naming|bash $CORE/test-plan-naming.sh"
+  "md_lint|python3 $CORE/md_lint.py --selftest && python3 $CORE/md_lint.py --all"
   "test-portable-purity|bash $CORE/test-portable-purity.sh"
   "test-config-globs|bash $CORE/test-config-globs.sh --selftest && bash $CORE/test-config-globs.sh --check"
   "test-gate-selftests|bash $CORE/test-gate-selftests.sh --selftest && bash $CORE/test-gate-selftests.sh --check"
