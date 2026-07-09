@@ -16,6 +16,7 @@
 #include "SmatchetChatPersistWorker.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -392,9 +393,28 @@ IAiClient::DeltaCallback AiAssistantController::MakeOnDelta(uint64_t turnGen) {
     MainThreadDispatcher* dispatcher = &dispatcher_;
     IAiAssistantUiState* ui = &uiState_;
 
-    return [dispatcher, ui, turnGen](const AiStreamDelta& delta) {
-        const std::string chunk = delta.TokenChunk;
+    // Worker-side coalescing: fast providers stream 30-50 chunks/s and each post
+    // costs a dispatcher round-trip + a UI redraw. Buffer chunks locally and post
+    // one task per flush window (>4 KB accumulated, ~80 ms elapsed, or the final
+    // delta). State lives in a shared_ptr so std::function copies share it.
+    struct CoalesceState {
+        std::string pending;
+        std::chrono::steady_clock::time_point lastPostAt = std::chrono::steady_clock::now();
+    };
+    auto coalesce = std::make_shared<CoalesceState>();
+
+    return [dispatcher, ui, turnGen, coalesce](const AiStreamDelta& delta) {
+        coalesce->pending.append(delta.TokenChunk);
         const bool isFinal = delta.IsFinal;
+        constexpr std::size_t kFlushBytes = 4u * 1024u;
+        constexpr std::chrono::milliseconds kFlushWindow(80);
+        const auto now = std::chrono::steady_clock::now();
+        if (!isFinal && coalesce->pending.size() <= kFlushBytes && now - coalesce->lastPostAt < kFlushWindow) {
+            return;
+        }
+        coalesce->lastPostAt = now;
+        std::string chunk;
+        chunk.swap(coalesce->pending);
         dispatcher->PostToMainThread([ui, turnGen, chunk, isFinal]() {
             if (ui->AssistantTurnGen() != turnGen) {
                 return; // stale callback — Cancel or newer Submit raced us

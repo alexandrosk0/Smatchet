@@ -27,59 +27,20 @@ namespace cmd {
 
 namespace {
 
-// CLI args land as JSON strings (Source/Standalone/CliCommandRunner.cpp § ParseArgs
-// stores --key=value as `string`). Scenarios must coerce defensively or risk
-// nlohmann::json::type_error.302 when args.value<int>(...) hits a string.
-int IntArg(const nlohmann::json& args, const char* key, int fallback) {
-    if (!args.contains(key))
-        return fallback;
-    const auto& v = args[key];
-    if (v.is_number())
-        return v.get<int>();
-    if (v.is_string()) {
-        try {
-            return std::stoi(v.get<std::string>());
-        } catch (...) {
-            return fallback;
-        }
-    }
-    return fallback;
-}
-std::string StringArg(const nlohmann::json& args, const char* key, const std::string& fallback) {
-    if (!args.contains(key))
-        return fallback;
-    const auto& v = args[key];
-    if (v.is_string())
-        return v.get<std::string>();
-    if (v.is_number())
-        return std::to_string(v.get<long long>());
-    return fallback;
-}
-
 class CommandPaletteFuzzyScenario : public IScenario {
   public:
     std::string Name() const override { return "command-palette-fuzzy"; }
 
     void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& outErr) override {
-        warmupFrames_ = IntArg(args, "warmupFrames", 8);
-        if (warmupFrames_ < 2) {
-            // The palette open request lands on frame 0 and the modal
-            // renders the next frame; need at least two frames before the
-            // screenshot is meaningful.
-            warmupFrames_ = 2;
-        }
-        captureSize_ = ParseScenarioCaptureSize(args);
+        // Shared prologue: warmup/captureSize parse + screenshotPath require/confine
+        // (#1566 class). warmupMin=2 — the palette open request lands on frame 0 and
+        // the modal renders the next frame, so at least two frames must pass before
+        // the screenshot is meaningful. Must precede the latch flip below so a
+        // rejected path leaves no session state mutated.
+        if (!ConfigureScreenshotScenario("command-palette-fuzzy", args, 8, 2, warmupFrames_, captureSize_,
+                                         screenshotPath_, outErr))
+            return;
         filter_ = StringArg(args, "filter", std::string("scenario."));
-        screenshotPath_ = StringArg(args, "screenshotPath", std::string());
-        if (screenshotPath_.empty()) {
-            outErr = "command-palette-fuzzy: screenshotPath is required";
-            return;
-        }
-        // Confine the caller-supplied path under <userData>/screenshots/ — MCP/Lua-reachable
-        // scenario, so an unconfined path is an arbitrary-file-write primitive (#1566 class).
-        // Must precede the latch flip below so a rejected path leaves no session state mutated.
-        if (!ConfineScenarioScreenshotPathInPlace("command-palette-fuzzy", screenshotPath_, outErr))
-            return;
         // Latch flip must follow the error-return guard above — otherwise
         // an OnStart that errors out leaves BackendHasBeenReachable=true
         // for the session (OnCancel/OnFinish may never run).
@@ -93,9 +54,6 @@ class CommandPaletteFuzzyScenario : public IScenario {
         // persists for ephemeral spawns.
         savedBackendReachable_ = g_ui.cfg.BackendHasBeenReachable;
         g_ui.cfg.BackendHasBeenReachable = true;
-        g_ui.requestWindowWidth = captureSize_.Width;
-        g_ui.requestWindowHeight = captureSize_.Height;
-        g_ui.requestWindowResize = true;
         // Stage the open + filter request now; SmatchetUI::Draw will consume
         // it on its next frame (which is also the scenario's first OnFrame).
         g_ui.requestCommandPaletteOpen = true;

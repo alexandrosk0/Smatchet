@@ -24,6 +24,7 @@
 
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+#include "Commands/Scenarios/ScenarioArgs.h"
 #include "Logger.h"
 #include "Ui/SmatchetImGuiTextureGuardRuntime.h"
 #include "Ui/SmatchetTextureFaultInjector.h"
@@ -37,24 +38,8 @@ namespace cmd {
 
 namespace {
 
-// CLI args land as JSON strings (Source/Standalone/CliCommandRunner.cpp §
-// ParseArgs stores --key=value as `string`). Scenarios must coerce defensively
-// or risk nlohmann::json::type_error.302 when args.value<int>(...) hits a string.
-int IntArg(const nlohmann::json& args, const char* key, int fallback) {
-    if (!args.contains(key))
-        return fallback;
-    const auto& v = args[key];
-    if (v.is_number())
-        return v.get<int>();
-    if (v.is_string()) {
-        try {
-            return std::stoi(v.get<std::string>());
-        } catch (...) {
-            return fallback;
-        }
-    }
-    return fallback;
-}
+// IntArg comes from the shared Commands/Scenarios/ScenarioArgs.h — the
+// per-scenario anon-namespace copy is gone (debt 2026-06-28).
 
 // Verbatim substring the guard's once-latched LOG_WARN must contain.
 const char kRepointMarker[] = "[P0 #1122] repointed";
@@ -102,40 +87,40 @@ class MobileTextureGuardScenario : public IScenario {
         framesAdvanced_ = (std::max)(framesAdvanced_, frameIndex);
 
         switch (frameIndex) {
-            case 0:
-            case 1:
-                // Warm-up: let the font atlas bake + panels settle before any
-                // fault is injected.
-                break;
-            case 2:
-                smatchet::ui::ResetTextureGuardLogLatch();
-                repointBaselineStuck_ = RepointMarkerCount();
-                smatchet::ui::ForceTextureStuck();
-                break;
-            // f3 = guard repoints f2's orphan + emits WARN (gap frame).
-            case 4:
-                recoveryLogSeenStuck_ = RepointMarkerCount() > repointBaselineStuck_;
-                smatchet::ui::ResetTextureGuardLogLatch();
-                repointBaselineCtxLoss_ = RepointMarkerCount();
-                smatchet::ui::ForceContextLoss();
-                break;
-            // f5 = guard repoints f4's orphan + emits WARN (gap frame).
-            case 6:
-                recoveryLogSeenCtxLoss_ = RepointMarkerCount() > repointBaselineCtxLoss_;
-                // Negative control: with re-arm disabled the guard must STILL
-                // repoint the orphaned command.
-                smatchet::ui::SetRearmDisabled(true);
-                smatchet::ui::ResetTextureGuardLogLatch();
-                repointBaselineNegCtl_ = RepointMarkerCount();
-                smatchet::ui::ForceTextureStuck();
-                break;
-            // f7 = guard repoints f6's orphan + emits WARN (gap frame).
-            case 8:
-                recoveryLogSeenNegCtl_ = RepointMarkerCount() > repointBaselineNegCtl_;
-                smatchet::ui::SetRearmDisabled(false); // restore global state.
-                break;
-            default:
-                break;
+        case 0:
+        case 1:
+            // Warm-up: let the font atlas bake + panels settle before any
+            // fault is injected.
+            break;
+        case 2:
+            smatchet::ui::ResetTextureGuardLogLatch();
+            repointBaselineStuck_ = RepointMarkerCount();
+            smatchet::ui::ForceTextureStuck();
+            break;
+        // f3 = guard repoints f2's orphan + emits WARN (gap frame).
+        case 4:
+            recoveryLogSeenStuck_ = RepointMarkerCount() > repointBaselineStuck_;
+            smatchet::ui::ResetTextureGuardLogLatch();
+            repointBaselineCtxLoss_ = RepointMarkerCount();
+            smatchet::ui::ForceContextLoss();
+            break;
+        // f5 = guard repoints f4's orphan + emits WARN (gap frame).
+        case 6:
+            recoveryLogSeenCtxLoss_ = RepointMarkerCount() > repointBaselineCtxLoss_;
+            // Negative control: with re-arm disabled the guard must STILL
+            // repoint the orphaned command.
+            smatchet::ui::SetRearmDisabled(true);
+            smatchet::ui::ResetTextureGuardLogLatch();
+            repointBaselineNegCtl_ = RepointMarkerCount();
+            smatchet::ui::ForceTextureStuck();
+            break;
+        // f7 = guard repoints f6's orphan + emits WARN (gap frame).
+        case 8:
+            recoveryLogSeenNegCtl_ = RepointMarkerCount() > repointBaselineNegCtl_;
+            smatchet::ui::SetRearmDisabled(false); // restore global state.
+            break;
+        default:
+            break;
         }
     }
 
