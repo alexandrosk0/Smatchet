@@ -54,12 +54,6 @@
   Status: applied (2026-06-21 decision — native-GL declared supported local bucket-E path; doc note added to `docs/agent-rules/debug-techniques.md`. The Mesa software-GL llvmpipe/d3d12-gallium path is CI-headless-only and is NOT a supported local config.)
   Last-reviewed: 2026-06-21
 
-- 2026-06-07 · build-fix agent (Slice-2) · [infra] · P3 — parallel preset builds collide on shared `.fetchcontent-*/curl-build` PDB paths → C1041
-  Details: Two presets building in parallel (after deps are already fetched) collided with `C1041` (cannot open program database) on the shared FetchContent curl build dir — the `.fetchcontent-*` base dir is shared across presets, so two MSVC compilations of the same dep TU race on one PDB. `docs/agent-rules/build.md` (Fresh-worktree pitfalls #4) already mandates serial *configures* and asserts "once the dep sources exist, parallel builds are fine" — this session's C1041 shows the build-phase collision also exists, so that line under-promises.
-  Concrete next action: either extend the build.md rule to "serialize preset *builds* too when they share `.fetchcontent-*` build dirs", or pass `/FS` (force-synchronous PDB writes) to the dep builds so parallel preset builds stop racing. Est ~30 min (doc) / ~1 h (`/FS` plumbing + verify).
-  Status: open
-  Last-reviewed: 2026-06-07
-
 - 2026-06-07 · test-rig+test-author (via orchestrator) · [infra] · P2 — CMake 4.x fresh-configure drops default MSVC `/EHsc` + `/DWIN32 /D_WINDOWS` flags → every doctest TU fails "Exceptions are disabled" in new worktrees
   Details: Both Slice-0 agents hit it independently (PR #938/#939 build-env): a brand-new worktree configured with CMake 4.3.2 builds with exceptions off; the main repo only works because its cache predates the CMake upgrade. Second variant: a FAILED first configure (no MSVC env, or cpr FetchContent's `git submodule` step dying under bash+vcvars with `git-sh-setup: file not found`) leaves a poisoned `CMakeCache.txt` with empty `CMAKE_CXX_FLAGS` that a later successful configure silently reuses.
   Concrete next action: (1) set the flags explicitly in the `_smatchet-msvc-base` preset (or `CMAKE_CXX_FLAGS_INIT` in a toolchain fragment) so fresh configures are correct by construction; (2) teach the configure path (`with-msvc-env.sh` or a wrapper) to detect `CMAKE_CXX_FLAGS:STRING=` empty in an existing MSVC-preset cache and wipe+reconfigure; (3) note in `docs/agent-rules/build.md` that cpr submodule updates fail under bash+vcvars — configure via PowerShell. Est ~1 h.

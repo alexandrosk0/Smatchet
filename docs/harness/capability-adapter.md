@@ -6,8 +6,8 @@ Trigger: **mapping an agent's capability tags to a specific harness's tools** (p
 
 | Capability tag | Claude Code | Codex / OpenAI Agents | Cursor | Aider | pi | Generic CLI |
 |---|---|---|---|---|---|---|
-| `semantic-code-search` | vexp `run_pipeline` → Sourcetrail `tools/sourcetrail/st_query.py` (call-graph/def) → `Grep` | `rg` fallback | (built-in search panel) | (not built-in — fall back to text-search) | `grep` (fallback) | `rg` over symbol set |
-| `file-skeleton` | vexp `get_skeleton` → targeted `Read` / `st_query.py file <path>` | targeted file read | — | — | `read` (fallback) | `ctags -x <file>` |
+| `semantic-code-search` | vexp `run_pipeline` → `Grep` | `rg` fallback | (built-in search panel) | (not built-in — fall back to text-search) | `grep` (fallback) | `rg` over symbol set |
+| `file-skeleton` | vexp `get_skeleton` → targeted `Read` | targeted file read | — | — | `read` (fallback) | `ctags -x <file>` |
 | `file-read` | `Read` | `read_file` | (built-in) | (built-in) | `read` | `cat` |
 | `file-edit` | `Edit` | `apply_patch` | (built-in) | (built-in) | `edit` | `sed` / patch |
 | `file-write` | `Write` | `apply_patch` | (built-in) | (built-in) | `write` | `tee` / redirect |

@@ -34,6 +34,13 @@
           },
           {
             "type": "command",
+            "command": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/audit-doc-status-owed.sh\" --nudge'",
+            "commandWindows": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/audit-doc-status-owed.sh\" --nudge'",
+            "statusMessage": "Checking root audit-doc remediation status",
+            "timeout": 30
+          },
+          {
+            "type": "command",
             "command": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/historical-review-ledger-reconcile.sh\" --nudge'",
             "commandWindows": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/historical-review-ledger-reconcile.sh\" --nudge'",
             "statusMessage": "Checking historical-review ledger freshness",
