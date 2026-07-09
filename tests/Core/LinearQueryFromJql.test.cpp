@@ -32,6 +32,10 @@ TEST_CASE("TranslateJqlToLinearFilter — status eq / neq / in") {
     CHECK(in.Filter["state"]["name"]["in"].size() == 2);
     CHECK(in.Filter["state"]["name"]["in"][0] == "Todo");
     CHECK(in.Filter["state"]["name"]["in"][1] == "In Progress");
+
+    // 2-char quoted operands ("" and '') unquote to empty (pins the >= 2 unquote bound).
+    CHECK(TranslateJqlToLinearFilter("status = \"\"").Filter["state"]["name"]["eq"] == "");
+    CHECK(TranslateJqlToLinearFilter("status = ''").Filter["state"]["name"]["eq"] == "");
 }
 
 TEST_CASE("TranslateJqlToLinearFilter — labels eq / in") {
