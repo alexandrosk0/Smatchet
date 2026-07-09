@@ -7,12 +7,11 @@
 #
 # Triggers (an escape lacking a postmortems.md entry referencing its PR):
 #   1. non-SUCCESS check on the merged head (PRIMARY) — a BLOCKING-scope check
-#      whose LATEST run was a terminal FAILURE yet merged. The most common
-#      escape. "Blocking scope" + "latest-run terminal failure" follow
-#      merge-gates.sh's curation (see CURATION below — one deliberate divergence:
-#      CANCELLED is treated as a supersede here, not a failure) so a CANCELLED
-#      concurrency twin / advisory lane / in-progress check never reads as a red
-#      required check.
+#      whose LATEST run was terminal non-SUCCESS (FAILURE, or CANCELLED with no
+#      later run) yet merged. The most common escape. "Blocking scope" +
+#      "latest-run terminal" follow merge-gates.sh's curation (see CURATION
+#      below) so a CANCELLED concurrency twin beside a later SUCCESS / advisory
+#      lane / in-progress check never reads as a red required check.
 #   2. override label on the merged PR (project.config.json
 #      merge_gates.override_labels) — but ONLY when the override was
 #      LOAD-BEARING (its gated check did not pass on its own). A moot override
@@ -64,6 +63,21 @@ REPO="${REPO:-alexandrosk0/Smatchet}"
 LEDGER="${POSTMORTEM_LEDGER:-docs/self-improvement/postmortems.md}"
 CONFIG_FILE="${POSTMORTEM_CONFIG_FILE:-project.config.json}"
 SCAN_N="${POSTMORTEM_SCAN_N:-20}"
+
+# Pin the has_entry/has_sha_entry ledger read to origin/develop — the same ref
+# the merge scans below trust. Reading the cwd working-tree file nags phantom
+# owes when the tree is parked on a stale branch and, worse, false-SUPPRESSES a
+# genuinely-owed postmortem when an entry exists only locally (tooling
+# 2026-06-19). POSTMORTEM_LEDGER stays an explicit working-file override (the
+# bats rig); without it, resolve via `git show` once, falling back to the
+# working tree only when origin/develop is unresolvable (degraded, not blind).
+if [ -z "${POSTMORTEM_LEDGER+x}" ]; then
+    _ledger_tmp="$(mktemp)"
+    trap 'rm -f "$_ledger_tmp"' EXIT
+    if git show "origin/develop:$LEDGER" > "$_ledger_tmp" 2>/dev/null; then
+        LEDGER="$_ledger_tmp"
+    fi
+fi
 
 # Curated blocking-scope allow-list — SINGLE SOURCE OF TRUTH lives in
 # merge-gates.sh as MERGE_GATES_BLOCK_ALLOWLIST_RE. Source it rather than keep a
@@ -384,9 +398,8 @@ merged_commits="" # space-delimited set of mergeCommit oids seen this run (trigg
 # back to the (lossy) live labels/statusCheckRollup columns.
 #
 # CURATION (the red-checks column) follows merge-gates.sh's GATE_FILTER so the
-# escape detector and the merge gate agree on what "red" means. Two deliberate
-# divergences from merge-gates.sh, noted inline: (b) CANCELLED is a supersede
-# here (merge-gates counts it as failing); and there is NO required-context-ABSENT
+# escape detector and the merge gate agree on what "red" means. One deliberate
+# divergence from merge-gates.sh, noted inline: there is NO required-context-ABSENT
 # detector — a required check that NEVER RAN produces no rollup row, so a
 # "merged with a required check absent" escape is invisible on this live path
 # (merge-gates' $reqAbsent catches it pre-merge; here it would only surface via a
@@ -395,10 +408,13 @@ merged_commits="" # space-delimited set of mergeCommit oids seen this run (trigg
 #       CANCELLED concurrency twin beside a later SUCCESS for the SAME context is
 #       dropped (the dominant false positive: every perf/coverage workflow sets
 #       cancel-in-progress; the `…/merge` ref run cancels the PR-head run).
-#   (b) require a TERMINAL FAILURE — CheckRun COMPLETED with conclusion in
-#       FAILURE/TIMED_OUT/ACTION_REQUIRED/STARTUP_FAILURE, or StatusContext state
-#       FAILURE/ERROR. CANCELLED is EXCLUDED (a cancel is a supersede, never a
-#       failure verdict); IN_PROGRESS/QUEUED/PENDING never count.
+#   (b) require a TERMINAL verdict — CheckRun COMPLETED with conclusion in
+#       FAILURE/TIMED_OUT/CANCELLED/ACTION_REQUIRED/STARTUP_FAILURE, or
+#       StatusContext state FAILURE/ERROR (same set merge-gates.sh blocks on).
+#       CANCELLED counts only when it survives dedupe (a) — i.e. it is the
+#       LATEST run for its context with no later SUCCESS — so a CANCELLED-latest
+#       meant-to-block check that native-merged is an escape (#1566), while the
+#       concurrency twin stays invisible; IN_PROGRESS/QUEUED/PENDING never count.
 #   (c) require BLOCKING scope — the context is in branch_protection
 #       .required_contexts ($reqNames) OR its name matches the meant-to-block
 #       allow-list (ALLOW_LIST_RE) and is not "advisory". An advisory / non-
@@ -425,7 +441,7 @@ JQ_ROWS='(sort_by(.mergedAt) | reverse | .[0:__SCAN_N__]) | .[] | [
           | select(
               (
                 (.__typename == "CheckRun" and (.status // "") == "COMPLETED"
-                 and ((.conclusion // "") | IN("FAILURE","TIMED_OUT","ACTION_REQUIRED","STARTUP_FAILURE")))
+                 and ((.conclusion // "") | IN("FAILURE","TIMED_OUT","CANCELLED","ACTION_REQUIRED","STARTUP_FAILURE")))
                 or
                 (.__typename == "StatusContext" and ((.state // "") | IN("FAILURE","ERROR")))
               )

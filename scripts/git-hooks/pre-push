@@ -226,20 +226,38 @@ elif [ -n "$repo_root" ]; then
         fi
         # 3. clang-format reflow (folds into the required `Windows + MSVC` lint
         #    step) — changed first-party C++ only, and only if clang-format is
-        #    installed (else fail-open).
+        #    installed (else fail-open). Delta-aware to match the CI gate:
+        #    `git clang-format --diff <base> HEAD` flags only the changed hunks,
+        #    so pre-existing drift elsewhere in a touched file can't block an
+        #    unrelated change. No git-clang-format → whole-file fallback (says
+        #    it is stricter than the CI delta). rc=1 is the violation verdict;
+        #    any other non-zero is infra → fail-open.
         if command -v clang-format >/dev/null 2>&1; then
             ci_cpp=""
             ci_cpp="$(grep -E '^(Source|tests)/.*\.(c|cc|cpp|cxx|h|hpp|hxx)$' <<<"$ci_changed" || true)"
             if [ -n "$ci_cpp" ]; then
                 ci_fmt_bad=0
-                while IFS= read -r ci_f; do
-                    [ -n "$ci_f" ] || continue
-                    ( cd "$repo_root" && clang-format --dry-run --Werror "$ci_f" ) >/dev/null 2>&1 \
-                        || ci_fmt_bad=1
-                done <<<"$ci_cpp"
+                ci_fmt_note=""
+                if command -v git-clang-format >/dev/null 2>&1; then
+                    ci_cpp_files=()
+                    while IFS= read -r ci_f; do
+                        [ -n "$ci_f" ] && ci_cpp_files+=("$ci_f")
+                    done <<<"$ci_cpp"
+                    ci_fmt_rc=0
+                    ( cd "$repo_root" && git clang-format --diff "$ci_base" HEAD -- "${ci_cpp_files[@]}" ) \
+                        >/dev/null 2>&1 || ci_fmt_rc=$?
+                    [ "$ci_fmt_rc" -eq 1 ] && ci_fmt_bad=1
+                else
+                    while IFS= read -r ci_f; do
+                        [ -n "$ci_f" ] || continue
+                        ( cd "$repo_root" && clang-format --dry-run --Werror "$ci_f" ) >/dev/null 2>&1 \
+                            || ci_fmt_bad=1
+                    done <<<"$ci_cpp"
+                    ci_fmt_note=" [whole-file — stricter than the CI delta; install git-clang-format for hunk-scoped]"
+                fi
                 if [ "$ci_fmt_bad" -ne 0 ]; then
                     ci_fail="$ci_fail
-  - clang-format reflow  (run: bash scripts/dev/pre-ship.sh  to auto-format)"
+  - clang-format reflow${ci_fmt_note}  (run: bash scripts/dev/pre-ship.sh  to auto-format)"
                 fi
             fi
         fi

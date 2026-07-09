@@ -1,5 +1,0 @@
-- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [tooling] · P3 — `tools/repo-health/facts.json` rots silently between sessions; the dashboard shows stale gate states with no freshness signal
-  Details: the repo-health dashboard splits "computed" metrics (recomputed every run) from "facts" (CI lane statuses, PR gate states, campaign verdicts) that are session-maintained in `facts.json` because the generator cannot reach GitHub — its own README admits the rot risk. A dashboard rendering weeks-old gate states as current is worse than no dashboard for the human-on-the-loop visibility role AI_POLICY.md assigns it. AGENTIC_INFRA_AUDIT.md finding C8.
-  Concrete next action: (a) stamp each fact with a `last-updated` date and render age prominently (e.g. amber >7 days, red >30) in `generate.py`/`template.html`; (b) add a SessionStart nudge (pattern: `followup-due-nudge.sh`) that fires when `facts.json` is older than a threshold, prompting a refresh pass. Effort S.
-  Status: open
-  Last-reviewed: 2026-07-06

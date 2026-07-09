@@ -1,5 +1,0 @@
-- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [infra] · P2 — fresh-clone bootstrap hole: every session hook/guard is inert until `setup-harness.sh` runs, and only a manual probe warns
-  Details: the `.claude/` adapter dir (hooks, guards, settings) is gitignored and provisioned only by `agents/scripts/core/setup-harness.sh`; in a fresh clone the head-drift, plan-lock, and shared-tree guards plus every SessionStart nudge are silently absent. `check-harness-provisioned.sh` exists to surface this but must be invoked by hand. `docs/plans/session-guard-agnostic.md` names the fresh-clone gap as an explicit non-goal ("their own in-flight effort") — but no live tracker actually carries it. AGENTIC_INFRA_AUDIT.md finding C5.
-  Concrete next action: (a) fold `check-harness-provisioned.sh` into `scripts/dev/doctor.sh` so the standard preflight reports the unprovisioned state; (b) add a cheap self-check to the git `pre-push` hook path (already repo-owned, so it *does* run in fresh clones) that warns when `.claude/hooks/` is absent under a Claude-harness session. Effort S.
-  Status: open
-  Last-reviewed: 2026-07-06

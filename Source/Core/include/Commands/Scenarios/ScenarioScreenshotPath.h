@@ -4,6 +4,8 @@
 #include <string>
 
 #include "Commands/PathConfinement.h"
+#include "Commands/Scenarios/ScenarioArgs.h"
+#include "Commands/Scenarios/ScenarioCaptureSizing.h"
 #include "ConfigManager.h"
 
 namespace smatchet {
@@ -41,6 +43,32 @@ inline bool ConfineScenarioScreenshotPathInPlace(const char* scenarioName, std::
         return false;
     }
     path = confined;
+    return true;
+}
+
+// Shared OnStart prologue for the screenshot scenarios (debt 2026-06-28): parse +
+// clamp warmupFrames, parse captureSize, require + confine screenshotPath, then
+// stage the g_ui window-resize request to the capture size. Returns false with a
+// scenario-prefixed outErr when screenshotPath is missing or escapes the
+// screenshots subdir — no session/global state mutates on a reject, exactly as
+// with the confine chokepoint above.
+inline bool ConfigureScreenshotScenario(const char* scenarioName, const nlohmann::json& args, int warmupDefault,
+                                        int warmupMin, int& warmupFrames, ScenarioCaptureSize& captureSize,
+                                        std::string& screenshotPath, std::string& outErr) {
+    warmupFrames = IntArg(args, "warmupFrames", warmupDefault);
+    if (warmupFrames < warmupMin) {
+        warmupFrames = warmupMin;
+    }
+    captureSize = ParseScenarioCaptureSize(args);
+    screenshotPath = StringArg(args, "screenshotPath", std::string());
+    if (screenshotPath.empty()) {
+        outErr = std::string(scenarioName) + ": screenshotPath is required";
+        return false;
+    }
+    if (!ConfineScenarioScreenshotPathInPlace(scenarioName, screenshotPath, outErr)) {
+        return false;
+    }
+    RequestScenarioCaptureWindowResize(captureSize);
     return true;
 }
 

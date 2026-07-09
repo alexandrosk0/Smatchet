@@ -104,8 +104,10 @@ void SeedAssistantBuffers(AssistantPrefsBuffers& b, UiDrawSession& d, const Trac
     }
 }
 
-// Any field edit invalidates a stale Test-connection result.
+// Any field edit invalidates a stale Test-connection result. Bumping the
+// generation also invalidates an in-flight probe's pending verdict.
 void ClearStaleTestResult(UiDrawSession& d) {
+    ++d.assistantPrefsTestGeneration;
     if (!d.assistantPrefsTestInFlight) {
         d.assistantPrefsTestResult.clear();
         d.assistantPrefsTestResultType = 0;
@@ -163,11 +165,53 @@ void ResolveProbeEndpoint(const TrackerConfig& probeCfg, AiProvider provider, st
     }
 }
 
+// Main-thread commit of the probe verdict. Drops the result when a field edit
+// bumped the generation mid-flight — the verdict describes bytes the user no
+// longer has configured.
+void CommitProbeVerdict(const std::string& errMsg, AiProvider provider, const std::string& defaultedBaseUrl,
+                        std::uint64_t generation) {
+    g_ui.assistantPrefsTestInFlight = false;
+    if (generation != g_ui.assistantPrefsTestGeneration) {
+        g_ui.assistantPrefsTestResult.clear();
+        g_ui.assistantPrefsTestResultType = 0;
+        return;
+    }
+    if (errMsg.empty()) {
+        // SMATCHET_DEVIATION(rule=duplication; reason=verdict-commit twin of
+        // AiPrefsTestConnection::PublishProbeResult — differs in target (working copy vs cfg) + the generation
+        // guard above; lockstep until the planned twin dedup; owner=user-text-error-pass; revisit=2026-09-30)
+        LOG_INFO("Preferences: Test connection VERIFIED providerKind=%d defaultedBaseUrl='%s'",
+                 static_cast<int>(provider), defaultedBaseUrl.c_str());
+        g_ui.assistantPrefsTestResult = "Verified";
+        g_ui.assistantPrefsTestResultType = 1;
+        // On success with a defaulted URL, write the default into the
+        // Assistant tab's WORKING copy (not cfg — the explicit-Save flow
+        // owns the cfg write) + force a buffer reseed so the field shows the
+        // value the probe used. The user then clicks Save to persist it.
+        if (!defaultedBaseUrl.empty()) {
+            if (provider == AiProvider::OllamaOpenAiCompat) {
+                g_ui.assistantPrefsWorking.AiBaseUrl = defaultedBaseUrl;
+            } else if (provider == AiProvider::OllamaNative) {
+                g_ui.assistantPrefsWorking.AiOllamaBaseUrl = defaultedBaseUrl;
+            } else if (provider == AiProvider::DeepSeek) {
+                g_ui.assistantPrefsWorking.AiDeepSeekBaseUrl = defaultedBaseUrl;
+            }
+            g_ui.assistantPrefsForceBufferReseed = true;
+        }
+    } else {
+        LOG_ERROR("Preferences: Test connection FAILED providerKind=%d errMsg='%s'", static_cast<int>(provider),
+                  errMsg.c_str());
+        g_ui.assistantPrefsTestResult = std::string("Failed: ") + errMsg;
+        g_ui.assistantPrefsTestResultType = 2;
+    }
+}
+
 // Worker-thread body — reachability GET + a real 1-token chat handshake.
 // Pure of ImGui; runs on the joined background-task pool. Posts the verdict
 // back through the dispatcher.
 void RunProbeWorker(AiProvider provider, AiClientConfig clientCfg, std::shared_ptr<std::atomic<bool>> cancel,
-                    std::string defaultedBaseUrl, std::string modelId, MainThreadDispatcher& dispatcher) {
+                    std::string defaultedBaseUrl, std::string modelId, std::uint64_t generation,
+                    MainThreadDispatcher& dispatcher) {
     std::string errMsg;
     // Defensive try/catch — `MakeAiClient` / `ProbeReachability` /
     // `SendStreaming` all run third-party transport (cpr/libcurl) +
@@ -230,36 +274,11 @@ void RunProbeWorker(AiProvider provider, AiClientConfig clientCfg, std::shared_p
         LOG_WARN("Assistant test-connection: unknown exception");
         errMsg = internalErrMsg;
     }
-    dispatcher.PostToMainThread([errMsg, cancel, provider, defaultedBaseUrl]() {
+    dispatcher.PostToMainThread([errMsg, cancel, provider, defaultedBaseUrl, generation]() {
         if (cancel && cancel->load()) {
             return;
         }
-        g_ui.assistantPrefsTestInFlight = false;
-        if (errMsg.empty()) {
-            LOG_INFO("Preferences: Test connection VERIFIED providerKind=%d defaultedBaseUrl='%s'",
-                     static_cast<int>(provider), defaultedBaseUrl.c_str());
-            g_ui.assistantPrefsTestResult = "Verified";
-            g_ui.assistantPrefsTestResultType = 1;
-            // On success with a defaulted URL, write the default into the
-            // Assistant tab's WORKING copy (not cfg — the explicit-Save flow
-            // owns the cfg write) + force a buffer reseed so the field shows the
-            // value the probe used. The user then clicks Save to persist it.
-            if (!defaultedBaseUrl.empty()) {
-                if (provider == AiProvider::OllamaOpenAiCompat) {
-                    g_ui.assistantPrefsWorking.AiBaseUrl = defaultedBaseUrl;
-                } else if (provider == AiProvider::OllamaNative) {
-                    g_ui.assistantPrefsWorking.AiOllamaBaseUrl = defaultedBaseUrl;
-                } else if (provider == AiProvider::DeepSeek) {
-                    g_ui.assistantPrefsWorking.AiDeepSeekBaseUrl = defaultedBaseUrl;
-                }
-                g_ui.assistantPrefsForceBufferReseed = true;
-            }
-        } else {
-            LOG_ERROR("Preferences: Test connection FAILED providerKind=%d errMsg='%s'", static_cast<int>(provider),
-                      errMsg.c_str());
-            g_ui.assistantPrefsTestResult = std::string("Failed: ") + errMsg;
-            g_ui.assistantPrefsTestResultType = 2;
-        }
+        CommitProbeVerdict(errMsg, provider, defaultedBaseUrl, generation);
     });
 }
 
@@ -275,6 +294,7 @@ void LaunchTestProbe(AppController& app, UiDrawSession& d, TrackerConfig probeCf
     d.assistantPrefsTestResultType = 0;
     d.assistantPrefsTestCancel = std::make_shared<std::atomic<bool>>(false);
     auto cancel = d.assistantPrefsTestCancel;
+    const std::uint64_t generation = ++d.assistantPrefsTestGeneration;
 
     std::string apiKey;
     std::string baseUrl;
@@ -310,8 +330,8 @@ void LaunchTestProbe(AppController& app, UiDrawSession& d, TrackerConfig probeCf
     MainThreadDispatcher& dispatcher = app.mainThreadDispatcher;
     // Joined background-task pool (not a raw detached thread — forbidden by the
     // no-detach lint); joined at shutdown so &dispatcher stays valid for the task.
-    app.LaunchBackgroundTask([provider, clientCfg, cancel, defaultedBaseUrl, modelId, &dispatcher]() {
-        RunProbeWorker(provider, clientCfg, cancel, defaultedBaseUrl, modelId, dispatcher);
+    app.LaunchBackgroundTask([provider, clientCfg, cancel, defaultedBaseUrl, modelId, generation, &dispatcher]() {
+        RunProbeWorker(provider, clientCfg, cancel, defaultedBaseUrl, modelId, generation, dispatcher);
     });
 }
 
@@ -449,6 +469,13 @@ void RenderModelPicker(UiDrawSession& d, const char* comboLabel, const char* fre
     if (it != catalog.end()) {
         selectedIdx = static_cast<int>(std::distance(catalog.begin(), it));
     }
+    if (selectedIdx < 0 && modelBuf[0] == '\0') {
+        // Persist the implied catalog default the combo is about to display so
+        // Test connection / Save use the model the user sees.
+        std::snprintf(modelBuf, modelBufCap, "%s", catalog[0].Id.c_str());
+        cfgField = modelBuf;
+        selectedIdx = 0;
+    }
     int comboIdx = (selectedIdx >= 0) ? selectedIdx : 0;
     if (ImGui::Combo(comboLabel, &comboIdx, displayPtrs.data(), static_cast<int>(displayPtrs.size()))) {
         std::snprintf(modelBuf, modelBufCap, "%s", catalog[static_cast<std::size_t>(comboIdx)].Id.c_str());
@@ -557,6 +584,12 @@ void RenderProviderCredentials(UiDrawSession& d, TrackerConfig& work, AiProvider
         }
         RenderModelPicker(d, "Anthropic model", "Anthropic model", "", AiProvider::Anthropic, b.anthropicModelBuf,
                           sizeof(b.anthropicModelBuf), work.AiModelAnthropic);
+        // AiBaseUrl is shared with the OpenAI branch above — the probe + client
+        // resolve Anthropic through the same field (see ResolveProbeEndpoint).
+        if (ImGui::InputTextWithHint("Base URL", "https://api.anthropic.com", b.baseUrlBuf, sizeof(b.baseUrlBuf))) {
+            work.AiBaseUrl = b.baseUrlBuf;
+            ClearStaleTestResult(d);
+        }
         RenderCustomEndpointConsent(d, AiProvider::Anthropic, work.AiAllowCustomEndpointAnthropic, "Anthropic",
                                     "api.anthropic.com", consentModalProvider);
     } else if (selectedKind == AiProvider::OllamaNative) {

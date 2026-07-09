@@ -54,8 +54,8 @@ fi
 #   --list-targets    print the resolved set and exit 0 (scope-coverage test)
 # Flat (maxdepth 1): scripts/dev + agents/scripts/{core,project}. Recursive:
 # scripts/mobile (build helpers nest under openssl/), agents/scripts/core/lib
-# (sourced libraries — e.g. ci-check-resolve.sh — live one level down). Per-
-# harness guards: docs/harness/<harness>/hooks/*.sh.
+# and agents/scripts/project/lint-rules.d (sourced libraries / rule modules —
+# live one level down). Per-harness guards: docs/harness/<harness>/hooks/*.sh.
 TARGETS=()
 if [ "${1:-}" = "--target" ] && [ -n "${2:-}" ]; then
     TARGETS=("$2")
@@ -65,6 +65,7 @@ else
             find scripts/dev agents/scripts/core agents/scripts/project \
                 -maxdepth 1 -type f -name '*.sh'
             if [ -d agents/scripts/core/lib ]; then find agents/scripts/core/lib -type f -name '*.sh'; fi
+            if [ -d agents/scripts/project/lint-rules.d ]; then find agents/scripts/project/lint-rules.d -type f -name '*.sh'; fi
             if [ -d scripts/mobile ]; then find scripts/mobile -type f -name '*.sh'; fi
             if [ -d docs/harness ]; then find docs/harness -path '*/hooks/*.sh' -type f; fi
         } | sort -u

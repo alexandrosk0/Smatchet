@@ -40,33 +40,6 @@ namespace cmd {
 
 namespace {
 
-std::string StringArg(const nlohmann::json& args, const char* key, const std::string& fallback) {
-    if (!args.contains(key))
-        return fallback;
-    const auto& v = args[key];
-    if (v.is_string())
-        return v.get<std::string>();
-    if (v.is_number())
-        return std::to_string(v.get<long long>());
-    return fallback;
-}
-
-int IntArg(const nlohmann::json& args, const char* key, int fallback) {
-    if (!args.contains(key))
-        return fallback;
-    const auto& v = args[key];
-    if (v.is_number())
-        return v.get<int>();
-    if (v.is_string()) {
-        try {
-            return std::stoi(v.get<std::string>());
-        } catch (...) {
-            return fallback;
-        }
-    }
-    return fallback;
-}
-
 // One labelled code sample per language tier. Kept short + ASCII so the
 // captured glyphs are font-stable across machines (the L∞ ≤ 4 tolerance
 // absorbs hinting noise). Each sample is chosen to exercise the distinct
@@ -98,24 +71,11 @@ class CodeSyntaxColoringScenario : public IScenario {
     std::string Name() const override { return "code-syntax-coloring"; }
 
     void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& outErr) override {
-        warmupFrames_ = IntArg(args, "warmupFrames", 8);
-        if (warmupFrames_ < 1) {
-            warmupFrames_ = 1;
-        }
-        captureSize_ = ParseScenarioCaptureSize(args);
-        screenshotPath_ = StringArg(args, "screenshotPath", std::string());
-        if (screenshotPath_.empty()) {
-            outErr = "code-syntax-coloring: screenshotPath is required";
+        // Shared prologue: warmup/captureSize parse + screenshotPath require/confine
+        // (#1566 class) — a reject returns before any session state mutates.
+        if (!ConfigureScreenshotScenario("code-syntax-coloring", args, 8, 1, warmupFrames_, captureSize_,
+                                         screenshotPath_, outErr))
             return;
-        }
-        // Confine the caller-supplied path under <userData>/screenshots/ — MCP/Lua-reachable
-        // scenario, so an unconfined path is an arbitrary-file-write primitive (#1566 class).
-        if (!ConfineScenarioScreenshotPathInPlace("code-syntax-coloring", screenshotPath_, outErr))
-            return;
-
-        g_ui.requestWindowWidth = captureSize_.Width;
-        g_ui.requestWindowHeight = captureSize_.Height;
-        g_ui.requestWindowResize = true;
     }
 
     void OnFrame(AppController& /*app*/, int /*frameIndex*/) override {

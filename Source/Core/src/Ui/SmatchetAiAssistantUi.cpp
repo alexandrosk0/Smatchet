@@ -238,13 +238,19 @@ std::size_t s_planCacheBytes = 0;
 //     show-on-hover alpha gate; the 1-frame lag avoids an ImGui hover-detection chicken-and-egg.
 std::unordered_map<std::uint64_t, float> s_messageHeightCache;
 std::unordered_map<std::size_t, bool> s_turnActiveLastFrame;
+// Index-keyed body-hash cache (0 = unset). Finalised history messages are immutable and the
+// vector only changes size (push_back / clear / hydrate), so caching the content hash per index
+// removes the O(body bytes) re-hash every frame for every culled off-screen turn. Reset on any
+// history-size change in DrawHistoryArea, mirroring the Y-cache.
+std::vector<std::uint64_t> s_messageHashCache;
 
 void PublishPlanCacheBytes() {
     smatchet::memtel::PlanCacheApproxBytes().store(s_planCacheBytes, std::memory_order_relaxed);
 }
 
-const MarkdownPreviewRender::PreviewPlan& GetOrBuildPlanForMessage(const std::string& content) {
-    const std::uint64_t key = MarkdownPreviewRender::HashContent(content);
+// `key` is the caller's already-computed HashContent(content) — RenderHistoryTurn owns the
+// per-index hash cache, so re-hashing here would pay the O(body bytes) cost twice per visible turn.
+const MarkdownPreviewRender::PreviewPlan& GetOrBuildPlanForMessage(const std::string& content, std::uint64_t key) {
     auto it = s_planCache.find(key);
     if (it != s_planCache.end() && it->second.contentLen == content.size()) {
         return *it->second.plan;
@@ -284,6 +290,7 @@ void ClearAiRenderCaches() {
     PublishPlanCacheBytes();
     s_messageHeightCache.clear();
     s_turnActiveLastFrame.clear();
+    s_messageHashCache.clear();
 }
 
 // True (and updates the stored basis) when the layout basis for cached message heights has
@@ -545,12 +552,22 @@ void RenderTurnActionRow(AiHistoryDrawCtx& ctx, int messageIndex, AiMessage* msg
 // Off-screen culling for a finalised (cacheable) history turn with a known height. Computes the
 // body hash into outBodyKey, then — when the turn is fully off-screen — emits a Dummy of the
 // realised height and returns true (caller should early-return). Returns false otherwise.
-bool TryCullHistoryTurn(const std::string& body, bool cacheable, float actionRowSlotH, std::uint64_t& outBodyKey) {
+bool TryCullHistoryTurn(const std::string& body, bool cacheable, float actionRowSlotH, std::uint64_t* hashSlot,
+                        std::uint64_t& outBodyKey) {
     outBodyKey = 0;
     if (!cacheable) {
         return false;
     }
-    outBodyKey = MarkdownPreviewRender::HashContent(body);
+    // `hashSlot` (nullable) is this turn's s_messageHashCache entry; 0 means unset. A hit skips
+    // re-hashing the whole body — the dominant remaining per-frame cost for culled turns.
+    if (hashSlot != nullptr && *hashSlot != 0u) {
+        outBodyKey = *hashSlot;
+    } else {
+        outBodyKey = MarkdownPreviewRender::HashContent(body);
+        if (hashSlot != nullptr) {
+            *hashSlot = outBodyKey;
+        }
+    }
     const auto hit = s_messageHeightCache.find(outBodyKey);
     if (hit != s_messageHeightCache.end() && hit->second > 0.0f) {
         const float labelH = ImGui::GetTextLineHeightWithSpacing();
@@ -606,7 +623,11 @@ void RenderHistoryTurn(AiHistoryDrawCtx& ctx, int messageIndex, const char* role
     // fully so the height cache populates on first sight.
     std::uint64_t bodyKey = 0;
     const float actionRowSlotH = ImGui::GetFrameHeightWithSpacing() * 0.9f;
-    if (TryCullHistoryTurn(body, cacheable, actionRowSlotH, bodyKey)) {
+    std::uint64_t* hashSlot =
+        (cacheable && messageIndex >= 0 && static_cast<std::size_t>(messageIndex) < s_messageHashCache.size())
+            ? &s_messageHashCache[static_cast<std::size_t>(messageIndex)]
+            : nullptr;
+    if (TryCullHistoryTurn(body, cacheable, actionRowSlotH, hashSlot, bodyKey)) {
         return;
     }
 
@@ -627,7 +648,7 @@ void RenderHistoryTurn(AiHistoryDrawCtx& ctx, int messageIndex, const char* role
                                     labelFont, labelWidth, nullptr);
     SelectableText::EndBlock(ctx.selCtx);
     if (cacheable) {
-        const MarkdownPreviewRender::PreviewPlan& plan = GetOrBuildPlanForMessage(body);
+        const MarkdownPreviewRender::PreviewPlan& plan = GetOrBuildPlanForMessage(body, bodyKey);
         MarkdownPreviewRender::RenderPlan(plan, ctx.renderOpts);
     } else {
         MarkdownPreviewRender::Render(body, ctx.renderOpts);
@@ -740,6 +761,9 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
         // exactly one AI chat panel exists in the app at a time.
         static std::vector<float> s_messageYCache;
         ApplyScrollToPinnedLatch(d, s_messageYCache);
+        if (s_messageHashCache.size() != d.assistantHistory.size()) {
+            s_messageHashCache.assign(d.assistantHistory.size(), 0u);
+        }
 
         auto& selCtx = SelectableText::Begin("##AiAssistantHistorySel");
 

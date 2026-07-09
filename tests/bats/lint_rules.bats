@@ -767,3 +767,37 @@ setup() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"no first-party no-raw-new / deviation-overdue"* ]]
 }
+
+# ---------- lint-rules.d module loading (monolith split) ----------
+# The scanner sources its per-rule-family modules from lint-rules.d/ next to the
+# entry point. Loading must FAIL CLOSED: a missing module means a silently
+# partial rule set, which would pass dirty PRs as false-clean.
+
+@test "entry point fails closed (rc 2) when a lint-rules.d module is missing" {
+    tmp="$(mktemp -d)"
+    cp "$LINT" "$tmp/test-lint-rules.sh"
+    mkdir -p "$tmp/lint-rules.d"
+    # Copy all modules EXCEPT one rule family.
+    for m in "$REPO_ROOT/agents/scripts/project/lint-rules.d"/*.sh; do
+        case "$m" in *55-catch-all.sh) continue ;; esac
+        cp "$m" "$tmp/lint-rules.d/"
+    done
+    run bash "$tmp/test-lint-rules.sh" --root "$REPO_ROOT" --scan-catch-all
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"missing rule module"* ]]
+    rm -rf "$tmp"
+}
+
+@test "entry point loads modules from its own directory, not the --root target" {
+    # The --diff base scan re-invokes the CURRENT scanner against a base worktree
+    # that may predate the split (no lint-rules.d there) — modules must resolve
+    # relative to the script, so a scan of a bare tree still works.
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    printf 'void f() {\n    try {\n        g();\n    } catch (...) {}\n}\n' > "$tmp/Source/Core/src/Swallow.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-catch-all
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"catch-all-swallow"* ]]
+    rm -rf "$tmp"
+}
