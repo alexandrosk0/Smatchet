@@ -205,6 +205,30 @@ def build_scorecard(items: list) -> tuple[str, str]:
     return "\n".join(cards), summary
 
 
+def build_freshness(facts: dict) -> str:
+    """Header badge for the age of the session-maintained facts (oldest section).
+
+    facts.json rots silently between sessions (its own README admits the risk);
+    the badge makes the rot visible: green ≤7 days, amber ≤30, red beyond.
+    """
+    ages = []
+    for k, v in (facts.get("updated") or {}).items():
+        if k.startswith("_"):
+            continue
+        try:
+            ages.append(((date.today() - date.fromisoformat(str(v))).days, k))
+        except ValueError:
+            continue
+    if not ages:
+        return ('<span class="pill p-warn"><span class="dot"></span>'
+                'facts age unknown</span>')
+    days, section = max(ages)
+    cls = "p-ok" if days <= 7 else ("p-warn" if days <= 30 else "p-crit")
+    label = "refreshed today" if days <= 0 else f"{days}d old"
+    return (f'<span class="pill {cls}" title="oldest section: {esc(section)}">'
+            f'<span class="dot"></span>facts {esc(label)}</span>')
+
+
 def build_gov_chips(gov: dict, facts: dict) -> str:
     chips = []
     lm = gov.get("loop_mode") or facts.get("governance", {}).get("loop_mode", "?")
@@ -312,6 +336,7 @@ def render(data: dict, facts: dict) -> str:
 
     tok = {
         "STAMP": esc(stamp),
+        "FACTS_FRESHNESS": build_freshness(facts),
         "GOV_CHIPS": build_gov_chips(data["governance"], facts),
         "CAMPAIGN_SUMMARY": esc(summary),
         "SCORECARD": scorecard,

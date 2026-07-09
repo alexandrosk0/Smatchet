@@ -38,6 +38,13 @@
             "commandWindows": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/historical-review-ledger-reconcile.sh\" --nudge'",
             "statusMessage": "Checking historical-review ledger freshness",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/repo-health-facts-nudge.sh\" --nudge'",
+            "commandWindows": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/repo-health-facts-nudge.sh\" --nudge'",
+            "statusMessage": "Checking repo-health facts freshness",
+            "timeout": 30
           }
         ]
       }

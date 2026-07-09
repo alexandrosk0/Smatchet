@@ -95,6 +95,8 @@ Heavy `Source/Core/src/<ctx>/` subsystems carry a leaf `AGENTS.md` (scoped rules
 
 **`CONTEXT.md` / `README.md` are never auto-loaded** on any harness — they're read on demand (agent or semantic search). Only the leaf `AGENTS.md` participates in nearest-wins.
 
+**Regression net**: `agents/scripts/core/test-leaf-doc-discovery.sh` (static, auto-enrolled in `test-all.sh`) asserts a `@AGENTS.md` shim sits beside every leaf on a provisioned checkout (skips when unprovisioned, e.g. CI). Its `--live` mode (opt-in, spends tokens — never auto-run) spawns a headless `claude -p` session cd'd into `Source/Core/src/Tracker/` and asserts it cites the leaf `AGENTS.md` as the rule source for a Tracker invariant — end-to-end proof the shim mechanism reaches an agent. Codex (native nearest-`AGENTS.md`) and Cursor (`CONTEXT-MAP.md` pointer) have no headless probe yet — manual residue.
+
 Eager-load caveat: if a harness ever eager-loads *all* nested memory at session start (rather than lazily per touched dir), the per-subsystem token win inverts — every subsystem's rules load every session. Claude Code's nested `CLAUDE.md` is **lazy** (confirmed), so the shim is safe. A future eager-loading harness should stay pointer-only (`CONTEXT-MAP.md`) until it supports lazy nearest-wins.
 
 ## Optional: coverage tooling (`OpenCppCoverage`)

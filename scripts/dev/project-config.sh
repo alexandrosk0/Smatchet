@@ -101,7 +101,9 @@ emit("VCS_P4_STREAMS", v.get("p4_streams", []))
 emit("VCS_PROTECTED_BRANCHES", v.get("protected_branches", []))
 
 ci = c.get("ci", {})
-emit("CI_REQUIRED_CHECKS", ci.get("required_checks", []))
+# Derived from branch_protection.required_contexts — the single source for the
+# required-checks list (ci.required_checks was a verbatim duplicate, removed).
+emit("CI_REQUIRED_CHECKS", c.get("branch_protection", {}).get("required_contexts", []))
 emit("CI_CODE_GLOBS", ci.get("path_filters", {}).get("code_globs", []))
 emit("CI_DOCS_IGNORE", ci.get("path_filters", {}).get("docs_ignore", []))
 
