@@ -136,6 +136,21 @@ teardown() {
     [[ "$output" == *"branch=develop"* ]]
 }
 
+@test "lock-claim: integration-branch owner emits wrong-tree warning" {
+    # Claiming with the owner branch resolved to develop/main is almost always a
+    # wrong-tree claim (the plan-lock self-collision class) — a loud warning fires.
+    run bash -c "cd '$CLONE' && bash '$SCRIPTS_DIR/lock-claim.sh' warn-slug '$WS_FILE'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"WARNING: lock owner branch resolves to 'develop'"* ]]
+}
+
+@test "lock-claim: feature-branch owner emits no wrong-tree warning" {
+    run bash -c "cd '$CLONE' && LOCK_BRANCH=feat/some-slice bash '$SCRIPTS_DIR/lock-claim.sh' quiet-slug '$WS_FILE'"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"WARNING: lock owner branch resolves"* ]]
+    [[ "$output" == *"branch=feat/some-slice"* ]]
+}
+
 @test "lock-claim: second claim on same slug returns 1 (lock held)" {
     # First claim — must succeed.
     bash -c "cd '$CLONE' && bash '$SCRIPTS_DIR/lock-claim.sh' contended-slug '$WS_FILE'" >/dev/null
