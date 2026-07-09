@@ -203,7 +203,8 @@
         "_doc": { "type": "string" },
         "policy": { "type": "string" },
         "loop_mode": { "type": "string", "enum": ["in", "on"] },
-        "auto_merge": { "type": "string", "enum": ["on", "off"] }
+        "auto_merge": { "type": "string", "enum": ["on", "off"] },
+        "session_token_ceiling": { "type": "integer", "minimum": 0 }
       }
     }
   }

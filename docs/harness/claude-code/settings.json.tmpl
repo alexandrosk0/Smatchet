@@ -26,6 +26,11 @@
           },
           {
             "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/cost-ceiling-nudge.sh\"",
+            "timeout": 5000
+          },
+          {
+            "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/plan-archival-owed.sh\" --nudge",
             "timeout": 10000
           },
