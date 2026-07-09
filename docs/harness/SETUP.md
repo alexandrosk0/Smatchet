@@ -138,6 +138,17 @@ POSIX runners would fall back to `lcov` + `gcov` for the same purpose — that p
 
 **Not the same path as the agentic-handoff runner**: `ClaudeCodeLocalRunner` (the in-repo H3 deliverable for `agent/<proposalId>` worktrees) already bases on `origin/develop` correctly per `Source/Core/src/ClaudeCodeLocalRunner.cpp` + the `handoff.auto_fetch_before_worktree` config flag (default `true`). Only the Claude Code SDK's own session-spawn path (`claude/<id>` worktrees) is affected.
 
+## Hook-authoring checklist — promoting a gate-script into a per-call hook
+
+A `--strict` gate-script built for explicit pre-launch invocation flags EVERY instance; wired raw into an always-on `PreToolUse`/`PostToolUse` hook it blocks trivial calls. When promoting one (proven by the fleet-preflight `Workflow` hook, #1429):
+
+1. **Threshold-gate the BLOCK, not the raw exit code** — parse the scope out of the payload and block only above the documented threshold (e.g. ">2 agents"); the gate's own non-zero exit is necessary but not sufficient as a per-call block signal.
+2. **Fail-OPEN on plumbing** — missing dep (`jq`, python), unparseable payload, or wrong tool → exit 0 (allow). A guard that blocks every call when a dep is absent is worse than the gap it closes. Block (exit 2) only when the gate itself reports a real violation.
+3. **Test-assert on the hook's OWN output prefix** (e.g. `[my-hook] blocking launch`), never a generic phrase — a hook that echoes the wrapped tool's output makes `[[ "$output" != *"blocking launch"* ]]` false-fail when the wrapped gate emits the same words.
+4. **Keep project-prefixed env-name literals out of portable rule-docs** — reference the knobs generically there (`<PROJECT>_*`); the literal names live in the non-portable hook source's header (guard: `test-portable-purity`).
+
+Reference implementations: [`claude-code/hooks/lint-portable-purity.sh`](claude-code/hooks/lint-portable-purity.sh) (fail-open shape), the fleet-preflight `PreToolUse` hook + `tests/bats/pretool_workflow_fleet_preflight.bats` (threshold + own-prefix assertions).
+
 ## Adding a new harness
 
 1. Create `docs/harness/<name>/setup.md` with the recreation steps.

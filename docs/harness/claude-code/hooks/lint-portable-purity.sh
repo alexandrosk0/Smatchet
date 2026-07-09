@@ -8,8 +8,8 @@
 # never at the 5-second edit-time point. Same trigger/block shape as the C++
 # lint PostToolUse hook (lint-cpp.sh).
 #
-# FAIL-OPEN by contract (hook-authoring checklist, tooling backlog
-# 2026-06-19-gate-script-into-pretooluse-hook-needs-threshold): a missing
+# FAIL-OPEN by contract (docs/harness/SETUP.md § Hook-authoring checklist —
+# promoting a gate-script into a per-call hook, point 2): a missing
 # script, absent deps (git/python), an unparseable payload, or an edit OUTSIDE
 # the portable dirs all exit 0 (allow). The hook only BLOCKS (exit 2) when the
 # gate itself reports a NEW leak — never on its own plumbing failure.
