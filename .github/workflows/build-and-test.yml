@@ -139,8 +139,9 @@ jobs:
                 # It lives in the agentic tree but a change to it MUST trigger the
                 # build so the gate is re-validated — otherwise a PR touching only
                 # the gate skips the build and the gate never runs. Keep before the
-                # agents/* docs-class arm (case matches first pattern).
-                agents/scripts/project/test-lint-rules.sh) code=true; break ;;
+                # agents/* docs-class arm (case matches first pattern). lint-rules.d/
+                # holds the gate's sourced per-rule modules — same rule.
+                agents/scripts/project/test-lint-rules.sh|agents/scripts/project/lint-rules.d/*) code=true; break ;;
                 # Docs-class scripts: test-docs.sh is the local mirror of
                 # .github/workflows/doc-validation.yml (anchors / agent-contract /
                 # plan-index / ...). It runs no compiler and touches no product
@@ -205,7 +206,7 @@ jobs:
             while IFS= read -r f; do
               [ -z "$f" ] && continue
               case "$f" in
-                agents/scripts/project/test-lint-rules.sh) android_only=false; break ;;
+                agents/scripts/project/test-lint-rules.sh|agents/scripts/project/lint-rules.d/*) android_only=false; break ;;
                 Source/Mobile/*|cmake/toolchains/*) ;;
                 scripts/dev/test-docs.sh) ;;
                 *.md|docs/*|agents/*|scripts/dev/local/*|.gitignore|.gitattributes|.coderabbit.yaml|.github/CODEOWNERS|.github/pull_request_template.md) ;;
