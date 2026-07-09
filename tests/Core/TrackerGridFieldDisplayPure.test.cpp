@@ -138,6 +138,16 @@ TEST_CASE("BuildWorklogRenderModel — totals, partial-page marker, tooltip entr
         const auto model = BuildWorklogRenderModel(R"({"total":0,"worklogs":[]})");
         REQUIRE(model.parsed);
         CHECK(model.line == "-");
+        // maxResults == 0 must NOT emit the page-size tooltip line (pins the > 0 bound).
+        CHECK(model.tooltip.find("Page size (maxResults):") == std::string::npos);
+    }
+    SUBCASE("'This page:' needs BOTH total and page entries non-zero") {
+        const auto zeroTotal = BuildWorklogRenderModel(R"({"total":0,"worklogs":[{"timeSpentSeconds":60}]})");
+        REQUIRE(zeroTotal.parsed);
+        CHECK(zeroTotal.tooltip.find("This page:") == std::string::npos);
+        const auto emptyPage = BuildWorklogRenderModel(R"({"total":5,"worklogs":[]})");
+        REQUIRE(emptyPage.parsed);
+        CHECK(emptyPage.tooltip.find("This page:") == std::string::npos);
     }
     SUBCASE("summed page seconds + partial-page asterisk") {
         const std::string value = R"({
@@ -153,6 +163,7 @@ TEST_CASE("BuildWorklogRenderModel — totals, partial-page marker, tooltip entr
         CHECK(model.line.find("3 work logs") == 0);
         CHECK(model.line.back() == '*');
         CHECK(model.tooltip.find("This page: 1\xe2\x80\x93") != std::string::npos);
+        CHECK(model.tooltip.find("Page size (maxResults): 2") != std::string::npos);
         CHECK(model.tooltip.find("Ann") != std::string::npos);
         CHECK(model.tooltip.find("u2") != std::string::npos); // accountId fallback for nameless author
         CHECK(model.tooltip.find("(partial; not all work logs loaded)") != std::string::npos);

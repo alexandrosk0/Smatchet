@@ -412,6 +412,12 @@ struct UiDrawSession {
     /// (failure). UI consumes this directly; toast paths bypass it.
     int assistantPrefsTestResultType = 0; // 0 info, 1 success, 2 error
     std::shared_ptr<std::atomic<bool>> assistantPrefsTestCancel;
+    /// Probe-generation token: bumped on every probe launch AND on every field
+    /// edit (ClearStaleTestResult), captured into the worker at launch. The
+    /// posted result-commit callback drops its verdict when the counter moved
+    /// mid-flight, so a provider/credential edit can't surface a stale
+    /// Verified/Failed. UI-thread-only.
+    std::uint64_t assistantPrefsTestGeneration = 0;
     /// Set by the Test-connection success callback when the probe used a
     /// fallback default URL (cfg base URL was empty). The next paint of the
     /// Assistant tab reseeds the static InputText buffers from the working copy

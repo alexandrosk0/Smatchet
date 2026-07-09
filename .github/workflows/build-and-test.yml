@@ -347,7 +347,10 @@ jobs:
           set -euo pipefail
           # `-f` flips curl to fail on HTTP error (so a 404 HTML page doesn't
           # land in the font path). `-L` follows redirects.
-          curl -fsSL \
+          # `--retry*` rides out transient 429/5xx on the raw fetch — a parallel
+          # PR burst rate-limited this exact URL for ~2h on 2026-07-09, redding
+          # otherwise-green jobs post-build. curl honors Retry-After on 429.
+          curl -fsSL --retry 10 --retry-delay 30 --retry-max-time 600 --retry-all-errors \
                "https://github.com/FortAwesome/Font-Awesome/raw/${FA_TAG}/webfonts/fa-solid-900.ttf" \
                -o assets/fonts/fa-solid-900.ttf
           echo "${FA_SHA256}  assets/fonts/fa-solid-900.ttf" | sha256sum -c -
@@ -455,7 +458,7 @@ jobs:
           FA_SHA256: "af19d135d3a935b3ebfbd80320716ffe1202052c5f68dc2c5f1abc57005ac605"
         run: |
           set -euo pipefail
-          curl -fsSL \
+          curl -fsSL --retry 10 --retry-delay 30 --retry-max-time 600 --retry-all-errors \
                "https://github.com/FortAwesome/Font-Awesome/raw/${FA_TAG}/webfonts/fa-solid-900.ttf" \
                -o assets/fonts/fa-solid-900.ttf
           echo "${FA_SHA256}  assets/fonts/fa-solid-900.ttf" | sha256sum -c -
@@ -541,7 +544,7 @@ jobs:
           FA_SHA256: "af19d135d3a935b3ebfbd80320716ffe1202052c5f68dc2c5f1abc57005ac605"
         run: |
           set -euo pipefail
-          curl -fsSL \
+          curl -fsSL --retry 10 --retry-delay 30 --retry-max-time 600 --retry-all-errors \
                "https://github.com/FortAwesome/Font-Awesome/raw/${FA_TAG}/webfonts/fa-solid-900.ttf" \
                -o assets/fonts/fa-solid-900.ttf
           echo "${FA_SHA256}  assets/fonts/fa-solid-900.ttf" | sha256sum -c -
@@ -737,7 +740,7 @@ jobs:
           FA_SHA256: "af19d135d3a935b3ebfbd80320716ffe1202052c5f68dc2c5f1abc57005ac605"
         run: |
           set -euo pipefail
-          curl -fsSL \
+          curl -fsSL --retry 10 --retry-delay 30 --retry-max-time 600 --retry-all-errors \
                "https://github.com/FortAwesome/Font-Awesome/raw/${FA_TAG}/webfonts/fa-solid-900.ttf" \
                -o assets/fonts/fa-solid-900.ttf
           echo "${FA_SHA256}  assets/fonts/fa-solid-900.ttf" | sha256sum -c -
@@ -855,8 +858,10 @@ jobs:
       - name: Build SmatchetStandalone (Smatchet light)
         run: cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
 
-      # The DX12 / Unreal-embedded core compiles with the light feature set:
-      # SMATCHET_EMBEDDED_IN_UNREAL forces Whisper off (CMakeLists.txt), and the
+      # The DX12 / Unreal-embedded core compiles with the light feature set: the
+      # explicit -DSMATCHET_WITH_WHISPER=OFF on the configure step above keeps
+      # Whisper off (SMATCHET_EMBEDDED_IN_UNREAL is a per-target compile define,
+      # not a CMake variable — it gates nothing at configure time), and the
       # Unreal plugin ships AI + MCP off too (SMATCHET_WITH_MCP_UNREAL). The
       # SmatchetCore_DX12 target is gated only by if(WIN32) — not by any feature
       # flag — so it still builds with AI/Whisper/MCP off. Keeping the dual-target
@@ -2145,7 +2150,7 @@ jobs:
         run: |
           set -euo pipefail
           cd "${RUNNER_TEMP}"
-          curl -fsSL \
+          curl -fsSL --retry 10 --retry-delay 30 --retry-max-time 600 --retry-all-errors \
             "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" \
             -o openssl.tar.gz
           # Pinned-checksum gate (fail-closed): a hijacked/changed tarball aborts here.
@@ -2268,7 +2273,7 @@ jobs:
         run: |
           set -euo pipefail
           cd "${RUNNER_TEMP}"
-          curl -fsSL \
+          curl -fsSL --retry 10 --retry-delay 30 --retry-max-time 600 --retry-all-errors \
             "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" \
             -o openssl.tar.gz
           echo "${OPENSSL_SHA256}  openssl.tar.gz" | sha256sum -c -
