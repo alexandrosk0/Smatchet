@@ -1,17 +1,11 @@
 #include "Commands/Scenarios/ScenarioCaptureSizing.h"
 
 #include "Logger.h"
-#include "SmatchetUiSession.h"
 
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <string>
-
-// Same unconditional-extern shim the scenario TUs use: g_ui is defined in
-// SmatchetUI.cpp without a guard while the header-side extern is gated on
-// SMATCHET_WITH_LUA_AUTOMATION.
-extern UiDrawSession g_ui;
 
 namespace smatchet {
 namespace cmd {
@@ -46,12 +40,6 @@ ScenarioCaptureSize ParseScenarioCaptureSize(const nlohmann::json& args) {
     size.Width = (std::max)(320, IntArg(args, "windowWidth", size.Width));
     size.Height = (std::max)(240, IntArg(args, "windowHeight", size.Height));
     return size;
-}
-
-void RequestScenarioCaptureWindowResize(const ScenarioCaptureSize& size) {
-    g_ui.requestWindowWidth = size.Width;
-    g_ui.requestWindowHeight = size.Height;
-    g_ui.requestWindowResize = true;
 }
 
 } // namespace cmd
