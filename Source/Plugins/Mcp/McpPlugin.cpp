@@ -18,6 +18,7 @@
 #include "Commands/Command.h"
 #include "Json/BoundedJsonParse.h" // smatchet::json_safe::ParseBounded — depth/node-bounded ingress parse (#1271)
 #include "McpJsonRpcPure.h"
+#include "McpRateLimitPure.h"
 #include <cstdio>  // std::remove, std::fopen/fwrite/fclose
 #include <cstdlib> // std::getenv — spawn-token handshake (SMATCHET_MCP_SPAWN_TOKEN)
 #if !defined(_WIN32)
@@ -65,6 +66,11 @@ void AppendMcpActivityLine(AppController* app, const std::string& line) {
     }
 }
 
+long long NowMonotonicMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
 } // namespace
 
 struct McpPlugin::Impl {
@@ -101,6 +107,12 @@ struct McpPlugin::Impl {
     std::vector<std::string> export_fields;
     bool allow_lua_execution = false;
     bool require_token_on_loopback = true;
+    // tools/call token bucket (AGENTIC_INFRA_AUDIT.md B3). Guarded by its own mutex —
+    // REST and JSON-RPC handlers run on different pool workers. Config-seeded at OnStart.
+    std::mutex toolsCallBucketMutex;
+    smatchet::mcp::pure::McpToolsCallBucket toolsCallBucket;
+    int toolsCallRateBurst = 0;
+    int toolsCallRateRefillPerSec = 0;
     /// Path to the instance.json written by OnStart and deleted by OnStop.
     std::string instanceJsonPath;
 };
@@ -149,7 +161,9 @@ bool McpPlugin::NeedsRestart(const TrackerConfig& cfg) const {
         cfg.McpAllowRemote ? SmatchetDefaults::Mcp::kBindAny : SmatchetDefaults::Mcp::kBindLocalhost;
     return st.ListenPort != expectedPort || st.BindHost != expectedBind || !AuthTokenMatches(cfg.McpAuthToken) ||
            !LuaExecutionEnabledMatches(cfg.McpAllowLuaExecution) ||
-           (impl_ && impl_->require_token_on_loopback != cfg.McpRequireTokenOnLoopback);
+           (impl_ && impl_->require_token_on_loopback != cfg.McpRequireTokenOnLoopback) ||
+           (impl_ && (impl_->toolsCallRateBurst != cfg.McpToolsCallRateBurst ||
+                      impl_->toolsCallRateRefillPerSec != cfg.McpToolsCallRateRefillPerSec));
 }
 
 bool McpPlugin::Authorize(const httplib::Request& req, httplib::Response& res) {
@@ -258,6 +272,10 @@ void McpPlugin::OnStart(AppController& app) {
     }
     impl_->allow_lua_execution = cfg.McpAllowLuaExecution;
     impl_->require_token_on_loopback = cfg.McpRequireTokenOnLoopback;
+    impl_->toolsCallRateBurst = cfg.McpToolsCallRateBurst;
+    impl_->toolsCallRateRefillPerSec = cfg.McpToolsCallRateRefillPerSec;
+    impl_->toolsCallBucket.Tokens = static_cast<double>(impl_->toolsCallRateBurst);
+    impl_->toolsCallBucket.LastRefillMs = NowMonotonicMs();
     impl_->tracker_domain = NormalizeDomain(cfg.Domain);
     if (cfg.McpExportFields.empty()) {
         impl_->export_fields = {
@@ -527,6 +545,36 @@ void McpPlugin::RegisterToolsCallRoute() {
                     [this](const httplib::Request& req, httplib::Response& res) { HandleToolsCall(req, res); });
 }
 
+bool McpPlugin::AllowToolsCall(long long& retryAfterMs) {
+    std::lock_guard<std::mutex> lock(impl_->toolsCallBucketMutex);
+    const smatchet::mcp::pure::McpRateLimitDecision decision = smatchet::mcp::pure::ConsumeToolsCallToken(
+        impl_->toolsCallBucket, impl_->toolsCallRateBurst, static_cast<double>(impl_->toolsCallRateRefillPerSec),
+        NowMonotonicMs());
+    retryAfterMs = decision.RetryAfterMs;
+    return decision.Allow;
+}
+
+bool McpPlugin::RestToolsCallWithinRateLimit(const std::string& name, const std::string& remote,
+                                             httplib::Response& res) {
+    long long retryAfterMs = 0;
+    if (AllowToolsCall(retryAfterMs)) {
+        return true;
+    }
+    // Same HTTP-200 canonical-envelope convention as DispatchRegistryToolsCall: the
+    // envelope carries the structured error so callers parse it, not the transport.
+    const nlohmann::json envelope = {{"ok", false},
+                                     {"command", name},
+                                     {"error",
+                                      {{"code", "rate-limited"},
+                                       {"message", "tools/call rate limit exceeded"},
+                                       {"details", {{"retry_after_ms", retryAfterMs}}}}}};
+    res.set_content(nlohmann::json{{"content", {{{"type", "text"}, {"text", envelope.dump()}}}}}.dump(),
+                    "application/json");
+    LOG_WARN("MCP: REST tools/call rate-limited tool=%s remote=%s", name.c_str(), remote.c_str());
+    AppendMcpActivityLine(impl_->app, "MCP: REST tools/call " + name + " rate-limited remote=" + remote);
+    return false;
+}
+
 void McpPlugin::DispatchRegistryToolsCall(const std::string& name, const nlohmann::json& arguments,
                                           const std::string& remote, httplib::Response& res) {
     smatchet::cmd::CommandContext cctx;
@@ -587,6 +635,11 @@ void McpPlugin::HandleToolsCall(const httplib::Request& req, httplib::Response& 
         std::string paramsStr = arguments.dump();
         LOG_TRACE("MCP: REST POST /mcp/tools/call remote=%s tool=%s args_len=%zu body_len=%zu", req.remote_addr.c_str(),
                   name.c_str(), paramsStr.size(), req.body.size());
+        // Token-bucket gate ahead of every dispatch arm (registry / run_lua / Lua MCP
+        // tools / unknown-command) — B3: nothing bounded tool-call frequency before.
+        if (!RestToolsCallWithinRateLimit(name, remote, res)) {
+            return;
+        }
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
         // error / result are populated and consumed only by the Lua tool paths
         // (run_lua / isLuaMcpTool → EmitToolsCallResult). The registry and no-Lua
@@ -821,6 +874,17 @@ void McpPlugin::HandleJsonRpcToolsCall(const std::string& remote, const nlohmann
     const std::string name = params.value("name", "");
     const std::string rpcRemote = remote;
     LOG_TRACE("MCP: JSON-RPC tools/call tool=%s", name.c_str());
+
+    // Same token-bucket gate as the REST route — both entry points share one bucket.
+    long long retryAfterMs = 0;
+    if (!AllowToolsCall(retryAfterMs)) {
+        jres["error"] = {{"code", -32000},
+                         {"message", "rate-limited: tools/call rate limit exceeded; retry after " +
+                                         std::to_string(retryAfterMs) + " ms"}};
+        LOG_WARN("MCP: JSON-RPC tools/call rate-limited tool=%s remote=%s", name.c_str(), rpcRemote.c_str());
+        AppendMcpActivityLine(impl_->app, "MCP: JSON-RPC tools/call " + name + " rate-limited remote=" + rpcRemote);
+        return;
+    }
 
     if (impl_->app->Commands().Contains(name)) {
         HandleJsonRpcRegistryCall(name, params, rpcRemote, jres);

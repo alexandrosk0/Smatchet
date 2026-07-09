@@ -30,7 +30,7 @@ Close the hole:
 |---|---|
 | **Recommended launcher** | `nsc <slug>` / `pwsh scripts/dev/worktree.ps1 new <slug>` provisions the new worktree **and**, on first run, the integration tree's `.claude/` — so using the standard launcher closes the hole automatically, no remembering required. |
 | **Working directly in the main clone** | Run `bash agents/scripts/core/setup-harness.sh claude-code` **once** before relying on the guard. |
-| **Check anytime** | `bash agents/scripts/core/check-harness-provisioned.sh` warns (exit 1) when the current tree's guard hook is missing and prints the fix; exit 0 when wired. |
+| **Check anytime** | `bash agents/scripts/core/check-harness-provisioned.sh` warns (exit 1) when the current tree's guard hook is missing and prints the fix; exit 0 when wired. `scripts/dev/doctor.sh` runs the same probe as a warn-only preflight check (`[WARN] harness`), so the standard doctor pass surfaces an unprovisioned tree without a hand-run probe. Note the repo-owned git hooks (`scripts/git-hooks/`, e.g. `pre-push`) are ALSO inert in a fresh clone — `core.hooksPath` is set by `setup-harness.sh`, so no git hook can self-report the hole. |
 
 Guard mechanics + recovery: [`process-rules.md`](../agent-rules/process-rules.md) § Concurrent interactive sessions.
 
@@ -94,6 +94,8 @@ Heavy `Source/Core/src/<ctx>/` subsystems carry a leaf `AGENTS.md` (scoped rules
 | Aider / generic | No | Read the leaf explicitly (point at it via `CONTEXT-MAP.md`). |
 
 **`CONTEXT.md` / `README.md` are never auto-loaded** on any harness — they're read on demand (agent or semantic search). Only the leaf `AGENTS.md` participates in nearest-wins.
+
+**Regression net**: `agents/scripts/core/test-leaf-doc-discovery.sh` (static, auto-enrolled in `test-all.sh`) asserts a `@AGENTS.md` shim sits beside every leaf on a provisioned checkout (skips when unprovisioned, e.g. CI). Its `--live` mode (opt-in, spends tokens — never auto-run) spawns a headless `claude -p` session cd'd into `Source/Core/src/Tracker/` and asserts it cites the leaf `AGENTS.md` as the rule source for a Tracker invariant — end-to-end proof the shim mechanism reaches an agent. Codex (native nearest-`AGENTS.md`) and Cursor (`CONTEXT-MAP.md` pointer) have no headless probe yet — manual residue.
 
 Eager-load caveat: if a harness ever eager-loads *all* nested memory at session start (rather than lazily per touched dir), the per-subsystem token win inverts — every subsystem's rules load every session. Claude Code's nested `CLAUDE.md` is **lazy** (confirmed), so the shim is safe. A future eager-loading harness should stay pointer-only (`CONTEXT-MAP.md`) until it supports lazy nearest-wins.
 

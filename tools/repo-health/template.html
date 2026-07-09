@@ -111,6 +111,7 @@
   .p-ok{color:var(--ok); background:var(--ok-dim); border-color:color-mix(in srgb,var(--ok) 30%,transparent)}
   .p-warn{color:var(--warn); background:var(--warn-dim); border-color:color-mix(in srgb,var(--warn) 30%,transparent)}
   .p-idle{color:var(--idle); background:var(--idle-dim); border-color:color-mix(in srgb,var(--idle) 32%,transparent)}
+  .p-crit{color:var(--crit); background:var(--crit-dim); border-color:color-mix(in srgb,var(--crit) 30%,transparent)}
   .st-ok{--stripe:var(--ok)} .st-warn{--stripe:var(--warn)} .st-idle{--stripe:var(--idle)}
 
   .kpis{display:grid; grid-template-columns:repeat(6,1fr); gap:12px}
@@ -217,6 +218,7 @@
     <div class="hmeta">
       <span class="stamp mono">{{STAMP}}</span>
       <div class="chips">
+        {{FACTS_FRESHNESS}}
         {{GOV_CHIPS}}
       </div>
     </div>

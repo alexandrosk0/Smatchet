@@ -65,6 +65,21 @@ LEDGER="${POSTMORTEM_LEDGER:-docs/self-improvement/postmortems.md}"
 CONFIG_FILE="${POSTMORTEM_CONFIG_FILE:-project.config.json}"
 SCAN_N="${POSTMORTEM_SCAN_N:-20}"
 
+# Pin the has_entry/has_sha_entry ledger read to origin/develop — the same ref
+# the merge scans below trust. Reading the cwd working-tree file nags phantom
+# owes when the tree is parked on a stale branch and, worse, false-SUPPRESSES a
+# genuinely-owed postmortem when an entry exists only locally (tooling
+# 2026-06-19). POSTMORTEM_LEDGER stays an explicit working-file override (the
+# bats rig); without it, resolve via `git show` once, falling back to the
+# working tree only when origin/develop is unresolvable (degraded, not blind).
+if [ -z "${POSTMORTEM_LEDGER+x}" ]; then
+    _ledger_tmp="$(mktemp)"
+    trap 'rm -f "$_ledger_tmp"' EXIT
+    if git show "origin/develop:$LEDGER" > "$_ledger_tmp" 2>/dev/null; then
+        LEDGER="$_ledger_tmp"
+    fi
+fi
+
 # Curated blocking-scope allow-list — SINGLE SOURCE OF TRUTH lives in
 # merge-gates.sh as MERGE_GATES_BLOCK_ALLOWLIST_RE. Source it rather than keep a
 # hand-synced copy: the duplicate drifted once (a stale branch still carried

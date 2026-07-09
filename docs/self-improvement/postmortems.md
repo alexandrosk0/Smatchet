@@ -39,7 +39,7 @@ Blameless — **over-broad allow-list pruning**. The broad `Bucket-` token was d
 PRIMARY (prevention) — add the literal `Bucket-E Jira fixture-backend (Mesa GL, hard)` job name to `MERGE_GATES_BLOCK_ALLOWLIST_RE` (`merge-gates.sh:163`), beside the already-blocking `Bucket launch-smoke (Mesa GL)`. This lane is deterministic + boot-capable (unlike the genuinely-advisory `Bucket-E UI tests` / `Bucket-C screenshot diff` lanes kept advisory by #1218's `bucket-out-of-band` remedy), so blocking it does NOT re-introduce the stochastic-flake jam the 2026-06-15 removal protected against. **Sequencing precondition: land only AFTER the #1579 product fix makes the lane green** — adding it while red blocks every PR. COMPANION (test) — a `merge_gates.bats` case asserting the deterministic fixture-backend lane IS allow-listed while the flaky bucket-C/E render lanes are NOT, so a future blanket `Bucket-` edit can't silently re-advisory it.
 
 ### Filed as
-[`docs/self-improvement/categories/infra/2026-06-28-bucket-e-fixture-lane-advisory-by-prefix.md`](categories/infra/2026-06-28-bucket-e-fixture-lane-advisory-by-prefix.md)
+`bucket-e-fixture-lane-advisory-by-prefix` — archived to [`categories/applied.md`](categories/applied.md) (superseded by the all-gates-blocking flip: `MERGE_GATES_BLOCK_ALLOWLIST_RE="."` blocks every non-advisory check, retiring the curated allow-list)
 
 ## 2026-06-27 · PR #1566 (escape) · PR #1571, #1572, #1574 (collateral) · CANCELLED `Perf PR-fast` (meant-to-block, not GH-required) merged via a human native-merge
 

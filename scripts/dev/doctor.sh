@@ -218,6 +218,19 @@ else
     write_pass 'clang-format' "$clang_format_line"
 fi
 
+# Harness provisioned — the session guards (HEAD-drift etc.) live in the
+# gitignored .claude/ and are wired only by setup-harness.sh, so a fresh clone
+# runs with every guard silently inert (the #913 bootstrap hole). Surface that
+# state in the standard preflight instead of relying on a hand-run probe.
+harness_probe="$REPO_ROOT/agents/scripts/core/check-harness-provisioned.sh"
+if [ -f "$harness_probe" ]; then
+    if bash "$harness_probe" --quiet "$REPO_ROOT" >/dev/null 2>&1; then
+        write_pass 'harness' 'session guards provisioned (.claude/hooks wired)'
+    else
+        write_warn 'harness' 'NOT provisioned -- session guards inert; fix: bash agents/scripts/core/setup-harness.sh claude-code'
+    fi
+fi
+
 # Opt-in: OpenCppCoverage check is skipped by default. Set the env var
 # SMATCHET_DOCTOR_CHECK_COVERAGE=1 to enable. Windows-only; install via
 # `choco install opencppcoverage` or the releases page. CI runners install
