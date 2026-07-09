@@ -1259,6 +1259,7 @@ set(_SMATCHET_AI_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/AiNdjsonParser.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/AiPrefsTestConnection.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/AiPrefsValidator.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/AiRequestBuilder.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/AiSseParser.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/AnthropicClient.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/OllamaClient.cpp"
