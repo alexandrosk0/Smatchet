@@ -1,9 +1,3 @@
-#if defined(_WIN32)
-// rand_s (OS CSPRNG via the CRT) — the define must precede the first <stdlib.h>
-// include anywhere in this TU (spawn-token hardening, backlog 2026-06-28).
-#define _CRT_RAND_S
-#endif
-
 #include "CliCommandRunner.h"
 
 #include "CliArgCoercion.h"
@@ -29,6 +23,8 @@
 #define NOMINMAX
 #endif
 #include <winsock2.h>
+#include <bcrypt.h> // BCryptGenRandom — spawn-token CSPRNG (backlog 2026-06-28)
+#pragma comment(lib, "bcrypt")
 #endif
 
 #include <httplib.h>
@@ -488,22 +484,17 @@ void EmitErrorToStderr(const nlohmann::json& envelope) {
 } // CLI stdout — product output, not logging
 
 #if defined(SMATCHET_WITH_MCP)
-/// Fill `buf` with `n` bytes from the explicit OS CSPRNG — rand_s (Windows CRT),
-/// arc4random_buf (macOS/BSD), getrandom (Linux). Returns false only when the
+/// Fill `buf` with `n` bytes from the explicit OS CSPRNG — BCryptGenRandom
+/// (Windows CNG), arc4random_buf (macOS/BSD), getrandom (Linux). Returns false only when the
 /// platform call failed or no platform branch applies; the caller then falls back
 /// to std::random_device, which the C++ standard does not guarantee to be
 /// crypto-secure or even non-deterministic (backlog 2026-06-28 — the shipped hosts
 /// all take an explicit branch, so the fallback never runs there).
 bool FillOsCsprng(unsigned char* buf, size_t n) {
 #if defined(_WIN32)
-    for (size_t i = 0; i < n; i += sizeof(unsigned int)) {
-        unsigned int v = 0;
-        if (rand_s(&v) != 0) {
-            return false;
-        }
-        std::memcpy(buf + i, &v, (n - i < sizeof(unsigned int)) ? n - i : sizeof(unsigned int));
-    }
-    return true;
+    const NTSTATUS status =
+        BCryptGenRandom(nullptr, buf, static_cast<ULONG>(n), BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+    return BCRYPT_SUCCESS(status);
 #elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
     arc4random_buf(buf, n);
     return true;
