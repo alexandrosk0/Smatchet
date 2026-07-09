@@ -9,6 +9,61 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [infra] · P2 — fresh-clone bootstrap hole: every session hook/guard is inert until `setup-harness.sh` runs, and only a manual probe warns
+  Details: the `.claude/` adapter dir (hooks, guards, settings) is gitignored and provisioned only by `agents/scripts/core/setup-harness.sh`; in a fresh clone the head-drift, plan-lock, and shared-tree guards plus every SessionStart nudge are silently absent. `check-harness-provisioned.sh` exists to surface this but must be invoked by hand. `docs/plans/session-guard-agnostic.md` names the fresh-clone gap as an explicit non-goal ("their own in-flight effort") — but no live tracker actually carries it. AGENTIC_INFRA_AUDIT.md finding C5.
+  Concrete next action: (a) fold `check-harness-provisioned.sh` into `scripts/dev/doctor.sh` so the standard preflight reports the unprovisioned state; (b) add a cheap self-check to the git `pre-push` hook path (already repo-owned, so it *does* run in fresh clones) that warns when `.claude/hooks/` is absent under a Claude-harness session. Effort S.
+  Resolution: applied — slice (a): `doctor.sh` now runs `check-harness-provisioned.sh --quiet` as a warn-only preflight check (`[WARN] harness` unprovisioned / `[PASS] harness` wired; covered by `tests/bats/harness_provisioned_doctor.bats`). Slice (b)'s premise was wrong: `scripts/git-hooks/pre-push` is itself only wired via `core.hooksPath` BY `setup-harness.sh`, so no git hook runs in a fresh clone either — replaced with a doc note in `docs/harness/SETUP.md` § Check anytime stating that fact and pointing at the doctor probe.
+  Status: applied
+  Last-reviewed: 2026-07-08
+
+- 2026-07-05 · orchestrator (docs-reconciliation session) · [tooling] · P2 — `scripts/dev/test-docs.sh` bills itself as the local mirror of `doc-validation.yml` but omits the `md_lint` (MD028 etc.) step the CI lane actually runs, so a doc author gets a green local mirror and then a red "Doc anchors + agent contract" CI lane on the same content
+  Details: `test-docs.sh`'s own header reads "local mirror of the .github/workflows/doc-validation.yml gate", and it runs 14 checks (`test-doc-anchors`, `test-plan-index`, `test-plan-ref-integrity`, `test-markdown-links`, …) — but NOT `python3 agents/scripts/core/md_lint.py --all`, which the CI doc lane runs as its "md_lint — markdown style (MD028 etc.)" step. This session added a staleness blockquote to `backlog/MANUAL_TEST_QUEUE.md` that left a bare blank line between two adjacent blockquotes; `test-docs.sh` passed 14/14 locally, then CI failed `md_lint: MD028 blank line inside blockquote`, costing a diagnosis round-trip plus a fix commit. The mirror's entire value is "catch locally what CI catches"; a missing sub-check silently defeats that for the single most common markdown-authoring mistake.
+  Concrete next action: add `md_lint` to the `CHECKS` array in `scripts/dev/test-docs.sh` (e.g. `"md_lint|python3 $CORE/md_lint.py --selftest && python3 $CORE/md_lint.py --all"`), mirroring how `doc-validation.yml` invokes it, so the local mirror is a true superset-or-equal of the CI doc lane. One-line addition, no new dependency (md_lint is pure Python already in-tree).
+  Resolution: applied — `md_lint|python3 $CORE/md_lint.py --selftest && python3 $CORE/md_lint.py --all` added to the STEPS array in `scripts/dev/test-docs.sh`, positioned between test-plan-naming and test-portable-purity to mirror the doc-validation.yml step order; verified by running test-docs.sh locally (md_lint green).
+  Status: applied
+  Last-reviewed: 2026-07-08
+
+- 2026-07-05 · claude-code · [tooling] · P3 — pre-push clang-format check is whole-file, not delta; pre-existing drift in a touched file blocks an unrelated change
+
+  Details: `scripts/git-hooks/pre-push` step 3 runs `clang-format --dry-run --Werror
+  "$ci_f"` over each **changed first-party C++ file as a whole**. The CI lint gate
+  (`Windows + MSVC` clang-format step) is **delta-based** (flags only NEW violations
+  vs origin/develop, grandfathering pre-existing drift), so the local hook is
+  STRICTER than the gate it claims to mirror. Observed this session on the
+  `perf-win-hunt` one-line change to `SmatchetAiAssistantUi.cpp`: my edit was
+  clang-format-clean, but a PRE-EXISTING drift at line 1036 (an over-long
+  `EnqueueAppendAndTrim` call from an earlier commit) tripped the whole-file
+  `--Werror` and refused the push. The remedy (`clang-format -i` the file) then
+  reformats a line I never touched, adding unrelated churn to the diff — or forces
+  the `SMATCHET_SKIP_PRESHIP_GATE=1` override for a legitimately-clean change.
+
+  Impact: low-frequency friction, but it (a) makes the hook disagree with CI (the
+  parity the hook exists to provide — `docs/agent-rules/ci-local-parity.md`), and
+  (b) nudges toward either scope-creep (reformatting untouched lines) or the
+  sanctioned-but-noisy skip override.
+
+  Concrete next action: make the pre-push clang-format check delta-aware to match
+  the CI gate — e.g. `git clang-format --diff <merge-base>` (formats/checks only the
+  changed hunks) instead of `clang-format --dry-run --Werror <whole-file>`. If a
+  whole-file check is intentional (catch latent drift early), then it should
+  *offer* to reformat only the changed hunks, and its message should say "whole-file
+  (stricter than CI delta)" so the operator isn't surprised the hook rejects a
+  CI-green change. Home: `scripts/git-hooks/pre-push` step 3.
+
+  Resolution: applied — pre-push step 3 now runs `git clang-format --diff
+  <merge-base> HEAD -- <changed first-party C++>` (delta: only changed hunks
+  flag, matching the CI gate; rc=1 = violation, any other rc = infra →
+  fail-open) and falls back to the whole-file `clang-format --dry-run --Werror`
+  loop only when git-clang-format is absent, with the failure line then
+  labelled "[whole-file — stricter than the CI delta]". Covered by
+  `tests/bats/pre_push_format_delta.bats` (clean hunk atop pre-existing drift
+  passes; bad new hunk still refuses).
+  Status: applied
+  Last-reviewed: 2026-07-08
+
+- 2026-07-05 · user-facing-text session (PRs #1614/#1615) · [infra] · P3 — remote-container builds: GitHub release tarballs 403 through the agent proxy; posix-core-check needs a manual curl clone + apt packages
+  Details: in the Claude Code remote container the network policy allows `git clone` but returns 403 for GitHub release-asset and codeload tarball downloads; the `posix-core-check` configure fails at cpr's internal FetchContent of `curl-7.80.0.tar.xz`. `xorg-dev`/`libgl1-mesa-dev` are also not preinstalled (glfw's configure needs them even though it never builds in that preset) and need an `apt-get update` first. Validated workaround (2026-07-05 session): `git clone --depth 1 --branch curl-7_80_0 https://github.com/curl/curl.git .fetchcontent-src/curl-manual`, then `apt-get install -y xorg-dev libgl1-mesa-dev`, then `cmake --preset posix-core-check -DFETCHCONTENT_SOURCE_DIR_CURL=$PWD/.fetchcontent-src/curl-manual`. Proposal: fold the steps into a SessionStart hook or a `scripts/dev/remote-container-bootstrap.sh` so future remote sessions get a working posix-core-check lane without rediscovering the workaround.
+  Resolution (2026-07-08): applied — `scripts/dev/remote-container-bootstrap.sh` wraps the workaround (idempotent: clone skipped when present, apt skipped when installed; `--no-configure` provisions only), referenced from `docs/agent-rules/build.md` § Remote-container posix-core-check bootstrap and `docs/harness/claude-code/setup.md` § Remote container; validated end-to-end in the target container (fresh configure green in ~80s; re-run skips both steps).
 - 2026-07-05 · orchestrator (mutation-testing pilot) · [test] · P2 — the mutation pilot (`MUTATION_PILOT.md`) found 10 genuine weak assertions in the headless `SmatchetTsanTests` rig; 3 worst fixed in the pilot PR, **7 residual survivors** remain unasserted (each a plausible single-point bug the current suite would ship uncaught)
   Details: 68 mutants over 12 TUs → 52 killed / 16 survived (5 equivalent, 1 out-of-oracle, 10 real weak assertions). The 7 residual (all reproduced + diffed in `MUTATION_PILOT.md` § "Every surviving mutant"):
   - `TrackerGridFieldDisplayPure.cpp` **GR5** — `if (s.MaxResults > 0)` → `>= 0`: "Page size (maxResults):" tooltip line emitted at 0, no subcase asserts it.
@@ -298,6 +353,47 @@
   Resolution: applied — ship-loops.md § merge-snapshot gained the **fourth writer**: the session that armed the auto-merge appends the row on receiving the merged notification (PR-activity webhook / check-in), fetching `mergeCommit`/`headSha`/labels via MCP when `gh` is absent, calling the same idempotent helper with `mergeActor=orchestrator-automerge` + `SNAPSHOT_MERGED_AT=<mergedAt>`, and landing it in its next develop-bound commit. The #1605 + #1608 rows were seeded through exactly that path in the same PR. Residual (accepted, documented in the mandate): a session that dies before the merge event, or with no further develop-bound commit, leaves the hole to ADR-0017's live fallback — best-effort, never blindness; no retro-composition.
   Status: applied
   Last-reviewed: 2026-07-05
+
+- 2026-06-24 · orchestrator (Claude Code) · [test] · P2 — non-hermetic `test-pre-push-merged-pr-guard.sh` mis-fires on PR merge-ref checkout (PR #1552)
+  Details: `Agentic self-tests (bats)` RED on PR #1552 (6 passed / 6 failed) — but only in CI, green on every head-only local run. Root cause: the test drives the WHOLE `scripts/git-hooks/pre-push` through a stripped `env -i` sandbox, and GitHub Actions `pull_request` checks out the merge ref (`refs/pull/N/merge`), whose tree carries develop's gate D (local-CI delta-gate) and plan-lock probe (C) — both mis-fire in the minimal sandbox (gate D's tooling is absent from the minimal PATH → misread as a violation; the plan-lock probe reads the REAL branch via `git symbolic-ref`, not the stubbed `git rev-parse`) and refuse before the merged-PR guard under test runs. A head-only checkout lacked gate D, so local runs stayed green — classic merge-ref-reintroduces-develop-code trap. Fix (shipped on #1552): neutralise the sibling probes inside the test's `env -i` block (`SMATCHET_SKIP_PRESHIP_GATE=1`, `SMATCHET_ALLOW_UNLOCKED_PUSH=1`); verified 12/12 against a throwaway merge-ref worktree carrying gate D.
+  Lesson: a bucket-A unit test driving a whole script with sibling stages must neutralise every stage it is NOT testing — otherwise an unrelated stage gaining a new environment dependency silently breaks the test on the merge-ref checkout while local head-only runs stay green. Proposed guard: a lint that any `env -i` hook invocation in an agentic self-test sets the escape var for EACH independent stage of the script under test.
+  Resolution (2026-07-08): applied — the recurrence guard landed as `agents/scripts/core/test-pre-push-stage-neutralisers.sh` (auto-enrolled via the test-all.sh glob; `--selftest` asserts the failure case): it extracts the `${SMATCHET_*:-0}` stage escape vars from the hook and fails any `env -i … $HOOK` invocation in `agents/scripts/core/test-pre-push-*.sh` that omits one; `test-pre-push-merged-pr-guard.sh` gained the missing stage-(A) neutraliser (`SMATCHET_ALLOW_DEVELOP_PUSH=1`).
+  Status: applied
+  Last-reviewed: 2026-07-08
+
+- 2026-06-19 · orchestrator · [tooling] · P3 — postmortem-owed.sh reads the cwd working-tree ledger instead of origin/develop, so a session whose integration tree is parked on a feature branch gets phantom "owed" nags (and, inversely, a locally-staged-but-unmerged entry can false-suppress a genuinely-owed postmortem)
+  Details: The 2026-06-19 session-start postmortem-owed hook reported `PR #1409 — override:
+    tests-out-of-band` owed, but that postmortem was already merged to develop — #1414, squash
+    96e79412, entry `## 2026-06-19 · PR #1390, #1409` in postmortems.md. The detector ran from the
+    integration tree (C:/Dev/Smatchet) which was checked out on feat/tsan-subset-sync-layer, a branch
+    predating #1414. has_entry / has_sha_entry grep `LEDGER` (postmortem-owed.sh:64 default
+    `docs/self-improvement/postmortems.md`, used at :124 and :143) as a cwd-relative WORKING-TREE path,
+    so they read the stale checked-out file (0 matches) and nagged. Re-running with POSTMORTEM_LEDGER
+    pointed at `git show origin/develop:…postmortems.md` reported `no gate escapes owed (last 20 merges
+    clean)`. The false-positive direction is just startup noise; the dangerous inverse is a
+    false-NEGATIVE — if the working tree holds a postmortem entry that is NOT yet merged to develop,
+    has_entry returns true and silently suppresses a genuinely-owed postmortem on develop. The detector
+    already scans the merges themselves against origin/develop (`git log origin/develop …` at :448/:492),
+    so only the ledger read diverges from the ref everything else trusts.
+  Concrete next action: pin the ledger read to the same ref the merges are scanned against. In
+    has_entry / has_sha_entry, resolve the ledger via `git show "origin/develop:$LEDGER"` (cache once to
+    a temp file, grep that) instead of reading the cwd working-tree path; keep POSTMORTEM_LEDGER as an
+    explicit override so the bats rig can still point at a fixture. Add bats cases (sibling of the
+    existing postmortem-owed tests): (1) working tree on a branch LACKING the entry while origin/develop
+    HAS it → detector reports clean, no phantom owe; (2) entry present ONLY in the working tree, absent
+    on origin/develop → still owes (guards the false-negative). Est ~0.5d.
+  Cross-ref: postmortem-owed.sh:64 (LEDGER default), :124-133 (has_entry), :143-146 (has_sha_entry),
+    :448/:492 (`git log origin/develop` merge scan); postmortems.md 2026-06-19 PR #1390, #1409 (the entry
+    falsely reported owed); merge 96e79412 (#1414); session-start postmortem-owed hook.
+  Resolution: applied — when POSTMORTEM_LEDGER is unset, LEDGER now resolves via
+    `git show "origin/develop:$LEDGER"` cached once to a mktemp file (rm on EXIT),
+    so has_entry / has_sha_entry grep the same ref the merge scans trust; the
+    working-tree path is only the degraded fallback when origin/develop is
+    unresolvable, and POSTMORTEM_LEDGER stays the explicit override for the bats
+    rig. Two new bats cases guard both directions (entry on origin/develop only →
+    no phantom owe; entry in the working tree only → still owes).
+  Status: applied
+  Last-reviewed: 2026-07-08
 
 - 2026-06-18 · claude (dx12-arm64 Phase 4 session) · [tooling] · P2 — `windows-11-arm-runner-for-arm64-binary-validation`: dx12-standalone-win-arm64 Phase 3 needs a `windows-11-arm` runner to EXECUTE ARM64 binaries; only an advisory compile-only cross leg exists
   Details: the Phase 4 PR adds `windows-msvc-arm64`, an advisory compile-only `amd64_arm64` cross job (`msvc-dev-cmd arch: amd64_arm64` then `ninja-iter-msvc-arm64` builds `SmatchetStandalone`). It proves ARM64 compile+link but CANNOT run the binary or `SmatchetTests` — a cross-built ARM64 image will not execute on the x64 `windows-2022` runner. The plan's Phase 3 risk focus (the ~310 `std::atomic` `memory_order` sites written under x86-TSO, untested on Windows-on-ARM), the DX12-on-WARP runtime smoke, and the `-Arch arm64` Inno installer smoke all need real ARM64 execution. `windows-11-arm` GitHub-hosted runners are free for public repos.
