@@ -207,8 +207,7 @@ TEST_CASE("Lua bindings · decode_json rejects over-deep nesting without crashin
 // Security finding A — node-count cap. A wide-but-shallow payload (a single array
 // with > kDecodeJsonMaxNodes elements) must also be rejected gracefully: depth
 // alone does not bound total allocation.
-TEST_CASE("Lua bindings · decode_json rejects excessive node count" *
-          doctest::test_suite("[high-risk]")) {
+TEST_CASE("Lua bindings · decode_json rejects excessive node count" * doctest::test_suite("[high-risk]")) {
     CoreFixture fx;
 
     // A flat array of 250000 zeros (> kDecodeJsonMaxNodes = 200000).
@@ -499,6 +498,36 @@ TEST_CASE("Lua bindings · InitLuaCore does not regress sandbox closure") {
            and os.remove  == nil
            and io         == nil
            and require    == nil
+    )");
+    CHECK_EQ(r.get<bool>(), true);
+}
+
+// =============================================================================
+// ai.* off-UI-thread unreachability contract (Issue #1678)
+// =============================================================================
+
+// Issue #1678 (agent code-audit finding B5) claimed the background automation
+// worker's per-job Lua state could reach `ai.add_context` / `ai.clear_context` /
+// `ai.prompt` and race `AiAssistantController`'s UI-thread-only state. Verified
+// false: `ai.*` is registered ONLY inside `AppController::Impl::InitLuaUi`
+// (AppController_LuaBindings.cpp) -- NEVER inside `InitLuaCore` -- and every
+// off-UI-thread state (`AutomationWorkerLoop`'s per-job `bgState`, and the MCP
+// run_lua / registered-tool fresh states) is built via
+// `AppController::Impl::PrepareFreshLuaState`, which calls `InitLuaCore` only.
+// So `ai` is unreachable off the UI thread by construction (table absence),
+// not by a runtime check. This test locks that invariant in against `CoreFixture`
+// (which drives the exact same `smatchet::lua::InitLuaCore` entry point) so a
+// future refactor that moves `ai` registration into `InitLuaCore` fails here
+// instead of silently reopening the race.
+TEST_CASE("Lua bindings · ai.* table is absent without InitLuaUi (off-UI-thread contract)") {
+    CoreFixture fx;
+
+    sol::object aiObj = fx.state()["ai"];
+    CHECK_FALSE(aiObj.valid());
+    CHECK_EQ(aiObj.get_type(), sol::type::lua_nil);
+
+    sol::protected_function_result r = Run(fx.state(), R"(
+        return ai == nil
     )");
     CHECK_EQ(r.get<bool>(), true);
 }
