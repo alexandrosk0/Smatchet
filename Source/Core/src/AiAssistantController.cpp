@@ -6,9 +6,8 @@
 #include "AiChatTimestamp.h"
 #include "AiClientFactory.h"
 #include "AiContextBuilder.h"
-#include "AiEndpointPolicy.h"
-#include "AiEndpointSanitize.h"
 #include "AiModelSignature.h"
+#include "AiRequestBuilder.h"
 #include "BackendAuditTrail.h"
 #include "ConfigManager.h"
 #include "IAiAssistantUiState.h"
@@ -16,7 +15,6 @@
 #include "MainThreadDispatcher.h"
 #include "SmatchetChatPersistWorker.h"
 
-#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -51,76 +49,9 @@ AiProvider ProviderFromConfig(const TrackerConfig& cfg) {
     }
 }
 
-// Strip CR/LF/NUL from a header-bound value. libcurl will usually reject them
-// already, but defense-in-depth: a user-typed `cfg.Ai*ApiKey` should never
-// carry header-smuggling control characters into the outbound request.
-std::string SanitizeHeaderValue(const std::string& v) {
-    std::string out;
-    out.reserve(v.size());
-    std::copy_if(v.begin(), v.end(), std::back_inserter(out),
-                 [](char c) { return c != '\r' && c != '\n' && c != '\0'; });
-    return out;
-}
-
-// Validate + (best-effort) normalise the user-configured endpoint URL against
-// `policy`. Returns the sanitised URL on success; empty + logs a structured
-// warning on rejection (the empty string causes the provider client to fall
-// back to its built-in default, which is the safe choice).
-std::string SanitizeBaseUrlOrLog(const std::string& raw, const char* providerLabel,
-                                 const smatchet::ai::pure::EndpointPolicy& policy) {
-    std::string normalised;
-    const smatchet::ai::pure::EndpointVerdict v = smatchet::ai::pure::SanitizeAiEndpointUrl(raw, policy, normalised);
-    if (v == smatchet::ai::pure::EndpointVerdict::Allowed)
-        return normalised;
-    LOG_ERROR("AiAssistantController: %s endpoint URL %s — falling back to provider default. Raw URL withheld.",
-              providerLabel, smatchet::ai::pure::EndpointVerdictDescription(v));
-    return std::string();
-}
-
-AiClientConfig BuildClientConfig(const TrackerConfig& cfg, AiProvider provider) {
-    AiClientConfig out;
-    const smatchet::ai::pure::EndpointPolicy policy = smatchet::ai::EndpointPolicyForProvider(cfg, provider);
-    switch (provider) {
-    case AiProvider::Anthropic:
-        out.ApiKey = SanitizeHeaderValue(cfg.AiAnthropicApiKey);
-        out.BaseUrl = SanitizeBaseUrlOrLog(cfg.AiBaseUrl, "anthropic", policy);
-        break;
-    case AiProvider::OllamaNative:
-        out.ApiKey.clear(); // Ollama-native has no API key
-        out.BaseUrl = SanitizeBaseUrlOrLog(cfg.AiOllamaBaseUrl, "ollama", policy);
-        break;
-    case AiProvider::OllamaOpenAiCompat:
-        out.ApiKey = SanitizeHeaderValue(cfg.AiApiKey);
-        // OllamaOpenAi-compat uses the user's base URL (typically http://localhost:11434/v1)
-        out.BaseUrl = SanitizeBaseUrlOrLog(cfg.AiBaseUrl.empty() ? cfg.AiOllamaBaseUrl : cfg.AiBaseUrl,
-                                           "ollama-openai-compat", policy);
-        break;
-    case AiProvider::DeepSeek:
-        out.ApiKey = SanitizeHeaderValue(cfg.AiDeepSeekApiKey);
-        // DeepSeek default endpoint when the user leaves the URL blank. Pass
-        // the literal default through the sanitiser too — never bypass the
-        // SanitizeAiEndpointUrl gate so a future redirect-block / scheme-pin
-        // rule applies uniformly.
-        out.BaseUrl = SanitizeBaseUrlOrLog(cfg.AiDeepSeekBaseUrl.empty() ? std::string("https://api.deepseek.com")
-                                                                         : cfg.AiDeepSeekBaseUrl,
-                                           "deepseek", policy);
-        break;
-    case AiProvider::OpenAi:
-    default:
-        out.ApiKey = SanitizeHeaderValue(cfg.AiApiKey);
-        out.BaseUrl = SanitizeBaseUrlOrLog(cfg.AiBaseUrl, "openai", policy);
-        break;
-    }
-    // Streaming chat replies from reasoning-tuned models (claude-opus-4-7,
-    // o1-style, DeepSeek-R1, Qwen3) routinely exceed the AiClientConfig default
-    // of 120s. cpr's `cpr::Timeout` is a total-envelope cap and fires regardless
-    // of stream progress, so a 5-minute reply with 57 KB received gets killed
-    // mid-stream with `cpr code 8 - Operation timed out`. Bump to 10 minutes
-    // for the chat path; the user-driven Cancel atom is the right abort
-    // mechanism for a genuinely stuck stream.
-    out.TotalTimeoutMs = 600000;
-    return out;
-}
+// SanitizeHeaderValue + BuildClientConfig (with the endpoint sanitize-with-consent
+// gate) moved to the shared AiRequestBuilder seam so the debug ai.* commands build
+// the exact production wire config (AGENTIC_INFRA_AUDIT.md B4 / P4).
 
 } // namespace
 
@@ -135,7 +66,7 @@ AiAssistantController::AiAssistantController(MainThreadDispatcher& dispatcher, I
     client_ = AiClientFactory::MakeAiClient(provider);
     if (client_) {
         cachedProviderName_ = client_->GetProviderName();
-        clientConfig_ = BuildClientConfig(cfg, provider);
+        clientConfig_ = smatchet::ai::BuildClientConfig(cfg, provider);
     } else {
         // Phase D providers return null today. The controller stays alive so the
         // panel can render an error strip; Submit() will short-circuit until the
@@ -332,7 +263,7 @@ bool AiAssistantController::RefreshProviderForTurn(const TrackerConfig& cfg) {
             cachedProviderName_.clear();
         }
     }
-    clientConfig_ = BuildClientConfig(cfg, cachedProvider_);
+    clientConfig_ = smatchet::ai::BuildClientConfig(cfg, cachedProvider_);
     return static_cast<bool>(client_);
 }
 

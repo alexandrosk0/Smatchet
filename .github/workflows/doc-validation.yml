@@ -389,6 +389,19 @@ jobs:
           bash agents/scripts/core/test-required-context-parity.sh --selftest
           bash agents/scripts/core/test-required-context-parity.sh --check
 
+      - name: test-workflow-job-mask — no job-level continue-on-error on a non-advisory job
+        if: steps.detect.outputs.docs == 'true' || steps.detect.outputs.workflows == 'true'
+        run: |
+          python -m pip install --quiet pyyaml
+          bash agents/scripts/core/test-workflow-job-mask.sh --selftest
+          bash agents/scripts/core/test-workflow-job-mask.sh --check
+
+      - name: test-required-context-adr-consistency — no ADR-rejected required-context addition
+        if: steps.detect.outputs.docs == 'true' || steps.detect.outputs.workflows == 'true'
+        run: |
+          bash agents/scripts/core/test-required-context-adr-consistency.sh --selftest
+          bash agents/scripts/core/test-required-context-adr-consistency.sh --check
+
       - name: test-gate-selftests — every --selftest-exposing gate asserts a failure case
         if: steps.detect.outputs.docs == 'true'
         run: |

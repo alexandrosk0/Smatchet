@@ -64,9 +64,12 @@
 # the size-skip / inline-evidence nuances stay in poll_merge_gates; `cr-out-of-band`
 # is the lever for those edge cases here.
 #
-# `*-out-of-band` PR labels downgrade the matching check, same as the poller:
+# `*-out-of-band` PR labels downgrade the matching check, same as the poller
+# (test-oob-label-impl.sh --parity asserts this set stays equal to merge-gates.sh
+# $downgraded — a half-wired label was the ADR-0022 intent-out-of-band bug):
 #   tests-out-of-band  → "Test-delta gate"   ·  perf-out-of-band → "Perf PR-fast*"
 #   intent-out-of-band → "Intent section" (mirrors poll_merge_gates $intent downgrade)
+#   plan-lock-out-of-band → "Plan-lock gate" (mirrors poll_merge_gates $planlock)
 #   cr-out-of-band     → waives the CodeRabbit-completion wait above (it still does
 #                        NOT downgrade any CI check — CR is its only scope).
 #
@@ -173,6 +176,7 @@ evaluate_rollup() {
         | ($labels | any(. == "tests-out-of-band")) as $testsOob
         | ($labels | any(. == "perf-out-of-band")) as $perfOob
         | ($labels | any(. == "intent-out-of-band")) as $intentOob
+        | ($labels | any(. == "plan-lock-out-of-band")) as $planlockOob
         # Dedup-to-latest-run BEFORE judging green/red (mirrors merge-gates.sh
         # $ctx). A check name can appear MULTIPLE times in statusCheckRollup when a
         # job is re-run / superseded: an older CANCELLED / FAILURE run plus a newer
@@ -226,7 +230,8 @@ evaluate_rollup() {
                  ($g.gating
                   and (($testsOob and $g.name == "Test-delta gate") | not)
                   and (($perfOob and ($g.name | startswith("Perf PR-fast"))) | not)
-                  and (($intentOob and $g.name == "Intent section") | not))})
+                  and (($intentOob and $g.name == "Intent section") | not)
+                  and (($planlockOob and $g.name == "Plan-lock gate") | not))})
              | select(.gating and (.green | not))
              | .name ]) as $rowBlockers
         # Absent-required cross-check (fail-closed): a required context missing
@@ -236,7 +241,8 @@ evaluate_rollup() {
              | select(. as $rn | ($present | any(. == $rn)) | not)
              | select(($testsOob and . == "Test-delta gate") | not)
              | select(($perfOob and (. | startswith("Perf PR-fast"))) | not)
-             | select(($intentOob and . == "Intent section") | not) ]) as $absentReq
+             | select(($intentOob and . == "Intent section") | not)
+             | select(($planlockOob and . == "Plan-lock gate") | not) ]) as $absentReq
         | ($rowBlockers + $absentReq)
         | unique
         | .[]
@@ -437,6 +443,19 @@ run_selftest() {
         fails=$((fails + 1))
     fi
 
+    # CASE 4c — plan-lock-out-of-band downgrades a RED "Plan-lock gate" (parity
+    # with poll_merge_gates $planlock; this path was half-wired until 2026-07-08).
+    local planlock_oob_rollup
+    planlock_oob_rollup='{"state":"OPEN","labels":[{"name":"plan-lock-out-of-band"}],"statusCheckRollup":[
+      {"__typename":"CheckRun","name":"Plan-lock gate","status":"COMPLETED","conclusion":"FAILURE"}]}'
+    blockers=$(evaluate_rollup "$planlock_oob_rollup" "")
+    if [ -z "$blockers" ]; then
+        echo "selftest CASE4c PASS — plan-lock-out-of-band downgrades RED Plan-lock gate"
+    else
+        echo "selftest CASE4c FAIL — plan-lock-out-of-band check should not block (got: '$blockers')" >&2
+        fails=$((fails + 1))
+    fi
+
     # CASE 5 — a REQUIRED context ABSENT from the rollup blocks (fail-closed).
     # "Windows + MSVC" is required but no row reports it -> must not read green.
     local absent_rollup
@@ -625,7 +644,7 @@ run_selftest() {
     fi
 
     if [ "$fails" -eq 0 ]; then
-        echo "PASS — safe-admin-merge --selftest (18/18)"
+        echo "PASS — safe-admin-merge --selftest (19/19)"
         return 0
     fi
     echo "FAIL — safe-admin-merge --selftest ($fails failing case(s))" >&2

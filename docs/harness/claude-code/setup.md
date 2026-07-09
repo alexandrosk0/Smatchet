@@ -65,6 +65,10 @@ On Windows the agent drives two shells with opposite strengths; using the wrong 
 
 `.claude/.agent-tokens.jsonl` is per-machine state — gitignored, never committed.
 
+## Remote container (cloud sandbox)
+
+In the Claude Code remote container, provision the `posix-core-check` build lane with `bash scripts/dev/remote-container-bootstrap.sh` — the container's egress policy 403s GitHub release tarballs (cpr's curl FetchContent) and lacks `xorg-dev`/`libgl1-mesa-dev`; the script wraps the validated workaround. Details: [`docs/agent-rules/build.md`](../../agent-rules/build.md) § Remote-container posix-core-check bootstrap.
+
 ## Refreshing after a `git pull`
 
 Re-run `bash agents/scripts/core/setup-harness.sh claude-code`:

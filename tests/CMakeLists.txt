@@ -253,6 +253,9 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiModelSignature.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiEndpointPolicy.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiEndpointSanitize.cpp"
+        # AiAssistantController now resolves its per-turn AiClientConfig through the
+        # shared AiRequestBuilder seam (also consumed by the debug ai.* commands).
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/AiRequestBuilder.cpp"
         # Gap map Tier 1 #8 — pre-network probe plan (no threads; Linux-runnable so the
         # container sessions doing this work can validate locally).
         Core/AiPrefsTestConnectionPure.test.cpp
@@ -976,6 +979,7 @@ add_executable(SmatchetTests
     Plugins/Mcp/McpToolSchemas.test.cpp
     Plugins/Mcp/McpDispatch.test.cpp
     Plugins/Mcp/McpHostOrigin.test.cpp
+    Plugins/Mcp/McpRateLimit.test.cpp
     Plugins/LuaConsole/LuaConsoleSelection.test.cpp
     Plugins/LuaConsole/LuaConsoleSelectionByPath.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Plugins/Mcp/McpJsonRpcPure.cpp"
@@ -1114,6 +1118,10 @@ add_executable(SmatchetTests
     # AiPrefsValidator.cpp now routes base-URL checks through EndpointPolicyForProvider
     # (security audit Item B); its TU lives here, so the doctest link needs it too.
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AiEndpointPolicy.cpp"
+    # Shared provider->AiClientConfig seam (key sanitizer + endpoint consent gate)
+    # consumed by the controller and the debug ai.* commands (audit B4/P4).
+    Core/AiRequestBuilder.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AiRequestBuilder.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/OpenAiClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AnthropicClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/OllamaClient.cpp"

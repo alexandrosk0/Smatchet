@@ -4,8 +4,10 @@
 #include "LinearClientHelpers.h"
 
 #include <doctest/doctest.h>
+#include <limits>
 #include <map>
 #include <nlohmann/json.hpp>
+#include <string>
 
 using namespace smatchet::linear;
 
@@ -141,6 +143,15 @@ TEST_CASE("ParseLinearRateLimitHeaders — an overflowing header falls back inst
     headers["x-complexity"] = "99999999999999999999";
     LinearRateLimit rl = ParseLinearRateLimitHeaders(headers);
     CHECK(rl.Complexity == -1);
+}
+
+TEST_CASE("ParseLinearRateLimitHeaders — a negative header keeps its sign (incl. LONG_MIN)") {
+    std::map<std::string, std::string> headers;
+    headers["x-complexity"] = "-7";
+    CHECK(ParseLinearRateLimitHeaders(headers).Complexity == -7);
+    // The deliberate LONG_MIN reconstruction (magnitude LONG_MAX+1) round-trips too.
+    headers["x-complexity"] = std::to_string((std::numeric_limits<long>::min)());
+    CHECK(ParseLinearRateLimitHeaders(headers).Complexity == (std::numeric_limits<long>::min)());
 }
 
 TEST_CASE("ResolveLinearRequestAuth — live key authoritative, url falls back") {

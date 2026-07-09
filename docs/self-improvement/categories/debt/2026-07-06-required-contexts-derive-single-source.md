@@ -1,5 +1,0 @@
-- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [debt] · P3 — `project.config.json` duplicates the 24-item required-checks list verbatim across `branch_protection.required_contexts` and `ci.required_checks`
-  Details: the two arrays are identical, and `test-required-context-parity.sh` guards them against divergence — so this is guarded duplication, not the unguarded-drift class. Still, in the value table that anchors a DRY-enforcing project (Engineering Pillar 5 is a blocking gate), deriving one list from the other would delete both the duplication and the guard that exists only to police it. AGENTIC_INFRA_AUDIT.md finding A5.
-  Concrete next action: keep `branch_protection.required_contexts` as the single source; make `ci.required_checks` consumers read the branch_protection list (via `scripts/dev/project-config.sh` / the schema), or replace the second array with a `"same-as": "branch_protection.required_contexts"` sentinel the schema validates; retire the parity gate once no second literal list exists. Check consumers of both keys before the cut. Effort S.
-  Status: open
-  Last-reviewed: 2026-07-06

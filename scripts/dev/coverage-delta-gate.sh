@@ -783,11 +783,15 @@ for f in "${CHANGED[@]}"; do
         # require a paired test delta on their own.
         Source/Core/src/*.cpp)
             PROD_CHANGES+=("$f") ;;
-        # Test surface — only actual test TUs count toward a delta. tests/support/*.h
-        # (shared fixtures / helpers) was previously included but is trivially
-        # dismissable (add an empty header to "satisfy" the gate). Restrict to the
-        # per-test-file delta the gate was designed to enforce.
-        tests/Core/*.test.cpp|tests/Commands/*.test.cpp|tests/Lua/*.test.cpp|tests/Plugins/*.test.cpp|tests/Plugins/Mcp/*.test.cpp|tests/ui/*.test.cpp)
+        # Test surface — only actual test TUs count toward a delta. tests/support/
+        # and tests/fixtures/ (shared helpers) are excluded as trivially
+        # dismissable (an empty helper would "satisfy" the gate). Any OTHER
+        # tests/ subdirectory counts by the *.test.cpp naming convention — a
+        # fixed per-directory list red-walled the first PR to add a NEW harness
+        # dir (tests/monkey/, #1637); a harness dir earns credit by naming its
+        # test TUs *.test.cpp, not by a hand-synced allowlist.
+        tests/support/*|tests/fixtures/*) ;;
+        tests/*.test.cpp)
             TEST_CHANGES+=("$f") ;;
     esac
 done

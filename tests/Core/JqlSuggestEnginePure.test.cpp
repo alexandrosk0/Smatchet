@@ -175,6 +175,21 @@ TEST_CASE("value mode — user field surfaces catalog humans only, with escape-p
         CHECK(HasInsert(out, "\"Bob Jones\""));
         CHECK(HasLabel(out, "Bob Jones (zoe@example.com)"));
     }
+    {
+        // 51 matching users → the kMaxUsers cap binds at exactly 50 (pins the >= bound).
+        std::vector<TrackerUser> capUsers;
+        for (int i = 0; i < 51; ++i) {
+            TrackerUser u;
+            u.AccountId = "cap" + std::to_string(i);
+            u.DisplayName = "User " + std::to_string(i);
+            capUsers.push_back(u);
+        }
+        const std::string typed = buf + "user";
+        const auto out = Run(typed, static_cast<int>(typed.size()), fields, capUsers, &meta);
+        const auto userCount = std::count_if(out.Items.begin(), out.Items.end(),
+                                             [](const QuerySuggestion& s) { return s.Label.rfind("User ", 0) == 0; });
+        CHECK(userCount == 50);
+    }
 }
 
 TEST_CASE("value mode — family-gated JQL functions") {
