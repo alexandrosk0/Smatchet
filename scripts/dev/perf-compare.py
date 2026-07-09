@@ -218,6 +218,22 @@ def evaluate(
         f_avg = _to_float(f.get("avgPerCallMs"), f"fresh.{name}.avgPerCallMs") if f else None
         b_calls = _to_int(b.get("calls"), f"baseline.{name}.calls") if b else 0
 
+        # Annotate rows the RELATIVE gate skips as below-floor noise, so the
+        # table's eye-catching percentages (+3575 % on a 1-sample scope) read
+        # as ungated sampling noise instead of a suspected regression
+        # (categories/tooling 2026-07-05 legibility entry; PR #1632).
+        floor_note = ""
+        if b is not None and f is not None:
+            if b_calls < min_calls:
+                floor_note = f"noise: {b_calls} < {min_calls} calls"
+            elif (
+                b_total is not None
+                and f_total is not None
+                and abs(f_total - b_total) <= min_abs_delta
+            ):
+                # No abs-value bars — a literal `|` splits the markdown table cell.
+                floor_note = f"noise: abs Δ ≤ {min_abs_delta:.3f} ms"
+
         rows.append(
             {
                 "name": name,
@@ -226,6 +242,7 @@ def evaluate(
                 "p99Ms": format_delta(b_p99, f_p99),
                 "maxMs": format_delta(b_max, f_max),
                 "baselineCalls": b_calls,
+                "floorNote": floor_note,
             }
         )
 
@@ -320,10 +337,20 @@ def emit_markdown(
     if rows:
         lines.append("| scope | lastTotalMs | avgPerCallMs | p99Ms | maxMs | baseline calls |")
         lines.append("|---|---|---|---|---|---:|")
-        for r in rows:
+        # Gated-eligible rows first; below-floor rows sink with their marker.
+        for r in sorted(rows, key=lambda r: bool(r.get("floorNote"))):
+            note = r.get("floorNote", "")
+            total = f"{r['lastTotalMs']} · ({note})" if note else r["lastTotalMs"]
             lines.append(
-                f"| `{r['name']}` | {r['lastTotalMs']} | {r['avgPerCallMs']} | {r['p99Ms']} | "
+                f"| `{r['name']}` | {total} | {r['avgPerCallMs']} | {r['p99Ms']} | "
                 f"{r['maxMs']} | {r['baselineCalls']} |"
+            )
+        if any(r.get("floorNote") for r in rows):
+            lines.append("")
+            lines.append(
+                "_Rows marked `· (noise: …)` sit below the sample/noise floor — "
+                "the relative gate skips them; their percentages are ungated "
+                "sampling noise, not regressions._"
             )
     else:
         lines.append("(no rows in either baseline or fresh snapshot)")

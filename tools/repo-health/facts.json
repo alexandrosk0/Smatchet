@@ -3,6 +3,13 @@
 
   "artifact_url": "https://claude.ai/code/artifact/e1a28cab-afd3-4f31-8258-4efb2387806e",
 
+  "updated": {
+    "_doc": "Per-section last-refresh dates (YYYY-MM-DD). Stamp the matching key on every refresh of that section; generate.py renders the OLDEST as the header freshness badge (green ≤7d, amber ≤30d, red beyond) and repo-health-facts-nudge.sh nags at SessionStart when facts.json itself goes stale.",
+    "campaign": "2026-07-06",
+    "ci_lanes": "2026-07-06",
+    "open_prs": "2026-07-06"
+  },
+
   "governance": { "loop_mode": "on", "auto_merge": "on" },
 
   "audit_resolved": {

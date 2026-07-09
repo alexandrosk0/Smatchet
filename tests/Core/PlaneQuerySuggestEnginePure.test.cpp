@@ -122,6 +122,18 @@ TEST_CASE("value context — user field sets the live-search meta + Plane displa
     CHECK(HasInsert(out, "u-123"));
 }
 
+TEST_CASE("value context — empty catalog option value emits no suggestion") {
+    // A hostile/degenerate catalog can carry an empty option value; the tryAdd guard must
+    // drop it instead of emitting an empty ("" -> "\"\"") suggestion.
+    auto fields = DefaultFields();
+    fields[0].AllowedValues.push_back("");
+    const std::string buf = "state:";
+    const auto out = Run(buf, static_cast<int>(buf.size()), fields);
+    CHECK(HasInsert(out, "Backlog"));
+    CHECK_FALSE(HasInsert(out, ""));
+    CHECK_FALSE(HasInsert(out, "\"\""));
+}
+
 TEST_CASE("unknown field before the separator falls back to the field catalog") {
     const std::string buf = "bogus:va";
     const auto out = Run(buf, static_cast<int>(buf.size()), DefaultFields());

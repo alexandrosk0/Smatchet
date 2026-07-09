@@ -26,7 +26,7 @@ The agentic layer is unusually large and unusually disciplined for a solo prerel
 
 | ID | Sev | Finding | Disposition |
 |---|---|---|---|
-| A1 | P2 | `AGENTS.md` is 159 lines against its own ≤150 contract budget | backlog entry |
+| A1 | P2 | `AGENTS.md` is 159 lines against its own ≤150 contract budget | backlog entry → **remediated 2026-07-08** (trimmed to 149 lines; detail moved to `docs/agent-rules/`) |
 | A2 | P3 | `AGENTS.md` pause-trigger (5) cites retired `Locales/*.json` glob | **fixed in this PR** |
 | A3 | P3 | Legacy `backlog/` ledgers carry no pointer to the live self-improvement system | **fixed in this PR** |
 | A4 | P2 | Portable purity is aspirational: ~190 baselined project literals; `docs/STRUCTURE.md` cites a stale count | already tracked |
@@ -81,7 +81,7 @@ The agentic layer is unusually large and unusually disciplined for a solo prerel
 | C4 | P2 | Agent-eval harness holds 3 cases — regression scoring for prompt changes is built but unpopulated | already tracked |
 | C5 | P2 | Fresh-clone bootstrap hole: every session hook/guard is inert until `setup-harness.sh` runs; only a manual probe warns | backlog entry |
 | C6 | P2 | MCP live-HTTP `Authorize` path (DNS-rebind gate, SSE cap) tested only via pure helpers, never over a real socket | backlog entry |
-| C7 | P3 | `tools/sourcetrail/st_query.py` — documented as the primary semantic-nav tool — needs a prebuilt DB absent from fresh checkouts | backlog entry |
+| C7 | P3 | `tools/sourcetrail/st_query.py` — documented as the primary semantic-nav tool — needs a prebuilt DB absent from fresh checkouts | backlog entry → **remediated 2026-07-08** (option (a): `tools/sourcetrail/` retired, nav-ladder rung removed) |
 | C8 | P3 | `tools/repo-health/facts.json` is session-maintained and rots silently | backlog entry |
 | C9 | P3 | Mutation-smoke gate (roadmap Slice F) remains manual-pilot-only | already tracked |
 

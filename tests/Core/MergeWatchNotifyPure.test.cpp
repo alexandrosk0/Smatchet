@@ -101,4 +101,12 @@ TEST_CASE("sanitization — control chars neutralised, whitespace kept, 500-byte
         CHECK(plan.Message.size() == 503); // 500 + "..."
         CHECK(plan.Message.compare(500, 3, "...") == 0);
     }
+    {
+        // Exactly at the 500-byte cap: NOT truncated (pins the strict > truncation bound).
+        const std::string atCap(500, 'y');
+        const NotifyPlan plan =
+            PlanMergeWatchNotify(std::string(R"({"pr":1,"state":"TIMEOUT","message":")") + atCap + "\"}");
+        REQUIRE(plan.Ok);
+        CHECK(plan.Message == atCap);
+    }
 }
