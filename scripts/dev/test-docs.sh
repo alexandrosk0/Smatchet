@@ -52,6 +52,7 @@ STEPS=(
   "test-config-globs|bash $CORE/test-config-globs.sh --selftest && bash $CORE/test-config-globs.sh --check"
   "test-gate-selftests|bash $CORE/test-gate-selftests.sh --selftest && bash $CORE/test-gate-selftests.sh --check"
   "test-oob-label-impl|bash $CORE/test-oob-label-impl.sh --selftest && bash $CORE/test-oob-label-impl.sh"
+  "test-required-context-adr-consistency|bash $CORE/test-required-context-adr-consistency.sh --selftest && bash $CORE/test-required-context-adr-consistency.sh --check"
   "test-portable-agent-vexp|bash $CORE/test-portable-agent-vexp.sh --selftest && bash $CORE/test-portable-agent-vexp.sh"
   "test-agent-discovery-fixture|bash $CORE/test-agent-discovery-fixture.sh"
   "test-agent-build-facts|bash $CORE/test-agent-build-facts.sh"

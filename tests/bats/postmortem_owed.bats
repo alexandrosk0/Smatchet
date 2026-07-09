@@ -4,9 +4,10 @@
 # Bats tests for agents/scripts/core/postmortem-owed.sh — the gate-escape
 # detector. Covers the three signal-cleanup fixes (backlog tooling.md):
 #   1. postmortem-owed-overreports-nonblocking-and-cancelled-twins (P1) — the
-#      curated rollup: latest-run-per-context dedupe + terminal-failure +
+#      curated rollup: latest-run-per-context dedupe + terminal-verdict +
 #      blocking-scope, so CANCELLED twins / advisory lanes / in-progress checks
-#      no longer over-report.
+#      no longer over-report. A CANCELLED that IS the latest run for a blocking
+#      context (no later SUCCESS) owes (perf-pr-fast cancelled-escape, #1566).
 #   2. postmortem-owed-moot-override-false-positive (P2) — a non-load-bearing
 #      override (its gate passed anyway) owes no postmortem.
 #   3. postmortem-owed-direct-push-blindspot (P2) — trigger 4 catches PR-less
@@ -159,14 +160,24 @@ JSON
     [[ "$output" != *"PR #2002"* ]]
 }
 
-@test "latest-run CANCELLED (no SUCCESS twin) owes nothing (cancel is a supersede)" {
+@test "latest-run CANCELLED (no SUCCESS twin) on a required context owes a postmortem" {
     prlist <<'JSON'
 [{"number":2003,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"a3"},"labels":[],
   "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-06-10T09:00:00Z"}]}]
 JSON
     run_detector
     [ "$status" -eq 0 ]
-    [[ "$output" != *"PR #2003"* ]]
+    [[ "$output" == *"postmortem owed: PR #2003 — red-check: Windows + MSVC"* ]]
+}
+
+@test "latest-run CANCELLED on an allow-list non-required check owes a postmortem (#1566 shape)" {
+    prlist <<'JSON'
+[{"number":2013,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"a13"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Fuzz smoke (windows-2022)","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"postmortem owed: PR #2013 — red-check: Fuzz smoke (windows-2022)"* ]]
 }
 
 @test "advisory non-allowlist red owes nothing" {
