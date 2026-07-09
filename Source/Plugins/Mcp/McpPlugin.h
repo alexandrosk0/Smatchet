@@ -67,6 +67,15 @@ class McpPlugin : public IPlugin {
     void EmitToolsCallResult(httplib::Response& res, const std::string& name, const std::string& remote,
                              const nlohmann::json& arguments, const std::string& error, const std::string& result);
 
+    /// tools/call token-bucket gate (AGENTIC_INFRA_AUDIT.md B3), shared by the REST and
+    /// JSON-RPC entry points. Consumes one token; on deny returns false and sets
+    /// `retryAfterMs` to the minimum wait until a token refills.
+    bool AllowToolsCall(long long& retryAfterMs);
+
+    /// REST-side wrapper around AllowToolsCall: on deny populates `res` with the
+    /// canonical HTTP-200 rate-limited envelope and returns false.
+    bool RestToolsCallWithinRateLimit(const std::string& name, const std::string& remote, httplib::Response& res);
+
     /// REST `tools/call` registry-hit arm: dispatch a registered command and emit the canonical
     /// envelope. Extracted from HandleToolsCall; wire shape byte-for-byte identical.
     void DispatchRegistryToolsCall(const std::string& name, const nlohmann::json& arguments, const std::string& remote,

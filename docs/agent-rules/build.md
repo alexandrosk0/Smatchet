@@ -10,6 +10,14 @@ Trigger: **building** the project (configuring presets, the light build, the dua
 
 `CMakePresets.json` carries a `testPresets` section so `ctest --preset <name>` resolves for every test-bearing configure preset (`ninja-test-{msvc,clang}`, `ninja-debug-{msvc,clang}`, `ninja-{msvc,clang}-asan`, `ninja-publish-msvc`, `ninja-publish-msvc-arm64`, `ninja-tsan-linux`, `ninja-fuzzer-linux`); each sets `output.outputOnFailure: true` to match the bare `ctest --output-on-failure` the CI workflows run. The two forms are equivalent: `ctest --preset <name>` from the repo root, or `cd build/<preset> && ctest --output-on-failure` (the `working-directory` form the CI YAMLs use). Verify a preset resolves without running anything via `ctest --preset <name> -N` (list-only). `tests/fuzz/README.md` documents both forms for the fuzzer lane.
 
+## TSan on Linux (`ninja-tsan-linux`) — install the Clang TSan runtime first
+
+`SmatchetTsanTests` is the only assertion-based test executable that builds + runs headless on Linux (the primary doctest/UI rigs need MSVC ABI or ImGui/GLFW/X11/GL). On a fresh Linux container `clang-18` ships WITHOUT the compiler-rt sanitizer archives — all TUs compile but the link fails (`ld.lld: cannot open .../libclang_rt.tsan-x86_64.a`). Install the toolchain-matched runtime first:
+
+`sudo apt-get install -y libclang-rt-18-dev` (generally `libclang-rt-$LLVM_VERSION-dev`)
+
+Then `cmake --preset ninja-tsan-linux && cmake --build --preset ninja-tsan-linux && ctest --preset ninja-tsan-linux`. The preset's FetchContent deps are all git-clone based, so it configures through the agent proxy without the release-tarball 403 workaround other presets need (infra `remote-container-fetchcontent-403`). Verified end-to-end in a remote container 2026-07-09: package install → configure → 97-target build → link → suite green.
+
 ## Warnings as errors
 
 **First-party warnings are errors** (`/WX` MSVC, `-Werror` clang) — force-ON via `SMATCHET_WARNINGS_AS_ERRORS=ON` in the `_smatchet-msvc-base` / `_smatchet-clang-base` presets, so every dev + CI + light build enforces it; the CMake option itself defaults OFF for external/raw-cmake/Unreal (`vs-unreal-msvc`) consumers. FetchContent deps + vendored object libs are never passed through the strict-warning helper, so third-party warnings can't break the build.

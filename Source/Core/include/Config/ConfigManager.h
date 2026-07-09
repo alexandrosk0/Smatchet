@@ -193,6 +193,11 @@ struct TrackerConfig {
     // process, which can drive the global command registry. Set false to restore the
     // legacy "any local process may call without a token" behavior.
     bool McpRequireTokenOnLoopback = true;
+    // MCP tools/call token-bucket rate limit shared by the REST and JSON-RPC routes:
+    // max burst (bucket capacity) and sustained refill per second. A non-positive
+    // value on either disables the limit.
+    int McpToolsCallRateBurst = 20;
+    int McpToolsCallRateRefillPerSec = 5;
     // Field ids that MCP /list_tickets and /search are allowed to export.
     // Empty = safe default subset (summary, status, priority, assignee, updated, created, labels, issuetype).
     std::vector<std::string> McpExportFields;

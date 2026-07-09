@@ -297,6 +297,8 @@ const FieldDesc<int> kIntFields[] = {
     {"field_catalog_cache_max_projects", &TrackerConfig::FieldCatalogCacheMaxProjects},
     {"hidden_pane_resident_cap", &TrackerConfig::HiddenPaneResidentCap},
     {"mcp_port", &TrackerConfig::McpPort},
+    {"mcp_tools_call_rate_burst", &TrackerConfig::McpToolsCallRateBurst},
+    {"mcp_tools_call_rate_refill_per_sec", &TrackerConfig::McpToolsCallRateRefillPerSec},
     {"date_compact_relative_threshold_days", &TrackerConfig::DateCompactRelativeThresholdDays},
     {"import_max_concurrent", &TrackerConfig::ImportMaxConcurrent},
     {"grid_end_wheel_swallows_before_horizontal", &TrackerConfig::GridEndWheelSwallowsBeforeHorizontal},
