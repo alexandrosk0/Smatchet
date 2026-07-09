@@ -1353,7 +1353,13 @@ class _CleanGit:
     stderr = ''
 subprocess.run = lambda *a, **kw: _CleanGit()
 m._count_live_sessions = lambda _p: 0
-entry = {'pr': 999, 'clone_path': r'$(pwd)',
+# The dedup key is read from the REGISTRY entry (via the atomic reserve), NOT
+# from the passed-in entry dict — seed it on the SAME head _gh_json returns,
+# keyed on the clone_path register stored ($CLONE_PATH, not pwd: from a linked
+# worktree pwd misses the entry and the not-in-registry fallback masks the test).
+clone = r'$CLONE_PATH'
+m._bump_auto_act_state(999, clone, 'deadbeefcafebabe1234567890abcdef12345678', 1)
+entry = {'pr': 999, 'clone_path': clone,
          'auto_act_for_head_sha': 'deadbeefcafebabe1234567890abcdef12345678'}
 state = {'last_state': 'TRIAGE_BUDGET_EXHAUSTED',
          'last_status_line': 'Poll 1/1 CodeRabbit: COMMENTED (3 actionable - block)'}
