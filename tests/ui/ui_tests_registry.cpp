@@ -15,6 +15,7 @@ extern "C" void SmatchetRegisterCallstackTooltipHoverTests(ImGuiTestEngine* engi
 extern "C" void SmatchetRegisterHelpMarkerKeyboardFocusTests(ImGuiTestEngine* engine);
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
 extern "C" void SmatchetRegisterMcpLuaFreshStateRaceTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterAutomationReloadHooksRaceTests(ImGuiTestEngine* engine);
 #endif
 extern "C" void SmatchetRegisterSyncStallVisibleCueTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAnnotateBeforeClCueTests(ImGuiTestEngine* engine);
@@ -64,6 +65,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterHelpMarkerKeyboardFocusTests(engine);
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     SmatchetRegisterMcpLuaFreshStateRaceTests(engine);
+    SmatchetRegisterAutomationReloadHooksRaceTests(engine);
 #endif
     SmatchetRegisterSyncStallVisibleCueTests(engine);
     SmatchetRegisterAnnotateBeforeClCueTests(engine);

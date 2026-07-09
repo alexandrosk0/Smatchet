@@ -5,9 +5,12 @@
 #include "BuiltinCommands_Internal.h"
 
 // fan-in Phase 5: depend on the narrow IAppAutomation facet, not the full AppController.h.
+// Also depend on IMainThreadPoster (via MainThreadDispatch.h) for the reload-hooks UI-thread
+// hop — see the comment on automation.reload-hooks below.
 #include "Interfaces/IAppAutomation.h"
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
+#include "Commands/MainThreadDispatch.h"
 
 #include <nlohmann/json.hpp>
 
@@ -61,7 +64,7 @@ std::vector<std::string> ExtractIdsArray(const nlohmann::json& args) {
 
 } // namespace
 
-void RegisterAutomationCommands(CommandRegistry& reg, IAppAutomation& app) {
+void RegisterAutomationCommands(CommandRegistry& reg, IAppAutomation& app, IMainThreadPoster& poster) {
     {
         Command c = MakeCommand("automation.run-script",
                                 "Queue a Lua automation script for execution on the given ticket IDs "
@@ -133,12 +136,34 @@ void RegisterAutomationCommands(CommandRegistry& reg, IAppAutomation& app) {
     }
 
     {
+        // Issue #1693: RunLuaSetupScript executes against the SHARED main sol::state (the
+        // same lua_State DrawLuaWindows / Lua cell-providers drive every frame on the UI
+        // thread). CommandRegistry::Dispatch has no thread affinity, so this command is
+        // reachable from an MCP/httplib worker thread — two threads through one lua_State
+        // is a genuine Lua-heap race (same failure class as the fixed
+        // mcp_lua_fresh_state_race bug). A fresh isolated sol::state is NOT a valid fix
+        // here: ui.register_global_action (and any other setup-script side effect) must
+        // land in the live main state's registries for the reload to actually take effect
+        // — a sol::function captured on a throwaway state can't be invoked safely from the
+        // UI thread's state, and the throwaway state is gone the instant this call returns.
+        // So the correct fix is the same UI-thread hop already used by every other
+        // UI-affecting command (AppViewCommands.cpp / PaneCommands.cpp /
+        // BuiltinCommands_Debug.cpp's dock.* / window.* commands): marshal onto the UI
+        // thread via RunOnUiThreadAsCommandResult, which runs inline with no extra latency
+        // when the caller is already on the UI thread (Palette / Lua-hook dispatch) and
+        // blocks on a one-shot future for the ~1-frame round trip otherwise (MCP/Lua-worker
+        // dispatch). ReloadSmatchetHooksSetupScript in LuaConsolePlugin.cpp calls
+        // RunLuaSetupScript directly (not through this command) but only from the UI-thread
+        // ImGui "Run" button draw call, so that path is unaffected.
         Command c =
             MakeCommand("automation.reload-hooks",
-                        "Re-run SmatchetHooks.lua on the main Lua state (equivalent of the hooks 'Run' button).",
-                        [&app](const nlohmann::json&, const CommandContext&) {
-                            app.RunLuaSetupScript("SmatchetHooks.lua");
-                            return CommandResult::Success(nlohmann::json{{"reloaded", "SmatchetHooks.lua"}});
+                        "Re-run SmatchetHooks.lua on the main Lua state (equivalent of the hooks 'Run' button). "
+                        "Marshals onto the UI thread — the main Lua state is UI-thread-owned.",
+                        [&app, &poster](const nlohmann::json&, const CommandContext&) {
+                            return RunOnUiThreadAsCommandResult(poster, [&app]() {
+                                app.RunLuaSetupScript("SmatchetHooks.lua");
+                                return CommandResult::Success(nlohmann::json{{"reloaded", "SmatchetHooks.lua"}});
+                            });
                         });
         c.Idempotent = false;
         c.AsyncSafe = true;

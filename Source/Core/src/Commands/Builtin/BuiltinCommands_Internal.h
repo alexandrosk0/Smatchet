@@ -77,7 +77,7 @@ void RegisterScenarioCommands(CommandRegistry& reg, IAppScenarios& app, IMainThr
 void RegisterUiTestCommands(CommandRegistry& reg, IAppScenarios& app, IMainThreadPoster& poster);
 void RegisterAttachCommands(CommandRegistry& reg, IAppAttachments& app);
 void RegisterAiCommands(CommandRegistry& reg, AppController& app);
-void RegisterAutomationCommands(CommandRegistry& reg, IAppAutomation& app);
+void RegisterAutomationCommands(CommandRegistry& reg, IAppAutomation& app, IMainThreadPoster& poster);
 void RegisterBugReportCommands(CommandRegistry& reg, AppController& app);
 void RegisterUiInteractionCommands(CommandRegistry& reg, AppController& app);
 
