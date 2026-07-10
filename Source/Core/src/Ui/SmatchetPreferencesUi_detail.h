@@ -111,6 +111,20 @@ inline bool AssistantAiFieldsDiffer(const TrackerConfig& a, const TrackerConfig&
            a.AgentsMdGlobalPath != b.AgentsMdGlobalPath || a.ProjectAgentsMdPath != b.ProjectAgentsMdPath ||
            a.AgentsMdAutoDiscoverProject != b.AgentsMdAutoDiscoverProject;
 }
+
+/// #1706 — reset the Assistant-tab seed latches when the Preferences window
+/// closes (Discard-on-close). Clearing `workingSeeded` makes the working COPY
+/// re-seed from cfg on reopen; setting `forceReseed` makes SeedAssistantBuffers
+/// overwrite the function-static InputText buffers (s_bufs) from that reverted
+/// copy — WITHOUT it, s_bufs.aiBufsSeeded/agentsBufsSeeded persist across close
+/// and the fields keep displaying the discarded edit text. Both latches must move
+/// together (the explicit Discard button — DiscardAssistantWorking — sets the
+/// same `forceReseed`); operates on the two bools so it stays pure + bucket-A
+/// testable in isolation (no UiDrawSession dependency).
+inline void ResetAssistantPrefsSeedLatchesOnClose(bool& workingSeeded, bool& forceReseed) {
+    workingSeeded = false;
+    forceReseed = true;
+}
 #endif // SMATCHET_WITH_AI
 
 } // namespace SmatchetPreferencesUiDetail

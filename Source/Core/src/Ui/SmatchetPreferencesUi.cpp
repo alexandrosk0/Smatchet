@@ -155,10 +155,14 @@ void SmatchetUI::resetPreferencesWindowState(UiDrawSession& d) {
     d.assistantPrefsTestInFlight = false;
     d.assistantPrefsTestResult.clear();
     d.assistantPrefsTestResultType = 0;
-    // Drop the explicit-Save working-copy seed latch so reopening the window
-    // re-seeds the Assistant tab's working copy from cfg (any unsaved edits the
-    // user closed the window on are intentionally dropped — Discard-on-close).
-    d.assistantPrefsWorkingSeeded = false;
+    // Reopening the window is a Discard-on-close: revert BOTH the working copy
+    // (workingSeeded=false re-seeds it from cfg) AND the InputText buffers
+    // (forceReseed=true — #1706: clearing only workingSeeded left the
+    // function-static s_bufs buffers seeded, so the fields kept displaying the
+    // discarded edit text). See ResetAssistantPrefsSeedLatchesOnClose (tested in
+    // tests/Core/PreferencesAssistantWorkingCopy.test.cpp).
+    SmatchetPreferencesUiDetail::ResetAssistantPrefsSeedLatchesOnClose(d.assistantPrefsWorkingSeeded,
+                                                                       d.assistantPrefsForceBufferReseed);
 #endif
 }
 
@@ -201,9 +205,8 @@ void SmatchetUI::loadPreferencesBuffers(UiDrawSession& d) {
     CopyStringToBuffer(d.githubOwnerBuf, d.cfg.GitHubOwner);
     CopyStringToBuffer(d.githubRepoBuf, d.cfg.GitHubRepo);
     CopyStringToBuffer(d.linearApiKeyBuf, d.cfg.LinearApiKey);
-    CopyStringToBuffer(d.linearBaseUrlBuf, d.cfg.LinearBaseUrl.empty()
-                                               ? std::string("https://api.linear.app/graphql")
-                                               : d.cfg.LinearBaseUrl);
+    CopyStringToBuffer(d.linearBaseUrlBuf, d.cfg.LinearBaseUrl.empty() ? std::string("https://api.linear.app/graphql")
+                                                                       : d.cfg.LinearBaseUrl);
     CopyStringToBuffer(d.linearTeamKeyBuf, d.cfg.LinearTeamKey);
     CopyStringToBuffer(d.linearTeamIdBuf, d.cfg.LinearTeamId);
     CopyStringToBuffer(d.linearWorkspaceUrlBuf, d.cfg.LinearWorkspaceUrl);
