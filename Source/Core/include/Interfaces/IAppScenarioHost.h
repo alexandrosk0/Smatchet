@@ -2,7 +2,7 @@
 #define SMATCHET_INTERFACES_IAPP_SCENARIO_HOST_H
 
 // Narrow scenario-host facet of AppController — fan-in Phase 6 T5
-// (docs/plans/active/appcontroller-fan-in-phase6-dissolution.md). The scenario
+// (docs/plans/shipped/appcontroller-fan-in-phase6-dissolution.md). The scenario
 // lifecycle hooks and the runner tick take this instead of the concrete
 // AppController, so scenario TUs whose only app dependency is spinning live
 // pane contexts or toggling the Lua cached-provider hooks stop including

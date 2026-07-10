@@ -1,10 +1,9 @@
 #pragma once
 
-// fan-in Phase 6 T2: this header needs only two Types/ leaf types (both hoisted out of
-// AppController in fan-in Phase 3 and re-exported there via using-aliases) — NOT the full
-// AppController.h. Dropping the include here stops SmatchetUiSession.h transitively spreading
-// AppController.h into every Ui TU that includes it; TUs that really use AppController methods
-// must (and do) include it directly.
+// This header needs only the leaf types below (hoisted out of AppController and re-exported
+// there via using-aliases) — NOT the full AppController.h. Keeping the include out stops
+// SmatchetUiSession.h transitively spreading AppController.h into every Ui TU that includes
+// it; TUs that really use AppController methods must (and do) include it directly.
 #include "Types/AppUpdateTypes.h"  // AppUpdateInfo (by-value member + std::future<AppUpdateInfo>)
 #include "Types/AttachmentTypes.h" // AttachmentDescriptor
 #include "Types/FieldEditTypes.h"  // FieldEditResult
