@@ -16,8 +16,9 @@ The 2026-07 codebase architecture review flagged five god files as its item 4:
 engines into one TU, amplifying merge conflicts, review scope, and (for the Lua-bindings file)
 the security-review surface of the `ai.*` off-UI-thread invariant. The repo already fixed the
 review's items 3 (PR #1708) and 6 (PR #1710); sibling campaigns cover items 1, 2, and 5. After
-this plan lands, no targeted TU exceeds ~800 LOC and an advisory lint warns before any first-party
-TU regrows past the ceiling.
+this plan lands, every targeted TU is a cohesive partition under the new 1,200-line advisory
+ceiling (most land at or below ~700 LOC) and the lint warns before any first-party TU regrows
+past it.
 
 **Hard environment constraint** (same as
 [`docs/plans/appcontroller-clusters-followup.md`](../appcontroller-clusters-followup.md)):
@@ -100,11 +101,13 @@ All five sources net-shrink; per-slice targets (spine = STAYS + includes):
 4. `AppController_LuaBindings.cpp` 1,561 → spine ~350; Ui ~350 / Ai ~250 / Tickets ~500.
 5. `SmatchetActiveProjectGridUi.cpp` 1,741 → Window ~600 / Table ~650 / Cells ~500 (spine dissolves into Window).
 
-Every post-split TU clears the new 1,200-line advisory ceiling with ≥ 30% headroom.
+Every post-split TU clears the new 1,200-line advisory ceiling: all with ≥ 40% headroom except
+`AdfToMarkdown.cpp` (~1,100 — one cohesive walker engine; partitioning it further would split
+along an arbitrary boundary, so its ~8% headroom is accepted).
 
 ## UX Pillar callouts
 
-- **Pillar 1 (perf, 144 Hz / 6.94 ms steady-state)**: no impact — byte-identical body moves; TU boundaries can only shift inlining marginally, and the perf gate baselines catch any surprise.
+- **Pillar 1 (perf, 144 Hz / 6.94 ms steady-state)**: behavior unchanged by construction (byte-identical body moves), but TU boundaries can shift inlining/codegen marginally — the perf-gate baselines are the backstop for any regression.
 - **Pillar 2 (UI-thread never blocks > 100 ms without visible cue)**: no impact — no new I/O, no scheduling changes.
 - **Pillar 3 (never crash)**: risk is ODR/static-init, not logic — mitigated by the single-definition checklist in § Risks; behavior pinned by the existing doctest nets.
 - **Pillar 4 (accessibility)**: no impact — zero UI behavior change.
