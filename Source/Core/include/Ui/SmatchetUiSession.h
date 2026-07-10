@@ -1,6 +1,14 @@
 #pragma once
 
-#include "AppController.h"
+// fan-in Phase 6 T2: this header needs only two Types/ leaf types (both hoisted out of
+// AppController in fan-in Phase 3 and re-exported there via using-aliases) — NOT the full
+// AppController.h. Dropping the include here stops SmatchetUiSession.h transitively spreading
+// AppController.h into every Ui TU that includes it; TUs that really use AppController methods
+// must (and do) include it directly.
+#include "Types/AppUpdateTypes.h"  // AppUpdateInfo (by-value member + std::future<AppUpdateInfo>)
+#include "Types/AttachmentTypes.h" // AttachmentDescriptor
+#include "Types/FieldEditTypes.h"  // FieldEditResult
+#include "Sync/SyncTypes.h"        // TrackerIssueFetchPack, TrackerConnectivityBannerForUi (::Level member init)
 #include "ConfigManager.h"
 #include "GridPane.h"
 #include "SmatchetDefaults.h"
@@ -50,7 +58,7 @@ struct SubmitResult; // log-a-bug-github — held by shared_ptr in UiDrawSession
 } // namespace smatchet
 
 struct AttachmentCollectionRequest {
-    std::vector<AppController::AttachmentDescriptor> Attachments;
+    std::vector<AttachmentDescriptor> Attachments;
 };
 
 struct AttachmentPreviewUpdate {
@@ -107,7 +115,7 @@ struct FieldEditCommitResult {
     Kind CommitKind = Kind::Failed;
     bool Ok = false;
     std::string Error;
-    AppController::FieldEditResult ApplyResult;
+    FieldEditResult ApplyResult;
     /** When CommitKind == QueuedOffline: JSON object map for `UpdateIssueFields`. */
     std::string QueuedFieldsPayloadJson;
 };

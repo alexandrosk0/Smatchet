@@ -9,16 +9,16 @@
 // can drive them from any surface. Handlers mutate `g_ui` on the UI thread.
 // See docs/plans/shipped/keyboard-shortcuts-rebindable.md.
 
-class AppController;
+class IMainThreadPoster;
 
 namespace smatchet {
 namespace cmd {
 
 class CommandRegistry;
 
-void RegisterAppViewCommands(CommandRegistry& registry, AppController& app);
+void RegisterAppViewCommands(CommandRegistry& registry, IMainThreadPoster& app);
 
-}  // namespace cmd
-}  // namespace smatchet
+} // namespace cmd
+} // namespace smatchet
 
-#endif  // SMATCHET_COMMANDS_APP_VIEW_COMMANDS_H
+#endif // SMATCHET_COMMANDS_APP_VIEW_COMMANDS_H
