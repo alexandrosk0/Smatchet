@@ -119,11 +119,11 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   merged list, cross-validated against the develop squash log; 4 PRs needed manual
   sha resolution — #1439/#1577 edited squash subjects, #1593/#1597 true merge
   commits) minus Batch 12's 17 → **477 to sweep**. **Batch 13 (#1695–#1560, 120
-  PRs) + Batch 14 (#1559–#1436, 120 PRs) done below** — the reviewed frontier is
-  now **#1436–#1695 contiguous** on top of the #1–#1174 baseline. Remaining:
-  **#1435–#1175 (236 PRs, batches 15–16 running this session) + #1593** (true
-  merge commit, 9 constituent commits — needs a per-constituent survivor pass,
-  handled separately).
+  PRs) + Batch 14 (#1559–#1436, 120 PRs) + Batch 15 (#1435–#1305, 120 PRs) done
+  below** — the reviewed frontier is now **#1305–#1695 contiguous** on top of the
+  #1–#1174 baseline. Remaining: **#1304–#1175 (116 PRs, batch 16 running this
+  session) + #1593** (true merge commit, 9 constituent commits — needs a
+  per-constituent survivor pass, handled separately).
 - **Swept:** **#1–#1174** (batches 1–11) — **the entire merged-PR history reviewed.**
   **SWEEP COMPLETE** — Batch 11 (#116–#1, 113 PRs, the final tail incl. the early
   base-`main` PRs #1–#5) added 2026-06-13;
@@ -185,6 +185,37 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   User-visible ones → GitHub Issues per ADR-0014 when actioned.)_
 
 <!-- Batches appended at the top. -->
+
+## Batch 15 — #1435–#1305 (120-PR sweep, 2026-07-10)
+
+Coverage: **120 reviewed — 15 with findings, 90 clean, 15 fully superseded, 0 errored, 0 died.** Net: **0 CRITICAL, 2 HIGH, 6 MEDIUM, 9 LOW.** Third installment of the post-#1174 frontier re-establishment (contiguous #1435→#1305; frontier now **#1305–#1695** on top of the #1–#1174 baseline). Survivor-filtered against origin/develop, so every finding is current. (Same sha-resolved workflow + reviewer model as Batches 13–14; 120/120 returned, 0 died; ~31 min, ~3.55M tokens.) **All 17 findings are `userVisible:false` (internal CI/gates/hooks/docs) → NO GitHub Issues this pass; backlog only per ADR-0014.** Dominant theme, emphatically: the **zero-test fail-open UI-test-driver cluster** — BOTH HIGHs and 3 MEDIUMs are the same `passed=0&&failed=0`→exit-0 shape across five per-feature `test-ui-*.sh` drivers (#1384, #1364, #1405, #1383, #1372), the exact class Batches 10–11 flagged in older drivers — the template keeps being copied. Plus a new sub-shape: `set -e`+`pipefail` aborting a step before its own graceful-degradation branch (#1424 ×2). Cross-filed onto the OPEN P2 `fail-open-meta-gate-authoring-check` in [`categories/tooling.md`](categories/tooling.md).
+
+### HIGH (2)
+- **#1384 (d0c80161) · `scripts/dev/test-ui-attachment-thumbnail-loading-cue.sh:62`** — fail-open zero-test gate: after the `SMATCHET_BUILD_UI_TESTS=OFF` and `"?"` guards, the driver exits 0 whenever `FAILED=="0"` — including `passed=0/failed=0` when the `ThumbnailLoadingCue` filter matches nothing (registry entry dropped/renamed). The gate cannot catch regression of its own registration. Fix: fail on `PASSED=0 && FAILED=0` before the exit-0 path.
+- **#1364 (addedce1) · `scripts/dev/test-ui-callstack-tooltip-hover.sh:82`** — same class: `passed=0 failed=0` passes the `"?"` check at :77, fails the `FAILED!="0"` check at :83, prints `Passed: 0 Failed: 0`, exits 0 — a green gate that ran no assertions. Fix: zero-run guard before the FAILED check.
+
+### MEDIUM (6)
+- **#1424 (0d2744d8) · `.github/workflows/build-and-test.yml:653`** — `result=$(bash scripts/dev/perf-run.sh … | tail -1)` runs under `bash -e` + the step's `set -uo pipefail`; a non-zero perf-run.sh fails the assignment and `set -e` aborts the step BEFORE the graceful `[ -f "$result" ]` handling and the explicitly-anticipated "first-run plumbing" warning at :661-663 — a tolerated first-run hiccup becomes a hard-red ARM64 job. Fix: `|| true` the assignment (or `set +e` bracket) so control reaches the intended `::warning::` path.
+- **#1405 (b29620bb) · `scripts/dev/test-ui-omnibar-search-apply.sh:86`** — zero-test fail-open: only `"?"` and `FAILED!=0` are rejected; an "Omnibar" filter matching zero tests exits 0 green. Fix: zero-run floor (or assert `PASSED` == expected 3).
+- **#1383 (0772f822) · `scripts/dev/test-ui-command-palette-inline-typing.sh:58`** — same class for the "CommandPalette" filter. Fix: zero-run guard before the `FAILED!=0` check.
+- **#1372 (4a06fb20) · `scripts/dev/test-ui-ai-assistant-model-change.sh:69`** — same class for `--name=AssistantModelChange`. Fix: zero-run guard.
+- **#1388 (9346fcf1) · `docs/harness/claude-code/hooks/guard-shared-tree.sh:96`** — the detection `gitopts` matches `-c` values with `-c[[:space:]]+[^[:space:]]+`, truncating at the first space inside a quoted value — `git -c user.name="a b" reset --hard` on the shared tree skips the :97 detection grep and the guard fails OPEN (early exit 0). The sibling `guard-head-drift.sh:99` was deliberately made quote-aware for exactly this. Fix: mirror it — `-c[[:space:]]+("[^"]*"|[^[:space:]]+)`.
+- **#1348 (9c5a8608) · `agents/scripts/core/merge-watcher-stuck-nudge.sh:83`** — the default `--list` output prints a literal em-dash, contradicting the PR's own ASCII-only deviation note; on a cp1252 Windows console the inline python raises `UnicodeEncodeError`, and being the last command under `set -euo pipefail` the script exits non-zero — violating its "Exit 0 always / degrade silent" contract exactly when a PR is actually stuck. Fix: ASCII ` -- ` like the `--nudge` branch.
+
+### LOW (9)
+- **#1424 (0d2744d8) · `.github/workflows/build-and-test.yml:613`** — same errexit sub-shape as the MEDIUM: `childlog="$(… | grep -a 'child stdout/stderr' | …)"` under `set -e`+pipefail; a no-match grep aborts the step before the graceful "no spawned-child log path found" branch — a booted-fine run (rc=0) goes spuriously red. Fix: `|| true` the assignment.
+- **#1420 (d0418faa) · `agents/scripts/core/test-shell-lint.sh:308`** — `check_pipefail_head` only recognizes plain/`local`/`export` assignment prefixes; `readonly`/`declare`/`typeset x=$(…|head)` under pipefail is silently not flagged — a miss of the exact class the rule guards. Fix: extend the alternation.
+- **#1417 (51facafc) · `agents/scripts/core/workflow-watchdog.sh:121`** — amplification floor uses `-lt 100`, so an explicit `--amplification-pct 100` fires cascade on a healthy fleet where runs == expected. Dormant (non-default). Fix: `-le 100` or `-gt` comparison, or document.
+- **#1412 (9438a896) · `docs/adr/0022-intent-gate-promotion.md:3`** — stale line-pin: cites `merge-gates.md:83` for the merge-queue deadlock class; that text is now at :102. Fix: re-pin or cite the section by name.
+- **#1395 (8ffe3035) · `.github/workflows/perf-full.yml:113`** — comment cites a `security.md "Mesa archive integrity"` entry that exists nowhere in the repo (duplicated in `perf-pr-fast.yml:228`). Fix: add the entry or repoint both copies.
+- **#1388 (9346fcf1) · `docs/harness/claude-code/hooks/guard-shared-tree.sh:97`** — the stash-pop detection branch lacks the `${gitopts}` segment its own :129 enumeration includes, so `git -C <path> stash pop` is never detected — fail-open for that form. Fix: insert `${gitopts}`.
+- **#1381 (0abb10cb) · `docs/self-improvement/categories/security.md:69`** — stale line-pin: "blocking synchronous tracker call at `JiraIssueMutation.cpp:206`" now points at a closing brace; the calls are at ~:188/:216. Fix: re-pin or use function names.
+- **#1352 (af3e6e24) · `tests/Core/LocalCacheManagerCorruption.test.cpp:5`** — header comment describes the abandoned v1 design (pre-open probe via a `QuarantineIfCorrupt` that exists nowhere; grep: 0 matches); shipped design is catch-in-ctor-body + `RebuildFreshAfterCorruption`/`QuarantinePath`. Fix: reword to the shipped mechanism.
+- **#1340 (8458aa1d) · `docs/self-improvement/categories/security.md:77`** — stale line-pin: `CommandRegistry.cpp:302-307` for `IsAutomationSource`/`RequiresExplicitConfirm`; now :332/:337. Fix: re-pin.
+
+**Clean (90, surviving lines reviewed, no findings):** #1435, #1433, #1432, #1430, #1429, #1428, #1427, #1426, #1425, #1423, #1422, #1421, #1416, #1415, #1414, #1413, #1411, #1410, #1409, #1408, #1407, #1406, #1404, #1403, #1401, #1400, #1398, #1397, #1396, #1394, #1393, #1391, #1389, #1387, #1386, #1385, #1382, #1380, #1376, #1375, #1374, #1373, #1371, #1370, #1367, #1366, #1365, #1363, #1361, #1360, #1359, #1358, #1357, #1356, #1355, #1354, #1353, #1350, #1349, #1347, #1346, #1345, #1344, #1343, #1342, #1341, #1339, #1338, #1337, #1336, #1335, #1334, #1333, #1331, #1330, #1329, #1328, #1327, #1326, #1325, #1324, #1323, #1322, #1321, #1320, #1319, #1315, #1314, #1313, #1305.
+
+**Fully superseded (15, no review surface):** #1434, #1431, #1419, #1418, #1402, #1399, #1392, #1390, #1379, #1378, #1377, #1369, #1368, #1362, #1332 — every introduced line was changed/removed by a later PR; excluded by construction.
 
 ## Batch 14 — #1559–#1436 (120-PR sweep, 2026-07-10)
 
