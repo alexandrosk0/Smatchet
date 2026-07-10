@@ -122,7 +122,7 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   (#1695–#1175, contiguous, newest first) + the **#1593 per-constituent special**
   (all below). Aggregate: **473 reviewed + #1593 — 56 with findings, 389 clean,
   31 fully superseded, 0 errored, 0 died; 1 CRITICAL, 4 HIGH, 21 MEDIUM, 38 LOW;
-  ~16.1M tokens, ~2.7h wall.** The 6 user-visible findings → GitHub Issues
+  ~16.1M tokens, ~2.7h wall.** The 5 user-visible findings → GitHub Issues
   **#1699** (B13 CRITICAL, AI-input overflow), **#1706** (B14, prefs stale
   buffers), **#1711/#1712/#1713** (B16: env-scrub `_PATH`, p4vc trailing-`\`,
   comments Gen token). Dominant recurring class across all four batches: the
