@@ -56,16 +56,19 @@ This session resolved #1702 only via an operator-authorized admin merge past the
 pending gate.
 
 **Update (2026-07-10): partially implemented (the structural half of proposal 3).**
-Ported two of merge-gates.sh's terminal pass-signals from the client gate to the
-SERVER gate (`.github/actions/cr-finding-gate/action.yml`), the one that actually
-blocks merge:
-- **selfImpOnly auto-pass** — a diff entirely under `docs/self-improvement/**`
-  (path-excluded by `.coderabbit.yaml`, sanctioned by
-  `self-improvement-pr-review-exemption`) passes immediately, no CR wait. This is
-  exactly the docs-only-PR class that wedged.
-- **terminal path-filter skip** — a CR "Review skipped … due to path filters"
-  comment on the head (rate-limit explicitly excluded) maps to 0 actionable → pass,
-  no longer relying solely on CR's unreliable StatusContext.
+Ported the **selfImpOnly** terminal pass-signal from the client gate
+(`merge-gates.sh`) to the SERVER gate (`.github/actions/cr-finding-gate/action.yml`),
+the one that actually blocks merge: a diff entirely under `docs/self-improvement/**`
+(path-excluded by `.coderabbit.yaml`, sanctioned by
+`self-improvement-pr-review-exemption`) passes immediately, no CR wait — exactly
+the docs-only-PR class that wedged. It is head-accurate (queries the PR's current
+file list) and fail-closed on any `gh` pagination error.
+
+A second, comment-body-based "terminal path-filter skip" pass was tried and
+**dropped after CodeRabbit review** (#1724): CR's skip summary comment carries no
+reliable head-commit anchor, so a stale skip comment from an earlier docs-only
+commit could pass a LATER code commit before CR re-reviewed it (fail-open race).
+selfImpOnly covers the recurring case without that hazard.
 
 Still open (deliberately NOT auto-passed — unsafe): the **rate-limit on a CODE
 PR** case. Auto-passing it would wave un-reviewed code through; the correct escape

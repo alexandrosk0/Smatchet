@@ -102,13 +102,21 @@ runs:
         # `--paginate` follows every page (the REST per_page is capped at 100, so
         # a first-page-only fetch would be blind to a code file at position 101+);
         # the line-based count sees the full diff.
+        #
+        # FAIL CLOSED on a gh error: `--paginate` that dies on a LATER page still
+        # emits the earlier pages, so `|| true` + a non-empty check would treat
+        # that partial list as complete and a code file on the unfetched page
+        # would be invisible — a >100-file code PR whose first page is all
+        # self-improvement could then auto-pass. Capture the exit code and require
+        # rc==0 before trusting the list (CodeRabbit #1724).
         files_list=$(gh api --paginate "repos/${OWNER}/${REPO}/pulls/${PR}/files?per_page=100" \
-                       --jq '.[].filename' 2>/dev/null || true)
-        if [ -n "$files_list" ]; then
+                       --jq '.[].filename' 2>/dev/null)
+        files_rc=$?
+        if [ "$files_rc" -eq 0 ] && [ -n "$files_list" ]; then
           n_files=$(printf '%s\n' "$files_list" | grep -c . || true)
           n_outside=$(printf '%s\n' "$files_list" | grep -cv '^docs/self-improvement/' || true)
         else
-          n_files=0; n_outside=1
+          n_files=0; n_outside=1   # gh error (partial/none) or empty — fail closed
         fi
         if [ "${n_files:-0}" -gt 0 ] && [ "${n_outside:-1}" -eq 0 ]; then
           post success "self-improvement-only diff (${n_files} file(s) under docs/self-improvement/**) — CR review exempt"
@@ -165,9 +173,6 @@ runs:
               reviews(first:100){
                 nodes{ author{login} state submittedAt commit{oid} body }
               }
-              comments(last:50){
-                nodes{ author{login} body }
-              }
               commits(last:1){
                 nodes{ commit{ statusCheckRollup{ contexts(first:100){
                   nodes{ __typename ... on StatusContext{ context state } }
@@ -207,32 +212,18 @@ runs:
           n_reviews="${n_reviews//[^0-9]/}"; n_reviews="${n_reviews:-0}"
 
           if [ "$n_reviews" -eq 0 ]; then
-            # Terminal path-filter skip: when EVERY changed file is path-excluded
-            # by .coderabbit.yaml, CR posts a PR-level "Review skipped ... due to
-            # path filters" comment and produces NO review node — and it does NOT
-            # reliably flip its "CodeRabbit" StatusContext to SUCCESS, so the
-            # cr_ctx disambiguation below retries to PENDING forever (observed on
-            # #1718's docs-only heads). The skip is TERMINAL — CR will never
-            # review these paths — and the excluded set is, by the repo's own
-            # config, deemed not-worth-reviewing, so treat it as 0 actionable ->
-            # PASS. Distinct from a rate-limit ("try again later"/"rate limit"),
-            # which is TEMPORARY and must NOT auto-pass a code PR — exclude it
-            # explicitly. This mirrors merge-gates.sh $crreviewskipped (client
-            # side). No head-SHA pin is needed: CR edits ONE summary comment in
-            # place, so the latest body reflects the current head's disposition.
-            cr_pathskip=$(printf '%s' "$resp" | jq -r '
-              [ .data.repository.pullRequest.comments.nodes[]?
-                | select(.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
-                | (.body // "") ]
-              | any(
-                  (test("review skipped"; "i") and test("path filter"; "i"))
-                  and ((test("rate.?limit"; "i") or test("try again later"; "i")) | not))
-              ' 2>/dev/null) || cr_pathskip=false
-            if [ "$cr_pathskip" = true ]; then
-              post success "CodeRabbit skipped review (all changed files path-excluded by .coderabbit.yaml) — 0 actionable"
-              exit 0
-            fi
-
+            # A terminal "Review skipped … path filters" case (every changed file
+            # path-excluded by .coderabbit.yaml) is handled UP FRONT for the only
+            # exempt set we can verify head-accurately: the docs/self-improvement/**
+            # selfImpOnly file-list check above. A comment-body-based skip pass was
+            # tried here but dropped (CodeRabbit #1724): CR's skip summary comment
+            # carries no reliable head-commit anchor, so a stale skip comment from an
+            # earlier docs-only commit could pass a LATER code commit before CR
+            # re-reviewed it — a fail-open race. Any other path-excluded (non-self-
+            # improvement) PR falls through to the StatusContext disambiguation
+            # below, or the cr-out-of-band label, rather than trusting an unanchored
+            # comment.
+            #
             # No CR review node on this head. Disambiguate via CR's own
             # "CodeRabbit" StatusContext on the head commit:
             #   SUCCESS -> CR is done and skipped the review (trivial / workflow
