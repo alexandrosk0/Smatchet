@@ -11,7 +11,8 @@
 // SAFETY / OPT-IN: registration is gated behind the env var SMATCHET_UI_MONKEY=1, so this
 // test is INERT under the normal `ui_test.run --all` (the required Bucket-E lane never
 // sets it) and cannot destabilize existing CI. It is exercised only by an advisory step
-// that sets the var and runs `ui_test.run --name="UiMonkey/*"`. Determinism: the seed
+// that sets the var and runs `ui_test.run --name="UiMonkey"` (the CATEGORY, substring-
+// matched — the engine filter is never a glob; Issue #1666). Determinism: the seed
 // (env SMATCHET_UI_MONKEY_SEED, else a fixed default) is logged up front via
 // ctx->LogInfo("ui-monkey seed=..."), so a crash in the captured spawn log replays.
 //
@@ -170,7 +171,7 @@ void RegisterRandomWalk(ImGuiTestEngine* engine) {
 extern "C" void SmatchetRegisterUiMonkeyTests(ImGuiTestEngine* engine) {
     // Opt-in only: inert unless SMATCHET_UI_MONKEY=1 so the required `ui_test.run --all`
     // lane never runs the random walker. An advisory step sets the var and runs it via
-    // `--name="UiMonkey/*"`.
+    // `--name="UiMonkey"` (category substring — the engine filter is never a glob).
     if (!MonkeyEnabled()) {
         return;
     }
