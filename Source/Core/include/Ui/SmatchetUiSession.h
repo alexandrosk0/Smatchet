@@ -5,8 +5,10 @@
 // AppController.h. Dropping the include here stops SmatchetUiSession.h transitively spreading
 // AppController.h into every Ui TU that includes it; TUs that really use AppController methods
 // must (and do) include it directly.
+#include "Types/AppUpdateTypes.h"  // AppUpdateInfo (by-value member + std::future<AppUpdateInfo>)
 #include "Types/AttachmentTypes.h" // AttachmentDescriptor
 #include "Types/FieldEditTypes.h"  // FieldEditResult
+#include "Sync/SyncTypes.h"        // TrackerIssueFetchPack, TrackerConnectivityBannerForUi (::Level member init)
 #include "ConfigManager.h"
 #include "GridPane.h"
 #include "SmatchetDefaults.h"
