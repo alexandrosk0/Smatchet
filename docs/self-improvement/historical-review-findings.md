@@ -112,8 +112,17 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
 - ⏭ **#908** (CMake dead sol2 re-run-cleanup group) — left as-is: editing the
   sol2 patch chain is higher-risk than the harmless dead comment; deferred.
 
-## Sweep status & remaining work (as of 2026-06-16)
+## Sweep status & remaining work (as of 2026-07-10)
 
+- **Post-#1174 frontier re-establishment (2026-07-10, in progress):** work-list =
+  all **494** merged-to-develop PRs in **(#1174, #1695]** (authoritative GitHub
+  merged list, cross-validated against the develop squash log; 4 PRs needed manual
+  sha resolution — #1439/#1577 edited squash subjects, #1593/#1597 true merge
+  commits) minus Batch 12's 17 → **477 to sweep**. **Batch 13 (#1695–#1560, 120
+  PRs) done below** — the reviewed frontier is now **#1560–#1695 contiguous** on
+  top of the #1–#1174 baseline. Remaining: **#1559–#1175 (356 PRs, batches 14–16
+  running this session) + #1593** (true merge commit, 9 constituent commits —
+  needs a per-constituent survivor pass, handled separately).
 - **Swept:** **#1–#1174** (batches 1–11) — **the entire merged-PR history reviewed.**
   **SWEEP COMPLETE** — Batch 11 (#116–#1, 113 PRs, the final tail incl. the early
   base-`main` PRs #1–#5) added 2026-06-13;
@@ -175,6 +184,36 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   User-visible ones → GitHub Issues per ADR-0014 when actioned.)_
 
 <!-- Batches appended at the top. -->
+
+## Batch 13 — #1695–#1560 (120-PR sweep, 2026-07-10)
+
+Coverage: **120 reviewed — 14 with findings, 99 clean, 7 fully superseded, 0 errored, 0 died.** Net: **1 CRITICAL, 1 HIGH, 1 MEDIUM, 11 LOW.** First installment of the post-#1174 frontier re-establishment (work-list = all 494 merged-to-develop PRs in (#1174, #1695] minus Batch 12's 17; this batch took the newest 120, contiguous #1695→#1560). Survivor-filtered against origin/develop (@ `b69e82f1`), so every finding is current — already-fixed/reverted code excluded by construction. (Reviewer model `code-review` opus/high via a sha-resolved variant of the persisted `historical-review-sweep` workflow — this remote session has no `gh` CLI, so each PR's squash commit was pre-resolved from the develop log and cross-validated against GitHub's merged-PR list, which also caught 4 PRs with edited/non-standard squash subjects the `(#N)`-suffix scrape misses: #1439/#1577/#1593/#1597. Concurrency 2 = the runtime cap min(16, cores−2) on this 4-core box, under the Opus ≤6 guardrail; 120/120 agents returned, 0 died; ~41 min, ~4.35M tokens.) **The CRITICAL (#1601) is `userVisible:true` → GitHub Issue #1699 (ADR-0014); the other 13 findings are internal tooling/docs → backlog only.** Recurring themes: the fail-open gate cluster once more (the HIGH is an unanchored CI denylist token; the MEDIUM is assertion-masking `rm -rf` tails in bats meta-tests), plus the usual stale-line-pin / moved-doc drift tail.
+
+### CRITICAL
+- **#1601 (b938ceb5) · `Source/Core/src/Ui/SmatchetAiAssistantUi.cpp:113`** — static-buffer overflow on a >8191-byte paste into the AI chat input. `InputBufferResizeCallback` records the dropped-byte count then returns 0 without resizing `Buf` OR resetting `data->BufSize`. But adding `ImGuiInputTextFlags_CallbackResize` (:1147) sets `is_resizable=true` in ImGui, which DISABLES the insert-time capacity clamp in `STB_TEXTEDIT_INSERTCHARS` (the pre-PR behavior the comment relies on) and lets ImGui grow its internal edit buffer to hold the full over-cap paste. At apply time ImGui calls the callback with `BufSize` enlarged to `needed+1`, then does `buf_size = callback_data.BufSize` (still enlarged) and `ImStrncpy(buf, apply_new_text, min(len+1, buf_size))` — copying the full paste into the fixed 8192-byte process-static `s_inputCharBuf`. The comment "ImGui then clamps the insert exactly as before" is false: that clamp only existed because the flag was absent. Memory corruption in exactly the scenario the truncation toast exists to report. Fix: in the `CallbackResize` branch also set `data->BufSize = kInputBufCap` (leave `Buf`/`BufTextLen`); verify against the vendored imgui `InputTextEx` apply-path; add an ASan bucket-E paste regression. → **Issue #1699**.
+
+### HIGH
+- **#1692 (681ad70b) · `scripts/dev/test-all.sh:99`** — fail-open CI denylist: `CI_SKIP_RE` uses unanchored substring tokens matched against the full script path (`[[ "$script" =~ $CI_SKIP_RE ]]` at :155). The token `test-plan-index` matches not only the intended `test-plan-index.sh` but also the distinct headless-safe Bucket-A suite `test-plan-index-robustness-bats.sh`, silently denylisting it in CI (`Passed: 0 Failed: 0 Skipped: 1`) — any failure in that suite is masked. Fix: anchor each token to a full basename (`test-plan-index\.sh`, or `(^|/)…\.sh` boundaries) and audit the other tokens for the same over-match.
+
+### MEDIUM
+- **#1605 (24fb4e71) · `tests/bats/lint_rules.bats:411`** — assertion-masking cleanup tails: the new `--scan-*` bats tests end with `rm -rf "$tmp"` AFTER their content assertions; bats doesn't run bodies under `set -e`, so the always-zero `rm -rf` becomes the test's exit status and masks a failing `[[ "$output" == … ]]` above it. A regression in the gate's `--root` scan path false-PASSes these meta-tests. Recurs at :322/:334/:346/:372/:423/:444/:458/:476. Fix: make the assertion the last command and use bats' auto-cleaned `$BATS_TEST_TMPDIR` (the `dup_audit.bats` house style), or move cleanup to `teardown()`.
+
+### LOW (11)
+- **#1680 (1878db71) · `agents/scripts/core/cost-ceiling-check.py:68`** — `int(row.get("input_tokens",0) or 0)` raises `ValueError` on a non-numeric token value; not caught by the surrounding `except OSError`, so one malformed row crashes the whole sum instead of degrading. Masked by the nudge wrapper's `|| true`, but `--blocking`/direct invocation tracebacks. Fix: wrap the two `int()` accumulations in `try/except (ValueError, TypeError): continue`, matching the existing skip-and-continue idiom.
+- **#1674 (4ac9b7aa) · `docs/plans/shipped/appcontroller-fan-in-phase5-facets.md:5`** — status line cites the predecessor plan at `docs/plans/appcontroller-fan-in.md`; it now lives at `docs/plans/shipped/appcontroller-fan-in.md`. Fix: update the path.
+- **#1654 (911d1b25) · `AGENTIC_INFRA_AUDIT.md:6`** — surviving audit-doc links still use the flat `docs/plans/<name>.md` layout from before the `active/`/`shipped/` reorg (lines 6, 7, 46, 120, 130, 131) — all 404. Fix: repoint to `active/agentic-infra-audit-campaign-2026-06.md`, `shipped/ai-control-policy.md`, `active/subagent-eval-agentic-coverage.md`, `shipped/mutation-testing-pilot.md`, `active/testing-surface-roadmap.md`.
+- **#1640 (ff6c05d7) · `Source/Core/src/Tracker/TrackerHttpClient.cpp:39`** — the `TrackerErrorKind::None` branch hard-codes the diagnostic to `"HTTP 200"`, but the classifier maps any 2xx to `AuthenticatedReachable`; a 201/204 probe reports a misleading string. Fix: `out.Diagnostic = "HTTP " + std::to_string(classified.Status());` like the other branches.
+- **#1623 (7f7807d5) · `.github/workflows/build-and-test.yml:1460`** — comment says "the 5-min step cap is the backstop" but the step cap two lines below is `timeout-minutes: 6` (inner bound is `timeout 300`). Fix: reword to 6-min (or align the cap to 5).
+- **#1615 (f56694df) · `docs/guides/error-surface-inventory.md:19`** — attributes `RedactHttpBodyForLog` to `TrackerHttpUtils.cpp`, but this same PR moved it to `TrackerHttpPure.cpp` (:209); only `RedactUrlForLog` remains. Fix: update the attribution.
+- **#1614 (03acf256) · `Source/Core/src/Ui/SmatchetIconPickerUi.cpp:27`** — comment claims "OpenPopup is not wrapped" to justify the `###` stable-ID, but this same PR added a wrapping `OpenPopup(const char*)` overload and the file's `#define ImGui SmatchetLocalizedImGui` alias routes :29 through it — the premise is false (behavior survives only because `###` hashes just the suffix). Fix: rewrite the comment to describe the actual wrapper + `###` contract.
+- **#1594 (839f55a9) · `TEST_COVERAGE_GAP_MAP.md:10`** — stale line-pin: cites `tests/CMakeLists.txt:272` for the "each test TU lists the production sources it exercises" contract; at HEAD that comment is at :306. Fix: re-pin or de-pin to the filename (the quoted text is unique).
+- **#1588 (41bc9cda) · `scripts/dev/osv-scan.py:171`** — the OSV scan only queries commit-pinned components (`scannable = [c for c in comps if c["commit"]]`); non-commit deps in the SBOM (lua 5.3.6 — known historical CVEs — and fontawesome) are silently excluded, so under the now-blocking `--fail-on HIGH` gate a HIGH Lua CVE never trips the check. Fix: also query OSV by version/ecosystem (or PURL) for non-commit deps, or at minimum emit a `::warning` per unscanned dep.
+- **#1575 (fc8b9945) · `docs/self-improvement/postmortems.md:56`** — the "Filed as" cross-ref points at `categories/infra/2026-06-27-perf-pr-fast-not-required-cancelled-escape.md`, which does not exist anywhere in the repo (the infra dir holds only the 2026-07-05 texture-guard doc). Fix: create the referenced doc or repoint the link.
+- **#1567 (aeb3bd52) · `docs/plans/active/tsan-imgui-linked-target.md:15`** — stale line-pin: cites `SmatchetUI.cpp:66` for the `UiDrawSession g_ui;` definition; at develop it is :71. Fix: re-pin or use a symbol reference.
+
+**Clean (99, surviving lines reviewed, no findings):** #1695, #1694, #1691, #1690, #1689, #1688, #1687, #1686, #1685, #1684, #1683, #1682, #1681, #1679, #1677, #1676, #1675, #1673, #1670, #1668, #1665, #1663, #1661, #1660, #1659, #1658, #1657, #1656, #1655, #1653, #1651, #1650, #1649, #1648, #1647, #1646, #1645, #1644, #1643, #1642, #1641, #1639, #1638, #1637, #1636, #1633, #1632, #1631, #1630, #1629, #1628, #1627, #1626, #1625, #1624, #1622, #1620, #1619, #1618, #1617, #1616, #1613, #1612, #1611, #1609, #1608, #1607, #1606, #1604, #1603, #1602, #1600, #1599, #1598, #1597, #1592, #1587, #1586, #1584, #1582, #1581, #1580, #1578, #1577, #1576, #1574, #1573, #1572, #1571, #1570, #1569, #1568, #1566, #1565, #1564, #1563, #1562, #1561, #1560.
+
+**Fully superseded (7, no review surface):** #1671, #1669, #1667, #1664, #1662, #1635, #1634 — every introduced line was changed/removed by a later PR; excluded by construction.
 
 ## Batch 12 — post-#1174 incremental (17-PR session sweep, 2026-06-16)
 
