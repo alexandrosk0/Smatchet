@@ -1,6 +1,7 @@
 #include "PlaneClient.h"
 #include "PlaneClient_Internal.h"
 #include "PlaneCommentMappingPure.h"
+#include "PlaneCustomPropertyPure.h"
 #include "PlaneIssueMappingPure.h"
 
 #include "IssueDraft.h"
@@ -422,7 +423,7 @@ TrackerError PlaneClient::AddIssueToSprint(const std::string& issueKey, const st
 }
 
 Result<nlohmann::json, TrackerError> PlaneClient::BuildCreatePayload(const IssueDraft& draft,
-                                                                     const std::vector<TrackerField>& /*catalog*/) {
+                                                                     const std::vector<TrackerField>& catalog) {
     nlohmann::json outPayload = nlohmann::json::object();
 
     outPayload["name"] = draft.FieldValues.count("summary") ? draft.FieldValues.at("summary") : "";
@@ -454,6 +455,16 @@ Result<nlohmann::json, TrackerError> PlaneClient::BuildCreatePayload(const Issue
 
     if (draft.FieldValues.count("assignee")) {
         outPayload["assignee"] = draft.FieldValues.at("assignee");
+    }
+
+    // C4: custom (UUID) properties used to be silently dropped here. A validation
+    // failure aborts the build — better a visible error than quiet data loss.
+    auto customProps = smatchet::plane::BuildPlaneCustomProperties(draft.FieldValues, catalog);
+    if (!customProps.has_value()) {
+        return Result<nlohmann::json, TrackerError>::Err(TrackerErrorInvalidRequest(customProps.error()));
+    }
+    if (!customProps.value().empty()) {
+        outPayload["properties"] = std::move(customProps.value());
     }
 
     return Result<nlohmann::json, TrackerError>::Ok(std::move(outPayload));

@@ -7,6 +7,7 @@
 // Characterization tests — they pin CURRENT behaviour of the shipped shell.
 
 #include "HttpRequestCapture.h"
+#include "IssueDraft.h"
 #include "JiraCatalogHttpFixture.h"
 #include "PlaneClient.h"
 #include "TestEnvGuard.h"
@@ -129,6 +130,46 @@ TEST_CASE("Plane create — visual key derivation, key→UUID cache write, creat
         REQUIRE_FALSE(created.has_value());
         CHECK(created.error().Kind == TrackerErrorKind::InvalidRequest);
         CHECK(created.error().Detail.find("may not be blank") != std::string::npos);
+    }
+}
+
+TEST_CASE("Plane create payload — C4: custom (UUID) properties are serialized, not dropped") {
+    // No fixture/env guard: BuildCreatePayload is a pure member (no HTTP, no ConfigManager).
+    PlaneClient client;
+
+    const char* kCustomUuid = "aaaaaaaa-1111-2222-3333-00000000c400";
+    TrackerField custom;
+    custom.Id = kCustomUuid;
+    custom.Name = "Story Points";
+    custom.Family = TrackerFieldFamily::Number;
+    custom.Type = "number";
+    custom.IsCustom = true;
+    const std::vector<TrackerField> catalog{custom};
+
+    SUBCASE("a filled custom rides under properties.<uuid> next to the core fields") {
+        IssueDraft draft;
+        draft.FieldValues["summary"] = "with customs";
+        draft.FieldValues[kCustomUuid] = "8";
+        const auto payload = client.BuildCreatePayload(draft, catalog);
+        REQUIRE(payload.has_value());
+        CHECK(payload.value()["name"] == "with customs");
+        REQUIRE(payload.value().contains("properties"));
+        CHECK(payload.value()["properties"][kCustomUuid].get<double>() == doctest::Approx(8.0));
+    }
+    SUBCASE("a core-only draft keeps the pre-C4 wire shape — no properties key") {
+        IssueDraft draft;
+        draft.FieldValues["summary"] = "plain";
+        const auto payload = client.BuildCreatePayload(draft, catalog);
+        REQUIRE(payload.has_value());
+        CHECK_FALSE(payload.value().contains("properties"));
+    }
+    SUBCASE("an invalid custom value aborts the build as InvalidRequest — visible, not silent") {
+        IssueDraft draft;
+        draft.FieldValues[kCustomUuid] = "a lot";
+        const auto payload = client.BuildCreatePayload(draft, catalog);
+        REQUIRE_FALSE(payload.has_value());
+        CHECK(payload.error().Kind == TrackerErrorKind::InvalidRequest);
+        CHECK(payload.error().Detail.find("Story Points") != std::string::npos);
     }
 }
 

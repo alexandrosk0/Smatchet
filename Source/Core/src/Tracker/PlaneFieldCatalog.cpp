@@ -503,9 +503,9 @@ PlaneClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string&
     // Plane v1 has no per-issue capability endpoint; report every built-in field the mutation
     // paths (`BuildCreatePayload`, `BuildUpdatePayload`, `AddIssueToSprint`) can serialize as
     // editable. Server still gets the final say — a rejected update surfaces through the same
-    // error path as any other mutation failure. Custom-property (UUID) editability is deferred
-    // until C4 lands `properties.<uuid>` serialization; reporting it editable here would only
-    // surface a UI affordance that the payload builder silently drops.
+    // error path as any other mutation failure. C4's `properties.<uuid>` serialization landed
+    // (BuildPlaneCustomProperties), but this seam has no catalog parameter to enumerate the
+    // custom UUIDs from, so customs stay unreported here until the seam grows one.
     for (const char* fieldId :
          {"summary", "description", "priority", "status", "assignee", "labels", "sprint", "type", "parent"}) {
         outFieldIdCanEdit[fieldId] = true;

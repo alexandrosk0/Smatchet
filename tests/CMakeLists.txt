@@ -916,6 +916,12 @@ add_executable(SmatchetTests
     # pulls cpr). Same pure-seam shape as PlaneIssueMappingPure above.
     Core/PlaneFieldCatalogPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneFieldCatalogPure.cpp"
+    # BACKLOG_CODE_REVIEW.md §C4 — pure Plane custom-property (properties.<uuid>)
+    # serializer consumed by PlaneClient::BuildCreatePayload. Same pure-seam shape as
+    # PlaneFieldCatalogPure above; its only production dep (TrackerFieldPayloadPure.cpp)
+    # is already linked in this rig.
+    Core/PlaneCustomPropertyPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneCustomPropertyPure.cpp"
     Core/MarkdownLanguageDefinition.test.cpp
     # MarkdownLanguageDefinition.test.cpp exercises the LD static factories
     # declared in TextEditor.h and defined in the vendored ImGuiColorTextEdit
