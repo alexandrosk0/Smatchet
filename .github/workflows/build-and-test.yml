@@ -531,11 +531,17 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .fetchcontent-src
-          # Sources are arch-independent; fall back to the shared prefix to reuse
-          # any already-fetched dependency sources.
-          key: ${{ runner.os }}-fetchcontent-msvc-arm64-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          # Drive-isolated namespace: `runner.os` is "Windows" for BOTH the
+          # windows-2022 lanes (workspace on D:) and this windows-11-arm runner
+          # (workspace on C:). A shared `${{ runner.os }}-fetchcontent-` restore
+          # prefix would pull a D:-drive cache whose FetchContent subbuild
+          # CMakeCache.txt has absolute `d:/...` paths baked in, failing configure
+          # on the C:-drive ARM runner with "CMakeCache.txt directory is different".
+          # Keep this cache in a `winarm64native` namespace that no D:-drive lane
+          # restores from (and that never restores a D:-drive cache).
+          key: ${{ runner.os }}-winarm64native-fetchcontent-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
           restore-keys: |
-            ${{ runner.os }}-fetchcontent-
+            ${{ runner.os }}-winarm64native-fetchcontent-
 
       - name: Fetch Font Awesome 6 Solid TTF (pinned + checksum-verified)
         shell: bash
@@ -729,9 +735,14 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .fetchcontent-src
-          key: ${{ runner.os }}-fetchcontent-msvc-arm64-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          # Same drive-isolated `winarm64native` namespace as the native build leg
+          # above — both run on windows-11-arm (C: drive) and must never restore a
+          # D:-drive windows-2022 FetchContent cache (baked-in absolute subbuild
+          # paths fail cmake configure). Shared with the native leg so the two
+          # ARM64 legs reuse each other's already-fetched sources.
+          key: ${{ runner.os }}-winarm64native-fetchcontent-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
           restore-keys: |
-            ${{ runner.os }}-fetchcontent-
+            ${{ runner.os }}-winarm64native-fetchcontent-
 
       - name: Fetch Font Awesome 6 Solid TTF (pinned + checksum-verified)
         shell: bash
