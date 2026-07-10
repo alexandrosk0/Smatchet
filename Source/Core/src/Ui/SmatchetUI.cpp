@@ -642,7 +642,7 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
     smatchet::cmd::RegisterViewCommands(app, ViewState);
     // Register pane.* commands (multi-grid Slice 4) — same idempotent guard; the grid-pane
     // state lives on the UiDrawSession singleton, so pass the live session in.
-    smatchet::cmd::RegisterPaneCommands(app, d);
+    smatchet::cmd::RegisterPaneCommands(app, app, d);
     {
         SMATCHET_UI_PERF_SCOPE("TickTrackerConnectivityMonitor");
         app.TickTrackerConnectivityMonitor(g_ui.cfg);

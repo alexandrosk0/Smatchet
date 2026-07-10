@@ -118,6 +118,7 @@ class AiAssistantController;
 #include "Interfaces/IAppAutomation.h"
 #include "Interfaces/IAppTicketData.h"
 #include "Interfaces/IAppTicketMutations.h"
+#include "Interfaces/IAppCommands.h"
 
 class ITrackerBackendFactory;
 class LocalCacheManager; // fan-in Phase 1: fwd-decl (was a direct heavy include); `std::unique_ptr<LocalCacheManager>
@@ -154,7 +155,8 @@ class AppController : public IMainThreadPoster,
                       public IAppDebug,
                       public IAppAutomation,
                       public IAppTicketData,
-                      public IAppTicketMutations {
+                      public IAppTicketMutations,
+                      public IAppCommands {
     /// `GridContextDepsAdapter` implements `IOfflineQueueDeps` + `ITicketSyncDeps` against
     /// this AppController + one `GridLiveContext` and forwards every method either to the
     /// per-context state (`Backend`, `ActiveTickets*`) or to AppController-shared state
@@ -269,8 +271,8 @@ class AppController : public IMainThreadPoster,
     /// Lifetime: created in `Initialize`; the same instance feeds the CLI, the
     /// MCP plugin's tools/list + tools/call, the Lua `commands.invoke` binding,
     /// and the in-app Ctrl+Shift+P palette.
-    smatchet::cmd::CommandRegistry& Commands();
-    const smatchet::cmd::CommandRegistry& Commands() const;
+    smatchet::cmd::CommandRegistry& Commands() override;
+    const smatchet::cmd::CommandRegistry& Commands() const override;
 
     /// Scenario runner — feeds from scenario.run / scenario.cancel / scenario.list.
     /// Tick is driven per-frame by SmatchetUI::Draw.
