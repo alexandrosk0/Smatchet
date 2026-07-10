@@ -21,20 +21,20 @@ class IdleScenario : public IScenario {
   public:
     std::string Name() const override { return "idle"; }
 
-    void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& /*outErr*/) override {
+    void OnStart(IAppScenarioHost& /*app*/, const nlohmann::json& args, std::string& /*outErr*/) override {
         frames_ = (std::max)(1, args.value("frames", 600));
         // Reset so the captured numbers reflect this run only.
         UiPerfMonitor::Instance().Reset();
     }
 
-    void OnFrame(AppController& /*app*/, int /*frameIndex*/) override {
+    void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override {
         // No-op: idle baseline observes the natural draw loop with zero driver
         // interference. Anything that wakes background work shouldn't be here.
     }
 
     bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
         // Find the dominant UI-thread row (SmatchetUI::Draw is the canonical
         // umbrella scope) so the baseline is comparable across scenarios.

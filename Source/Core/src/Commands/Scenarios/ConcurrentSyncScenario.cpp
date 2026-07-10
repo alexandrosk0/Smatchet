@@ -15,7 +15,7 @@
 
 #include "Commands/Scenarios/IScenario.h"
 
-#include "AppController.h"
+#include "Interfaces/IAppScenarioHost.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "SmatchetUiSession.h"
 #include "UiPerfMonitor.h"
@@ -36,7 +36,7 @@ class ConcurrentSyncScenario : public IScenario {
   public:
     std::string Name() const override { return "concurrent-sync"; }
 
-    void OnStart(AppController& app, const nlohmann::json& args, std::string& /*outErr*/) override {
+    void OnStart(IAppScenarioHost& app, const nlohmann::json& args, std::string& /*outErr*/) override {
         frames_ = (std::max)(1, args.value("frames", 600));
         maxFrameTopMs_ = 0.0;
 
@@ -54,7 +54,7 @@ class ConcurrentSyncScenario : public IScenario {
         UiPerfMonitor::Instance().Reset();
     }
 
-    void OnFrame(AppController& app, int /*frameIndex*/) override {
+    void OnFrame(IAppScenarioHost& app, int /*frameIndex*/) override {
         // Keep the second context warm (re-stamp visible) so the hidden-grace
         // sweep in TickAllContexts does not retire it mid-run — both contexts
         // must stay live for the whole rotation measurement.
@@ -72,7 +72,7 @@ class ConcurrentSyncScenario : public IScenario {
 
     bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         // The second context (not focused, not default) self-retires after the
         // hidden-grace window once this scenario stops stamping it visible.
         const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);

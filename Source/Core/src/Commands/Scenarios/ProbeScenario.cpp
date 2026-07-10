@@ -26,13 +26,13 @@ class ProbeScenario : public IScenario {
 
     std::string Name() const override { return name_; }
 
-    void OnStart(AppController& app, const nlohmann::json& /*args*/, std::string& /*outErr*/) override {
+    void OnStart(IAppScenarioHost& app, const nlohmann::json& /*args*/, std::string& /*outErr*/) override {
         if (setup_) {
             setup_(app);
         }
     }
 
-    void OnFrame(AppController& /*app*/, int frameIndex) override {
+    void OnFrame(IAppScenarioHost& /*app*/, int frameIndex) override {
         if (onFrame_) {
             onFrame_(frameIndex);
         }
@@ -40,7 +40,7 @@ class ProbeScenario : public IScenario {
 
     bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         nlohmann::json out;
         out["name"] = name_;
         out["frames"] = frames_;

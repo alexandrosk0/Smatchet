@@ -69,7 +69,7 @@ class CodeSyntaxColoringScenario : public IScenario {
   public:
     std::string Name() const override { return "code-syntax-coloring"; }
 
-    void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& outErr) override {
+    void OnStart(IAppScenarioHost& /*app*/, const nlohmann::json& args, std::string& outErr) override {
         // Shared prologue: warmup/captureSize parse + screenshotPath require/confine
         // (#1566 class) — a reject returns before any session state mutates.
         if (!ConfigureScreenshotScenario("code-syntax-coloring", args, 8, 1, warmupFrames_, captureSize_,
@@ -77,7 +77,7 @@ class CodeSyntaxColoringScenario : public IScenario {
             return;
     }
 
-    void OnFrame(AppController& /*app*/, int /*frameIndex*/) override {
+    void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override {
         // Draw a fully-opaque window covering the framebuffer so the capture is
         // dominated by the coloured code, not the dock chrome behind it. Fixed
         // pos + size (ImGuiCond_Always) keep the layout deterministic.
@@ -113,7 +113,7 @@ class CodeSyntaxColoringScenario : public IScenario {
 
     bool IsDone(int frameIndex) const override { return frameIndex >= warmupFrames_; }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         // Trigger the screenshot after the warm-up frames have rendered +
         // the colour cache is warm. Source/Standalone/main.cpp's post-swap
         // handler consumes the request and writes the PNG.

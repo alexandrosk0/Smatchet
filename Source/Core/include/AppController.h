@@ -119,6 +119,7 @@ class AiAssistantController;
 #include "Interfaces/IAppTicketData.h"
 #include "Interfaces/IAppTicketMutations.h"
 #include "Interfaces/IAppCommands.h"
+#include "Interfaces/IAppScenarioHost.h"
 
 class ITrackerBackendFactory;
 class LocalCacheManager; // fan-in Phase 1: fwd-decl (was a direct heavy include); `std::unique_ptr<LocalCacheManager>
@@ -156,7 +157,8 @@ class AppController : public IAppThreading,
                       public IAppAutomation,
                       public IAppTicketData,
                       public IAppTicketMutations,
-                      public IAppCommands {
+                      public IAppCommands,
+                      public IAppScenarioHost {
     /// `GridContextDepsAdapter` implements `IOfflineQueueDeps` + `ITicketSyncDeps` against
     /// this AppController + one `GridLiveContext` and forwards every method either to the
     /// per-context state (`Backend`, `ActiveTickets*`) or to AppController-shared state
@@ -568,21 +570,22 @@ class AppController : public IAppThreading,
     /// lookup succeeds. Returns false on missing-fn / not-callable / Lua-disabled; populates
     /// `outError`. No-op stub in the no-Lua build.
     bool ScenarioRegisterLuaCachedProvider(const std::string& fieldId, const std::string& luaFnName,
-                                           const std::vector<std::string>& extraScripts, std::string& outError);
+                                           const std::vector<std::string>& extraScripts,
+                                           std::string& outError) override;
     /// Convenience overload — equivalent to passing an empty `extraScripts`.
     bool ScenarioRegisterLuaCachedProvider(const std::string& fieldId, const std::string& luaFnName,
-                                           std::string& outError);
+                                           std::string& outError) override;
     /// Inverse of `ScenarioRegisterLuaCachedProvider`. Restores the user-side provider that
     /// was displaced at register time (if any), or erases the entry if no prior existed. Also
     /// drops every cache entry for that field so the restored provider re-records cleanly.
     /// No-op if not registered via the scenario surface, or in the no-Lua build.
-    void ScenarioUnregisterLuaCachedProvider(const std::string& fieldId);
+    void ScenarioUnregisterLuaCachedProvider(const std::string& fieldId) override;
 
     /// Scenario hook: clear every `luaFieldCache_` entry so subsequent cells re-record. Used
     /// by fuzz scenarios that need to exercise the recorder path each frame (otherwise the
     /// cache hit-rate becomes 100% after first paint and only the initial visible cells are
     /// fuzzed). No-op stub in the no-Lua build.
-    void ScenarioInvalidateLuaFieldCache();
+    void ScenarioInvalidateLuaFieldCache() override;
 
     // LuaUiInvalidateFieldCacheBind(sol::optional<std::string>, sol::optional<std::string>) moved
     // onto AppController::Impl (#19c) — its sol::optional signature can't be declared here.
@@ -1145,7 +1148,7 @@ class AppController : public IAppThreading,
     /// default context's gets the default's field catalog copied in (one-time, pane-show —
     /// duplicate/same-backend panes render dropdowns immediately instead of raw values).
     /// Returns the context (never null after return).
-    GridLiveContext* EnsurePaneContextLive(const std::string& paneId, const std::string& backendKey);
+    GridLiveContext* EnsurePaneContextLive(const std::string& paneId, const std::string& backendKey) override;
     /// UI thread. One-shot per context generation: kick the pane's FIRST sync against its
     /// own (config, views) pair. The smatchet_views.json bucket load runs on a worker
     /// (Pillar 2 — no disk I/O on the UI thread), then hops back via mainThreadDispatcher

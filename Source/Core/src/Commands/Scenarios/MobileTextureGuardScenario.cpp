@@ -75,14 +75,14 @@ class MobileTextureGuardScenario : public IScenario {
   public:
     std::string Name() const override { return "mobile-texture-guard"; }
 
-    void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& /*outErr*/) override {
+    void OnStart(IAppScenarioHost& /*app*/, const nlohmann::json& args, std::string& /*outErr*/) override {
         // Total frame budget is fixed at 10 (3 sub-steps × fault+2-frame-gap, see
         // IsDone); the arg only lets a caller extend the run for manual
         // inspection, never shorten it below the 10 the state machine needs.
         totalFrames_ = (std::max)(10, IntArg(args, "frames", 10));
     }
 
-    void OnFrame(AppController& /*app*/, int frameIndex) override {
+    void OnFrame(IAppScenarioHost& /*app*/, int frameIndex) override {
         framesAdvanced_ = (std::max)(framesAdvanced_, frameIndex);
 
         switch (frameIndex) {
@@ -125,7 +125,7 @@ class MobileTextureGuardScenario : public IScenario {
 
     bool IsDone(int frameIndex) const override { return frameIndex >= totalFrames_; }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         int passed = 0;
         if (recoveryLogSeenStuck_)
             ++passed;

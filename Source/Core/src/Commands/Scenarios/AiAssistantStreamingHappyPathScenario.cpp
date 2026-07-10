@@ -127,7 +127,7 @@ class AiAssistantStreamingHappyPathScenario : public IScenario {
 
     std::string Name() const override { return "ai-assistant-streaming-happy-path"; }
 
-    void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& outErr) override {
+    void OnStart(IAppScenarioHost& /*app*/, const nlohmann::json& args, std::string& outErr) override {
         frames_ = (std::max)(1, args.value("frames", 60));
         {
             std::lock_guard<std::mutex> lk(g_stubMutex);
@@ -177,13 +177,13 @@ class AiAssistantStreamingHappyPathScenario : public IScenario {
         UiPerfMonitor::Instance().Reset();
     }
 
-    void OnFrame(AppController& /*app*/, int /*frameIndex*/) override {
+    void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override {
         // Idle — the worker drives the stream; the UI keeps rendering.
     }
 
     bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
 
-    void OnCancel(AppController& /*app*/) override {
+    void OnCancel(IAppScenarioHost& /*app*/) override {
         if (cancel_) {
             cancel_->store(true, std::memory_order_release);
         }
@@ -191,7 +191,7 @@ class AiAssistantStreamingHappyPathScenario : public IScenario {
         ClearOverride();
     }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         JoinWorker();
         ClearOverride();
 

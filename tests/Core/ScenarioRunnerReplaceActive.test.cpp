@@ -57,7 +57,7 @@ class ThreadedProbeScenario : public IScenario {
 
     std::string Name() const override { return "dr7-threaded-probe"; }
 
-    void OnStart(AppController& /*app*/, const nlohmann::json& /*args*/, std::string& /*outErr*/) override {
+    void OnStart(IAppScenarioHost& /*app*/, const nlohmann::json& /*args*/, std::string& /*outErr*/) override {
         cancel_ = std::make_shared<std::atomic<bool>>(false);
         worker_ = std::thread([this]() {
             while (!cancel_->load(std::memory_order_acquire)) {
@@ -67,13 +67,13 @@ class ThreadedProbeScenario : public IScenario {
         });
     }
 
-    void OnFrame(AppController& /*app*/, int /*frameIndex*/) override {}
+    void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override {}
 
     bool IsDone(int /*frameIndex*/) const override { return false; }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override { return nlohmann::json::object(); }
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override { return nlohmann::json::object(); }
 
-    void OnCancel(AppController& /*app*/) override {
+    void OnCancel(IAppScenarioHost& /*app*/) override {
         probe_->onCancelCalls.fetch_add(1, std::memory_order_relaxed);
         StopAndJoin();
     }
@@ -95,14 +95,18 @@ class ThreadedProbeScenario : public IScenario {
 };
 
 // ScenarioRunner::Start requires a non-null ctx.App: it binds *ctx.App to the
-// scenario's OnStart(AppController&). ThreadedProbeScenario ignores that
+// scenario's OnStart(IAppScenarioHost&). ThreadedProbeScenario ignores that
 // reference, so a placeholder pointer is never dereferenced — this keeps the
 // test in the header-light Core rig (a real AppController lives only in the
 // heavy tests/ui binary). Address of a live stack object, so the pointer is a
 // valid, non-null address that is simply never read through.
-AppController* PlaceholderApp(int& anchor) {
-    return reinterpret_cast<AppController*>(&anchor);
-}
+AppController* PlaceholderApp(int& anchor) { return reinterpret_cast<AppController*>(&anchor); }
+
+// Same placeholder trick for the direct-OnStart test below: the hook takes
+// IAppScenarioHost& (fan-in Phase 6 T5) and binding the fake as the facet type
+// directly avoids the derived-to-base conversion, which would need the
+// complete AppController this header-light rig deliberately excludes.
+IAppScenarioHost* PlaceholderHost(int& anchor) { return reinterpret_cast<IAppScenarioHost*>(&anchor); }
 
 } // namespace
 
@@ -160,7 +164,7 @@ TEST_CASE("A scenario owning a joinable worker joins it in its destructor (no st
     {
         ThreadedProbeScenario scenario(probe);
         std::string err;
-        scenario.OnStart(*PlaceholderApp(appAnchor), nlohmann::json::object(), err);
+        scenario.OnStart(*PlaceholderHost(appAnchor), nlohmann::json::object(), err);
         CHECK(err.empty());
         // Deliberately do NOT call OnCancel/OnFinish: the destructor alone must
         // join the still-joinable worker. If it did not, ~std::thread would call

@@ -37,7 +37,7 @@ class ThemeSwitchRoundtripScenario : public IScenario {
   public:
     std::string Name() const override { return "theme-switch-roundtrip"; }
 
-    void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& outErr) override {
+    void OnStart(IAppScenarioHost& /*app*/, const nlohmann::json& args, std::string& outErr) override {
         // Warm-up budgets. Three knobs to keep the scenario tunable from CLI
         // without requiring a recompile when ImGui's docking layout cost
         // changes between minor versions:
@@ -100,7 +100,7 @@ class ThemeSwitchRoundtripScenario : public IScenario {
         g_ui.cfg.Theme = ThemeId::SmatchetDark;
     }
 
-    void OnFrame(AppController& /*app*/, int frameIndex) override {
+    void OnFrame(IAppScenarioHost& /*app*/, int frameIndex) override {
         // skipSwitch_ short-circuits both theme flips. The scenario then walks
         // through the full warmup window holding SmatchetDark the entire time
         // — what the dual-capture test driver uses as its fresh-launch
@@ -128,13 +128,13 @@ class ThemeSwitchRoundtripScenario : public IScenario {
         return frameIndex >= (warmupA_ + warmupB_ + warmupReturn_);
     }
 
-    void OnCancel(AppController& /*app*/) override {
+    void OnCancel(IAppScenarioHost& /*app*/) override {
         // Restore the user's theme on cancellation so a Ctrl-C mid-run doesn't
         // leave the live UI on NortonCommander.
         g_ui.cfg.Theme = savedTheme_;
     }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         // Same capture-trigger pattern as DockGapSentinelScenario /
         // CommandPaletteFuzzyScenario — the post-swap handler in
         // Source/Standalone/main.cpp will write the PNG after the next

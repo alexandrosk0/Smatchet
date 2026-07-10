@@ -215,7 +215,7 @@ bool UiTestWantsLocalCache() {
 }
 } // namespace
 
-void UiTestScenario::OnStart(AppController& app, const nlohmann::json& args, std::string& outErr) {
+void UiTestScenario::OnStart(IAppScenarioHost& app, const nlohmann::json& args, std::string& outErr) {
     filter_ = args.value("name", std::string());
     outPath_ = args.value("outPath", std::string());
     outLog_ = args.value("outLog", std::string());
@@ -247,7 +247,11 @@ void UiTestScenario::OnStart(AppController& app, const nlohmann::json& args, std
     }
 
     if (UiTestWantsLocalCache()) {
-        if (app.EnsureLocalCacheForUiTest()) {
+        // The runner only ever drives scenarios with the AppController that owns it (ScenarioRunner.cpp
+        // stashes CommandContext::App), and AppController is the sole IAppScenarioHost implementer, so
+        // the downcast is safe. Bucket-E test functions need the concrete pointer via
+        // SmatchetActiveUiTestAppController().
+        if (static_cast<AppController&>(app).EnsureLocalCacheForUiTest()) {
             LOG_INFO("ui_test.run: SMATCHET_UITEST_WITH_LOCAL_CACHE=1 — live local cache ensured");
         } else {
             LOG_WARN("ui_test.run: SMATCHET_UITEST_WITH_LOCAL_CACHE=1 but cache init failed");
@@ -284,7 +288,7 @@ void UiTestScenario::OnStart(AppController& app, const nlohmann::json& args, std
 
     ImGuiTestEngine_Start(engine_, uiCtx);
     g_active_engine.store(engine_, std::memory_order_release);
-    g_active_app.store(&app, std::memory_order_release);
+    g_active_app.store(&static_cast<AppController&>(app), std::memory_order_release);
 
     LOG_INFO("ui_test.run: engine started (filter='%s')", filter_.empty() ? "(all)" : filter_.c_str());
 #else
@@ -295,7 +299,7 @@ void UiTestScenario::OnStart(AppController& app, const nlohmann::json& args, std
 #endif
 }
 
-void UiTestScenario::OnFrame(AppController& /*app*/, int frameIndex) {
+void UiTestScenario::OnFrame(IAppScenarioHost& /*app*/, int frameIndex) {
 #if defined(SMATCHET_BUILD_UI_TESTS)
     if (engine_ == nullptr || startedQueue_) {
         return;
@@ -345,7 +349,7 @@ bool UiTestScenario::IsDone(int frameIndex) const {
 #endif
 }
 
-nlohmann::json UiTestScenario::OnFinish(AppController& /*app*/) {
+nlohmann::json UiTestScenario::OnFinish(IAppScenarioHost& /*app*/) {
     nlohmann::json out;
     if (disabled_) {
         out["passed"] = 0;
@@ -402,7 +406,7 @@ nlohmann::json UiTestScenario::OnFinish(AppController& /*app*/) {
     return out;
 }
 
-void UiTestScenario::OnCancel(AppController& /*app*/) {
+void UiTestScenario::OnCancel(IAppScenarioHost& /*app*/) {
 #if defined(SMATCHET_BUILD_UI_TESTS)
     if (engine_ != nullptr) {
         // Cancellation is the timeout / watchdog path -- the most diagnostically

@@ -50,7 +50,7 @@ class AiChatHistoryRenderScenario : public IScenario {
   public:
     std::string Name() const override { return "ai-chat-history-render"; }
 
-    void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& /*outErr*/) override {
+    void OnStart(IAppScenarioHost& /*app*/, const nlohmann::json& args, std::string& /*outErr*/) override {
         frames_ = args.value("frames", 300);
         seedCount_ = args.value("seed", 50);
         pinRatio_ = args.value("pinRatio", 0.04f); // ~4% pinned by default → 2 of 50
@@ -110,7 +110,7 @@ class AiChatHistoryRenderScenario : public IScenario {
         }
     }
 
-    void OnFrame(AppController& /*app*/, int frameIndex) override {
+    void OnFrame(IAppScenarioHost& /*app*/, int frameIndex) override {
         // No per-frame mutation — the scenario's whole job is to let
         // DrawHistoryArea render the seeded set repeatedly so the perf monitor
         // accumulates representative timings. Past warmup, sample each scope's
@@ -134,9 +134,9 @@ class AiChatHistoryRenderScenario : public IScenario {
 
     bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
 
-    void OnCancel(AppController& /*app*/) override { Restore(); }
+    void OnCancel(IAppScenarioHost& /*app*/) override { Restore(); }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
         nlohmann::json rowsJson = nlohmann::json::array();
         // std::transform satisfies cppcheck `useStlAlgorithm` over the raw

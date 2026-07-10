@@ -64,7 +64,7 @@ class DescriptionTooltipMarkdownRenderScenario : public IScenario {
   public:
     std::string Name() const override { return "description-tooltip-markdown-render"; }
 
-    void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& outErr) override {
+    void OnStart(IAppScenarioHost& /*app*/, const nlohmann::json& args, std::string& outErr) override {
         frames_ = (std::max)(1, args.value("frames", 300));
         wrapWidth_ = (std::max)(kMinWrapWidth, args.value("wrapWidth", 480.0f));
         rendersPerFrame_ = (std::max)(1, args.value("rendersPerFrame", 4));
@@ -87,7 +87,7 @@ class DescriptionTooltipMarkdownRenderScenario : public IScenario {
         UiPerfMonitor::Instance().Reset();
     }
 
-    void OnFrame(AppController& /*app*/, int /*frameIndex*/) override {
+    void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override {
         // Drive BuildPlan + RenderPlan inside a self-contained hidden ImGui
         // window so the tooltip-render code path sees a live ImGui draw
         // context (the runner ticks us from inside SmatchetUI::Draw, so an
@@ -115,7 +115,7 @@ class DescriptionTooltipMarkdownRenderScenario : public IScenario {
 
     bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
         nlohmann::json rowsJson = nlohmann::json::array();
         for (const UiPerfRow& r : rows) {
