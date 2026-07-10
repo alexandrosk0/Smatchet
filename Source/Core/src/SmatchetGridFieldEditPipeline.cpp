@@ -155,7 +155,7 @@ void RunCommitWorker(AppController& app, UiDrawSession& d, PendingFieldEdit edit
 
     // Hand the result back to the UI thread. The dispatcher's bounded queue
     // and BeginShutdown-aware Post are safe even if the app is mid-teardown.
-    app.mainThreadDispatcher.PostToMainThread(
+    app.PostToMainThread(
         [&app, &d, edit, result]() mutable { ApplyCommitResultOnUiThread(app, d, edit, std::move(result)); });
 }
 

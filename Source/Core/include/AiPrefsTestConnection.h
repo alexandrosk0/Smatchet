@@ -3,7 +3,7 @@
 
 #include "AiTypes.h"
 
-class AppController;
+class IAppThreading; // narrow AppController threading facet — see Commands/IAppThreading.h
 struct UiDrawSession;
 
 namespace AiPrefsTestConnection {
@@ -24,7 +24,7 @@ namespace AiPrefsTestConnection {
 //   - Creates a fresh `assistantPrefsTestCancel` shared_ptr<atomic<bool>>.
 //   - Spawns a detached worker thread that runs ProbeReachability +
 //     SendStreaming on a 1-token "ping", catching exceptions.
-//   - Posts the result back via `app.mainThreadDispatcher`. The posted lambda
+//   - Posts the result back via `app.PostToMainThread`. The posted lambda
 //     checks the cancel atom first; on cancel it returns without mutating any
 //     `g_ui.*Test*` field (so the cancel-on-prefs-close branch in
 //     `SmatchetDrawPreferencesPanel` can clear state and have the late dispatch
@@ -34,7 +34,7 @@ namespace AiPrefsTestConnection {
 // remains inline (pending the follow-up PR after whisper-dictation-phase-f
 // merges), this function MUST stay in lock-step with that lambda's body.
 // docs/plans/shipped/ai-client-test-override.md tracks the rewire follow-up.
-void TriggerProbe(UiDrawSession& d, AppController& app, AiProvider provider);
+void TriggerProbe(UiDrawSession& d, IAppThreading& app, AiProvider provider);
 
 } // namespace AiPrefsTestConnection
 

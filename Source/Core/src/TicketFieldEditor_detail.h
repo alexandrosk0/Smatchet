@@ -7,13 +7,13 @@
 #include <string>
 #include <vector>
 
-class AppController;
+class IAppThreading; // fan-in Phase 6 T4: the long-text modal only launches a seed worker + posts back
 struct CachedTicket;
 struct SpreadsheetState;
 struct PendingFieldEdit;
 
 // Defined in TicketFieldEditor_Modal.cpp with external linkage.
-void OpenLongTextEditor(AppController& app, const std::string& issueId, const TrackerField& field,
+void OpenLongTextEditor(IAppThreading& app, const std::string& issueId, const TrackerField& field,
                         const std::string& label, const std::string& currentStrippedValue,
                         const std::string& currentRichValue);
 void CloseLongTextEditor();

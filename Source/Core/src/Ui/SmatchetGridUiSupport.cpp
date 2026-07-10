@@ -250,7 +250,7 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
                         app->LaunchBackgroundTask([appPtr, capturedIssueKey, commentBody]() {
                             std::string err;
                             const bool ok = appPtr->AddIssueCommentPlain(capturedIssueKey, commentBody, err);
-                            appPtr->mainThreadDispatcher.PostToMainThread([ok, err, capturedIssueKey]() {
+                            appPtr->PostToMainThread([ok, err, capturedIssueKey]() {
                                 if (ok) {
                                     SmatchetToastManager::Instance().Push(
                                         SmatchetLocalization::T("toast.comment_posted", "Comment Posted"),

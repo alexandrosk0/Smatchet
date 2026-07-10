@@ -10,6 +10,9 @@
 #if defined(SMATCHET_WITH_AI)
 
 #include "SmatchetPreferencesUi_detail.h"
+// clang-format off
+// SMATCHET_DEVIATION(rule=duplication; reason=the WIN32 lean-and-mean preamble + AI-cluster include run is grandfathered boilerplate shared with SmatchetPreferencesUi_Whisper.cpp and SmatchetAiAssistantUi.cpp; adding the Commands/IMainThreadPoster.h include (fan-in Phase 6 T4 dispatcher de-publicizing) re-hashed the clone windows vs both siblings — not a real copy-paste; owner=orchestrator; revisit=when the AI-surface include prologue is factored into a shared header)
+// clang-format on
 #include "SmatchetUI.h"
 #include "ConfigManager.h"
 #include "SmatchetToast.h"
@@ -22,6 +25,7 @@
 #include "AiTypes.h"
 #include "IAiClient.h"
 #include "AppController.h"
+#include "Commands/IMainThreadPoster.h"
 #include "Logger.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetHelpMarker.h"
@@ -208,10 +212,10 @@ void CommitProbeVerdict(const std::string& errMsg, AiProvider provider, const st
 
 // Worker-thread body — reachability GET + a real 1-token chat handshake.
 // Pure of ImGui; runs on the joined background-task pool. Posts the verdict
-// back through the dispatcher.
+// back through the poster.
 void RunProbeWorker(AiProvider provider, AiClientConfig clientCfg, std::shared_ptr<std::atomic<bool>> cancel,
                     std::string defaultedBaseUrl, std::string modelId, std::uint64_t generation,
-                    MainThreadDispatcher& dispatcher) {
+                    IMainThreadPoster& poster) {
     std::string errMsg;
     // Defensive try/catch — `MakeAiClient` / `ProbeReachability` /
     // `SendStreaming` all run third-party transport (cpr/libcurl) +
@@ -274,7 +278,7 @@ void RunProbeWorker(AiProvider provider, AiClientConfig clientCfg, std::shared_p
         LOG_WARN("Assistant test-connection: unknown exception");
         errMsg = internalErrMsg;
     }
-    dispatcher.PostToMainThread([errMsg, cancel, provider, defaultedBaseUrl, generation]() {
+    poster.PostToMainThread([errMsg, cancel, provider, defaultedBaseUrl, generation]() {
         if (cancel && cancel->load()) {
             return;
         }
@@ -327,11 +331,10 @@ void LaunchTestProbe(AppController& app, UiDrawSession& d, TrackerConfig probeCf
     clientCfg.ConnectTimeoutMs = 5000;
     clientCfg.TotalTimeoutMs = 15000;
 
-    MainThreadDispatcher& dispatcher = app.mainThreadDispatcher;
     // Joined background-task pool (not a raw detached thread — forbidden by the
-    // no-detach lint); joined at shutdown so &dispatcher stays valid for the task.
-    app.LaunchBackgroundTask([provider, clientCfg, cancel, defaultedBaseUrl, modelId, generation, &dispatcher]() {
-        RunProbeWorker(provider, clientCfg, cancel, defaultedBaseUrl, modelId, generation, dispatcher);
+    // no-detach lint); joined at shutdown so &app stays valid for the task.
+    app.LaunchBackgroundTask([provider, clientCfg, cancel, defaultedBaseUrl, modelId, generation, &app]() {
+        RunProbeWorker(provider, clientCfg, cancel, defaultedBaseUrl, modelId, generation, app);
     });
 }
 

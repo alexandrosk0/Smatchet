@@ -47,8 +47,8 @@ int InputTextStdStringResize(ImGuiInputTextCallbackData* data) {
 
 bool InputTextStdString(const char* label, std::string& str, ImGuiInputTextFlags flags = 0) {
     flags |= ImGuiInputTextFlags_CallbackResize;
-    return ImGui::InputText(label, const_cast<char*>(str.c_str()), str.capacity() + 1, flags,
-                            InputTextStdStringResize, &str);
+    return ImGui::InputText(label, const_cast<char*>(str.c_str()), str.capacity() + 1, flags, InputTextStdStringResize,
+                            &str);
 }
 
 bool InputTextMultilineStdString(const char* label, std::string& str, const ImVec2& size,
@@ -179,7 +179,7 @@ void SmatchetToolbarUi::RefreshTrackerAppendCache(AppController& app) {
         if (it != disk.Backends.end()) {
             append = it->second.ToolbarAppend;
         }
-        app.mainThreadDispatcher.PostToMainThread([this, key, append]() {
+        app.PostToMainThread([this, key, append]() {
             // Apply only if this load is still the current one — a newer backend switch (or a forced
             // reload that re-kicked under a different key) supersedes an older in-flight result.
             if (trackerAppendLoadInFlightKey_ != key) {
@@ -683,7 +683,7 @@ void SmatchetToolbarUi::DrawEditorFooter(AppController& app, EditorCtx& ctx, Tra
                 PersistentViewsFile disk = ConfigManager::LoadPersistentViewsFromDisk();
                 disk.Backends[trackerKey].ToolbarAppend = trackerAppend;
                 ConfigManager::SavePersistentViewsToDisk(disk);
-                app.mainThreadDispatcher.PostToMainThread([this]() { trackerAppendCacheLoaded_ = false; });
+                app.PostToMainThread([this]() { trackerAppendCacheLoaded_ = false; });
             });
         } else {
             cfg.Toolbar = editBuf_;

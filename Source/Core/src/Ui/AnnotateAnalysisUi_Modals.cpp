@@ -321,27 +321,26 @@ void OpenTrackerUserProfileForP4User(const AppController& app, const std::string
             appMut.FetchUserGroupNames(bestAccountId, groups, gerr);
         }
         const bool found = searchOk && !users.empty();
-        appMut.mainThreadDispatcher.PostToMainThread(
-            [capturedUser, found, bestDisplayName, bestEmail, groups, qerr, gerr]() {
-                if (!HasLiveStateInstance()) {
-                    return;
+        appMut.PostToMainThread([capturedUser, found, bestDisplayName, bestEmail, groups, qerr, gerr]() {
+            if (!HasLiveStateInstance()) {
+                return;
+            }
+            State().profileInFlight = false;
+            if (!found) {
+                State().profileName = "Past Employee";
+                State().profileEmail = capturedUser;
+                if (!qerr.empty()) {
+                    State().profileErr = qerr;
                 }
-                State().profileInFlight = false;
-                if (!found) {
-                    State().profileName = "Past Employee";
-                    State().profileEmail = capturedUser;
-                    if (!qerr.empty()) {
-                        State().profileErr = qerr;
-                    }
-                    return;
-                }
-                State().profileName = bestDisplayName;
-                State().profileEmail = bestEmail;
-                State().profileGroups = groups;
-                if (State().profileGroups.empty() && !gerr.empty()) {
-                    State().profileErr = gerr;
-                }
-            });
+                return;
+            }
+            State().profileName = bestDisplayName;
+            State().profileEmail = bestEmail;
+            State().profileGroups = groups;
+            if (State().profileGroups.empty() && !gerr.empty()) {
+                State().profileErr = gerr;
+            }
+        });
     });
 }
 
@@ -383,24 +382,23 @@ void PrepareAssignModal(const AppController& app, const AnnotateRow& row, const 
             displayName = (it != users.end()) ? it->DisplayName : users[0].DisplayName;
         }
         const bool foundAny = searchOk && !users.empty();
-        appMut.mainThreadDispatcher.PostToMainThread(
-            [capturedUser, foundAny, hasJiraAccount, accountId, displayName]() {
-                if (!HasLiveStateInstance()) {
-                    return;
-                }
-                State().assignInFlight = false;
-                if (!foundAny) {
-                    State().assignTitle = std::string("Past Employee (") + capturedUser + ")";
-                    return;
-                }
-                if (hasJiraAccount) {
-                    State().assignAccountId = accountId;
-                    State().assignHasJiraAccount = true;
-                    State().assignTitle = displayName + " (" + capturedUser + ")";
-                } else {
-                    State().assignTitle = std::string("Past Employee (") + capturedUser + ")";
-                }
-            });
+        appMut.PostToMainThread([capturedUser, foundAny, hasJiraAccount, accountId, displayName]() {
+            if (!HasLiveStateInstance()) {
+                return;
+            }
+            State().assignInFlight = false;
+            if (!foundAny) {
+                State().assignTitle = std::string("Past Employee (") + capturedUser + ")";
+                return;
+            }
+            if (hasJiraAccount) {
+                State().assignAccountId = accountId;
+                State().assignHasJiraAccount = true;
+                State().assignTitle = displayName + " (" + capturedUser + ")";
+            } else {
+                State().assignTitle = std::string("Past Employee (") + capturedUser + ")";
+            }
+        });
     });
 }
 

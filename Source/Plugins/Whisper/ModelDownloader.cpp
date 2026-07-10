@@ -1,5 +1,5 @@
 // ModelDownloader — see header for design pointers. Pattern A worker:
-// `Start` dispatches via AppController::LaunchBackgroundTask, the worker
+// `Start` dispatches via IAppThreading::LaunchBackgroundTask, the worker
 // streams bytes to disk through a cpr::WriteCallback (cancel atom polled
 // between chunks), then re-opens the completed partial for a streaming
 // SHA-256 pass before renaming onto the final path.
@@ -10,7 +10,7 @@
 
 #include "ModelDownloader.h"
 
-#include "AppController.h"
+#include "Commands/IAppThreading.h"
 #include "ConfigManager.h"
 #include "Logger.h"
 #include "ModelCatalog.h"
@@ -234,7 +234,7 @@ void ModelDownloader::Cancel() {
     }
 }
 
-bool ModelDownloader::Start(AppController& app, const std::string& modelId, const std::string& destDir,
+bool ModelDownloader::Start(IAppThreading& app, const std::string& modelId, const std::string& destDir,
                             std::string& outError) {
     outError.clear();
     if (modelId.empty()) {

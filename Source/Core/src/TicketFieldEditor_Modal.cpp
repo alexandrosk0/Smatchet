@@ -1,7 +1,7 @@
 #include "TicketFieldEditor.h"
 #include "TicketFieldEditor_detail.h"
 
-#include "AppController.h"
+#include "Commands/IAppThreading.h"
 #include "CppSyntaxHighlight.h"
 #include "DictationInsertionRouter.h"
 #include "SmatchetFieldRender.h"
@@ -463,7 +463,7 @@ void SeedLongTextBuffer(const std::string& seed) {
 
 } // namespace
 
-void OpenLongTextEditor(AppController& app, const std::string& issueId, const TrackerField& field,
+void OpenLongTextEditor(IAppThreading& app, const std::string& issueId, const TrackerField& field,
                         const std::string& label, const std::string& currentStrippedValue,
                         const std::string& currentRichValue) {
     s_ActiveLongTextState.IssueId = issueId;
@@ -512,8 +512,8 @@ void OpenLongTextEditor(AppController& app, const std::string& issueId, const Tr
             std::vector<std::string> droppedNodes;
             bool rawMode = false;
             std::string seed = ComputeLongTextSeed(capturedKind, capturedRich, capturedStripped, droppedNodes, rawMode);
-            app.mainThreadDispatcher.PostToMainThread([capturedGen, capturedIssueId, seed = std::move(seed),
-                                                       droppedNodes = std::move(droppedNodes), rawMode]() mutable {
+            app.PostToMainThread([capturedGen, capturedIssueId, seed = std::move(seed),
+                                  droppedNodes = std::move(droppedNodes), rawMode]() mutable {
                 // Discard if user opened a different editor since dispatch — LoadGen increases monotonically.
                 if (!s_ActiveLongTextState.Active || s_ActiveLongTextState.LoadGen != capturedGen ||
                     s_ActiveLongTextState.IssueId != capturedIssueId) {

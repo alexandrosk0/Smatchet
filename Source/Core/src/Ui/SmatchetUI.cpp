@@ -223,7 +223,7 @@ static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
             app.LaunchBackgroundTask([&app, downloadUrl, assetName, cancelFlag]() {
                 std::string err;
                 const bool ok = app.DownloadAndLaunchInstallerUpdate(downloadUrl, assetName, err, cancelFlag);
-                app.mainThreadDispatcher.PostToMainThread([ok, err]() {
+                app.PostToMainThread([ok, err]() {
                     g_ui.installerDownloadInFlight = false;
                     g_ui.installerDownloadCancel.reset();
                     if (ok) {

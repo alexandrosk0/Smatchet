@@ -1,6 +1,6 @@
 #include "SmatchetMergeWatchNotifyServer.h"
 
-#include "AppController.h"
+#include "Commands/IMainThreadPoster.h"
 #include "Logger.h"
 #include "MergeWatchNotifyPure.h"
 #include "SmatchetToast.h"
@@ -15,12 +15,10 @@ SmatchetMergeWatchNotifyServer::SmatchetMergeWatchNotifyServer() : running_(fals
 
 SmatchetMergeWatchNotifyServer::~SmatchetMergeWatchNotifyServer() { Stop(); }
 
-void SmatchetMergeWatchNotifyServer::RegisterRoutes(AppController& app) {
-    // Capture dispatcher by reference — outlives the server per AppController's
+void SmatchetMergeWatchNotifyServer::RegisterRoutes(IMainThreadPoster& poster) {
+    // Capture the poster by reference — outlives the server per AppController's
     // dtor ordering (Stop() runs before mainThreadDispatcher.BeginShutdown).
-    MainThreadDispatcher& dispatcher = app.mainThreadDispatcher;
-
-    server_->Post("/merge-watch/notify", [&dispatcher](const httplib::Request& req, httplib::Response& res) {
+    server_->Post("/merge-watch/notify", [&poster](const httplib::Request& req, httplib::Response& res) {
         // The whole attacker-reachable decision surface (bounded parse → shape/type
         // validation → state allow-list → sanitize → toast plan) lives in
         // MergeWatchNotifyPure::PlanMergeWatchNotify (gap map Tier 1 #6 — doctested in
@@ -32,11 +30,11 @@ void SmatchetMergeWatchNotifyServer::RegisterRoutes(AppController& app) {
             return;
         }
 
-        // Post to UI thread — dispatcher is thread-safe + bounded.
+        // Post to UI thread — the poster is thread-safe + bounded.
         const std::string title = plan.Title;
         const std::string message = plan.Message;
         const ToastType type = plan.Type;
-        dispatcher.PostToMainThread(
+        poster.PostToMainThread(
             [title, message, type]() { SmatchetToastManager::Instance().Push(title, message, type, 6000); });
     });
 
@@ -48,13 +46,13 @@ void SmatchetMergeWatchNotifyServer::RegisterRoutes(AppController& app) {
     });
 }
 
-bool SmatchetMergeWatchNotifyServer::Start(AppController& app, std::uint16_t port) {
+bool SmatchetMergeWatchNotifyServer::Start(IMainThreadPoster& poster, std::uint16_t port) {
     if (running_.load(std::memory_order_acquire)) {
         LOG_WARN("SmatchetMergeWatchNotifyServer::Start: already running");
         return false;
     }
     server_ = std::make_unique<httplib::Server>();
-    RegisterRoutes(app);
+    RegisterRoutes(poster);
 
     // Bind 127.0.0.1 ONLY. cpp-httplib's bind_to_port returns true on success.
     if (!server_->bind_to_port("127.0.0.1", port)) {

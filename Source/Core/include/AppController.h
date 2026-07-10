@@ -40,7 +40,7 @@ struct McpToolDefinition;
 #include "GridLiveContext.h"
 #include "ITrackerBackend.h"
 #include "MainThreadDispatcher.h"
-#include "Commands/IMainThreadPoster.h"
+#include "Commands/IAppThreading.h"
 #include "SmatchetMergeWatchNotifyServer.h"
 #include "IssueDraft.h"
 #include "IssueCreatePipeline.h"
@@ -146,7 +146,7 @@ class ScenarioRunner;
 }
 } // namespace smatchet
 
-class AppController : public IMainThreadPoster,
+class AppController : public IAppThreading,
                       public IAppOfflineQueue,
                       public IAppMeta,
                       public IAppAttachments,
@@ -1372,14 +1372,14 @@ class AppController : public IMainThreadPoster,
     // prior surface.
 
   public:
-    /// Spawn `task` on a tracked background thread. Threads are joined either
-    /// when the producer completes or in `JoinBackgroundTasks` before
-    /// destruction — never detached. Post results back to the UI thread via
-    /// `mainThreadDispatcher.PostToMainThread` inside `task`.
+    /// IAppThreading — spawn `task` on a tracked background thread. Threads are
+    /// joined either when the producer completes or in `JoinBackgroundTasks`
+    /// before destruction — never detached. Post results back to the UI thread
+    /// via `PostToMainThread` inside `task`.
     /// Public so non-member callers (grid field-edit pipeline, etc.) can
     /// dispatch HTTP / SQLite work off the UI thread without re-implementing
     /// thread-bookkeeping.
-    void LaunchBackgroundTask(std::function<void()> task);
+    void LaunchBackgroundTask(std::function<void()> task) override;
 
     /// True once shutdown has begun. Public so `EditMetaCacheService` (via the deps adapter) can
     /// poll it from its warm worker to bail out of long loops (god-object decomposition Phase 1).
