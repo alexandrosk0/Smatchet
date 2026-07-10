@@ -692,6 +692,7 @@ mw.process_registered_pr = fake_proc
 mw.read_registry = lambda: [{'pr': 901, 'clone_path': 'x'}, {'pr': 902, 'clone_path': 'x'}]
 mw.write_pid_file = lambda: None
 mw.clear_pid_file = lambda: None
+mw.maybe_self_resync = lambda *_a, **_k: {}  # unit isolation: daemon_loop's startup resync must not run real git fetch/drift
 def stop(_):
     raise mw.StopSignal()
 mw.time.sleep = stop
@@ -724,6 +725,7 @@ mw.process_registered_pr = fake_proc
 mw.read_registry = lambda: [{'pr': 901, 'clone_path': 'x'}, {'pr': 902, 'clone_path': 'x'}]
 mw.write_pid_file = lambda: None
 mw.clear_pid_file = lambda: None
+mw.maybe_self_resync = lambda *_a, **_k: {}  # unit isolation: daemon_loop's startup resync must not run real git fetch/drift
 def stop(_):
     raise mw.StopSignal()
 mw.time.sleep = stop
@@ -754,6 +756,7 @@ def bad_registry():
 mw.read_registry = bad_registry
 mw.write_pid_file = lambda: None
 mw.clear_pid_file = lambda: None
+mw.maybe_self_resync = lambda *_a, **_k: {}  # unit isolation: daemon_loop's startup resync must not run real git fetch/drift
 def stop(_):
     raise mw.StopSignal()
 mw.time.sleep = stop
@@ -784,6 +787,7 @@ def signal_mid_read():
 mw.read_registry = signal_mid_read
 mw.write_pid_file = lambda: None
 mw.clear_pid_file = lambda: None
+mw.maybe_self_resync = lambda *_a, **_k: {}  # unit isolation: daemon_loop's startup resync must not run real git fetch/drift
 def stop(_):
     raise mw.StopSignal()
 mw.time.sleep = stop
