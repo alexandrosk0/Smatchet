@@ -1,0 +1,84 @@
+[
+  {
+    "id": "GR3-partial-marker",
+    "file": "Source/Core/src/Tracker/TrackerGridFieldDisplayPure.cpp",
+    "search": "if (s.WorklogsOnPage < s.Total) {\n                model.line += \"*\";",
+    "replace": "if (s.WorklogsOnPage <= s.Total) {\n                model.line += \"*\";",
+    "expect": "killed",
+    "note": "worklog partial-page '*' marker on model.line; regression guard (MUTATION_PILOT.md GR3, test-fixed 2026-07-05)"
+  },
+  {
+    "id": "JQL05-email-fallback",
+    "file": "Source/Core/src/Tracker/JqlSuggestEnginePure.cpp",
+    "search": "            !nameMatch && !user.EmailAddress.empty() && AsciiStartsWithIgnoreCase(user.EmailAddress, pre);",
+    "replace": "            nameMatch && !user.EmailAddress.empty() && AsciiStartsWithIgnoreCase(user.EmailAddress, pre);",
+    "expect": "killed",
+    "note": "email-prefix user match fallback; regression guard (MUTATION_PILOT.md JQL-05 email, test-fixed 2026-07-05)"
+  },
+  {
+    "id": "PLANE04-id-insert",
+    "file": "Source/Core/src/Tracker/PlaneQuerySuggestEnginePure.cpp",
+    "search": "return AsciiStartsWithIgnoreCase(raw, pre) || AsciiStartsWithIgnoreCase(label, pre);",
+    "replace": "return AsciiStartsWithIgnoreCase(raw, pre) && AsciiStartsWithIgnoreCase(label, pre);",
+    "expect": "killed",
+    "note": "display-name match still offers account-id insert; regression guard (MUTATION_PILOT.md PLANE-04, test-fixed 2026-07-05)"
+  },
+
+  {
+    "id": "GR5-maxresults-tooltip",
+    "file": "Source/Core/src/Tracker/TrackerGridFieldDisplayPure.cpp",
+    "search": "if (s.MaxResults > 0) {",
+    "replace": "if (s.MaxResults >= 0) {",
+    "expect": "survived",
+    "note": "known gap: 'Page size (maxResults)' tooltip line unasserted (backlog test/GR5)"
+  },
+  {
+    "id": "GR6-thispage-tooltip",
+    "file": "Source/Core/src/Tracker/TrackerGridFieldDisplayPure.cpp",
+    "search": "if (s.Total > 0 && s.WorklogsOnPage > 0) {",
+    "replace": "if (s.Total > 0 || s.WorklogsOnPage > 0) {",
+    "expect": "survived",
+    "note": "known gap: 'This page: a-b of N' tooltip branch never exercised at one-operand-zero (backlog test/GR6)"
+  },
+  {
+    "id": "MW-m3-truncation-cap",
+    "file": "Source/Core/src/MergeWatchNotifyPure.cpp",
+    "search": "if (out.size() > kMaxMessageBytes) {",
+    "replace": "if (out.size() >= kMaxMessageBytes) {",
+    "expect": "survived",
+    "note": "known gap: notify-payload truncation exact-cap boundary unasserted; trust-boundary TU (backlog test/MergeWatch-m3)"
+  },
+
+  {
+    "id": "DT2-daysinmonth-bound",
+    "file": "Source/Core/src/Tracker/TrackerDateTimePure.cpp",
+    "search": "if (month < 1 || month > 12) {",
+    "replace": "if (month < 1 || month >= 12) {",
+    "expect": "equivalent",
+    "note": "equivalent: December(12) hits fallback 'return 31' == real December length (MUTATION_PILOT.md DT2)"
+  },
+  {
+    "id": "DT5-clampday",
+    "file": "Source/Core/src/Tracker/TrackerDateTimePure.cpp",
+    "search": "if (w.Day > dim) {",
+    "replace": "if (w.Day >= dim) {",
+    "expect": "equivalent",
+    "note": "equivalent: Day==dim clamp writes dim (same value), no observable change (MUTATION_PILOT.md DT5)"
+  },
+  {
+    "id": "MAP05-reserve",
+    "file": "Source/Core/src/Tracker/LinearIssueMappingPure.cpp",
+    "search": "tickets.reserve(nodes.size());",
+    "replace": "tickets.reserve(nodes.size() + 1);",
+    "expect": "equivalent",
+    "note": "equivalent: reserve affects capacity only, never observable size/contents (MUTATION_PILOT.md MAP-05)"
+  },
+  {
+    "id": "LABELS-m3-emptyfilter",
+    "file": "Source/Core/src/Tracker/TrackerLabelsPure.cpp",
+    "search": "if (filterLower.empty()) {",
+    "replace": "if (false) {",
+    "expect": "equivalent",
+    "note": "equivalent: find(\"\")==0 so LabelMatchesFilter still returns true for empty filter; fast path was pure optimisation (MUTATION_PILOT.md Labels-m3)"
+  }
+]

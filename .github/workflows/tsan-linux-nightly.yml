@@ -87,6 +87,16 @@ jobs:
           TSAN_OPTIONS: "halt_on_error=1 second_deadlock_stack=1"
         run: ctest --output-on-failure
 
+      - name: Mutation-smoke gate (advisory — assertion strength, Slice F)
+        # ADVISORY: reuses the configured+built ninja-tsan-linux tree to run the
+        # assertion-strength sweep (docs/plans/active/mutation-smoke-gate.md).
+        # Nightly + manual only (not the paths-scoped PR trigger) per the plan's
+        # cadence decision; continue-on-error so a survivor never blocks the
+        # nightly — it graduates to blocking after clean runs (§ Decisions).
+        if: ${{ github.event_name != 'pull_request' }}
+        continue-on-error: true
+        run: bash scripts/dev/mutation-smoke.sh --gate --floor 80
+
       - name: Surface TSan report in job summary
         if: failure()
         run: |
