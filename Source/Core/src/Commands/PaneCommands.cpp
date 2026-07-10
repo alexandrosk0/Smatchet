@@ -54,7 +54,7 @@ GridPane* ResolveNamedOrFocusedPane(UiDrawSession& d, const nlohmann::json& args
     return &d.focusedPane();
 }
 
-void RegisterPaneListCommand(IAppCommands& app, IMainThreadPoster& poster, UiDrawSession& d, CommandRegistry& reg) {
+void RegisterPaneListCommand(IMainThreadPoster& poster, UiDrawSession& d, CommandRegistry& reg) {
     Command c;
     // clang-format off
     // SMATCHET_DEVIATION(rule=duplication; reason=the Command-struct registration boilerplate (Name/Category/Summary + poster-hop handler shell) is grandfathered across the pane.*/view.* command TU siblings; retyping the capture to the narrow poster (fan-in Phase 6 T3) re-hashed the clone window vs ViewCommands.cpp — not a real copy-paste; owner=orchestrator; revisit=when the command-registration shell is factored into a shared builder)
@@ -80,7 +80,7 @@ void RegisterPaneListCommand(IAppCommands& app, IMainThreadPoster& poster, UiDra
     reg.Register(std::move(c));
 }
 
-void RegisterPaneFocusCommand(IAppCommands& app, IMainThreadPoster& poster, UiDrawSession& d, CommandRegistry& reg) {
+void RegisterPaneFocusCommand(IMainThreadPoster& poster, UiDrawSession& d, CommandRegistry& reg) {
     Command c;
     c.Name = "pane.focus";
     c.Category = "pane";
@@ -118,8 +118,7 @@ void RegisterPaneFocusCommand(IAppCommands& app, IMainThreadPoster& poster, UiDr
 }
 
 /// pane.next / pane.prev share the cycle-then-latch body; `forward` picks the helper.
-void RegisterPaneCycleCommand(IAppCommands& app, IMainThreadPoster& poster, UiDrawSession& d, CommandRegistry& reg,
-                              bool forward) {
+void RegisterPaneCycleCommand(IMainThreadPoster& poster, UiDrawSession& d, CommandRegistry& reg, bool forward) {
     Command c;
     c.Name = forward ? "pane.next" : "pane.prev";
     c.Category = "pane";
@@ -148,9 +147,9 @@ void RegisterPaneCycleCommand(IAppCommands& app, IMainThreadPoster& poster, UiDr
 /// so the command never mutates d.gridPanes mid-render. `summary`/`description` differ
 /// per verb; `acceptDirection` adds the advisory split-direction arg;
 /// `acceptBackend` (pane.new only) adds `backend` + `view` params for cross-backend creation.
-void RegisterPaneAddCommand(IAppCommands& app, IMainThreadPoster& poster, UiDrawSession& d, CommandRegistry& reg,
-                            const std::string& name, const std::string& summary, const std::string& description,
-                            bool acceptDirection, bool acceptBackend = false) {
+void RegisterPaneAddCommand(IMainThreadPoster& poster, UiDrawSession& d, CommandRegistry& reg, const std::string& name,
+                            const std::string& summary, const std::string& description, bool acceptDirection,
+                            bool acceptBackend = false) {
     Command c;
     c.Name = name;
     c.Category = "pane";
@@ -221,7 +220,7 @@ void RegisterPaneAddCommand(IAppCommands& app, IMainThreadPoster& poster, UiDraw
     reg.Register(std::move(c));
 }
 
-void RegisterPaneCloseCommand(IAppCommands& app, IMainThreadPoster& poster, UiDrawSession& d, CommandRegistry& reg) {
+void RegisterPaneCloseCommand(IMainThreadPoster& poster, UiDrawSession& d, CommandRegistry& reg) {
     Command c;
     c.Name = "pane.close";
     c.Category = "pane";
@@ -255,7 +254,7 @@ void RegisterPaneCloseCommand(IAppCommands& app, IMainThreadPoster& poster, UiDr
     reg.Register(std::move(c));
 }
 
-void RegisterPaneRenameCommand(IAppCommands& app, IMainThreadPoster& poster, UiDrawSession& d, CommandRegistry& reg) {
+void RegisterPaneRenameCommand(IMainThreadPoster& poster, UiDrawSession& d, CommandRegistry& reg) {
     Command c;
     c.Name = "pane.rename";
     c.Category = "pane";
@@ -311,30 +310,31 @@ void RegisterPaneCommands(IAppCommands& app, IMainThreadPoster& poster, UiDrawSe
     if (reg.HasExact("pane.list"))
         return;
 
-    RegisterPaneListCommand(app, session, reg);
-    RegisterPaneFocusCommand(app, session, reg);
-    RegisterPaneCycleCommand(app, session, reg, /*forward=*/true);
-    RegisterPaneCycleCommand(app, session, reg, /*forward=*/false);
-    RegisterPaneAddCommand(app, session, reg, "pane.new", "Open a new grid pane (optionally on a chosen backend).",
+    RegisterPaneListCommand(poster, session, reg);
+    RegisterPaneFocusCommand(poster, session, reg);
+    RegisterPaneCycleCommand(poster, session, reg, /*forward=*/true);
+    RegisterPaneCycleCommand(poster, session, reg, /*forward=*/false);
+    RegisterPaneAddCommand(poster, session, reg, "pane.new", "Open a new grid pane (optionally on a chosen backend).",
                            "Without backend param: duplicates the focused pane (same backend + view) via "
                            "the pane window \"+\" mechanism. With backend param: opens a new pane on the "
                            "named backend using its active/default view (or the view id if given). "
                            "The backend must have credentials configured. The host opens the pane next "
                            "frame and focuses it.",
                            /*acceptDirection=*/false, /*acceptBackend=*/true);
-    RegisterPaneAddCommand(app, session, reg, "pane.duplicate", "Duplicate the focused grid pane.",
+    RegisterPaneAddCommand(poster, session, reg, "pane.duplicate", "Duplicate the focused grid pane.",
                            "Alias of pane.new: opens a copy of the focused pane (same backend + "
                            "view) and focuses it. The new pane id is assigned by the host.",
                            /*acceptDirection=*/false);
-    RegisterPaneAddCommand(app, session, reg, "pane.split", "Open a new pane; drag its tab to a window edge to split.",
+    RegisterPaneAddCommand(poster, session, reg, "pane.split",
+                           "Open a new pane; drag its tab to a window edge to split.",
                            "Opens a new pane duplicating the focused one (same path as pane.new). "
                            "The command cannot force dock geometry without DockBuilder, so native "
                            "ImGui docking decides tab-vs-split: drag the new pane's tab to an edge "
                            "to make it a side-by-side split. An optional 'direction' arg is recorded "
                            "but advisory only.",
                            /*acceptDirection=*/true);
-    RegisterPaneCloseCommand(app, session, reg);
-    RegisterPaneRenameCommand(app, session, reg);
+    RegisterPaneCloseCommand(poster, session, reg);
+    RegisterPaneRenameCommand(poster, session, reg);
 }
 
 } // namespace cmd
