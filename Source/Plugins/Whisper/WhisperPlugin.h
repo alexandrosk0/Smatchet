@@ -12,7 +12,7 @@
 // onPress dispatches capture-start + UI indicator on; onRelease dispatches
 // capture-stop + transcription + (eventually) Insert. The hotkey hook
 // callbacks are worker-thread entry points — they post UI-thread state via
-// `AppController::mainThreadDispatcher.PostToMainThread` and never touch
+// `AppController::PostToMainThread` and never touch
 // ImGui directly.
 // Entire Source/Plugins/Whisper/ subtree is CMake-conditional (Layer 6 gating); the
 // translation unit only exists when SMATCHET_WITH_WHISPER=ON. UI / call-site

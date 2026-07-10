@@ -9,7 +9,7 @@
 // stamp `cfg.WhisperConsentTimestampSec = NowEpochSec()` and save the config
 // before calling Start; the banner + Preferences download buttons do so.
 // Threading — Start() spawns a single background thread via
-// AppController::LaunchBackgroundTask; UI-thread callers poll `GetProgress()`
+// IAppThreading::LaunchBackgroundTask; UI-thread callers poll `GetProgress()`
 // each frame for the progress bar. Cancel() flips the shared cancel atom
 // between chunks. The worker writes to `<dest>.partial` and renames onto
 // `<dest>` only after SHA-256 verification passes — a mid-flight crash
@@ -22,7 +22,7 @@
 #include <mutex>
 #include <string>
 
-class AppController;
+class IAppThreading; // narrow AppController threading facet — see Commands/IAppThreading.h
 
 namespace smatchet {
 namespace whisper {
@@ -69,7 +69,7 @@ class ModelDownloader {
     /// caller polls GetProgress() each frame to drive the UI. Returns
     /// false on validation / consent failure, with the reason in
     /// `outError` (also surfaced through Progress::error after Start).
-    bool Start(AppController& app, const std::string& modelId, const std::string& destDir, std::string& outError);
+    bool Start(IAppThreading& app, const std::string& modelId, const std::string& destDir, std::string& outError);
 
     /// Thread-safe snapshot of the worker's current state. Cheap; the UI
     /// polls every ~1 frame for the progress bar.

@@ -301,7 +301,8 @@ long long SteadyMillis(std::chrono::steady_clock::time_point tp) {
 // True when `url` failed a fetch recently enough to still be inside the backoff window.
 bool IconUrlFetchInBackoff(const std::string& url) {
     const auto now = std::chrono::steady_clock::now();
-    const long long backoffMs = std::chrono::duration_cast<std::chrono::milliseconds>(kIconFetchNegativeBackoff).count();
+    const long long backoffMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(kIconFetchNegativeBackoff).count();
     std::lock_guard<std::mutex> lock(IconUrlFetchNegativeMutex());
     const auto& m = IconUrlFetchNegativeMap();
     const auto it = m.find(url);
@@ -410,7 +411,7 @@ bool LoadOrFetchUrlImage(AppController& app, const std::string& url, SmatchetLoa
             if (ifs) {
                 bytes.assign((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
             }
-            app.mainThreadDispatcher.PostToMainThread([capturedUrlKey, bytes]() {
+            app.PostToMainThread([capturedUrlKey, bytes]() {
                 ClearIconFileReadInFlight(capturedUrlKey);
                 if (bytes.empty()) {
                     return;
@@ -458,7 +459,7 @@ bool LoadOrFetchUrlImage(AppController& app, const std::string& url, SmatchetLoa
         }
         // Post texture upload + in-flight-set release back to the UI thread. The image-texture
         // cache requires UI-thread invocation (GL / DX12 resource creation).
-        app.mainThreadDispatcher.PostToMainThread([capturedUrl, capturedUrlKey, bytes, fetchOk, fetchError]() {
+        app.PostToMainThread([capturedUrl, capturedUrlKey, bytes, fetchOk, fetchError]() {
             ClearIconUrlFetchInFlight(capturedUrl);
             if (!fetchOk || bytes.empty()) {
                 // DR28: memoise the failure so subsequent frames back off (see IconUrlFetchInBackoff)
@@ -514,7 +515,7 @@ bool LoadTextureForResolvedPath(AppController& app, const std::string& resolved,
         if (ifs) {
             bytes.assign((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
         }
-        app.mainThreadDispatcher.PostToMainThread([capturedCacheKey, bytes]() {
+        app.PostToMainThread([capturedCacheKey, bytes]() {
             ClearIconFileReadInFlight(capturedCacheKey);
             if (bytes.empty()) {
                 return;

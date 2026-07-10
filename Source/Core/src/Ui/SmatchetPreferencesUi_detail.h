@@ -10,7 +10,8 @@
 
 class SmatchetUI;
 class AppController;
-class IAppCommands; // fan-in Phase 6: keybindings tab takes the narrow registry facet
+class IAppCommands;  // fan-in Phase 6: keybindings tab takes the narrow registry facet
+class IAppThreading; // fan-in Phase 6 T4: whisper tab only launches workers + posts back
 struct UiDrawSession;
 
 namespace SmatchetPreferencesUiDetail {
@@ -129,7 +130,7 @@ void DrawAssistantPreferencesTab(AppController& app, UiDrawSession& d);
 #endif
 
 #if defined(SMATCHET_WITH_WHISPER)
-void DrawWhisperPreferencesTab(AppController& app, UiDrawSession& d);
+void DrawWhisperPreferencesTab(IAppThreading& app, UiDrawSession& d);
 #endif
 
 void DrawLocalAndAppearancePreferencesTabs(SmatchetUI& ui, AppController& app, UiDrawSession& d);

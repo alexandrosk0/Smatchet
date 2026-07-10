@@ -21,7 +21,7 @@
 // ~AppController BEFORE mainThreadDispatcher.BeginShutdown() fires so any
 // in-flight POST callbacks observe a live dispatcher.
 
-class AppController;
+class IMainThreadPoster; // the server only posts toast plans to the UI thread — see Commands/IMainThreadPoster.h
 namespace httplib {
 class Server;
 }
@@ -36,7 +36,7 @@ class SmatchetMergeWatchNotifyServer {
     /// running. Per LOCKED design decision 3 (notification channel = Smatchet
     /// toast + Windows native), this is best-effort — failure is logged but
     /// doesn't prevent Smatchet startup. Daemon falls back to Windows native.
-    bool Start(AppController& app, std::uint16_t port = 7679);
+    bool Start(IMainThreadPoster& poster, std::uint16_t port = 7679);
 
     /// Stop the listener + join the thread. Idempotent.
     void Stop();
@@ -46,7 +46,7 @@ class SmatchetMergeWatchNotifyServer {
   private:
     /// Register the POST /merge-watch/notify + GET /merge-watch/health routes on
     /// server_. Split out of Start() to keep it under the function-size cap.
-    void RegisterRoutes(AppController& app);
+    void RegisterRoutes(IMainThreadPoster& poster);
 
     std::unique_ptr<httplib::Server> server_;
     std::unique_ptr<std::thread> listenThread_;

@@ -67,7 +67,7 @@ void LaunchSubmit(AppController& app, UiDrawSession& d, const std::string& shotP
     app.LaunchBackgroundTask([&app, &d, opts]() {
         const smatchet::diagnostics::SubmitResult r = smatchet::diagnostics::SubmitBugReport(app, opts);
         auto shared = std::make_shared<smatchet::diagnostics::SubmitResult>(r);
-        app.mainThreadDispatcher.PostToMainThread([&d, shared]() {
+        app.PostToMainThread([&d, shared]() {
             d.bugReportResult = shared;
             d.bugReportInFlight = false;
             if (shared->Ok) {
@@ -182,7 +182,7 @@ void DrawEgressPreview(AppController& app, UiDrawSession& d) {
             const smatchet::diagnostics::ContextBundle bundle = smatchet::diagnostics::GatherContext(app, opts);
             const std::string shotNote = inclShot ? "_(screenshot attached on submit)_" : std::string();
             auto text = std::make_shared<std::string>(smatchet::diagnostics::BuildMarkdownBody(opts, bundle, shotNote));
-            app.mainThreadDispatcher.PostToMainThread([&d, text]() {
+            app.PostToMainThread([&d, text]() {
                 // Don't clobber if the user started editing while we generated.
                 if (!d.bugReportPreviewUserEdited) {
                     const std::size_t cap = text->size() + 16384u;

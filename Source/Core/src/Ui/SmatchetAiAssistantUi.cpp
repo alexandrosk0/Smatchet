@@ -199,7 +199,7 @@ void HydrateFromConfigOnce(AppController& app, UiDrawSession& d) {
             std::vector<AiMessage> loaded;
             std::vector<std::int64_t> ids;
             appPtr->LoadAiChatMessages(cap, loaded, ids);
-            appPtr->mainThreadDispatcher.PostToMainThread([loaded = std::move(loaded), ids = std::move(ids)]() mutable {
+            appPtr->PostToMainThread([loaded = std::move(loaded), ids = std::move(ids)]() mutable {
                 g_ui.assistantHistory = std::move(loaded);
                 g_ui.assistantHistoryRowIds = std::move(ids);
                 g_ui.assistantHistoryHydrated = true;
@@ -207,7 +207,7 @@ void HydrateFromConfigOnce(AppController& app, UiDrawSession& d) {
         } catch (...) {
             // Graceful degradation — leave hydrated false so further dispatches no-op
             // until the next session retries. The LCM already logged the LOG_WARN.
-            appPtr->mainThreadDispatcher.PostToMainThread([]() { g_ui.assistantHistoryHydrated = true; });
+            appPtr->PostToMainThread([]() { g_ui.assistantHistoryHydrated = true; });
         }
     });
 }

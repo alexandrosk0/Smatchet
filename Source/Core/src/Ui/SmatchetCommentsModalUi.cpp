@@ -55,8 +55,7 @@ void KickCommentsFetch(AppController& app, const std::string& issueId, int gen) 
         std::vector<TrackerIssueComment> comments;
         std::string err;
         const bool ok = appPtr->FetchIssueComments(capturedIssueId, comments, err);
-        appPtr->mainThreadDispatcher.PostToMainThread([appPtr, gen, capturedIssueId, ok,
-                                                       comments = std::move(comments), err]() mutable {
+        appPtr->PostToMainThread([appPtr, gen, capturedIssueId, ok, comments = std::move(comments), err]() mutable {
             if (!s_CommentsState.Active || s_CommentsState.Gen != gen || s_CommentsState.IssueId != capturedIssueId) {
                 return;
             }
@@ -70,8 +69,7 @@ void KickCommentsFetch(AppController& app, const std::string& issueId, int gen) 
                 // narrowing-ok: a single issue thread's comment count is far below INT_MAX; the
                 // cached-count field is int. No saturation (matches the codebase's bounded-container
                 // size()->int convention).
-                appPtr->UpdateCachedCommentCount(capturedIssueId,
-                                                 static_cast<int>(s_CommentsState.Comments.size()));
+                appPtr->UpdateCachedCommentCount(capturedIssueId, static_cast<int>(s_CommentsState.Comments.size()));
             } else {
                 s_CommentsState.Error =
                     err.empty()
@@ -159,7 +157,7 @@ void DrawCommentsPostBox(AppController& app, bool readOnlyMode) {
         app.LaunchBackgroundTask([appPtr, capturedIssueId, body, gen]() {
             std::string err;
             const bool ok = appPtr->AddIssueCommentPlain(capturedIssueId, body, err);
-            appPtr->mainThreadDispatcher.PostToMainThread([appPtr, capturedIssueId, gen, ok, err]() {
+            appPtr->PostToMainThread([appPtr, capturedIssueId, gen, ok, err]() {
                 if (ok) {
                     SmatchetToastManager::Instance().Push(
                         SmatchetLocalization::T("toast.comment_posted", "Comment Posted"),

@@ -894,7 +894,7 @@ void RunHotkeyRelease_Mock_Worker(WhisperPlugin::PhaseEState* state) {
         std::this_thread::sleep_for(mock.delay);
         localState->transcribeInFlight.store(false, std::memory_order_release);
         const std::string text = mock.text;
-        app->mainThreadDispatcher.PostToMainThread([text]() {
+        app->PostToMainThread([text]() {
             ImGuiContext* gctx = ::ImGui::GetCurrentContext();
             const unsigned int activeId = gctx != nullptr ? static_cast<unsigned int>(gctx->ActiveId) : 0u;
             g_dictationRouter.InsertIntoFocusedInputText(text, activeId);
@@ -991,7 +991,7 @@ void RunHotkeyRelease_Worker(WhisperPlugin::PhaseEState* state) {
         // re-read on the UI thread (cheap; ConfigManager has an in-memory
         // cache) to pick up any Preferences toggle that landed between the
         // hotkey press and the transcription completing.
-        app->mainThreadDispatcher.PostToMainThread([text]() {
+        app->PostToMainThread([text]() {
             ImGuiContext* gctx = ::ImGui::GetCurrentContext();
             const unsigned int activeId = gctx != nullptr ? static_cast<unsigned int>(gctx->ActiveId) : 0u;
             g_dictationRouter.InsertIntoFocusedInputText(text, activeId);
