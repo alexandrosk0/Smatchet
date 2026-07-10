@@ -176,12 +176,14 @@ bool LaunchP4VcLike(const AnnotateAnalysisConfig& cfg, const std::string& timela
     }
     // Placeholder values are substituted raw into a command line whose quoting
     // structure the template author controls — we cannot re-quote per-arg here.
-    // A value containing a double-quote could close the template's wrap quote
-    // and inject new arguments/flags, so reject those values outright (same
-    // injection class as the QuoteWinArgWide trailing-backslash bug, but on the
-    // custom-command path the field, not the helper, is the vector).
-    if (file.find('"') != std::string::npos || cl.find('"') != std::string::npos) {
-        LOG_WARN("LaunchP4VcLike: custom command rejected because a {file}/{cl} value contains a double-quote");
+    // A {file}/{cl} value containing a double-quote could close the template's
+    // wrap quote and inject arguments; a value ENDING IN A BACKSLASH escapes the
+    // template's closing wrap quote ("foo\") and shifts the argument boundary
+    // (#1712 — same trailing-backslash injection class QuoteWinArgWidePure guards
+    // on the helper path, but here the raw field is the vector). Reject both.
+    if (P4vLaunch::P4vCustomCommandFieldRejected(file) || P4vLaunch::P4vCustomCommandFieldRejected(cl)) {
+        LOG_WARN("LaunchP4VcLike: custom command rejected because a {file}/{cl} value contains a double-quote "
+                 "or ends with a backslash");
         return false;
     }
     ReplacePlaceholder(cmd, "{file}", file);
