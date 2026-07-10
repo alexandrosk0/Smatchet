@@ -5,7 +5,7 @@
 
 #include "BugReportService.h"
 
-#include "AppController.h"
+#include "Interfaces/IAppMeta.h"
 #include "BackendAuditTrail.h"
 #include "GitHubClient.h"
 #include "GitHubClientHelpers.h"
@@ -539,7 +539,7 @@ std::string BuildBugReportBrowseUrl(const ResolvedBugTarget& target, const std::
 
 } // namespace
 
-ContextBundle GatherContext(const AppController& app, const BugReportOptions& opts) {
+ContextBundle GatherContext(const IAppMeta& app, const BugReportOptions& opts) {
     ContextBundle bundle;
     const TrackerConfig cfg = ConfigManager::Load();
 
@@ -597,7 +597,7 @@ ContextBundle GatherContext(const AppController& app, const BugReportOptions& op
     return bundle;
 }
 
-SubmitResult SubmitBugReport(AppController& app, const BugReportOptions& opts) {
+SubmitResult SubmitBugReport(IAppMeta& app, const BugReportOptions& opts) {
     SubmitResult result;
     const TrackerConfig cfg = ConfigManager::Load();
 
