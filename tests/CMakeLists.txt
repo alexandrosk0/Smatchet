@@ -972,6 +972,9 @@ add_executable(SmatchetTests
     # CommandLineToArgvW backslash-run doubling (trailing-backslash + embedded-
     # quote injection fix). Header-only pure helper, no production .cpp to link.
     Core/P4vLaunchArgQuotePure.test.cpp
+    # Comments-modal generation-token stale-guard (monotonic Gen across opens +
+    # post-refetch supersession). Header-only pure helper, no production .cpp to link.
+    Core/SmatchetCommentsModalGenPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SubprocessCapturePure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SubprocessCapture.cpp"
     Plugins/Mcp/McpRequestParser.test.cpp
