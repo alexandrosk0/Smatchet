@@ -114,16 +114,22 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
 
 ## Sweep status & remaining work (as of 2026-07-10)
 
-- **Post-#1174 frontier re-establishment (2026-07-10, in progress):** work-list =
-  all **494** merged-to-develop PRs in **(#1174, #1695]** (authoritative GitHub
-  merged list, cross-validated against the develop squash log; 4 PRs needed manual
-  sha resolution — #1439/#1577 edited squash subjects, #1593/#1597 true merge
-  commits) minus Batch 12's 17 → **477 to sweep**. **Batch 13 (#1695–#1560, 120
-  PRs) + Batch 14 (#1559–#1436, 120 PRs) + Batch 15 (#1435–#1305, 120 PRs) done
-  below** — the reviewed frontier is now **#1305–#1695 contiguous** on top of the
-  #1–#1174 baseline. Remaining: **#1304–#1175 (116 PRs, batch 16 running this
-  session) + #1593** (true merge commit, 9 constituent commits — needs a
-  per-constituent survivor pass, handled separately).
+- **Post-#1174 frontier re-establishment (2026-07-10): SWEEP COMPLETE #1–#1695.**
+  Work-list = all **494** merged-to-develop PRs in **(#1174, #1695]** (authoritative
+  GitHub merged list, cross-validated against the develop squash log; 4 PRs needed
+  manual sha resolution — #1439/#1577 edited squash subjects, #1593/#1597 true merge
+  commits) minus Batch 12's 17 → **477 swept this session** as Batches 13–16
+  (#1695–#1175, contiguous, newest first) + the **#1593 per-constituent special**
+  (all below). Aggregate: **473 reviewed + #1593 — 56 with findings, 389 clean,
+  31 fully superseded, 0 errored, 0 died; 1 CRITICAL, 4 HIGH, 21 MEDIUM, 38 LOW;
+  ~16.1M tokens, ~2.7h wall.** The 6 user-visible findings → GitHub Issues
+  **#1699** (B13 CRITICAL, AI-input overflow), **#1706** (B14, prefs stale
+  buffers), **#1711/#1712/#1713** (B16: env-scrub `_PATH`, p4vc trailing-`\`,
+  comments Gen token). Dominant recurring class across all four batches: the
+  **zero-test fail-open driver** (`passed=0&&failed=0`→exit-0) — 12+ new sites.
+  With the #1–#1174 baseline, **every merged PR #1→#1695 is survivor-reviewed;
+  the next sweep resumes from #1696** (same recipe; sha-resolved variant recipe
+  in the Batch 13 header for gh-less environments).
 - **Swept:** **#1–#1174** (batches 1–11) — **the entire merged-PR history reviewed.**
   **SWEEP COMPLETE** — Batch 11 (#116–#1, 113 PRs, the final tail incl. the early
   base-`main` PRs #1–#5) added 2026-06-13;
@@ -185,6 +191,39 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   User-visible ones → GitHub Issues per ADR-0014 when actioned.)_
 
 <!-- Batches appended at the top. -->
+
+## Batch 16 — #1304–#1175 + the #1593 special (117-PR sweep, 2026-07-10) — FRONTIER COMPLETE
+
+Coverage: **116 reviewed — 14 with findings, 96 clean, 6 fully superseded, 0 errored, 0 died** — plus the **#1593 true-merge special** (below). Net: **0 CRITICAL, 1 HIGH, 9 MEDIUM, 7 LOW.** Final installment of the post-#1174 frontier re-establishment: with Batches 13–16 + Batch 12 + the #1593 special, **every merged PR #1–#1695 is now survivor-reviewed — SWEEP COMPLETE, no gaps.** Survivor-filtered against origin/develop, so every finding is current. (Same sha-resolved workflow + reviewer model as Batches 13–15; 116/116 returned, 0 died; ~44 min, ~3.87M tokens.) **Three findings are `userVisible:true` → GitHub Issues per ADR-0014: the HIGH #1233 → Issue #1711, #1222 → Issue #1712, #1217 → Issue #1713; the other 14 are internal CI/gates/docs → backlog only.** Recurring themes: the zero-test fail-open driver cluster AGAIN (#1181 ×2, #1175, plus the in-workflow #1281 0/0-envelope variant — same class as Batch 15's five), a coverage detect self-gate that fails open on git error (#1206), and two exception-safety/generation-token state bugs in product code (#1221, #1217).
+
+**#1593 special (true merge commit `368e1841`, 9 constituent commits):** reviewed separately — blame attributes its survivors to the 9 branch commits, not the merge sha, so the survivor extractor ran per-constituent. **Clean** — 8 of 9 commits had survivors (~1,167 lines across the CPP_CODE_AUDIT remediation: overflow-checked parsing, SSRF hardening, ParseBounded, per-turn AI cancel tokens, RAII latch resets, editor truncation guards, coverage-delta SIGPIPE fix); `f92255f0` fully superseded; no findings.
+
+### HIGH
+- **#1233 (8775fc35) · `Source/Core/src/SubprocessCapturePure.cpp:170`** — **user-visible**: `IsSensitiveEnvName` substring-matches the `"_PAT"` token, which also matches every `*_PATH` name — `LD_LIBRARY_PATH`/`DYLD_LIBRARY_PATH`/`GIT_EXEC_PATH`/`PKG_CONFIG_PATH` are scrubbed from children. `P4Annotate.cpp` sets `scrubSensitiveEnv=true`, so a p4/git child on Linux/macOS can fail to load shared libs — contradicting the documented PATH-family survival guarantee. Tests cover only `PATH`/`GIT_DIR`, so the regression is uncovered. Fix: suffix-match `_PAT` (endsWith), add `CHECK_FALSE` cases for `LD_LIBRARY_PATH`/`GIT_EXEC_PATH`. → **Issue #1711**.
+
+### MEDIUM (9)
+- **#1281 (b3f31f18) · `.github/workflows/build-and-test.yml:1139`** — the childlog-extraction `sed 's/.*child stdout\/stderr[^A-Za-z]*//'` also consumes the leading `/` of the absolute POSIX temp path, leaving a relative path that never exists → the per-test ImGui failure reasons are NEVER captured on the Linux bucket-E lane (the :613 twin works only because Windows paths start with a drive letter). Fix: exclude `/` from the consumed class.
+- **#1281 (b3f31f18) · `.github/workflows/build-and-test.yml:1177`** — a well-formed envelope with `passed=0 failed=0` stays `status=ok`, breaks the retry loop, and the lane passes green with zero tests executed under `--all`. Fix: treat `passed==0` as `status=broken`.
+- **#1223 (facbc2ca) · `docs/agent-rules/build.md:68`** — doc-vs-code drift on a gated preset literal: claims `ninja-msvc-asan` "does not enable tests" (+ manual `-DSMATCHET_BUILD_TESTS=ON` step), but CMakePresets.json:136 bakes `SMATCHET_BUILD_TESTS: ON` into the preset. Fix: rewrite to the preset's actual default.
+- **#1222 (6b6ea431) · `Source/Core/src/Ui/P4vLaunch.cpp:183`** — **user-visible**: the custom-command injection guard rejects embedded quotes in `{file}`/`{cl}` but not a TRAILING BACKSLASH — a value ending `\` escapes the template's closing wrap quote, un-terminating the argument and shifting the p4vc boundary (the exact sibling vector this PR fixed in the helper). Fix: reject/sanitize trailing `\` on the raw-template path. → **Issue #1712**.
+- **#1221 (85d7e785) · `Source/Core/src/AppController_LuaBindings.cpp:602`** — `EndLuaAiPromptTurn()` (clears `aiPromptInFlight_`) is happy-path-only; an exception from `LuaTableToAiContextBlock`/`AddAiContext`/`PromptAi` unwinds past it, the flag stays set, and every later `ai.prompt` is rejected as re-entrant — permanent feature lockout after one error. Fix: RAII scope guard (or try/catch + release + rethrow).
+- **#1217 (3c10e1d1) · `Source/Core/src/Ui/SmatchetCommentsModalUi.cpp:196`** — **user-visible**: `OpenCommentsModal` resets the state struct (Gen→0) then `++Gen`, so the documented monotonic stale-post-back generation token is always 1 — inert. A slow open-fetch landing after a post-triggered re-fetch of the same issue overwrites fresher results, momentarily dropping a just-posted comment. Fix: keep the counter out of the reset (static monotonic counter). → **Issue #1713**.
+- **#1206 (f8e746d1) · `.github/workflows/coverage.yml:96`** — the detect self-gate computes `changed` via `git diff … || true`; any git failure yields empty `changed` → `run=false` → the REQUIRED coverage context fake-greens, contradicting the block's own "must NEVER fake-green" comment. Fix: on fetch/diff failure default `run=true`.
+- **#1181 (5ba0c5af) · `scripts/dev/test-ui-annotate-before-cl-cue.sh:60`** — zero-test fail-open (the Batch-15 driver cluster again): `passed=0/failed=0` exits 0 green. Fix: `PASSED>=1` floor.
+- **#1181 (5ba0c5af) · `scripts/dev/test-ui-toolbar-append-cache-cue.sh:60`** — same fail-open in the sibling driver. Fix: same floor.
+
+### LOW (7)
+- **#1261 (e6445a27) · `Source/Core/src/Ui/SmatchetOmnibarUi.cpp:120`** — comment claims the per-frame `ClassifyOmnibarInput` is "pure, allocation-free", but it constructs owning `std::string`s each call (`TrimCopyAsciiWhitespace`, `ToLowerAsciiCopy`) — per-frame copies while the omnibar is visible (bounded/SSO). Fix: fix the wording, or cache the classification on buffer change.
+- **#1217 (3c10e1d1) · `Source/Core/src/AppController_CatalogAndFieldEdit.cpp:853`** — backend-agnostic `FetchIssueComments` returns "Jira backend is not initialized." for any backend (GitHub/Plane); every sibling uses the generic "Tracker backend…". Fix: use the generic string.
+- **#1202 (f14e5766) · `docs/guides/testing-surface.md:175`** — § 5.1 backlog line-pins drifted (verified: :175 → debt.md:65 now an unrelated race entry; :181 → applied.md:265 now a postmortem). Fix: re-anchor to headings, not line numbers.
+- **#1198 (2ae42828) · `tests/ui/reset_layout_docking.test.cpp:76`** — raw `new` inside a `unique_ptr` ctor; house rule is `make_unique`. Test-only, no leak. Fix: `std::make_unique`.
+- **#1186 (14c9c58e) · `tests/Core/UserInfoActivityCancelUaf.test.cpp:197`** — the "cancel signalled before worker starts" TEST_CASE never pre-cancels (its own comment concedes it can't); its assertions pass regardless — false confidence for the named behavior. Fix: drive the guard directly or rename to what it actually exercises.
+- **#1183 (67098d12) · `docs/plans/shipped/mobile-ci-smoke-gate.md:103`** — implementation log says "8-frame state machine"/single-frame gap; shipped code is 10-frame with the 2-frame honesty-fix gap. Fix: update the log line.
+- **#1175 (61bdf630) · `agents/scripts/core/test-pr-status-watch-bats.sh:48`** — the wrapper's own zero-run fail-open: zero `ok`/`not ok` lines with rc 0 → "Passed: 0 Failed: 0", exit 0. Fix: explicit 0/0 guard.
+
+**Clean (96, surviving lines reviewed, no findings):** #1304, #1302, #1301, #1300, #1299, #1295, #1294, #1293, #1292, #1288, #1280, #1279, #1278, #1277, #1276, #1275, #1274, #1273, #1272, #1271, #1270, #1269, #1268, #1266, #1265, #1264, #1263, #1260, #1259, #1258, #1257, #1256, #1255, #1253, #1252, #1251, #1250, #1248, #1247, #1246, #1245, #1244, #1243, #1242, #1241, #1240, #1239, #1238, #1237, #1235, #1234, #1232, #1231, #1230, #1229, #1228, #1227, #1226, #1225, #1220, #1219, #1218, #1216, #1215, #1214, #1213, #1212, #1211, #1210, #1209, #1208, #1207, #1205, #1204, #1203, #1201, #1200, #1199, #1197, #1196, #1195, #1194, #1193, #1192, #1191, #1190, #1189, #1188, #1187, #1185, #1184, #1182, #1180, #1179, #1178, #1177.
+
+**Fully superseded (6, no review surface):** #1303, #1267, #1262, #1249, #1224, #1176 — every introduced line was changed/removed by a later PR; excluded by construction.
 
 ## Batch 15 — #1435–#1305 (120-PR sweep, 2026-07-10)
 
