@@ -34,9 +34,14 @@ Est ~15 min total. This session fixed the instance by adding
 `scripts/dev/test-mutation-smoke-bats.sh` (#1702), but the pre-ship gap remains
 and will bite the next suite added without a wrapper.
 
+**Update (2026-07-10): implemented.** Added a
+`bash agents/scripts/core/test-orphan-bats.sh` stage to `scripts/dev/pre-ship.sh`
+(next to the test-list consistency check), so a wrapper-less bats suite is caught
+before push. Archive to `applied.md` on the next sweep.
+
 ## Format
 
 - Details: see § Friction. Verified against the committed tree at develop head.
-- Concrete next action: see § Proposal (1)–(2).
+- Concrete next action: see § Proposal (1)–(2) — done.
 - Status: open
 - Last-reviewed: 2026-07-10
