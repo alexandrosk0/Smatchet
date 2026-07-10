@@ -1,6 +1,7 @@
 #include "SmatchetUI_Internal.h"
 
-#include "AppController.h"
+class AppController; // fan-in Phase 6: this TU only names AppController& in signatures / pass-throughs — fwd-decl
+                     // suffices
 #include "ConfigManager.h"
 #include "ConfigSaveWorker.h"
 #include "Logger.h"

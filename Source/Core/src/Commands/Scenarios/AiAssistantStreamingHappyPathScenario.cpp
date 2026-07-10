@@ -23,7 +23,6 @@
 
 #include "AiClientFactory.h"
 #include "AiTypes.h"
-#include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "IAiClient.h"
 #include "Logger.h"

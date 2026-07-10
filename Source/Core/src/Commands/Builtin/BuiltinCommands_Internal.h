@@ -79,8 +79,8 @@ void RegisterUiTestCommands(CommandRegistry& reg, IAppScenarios& app, IMainThrea
 void RegisterAttachCommands(CommandRegistry& reg, IAppAttachments& app);
 void RegisterAiCommands(CommandRegistry& reg, AppController& app);
 void RegisterAutomationCommands(CommandRegistry& reg, IAppAutomation& app, IMainThreadPoster& poster);
-void RegisterBugReportCommands(CommandRegistry& reg, AppController& app);
-void RegisterUiInteractionCommands(CommandRegistry& reg, AppController& app);
+void RegisterBugReportCommands(CommandRegistry& reg, AppController& app, IMainThreadPoster& poster);
+void RegisterUiInteractionCommands(CommandRegistry& reg, IMainThreadPoster& poster);
 
 } // namespace cmd
 } // namespace smatchet

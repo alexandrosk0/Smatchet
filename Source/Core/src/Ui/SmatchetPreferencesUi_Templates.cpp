@@ -9,7 +9,8 @@
 
 #include "SmatchetPreferencesUi_detail.h"
 #include "SmatchetUI.h"
-#include "AppController.h"
+class AppController; // fan-in Phase 6: this TU only names AppController& in signatures / pass-throughs — fwd-decl
+                     // suffices
 #include "Logger.h"
 #include "SmatchetHelpMarker.h"
 #include "SmatchetLocalization.h"
