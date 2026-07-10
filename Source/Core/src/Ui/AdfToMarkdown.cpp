@@ -1,6 +1,6 @@
-// ADF -> Markdown (recursive walker) + HTML-subset -> Markdown state machine. Split out of
-// MarkdownConvert.cpp (see the god-file-splits plan). Behavior-identical body move;
-// state + entry-point declarations live in MarkdownConvert_Internal.h.
+// ADF -> Markdown (recursive walker) + HTML-subset -> Markdown state machine, split out of the
+// MarkdownConvert god file for the god-file-splits decomposition. Behavior-identical body move.
+// Shared state plus the engine entry-point declarations live in the MarkdownConvert_Internal header.
 
 #include "MarkdownConvert.h"
 #include "MarkdownConvert_Internal.h"
@@ -12,6 +12,10 @@ extern "C" {
 }
 
 #include <nlohmann/json.hpp>
+
+// clang-format off
+// SMATCHET_DEVIATION(rule=duplication; reason=the shared engine-TU include block + namespace-open boilerplate is grandfathered across the MarkdownConvert split siblings (MarkdownToAdf / MarkdownToHtml / AdfToMarkdown) — a behavior-preserving god-file partition has no shared prologue header to factor into without worse coupling, and the DRY gate doc endorses an exemption over cross-context abstraction; owner=orchestrator; revisit=when a shared MarkdownConvert TU prologue header is introduced)
+// clang-format on
 
 #include <algorithm>
 #include <cctype>
