@@ -50,15 +50,23 @@ void AiSseParser::Feed(const char* data, std::size_t len, const EventCallback& o
         buffer_.append(data, len);
     }
 
-    std::size_t scanFrom = 0;
+    // Issue #1596: this used to `buffer_.erase(0, end + boundaryLen)` after EVERY
+    // extracted frame, then rescan from offset 0 — an O(n) erase/rescan per frame,
+    // O(n^2) total on a single Feed() call packed with many small frames (e.g. a
+    // fuzzer-grown "\n\n\n\n..." input), which fits the fuzz-smoke report's "crash,
+    // leak, or timeout" category (a libFuzzer per-input hang). Fixed: track a
+    // monotonically-advancing `consumed` offset instead — every find() scans only
+    // the not-yet-consumed tail, and the whole consumed prefix is erased ONCE after
+    // the loop, making one Feed() call O(buffer size) instead of O(buffer size^2).
+    std::size_t consumed = 0;
     while (true) {
         std::size_t boundaryLen = 0;
-        const std::size_t end = FindFrameBoundary(buffer_, scanFrom, boundaryLen);
+        const std::size_t end = FindFrameBoundary(buffer_, consumed, boundaryLen);
         if (end == std::string::npos)
             break;
 
         Event ev;
-        std::size_t lineStart = 0;
+        std::size_t lineStart = consumed;
         while (lineStart <= end) {
             std::size_t lineEnd = buffer_.find('\n', lineStart);
             if (lineEnd == std::string::npos || lineEnd > end)
@@ -94,9 +102,11 @@ void AiSseParser::Feed(const char* data, std::size_t len, const EventCallback& o
         if (!ev.Name.empty() || !ev.Data.empty())
             onEvent(ev);
 
-        buffer_.erase(0, end + boundaryLen);
-        scanFrom = 0;
+        consumed = end + boundaryLen;
     }
+
+    if (consumed > 0)
+        buffer_.erase(0, consumed);
 }
 
 void AiSseParser::Flush(const EventCallback& onEvent) {
