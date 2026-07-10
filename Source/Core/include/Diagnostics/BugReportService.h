@@ -17,7 +17,7 @@
 //
 // docs/plans/shipped/log-a-bug-github.md.
 
-class AppController;
+class IAppMeta; // narrow AppController facet — the service reads only the app version
 
 namespace smatchet {
 namespace diagnostics {
@@ -107,12 +107,12 @@ nlohmann::json BuildRelayRequest(const std::string& title, const std::string& bo
 
 /// Gather runtime context: app version, build tag, OS/arch, active tracker, UTC,
 /// the recent log tail (trimmed), and recent audit events (redacted).
-ContextBundle GatherContext(const AppController& app, const BugReportOptions& opts);
+ContextBundle GatherContext(const IAppMeta& app, const BugReportOptions& opts);
 
 /// Blocking submit — construct a dedicated GitHubClient against the dev repo and
 /// run IssueCreatePipeline. Worker-thread only (blocks on HTTP). Uploads the
 /// screenshot (if any) via the Contents API, degrading to local stage on failure.
-SubmitResult SubmitBugReport(AppController& app, const BugReportOptions& opts);
+SubmitResult SubmitBugReport(IAppMeta& app, const BugReportOptions& opts);
 
 } // namespace diagnostics
 } // namespace smatchet

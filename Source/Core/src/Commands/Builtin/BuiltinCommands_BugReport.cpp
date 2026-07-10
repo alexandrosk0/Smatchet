@@ -9,9 +9,9 @@
 #include "Commands/CommandRegistry.h"
 #include "Commands/MainThreadDispatch.h"
 
-// fan-in Phase 6: this TU only PASSES the AppController& through to diagnostics::SubmitBugReport
-// (fwd-decl-safe) and upcasts to IMainThreadPoster for the modal UI-thread hop — so the full
-// AppController.h include is dropped; the registrar takes the poster as a second narrow ref.
+// This TU only passes the narrow IAppMeta& through to diagnostics::SubmitBugReport and uses the
+// poster for the modal UI-thread hop — no AppController dependency at all; the dispatcher upcasts
+// the concrete object into both narrow refs.
 #include <nlohmann/json.hpp> // this TU constructs nlohmann::json directly.
 #include "ConfigManager.h"
 #include "Diagnostics/BugReportService.h"
@@ -30,7 +30,7 @@ namespace cmd {
 using builtin_detail::MakeCommand;
 using builtin_detail::PString;
 
-void RegisterBugReportCommands(CommandRegistry& reg, AppController& app, IMainThreadPoster& poster) {
+void RegisterBugReportCommands(CommandRegistry& reg, IAppMeta& app, IMainThreadPoster& poster) {
     Command c = MakeCommand(
         "bug.report", "File a bug to the configured dev GitHub repo (modal, or headless with --description).",
         [&app, &poster](const nlohmann::json& args, const CommandContext& ctx) {

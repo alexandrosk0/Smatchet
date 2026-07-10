@@ -592,7 +592,7 @@ void SmatchetUI::drawPreWindowOverlays(AppController& app, UiDrawSession& d) {
     // binding, default hotkey Ctrl+Shift+B, dispatched up in dispatchKeybindings.
     // This block only renders the modal once showBugReport latches, and is drawn
     // unconditionally so it still works while the active backend is unreachable.
-    SmatchetBugReportUi_Draw(app, g_ui);
+    SmatchetBugReportUi_Draw(app, app, g_ui);
 
     // Scenario tick: drive the active scenario one frame and propagate scroll state
     // into the session so SmatchetActiveProjectGridUi can honor it.
