@@ -29,7 +29,7 @@ Each slice moves a contiguous, cohesive block of `AppController::` method *defin
 of `AppController.cpp` into a new `AppController_<Area>.cpp` companion TU. Declarations stay
 in `AppController.h` untouched — callers, linkage, and behavior are identical; only which
 `.o` a symbol lands in changes. New TUs auto-join the DX12/Standalone build via the existing
-`file(GLOB_RECURSE CORE_SOURCES …)` (CMakeLists.txt:1127); the `tests/` target list is checked
+`file(GLOB_RECURSE CORE_SOURCES …)` (Source/Core/CMakeLists.txt); the `tests/` target list is checked
 per-slice (no test references the moved symbols → no test edit). Any file-local
 (anon-namespace) helper used *exclusively* by the moved cluster moves with it, verified by
 whole-tree grep before the cut.
