@@ -26,6 +26,7 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/automation_reload_hooks_race.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_panel_dock_swap.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_enter_send.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_input_paste_overflow.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/ai_prefs_autosave_flow.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_preferences_docking.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_preferences_enter_send.test.cpp"
