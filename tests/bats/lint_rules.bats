@@ -548,6 +548,80 @@ setup() {
     [ -z "$output" ]
 }
 
+# ---------- no-ui-include-in-domain (include-direction; domain zones, absolute-0) ----------
+# A quote-form `#include "Ui/..."` in a domain subsystem (Tracker/Sync/Persistence/Config +
+# include mirrors + Plugins/Mcp) inverts the layer DAG; the header->header include-cycle gate
+# can't see a domain .cpp -> Ui/ edge. --scan-ui-include emits the detected set for bats.
+
+@test "--scan-ui-include fires on a Ui/ include in a Tracker TU" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src/Tracker"
+    printf '#include "TrackerLabelsPure.h"\n#include "Ui/TouchCellEditGesture.h"\n' \
+        > "$tmp/Source/Core/src/Tracker/TrackerBad.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-ui-include
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no-ui-include-in-domain"* ]]
+    [[ "$output" == *"TrackerBad.cpp:2"* ]]
+    rm -rf "$tmp"
+}
+
+@test "--scan-ui-include fires in a domain include/ mirror header too" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/include/Sync"
+    printf '#pragma once\n#include "Ui/SmatchetToast.h"\n' \
+        > "$tmp/Source/Core/include/Sync/SyncBad.h"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-ui-include
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"SyncBad.h:2"* ]]
+    rm -rf "$tmp"
+}
+
+@test "--scan-ui-include ignores Ui/-internal, Commands/, and root-leaf consumers (out of scope)" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src/Ui" "$tmp/Source/Core/src/Commands/Scenarios" "$tmp/Source/Core/src"
+    printf '#include "Ui/SmatchetUI.h"\n' > "$tmp/Source/Core/src/Ui/SomeUi.cpp"
+    printf '#include "Ui/SmatchetTextureFaultInjector.h"\n' \
+        > "$tmp/Source/Core/src/Commands/Scenarios/MyScenario.cpp"
+    printf '#include "Ui/SmatchetToast.h"\n' > "$tmp/Source/Core/src/RootLeaf.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-ui-include
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-ui-include ignores a comment mention and an angle-bracket include" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src/Tracker"
+    printf '// the gate lived at Ui/TouchCellEditGesture.h before the layer fix\n#include <string>\n#include "TrackerLabelsPure.h"\n' \
+        > "$tmp/Source/Core/src/Tracker/TrackerClean.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-ui-include
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-ui-include respects a SMATCHET_DEVIATION above the include" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src/Tracker"
+    printf '// SMATCHET_DEVIATION(rule=no-ui-include-in-domain; reason=test; owner=x; revisit=2099-01-01)\n#include "Ui/SmatchetToast.h"\n' \
+        > "$tmp/Source/Core/src/Tracker/TrackerDev.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-ui-include
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-ui-include is clean on the real first-party tree (domain zones are Ui-free)" {
+    run bash "$LINT" --scan-ui-include
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
 # ---------- pr-numbered-temporal-comments (WARN-first; comment-regrowth guard) ----------
 # A comment pinning a DEV pull-request number (// PR 5 / PR #1104 / PR#1218 / PR12) is a temporal
 # scaffold that rots once the PR squash-merges. --scan-pr-comments emits the detected set for bats.

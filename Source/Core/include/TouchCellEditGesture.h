@@ -13,6 +13,12 @@
 // per editor. The pure predicate it consumes (ShouldOpenCellEditorByLongPress) is unit-tested in
 // TicketFieldEditorCommitPolicyPure.h without ImGui or __ANDROID__.
 //
+// Lives at the include/ root (a leaf/utility header, NOT under Ui/): its consumers are the
+// domain-side cell-editor TUs (TicketFieldEditor.cpp plus the Tracker Labels/DateTime editors), and
+// domain code must not include Ui/ headers (lint rule no-ui-include-in-domain — the layer DAG flows
+// Ui -> domain, never the reverse). It depends only on ImGui (third-party, layer-neutral) and the
+// pure commit-policy header beside it — nothing from the Ui/ subsystem.
+//
 // Include this BEFORE any `#define ImGui SmatchetLocalizedImGui` in the consuming TU so the ImGui::
 // calls below bind to the real ImGui namespace (the localization wrapper only forwards text-drawing
 // calls; the input/state queries used here — GetIO / IsItemHovered / IsMouseDragging — are identical

@@ -63,3 +63,4 @@ Backends never call `cpr::` directly — they go through `TrackerHttpClient` / `
 
 - **Sync** owns `OfflineQueueService` — every Tracker write enqueues there (`PendingCreate` / `PendingFieldEditRecord`) so an offline edit replays through the same pipelines.
 - **Persistence** owns `CachedTicket` (the cache row Tracker reads/produces) and `BackendAuditTrail` / `FieldEditAuditSource` (the audit log Tracker writes append to).
+- **Ui** is strictly above Tracker in the layer DAG: Tracker code never includes `Ui/` headers (lint rule `no-ui-include-in-domain`). The Tracker-owned cell editors (Labels, DateTime) draw with ImGui directly; shared editor helpers they need (e.g. the touch/click open-gesture gate `TouchCellEditGesture.h`) live as layer-neutral leaf headers at the `Source/Core/include/` root, not under `Ui/`.

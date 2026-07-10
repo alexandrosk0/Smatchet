@@ -3,7 +3,7 @@
 #include "ConfigManager.h"
 #include "TrackerDateTimePure.h"
 #include "TicketFieldEditorCommitPolicyPure.h"
-#include "Ui/TouchCellEditGesture.h"
+#include "TouchCellEditGesture.h"
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
@@ -399,7 +399,7 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& f
                                             [](unsigned char ch) { return std::isspace(ch) != 0; });
         // Empty due date (and similar) would otherwise require double-click like populated cells, so
         // a blank cell folds into the single-click open affordance. On the touch build this collapses
-        // to a long-press (Ui/TouchCellEditGesture.h); desktop codegen stays byte-identical.
+        // to a long-press (TouchCellEditGesture.h); desktop codegen stays byte-identical.
         const bool dtCellClicked =
             ImGui::Selectable((display + itemId).c_str(), false, ImGuiSelectableFlags_AllowDoubleClick);
         if (SmatchetTouchEdit::ShouldOpenCellEditorOnGesture(dtCellClicked, singleClickToEdit || blankValue)) {

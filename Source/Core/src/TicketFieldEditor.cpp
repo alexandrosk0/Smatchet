@@ -21,7 +21,7 @@
 #include "TicketFieldEditorOptionFilterPure.h"
 #include "TicketFieldEditorCommitPolicyPure.h"
 #include "TicketFieldEditorDurationPopupPure.h"
-#include "Ui/TouchCellEditGesture.h"
+#include "TouchCellEditGesture.h"
 #include "TextEditor.h"
 #include "Logger.h"
 #include "JiraClient.h"
@@ -76,7 +76,7 @@ constexpr bool kMobileInlineEditBuild = false;
 #endif
 
 // P1.3 mobile interaction model (#1018 item 23): the cell-editor open gesture (long-press on the
-// touch build, click / double-click on desktop) lives in Ui/TouchCellEditGesture.h so all five cell
+// touch build, click / double-click on desktop) lives in TouchCellEditGesture.h so all five cell
 // editors share one rule — the inline text cell here plus the SingleSelect / MultiSelect / Cascading
 // combos, and the Labels / DateTime editors in their own TUs. Pulled in unqualified for the call
 // sites below; desktop codegen stays byte-identical (kMobileTouchBuild is constexpr-false there).

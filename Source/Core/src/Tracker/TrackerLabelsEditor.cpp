@@ -2,7 +2,7 @@
 #include "AppController.h"
 #include "StringUtil.h"
 #include "TrackerLabelsPure.h"
-#include "Ui/TouchCellEditGesture.h"
+#include "TouchCellEditGesture.h"
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "SmatchetLocalizedImGui.h"
