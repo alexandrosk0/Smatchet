@@ -34,6 +34,9 @@
 #                          json_safe::ParseBounded (ALL first-party .cpp/.h/.hpp; blocking)
 #   catch-all-swallow      EMPTY catch (...) body — no statement, no justifying comment
 #                          (all first-party C++; absolute-0; exception-handling-policy hard rule 1)
+#   no-ui-include-in-domain  quote-form #include "Ui/..." in a DOMAIN subsystem (Tracker/Sync/
+#                          Persistence/Config + include mirrors + Plugins/Mcp; absolute-0 —
+#                          layer-DAG inversion the header->header include-cycle gate can't see)
 #   (advisory)             unbounded-recursive-json-walker — self-recursive fn over a
 #                          nlohmann::json/sol::object param with no depth/budget token (WARN)
 #   (advisory)             unbounded-file-slurp — rdbuf()/istreambuf whole-file read (WARN)
@@ -87,7 +90,8 @@ for _mod in "$LINT_RULES_D"/00-common.sh "$LINT_RULES_D"/10-line-rules.sh \
             "$LINT_RULES_D"/40-unused-config-guard.sh "$LINT_RULES_D"/50-bare-json.sh \
             "$LINT_RULES_D"/55-catch-all.sh "$LINT_RULES_D"/60-json-walker.sh \
             "$LINT_RULES_D"/65-file-slurp.sh "$LINT_RULES_D"/70-ui-request-flag.sh \
-            "$LINT_RULES_D"/75-pr-comments.sh "$LINT_RULES_D"/80-interface-doc.sh; do
+            "$LINT_RULES_D"/75-pr-comments.sh "$LINT_RULES_D"/80-interface-doc.sh \
+            "$LINT_RULES_D"/85-ui-include-direction.sh; do
     if [ ! -f "$_mod" ]; then
         echo "test-lint-rules: ERROR: missing rule module $_mod" >&2
         exit 2
@@ -125,10 +129,11 @@ case "${1:-}" in
     --scan-json-walkers) MODE=scanjsonwalkers ;;
     --scan-slurps) MODE=scanslurps ;;
     --scan-ui-reqflag) MODE=scanuireqflag ;;
+    --scan-ui-include) MODE=scanuiinclude ;;
     --scan-pr-comments) MODE=scanprcomments ;;
     --selftest)    MODE=selftest ;;
     "")            MODE=diff ;;
-    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--agentsize-baseline|--dup-baseline|--include-cycle-baseline|--scan-file[=]<f>|--full|--scan-wide|--scan-glfw|--scan-cmake-ci|--scan-unused-cfg|--scan-bare-json|--scan-catch-all|--scan-json-walkers|--scan-slurps|--scan-ui-reqflag|--scan-pr-comments|--selftest]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--agentsize-baseline|--dup-baseline|--include-cycle-baseline|--scan-file[=]<f>|--full|--scan-wide|--scan-glfw|--scan-cmake-ci|--scan-unused-cfg|--scan-bare-json|--scan-catch-all|--scan-json-walkers|--scan-slurps|--scan-ui-reqflag|--scan-ui-include|--scan-pr-comments|--selftest]" >&2; exit 2 ;;
 esac
 
 case "$MODE" in
@@ -344,6 +349,25 @@ case "$MODE" in
     if [ -n "$(scan_ui_request_flag_file "$_ui_tmp")" ]; then
         echo "SELFTEST FAIL: ui-request-flag-off-thread fired despite an in-window SMATCHET_DEVIATION" >&2; miss=1; fi
     rm -f "$_ui_tmp" 2>/dev/null || true
+    # --- no-ui-include-in-domain — assert the rule is documented + fires on a quote-form Ui/
+    # include, and stays quiet for an angle-bracket / comment mention / a deviation. ---
+    for r in "${UIINCLUDE_RULES[@]}"; do
+        if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: include-direction rule '$r' missing from AGENTS.md" >&2; miss=1; fi
+    done
+    # selftest: asserts-failure — a quote-form `#include "Ui/..."` must fire; a comment mention,
+    # an angle-bracket include, and an in-window SMATCHET_DEVIATION must not.
+    _uii_tmp="$(mktemp --suffix=.cpp 2>/dev/null || echo "${TMPDIR:-/tmp}/uii_selftest.$$.cpp")"
+    case "$_uii_tmp" in *.cpp) ;; *) mv -f "$_uii_tmp" "$_uii_tmp.cpp" 2>/dev/null && _uii_tmp="$_uii_tmp.cpp" ;; esac
+    printf '#include "TrackerLabelsPure.h"\n#include "Ui/TouchCellEditGesture.h"\n' > "$_uii_tmp"
+    if [ -z "$(scan_ui_include_direction_file "$_uii_tmp")" ]; then
+        echo "SELFTEST FAIL: no-ui-include-in-domain did not fire on a quote-form Ui/ include" >&2; miss=1; fi
+    printf '// the gesture gate used to live at Ui/TouchCellEditGesture.h\n#include <string>\n#include "TrackerLabelsPure.h"\n' > "$_uii_tmp"
+    if [ -n "$(scan_ui_include_direction_file "$_uii_tmp")" ]; then
+        echo "SELFTEST FAIL: no-ui-include-in-domain fired on a comment mention / non-Ui include" >&2; miss=1; fi
+    printf '// SMATCHET_DEVIATION(rule=no-ui-include-in-domain; reason=test; owner=x; revisit=2099-01-01)\n#include "Ui/SmatchetToast.h"\n' > "$_uii_tmp"
+    if [ -n "$(scan_ui_include_direction_file "$_uii_tmp")" ]; then
+        echo "SELFTEST FAIL: no-ui-include-in-domain fired despite an in-window SMATCHET_DEVIATION" >&2; miss=1; fi
+    rm -f "$_uii_tmp" 2>/dev/null || true
     # --- pr-numbered-temporal-comments — assert the rule is documented + fires on a dev-PR-number
     # comment, and stays quiet for product-domain "PR" (no number) / Issue refs / non-comment lines /
     # a deviation. ---
@@ -458,6 +482,13 @@ case "$MODE" in
     # ui-request-flag-off-thread set over Source/Core/src/Commands (excl. Scenarios) .cpp TUs
     # (debug + bats harness). `--root <dir>` (handled above) points this at an arbitrary tree.
     compute_ui_request_flag_violations
+    ;;
+
+  scanuiinclude)
+    # no-ui-include-in-domain set over the domain subsystems (Tracker/Sync/Persistence/Config +
+    # include mirrors + Plugins/Mcp) — debug + bats harness. `--root <dir>` (handled above) points
+    # this at an arbitrary tree.
+    compute_ui_include_direction_violations
     ;;
 
   scanprcomments)
@@ -703,6 +734,28 @@ case "$MODE" in
         echo "  or add SMATCHET_DEVIATION(rule=ui-request-flag-off-thread; reason=...; owner=...; revisit=...) above the write."
     else
         echo "[test-lint-rules] PASS — no off-UI-thread g_ui request-flag write in command-dispatch TUs"
+    fi
+
+    # --- no-ui-include-in-domain (domain subsystems; ABSOLUTE-0) ---
+    # A quote-form `#include "Ui/..."` in a DOMAIN subsystem (Tracker/Sync/Persistence/Config +
+    # include mirrors + Plugins/Mcp) inverts the architecture layer DAG (Ui ranks above every domain
+    # layer) and compile-couples backend logic to the render layer. The include-cycle gate's
+    # back-edge check is header->header by design, so a domain .cpp -> Ui/ header edge escaped it
+    # (the TouchCellEditGesture.h class). The domain dirs are Ui-clean today, so any hit is a
+    # regression (absolute-0, no grandfathering — same model as no-glfw / ui-request-flag).
+    # Commands/ is out of scope (sanctioned Scenario/view-visibility Ui seams — see the rule module).
+    # A SMATCHET_DEVIATION(rule=no-ui-include-in-domain; ...) above the include escapes.
+    uii_out="$(compute_ui_include_direction_violations)"
+    if [ -n "$uii_out" ]; then
+        rc=1
+        echo
+        echo "FAIL: Ui/ header included from a domain subsystem (layer inversion — domain code must never depend on the Ui layer):"
+        printf '%s\n' "$uii_out" | sed 's/^/  /'
+        echo "  Relocate the shared logic to a layer-neutral leaf header (Source/Core/include/ root — see TouchCellEditGesture.h),"
+        echo "  or invert via an interface the Ui layer implements,"
+        echo "  or add SMATCHET_DEVIATION(rule=no-ui-include-in-domain; reason=...; owner=...; revisit=...) above the include."
+    else
+        echo "[test-lint-rules] PASS — no Ui/ include in domain subsystems (Tracker/Sync/Persistence/Config/Mcp)"
     fi
 
     # --- unused-symbol-under-config-guard (CHANGED first-party .cpp; WARN-first) ---
