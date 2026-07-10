@@ -35,9 +35,7 @@ bool ParseBooleanToken(std::string raw, bool& outValue) {
     return false;
 }
 
-const std::string& FieldDisplayName(const TrackerField& field) {
-    return field.Name.empty() ? field.Id : field.Name;
-}
+const std::string& FieldDisplayName(const TrackerField& field) { return field.Name.empty() ? field.Id : field.Name; }
 
 } // namespace
 
@@ -83,8 +81,7 @@ Result<nlohmann::json> BuildPlaneCustomProperties(const std::unordered_map<std::
                                                    "' is not a boolean (use true/false).");
             }
             value = parsed;
-        } else if (field.Family == TrackerFieldFamily::SelectSingle ||
-                   field.Family == TrackerFieldFamily::UserSingle) {
+        } else if (field.Family == TrackerFieldFamily::SelectSingle || field.Family == TrackerFieldFamily::UserSingle) {
             value = ResolveOptionId(field, raw);
         } else {
             // Text / Date / DateTime / unknown families: the raw string is already the shape

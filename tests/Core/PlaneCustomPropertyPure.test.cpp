@@ -85,8 +85,8 @@ std::vector<TrackerField> DefaultCatalog() {
 
 TEST_CASE("customs are emitted under their UUID; built-ins and unknown ids are not") {
     std::unordered_map<std::string, std::string> values;
-    values["summary"] = "a core field";           // built-in — the core payload owns it
-    values["not-in-catalog"] = "stray";           // unknown id — nothing to type it with
+    values["summary"] = "a core field"; // built-in — the core payload owns it
+    values["not-in-catalog"] = "stray"; // unknown id — nothing to type it with
     values[kTextUuid] = "hello";
 
     const auto result = BuildPlaneCustomProperties(values, DefaultCatalog());
@@ -182,9 +182,9 @@ TEST_CASE("multi-select splits CSV, resolves each token, and skips an all-empty 
         const auto& arr = result.value().at(kMultiUuid);
         REQUIRE(arr.is_array());
         REQUIRE(arr.size() == 3);
-        CHECK(arr[0] == "opt-a");    // label → id
-        CHECK(arr[1] == "opt-b");    // id stays id
-        CHECK(arr[2] == "Gamma");    // unknown passes through
+        CHECK(arr[0] == "opt-a"); // label → id
+        CHECK(arr[1] == "opt-b"); // id stays id
+        CHECK(arr[2] == "Gamma"); // unknown passes through
     }
     values[kMultiUuid] = " , ,"; // separators only — nothing to send
     {

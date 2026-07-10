@@ -546,7 +546,9 @@ Result<std::vector<TrackerIssueComment>, TrackerError> PlaneClient::FetchIssueCo
     }
 
     std::vector<TrackerIssueComment> mapped;
-    // SMATCHET_DEVIATION(rule=duplication; reason=DR25 Plane cursor-pagination loop is the uniform tracker idiom (mirrors PlaneIssueSearch/PlaneActivityFeed); the per-page bodies differ, so a shared callback helper across independent fetches is not worth the coupling; owner=deep-review; revisit=2026-10-01)
+    // SMATCHET_DEVIATION(rule=duplication; reason=DR25 Plane cursor-pagination loop is the uniform tracker idiom
+    // (mirrors PlaneIssueSearch/PlaneActivityFeed); the per-page bodies differ, so a shared callback helper across
+    // independent fetches is not worth the coupling; owner=deep-review; revisit=2026-10-01)
     std::string cursor;
     // Follow Plane's cursor pagination so comments beyond the first page are returned (DR25).
     // The page cap bounds a cursor that never signals end-of-list.
