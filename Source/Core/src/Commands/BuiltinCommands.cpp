@@ -63,7 +63,7 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
     RegisterUiTestCommands(reg, app, app);
     RegisterAiCommands(reg, app);
     RegisterAutomationCommands(reg, app, app);
-    RegisterBugReportCommands(reg, app);
+    RegisterBugReportCommands(reg, app, app);
     RegisterUiInteractionCommands(reg, app);
 
     RegisterViewToggleCommands(reg, app);

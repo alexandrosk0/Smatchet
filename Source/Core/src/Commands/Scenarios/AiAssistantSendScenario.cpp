@@ -28,7 +28,6 @@
 #if defined(SMATCHET_WITH_AI)
 
 #include "AiTypes.h"
-#include "AppController.h"
 #include "IAiClient.h"
 #include "Logger.h"
 #include "OpenAiClient.h"

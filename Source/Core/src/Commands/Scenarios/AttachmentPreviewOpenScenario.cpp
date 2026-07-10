@@ -12,8 +12,10 @@
 // ever reintroduced the synchronous cpr::Get would surface here as a one-frame spike.
 
 #include "Commands/Scenarios/IScenario.h"
+// clang-format off
+// SMATCHET_DEVIATION(rule=duplication; reason=the shared scenario-TU include + namespace-open boilerplate is grandfathered across the Scenarios/*.cpp siblings; dropping the vestigial AppController.h include (fan-in Phase 6 T1a) re-hashed the boilerplate clone window vs a sibling scenario — not a real copy-paste; owner=orchestrator; revisit=when the scenario prologue is factored into a shared header)
+// clang-format on
 
-#include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "UiPerfMonitor.h"
 

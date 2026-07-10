@@ -14,7 +14,8 @@
 
 #include "SmatchetWhisperOverlayUi.h"
 
-#include "AppController.h"
+class AppController; // fan-in Phase 6: this TU only names AppController& in signatures / pass-throughs — fwd-decl
+                     // suffices
 #include "DictationInsertionRouter.h"
 #include "SmatchetLocalization.h"
 
@@ -42,24 +43,18 @@ void Render(AppController& /*app*/) {
     ImGui::SetNextWindowPos(anchor, ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.85f);
 
-    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration |
-                                   ImGuiWindowFlags_AlwaysAutoResize |
-                                   ImGuiWindowFlags_NoSavedSettings |
-                                   ImGuiWindowFlags_NoFocusOnAppearing |
-                                   ImGuiWindowFlags_NoNav |
-                                   ImGuiWindowFlags_NoMove |
-                                   ImGuiWindowFlags_NoDocking;
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+                                   ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoDocking;
 
     if (ImGui::Begin("##SmatchetWhisperOverlay", nullptr, flags)) {
         // Red dot + REC label — same colour shade as the menu-bar mic
         // indicator so the two readouts are recognisable as a pair.
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
-        ImGui::TextUnformatted(SmatchetLocalization::T("whisper.overlay.recordingLabel",
-                                                       "\xE2\x97\x8F REC"));
+        ImGui::TextUnformatted(SmatchetLocalization::T("whisper.overlay.recordingLabel", "\xE2\x97\x8F REC"));
         ImGui::PopStyleColor();
         ImGui::SameLine();
-        ImGui::TextDisabled("%s", SmatchetLocalization::T("whisper.overlay.holdHint",
-                                                          "hold hotkey"));
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("whisper.overlay.holdHint", "hold hotkey"));
 
         // Live amplitude bar. 0..1 range; ProgressBar clamps internally.
         const float amp = g_dictationRouter.GetLastPeakAmplitude();
@@ -72,8 +67,7 @@ void Render(AppController& /*app*/) {
         // cleanly. Pressing Esc through the cancel button also serves as a
         // mouse-only cancel path for users without an Esc key (rare laptop
         // accessibility scenario).
-        const char* cancelText = SmatchetLocalization::T("whisper.overlay.cancelButton",
-                                                          "Cancel (Esc)");
+        const char* cancelText = SmatchetLocalization::T("whisper.overlay.cancelButton", "Cancel (Esc)");
         if (ImGui::SmallButton(cancelText)) {
             g_dictationRouter.SetRecording(false);
         }
