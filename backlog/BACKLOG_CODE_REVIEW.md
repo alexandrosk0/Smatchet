@@ -46,7 +46,7 @@
 | C1 Retry-after-400 dup | ✅ RESOLVED | Consolidated into `FieldEditPipelineService::ApplyFieldUpdateWithEditMetaRetry`; both submit paths route through it. |
 | C4 Plane customs dropped | ✅ RESOLVED (2026-07-10) | `BuildCreatePayload` now emits custom catalog fields under `properties.<uuid>` via the pure, doctested `BuildPlaneCustomProperties`; an unrepresentable value surfaces as `InvalidRequest` instead of silent loss. Edit-meta reporting of customs stays a flagged follow-on (seam has no catalog param). |
 | C5 FileIo extraction | 🟡 PARTIAL | No `FileIo.{h,cpp}`. `AtomicWriteTextFile` promoted to a public `ConfigManager` static (shared by 4 callers); `ScopedFileLock` still confined to `ConfigManager_Internal.h`. |
-| C6 LooksSensitiveKey blocklist | ⏳ OPEN | Unchanged (a product call, no code change resolves it). |
+| C6 LooksSensitiveKey blocklist | ✅ RESOLVED (documented, 2026-07-10) | The doc-why-each-entry-stays branch of the product call taken: rationale comment above `LooksSensitiveKey` classifies the list (credentials / identity-PII / free-text-that-quotes-both) and states why trimming is a privacy-stance decision. No behaviour change; trimming stays available if diff utility is later preferred. |
 | N1 LuaBindings LOC | ✅ number stale | Now **1540** (not 2648) — the file shrank via the 3-way split, opposite the doc's "grew" narrative. |
 | N3 CommandRegistry::FindLocked | ✅ RESOLVED | New alias-aware `Contains()` (locks internally, mirrors `FindLocked(name) != nullptr`); both `McpPlugin.cpp` worker-thread callers migrated to it — no registry pointer escapes to an httplib thread anymore. Regression-tested (alias resolution pinned). |
 | N4 AppController.h size/friends | 🟡 MIXED | Now **1465 LOC** (+430); but friend-coupling largely resolved — three friends collapsed to one `GridContextDepsAdapter`; sol2 friend gone. No `TrackerActions` interface yet. |
@@ -58,7 +58,7 @@
 | N12 IsTrackerTransportErrorText | ⏳ OPEN (unblocked 2026-07-05) | Still defined + used across ~14 files, shadowing `ClassifyTrackerResponse`. B2's uniform-retry objective is now met, so this consumer-side heuristic can be retired — next actionable B2 follow-on. |
 | N13 TryGetMcpStatusSnapshot | ⏳ OPEN (acceptable) | Still a gated virtual on `IPlugin`; no capability-tag system. As the doc itself said, acceptable today. |
 
-**Still genuinely open after this pass:** C6, N12 (+ N13 acceptable, B2/B5/C5/N4 partial). C4 closed 2026-07-10 (`properties.<uuid>` serialization). A4 (graceful half) and N3 were closed 2026-07-05; B5 improved (multi-paragraph + list preservation) with fuller rich-cell fidelity deferred. Everything else on the A/B/C/N carry-over list is resolved. Items already ✅ in the doc (N2, C2, C7, N7, N11, N14) re-verified still true.
+**Still genuinely open after this pass:** N12 (+ N13 acceptable, B2/B5/C5/N4 partial). C4 (`properties.<uuid>` serialization) and C6 (blocklist rationale documented) closed 2026-07-10. A4 (graceful half) and N3 were closed 2026-07-05; B5 improved (multi-paragraph + list preservation) with fuller rich-cell fidelity deferred. Everything else on the A/B/C/N carry-over list is resolved. Items already ✅ in the doc (N2, C2, C7, N7, N11, N14) re-verified still true.
 
 ---
 
@@ -154,7 +154,9 @@ Rebuilds `openWrap` / `closeWrap` vectors per text node. Reuse a scratch buffer 
 
 Both still defined in `Source/Core/src/ConfigManager.cpp` anonymous namespace (lines 179+, ~700+). `BackendAuditTrail` uses raw `ofstream`; export paths re-implement atomic-write. Promote to `Source/Core/{src,include}/FileIo.{h,cpp}` so all three share. Win32-only work.
 
-### C6. `BackendAuditTrail::LooksSensitiveKey` blocklist (item 43)
+### C6. `BackendAuditTrail::LooksSensitiveKey` blocklist (item 43) — ✅ RESOLVED (documented, 2026-07-10)
+> Took the "document why each entry stays" branch of the product call: a rationale comment above `LooksSensitiveKey` (`Source/Core/src/Persistence/BackendAuditTrail.cpp`) classifies the blocklist into credentials / identity-PII / free-text-that-quotes-both and records why the audit trail (plaintext, on-disk, travels in bug reports) keeps all three. Behaviour unchanged. If diff utility is ever preferred over the privacy stance, trimming is a deliberate follow-up decision, not a cleanup.
+
 Redacts `summary` / `assignee` / `body` / `text` etc. Likely too broad — audit dumps lose useful diffs. Product call: trim the list or document why each entry stays.
 
 ### C7. Manual `PushClipRect` per grid cell (item 54) — ✅ shipped (branch `feat/grid-pushcliprect-audit`)
