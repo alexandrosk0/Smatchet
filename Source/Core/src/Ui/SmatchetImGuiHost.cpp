@@ -1070,7 +1070,8 @@ void SmatchetImGuiHost::DrainCommandQueue(std::size_t maxCount) {
 
             if (resultJson.empty()) {
                 smatchet::cmd::CommandContext ctx;
-                ctx.App = &ImplData->App;
+                ctx.ScenarioHost = &ImplData->App;
+                ctx.Threading = &ImplData->App;
                 ctx.Source = smatchet::cmd::CommandSource::Unreal;
                 ctx.ConfirmedDestructive = req.ConfirmedDestructive;
                 ctx.DryRun = req.DryRun;

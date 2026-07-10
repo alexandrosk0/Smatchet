@@ -492,8 +492,7 @@ void EmitErrorToStderr(const nlohmann::json& envelope) {
 /// all take an explicit branch, so the fallback never runs there).
 bool FillOsCsprng(unsigned char* buf, size_t n) {
 #if defined(_WIN32)
-    const NTSTATUS status =
-        BCryptGenRandom(nullptr, buf, static_cast<ULONG>(n), BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+    const NTSTATUS status = BCryptGenRandom(nullptr, buf, static_cast<ULONG>(n), BCRYPT_USE_SYSTEM_PREFERRED_RNG);
     return BCRYPT_SUCCESS(status);
 #elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
     arc4random_buf(buf, n);
@@ -1505,7 +1504,8 @@ int RunCmdInProcessImpl(int argc, char** argv) {
         }
 
         smatchet::cmd::CommandContext ctx;
-        ctx.App = boot.app.get();
+        ctx.ScenarioHost = boot.app.get();
+        ctx.Threading = boot.app.get();
         ctx.Source = smatchet::cmd::CommandSource::Cli;
         ctx.ConfirmedDestructive = pa.yes;
         ctx.DryRun = pa.dryRun;

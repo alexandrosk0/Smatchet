@@ -25,7 +25,8 @@
 // include nlohmann/json.hpp directly. See debt json-fwd-swap-by-value-carriers.
 #include <nlohmann/json_fwd.hpp>
 
-class AppController;
+class IAppScenarioHost;
+class IAppThreading;
 
 namespace smatchet {
 namespace cmd {
@@ -38,7 +39,7 @@ struct ParamSpec {
     bool Required = false;
     std::string Description;
     std::shared_ptr<nlohmann::json> Default; ///< null ptr when no default
-    std::vector<std::string> Enum; ///< empty unless the param is enum-restricted
+    std::vector<std::string> Enum;           ///< empty unless the param is enum-restricted
     /// Optional numeric bounds for Int/Number params (null ptr == unbounded). Enforced
     /// in ValidateAndResolveArgs after coercion; out-of-range yields ValidationError.
     std::shared_ptr<long long> MinInt;
@@ -68,9 +69,9 @@ const char* ErrorCodeString(ErrorCode c);
 
 struct CommandError {
     ErrorCode Code = ErrorCode::None;
-    std::string Message;                  ///< human-readable
-    std::string Hint;                     ///< actionable next step
-    std::vector<std::string> Suggestions; ///< e.g. fuzzy did-you-mean
+    std::string Message;                     ///< human-readable
+    std::string Hint;                        ///< actionable next step
+    std::vector<std::string> Suggestions;    ///< e.g. fuzzy did-you-mean
     std::shared_ptr<nlohmann::json> Details; ///< optional structured detail (null ptr when none)
 
     nlohmann::json ToJson() const;
@@ -146,7 +147,15 @@ inline bool RequiresExplicitConfirm(CommandSource source, bool destructive, bool
 }
 
 struct CommandContext {
-    AppController* App = nullptr;
+    /// Scenario drive path: the runner reads this facet when a scenario command
+    /// starts and passes it to the scenario lifecycle hooks. Writers that hold
+    /// the full app assign it to this field and to Threading below; contexts
+    /// built inside scenario hooks carry ScenarioHost only, because a hook
+    /// receives the host facet and never a concrete controller.
+    IAppScenarioHost* ScenarioHost = nullptr;
+    /// Worker-launch escape hatch for handlers that spawn a background task and
+    /// post results back to the UI thread (today: the whisper model download).
+    IAppThreading* Threading = nullptr;
     CommandSource Source = CommandSource::Internal;
     /// Set by `--yes` (CLI), `__confirm:true` (MCP/Unreal), or palette Shift+Enter.
     bool ConfirmedDestructive = false;

@@ -11,8 +11,8 @@
 
 #include "Commands/Scenarios/IScenario.h"
 
-#include "AppController.h"
-#include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+#include "Interfaces/IAppScenarioHost.h"
+#include <nlohmann/json.hpp> // the scenario headers expose only json_fwd; this TU uses nlohmann::json directly.
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 #include "UiPerfMonitor.h"
@@ -65,11 +65,10 @@ class CellEditBurstScenario : public IScenario {
         dispatchArgs["value"] = newValue;
 
         CommandContext ctx;
-        AppController& concrete = RequireConcreteController(app);
-        ctx.App = &concrete;
+        ctx.ScenarioHost = &app;
         ctx.Source = CommandSource::Internal;
 
-        const CommandResult res = concrete.Commands().Dispatch("debug.grid.edit-burst", dispatchArgs, ctx);
+        const CommandResult res = app.Commands().Dispatch("debug.grid.edit-burst", dispatchArgs, ctx);
         if (res.Error.Code != ErrorCode::None) {
             outErr = "debug.grid.edit-burst failed: " + res.Error.Message;
             return;

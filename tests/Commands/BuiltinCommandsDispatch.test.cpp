@@ -45,7 +45,8 @@ struct BuiltinsFixture {
 
     BuiltinsFixture() {
         smatchet::cmd::RegisterBuiltinCommands(Reg, App);
-        Ctx.App = &App;
+        Ctx.ScenarioHost = &App;
+        Ctx.Threading = &App;
         Ctx.Source = CommandSource::Cli; // automation source — destructive gate armed
     }
 };

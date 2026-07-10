@@ -136,7 +136,8 @@ void SmatchetToolbarUi::DispatchButton(AppController& app, TrackerConfig& cfg, c
         }
     }
     smatchet::cmd::CommandContext ctx;
-    ctx.App = &app;
+    ctx.ScenarioHost = &app;
+    ctx.Threading = &app;
     ctx.Source = smatchet::cmd::CommandSource::Internal;
     const smatchet::cmd::CommandResult r = app.Commands().Dispatch(b.CommandId, args, ctx);
     if (!r.Ok) {

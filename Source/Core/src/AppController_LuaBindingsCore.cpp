@@ -196,10 +196,12 @@ sol::table LuaCommandsInvokeGlue(sol::this_state L, const std::string& cmdName, 
     }
     nlohmann::json args = (argsTable) ? LuaToJson(argsTable.value()) : nlohmann::json::object();
     smatchet::cmd::CommandContext ctx;
-    // Behaviour-preservation: pre-lift this was `ctx.App = app;` where `app` was the
-    // AppController*. ILuaBindingHost::AppForCommandContext() returns the same pointer
-    // in production (FakeLuaBindingHost returns nullptr -- test handlers ignore App).
-    ctx.App = host->AppForCommandContext();
+    // Behaviour-preservation: the host hands back the same underlying app that the
+    // pre-lift glue stored, now upcast to the two narrow facets the command context
+    // carries. FakeLuaBindingHost returns null from both accessors -- test handlers
+    // ignore the facet fields, and null simply propagates into the context.
+    ctx.ScenarioHost = host->ScenarioHostForCommandContext();
+    ctx.Threading = host->ThreadingForCommandContext();
     ctx.Source = smatchet::cmd::CommandSource::Lua;
     // Security audit 2026-06-13 #3: Lua is a non-UI automation source. Confirmation
     // of a destructive command must be an EXPLICIT per-call signal from the script,

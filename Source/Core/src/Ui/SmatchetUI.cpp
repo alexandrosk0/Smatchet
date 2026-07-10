@@ -864,7 +864,8 @@ void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
             }
         }
         smatchet::cmd::CommandContext ctx;
-        ctx.App = &app;
+        ctx.ScenarioHost = &app;
+        ctx.Threading = &app;
         ctx.Source = smatchet::cmd::CommandSource::Internal;
         const smatchet::cmd::CommandResult r = app.Commands().Dispatch(pk.commandId, args, ctx);
         if (!r.Ok) {
