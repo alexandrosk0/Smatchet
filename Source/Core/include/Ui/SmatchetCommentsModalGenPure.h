@@ -3,7 +3,6 @@
 #include <string>
 
 /// Pure, unit-testable core of the comments-modal generation-token stale-guard (#1713).
-///
 /// Every comments fetch/post dispatch is tagged with a generation token so a slow post-back
 /// that lands after the modal moved on (re-opened, switched issue, or a newer re-fetch) is
 /// discarded instead of overwriting fresher results. The token MUST be genuinely monotonic
