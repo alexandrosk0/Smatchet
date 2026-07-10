@@ -2,7 +2,7 @@
 
 > **Slug**: `appcontroller-fan-in-phase6-dissolution`
 >
-> **Status**: `active` — audit-driven execution. Successor to `docs/plans/shipped/appcontroller-fan-in-phase5-facets.md` (8 facets, −10).
+> **Status**: `active` — audit-driven execution. Successor to `docs/plans/appcontroller-fan-in-phase5-facets.md` (8 facets, −10).
 
 <!-- index-summary: Phase 6 of the AppController fan-in reduction — a full audit of all 111 AppController.h includers classified every file into tiers; this plan executes the tiers in order (free include-drops, poster-upcast fixes, nested-type hoists, methods-only facets, mainThreadDispatcher de-publicizing, IScenario narrowing) down to the composition-root ceiling (~34 includers). -->
 
@@ -21,12 +21,12 @@ Phase 5 exhausted the *cleanly-migratable command-TU cluster* (−10). External 
 | T1b: vestigial TUs | 4 | delete include (fwd-decl if signatures name AppController&) | −4 |
 | T1c: poster-upcast-only command TUs | 2 | two-param registrar (`IMainThreadPoster&`); `SubmitBugReport(app,…)` pass-through is fwd-decl-safe | −2 |
 | T2: nested-type dependents | 7 | hoist `AppController::{AttachmentDescriptor, FieldEditResult, TrackerConnectivityState, *DeleteSummary/*RestoreSummary}` to rank-0 `Types/`; `Ui/SmatchetUiSession.h` is the transitive-spread kill | −7 |
-| T3: methods-only | 21 | existing + new narrow facets (URL, pane-focus, `Commands()` registry, MCP-activity, Lua-console) | −21 |
-| T4: `mainThreadDispatcher` reach-ins | 17 | route posts through `IMainThreadPoster::PostToMainThread`; queue-metric accessors for Perf | −17 |
+| T3: methods-only | 22 | existing + new narrow facets (URL, pane-focus, `Commands()` registry, MCP-activity, Lua-console, AI-assistant) — incl. `SmatchetAiAssistantUi.cpp`, initially misread as a composition root (comment-text false positive) | −22 |
+| T4: `mainThreadDispatcher` reach-ins | 18 | route posts through `IMainThreadPoster::PostToMainThread`; queue-metric accessors for Perf — incl. `SmatchetFieldIconRender.cpp` (`app.mainThreadDispatcher.PostToMainThread` in its texture workers), initially misread as a composition root | −18 |
 | T5: scenario TUs using app | 11 | narrow `IScenario`'s `AppController&` signature to a scenario-host facet | −11 |
 | T6: Pillar-1 inline-getter consumers | 15 | **blocked** on a non-virtual read-model design (revision-gated snapshot) — attempted last; documented terminal if unsafe | −15 (conditional) |
 
-Ceiling: 111 → **~34** (or ~19 if T6 lands).
+Ceiling: 12+4+1 terminal +15+4+2+7+22+18+11+15 tiers = **111** (reconciled — two comment-text false positives originally dropped from the counts are now in T3/T4). Ceiling: 111 → **~32** (or ~17 if T6 lands).
 
 ## Verification
 
