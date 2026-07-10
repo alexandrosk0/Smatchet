@@ -1,6 +1,6 @@
-# Re-triggering `@coderabbitai review` resets the adaptive rate-limit window, wedging the required CR-findings gate
+# The required CR-findings gate has no pass path when CodeRabbit never reviews (throttled, draft-skipped, or path-excluded)
 
-- 2026-07-10 · orchestrator (self-improvement campaign ship session) · [process] · P2 — high-volume campaigns exhaust CodeRabbit's per-developer adaptive limit, and manual re-triggers make it worse, blocking merge on the required `CR findings` status for hours
+- 2026-07-10 · orchestrator (self-improvement campaign ship session) · [process] · P2 — the required `CR findings` status pends forever when CR doesn't produce a review; high-volume campaigns exhaust the adaptive rate-limit (and re-triggers reset it), while docs/self-improvement-only PRs are path-excluded outright — both wedge merge
 
 ## Friction
 
@@ -24,6 +24,16 @@ Two behaviours compounded it, both verified this session:
 The required gate has no degrade path when the external reviewer is unavailable,
 so an upstream throttle translates directly into an unbounded merge block.
 
+**Stronger variant, observed on the PR logging this very entry (#1718):** CodeRabbit
+**path-excludes** `docs/self-improvement/**` (`!docs/self-improvement/**` in
+`.coderabbit.yaml`), so for a docs/self-improvement-only PR it posts "Review skipped
+due to path filters" and **never** produces a review. The `CR findings (0 actionable)`
+gate is then **structurally unsatisfiable** — no amount of waiting or re-triggering
+helps, because there is nothing for CR to review. Same class of failure (CR skips a
+draft too), and the fix is the same: the gate must treat "CR will not / cannot review
+this PR" (path-excluded, draft-skipped, throttled past a deadline) as **0 findings →
+pass**, not perpetual pending.
+
 ## Proposal
 
 1. **Agent behaviour (cheap, do first):** when the `CR findings` gate is pending
@@ -32,10 +42,14 @@ so an upstream throttle translates directly into an unbounded merge block.
    to the existing draft-PR note.
 2. **Pace campaigns:** stagger PR *readiness* (mark ready in small batches) so CR
    review volume stays under the adaptive limit instead of firing N reviews at once.
-3. **Gate design:** give the required `CR findings` check a staleness/timeout
-   escape — e.g. after N hours pending with zero findings from any other reviewer
-   (Bugbot/Copilot) it degrades to advisory — so an external throttle can't block
-   merge indefinitely. This is the load-bearing fix.
+3. **Gate design (load-bearing):** the required `CR findings` check must have a
+   pass path when CR does not produce a review. Two triggers: (a) an explicit
+   **"Review skipped due to path filters"** (or draft-skip) comment from CR on the
+   head SHA → treat as 0 findings → **pass immediately** (structural, not a wait);
+   (b) after N hours pending with zero findings from any other reviewer
+   (Bugbot/Copilot) → degrade to advisory. Without (a), any docs/self-improvement-only
+   PR — including the ones this very backlog process produces — can never merge
+   without an operator admin-merge.
 
 Est: (1) ~10 min doc; (2) ~15 min playbook; (3) ~1–2h (poller/gate change).
 This session resolved #1702 only via an operator-authorized admin merge past the
