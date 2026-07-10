@@ -29,6 +29,7 @@
 #include <doctest/doctest.h>
 
 #include <atomic>
+#include <cstdlib>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -101,8 +102,10 @@ class ThreadedProbeScenario : public IScenario {
 // (it binds the pointee to each lifecycle hook), and both tests below drive
 // hooks that ignore it. A live stub stays valid even if a future scenario edit
 // touches the reference. Keeps the rig header-light — the facet header is
-// AppController-free, and the empty registry satisfies the host's command
-// accessor without pulling the heavy app stack.
+// AppController-free, and the command accessors abort instead of owning a
+// registry: this rig deliberately does not link the command-system objects,
+// so an owned member would be an unresolved external, and no test here ever
+// dispatches a command.
 class NullScenarioHost : public IAppScenarioHost {
   public:
     GridLiveContext* EnsurePaneContextLive(const std::string&, const std::string&) override { return nullptr; }
@@ -115,11 +118,8 @@ class NullScenarioHost : public IAppScenarioHost {
     }
     void ScenarioUnregisterLuaCachedProvider(const std::string&) override {}
     void ScenarioInvalidateLuaFieldCache() override {}
-    smatchet::cmd::CommandRegistry& Commands() override { return registry_; }
-    const smatchet::cmd::CommandRegistry& Commands() const override { return registry_; }
-
-  private:
-    smatchet::cmd::CommandRegistry registry_;
+    smatchet::cmd::CommandRegistry& Commands() override { std::abort(); }
+    const smatchet::cmd::CommandRegistry& Commands() const override { std::abort(); }
 };
 
 } // namespace
