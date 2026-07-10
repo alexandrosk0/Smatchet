@@ -28,12 +28,21 @@
 #include <nlohmann/json_fwd.hpp>
 
 class AppController;
+class IAppScenarioHost; // narrow scenario-host facet of AppController — see Interfaces/IAppScenarioHost.h
 
 namespace smatchet {
 namespace cmd {
 
 struct CommandContext;
 struct CommandResult;
+
+/// Recover the concrete AppController inside a scenario hook. The runner only
+/// ever drives scenarios with the owning AppController — the sole
+/// IAppScenarioHost implementer — so the downcast is safe from any hook the
+/// runner invokes. Single seam for that invariant; scenarios that must wire
+/// CommandContext::App call this instead of casting locally. Defined in
+/// ScenarioRunner.cpp, the orchestrator TU that already holds the complete type.
+AppController& RequireConcreteController(IAppScenarioHost& app);
 
 /// Interface every scenario must implement.
 class IScenario {
@@ -44,23 +53,23 @@ class IScenario {
 
     /// Called once before the first Tick.
     /// @param outErr  Non-empty on failure; runner aborts without calling OnFrame/OnFinish.
-    virtual void OnStart(AppController& app, const nlohmann::json& args, std::string& outErr) = 0;
+    virtual void OnStart(IAppScenarioHost& app, const nlohmann::json& args, std::string& outErr) = 0;
 
     /// Called once per frame until IsDone returns true.
-    virtual void OnFrame(AppController& app, int frameIndex) = 0;
+    virtual void OnFrame(IAppScenarioHost& app, int frameIndex) = 0;
 
     /// Return true when the scenario has completed its work.
     virtual bool IsDone(int frameIndex) const = 0;
 
     /// Called after the final frame. Return the result payload (written to disk + returned to caller).
-    virtual nlohmann::json OnFinish(AppController& app) = 0;
+    virtual nlohmann::json OnFinish(IAppScenarioHost& app) = 0;
 
     /// Called by ScenarioRunner::Cancel when the user aborts the scenario mid-run. Default
     /// no-op. Scenarios that mutate persistent app state in OnStart (e.g. registering a
     /// transient Lua provider) must override this to unwind that state — Cancel does NOT
     /// invoke OnFinish, so cleanup needs its own hook. The runner passes the same
-    /// `AppController&` it stashed at Start time.
-    virtual void OnCancel(AppController& /*app*/) {}
+    /// scenario-host reference it stashed at Start time.
+    virtual void OnCancel(IAppScenarioHost& /*app*/) {}
 
     /// Optional: return the scroll-Y target the runner should propagate to the grid this
     /// frame. Return -1 (default) to leave the grid alone. Scenarios that drive scroll
@@ -96,7 +105,7 @@ class ScenarioRunner {
     CommandResult Start(const std::string& name, const nlohmann::json& args, const CommandContext& ctx);
 
     /// Called once per frame from SmatchetUI::Draw.
-    void Tick(AppController& app, bool& outScrollActiveOut, int& outScrollTargetOut);
+    void Tick(IAppScenarioHost& app, bool& outScrollActiveOut, int& outScrollTargetOut);
 
     void Cancel();
     bool Active() const { return active_ != nullptr; }
@@ -112,11 +121,11 @@ class ScenarioRunner {
     bool warmupResetDone_ = false;
     std::string outPath_;
     std::unordered_map<std::string, Factory> factories_;
-    /// Stashed AppController pointer captured at Start() time so Cancel() can drive the
+    /// Stashed scenario-host pointer captured at Start() time so Cancel() can drive the
     /// active scenario's OnCancel hook even though Cancel() takes no args. Cleared on
     /// scenario finish / cancel. Lifetime: AppController owns the runner, so the pointer is
     /// always valid while `active_` is set.
-    AppController* app_ = nullptr;
+    IAppScenarioHost* app_ = nullptr;
 };
 
 } // namespace cmd

@@ -19,7 +19,7 @@
 #include <memory>
 #include <string>
 
-class AppController;
+class IAppScenarioHost; // narrow scenario-host facet — see Interfaces/IAppScenarioHost.h
 
 namespace smatchet {
 namespace cmd {
@@ -31,8 +31,8 @@ class ScenarioRunner;
 using ProbeFrameFn = std::function<void(int frameIndex)>;
 
 /// Optional one-shot setup callback invoked from OnStart (before the first frame).
-/// Receives the live AppController so the probe can seed state.
-using ProbeSetupFn = std::function<void(AppController& app)>;
+/// Receives the live scenario host so the probe can seed state.
+using ProbeSetupFn = std::function<void(IAppScenarioHost& app)>;
 
 /// Build a ProbeScenario. `name` is the scenario name (Start() key). `onFrame`
 /// runs each frame for `frames` frames (clamped to >= 1). `setup` (may be null)

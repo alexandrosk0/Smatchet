@@ -11,7 +11,7 @@
 
 #include "Commands/Scenarios/IScenario.h"
 
-#include "AppController.h"
+#include "Interfaces/IAppScenarioHost.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "UiPerfMonitor.h"
 
@@ -25,7 +25,7 @@ class LuaRecorderFuzzScenario : public IScenario {
   public:
     std::string Name() const override { return "lua-recorder-fuzz"; }
 
-    void OnStart(AppController& app, const nlohmann::json& args, std::string& outErr) override {
+    void OnStart(IAppScenarioHost& app, const nlohmann::json& args, std::string& outErr) override {
         frames_ = args.value("frames", 600);
         pixPerFrame_ = args.value("pixPerFrame", 4);
         const std::string fieldId = args.value("field", std::string("summary"));
@@ -41,7 +41,7 @@ class LuaRecorderFuzzScenario : public IScenario {
         scrollY_ = 0;
     }
 
-    void OnFrame(AppController& app, int /*frameIndex*/) override {
+    void OnFrame(IAppScenarioHost& app, int /*frameIndex*/) override {
         scrollY_ += pixPerFrame_;
         // Drop every cell cache entry so the next paint re-records via the fuzz provider.
         // Without this the cache hit-rate becomes 100% after first paint and the recorder
@@ -53,14 +53,14 @@ class LuaRecorderFuzzScenario : public IScenario {
 
     int CurrentScrollY() const override { return scrollY_; }
 
-    void OnCancel(AppController& app) override {
+    void OnCancel(IAppScenarioHost& app) override {
         if (!boundField_.empty()) {
             app.ScenarioUnregisterLuaCachedProvider(boundField_);
             boundField_.clear();
         }
     }
 
-    nlohmann::json OnFinish(AppController& app) override {
+    nlohmann::json OnFinish(IAppScenarioHost& app) override {
         if (!boundField_.empty()) {
             app.ScenarioUnregisterLuaCachedProvider(boundField_);
             boundField_.clear();

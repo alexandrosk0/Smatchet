@@ -30,7 +30,7 @@ class CommandPaletteFuzzyScenario : public IScenario {
   public:
     std::string Name() const override { return "command-palette-fuzzy"; }
 
-    void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& outErr) override {
+    void OnStart(IAppScenarioHost& /*app*/, const nlohmann::json& args, std::string& outErr) override {
         // Shared prologue: warmup/captureSize parse + screenshotPath require/confine
         // (#1566 class). warmupMin=2 — the palette open request lands on frame 0 and
         // the modal renders the next frame, so at least two frames must pass before
@@ -59,14 +59,14 @@ class CommandPaletteFuzzyScenario : public IScenario {
         g_ui.requestCommandPaletteFilter = filter_;
     }
 
-    void OnFrame(AppController& /*app*/, int /*frameIndex*/) override {
+    void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override {
         // No per-frame mutation needed — the palette stays open until either
         // the user dismisses it or we tear down at scenario end.
     }
 
     bool IsDone(int frameIndex) const override { return frameIndex >= warmupFrames_; }
 
-    void OnCancel(AppController& /*app*/) override {
+    void OnCancel(IAppScenarioHost& /*app*/) override {
         // Clear any pending request that hadn't been consumed yet so a
         // cancelled scenario doesn't pop the palette mid-stream for the user.
         g_ui.requestCommandPaletteOpen = false;
@@ -74,7 +74,7 @@ class CommandPaletteFuzzyScenario : public IScenario {
         g_ui.cfg.BackendHasBeenReachable = savedBackendReachable_;
     }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         // Same capture-trigger pattern as DockGapSentinelScenario — the post-
         // swap handler in Source/Standalone/main.cpp will write the PPM
         // after the next SwapBuffers.

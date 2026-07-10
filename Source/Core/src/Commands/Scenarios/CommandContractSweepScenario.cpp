@@ -14,7 +14,8 @@
 
 #include "Commands/Scenarios/IScenario.h"
 
-// SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=IScenario passes AppController& and Commands() has no narrower interface yet; owner=command-system; revisit=2026-12-31)
+// SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=IScenario passes AppController& and Commands() has no narrower
+// interface yet; owner=command-system; revisit=2026-12-31)
 #include "AppController.h"
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
@@ -38,18 +39,18 @@ class CommandContractSweepScenario : public IScenario {
   public:
     std::string Name() const override { return "command-contract-sweep"; }
 
-    void OnStart(AppController& /*app*/, const nlohmann::json& /*args*/, std::string& /*outErr*/) override {}
+    void OnStart(IAppScenarioHost& /*app*/, const nlohmann::json& /*args*/, std::string& /*outErr*/) override {}
 
-    void OnFrame(AppController& app, int frameIndex) override {
+    void OnFrame(IAppScenarioHost& app, int frameIndex) override {
         if (frameIndex > 0) {
             return;
         }
-        RunSweep(app);
+        RunSweep(RequireConcreteController(app));
     }
 
     bool IsDone(int frameIndex) const override { return frameIndex >= 1; }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override { return summary_; }
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override { return summary_; }
 
   private:
     void AddViolation(const std::string& command, const std::string& probe, const std::string& expected,

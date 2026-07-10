@@ -228,7 +228,7 @@ class AiAssistantSendScenario : public IScenario {
 
     std::string Name() const override { return "ai-assistant-send-s2-s4-s5"; }
 
-    void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& /*outErr*/) override {
+    void OnStart(IAppScenarioHost& /*app*/, const nlohmann::json& args, std::string& /*outErr*/) override {
         frames_ = args.value("frames", 8);
         if (frames_ < 1)
             frames_ = 1;
@@ -243,15 +243,15 @@ class AiAssistantSendScenario : public IScenario {
         UiPerfMonitor::Instance().Reset();
     }
 
-    void OnFrame(AppController& /*app*/, int /*frameIndex*/) override {}
+    void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override {}
 
     bool IsDone(int frameIndex) const override {
         return frameIndex >= frames_ && done_.load(std::memory_order_acquire);
     }
 
-    void OnCancel(AppController& /*app*/) override { JoinWorker(); }
+    void OnCancel(IAppScenarioHost& /*app*/) override { JoinWorker(); }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         JoinWorker();
         nlohmann::json out;
         EmitSub(out, "s2_happy_path", s2_);

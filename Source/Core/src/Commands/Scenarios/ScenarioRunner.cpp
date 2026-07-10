@@ -1,5 +1,10 @@
 #include "Commands/Scenarios/IScenario.h"
 
+// clang-format off
+// SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=the runner is the single orchestrator that converts the concrete AppController arriving via CommandContext::App into the IAppScenarioHost facet the scenario lifecycle hooks take (fan-in Phase 6 T5); the AppController& -> IAppScenarioHost& derived-to-base conversion at OnStart/app_ stash needs the complete definition. ONE-TIME includer that replaces the N per-scenario TUs each dropping AppController.h as the facet lands — mirrors the BuiltinCommands.cpp dispatcher deviation; owner=orchestrator; revisit=when CommandContext carries a pre-upcast scenario-host pointer)
+#include "AppController.h"
+// clang-format on
+
 #include "Commands/Command.h"
 #include "Commands/PathConfinement.h"
 #include "ConfigManager.h"
@@ -25,6 +30,8 @@ namespace fs = ghc::filesystem;
 
 namespace smatchet {
 namespace cmd {
+
+AppController& RequireConcreteController(IAppScenarioHost& app) { return static_cast<AppController&>(app); }
 
 void ScenarioRunner::RegisterFactory(const std::string& name, Factory f) { factories_[name] = std::move(f); }
 
@@ -114,7 +121,7 @@ CommandResult ScenarioRunner::Start(const std::string& name, const nlohmann::jso
     return CommandResult::Success({{"running", true}, {"outPath", outPath_}});
 }
 
-void ScenarioRunner::Tick(AppController& app, bool& outScrollActive, int& outScrollTarget) {
+void ScenarioRunner::Tick(IAppScenarioHost& app, bool& outScrollActive, int& outScrollTarget) {
     outScrollActive = false;
     outScrollTarget = -1;
     if (!active_)

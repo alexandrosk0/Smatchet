@@ -85,7 +85,7 @@ class WhisperAiAssistantAutosendScenario : public IScenario {
   public:
     std::string Name() const override { return "whisper-ai-assistant-autosend"; }
 
-    void OnStart(AppController& app, const nlohmann::json& args, std::string& outErr) override {
+    void OnStart(IAppScenarioHost& app, const nlohmann::json& args, std::string& outErr) override {
         expectedText_ = args.value("text", std::string(kDefaultAutosendText));
         delayMs_ = (std::max)(0, args.value("delayMs", 50));
         frameLimit_ = (std::max)(120, args.value("frames", 360));
@@ -158,7 +158,7 @@ class WhisperAiAssistantAutosendScenario : public IScenario {
         (void)app;
     }
 
-    void OnFrame(AppController& app, int frameIndex) override {
+    void OnFrame(IAppScenarioHost& app, int frameIndex) override {
         // Always poll the transcribing flag — once we've seen it true, latch
         // for the cell-4 assertion regardless of subsequent toggles.
         if (g_dictationRouter.IsTranscribing()) {
@@ -177,11 +177,12 @@ class WhisperAiAssistantAutosendScenario : public IScenario {
         }
 
         if (state_ == State::Initial && frameIndex >= pressFrame_) {
+            AppController& concrete = RequireConcreteController(app);
             CommandContext ctx;
-            ctx.App = &app;
+            ctx.App = &concrete;
             ctx.Source = CommandSource::Internal;
             const CommandResult pressRes =
-                app.Commands().Dispatch("whisper.simulate-press", nlohmann::json::object(), ctx);
+                concrete.Commands().Dispatch("whisper.simulate-press", nlohmann::json::object(), ctx);
             if (pressRes.Error.Code != ErrorCode::None) {
                 LOG_WARN("WhisperAiAssistantAutosendScenario: simulate-press failed: %s",
                          pressRes.Error.Message.c_str());
@@ -192,11 +193,12 @@ class WhisperAiAssistantAutosendScenario : public IScenario {
             return;
         }
         if (state_ == State::WaitingForReleaseFrame && frameIndex >= releaseFrame_) {
+            AppController& concrete = RequireConcreteController(app);
             CommandContext ctx;
-            ctx.App = &app;
+            ctx.App = &concrete;
             ctx.Source = CommandSource::Internal;
             const CommandResult releaseRes =
-                app.Commands().Dispatch("whisper.simulate-release", nlohmann::json::object(), ctx);
+                concrete.Commands().Dispatch("whisper.simulate-release", nlohmann::json::object(), ctx);
             if (releaseRes.Error.Code != ErrorCode::None) {
                 LOG_WARN("WhisperAiAssistantAutosendScenario: simulate-release failed: %s",
                          releaseRes.Error.Message.c_str());
@@ -227,9 +229,9 @@ class WhisperAiAssistantAutosendScenario : public IScenario {
 
     bool IsDone(int frameIndex) const override { return state_ == State::Asserted || frameIndex >= frameLimit_; }
 
-    void OnCancel(AppController& /*app*/) override { Teardown(); }
+    void OnCancel(IAppScenarioHost& /*app*/) override { Teardown(); }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         Teardown();
         nlohmann::json out;
         out["scenario"] = Name();

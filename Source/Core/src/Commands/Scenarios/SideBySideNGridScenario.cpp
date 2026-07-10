@@ -16,8 +16,7 @@
 #include "Commands/Scenarios/IScenario.h"
 
 // clang-format off
-// SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=perf scenario drives AppController::EnsurePaneContextLive to spin a live GridLiveContext per pane — same unavoidable dependency as the grandfathered side-by-side-2-grid / concurrent-sync scenarios; no narrower interface exposes it; owner=perf-tooling; revisit=2026-12-31)
-#include "AppController.h"
+#include "Interfaces/IAppScenarioHost.h"
 // clang-format on
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "SmatchetUiSession.h"
@@ -51,7 +50,7 @@ class SideBySideNGridScenario : public IScenario {
   public:
     std::string Name() const override { return "side-by-side-grids"; }
 
-    void OnStart(AppController& app, const nlohmann::json& args, std::string& /*outErr*/) override {
+    void OnStart(IAppScenarioHost& app, const nlohmann::json& args, std::string& /*outErr*/) override {
         frames_ = (std::max)(1, args.value("frames", 600));
         paneTarget_ = (std::min)(kMaxPanes, (std::max)(kMinPanes, args.value("panes", 8)));
         addedPaneIds_.clear();
@@ -104,7 +103,7 @@ class SideBySideNGridScenario : public IScenario {
         UiPerfMonitor::Instance().Reset();
     }
 
-    void OnFrame(AppController& /*app*/, int /*frameIndex*/) override {
+    void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override {
         // Passive observer: track the worst per-frame UI scope across the run so a
         // one-frame spike from the N-grid draw is captured. GetLastFrameRows returns
         // the prior frame's totals (updated by UiPerfMonitor::BeginFrame).
@@ -120,9 +119,9 @@ class SideBySideNGridScenario : public IScenario {
 
     bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
 
-    void OnCancel(AppController& /*app*/) override { RemoveSyntheticPanes(); }
+    void OnCancel(IAppScenarioHost& /*app*/) override { RemoveSyntheticPanes(); }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         RemoveSyntheticPanes();
 
         const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);

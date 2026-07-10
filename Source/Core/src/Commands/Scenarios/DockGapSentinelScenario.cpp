@@ -41,7 +41,7 @@ class DockGapSentinelScenario : public IScenario {
   public:
     std::string Name() const override { return "dock-gap-sentinel"; }
 
-    void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& outErr) override {
+    void OnStart(IAppScenarioHost& /*app*/, const nlohmann::json& args, std::string& outErr) override {
         // Shared prologue: warmup/captureSize parse + screenshotPath require/confine
         // (the confine kills the #1566 arbitrary-file-write class for this
         // MCP/Lua-reachable scenario) + window-resize request. A reject returns
@@ -54,7 +54,7 @@ class DockGapSentinelScenario : public IScenario {
         ArmPinkClear();
     }
 
-    void OnFrame(AppController& /*app*/, int /*frameIndex*/) override {
+    void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override {
         // The dock is already in its steady-state layout by the time
         // SmatchetUI::Draw runs; warm-up frames give the docking builder time to
         // settle from a cold-spawn state. Re-arm the transient pink clear-color
@@ -67,7 +67,7 @@ class DockGapSentinelScenario : public IScenario {
 
     bool IsDone(int frameIndex) const override { return frameIndex >= warmupFrames_; }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         // Trigger the screenshot AFTER the warm-up frames have rendered.
         // Source/Standalone/main.cpp's post-swap handler will consume the
         // request and write the PPM. On DX12 the request flag has no
