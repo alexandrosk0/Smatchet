@@ -140,8 +140,10 @@ cat > "$TMP/plan-5.md" <<'EOF'
 | `CORE_SOURCES` | (list-add) |
 EOF
 out=$(run_probe "$TMP/plan-5.md")
-# CORE_SOURCES exists in CMakeLists.txt — should resolve.
-if grep -q "CORE_SOURCES" "$REPO_ROOT/CMakeLists.txt"; then
+# CORE_SOURCES exists in the tracked CMake build files (defined in
+# Source/Core/CMakeLists.txt since the per-component split; the probe greps
+# every tracked *CMakeLists.txt + cmake/*.cmake) — should resolve.
+if git -C "$REPO_ROOT" grep -q "CORE_SOURCES" -- '*CMakeLists.txt' 'cmake/*.cmake' 2>/dev/null; then
     assert_exit "5. CMake variable CORE_SOURCES -> exit 0" 0 "$out"
 else
     echo "SKIP: 5. CORE_SOURCES not in CMakeLists.txt (repo changed); skipping"
