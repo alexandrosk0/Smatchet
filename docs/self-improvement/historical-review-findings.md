@@ -11,6 +11,48 @@
 > auto-fixed. User-visible product defects should be elevated to GitHub Issues
 > (ADR-0014); the rest is tech-debt. Newest batch on top.
 
+## Reconcile / re-verification pass (2026-07-10)
+
+Ran `historical-review-ledger-reconcile.sh --reconcile` (0/11 flagged by the
+coarse probes) **then manually re-verified every one of the 11 STILL-OPEN
+findings from the 2026-06-20 pass against `origin/develop` by reading the cited
+code at HEAD** — because the automated probes are conservative (they never
+flagged the 4 below, yet all 4 are genuinely resolved). **Of 11: 4 now DONE, 7
+still open.**
+
+**Newly resolved since 2026-06-20 (drop from the open list):**
+- **#1138 / #1158 / #1049** (the 3 user-visible defects elevated to GitHub
+  Issues) — **Issues #1457 / #1458 / #1459 are all CLOSED (COMPLETED)**. The
+  `gridContexts_` map race, the `pane.new` un-credentialed duplicate-spawn, and
+  the annotate day→CL re-fire UI freeze are fixed on develop.
+- **#919** (HIGH) `merge_watcher.bats` — **DONE**. The broken `case "$2 $3"`
+  bash-stub `handle_pass` tests were rewritten to Python monkeypatch
+  (`squash_merge_pr` → `ENQUEUED_SENTINEL`); the enqueue + immediate-merge
+  queue-safety paths now genuinely run (was Windows-unresolvable/skipped).
+
+**STILL OPEN (NOT DONE) — re-verified alive at develop 2026-07-10** (all HIGH,
+internal gate/test/doc debt; no product defect → backlog, not Issues):
+- **#1116** `scripts/dev/pre-ship.sh:~292` — strict-zone detection uses bare
+  `command -v python3` (not the `resolve_python` resolver in
+  `agents/scripts/project/lint-rules.d/00-common.sh`) and swallows failure via
+  `|| true`, so the Windows `python3` App-Execution-Alias stub (exit-49) leaves
+  `$review_strict_zones` empty → a strict-zone diff N/A-passes the review gate.
+- **#789** `scripts/dev/pre-ship.sh:~227,~239` — `comment_audit.py` + `md_lint.py`
+  still invoked via bare `python3`, ignoring the repo python resolver.
+- **#329** `test-perf-marker-inventory.sh:~30` — leak gate greps the committed
+  `docs/perf/MARKER_INVENTORY.md`; the `--check` regen output is echoed but never
+  compared, so un-regenerated drift is invisible.
+- **#80** `test-theme-syntax-colors.sh:~57` — fails only on `FAILED > 0`; a run
+  with zero total assertions (vanished suite) exits 0 (green).
+- **#77** `test-ui-views-columns-reorder.sh:~63` — no zero-test guard (PASSED=0,
+  FAILED=0 passes) **and** a dead `extract()` helper (:~27) never invoked.
+- **#784** `agents/scripts/core/postmortem-owed.sh:~221` — `has_entry` dedup regex
+  `[,[:space:]]#$1([^0-9]|$)` splits commas/space but not `/` → slash-joined PR
+  trailers (`#906/#907/#908`) re-flag every SessionStart.
+- **#807** `README.md:~70,~104` — references `scripts/dev/build_and_run.ps1` (the
+  script now lives at `scripts/dev/local/build_and_run.ps1`) + overstates
+  auto-vcvars bootstrap (`with-msvc.ps1` not invoked by the main path).
+
 ## Verification pass (2026-06-20)
 
 Fresh **live-tree re-verification** of every CRITICAL + HIGH finding (plus the
@@ -35,6 +77,8 @@ defects were elevated to GitHub Issues per ADR-0014.
   context captured by pointer), #524 (full-body actionable-count parse).
 
 **STILL OPEN (NOT DONE) — re-verified alive at develop 2026-06-20:**
+_(⚠ SUPERSEDED by the 2026-07-10 reconcile pass above: #1138/#1158/#1049 and
+#919 are now DONE; the live open list is the 7 findings in that newer section.)_
 
 _Product / user-visible → filed as GitHub Issues (ADR-0014):_
 - **#1138** (HIGH) `AppController_CatalogAndFieldEdit.cpp:2052` — `gridContexts_`
