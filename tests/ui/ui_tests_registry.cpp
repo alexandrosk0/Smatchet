@@ -39,6 +39,7 @@ extern "C" void SmatchetRegisterDurationInlineEditCommitTests(ImGuiTestEngine* e
 extern "C" void SmatchetRegisterMobileViewsConfirmModalTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterKeybindingsEditorRebindTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterCommandPaletteInlineTypingTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterCommandPaletteDeferredDispatchTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterOmnibarSearchApplyTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterOfflineConflictModalPanesTests(ImGuiTestEngine* engine);
 #if defined(SMATCHET_WITH_AI)
@@ -89,6 +90,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterMobileViewsConfirmModalTests(engine);
     SmatchetRegisterKeybindingsEditorRebindTests(engine);
     SmatchetRegisterCommandPaletteInlineTypingTests(engine);
+    SmatchetRegisterCommandPaletteDeferredDispatchTests(engine);
     SmatchetRegisterOmnibarSearchApplyTests(engine);
     SmatchetRegisterOfflineConflictModalPanesTests(engine);
 #if defined(SMATCHET_WITH_AI)
