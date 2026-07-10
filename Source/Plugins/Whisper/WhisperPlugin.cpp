@@ -333,11 +333,11 @@ smatchet::cmd::Command BuildDownloadModelCommand() {
         if (destDir.empty()) {
             return CommandResult::Failure(ErrorCode::HandlerError, "platform shared user-data directory unavailable");
         }
-        if (ctx.App == nullptr) {
+        if (ctx.Threading == nullptr) {
             return CommandResult::Failure(ErrorCode::HandlerError, "AppController unavailable");
         }
         std::string err;
-        if (!PluginOwnedDownloader().Start(*ctx.App, modelId, destDir, err)) {
+        if (!PluginOwnedDownloader().Start(*ctx.Threading, modelId, destDir, err)) {
             return CommandResult::Failure(ErrorCode::HandlerError, err);
         }
         nlohmann::json out;

@@ -21,6 +21,7 @@
 #include "Interfaces/IAppScenarioHost.h"
 
 #include "Commands/Command.h"
+#include "Commands/CommandRegistry.h"
 #include "ConfigManager.h"
 
 #include <nlohmann/json.hpp>
@@ -28,6 +29,7 @@
 #include <doctest/doctest.h>
 
 #include <atomic>
+#include <cstdlib>
 #include <chrono>
 #include <memory>
 #include <string>
@@ -96,18 +98,14 @@ class ThreadedProbeScenario : public IScenario {
     std::thread worker_;
 };
 
-// ScenarioRunner::Start requires a non-null ctx.App: it binds *ctx.App to the
-// scenario's OnStart(IAppScenarioHost&). ThreadedProbeScenario ignores that
-// reference, so a placeholder pointer is never dereferenced — this keeps the
-// test in the header-light Core rig (a real AppController lives only in the
-// heavy tests/ui binary). Address of a live stack object, so the pointer is a
-// valid, non-null address that is simply never read through.
-AppController* PlaceholderApp(int& anchor) { return reinterpret_cast<AppController*>(&anchor); }
-
-// Real no-op host for the direct-OnStart test below: the hook takes
-// IAppScenarioHost&, and a live stub (unlike the placeholder-pointer trick)
-// stays valid even if a future scenario edit touches the reference. Keeps the
-// rig header-light — the facet header is AppController-free.
+// Real no-op host: the runner requires a non-null scenario host on the context
+// (it binds the pointee to each lifecycle hook), and both tests below drive
+// hooks that ignore it. A live stub stays valid even if a future scenario edit
+// touches the reference. Keeps the rig header-light — the facet header is
+// AppController-free, and the command accessors abort instead of owning a
+// registry: this rig deliberately does not link the command-system objects,
+// so an owned member would be an unresolved external, and no test here ever
+// dispatches a command.
 class NullScenarioHost : public IAppScenarioHost {
   public:
     GridLiveContext* EnsurePaneContextLive(const std::string&, const std::string&) override { return nullptr; }
@@ -120,6 +118,8 @@ class NullScenarioHost : public IAppScenarioHost {
     }
     void ScenarioUnregisterLuaCachedProvider(const std::string&) override {}
     void ScenarioInvalidateLuaFieldCache() override {}
+    smatchet::cmd::CommandRegistry& Commands() override { std::abort(); }
+    const smatchet::cmd::CommandRegistry& Commands() const override { std::abort(); }
 };
 
 } // namespace
@@ -135,9 +135,9 @@ TEST_CASE("ScenarioRunner::Start tears the outgoing scenario down (OnCancel + jo
         return std::unique_ptr<IScenario>(std::make_unique<ThreadedProbeScenario>(nextProbe));
     });
 
-    int appAnchor = 0;
+    NullScenarioHost host;
     CommandContext ctx;
-    ctx.App = PlaceholderApp(appAnchor);
+    ctx.ScenarioHost = &host;
 
     auto probeA = std::make_shared<ReplaceProbe>();
     auto probeB = std::make_shared<ReplaceProbe>();

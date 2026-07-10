@@ -23,8 +23,8 @@
 
 #include "Commands/Scenarios/IScenario.h"
 
-#include "AppController.h"
-#include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+#include "Interfaces/IAppScenarioHost.h"
+#include <nlohmann/json.hpp> // the scenario headers expose only json_fwd; this TU uses nlohmann::json directly.
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 #include "DictationInsertionRouter.h"
@@ -98,14 +98,13 @@ class WhisperDictationScenario : public IScenario {
     void OnFrame(IAppScenarioHost& app, int frameIndex) override {
         if (state_ == State::Initial && frameIndex >= pressFrame_) {
             // clang-format off
-            // SMATCHET_DEVIATION(rule=duplication; reason=the simulate-press/simulate-release dispatch shell is a deliberate grandfathered twin of WhisperAiAssistantAutosendScenario's press/release frames — same command pair driven at different assert points; retyping the lifecycle hook to the scenario-host facet with a per-branch concrete recovery re-hashed the clone windows — not a real copy-paste; owner=orchestrator; revisit=when the two whisper scenarios share a dispatch helper)
+            // SMATCHET_DEVIATION(rule=duplication; reason=the simulate-press/simulate-release dispatch shell is a deliberate grandfathered twin of WhisperAiAssistantAutosendScenario's press/release frames — same command pair driven at different assert points, dispatched straight through the scenario-host facet the hook receives — not a real copy-paste; owner=orchestrator; revisit=when the two whisper scenarios share a dispatch helper)
             // clang-format on
-            AppController& concrete = RequireConcreteController(app);
             CommandContext ctx;
-            ctx.App = &concrete;
+            ctx.ScenarioHost = &app;
             ctx.Source = CommandSource::Internal;
             const CommandResult pressRes =
-                concrete.Commands().Dispatch("whisper.simulate-press", nlohmann::json::object(), ctx);
+                app.Commands().Dispatch("whisper.simulate-press", nlohmann::json::object(), ctx);
             if (pressRes.Error.Code != ErrorCode::None) {
                 LOG_WARN("WhisperDictationScenario: simulate-press dispatch failed: %s",
                          pressRes.Error.Message.c_str());
@@ -117,14 +116,13 @@ class WhisperDictationScenario : public IScenario {
         }
         if (state_ == State::WaitingForReleaseFrame && frameIndex >= releaseFrame_) {
             // clang-format off
-            // SMATCHET_DEVIATION(rule=duplication; reason=the simulate-press/simulate-release dispatch shell is a deliberate grandfathered twin of WhisperAiAssistantAutosendScenario's press/release frames — same command pair driven at different assert points; retyping the lifecycle hook to the scenario-host facet with a per-branch concrete recovery re-hashed the clone windows — not a real copy-paste; owner=orchestrator; revisit=when the two whisper scenarios share a dispatch helper)
+            // SMATCHET_DEVIATION(rule=duplication; reason=the simulate-press/simulate-release dispatch shell is a deliberate grandfathered twin of WhisperAiAssistantAutosendScenario's press/release frames — same command pair driven at different assert points, dispatched straight through the scenario-host facet the hook receives — not a real copy-paste; owner=orchestrator; revisit=when the two whisper scenarios share a dispatch helper)
             // clang-format on
-            AppController& concrete = RequireConcreteController(app);
             CommandContext ctx;
-            ctx.App = &concrete;
+            ctx.ScenarioHost = &app;
             ctx.Source = CommandSource::Internal;
             const CommandResult releaseRes =
-                concrete.Commands().Dispatch("whisper.simulate-release", nlohmann::json::object(), ctx);
+                app.Commands().Dispatch("whisper.simulate-release", nlohmann::json::object(), ctx);
             if (releaseRes.Error.Code != ErrorCode::None) {
                 LOG_WARN("WhisperDictationScenario: simulate-release dispatch failed: %s",
                          releaseRes.Error.Message.c_str());

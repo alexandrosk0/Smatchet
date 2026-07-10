@@ -33,8 +33,8 @@
 
 #include "Commands/Scenarios/IScenario.h"
 
-#include "AppController.h"
-#include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+#include "Interfaces/IAppScenarioHost.h"
+#include <nlohmann/json.hpp> // the scenario headers expose only json_fwd; this TU uses nlohmann::json directly.
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 #include "ConfigManager.h"
@@ -177,12 +177,11 @@ class WhisperAiAssistantAutosendScenario : public IScenario {
         }
 
         if (state_ == State::Initial && frameIndex >= pressFrame_) {
-            AppController& concrete = RequireConcreteController(app);
             CommandContext ctx;
-            ctx.App = &concrete;
+            ctx.ScenarioHost = &app;
             ctx.Source = CommandSource::Internal;
             const CommandResult pressRes =
-                concrete.Commands().Dispatch("whisper.simulate-press", nlohmann::json::object(), ctx);
+                app.Commands().Dispatch("whisper.simulate-press", nlohmann::json::object(), ctx);
             if (pressRes.Error.Code != ErrorCode::None) {
                 LOG_WARN("WhisperAiAssistantAutosendScenario: simulate-press failed: %s",
                          pressRes.Error.Message.c_str());
@@ -193,12 +192,11 @@ class WhisperAiAssistantAutosendScenario : public IScenario {
             return;
         }
         if (state_ == State::WaitingForReleaseFrame && frameIndex >= releaseFrame_) {
-            AppController& concrete = RequireConcreteController(app);
             CommandContext ctx;
-            ctx.App = &concrete;
+            ctx.ScenarioHost = &app;
             ctx.Source = CommandSource::Internal;
             const CommandResult releaseRes =
-                concrete.Commands().Dispatch("whisper.simulate-release", nlohmann::json::object(), ctx);
+                app.Commands().Dispatch("whisper.simulate-release", nlohmann::json::object(), ctx);
             if (releaseRes.Error.Code != ErrorCode::None) {
                 LOG_WARN("WhisperAiAssistantAutosendScenario: simulate-release failed: %s",
                          releaseRes.Error.Message.c_str());

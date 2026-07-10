@@ -765,7 +765,11 @@ bool AppController::Impl::SubmitFieldEdit(const std::string& issueId, const Trac
     return app_.SubmitFieldEdit(issueId, field, rawValues, outError);
 }
 smatchet::cmd::CommandRegistry& AppController::Impl::LuaCommands() { return app_.Commands(); }
-AppController* AppController::Impl::AppForCommandContext() { return &app_; }
+// Facet accessors for the invoke glue's command context. The upcasts happen
+// here, where the concrete app type is complete; the glue TU sees only the
+// forward-declared facets.
+IAppScenarioHost* AppController::Impl::ScenarioHostForCommandContext() { return &app_; }
+IAppThreading* AppController::Impl::ThreadingForCommandContext() { return &app_; }
 
 std::tuple<sol::object, std::string> AppController::Impl::LuaGetTicketBind(sol::state_view sv,
                                                                            const std::string& issueId) {

@@ -30,6 +30,12 @@
 namespace smatchet {
 namespace cmd {
 
+// Downcast seam declared in IScenario.h. It moved here from the runner TU when
+// the command context stopped carrying the concrete controller: this ui-test
+// scenario is the sole remaining caller and already includes AppController.h
+// for the active-app seam its bucket-E test functions read back.
+AppController& RequireConcreteController(IAppScenarioHost& app) { return static_cast<AppController&>(app); }
+
 namespace {
 
 #if defined(SMATCHET_BUILD_UI_TESTS)

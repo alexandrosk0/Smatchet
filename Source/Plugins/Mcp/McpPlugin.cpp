@@ -578,7 +578,8 @@ bool McpPlugin::RestToolsCallWithinRateLimit(const std::string& name, const std:
 void McpPlugin::DispatchRegistryToolsCall(const std::string& name, const nlohmann::json& arguments,
                                           const std::string& remote, httplib::Response& res) {
     smatchet::cmd::CommandContext cctx;
-    cctx.App = impl_->app;
+    cctx.ScenarioHost = impl_->app;
+    cctx.Threading = impl_->app;
     cctx.Source = smatchet::cmd::CommandSource::Mcp;
     cctx.ConfirmedDestructive = arguments.value("__confirm", false);
     cctx.DryRun = arguments.value("__dry_run", false);
@@ -599,7 +600,8 @@ void McpPlugin::DispatchRegistryToolsCall(const std::string& name, const nlohman
 void McpPlugin::EmitUnknownToolsCallEnvelope(const std::string& name, const nlohmann::json& arguments,
                                              const std::string& remote, httplib::Response& res) {
     smatchet::cmd::CommandContext cctx;
-    cctx.App = impl_->app;
+    cctx.ScenarioHost = impl_->app;
+    cctx.Threading = impl_->app;
     cctx.Source = smatchet::cmd::CommandSource::Mcp;
     smatchet::cmd::CommandResult cr = impl_->app->Commands().Dispatch(name, arguments, cctx);
     const nlohmann::json envelope = cr.ToWireJson(name, false);
@@ -701,7 +703,8 @@ void McpPlugin::HandleToolsCall(const httplib::Request& req, httplib::Response& 
         // No Lua: unknown name → structured unknown-command from registry.
         {
             smatchet::cmd::CommandContext cctx;
-            cctx.App = impl_->app;
+            cctx.ScenarioHost = impl_->app;
+            cctx.Threading = impl_->app;
             cctx.Source = smatchet::cmd::CommandSource::Mcp;
             smatchet::cmd::CommandResult cr = impl_->app->Commands().Dispatch(name, arguments, cctx);
             const nlohmann::json envelope = cr.ToWireJson(name, false);
@@ -814,7 +817,8 @@ void McpPlugin::HandleJsonRpcRegistryCall(const std::string& name, const nlohman
                                           const std::string& rpcRemote, nlohmann::json& jres) {
     const nlohmann::json args = params.value("arguments", nlohmann::json::object());
     smatchet::cmd::CommandContext cctx;
-    cctx.App = impl_->app;
+    cctx.ScenarioHost = impl_->app;
+    cctx.Threading = impl_->app;
     cctx.Source = smatchet::cmd::CommandSource::Mcp;
     cctx.ConfirmedDestructive = args.value("__confirm", false);
     cctx.DryRun = args.value("__dry_run", false);

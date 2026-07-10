@@ -164,7 +164,8 @@ void CommandPaletteUi::drainPendingDispatch(AppController& app) {
     }
     hasPendingDispatch_ = false;
     CommandContext ctx;
-    ctx.App = &app;
+    ctx.ScenarioHost = &app;
+    ctx.Threading = &app;
     ctx.Source = CommandSource::Palette;
     ctx.ConfirmedDestructive = pendingDispatchDestructive_;
     const nlohmann::json args = pendingDispatchArgs_ ? *pendingDispatchArgs_ : nlohmann::json::object();
