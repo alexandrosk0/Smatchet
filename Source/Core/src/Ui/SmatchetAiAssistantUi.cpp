@@ -1456,6 +1456,11 @@ void ApplyAssistantDocking(UiDrawSession& d, bool& needsReDock) {
 
 } // namespace
 
+// Externally-linked wrapper over the TU-internal ClearAiRenderCaches() (anonymous
+// namespace) so callers that swap `assistantHistory` wholesale — e.g. a scenario
+// restoring saved history — can invalidate the index-keyed render caches.
+void SmatchetClearAiRenderCaches() { ClearAiRenderCaches(); }
+
 void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const ViewDefinition* activeView,
                                   bool embedded) {
     HydrateFromConfigOnce(app, d);

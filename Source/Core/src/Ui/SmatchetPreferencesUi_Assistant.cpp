@@ -474,6 +474,7 @@ void RenderModelPicker(UiDrawSession& d, const char* comboLabel, const char* fre
         // Test connection / Save use the model the user sees.
         std::snprintf(modelBuf, modelBufCap, "%s", catalog[0].Id.c_str());
         cfgField = modelBuf;
+        ClearStaleTestResult(d); // seeding the implied default is a model change like the other branches
         selectedIdx = 0;
     }
     int comboIdx = (selectedIdx >= 0) ? selectedIdx : 0;

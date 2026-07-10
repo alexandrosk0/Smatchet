@@ -19,12 +19,16 @@
 // neither registers nor compiles the scenario.
 
 #if defined(SMATCHET_WITH_AI)
+// clang-format off
+// SMATCHET_DEVIATION(rule=duplication; reason=file-top scaffold clone (AI gate + shared include block) across scenario TUs; owner=command-system; revisit=2026-12-31)
+// clang-format on
 
 #include "Commands/Scenarios/IScenario.h"
 
 #include "AiTypes.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "SmatchetUiSession.h"
+#include "SmatchetAiAssistantUi.h" // SmatchetClearAiRenderCaches — invalidate index-keyed render caches on history restore
 #include "UiPerfMonitor.h"
 
 #include <algorithm>
@@ -204,6 +208,10 @@ class AiChatHistoryRenderScenario : public IScenario {
         g_ui.assistantHistoryHydrated = savedHydrated_;
         g_ui.assistantPanelOpen = savedPanelOpen_;
         g_ui.assistantScrollToMessageIndex = savedScrollIdx_;
+        // Invalidate the index-keyed render caches: the panel's body-hash cache only
+        // resets on a size change, so if the restored history length equals the seeded
+        // count the stale per-index hashes would be reused against the real bodies.
+        SmatchetClearAiRenderCaches();
     }
 
     int frames_ = 300;

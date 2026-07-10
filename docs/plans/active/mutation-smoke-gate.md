@@ -82,11 +82,17 @@ Phase 1 (this PR), all run locally in-container:
 
 ## Deviations from plan
 
-- None yet.
+- The bats suite `tests/bats/mutation_smoke.bats` shipped without a `test-*.sh`
+  wrapper naming its path, so the orphan-bats gate (`test-orphan-bats.sh`) failed
+  on develop and the suite never ran in agentic-selftests. Fixed by adding
+  `scripts/dev/test-mutation-smoke-bats.sh` (canonical bats wrapper); the corpus/
+  harness mirror `test-mutation-smoke.sh` validates the script itself and does not
+  count as a suite wrapper.
 
 ## Verification (actual)
 
 - Phase 1: shellcheck clean; corpus valid JSON; `--dry-run` green with tree clean afterward (see § Verification).
+- Bats wrapper: `test-mutation-smoke-bats.sh` runs `mutation_smoke.bats` 9/9 green; `test-orphan-bats.sh` PASS (all 63 suites wrapped); shellcheck clean.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 
