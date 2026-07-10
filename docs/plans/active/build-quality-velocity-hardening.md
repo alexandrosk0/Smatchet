@@ -65,7 +65,7 @@ Root multiplier A — the `json.hpp` / sol2 / `AppController` header choke:
 
 - ~~**[#2]** `json_fwd` swap of the 3 named headers~~ — **NO-GO in isolation** (round-2): relieves only 4 of 298 json-pulling TUs because `Commands/Command.h` (201 TUs) + `AppController.h` (185 TUs, `parametersSchema`) hold `nlohmann::json` **by value** → can't forward. Unblock via #19 first.
 - **[#19]** pImpl `AppController` (8,022 LOC across `AppController*.cpp`; 105 direct / ~114 transitive includers; lifts sol2's 22k-line header out of the public graph) — also the prerequisite for any `json_fwd` payoff.
-- **[#20/#28]** PCH json: Standalone = NO-GO ("net wash" confirmed at `SmatchetPch.h:17-21`); **Core_DX12 json-PCH = GO for a one-shot trial** — PCH-less today (`CMakeLists.txt:1526` is Standalone-only) yet 64% of its 225 TUs pull json, never measured. ghc-in-PCH = NO-GO (6-7% reach). Tests get a `REUSE_FROM` PCH.
+- **[#20/#28]** PCH json: Standalone = NO-GO ("net wash" confirmed at `SmatchetPch.h:17-21`); **Core_DX12 json-PCH = GO for a one-shot trial** — PCH-less today (the `SMATCHET_USE_PCH` block in `Source/Standalone/CMakeLists.txt` is Standalone-only) yet 64% of its 225 TUs pull json, never measured. ghc-in-PCH = NO-GO (6-7% reach). Tests get a `REUSE_FROM` PCH.
 
 Root multiplier B — missing automated safety nets:
 

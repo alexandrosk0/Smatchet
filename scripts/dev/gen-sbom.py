@@ -135,7 +135,8 @@ def supplemental_deps():
             "source_file": "CMakeLists.txt",
         },
         {
-            # CMakeLists.txt ~L1289/1911: vendored Font Awesome 6 icon-name header
+            # Source/Core/CMakeLists.txt (include dirs) + Source/Standalone/CMakeLists.txt
+            # (TTF copy): vendored Font Awesome 6 icon-name header
             # (zlib) + optional Solid TTF (SIL OFL 1.1). Font asset — carried for
             # SBOM completeness; not a code-execution CVE surface.
             "name": "fontawesome",
@@ -144,7 +145,7 @@ def supplemental_deps():
             "owner": "FortAwesome",
             "repo": "Font-Awesome",
             "commit": None,
-            "source_file": "CMakeLists.txt",
+            "source_file": "Source/Core/CMakeLists.txt",
         },
     ]
 

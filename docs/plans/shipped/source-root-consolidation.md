@@ -165,7 +165,7 @@ Per `AGENTS.md` § Verification automation. Reconfigure first — CMake explicit
 ## Out of scope (flagged, not designed)
 
 - **Moving `tests/` under `Source/`** — explicitly excluded; revisit only if the tooling that keys off `tests/` (coverage-delta, CI filters, git-janitor whitelist) is migrated in the same pass. (Note: the `tests/Source_Core/` → `tests/Core/` mirror rename **is in scope** per grill decision — only the `tests/` *root* stays put.)
-- **Per-component `CMakeLists.txt` split** (true `add_subdirectory` per component instead of the root GLOB) — larger architectural change; not required for the consolidation.
+- **Per-component `CMakeLists.txt` split** (true `add_subdirectory` per component instead of the root GLOB) — larger architectural change; not required for the consolidation. *(Since shipped separately — 2026-07: per-component `CMakeLists.txt` files under `Source/*`, pulled in from the root via `include()` rather than `add_subdirectory()` so every target/variable/source-property stays in root directory scope for byte-identical build output.)*
 - **Rewriting bare includes to path-qualified (`#include "Tracker/JiraClient.h"`)** — include-hygiene improvement deferred; this plan keeps the flat include namespace.
 
 ## Implementation log
