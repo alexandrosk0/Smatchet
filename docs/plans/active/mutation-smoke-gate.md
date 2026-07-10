@@ -2,7 +2,7 @@
 
 > **Slug**: `mutation-smoke-gate` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — **Phase 1 shipped in this PR** (harness + seed corpus, dry-run-validated). Phases 2–4 (CI wiring, corpus expansion, blocking graduation) are **gated on the § Decisions for review below** — this is a `plan-doc-required` slice per [`testing-surface-roadmap.md`](testing-surface-roadmap.md) § "Which slices need a detailed plan before code", so no CI lane is wired until the policy decisions are made.
+> **Status**: `active` — **Phases 1 + 2 shipped in this PR.** Phase 1 = harness + seed corpus (dry-run-validated). Phase 2 = advisory nightly wiring + bats + local mirror, per the owner's decisions (2026-07-10): **advisory nightly → graduate to blocking after clean runs**, **10-mutant seed @ 80% floor** to start. Phase 3 (corpus expansion to the full 17-TU set) and Phase 4 (blocking graduation) remain future work — the gate is `continue-on-error` until then, so it can never block a nightly.
 >
 > **Roadmap**: [`testing-surface-roadmap.md`](testing-surface-roadmap.md) Slice **F** (Gap 4, "Mutation-smoke / coverage-delta gate"). **Precursor**: [`MUTATION_PILOT.md`](../../../MUTATION_PILOT.md) (2026-07-05). **Originating backlog**: `docs/self-improvement/categories/tooling/2026-07-05-mutation-harness-slice-f.md`.
 
@@ -29,9 +29,9 @@ The floor is a **kill-rate over the `killed` set** (assertion-strength), deliber
 
 1. `scripts/dev/mutation-smoke.sh` (**new, shipped Phase 1**) — the harness. `--list` / `--dry-run` (no build; validates unique-search + apply/revert mechanics on any host) / full sweep / `--gate` (fail below floor) / `--floor N` / `--preset` / `--exe` / `--id`. Bypass `SMATCHET_SKIP_MUTATION_SMOKE=1`.
 2. `scripts/dev/mutation-smoke-corpus.json` (**new, shipped Phase 1**) — seed corpus: 10 mutants transcribed from `MUTATION_PILOT.md` — 3 `killed` regression guards (GR3, JQL-05-email, PLANE-04, the pilot's fixed survivors), 3 `survived` known gaps (GR5, GR6, MergeWatch-m3), 4 `equivalent` (DT2, DT5, MAP-05, Labels-m3, the pilot's full equivalent set).
-3. `.github/workflows/*.yml` (**Phase 2, gated on decisions**) — an advisory job on the ubuntu runner: `apt-get install libclang-rt-<v>-dev` (TSan runtime, per `MUTATION_PILOT.md` note + the shipped `tsan-linux-runtime-missing` fix), `cmake --preset ninja-tsan-linux`, then `mutation-smoke.sh --gate --floor <N>`.
-4. `tests/bats/mutation_smoke.bats` (**Phase 2**) — unit-test the harness classify/floor/tree-clean logic with a fake preset+exe (no real build), the way `merge_gates.bats` fakes `gh`.
-5. `scripts/dev/test-all.sh` — auto-enrolls `mutation-smoke.sh --dry-run` via the `test-*.sh` glob for the local mirror (mechanics check, no TSan build needed locally).
+3. `.github/workflows/tsan-linux-nightly.yml` (**shipped Phase 2**) — an advisory (`continue-on-error`) `Mutation-smoke gate` step appended to the existing `tsan-linux` job, after ctest, reusing its built `ninja-tsan-linux` tree; runs `mutation-smoke.sh --gate --floor 80` on nightly + manual dispatch only.
+4. `tests/bats/mutation_smoke.bats` (**shipped Phase 2**) — 9 unit tests of the classify/floor/honesty/tree-safety logic with a fake `cmake` PATH shim + fake exe (no real build), the way `merge_gates.bats` fakes `gh`.
+5. `scripts/dev/test-mutation-smoke.sh` (**shipped Phase 2**) — local/CI mirror auto-enrolled via the `test-*.sh` glob (test-all.sh + Agentic self-tests): corpus JSON validity + `--list` + (clean-tree) `--dry-run` mechanics. No TSan build needed.
 
 ## Existing utilities reused
 
@@ -39,13 +39,13 @@ The floor is a **kill-rate over the `killed` set** (assertion-strength), deliber
 - `MUTATION_PILOT.md` § "Every surviving mutant — exact diff" + § "Equivalent mutants" — the source of every corpus entry's `search`/`replace`/`expect` and the equivalent-mutant exclusion list (DT2/DT5/MAP-05/Labels-m3/JQL-01).
 - The `SMATCHET_SKIP_*` bypass + `--gate`/advisory conventions from the merge-gate/coverage-gate scripts.
 
-## Decisions for review (this is the plan-review gate — Phases 2–4 wait on these)
+## Decisions (resolved 2026-07-10)
 
-1. **Cadence.** Advisory **nightly** `schedule:` (pilot: a full sweep is a few minutes; per-PR would add ~minutes to every code PR) — **recommended** — vs per-PR on changed pure-TUs only, vs both.
-2. **Floor value.** Start at **80 %** (the pilot's per-TU discipline threshold; the equivalent-adjusted rate was 82.5 %) over the `killed` set — vs a lower warm-up floor while the corpus is small.
-3. **Advisory → blocking graduation.** Ship **advisory-first** (WARN, `continue-on-error`) like every other calibration gate (dup-audit, comment-noise), graduate to blocking after N clean nightly runs — **recommended** — vs blocking from day one.
-4. **Corpus scope for Phase 3.** Expand from the 10-mutant seed to the full **17 clean-signal TU** set (each carrying a dedicated `*.test.cpp` in the TSan rig), ~5–7 mutants/TU (~100 mutants, still a few minutes) — vs keep it a curated hot-file subset.
-5. **TSan-runtime provisioning.** The nightly lane must `apt-get install libclang-rt-<v>-dev` (the runtime is absent from the runner image — see the shipped `ninja-tsan-linux` runtime backlog fix). Confirm that's acceptable vs pre-baking it into a runner image.
+1. **Cadence** → **advisory nightly.** Wired as a step in the existing `tsan-linux-nightly.yml` job (reuses its configured+built `ninja-tsan-linux` tree), gated `github.event_name != 'pull_request'` so it runs on the nightly cron + manual dispatch only, not the workflow's paths-scoped PR trigger.
+2. **Floor** → **80 %** over the `killed` guard set (`mutation-smoke.sh --gate --floor 80`).
+3. **Graduation** → **advisory-first** (`continue-on-error: true`), graduate to blocking after N clean nightly runs (Phase 4). Matches dup-audit / comment-noise rollout.
+4. **Corpus scope** → **10-mutant seed now**, expand to the full 17-TU set in Phase 3.
+5. **TSan-runtime provisioning** → **moot on CI.** The `tsan-linux-nightly` job already builds `ninja-tsan-linux` green on `ubuntu-latest` (the runner's clang bundles compiler-rt/tsan); the runtime was only absent in the local dev container. No extra `apt-get` needed.
 
 ## UX Pillar callouts
 

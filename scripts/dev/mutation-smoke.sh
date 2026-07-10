@@ -73,7 +73,17 @@ fi
 
 [ -f "$CORPUS" ] || { echo "mutation-smoke: corpus not found: $CORPUS" >&2; exit 3; }
 command -v python3 >/dev/null || { echo "mutation-smoke: python3 required" >&2; exit 2; }
-[ -n "$EXE" ] || EXE="build/${PRESET}/tests/SmatchetTsanTests"
+
+# Resolve the test exe. Default to the conventional path; if absent, locate the
+# rig binary under the build dir (its subdir varies by generator/preset). Only
+# needed for a real sweep — --list / --dry-run never run it.
+if [ -z "$EXE" ]; then
+    EXE="build/${PRESET}/tests/SmatchetTsanTests"
+    if [ ! -x "$EXE" ] && [ "$MODE" = "run" ]; then
+        found="$(find "build/${PRESET}" -type f -name 'SmatchetTsanTests' -perm -u+x 2>/dev/null | head -1 || true)"
+        [ -n "$found" ] && EXE="$found"
+    fi
+fi
 
 # --- tree-clean guard: refuse to run on a dirty tree; revert on interruption ---
 assert_clean() {
@@ -91,8 +101,6 @@ revert_current() {
     fi
 }
 trap 'revert_current' EXIT INT TERM
-
-assert_clean
 
 # --- read corpus into parallel arrays via python (jq may be absent) ---------
 mapfile -t ROWS < <(python3 - "$CORPUS" "$ONLY_IDS" <<'PY'
@@ -119,6 +127,10 @@ if [ "$MODE" = "list" ]; then
     echo "(${#ROWS[@]} mutants)"
     exit 0
 fi
+
+# dry-run / full sweep apply+revert real edits — refuse on a dirty tree so a
+# pre-existing edit is never confused with (or clobbered by) a mutant revert.
+assert_clean
 
 # apply exactly one occurrence of search->replace in file (fail if 0 or >1)
 apply_mutant() {
