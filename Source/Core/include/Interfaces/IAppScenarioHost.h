@@ -16,7 +16,7 @@
 #include <string>
 #include <vector>
 
-class GridLiveContext;
+struct GridLiveContext;
 
 class IAppScenarioHost {
   public:
