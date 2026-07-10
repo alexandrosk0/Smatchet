@@ -57,11 +57,12 @@ USAGE
 # (SMATCHET_PRESHIP_GATE_ONLY=1 exercises ONLY the review gate; the lint stages have
 # their own gates/selftests). Auto-enrolled by agents/scripts/core/test-gate-selftests.sh.
 run_selftest() {
-    local script_path tmp
+    local script_path tmp tmp2
     script_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
     tmp="$(mktemp -d)"
-    # shellcheck disable=SC2064  # expand $tmp now
-    trap "rm -rf '$tmp'" RETURN
+    tmp2="$(mktemp -d)"
+    # shellcheck disable=SC2064  # expand $tmp/$tmp2 now
+    trap "rm -rf '$tmp' '$tmp2'" RETURN
     (
         set -e
         cd "$tmp"
@@ -98,7 +99,36 @@ run_selftest() {
         echo "pre-ship --selftest: FAIL — SMATCHET_SKIP_REVIEW_GATE=1 bypass broken" >&2
         return 1
     fi
-    echo "pre-ship --selftest: PASS — gate blocks unacked substantive diffs, acks, re-arms on edit, bypass works."
+    # 5. #1116 fail-CLOSED — strict-zone detection needs a WORKING python; without one it must
+    #    not silently skip and let a strict-zone diff slip the gate. Use a fresh repo with a
+    #    SMALL NON-strict C++ diff (normally N/A-passes) and prove FORCE_NO_PY flips it to block.
+    (
+        set -e
+        cd "$tmp2"
+        git init -q -b base .
+        git config user.email selftest@local
+        git config user.name selftest
+        printf '{"lint":{"zones":{"strict":["Source/Core/src/Sync/"]}}}\n' > project.config.json
+        mkdir -p Source/Core/src/Ui
+        echo "// base" > Source/Core/src/Ui/SelfTestUi.cpp
+        git add -A && git commit -qm base
+        git checkout -qb feature
+        printf '// edit\nint self_ui_fn() { return 2; }\n' >> Source/Core/src/Ui/SelfTestUi.cpp
+        git commit -aqm edit
+    )
+    # 5a. baseline — WITH python this small non-strict diff is NOT substantive -> MUST PASS.
+    if ! (cd "$tmp2" && SMATCHET_PRESHIP_GATE_ONLY=1 bash "$script_path" base >/dev/null 2>&1); then
+        echo "pre-ship --selftest: FAIL — a small non-strict diff should N/A-pass the review gate" >&2
+        return 1
+    fi
+    # 5b. #1116 — the SAME diff with NO working python must fail CLOSED (strict membership
+    #     undetectable -> require review), not N/A-pass. This is the exact fail-open the old
+    #     `command -v python3` + swallowed-exit path allowed on the Windows py-stub.
+    if (cd "$tmp2" && SMATCHET_PRESHIP_GATE_ONLY=1 SMATCHET_PRESHIP_FORCE_NO_PY=1 bash "$script_path" base >/dev/null 2>&1); then
+        echo "pre-ship --selftest: FAIL — #1116 fail-open: strict detection skipped and the diff N/A-passed with no working python" >&2
+        return 1
+    fi
+    echo "pre-ship --selftest: PASS — gate blocks unacked substantive diffs, acks, re-arms on edit, bypass works, #1116 fail-closed on no-python."
     return 0
 }
 
@@ -157,6 +187,24 @@ review_fingerprint() {
         git diff HEAD -- "${review_cpp_globs[@]}" 2>/dev/null || true
     } | sha256sum | cut -d' ' -f1
 }
+
+# Resolve a WORKING python interpreter (empty if none). `command -v python3` alone is
+# insufficient on Windows: the python3 "App Execution Alias" stub passes `command -v` but
+# exits 49 ("Python was not found") when actually run — so probe each candidate by executing
+# it. Mirror of resolve_python in agents/scripts/project/lint-rules.d/00-common.sh (kept local
+# so this top-level script stays independent of the lint-rules internals).
+resolve_python() {
+    local cand p
+    for cand in python3 python py; do
+        p="$(command -v "$cand" 2>/dev/null)" || continue
+        if "$p" -c "" >/dev/null 2>&1; then printf '%s\n' "$p"; return 0; fi
+    done
+    return 1
+}
+PRESHIP_PY="$(resolve_python || true)"
+# Selftest hook: force the "no working python" branch so the #1116 fail-closed path is
+# testable in an environment that DOES have python. Never set this in normal use.
+[ "${SMATCHET_PRESHIP_FORCE_NO_PY:-0}" = "1" ] && PRESHIP_PY=""
 
 # SMATCHET_PRESHIP_GATE_ONLY=1 (selftest hook): skip the lint stages and run ONLY the
 # code-review gate. Never set this in normal use — the lint stages are the point.
@@ -224,8 +272,12 @@ fi
 # reported and still blocks the gate below. This kills the recurring comment-blank-run footgun
 # (postmortem: 6 PRs in one session re-tripped it on bare `//` header-doc separators).
 echo "pre-ship: auto-stripping new blank-run/decorative comment-noise vs $base_ref"
-python3 agents/scripts/core/comment_audit.py --fix "$base_ref" \
-    || echo "pre-ship: WARN — comment-noise auto-strip errored; the gate below still enforces." >&2
+if [ -n "$PRESHIP_PY" ]; then
+    "$PRESHIP_PY" agents/scripts/core/comment_audit.py --fix "$base_ref" \
+        || echo "pre-ship: WARN — comment-noise auto-strip errored; the gate below still enforces." >&2
+else
+    echo "pre-ship: WARN — no working python; comment-noise auto-strip skipped (the gate below still enforces)." >&2
+fi
 
 echo "pre-ship: running delta lint gate vs $base_ref"
 if ! bash agents/scripts/project/test-lint-rules.sh --diff "$base_ref"; then
@@ -236,7 +288,9 @@ fi
 # Markdown style lint (MD028 etc.) — docs are not covered by the C++ delta gate,
 # so without this a markdown issue only surfaced as a post-push CodeRabbit finding.
 echo "pre-ship: running markdown lint (md_lint.py --all)"
-if ! python3 agents/scripts/core/md_lint.py --all; then
+if [ -z "$PRESHIP_PY" ]; then
+    echo "pre-ship: WARN — no working python; markdown lint skipped (CI still enforces it)." >&2
+elif ! "$PRESHIP_PY" agents/scripts/core/md_lint.py --all; then
     echo "pre-ship: FAIL — fix the markdown findings above before pushing." >&2
     exit 1
 fi
@@ -302,21 +356,26 @@ if [ "${#review_changed_cpp[@]}" -gt 0 ]; then
     # tr -d '\r': native Windows python3 prints CRLF; an un-stripped \r in the zone string
     # silently defeats the `case "$f" in "$z"*` prefix match (caught by --selftest).
     review_strict_zones=()
-    if command -v python3 >/dev/null 2>&1; then
+    if [ -n "$PRESHIP_PY" ]; then
         mapfile -t review_strict_zones < <(
-            python3 -c "import json;print('\n'.join(json.load(open('project.config.json'))['lint']['zones']['strict']))" \
+            "$PRESHIP_PY" -c "import json;print('\n'.join(json.load(open('project.config.json'))['lint']['zones']['strict']))" \
                 2>/dev/null | tr -d '\r' || true
         )
-    else
-        echo "pre-ship: WARN — python3 unavailable; strict-zone detection skipped (the line threshold still applies)." >&2
-    fi
-    for f in "${review_changed_cpp[@]}"; do
-        [ -n "$f" ] || continue
-        for z in "${review_strict_zones[@]:-}"; do
-            [ -n "$z" ] || continue
-            case "$f" in "$z"*) review_strict_hit="$f" ;; esac
+        for f in "${review_changed_cpp[@]}"; do
+            [ -n "$f" ] || continue
+            for z in "${review_strict_zones[@]:-}"; do
+                [ -n "$z" ] || continue
+                case "$f" in "$z"*) review_strict_hit="$f" ;; esac
+            done
         done
-    done
+    else
+        # #1116 fail-CLOSED: no WORKING python (the Windows py-stub passes `command -v` but
+        # exits 49) means the strict-zone list is unreadable. The old code just skipped
+        # detection here, so a sub-threshold strict-zone diff N/A-passed the review gate
+        # (fail-OPEN). Instead, treat the changed C++ as strict-requiring so the gate engages.
+        echo "pre-ship: WARN — no working python; strict-zone list unreadable → requiring review conservatively (fail-closed, #1116)." >&2
+        review_strict_hit="(strict-zone detection unavailable — no working python)"
+    fi
 fi
 review_lines=$(
     {
