@@ -14,7 +14,8 @@
 
 #include "SmatchetWhisperSetupBanner.h"
 
-#include "AppController.h"
+class AppController; // fan-in Phase 6: this TU only names AppController& in signatures / pass-throughs — fwd-decl
+                     // suffices
 #include "ConfigManager.h"
 #include "Logger.h"
 #include "ModelCatalog.h"
