@@ -418,3 +418,32 @@ TEST_CASE("AiSseParser: many small Feeds reconstruct a full stream") {
         CHECK(dripC.events[i].Data == oneShotC.events[i].Data);
     }
 }
+
+TEST_CASE("AiSseParser: many frames packed in ONE Feed call — Issue #1596 quadratic-erase regression" *
+          doctest::test_suite("[high-risk]")) {
+    // Pre-fix, Feed() called `buffer_.erase(0, ...)` after every extracted frame and then
+    // rescanned from offset 0 — an O(n) erase + O(n) rescan per frame, O(n^2) total when a
+    // single Feed() call is packed with many small frames (exactly what a coverage-guided
+    // fuzzer grows toward: nightly fuzz-smoke reported a "crash, leak, or timeout" whose
+    // crash artifact expired before root-cause, but this pattern is the strongest candidate
+    // — a libFuzzer per-input hang on a large multi-frame buffer). Fixed: a monotonically
+    // advancing `consumed` offset makes one Feed() call O(buffer size), with a single erase
+    // at the end. This test proves correctness at a scale (20k frames) that would be
+    // impractically slow under the old O(n^2) behavior in a doctest run, without asserting
+    // wall-clock time directly (which would be flaky under CI scheduling jitter) — the test
+    // itself IS the regression: it must complete promptly to not stall the whole suite.
+    constexpr int kFrameCount = 20000;
+    std::string stream;
+    stream.reserve(static_cast<std::size_t>(kFrameCount) * 24);
+    for (int i = 0; i < kFrameCount; ++i) {
+        stream += "data: " + std::to_string(i) + "\n\n";
+    }
+
+    AiSseParser p;
+    EventCollector c;
+    Feed(p, stream, c);
+
+    REQUIRE(c.events.size() == static_cast<std::size_t>(kFrameCount));
+    CHECK(c.events.front().Data == "0");
+    CHECK(c.events.back().Data == std::to_string(kFrameCount - 1));
+}
