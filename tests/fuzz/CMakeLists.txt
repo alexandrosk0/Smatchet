@@ -97,6 +97,11 @@ smatchet_add_fuzz_target(fuzz_markdown_adf
     SOURCES
         fuzz_markdown_adf.cpp
         "${_fuzz_core}/src/Ui/MarkdownConvert.cpp"
+        # MarkdownConvert god-file split (god-file-splits plan): the ADF entry point in
+        # the spine delegates to md_detail:: engines defined in these companion TUs.
+        "${_fuzz_core}/src/Ui/MarkdownToAdf.cpp"
+        "${_fuzz_core}/src/Ui/MarkdownToHtml.cpp"
+        "${_fuzz_core}/src/Ui/AdfToMarkdown.cpp"
         ${_fuzz_logger_srcs}
     INCLUDES
         "${_fuzz_core}/include"
