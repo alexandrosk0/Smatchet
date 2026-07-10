@@ -8,14 +8,14 @@
 // g_ui.cfg.UiMode on the UI thread and marks prefs dirty; drawResolveUiMode picks
 // the change up next frame. Registered from RegisterBuiltinCommands.
 
-class AppController;
+class IMainThreadPoster;
 
 namespace smatchet {
 namespace cmd {
 
 class CommandRegistry;
 
-void RegisterUiModeCommand(CommandRegistry& registry, AppController& app);
+void RegisterUiModeCommand(CommandRegistry& registry, IMainThreadPoster& app);
 
 } // namespace cmd
 } // namespace smatchet

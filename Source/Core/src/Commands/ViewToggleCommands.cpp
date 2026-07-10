@@ -32,8 +32,8 @@ namespace {
 // side-effects). `focusLatch`, when set, is raised ONLY on action=="show" — so a
 // plain menu/palette toggle does not steal window focus, while an explicit reveal
 // shortcut (Ctrl+Shift+F etc.) does. This keeps the pre-migration behavior exact.
-CommandResult ToggleFlag(AppController& app, bool UiDrawSession::* flag, void (*onOpen)(UiDrawSession&),
-                         bool UiDrawSession::* focusLatch, const std::string& action) {
+CommandResult ToggleFlag(IMainThreadPoster& app, bool UiDrawSession::*flag, void (*onOpen)(UiDrawSession&),
+                         bool UiDrawSession::*focusLatch, const std::string& action) {
     return RunOnUiThreadAsCommandResult(app, [flag, onOpen, focusLatch, action]() {
         bool& v = g_ui.*flag;
         bool open;
@@ -59,9 +59,9 @@ CommandResult ToggleFlag(AppController& app, bool UiDrawSession::* flag, void (*
     });
 }
 
-void RegisterToggle(CommandRegistry& reg, AppController& app, const char* name, const char* label,
-                    bool UiDrawSession::* flag, void (*onOpen)(UiDrawSession&),
-                    bool UiDrawSession::* focusLatch = nullptr) {
+void RegisterToggle(CommandRegistry& reg, IMainThreadPoster& app, const char* name, const char* label,
+                    bool UiDrawSession::*flag, void (*onOpen)(UiDrawSession&),
+                    bool UiDrawSession::*focusLatch = nullptr) {
     Command c;
     c.Name = name;
     c.Category = "view";
@@ -100,7 +100,7 @@ void OnOpenLuaAutomation(UiDrawSession& d) {
 
 } // namespace
 
-void RegisterViewToggleCommands(CommandRegistry& reg, AppController& app) {
+void RegisterViewToggleCommands(CommandRegistry& reg, IMainThreadPoster& app) {
     if (reg.HasExact("view.toggle.views_dashboard"))
         return;
 
