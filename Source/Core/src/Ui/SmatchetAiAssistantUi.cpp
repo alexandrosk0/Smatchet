@@ -109,8 +109,20 @@ int InputBufferResizeCallback(ImGuiInputTextCallbackData* data) {
         if (dropped > 0) {
             s_inputTruncatedDroppedBytes = dropped;
         }
+        // #1699 — clamp the reported capacity back to our real fixed cap. We do NOT
+        // resize Buf (it is the process-static s_inputCharBuf). Passing CallbackResize
+        // sets is_resizable inside ImGui, which DISABLES the insert-time capacity clamp
+        // and lets ImGui grow its internal edit state to hold the full over-cap paste.
+        // At apply time (InputTextEx, imgui_widgets.cpp) ImGui reads this callback's
+        // BufSize back as its working capacity, clamps the applied length to that
+        // capacity minus one, and ImStrncpy's that many bytes into Buf. If we left
+        // BufSize enlarged (needed+1), that copy would write the full over-cap paste
+        // into the fixed 8 KiB buffer — a static-buffer overflow. Resetting it to the
+        // real cap makes the applied length clamp to kInputBufCap-1 and the copy fit
+        // exactly; Buf and BufTextLen stay untouched.
+        data->BufSize = kInputBufCap;
     }
-    // Return 0: we did NOT resize. ImGui keeps the original buffer + clamps.
+    // Return 0: we did NOT resize Buf. ImGui copies at most kInputBufCap bytes.
     return 0;
 }
 

@@ -44,6 +44,7 @@ extern "C" void SmatchetRegisterOfflineConflictModalPanesTests(ImGuiTestEngine* 
 #if defined(SMATCHET_WITH_AI)
 extern "C" void SmatchetRegisterAiAssistantPanelDockSwapTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAiAssistantEnterSendTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterAiAssistantInputPasteOverflowTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAiPrefsAutosaveFlowTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAiAssistantPreferencesDockingTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAiAssistantPreferencesEnterSendTests(ImGuiTestEngine* engine);
@@ -93,6 +94,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
 #if defined(SMATCHET_WITH_AI)
     SmatchetRegisterAiAssistantPanelDockSwapTests(engine);
     SmatchetRegisterAiAssistantEnterSendTests(engine);
+    SmatchetRegisterAiAssistantInputPasteOverflowTests(engine);
     SmatchetRegisterAiPrefsAutosaveFlowTests(engine);
     SmatchetRegisterAiAssistantPreferencesDockingTests(engine);
     SmatchetRegisterAiAssistantPreferencesEnterSendTests(engine);
