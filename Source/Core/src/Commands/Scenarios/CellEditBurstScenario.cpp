@@ -65,10 +65,7 @@ class CellEditBurstScenario : public IScenario {
         dispatchArgs["value"] = newValue;
 
         CommandContext ctx;
-        // The runner only ever drives scenarios with the AppController that owns it (ScenarioRunner.cpp
-        // stashes CommandContext::App), and AppController is the sole IAppScenarioHost implementer, so
-        // the downcast is safe. This scenario needs the concrete type for CommandContext::App wiring.
-        AppController& concrete = static_cast<AppController&>(app);
+        AppController& concrete = RequireConcreteController(app);
         ctx.App = &concrete;
         ctx.Source = CommandSource::Internal;
 

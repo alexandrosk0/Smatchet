@@ -45,10 +45,7 @@ class CommandContractSweepScenario : public IScenario {
         if (frameIndex > 0) {
             return;
         }
-        // The runner only ever drives scenarios with the AppController that owns it (ScenarioRunner.cpp
-        // stashes CommandContext::App), and AppController is the sole IAppScenarioHost implementer, so
-        // the downcast is safe. This scenario needs the concrete type for CommandContext::App wiring.
-        RunSweep(static_cast<AppController&>(app));
+        RunSweep(RequireConcreteController(app));
     }
 
     bool IsDone(int frameIndex) const override { return frameIndex >= 1; }

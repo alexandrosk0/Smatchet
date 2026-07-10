@@ -27,6 +27,7 @@
 // include the full <nlohmann/json.hpp> directly.
 #include <nlohmann/json_fwd.hpp>
 
+class AppController;
 class IAppScenarioHost; // narrow scenario-host facet of AppController — see Interfaces/IAppScenarioHost.h
 
 namespace smatchet {
@@ -34,6 +35,14 @@ namespace cmd {
 
 struct CommandContext;
 struct CommandResult;
+
+/// Recover the concrete AppController inside a scenario hook. The runner only
+/// ever drives scenarios with the owning AppController — the sole
+/// IAppScenarioHost implementer — so the downcast is safe from any hook the
+/// runner invokes. Single seam for that invariant; scenarios that must wire
+/// CommandContext::App call this instead of casting locally. Defined in
+/// ScenarioRunner.cpp, the orchestrator TU that already holds the complete type.
+AppController& RequireConcreteController(IAppScenarioHost& app);
 
 /// Interface every scenario must implement.
 class IScenario {

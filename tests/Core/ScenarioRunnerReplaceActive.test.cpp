@@ -18,6 +18,8 @@
 
 #include "Commands/Scenarios/IScenario.h"
 
+#include "Interfaces/IAppScenarioHost.h"
+
 #include "Commands/Command.h"
 #include "ConfigManager.h"
 
@@ -102,11 +104,23 @@ class ThreadedProbeScenario : public IScenario {
 // valid, non-null address that is simply never read through.
 AppController* PlaceholderApp(int& anchor) { return reinterpret_cast<AppController*>(&anchor); }
 
-// Same placeholder trick for the direct-OnStart test below: the hook takes
-// IAppScenarioHost& (fan-in Phase 6 T5) and binding the fake as the facet type
-// directly avoids the derived-to-base conversion, which would need the
-// complete AppController this header-light rig deliberately excludes.
-IAppScenarioHost* PlaceholderHost(int& anchor) { return reinterpret_cast<IAppScenarioHost*>(&anchor); }
+// Real no-op host for the direct-OnStart test below: the hook takes
+// IAppScenarioHost&, and a live stub (unlike the placeholder-pointer trick)
+// stays valid even if a future scenario edit touches the reference. Keeps the
+// rig header-light — the facet header is AppController-free.
+class NullScenarioHost : public IAppScenarioHost {
+  public:
+    GridLiveContext* EnsurePaneContextLive(const std::string&, const std::string&) override { return nullptr; }
+    bool ScenarioRegisterLuaCachedProvider(const std::string&, const std::string&, const std::vector<std::string>&,
+                                           std::string&) override {
+        return false;
+    }
+    bool ScenarioRegisterLuaCachedProvider(const std::string&, const std::string&, std::string&) override {
+        return false;
+    }
+    void ScenarioUnregisterLuaCachedProvider(const std::string&) override {}
+    void ScenarioInvalidateLuaFieldCache() override {}
+};
 
 } // namespace
 
@@ -160,11 +174,11 @@ TEST_CASE("ScenarioRunner::Start tears the outgoing scenario down (OnCancel + jo
 TEST_CASE("A scenario owning a joinable worker joins it in its destructor (no std::terminate)") {
     auto probe = std::make_shared<ReplaceProbe>();
 
-    int appAnchor = 0;
     {
         ThreadedProbeScenario scenario(probe);
         std::string err;
-        scenario.OnStart(*PlaceholderHost(appAnchor), nlohmann::json::object(), err);
+        NullScenarioHost host;
+        scenario.OnStart(host, nlohmann::json::object(), err);
         CHECK(err.empty());
         // Deliberately do NOT call OnCancel/OnFinish: the destructor alone must
         // join the still-joinable worker. If it did not, ~std::thread would call

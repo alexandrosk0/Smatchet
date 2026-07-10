@@ -177,9 +177,7 @@ class WhisperAiAssistantAutosendScenario : public IScenario {
         }
 
         if (state_ == State::Initial && frameIndex >= pressFrame_) {
-            // Safe downcast: the runner only ever drives scenarios with the owning AppController
-            // (sole IAppScenarioHost implementer); CommandContext::App needs the concrete type.
-            AppController& concrete = static_cast<AppController&>(app);
+            AppController& concrete = RequireConcreteController(app);
             CommandContext ctx;
             ctx.App = &concrete;
             ctx.Source = CommandSource::Internal;
@@ -195,9 +193,7 @@ class WhisperAiAssistantAutosendScenario : public IScenario {
             return;
         }
         if (state_ == State::WaitingForReleaseFrame && frameIndex >= releaseFrame_) {
-            // Safe downcast: the runner only ever drives scenarios with the owning AppController
-            // (sole IAppScenarioHost implementer); CommandContext::App needs the concrete type.
-            AppController& concrete = static_cast<AppController&>(app);
+            AppController& concrete = RequireConcreteController(app);
             CommandContext ctx;
             ctx.App = &concrete;
             ctx.Source = CommandSource::Internal;

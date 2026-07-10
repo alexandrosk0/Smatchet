@@ -97,12 +97,10 @@ class WhisperDictationScenario : public IScenario {
 
     void OnFrame(IAppScenarioHost& app, int frameIndex) override {
         if (state_ == State::Initial && frameIndex >= pressFrame_) {
-            // Safe downcast: the runner only ever drives scenarios with the owning AppController
-            // (sole IAppScenarioHost implementer); CommandContext::App needs the concrete type.
             // clang-format off
-            // SMATCHET_DEVIATION(rule=duplication; reason=the simulate-press/simulate-release dispatch shell is a deliberate grandfathered twin of WhisperAiAssistantAutosendScenario's press/release frames — same command pair driven at different assert points; retyping the lifecycle hook to IAppScenarioHost with a per-branch concrete downcast (fan-in Phase 6 T5) re-hashed the clone windows — not a real copy-paste; owner=orchestrator; revisit=when the two whisper scenarios share a dispatch helper)
+            // SMATCHET_DEVIATION(rule=duplication; reason=the simulate-press/simulate-release dispatch shell is a deliberate grandfathered twin of WhisperAiAssistantAutosendScenario's press/release frames — same command pair driven at different assert points; retyping the lifecycle hook to the scenario-host facet with a per-branch concrete recovery re-hashed the clone windows — not a real copy-paste; owner=orchestrator; revisit=when the two whisper scenarios share a dispatch helper)
             // clang-format on
-            AppController& concrete = static_cast<AppController&>(app);
+            AppController& concrete = RequireConcreteController(app);
             CommandContext ctx;
             ctx.App = &concrete;
             ctx.Source = CommandSource::Internal;
@@ -118,12 +116,10 @@ class WhisperDictationScenario : public IScenario {
             return;
         }
         if (state_ == State::WaitingForReleaseFrame && frameIndex >= releaseFrame_) {
-            // Safe downcast: the runner only ever drives scenarios with the owning AppController
-            // (sole IAppScenarioHost implementer); CommandContext::App needs the concrete type.
             // clang-format off
-            // SMATCHET_DEVIATION(rule=duplication; reason=the simulate-press/simulate-release dispatch shell is a deliberate grandfathered twin of WhisperAiAssistantAutosendScenario's press/release frames — same command pair driven at different assert points; retyping the lifecycle hook to IAppScenarioHost with a per-branch concrete downcast (fan-in Phase 6 T5) re-hashed the clone windows — not a real copy-paste; owner=orchestrator; revisit=when the two whisper scenarios share a dispatch helper)
+            // SMATCHET_DEVIATION(rule=duplication; reason=the simulate-press/simulate-release dispatch shell is a deliberate grandfathered twin of WhisperAiAssistantAutosendScenario's press/release frames — same command pair driven at different assert points; retyping the lifecycle hook to the scenario-host facet with a per-branch concrete recovery re-hashed the clone windows — not a real copy-paste; owner=orchestrator; revisit=when the two whisper scenarios share a dispatch helper)
             // clang-format on
-            AppController& concrete = static_cast<AppController&>(app);
+            AppController& concrete = RequireConcreteController(app);
             CommandContext ctx;
             ctx.App = &concrete;
             ctx.Source = CommandSource::Internal;

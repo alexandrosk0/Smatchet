@@ -247,11 +247,8 @@ void UiTestScenario::OnStart(IAppScenarioHost& app, const nlohmann::json& args, 
     }
 
     if (UiTestWantsLocalCache()) {
-        // The runner only ever drives scenarios with the AppController that owns it (ScenarioRunner.cpp
-        // stashes CommandContext::App), and AppController is the sole IAppScenarioHost implementer, so
-        // the downcast is safe. Bucket-E test functions need the concrete pointer via
-        // SmatchetActiveUiTestAppController().
-        if (static_cast<AppController&>(app).EnsureLocalCacheForUiTest()) {
+        // Bucket-E test functions need the concrete pointer via SmatchetActiveUiTestAppController().
+        if (RequireConcreteController(app).EnsureLocalCacheForUiTest()) {
             LOG_INFO("ui_test.run: SMATCHET_UITEST_WITH_LOCAL_CACHE=1 — live local cache ensured");
         } else {
             LOG_WARN("ui_test.run: SMATCHET_UITEST_WITH_LOCAL_CACHE=1 but cache init failed");
@@ -288,7 +285,7 @@ void UiTestScenario::OnStart(IAppScenarioHost& app, const nlohmann::json& args, 
 
     ImGuiTestEngine_Start(engine_, uiCtx);
     g_active_engine.store(engine_, std::memory_order_release);
-    g_active_app.store(&static_cast<AppController&>(app), std::memory_order_release);
+    g_active_app.store(&RequireConcreteController(app), std::memory_order_release);
 
     LOG_INFO("ui_test.run: engine started (filter='%s')", filter_.empty() ? "(all)" : filter_.c_str());
 #else
