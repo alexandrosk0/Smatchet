@@ -251,6 +251,19 @@ if ! bash agents/scripts/core/check-test-list.sh --check; then
     exit 1
 fi
 
+# Orphan-bats (self-improvement tooling/P2): a new tests/bats/*.bats with no
+# test-*.sh wrapper naming it never runs — test-all.sh discovers wrappers by the
+# test-*.sh glob, never a bare .bats. The gate lives in test-all.sh / CI, but not
+# this fast pre-push path, so a wrapper-less suite (mutation_smoke.bats, #1698)
+# only reddened the Agentic self-tests lane a merge later on an unrelated PR.
+# Near-instant (a glob + grep over wrappers, no build) — run it here so the gap
+# is caught before push.
+echo "pre-ship: running orphan-bats check (every tests/bats/*.bats needs a wrapper)"
+if ! bash agents/scripts/core/test-orphan-bats.sh; then
+    echo "pre-ship: FAIL — add a test-*.sh wrapper that runs the bats suite(s) above before pushing." >&2
+    exit 1
+fi
+
 # Doc-validation mirror — the "Doc anchors + agent contract" CI check (plan-ref
 # integrity, plan index, doc anchors, markdown links, …). Cheap (~10 s) and the
 # only local stage that catches a docs/plans git-mv leaving stale refs in source

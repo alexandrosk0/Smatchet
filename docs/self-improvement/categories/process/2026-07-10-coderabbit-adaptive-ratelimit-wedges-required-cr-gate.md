@@ -55,6 +55,24 @@ Est: (1) ~10 min doc; (2) ~15 min playbook; (3) ~1–2h (poller/gate change).
 This session resolved #1702 only via an operator-authorized admin merge past the
 pending gate.
 
+**Update (2026-07-10): partially implemented (the structural half of proposal 3).**
+Ported two of merge-gates.sh's terminal pass-signals from the client gate to the
+SERVER gate (`.github/actions/cr-finding-gate/action.yml`), the one that actually
+blocks merge:
+- **selfImpOnly auto-pass** — a diff entirely under `docs/self-improvement/**`
+  (path-excluded by `.coderabbit.yaml`, sanctioned by
+  `self-improvement-pr-review-exemption`) passes immediately, no CR wait. This is
+  exactly the docs-only-PR class that wedged.
+- **terminal path-filter skip** — a CR "Review skipped … due to path filters"
+  comment on the head (rate-limit explicitly excluded) maps to 0 actionable → pass,
+  no longer relying solely on CR's unreliable StatusContext.
+
+Still open (deliberately NOT auto-passed — unsafe): the **rate-limit on a CODE
+PR** case. Auto-passing it would wave un-reviewed code through; the correct escape
+stays the `cr-out-of-band` label + `cr-disposition:` attestation (already
+supported). Proposals (1) don't-re-trigger and (2) pace-campaigns remain doc/
+playbook follow-ups.
+
 ## Format
 
 - Details: see § Friction. Verified: the rate-limit countdown reset was observed
