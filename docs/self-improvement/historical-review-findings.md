@@ -119,10 +119,11 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   merged list, cross-validated against the develop squash log; 4 PRs needed manual
   sha resolution — #1439/#1577 edited squash subjects, #1593/#1597 true merge
   commits) minus Batch 12's 17 → **477 to sweep**. **Batch 13 (#1695–#1560, 120
-  PRs) done below** — the reviewed frontier is now **#1560–#1695 contiguous** on
-  top of the #1–#1174 baseline. Remaining: **#1559–#1175 (356 PRs, batches 14–16
-  running this session) + #1593** (true merge commit, 9 constituent commits —
-  needs a per-constituent survivor pass, handled separately).
+  PRs) + Batch 14 (#1559–#1436, 120 PRs) done below** — the reviewed frontier is
+  now **#1436–#1695 contiguous** on top of the #1–#1174 baseline. Remaining:
+  **#1435–#1175 (236 PRs, batches 15–16 running this session) + #1593** (true
+  merge commit, 9 constituent commits — needs a per-constituent survivor pass,
+  handled separately).
 - **Swept:** **#1–#1174** (batches 1–11) — **the entire merged-PR history reviewed.**
   **SWEEP COMPLETE** — Batch 11 (#116–#1, 113 PRs, the final tail incl. the early
   base-`main` PRs #1–#5) added 2026-06-13;
@@ -184,6 +185,34 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   User-visible ones → GitHub Issues per ADR-0014 when actioned.)_
 
 <!-- Batches appended at the top. -->
+
+## Batch 14 — #1559–#1436 (120-PR sweep, 2026-07-10)
+
+Coverage: **120 reviewed — 13 with findings, 104 clean, 3 fully superseded, 0 errored, 0 died.** Net: **0 CRITICAL, 0 HIGH, 5 MEDIUM, 11 LOW.** Second installment of the post-#1174 frontier re-establishment (contiguous #1559→#1436; frontier now **#1436–#1695** on top of the #1–#1174 baseline). Survivor-filtered against origin/develop, so every finding is current. (Same sha-resolved workflow + reviewer model as Batch 13; 120/120 returned, 0 died; ~47 min, ~4.36M tokens.) **One MEDIUM (#1554) is `userVisible:true` → GitHub Issue #1706 (ADR-0014); the other 15 findings are internal tooling/gates/docs → backlog only.** Dominant theme yet again: the **fail-open / no-op gate cluster** — 4 of 5 MEDIUMs are gates that can't catch (or can be talked out of) the regression they exist for (#1525 unanchored `cr-disposition` attestation, #1511 self-contradictory staleness predicate, #1505 unanchored broken-lane suppression, plus the #1523/#1522/#1520 LOW variants). Cross-filed onto the OPEN P2 `fail-open-meta-gate-authoring-check` in [`categories/tooling.md`](categories/tooling.md).
+
+### MEDIUM (5)
+- **#1554 (55eddeb7) · `Source/Core/src/Ui/SmatchetPreferencesUi.cpp:161`** — **user-visible**: window-close reset clears `assistantPrefsWorkingSeeded` (working copy correctly re-seeds from cfg on reopen) but never resets the function-static buffer seed flags nor requests `assistantPrefsForceBufferReseed`. Close-without-Save then reopen → InputText fields still show the DROPPED edit text (present in neither working copy nor cfg, no dirty `*`); re-editing flows the stale text back into the working copy. Fix: in `resetPreferencesWindowState` also set `d.assistantPrefsForceBufferReseed = true`. → **Issue #1706**.
+- **#1525 (7df25fa3) · `agents/scripts/core/merge-gates.sh:542`** — the mandatory `cr-disposition:` attestation for a `cr-out-of-band` override is an unanchored, case-insensitive substring test over the whole PR body; a body that merely QUOTES the mechanism (pasted template/docs containing `cr-disposition:<reason>`) satisfies it, so the override bypasses the CR gate with no genuine recorded reason — the exact fail-open PR-3 closed. Fix: anchor per-line (`(?m)^\s*[-*]?\s*cr-disposition:\s*…`) and reject the literal `<reason>` placeholder.
+- **#1511 (9c98b7ae) · `agents/scripts/project/test-plan-staleness.sh:63`** — the staleness gate is a near-no-op: `is_stale` needs `cited_prs` non-empty AND all post-ship sections still stubs, but `cited_prs` is read ONLY from § Implementation log, which the stub predicate requires to be empty — the two conditions are mutually near-exclusive, so the "shipped but never written up" drift it was built for can never fire. Fix: source cited PRs from a section that persists (or drop Impl-log from the stub set so a populated log + stub Deviations/Verification flags).
+- **#1505 (a8bb69c7) · `agents/scripts/core/postmortem-owed.sh:202`** — `is_broken_lane` matches a configured broken-lane token against red check-names with an unanchored `grep -qiF`; a broad token ("Coverage") also suppresses a genuinely-red sibling ("Coverage-Integration"), laundering a real gate escape into a no-postmortem WARN. Dormant (registry starts empty) but fail-open once configured. Fix: anchored whole-name equality.
+- **#1466 (ff1f18e6) · `docs/mobile/CHROMEBOOK_PORT_INVESTIGATION.md:203`** — broken path cross-ref: cites `Source/Core/include/Ui/SmatchetUiModeIds.h`; the header lives at `Source/Core/include/SmatchetUiModeIds.h` (no `Ui/`). Fix: drop the segment.
+
+### LOW (11)
+- **#1556 (572a952d) · `scripts/git-hooks/pre-push:221`** — header promises FAIL-OPEN on infra/tool uncertainty, but sections (D)#2 doc-checks and (D)#4 shell-lint treat ANY non-zero exit as a violation (fail-CLOSED) — an internal infra error wedges an unrelated push. Fix: split real-violation rc from infra rc as (D)#1 already does.
+- **#1523 (281d16dc) · `scripts/dev/perf-baseline.sh:187`** — orphan-baseline gate fails open: if the (very specific) `Name() const override` regex matches nothing, `registered` is empty and the check exit-0s with a WARN; unparseable baseline JSON is likewise silently skipped. Fix: fail-closed on empty `registered` and on parse failure.
+- **#1522 (81de3e07) · `agents/scripts/core/test-shell-lint.sh:330`** — NUL-byte guard uses GNU-only `grep -qaP '\x00'` with stderr swallowed; on BSD grep (macOS is a documented dev platform) the rule silently no-ops. Fix: `tr -d '\000' | cmp -s` probe, or gate on PCRE support; at minimum stop swallowing stderr.
+- **#1520 (e807690c) · `agents/scripts/core/test-bats-ascii-names.sh:74`** — same class: `grep -P` failure hidden by `2>/dev/null` → zero matches → green PASS having scanned nothing. Fix: probe `-P` support up front and return 2, or check grep's exit status.
+- **#1507 (f50b28be) · `scripts/dev/agent-eval-calibrate.py:301`** — `emit_markdown` re-parses formatted violation strings with `split(" / ")`, mis-parsing the committed label `"cr-dpapi-secret-loss / strong run"`; the per-row verdict prints "ok" for an over-threshold pair (BLOCK banner + exit code stay correct — misleading report only). Fix: return structured (label, dimension) violations instead of re-parsing.
+- **#1506 (f5cd3234) · `agents/scripts/core/test-lint-hook-split.sh:229`** — with `nullglob`, an empty `QUEUE_REAL` array makes `cat "${QUEUE_REAL[@]}"` read stdin — potential hang on the failure path when stdin isn't redirected. Fix: guard on array non-emptiness or add `</dev/null`.
+- **#1469 (d849b142) · `Source/Core/src/FieldEditPipelineService.cpp:125`** — when `backend->Mutations()` is null, `TryBuildFieldEditPayloadForNetwork` returns false with `outError` never set — callers (e.g. `TryPrepareOfflineFieldEdit`) surface an empty error string. Fix: set a "backend does not support issue mutations" error before the return.
+- **#1466 (ff1f18e6) · `docs/mobile/CHROMEBOOK_PORT_INVESTIGATION.md:68`** — stale line-pin: `android:allowBackup="false"` cited at manifest line 7; the A8 touchscreen block shifted it to :19. Fix: re-pin or drop the number.
+- **#1463 (f2100d44) · `.github/workflows/lock-cleanup.yml:13`** — comment cites `docs/plans/plan-lock-enforcement.md`, archived to `docs/plans/shipped/` by this very PR (line 12 already uses the shipped/ prefix for the sibling doc). Fix: add `shipped/`.
+- **#1463 (f2100d44) · `agents/scripts/core/lock-table-cache.sh:31`** — same stale ref to the pre-archival plan path. Fix: add `shipped/`.
+- **#1463 (f2100d44) · `docs/harness/claude-code/hooks/guard-plan-lock.sh:28`** — same stale ref. Fix: add `shipped/`.
+
+**Clean (104, surviving lines reviewed, no findings):** #1559, #1558, #1557, #1555, #1553, #1552, #1551, #1550, #1549, #1548, #1547, #1546, #1545, #1544, #1543, #1542, #1541, #1540, #1539, #1538, #1537, #1536, #1535, #1534, #1533, #1532, #1531, #1530, #1529, #1528, #1527, #1526, #1524, #1521, #1519, #1518, #1517, #1516, #1515, #1514, #1513, #1512, #1510, #1509, #1508, #1504, #1503, #1502, #1501, #1500, #1499, #1498, #1497, #1496, #1495, #1494, #1493, #1492, #1491, #1490, #1489, #1488, #1487, #1486, #1485, #1484, #1483, #1482, #1481, #1480, #1478, #1477, #1476, #1475, #1474, #1473, #1472, #1471, #1470, #1468, #1467, #1465, #1464, #1462, #1461, #1460, #1456, #1455, #1454, #1453, #1452, #1451, #1450, #1446, #1445, #1444, #1443, #1442, #1441, #1440, #1439, #1438, #1437, #1436.
+
+**Fully superseded (3, no review surface):** #1449, #1448, #1447 — every introduced line was changed/removed by a later PR; excluded by construction.
 
 ## Batch 13 — #1695–#1560 (120-PR sweep, 2026-07-10)
 
