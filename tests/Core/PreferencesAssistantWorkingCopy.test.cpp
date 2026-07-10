@@ -133,4 +133,30 @@ TEST_CASE("CopyAssistantAiFields — Discard semantics: working reverts to cfg, 
     CHECK_FALSE(AssistantAiFieldsDiffer(work, cfg));
 }
 
+// #1706 — closing the Preferences window without Save is a Discard-on-close: it
+// must revert BOTH the working copy AND the InputText buffers. The pre-#1706 bug
+// reset only the working-copy latch, leaving forceReseed unset, so the reopened
+// tab kept displaying the discarded edit text (the function-static s_bufs buffers
+// stayed seeded). This locks that both latches move together — removing the
+// forceReseed=true from ResetAssistantPrefsSeedLatchesOnClose re-fails the second
+// CHECK.
+TEST_CASE("ResetAssistantPrefsSeedLatchesOnClose — reverts working copy AND forces buffer reseed" *
+          doctest::test_suite("[high-risk]")) {
+    using SmatchetPreferencesUiDetail::ResetAssistantPrefsSeedLatchesOnClose;
+
+    // Pre-close state: window open, working copy seeded, no reseed pending.
+    bool workingSeeded = true;
+    bool forceReseed = false;
+
+    ResetAssistantPrefsSeedLatchesOnClose(workingSeeded, forceReseed);
+
+    CHECK_FALSE(workingSeeded); // reopen re-seeds the working copy from cfg
+    CHECK(forceReseed);         // reopen also reseeds the InputText buffers (#1706)
+
+    // Idempotent-ish: calling again from the reset state keeps both latched correctly.
+    ResetAssistantPrefsSeedLatchesOnClose(workingSeeded, forceReseed);
+    CHECK_FALSE(workingSeeded);
+    CHECK(forceReseed);
+}
+
 #endif // SMATCHET_WITH_AI
