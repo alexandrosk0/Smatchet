@@ -73,3 +73,16 @@ TEST_CASE("ConsumeToolsCallToken a backwards timestamp refills nothing") {
     // nowMs behind LastRefillMs must not grant free tokens.
     CHECK_FALSE(ConsumeToolsCallToken(bucket, 1, 100.0, 4000).Allow);
 }
+
+TEST_CASE("ConsumeToolsCallToken a backwards timestamp does not over-refill the next forward call") {
+    // Regression: a backwards timestamp must not roll LastRefillMs back, or a
+    // later forward call measures elapsed against the rolled-back mark and
+    // over-refills — a rate-limit bypass. burst 1, 1 token/s.
+    McpToolsCallBucket bucket = FullBucket(1, 5000);
+    CHECK(ConsumeToolsCallToken(bucket, 1, 1.0, 5000).Allow);       // empties the bucket
+    CHECK_FALSE(ConsumeToolsCallToken(bucket, 1, 1.0, 4000).Allow); // backwards: no refill
+    // 100 ms after the REAL last refill (5000) only 0.1 token has accrued, so the
+    // next call must still be denied. With the bug, LastRefillMs was rolled back
+    // to 4000, making elapsed 1100 ms -> a full (capped) token -> a spurious allow.
+    CHECK_FALSE(ConsumeToolsCallToken(bucket, 1, 1.0, 5100).Allow);
+}

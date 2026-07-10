@@ -112,6 +112,10 @@ void DrawWhisperEnableAndMode(UiDrawSession& d) {
 // configured, so the presence check + Download button act on the model the
 // user sees.
 void SeedDefaultWhisperModel(UiDrawSession& d, const std::vector<smatchet::whisper::catalog::Entry>& catalog) {
+    // Deliberate: seeds directly into the live d.cfg (not a working copy) and marks
+    // dirty, so opening the Whisper tab with an empty model triggers a debounced
+    // persist with no explicit user action. This differs from the Assistant tab's
+    // working-copy pattern by design — the picker must show and use a concrete model.
     if (d.cfg.WhisperModel.empty() && catalog.size() > 1) {
         d.cfg.WhisperModel = catalog[1].Id;
         MarkPrefsDirty(d);

@@ -40,11 +40,16 @@ inline McpRateLimitDecision ConsumeToolsCallToken(McpToolsCallBucket& bucket, in
     const long long elapsedMs = nowMs - bucket.LastRefillMs;
     if (elapsedMs > 0) {
         bucket.Tokens += (static_cast<double>(elapsedMs) / 1000.0) * refillPerSec;
+        // Advance the refill clock only on forward progress. A backwards (or
+        // equal) timestamp must NOT roll LastRefillMs back: a later forward call
+        // would then measure elapsed against the rolled-back mark and over-refill
+        // beyond the configured rate — a rate-limit bypass. steady_clock feeds
+        // this in production, but the pure function must not depend on that.
+        bucket.LastRefillMs = nowMs;
     }
     if (bucket.Tokens > static_cast<double>(burst)) {
         bucket.Tokens = static_cast<double>(burst);
     }
-    bucket.LastRefillMs = nowMs;
     if (bucket.Tokens >= 1.0) {
         bucket.Tokens -= 1.0;
         decision.Allow = true;

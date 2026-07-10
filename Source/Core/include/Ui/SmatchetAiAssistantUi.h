@@ -19,4 +19,9 @@ struct ViewDefinition;
 /// = the desktop dock window, byte-identical to the pre-slice-4 path.
 void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const ViewDefinition* activeView,
                                   bool embedded = false);
+
+/// Drop every per-conversation render cache (plan / height / body-hash). Callers that swap
+/// `assistantHistory` wholesale (e.g. a scenario restoring saved history) must invoke this —
+/// the index-keyed caches otherwise reuse stale entries when the size is unchanged.
+void SmatchetClearAiRenderCaches();
 #endif
