@@ -157,7 +157,7 @@ void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
 }
 #elif defined(__ANDROID__)
 void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
-    // SECURITY (audit H2 / CR #1357): Android seals EVERY secret at rest through the host
+    // SECURITY (audit H21357#1357): Android seals EVERY secret at rest through the host
     // AndroidKeyStore AES-GCM provider. ProtectSecretForConfig routes to that provider and FAILS
     // CLOSED — it returns empty when no provider is wired or the JNI seal fails. Unlike the Win32
     // DPAPI arm above there is NO plaintext fallback: an Android profile file is not a reliable
@@ -302,7 +302,7 @@ void LoadSecretFields(const nlohmann::json& j, TrackerConfig& cfg, SecretMigrati
     }
 #endif
 #elif defined(__ANDROID__)
-    // SECURITY (audit H2 / CR #1357): unseal every secret through the host Keystore provider.
+    // SECURITY (audit H21357#1357): unseal every secret through the host Keystore provider.
     // UnprotectSecretFieldFromConfig -> UnprotectSecretFromConfig FAILS SAFE to empty (no provider, a
     // Keystore/JNI decrypt failure, or ciphertext minted on another device). Plaintext fallback is gated
     // on the SEALED key being ABSENT — not on an empty unseal: a present-but-undecryptable `*_enc`

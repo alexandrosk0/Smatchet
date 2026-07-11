@@ -81,7 +81,7 @@ std::string UnprotectSecretFromConfig(const std::string& protectedBase64);
 // optionally-installed host provider (the Keystore JNI bridge the mobile host wires at boot). All
 // three arms are covered by the Windows doctest rig (ConfigSecretFilePerms.test.cpp):
 //   * empty input            -> empty output (no secret to transform).
-//   * provider NOT installed -> empty output (FAIL CLOSED, audit H2 / CR #1357): a secret we cannot
+//   * provider NOT installed -> empty output (FAIL CLOSED, audit H21357#1357): a secret we cannot
 //                               seal is dropped rather than passed through as cleartext, and on
 //                               unseal a stored value is treated as absent. The Android
 //                               ProtectSecretForConfig call site emits the loud DROPPED warning.
@@ -110,7 +110,7 @@ std::function<std::string(const std::string&)>& GetAndroidSecretUnprotectorRef()
 bool IsLooseConfigFileMode(unsigned int mode);
 
 // Helper used by Load() to surface a single warning per decrypt failure with the field name.
-// Cross-platform (audit H2 / CR #1357): the Win32 DPAPI path and the Android Keystore path both
+// Cross-platform (audit H21357#1357): the Win32 DPAPI path and the Android Keystore path both
 // route field-name-logged unseals through here; on POSIX desktop UnprotectSecretFromConfig is a
 // verbatim passthrough so this never warns.
 std::string UnprotectSecretFieldFromConfig(const char* fieldName, const std::string& protectedBase64);
@@ -153,7 +153,7 @@ struct SecretMigrationFlags {
     bool WhisperApiKey = false;
 #endif
 #if defined(__ANDROID__)
-    // Android fail-closed migration (audit H2 / CR #1357): set when ANY secret fell back to a legacy
+    // Android fail-closed migration (audit H21357#1357): set when ANY secret fell back to a legacy
     // plaintext key — including token/plane/github/bugreport, which have no per-field flag. Forces a
     // one-shot re-Save so the plaintext is re-sealed via Keystore, or dropped fail-closed if no
     // provider is wired. The goal is to get pre-fix plaintext OFF disk on first load after upgrade.

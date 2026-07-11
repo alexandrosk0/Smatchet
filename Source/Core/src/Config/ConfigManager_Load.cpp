@@ -650,7 +650,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
 
 #if defined(_WIN32) || defined(__ANDROID__)
     // Win32: only MCP gets an eager legacy cleanup here; older secrets keep their established lazy
-    // migration behavior. Android (audit H2 / CR #1357): migrate.LegacyPlaintext is set for ANY
+    // migration behavior. Android (audit H21357#1357): migrate.LegacyPlaintext is set for ANY
     // plaintext fallback, so this re-Save eagerly re-seals (or fail-closed drops) every legacy secret.
     // Ordering note, backlog #15: this migration re-save runs BEFORE the env/CLI override block below, by design.
     // - cfg here reflects what disk contained, with the legacy plaintext token already decoded into McpAuthToken.
