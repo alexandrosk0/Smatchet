@@ -184,7 +184,7 @@ whole-tree grep before the cut.
   `AppController_FieldIconPath.cpp`; `AppController.cpp` 893 → 742 LOC. `g_TrackerIssueFetchMutex`
   (co-resident in the same source anon block but locked by the staying `FetchIssuesForActiveView`)
   kept behind in its own anon namespace. Crosses the ≤ ~800 LOC target.
-- Slice 7 — PR #TBD · local-cache database block (`RemoveLocalCacheDbFiles` helper +
+- Slice 7 — PR #1765 · local-cache database block (`RemoveLocalCacheDbFiles` helper +
   `GetResolvedLocalCacheDbPath` / `RecreateLocalCacheDatabase` / `EnsureLocalCacheForUiTest`) →
   `AppController_LocalCacheDb.cpp`; `AppController.cpp` 742 → 571 LOC. Helper `RemoveLocalCacheDbFiles`
   cluster-private (2 grep hits, both moved). No `impl_->` in the moved bodies (slice-2-style — no
