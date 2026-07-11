@@ -2,7 +2,7 @@
 
 > **Slug**: `appcontroller-clusters-followup` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — slice 1 (MCP client-activity) in flight.
+> **Status**: `active` — slice 1 (MCP client-activity) shipped (PR #1660); slice 2 (Lua-script-file handling) in flight.
 
 <!-- index-summary: Continuation of the shipped appcontroller-service-extraction plan — behavior-preserving extraction of the remaining cohesive AppController.cpp clusters (flagged there as § Out of scope) into focused companion TUs, toward the ≤ ~800 LOC target. -->
 
@@ -36,17 +36,24 @@ whole-tree grep before the cut.
 
 ## Slices
 
-- **Slice 1 — MCP client-activity plumbing (this PR).** Extract the whole
+- **Slice 1 — MCP client-activity plumbing (SHIPPED, PR #1660).** Extract the whole
   `#if defined(SMATCHET_WITH_MCP)` cluster — the anon `PrefixMcpActivityLine` helper plus
   `AppendMcpActivity` / `CopyMcpActivityLog` / `NotifyMcpClientHttpActivity` /
   `GetMcpHttpTrafficEpoch` / `TryGetMcpLastClientHttpActivity` — into
   `AppController_McpActivity.cpp`. Anon helper confirmed cluster-private (2 grep hits, both
   moved). `AppController.cpp` 1519 → 1427 LOC. No CMake/test edit.
 
-- **Slice 2+ (future) — remaining clusters.** Lua-script-file handling
-  (`ResolveLuaScriptPath` / `ListLuaScriptFiles` / `GetAutomationScriptContent` /
-  `SaveAutomationScriptContent`) and the AI-context cluster (`AddAiContext` / `ClearAiContext` /
-  `GetAiContext` / `PromptAi`). Sized per-slice; not designed until slice 1 lands.
+- **Slice 2 — Lua-script-file handling (this PR).** Extract `ResolveLuaScriptPath` /
+  `ListLuaScriptFiles` / `GetAutomationScriptContent` / `SaveAutomationScriptContent` into
+  `AppController_LuaScriptFiles.cpp`. The four are topically cohesive but not contiguous
+  (two around former lines 1007–1109, two around 1188–1230, with the field-icon path
+  resolver between — that stays). Helper census: the bodies reference no anon-namespace or
+  static file-local helper, so nothing else moves; the cluster is compiled unconditionally
+  (not Lua-gated — matches the pre-move layout and the `AppController_LuaStubs.cpp` note).
+  `AppController.cpp` 1442 → 1294 LOC. No CMake/test edit.
+
+- **Slice 3 (future) — AI-context cluster.** `AddAiContext` / `ClearAiContext` /
+  `GetAiContext` / `PromptAi`. Sized when designed.
 
 ## Verification
 
@@ -65,4 +72,7 @@ whole-tree grep before the cut.
 
 ## Implementation log
 
-- (pending) Slice 1 — `<sha>` · MCP client-activity → `AppController_McpActivity.cpp`.
+- Slice 1 — PR #1660 (`17ea3235`) · MCP client-activity → `AppController_McpActivity.cpp`;
+  `AppController.cpp` 1519 → 1427 LOC.
+- Slice 2 — PR #1742 · Lua-script-file handling → `AppController_LuaScriptFiles.cpp`;
+  `AppController.cpp` 1442 → 1294 LOC.
