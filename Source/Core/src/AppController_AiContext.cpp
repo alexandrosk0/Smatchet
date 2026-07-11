@@ -1,6 +1,6 @@
 // AppController_AiContext.cpp — AI-context cluster extracted from
 // AppController.cpp (behavior-preserving TU split, plan
-// docs/plans/active/appcontroller-clusters-followup.md). Method DECLARATIONS stay in
+// docs/plans/appcontroller-clusters-followup.md). Method DECLARATIONS stay in
 // AppController.h; only the definitions moved, so linkage and behavior are identical.
 // The four methods are always-on (unconditional signatures, so Lua glue and the
 // SMATCHET_WITH_AI=OFF build link identically); each body internally guards its

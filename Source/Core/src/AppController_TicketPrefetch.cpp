@@ -1,6 +1,6 @@
 // AppController_TicketPrefetch.cpp — bulk-import ticket-prefetch cluster extracted from
 // AppController.cpp (behavior-preserving TU split, plan
-// docs/plans/active/appcontroller-clusters-followup.md). Method DECLARATIONS stay in
+// docs/plans/appcontroller-clusters-followup.md). Method DECLARATIONS stay in
 // AppController.h; only the definitions moved, so linkage and behavior are identical.
 // The cluster dedupes requested keys against the in-flight set, launches a background
 // worker, fetches and caches the tickets off the UI thread, then clears the in-flight

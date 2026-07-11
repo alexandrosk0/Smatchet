@@ -1,6 +1,6 @@
 // AppController_LuaScriptFiles.cpp — Lua-script-file handling extracted from
 // AppController.cpp (behavior-preserving TU split, plan
-// docs/plans/active/appcontroller-clusters-followup.md). Method DECLARATIONS stay in
+// docs/plans/appcontroller-clusters-followup.md). Method DECLARATIONS stay in
 // AppController.h; only the definitions moved, so linkage and behavior are identical.
 // The cluster is compiled unconditionally (it is not Lua-gated — script-path resolution
 // and Scripts/ enumeration work in the no-Lua build too, matching the pre-move layout).

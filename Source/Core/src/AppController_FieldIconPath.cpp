@@ -1,6 +1,6 @@
 // AppController_FieldIconPath.cpp — field-icon asset-path resolver extracted from
 // AppController.cpp (behavior-preserving TU split, plan
-// docs/plans/active/appcontroller-clusters-followup.md). The method DECLARATION stays in
+// docs/plans/appcontroller-clusters-followup.md). The method DECLARATION stays in
 // AppController.h; only the definition and its two file-local helpers moved, so linkage
 // and behavior are identical. The two helpers are used exclusively by this resolver, so
 // they move with it in a fresh anonymous namespace. This TU never touches the pImpl, so it
