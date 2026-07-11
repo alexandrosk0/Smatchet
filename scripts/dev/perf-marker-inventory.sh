@@ -14,7 +14,9 @@
 
 set -uo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# REPO_ROOT (the tree to scan) is overridable via SMATCHET_MARKER_REPO_ROOT so the
+# leak-gate test can regenerate the inventory over a throwaway fixture tree (#329).
+REPO_ROOT="${SMATCHET_MARKER_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 # Hard-fail on cd: this script WRITES docs/perf/MARKER_INVENTORY.md as a
 # repo-relative path. A failed cd would land the write wherever the
 # caller happened to be cwd'd in — bug, not a no-op.
@@ -25,7 +27,9 @@ case "${1:-}" in
     --check) CHECK_ONLY=1 ;;
 esac
 
-OUT_FILE="docs/perf/MARKER_INVENTORY.md"
+# OUT_FILE is overridable via MARKER_INVENTORY_OUT so a caller can regenerate the
+# inventory to a throwaway path without clobbering the committed doc (#329 leak gate).
+OUT_FILE="${MARKER_INVENTORY_OUT:-docs/perf/MARKER_INVENTORY.md}"
 TMP_FILE="$(mktemp -t marker-inventory-XXXXXX.md)"
 
 # Collect every SMATCHET_UI_PERF_SCOPE invocation across first-party trees.
