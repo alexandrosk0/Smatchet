@@ -13,6 +13,12 @@
 #include "ConfigManager.h"
 #include "LocalCacheManager.h"
 #include "Logger.h"
+// RecreateLocalCacheDatabase drives per-context streaming-sync teardown through
+// GridLiveContext::ticketSync_ and clears OfflineQueueService state via offlineQueue_; both are
+// member unique_ptrs that AppController.h only forward-declares, so the pointees must be complete
+// here for the destructor and method calls.
+#include "OfflineQueueService.h"
+#include "TicketSyncService.h"
 
 #include <ghc/filesystem.hpp>
 
