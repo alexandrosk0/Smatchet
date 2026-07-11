@@ -110,6 +110,11 @@ void DispatchOllamaLine(const nlohmann::json& j, const IAiClient::DeltaCallback&
 std::string OllamaBuildRequestBodyJson(const AiChatRequest& req) { return BuildChatBody(req).dump(); }
 
 // Single-source wire introspection (AiWireIntrospect.h) — see OpenAiClient.cpp.
+// SMATCHET_DEVIATION(rule=duplication; reason=each provider client's thin wire-introspection wrapper
+// (BuildChatBodyJson + ResolveChatUrl) must live in its OWN TU to delegate to that client's
+// anonymous-namespace BuildChatBody/ResolveBaseUrl/JoinUrl; folding the three into one shared unit
+// would couple otherwise-independent provider adapters — the cross-subsystem-coupling anti-pattern
+// the DRY pillar itself forbids (ADR-0015); owner=ai-clients; revisit=2026-12-31)
 namespace smatchet {
 namespace ai {
 nlohmann::json OllamaNativeBuildChatBodyJson(const AiChatRequest& req) { return BuildChatBody(req); }
