@@ -103,5 +103,5 @@ whole-tree grep before the cut.
   `AppController.cpp` 1442 → 1294 LOC.
 - Slice 3 — PR #1743 (`2c580c79`) · AI-context cluster → `AppController_AiContext.cpp`;
   `AppController.cpp` 1297 → 1237 LOC.
-- Slice 4 — PR TBD · host-integration cluster → `AppController_HostIntegration.cpp`;
+- Slice 4 — PR #1749 · host-integration cluster → `AppController_HostIntegration.cpp`;
   `AppController.cpp` 1237 → 1023 LOC.
