@@ -151,6 +151,14 @@ whole-tree grep before the cut.
   (`std::error_code`). `AppController.cpp` 742 → 571 LOC. No CMake/test edit. This is the LAST
   cohesive extractable cluster — after slice 7, `AppController.cpp` has no further
   obviously-cohesive block to peel off and the plan is ready to move to `shipped`.
+  **Fix-forward (squash `776d1b83` includes it):** the initial `impl_->` census was too narrow —
+  it looked only for pImpl access and missed that `RecreateLocalCacheDatabase` dereferences two
+  *non-pImpl* member `unique_ptr`s whose pointees `AppController.h` only forward-declares:
+  `GridLiveContext::ticketSync_` (`CancelAndJoinActiveStreamingSync` / `ResetStaleDeletionState`)
+  and `offlineQueue_` (`legacyPendingStartupBanner_.clear()`). MSVC failed with C2027 "use of
+  undefined type"; the fix added `#include "TicketSyncService.h"` and `#include
+  "OfflineQueueService.h"` (completeness for the member-`unique_ptr` derefs — the same class of
+  fix as slice 3's `LuaAutomationHost.h`). CI-caught and one line of includes; no body change.
 
 ## Verification
 
@@ -189,5 +197,11 @@ whole-tree grep before the cut.
   `AppController_LocalCacheDb.cpp`; `AppController.cpp` 742 → 571 LOC. Helper `RemoveLocalCacheDbFiles`
   cluster-private (2 grep hits, both moved). No `impl_->` in the moved bodies (slice-2-style — no
   `AppControllerImpl.h` / `LuaAutomationHost.h`); no build gating. `g_TrackerIssueFetchMutex`
-  (second anon block) and `LoadAiChatMessages` left in place. LAST cohesive cluster — plan ready to
-  move to `shipped` after this slice.
+  (second anon block) and `LoadAiChatMessages` left in place. **Fix-forward** included in the squash:
+  the `impl_->`-only census missed that `RecreateLocalCacheDatabase` derefs two non-pImpl member
+  `unique_ptr`s with forward-declared pointees — `GridLiveContext::ticketSync_` and `offlineQueue_` —
+  so MSVC failed C2027; added `#include "TicketSyncService.h"` + `#include "OfflineQueueService.h"`
+  for member-`unique_ptr` completeness (same class as slice 3's `LuaAutomationHost.h`). Rebased onto
+  develop's #1751 DR6 atomic-swap — moved bodies carry `std::atomic_store(&Cache, …)`, not the
+  pre-#1751 `Cache.reset()`/`make_unique` forms. LAST cohesive cluster — `AppController.cpp` now
+  571 LOC (2862 → 571 across this plan + the predecessor); plan moved to `shipped`.
