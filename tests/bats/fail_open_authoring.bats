@@ -40,6 +40,20 @@ teardown() {
     [ "$status" -eq 0 ]
 }
 
+@test "no-args default is BLOCKING (post-graduation): FAILs on a planted shape-Z driver" {
+    # The 2026-07-11 graduation flipped the default case "${1:---check}" -> --check-strict,
+    # so a NO-ARGS invocation (how test-all.sh --ci globs + runs the gate) must now block.
+    # Guards the default branch of the arg-dispatch case against a silent revert.
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/agents/scripts/core"
+    printf '#!/usr/bin/env bash\necho "Passed: $PASSED  Failed: $FAILED"\nif [ "$FAILED" != "0" ]; then exit 1; fi\nexit 0\n' \
+        > "$tmp/agents/scripts/core/bad-driver.sh"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash -c "cd '$tmp' && bash '$FOA'"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Z-zero-run-driver"* ]]
+}
+
 @test "--check-strict FAILs on a planted shape-B fail-open in a synthetic tree" {
     tmp="$(mktemp -d)"
     mkdir -p "$tmp/agents/scripts/core"
