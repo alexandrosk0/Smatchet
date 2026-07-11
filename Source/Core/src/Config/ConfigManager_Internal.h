@@ -136,7 +136,7 @@ bool& GetHasCachedConfigRef();
 std::string& GetRuntimeAssetDirectoryRef();
 std::string& GetUserDataDirectoryRef();
 
-// -------- god-file-splits PR 2: cross-TU seam between the Save/Load/Secrets TUs ----------
+// -------- god-file-splits (ConfigManager slice): cross-TU seam between the Save/Load/Secrets TUs --
 // SecretMigrationFlags is shared by ConfigManager_Secrets.cpp (LoadSecretFields) and
 // ConfigManager_Load.cpp (ConfigManager::Load). The four free functions are the table-driven
 // scalar pair (defined in ConfigManager.cpp, which owns the field tables) and the secret
