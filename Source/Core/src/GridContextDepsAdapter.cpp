@@ -27,6 +27,12 @@ GridContextDepsAdapter::GridContextDepsAdapter(AppController& app, GridLiveConte
 
 ISyncCache* GridContextDepsAdapter::Cache() { return app_.Cache.get(); }
 
+// DR6: atomic_load snapshot of the cache shared_ptr so an off-thread caller (QueueCreateOffline)
+// holds it alive across the whole operation while the UI thread swaps it in
+// RecreateLocalCacheDatabase. Mirrors the ADR-0012 Backend atomic_load reader pattern above.
+// LocalCacheManager derives from ISyncCache, so the shared_ptr converts implicitly.
+std::shared_ptr<ISyncCache> GridContextDepsAdapter::CacheShared() { return std::atomic_load(&app_.Cache); }
+
 // Backend reads go through std::atomic_load so the shared_ptr-instance read can't race the
 // live swap (atomic_store/atomic_exchange in SetBackend). The ALIASING shared_ptr keeps the
 // whole backend alive for as long as the caller holds the role handle — stronger than the

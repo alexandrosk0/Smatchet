@@ -300,15 +300,15 @@ void RegisterVerifyOnSaveCancelOnCloseVariant(ImGuiTestEngine* engine) {
         for (int i = 0; i < 240; ++i) {
             ctx->Yield();
         }
-        g_ui.assistantPrefsTestInFlight = false;
 
         AiClientFactory::SetTestOverride(nullptr);
         g_ui.showPreferences = false;
 
-        IM_CHECK(!g_ui.assistantPrefsTestInFlight);
-        // Dispatcher callback short-circuited at the cancel guard, so the
-        // result line stays as the initial "Testing..." TriggerProbe set
-        // (type=0). The success branch's "Verified." (type=1) is NOT reached.
+        // DR29: the previous body set assistantPrefsTestInFlight=false itself and then
+        // asserted it was false — a self-referential guard. Assert the production-observable
+        // outcome instead: the dispatcher callback short-circuited at the cancel guard, so the
+        // result line stays as the initial "Testing..." TriggerProbe set (type=0); the success
+        // branch's "Verified." (type=1) is never reached.
         IM_CHECK_EQ(g_ui.assistantPrefsTestResultType, 0);
     };
 }

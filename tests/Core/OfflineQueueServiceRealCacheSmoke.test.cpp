@@ -36,6 +36,12 @@ class RealCacheOfflineQueueDeps : public FakeOfflineQueueDeps {
     // NOTE: the base's `CacheImpl` (FakeSyncCache) still exists but is ORPHANED here — never
     // read `deps.CacheImpl` in this TU (it would silently target the fake, not the real cache).
     ISyncCache* Cache() override { return &real_; }
+    // DR6: match the overridden Cache() — a non-owning aliasing shared_ptr over the SAME real_
+    // cache (the fixture owns real_ for its lifetime). Without this, the base CacheShared() would
+    // hand back the orphaned fake cache, not real_.
+    std::shared_ptr<ISyncCache> CacheShared() override {
+        return std::shared_ptr<ISyncCache>(std::shared_ptr<void>(), &real_);
+    }
     LocalCacheManager& RealCache() { return real_; }
 
   private:

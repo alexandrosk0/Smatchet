@@ -37,6 +37,13 @@ class IOfflineQueueDeps {
     /// or after `RecreateLocalCacheDatabase` has torn it down. Callers must null-check.
     virtual ISyncCache* Cache() = 0;
 
+    /// DR6 latched cache snapshot — a strong handle over the same cache the raw Cache() points
+    /// at, so an off-thread caller (QueueCreateOffline runs on a worker) keeps the cache alive
+    /// across its whole operation while the UI thread swaps it in RecreateLocalCacheDatabase.
+    /// Mirrors the ADR-0012 Backend atomic-swap / ReaderShared latched-handle pattern. May be
+    /// null (no cache yet). Capture the shared_ptr itself and use it for every deref.
+    virtual std::shared_ptr<ISyncCache> CacheShared() = 0;
+
     /// LATCHED narrow read accessor — a strong handle that keeps the owning backend alive
     /// (production: aliasing shared_ptr onto the atomically-latched backend) so replay
     /// workers that captured it survive a live tracker swap or a Slice-3 pane-context
