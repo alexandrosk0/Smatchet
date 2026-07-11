@@ -2,7 +2,7 @@
 
 > **Slug**: `appcontroller-clusters-followup` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — slice 1 (MCP client-activity) shipped (PR #1660); slice 2 (Lua-script-file handling) in flight.
+> **Status**: `active` — slice 1 (MCP client-activity) shipped (PR #1660); slice 2 (Lua-script-file handling) shipped (PR #1742, squash `1461bee3`); slice 3 (AI-context) in flight.
 
 <!-- index-summary: Continuation of the shipped appcontroller-service-extraction plan — behavior-preserving extraction of the remaining cohesive AppController.cpp clusters (flagged there as § Out of scope) into focused companion TUs, toward the ≤ ~800 LOC target. -->
 
@@ -43,7 +43,7 @@ whole-tree grep before the cut.
   `AppController_McpActivity.cpp`. Anon helper confirmed cluster-private (2 grep hits, both
   moved). `AppController.cpp` 1519 → 1427 LOC. No CMake/test edit.
 
-- **Slice 2 — Lua-script-file handling (this PR).** Extract `ResolveLuaScriptPath` /
+- **Slice 2 — Lua-script-file handling (SHIPPED, PR #1742).** Extract `ResolveLuaScriptPath` /
   `ListLuaScriptFiles` / `GetAutomationScriptContent` / `SaveAutomationScriptContent` into
   `AppController_LuaScriptFiles.cpp`. The four are topically cohesive but not contiguous
   (two around former lines 1007–1109, two around 1188–1230, with the field-icon path
@@ -52,8 +52,16 @@ whole-tree grep before the cut.
   (not Lua-gated — matches the pre-move layout and the `AppController_LuaStubs.cpp` note).
   `AppController.cpp` 1442 → 1294 LOC. No CMake/test edit.
 
-- **Slice 3 (future) — AI-context cluster.** `AddAiContext` / `ClearAiContext` /
-  `GetAiContext` / `PromptAi`. Sized when designed.
+- **Slice 3 — AI-context cluster (this PR).** Extract `AddAiContext` / `ClearAiContext` /
+  `GetAiContext` / `PromptAi` into `AppController_AiContext.cpp`. The four are contiguous
+  and always-on (unconditional signatures; each body internally guards its
+  `impl_->aiAssistant_` delegation with `SMATCHET_WITH_AI` and no-ops otherwise —
+  reproduced byte-identically, including the `#else (void)param;` tails, so the light
+  build compiles the same bodies with the guarded branches dropped). Helper census: the
+  bodies reference no anon-namespace or static file-local helper (only Impl's
+  `aiAssistant_`, `GetGlobalAiAssistantUiState()`, and `LOG_WARN`), so nothing else
+  moves. Unlike slice 2 this TU dereferences the pImpl, so it includes
+  `AppControllerImpl.h`. `AppController.cpp` 1297 → 1237 LOC. No CMake/test edit.
 
 ## Verification
 
@@ -74,5 +82,7 @@ whole-tree grep before the cut.
 
 - Slice 1 — PR #1660 (`17ea3235`) · MCP client-activity → `AppController_McpActivity.cpp`;
   `AppController.cpp` 1519 → 1427 LOC.
-- Slice 2 — PR #1742 · Lua-script-file handling → `AppController_LuaScriptFiles.cpp`;
+- Slice 2 — PR #1742 (`1461bee3`) · Lua-script-file handling → `AppController_LuaScriptFiles.cpp`;
   `AppController.cpp` 1442 → 1294 LOC.
+- Slice 3 — PR #1743 · AI-context cluster → `AppController_AiContext.cpp`;
+  `AppController.cpp` 1297 → 1237 LOC.
