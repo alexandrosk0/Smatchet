@@ -197,9 +197,11 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   buffers), **#1711/#1712/#1713** (B16: env-scrub `_PATH`, p4vc trailing-`\`,
   comments Gen token). Dominant recurring class across all four batches: the
   **zero-test fail-open driver** (`passed=0&&failed=0`→exit-0) — 12+ new sites.
-  With the #1–#1174 baseline, **every merged PR #1→#1695 is survivor-reviewed;
-  the next sweep resumes from #1696** (same recipe; sha-resolved variant recipe
-  in the Batch 13 header for gh-less environments).
+  With the #1–#1174 baseline, **every merged PR #1→#1695 is survivor-reviewed.**
+  **Batch 17 (same session) extended the frontier to #1737** — 36 PRs
+  (#1696–#1737, incl. #1700 itself), 4 findings (1 MEDIUM fail-open + 3 LOW),
+  0 user-visible. **The next sweep resumes from #1738** (same recipe;
+  sha-resolved variant recipe in the Batch 13 header for gh-less environments).
 - **Swept:** **#1–#1174** (batches 1–11) — **the entire merged-PR history reviewed.**
   **SWEEP COMPLETE** — Batch 11 (#116–#1, 113 PRs, the final tail incl. the early
   base-`main` PRs #1–#5) added 2026-06-13;
@@ -261,6 +263,20 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   User-visible ones → GitHub Issues per ADR-0014 when actioned.)_
 
 <!-- Batches appended at the top. -->
+
+## Batch 17 — #1737–#1696 (36-PR sweep, 2026-07-10)
+
+Coverage: **36 reviewed — 4 with findings, 32 clean, 0 fully superseded, 0 errored, 0 died.** Net: **0 CRITICAL, 0 HIGH, 1 MEDIUM, 3 LOW.** Same-day incremental on top of the Batches 13–16 frontier: everything merged after #1695 up to develop @ `2877512f` — **the frontier is now #1–#1737 contiguous; the next sweep resumes from #1738.** Survivor-filtered against origin/develop (0 superseded — the PRs are hours old, so essentially every introduced line is alive; includes the sweep's own #1700). (Same sha-resolved workflow + reviewer model as Batches 13–16; 36/36 returned, 0 died; ~13 min, ~1.3M tokens.) **All 4 findings are `userVisible:false` → NO GitHub Issues; backlog only per ADR-0014.** The MEDIUM is another fail-open gate variant — cross-filed onto the REOPENED `fail-open-meta-gate-authoring-check` in [`categories/tooling.md`](categories/tooling.md) as sub-shape (I): a mutation gate whose scored set can silently drain to zero.
+
+### MEDIUM
+- **#1698 (e87c5b78) · `scripts/dev/mutation-smoke.sh:219`** — fail-open: scoring counts only `expect=killed` guards; FILE-MISSING/SPEC-ERROR/BUILD_FAIL outcomes silently `continue` without gating. If ALL guard mutants land in those buckets (full corpus rot after a production refactor, or a systemic build break), `scored=0` and the gate exits 0 — a green run that verified zero assertion strength, contradicting the plan's "fails loud, never silently skips-as-pass" claim. Muted today by continue-on-error, but Phase 4 graduates it to blocking. Fix: under `--gate`, exit 1 when `scored==0` (and/or fold the error buckets into a non-zero exit).
+
+### LOW (3)
+- **#1732 (2877512f) · `Source/Core/src/Ui/AdfToMarkdown.cpp:505`** — `EmitAdfCodeBlock` materializes the ENTIRE accumulated output (`const std::string current = s.out.str()`) on every code block just to inspect `current.back()` — O(blocks × total-output) quadratic conversion cost. Fix: track a `lastCh` on `AdfWalkState` (or peek the streambuf) instead of copying the growing buffer.
+- **#1728 (2204ce60) · `docs/plans/active/god-file-splits.md:24`** — sibling-plan cross-refs use `../<slug>.md` (also :92/:133/:152/:153), which resolves to `docs/plans/` — but all three targets live in `docs/plans/active/`; every link is broken. Fix: same-directory `<slug>.md` targets.
+- **#1722 (dc1b693b) · `docs/plans/shipped/appcontroller-fan-in-phase6-dissolution.md:5`** — cites `docs/plans/appcontroller-fan-in-phase5-facets.md`; the Phase 5 plan lives at `docs/plans/shipped/…` (INDEX.md links the shipped/ copy). Fix: add `shipped/`.
+
+**Clean (32, surviving lines reviewed, no findings):** #1737, #1736, #1735, #1734, #1733, #1731, #1730, #1729, #1727, #1726, #1725, #1724, #1723, #1721, #1720, #1719, #1718, #1717, #1716, #1715, #1714, #1710, #1709, #1708, #1707, #1705, #1704, #1702, #1701, #1700, #1697, #1696.
 
 ## Batch 16 — #1304–#1175 + the #1593 special (117-PR sweep, 2026-07-10) — FRONTIER COMPLETE
 
