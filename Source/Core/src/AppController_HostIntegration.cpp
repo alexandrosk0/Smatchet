@@ -188,8 +188,8 @@ void AppController::AddAutomationLogSink(std::function<void(const std::string&)>
     if (impl_->luaHost_) {
         impl_->luaHost_->AddAutomationLogSink(std::move(sink));
     } else {
-        // OnEarlyInit fires before Initialize constructs luaHost_. Buffer the sink;
-        // Initialize drains pendingLogSinks_ into luaHost_ immediately after construction.
+        // OnEarlyInit fires before Initialize constructs the Lua host, so the sink is
+        // buffered here and drained into the host immediately after construction.
         if (sink) {
             pendingLogSinks_.push_back(std::move(sink));
         }
