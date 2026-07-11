@@ -226,6 +226,11 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/FieldEditAuditSource.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/TextMerge.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownConvert.cpp"
+        # MarkdownConvert god-file split (god-file-splits plan): the spine above
+        # delegates to md_detail:: engines defined in these companion TUs.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownToAdf.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownToHtml.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/AdfToMarkdown.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueCreatePipeline.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueCreatePipelineHelpers.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldPayload.cpp"
@@ -1019,6 +1024,11 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/CompactDateFormatPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/UiPerfMonitor.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownConvert.cpp"
+    # MarkdownConvert god-file split (god-file-splits plan): companion engine TUs the
+    # spine delegates to (md_detail::). Pure md4c/json/Logger — no ImGui, links in this rig.
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownToAdf.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownToHtml.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/AdfToMarkdown.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/BackendAuditTrail.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/FieldEditAuditSource.cpp"
