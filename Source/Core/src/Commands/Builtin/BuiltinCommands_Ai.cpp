@@ -31,6 +31,7 @@
 #include "AiPrefsValidator.h"
 #include "AiRequestBuilder.h"
 #include "AiTypes.h"
+#include "AiWireIntrospect.h"
 #include "ConfigManager.h"
 #include "IAiClient.h"
 #endif
@@ -103,105 +104,20 @@ std::string RedactedKey(const std::string& key) {
     return out;
 }
 
-// Mirror the body shape each client emits without depending on their internal
-// helpers. Drift risk is low: changing the wire body is a wire-level decision
-// that should also update this debug dumper.
-nlohmann::json BuildAnthropicBody(const std::string& model, const std::string& systemPrompt, const std::string& prompt,
-                                  int maxTokens) {
-    nlohmann::json body;
-    body["model"] = model;
-    body["stream"] = true;
-    body["max_tokens"] = (maxTokens > 0) ? maxTokens : 4096;
-    if (!systemPrompt.empty()) {
-        body["system"] = systemPrompt;
-    }
-    nlohmann::json messages = nlohmann::json::array();
-    nlohmann::json userMsg;
-    userMsg["role"] = "user";
-    userMsg["content"] = prompt;
-    messages.push_back(std::move(userMsg));
-    body["messages"] = std::move(messages);
-    return body;
-}
-
-nlohmann::json BuildOpenAiBody(const std::string& model, const std::string& systemPrompt, const std::string& prompt,
-                               int maxTokens) {
-    nlohmann::json body;
-    body["model"] = model;
-    body["stream"] = true;
-    // Mirror OpenAiClient::BuildChatBody — always emit max_tokens so the
-    // debug dump matches the wire body that reasoning-style models depend on
-    // (gemma-4-31b, o1-style) to reach `content` instead of exhausting on
-    // `reasoning_content`.
-    body["max_tokens"] = (maxTokens > 0) ? maxTokens : 4096;
-    nlohmann::json messages = nlohmann::json::array();
-    if (!systemPrompt.empty()) {
-        nlohmann::json sys;
-        sys["role"] = "system";
-        sys["content"] = systemPrompt;
-        messages.push_back(std::move(sys));
-    }
-    nlohmann::json userMsg;
-    userMsg["role"] = "user";
-    userMsg["content"] = prompt;
-    messages.push_back(std::move(userMsg));
-    body["messages"] = std::move(messages);
-    return body;
-}
-
-nlohmann::json BuildOllamaNativeBody(const std::string& model, const std::string& systemPrompt,
-                                     const std::string& prompt) {
-    nlohmann::json body;
-    body["model"] = model;
-    body["stream"] = true;
-    nlohmann::json messages = nlohmann::json::array();
-    if (!systemPrompt.empty()) {
-        nlohmann::json sys;
-        sys["role"] = "system";
-        sys["content"] = systemPrompt;
-        messages.push_back(std::move(sys));
-    }
-    nlohmann::json userMsg;
-    userMsg["role"] = "user";
-    userMsg["content"] = prompt;
-    messages.push_back(std::move(userMsg));
-    body["messages"] = std::move(messages);
-    return body;
-}
-
-// Mirror OpenAiClient::ResolveBaseUrl — strip a trailing "/v1" or "/v1/" so
-// debug dumps match the wire body when callers configure the natural
-// LM Studio / Ollama-OpenAI-compat / OpenAI-docs form ending in /v1.
-std::string StripOpenAiV1Suffix(std::string base) {
-    if (base.size() >= 4 && base.compare(base.size() - 4, 4, "/v1/") == 0) {
-        base.resize(base.size() - 4);
-    } else if (base.size() >= 3 && base.compare(base.size() - 3, 3, "/v1") == 0) {
-        base.resize(base.size() - 3);
-    }
-    return base;
-}
-
-std::string ResolveEndpointUrl(AiProvider provider, const std::string& baseUrl) {
-    auto join = [](std::string base, const char* path) {
-        if (base.empty()) {
-            return std::string(path);
-        }
-        if (base.back() == '/') {
-            base.pop_back();
-        }
-        return base + path;
-    };
-    switch (provider) {
-    case AiProvider::Anthropic:
-        return join(baseUrl.empty() ? std::string("https://api.anthropic.com") : baseUrl, "/v1/messages");
-    case AiProvider::OllamaNative:
-        return join(baseUrl.empty() ? std::string("http://localhost:11434") : baseUrl, "/api/chat");
-    case AiProvider::OllamaOpenAiCompat:
-    case AiProvider::OpenAi:
-    default:
-        return join(StripOpenAiV1Suffix(baseUrl.empty() ? std::string("https://api.openai.com") : baseUrl),
-                    "/v1/chat/completions");
-    }
+// Build the single-turn AiChatRequest an ai.dump-request invocation represents,
+// so the wire body/URL come from the SAME builders the live client uses
+// (AiWireIntrospect.h) instead of a drift-prone debug mirror.
+AiChatRequest MakeDumpRequest(const std::string& model, const std::string& systemPrompt, const std::string& prompt) {
+    AiChatRequest req;
+    req.Model = model;
+    req.SystemPrompt = systemPrompt;
+    req.Temperature = -1.0f; // unset sentinel — omitted from the wire (server default)
+    req.MaxTokens = 0;       // unset sentinel — client applies its own default cap
+    AiMessage userTurn;
+    userTurn.Role = "user";
+    userTurn.Content = prompt;
+    req.History.push_back(std::move(userTurn));
+    return req;
 }
 
 void RegisterListModelsCommand(CommandRegistry& reg) {
@@ -261,13 +177,15 @@ void RegisterDumpRequestCommand(CommandRegistry& reg) {
                 const AiClientConfig clientCfg = smatchet::ai::BuildClientConfig(cfg, provider);
                 const std::string model = args.value("model", ResolveModelId(cfg, provider));
 
+                const AiChatRequest req = MakeDumpRequest(model, systemPrompt, prompt);
                 nlohmann::json body;
                 nlohmann::json headers;
-                std::string url = ResolveEndpointUrl(provider, clientCfg.BaseUrl);
+                std::string url;
 
                 switch (provider) {
                 case AiProvider::Anthropic:
-                    body = BuildAnthropicBody(model, systemPrompt, prompt, 0);
+                    body = smatchet::ai::AnthropicBuildChatBodyJson(req);
+                    url = smatchet::ai::AnthropicResolveChatUrl(clientCfg);
                     headers["accept"] = "text/event-stream";
                     headers["content-type"] = "application/json";
                     headers["cache-control"] = "no-cache";
@@ -275,14 +193,16 @@ void RegisterDumpRequestCommand(CommandRegistry& reg) {
                     headers["x-api-key"] = RedactedKey(clientCfg.ApiKey);
                     break;
                 case AiProvider::OllamaNative:
-                    body = BuildOllamaNativeBody(model, systemPrompt, prompt);
+                    body = smatchet::ai::OllamaNativeBuildChatBodyJson(req);
+                    url = smatchet::ai::OllamaNativeResolveChatUrl(clientCfg);
                     headers["accept"] = "application/x-ndjson";
                     headers["content-type"] = "application/json";
                     break;
                 case AiProvider::OpenAi:
                 case AiProvider::OllamaOpenAiCompat:
                 default:
-                    body = BuildOpenAiBody(model, systemPrompt, prompt, 0);
+                    body = smatchet::ai::OpenAiBuildChatBodyJson(req);
+                    url = smatchet::ai::OpenAiResolveChatUrl(clientCfg);
                     headers["accept"] = "text/event-stream";
                     headers["content-type"] = "application/json";
                     headers["cache-control"] = "no-cache";

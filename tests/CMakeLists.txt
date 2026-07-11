@@ -1149,6 +1149,9 @@ add_executable(SmatchetTests
     # Shared provider->AiClientConfig seam (key sanitizer + endpoint consent gate)
     # consumed by the controller and the debug ai.* commands (audit B4/P4).
     Core/AiRequestBuilder.test.cpp
+    # ai.dump-request wire builders — single-source wrappers over the client
+    # BuildChatBody/URL resolvers (links the same 3 client TUs below).
+    Core/AiWireIntrospect.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AiRequestBuilder.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/OpenAiClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AnthropicClient.cpp"

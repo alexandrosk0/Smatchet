@@ -2,6 +2,7 @@
 
 #include "AiErrorRedact.h"
 #include "AiSseParser.h"
+#include "AiWireIntrospect.h"
 #include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "NetworkUsageTracker.h"
@@ -122,6 +123,18 @@ void DispatchOpenAiDataLine(const std::string& data, const IAiClient::DeltaCallb
 }
 
 } // namespace
+
+// Single-source wire introspection (AiWireIntrospect.h) — delegate to the same
+// anonymous-namespace builders the live Chat/Stream path uses, so ai.dump-request
+// reflects the exact wire body/URL with no drift.
+namespace smatchet {
+namespace ai {
+nlohmann::json OpenAiBuildChatBodyJson(const AiChatRequest& req) { return BuildChatBody(req); }
+std::string OpenAiResolveChatUrl(const AiClientConfig& cfg) {
+    return JoinUrl(ResolveBaseUrl(cfg), "/v1/chat/completions");
+}
+} // namespace ai
+} // namespace smatchet
 
 std::string OpenAiClient::GetProviderName() const { return "openai"; }
 
