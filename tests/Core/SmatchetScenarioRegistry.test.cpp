@@ -38,6 +38,7 @@ std::set<std::string> ExpectedNames() {
     expected.insert("ai-chat-history-render");
 #endif
     expected.insert("idle");
+    expected.insert("command-contract-sweep");
     expected.insert("cell-edit-burst");
     expected.insert("attachment-preview-open");
     expected.insert("preferences-slider-drag");
@@ -57,7 +58,7 @@ std::set<std::string> ExpectedNames() {
 #if defined(SMATCHET_WITH_AI)
     expected.insert("ai-assistant-streaming-happy-path");
     expected.insert("ai-assistant-streaming-transport-down-within-5s");
-    // PR-12 — real-client S2/S4/S5 streaming scenario.
+    // Real-client S2/S4/S5 streaming scenario.
     expected.insert("ai-assistant-send-s2-s4-s5");
 #endif
 #if defined(SMATCHET_WITH_WHISPER)

@@ -430,12 +430,12 @@ Build with the arm64 ABI present (full both-ABI build, or `-Pandroid.injected.bu
 
 **Workflow:** [`.github/workflows/build-and-test.yml`](../../.github/workflows/build-and-test.yml).
 
-### Existing job — `mobile-android-ndk` (advisory)
+### Existing job — `mobile-android-ndk` (blocking)
 
-- **Name:** `Mobile — Android NDK arm64-v8a (.so configure+link, advisory)`
+- **Name:** `Mobile — Android NDK arm64-v8a (.so configure+link)`
 - **Runner:** `ubuntu-latest` · **timeout:** 45 min · **permissions:** `contents: read`
 - **Gating:** `needs: changes` and runs only when `needs.changes.outputs.code == 'true'`. The change-detector treats `*.md`, `docs/*`, `agents/*`, etc. as docs-class (no build); a `Source/Mobile/**` change hits the catch-all and sets `code=true`, so this job runs. (An empty/failed diff defaults `code=true`, fail-safe.)
-- **Advisory:** **not** on the `develop` merge-gate.
+- **Blocking:** a branch-protection required context on `develop` + poller-blocked under block-on-any-red (see § Mobile CI jobs below).
 
 **Pins (env):**
 
@@ -474,7 +474,7 @@ The `android-ndk-arm64` preset: generator Ninja, `binaryDir build/android-ndk-ar
 
 ### Mobile CI jobs (shipped)
 
-Three jobs now cover the Android target — all **advisory** (none in `develop`'s required-check set, none on the merge-gate meant-to-block allow-list, so a flaky emulator can never block a merge):
+Three jobs now cover the Android target — all **blocking** since the all-gates-blocking flip (the NDK + APK jobs are branch-protection required contexts; the emulator smoke is poller-blocked via block-on-any-red, made reliable by the cold-boot fix that removed its snapshot-restore boot race):
 
 - **`mobile-android-ndk`** — configure + link of the `arm64-v8a` `SmatchetMobile` `.so` (validates Slice-1 TLS backend); stops at link.
 - **`mobile-android-apk`** — `./gradlew assembleDebug -Pandroid.injected.build.abi=arm64-v8a`; packages the release-ABI APK (`needs: mobile-android-ndk`, restores its OpenSSL/_deps cache).

@@ -4,19 +4,19 @@
 // the FakeEditMetaDeps) + a FieldEditPipelineService(fakeFieldEditDeps, editMeta). No AppController,
 // ImGui, cpr, HTTP, or SQLite surface is touched — the fakes are header-only and SQLite-free.
 //
-// A per-case TestEnvGuard (OfflineQueueTestEnv.h) points ConfigManager at a temp dir with
+// A per-case OfflineQueueTestEnvGuard (OfflineQueueTestEnv.h) points ConfigManager at a temp dir with
 // `read_only_mode=false` (a missing config defaults ReadOnlyMode=true, which blocks every edit) and
 // redirects the BackendAuditTrail file there, so SubmitFieldEdit's read-only gate + audit writes do
 // not depend on the developer's real config.
 //
 // Per-case isolation: every TEST_CASE constructs its own fakes + fresh services. No statics, no
-// shared world state, no order dependencies (the TestEnvGuard's process-wide config is set+reset
+// shared world state, no order dependencies (the OfflineQueueTestEnvGuard's process-wide config is set+reset
 // per case; doctest's single-threaded runner prevents races).
 
 #include "../support/FakeEditMetaDeps.h"
 #include "../support/FakeFieldEditDeps.h"
 #include "../support/FakeTrackerClient.h"
-#include "../support/OfflineQueueTestEnv.h" // TestEnvGuard (read_only_mode=false + audit temp dir)
+#include "../support/OfflineQueueTestEnv.h" // OfflineQueueTestEnvGuard (read_only_mode=false + audit temp dir)
 
 #include "CachedTicketTypes.h"
 #include "EditMetaCacheService.h"
@@ -34,7 +34,7 @@
 
 using smatchet_tests::FakeEditMetaDeps;
 using smatchet_tests::FakeFieldEditDeps;
-using smatchet_tests::TestEnvGuard;
+using smatchet_tests::OfflineQueueTestEnvGuard;
 
 namespace {
 
@@ -89,7 +89,7 @@ struct Rig {
 // (1) Regular field success → UpdateTicket + deferred notify.
 // ---------------------------------------------------------------------------
 TEST_CASE("FieldEditPipelineService::SubmitFieldEdit regular success applies optimistic update + notify") {
-    TestEnvGuard env;
+    OfflineQueueTestEnvGuard env;
     Rig rig;
     rig.fieldDeps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1"));
     rig.fieldDeps.Fake()->SetDefaultUpdateIssueFieldsResult(true); // PUT succeeds
@@ -111,7 +111,7 @@ TEST_CASE("FieldEditPipelineService::SubmitFieldEdit regular success applies opt
 // (2) Read-only mode blocks before any network call.
 // ---------------------------------------------------------------------------
 TEST_CASE("FieldEditPipelineService::SubmitFieldEdit blocked by read-only mode") {
-    TestEnvGuard env;
+    OfflineQueueTestEnvGuard env;
     // Flip the temp config to read-only AFTER the guard wrote read_only_mode=false (same temp dir
     // the guard pointed ConfigManager at; restored on guard teardown).
     {
@@ -137,7 +137,7 @@ TEST_CASE("FieldEditPipelineService::SubmitFieldEdit blocked by read-only mode")
 // (3) Editmeta-deny blocks the regular branch (no PUT issued).
 // ---------------------------------------------------------------------------
 TEST_CASE("FieldEditPipelineService::SubmitFieldEdit blocked when editmeta denies the field") {
-    TestEnvGuard env;
+    OfflineQueueTestEnvGuard env;
     Rig rig;
     rig.fieldDeps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1"));
     // Loaded editmeta that explicitly DENIES summary.
@@ -156,7 +156,7 @@ TEST_CASE("FieldEditPipelineService::SubmitFieldEdit blocked when editmeta denie
 // (4) 400 → refresh editmeta (now allows) → retry → succeed (cross-service).
 // ---------------------------------------------------------------------------
 TEST_CASE("FieldEditPipelineService::SubmitFieldEdit retries after a 400 once editmeta is refreshed") {
-    TestEnvGuard env;
+    OfflineQueueTestEnvGuard env;
     Rig rig;
     rig.fieldDeps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1"));
     // First PUT returns HTTP 400; second PUT (after editmeta refresh) succeeds.
@@ -178,7 +178,7 @@ TEST_CASE("FieldEditPipelineService::SubmitFieldEdit retries after a 400 once ed
 // (5) Sprint branch — AddIssueToSprint + optimistic option-label display value.
 // ---------------------------------------------------------------------------
 TEST_CASE("FieldEditPipelineService::SubmitFieldEdit sprint branch adds to sprint + resolves option label") {
-    TestEnvGuard env;
+    OfflineQueueTestEnvGuard env;
     Rig rig;
     rig.fieldDeps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1"));
     rig.fieldDeps.Fake()->SetDefaultAddIssueToSprintResult(true);
@@ -198,7 +198,7 @@ TEST_CASE("FieldEditPipelineService::SubmitFieldEdit sprint branch adds to sprin
 // (6) Timetracking branch — wraps the estimate into a `timetracking` payload.
 // ---------------------------------------------------------------------------
 TEST_CASE("FieldEditPipelineService::SubmitFieldEdit timetracking branch writes a timetracking payload") {
-    TestEnvGuard env;
+    OfflineQueueTestEnvGuard env;
     Rig rig;
     rig.fieldDeps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1"));
     rig.fieldDeps.Fake()->SetDefaultUpdateIssueFieldsResult(true);
@@ -221,7 +221,7 @@ TEST_CASE("FieldEditPipelineService::SubmitFieldEdit timetracking branch writes 
 //     queueable field; TryPrepareOfflineFieldEdit → true with a non-empty payload JSON.
 // ---------------------------------------------------------------------------
 TEST_CASE("FieldEditPipelineService offline-fallback prepare contract for a queueable field") {
-    TestEnvGuard env;
+    OfflineQueueTestEnvGuard env;
     Rig rig;
     rig.fieldDeps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1"));
     rig.editMetaDeps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}});
@@ -255,7 +255,7 @@ TEST_CASE("FieldEditPipelineService offline-fallback prepare contract for a queu
 // (8) ApplyFieldEditResult — success / not-ok / no-cache.
 // ---------------------------------------------------------------------------
 TEST_CASE("FieldEditPipelineService::ApplyFieldEditResult applies a successful result to the cache") {
-    TestEnvGuard env;
+    OfflineQueueTestEnvGuard env;
     Rig rig;
     rig.fieldDeps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1"));
 
@@ -273,7 +273,7 @@ TEST_CASE("FieldEditPipelineService::ApplyFieldEditResult applies a successful r
 }
 
 TEST_CASE("FieldEditPipelineService::ApplyFieldEditResult rejects a not-ok result") {
-    TestEnvGuard env;
+    OfflineQueueTestEnvGuard env;
     Rig rig;
     rig.fieldDeps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1"));
 
@@ -290,7 +290,7 @@ TEST_CASE("FieldEditPipelineService::ApplyFieldEditResult rejects a not-ok resul
 }
 
 TEST_CASE("FieldEditPipelineService::ApplyFieldEditResult fails when no cache is initialized") {
-    TestEnvGuard env;
+    OfflineQueueTestEnvGuard env;
     Rig rig;
     rig.fieldDeps.HasCacheImpl = false; // simulate cache-not-initialized
 
@@ -302,6 +302,6 @@ TEST_CASE("FieldEditPipelineService::ApplyFieldEditResult fails when no cache is
     const bool ok = rig.svc.ApplyFieldEditResult("ABC-1", result, err);
 
     CHECK_FALSE(ok);
-    CHECK(err.find("Cache is not initialized") != std::string::npos);
+    CHECK(err.find("Local cache is unavailable") != std::string::npos);
     CHECK(rig.fieldDeps.UpdatedTickets.empty());
 }

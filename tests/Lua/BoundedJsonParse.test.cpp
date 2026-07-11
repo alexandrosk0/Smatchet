@@ -1,7 +1,7 @@
 // BoundedJsonParse.test.cpp — pure doctest for the shared depth/node-bounded JSON
 // parse helper (smatchet::json_safe::ParseBounded). This is the ONE bounded-parse
 // implementation that the decode_json Lua sink, the MCP REST / JSON-RPC POST
-// handlers, and the Lua-MCP-tool params path all route through (PR #1271). Testing
+// handlers, and the Lua-MCP-tool params path all route through this shared helper. Testing
 // the helper directly proves every ingress is depth/node bounded without standing
 // up each transport.
 //
@@ -113,4 +113,69 @@ TEST_CASE("ParseBounded · malformed-but-shallow input is InvalidJsonError, not 
     const nlohmann::json j = js::ParseBounded("{not valid json", err);
     CHECK(j.is_null());
     CHECK(err == std::string(js::InvalidJsonError()));
+}
+
+// ParseBoundedOrDiscarded — the drop-in for legacy `json::parse(text, nullptr, false)`
+// sites (tracker HTTP clients) that branch on `.is_discarded()`. Same caps as
+// ParseBounded, but any failure collapses to a DISCARDED json so those sites adopt the
+// depth-bomb guard with a one-line swap and no error-handling change.
+
+TEST_CASE("ParseBoundedOrDiscarded · valid JSON parses and is NOT discarded" * doctest::test_suite("[high-risk]")) {
+    const nlohmann::json j = js::ParseBoundedOrDiscarded(R"({"data":{"viewer":{"id":"u1"}}})");
+    REQUIRE_FALSE(j.is_discarded());
+    REQUIRE(j.is_object());
+    CHECK(j["data"]["viewer"]["id"].get<std::string>() == "u1");
+}
+
+TEST_CASE("ParseBoundedOrDiscarded · malformed input is discarded (matches legacy allow_exceptions=false)") {
+    CHECK(js::ParseBoundedOrDiscarded("{not valid json").is_discarded());
+    CHECK(js::ParseBoundedOrDiscarded("").is_discarded());
+}
+
+TEST_CASE("ParseBoundedOrDiscarded · over-deep payload is discarded, not a crash" * doctest::test_suite("[high-risk]")) {
+    // The exact regression the swap closes: a bare json::parse(...,false) builds the full
+    // DOM and then SIGSEGVs on recursive teardown. The bounded wrapper must instead report
+    // failure as a discarded json (which callers already treat as a parse error).
+    const int n = 5000;
+    std::string s(static_cast<std::size_t>(n), '[');
+    s.append(static_cast<std::size_t>(n), ']');
+    CHECK(js::ParseBoundedOrDiscarded(s).is_discarded());
+
+    // Wide-but-shallow node bomb is likewise discarded.
+    std::string wide = "[";
+    for (int i = 0; i < 249999; ++i) {
+        wide += "0,";
+    }
+    wide += "0]";
+    CHECK(js::ParseBoundedOrDiscarded(wide).is_discarded());
+}
+
+TEST_CASE("ParseBoundedOrDiscarded · oversized input is discarded by the byte cap") {
+    const std::string s(2048, 'x');
+    CHECK(js::ParseBoundedOrDiscarded(s, /*maxBytes=*/1024u).is_discarded());
+}
+
+TEST_CASE("ParseBoundedOrDiscarded · a literal JSON null is a SUCCESS (null, not discarded)") {
+    // Distinguishes success-null from failure-discarded: `null` is valid JSON, so it must
+    // parse to a null value that is NOT discarded — otherwise callers would misread a valid
+    // null body as a parse failure.
+    const nlohmann::json j = js::ParseBoundedOrDiscarded("null");
+    CHECK_FALSE(j.is_discarded());
+    CHECK(j.is_null());
+}
+
+TEST_CASE("ParseBoundedOrDiscarded · a discarded result answers tracker guard checks safely" *
+          doctest::test_suite("[high-risk]")) {
+    // Several throwing tracker sites (JiraClient::ListProjects, GitHubClient rate-limit banner /
+    // CreateIssue, JiraActivityFeed, ExtractGitHubErrorMessage) keep their existing try/catch and
+    // gate on is_array() / is_object() / contains() before touching the parsed value. Swapping the
+    // throwing json::parse for this helper is only safe if those type checks answer false WITHOUT
+    // throwing on a discarded (failed/depth-bombed) result — so a hostile body deterministically
+    // takes the failure path instead of ever building a deep DOM.
+    const nlohmann::json d = js::ParseBoundedOrDiscarded("{not json");
+    REQUIRE(d.is_discarded());
+    CHECK_FALSE(d.is_array());
+    CHECK_FALSE(d.is_object());
+    CHECK_FALSE(d.contains("resources"));
+    CHECK_FALSE(d.contains("message"));
 }

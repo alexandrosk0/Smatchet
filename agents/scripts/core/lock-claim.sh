@@ -83,6 +83,14 @@ fi
 # Collect agent identity + metadata.
 agent_id="${AGENT_ID:-orchestrator}"
 branch="${LOCK_BRANCH:-$(git symbolic-ref --quiet --short HEAD || echo 'detached')}"
+case "$branch" in
+    develop|main)
+        # A plan-lock owned by the integration branch is almost always a wrong-tree claim:
+        # the pre-push guard then rejects the feature worktree's own push as a collision.
+        echo "lock-claim: WARNING: lock owner branch resolves to '$branch' (integration branch) —" >&2
+        echo "lock-claim:          you usually claim from the feature worktree; pass LOCK_BRANCH explicitly if this is unintended" >&2
+        ;;
+esac
 plan="${LOCK_PLAN:-}"
 notes="${LOCK_NOTES:-}"
 started=$(date -u +%Y-%m-%dT%H:%M:%SZ)

@@ -7,40 +7,21 @@ This file exists only so Claude Code (which auto-loads `.claude/CLAUDE.md`) pick
 @../AGENTS.md
 
 
-## Codebase navigation — Sourcetrail code-graph + grep
+## Codebase navigation — semantic search + grep
 
-AGENTS.md § Semantic codebase search says *navigate by meaning + exact
-call-graph before raw text-search*. On Claude Code the concrete tools are the
-**Sourcetrail code-graph index** (exact call-graph / definition facts from a
-prebuilt libclang SQLite graph) and `Grep`/`Glob` (literal/symbol sweeps).
-
-### Sourcetrail — exact navigation facts
-`tools/sourcetrail/st_query.py` queries a prebuilt symbol graph of the C++ tree
-for facts grep cannot answer — who *calls* a function (not who *mentions* it),
-the definition site, class members, inheritance:
-
-```bash
-python tools/sourcetrail/st_query.py callers <sym>   # functions that call <sym> (caller @ call-site)
-python tools/sourcetrail/st_query.py callees <sym>   # functions <sym> calls
-python tools/sourcetrail/st_query.py def <sym>       # definition site → file:line
-python tools/sourcetrail/st_query.py refs <sym>      # every reference/use
-python tools/sourcetrail/st_query.py members <Type>  # members of a class/struct/namespace
-python tools/sourcetrail/st_query.py name <substr>   # qualified names containing <substr>
-```
-
-Name match is a case-insensitive suffix on the qualified name (`send`,
-`JiraClient::send`, fully-qualified all resolve). Full subcommand table,
-re-indexing steps, and limits: [`tools/sourcetrail/README.md`](../tools/sourcetrail/README.md).
-The `.srctrldb` index is git-ignored, machine-local, and a snapshot — rebuild
-after large code changes (README § Re-indexing). If it is absent/stale, fall
-back to grep.
+AGENTS.md § Semantic codebase search says *navigate by meaning before raw
+text-search*. On Claude Code the concrete tools are vexp `run_pipeline`
+(graph-ranked context, when its daemon is up) and `Grep`/`Glob`
+(literal/symbol sweeps). The former Sourcetrail `st_query.py` rung is
+retired — upstream discontinued, and its prebuilt symbol DB never existed
+in a fresh checkout.
 
 ### Grep / Glob — literal & exhaustive sweeps
 Use `Grep`/`Glob` for exhaustive literal/symbol inventories and mechanical
 rename sweeps (every occurrence must be found — graph queries are not
-exhaustive), and as the fallback when the Sourcetrail index is unavailable.
+exhaustive), and as the fallback when semantic search is unavailable.
 
 ### Subagent / Explore / Plan mode
-- Subagents may call `st_query.py` and grep directly — pass the task description.
-- Prefer a targeted `st_query.py` call over spawning Agent(Explore) for a
-  "who calls X / where is X" question; reserve Explore for broad fan-out.
+- Subagents may call grep directly — pass the task description.
+- Reserve Agent(Explore) for broad fan-out; a targeted Grep answers a
+  single "who calls X / where is X" question more cheaply.

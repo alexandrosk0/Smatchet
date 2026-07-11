@@ -311,9 +311,16 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
         }
     }
     if (!catalogPlane) {
-        for (auto& field : cat.AvailableFields) {
-            if (IsNonEditableTimetrackingFieldId(field.Id)) {
-                field.ReadOnly = true;
+        // DR6: the timetracking read-only sweep mutates cat.AvailableFields, which UI-thread
+        // readers (create/draft paths) touch concurrently — take the guard for the loop. The
+        // Erase/Ensure helpers below self-lock availableFieldsMutex_ (non-recursive), so they
+        // must stay OUTSIDE this scope or the second lock self-deadlocks.
+        {
+            std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+            for (auto& field : cat.AvailableFields) {
+                if (IsNonEditableTimetrackingFieldId(field.Id)) {
+                    field.ReadOnly = true;
+                }
             }
         }
         EraseCatalogLegacyCommentField(cat);

@@ -71,10 +71,10 @@ JSON
 
 # ----------------------------------------------------------------------------
 
-@test "--selftest passes (18/18) and dogfoods the gate" {
+@test "--selftest passes (19/19) and dogfoods the gate" {
     run bash "$SCRIPT" --selftest
     [ "$status" -eq 0 ]
-    [[ "$output" == *"PASS — safe-admin-merge --selftest (18/18)"* ]]
+    [[ "$output" == *"PASS — safe-admin-merge --selftest (19/19)"* ]]
 }
 
 @test "dedup-to-latest: older CANCELLED run with a newer SUCCESS run reads GREEN (exit 0, merge fires)" {
@@ -107,19 +107,22 @@ JSON
     [ ! -f "$MERGE_SENTINEL" ]
 }
 
-@test "a RED Bucket-C does NOT block (Mesa-GL advisory-flip 2026-06-15, exit 0)" {
-    # `Bucket-` was dropped from the allow-list 2026-06-15 (infra.md
-    # `bucket-mesa-exe-boot` P1): the Mesa-software-GL bucket lanes cannot boot
-    # the CI exe, so a RED Bucket-C is now a non-allow-listed advisory red and
-    # must NOT block the admin-merge. Required check kept green so Bucket-C is
-    # the sole red. Re-arm as a REFUSES test when the lane graduates to hard-fail.
+@test "a RED Bucket-C BLOCKS (block-on-any-red flip; was the 2026-06-15 advisory era)" {
+    # HISTORY: `Bucket-` was dropped from the allow-list 2026-06-15 while the
+    # Mesa-GL lanes could not boot the CI exe, and this test pinned "a RED
+    # Bucket-C must NOT block". The all-gates-blocking flip re-arms it as the
+    # REFUSES test the old comment promised: the lanes are genuinely green, the
+    # blocking scope is every non-advisory-named check, so a red Bucket-C gates
+    # the admin-merge like any other check. Required check kept green so
+    # Bucket-C is the sole red.
     export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","labels":[],"statusCheckRollup":[
       {"__typename":"CheckRun","name":"Bucket-C (ImGui Test Engine)","status":"COMPLETED","conclusion":"FAILURE"},
       {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"},
       {"__typename":"StatusContext","context":"Test-delta gate","state":"SUCCESS"}]}'
     run bash "$SCRIPT" 1180
-    [ "$status" -eq 0 ]
-    [ -f "$MERGE_SENTINEL" ]
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Bucket-C"* ]]
+    [ ! -f "$MERGE_SENTINEL" ]
 }
 
 @test "REFUSES on a RED required StatusContext (exit 1, no merge)" {
@@ -161,14 +164,18 @@ JSON
     [ -f "$MERGE_SENTINEL" ]
 }
 
-@test "a non-required non-allow-listed RED check does NOT block (exit 0)" {
+@test "an arbitrary non-required RED check BLOCKS (block-on-any-red flip)" {
+    # Was "does NOT block" under the curated allow-list era. Under
+    # block-on-any-red every non-advisory-named red gates the admin-merge; the
+    # advisory-NAME escape keeps its own does-NOT-block test above.
     export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","labels":[],"statusCheckRollup":[
       {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"},
       {"__typename":"StatusContext","context":"Test-delta gate","state":"SUCCESS"},
       {"__typename":"CheckRun","name":"some-random-non-required","status":"COMPLETED","conclusion":"FAILURE"}]}'
     run bash "$SCRIPT" 1180
-    [ "$status" -eq 0 ]
-    [ -f "$MERGE_SENTINEL" ]
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"some-random-non-required"* ]]
+    [ ! -f "$MERGE_SENTINEL" ]
 }
 
 @test "perf-out-of-band downgrades a RED Perf PR-fast (exit 0, merge fires)" {

@@ -24,9 +24,11 @@
 #include "Commands/CommandRegistry.h"
 #include "TrackerFieldSchema.h" // TrackerField — POD
 
-// Forward-declared in Commands/Command.h. Re-declared here so callers of
-// `AppForCommandContext()` don't need to chase the include chain.
-class AppController;
+// Narrow app facets carried by the command context (declared in
+// Commands/Command.h). Forward declarations suffice: the accessors below
+// return them by pointer and never dereference them in this header.
+class IAppScenarioHost;
+class IAppThreading;
 
 namespace smatchet {
 namespace lua {
@@ -105,12 +107,15 @@ class ILuaBindingHost {
     // --- Command registry pass-through (commands.invoke) ---
     virtual smatchet::cmd::CommandRegistry& LuaCommands() = 0;
 
-    // --- ctx.App propagation for `commands.invoke` ---
-    // `CommandContext::App` is an `AppController*` (per Commands/Command.h:99).
-    // Production returns `this` cast to `AppController*`; test fakes return
-    // `nullptr` -- test command handlers either ignore ctx.App or aren't
-    // registered. Forward-declared only; never dereferenced inside ILuaBindingHost.
-    virtual AppController* AppForCommandContext() = 0;
+    // --- app-facet propagation for the invoke glue ---
+    // The invoke glue copies these pointers into the command context it builds,
+    // one per facet field. Production returns the owning app upcast to each
+    // facet; the upcast happens in the implementing translation unit, where the
+    // concrete type is complete. Test fakes return null from both -- the command
+    // handlers exercised there either ignore the facet fields or aren't
+    // registered. Never dereferenced inside this interface.
+    virtual IAppScenarioHost* ScenarioHostForCommandContext() = 0;
+    virtual IAppThreading* ThreadingForCommandContext() = 0;
 };
 
 namespace smatchet {

@@ -4,12 +4,17 @@
 #include "StringUtil.h"
 
 #include <string>
+#include <vector>
 
 // Private header for SmatchetPreferencesUi split TUs. Not installed — included only
 // by SmatchetPreferencesUi.cpp and its companion _*.cpp files.
 
 class SmatchetUI;
 class AppController;
+class IAppCommands;        // fan-in Phase 6: keybindings tab takes the narrow registry facet
+class IAppThreading;       // fan-in Phase 6 T4: whisper tab only launches workers + posts back
+class IAppTicketMutations; // Scope A: templates tab forwards the field-lookup facet to Annotate prefs
+struct TrackerField;
 struct UiDrawSession;
 
 namespace SmatchetPreferencesUiDetail {
@@ -110,6 +115,20 @@ inline bool AssistantAiFieldsDiffer(const TrackerConfig& a, const TrackerConfig&
            a.AgentsMdGlobalPath != b.AgentsMdGlobalPath || a.ProjectAgentsMdPath != b.ProjectAgentsMdPath ||
            a.AgentsMdAutoDiscoverProject != b.AgentsMdAutoDiscoverProject;
 }
+
+/// #1706 — reset the Assistant-tab seed latches when the Preferences window
+/// closes (Discard-on-close). Clearing `workingSeeded` makes the working COPY
+/// re-seed from cfg on reopen; setting `forceReseed` makes SeedAssistantBuffers
+/// overwrite the function-static InputText buffers (s_bufs) from that reverted
+/// copy — WITHOUT it, s_bufs.aiBufsSeeded/agentsBufsSeeded persist across close
+/// and the fields keep displaying the discarded edit text. Both latches must move
+/// together (the explicit Discard button — DiscardAssistantWorking — sets the
+/// same `forceReseed`); operates on the two bools so it stays pure + bucket-A
+/// testable in isolation (no UiDrawSession dependency).
+inline void ResetAssistantPrefsSeedLatchesOnClose(bool& workingSeeded, bool& forceReseed) {
+    workingSeeded = false;
+    forceReseed = true;
+}
 #endif // SMATCHET_WITH_AI
 
 } // namespace SmatchetPreferencesUiDetail
@@ -128,10 +147,11 @@ void DrawAssistantPreferencesTab(AppController& app, UiDrawSession& d);
 #endif
 
 #if defined(SMATCHET_WITH_WHISPER)
-void DrawWhisperPreferencesTab(AppController& app, UiDrawSession& d);
+void DrawWhisperPreferencesTab(IAppThreading& app, UiDrawSession& d);
 #endif
 
 void DrawLocalAndAppearancePreferencesTabs(SmatchetUI& ui, AppController& app, UiDrawSession& d);
-void DrawKeybindingsPreferencesTab(SmatchetUI& ui, AppController& app, UiDrawSession& d);
-void DrawTemplatePreferencesTabs(SmatchetUI& ui, AppController& app, UiDrawSession& d,
+void DrawKeybindingsPreferencesTab(SmatchetUI& ui, IAppCommands& app, UiDrawSession& d);
+void DrawTemplatePreferencesTabs(SmatchetUI& ui, const std::vector<TrackerField>& availableFields,
+                                 const IAppTicketMutations& ticketMutations, UiDrawSession& d,
                                  SmatchetPreferencesUiTemplateFlags& flags);

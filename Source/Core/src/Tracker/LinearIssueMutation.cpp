@@ -3,6 +3,7 @@
 #include "BackendAuditTrail.h"
 #include "ConfigManager.h"
 #include "IssueDraft.h"
+#include "Json/BoundedJsonParse.h"
 #include "LinearClientHelpers.h"
 #include "LinearIssueSearch.h" // BuildLinearHeaders (cpr::Header — shared with the read path)
 #include "LinearMutationPure.h"
@@ -51,7 +52,8 @@ bool RunLinearMutation(const std::string& apiUrl, const std::string& apiKey, con
     /* PILLAR2_WORKER_ONLY */ // est-latency: 15000ms
     const cpr::Response resp = TrackerPostLogged("LinearClient", apiUrl, BuildLinearHeaders(apiKey), body);
 
-    nlohmann::json parsed = nlohmann::json::parse(resp.text, nullptr, false);
+    // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
+    nlohmann::json parsed = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
     std::string errorMessage;
     const bool hasErrors =
         !parsed.is_discarded() && smatchet::linear::LinearResponseHasErrors(parsed, errorMessage);
@@ -79,7 +81,13 @@ std::string ResolveIssueUuid(const std::string& apiUrl, const std::string& apiKe
     /* PILLAR2_WORKER_ONLY */ // est-latency: 15000ms
     const cpr::Response resp = TrackerPostLogged("LinearClient", apiUrl, BuildLinearHeaders(apiKey), body);
 
-    nlohmann::json parsed = nlohmann::json::parse(resp.text, nullptr, false);
+    // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
+    // SMATCHET_DEVIATION(rule=duplication): the build-body → TrackerPostLogged → bounded-parse →
+    // status/errors[] check is the standard Linear GraphQL call shape shared by the distinct
+    // read/resolve callers (ResolveIssueUuid here, ResolveCatalogTeamId in LinearClient); each has
+    // different downstream extraction, so per ADR-0015 an exemption is preferred over abstracting
+    // the prefix across unrelated call sites.
+    nlohmann::json parsed = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
     std::string errorMessage;
     if (resp.status_code != 200 || parsed.is_discarded() ||
         smatchet::linear::LinearResponseHasErrors(parsed, errorMessage)) {

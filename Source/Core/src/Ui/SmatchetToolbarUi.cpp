@@ -19,7 +19,9 @@
 #include "ConfigSaveWorker.h"
 #include "ITrackerConnectivity.h"
 #include "IconsFontAwesome6.h"
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
+#include "SmatchetLocalization.h"
 #include "SmatchetToolbarUi_detail.h"
 #include "Ui/SmatchetImGuiFonts.h"
 #include "Ui/SmatchetUiSession.h"
@@ -27,6 +29,34 @@
 #include "imgui_internal.h" // BeginViewportSideBar (pins the bar below the menu)
 
 namespace {
+
+// DR23 — std::string-backed InputText so an editor field (LuaCode / ArgsJson / CommandId / Tooltip)
+// is never rounded through a fixed char buffer that silently truncates on the first keystroke.
+// Mirrors misc/cpp/imgui_stdlib.h: the buffer IS the std::string's storage and CallbackResize grows
+// it as the user types past capacity. The mutable pointer is taken via a c_str cast, matching
+// imgui_stdlib, so it stays valid under the project's C++14 build where the non-const data overload
+// is unavailable.
+int InputTextStdStringResize(ImGuiInputTextCallbackData* data) {
+    if (data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
+        auto* str = static_cast<std::string*>(data->UserData);
+        str->resize(static_cast<size_t>(data->BufTextLen));
+        data->Buf = const_cast<char*>(str->c_str());
+    }
+    return 0;
+}
+
+bool InputTextStdString(const char* label, std::string& str, ImGuiInputTextFlags flags = 0) {
+    flags |= ImGuiInputTextFlags_CallbackResize;
+    return ImGui::InputText(label, const_cast<char*>(str.c_str()), str.capacity() + 1, flags, InputTextStdStringResize,
+                            &str);
+}
+
+bool InputTextMultilineStdString(const char* label, std::string& str, const ImVec2& size,
+                                 ImGuiInputTextFlags flags = 0) {
+    flags |= ImGuiInputTextFlags_CallbackResize;
+    return ImGui::InputTextMultiline(label, const_cast<char*>(str.c_str()), str.capacity() + 1, size, flags,
+                                     InputTextStdStringResize, &str);
+}
 
 bool IsUiPseudoCommand(const std::string& id) {
     return id == "ui.command_palette" || id == "ui.settings" || id == "ui.toolbar_customize";
@@ -95,16 +125,19 @@ void SmatchetToolbarUi::DispatchButton(AppController& app, TrackerConfig& cfg, c
         return;
     }
 
+    // SMATCHET_DEVIATION(rule=duplication; reason=parity w/ SmatchetUI.cpp; owner=cpp-audit; revisit=2026-09-30)
     nlohmann::json args = nlohmann::json::object();
     if (!b.ArgsJson.empty()) {
-        try {
-            args = nlohmann::json::parse(b.ArgsJson);
-        } catch (...) { // catch-all-ok: invalid args JSON → dispatch with empty object
+        std::string parseErr;
+        args = smatchet::json_safe::ParseBounded(b.ArgsJson, parseErr);
+        if (!parseErr.empty()) { // invalid args JSON → dispatch with empty object
+            LOG_WARN("Toolbar: bad args JSON for command \"%s\": %s", b.CommandId.c_str(), parseErr.c_str());
             args = nlohmann::json::object();
         }
     }
     smatchet::cmd::CommandContext ctx;
-    ctx.App = &app;
+    ctx.ScenarioHost = &app;
+    ctx.Threading = &app;
     ctx.Source = smatchet::cmd::CommandSource::Internal;
     const smatchet::cmd::CommandResult r = app.Commands().Dispatch(b.CommandId, args, ctx);
     if (!r.Ok) {
@@ -147,7 +180,7 @@ void SmatchetToolbarUi::RefreshTrackerAppendCache(AppController& app) {
         if (it != disk.Backends.end()) {
             append = it->second.ToolbarAppend;
         }
-        app.mainThreadDispatcher.PostToMainThread([this, key, append]() {
+        app.PostToMainThread([this, key, append]() {
             // Apply only if this load is still the current one — a newer backend switch (or a forced
             // reload that re-kicked under a different key) supersedes an older in-flight result.
             if (trackerAppendLoadInFlightKey_ != key) {
@@ -160,6 +193,16 @@ void SmatchetToolbarUi::RefreshTrackerAppendCache(AppController& app) {
         });
     });
 }
+
+namespace {
+
+// Single source of the Customize Toolbar popup title: OpenPopup and BeginPopupModal must build
+// the byte-identical (translated) string or the popup ID never matches and the editor won't open.
+const char* ToolbarEditorPopupTitle() {
+    return SmatchetLocalization::WindowTitle("toolbar.editor.title", "Customize Toolbar", "SmatchetToolbarEditor");
+}
+
+} // namespace
 
 void SmatchetToolbarUi::RenderBar(AppController& app, TrackerConfig& cfg) {
     ImGuiViewport* vp = ImGui::GetMainViewport();
@@ -231,7 +274,9 @@ void SmatchetToolbarUi::RenderBar(AppController& app, TrackerConfig& cfg) {
                     }
                 }
                 if (b.Kind == ToolbarButtonKind::Command && !enabled) {
-                    tip += "  (command not found)";
+                    tip += "  (";
+                    tip += SmatchetLocalization::T("toolbar.command_not_found", "command not found");
+                    tip += ")";
                 }
                 ImGui::SetTooltip("%s", tip.c_str());
             }
@@ -264,7 +309,8 @@ void SmatchetToolbarUi::RenderBar(AppController& app, TrackerConfig& cfg) {
             ImGui::SmallButton(ICON_FA_SPINNER "##tb-append-loading");
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("Loading tracker toolbar buttons...");
+                ImGui::SetTooltip(
+                    "%s", SmatchetLocalization::T("toolbar.append_loading", "Loading tracker toolbar buttons..."));
             }
         }
 
@@ -272,10 +318,10 @@ void SmatchetToolbarUi::RenderBar(AppController& app, TrackerConfig& cfg) {
         // per-button menu above when the cursor is over a button).
         if (ImGui::BeginPopupContextWindow("##ToolbarCtx",
                                            ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
-            if (ImGui::MenuItem("Customize Toolbar...")) {
+            if (ImGui::MenuItem(SmatchetLocalization::T("toolbar.menu.customize", "Customize Toolbar..."))) {
                 requestEditorOpen_ = true;
             }
-            if (ImGui::MenuItem("Hide Toolbar")) {
+            if (ImGui::MenuItem(SmatchetLocalization::T("toolbar.menu.hide", "Hide Toolbar"))) {
                 cfg.Toolbar.Visible = false;
                 smatchet::config_save::EnqueueTrackerConfig(cfg);
             }
@@ -294,7 +340,7 @@ void SmatchetToolbarUi::RenderButtonContextMenu(TrackerConfig& cfg, int src) {
 
     // Edit... defers selection to the editor (no save here); the other ops mutate the global
     // button list in place — the same swap/insert/erase the Customize editor uses — then persist.
-    if (ImGui::MenuItem("Edit...")) {
+    if (ImGui::MenuItem(SmatchetLocalization::T("toolbar.menu.edit", "Edit..."))) {
         requestEditorOpen_ = true;
         requestEditSelect_ = src;
     }
@@ -302,28 +348,29 @@ void SmatchetToolbarUi::RenderButtonContextMenu(TrackerConfig& cfg, int src) {
     // command id to bind. Latches the request for SmatchetUI to open the shared quick-bind modal.
     const ToolbarButton& clicked = buttons[src];
     if (clicked.Kind == ToolbarButtonKind::Command && !clicked.CommandId.empty()) {
-        if (ImGui::MenuItem("Set shortcut...")) {
+        if (ImGui::MenuItem(SmatchetLocalization::T("cmdpalette.set_shortcut", "Set shortcut..."))) {
             requestQuickBindCommandId_ = clicked.CommandId;
             requestQuickBindArgsJson_ = clicked.ArgsJson; // bind the button's real args, not "{}"
         }
     }
     ImGui::Separator();
-    if (ImGui::MenuItem("Move Left", nullptr, false, src > 0)) {
+    if (ImGui::MenuItem(SmatchetLocalization::T("toolbar.menu.move_left", "Move Left"), nullptr, false, src > 0)) {
         std::swap(buttons[src], buttons[src - 1]);
         smatchet::config_save::EnqueueTrackerConfig(cfg);
     }
-    if (ImGui::MenuItem("Move Right", nullptr, false, src < count - 1)) {
+    if (ImGui::MenuItem(SmatchetLocalization::T("toolbar.menu.move_right", "Move Right"), nullptr, false,
+                        src < count - 1)) {
         std::swap(buttons[src], buttons[src + 1]);
         smatchet::config_save::EnqueueTrackerConfig(cfg);
     }
-    if (ImGui::MenuItem("Insert Separator")) {
+    if (ImGui::MenuItem(SmatchetLocalization::T("toolbar.menu.insert_separator", "Insert Separator"))) {
         ToolbarButton sep;
         sep.Kind = ToolbarButtonKind::Separator;
         buttons.insert(buttons.begin() + src + 1, sep); // after the clicked button
         smatchet::config_save::EnqueueTrackerConfig(cfg);
     }
     ImGui::Separator();
-    if (ImGui::MenuItem("Delete")) {
+    if (ImGui::MenuItem(SmatchetLocalization::T("common.delete", "Delete"))) {
         buttons.erase(buttons.begin() + src);
         smatchet::config_save::EnqueueTrackerConfig(cfg);
     }
@@ -382,7 +429,9 @@ void SmatchetToolbarUi::SyncEditorOpenRequest(AppController& app, TrackerConfig&
         cmdNames_.push_back(c.Name);
     }
     cmdSearch_[0] = '\0';
-    ImGui::OpenPopup("Customize Toolbar##SmatchetToolbarEditor");
+    // WindowTitle appends "###SmatchetToolbarEditor" so the popup ID is stable across languages
+    // (both OpenPopup and BeginPopupModal build the identical translated string).
+    ImGui::OpenPopup(ToolbarEditorPopupTitle());
 }
 
 SmatchetToolbarUi::EditorCtx SmatchetToolbarUi::DrawEditorScopeSelector() {
@@ -390,16 +439,21 @@ SmatchetToolbarUi::EditorCtx SmatchetToolbarUi::DrawEditorScopeSelector() {
 
     // Scope selector. Global scope edits the shared toolbar; Tracker scope edits the active
     // backend append list, shown on the bar after the global set. Switching resets selection.
-    ImGui::TextUnformatted("Scope:");
+    ImGui::TextUnformatted(SmatchetLocalization::T("toolbar.editor.scope", "Scope:"));
     ImGui::SameLine();
-    if (ImGui::RadioButton("Global", editScope_ == EditScope::Global) && editScope_ != EditScope::Global) {
+    if (ImGui::RadioButton(SmatchetLocalization::T("toolbar.editor.scope_global", "Global"),
+                           editScope_ == EditScope::Global) &&
+        editScope_ != EditScope::Global) {
         editScope_ = EditScope::Global;
         selected_ = editBuf_.Buttons.empty() ? -1 : 0;
     }
     ImGui::SameLine();
     {
         const std::string trackerLabel =
-            (editHasTracker_ ? ("Current tracker: " + editTrackerType_) : std::string("Current tracker: (none)")) +
+            std::string(editHasTracker_
+                            ? SmatchetLocalization::Format("toolbar.editor.scope_tracker", "Current tracker: %s",
+                                                           editTrackerType_.c_str())
+                            : SmatchetLocalization::T("toolbar.editor.scope_tracker_none", "Current tracker: (none)")) +
             "##scopeTracker";
         if (!editHasTracker_) {
             ImGui::BeginDisabled();
@@ -417,9 +471,12 @@ SmatchetToolbarUi::EditorCtx SmatchetToolbarUi::DrawEditorScopeSelector() {
     const bool trackerScope = editScope_ == EditScope::Tracker;
     std::vector<ToolbarButton>& buttons = trackerScope ? trackerEditBuf_ : editBuf_.Buttons;
     if (trackerScope) {
-        ImGui::TextDisabled("Appended for %s, shown after the global toolbar.", editTrackerType_.c_str());
+        ImGui::TextDisabled("%s", SmatchetLocalization::Format("toolbar.editor.scope_tracker_hint",
+                                                               "Appended for %s, shown after the global toolbar.",
+                                                               editTrackerType_.c_str()));
     } else {
-        ImGui::TextDisabled("Global toolbar, shown for every tracker.");
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("toolbar.editor.scope_global_hint",
+                                                          "Global toolbar, shown for every tracker."));
     }
     ImGui::Separator();
     return EditorCtx{buttons, trackerScope, fa};
@@ -429,7 +486,7 @@ void SmatchetToolbarUi::DrawEditorActionRow(EditorCtx& ctx) {
     std::vector<ToolbarButton>& buttons = ctx.buttons;
 
     // Action row.
-    if (ImGui::Button("Add command")) {
+    if (ImGui::Button(SmatchetLocalization::T("toolbar.editor.add_command", "Add command"))) {
         ToolbarButton b;
         b.Kind = ToolbarButtonKind::Command;
         b.Tooltip = "New button";
@@ -437,7 +494,7 @@ void SmatchetToolbarUi::DrawEditorActionRow(EditorCtx& ctx) {
         selected_ = static_cast<int>(buttons.size()) - 1;
     }
     ImGui::SameLine();
-    if (ImGui::Button("Add Lua")) {
+    if (ImGui::Button(SmatchetLocalization::T("toolbar.editor.add_lua", "Add Lua"))) {
         ToolbarButton b;
         b.Kind = ToolbarButtonKind::Lua;
         b.Tooltip = "New Lua button";
@@ -445,7 +502,7 @@ void SmatchetToolbarUi::DrawEditorActionRow(EditorCtx& ctx) {
         selected_ = static_cast<int>(buttons.size()) - 1;
     }
     ImGui::SameLine();
-    if (ImGui::Button("Add separator")) {
+    if (ImGui::Button(SmatchetLocalization::T("toolbar.editor.add_separator", "Add separator"))) {
         ToolbarButton b;
         b.Kind = ToolbarButtonKind::Separator;
         buttons.push_back(b);
@@ -459,22 +516,22 @@ void SmatchetToolbarUi::DrawEditorActionRow(EditorCtx& ctx) {
     if (!hasSel) {
         ImGui::BeginDisabled();
     }
-    if (ImGui::Button("Duplicate") && hasSel) {
+    if (ImGui::Button(SmatchetLocalization::T("toolbar.editor.duplicate", "Duplicate")) && hasSel) {
         buttons.insert(buttons.begin() + selected_ + 1, buttons[selected_]);
         ++selected_;
     }
     ImGui::SameLine();
-    if (ImGui::Button("Delete") && hasSel) {
+    if (ImGui::Button(SmatchetLocalization::T("common.delete", "Delete")) && hasSel) {
         buttons.erase(buttons.begin() + selected_);
         selected_ = buttons.empty() ? -1 : (std::min)(selected_, static_cast<int>(buttons.size()) - 1);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Up") && hasSel && selected_ > 0) {
+    if (ImGui::Button(SmatchetLocalization::T("toolbar.editor.up", "Up")) && hasSel && selected_ > 0) {
         std::swap(buttons[selected_], buttons[selected_ - 1]);
         --selected_;
     }
     ImGui::SameLine();
-    if (ImGui::Button("Down") && hasSel && selected_ < count - 1) {
+    if (ImGui::Button(SmatchetLocalization::T("toolbar.editor.down", "Down")) && hasSel && selected_ < count - 1) {
         std::swap(buttons[selected_], buttons[selected_ + 1]);
         ++selected_;
     }
@@ -527,21 +584,24 @@ void SmatchetToolbarUi::DrawEditorFieldEditor(EditorCtx& ctx) {
     ImGui::BeginChild("##tbedit", ImVec2(0.0f, -ImGui::GetFrameHeightWithSpacing()), true);
     if (selected_ >= 0 && selected_ < static_cast<int>(buttons.size())) {
         ToolbarButton& b = buttons[selected_];
-        const char* kinds[] = {"Command", "Lua", "Separator"};
+        const char* kinds[] = {SmatchetLocalization::T("toolbar.kind.command", "Command"),
+                               SmatchetLocalization::T("toolbar.kind.lua", "Lua"),
+                               SmatchetLocalization::T("toolbar.kind.separator", "Separator")};
         int k = static_cast<int>(b.Kind);
-        if (ImGui::Combo("Kind", &k, kinds, 3)) {
+        if (ImGui::Combo(SmatchetLocalization::T("toolbar.editor.kind", "Kind"), &k, kinds, 3)) {
             b.Kind = static_cast<ToolbarButtonKind>(k);
         }
 
         if (b.Kind != ToolbarButtonKind::Separator) {
             char nameBuf[64];
             std::snprintf(nameBuf, sizeof(nameBuf), "%s", b.IconName.c_str());
-            if (ImGui::InputText("Icon name", nameBuf, sizeof(nameBuf))) {
+            if (ImGui::InputText(SmatchetLocalization::T("toolbar.editor.icon_name", "Icon name"), nameBuf,
+                                 sizeof(nameBuf))) {
                 b.IconName = nameBuf;
                 b.IconGlyph = SmatchetToolbarIconGlyph(b.IconName);
             }
             ImGui::SameLine();
-            if (ImGui::Button("Pick...")) {
+            if (ImGui::Button(SmatchetLocalization::T("toolbar.editor.pick", "Pick..."))) {
                 iconPicker_.Open();
             }
             {
@@ -558,22 +618,18 @@ void SmatchetToolbarUi::DrawEditorFieldEditor(EditorCtx& ctx) {
                 ImGui::TextUnformatted(g.c_str());
             }
 
-            char tipBuf[128];
-            std::snprintf(tipBuf, sizeof(tipBuf), "%s", b.Tooltip.c_str());
-            if (ImGui::InputText("Tooltip", tipBuf, sizeof(tipBuf))) {
-                b.Tooltip = tipBuf;
-            }
+            // DR23: std::string-backed — no truncation of a long tooltip.
+            InputTextStdString(SmatchetLocalization::T("toolbar.editor.tooltip", "Tooltip"), b.Tooltip);
         }
 
         if (b.Kind == ToolbarButtonKind::Command) {
-            char cmdBuf[128];
-            std::snprintf(cmdBuf, sizeof(cmdBuf), "%s", b.CommandId.c_str());
-            if (ImGui::InputText("Command id", cmdBuf, sizeof(cmdBuf))) {
-                b.CommandId = cmdBuf;
-            }
-            ImGui::TextDisabled("Pick a command:");
+            // DR23: std::string-backed — no truncation of a long command id.
+            InputTextStdString(SmatchetLocalization::T("toolbar.editor.command_id", "Command id"), b.CommandId);
+            ImGui::TextDisabled("%s", SmatchetLocalization::T("toolbar.editor.pick_command", "Pick a command:"));
             ImGui::SetNextItemWidth(-1.0f);
-            ImGui::InputTextWithHint("##cmdsearch", "Filter commands...", cmdSearch_, sizeof(cmdSearch_));
+            ImGui::InputTextWithHint("##cmdsearch",
+                                     SmatchetLocalization::T("toolbar.editor.filter_commands", "Filter commands..."),
+                                     cmdSearch_, sizeof(cmdSearch_));
             std::string q(cmdSearch_);
             ImGui::BeginChild("##cmdlist", ImVec2(0.0f, 90.0f), true);
             for (const std::string& n : cmdNames_) {
@@ -586,22 +642,18 @@ void SmatchetToolbarUi::DrawEditorFieldEditor(EditorCtx& ctx) {
             }
             ImGui::EndChild();
 
-            char argBuf[256];
-            std::snprintf(argBuf, sizeof(argBuf), "%s", b.ArgsJson.c_str());
-            if (ImGui::InputText("Args (JSON)", argBuf, sizeof(argBuf))) {
-                b.ArgsJson = argBuf;
-            }
+            // DR23: std::string-backed — no truncation of a long args-JSON payload.
+            InputTextStdString(SmatchetLocalization::T("toolbar.editor.args_json", "Args (JSON)"), b.ArgsJson);
         } else if (b.Kind == ToolbarButtonKind::Lua) {
-            char luaBuf[2048];
-            std::snprintf(luaBuf, sizeof(luaBuf), "%s", b.LuaCode.c_str());
-            if (ImGui::InputTextMultiline("Lua code", luaBuf, sizeof(luaBuf), ImVec2(-1.0f, 120.0f))) {
-                b.LuaCode = luaBuf;
-            }
+            // DR23: std::string-backed — no truncation of a >2 KB Lua script.
+            InputTextMultilineStdString(SmatchetLocalization::T("toolbar.editor.lua_code", "Lua code"), b.LuaCode,
+                                        ImVec2(-1.0f, 120.0f));
         } else {
-            ImGui::TextDisabled("Separator (no settings).");
+            ImGui::TextDisabled("%s",
+                                SmatchetLocalization::T("toolbar.editor.separator_hint", "Separator (no settings)."));
         }
     } else {
-        ImGui::TextDisabled("Select or add a button.");
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("toolbar.editor.select_hint", "Select or add a button."));
     }
     ImGui::EndChild();
 }
@@ -610,12 +662,13 @@ void SmatchetToolbarUi::DrawEditorFooter(AppController& app, EditorCtx& ctx, Tra
     // Footer. "Show toolbar" is a global-only setting (per-tracker visibility deferred), so in
     // Tracker scope a hint anchors the line instead.
     if (ctx.trackerScope) {
-        ImGui::TextDisabled("Visibility follows the global scope.");
+        ImGui::TextDisabled(
+            "%s", SmatchetLocalization::T("toolbar.editor.visibility_hint", "Visibility follows the global scope."));
     } else {
-        ImGui::Checkbox("Show toolbar", &editBuf_.Visible);
+        ImGui::Checkbox(SmatchetLocalization::T("toolbar.editor.show_toolbar", "Show toolbar"), &editBuf_.Visible);
     }
     ImGui::SameLine(ImGui::GetWindowWidth() - 200.0f);
-    if (ImGui::Button("Save", ImVec2(90.0f, 0.0f))) {
+    if (ImGui::Button(SmatchetLocalization::T("common.save", "Save"), ImVec2(90.0f, 0.0f))) {
         if (ctx.trackerScope && editHasTracker_) {
             // Pillar-2: offload the load-modify-save off the UI thread. The load + save stay
             // co-located on one task so they remain ordered (no intra-pair read-after-write
@@ -631,7 +684,7 @@ void SmatchetToolbarUi::DrawEditorFooter(AppController& app, EditorCtx& ctx, Tra
                 PersistentViewsFile disk = ConfigManager::LoadPersistentViewsFromDisk();
                 disk.Backends[trackerKey].ToolbarAppend = trackerAppend;
                 ConfigManager::SavePersistentViewsToDisk(disk);
-                app.mainThreadDispatcher.PostToMainThread([this]() { trackerAppendCacheLoaded_ = false; });
+                app.PostToMainThread([this]() { trackerAppendCacheLoaded_ = false; });
             });
         } else {
             cfg.Toolbar = editBuf_;
@@ -640,7 +693,7 @@ void SmatchetToolbarUi::DrawEditorFooter(AppController& app, EditorCtx& ctx, Tra
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Cancel", ImVec2(90.0f, 0.0f))) {
+    if (ImGui::Button(SmatchetLocalization::T("common.cancel", "Cancel"), ImVec2(90.0f, 0.0f))) {
         ImGui::CloseCurrentPopup();
     }
 }
@@ -649,8 +702,7 @@ void SmatchetToolbarUi::RenderEditor(AppController& app, TrackerConfig& cfg) {
     SyncEditorOpenRequest(app, cfg);
 
     ImGui::SetNextWindowSize(ImVec2(620.0f, 460.0f), ImGuiCond_Appearing);
-    if (!ImGui::BeginPopupModal("Customize Toolbar##SmatchetToolbarEditor", nullptr,
-                                ImGuiWindowFlags_NoSavedSettings)) {
+    if (!ImGui::BeginPopupModal(ToolbarEditorPopupTitle(), nullptr, ImGuiWindowFlags_NoSavedSettings)) {
         return;
     }
 

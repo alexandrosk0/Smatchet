@@ -234,18 +234,26 @@ void LuaConsolePlugin::RefreshScriptList(const AppController& app, bool forceRes
     }
     std::sort(scriptList_.begin(), scriptList_.end());
     scriptList_.erase(std::unique(scriptList_.begin(), scriptList_.end()), scriptList_.end());
-    if (selectedScriptIndex_ < 0 || selectedScriptIndex_ >= static_cast<int>(scriptList_.size())) {
-        selectedScriptIndex_ = 0;
+    SyncSelectionToList();
+}
+
+void LuaConsolePlugin::SyncSelectionToList() {
+    if (lua_console_detail::ResolveSelectedScriptIndex(scriptList_, selectedScriptName_) >= 0) {
+        return;
     }
+    if (selectedScriptName_.empty() && !scriptList_.empty()) {
+        selectedScriptName_ = scriptList_.front();
+        return;
+    }
+    selectedScriptName_.clear();
 }
 
 bool LuaConsolePlugin::LoadSelectedScriptIntoEditor(const AppController& app, std::string& outErr) {
-    if (scriptList_.empty()) {
-        outErr = "No script files.";
+    if (selectedScriptName_.empty()) {
+        outErr = "No script selected.";
         return false;
     }
-    const std::string& name = scriptList_[static_cast<size_t>(selectedScriptIndex_)];
-    const std::string path = app.ResolveLuaScriptPath(name);
+    const std::string path = app.ResolveLuaScriptPath(selectedScriptName_);
     if (path.empty()) {
         outErr = "Invalid script path.";
         return false;
@@ -263,11 +271,14 @@ bool LuaConsolePlugin::LoadSelectedScriptIntoEditor(const AppController& app, st
 }
 
 bool LuaConsolePlugin::SaveCurrentScript(const AppController& app, std::string& outErr) {
-    if (scriptList_.empty()) {
+    if (selectedScriptName_.empty()) {
+        outErr = "No script selected.";
         return false;
     }
-    const std::string& name = scriptList_[static_cast<size_t>(selectedScriptIndex_)];
-    const std::string path = app.ResolveLuaScriptPath(name);
+    // Target the tracked script by identity, never by list index: RefreshScriptList
+    // re-sorts every ~0.35s and an index would point at whichever file now sits
+    // there, silently clobbering it (DR11).
+    const std::string path = app.ResolveLuaScriptPath(selectedScriptName_);
     if (path.empty()) {
         outErr = "Invalid path.";
         return false;
@@ -341,12 +352,8 @@ void LuaConsolePlugin::OnEarlyInit(AppController& app) {
              fileReadable(hooksPath) ? "yes" : "no");
 
     RefreshScriptList(app, true);
-    auto it = std::find(scriptList_.begin(), scriptList_.end(), std::string("Automation.lua"));
-    if (it != scriptList_.end()) {
-        selectedScriptIndex_ = static_cast<int>(it - scriptList_.begin());
-    } else {
-        selectedScriptIndex_ = 0;
-    }
+    selectedScriptName_ = "Automation.lua";
+    SyncSelectionToList();
     std::string err;
     (void)LoadSelectedScriptIntoEditor(app, err);
     {
@@ -538,16 +545,17 @@ void LuaConsolePlugin::DrawScriptsTab(DrawCtx& ctx, const std::string& curName) 
     bool openUnsavedSwitchAfterCombo = false;
     if (ImGui::BeginCombo("##script_pick", curName.c_str())) {
         for (int i = 0; i < static_cast<int>(scriptList_.size()); ++i) {
-            const bool sel = (i == selectedScriptIndex_);
-            if (ImGui::Selectable(scriptList_[static_cast<size_t>(i)].c_str(), sel)) {
-                if (i != selectedScriptIndex_) {
+            const std::string& entry = scriptList_[static_cast<size_t>(i)];
+            const bool sel = (entry == selectedScriptName_);
+            if (ImGui::Selectable(entry.c_str(), sel)) {
+                if (entry != selectedScriptName_) {
                     if (luaEditor_.GetText() != diskSnapshot_) {
-                        pendingScriptIndex_ = i;
+                        pendingScriptName_ = entry;
                         // OpenPopup from inside BeginCombo is unreliable (modal vs combo popup stack).
                         // Defer until after EndCombo so BeginPopupModal runs same frame after OpenPopup.
                         openUnsavedSwitchAfterCombo = true;
                     } else {
-                        selectedScriptIndex_ = i;
+                        selectedScriptName_ = entry;
                         std::string e;
                         (void)LoadSelectedScriptIntoEditor(app, e);
                     }
@@ -564,7 +572,7 @@ void LuaConsolePlugin::DrawScriptsTab(DrawCtx& ctx, const std::string& curName) 
         if (ImGui::Button("Save", ImVec2(120, 0))) {
             std::string e;
             if (SaveCurrentScript(app, e)) {
-                selectedScriptIndex_ = pendingScriptIndex_;
+                selectedScriptName_ = pendingScriptName_;
                 (void)LoadSelectedScriptIntoEditor(app, e);
             } else {
                 g_ui.gridEditError = e;
@@ -573,7 +581,7 @@ void LuaConsolePlugin::DrawScriptsTab(DrawCtx& ctx, const std::string& curName) 
         }
         ImGui::SameLine();
         if (ImGui::Button("Discard", ImVec2(120, 0))) {
-            selectedScriptIndex_ = pendingScriptIndex_;
+            selectedScriptName_ = pendingScriptName_;
             std::string e;
             (void)LoadSelectedScriptIntoEditor(app, e);
             ImGui::CloseCurrentPopup();
@@ -653,8 +661,7 @@ void LuaConsolePlugin::DrawScriptPane(DrawCtx& ctx) {
             RefreshScriptList(app);
             onScriptsTabLastFrame_ = true;
 
-            const std::string curName =
-                scriptList_.empty() ? std::string("(none)") : scriptList_[static_cast<size_t>(selectedScriptIndex_)];
+            const std::string curName = selectedScriptName_.empty() ? std::string("(none)") : selectedScriptName_;
             DrawScriptsTab(ctx, curName);
             ImGui::EndTabItem();
         } else {

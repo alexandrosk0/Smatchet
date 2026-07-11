@@ -26,7 +26,9 @@
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetHelpMarker.h"
 #include "SmatchetImGuiFonts.h"
+#include "SmatchetLocalization.h"
 #include "SmatchetTheme.h"
+#include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
 #include "SpreadsheetState.h"
 #include "UiPerfMonitor.h"
@@ -81,6 +83,48 @@ const char* const kOutboundConsentPopupId = "##AiOutboundConsent";
 // and on panel close.
 std::array<char, kInputBufCap> s_inputCharBuf{};
 bool s_inputCharBufSeeded = false;
+
+// Bytes the most recent InputText frame had to drop because a paste / splice
+// would have pushed the text past the fixed `s_inputCharBuf` cap. Set inside
+// InputBufferResizeCallback (ImGui's CallbackResize path), consumed + cleared
+// by DrawInputAndButtons after the InputText call to raise the user-facing
+// truncation toast. Single-threaded UI-thread access — no atomic needed.
+std::size_t s_inputTruncatedDroppedBytes = 0;
+
+// CallbackResize handler for the chat input. ImGui invokes this when a paste (or
+// the dictation splice-reload) would grow the text past the buffer capacity. The
+// stdlib pattern would resize a std::string here, but we keep a hard fixed cap
+// on purpose (the buffer is process-static and dictation-spliced). So instead of
+// growing we measure the would-be overflow via the pure
+// AiTruncatedPasteDroppedBytes helper, stash it for the draw code to toast, and
+// leave Buf and BufTextLen untouched — ImGui then clamps the insert to the
+// existing capacity exactly as it did before this callback existed
+// (behaviour-preserving for the non-overflow path).
+int InputBufferResizeCallback(ImGuiInputTextCallbackData* data) {
+    if (data != nullptr && data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
+        // data->BufSize is the requested new capacity (capacity+1); BufTextLen is
+        // the desired text length in bytes (excludes the NUL). Both already exceed
+        // our fixed cap here, hence the callback firing.
+        const std::size_t dropped = smatchet::ai::AiTruncatedPasteDroppedBytes(data->BufTextLen, kInputBufCap);
+        if (dropped > 0) {
+            s_inputTruncatedDroppedBytes = dropped;
+        }
+        // #1699 — clamp the reported capacity back to our real fixed cap. We do NOT
+        // resize Buf (it is the process-static s_inputCharBuf). Passing CallbackResize
+        // sets is_resizable inside ImGui, which DISABLES the insert-time capacity clamp
+        // and lets ImGui grow its internal edit state to hold the full over-cap paste.
+        // At apply time (InputTextEx, imgui_widgets.cpp) ImGui reads this callback's
+        // BufSize back as its working capacity, clamps the applied length to that
+        // capacity minus one, and ImStrncpy's that many bytes into Buf. If we left
+        // BufSize enlarged (needed+1), that copy would write the full over-cap paste
+        // into the fixed 8 KiB buffer — a static-buffer overflow. Resetting it to the
+        // real cap makes the applied length clamp to kInputBufCap-1 and the copy fit
+        // exactly; Buf and BufTextLen stay untouched.
+        data->BufSize = kInputBufCap;
+    }
+    // Return 0: we did NOT resize Buf. ImGui copies at most kInputBufCap bytes.
+    return 0;
+}
 
 // Phase F — auto-send-on-punctuation hand-off slot. The dictation router calls
 // the registered send callback from `RunHotkeyRelease_Worker`'s UI-thread
@@ -155,7 +199,7 @@ void HydrateFromConfigOnce(AppController& app, UiDrawSession& d) {
             std::vector<AiMessage> loaded;
             std::vector<std::int64_t> ids;
             appPtr->LoadAiChatMessages(cap, loaded, ids);
-            appPtr->mainThreadDispatcher.PostToMainThread([loaded = std::move(loaded), ids = std::move(ids)]() mutable {
+            appPtr->PostToMainThread([loaded = std::move(loaded), ids = std::move(ids)]() mutable {
                 g_ui.assistantHistory = std::move(loaded);
                 g_ui.assistantHistoryRowIds = std::move(ids);
                 g_ui.assistantHistoryHydrated = true;
@@ -163,7 +207,7 @@ void HydrateFromConfigOnce(AppController& app, UiDrawSession& d) {
         } catch (...) {
             // Graceful degradation — leave hydrated false so further dispatches no-op
             // until the next session retries. The LCM already logged the LOG_WARN.
-            appPtr->mainThreadDispatcher.PostToMainThread([]() { g_ui.assistantHistoryHydrated = true; });
+            appPtr->PostToMainThread([]() { g_ui.assistantHistoryHydrated = true; });
         }
     });
 }
@@ -206,13 +250,19 @@ std::size_t s_planCacheBytes = 0;
 //     show-on-hover alpha gate; the 1-frame lag avoids an ImGui hover-detection chicken-and-egg.
 std::unordered_map<std::uint64_t, float> s_messageHeightCache;
 std::unordered_map<std::size_t, bool> s_turnActiveLastFrame;
+// Index-keyed body-hash cache (0 = unset). Finalised history messages are immutable and the
+// vector only changes size (push_back / clear / hydrate), so caching the content hash per index
+// removes the O(body bytes) re-hash every frame for every culled off-screen turn. Reset on any
+// history-size change in DrawHistoryArea, mirroring the Y-cache.
+std::vector<std::uint64_t> s_messageHashCache;
 
 void PublishPlanCacheBytes() {
     smatchet::memtel::PlanCacheApproxBytes().store(s_planCacheBytes, std::memory_order_relaxed);
 }
 
-const MarkdownPreviewRender::PreviewPlan& GetOrBuildPlanForMessage(const std::string& content) {
-    const std::uint64_t key = MarkdownPreviewRender::HashContent(content);
+// `key` is the caller's already-computed HashContent(content) — RenderHistoryTurn owns the
+// per-index hash cache, so re-hashing here would pay the O(body bytes) cost twice per visible turn.
+const MarkdownPreviewRender::PreviewPlan& GetOrBuildPlanForMessage(const std::string& content, std::uint64_t key) {
     auto it = s_planCache.find(key);
     if (it != s_planCache.end() && it->second.contentLen == content.size()) {
         return *it->second.plan;
@@ -252,6 +302,7 @@ void ClearAiRenderCaches() {
     PublishPlanCacheBytes();
     s_messageHeightCache.clear();
     s_turnActiveLastFrame.clear();
+    s_messageHashCache.clear();
 }
 
 // True (and updates the stored basis) when the layout basis for cached message heights has
@@ -513,12 +564,22 @@ void RenderTurnActionRow(AiHistoryDrawCtx& ctx, int messageIndex, AiMessage* msg
 // Off-screen culling for a finalised (cacheable) history turn with a known height. Computes the
 // body hash into outBodyKey, then — when the turn is fully off-screen — emits a Dummy of the
 // realised height and returns true (caller should early-return). Returns false otherwise.
-bool TryCullHistoryTurn(const std::string& body, bool cacheable, float actionRowSlotH, std::uint64_t& outBodyKey) {
+bool TryCullHistoryTurn(const std::string& body, bool cacheable, float actionRowSlotH, std::uint64_t* hashSlot,
+                        std::uint64_t& outBodyKey) {
     outBodyKey = 0;
     if (!cacheable) {
         return false;
     }
-    outBodyKey = MarkdownPreviewRender::HashContent(body);
+    // `hashSlot` (nullable) is this turn's s_messageHashCache entry; 0 means unset. A hit skips
+    // re-hashing the whole body — the dominant remaining per-frame cost for culled turns.
+    if (hashSlot != nullptr && *hashSlot != 0u) {
+        outBodyKey = *hashSlot;
+    } else {
+        outBodyKey = MarkdownPreviewRender::HashContent(body);
+        if (hashSlot != nullptr) {
+            *hashSlot = outBodyKey;
+        }
+    }
     const auto hit = s_messageHeightCache.find(outBodyKey);
     if (hit != s_messageHeightCache.end() && hit->second > 0.0f) {
         const float labelH = ImGui::GetTextLineHeightWithSpacing();
@@ -574,7 +635,11 @@ void RenderHistoryTurn(AiHistoryDrawCtx& ctx, int messageIndex, const char* role
     // fully so the height cache populates on first sight.
     std::uint64_t bodyKey = 0;
     const float actionRowSlotH = ImGui::GetFrameHeightWithSpacing() * 0.9f;
-    if (TryCullHistoryTurn(body, cacheable, actionRowSlotH, bodyKey)) {
+    std::uint64_t* hashSlot =
+        (cacheable && messageIndex >= 0 && static_cast<std::size_t>(messageIndex) < s_messageHashCache.size())
+            ? &s_messageHashCache[static_cast<std::size_t>(messageIndex)]
+            : nullptr;
+    if (TryCullHistoryTurn(body, cacheable, actionRowSlotH, hashSlot, bodyKey)) {
         return;
     }
 
@@ -595,7 +660,7 @@ void RenderHistoryTurn(AiHistoryDrawCtx& ctx, int messageIndex, const char* role
                                     labelFont, labelWidth, nullptr);
     SelectableText::EndBlock(ctx.selCtx);
     if (cacheable) {
-        const MarkdownPreviewRender::PreviewPlan& plan = GetOrBuildPlanForMessage(body);
+        const MarkdownPreviewRender::PreviewPlan& plan = GetOrBuildPlanForMessage(body, bodyKey);
         MarkdownPreviewRender::RenderPlan(plan, ctx.renderOpts);
     } else {
         MarkdownPreviewRender::Render(body, ctx.renderOpts);
@@ -708,6 +773,9 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
         // exactly one AI chat panel exists in the app at a time.
         static std::vector<float> s_messageYCache;
         ApplyScrollToPinnedLatch(d, s_messageYCache);
+        if (s_messageHashCache.size() != d.assistantHistory.size()) {
+            s_messageHashCache.assign(d.assistantHistory.size(), 0u);
+        }
 
         auto& selCtx = SelectableText::Begin("##AiAssistantHistorySel");
 
@@ -1004,8 +1072,7 @@ void DispatchAiSend(AppController& app, UiDrawSession& d, const ViewDefinition* 
     if (d.assistantHistoryHydrated) {
         // Coalescing Trim — successive Appends collapse into a single Trim in the worker queue, so
         // the cost is one O(N) erase on the worker side, not a SQLite DELETE per send.
-        smatchet::ai::chat_persist::EnqueueAppendAndTrim(std::move(persistCopy), newIdx,
-                                                         d.cfg.AssistantHistoryMaxRows);
+        smatchet::ai::chat_persist::EnqueueAppendAndTrim(std::move(persistCopy), newIdx, d.cfg.AssistantHistoryMaxRows);
     }
     d.assistantInputBuf.clear();
     std::memset(s_inputCharBuf.data(), 0, s_inputCharBuf.size());
@@ -1050,12 +1117,11 @@ void DrawOutboundConsentModal(AppController& app, UiDrawSession& d, const ViewDe
     ImGui::SameLine();
     ImGui::TextDisabled("(audit-trail excluded; fetched on send if enabled)");
     if (ImGui::TreeNode("What gets sent")) {
-        ImGui::TextWrapped(
-            "selected_tickets, visible_rows, active_ticket and active_view are pulled from the focused "
-            "grid pane — issue ids, summaries, statuses and field values already visible on screen. "
-            "audit_trail (off by default) additionally includes assignee emails and freeform comments. "
-            "Your global/project agents.md is prepended as the system prompt, and your typed message is "
-            "sent verbatim. Nothing else leaves this machine.");
+        ImGui::TextWrapped("selected_tickets, visible_rows, active_ticket and active_view are pulled from the focused "
+                           "grid pane — issue ids, summaries, statuses and field values already visible on screen. "
+                           "audit_trail (off by default) additionally includes assignee emails and freeform comments. "
+                           "Your global/project agents.md is prepended as the system prompt, and your typed message is "
+                           "sent verbatim. Nothing else leaves this machine.");
         ImGui::TreePop();
     }
     ImGui::Spacing();
@@ -1085,13 +1151,41 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     // ImGuiInputTextFlags_CtrlEnterForNewLine inverts the default multiline Enter
     // semantics so a bare Enter submits and Ctrl+Enter inserts a line break — see
     // imgui.h flag docs. EnterReturnsTrue makes the call return true on submit.
-    const ImGuiInputTextFlags inputFlags =
-        ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CtrlEnterForNewLine;
-    const bool enterSubmitted = ImGui::InputTextMultiline("##AiAssistantInput", s_inputCharBuf.data(),
-                                                          s_inputCharBuf.size(), ImVec2(-1.0f, inputH), inputFlags);
+    // CallbackResize lets us DETECT (not honour) an over-cap paste: a paste
+    // bigger than the fixed buffer was previously clamped silently, losing the
+    // dropped suffix with no feedback. The callback records the dropped byte
+    // count; we toast it below. (aiassistant-silent-8kib-paste-truncation)
+    const ImGuiInputTextFlags inputFlags = ImGuiInputTextFlags_EnterReturnsTrue |
+                                           ImGuiInputTextFlags_CtrlEnterForNewLine | ImGuiInputTextFlags_CallbackResize;
+    const bool enterSubmitted =
+        ImGui::InputTextMultiline("##AiAssistantInput", s_inputCharBuf.data(), s_inputCharBuf.size(),
+                                  ImVec2(-1.0f, inputH), inputFlags, &InputBufferResizeCallback);
     // Mirror char-buf back into the string field every frame so the Send-button click
-    // below + the Lua glue see the latest value with no separate poke.
-    d.assistantInputBuf.assign(s_inputCharBuf.data());
+    // below + the Lua glue see the latest value with no separate poke. Only assign when the
+    // buffer actually differs — the panel redraws every frame, so an unconditional assign()
+    // copies (and can reallocate) the std::string each frame even when nothing was typed. The
+    // std::string vs const char* compare is allocation-free and skips the write in the steady
+    // state (same per-frame-alloc guard as the omnibar mirror).
+    if (d.assistantInputBuf != s_inputCharBuf.data()) {
+        d.assistantInputBuf.assign(s_inputCharBuf.data());
+    }
+
+    // Surface any paste/splice truncation the resize callback flagged this frame.
+    // Naming the dropped length restores visibility (UX Pillar) — the input has a
+    // hard 8 KB cap and the over-cap suffix is gone. Rounded to whole KB for the
+    // message; the title is a plain translated string.
+    if (s_inputTruncatedDroppedBytes > 0) {
+        const int droppedKb = static_cast<int>((s_inputTruncatedDroppedBytes + 1023u) / 1024u); // round up, min 1 KB
+        const int limitKb = kInputBufCap / 1024;
+        SmatchetToastManager::Instance().Push(SmatchetLocalization::T("ai.paste_truncated.title", "Paste truncated"),
+                                              SmatchetLocalization::Format("ai.paste_truncated.body",
+                                                                           "%d KB dropped (input limit %d KB)",
+                                                                           droppedKb, limitKb),
+                                              ToastType::Warning, 5000);
+        LOG_WARN("AiAssistantUi: paste truncated — %zu bytes dropped (input cap %d bytes).",
+                 s_inputTruncatedDroppedBytes, kInputBufCap);
+        s_inputTruncatedDroppedBytes = 0;
+    }
 
     AiAssistantController* ctrl = app.HasAiAssistantController() ? &app.GetAiAssistantController() : nullptr;
 
@@ -1373,6 +1467,11 @@ void ApplyAssistantDocking(UiDrawSession& d, bool& needsReDock) {
 }
 
 } // namespace
+
+// Externally-linked wrapper over the TU-internal ClearAiRenderCaches() (anonymous
+// namespace) so callers that swap `assistantHistory` wholesale — e.g. a scenario
+// restoring saved history — can invalidate the index-keyed render caches.
+void SmatchetClearAiRenderCaches() { ClearAiRenderCaches(); }
 
 void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const ViewDefinition* activeView,
                                   bool embedded) {

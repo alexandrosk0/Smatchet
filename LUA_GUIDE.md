@@ -124,7 +124,7 @@ ai.add_context({ kind = "active_ticket", name = "Ticket", body = "PROJ-42" })
 ai.prompt("Summarise this ticket and propose two next steps.")
 ```
 
-**Threading**: call `ai.*` from UI-thread paths (`ui.register_ticket_action`, `ui.register_global_action`, `imgui.button` callbacks). Calling from a background `process_ticket` worker race-mutates the controller's context list. **Cost**: `ai.prompt` is event-time, never per-frame; it spawns a worker and returns immediately.
+**Threading**: `ai.*` is reachable only from UI-thread paths (`ui.register_ticket_action`, `ui.register_global_action`, `imgui.button` callbacks) — the `ai` global is bound only in the UI-thread Lua state, so referencing it from a background `process_ticket` worker or an automation script raises "attempt to index a nil value" immediately; there is no runtime race to avoid, just an absent global (Issue #1678). **Cost**: `ai.prompt` is event-time, never per-frame; it spawns a worker and returns immediately.
 
 ### `Ticket` Object
 

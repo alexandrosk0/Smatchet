@@ -1,6 +1,13 @@
 #pragma once
 
-#include "AppController.h"
+// This header needs only the leaf types below (hoisted out of AppController and re-exported
+// there via using-aliases) — NOT the full AppController.h. Keeping the include out stops
+// SmatchetUiSession.h transitively spreading AppController.h into every Ui TU that includes
+// it; TUs that really use AppController methods must (and do) include it directly.
+#include "Types/AppUpdateTypes.h"  // AppUpdateInfo (by-value member + std::future<AppUpdateInfo>)
+#include "Types/AttachmentTypes.h" // AttachmentDescriptor
+#include "Types/FieldEditTypes.h"  // FieldEditResult
+#include "Sync/SyncTypes.h"        // TrackerIssueFetchPack, TrackerConnectivityBannerForUi (::Level member init)
 #include "ConfigManager.h"
 #include "GridPane.h"
 #include "SmatchetDefaults.h"
@@ -50,7 +57,7 @@ struct SubmitResult; // log-a-bug-github — held by shared_ptr in UiDrawSession
 } // namespace smatchet
 
 struct AttachmentCollectionRequest {
-    std::vector<AppController::AttachmentDescriptor> Attachments;
+    std::vector<AttachmentDescriptor> Attachments;
 };
 
 struct AttachmentPreviewUpdate {
@@ -107,7 +114,7 @@ struct FieldEditCommitResult {
     Kind CommitKind = Kind::Failed;
     bool Ok = false;
     std::string Error;
-    AppController::FieldEditResult ApplyResult;
+    FieldEditResult ApplyResult;
     /** When CommitKind == QueuedOffline: JSON object map for `UpdateIssueFields`. */
     std::string QueuedFieldsPayloadJson;
 };
@@ -412,6 +419,12 @@ struct UiDrawSession {
     /// (failure). UI consumes this directly; toast paths bypass it.
     int assistantPrefsTestResultType = 0; // 0 info, 1 success, 2 error
     std::shared_ptr<std::atomic<bool>> assistantPrefsTestCancel;
+    /// Probe-generation token: bumped on every probe launch AND on every field
+    /// edit (ClearStaleTestResult), captured into the worker at launch. The
+    /// posted result-commit callback drops its verdict when the counter moved
+    /// mid-flight, so a provider/credential edit can't surface a stale
+    /// Verified/Failed. UI-thread-only.
+    std::uint64_t assistantPrefsTestGeneration = 0;
     /// Set by the Test-connection success callback when the probe used a
     /// fallback default URL (cfg base URL was empty). The next paint of the
     /// Assistant tab reseeds the static InputText buffers from the working copy
@@ -593,6 +606,11 @@ struct UiDrawSession {
     /// by SmatchetUI::applyPendingViewDelete, immediately after the create latch.
     bool viewsPendingDeleteActive = false;
     std::string viewsPendingDeleteToastName;
+    /// DR13b — the id of the view targeted by the delete-confirm modal + delete latch. Set at
+    /// right-click "Delete view..." (the right-clicked row) or the editor-header Delete button
+    /// (the active view). Lets deletion hit the right-clicked view regardless of which view is
+    /// active or whether the active view's editor is dirty. Empty falls back to the active view.
+    std::string viewsPendingDeleteId;
 
     // ---- Grid panes (multi-grid-tabs Slice 2, ADR-0018) ----
     // The per-pane grid runtime that used to live here as singleton fields

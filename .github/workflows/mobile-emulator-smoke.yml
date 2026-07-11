@@ -6,11 +6,18 @@ name: Mobile emulator smoke
 # real EGL/GLES3 surface + frame loop end-to-end on a (software-rendered) GPU; the
 # .so-link and assembleDebug jobs stop at link/package time.
 #
-# ADVISORY: the job name keeps the "Mobile — " prefix and is intentionally NOT on
-# the merge-gate poller allow-list, so a flaky emulator boot can never block merge.
-# It is path-filtered (heavy: builds x86_64 OpenSSL + APK + boots an AVD) so it only
-# runs when mobile/native/cmake surfaces change — unlike the seconds-fast
-# always-on Android security gate.
+# BLOCKING: this check merge-blocks like every other gate (the poller blocks on ANY
+# red check — all-gates-blocking). Boot determinism: the emulator COLD-boots every
+# run (-no-snapshot-load on the smoke leg) — quick-boot restored a cached
+# default_boot snapshot whose sys.boot_completed=1 predated service registration,
+# so the runner action's own `input keyevent 82` hit
+# ServiceNotFoundException("input") ~23% of runs (e.g. run 28730560601). A cold
+# boot only sets sys.boot_completed after system services are genuinely up, which
+# removes that race for ~60-90 s of extra wall clock. The AVD cache below still
+# saves the system-image download + AVD creation; only the snapshot fast-path is
+# forgone. It is path-filtered (heavy: builds x86_64 OpenSSL + APK + boots an AVD)
+# so it only runs when mobile/native/cmake surfaces change — unlike the
+# seconds-fast always-on Android security gate.
 
 on:
   pull_request:
@@ -41,7 +48,7 @@ env:
 
 jobs:
   mobile-emulator-smoke:
-    name: Mobile — Android emulator smoke (x86_64, boot APK + first frame, advisory)
+    name: Mobile — Android emulator smoke (x86_64, boot APK + first frame)
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -80,7 +87,7 @@ jobs:
           sudo udevadm trigger --name-match=kvm
 
       - name: Set up JDK 17 (AGP 8.5 toolchain)
-        uses: actions/setup-java@ad2b38190b15e4d6bdf0c97fb4fca8412226d287 # v5.3.0
+        uses: actions/setup-java@1bcf9fb12cf4aa7d266a90ae39939e61372fe520 # v5.4.0
         with:
           distribution: temurin
           java-version: "17"
@@ -110,7 +117,7 @@ jobs:
 
       - name: Cache prebuilt OpenSSL (x86_64)
         id: openssl-cache
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/openssl-android/x86_64
           key: openssl-${{ env.OPENSSL_VERSION }}-ndk-${{ env.NDK_VERSION }}-x86_64-api${{ env.ANDROID_API }}
@@ -143,7 +150,7 @@ jobs:
           test -f "${OPENSSL_PREFIX}/include/openssl/opensslv.h" || { echo "::error::opensslv.h missing"; exit 1; }
 
       - name: Cache FetchContent _deps (emulator-x86_64)
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-android-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
@@ -191,7 +198,7 @@ jobs:
           echo "SMATCHET_APK_PATH=$(pwd)/$APK" >> "$GITHUB_ENV"
 
       - name: Cache AVD snapshot
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: avd-cache
         with:
           path: |
@@ -201,7 +208,7 @@ jobs:
 
       - name: Create AVD + snapshot (cache miss)
         if: steps.avd-cache.outputs.cache-hit != 'true'
-        uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: ${{ env.EMULATOR_API }}
           arch: x86_64
@@ -212,7 +219,7 @@ jobs:
           script: echo "AVD primed"
 
       - name: Boot emulator + install APK + assert first-frame marker
-        uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         env:
           SMATCHET_APK_PATH: ${{ env.SMATCHET_APK_PATH }}
         with:
@@ -220,6 +227,12 @@ jobs:
           arch: x86_64
           target: google_apis
           force-avd-creation: false
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot-save
+          # -no-snapshot-load: COLD boot (see header). Quick-booting the cached
+          # default_boot snapshot resumed a state where sys.boot_completed=1 but the
+          # input/settings services weren't registered yet, and the runner action's
+          # post-boot `input keyevent 82` crashed with ServiceNotFoundException —
+          # the ~23% flake this gate had while advisory. Cold boot makes
+          # boot_completed imply services-up.
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-snapshot-save -no-snapshot-load
           disable-animations: true
           script: bash .github/scripts/mobile-emulator-smoke.sh

@@ -1,0 +1,64 @@
+{
+  "_doc": "Session-maintained facts for the repo-health dashboard. generate.py computes every tree-derivable metric itself; this file carries only (a) judgment verdicts a script can't make and (b) live GitHub state only the MCP tools can fetch. Refresh CI lanes + open PRs from the GitHub Actions/PR APIs, re-run generate.py, then republish to the artifact URL below. See README.md.",
+
+  "artifact_url": "https://claude.ai/code/artifact/e1a28cab-afd3-4f31-8258-4efb2387806e",
+
+  "updated": {
+    "_doc": "Per-section last-refresh dates (YYYY-MM-DD). Stamp the matching key on every refresh of that section; generate.py renders the OLDEST as the header freshness badge (green ≤7d, amber ≤30d, red beyond) and repo-health-facts-nudge.sh nags at SessionStart when facts.json itself goes stale.",
+    "campaign": "2026-07-06",
+    "ci_lanes": "2026-07-06",
+    "open_prs": "2026-07-06"
+  },
+
+  "governance": { "loop_mode": "on", "auto_merge": "on" },
+
+  "audit_resolved": {
+    "fixed": 31,
+    "accepted": 2,
+    "_note": "CPP_CODE_AUDIT.md remediation (docs/plans/shipped/cpp-code-audit-remediation.md): 31 findings fixed, 2 accepted as documented deviations (#21 DictationInsertionRouter latent risk, #26 SubprocessCapture fork-safety half)."
+  },
+
+  "campaign": [
+    { "status": "landed",      "title": "Finding‑class CI gates",
+      "evidence": "Blocking <code style=\"font-family:var(--mono);font-size:11px\">bare‑json‑parse‑untrusted</code> lint gate + ranked mining record (#1608 → #1605)." },
+    { "status": "landed",      "title": "Mutation testing",
+      "evidence": "Pilot <b style=\"color:var(--ok)\">merged</b> (#1626): 68 mutants / 12 TUs → 52 killed, 16 survived; 3 worst survivors strengthened. Plan archived (#1641)." },
+    { "status": "partial",     "title": "Outward‑facing product", "label": "Half shipped",
+      "evidence": "i18n <b style=\"color:var(--ok)\">merged</b> (#1614) + error‑message pass <b style=\"color:var(--ok)\">merged</b> (#1615). AppController service‑extraction (2.8K LOC) pending." },
+    { "status": "landed",      "title": "Performance win‑hunting",
+      "evidence": "Hunt <b style=\"color:var(--ok)\">shipped</b>: PERF_WIN_HUNT.md + CommandPaletteUi snapshot (#1633, closed audit #33) + AI‑input alloc guard (#1632)." },
+    { "status": "landed",      "title": "Fuzz‑surface expansion",
+      "evidence": "Fuzz surface <b style=\"color:var(--ok)\">6 → 12 targets</b> — tracker mappers (#1627) + nightly code‑monkey fuzzers (#1637); E2d locale guard in review (#1645)." },
+    { "status": "landed",      "title": "Long‑horizon execution",
+      "evidence": "Pilot #1604 merged · nightly triage routine live · Phase‑3 batches #1607/#1609 · dashboard <b style=\"color:var(--ok)\">merged</b> (#1625)." }
+  ],
+
+  "ci_lanes": [
+    { "name": "Sanitizer nightly",       "detail": "ASan/UBSan · 04:00 UTC",       "status": "pass",   "when": "run #38"  },
+    { "name": "Fuzz smoke",              "detail": "libFuzzer · 04:30 UTC",         "status": "pass",   "when": "run #152" },
+    { "name": "TSan Linux nightly",      "detail": "threading subset · 05:00 UTC",  "status": "pass",   "when": "run #319" },
+    { "name": "Fresh‑clone configure",   "detail": "cold bootstrap · 05:00 UTC",    "status": "pass",   "when": "run #27"  },
+    { "name": "Dep CVE / SBOM",          "detail": "OSV scan · Mondays 04:17",      "status": "weekly", "when": "Mon"      }
+  ],
+  "triage_note": "Watched nightly by the <b style=\"color:var(--ink)\">smatchet‑nightly‑advisory‑lane‑triage</b> routine · 06:30 UTC.",
+
+  "open_prs": [
+    { "id": "1646", "state": "ready", "label": "Ready",
+      "title": "Bound the app‑update check response body", "meta": "SECURITY_AUDIT #31 · 8 MiB cap" },
+    { "id": "1645", "state": "ready", "label": "Ready",
+      "title": "Fuzz E2d — locale format‑specifier guard", "meta": "item 05 follow‑on · 13th target" },
+    { "id": "1643", "state": "ready", "label": "Ready",
+      "title": "Backlog B2 2C/2D — Plane mutations single‑attempt", "meta": "docs + in‑code guardrail" }
+  ],
+
+  "governance_list": [
+    { "icon": "on", "title": "Human‑on‑the‑loop",
+      "detail": "<code>loop_mode: on</code> — action‑biased autonomy; human monitors &amp; interrupts." },
+    { "icon": "✓", "title": "Standing auto‑merge grant",
+      "detail": "<code>auto_merge: on</code> — merges once the full gate poll passes; gates still bind." },
+    { "icon": "⛔", "title": "Block‑on‑any‑red",
+      "detail": "Every CI check gates the merge (#1619) — curated allow‑list retired." },
+    { "icon": "⏱", "title": "Nightly triage routine",
+      "detail": "Fresh session · <code>cron 30 6 * * *</code> · push+email · caps 2 items / 1 draft PR." }
+  ]
+}

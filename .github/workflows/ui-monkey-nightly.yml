@@ -1,0 +1,236 @@
+name: UI monkey nightly
+
+# Layer 2 of the nightly "code monkey" (docs/plans/nightly-monkey-tester.md): a random-
+# INPUT UI monkey. It boots the real app under the ImGui Test Engine (headless llvmpipe,
+# exactly like the bucket-E lane) and sprays a long SEEDED stream of random keyboard/mouse
+# events at the live UI, asserting nothing — only a real crash / in-frame IM_ASSERT fails.
+#
+# ADVISORY + ISOLATED: this is a NEW workflow, NOT a step in the required bucket-E job, so
+# it can't gate PRs or push that tight lane over its timeout. The UI monkey test is opt-in
+# (registered only when SMATCHET_UI_MONKEY=1), so `ui_test.run --all` on every other lane
+# never runs it. A crash auto-files a `bug` issue carrying the reproducing seed.
+#
+# Build/run steps mirror the proven bucket-e-ui-tests job (ninja-ui-test-msvc on
+# windows-2022 + the install-mesa-gl composite action + llvmpipe).
+
+on:
+  schedule:
+    - cron: '17 5 * * *'   # 05:17 UTC daily — staggered off the other nightlies
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: 'Fixed seed to replay a specific finding (blank = built-in default).'
+        required: false
+        default: ''
+      steps:
+        description: 'Number of random-input steps.'
+        required: false
+        default: '2500'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: ui-monkey-nightly
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  ui-monkey-nightly:
+    name: UI monkey nightly (ImGui Test Engine, llvmpipe)
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - name: Checkout develop
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: develop
+          persist-credentials: false
+
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+
+      - name: Cache FetchContent _deps (ui-test preset)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .fetchcontent-src
+          key: ${{ runner.os }}-fetchcontent-ui-test-msvc-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Configure ninja-ui-test-msvc
+        run: cmake --preset ninja-ui-test-msvc
+
+      - name: Build SmatchetStandalone (UI tests on)
+        run: cmake --build --preset ninja-ui-test-msvc
+
+      - name: Install Mesa software GL
+        uses: ./.github/actions/install-mesa-gl
+        with:
+          target-dir: build/ninja-ui-test-msvc
+
+      - name: Run the UI monkey
+        id: run
+        continue-on-error: true
+        shell: bash
+        working-directory: build/ninja-ui-test-msvc
+        env:
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          SMATCHET_UI_MONKEY: "1"
+          SMATCHET_UI_MONKEY_SEED: ${{ github.event.inputs.seed }}
+          SMATCHET_UI_MONKEY_STEPS: ${{ github.event.inputs.steps }}
+        run: |
+          set -uo pipefail
+          # --spawn isolates a crash in a child process so the parent still reports it. The
+          # monkey self-bounds by SMATCHET_UI_MONKEY_STEPS; --frames must exceed its frame use
+          # (~2 frames/step). timeout is the hang backstop.
+          #
+          # Filter is 'UiMonkey' (the CATEGORY, substring-matched) — NOT 'UiMonkey/*'.
+          # ImGuiTestEngine_PassFilter is substring/anchor-based ('^'/'$'), never glob:
+          # 'UiMonkey/*' contains a literal '/*' that is a substring of neither the
+          # category ("UiMonkey") nor the name ("RandomWalk"), so it matched ZERO tests
+          # and this lane ran vacuously from its first nightly (Issue #1666 — the
+          # "crash" it reported was actually this zero-match, mislabeled).
+          echo "ui-monkey: ui_test.run --name=UiMonkey --frames=8000 --spawn --yes"
+          out="$(timeout 600 ./Smatchet.exe cmd ui_test.run --name='UiMonkey' --frames=8000 --spawn --yes 2>&1)"
+          rc=$?
+          printf '%s\n' "$out" | tee ../../ui-monkey.log
+          # Surface the spawned child log (per-test detail / the logged seed / any crash).
+          childlog="$(printf '%s\n' "$out" | grep -a 'child stdout/stderr' | tail -1 | sed 's/.*child stdout\/stderr[^A-Za-z]*//')"
+          if [ -n "${childlog:-}" ] && [ -f "$childlog" ]; then
+            echo "===== ui-monkey spawned-child log ====="; cat "$childlog" | tee -a ../../ui-monkey.log
+          fi
+          tested="$(printf '%s\n' "$out" | grep -aoE '"tested"[ :]+[0-9]+' | grep -oE '[0-9]+' | tail -1 || echo 0)"
+          passed="$(printf '%s\n' "$out" | grep -aoE '"passed"[ :]+[0-9]+' | grep -oE '[0-9]+' | tail -1 || echo 0)"
+          failed="$(printf '%s\n' "$out" | grep -aoE '"failed"[ :]+[0-9]+' | grep -oE '[0-9]+' | tail -1 || echo 0)"
+          # The command envelope's own `ok` flag is the authoritative crash-vs-clean signal:
+          # a genuine zero-match returns `"ok":true` with `"tested":0` (harness), while a
+          # test that hung / crashed makes ui_test.run return `"ok":false` with an ERROR
+          # envelope that has NO tested field (the CLI still exits rc==0 reporting the
+          # scenario timeout, so rc alone can't distinguish the two — this is a REAL crash,
+          # not a harness miss). Default true when no envelope is found (e.g. hard child
+          # death) — the tested==0 branch then classifies it as crash regardless.
+          okflag="$(printf '%s\n' "$out" | grep -aoE '"ok"[ :]+(true|false)' | grep -oE '(true|false)' | tail -1 || echo true)"
+          # The seed is logged by the SPAWNED CHILD (ui_monkey.test.cpp), not the parent —
+          # grep the combined ui-monkey.log (parent output + child log tee'd above), not $out.
+          seed="$(grep -aoE 'ui-monkey seed=[0-9]+' ../../ui-monkey.log | head -1 | sed 's/ui-monkey seed=//' || true)"
+          echo "tested=${tested:-0} passed=${passed:-0} failed=${failed:-0} ok=${okflag} rc=${rc}"
+          {
+            echo "tested=${tested:-0}"
+            echo "passed=${passed:-0}"
+            echo "failed=${failed:-0}"
+            echo "ok=${okflag}"
+            echo "rc=${rc}"
+            echo "seed=${seed:-unknown}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Evaluate result
+        id: eval
+        shell: bash
+        env:
+          TESTED: ${{ steps.run.outputs.tested }}
+          PASSED: ${{ steps.run.outputs.passed }}
+          FAILED: ${{ steps.run.outputs.failed }}
+          OK: ${{ steps.run.outputs.ok }}
+          RC: ${{ steps.run.outputs.rc }}
+        run: |
+          set -uo pipefail
+          # A clean run is ok==true && tested>=1 && passed>=1 && failed==0. Anything else is
+          # a finding, but the KIND matters (Issue #1666 lesson — a zero-match got filed as a
+          # "crash" with seed=unknown, sending a human after a phantom):
+          #   kind=harness — ONLY a genuine zero-match: the command completed cleanly
+          #     (ok==true, rc==0) but matched no test (tested==0). The walk never executed
+          #     (bad --name filter, unregistered test, env var not propagating). No seed.
+          #   kind=crash — everything else non-clean: a test ran and failed/crashed, OR the
+          #     command returned ok==false (error/timeout envelope — a hung or crashed test;
+          #     note the CLI still exits rc==0 reporting a scenario timeout, so `ok` — NOT rc
+          #     — is the discriminator), OR the parent was hard-killed (rc!=0). Crash is the
+          #     fail-safe default whenever the run was not a clean, orderly zero-match.
+          if [ "${TESTED:-0}" = "0" ] && [ "${OK:-true}" = "true" ] && [ "${RC:-1}" = "0" ]; then
+            echo "finding=1" >> "$GITHUB_OUTPUT"
+            echo "kind=harness" >> "$GITHUB_OUTPUT"
+          elif [ "${OK:-true}" = "false" ] || [ "${TESTED:-0}" = "0" ] || [ "${FAILED:-0}" != "0" ] || [ "${PASSED:-0}" = "0" ]; then
+            echo "finding=1" >> "$GITHUB_OUTPUT"
+            echo "kind=crash" >> "$GITHUB_OUTPUT"
+          else
+            echo "finding=0" >> "$GITHUB_OUTPUT"
+            echo "kind=none" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Surface report in job summary
+        if: steps.eval.outputs.finding == '1'
+        shell: bash
+        env:
+          SEED: ${{ steps.run.outputs.seed }}
+          KIND: ${{ steps.eval.outputs.kind }}
+          TESTED: ${{ steps.run.outputs.tested }}
+        run: |
+          {
+            echo "## UI monkey nightly finding (${KIND})"
+            echo ""
+            if [ "$KIND" = "harness" ]; then
+              echo "- **The walk never executed** (tested=${TESTED:-0}) — filter/registration/env problem, NOT a UI crash."
+            else
+              echo "- Reproducing seed: \`${SEED:-unknown}\`"
+              echo "- Replay: set \`SMATCHET_UI_MONKEY=1 SMATCHET_UI_MONKEY_SEED=${SEED:-<seed>}\` then \`ui_test.run --name='UiMonkey' --spawn --yes\`"
+            fi
+            echo ""
+            echo '```'
+            grep -aE "Error |IM_ASSERT|ui-monkey|Passed:|Failed:|crash" ui-monkey.log | head -160 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update bug issue on finding
+        if: steps.eval.outputs.finding == '1'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SEED: ${{ steps.run.outputs.seed }}
+          KIND: ${{ steps.eval.outputs.kind }}
+          TESTED: ${{ steps.run.outputs.tested }}
+        run: |
+          set -uo pipefail
+          # Two DISTINCT issue shapes (Issue #1666 lesson — the original zero-match got
+          # filed under the crash title with seed=unknown, sending a human after a
+          # phantom crash). Each kind gets its own stable title so dedup upserts the
+          # right tracking issue.
+          if [ "$KIND" = "harness" ]; then
+            title="UI monkey nightly matched 0 tests (harness misconfiguration)"
+            body="The nightly UI monkey ran but the walk NEVER EXECUTED (tested=${TESTED:-0}).
+
+          This is a harness problem — a bad --name filter, an unregistered test, or
+          SMATCHET_UI_MONKEY=1 not reaching the spawned child — NOT a UI crash. There is
+          no reproducing seed because no test ran.
+
+          Run: ${RUN_URL}
+
+          Check: the ImGui Test Engine filter is substring/anchor-based (never glob);
+          the registered test is category \`UiMonkey\`, name \`RandomWalk\`; registration
+          is gated on SMATCHET_UI_MONKEY=1 in the CHILD process env."
+          else
+            title="UI monkey nightly found a crash (ImGui random-input walk)"
+            body="The nightly UI monkey on \`develop\` tripped an in-frame assert / crash.
+
+          Run: ${RUN_URL}
+          Reproducing seed: \`${SEED:-unknown}\`
+          Replay: build \`ninja-ui-test-msvc\`, then run under llvmpipe:
+          \`\`\`
+          SMATCHET_UI_MONKEY=1 SMATCHET_UI_MONKEY_SEED=${SEED:-<seed>} \\
+            ./Smatchet.exe cmd ui_test.run --name='UiMonkey' --spawn --yes
+          \`\`\`
+
+          See the job summary for the ImGui Test Engine error / assertion. This is Layer 2 of
+          nightly-monkey-tester.md — a random-input UI defect (crash or Begin/End imbalance)."
+          fi
+          existing=$(gh issue list --state open --label bug --search "\"$title\" in:title" \
+                       --json number --jq '.[0].number' 2>/dev/null || true)
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            gh issue comment "$existing" --body "Recurred: ${RUN_URL} (kind=${KIND}, seed \`${SEED:-unknown}\`)" || true
+          else
+            gh issue create --title "$title" --label bug --body "$body" || true
+          fi

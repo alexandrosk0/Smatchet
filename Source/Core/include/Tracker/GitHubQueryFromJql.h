@@ -84,6 +84,12 @@ struct JqlToGitHubResult {
 /// Query empty (or just `repo:o/r` when owner+repo provided).
 JqlToGitHubResult TranslateJqlToGitHubSearch(const std::string& jql, const std::string& owner, const std::string& repo);
 
+/// Extract the leading `owner/repo` project anchor from a tracker query string.
+/// Returns the token only when the FIRST whitespace-delimited token is itself
+/// shaped `owner/repo` (a single '/', GitHub owner/repo alphabet on both sides).
+/// A stray '/' elsewhere in the query (e.g. a `ui/ux` label value) yields "".
+std::string ExtractGitHubProjectAnchor(const std::string& query);
+
 } // namespace github
 } // namespace smatchet
 

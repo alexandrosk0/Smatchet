@@ -4,7 +4,7 @@
 
 #include "Commands/Scenarios/IScenario.h"
 
-#include "AppController.h"
+#include "Interfaces/IAppScenarioHost.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "UiPerfMonitor.h"
 
@@ -18,7 +18,7 @@ class PriorityGridScrollScenario : public IScenario {
   public:
     std::string Name() const override { return "priority-grid-scroll"; }
 
-    void OnStart(AppController& app, const nlohmann::json& args, std::string& outErr) override {
+    void OnStart(IAppScenarioHost& app, const nlohmann::json& args, std::string& outErr) override {
         frames_ = args.value("frames", 600);
         pixPerFrame_ = args.value("pixPerFrame", 8);
         // Seed the scroll at y=0 before we begin.
@@ -42,11 +42,11 @@ class PriorityGridScrollScenario : public IScenario {
         // (No public Reset() yet; snapshot at start and diff at finish as a proxy.)
     }
 
-    void OnFrame(AppController& /*app*/, int /*frameIndex*/) override { scrollY_ += pixPerFrame_; }
+    void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override { scrollY_ += pixPerFrame_; }
 
     bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
 
-    void OnCancel(AppController& app) override {
+    void OnCancel(IAppScenarioHost& app) override {
         // Unwind transient state so cancelling a perf run never leaves a scenario-installed
         // provider clobbering the user's actual `priority` renderer for the rest of the
         // session. ScenarioUnregisterLuaCachedProvider restores the prior provider.
@@ -56,7 +56,7 @@ class PriorityGridScrollScenario : public IScenario {
         }
     }
 
-    nlohmann::json OnFinish(AppController& app) override {
+    nlohmann::json OnFinish(IAppScenarioHost& app) override {
         if (registeredLuaPriority_) {
             app.ScenarioUnregisterLuaCachedProvider(luaProviderField_);
             registeredLuaPriority_ = false;

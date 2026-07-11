@@ -199,6 +199,18 @@ inline const ViewDefinition* ApplyPendingViewCreateCore(Views& viewState, bool& 
     return viewState.GetActiveView();
 }
 
+/// DR13b — resolve a view's display name by id from the store, for the delete-confirm prompt +
+/// toast (the target may not be the active view). Returns `fallback` when the id is absent. Pure —
+/// bucket-A testable.
+inline std::string FindViewName(const ViewsStore& store, const std::string& id, const std::string& fallback) {
+    for (const auto& view : store.Views) {
+        if (view.Id == id) {
+            return view.Name;
+        }
+    }
+    return fallback;
+}
+
 void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore& store, bool pushHistory);
 
 /// Snapshot the active view's full ViewDefinition into UiDrawSession on the

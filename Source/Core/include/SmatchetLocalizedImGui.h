@@ -23,6 +23,23 @@ inline bool BeginPopupModal(const char* name, bool* p_open = nullptr, ImGuiWindo
     return ::ImGui::BeginPopupModal(SmatchetLocalization::WindowTitleFromSource(name), p_open, flags);
 }
 
+// OpenPopup/BeginPopup run the same WindowTitleFromSource transform as BeginPopupModal so the
+// popup ID stays paired with its translated Begin* counterpart in every language. Without this,
+// a raw OpenPopup hashes the English literal while the wrapped BeginPopupModal hashes the
+// translated title the moment the string gains a catalog entry — the popup silently never opens
+// in that locale. ID-only names ("##x") and untranslated titles pass through unchanged.
+inline void OpenPopup(const char* str_id, ImGuiPopupFlags popup_flags = 0) {
+    ::ImGui::OpenPopup(SmatchetLocalization::WindowTitleFromSource(str_id), popup_flags);
+}
+
+// Forwarder: the const char* overload above would otherwise hide ImGui's ImGuiID overload
+// from qualified lookup in aliased TUs.
+inline void OpenPopup(ImGuiID id, ImGuiPopupFlags popup_flags = 0) { ::ImGui::OpenPopup(id, popup_flags); }
+
+inline bool BeginPopup(const char* str_id, ImGuiWindowFlags flags = 0) {
+    return ::ImGui::BeginPopup(SmatchetLocalization::WindowTitleFromSource(str_id), flags);
+}
+
 inline void SetWindowFocus(const char* name) {
     ::ImGui::SetWindowFocus(SmatchetLocalization::WindowTitleFromSource(name));
 }
@@ -138,7 +155,7 @@ inline bool InputInt(const char* label, int* v, int step = 1, int step_fast = 10
 inline bool SliderInt(const char* label, int* v, int v_min, int v_max, const char* format = "%d",
                       ImGuiSliderFlags flags = 0) {
     return ::ImGui::SliderInt(SmatchetLocalization::LabelFromSource(label), v, v_min, v_max,
-                              SmatchetLocalization::TranslateSource(format), flags);
+                              SmatchetLocalization::TranslateSourceAsFormat(format), flags);
 }
 
 inline bool Selectable(const char* label, bool selected = false, ImGuiSelectableFlags flags = 0,
@@ -188,49 +205,49 @@ inline void TextUnformatted(const char* text, const char* text_end = nullptr) {
 inline void Text(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    ::ImGui::TextV(SmatchetLocalization::TranslateSource(fmt), args);
+    ::ImGui::TextV(SmatchetLocalization::TranslateSourceAsFormat(fmt), args);
     va_end(args);
 }
 
 inline void TextColored(const ImVec4& col, const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    ::ImGui::TextColoredV(col, SmatchetLocalization::TranslateSource(fmt), args);
+    ::ImGui::TextColoredV(col, SmatchetLocalization::TranslateSourceAsFormat(fmt), args);
     va_end(args);
 }
 
 inline void TextDisabled(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    ::ImGui::TextDisabledV(SmatchetLocalization::TranslateSource(fmt), args);
+    ::ImGui::TextDisabledV(SmatchetLocalization::TranslateSourceAsFormat(fmt), args);
     va_end(args);
 }
 
 inline void TextWrapped(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    ::ImGui::TextWrappedV(SmatchetLocalization::TranslateSource(fmt), args);
+    ::ImGui::TextWrappedV(SmatchetLocalization::TranslateSourceAsFormat(fmt), args);
     va_end(args);
 }
 
 inline void BulletText(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    ::ImGui::BulletTextV(SmatchetLocalization::TranslateSource(fmt), args);
+    ::ImGui::BulletTextV(SmatchetLocalization::TranslateSourceAsFormat(fmt), args);
     va_end(args);
 }
 
 inline void SetTooltip(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    ::ImGui::SetTooltipV(SmatchetLocalization::TranslateSource(fmt), args);
+    ::ImGui::SetTooltipV(SmatchetLocalization::TranslateSourceAsFormat(fmt), args);
     va_end(args);
 }
 
 inline void SetItemTooltip(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
-    ::ImGui::SetItemTooltipV(SmatchetLocalization::TranslateSource(fmt), args);
+    ::ImGui::SetItemTooltipV(SmatchetLocalization::TranslateSourceAsFormat(fmt), args);
     va_end(args);
 }
 

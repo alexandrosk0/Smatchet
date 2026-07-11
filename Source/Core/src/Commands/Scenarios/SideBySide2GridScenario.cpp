@@ -14,7 +14,7 @@
 
 #include "Commands/Scenarios/IScenario.h"
 
-#include "AppController.h"
+#include "Interfaces/IAppScenarioHost.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "SmatchetUiSession.h"
 #include "UiPerfMonitor.h"
@@ -35,7 +35,7 @@ class SideBySide2GridScenario : public IScenario {
   public:
     std::string Name() const override { return "side-by-side-2-grid"; }
 
-    void OnStart(AppController& app, const nlohmann::json& args, std::string& /*outErr*/) override {
+    void OnStart(IAppScenarioHost& app, const nlohmann::json& args, std::string& /*outErr*/) override {
         frames_ = (std::max)(1, args.value("frames", 600));
         addedPane_ = false;
         maxFrameTopMs_ = 0.0;
@@ -92,7 +92,7 @@ class SideBySide2GridScenario : public IScenario {
         UiPerfMonitor::Instance().Reset();
     }
 
-    void OnFrame(AppController& /*app*/, int /*frameIndex*/) override {
+    void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override {
         // Passive observer: sample the dominant per-frame UI scope so a one-frame
         // spike from the two-grid draw is captured. GetLastFrameRows returns the
         // prior frame's totals (updated by UiPerfMonitor::BeginFrame).
@@ -108,9 +108,9 @@ class SideBySide2GridScenario : public IScenario {
 
     bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
 
-    void OnCancel(AppController& /*app*/) override { RemoveSyntheticPane(); }
+    void OnCancel(IAppScenarioHost& /*app*/) override { RemoveSyntheticPane(); }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         RemoveSyntheticPane();
 
         const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);

@@ -57,6 +57,32 @@ nlohmann::json BuildChatBody(const AiChatRequest& req) {
     return body;
 }
 
+// Parse an Anthropic SSE `error` event payload into a human-readable message.
+// The data is server-supplied + attacker-influenced, so parse through the
+// depth/node-bounded helper (never throws) and redact the extracted text before
+// it can reach a log or the UI. Returns a generic fallback when the body is
+// absent / unparseable so a mid-stream error is never mistaken for success.
+std::string ParseAnthropicStreamErrorMessage(const std::string& data) {
+    const std::string kFallback = "provider stream error";
+    if (data.empty())
+        return kFallback;
+    std::string parseErr;
+    nlohmann::json j = smatchet::json_safe::ParseBounded(data, parseErr);
+    if (!parseErr.empty() || !j.is_object())
+        return kFallback;
+    std::string message;
+    if (j.contains("error") && j["error"].is_object()) {
+        const auto& err = j["error"];
+        if (err.contains("message") && err["message"].is_string())
+            message = err["message"].get<std::string>();
+        if (message.empty() && err.contains("type") && err["type"].is_string())
+            message = err["type"].get<std::string>();
+    }
+    if (message.empty())
+        return kFallback;
+    return smatchet::ai::pure::RedactProviderErrorBody(message);
+}
+
 // Translate one decoded SSE event into at most one AiStreamDelta. Mutates
 // sawFinal when the stream terminates so the WriteCallback can short-circuit.
 void DispatchAnthropicEvent(const AiSseParser::Event& ev, const IAiClient::DeltaCallback& onDelta, bool& sawFinal,
@@ -166,14 +192,28 @@ void AnthropicClient::SendStreaming(const AiClientConfig& cfg, const AiChatReque
     AiSseParser parser;
     bool sawFinal = false;
     bool cancelObserved = false;
+    bool sawStreamError = false;
+    std::string streamErrorMessage;
     std::string pendingFinishReason;
 
     auto translate = [&](const AiSseParser::Event& ev) {
         if (cancelObserved || sawFinal)
             return;
+        // A mid-stream `error` event on an otherwise-200 SSE stream is a real
+        // failure. Record it and mark the stream terminated (sawFinal) exactly as a
+        // normal terminal event does, leaving the shared post-response tail untouched.
+        // The trailing sawStreamError branch then reports it via onError instead of
+        // synthesizing a success `eof` that would commit truncated text (DR20).
+        if (ev.Name == "error") {
+            streamErrorMessage = ParseAnthropicStreamErrorMessage(ev.Data);
+            sawStreamError = true;
+            sawFinal = true;
+            return;
+        }
         DispatchAnthropicEvent(ev, onDelta, sawFinal, pendingFinishReason);
     };
 
+    // SMATCHET_DEVIATION(rule=duplication; reason=the Anthropic + OpenAi SSE streaming skeletons (WriteCallback cancel-poll + cpr::Post + post-response cancel/transport/HTTP/eof dispatch) are a long-standing near-verbatim pair by necessity — both speak the same SSE wire shape while the token-delta decoders differ; the DR20 mid-stream-error fix edits inside that shared skeleton, re-bounding the pre-existing clone. Folding the skeleton into one helper would couple two independent provider adapters (DRY Pillar 5 per ADR-0015); owner=deep-review; revisit=2026-10-01)
     cpr::WriteCallback wcb{[&](const std::string& chunk, intptr_t) -> bool {
                                if (cancel && cancel->load(std::memory_order_acquire)) {
                                    cancelObserved = true;
@@ -238,5 +278,15 @@ void AnthropicClient::SendStreaming(const AiClientConfig& cfg, const AiChatReque
         d.IsFinal = true;
         d.FinishReason = "eof";
         onDelta(d);
+    }
+
+    if (sawStreamError) {
+        // Mid-stream provider `error` event on a 200 stream: transport/HTTP above
+        // saw a clean 200 and the eof above was suppressed by the sawFinal flag set
+        // at detection, so surface the failure here rather than as success (DR20).
+        AiStreamError err;
+        err.HttpStatus = r.status_code;
+        err.Message = streamErrorMessage;
+        onError(err);
     }
 }

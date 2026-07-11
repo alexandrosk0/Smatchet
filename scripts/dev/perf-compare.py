@@ -187,9 +187,18 @@ def evaluate(
     # float()/int() casts crashed with KeyError or TypeError and bypassed
     # the documented exit-2 input-error path. (CodeRabbit PR #322 #5.)
     min_calls = _to_int(policy.get("min_baseline_calls", 10), "policy.min_baseline_calls")
-    mean_pct = _to_float(policy.get("mean_delta_pct", 10.0), "policy.mean_delta_pct") or 10.0
-    p99_cap = _to_float(policy.get("p99_abs_ceiling_ms", 10.0), "policy.p99_abs_ceiling_ms") or 10.0
-    max_cap = _to_float(policy.get("max_abs_ceiling_ms", 50.0), "policy.max_abs_ceiling_ms") or 50.0
+
+    # Substitute the default only for an absent/null knob — NOT for an explicit 0.
+    # `X or DEFAULT` treated `mean_delta_pct: 0` (gate on ANY regression) as falsy
+    # and silently loosened it to the permissive default. `.get(key, default)`
+    # already covers absence; the None-check only rescues an explicit JSON null.
+    def _knob(key, default):
+        v = _to_float(policy.get(key, default), "policy.%s" % key)
+        return default if v is None else v
+
+    mean_pct = _knob("mean_delta_pct", 10.0)
+    p99_cap = _knob("p99_abs_ceiling_ms", 10.0)
+    max_cap = _knob("max_abs_ceiling_ms", 50.0)
     # None ⇒ knob disabled (ships off until perf-gate-revival step-5 calibration).
     mean_cap = _to_float(policy.get("mean_abs_ceiling_ms"), "policy.mean_abs_ceiling_ms")
     min_abs_delta = _to_float(
@@ -209,6 +218,22 @@ def evaluate(
         f_avg = _to_float(f.get("avgPerCallMs"), f"fresh.{name}.avgPerCallMs") if f else None
         b_calls = _to_int(b.get("calls"), f"baseline.{name}.calls") if b else 0
 
+        # Annotate rows the RELATIVE gate skips as below-floor noise, so the
+        # table's eye-catching percentages (+3575 % on a 1-sample scope) read
+        # as ungated sampling noise instead of a suspected regression
+        # (categories/tooling 2026-07-05 legibility entry; PR #1632).
+        floor_note = ""
+        if b is not None and f is not None:
+            if b_calls < min_calls:
+                floor_note = f"noise: {b_calls} < {min_calls} calls"
+            elif (
+                b_total is not None
+                and f_total is not None
+                and abs(f_total - b_total) <= min_abs_delta
+            ):
+                # No abs-value bars — a literal `|` splits the markdown table cell.
+                floor_note = f"noise: abs Δ ≤ {min_abs_delta:.3f} ms"
+
         rows.append(
             {
                 "name": name,
@@ -217,6 +242,7 @@ def evaluate(
                 "p99Ms": format_delta(b_p99, f_p99),
                 "maxMs": format_delta(b_max, f_max),
                 "baselineCalls": b_calls,
+                "floorNote": floor_note,
             }
         )
 
@@ -311,10 +337,20 @@ def emit_markdown(
     if rows:
         lines.append("| scope | lastTotalMs | avgPerCallMs | p99Ms | maxMs | baseline calls |")
         lines.append("|---|---|---|---|---|---:|")
-        for r in rows:
+        # Gated-eligible rows first; below-floor rows sink with their marker.
+        for r in sorted(rows, key=lambda r: bool(r.get("floorNote"))):
+            note = r.get("floorNote", "")
+            total = f"{r['lastTotalMs']} · ({note})" if note else r["lastTotalMs"]
             lines.append(
-                f"| `{r['name']}` | {r['lastTotalMs']} | {r['avgPerCallMs']} | {r['p99Ms']} | "
+                f"| `{r['name']}` | {total} | {r['avgPerCallMs']} | {r['p99Ms']} | "
                 f"{r['maxMs']} | {r['baselineCalls']} |"
+            )
+        if any(r.get("floorNote") for r in rows):
+            lines.append("")
+            lines.append(
+                "_Rows marked `· (noise: …)` sit below the sample/noise floor — "
+                "the relative gate skips them; their percentages are ungated "
+                "sampling noise, not regressions._"
             )
     else:
         lines.append("(no rows in either baseline or fresh snapshot)")

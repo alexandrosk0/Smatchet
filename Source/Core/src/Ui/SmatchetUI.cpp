@@ -1,16 +1,20 @@
+// SMATCHET_DEVIATION(rule=duplication; reason=include-block clone, audit #12; owner=cpp-audit; revisit=2026-09-30)
 #include "SmatchetUI.h"
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+// SMATCHET_DEVIATION(rule=duplication; reason=include-block clone, audit #12; owner=cpp-audit; revisit=2026-09-30)
 #include "SmatchetViewVisibility.h"
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetStatusBarUi.h"
 #include "Commands/CommandPaletteUi.h"
 #include "Commands/CommandRegistry.h"
+#include "Commands/PaletteOpenLatch.h"
 #include "Commands/Scenarios/IScenario.h"
 #include "Commands/PaneCommands.h"
 #include "Commands/ViewCommands.h"
 #include "ConfigManager.h"
 #include "ConfigSaveWorker.h"
+#include "Json/BoundedJsonParse.h"
 #include "TrackerGridFieldDisplay.h"
 #include "SmatchetGridUiSupport.h"
 #include "SmatchetImageTextureCache.h"
@@ -116,27 +120,34 @@ static void DrainAppUpdateCheck(UiDrawSession& d) {
     }
 
     d.appUpdateCheckInFlight = false;
+    const char* const checkFailedMsg = SmatchetLocalization::T(
+        "updates.check_failed", "Update check failed — check your network connection and try again. You can "
+                                "also download releases from the GitHub page.");
     try {
         d.appUpdateInfo = d.appUpdateFuture.get();
     } catch (const std::exception& ex) {
+        LOG_WARN("DrainAppUpdateCheck: %s", ex.what());
         d.appUpdateInfo = {};
-        d.appUpdateInfo.Error = std::string("Update check failed: ") + ex.what();
+        d.appUpdateInfo.Error = checkFailedMsg;
     } catch (...) {
         LOG_WARN("DrainAppUpdateCheck: unknown exception");
         d.appUpdateInfo = {};
-        d.appUpdateInfo.Error = "Update check failed with an unknown error.";
+        d.appUpdateInfo.Error = checkFailedMsg;
     }
 
     if (!d.appUpdateInfo.Error.empty()) {
         if (d.appUpdateCheckManual) {
-            SmatchetToastManager::Instance().Push("Updates", d.appUpdateInfo.Error, ToastType::Error, 5000);
+            SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.updates", "Updates"),
+                                                  d.appUpdateInfo.Error, ToastType::Error, 5000);
         }
         return;
     }
     if (!d.appUpdateInfo.UpdateAvailable) {
         if (d.appUpdateCheckManual) {
-            SmatchetToastManager::Instance().Push("Updates", "You are already on the latest release.",
-                                                  ToastType::Success, 3500);
+            SmatchetToastManager::Instance().Push(
+                SmatchetLocalization::T("toast.updates", "Updates"),
+                SmatchetLocalization::T("updates.already_latest", "You are already on the latest release."),
+                ToastType::Success, 3500);
         }
         return;
     }
@@ -146,17 +157,20 @@ static void DrainAppUpdateCheck(UiDrawSession& d) {
     }
 
     d.appUpdateModalOpen = true;
-    ImGui::OpenPopup("Update Available");
+    ImGui::OpenPopup("Update Available###AppUpdateAvailable");
     if (d.appUpdateCheckManual) {
-        SmatchetToastManager::Instance().Push("Updates", "New version found.", ToastType::Info, 2500);
+        SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.updates", "Updates"),
+                                              SmatchetLocalization::T("updates.new_version", "New version found."),
+                                              ToastType::Info, 2500);
     }
 }
 
 static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
     if (d.appUpdateModalOpen) {
-        ImGui::OpenPopup("Update Available");
+        ImGui::OpenPopup("Update Available###AppUpdateAvailable");
     }
-    if (!ImGui::BeginPopupModal("Update Available", &d.appUpdateModalOpen, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (!ImGui::BeginPopupModal("Update Available###AppUpdateAvailable", &d.appUpdateModalOpen,
+                                ImGuiWindowFlags_AlwaysAutoResize)) {
         return;
     }
 
@@ -197,30 +211,36 @@ static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
             }
         }
     } else {
-        if (ImGui::Button("Download and Install", ImVec2(170.0f, 0.0f))) {
+        // Auto-size: the label translates, so a fixed 170px width clips the French text.
+        if (ImGui::Button("Download and Install")) {
             d.installerDownloadInFlight = true;
             d.installerDownloadCancel = std::make_shared<std::atomic<bool>>(false);
             const std::string downloadUrl = d.appUpdateInfo.InstallerAsset.DownloadUrl;
             const std::string assetName = d.appUpdateInfo.InstallerAsset.Name;
             std::shared_ptr<std::atomic<bool>> cancelFlag = d.installerDownloadCancel;
-            d.appUpdateActionStatus = "Downloading installer...";
+            d.appUpdateActionStatus =
+                SmatchetLocalization::T("updates.downloading_installer", "Downloading installer...");
             app.LaunchBackgroundTask([&app, downloadUrl, assetName, cancelFlag]() {
                 std::string err;
                 const bool ok = app.DownloadAndLaunchInstallerUpdate(downloadUrl, assetName, err, cancelFlag);
-                app.mainThreadDispatcher.PostToMainThread([ok, err]() {
+                app.PostToMainThread([ok, err]() {
                     g_ui.installerDownloadInFlight = false;
                     g_ui.installerDownloadCancel.reset();
                     if (ok) {
-                        g_ui.appUpdateActionStatus =
-                            "Installer launched. Smatchet will close so the update can proceed.";
+                        g_ui.appUpdateActionStatus = SmatchetLocalization::T(
+                            "updates.installer_launched",
+                            "Installer launched. Smatchet will close so the update can proceed.");
+                    } else if (err.empty()) {
+                        g_ui.appUpdateActionStatus = SmatchetLocalization::T("updates.installer_launch_failed",
+                                                                             "Failed to launch installer update.");
                     } else {
-                        g_ui.appUpdateActionStatus = err.empty() ? "Failed to launch installer update." : err;
+                        g_ui.appUpdateActionStatus = err;
                     }
                 });
             });
         }
         ImGui::SameLine();
-        if (ImGui::Button("Skip This Version", ImVec2(150.0f, 0.0f))) {
+        if (ImGui::Button("Skip This Version")) {
             d.cfg.UpdateSkipVersion = d.appUpdateInfo.LatestVersion;
             ConfigManager::Save(d.cfg);
             d.appUpdateModalOpen = false;
@@ -453,6 +473,19 @@ void SmatchetUI::drawPerFrameTicksAndHandlers(AppController& app, UiDrawSession&
     if (d.cfgInitialized && !d.offlineLegacyStartupBannerConsumed) {
         d.offlineLegacyStartupBannerConsumed = true;
         d.offlineLegacyStartupBannerText = app.TakeLegacyPendingStartupBanner();
+        // One-shot corrupt-config notice (previously log-only: settings reverted to defaults
+        // with zero UI signal). Same startup seam as the legacy banner; UI thread only.
+        const std::string badConfigName = ConfigManager::TakeStartupConfigWarning();
+        if (!badConfigName.empty()) {
+            SmatchetToastManager::Instance().Push(
+                SmatchetLocalization::T("toast.settings", "Settings"),
+                SmatchetLocalization::Format(
+                    "config.parse_failed",
+                    "Your settings file (%s) could not be read, so defaults are in use. Fix the file, or open "
+                    "Preferences and Save to rewrite it.",
+                    badConfigName.c_str()),
+                ToastType::Warning, 12000);
+        }
     }
     if (d.cfgInitialized && d.cfg.UpdateCheckEnabled && !d.appUpdateStartupCheckStarted) {
         d.appUpdateStartupCheckStarted = true;
@@ -542,11 +575,12 @@ void SmatchetUI::drawPreWindowOverlays(AppController& app, UiDrawSession& d) {
         // before its Draw runs this frame. Consume-once: the scenario sets the
         // flag, we drain it here. Subsequent frames render the steady palette
         // state, which is what the screenshot diff golden captures.
-        if (g_ui.requestCommandPaletteOpen) {
-            g_ui.requestCommandPaletteOpen = false;
+        const smatchet::cmd::PaletteOpenDecision paletteOpen =
+            smatchet::cmd::ConsumePaletteOpenLatch(g_ui.requestCommandPaletteOpen, g_ui.requestCommandPaletteFilter);
+        if (paletteOpen.Open) {
             commandPalette_.Open();
-            if (!g_ui.requestCommandPaletteFilter.empty()) {
-                commandPalette_.SetFilterText(g_ui.requestCommandPaletteFilter.c_str());
+            if (!paletteOpen.Filter.empty()) {
+                commandPalette_.SetFilterText(paletteOpen.Filter.c_str());
             }
         }
         // Borrow the live keybinding table so palette rows surface their bound combo.
@@ -558,7 +592,7 @@ void SmatchetUI::drawPreWindowOverlays(AppController& app, UiDrawSession& d) {
     // binding, default hotkey Ctrl+Shift+B, dispatched up in dispatchKeybindings.
     // This block only renders the modal once showBugReport latches, and is drawn
     // unconditionally so it still works while the active backend is unreachable.
-    SmatchetBugReportUi_Draw(app, g_ui);
+    SmatchetBugReportUi_Draw(app, app, g_ui);
 
     // Scenario tick: drive the active scenario one frame and propagate scroll state
     // into the session so SmatchetActiveProjectGridUi can honor it.
@@ -608,7 +642,7 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
     smatchet::cmd::RegisterViewCommands(app, ViewState);
     // Register pane.* commands (multi-grid Slice 4) — same idempotent guard; the grid-pane
     // state lives on the UiDrawSession singleton, so pass the live session in.
-    smatchet::cmd::RegisterPaneCommands(app, d);
+    smatchet::cmd::RegisterPaneCommands(app, app, d);
     {
         SMATCHET_UI_PERF_SCOPE("TickTrackerConnectivityMonitor");
         app.TickTrackerConnectivityMonitor(g_ui.cfg);
@@ -822,15 +856,16 @@ void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
         }
         nlohmann::json args = nlohmann::json::object();
         if (!pk.argsJson.empty()) {
-            try {
-                args = nlohmann::json::parse(pk.argsJson);
-            } catch (const std::exception& e) {
-                LOG_WARN("Keybindings: bad args JSON for command \"%s\": %s", pk.commandId.c_str(), e.what());
+            std::string parseErr;
+            args = smatchet::json_safe::ParseBounded(pk.argsJson, parseErr);
+            if (!parseErr.empty()) {
+                LOG_WARN("Keybindings: bad args JSON for command \"%s\": %s", pk.commandId.c_str(), parseErr.c_str());
                 args = nlohmann::json::object();
             }
         }
         smatchet::cmd::CommandContext ctx;
-        ctx.App = &app;
+        ctx.ScenarioHost = &app;
+        ctx.Threading = &app;
         ctx.Source = smatchet::cmd::CommandSource::Internal;
         const smatchet::cmd::CommandResult r = app.Commands().Dispatch(pk.commandId, args, ctx);
         if (!r.Ok) {
@@ -968,7 +1003,9 @@ void SmatchetUI::drawSecondaryWindows(AppController& app, UiDrawSession& d) {
 void SmatchetUI::userInfoAddToQuery(AppController& app, UiDrawSession& d, const std::string& sourcePaneId,
                                     const std::string& issueKey) {
     if (issueKey.empty()) {
-        SmatchetToastManager::Instance().Push("User Info", "No issue key to add.", ToastType::Warning);
+        SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.user_info", "User Info"),
+                                              SmatchetLocalization::T("userinfo.no_issue_key", "No issue key to add."),
+                                              ToastType::Warning);
         return;
     }
     GridPane* target = FindGridPaneById(d.gridPanes, sourcePaneId);
@@ -976,8 +1013,10 @@ void SmatchetUI::userInfoAddToQuery(AppController& app, UiDrawSession& d, const 
         target = FindGridPaneById(d.gridPanes, d.focusedPaneId);
     }
     if (!target) {
-        SmatchetToastManager::Instance().Push("User Info", "Source pane is gone; cannot update its view query.",
-                                              ToastType::Warning);
+        SmatchetToastManager::Instance().Push(
+            SmatchetLocalization::T("toast.user_info", "User Info"),
+            SmatchetLocalization::T("userinfo.source_pane_gone", "Source pane is gone; cannot update its view query."),
+            ToastType::Warning);
         return;
     }
     // Per-backend key clause: Plane filter syntax vs Jira JQL.
@@ -987,11 +1026,16 @@ void SmatchetUI::userInfoAddToQuery(AppController& app, UiDrawSession& d, const 
     // the original behaviour (ViewState.UpdateActive false → no toast).
     switch (applyQueryToPaneView(app, d, *target, query)) {
     case ApplyQueryResult::Ok:
-        SmatchetToastManager::Instance().Push("User Info", "View query set to " + issueKey + ".", ToastType::Success);
+        SmatchetToastManager::Instance().Push(
+            SmatchetLocalization::T("toast.user_info", "User Info"),
+            SmatchetLocalization::Format("userinfo.query_set", "View query set to %s.", issueKey.c_str()),
+            ToastType::Success);
         break;
     case ApplyQueryResult::ViewUnavailable:
-        SmatchetToastManager::Instance().Push("User Info", "Target view is unavailable; cannot update query.",
-                                              ToastType::Warning);
+        SmatchetToastManager::Instance().Push(
+            SmatchetLocalization::T("toast.user_info", "User Info"),
+            SmatchetLocalization::T("userinfo.view_unavailable", "Target view is unavailable; cannot update query."),
+            ToastType::Warning);
         break;
     case ApplyQueryResult::UpdateFailed:
         break;

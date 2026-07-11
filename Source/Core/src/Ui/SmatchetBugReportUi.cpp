@@ -4,7 +4,8 @@
 
 #include "SmatchetBugReportUi.h"
 
-#include "AppController.h"
+#include "Commands/IAppThreading.h"
+#include "Interfaces/IAppMeta.h"
 #include "ConfigManager.h"
 #include "Diagnostics/BugReportService.h"
 #include "SmatchetHelpMarker.h"
@@ -51,7 +52,7 @@ std::string PendingShotStamp() {
 #endif
 
 // Launch the worker submit for the given screenshot path (may be empty).
-void LaunchSubmit(AppController& app, UiDrawSession& d, const std::string& shotPath) {
+void LaunchSubmit(IAppThreading& app, IAppMeta& meta, UiDrawSession& d, const std::string& shotPath) {
     smatchet::diagnostics::BugReportOptions opts;
     opts.UserDescription = DescriptionText(d);
     opts.IncludeScreenshot = !shotPath.empty();
@@ -64,14 +65,17 @@ void LaunchSubmit(AppController& app, UiDrawSession& d, const std::string& shotP
         opts.BodyOverride = std::string(d.bugReportPreviewBuf.data());
     }
 
-    app.LaunchBackgroundTask([&app, &d, opts]() {
-        const smatchet::diagnostics::SubmitResult r = smatchet::diagnostics::SubmitBugReport(app, opts);
+    app.LaunchBackgroundTask([&app, &meta, &d, opts]() {
+        const smatchet::diagnostics::SubmitResult r = smatchet::diagnostics::SubmitBugReport(meta, opts);
         auto shared = std::make_shared<smatchet::diagnostics::SubmitResult>(r);
-        app.mainThreadDispatcher.PostToMainThread([&d, shared]() {
+        app.PostToMainThread([&d, shared]() {
             d.bugReportResult = shared;
             d.bugReportInFlight = false;
             if (shared->Ok) {
-                SmatchetToastManager::Instance().Push("Bug report", "Filed " + shared->IssueKey, ToastType::Success);
+                SmatchetToastManager::Instance().Push(
+                    SmatchetLocalization::T("toast.bug_report", "Bug report"),
+                    SmatchetLocalization::Format("bugreport.filed", "Filed %s", shared->IssueKey.c_str()),
+                    ToastType::Success);
                 d.showBugReport = false; // close on success; failure keeps the modal open with a banner
                 d.bugReportDescBuf.clear();
                 d.bugReportPreviewBuf.clear();
@@ -86,14 +90,14 @@ void LaunchSubmit(AppController& app, UiDrawSession& d, const std::string& shotP
 // draws. Standalone capture path sets bugReportShotReady once the PNG lands; launch the
 // submit worker on the ready edge, request the capture on the armed frame, time out if it
 // never lands. Lifts the branch-heavy state machine out of the draw body.
-void AdvanceShotHandshake(AppController& app, UiDrawSession& d) {
+void AdvanceShotHandshake(IAppThreading& app, IAppMeta& meta, UiDrawSession& d) {
     if (!(d.bugReportInFlight && d.bugReportShotPending)) {
         return;
     }
     if (d.bugReportShotReady) {
         d.bugReportShotReady = false;
         d.bugReportShotPending = false;
-        LaunchSubmit(app, d, d.bugReportStagedShotPath);
+        LaunchSubmit(app, meta, d, d.bugReportStagedShotPath);
     } else if (d.bugReportShotArmed) {
         // The frame after Submit. The modal is suppressed THIS frame (an early exit in the
         // draw body skips it), so the captured frame won't contain the modal. Request the
@@ -163,7 +167,7 @@ void DrawDestination(UiDrawSession& d) {
 
 // Egress preview shows exactly what will be sent and stays EDITABLE, so the user can remove
 // anything they don't want to share. Regenerated from current inputs on a worker until edit.
-void DrawEgressPreview(AppController& app, UiDrawSession& d) {
+void DrawEgressPreview(IAppThreading& app, IAppMeta& meta, UiDrawSession& d) {
     if (!ImGui::CollapsingHeader("Preview / edit what will be sent")) {
         return;
     }
@@ -175,11 +179,11 @@ void DrawEgressPreview(AppController& app, UiDrawSession& d) {
         opts.UserDescription = DescriptionText(d);
         opts.IncludeScreenshot = d.bugReportInclScreenshot;
         const bool inclShot = d.bugReportInclScreenshot;
-        app.LaunchBackgroundTask([&app, &d, opts, inclShot]() {
-            const smatchet::diagnostics::ContextBundle bundle = smatchet::diagnostics::GatherContext(app, opts);
+        app.LaunchBackgroundTask([&app, &meta, &d, opts, inclShot]() {
+            const smatchet::diagnostics::ContextBundle bundle = smatchet::diagnostics::GatherContext(meta, opts);
             const std::string shotNote = inclShot ? "_(screenshot attached on submit)_" : std::string();
             auto text = std::make_shared<std::string>(smatchet::diagnostics::BuildMarkdownBody(opts, bundle, shotNote));
-            app.mainThreadDispatcher.PostToMainThread([&d, text]() {
+            app.PostToMainThread([&d, text]() {
                 // Don't clobber if the user started editing while we generated.
                 if (!d.bugReportPreviewUserEdited) {
                     const std::size_t cap = text->size() + 16384u;
@@ -209,7 +213,7 @@ void DrawEgressPreview(AppController& app, UiDrawSession& d) {
 // Apply a Submit action: flip in-flight, then either arm the redacted screenshot capture
 // (standalone, when requested) or launch the submit worker directly. Mirrors the original
 // inline Submit branch byte-for-byte.
-void OnSubmit(AppController& app, UiDrawSession& d) {
+void OnSubmit(IAppThreading& app, IAppMeta& meta, UiDrawSession& d) {
     d.bugReportInFlight = true;
     d.bugReportResult.reset();
 #ifndef SMATCHET_EMBEDDED_IN_UNREAL
@@ -229,16 +233,16 @@ void OnSubmit(AppController& app, UiDrawSession& d) {
         d.bugReportShotDeadline = ImGui::GetTime() + kShotCaptureTimeoutSec + 2.0;
     } else {
         d.bugReportShotPending = false;
-        LaunchSubmit(app, d, std::string());
+        LaunchSubmit(app, meta, d, std::string());
     }
 #else
     d.bugReportShotPending = false;
-    LaunchSubmit(app, d, std::string());
+    LaunchSubmit(app, meta, d, std::string());
 #endif
 }
 
 // Error banner + Submit/Cancel buttons + key dispatch (Ctrl+Enter submit, Esc cancel).
-void DrawActions(AppController& app, UiDrawSession& d) {
+void DrawActions(IAppThreading& app, IAppMeta& meta, UiDrawSession& d) {
     // Error banner (failure keeps the modal open).
     if (d.bugReportResult && !d.bugReportResult->Ok && !d.bugReportResult->Error.empty()) {
         ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "Submit failed: %s", d.bugReportResult->Error.c_str());
@@ -265,7 +269,7 @@ void DrawActions(AppController& app, UiDrawSession& d) {
     const bool cancelClicked = ImGui::Button("Cancel");
 
     if ((submitClicked || (submitKey && canSubmit))) {
-        OnSubmit(app, d);
+        OnSubmit(app, meta, d);
     }
     if (cancelClicked && !d.bugReportInFlight) {
         d.showBugReport = false;
@@ -278,8 +282,8 @@ void DrawActions(AppController& app, UiDrawSession& d) {
 
 } // namespace
 
-void SmatchetBugReportUi_Draw(AppController& app, UiDrawSession& d) {
-    AdvanceShotHandshake(app, d);
+void SmatchetBugReportUi_Draw(IAppThreading& app, IAppMeta& meta, UiDrawSession& d) {
+    AdvanceShotHandshake(app, meta, d);
 
     if (!d.showBugReport) {
         return;
@@ -330,8 +334,8 @@ void SmatchetBugReportUi_Draw(AppController& app, UiDrawSession& d) {
                                "layout-preserving, no readable text. Icons + colour stay intact.");
 #endif
 
-    DrawEgressPreview(app, d);
-    DrawActions(app, d);
+    DrawEgressPreview(app, meta, d);
+    DrawActions(app, meta, d);
 
     d.bugReportOpenLatch = false;
     ImGui::End();

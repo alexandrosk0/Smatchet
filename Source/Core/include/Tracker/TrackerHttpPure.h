@@ -14,6 +14,18 @@
 // path means no explicit CAINFO, so libcurl keeps its compile-time or system-store
 // default (the desktop path, unchanged).
 // Test surface: tests/Core/TrackerHttpSslPure.test.cpp.
+/**
+ * Redact a tracker HTTP response/error body before it is written to a log line or an
+ * audit row (security synthesis #12). Tracker 4xx/5xx bodies have been observed
+ * reflecting the request — a 401/403 can echo the `Authorization` header verbatim, and
+ * Jira personal-access / GitHub PAT tokens surface in error payloads. Delegates the
+ * token-shape stripping to the cpr-free `smatchet::ai::pure::RedactProviderErrorBody`
+ * (same Bearer / api_key / Authorization / sk-/ghp_ heuristics) then caps the length —
+ * never invent a new redactor. Lives in this cpr-free TU (not TrackerHttpUtils.cpp) so
+ * cpr-free targets (TSan rig, ConnectivityMonitorService) can link it.
+ */
+std::string RedactHttpBodyForLog(const std::string& body);
+
 namespace TrackerHttpPure {
 
 // Resolved SSL trust decision. When attach is false, leave libcurl's default CAINFO

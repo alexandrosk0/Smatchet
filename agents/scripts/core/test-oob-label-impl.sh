@@ -19,14 +19,26 @@
 #                 or agents/scripts/core/merge-gates.sh. That is a step/branch that
 #                 actually reads the label.
 #
+# PARITY (2026-07-08, deps-override-label-parity-test): the no-arg run ALSO
+# asserts the CI-downgrade label set wired in merge-gates.sh poll_merge_gates
+# ($downgraded) equals the set wired in safe-admin-merge.sh evaluate_rollup —
+# the two merge paths a `*-out-of-band` label must reach. ADR-0022's
+# intent-out-of-band shipped honoring only the poller (surfaced live on #1435);
+# plan-lock-out-of-band repeated the class until 2026-07-08. Both sets are
+# extracted mechanically (label→jq-var bindings resolved against each script's
+# downgrade expression), so a half-wired addition FAILS here.
+#
 # Override root (testing): SMATCHET_OOB_ROOT points the corpus at a fixture tree.
+# SMATCHET_OOB_MG_FILE / SMATCHET_OOB_SAM_FILE point the parity extraction at
+# fixture scripts (default: the real merge-gates.sh / safe-admin-merge.sh).
 #
 # Usage:
 #   bash agents/scripts/core/test-oob-label-impl.sh            # scan the real tree
 #   bash agents/scripts/core/test-oob-label-impl.sh --selftest # fixture dogfood
 #
-# Exit: 0 every documented label is implemented · 1 a documented-but-unimplemented
-#       label (or --selftest failure) · 2 infra error.
+# Exit: 0 every documented label is implemented (and the two merge paths agree) ·
+#       1 a documented-but-unimplemented label / a poller-vs-admin divergence
+#       (or --selftest failure) · 2 infra error.
 # Goes through test-shell-lint.sh + the test-gate-selftests.sh marker check.
 #
 # selftest: asserts-failure
@@ -107,6 +119,61 @@ _run_check() {
     return 0
 }
 
+# --- Poller-vs-admin-path CI-downgrade parity --------------------------------
+
+# _mg_ci_downgrade_labels <merge-gates.sh> — the labels merge-gates.sh actually
+# applies as CI downgrades: jq vars referenced inside the `$failing → $downgraded`
+# select block, resolved back through their `any(. == "<label>")) as $var` binding.
+_mg_ci_downgrade_labels() {
+    local f="$1" region v
+    # `q` at the closing anchor stops after the FIRST block — later `$failing`
+    # mentions (the poller's count expressions) must not extend the region.
+    region="$(sed -n '/\[\$failing\[\] | select(/,/as \$downgraded/{p;/as \$downgraded/q;}' "$f")"
+    [ -n "$region" ] || { echo "test-oob-label-impl: no \$downgraded block in $f" >&2; return 2; }
+    printf '%s\n' "$region" | grep -oE '\$[A-Za-z_][A-Za-z_0-9]*' | sort -u | while IFS= read -r v; do
+        v="${v#\$}"
+        sed -n "s/.*any(\\. == \"\\([a-z0-9-]*-out-of-band\\)\")) as \\\$${v}[[:space:]]*\$/\\1/p" "$f"
+    done | sort -u
+}
+
+# _sam_ci_downgrade_labels <safe-admin-merge.sh> — the labels evaluate_rollup
+# honors: label→var bindings inside the function body whose var is USED beyond
+# the binding line (a bound-but-unused var is not wiring).
+_sam_ci_downgrade_labels() {
+    local f="$1" body line v label n
+    body="$(sed -n '/^evaluate_rollup() {/,/^}/p' "$f")"
+    [ -n "$body" ] || { echo "test-oob-label-impl: no evaluate_rollup() in $f" >&2; return 2; }
+    while IFS= read -r line; do
+        label="$(printf '%s\n' "$line" | sed -n 's/.*any(\. == "\([a-z0-9-]*-out-of-band\)")) as \$\([A-Za-z_0-9]*\).*/\1/p')"
+        v="$(printf '%s\n' "$line" | sed -n 's/.*any(\. == "\([a-z0-9-]*-out-of-band\)")) as \$\([A-Za-z_0-9]*\).*/\2/p')"
+        [ -n "$label" ] && [ -n "$v" ] || continue
+        n="$(printf '%s\n' "$body" | grep -cE "\\\$${v}\b" || true)"
+        # `if` (not `&&`): a trailing false && would leak rc 1 through pipefail.
+        if [ "$n" -gt 1 ]; then printf '%s\n' "$label"; fi
+    done < <(printf '%s\n' "$body" | grep -E 'any\(\. == "[a-z0-9-]*-out-of-band"\)\) as \$') | sort -u
+}
+
+# _run_parity <merge-gates.sh> <safe-admin-merge.sh> — assert set equality.
+_run_parity() {
+    local mg="$1" sam="$2" mg_set sam_set
+    [ -r "$mg" ] && [ -r "$sam" ] || { echo "test-oob-label-impl: parity sources unreadable ($mg / $sam)" >&2; return 2; }
+    mg_set="$(_mg_ci_downgrade_labels "$mg")" || return 2
+    sam_set="$(_sam_ci_downgrade_labels "$sam")" || return 2
+    if [ -z "$mg_set" ] || [ -z "$sam_set" ]; then
+        echo "test-oob-label-impl: parity extraction found an EMPTY downgrade set (mg: '${mg_set}' sam: '${sam_set}') — refusing (fail-closed; the extraction anchors may have drifted)." >&2
+        return 2
+    fi
+    if [ "$mg_set" != "$sam_set" ]; then
+        echo "test-oob-label-impl: FAIL — CI-downgrade label sets DIVERGE between the two merge paths:" >&2
+        echo "  merge-gates.sh \$downgraded:        $(printf '%s' "$mg_set" | tr '\n' ' ')" >&2
+        echo "  safe-admin-merge evaluate_rollup:  $(printf '%s' "$sam_set" | tr '\n' ' ')" >&2
+        echo "  Wire the missing label into BOTH paths (a half-wired override refuses labelled PRs on one path — #1435)." >&2
+        return 1
+    fi
+    echo "test-oob-label-impl: PASS — poller and admin-merge honor the same CI-downgrade label set ($(printf '%s' "$mg_set" | tr '\n' ' '))."
+    return 0
+}
+
 # --selftest — fixture dogfood. A documented-but-unimplemented label MUST fail;
 # adding an impl line MUST pass (the asserted-failure case the gate-selftests
 # meta-gate requires). No network; a throwaway tree.
@@ -143,7 +210,40 @@ YML
         return 1
     fi
 
-    echo "test-oob-label-impl --selftest: PASS — catches a documented-but-unimplemented label; passes an implemented one."
+    # 3. Parity divergence: mg wires two labels, sam only one -> FAIL.
+    cat > "$tmp/mg.sh" <<'SH'
+| ($labels | any(. == "tests-out-of-band")) as $tests
+| ($labels | any(. == "phantom-out-of-band")) as $ph
+| ([$failing[] | select(
+      ($tests and .name == "Test-delta gate") or
+      ($ph and .name == "Phantom gate"))]) as $downgraded
+SH
+    cat > "$tmp/sam.sh" <<'SH'
+evaluate_rollup() {
+        | ($labels | any(. == "tests-out-of-band")) as $testsOob
+        | (($testsOob and $g.name == "Test-delta gate") | not)
+}
+SH
+    if _run_parity "$tmp/mg.sh" "$tmp/sam.sh" >/dev/null 2>&1; then
+        echo "test-oob-label-impl --selftest: FAIL — poller-vs-admin divergence was not caught" >&2
+        return 1
+    fi
+
+    # 4. Wire the second label into sam too -> parity PASS.
+    cat > "$tmp/sam.sh" <<'SH'
+evaluate_rollup() {
+        | ($labels | any(. == "tests-out-of-band")) as $testsOob
+        | ($labels | any(. == "phantom-out-of-band")) as $phOob
+        | (($testsOob and $g.name == "Test-delta gate") | not)
+        | (($phOob and $g.name == "Phantom gate") | not)
+}
+SH
+    if ! _run_parity "$tmp/mg.sh" "$tmp/sam.sh" >/dev/null 2>&1; then
+        echo "test-oob-label-impl --selftest: FAIL — equal downgrade sets still flagged as divergent" >&2
+        return 1
+    fi
+
+    echo "test-oob-label-impl --selftest: PASS — catches a documented-but-unimplemented label; passes an implemented one; catches a poller-vs-admin downgrade divergence."
     return 0
 }
 
@@ -157,8 +257,18 @@ case "${1:-}" in
         if [ -z "$ROOT" ]; then
             ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
         fi
-        _run_check "$ROOT"
-        exit $?
+        rc=0
+        _run_check "$ROOT" || rc=$?
+        MG="${SMATCHET_OOB_MG_FILE:-$ROOT/agents/scripts/core/merge-gates.sh}"
+        SAM="${SMATCHET_OOB_SAM_FILE:-$ROOT/agents/scripts/core/safe-admin-merge.sh}"
+        if { [ -f "$MG" ] && [ -f "$SAM" ]; } || [ -n "${SMATCHET_OOB_MG_FILE:-}${SMATCHET_OOB_SAM_FILE:-}" ]; then
+            _run_parity "$MG" "$SAM" || rc=$?
+        else
+            # Fixture root without both merge scripts (bats corpus fixtures) —
+            # parity has no subject there; the real tree always has both.
+            echo "test-oob-label-impl: NOTE — parity skipped (merge-gates.sh + safe-admin-merge.sh not both under $ROOT)" >&2
+        fi
+        exit "$rc"
         ;;
     *)
         echo "usage: test-oob-label-impl.sh [--selftest]" >&2

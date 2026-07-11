@@ -74,9 +74,17 @@ loop catches after the fact.
 Token / compute spend is a **human-governed budget** (gauged by
 `agents/_shared/token-tracking/`). The agent surfaces cost and **escalates
 before** an unbounded or expensive autonomous run. Runaway spend without
-validation is forbidden. (An automated cost-ceiling *gate* is a separate
-follow-up; this charter states the principle + the escalate-before-unbounded
-duty.)
+validation is forbidden.
+
+The automated backstop is the **advisory session cost-ceiling check**
+(`agents/scripts/core/cost-ceiling-check.py`, run at SessionStart via
+`cost-ceiling-nudge.sh`): when delegated-subagent spend recorded by the
+token-tracking layer meets `project.config.json` §
+`governance.session_token_ceiling`, it prints an ESCALATE banner directing the
+agent to pause and confirm budget with the human before further delegation.
+Advisory (never blocks — the WARN-first ramp every gate here starts on);
+graduation to blocking is a deliberate future decision (`--blocking` exists).
+The ceiling is the human's number: tune or disable (0) in config.
 
 ## Scope of this charter
 

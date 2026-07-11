@@ -32,6 +32,9 @@ extern std::unique_ptr<smatchet::cmd::IScenario> MakeThemeSwitchRoundtripScenari
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeAiChatHistoryRenderScenario();
 #endif
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeIdleScenario();
+// Gap map Tier 3 — registry-wide command error-envelope contract sweep (mutation-free:
+// every probe is rejected by the Dispatch guards before any handler runs).
+extern std::unique_ptr<smatchet::cmd::IScenario> MakeCommandContractSweepScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeCellEditBurstScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeAttachmentPreviewOpenScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakePreferencesSliderDragScenario();
@@ -56,7 +59,7 @@ extern std::unique_ptr<smatchet::cmd::IScenario> MakeMobileTextureGuardScenario(
 #if defined(SMATCHET_WITH_AI)
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreamingHappyPathScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantStreamingTransportDownScenario();
-// PR-12 — S2/S4/S5 streaming via a REAL OpenAiClient over an in-process httplib
+// S2/S4/S5 streaming via a REAL OpenAiClient over an in-process httplib
 // loopback server (vs the stub-driven happy-path / transport-down scenarios above).
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeAiAssistantSendScenario();
 #endif
@@ -98,6 +101,7 @@ void RegisterAllScenarios(ScenarioRunner& runner) {
     // shipped pillar-1 / pillar-2 fix doesn't regress, or establishes the
     // baseline floor against which other scenarios are compared.
     runner.RegisterFactory("idle", []() { return ::MakeIdleScenario(); });
+    runner.RegisterFactory("command-contract-sweep", []() { return ::MakeCommandContractSweepScenario(); });
     runner.RegisterFactory("cell-edit-burst", []() { return ::MakeCellEditBurstScenario(); });
     runner.RegisterFactory("attachment-preview-open", []() { return ::MakeAttachmentPreviewOpenScenario(); });
     runner.RegisterFactory("preferences-slider-drag", []() { return ::MakePreferencesSliderDragScenario(); });
@@ -131,7 +135,7 @@ void RegisterAllScenarios(ScenarioRunner& runner) {
                            []() { return ::MakeAiAssistantStreamingHappyPathScenario(); });
     runner.RegisterFactory("ai-assistant-streaming-transport-down-within-5s",
                            []() { return ::MakeAiAssistantStreamingTransportDownScenario(); });
-    // PR-12 — real-client S2 (happy) / S4 (401 bad-key) / S5 (transport-down)
+    // Real-client S2 (happy) / S4 (401 bad-key) / S5 (transport-down)
     // streaming over an in-process httplib loopback server. See
     // AiAssistantSendScenario.cpp + scripts/dev/test-ai-assistant.sh.
     runner.RegisterFactory("ai-assistant-send-s2-s4-s5", []() { return ::MakeAiAssistantSendScenario(); });

@@ -4,6 +4,7 @@
 #include "AppController.h"
 #include "ITrackerCollaboration.h"
 #include "SmatchetLocalization.h"
+#include "Ui/SmatchetCommentsModalGenPure.h"
 #include "Ui/SmatchetToast.h"
 
 #include "imgui.h"
@@ -30,8 +31,10 @@ struct CommentsModalState {
     std::string Error;
     bool Active = false;
     bool JustOpened = false;
-    /// Monotonically-increasing generation token. Workers compare against the current Gen on
-    /// post-back and discard if the user opened a different issue's modal since dispatch.
+    /// Generation token of the in-flight dispatch. Workers compare against the current Gen on
+    /// post-back and discard on mismatch (re-open / issue-switch / a newer re-fetch). Sourced from
+    /// the file-static `s_genCounter` (NOT reset with this struct) so it is genuinely monotonic
+    /// across opens — see SmatchetCommentsModalGenPure.h (#1713).
     int Gen = 0;
 
     static constexpr size_t kPostBufferSize = 16 * 1024;
@@ -39,6 +42,11 @@ struct CommentsModalState {
 };
 
 CommentsModalState s_CommentsState;
+
+/// Monotonic generation counter, deliberately OUTSIDE CommentsModalState so it survives the
+/// `s_CommentsState = CommentsModalState{}` reset on every open/close — the reset is exactly what
+/// pinned Gen to 1 and made the stale-guard inert (#1713). Each dispatch takes the next value.
+int s_genCounter = 0;
 
 constexpr const char* kCommentsModalPopupId = "IssueCommentsModal";
 
@@ -55,9 +63,9 @@ void KickCommentsFetch(AppController& app, const std::string& issueId, int gen) 
         std::vector<TrackerIssueComment> comments;
         std::string err;
         const bool ok = appPtr->FetchIssueComments(capturedIssueId, comments, err);
-        appPtr->mainThreadDispatcher.PostToMainThread([appPtr, gen, capturedIssueId, ok,
-                                                       comments = std::move(comments), err]() mutable {
-            if (!s_CommentsState.Active || s_CommentsState.Gen != gen || s_CommentsState.IssueId != capturedIssueId) {
+        appPtr->PostToMainThread([appPtr, gen, capturedIssueId, ok, comments = std::move(comments), err]() mutable {
+            if (SmatchetCommentsModalGen::CallbackIsStale(s_CommentsState.Active, s_CommentsState.Gen, gen,
+                                                          s_CommentsState.IssueId, capturedIssueId)) {
                 return;
             }
             s_CommentsState.FetchInFlight = false;
@@ -70,8 +78,7 @@ void KickCommentsFetch(AppController& app, const std::string& issueId, int gen) 
                 // narrowing-ok: a single issue thread's comment count is far below INT_MAX; the
                 // cached-count field is int. No saturation (matches the codebase's bounded-container
                 // size()->int convention).
-                appPtr->UpdateCachedCommentCount(capturedIssueId,
-                                                 static_cast<int>(s_CommentsState.Comments.size()));
+                appPtr->UpdateCachedCommentCount(capturedIssueId, static_cast<int>(s_CommentsState.Comments.size()));
             } else {
                 s_CommentsState.Error =
                     err.empty()
@@ -159,7 +166,7 @@ void DrawCommentsPostBox(AppController& app, bool readOnlyMode) {
         app.LaunchBackgroundTask([appPtr, capturedIssueId, body, gen]() {
             std::string err;
             const bool ok = appPtr->AddIssueCommentPlain(capturedIssueId, body, err);
-            appPtr->mainThreadDispatcher.PostToMainThread([appPtr, capturedIssueId, gen, ok, err]() {
+            appPtr->PostToMainThread([appPtr, capturedIssueId, gen, ok, err]() {
                 if (ok) {
                     SmatchetToastManager::Instance().Push(
                         SmatchetLocalization::T("toast.comment_posted", "Comment Posted"),
@@ -173,17 +180,21 @@ void DrawCommentsPostBox(AppController& app, bool readOnlyMode) {
                         ToastType::Error);
                 }
                 // Only act on the still-open modal for this issue (Gen guards against a re-open).
-                if (!s_CommentsState.Active || s_CommentsState.Gen != gen ||
-                    s_CommentsState.IssueId != capturedIssueId) {
+                if (SmatchetCommentsModalGen::CallbackIsStale(s_CommentsState.Active, s_CommentsState.Gen, gen,
+                                                              s_CommentsState.IssueId, capturedIssueId)) {
                     return;
                 }
                 s_CommentsState.PostInFlight = false;
                 if (ok) {
-                    // Clear the post box and re-fetch the thread so the new comment shows.
+                    // Clear the post box and re-fetch the thread so the new comment shows. Take a FRESH
+                    // generation for the re-fetch so the original-open fetch (older Gen), if it is still
+                    // in flight and lands afterward, is discarded instead of overwriting this fresher
+                    // list and momentarily dropping the just-posted comment (#1713).
                     s_CommentsState.PostBuf.assign(CommentsModalState::kPostBufferSize, '\0');
-                    s_CommentsState.FetchInFlight = true;
                     s_CommentsState.Comments.clear();
-                    KickCommentsFetch(*appPtr, capturedIssueId, gen);
+                    s_CommentsState.Gen = SmatchetCommentsModalGen::AllocGen(s_genCounter);
+                    s_CommentsState.FetchInFlight = true;
+                    KickCommentsFetch(*appPtr, capturedIssueId, s_CommentsState.Gen);
                 }
             });
         });
@@ -198,7 +209,9 @@ void OpenCommentsModal(AppController& app, const std::string& issueId) {
     s_CommentsState.Active = true;
     s_CommentsState.JustOpened = true;
     s_CommentsState.FetchInFlight = true;
-    ++s_CommentsState.Gen;
+    // Take the next monotonic token from the file-static counter (survives the reset above) so this
+    // open is distinguishable from a prior open's still-in-flight fetch (#1713).
+    s_CommentsState.Gen = SmatchetCommentsModalGen::AllocGen(s_genCounter);
     s_CommentsState.PostBuf.assign(CommentsModalState::kPostBufferSize, '\0');
     KickCommentsFetch(app, issueId, s_CommentsState.Gen);
 }

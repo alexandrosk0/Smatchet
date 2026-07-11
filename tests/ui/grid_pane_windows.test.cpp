@@ -140,7 +140,7 @@ static void RegisterGridPaneNewSplitFocusClose(ImGuiTestEngine* engine) {
             splitDone = bothVisible;
         }
 
-        // 3b. SORT-CLICK INTO A NOT-YET-FOCUSED PANE (PR #962 review HIGH-3) — a
+        // 3b. SORT-CLICK INTO A NOT-YET-FOCUSED PANE — a
         // header sort click lands on the SAME frame ImGui moves window focus; the
         // view mirror must run off the live focus report, not last frame's
         // pane.focused. Focus the PRIMARY pane first, then click pane 2's "ID"
@@ -165,7 +165,7 @@ static void RegisterGridPaneNewSplitFocusClose(ImGuiTestEngine* engine) {
         }
 
         // Record the survivor's saved view BEFORE the close so we can assert the
-        // focused-close hand-over never rebinds it (PR #962 review HIGH-2).
+        // focused-close hand-over never rebinds it.
         const std::string survivorViewIdBeforeClose = g_ui.gridPanes.front().viewId;
 
         // 4. CLOSE — flip the pane's open flag exactly as the tab X writes it (the X

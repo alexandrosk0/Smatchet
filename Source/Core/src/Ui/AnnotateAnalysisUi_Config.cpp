@@ -1,7 +1,8 @@
 #include "AnnotateAnalysisUi_Internal.h"
 
-#include "AppController.h"
+#include "CachedTicketTypes.h"
 #include "CompactDateFormat.h"
+#include "Interfaces/IAppTicketData.h"
 #include "ConfigManager.h"
 #include "JiraClient.h"
 #include "Logger.h"
@@ -55,13 +56,13 @@ namespace {
 // Shared body for the three autoselect-Jira-field helpers: if the target field id is
 // unset and a field whose (lowercased) name satisfies `nameMatches` exists, adopt its id,
 // persist, and optionally refresh the callstack-field hint. `nameMatches` receives the
-// already-lowercased field name.
-void MaybeAutoselectTrackerField(const AppController& app, std::string& targetFieldId,
+// already-lowercased field name. `fields` is the app-owned field catalog, extracted by
+// callers that hold the full app object.
+void MaybeAutoselectTrackerField(const std::vector<TrackerField>& fields, std::string& targetFieldId,
                                  bool (*nameMatches)(const std::string&), bool updateCallstackHint) {
     if (!targetFieldId.empty()) {
         return;
     }
-    const auto& fields = app.GetAvailableFields();
     if (fields.empty()) {
         return;
     }
@@ -79,24 +80,25 @@ void MaybeAutoselectTrackerField(const AppController& app, std::string& targetFi
 
 } // namespace
 
-void MaybeAutoselectCallstackTrackerField(const AppController& app) {
+void MaybeAutoselectCallstackTrackerField(const std::vector<TrackerField>& availableFields) {
     MaybeAutoselectTrackerField(
-        app, State().annotateCfg.CallstackTrackerFieldId, [](const std::string& n) { return n == "callstack"; },
+        availableFields, State().annotateCfg.CallstackTrackerFieldId,
+        [](const std::string& n) { return n == "callstack"; },
         /*updateCallstackHint=*/true);
 }
 
-void MaybeAutoselectLastFoundClTrackerField(const AppController& app) {
+void MaybeAutoselectLastFoundClTrackerField(const std::vector<TrackerField>& availableFields) {
     MaybeAutoselectTrackerField(
-        app, State().annotateCfg.LastFoundClTrackerFieldId,
+        availableFields, State().annotateCfg.LastFoundClTrackerFieldId,
         [](const std::string& n) { return n == "last found cl" || n == "lastfoundcl" || n == "last_found_cl"; },
         /*updateCallstackHint=*/false);
 }
 
-void MaybeAutoselectLastOccurrencesTrackerField(const AppController& app) {
+void MaybeAutoselectLastOccurrencesTrackerField(const std::vector<TrackerField>& availableFields) {
     // Defensive misspelling matches ("last occurances" / "last occurences") intentionally
     // kept — they match real, badly-named Jira fields, not our own strings.
     MaybeAutoselectTrackerField(
-        app, State().annotateCfg.LastOccurrencesTrackerFieldId,
+        availableFields, State().annotateCfg.LastOccurrencesTrackerFieldId,
         [](const std::string& n) {
             return n == "last occurrences" || n == "last occurances" || n == "last occurences" ||
                    n == "last_occurrences";
@@ -150,12 +152,12 @@ std::string NormalizeJiraDateForBeforePicker(const std::string& raw) {
 
 } // namespace
 
-void TryFillBeforeChangelistAndDateFromJira(const AppController& app, const std::string& issueKey) {
+void TryFillBeforeChangelistAndDateFromJira(const IAppTicketData& ticketData, const std::string& issueKey) {
     if (issueKey.empty()) {
         State().beforeDateIso.clear();
         return;
     }
-    const auto ticketsSnap = app.GetActiveTicketsSnapshot();
+    const auto ticketsSnap = ticketData.GetActiveTicketsSnapshot();
     for (const auto& t : *ticketsSnap) {
         if (t.id != issueKey) {
             continue;
@@ -179,11 +181,11 @@ void TryFillBeforeChangelistAndDateFromJira(const AppController& app, const std:
     }
 }
 
-void TryFillCallstackFromJira(const AppController& app, const std::string& issueKey) {
+void TryFillCallstackFromJira(const IAppTicketData& ticketData, const std::string& issueKey) {
     if (State().annotateCfg.CallstackTrackerFieldId.empty() || issueKey.empty()) {
         return;
     }
-    const auto ticketsSnap = app.GetActiveTicketsSnapshot();
+    const auto ticketsSnap = ticketData.GetActiveTicketsSnapshot();
     for (const auto& t : *ticketsSnap) {
         if (t.id != issueKey) {
             continue;

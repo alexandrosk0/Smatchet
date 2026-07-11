@@ -3,12 +3,13 @@
 #include "ConfigManager.h"
 #include "TrackerDateTimePure.h"
 #include "TicketFieldEditorCommitPolicyPure.h"
-#include "Ui/TouchCellEditGesture.h"
+#include "TouchCellEditGesture.h"
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
 
+// SMATCHET_DEVIATION(rule=duplication; reason=UI-shell include boilerplate; owner=tracker-backend; revisit=2026-09-30)
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -55,28 +56,6 @@ std::string ComputeDateCellDisplay(const std::string& currentValue, const std::s
         display = "";
     }
     return display;
-}
-
-// Initialise the picker working-state from the current value when an edit
-// session has just started. Seeds the working date, the calendar view month,
-// and the text-mode fallback flag for unparseable non-empty values.
-void InitDatePickerWorking(const std::string& currentValue, bool isDateOnly, ParsedJiraDateTime& working, int& viewYear,
-                           int& viewMonth, bool& forceTextMode) {
-    ParsedJiraDateTime parsed;
-    if (TryParseJiraDateTime(currentValue, parsed)) {
-        working = parsed;
-        forceTextMode = false;
-        viewYear = parsed.Year;
-        viewMonth = parsed.Month;
-        ClampDayToMonth(working, viewYear, viewMonth);
-    } else if (currentValue.empty()) {
-        working = TodayUtcParsed(!isDateOnly);
-        forceTextMode = false;
-        viewYear = working.Year;
-        viewMonth = working.Month;
-    } else {
-        forceTextMode = true;
-    }
 }
 
 static int InputTextCallback_ClearSelectOnEditOpen(ImGuiInputTextCallbackData* data) {
@@ -420,7 +399,7 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& f
                                             [](unsigned char ch) { return std::isspace(ch) != 0; });
         // Empty due date (and similar) would otherwise require double-click like populated cells, so
         // a blank cell folds into the single-click open affordance. On the touch build this collapses
-        // to a long-press (Ui/TouchCellEditGesture.h); desktop codegen stays byte-identical.
+        // to a long-press (TouchCellEditGesture.h); desktop codegen stays byte-identical.
         const bool dtCellClicked =
             ImGui::Selectable((display + itemId).c_str(), false, ImGuiSelectableFlags_AllowDoubleClick);
         if (SmatchetTouchEdit::ShouldOpenCellEditorOnGesture(dtCellClicked, singleClickToEdit || blankValue)) {
@@ -432,7 +411,8 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& f
 
     const bool editJustStarted = state.EditJustStarted;
     if (editJustStarted) {
-        InitDatePickerWorking(currentValue, isDateOnly, s_working, s_viewYear, s_viewMonth, s_forceTextMode);
+        TrackerDateTimePure::InitDatePickerWorking(currentValue, isDateOnly, s_working, s_viewYear, s_viewMonth,
+                                                   s_forceTextMode);
         if (SmatchetTouchEdit::kMobileTouchBuild) {
             // Touch: anchoring the picker at the touch point pins it to a screen edge and can clip the
             // Apply / Clear / Cancel footer off-screen (phone trap). Center it on the display instead.
@@ -460,31 +440,15 @@ void RenderDateTimeFieldEditor(const CachedTicket& ticket, const TrackerField& f
         const bool clearPressed = (action == PickerAction::Clear);
         const bool cancelPressed = (action == PickerAction::Cancel);
 
-        // Apply and Clear are the explicit "Save" of this touch popup; Cancel / Back discard. Gate the
-        // PUT on a real change so re-Applying an unchanged value (or Clearing an already-empty cell)
-        // never fires a stray no-op PUT — same no-op rule as the inline editor.
+        // Apply and Clear are the explicit "Save" of this touch popup; Cancel / Back discard. The
+        // commit gate (PUT only on a REAL change — canonical-form comparison so wire-format-only
+        // differences never fire a stray no-op PUT) lives in TrackerDateTimePure::PlanDateTimeCommit
+        // (lifted byte-identical; tests/Core/TrackerDateTimePure.test.cpp pins it).
         if (applyPressed || clearPressed) {
-            std::string canon;
-            if (applyPressed) {
-                ClampDayToMonth(s_working, s_working.Year, s_working.Month);
-                canon = FormatJiraDateOrDateTimeForApi(isDateOnly, s_working);
-            }
-            const bool curBlank = std::all_of(currentValue.begin(), currentValue.end(),
-                                              [](unsigned char ch) { return std::isspace(ch) != 0; });
-            // Compare canon against the canonical form of currentValue, not its raw wire string:
-            // FormatJiraDateOrDateTimeForApi forces ".000" milliseconds and always emits seconds, so a
-            // re-Apply of an unchanged value whose Jira wire form differs only in ms/seconds/zone
-            // spelling (e.g. "...T10:00:00.123+0000") would otherwise read as changed and fire a stray
-            // no-op PUT. Both sides go through the same formatter, so equality means semantic identity.
-            // Unparseable currentValue falls back to the raw string (conservative — treats as changed).
-            std::string canonCurrent = currentValue;
-            ParsedJiraDateTime curParsed;
-            if (TryParseJiraDateTime(currentValue, curParsed)) {
-                canonCurrent = FormatJiraDateOrDateTimeForApi(isDateOnly, curParsed);
-            }
-            const bool valueChanged = clearPressed ? !curBlank : (canon != canonCurrent);
-            if (TicketFieldEditorCommitPolicyPure::ShouldCommitTouchPopupEdit(/*savePressed=*/true, valueChanged)) {
-                queue(clearPressed ? std::vector<std::string>{} : std::vector<std::string>{canon});
+            const TrackerDateTimePure::DateTimeCommitPlan plan = TrackerDateTimePure::PlanDateTimeCommit(
+                applyPressed, clearPressed, isDateOnly, s_working, currentValue);
+            if (plan.Queue) {
+                queue(plan.Values);
             }
         }
 

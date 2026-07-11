@@ -193,6 +193,11 @@ struct TrackerConfig {
     // process, which can drive the global command registry. Set false to restore the
     // legacy "any local process may call without a token" behavior.
     bool McpRequireTokenOnLoopback = true;
+    // MCP tools/call token-bucket rate limit shared by the REST and JSON-RPC routes:
+    // max burst (bucket capacity) and sustained refill per second. A non-positive
+    // value on either disables the limit.
+    int McpToolsCallRateBurst = 20;
+    int McpToolsCallRateRefillPerSec = 5;
     // Field ids that MCP /list_tickets and /search are allowed to export.
     // Empty = safe default subset (summary, status, priority, assignee, updated, created, labels, issuetype).
     std::vector<std::string> McpExportFields;
@@ -743,6 +748,12 @@ class ConfigManager {
                                          std::function<std::string(const std::string&)> unprotector);
 
     static nlohmann::json LoadJsonFile(const std::string& path);
+
+    /// One-shot startup notice: returns the user config file NAME (empty when none) if the
+    /// config existed but failed to parse this session, so defaults are silently in use.
+    /// Previously log-only — the user lost settings with zero UI signal. The UI consumes
+    /// this once at startup and raises a toast; clears on read.
+    static std::string TakeStartupConfigWarning();
     static nlohmann::json LoadMergedConfigJson();
     static std::string NormalizeUiLanguageCode(const std::string& code);
     static void WriteConfigJson(const nlohmann::json& j);

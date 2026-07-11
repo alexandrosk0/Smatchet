@@ -317,7 +317,8 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorS
     TrackerQueryAcpCallbackUserData jqlCb{};
     jqlCb.session = &d;
     jqlCb.editor = &st;
-    jqlCb.app = &app;
+    jqlCb.fields = &app.GetAvailableFields();
+    jqlCb.users = &app.GetAvailableUsers();
     jqlCb.suggestBuild = &jqlSuggestBuild;
     jqlCb.meta = &jqlMeta;
     jqlCb.kind = d.cfg.TrackerType == "Plane" ? TrackerQuerySuggestKind::PlaneFilter : TrackerQuerySuggestKind::JiraJql;

@@ -77,23 +77,31 @@ bool Views::UpdateActive(const ViewDefinition& updated) {
 }
 
 bool Views::DeleteActive() {
+    return Delete(Slice_.ActiveViewId);
+}
+
+bool Views::Delete(const std::string& id) {
     if (Slice_.Views.size() <= 1) {
         return false;
     }
-    // Capture the active index BEFORE erase so we can pick the neighbour as the new active
-    // view (UX nit: deleting the last view used to jump back to the first).
-    const auto activeIt = std::find_if(Slice_.Views.begin(), Slice_.Views.end(),
-                                       [&](const ViewDefinition& v) { return v.Id == Slice_.ActiveViewId; });
-    if (activeIt == Slice_.Views.end()) {
+    const auto it = std::find_if(Slice_.Views.begin(), Slice_.Views.end(),
+                                 [&](const ViewDefinition& v) { return v.Id == id; });
+    if (it == Slice_.Views.end()) {
         return false;
     }
-    const std::size_t activeIndex = static_cast<std::size_t>(activeIt - Slice_.Views.begin());
-    Slice_.Views.erase(activeIt);
-    if (!Slice_.Views.empty()) {
-        const std::size_t pickIndex = (activeIndex < Slice_.Views.size()) ? activeIndex : Slice_.Views.size() - 1;
-        Slice_.ActiveViewId = Slice_.Views[pickIndex].Id;
-    } else {
-        Slice_.ActiveViewId.clear();
+    // Capture the erased index BEFORE erase so we can pick the neighbour as the new active view
+    // (UX nit: deleting the last view used to jump back to the first).
+    const bool wasActive = (id == Slice_.ActiveViewId);
+    const std::size_t erasedIndex = static_cast<std::size_t>(it - Slice_.Views.begin());
+    Slice_.Views.erase(it);
+    if (wasActive) {
+        if (!Slice_.Views.empty()) {
+            const std::size_t pickIndex =
+                smatchet::views_merge::PickActiveViewIndexAfterErase(erasedIndex, Slice_.Views.size());
+            Slice_.ActiveViewId = Slice_.Views[pickIndex].Id;
+        } else {
+            Slice_.ActiveViewId.clear();
+        }
     }
     Revision_.fetch_add(1);
     Save();
@@ -105,6 +113,12 @@ void Views::Save() {
         return;
     }
     ConfigManager::ViewsStoreToViewWorkspace(Slice_, Disk.Backends[ActiveBackendKey]);
+    // DR13a: re-read the file and fold in any out-of-band ToolbarAppend writes (the toolbar
+    // editor's tracker-scope save worker writes ToolbarAppend straight to disk, bypassing this
+    // wrapper). Without this merge, rewriting from our boot-time snapshot reverts those toolbar
+    // buttons — they vanish on the next restart / backend swap.
+    PersistentViewsFile fresh = ConfigManager::LoadPersistentViewsFromDisk();
+    smatchet::views_merge::MergePersistentViewsToolbarAppend(Disk, fresh);
     ConfigManager::SavePersistentViewsToDisk(Disk);
 }
 

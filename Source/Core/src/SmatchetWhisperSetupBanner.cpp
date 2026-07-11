@@ -14,7 +14,8 @@
 
 #include "SmatchetWhisperSetupBanner.h"
 
-#include "AppController.h"
+class IAppThreading; // fan-in Phase 6 T4: only named in signatures / the ModelDownloader::Start pass-through — fwd-decl
+                     // suffices
 #include "ConfigManager.h"
 #include "Logger.h"
 #include "ModelCatalog.h"
@@ -113,7 +114,7 @@ void StampFreshConsent(TrackerConfig& cfg) {
 #endif
 }
 
-bool DispatchDownload(AppController& app, TrackerConfig& cfg, std::string& outError) {
+bool DispatchDownload(IAppThreading& app, TrackerConfig& cfg, std::string& outError) {
     const std::string modelId = CatalogIdAt(Bs().selectedIndex);
     cfg.WhisperModel = modelId;
     cfg.WhisperEnabled = true; // banner intent — Preferences can flip later
@@ -187,7 +188,7 @@ void RenderDownloadingBody(const ModelDownloader::Progress& prog) {
 }
 
 // Expanded model-picker phase: radio list + download/cancel + last-error line.
-void RenderPickerBody(AppController& app, TrackerConfig& cfg, BannerState& s, bool& cfgChanged) {
+void RenderPickerBody(IAppThreading& app, TrackerConfig& cfg, BannerState& s, bool& cfgChanged) {
     ::ImGui::TextUnformatted(SmatchetLocalization::T("whisper.banner.pickModel", "Choose speech model:"));
     const auto& all = smatchet::whisper::catalog::All();
     for (std::size_t i = 0; i < all.size(); ++i) {
@@ -262,7 +263,7 @@ void RenderPromptBody(TrackerConfig& cfg, BannerState& s, bool& cfgChanged) {
 
 ModelDownloader& BannerOwnedDownloader() { return OwnedDownloader(); }
 
-bool Render(AppController& app, TrackerConfig& cfg) {
+bool Render(IAppThreading& app, TrackerConfig& cfg) {
 #if !defined(SMATCHET_WITH_WHISPER)
     (void)app;
     (void)cfg;

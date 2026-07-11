@@ -66,7 +66,10 @@ bool ConnectivityMonitorService::IsConnectivityDegradedForProbeInterval(TrackerC
         nextProbeState == TrackerConnectivityState::ServiceUnavailable) {
         return true;
     }
-    if (!lastTicketSyncWarning_.empty() && IsTrackerTransportErrorText(lastTicketSyncWarning_)) {
+    // The flag travels with the warning from the seam that classified it (N12 slice 1) — the old
+    // substring sniff over the PREFIX-composed message only worked because the heuristic happens
+    // to be substring-based.
+    if (lastTicketSyncWarningTransient_) {
         return true;
     }
     const std::string& catalogErr = deps_.FocusedFieldCatalogError();
@@ -117,6 +120,7 @@ void ConnectivityMonitorService::ApplyTrackerConnectivityProbeResult(const std::
             diag.resize(kMaxDiagChars);
         }
         lastTicketSyncWarning_ = "Showing cached issues — lost connection to tracker: " + diag;
+        lastTicketSyncWarningTransient_ = true; // by construction: written only on TransportDown/ServiceUnavailable
         LOG_WARN("ConnectivityMonitor: Tracker probe reports connectivity loss: %s", diag.c_str());
     }
 
@@ -198,6 +202,7 @@ void ConnectivityMonitorService::applyLiveTrackerReachabilityAfterSuccessfulBack
     }
     lastState_ = TrackerConnectivityState::AuthenticatedReachable;
     lastTicketSyncWarning_.clear();
+    lastTicketSyncWarningTransient_ = false;
     // Clear the LIVE-focus catalog warning once: the adapter latches the focused catalog so the
     // check/clear/bump stay on the SAME context even if focus moves between deps calls (Pillar 3).
     if (!deps_.FocusedFieldCatalogWarning().empty()) {
@@ -242,13 +247,15 @@ std::string CatalogOfflineTechnicalSuffix(const std::string& cw) {
     for (const char* p : prefixes) {
         const size_t pl = std::strlen(p);
         if (cw.size() >= pl && cw.compare(0, pl, p) == 0) {
-            return cw.substr(pl);
+            // The suffix embeds the raw fetch error (cpr transport / backend text) — scrub
+            // secret-shaped tokens before it reaches the banner (reuses the AI-side redactor).
+            return RedactHttpBodyForLog(cw.substr(pl));
         }
     }
     if (cw == kWorkingOfflineSnapshotCatalog) {
         return std::string();
     }
-    return TruncateTrackerBannerDetail(cw, 100);
+    return TruncateTrackerBannerDetail(RedactHttpBodyForLog(cw), 100);
 }
 
 std::string TicketOfflineTechnicalSuffix(const std::string& tw) {
@@ -265,10 +272,10 @@ std::string TicketOfflineTechnicalSuffix(const std::string& tw) {
     for (const char* p : prefixes) {
         const size_t pl = std::strlen(p);
         if (tw.size() >= pl && tw.compare(0, pl, p) == 0) {
-            return tw.substr(pl);
+            return RedactHttpBodyForLog(tw.substr(pl));
         }
     }
-    return TruncateTrackerBannerDetail(tw, 100);
+    return TruncateTrackerBannerDetail(RedactHttpBodyForLog(tw), 100);
 }
 
 void AppendSessionCatalogNoteToBanner(std::string& out, const std::string* sessionNote) {
@@ -361,6 +368,7 @@ bool ConnectivityMonitorService::ConsumeTrackerConnectivityRecovery() {
     }
     recoveryPending_ = false;
     lastTicketSyncWarning_.clear();
+    lastTicketSyncWarningTransient_ = false;
     deps_.ClearFocusedFieldCatalogWarning();
     const auto now = std::chrono::steady_clock::now();
     deps_.RestartReplayTimers(now);

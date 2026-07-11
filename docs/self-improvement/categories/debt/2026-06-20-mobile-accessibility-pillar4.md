@@ -1,6 +1,6 @@
 - 2026-06-20 · claude-code · [debt] · P2 — Mobile (Android) accessibility — Pillar-4 gaps from the P1.6 research slice
 
-  Details: Slice P1.6 of `docs/plans/active/mobile-app-fuller-integration.md` (accessibility research)
+  Details: Slice P1.6 of `docs/plans/shipped/mobile-app-fuller-integration.md` (accessibility research)
   produced findings in `docs/mobile/PHASE1_ACCESSIBILITY_RESEARCH.md`. Four concrete, partly-tractable
   Pillar-4 gaps on the Android (GLES3 immediate-mode ImGui) build:
   (1) **Screen reader**: TalkBack sees the GLES surface as one opaque element — Dear ImGui has no

@@ -73,13 +73,15 @@ bool ScanQuotedString(const std::string& src, std::size_t& i, char quote, std::s
     return true;
 }
 
-// Scan a bareword (identifier chars + dots/dashes) starting at `i`, advancing
-// `i` past the word. Returns the matched text.
+// Scan a bareword (identifier chars + dots/dashes/at) starting at `i`, advancing
+// `i` past the word. Returns the matched text. `@` is preserved so GitHub-native
+// user tokens like `@me` survive tokenization intact (dropping it collapsed
+// `@me` to a literal `me`, mis-scoping the qualifier).
 std::string ScanBareword(const std::string& src, std::size_t& i) {
     const std::size_t start = i;
     while (i < src.size()) {
         const unsigned char cc = static_cast<unsigned char>(src[i]);
-        if (std::isalnum(cc) == 0 && cc != '_' && cc != '-' && cc != '.') {
+        if (std::isalnum(cc) == 0 && cc != '_' && cc != '-' && cc != '.' && cc != '@') {
             break;
         }
         ++i;
@@ -151,8 +153,9 @@ bool Tokenize(const std::string& src, std::vector<Tok>& out, std::string& error)
             ++i;
             continue;
         }
-        // Bareword: identifier chars + dots/dashes (for fields).
-        if (std::isalnum(c) != 0 || c == '_' || c == '-' || c == '.') {
+        // Bareword: identifier chars + dots/dashes (for fields), plus `@` so a
+        // leading-`@` value such as `@me` starts (and stays inside) one token.
+        if (std::isalnum(c) != 0 || c == '_' || c == '-' || c == '.' || c == '@') {
             Tok t;
             t.Kind = TokKind::Word;
             t.Text = ScanBareword(src, i);
@@ -225,13 +228,25 @@ void AppendWarning(std::string& w, const std::string& msg) {
 
 // Quote a value if it contains whitespace, otherwise emit bare. GitHub's
 // search-qualifier syntax accepts both `label:bug` and `label:"needs review"`.
+// When wrapping, embedded `"` and `\` are backslash-escaped so a value carrying
+// a quote can't terminate the qualifier early (and can't inject a second one).
 std::string MaybeQuote(const std::string& v) {
     const bool needs =
         std::any_of(v.begin(), v.end(), [](char c) { return std::isspace(static_cast<unsigned char>(c)) != 0; });
     if (!needs) {
         return v;
     }
-    return std::string("\"") + v + "\"";
+    std::string out;
+    out.reserve(v.size() + 2);
+    out.push_back('"');
+    for (char c : v) {
+        if (c == '"' || c == '\\') {
+            out.push_back('\\');
+        }
+        out.push_back(c);
+    }
+    out.push_back('"');
+    return out;
 }
 
 // Token-aware ORDER BY clause stripping. JQL allows `ORDER BY <field> <dir>`
@@ -480,6 +495,29 @@ void TranslateClauses(const std::vector<Tok>& tokens, std::string& body, JqlToGi
     }
 }
 
+// Strict `owner/repo` shape check: exactly one '/', non-empty on both sides, and
+// every other char drawn from the GitHub owner/repo alphabet (alnum + '-' '_'
+// '.'). A token carrying qualifier punctuation (`:` etc.) or a second '/' is
+// rejected so a stray slash inside a value (e.g. a `ui/ux` label) can't be
+// mistaken for a repo anchor.
+bool IsOwnerRepoToken(const std::string& token) {
+    std::size_t slashCount = 0;
+    std::size_t slashPos = std::string::npos;
+    for (std::size_t i = 0; i < token.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(token[i]);
+        if (c == '/') {
+            ++slashCount;
+            slashPos = i;
+            continue;
+        }
+        const bool allowed = std::isalnum(c) != 0 || c == '-' || c == '_' || c == '.';
+        if (!allowed) {
+            return false;
+        }
+    }
+    return slashCount == 1 && slashPos > 0 && slashPos + 1 < token.size();
+}
+
 // Compose the final query: optional `repo:<owner>/<repo>` prefix, then body.
 std::string ComposeQuery(const std::string& owner, const std::string& repo, const std::string& body) {
     std::string out;
@@ -517,6 +555,19 @@ JqlToGitHubResult TranslateJqlToGitHubSearch(const std::string& jql, const std::
 
     result.Query = ComposeQuery(owner, repo, body);
     return result;
+}
+
+std::string ExtractGitHubProjectAnchor(const std::string& query) {
+    // The GitHub "project" anchor is a leading `owner/repo` token. Anchor on the
+    // FIRST whitespace-delimited token and accept it only when that token is
+    // itself shaped `owner/repo`; a bare '/' elsewhere in the query (e.g. a
+    // `ui/ux` label value) must not be mistaken for a repo anchor.
+    const std::size_t firstSpace = query.find(' ');
+    const std::string token = (firstSpace == std::string::npos) ? query : query.substr(0, firstSpace);
+    if (!IsOwnerRepoToken(token)) {
+        return std::string();
+    }
+    return token;
 }
 
 } // namespace github

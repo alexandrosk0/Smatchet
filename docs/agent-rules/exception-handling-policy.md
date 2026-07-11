@@ -47,3 +47,8 @@ Mark these with `// catch-all-ok: <reason>` so the lint check skips them.
 - `catch (...) {}` or `catch (...) { }` (empty body) as **ERROR**
 - `catch (...)` with no `LOG_` call in the body as **WARNING**
 - Suppressed by `// catch-all-ok:` on the catch line or in the body
+
+The empty-body ERROR tier is also a **CI merge gate**: `test-lint-rules.sh --diff` enforces it
+absolute-0 over all first-party C++ as rule `catch-all-swallow` (a comment inside the body,
+`// catch-all-ok:`, or a deviation comment for rule `catch-all-swallow` — grammar in
+cpp-rules.md — escapes). The no-LOG WARNING tier stays editor-hook-only.

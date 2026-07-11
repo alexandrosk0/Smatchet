@@ -65,7 +65,7 @@ jobs:
         run: clang++ --version
 
       - name: Cache FetchContent sources
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             .fetchcontent-src
@@ -86,6 +86,16 @@ jobs:
           # second_deadlock_stack surfaces both stacks of a lock-order inversion.
           TSAN_OPTIONS: "halt_on_error=1 second_deadlock_stack=1"
         run: ctest --output-on-failure
+
+      - name: Mutation-smoke gate (advisory — assertion strength, Slice F)
+        # ADVISORY: reuses the configured+built ninja-tsan-linux tree to run the
+        # assertion-strength sweep (docs/plans/active/mutation-smoke-gate.md).
+        # Nightly + manual only (not the paths-scoped PR trigger) per the plan's
+        # cadence decision; continue-on-error so a survivor never blocks the
+        # nightly — it graduates to blocking after clean runs (§ Decisions).
+        if: ${{ github.event_name != 'pull_request' }}
+        continue-on-error: true
+        run: bash scripts/dev/mutation-smoke.sh --gate --floor 80
 
       - name: Surface TSan report in job summary
         if: failure()

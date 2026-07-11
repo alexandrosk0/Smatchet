@@ -324,7 +324,7 @@ TEST_CASE("TicketSyncService::ApplyIssueFetchPack with non-transport FetchError 
     TrackerIssueFetchPack pack;
     pack.Tickets.push_back(MakeTicket("ERR-1"));
     pack.FullSyncCompleted = false;
-    pack.FetchError = "HTTP 400: invalid JQL"; // non-transport; IsTrackerTransportErrorText → false
+    pack.FetchError = "HTTP 400: invalid JQL"; // non-transport; the pack composer classifies → false
     svc.ApplyIssueFetchPack(pack);
 
     CachedTicket got;
@@ -336,6 +336,36 @@ TEST_CASE("TicketSyncService::ApplyIssueFetchPack with non-transport FetchError 
     CHECK(deps.DeferredLiveNotifyCalls == 0);
     CHECK(deps.LastTrackerTicketSyncWarning.empty());
     CHECK(deps.PendingLuaWindowBumpImpl == true);
+}
+
+TEST_CASE("TicketSyncService::ApplyIssueFetchPack branches on the pack's transport flag, not the error text" *
+          doctest::test_suite("[high-risk]")) {
+    // N12 slice 1 regression witness: transport-ness is decided ONCE where the pack is composed
+    // and travels as FetchErrorTransient. A transport-shaped error TEXT with the flag left false
+    // must NOT flip connectivity — proving this consumer no longer re-classifies the string —
+    // and the flag set true takes the transport path, tagging the warning it emits.
+    FakeTicketSyncDeps deps;
+    TicketSyncService svc(deps);
+
+    {
+        TrackerIssueFetchPack pack;
+        pack.FetchError = "Connection timeout after 30000 ms"; // transport-shaped TEXT...
+        pack.FetchErrorTransient = false;                      // ...but the composer said no
+        svc.ApplyIssueFetchPack(pack);
+        CHECK(deps.LastConnectivityState == ITicketSyncDeps::ConnectivityState::Unknown);
+        CHECK(deps.PushOutageCalls == 0);
+        CHECK(deps.LastTrackerTicketSyncWarning.empty());
+    }
+    {
+        TrackerIssueFetchPack pack;
+        pack.FetchError = "backend said no";
+        pack.FetchErrorTransient = true;
+        svc.ApplyIssueFetchPack(pack);
+        CHECK(deps.LastConnectivityState == ITicketSyncDeps::ConnectivityState::TransportDown);
+        CHECK(deps.PushOutageCalls == 1);
+        CHECK(deps.LastTrackerTicketSyncWarning.find("live refresh did not complete") != std::string::npos);
+        CHECK(deps.LastTrackerTicketSyncWarningTransient);
+    }
 }
 
 TEST_CASE("TicketSyncService::ApplyIssueFetchPack success path posts deferred-live-notify exactly once") {
@@ -538,7 +568,7 @@ TEST_CASE("TicketSyncService kind change clears in-memory active tickets and pub
     REQUIRE(deps.ActiveTicketsPublishedImpl != nullptr);
     CHECK(deps.ActiveTicketsPublishedImpl->empty());
     CHECK(deps.ActiveTicketsRevisionImpl == 1);
-    // Every ActiveTickets-mutating path flips the Lua window bump (PR #386 invariant).
+    // Every ActiveTickets-mutating path flips the Lua window bump (invariant).
     CHECK(deps.PendingLuaWindowBumpImpl == true);
     // SQLite rows are untouched by the in-memory clear.
     CachedTicket got;

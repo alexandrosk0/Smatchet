@@ -14,10 +14,10 @@
 # asserted in prose, not enforced by an exit code.
 #
 # (Historical note: `Bucket-*` was DROPPED from $MERGE_GATES_BLOCK_ALLOWLIST_RE
-# on 2026-06-15 — the Mesa-software-GL bucket-C/E lanes cannot boot the CI exe
-# (infra.md `bucket-mesa-exe-boot` P1), so a RED bucket lane no longer gates
-# this guard. The #1180 escape above predates that flip; re-add when the lane
-# graduates back to hard-fail.)
+# on 2026-06-15 while the Mesa-GL lanes could not boot the CI exe; the
+# all-gates-blocking flip re-armed it — the constant is now "." (every
+# non-advisory-named check gates), so a RED bucket lane blocks this guard
+# again, exactly the teeth the #1180 escape needed.)
 #
 # This guard makes the green assertion an EXIT CODE, not text:
 #   * reads the head's statusCheckRollup (`gh pr view --json statusCheckRollup`)
@@ -32,13 +32,14 @@
 #
 # A check BLOCKS the admin-merge when BOTH:
 #   (1) it is gating — REQUIRED (name ∈ branch_protection.required_contexts) OR
-#       allow-listed (name matches $MERGE_GATES_BLOCK_ALLOWLIST_RE, non-advisory)
+#       in the blocking scope (name matches $MERGE_GATES_BLOCK_ALLOWLIST_RE —
+#       "." post-flip, i.e. every name — AND does not contain "advisory")
 #   (2) it is non-green — a CheckRun that is not COMPLETED, or whose conclusion
 #       is not in {SUCCESS, NEUTRAL, SKIPPED}; or a StatusContext whose state is
 #       not SUCCESS. (Pending counts as non-green: a stale-BLOCKED-green PR has
 #       no pending gating checks left.)
-# A non-gating red (e.g. an advisory check, or a non-required non-allow-listed
-# one) does NOT block — mirroring the merge-gates $failing contract exactly.
+# The only non-gating red left is an advisory-NAMED check — mirroring the
+# merge-gates $failing contract exactly.
 #
 # CodeRabbit-completion gate (added 2026-06-17 — the #1332 "Review failed:
 # Pull request was closed or merged during review" race): a CI-green PR can be
@@ -63,9 +64,12 @@
 # the size-skip / inline-evidence nuances stay in poll_merge_gates; `cr-out-of-band`
 # is the lever for those edge cases here.
 #
-# `*-out-of-band` PR labels downgrade the matching check, same as the poller:
+# `*-out-of-band` PR labels downgrade the matching check, same as the poller
+# (test-oob-label-impl.sh --parity asserts this set stays equal to merge-gates.sh
+# $downgraded — a half-wired label was the ADR-0022 intent-out-of-band bug):
 #   tests-out-of-band  → "Test-delta gate"   ·  perf-out-of-band → "Perf PR-fast*"
 #   intent-out-of-band → "Intent section" (mirrors poll_merge_gates $intent downgrade)
+#   plan-lock-out-of-band → "Plan-lock gate" (mirrors poll_merge_gates $planlock)
 #   cr-out-of-band     → waives the CodeRabbit-completion wait above (it still does
 #                        NOT downgrade any CI check — CR is its only scope).
 #
@@ -172,6 +176,7 @@ evaluate_rollup() {
         | ($labels | any(. == "tests-out-of-band")) as $testsOob
         | ($labels | any(. == "perf-out-of-band")) as $perfOob
         | ($labels | any(. == "intent-out-of-band")) as $intentOob
+        | ($labels | any(. == "plan-lock-out-of-band")) as $planlockOob
         # Dedup-to-latest-run BEFORE judging green/red (mirrors merge-gates.sh
         # $ctx). A check name can appear MULTIPLE times in statusCheckRollup when a
         # job is re-run / superseded: an older CANCELLED / FAILURE run plus a newer
@@ -225,7 +230,8 @@ evaluate_rollup() {
                  ($g.gating
                   and (($testsOob and $g.name == "Test-delta gate") | not)
                   and (($perfOob and ($g.name | startswith("Perf PR-fast"))) | not)
-                  and (($intentOob and $g.name == "Intent section") | not))})
+                  and (($intentOob and $g.name == "Intent section") | not)
+                  and (($planlockOob and $g.name == "Plan-lock gate") | not))})
              | select(.gating and (.green | not))
              | .name ]) as $rowBlockers
         # Absent-required cross-check (fail-closed): a required context missing
@@ -235,7 +241,8 @@ evaluate_rollup() {
              | select(. as $rn | ($present | any(. == $rn)) | not)
              | select(($testsOob and . == "Test-delta gate") | not)
              | select(($perfOob and (. | startswith("Perf PR-fast"))) | not)
-             | select(($intentOob and . == "Intent section") | not) ]) as $absentReq
+             | select(($intentOob and . == "Intent section") | not)
+             | select(($planlockOob and . == "Plan-lock gate") | not) ]) as $absentReq
         | ($rowBlockers + $absentReq)
         | unique
         | .[]
@@ -363,12 +370,11 @@ evaluate_cr() {
 run_selftest() {
     local fails=0
 
-    # CASE 1 — REFUSES on a RED allow-listed check, AND proves the Mesa-GL
-    # bucket lanes are now advisory. `Coverage` (still allow-listed) is FAILURE
-    # -> must block; `Bucket-C` is FAILURE but `Bucket-` was dropped from the
-    # allow-list 2026-06-15 (infra.md `bucket-mesa-exe-boot` P1) -> must NOT
-    # block. Re-add the `&& grep Bucket-C` blocker assertion when the bucket
-    # lane graduates back to hard-fail.
+    # CASE 1 — REFUSES on RED checks under block-on-any-red (all-gates-blocking
+    # flip): BOTH `Coverage` (required-era allow-list) AND `Bucket-C` (never on
+    # the curated list; the 2026-06-15 advisory era pinned it non-blocking) must
+    # now block — every non-advisory-named red gates the admin-merge. The
+    # advisory-NAME escape is covered by CASE 2's `Duplication scanner (advisory)`.
     local red_rollup
     red_rollup='{"state":"OPEN","labels":[],"statusCheckRollup":[
       {"__typename":"CheckRun","name":"Coverage","status":"COMPLETED","conclusion":"FAILURE"},
@@ -377,10 +383,10 @@ run_selftest() {
     local blockers
     blockers=$(evaluate_rollup "$red_rollup" "Windows + MSVC")
     if [ -n "$blockers" ] && printf '%s' "$blockers" | grep -q 'Coverage' \
-       && ! printf '%s' "$blockers" | grep -q 'Bucket-C'; then
-        echo "selftest CASE1 PASS — refuses on RED allow-listed Coverage; advisory Bucket-C ignored"
+       && printf '%s' "$blockers" | grep -q 'Bucket-C'; then
+        echo "selftest CASE1 PASS — refuses on RED Coverage AND RED Bucket-C (block-on-any-red)"
     else
-        echo "selftest CASE1 FAIL — Coverage must block, Bucket-C must NOT (got: '$blockers')" >&2
+        echo "selftest CASE1 FAIL — Coverage AND Bucket-C must both block (got: '$blockers')" >&2
         fails=$((fails + 1))
     fi
 
@@ -434,6 +440,19 @@ run_selftest() {
         echo "selftest CASE4b PASS — intent-out-of-band downgrades RED Intent section"
     else
         echo "selftest CASE4b FAIL — intent-out-of-band check should not block (got: '$blockers')" >&2
+        fails=$((fails + 1))
+    fi
+
+    # CASE 4c — plan-lock-out-of-band downgrades a RED "Plan-lock gate" (parity
+    # with poll_merge_gates $planlock; this path was half-wired until 2026-07-08).
+    local planlock_oob_rollup
+    planlock_oob_rollup='{"state":"OPEN","labels":[{"name":"plan-lock-out-of-band"}],"statusCheckRollup":[
+      {"__typename":"CheckRun","name":"Plan-lock gate","status":"COMPLETED","conclusion":"FAILURE"}]}'
+    blockers=$(evaluate_rollup "$planlock_oob_rollup" "")
+    if [ -z "$blockers" ]; then
+        echo "selftest CASE4c PASS — plan-lock-out-of-band downgrades RED Plan-lock gate"
+    else
+        echo "selftest CASE4c FAIL — plan-lock-out-of-band check should not block (got: '$blockers')" >&2
         fails=$((fails + 1))
     fi
 
@@ -625,7 +644,7 @@ run_selftest() {
     fi
 
     if [ "$fails" -eq 0 ]; then
-        echo "PASS — safe-admin-merge --selftest (18/18)"
+        echo "PASS — safe-admin-merge --selftest (19/19)"
         return 0
     fi
     echo "FAIL — safe-admin-merge --selftest ($fails failing case(s))" >&2

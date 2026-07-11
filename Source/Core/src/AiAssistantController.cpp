@@ -6,9 +6,8 @@
 #include "AiChatTimestamp.h"
 #include "AiClientFactory.h"
 #include "AiContextBuilder.h"
-#include "AiEndpointPolicy.h"
-#include "AiEndpointSanitize.h"
 #include "AiModelSignature.h"
+#include "AiRequestBuilder.h"
 #include "BackendAuditTrail.h"
 #include "ConfigManager.h"
 #include "IAiAssistantUiState.h"
@@ -16,8 +15,8 @@
 #include "MainThreadDispatcher.h"
 #include "SmatchetChatPersistWorker.h"
 
-#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -50,76 +49,9 @@ AiProvider ProviderFromConfig(const TrackerConfig& cfg) {
     }
 }
 
-// Strip CR/LF/NUL from a header-bound value. libcurl will usually reject them
-// already, but defense-in-depth: a user-typed `cfg.Ai*ApiKey` should never
-// carry header-smuggling control characters into the outbound request.
-std::string SanitizeHeaderValue(const std::string& v) {
-    std::string out;
-    out.reserve(v.size());
-    std::copy_if(v.begin(), v.end(), std::back_inserter(out),
-                 [](char c) { return c != '\r' && c != '\n' && c != '\0'; });
-    return out;
-}
-
-// Validate + (best-effort) normalise the user-configured endpoint URL against
-// `policy`. Returns the sanitised URL on success; empty + logs a structured
-// warning on rejection (the empty string causes the provider client to fall
-// back to its built-in default, which is the safe choice).
-std::string SanitizeBaseUrlOrLog(const std::string& raw, const char* providerLabel,
-                                 const smatchet::ai::pure::EndpointPolicy& policy) {
-    std::string normalised;
-    const smatchet::ai::pure::EndpointVerdict v = smatchet::ai::pure::SanitizeAiEndpointUrl(raw, policy, normalised);
-    if (v == smatchet::ai::pure::EndpointVerdict::Allowed)
-        return normalised;
-    LOG_ERROR("AiAssistantController: %s endpoint URL %s — falling back to provider default. Raw URL withheld.",
-              providerLabel, smatchet::ai::pure::EndpointVerdictDescription(v));
-    return std::string();
-}
-
-AiClientConfig BuildClientConfig(const TrackerConfig& cfg, AiProvider provider) {
-    AiClientConfig out;
-    const smatchet::ai::pure::EndpointPolicy policy = smatchet::ai::EndpointPolicyForProvider(cfg, provider);
-    switch (provider) {
-    case AiProvider::Anthropic:
-        out.ApiKey = SanitizeHeaderValue(cfg.AiAnthropicApiKey);
-        out.BaseUrl = SanitizeBaseUrlOrLog(cfg.AiBaseUrl, "anthropic", policy);
-        break;
-    case AiProvider::OllamaNative:
-        out.ApiKey.clear(); // Ollama-native has no API key
-        out.BaseUrl = SanitizeBaseUrlOrLog(cfg.AiOllamaBaseUrl, "ollama", policy);
-        break;
-    case AiProvider::OllamaOpenAiCompat:
-        out.ApiKey = SanitizeHeaderValue(cfg.AiApiKey);
-        // OllamaOpenAi-compat uses the user's base URL (typically http://localhost:11434/v1)
-        out.BaseUrl = SanitizeBaseUrlOrLog(cfg.AiBaseUrl.empty() ? cfg.AiOllamaBaseUrl : cfg.AiBaseUrl,
-                                           "ollama-openai-compat", policy);
-        break;
-    case AiProvider::DeepSeek:
-        out.ApiKey = SanitizeHeaderValue(cfg.AiDeepSeekApiKey);
-        // DeepSeek default endpoint when the user leaves the URL blank. Pass
-        // the literal default through the sanitiser too — never bypass the
-        // SanitizeAiEndpointUrl gate so a future redirect-block / scheme-pin
-        // rule applies uniformly.
-        out.BaseUrl = SanitizeBaseUrlOrLog(cfg.AiDeepSeekBaseUrl.empty() ? std::string("https://api.deepseek.com")
-                                                                         : cfg.AiDeepSeekBaseUrl,
-                                           "deepseek", policy);
-        break;
-    case AiProvider::OpenAi:
-    default:
-        out.ApiKey = SanitizeHeaderValue(cfg.AiApiKey);
-        out.BaseUrl = SanitizeBaseUrlOrLog(cfg.AiBaseUrl, "openai", policy);
-        break;
-    }
-    // Streaming chat replies from reasoning-tuned models (claude-opus-4-7,
-    // o1-style, DeepSeek-R1, Qwen3) routinely exceed the AiClientConfig default
-    // of 120s. cpr's `cpr::Timeout` is a total-envelope cap and fires regardless
-    // of stream progress, so a 5-minute reply with 57 KB received gets killed
-    // mid-stream with `cpr code 8 - Operation timed out`. Bump to 10 minutes
-    // for the chat path; the user-driven Cancel atom is the right abort
-    // mechanism for a genuinely stuck stream.
-    out.TotalTimeoutMs = 600000;
-    return out;
-}
+// SanitizeHeaderValue + BuildClientConfig (with the endpoint sanitize-with-consent
+// gate) moved to the shared AiRequestBuilder seam so the debug ai.* commands build
+// the exact production wire config (AGENTIC_INFRA_AUDIT.md B4 / P4).
 
 } // namespace
 
@@ -134,7 +66,7 @@ AiAssistantController::AiAssistantController(MainThreadDispatcher& dispatcher, I
     client_ = AiClientFactory::MakeAiClient(provider);
     if (client_) {
         cachedProviderName_ = client_->GetProviderName();
-        clientConfig_ = BuildClientConfig(cfg, provider);
+        clientConfig_ = smatchet::ai::BuildClientConfig(cfg, provider);
     } else {
         // Phase D providers return null today. The controller stays alive so the
         // panel can render an error strip; Submit() will short-circuit until the
@@ -155,6 +87,15 @@ AiAssistantController::~AiAssistantController() {
         shuttingDown_ = true;
         if (currentCancel_) {
             currentCancel_->store(true, std::memory_order_release);
+        }
+        // Also flip every still-queued turn's own token — CPP_CODE_AUDIT.md #4:
+        // without this, a turn that hasn't been popped by WorkerLoop yet would
+        // stream to completion after currentCancel_ moves on to it (a shutdown
+        // hang, not just a Cancel no-op).
+        for (Request& queued : pending_) {
+            if (queued.Cancel) {
+                queued.Cancel->store(true, std::memory_order_release);
+            }
         }
     }
     queueCv_.notify_all();
@@ -196,6 +137,11 @@ bool AiAssistantController::Submit(uint64_t turnGen, std::string prompt, std::ve
     req.TurnGen = turnGen;
     req.ModelOverride = std::move(modelOverride);
     req.EffortOverride = std::move(effortOverride);
+    // Each queued turn owns its own cancel token from the moment it's created —
+    // CPP_CODE_AUDIT.md #4: the token must NOT be shared/rebound via currentCancel_
+    // here, or a later Submit() would silently steal the in-flight field out from
+    // under an earlier turn that's still streaming.
+    req.Cancel = std::make_shared<std::atomic<bool>>(false);
     {
         std::lock_guard<std::mutex> lk(queueMutex_);
         if (shuttingDown_) {
@@ -203,11 +149,6 @@ bool AiAssistantController::Submit(uint64_t turnGen, std::string prompt, std::ve
                      static_cast<unsigned long long>(turnGen));
             return false;
         }
-        // Replace cancel atom — each turn owns its own atom so a Cancel of the
-        // previous turn cannot flip the next turn's flag (a race the shared_ptr
-        // ownership model neutralises: worker captures the previous shared_ptr;
-        // UI rebinds currentCancel_ to a fresh shared_ptr for the new turn).
-        currentCancel_ = std::make_shared<std::atomic<bool>>(false);
         pending_.push_back(std::move(req));
     }
     queueCv_.notify_one();
@@ -218,6 +159,14 @@ void AiAssistantController::Cancel() {
     std::lock_guard<std::mutex> lk(queueMutex_);
     if (currentCancel_) {
         currentCancel_->store(true, std::memory_order_release);
+    }
+    // Also flip every still-queued turn's own token, not just the in-flight one —
+    // otherwise a Cancel() that lands while a turn is queued but not yet popped
+    // by WorkerLoop would be silently dropped for that turn (CPP_CODE_AUDIT.md #4).
+    for (Request& queued : pending_) {
+        if (queued.Cancel) {
+            queued.Cancel->store(true, std::memory_order_release);
+        }
     }
 }
 
@@ -233,7 +182,12 @@ void AiAssistantController::WorkerLoop() {
             }
             req = std::move(pending_.front());
             pending_.pop_front();
-            cancel = currentCancel_;
+            cancel = req.Cancel;
+            // Publish this turn's token as THE in-flight token, under the same lock
+            // Cancel()/the destructor take — so a Cancel() that arrives right after
+            // this pop always reaches the turn that's actually about to run, never a
+            // stale or not-yet-existing token (CPP_CODE_AUDIT.md #4).
+            currentCancel_ = cancel;
         }
         // Pre-cancel check — Cancel might have fired between Submit and WorkerLoop pickup.
         if (cancel && cancel->load(std::memory_order_acquire)) {
@@ -309,12 +263,12 @@ bool AiAssistantController::RefreshProviderForTurn(const TrackerConfig& cfg) {
             cachedProviderName_.clear();
         }
     }
-    clientConfig_ = BuildClientConfig(cfg, cachedProvider_);
+    clientConfig_ = smatchet::ai::BuildClientConfig(cfg, cachedProvider_);
     return static_cast<bool>(client_);
 }
 
 void AiAssistantController::ResolveModelAndEffort(const TrackerConfig& cfg, const Request& req,
-                                                 AiChatRequest& chatReq) {
+                                                  AiChatRequest& chatReq) {
     // Model + reasoning effort for this turn come from the single per-turn config
     // snapshot taken in RunRequest. Per-turn overrides (chat-window Model + Effort
     // Combos) win when non-empty; otherwise the snapshot Preferences value applies.
@@ -408,9 +362,9 @@ void AiAssistantController::BuildChatPayload(const TrackerConfig& cfg, const Req
         // snapshot threaded from RunRequest.
         std::lock_guard<std::mutex> lk(agentsMdMutex_);
         const bool cacheUsable = smatchet::ai::pure::AgentsMdCacheStillValid(
-            agentsMdCacheValid_.load(std::memory_order_acquire), agentsMdCachedGlobalPath_,
-            agentsMdCachedProjectPath_, agentsMdCachedAutoDiscover_, cfg.AgentsMdGlobalPath,
-            cfg.ProjectAgentsMdPath, cfg.AgentsMdAutoDiscoverProject);
+            agentsMdCacheValid_.load(std::memory_order_acquire), agentsMdCachedGlobalPath_, agentsMdCachedProjectPath_,
+            agentsMdCachedAutoDiscover_, cfg.AgentsMdGlobalPath, cfg.ProjectAgentsMdPath,
+            cfg.AgentsMdAutoDiscoverProject);
         if (cacheUsable) {
             agentsMd = agentsMdCachedBody_;
         } else {
@@ -439,9 +393,28 @@ IAiClient::DeltaCallback AiAssistantController::MakeOnDelta(uint64_t turnGen) {
     MainThreadDispatcher* dispatcher = &dispatcher_;
     IAiAssistantUiState* ui = &uiState_;
 
-    return [dispatcher, ui, turnGen](const AiStreamDelta& delta) {
-        const std::string chunk = delta.TokenChunk;
+    // Worker-side coalescing: fast providers stream 30-50 chunks/s and each post
+    // costs a dispatcher round-trip + a UI redraw. Buffer chunks locally and post
+    // one task per flush window (>4 KB accumulated, ~80 ms elapsed, or the final
+    // delta). State lives in a shared_ptr so std::function copies share it.
+    struct CoalesceState {
+        std::string pending;
+        std::chrono::steady_clock::time_point lastPostAt = std::chrono::steady_clock::now();
+    };
+    auto coalesce = std::make_shared<CoalesceState>();
+
+    return [dispatcher, ui, turnGen, coalesce](const AiStreamDelta& delta) {
+        coalesce->pending.append(delta.TokenChunk);
         const bool isFinal = delta.IsFinal;
+        constexpr std::size_t kFlushBytes = 4u * 1024u;
+        constexpr std::chrono::milliseconds kFlushWindow(80);
+        const auto now = std::chrono::steady_clock::now();
+        if (!isFinal && coalesce->pending.size() <= kFlushBytes && now - coalesce->lastPostAt < kFlushWindow) {
+            return;
+        }
+        coalesce->lastPostAt = now;
+        std::string chunk;
+        chunk.swap(coalesce->pending);
         dispatcher->PostToMainThread([ui, turnGen, chunk, isFinal]() {
             if (ui->AssistantTurnGen() != turnGen) {
                 return; // stale callback — Cancel or newer Submit raced us

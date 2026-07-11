@@ -21,8 +21,7 @@
 #include "Commands/Scenarios/IScenario.h"
 
 // clang-format off
-// SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=interactive perf scenario drives AppController::EnsurePaneContextLive to spin a live GridLiveContext per mixed-backend pane — same unavoidable dependency as the grandfathered side-by-side-grids / concurrent-sync scenarios; no narrower interface exposes it; owner=perf-tooling; revisit=2026-12-31)
-#include "AppController.h"
+#include "Interfaces/IAppScenarioHost.h"
 // clang-format on
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "GridPane.h"
@@ -101,7 +100,7 @@ class InteractiveGridStressScenario : public IScenario {
   public:
     std::string Name() const override { return "interactive-grid-stress"; }
 
-    void OnStart(AppController& app, const nlohmann::json& args, std::string& /*outErr*/) override {
+    void OnStart(IAppScenarioHost& app, const nlohmann::json& args, std::string& /*outErr*/) override {
         // Effectively perpetual: keep injecting for the whole FpsMeasure window; the
         // window-close from FpsMeasure ends the process before IsDone fires.
         frames_ = (std::max)(1, args.value("frames", 100000000));
@@ -148,7 +147,7 @@ class InteractiveGridStressScenario : public IScenario {
         UiPerfMonitor::Instance().Reset();
     }
 
-    void OnFrame(AppController& /*app*/, int frameIndex) override {
+    void OnFrame(IAppScenarioHost& /*app*/, int frameIndex) override {
         // Vertical + horizontal scroll on the focused pane every frame. Desynced
         // periods so H and V rarely peak together (more realistic, more stress).
         scrollY_ = Triangle(frameIndex, /*period=*/200, /*amp=*/1600);
@@ -184,9 +183,9 @@ class InteractiveGridStressScenario : public IScenario {
 
     int CurrentScrollY() const override { return scrollY_; }
 
-    void OnCancel(AppController& /*app*/) override { Cleanup(); }
+    void OnCancel(IAppScenarioHost& /*app*/) override { Cleanup(); }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         Cleanup();
         const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
         nlohmann::json rowsJson = nlohmann::json::array();

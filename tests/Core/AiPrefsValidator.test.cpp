@@ -325,7 +325,7 @@ TEST_CASE("AiPrefsValidator: DeepSeek key without 'sk-' prefix warns") {
 }
 
 TEST_CASE("AiPrefsValidator: DeepSeek with Anthropic-shape 'sk-ant-' key warns cross-paste") {
-    // Regression for PR #289 follow-up: an Anthropic key pasted into the DeepSeek slot
+    // Regression: an Anthropic key pasted into the DeepSeek slot
     // satisfies the loose `sk-` prefix check, slips through validate, and then yields a
     // server-side HTTP 401 with no Smatchet-side clue what went wrong. Tight check on
     // the Anthropic-exclusive `sk-ant-` prefix surfaces the mistake before the network.

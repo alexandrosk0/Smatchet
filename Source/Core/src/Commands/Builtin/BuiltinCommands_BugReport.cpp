@@ -9,8 +9,10 @@
 #include "Commands/CommandRegistry.h"
 #include "Commands/MainThreadDispatch.h"
 
-#include "AppController.h"
-#include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+// This TU only passes the narrow IAppMeta& through to diagnostics::SubmitBugReport and uses the
+// poster for the modal UI-thread hop — no AppController dependency at all; the dispatcher upcasts
+// the concrete object into both narrow refs.
+#include <nlohmann/json.hpp> // this TU constructs nlohmann::json directly.
 #include "ConfigManager.h"
 #include "Diagnostics/BugReportService.h"
 #include "SmatchetUiSession.h"
@@ -28,10 +30,10 @@ namespace cmd {
 using builtin_detail::MakeCommand;
 using builtin_detail::PString;
 
-void RegisterBugReportCommands(CommandRegistry& reg, AppController& app) {
+void RegisterBugReportCommands(CommandRegistry& reg, IAppMeta& app, IMainThreadPoster& poster) {
     Command c = MakeCommand(
         "bug.report", "File a bug to the configured dev GitHub repo (modal, or headless with --description).",
-        [&app](const nlohmann::json& args, const CommandContext& ctx) {
+        [&app, &poster](const nlohmann::json& args, const CommandContext& ctx) {
             const std::string description = args.value("description", std::string());
             const bool screenshot = args.value("screenshot", true);
 
@@ -59,7 +61,7 @@ void RegisterBugReportCommands(CommandRegistry& reg, AppController& app) {
 
             // Modal mode (no description) — flip the UI latch on the UI thread; no submit here.
             if (description.empty()) {
-                return RunOnUiThreadAsCommandResult(app, [screenshot]() {
+                return RunOnUiThreadAsCommandResult(poster, [screenshot]() {
                     g_ui.showBugReport = true;
                     g_ui.bugReportOpenLatch = true;
                     g_ui.bugReportInclScreenshot = screenshot;

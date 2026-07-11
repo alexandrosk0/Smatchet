@@ -2,7 +2,7 @@
 // a `FakeOfflineQueueDeps` + `FakeTrackerClient` + the in-memory `FakeSyncCache` (ADR-0020 —
 // contract-suite-verified against the real cache; no SQLite). Every
 // case constructs a fresh fixture stack so queue / cache / mock state never leaks across
-// `TEST_CASE`s. Each test owns a `TestEnvGuard` that redirects the audit writer + the
+// `TEST_CASE`s. Each test owns a `OfflineQueueTestEnvGuard` that redirects the audit writer + the
 // ConfigManager user-data dir into a private temp dir, and writes a minimal config file
 // with `read_only_mode=false` (ConfigManager defaults that to true when no config exists).
 //
@@ -43,7 +43,7 @@ using smatchet_tests::FakeOfflineQueueDeps;
 // Per-test temp dir + ConfigManager redirection + read_only_mode=false config. Extracted to
 // tests/support/OfflineQueueTestEnv.h (multi-grid Slice 1c) so the backend-key replay TU
 // reuses it; semantics unchanged.
-using smatchet_tests::TestEnvGuard;
+using smatchet_tests::OfflineQueueTestEnvGuard;
 
 namespace {
 
@@ -141,7 +141,7 @@ class StructuredFieldDeps : public FakeOfflineQueueDeps {
 // assertion, confirming the post-success delete is what flips the row off the queue.
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: create → drain 200 OK deletes row" * doctest::test_suite("[high-risk]")) {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     PrimeCreatePipelineHappy(deps);
     deps.BackendImpl->EnqueueCreateIssueSuccess("PROJ-42");
@@ -172,7 +172,7 @@ TEST_CASE("OfflineQueueServiceRuntime: create → drain 200 OK deletes row" * do
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: create → drain 4xx increments attempts, no dead-letter" *
           doctest::test_suite("[high-risk]")) {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     PrimeCreatePipelineHappy(deps);
     deps.BackendImpl->EnqueueCreateIssueFailure("HTTP 422: validation failed");
@@ -195,7 +195,7 @@ TEST_CASE("OfflineQueueServiceRuntime: create → drain 4xx increments attempts,
 // Case 3 — Enqueue create-issue → 5xx (server error, transport-classified) → stays + attempts++.
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: create → drain 5xx increments attempts, stays in queue") {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     PrimeCreatePipelineHappy(deps);
     deps.BackendImpl->EnqueueCreateIssueFailure("HTTP 503: service unavailable");
@@ -215,7 +215,7 @@ TEST_CASE("OfflineQueueServiceRuntime: create → drain 5xx increments attempts,
 // Case 4 — Enqueue create-issue → timeout → stays + attempts++.
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: create → drain timeout increments attempts, stays in queue") {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     PrimeCreatePipelineHappy(deps);
     deps.BackendImpl->EnqueueCreateIssueFailure("Operation timed out after 30000 ms");
@@ -238,7 +238,7 @@ TEST_CASE("OfflineQueueServiceRuntime: create → drain timeout increments attem
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: create → 401 stays in queue, no dead-letter on auth" *
           doctest::test_suite("[high-risk]")) {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     PrimeCreatePipelineHappy(deps);
     deps.BackendImpl->EnqueueCreateIssueFailure("HTTP 401: invalid credentials");
@@ -264,7 +264,7 @@ TEST_CASE("OfflineQueueServiceRuntime: create → 401 stays in queue, no dead-le
 // true → row archives.
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: create → repeated failure archives at kMaxReplayAttempts boundary") {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     PrimeCreatePipelineHappy(deps);
     deps.BackendImpl->SetDefaultCreateIssueResult(false, "HTTP 503: still down");
@@ -294,7 +294,7 @@ TEST_CASE("OfflineQueueServiceRuntime: create → repeated failure archives at k
 // top of the replay loop, before the create call).
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: create → already-at-cap row dead-letters without invoking backend") {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     PrimeCreatePipelineHappy(deps);
     // Make the backend explode if it gets called — proves we never reached CreateIssue.
@@ -318,7 +318,7 @@ TEST_CASE("OfflineQueueServiceRuntime: create → already-at-cap row dead-letter
 // Case 7 — Enqueue field-edit → drain 200 OK → row deleted.
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: field-edit → drain 200 OK deletes row") {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     deps.BackendImpl->EnqueueUpdateIssueFieldsSuccess();
 
@@ -346,7 +346,7 @@ TEST_CASE("OfflineQueueServiceRuntime: field-edit → drain 200 OK deletes row")
 // `IsTrackerTransportErrorText`: non-transport errors archive immediately as `replay_rejected`.
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: field-edit → drain 4xx archives to dead-letter") {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     deps.BackendImpl->EnqueueUpdateIssueFieldsFailure("HTTP 422: Unprocessable Entity");
 
@@ -374,7 +374,7 @@ TEST_CASE("OfflineQueueServiceRuntime: field-edit → drain 4xx archives to dead
 // filtered by the pending-create id encoded in the event's `operation_id` field.
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: replay emits audit-trail row per attempt") {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     PrimeCreatePipelineHappy(deps);
     deps.BackendImpl->EnqueueCreateIssueSuccess("PROJ-44");
@@ -420,7 +420,7 @@ TEST_CASE("OfflineQueueServiceRuntime: replay emits audit-trail row per attempt"
 // "successive rows are processed independently". Documented in plan Deviations.
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: two sequential creates both drain in one tick") {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     PrimeCreatePipelineHappy(deps);
     deps.BackendImpl->EnqueueCreateIssueSuccess("PROJ-100");
@@ -450,7 +450,7 @@ TEST_CASE("OfflineQueueServiceRuntime: two sequential creates both drain in one 
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: field-edit → merge conflict marks row, no PUT, no dead-letter" *
           doctest::test_suite("[high-risk]")) {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     // Stage a server document with a `summary` field that diverged from base.
     CachedTicket fresh;
@@ -483,7 +483,7 @@ TEST_CASE("OfflineQueueServiceRuntime: field-edit → merge conflict marks row, 
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: scalar conflict suspends with kind:scalar, no PUT" *
           doctest::test_suite("[high-risk]")) {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     // Server's current display value for `status` diverged from the captured base.
     CachedTicket fresh;
@@ -515,7 +515,7 @@ TEST_CASE("OfflineQueueServiceRuntime: scalar conflict suspends with kind:scalar
 // ADR-0016 — Scalar, server unchanged: base == theirs → replay normally (no conflict).
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: scalar unchanged replays (no conflict)") {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     deps.BackendImpl->EnqueueUpdateIssueFieldsSuccess();
     CachedTicket fresh;
@@ -543,7 +543,7 @@ TEST_CASE("OfflineQueueServiceRuntime: scalar unchanged replays (no conflict)") 
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: permanent re-fetch failure with base → unverified suspend" *
           doctest::test_suite("[high-risk]")) {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     // 404 is permanent (IsTrackerTransportErrorText==false).
     deps.BackendImpl->SetFetchIssuesForKeysResult(false, {}, "HTTP 404: not found");
@@ -572,7 +572,7 @@ TEST_CASE("OfflineQueueServiceRuntime: permanent re-fetch failure with base → 
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: transient re-fetch failure retries then unverified at cap" *
           doctest::test_suite("[high-risk]")) {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     // Timeout is transient (IsTrackerTransportErrorText==true).
     deps.BackendImpl->SetFetchIssuesForKeysResult(false, {}, "Operation timed out after 30000 ms");
@@ -609,7 +609,7 @@ TEST_CASE("OfflineQueueServiceRuntime: transient re-fetch failure retries then u
 // re-fetch is not even attempted (no base to compare against).
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: no-base row replays (documented last-write-wins residue)") {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     deps.BackendImpl->EnqueueUpdateIssueFieldsSuccess();
     // Even if a fetch WOULD diverge, no base means we never look.
@@ -638,7 +638,7 @@ TEST_CASE("OfflineQueueServiceRuntime: no-base row replays (documented last-writ
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: blank-but-captured scalar base still conflict-checks" *
           doctest::test_suite("[high-risk]")) {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     // Server now has a non-empty value; the captured base was blank → server moved.
     CachedTicket fresh;
@@ -671,7 +671,7 @@ TEST_CASE("OfflineQueueServiceRuntime: blank-but-captured scalar base still conf
 // payload. The service logs-and-skips; no fabricated `__resolved__`-keyed row is created.
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: resolve on missing row does not fabricate a payload") {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     OfflineQueueService svc(deps);
 
@@ -686,7 +686,7 @@ TEST_CASE("OfflineQueueServiceRuntime: resolve on missing row does not fabricate
 // ADR-0016 — Discard resolution: hard-deletes the queue row AND emits an audit entry.
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: discard hard-deletes row + emits audit entry") {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     OfflineQueueService svc(deps);
     std::string err;
@@ -711,7 +711,7 @@ TEST_CASE("OfflineQueueServiceRuntime: discard hard-deletes row + emits audit en
 // ADR-0016 — Resolve clears BOTH bases so the next replay performs the consented overwrite.
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: resolve clears both rich + scalar bases") {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     OfflineQueueService svc(deps);
     std::string err;
@@ -758,7 +758,7 @@ TEST_CASE("OfflineQueueServiceRuntime: ShouldArchive boundary — pre-attempt + 
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: null Mutations early-return resets in-flight latch (#16)" *
           doctest::test_suite("[high-risk]")) {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     NullableMutationsDeps deps;
     deps.MutationsNull = true; // live mutations role transiently unavailable
 
@@ -800,7 +800,7 @@ TEST_CASE("OfflineQueueServiceRuntime: null Mutations early-return resets in-fli
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: #854 scalar resolve on structured field rebuilds object payload (theirs)" *
           doctest::test_suite("[high-risk]")) {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     StructuredFieldDeps deps;
     deps.Fields = {MakeField("priority", TrackerFieldFamily::SelectSingle)};
 
@@ -837,7 +837,7 @@ TEST_CASE("OfflineQueueServiceRuntime: #854 scalar resolve on structured field r
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: #854 scalar resolve on structured field keeps object payload (mine)" *
           doctest::test_suite("[high-risk]")) {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     StructuredFieldDeps deps;
     deps.Fields = {MakeField("priority", TrackerFieldFamily::SelectSingle)};
 
@@ -868,7 +868,7 @@ TEST_CASE("OfflineQueueServiceRuntime: #854 scalar resolve on structured field k
 // special-case string fields away from the builder seam. We assert the value is not an object.
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: #854 scalar resolve on string field stays a bare string (no regression)") {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     // No catalog field for "summary" → degraded fallback writes the verbatim string, which is
     // the correct shape for a genuinely string-valued field.

@@ -81,11 +81,26 @@ CommandResult ScenarioRunner::Start(const std::string& name, const nlohmann::jso
     std::remove(outPath_.c_str());
 
     std::unique_ptr<IScenario> scenario = it->second();
+
+    // DR7: a scenario is already running when this Start arrives. Tear the
+    // outgoing one down through the normal Cancel path FIRST. Cancel drives its
+    // OnCancel hook, which for the AI streaming scenarios signals their cancel
+    // token, joins the owned worker std::thread, and clears the process-wide
+    // AiClientFactory test override. This must happen before the replacement's
+    // OnStart installs its own override, and before the move-assign to active_
+    // below. Move-assigning over a live scenario would instead destroy it in
+    // place: running ~std::thread on a still-joinable worker calls
+    // std::terminate, and the stale factory override would dangle into the
+    // freed scenario's state.
+    if (active_) {
+        Cancel();
+    }
+
     std::string startErr;
-    // Capture ctx.App before the call (handler may be invoked from any source).
-    AppController* appPtr = ctx.App;
-    if (appPtr) {
-        scenario->OnStart(*appPtr, args, startErr);
+    // Capture the context's scenario host before the call (handler may be invoked from any source).
+    IAppScenarioHost* hostPtr = ctx.ScenarioHost;
+    if (hostPtr) {
+        scenario->OnStart(*hostPtr, args, startErr);
     } else {
         startErr = "AppController not available";
     }
@@ -93,13 +108,13 @@ CommandResult ScenarioRunner::Start(const std::string& name, const nlohmann::jso
         return CommandResult::Failure(ErrorCode::HandlerError, "Scenario '" + name + "' failed to start: " + startErr);
     }
 
-    app_ = appPtr;
+    app_ = hostPtr;
     active_ = std::move(scenario);
     LOG_INFO("ScenarioRunner: started '%s' → %s", name.c_str(), outPath_.c_str());
     return CommandResult::Success({{"running", true}, {"outPath", outPath_}});
 }
 
-void ScenarioRunner::Tick(AppController& app, bool& outScrollActive, int& outScrollTarget) {
+void ScenarioRunner::Tick(IAppScenarioHost& app, bool& outScrollActive, int& outScrollTarget) {
     outScrollActive = false;
     outScrollTarget = -1;
     if (!active_)

@@ -312,12 +312,23 @@ _classify_diff() {
         line="${line#"${line%%[![:space:]]*}"}"
         line="${line%"${line##*[![:space:]]}"}"
 
-        # In a block comment: stays a comment until the close `*/`.
+        # In a block comment: stays a comment until the close `*/`. If real code
+        # trails the close on the same line (`... */ launchTask();`), it must still
+        # be classified — don't blanket-continue past it (mirrors the LOG-statement
+        # close handling below; the single-line `/* */ code` path already does this).
         if [ "$in_block_comment" -eq 1 ]; then
             case "$line" in
-                *'*/'*) in_block_comment=0 ;;
+                *'*/'*)
+                    in_block_comment=0
+                    line="${line#*'*/'}"                       # drop through the close
+                    line="${line#"${line%%[![:space:]]*}"}"    # ltrim the remainder
+                    case "$line" in
+                        ''|'//'*) continue ;;                  # nothing (or a line comment) follows
+                    esac
+                    ;;                                          # else fall through to classify trailing code
+                *)
+                    continue ;;                                 # still inside the block comment
             esac
-            continue
         fi
         # Opening of a block comment that does not close on this line.
         case "$line" in
@@ -772,11 +783,15 @@ for f in "${CHANGED[@]}"; do
         # require a paired test delta on their own.
         Source/Core/src/*.cpp)
             PROD_CHANGES+=("$f") ;;
-        # Test surface — only actual test TUs count toward a delta. tests/support/*.h
-        # (shared fixtures / helpers) was previously included but is trivially
-        # dismissable (add an empty header to "satisfy" the gate). Restrict to the
-        # per-test-file delta the gate was designed to enforce.
-        tests/Core/*.test.cpp|tests/Lua/*.test.cpp|tests/Plugins/*.test.cpp|tests/Plugins/Mcp/*.test.cpp|tests/ui/*.test.cpp)
+        # Test surface — only actual test TUs count toward a delta. tests/support/
+        # and tests/fixtures/ (shared helpers) are excluded as trivially
+        # dismissable (an empty helper would "satisfy" the gate). Any OTHER
+        # tests/ subdirectory counts by the *.test.cpp naming convention — a
+        # fixed per-directory list red-walled the first PR to add a NEW harness
+        # dir (tests/monkey/, #1637); a harness dir earns credit by naming its
+        # test TUs *.test.cpp, not by a hand-synced allowlist.
+        tests/support/*|tests/fixtures/*) ;;
+        tests/*.test.cpp)
             TEST_CHANGES+=("$f") ;;
     esac
 done
@@ -800,9 +815,26 @@ fi
 # files is provably no-new-runtime-surface, PASS legitimately (no override). This
 # is what lets the gate run cleanly on a merge_group ref where PR labels (and so
 # tests-out-of-band) don't apply. CONSERVATIVE — any real statement falls through.
-EXEMPTION="$(git diff --diff-filter=ACMR "$MERGE_BASE"...HEAD -- \
-        Source/Core Source/Plugins Source/Standalone tests 2>/dev/null \
-    | _classify_diff)"
+# Write the diff to a temp file rather than piping it into `_classify_diff` directly.
+# `_classify_diff` intentionally `break`s out of its read loop on the first real-surface
+# line (see its body). Under a `|` pipe with `set -o pipefail`, an early-closing reader
+# sends `git diff` SIGPIPE (128+13=141) once its stdout buffer fills, and pipefail
+# propagates that 141 through the `EXEMPTION=$(...)` assignment, tripping `set -e` and
+# killing the script BEFORE it reaches the "FAIL: ... test deltas" message below — a real
+# diff that should cleanly fail the gate instead crashes it. A plain redirect into a file
+# has no pipe to receive SIGPIPE (git diff always runs to completion), AND its exit status
+# is captured directly — unlike an earlier process-substitution fix for this same SIGPIPE
+# bug, which fixed the crash but lost git-diff-failure detection entirely (a bad
+# `MERGE_BASE` or other git error would silently classify as EXEMPT on the resulting empty
+# input instead of hard-failing the gate).
+GIT_DIFF_TMPFILE="$(mktemp)"
+trap 'rm -f "$GIT_DIFF_TMPFILE"' EXIT
+if ! git diff --diff-filter=ACMR "$MERGE_BASE"...HEAD -- \
+        Source/Core Source/Plugins Source/Standalone tests >"$GIT_DIFF_TMPFILE" 2>/dev/null; then
+    echo "[coverage-delta-gate] FAIL — git diff failed (bad MERGE_BASE '$MERGE_BASE' or git error)" >&2
+    exit 1
+fi
+EXEMPTION="$(_classify_diff < "$GIT_DIFF_TMPFILE")"
 if [ "$EXEMPTION" = "EXEMPT" ]; then
     echo "[coverage-delta-gate] PASS — test-light exemption: every product-code"
     echo "[coverage-delta-gate]        change is no-new-runtime-surface"
@@ -821,7 +853,7 @@ for f in "${PROD_CHANGES[@]}"; do
     echo "  - $f"
 done
 echo
-echo "Add tests under tests/Core/ (or tests/Lua/, tests/Plugins/, tests/ui/) for the"
+echo "Add tests under tests/Core/ (or tests/Commands/, tests/Lua/, tests/Plugins/, tests/ui/) for the"
 echo "changed units. Changes that add no new runtime surface (comment-only,"
 echo "logging-only, static_assert-only, forward-declaration-only, include-only,"
 echo "preprocessor-guard-only, swallow->log catch) are auto-exempted; if yours"

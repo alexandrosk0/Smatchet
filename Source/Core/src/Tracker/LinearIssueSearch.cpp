@@ -362,6 +362,12 @@ FetchIssuesForKeysViaGraphQl(const std::string& apiUrl, const std::string& apiKe
     if (parse.Fatal) {
         LOG_ERROR("LinearIssueSearch::FetchIssuesForKeysViaGraphQl: HTTP %ld — %s", resp.status_code,
                   parse.Error.c_str());
+        // A fatal parse on a 2xx (200-with-GraphQL-errors, or a 2xx-non-200) would
+        // classify as Ok() via TrackerErrorFromHttpStatus (Kind==None, detail
+        // discarded), swallowing the failure. Carry the detail under a non-OK kind (DR20).
+        if (resp.status_code >= 200 && resp.status_code < 300) {
+            return FetchResult::Err(TrackerErrorUnknown(parse.Error, static_cast<int>(resp.status_code)));
+        }
         return FetchResult::Err(TrackerErrorFromHttpStatus(static_cast<int>(resp.status_code), parse.Error));
     }
     outTickets = std::move(parse.Tickets);

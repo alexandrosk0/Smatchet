@@ -1,0 +1,389 @@
+<title>Smatchet — Repo Health</title>
+<!--
+  Repo-health dashboard TEMPLATE. Rendered by tools/repo-health/generate.py via
+  double-brace placeholder substitution. Edit design/markup here; edit data in
+  facts.json or the computed collectors in generate.py. Never hand-fill
+  placeholders — run the generator.
+-->
+<style>
+  /* ============ Token system — dark is the base :root ============ */
+  :root{
+    --bg:#0e1116; --bg-2:#151a21; --bg-3:#1b222b; --bg-inset:#0a0d11;
+    --border:#242c37; --border-strong:#333d4a;
+    --ink:#e7edf3; --ink-2:#a7b4c2; --ink-3:#6d7c8c;
+    --accent:#4aa8ff; --accent-ink:#8ecbff; --accent-dim:rgba(74,168,255,.13);
+    --ok:#3fb950; --ok-dim:rgba(63,185,80,.14);
+    --warn:#d6a220; --warn-dim:rgba(214,162,32,.15);
+    --crit:#f85149; --crit-dim:rgba(248,81,73,.14);
+    --idle:#5c6875; --idle-dim:rgba(120,134,150,.14);
+    --grid:rgba(255,255,255,.022);
+    --shadow:0 1px 0 rgba(255,255,255,.02) inset, 0 8px 24px -12px rgba(0,0,0,.6);
+  }
+  @media (prefers-color-scheme: light){
+    :root{
+      --bg:#eef1f5; --bg-2:#ffffff; --bg-3:#f4f6f9; --bg-inset:#e8ecf1;
+      --border:#dde3ea; --border-strong:#c6cfda;
+      --ink:#161d26; --ink-2:#48545f; --ink-3:#6d7887;
+      --accent:#0a6fdb; --accent-ink:#0a6fdb; --accent-dim:rgba(10,111,219,.10);
+      --ok:#1a7f37; --ok-dim:rgba(26,127,55,.11);
+      --warn:#9a6700; --warn-dim:rgba(154,103,0,.12);
+      --crit:#cf222e; --crit-dim:rgba(207,34,46,.10);
+      --idle:#7a8592; --idle-dim:rgba(122,133,146,.13);
+      --grid:rgba(20,30,50,.03);
+      --shadow:0 1px 0 rgba(255,255,255,.7) inset, 0 6px 18px -12px rgba(20,30,50,.28);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0e1116; --bg-2:#151a21; --bg-3:#1b222b; --bg-inset:#0a0d11;
+    --border:#242c37; --border-strong:#333d4a;
+    --ink:#e7edf3; --ink-2:#a7b4c2; --ink-3:#6d7c8c;
+    --accent:#4aa8ff; --accent-ink:#8ecbff; --accent-dim:rgba(74,168,255,.13);
+    --ok:#3fb950; --ok-dim:rgba(63,185,80,.14);
+    --warn:#d6a220; --warn-dim:rgba(214,162,32,.15);
+    --crit:#f85149; --crit-dim:rgba(248,81,73,.14);
+    --idle:#5c6875; --idle-dim:rgba(120,134,150,.14);
+    --grid:rgba(255,255,255,.022);
+    --shadow:0 1px 0 rgba(255,255,255,.02) inset, 0 8px 24px -12px rgba(0,0,0,.6);
+  }
+  :root[data-theme="light"]{
+    --bg:#eef1f5; --bg-2:#ffffff; --bg-3:#f4f6f9; --bg-inset:#e8ecf1;
+    --border:#dde3ea; --border-strong:#c6cfda;
+    --ink:#161d26; --ink-2:#48545f; --ink-3:#6d7887;
+    --accent:#0a6fdb; --accent-ink:#0a6fdb; --accent-dim:rgba(10,111,219,.10);
+    --ok:#1a7f37; --ok-dim:rgba(26,127,55,.11);
+    --warn:#9a6700; --warn-dim:rgba(154,103,0,.12);
+    --crit:#cf222e; --crit-dim:rgba(207,34,46,.10);
+    --idle:#7a8592; --idle-dim:rgba(122,133,146,.13);
+    --grid:rgba(20,30,50,.03);
+    --shadow:0 1px 0 rgba(255,255,255,.7) inset, 0 6px 18px -12px rgba(20,30,50,.28);
+  }
+  :root{
+    --sans: system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --mono: ui-monospace,"SF Mono","Cascadia Code","JetBrains Mono",Menlo,Consolas,monospace;
+  }
+
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    font-size:15px; line-height:1.5; -webkit-font-smoothing:antialiased;
+    background-image:
+      linear-gradient(var(--grid) 1px,transparent 1px),
+      linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+    background-size:34px 34px;
+  }
+  .wrap{max-width:1120px; margin:0 auto; padding:34px 24px 60px}
+
+  .mono{font-family:var(--mono)}
+  .tnum{font-variant-numeric:tabular-nums}
+  .eyebrow{font-family:var(--mono); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-3); font-weight:600}
+
+  header.top{display:flex; align-items:flex-end; justify-content:space-between; gap:20px; flex-wrap:wrap; padding-bottom:20px; margin-bottom:26px; border-bottom:1px solid var(--border)}
+  .brand{display:flex; align-items:center; gap:13px}
+  .glyph{width:38px; height:38px; flex:none; border-radius:9px; background:var(--accent-dim); border:1px solid var(--border-strong); display:grid; place-items:center; font-size:19px; box-shadow:var(--shadow)}
+  .brand h1{margin:0; font-size:20px; font-weight:700; letter-spacing:-.01em; line-height:1.1}
+  .brand .sub{font-family:var(--mono); font-size:11.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--accent-ink); font-weight:600}
+  .hmeta{display:flex; flex-direction:column; align-items:flex-end; gap:9px}
+  .stamp{font-family:var(--mono); font-size:11.5px; color:var(--ink-3); letter-spacing:.03em}
+  .chips{display:flex; gap:7px; flex-wrap:wrap; justify-content:flex-end}
+  .chip{font-family:var(--mono); font-size:11px; font-weight:600; padding:4px 9px; border-radius:6px; border:1px solid var(--border-strong); color:var(--ink-2); background:var(--bg-2); display:inline-flex; align-items:center; gap:6px; letter-spacing:.02em}
+  .chip.on{color:var(--ok); border-color:color-mix(in srgb,var(--ok) 45%,var(--border))}
+  .chip .dot{width:6px; height:6px; border-radius:50%; background:currentColor; box-shadow:0 0 0 3px color-mix(in srgb,currentColor 22%,transparent)}
+
+  section{margin-top:34px}
+  .sec-head{display:flex; align-items:baseline; gap:12px; margin-bottom:14px}
+  .sec-head h2{margin:0; font-size:14px; font-weight:700; letter-spacing:.01em; text-wrap:balance}
+  .sec-head .rule{flex:1; height:1px; background:var(--border)}
+  .sec-head .count{font-family:var(--mono); font-size:11.5px; color:var(--ink-3)}
+
+  .card{background:var(--bg-2); border:1px solid var(--border); border-radius:12px; box-shadow:var(--shadow)}
+
+  .scorecard{display:grid; grid-template-columns:repeat(3,1fr); gap:12px}
+  .item{position:relative; padding:15px 16px 15px 18px; overflow:hidden; transition:transform .14s ease, border-color .14s ease}
+  .item::before{content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--stripe,var(--idle))}
+  .item:hover{transform:translateY(-2px); border-color:var(--border-strong)}
+  .item .num{font-family:var(--mono); font-size:11px; color:var(--ink-3); font-weight:600}
+  .item h3{margin:3px 0 0; font-size:14.5px; font-weight:650; letter-spacing:-.005em; line-height:1.25}
+  .item p{margin:9px 0 0; font-size:12.5px; color:var(--ink-2); line-height:1.45}
+  .item .pill{margin-top:11px}
+  .pill{display:inline-flex; align-items:center; gap:6px; font-family:var(--mono); font-size:10.5px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; padding:3px 8px; border-radius:20px; border:1px solid transparent}
+  .pill .dot{width:6px; height:6px; border-radius:50%; background:currentColor}
+  .p-ok{color:var(--ok); background:var(--ok-dim); border-color:color-mix(in srgb,var(--ok) 30%,transparent)}
+  .p-warn{color:var(--warn); background:var(--warn-dim); border-color:color-mix(in srgb,var(--warn) 30%,transparent)}
+  .p-idle{color:var(--idle); background:var(--idle-dim); border-color:color-mix(in srgb,var(--idle) 32%,transparent)}
+  .p-crit{color:var(--crit); background:var(--crit-dim); border-color:color-mix(in srgb,var(--crit) 30%,transparent)}
+  .st-ok{--stripe:var(--ok)} .st-warn{--stripe:var(--warn)} .st-idle{--stripe:var(--idle)}
+
+  .kpis{display:grid; grid-template-columns:repeat(6,1fr); gap:12px}
+  .kpi{padding:14px 15px; display:flex; flex-direction:column; gap:2px}
+  .kpi .k-label{font-family:var(--mono); font-size:10px; letter-spacing:.11em; text-transform:uppercase; color:var(--ink-3); font-weight:600}
+  .kpi .k-val{font-family:var(--mono); font-size:26px; font-weight:680; letter-spacing:-.02em; line-height:1.15; margin-top:5px}
+  .kpi .k-val .unit{font-size:13px; color:var(--ink-3); font-weight:600; margin-left:2px}
+  .kpi .k-foot{font-size:11.5px; color:var(--ink-2); margin-top:3px}
+  .kpi .k-foot b{color:var(--ink); font-weight:650}
+  .kpi.accent .k-val{color:var(--accent-ink)}
+  .kpi.ok .k-val{color:var(--ok)}
+
+  .cols{display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:start}
+  .panel{padding:16px 17px}
+  .panel .p-title{display:flex; align-items:center; gap:9px; margin-bottom:14px}
+  .panel .p-title h3{margin:0; font-size:13px; font-weight:700; letter-spacing:.01em}
+  .panel .p-title .tag{margin-left:auto; font-family:var(--mono); font-size:11px; color:var(--ink-3)}
+
+  .bd{display:flex; flex-direction:column; gap:11px}
+  .bd-row{display:grid; grid-template-columns:70px 1fr auto; align-items:center; gap:11px}
+  .bd-row .lab{font-family:var(--mono); font-size:11px; color:var(--ink-2); letter-spacing:.02em}
+  .track{height:8px; border-radius:5px; background:var(--bg-inset); overflow:hidden; border:1px solid var(--border)}
+  .fill{height:100%; border-radius:5px}
+  .bd-row .amt{font-family:var(--mono); font-size:11.5px; color:var(--ink-3); text-align:right}
+  .resolved-note{margin-top:14px; padding-top:13px; border-top:1px dashed var(--border); display:flex; align-items:center; gap:9px; font-size:12.5px; color:var(--ink-2)}
+  .big-ok{font-family:var(--mono); font-weight:700; color:var(--ok); font-size:13px}
+
+  .lanes{display:flex; flex-direction:column; gap:2px}
+  .lane{display:flex; align-items:center; gap:11px; padding:9px 4px; border-bottom:1px solid var(--border)}
+  .lane:last-child{border-bottom:0}
+  .lane .sdot{width:9px; height:9px; border-radius:50%; flex:none}
+  .sdot.ok{background:var(--ok); box-shadow:0 0 0 3px var(--ok-dim)}
+  .sdot.idle{background:var(--idle); box-shadow:0 0 0 3px var(--idle-dim)}
+  .sdot.crit{background:var(--crit); box-shadow:0 0 0 3px var(--crit-dim)}
+  .lane .l-name{font-size:13px; color:var(--ink); font-weight:550}
+  .lane .l-name small{display:block; font-family:var(--mono); font-size:10.5px; color:var(--ink-3); font-weight:400; letter-spacing:.02em; margin-top:1px}
+  .lane .l-stat{margin-left:auto; font-family:var(--mono); font-size:11px; font-weight:700; letter-spacing:.05em; text-transform:uppercase}
+  .l-stat.ok{color:var(--ok)} .l-stat.idle{color:var(--idle)}
+  .lane .l-when{font-family:var(--mono); font-size:11px; color:var(--ink-3); min-width:74px; text-align:right}
+
+  .prs{display:flex; flex-direction:column}
+  .pr{display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:12px; padding:11px 4px; border-bottom:1px solid var(--border); transition:background .12s}
+  .pr:last-child{border-bottom:0}
+  .pr:hover{background:var(--bg-3)}
+  .pr .id{font-family:var(--mono); font-size:12.5px; font-weight:700; color:var(--accent-ink)}
+  .pr .desc{min-width:0}
+  .pr .desc .t{font-size:12.5px; color:var(--ink); font-weight:550; line-height:1.3}
+  .pr .desc .m{font-family:var(--mono); font-size:10.5px; color:var(--ink-3); margin-top:2px; letter-spacing:.02em}
+
+  .gov{display:flex; flex-direction:column}
+  .gv{display:flex; align-items:flex-start; gap:11px; padding:11px 4px; border-bottom:1px solid var(--border)}
+  .gv:last-child{border-bottom:0}
+  .gv .ic{width:22px; height:22px; flex:none; border-radius:6px; display:grid; place-items:center; font-size:11px; font-weight:700; font-family:var(--mono); background:var(--ok-dim); color:var(--ok); border:1px solid color-mix(in srgb,var(--ok) 30%,transparent)}
+  .gv .g-body .g-t{font-size:12.5px; color:var(--ink); font-weight:600}
+  .gv .g-body .g-d{font-size:11.5px; color:var(--ink-2); margin-top:2px; line-height:1.4}
+  .gv .g-body .g-d code{font-family:var(--mono); font-size:11px; background:var(--bg-inset); padding:1px 5px; border-radius:4px; border:1px solid var(--border); color:var(--ink-2)}
+
+  .stack{height:26px; border-radius:7px; overflow:hidden; display:flex; border:1px solid var(--border); background:var(--bg-inset)}
+  .stack > span{display:flex; align-items:center; justify-content:center; font-family:var(--mono); font-size:11px; font-weight:700; color:#fff; min-width:0}
+  .legend{display:flex; gap:16px; flex-wrap:wrap; margin-top:12px}
+  .lg{display:flex; align-items:center; gap:7px; font-size:12px; color:var(--ink-2)}
+  .lg .sw{width:11px; height:11px; border-radius:3px}
+  .lg b{color:var(--ink); font-family:var(--mono); font-weight:700}
+
+  .cats{display:flex; flex-direction:column; gap:9px; margin-top:2px}
+  .cat{display:grid; grid-template-columns:78px 1fr 34px; align-items:center; gap:11px}
+  .cat .cl{font-family:var(--mono); font-size:11px; color:var(--ink-2); letter-spacing:.02em}
+  .cat .amt{font-family:var(--mono); font-size:11.5px; color:var(--ink-3); text-align:right}
+
+  footer{margin-top:44px; padding-top:18px; border-top:1px solid var(--border); display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap}
+  footer .srcs{font-family:var(--mono); font-size:11px; color:var(--ink-3); line-height:1.9}
+  footer .srcs b{color:var(--ink-2); font-weight:600}
+  footer .note{font-size:11.5px; color:var(--ink-3); max-width:320px; text-align:right}
+  footer .note .mono{font-size:11px}
+
+  @media (prefers-reduced-motion: no-preference){
+    .reveal{opacity:0; transform:translateY(8px); animation:rise .5s cubic-bezier(.2,.7,.3,1) forwards}
+    .d1{animation-delay:.04s}.d2{animation-delay:.1s}.d3{animation-delay:.16s}.d4{animation-delay:.22s}
+    @keyframes rise{to{opacity:1; transform:none}}
+  }
+  @media (max-width:880px){
+    .scorecard{grid-template-columns:1fr 1fr}
+    .kpis{grid-template-columns:repeat(3,1fr)}
+    .cols{grid-template-columns:1fr}
+  }
+  @media (max-width:560px){
+    .scorecard{grid-template-columns:1fr}
+    .kpis{grid-template-columns:1fr 1fr}
+    .hmeta{align-items:flex-start}
+    header.top{align-items:flex-start}
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="top reveal">
+    <div class="brand">
+      <div class="glyph">🗡️</div>
+      <div>
+        <h1>Smatchet</h1>
+        <span class="sub">Repo Health</span>
+      </div>
+    </div>
+    <div class="hmeta">
+      <span class="stamp mono">{{STAMP}}</span>
+      <div class="chips">
+        {{FACTS_FRESHNESS}}
+        {{GOV_CHIPS}}
+      </div>
+    </div>
+  </header>
+
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">Fable‑5 improvement campaign</span>
+      <span class="rule"></span>
+      <span class="count mono">{{CAMPAIGN_SUMMARY}}</span>
+    </div>
+    <div class="scorecard">
+{{SCORECARD}}
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">Headline metrics</span>
+      <span class="rule"></span>
+    </div>
+    <div class="kpis">
+      <div class="card kpi ok reveal d1">
+        <span class="k-label">Audit findings</span>
+        <span class="k-val tnum">{{AUDIT_TOTAL}}<span class="unit">/{{AUDIT_TOTAL2}}</span></span>
+        <span class="k-foot"><b>{{AUDIT_FIXED}} fixed</b> · {{AUDIT_ACCEPTED}} accepted</span>
+      </div>
+      <div class="card kpi accent reveal d1">
+        <span class="k-label">Test coverage</span>
+        <span class="k-val tnum">{{COV_TU_PCT}}<span class="unit">% TU</span></span>
+        <span class="k-foot"><b>{{COV_TU_FRAC}}</b> Core TUs</span>
+      </div>
+      <div class="card kpi reveal d2">
+        <span class="k-label">Coverage · LOC</span>
+        <span class="k-val tnum">{{COV_LOC_PCT}}<span class="unit">%</span></span>
+        <span class="k-foot"><b>{{COV_LOC_FRAC}}</b> lines</span>
+      </div>
+      <div class="card kpi reveal d2">
+        <span class="k-label">Fuzz targets</span>
+        <span class="k-val tnum">{{FUZZ_N}}</span>
+        <span class="k-foot">{{TEST_TU_N}} test TUs total</span>
+      </div>
+      <div class="card kpi reveal d3">
+        <span class="k-label">Active plans</span>
+        <span class="k-val tnum">{{PLANS_ACTIVE}}</span>
+        <span class="k-foot">{{PLANS_DEFERRED}} deferred · <b>{{PLANS_SHIPPED}} shipped</b></span>
+      </div>
+      <div class="card kpi reveal d3">
+        <span class="k-label">Improvements</span>
+        <span class="k-val tnum">{{APPLIED_N}}</span>
+        <span class="k-foot">self‑improvement, applied</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="cols">
+      <div style="display:flex;flex-direction:column;gap:16px">
+        <div class="card panel reveal d1">
+          <div class="p-title">
+            <h3>Audit burn‑down</h3>
+            <span class="tag mono">CPP_CODE_AUDIT.md</span>
+          </div>
+          <div class="bd">
+            <div class="bd-row">
+              <span class="lab">High</span>
+              <div class="track"><div class="fill" style="width:100%;background:var(--crit)"></div></div>
+              <span class="amt">{{AUDIT_HIGH}} · fixed</span>
+            </div>
+            <div class="bd-row">
+              <span class="lab">Medium</span>
+              <div class="track"><div class="fill" style="width:100%;background:var(--warn)"></div></div>
+              <span class="amt">{{AUDIT_MED}} · fixed</span>
+            </div>
+            <div class="bd-row">
+              <span class="lab">Low</span>
+              <div class="track"><div class="fill" style="width:{{AUDIT_LOW_PCT}}%;background:var(--ok)"></div></div>
+              <span class="amt">{{AUDIT_LOW}} · {{AUDIT_LOW_FIXED}} + {{AUDIT_LOW_ACCEPTED}}*</span>
+            </div>
+          </div>
+          <div class="resolved-note">
+            <span class="big-ok mono">100% addressed</span>
+            <span>every finding fixed or accepted as documented deviation (*{{AUDIT_ACCEPTED}} latent‑risk).</span>
+          </div>
+        </div>
+
+        <div class="card panel reveal d2">
+          <div class="p-title">
+            <h3>CI advisory lanes</h3>
+            <span class="tag mono">nightly · off merge‑gate</span>
+          </div>
+          <div class="lanes">
+{{LANES}}
+          </div>
+          <div class="resolved-note" style="border-top:0;padding-top:11px;margin-top:6px">
+            <span>{{TRIAGE_NOTE}}</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:16px">
+        <div class="card panel reveal d2">
+          <div class="p-title">
+            <h3>Open agent PRs</h3>
+            <span class="tag mono">{{PR_COUNT}} open</span>
+          </div>
+          <div class="prs">
+{{PRS}}
+          </div>
+        </div>
+
+        <div class="card panel reveal d3">
+          <div class="p-title">
+            <h3>Governance &amp; automation</h3>
+            <span class="tag mono">AI_POLICY.md</span>
+          </div>
+          <div class="gov">
+{{GOV_LIST}}
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="cols">
+      <div class="card panel reveal d1">
+        <div class="p-title">
+          <h3>Self‑improvement backlog</h3>
+          <span class="tag mono">tracked · by category</span>
+        </div>
+        <div class="cats">
+{{BACKLOG_CATS}}
+        </div>
+      </div>
+
+      <div class="card panel reveal d2">
+        <div class="p-title">
+          <h3>Plan lifecycle</h3>
+          <span class="tag mono">{{PLANS_TOTAL}} total</span>
+        </div>
+        <div class="stack">
+{{PLANS_STACK}}
+        </div>
+        <div class="legend">
+          <span class="lg"><span class="sw" style="background:var(--accent)"></span>Active <b>{{PLANS_ACTIVE}}</b></span>
+          <span class="lg"><span class="sw" style="background:var(--idle)"></span>Deferred <b>{{PLANS_DEFERRED}}</b></span>
+          <span class="lg"><span class="sw" style="background:var(--ok)"></span>Shipped <b>{{PLANS_SHIPPED}}</b></span>
+        </div>
+        <div class="resolved-note" style="margin-top:22px">
+          <span style="font-size:12.5px">A <b style="color:var(--ink)">{{SHIP_RATE}}% ship rate</b> across the plan corpus — the working set stays small; finished design docs move to <code style="font-family:var(--mono);font-size:11px;background:var(--bg-inset);padding:1px 5px;border-radius:4px;border:1px solid var(--border)">docs/plans/shipped/</code>.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="srcs">
+      <b>Sources</b><br>
+      CPP_CODE_AUDIT.md · SECURITY_AUDIT.md · TEST_COVERAGE_GAP_MAP.md<br>
+      docs/self‑improvement/ · docs/plans/ · GitHub Actions · trigger registry
+    </div>
+    <div class="note">
+      Generated by <span class="mono">tools/repo-health/generate.py</span> · <span class="mono">{{GEN_AT}}</span>. Tree metrics recomputed each run; live CI/PR &amp; verdicts from <span class="mono">facts.json</span>.
+    </div>
+  </footer>
+
+</div>

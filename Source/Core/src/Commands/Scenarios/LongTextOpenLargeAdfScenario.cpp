@@ -18,7 +18,6 @@
 
 #include "Commands/Scenarios/IScenario.h"
 
-#include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "TicketFieldEditorLongTextPure.h"
 #include "UiPerfMonitor.h"
@@ -64,7 +63,7 @@ class LongTextOpenLargeAdfScenario : public IScenario {
   public:
     std::string Name() const override { return "long-text-open-large-adf"; }
 
-    void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& /*outErr*/) override {
+    void OnStart(IAppScenarioHost& /*app*/, const nlohmann::json& args, std::string& /*outErr*/) override {
         frames_ = (std::max)(1, args.value("frames", 600));
         UiPerfMonitor::Instance().Reset();
 
@@ -86,7 +85,7 @@ class LongTextOpenLargeAdfScenario : public IScenario {
         droppedCount_ = droppedNodes.size();
     }
 
-    void OnFrame(AppController& /*app*/, int /*frameIndex*/) override {
+    void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override {
         // Steady-state observer; the seed compute happened in OnStart. With
         // the worker dispatch in production these frames would coincide with
         // a "Loading description…" banner — we just verify the UI thread is
@@ -95,7 +94,7 @@ class LongTextOpenLargeAdfScenario : public IScenario {
 
     bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
         double topMs = 0.0;
         std::string topName;

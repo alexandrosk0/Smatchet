@@ -10,6 +10,9 @@
 #if defined(SMATCHET_WITH_AI)
 
 #include "SmatchetPreferencesUi_detail.h"
+// clang-format off
+// SMATCHET_DEVIATION(rule=duplication; reason=the WIN32 lean-and-mean preamble + AI-cluster include run is grandfathered boilerplate shared with SmatchetPreferencesUi_Whisper.cpp and SmatchetAiAssistantUi.cpp; adding the Commands/IMainThreadPoster.h include (fan-in Phase 6 T4 dispatcher de-publicizing) re-hashed the clone windows vs both siblings — not a real copy-paste; owner=orchestrator; revisit=when the AI-surface include prologue is factored into a shared header)
+// clang-format on
 #include "SmatchetUI.h"
 #include "ConfigManager.h"
 #include "SmatchetToast.h"
@@ -22,6 +25,7 @@
 #include "AiTypes.h"
 #include "IAiClient.h"
 #include "AppController.h"
+#include "Commands/IMainThreadPoster.h"
 #include "Logger.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetHelpMarker.h"
@@ -104,8 +108,10 @@ void SeedAssistantBuffers(AssistantPrefsBuffers& b, UiDrawSession& d, const Trac
     }
 }
 
-// Any field edit invalidates a stale Test-connection result.
+// Any field edit invalidates a stale Test-connection result. Bumping the
+// generation also invalidates an in-flight probe's pending verdict.
 void ClearStaleTestResult(UiDrawSession& d) {
+    ++d.assistantPrefsTestGeneration;
     if (!d.assistantPrefsTestInFlight) {
         d.assistantPrefsTestResult.clear();
         d.assistantPrefsTestResultType = 0;
@@ -163,17 +169,62 @@ void ResolveProbeEndpoint(const TrackerConfig& probeCfg, AiProvider provider, st
     }
 }
 
+// Main-thread commit of the probe verdict. Drops the result when a field edit
+// bumped the generation mid-flight — the verdict describes bytes the user no
+// longer has configured.
+void CommitProbeVerdict(const std::string& errMsg, AiProvider provider, const std::string& defaultedBaseUrl,
+                        std::uint64_t generation) {
+    g_ui.assistantPrefsTestInFlight = false;
+    if (generation != g_ui.assistantPrefsTestGeneration) {
+        g_ui.assistantPrefsTestResult.clear();
+        g_ui.assistantPrefsTestResultType = 0;
+        return;
+    }
+    if (errMsg.empty()) {
+        // SMATCHET_DEVIATION(rule=duplication; reason=verdict-commit twin of
+        // AiPrefsTestConnection::PublishProbeResult — differs in target (working copy vs cfg) + the generation
+        // guard above; lockstep until the planned twin dedup; owner=user-text-error-pass; revisit=2026-09-30)
+        LOG_INFO("Preferences: Test connection VERIFIED providerKind=%d defaultedBaseUrl='%s'",
+                 static_cast<int>(provider), defaultedBaseUrl.c_str());
+        g_ui.assistantPrefsTestResult = "Verified";
+        g_ui.assistantPrefsTestResultType = 1;
+        // On success with a defaulted URL, write the default into the
+        // Assistant tab's WORKING copy (not cfg — the explicit-Save flow
+        // owns the cfg write) + force a buffer reseed so the field shows the
+        // value the probe used. The user then clicks Save to persist it.
+        if (!defaultedBaseUrl.empty()) {
+            if (provider == AiProvider::OllamaOpenAiCompat) {
+                g_ui.assistantPrefsWorking.AiBaseUrl = defaultedBaseUrl;
+            } else if (provider == AiProvider::OllamaNative) {
+                g_ui.assistantPrefsWorking.AiOllamaBaseUrl = defaultedBaseUrl;
+            } else if (provider == AiProvider::DeepSeek) {
+                g_ui.assistantPrefsWorking.AiDeepSeekBaseUrl = defaultedBaseUrl;
+            }
+            g_ui.assistantPrefsForceBufferReseed = true;
+        }
+    } else {
+        LOG_ERROR("Preferences: Test connection FAILED providerKind=%d errMsg='%s'", static_cast<int>(provider),
+                  errMsg.c_str());
+        g_ui.assistantPrefsTestResult = std::string("Failed: ") + errMsg;
+        g_ui.assistantPrefsTestResultType = 2;
+    }
+}
+
 // Worker-thread body — reachability GET + a real 1-token chat handshake.
 // Pure of ImGui; runs on the joined background-task pool. Posts the verdict
-// back through the dispatcher.
+// back through the poster.
 void RunProbeWorker(AiProvider provider, AiClientConfig clientCfg, std::shared_ptr<std::atomic<bool>> cancel,
-                    std::string defaultedBaseUrl, std::string modelId, MainThreadDispatcher& dispatcher) {
+                    std::string defaultedBaseUrl, std::string modelId, std::uint64_t generation,
+                    IMainThreadPoster& poster) {
     std::string errMsg;
     // Defensive try/catch — `MakeAiClient` / `ProbeReachability` /
     // `SendStreaming` all run third-party transport (cpr/libcurl) +
     // SSE parser code. An uncaught exception here would propagate out of the
     // background task and call `std::terminate`. Trap it, surface as a failure
     // result via the existing dispatcher path so UI state recovers.
+    const char* const internalErrMsg =
+        SmatchetLocalization::T("prefs.assistant.test_internal_error",
+                                "the request could not be completed — check the endpoint URL and try again");
     try {
         std::unique_ptr<IAiClient> client = AiClientFactory::MakeAiClient(provider);
         if (!client) {
@@ -217,41 +268,21 @@ void RunProbeWorker(AiProvider provider, AiClientConfig clientCfg, std::shared_p
                 }
             }
         }
+        // SMATCHET_DEVIATION(rule=duplication; reason=test-connection probe twins (AiPrefsTestConnection vs Preferences
+        // UI worker) predate this pass; the identical localized catch-handling keeps both twins consistent until the
+        // planned twin dedup; owner=user-text-error-pass; revisit=2026-09-30)
     } catch (const std::exception& ex) {
-        errMsg = std::string("internal error: ") + ex.what();
+        LOG_WARN("Assistant test-connection: %s", ex.what());
+        errMsg = internalErrMsg;
     } catch (...) {
-        errMsg = "internal error: unknown exception";
+        LOG_WARN("Assistant test-connection: unknown exception");
+        errMsg = internalErrMsg;
     }
-    dispatcher.PostToMainThread([errMsg, cancel, provider, defaultedBaseUrl]() {
+    poster.PostToMainThread([errMsg, cancel, provider, defaultedBaseUrl, generation]() {
         if (cancel && cancel->load()) {
             return;
         }
-        g_ui.assistantPrefsTestInFlight = false;
-        if (errMsg.empty()) {
-            LOG_INFO("Preferences: Test connection VERIFIED providerKind=%d defaultedBaseUrl='%s'",
-                     static_cast<int>(provider), defaultedBaseUrl.c_str());
-            g_ui.assistantPrefsTestResult = "Verified";
-            g_ui.assistantPrefsTestResultType = 1;
-            // On success with a defaulted URL, write the default into the
-            // Assistant tab's WORKING copy (not cfg — the explicit-Save flow
-            // owns the cfg write) + force a buffer reseed so the field shows the
-            // value the probe used. The user then clicks Save to persist it.
-            if (!defaultedBaseUrl.empty()) {
-                if (provider == AiProvider::OllamaOpenAiCompat) {
-                    g_ui.assistantPrefsWorking.AiBaseUrl = defaultedBaseUrl;
-                } else if (provider == AiProvider::OllamaNative) {
-                    g_ui.assistantPrefsWorking.AiOllamaBaseUrl = defaultedBaseUrl;
-                } else if (provider == AiProvider::DeepSeek) {
-                    g_ui.assistantPrefsWorking.AiDeepSeekBaseUrl = defaultedBaseUrl;
-                }
-                g_ui.assistantPrefsForceBufferReseed = true;
-            }
-        } else {
-            LOG_ERROR("Preferences: Test connection FAILED providerKind=%d errMsg='%s'", static_cast<int>(provider),
-                      errMsg.c_str());
-            g_ui.assistantPrefsTestResult = std::string("Failed: ") + errMsg;
-            g_ui.assistantPrefsTestResultType = 2;
-        }
+        CommitProbeVerdict(errMsg, provider, defaultedBaseUrl, generation);
     });
 }
 
@@ -267,6 +298,7 @@ void LaunchTestProbe(AppController& app, UiDrawSession& d, TrackerConfig probeCf
     d.assistantPrefsTestResultType = 0;
     d.assistantPrefsTestCancel = std::make_shared<std::atomic<bool>>(false);
     auto cancel = d.assistantPrefsTestCancel;
+    const std::uint64_t generation = ++d.assistantPrefsTestGeneration;
 
     std::string apiKey;
     std::string baseUrl;
@@ -299,11 +331,10 @@ void LaunchTestProbe(AppController& app, UiDrawSession& d, TrackerConfig probeCf
     clientCfg.ConnectTimeoutMs = 5000;
     clientCfg.TotalTimeoutMs = 15000;
 
-    MainThreadDispatcher& dispatcher = app.mainThreadDispatcher;
     // Joined background-task pool (not a raw detached thread — forbidden by the
-    // no-detach lint); joined at shutdown so &dispatcher stays valid for the task.
-    app.LaunchBackgroundTask([provider, clientCfg, cancel, defaultedBaseUrl, modelId, &dispatcher]() {
-        RunProbeWorker(provider, clientCfg, cancel, defaultedBaseUrl, modelId, dispatcher);
+    // no-detach lint); joined at shutdown so &app stays valid for the task.
+    app.LaunchBackgroundTask([provider, clientCfg, cancel, defaultedBaseUrl, modelId, generation, &app]() {
+        RunProbeWorker(provider, clientCfg, cancel, defaultedBaseUrl, modelId, generation, app);
     });
 }
 
@@ -441,6 +472,14 @@ void RenderModelPicker(UiDrawSession& d, const char* comboLabel, const char* fre
     if (it != catalog.end()) {
         selectedIdx = static_cast<int>(std::distance(catalog.begin(), it));
     }
+    if (selectedIdx < 0 && modelBuf[0] == '\0') {
+        // Persist the implied catalog default the combo is about to display so
+        // Test connection / Save use the model the user sees.
+        std::snprintf(modelBuf, modelBufCap, "%s", catalog[0].Id.c_str());
+        cfgField = modelBuf;
+        ClearStaleTestResult(d); // seeding the implied default is a model change like the other branches
+        selectedIdx = 0;
+    }
     int comboIdx = (selectedIdx >= 0) ? selectedIdx : 0;
     if (ImGui::Combo(comboLabel, &comboIdx, displayPtrs.data(), static_cast<int>(displayPtrs.size()))) {
         std::snprintf(modelBuf, modelBufCap, "%s", catalog[static_cast<std::size_t>(comboIdx)].Id.c_str());
@@ -514,8 +553,8 @@ void RenderCustomEndpointConsent(UiDrawSession& d, AiProvider prov, bool& flag, 
 
 // Per-provider credential fields (key / model / base URL + custom-endpoint
 // consent), auto-saved on every edit. One branch per provider kind.
-void RenderProviderCredentials(UiDrawSession& d, TrackerConfig& work, AiProvider selectedKind,
-                               AssistantPrefsBuffers& b, int& consentModalProvider) {
+void RenderProviderCredentials(UiDrawSession& d, TrackerConfig& work, AiProvider selectedKind, AssistantPrefsBuffers& b,
+                               int& consentModalProvider) {
     if (selectedKind == AiProvider::OpenAi || selectedKind == AiProvider::OllamaOpenAiCompat) {
         const bool isLocalCompat = (selectedKind == AiProvider::OllamaOpenAiCompat);
         const char* keyLabel = isLocalCompat ? "API key (optional for local)" : "OpenAI API key";
@@ -549,6 +588,12 @@ void RenderProviderCredentials(UiDrawSession& d, TrackerConfig& work, AiProvider
         }
         RenderModelPicker(d, "Anthropic model", "Anthropic model", "", AiProvider::Anthropic, b.anthropicModelBuf,
                           sizeof(b.anthropicModelBuf), work.AiModelAnthropic);
+        // AiBaseUrl is shared with the OpenAI branch above — the probe + client
+        // resolve Anthropic through the same field (see ResolveProbeEndpoint).
+        if (ImGui::InputTextWithHint("Base URL", "https://api.anthropic.com", b.baseUrlBuf, sizeof(b.baseUrlBuf))) {
+            work.AiBaseUrl = b.baseUrlBuf;
+            ClearStaleTestResult(d);
+        }
         RenderCustomEndpointConsent(d, AiProvider::Anthropic, work.AiAllowCustomEndpointAnthropic, "Anthropic",
                                     "api.anthropic.com", consentModalProvider);
     } else if (selectedKind == AiProvider::OllamaNative) {
@@ -702,8 +747,8 @@ void RenderAssistantSaveDiscard(AppController& app, UiDrawSession& d, bool dirty
     }
     ImGui::SameLine();
     if (dirty) {
-        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f),
-                           "%s", SmatchetLocalization::T("prefs.assistant.unsaved", "Unsaved changes"));
+        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f), "%s",
+                           SmatchetLocalization::T("prefs.assistant.unsaved", "Unsaved changes"));
     } else {
         ImGui::TextDisabled("%s", SmatchetLocalization::T("prefs.assistant.no_changes", "No unsaved changes"));
     }

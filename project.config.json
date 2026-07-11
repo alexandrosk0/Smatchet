@@ -57,31 +57,31 @@
       "Test-delta gate",
       "Windows + MSVC",
       "Windows + MSVC (Smatchet light — AI/Whisper/MCP off)",
+      "Windows + MSVC (ARM64 cross-compile)",
       "Comment-noise + high-integrity gate",
       "Shell lint (shellcheck)",
       "Doc anchors + agent contract",
       "Perf PR-fast (windows-2022)",
       "Coverage (windows-2022 + OpenCppCoverage)",
       "Sanitizer (ASAN via MSVC)",
-      "Sanitizer (UBSan via Clang)"
+      "Sanitizer (UBSan via Clang)",
+      "Agentic self-tests (bats)",
+      "Duplication scanner",
+      "CR finding gate",
+      "Pillar 2 scanner",
+      "Android security gate (manifest + TLS fail-fast)",
+      "Packaging graph smoke (SmatchetPackageUnrealLibs_DX12)",
+      "Bucket launch-smoke (Mesa GL)",
+      "Mobile — POSIX core compile gate (Linux clang)",
+      "Mobile — Android NDK arm64-v8a (.so configure+link)",
+      "Mobile — Android APK (Gradle assembleDebug arm64-v8a)",
+      "C++ lint (catch-all + cppcheck)"
     ],
     "required_review_count": 0,
     "enforce_admins": false,
     "strict": false
   },
   "ci": {
-    "required_checks": [
-      "Test-delta gate",
-      "Windows + MSVC",
-      "Windows + MSVC (Smatchet light — AI/Whisper/MCP off)",
-      "Comment-noise + high-integrity gate",
-      "Shell lint (shellcheck)",
-      "Doc anchors + agent contract",
-      "Perf PR-fast (windows-2022)",
-      "Coverage (windows-2022 + OpenCppCoverage)",
-      "Sanitizer (ASAN via MSVC)",
-      "Sanitizer (UBSan via Clang)"
-    ],
     "path_filters": {
       "code_globs": ["Source/**"],
       "docs_ignore": ["**/*.md", "docs/**", "agents/**", ".gitignore", ".gitattributes", ".coderabbit.yaml"]
@@ -151,9 +151,10 @@
     "sink_warn_lines": 400
   },
   "governance": {
-    "_doc": "Human-authority charter defaults (AI_POLICY.md). loop_mode / auto_merge are the committed operator defaults, read at SessionStart by agents/scripts/core/clear-session-context.sh when the matching env var (SMATCHET_LOOP_MODE / SMATCHET_AUTOMERGE) is unset; the env var overrides per session. loop_mode 'on' = action-biased human-on-the-loop, 'in' = plan-gated human-in-the-loop. auto_merge 'on' is a STANDING, revocable grant: the orchestrator auto-merges a PR once the full merge-gates poll passes (safe-merge.sh) WITHOUT the per-PR post-ship merge prompt — the gates still bind; only the asking is removed (set 2026-06-23: solo maintainer, low review availability).",
+    "_doc": "Human-authority charter defaults (AI_POLICY.md). loop_mode / auto_merge are the committed operator defaults, read at SessionStart by agents/scripts/core/clear-session-context.sh when the matching env var (SMATCHET_LOOP_MODE / SMATCHET_AUTOMERGE) is unset; the env var overrides per session. loop_mode 'on' = action-biased human-on-the-loop, 'in' = plan-gated human-in-the-loop. auto_merge 'on' is a STANDING, revocable grant: the orchestrator auto-merges a PR once the full merge-gates poll passes (safe-merge.sh) WITHOUT the per-PR post-ship merge prompt — the gates still bind; only the asking is removed (set 2026-06-23: solo maintainer, low review availability). session_token_ceiling (tokens; input+output summed per row of the token-tracking JSONL, cache fields excluded; 0 disables) is the ADVISORY per-session delegated-subagent spend ceiling checked at SessionStart by agents/scripts/core/cost-ceiling-nudge.sh -> cost-ceiling-check.py; on a hit it prints an ESCALATE banner (never blocks — WARN-first ramp) per AI_POLICY.md § Cost control. Default 5000000 sized from observed heavy fleet sessions (the 2026-06 audit fleet died at ~4.1M tokens); tune or disable deliberately.",
     "policy": "AI_POLICY.md",
     "loop_mode": "on",
-    "auto_merge": "on"
+    "auto_merge": "on",
+    "session_token_ceiling": 5000000
   }
 }

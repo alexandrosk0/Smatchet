@@ -138,5 +138,26 @@ inline nlohmann::json ParseBounded(const std::string& text, std::string& errOut,
     return j;
 }
 
+// Convenience wrapper for the many ingress sites that historically used
+// `json::parse(text, nullptr, false)` and branch on `.is_discarded()`. Parses
+// `text` under the SAME hard byte/depth/node caps as ParseBounded, returning a
+// DISCARDED json on ANY failure (invalid / too large / too deeply-nested). This
+// lets those sites adopt the depth-bomb guard with a one-line swap — their
+// existing `.is_discarded()` checks keep working unchanged, and the pre-existing
+// "invalid → discarded" behaviour is preserved while the new "too deep/large →
+// discarded" (instead of a SIGSEGV on deep-DOM teardown) is added. New code that
+// wants the specific failure reason should call ParseBounded directly.
+inline nlohmann::json ParseBoundedOrDiscarded(const std::string& text,
+                                              std::size_t maxBytes = 4u * 1024u * 1024u,
+                                              int maxDepth = kDefaultMaxDepth,
+                                              std::size_t maxNodes = kDefaultMaxNodes) {
+    std::string err;
+    nlohmann::json j = ParseBounded(text, err, maxBytes, maxDepth, maxNodes);
+    if (!err.empty()) {
+        return nlohmann::json(nlohmann::json::value_t::discarded);
+    }
+    return j;
+}
+
 } // namespace json_safe
 } // namespace smatchet

@@ -141,6 +141,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`dual-ui-mode-desktop-mobile`](shipped/dual-ui-mode-desktop-mobile.md) | 2026-06-09 | Plan — Desktop / Mobile switchable UI modes |
 | [`mobile-mvp-completion`](shipped/mobile-mvp-completion.md) | 2026-06-09 | Plan — Mobile (Android) Phase-0 MVP completion |
 | [`ilocalcache-seam`](shipped/ilocalcache-seam.md) | 2026-06-10 | ISyncCache seam (ADR-0020) — 28-method sync-cache interface decouples OfflineQueueService/TicketSyncService/IssueCreatePipeline from SQLite; service tests run on a contract-suite-verified FakeSyncCache with a configure-time purity guard; PR1 #1112 (seam) + PR2 (test purity). |
+| [`mobile-app-fuller-integration`](shipped/mobile-app-fuller-integration.md) | 2026-06-10 | Mobile app — fuller integration (Phase 1) |
 | [`ui-help-marker-tooltips`](shipped/ui-help-marker-tooltips.md) | 2026-06-10 | UI text shortening + (?) help-marker tooltip |
 | [`dx12-standalone-win-arm64`](shipped/dx12-standalone-win-arm64.md) | 2026-06-11 | Plan — DX12 standalone renderer + Windows ARM64 standalone port |
 | [`merge-watcher-stuck-escalation`](shipped/merge-watcher-stuck-escalation.md) | 2026-06-11 | Plan — smatchet-merge-watcher stuck-PR escalation |
@@ -173,6 +174,21 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`appcontroller-god-object-decomposition`](shipped/appcontroller-god-object-decomposition.md) | 2026-06-19 | Plan — AppController god-object decomposition |
 | [`plan-lock-enforcement`](shipped/plan-lock-enforcement.md) | 2026-06-19 | Plan — Force plan-lock filing before file edits (force-on-contention, 3-layer) |
 | [`perf-interactive-grid-stress`](shipped/perf-interactive-grid-stress.md) | 2026-06-20 | Plan — interactive-grid-stress (active 8-pane mixed-backend perf probe) |
+| [`cpp-security-hardening`](shipped/cpp-security-hardening.md) | 2026-06-27 | Plan — C++ security hardening (audit remediation) |
+| [`cpp-code-audit-remediation`](shipped/cpp-code-audit-remediation.md) | 2026-07-02 | Plan — C++ code audit remediation (CPP_CODE_AUDIT.md) |
+| [`all-gates-blocking`](shipped/all-gates-blocking.md) | 2026-07-05 | All gates blocking — flip every CI test gate to merge-blocking + fix the reds |
+| [`commands-invocation-harness`](shipped/commands-invocation-harness.md) | 2026-07-05 | Plan — Tier-3 Commands invocation harness: table-driven builtin-command dispatch tests |
+| [`coverage-gap-tier1-pure-extractions`](shipped/coverage-gap-tier1-pure-extractions.md) | 2026-07-05 | Plan — Coverage-gap Tier 1: pure extractions for the audit-fixed sort + long-text paths |
+| [`coverage-gap-tier2-backend-shell-fixtures`](shipped/coverage-gap-tier2-backend-shell-fixtures.md) | 2026-07-05 | Plan — Coverage-gap Tier 2: backend-shell fixture tests (Plane + Linear issue search) |
+| [`coverage-gap-tier3-command-contract`](shipped/coverage-gap-tier3-command-contract.md) | 2026-07-05 | Plan — Coverage-gap Tier 3: registry-wide command error-envelope contract sweep |
+| [`mutation-testing-pilot`](shipped/mutation-testing-pilot.md) | 2026-07-05 | Plan — Mutation-testing pilot (assertion-strength probe) |
+| [`user-facing-text-i18n-sweep`](shipped/user-facing-text-i18n-sweep.md) | 2026-07-05 | Plan — user-facing text i18n completeness sweep |
+| [`appcontroller-fan-in-phase5-facets`](shipped/appcontroller-fan-in-phase5-facets.md) | 2026-07-06 | Phase 5 of the AppController fan-in reduction — carve stable IApp* interface facets so includer-clusters depend on a narrow interface instead of the concrete class, cutting the fan-in COUNT. Design-only; excludes all per-frame inline getters; each slice CI-gated. |
+| [`appcontroller-service-extraction`](shipped/appcontroller-service-extraction.md) | 2026-07-06 | Behavior-preserving extraction of cohesive responsibility clusters out of AppController.cpp (~2862 LOC) into focused companion TUs; carries forward the still-relevant Phase 2 items from the archived large-files-and-phase-2 plan. |
+| [`nightly-monkey-tester`](shipped/nightly-monkey-tester.md) | 2026-07-06 | Plan — Nightly "code monkey" tester |
+| [`perf-gate-step5-calibration`](shipped/perf-gate-step5-calibration.md) | 2026-07-06 | Perf gate — step-5 calibration (arm the mean budget + deepen coverage) |
+| [`appcontroller-fan-in-phase6-dissolution`](shipped/appcontroller-fan-in-phase6-dissolution.md) | 2026-07-10 | Phase 6 of the AppController fan-in reduction — a full audit of all 111 AppController.h includers classified every file into tiers; five shipped slices (free include-drops, poster registrars, the UiSession.h nested-type hoist, and the IAppCommands / IAppThreading / IAppScenarioHost facets) brought fan-in from 111 to 77, the documented terminal set. |
+| [`plane-custom-properties`](shipped/plane-custom-properties.md) | 2026-07-11 | Plan — Plane custom (UUID) properties: serialize instead of silently dropping (C4) |
 <!-- END auto-plan-index -->
 
 ### Notes

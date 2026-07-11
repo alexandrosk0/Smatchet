@@ -1,5 +1,6 @@
 #include "TicketGridModel.h"
 
+#include "TicketGridDurationSortPure.h"
 #include "CompactDateFormat.h"
 #include "TrackerDateTimeFieldEditor.h"
 #include "TrackerGridFieldDisplay.h"
@@ -11,84 +12,10 @@
 #include <cerrno>
 #include <cstdlib>
 #include <iterator>
+#include <limits>
 #include <unordered_set>
 
 namespace {
-
-long long ParseDurationToSecondsForSort(const std::string& input) {
-    constexpr long long kSecondsPerHour = 3600;
-    constexpr long long kSecondsPerDay = 8 * kSecondsPerHour;
-    constexpr long long kSecondsPerWeek = 5 * kSecondsPerDay;
-    auto trim = [](const std::string& s) {
-        size_t a = 0;
-        size_t b = s.size();
-        while (a < b && (s[a] == ' ' || s[a] == '\t')) {
-            ++a;
-        }
-        while (b > a && (s[b - 1] == ' ' || s[b - 1] == '\t')) {
-            --b;
-        }
-        return s.substr(a, b - a);
-    };
-    std::string s = trim(input);
-    if (s.empty()) {
-        return 0;
-    }
-    size_t pos = 0;
-    try {
-        long long v = std::stoll(s, &pos, 10);
-        while (pos < s.size() && (s[pos] == ' ' || s[pos] == '\t')) {
-            ++pos;
-        }
-        if (pos >= s.size()) {
-            return v;
-        }
-    } catch (...) {
-        // catch-all-ok: std::stoll throws on non-numeric input — intentional fall-through to the
-        // manual unit-by-unit duration parse below.
-    }
-    pos = 0;
-    long long total = 0;
-    while (pos < s.size()) {
-        while (pos < s.size() && (s[pos] == ' ' || s[pos] == '\t')) {
-            ++pos;
-        }
-        if (pos >= s.size()) {
-            break;
-        }
-        long long num = 1;
-        if (std::isdigit(static_cast<unsigned char>(s[pos]))) {
-            size_t next = 0;
-            try {
-                num = std::stoll(s.substr(pos), &next, 10);
-                pos += next;
-            } catch (...) {
-                break;
-            }
-        }
-        if (pos >= s.size()) {
-            total += num;
-            break;
-        }
-        const char u = s[pos];
-        if (u == 'w' || u == 'W') {
-            total += num * kSecondsPerWeek;
-            ++pos;
-        } else if (u == 'd' || u == 'D') {
-            total += num * kSecondsPerDay;
-            ++pos;
-        } else if (u == 'h' || u == 'H') {
-            total += num * kSecondsPerHour;
-            ++pos;
-        } else if (u == 'm' || u == 'M') {
-            total += num * 60LL;
-            ++pos;
-        } else {
-            total += num;
-        }
-    }
-    return total;
-}
 
 const std::unordered_set<std::string> kTimeTrackingFieldIds = {
     "timeoriginalestimate",          "timeestimate",          "timespent",
@@ -272,16 +199,6 @@ int CompareIssueKeyValues(const std::string& aVal, const std::string& bVal) {
     return 0;
 }
 
-/** Time-tracking duration compare (e.g. "2d 4h" -> seconds). */
-int CompareTimeTrackingValues(const std::string& aVal, const std::string& bVal) {
-    const long long sa = ParseDurationToSecondsForSort(aVal);
-    const long long sb = ParseDurationToSecondsForSort(bVal);
-    if (sa != sb) {
-        return (sa < sb) ? -1 : 1;
-    }
-    return 0;
-}
-
 /** Date/datetime compare — lexical on the raw ISO string (sortable as-is). */
 int CompareDateValues(const std::string& aVal, const std::string& bVal) {
     const int cmp = aVal.compare(bVal);
@@ -344,7 +261,7 @@ int CompareFieldValuesForSort(const std::string& fieldId, const TrackerField* fi
         return CompareIssueKeyValues(aVal, bVal);
     }
     if (kTimeTrackingFieldIds.count(fieldId)) {
-        return CompareTimeTrackingValues(aVal, bVal);
+        return TicketGridDurationSortPure::CompareTimeTrackingValues(aVal, bVal);
     }
     if (kDateFieldIds.count(fieldId) || (fieldMeta && (fieldMeta->Type == "date" || fieldMeta->Type == "datetime"))) {
         return CompareDateValues(aVal, bVal);

@@ -23,6 +23,17 @@
 
 TicketSyncService::TicketSyncService(ITicketSyncDeps& deps) : deps_(deps) {}
 
+bool TicketSyncService::ShouldSkipMassDeletionOnEmptyFullSync(std::size_t keepCount, std::size_t cachedRowCount,
+                                                              int consecutiveEmptyFullSyncs, int emptyWipeThreshold) {
+    if (keepCount > 0) {
+        return false;
+    }
+    if (cachedRowCount == 0) {
+        return false;
+    }
+    return consecutiveEmptyFullSyncs < emptyWipeThreshold;
+}
+
 void TicketSyncService::CancelAndJoinActiveStreamingSync() {
     activeStreamingSync_.Cancelled = true;
     activeStreamingSync_.Superseded = true;
@@ -48,15 +59,18 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
         return;
     }
 
-    deps_.SetLastTrackerTicketSyncWarning(std::string());
+    deps_.SetLastTrackerTicketSyncWarning(std::string(), /*transient=*/false);
 
     const std::vector<CachedTicket>& freshTickets = pack.Tickets;
     const std::string& fetchError = pack.FetchError;
     const std::string& fetchWarning = pack.Warning;
     const bool fullSyncCompleted = pack.FullSyncCompleted;
 
-    if (!fetchError.empty() && IsTrackerTransportErrorText(fetchError)) {
-        deps_.SetLastTrackerTicketSyncWarning("Showing cached issues — live refresh did not complete: " + fetchError);
+    // The pack carries its transport classification from the composition seam (N12 slice 1) —
+    // do not re-classify the text here.
+    if (!fetchError.empty() && pack.FetchErrorTransient) {
+        deps_.SetLastTrackerTicketSyncWarning("Showing cached issues — live refresh did not complete: " + fetchError,
+                                              /*transient=*/true);
         LOG_WARN("TicketSyncService::ApplyIssueFetchPack transport-style fetch issue: %s", fetchError.c_str());
         deps_.SetLastTrackerConnectivityState(ITicketSyncDeps::ConnectivityState::TransportDown);
         const auto nowProbe = std::chrono::steady_clock::now();
@@ -65,7 +79,8 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
     } else if (fetchError.empty()) {
         // Soft warnings still count as success — the fetched data is valid, just partial.
         if (!fetchWarning.empty()) {
-            deps_.SetLastTrackerTicketSyncWarning("Sync completed with a caveat: " + fetchWarning);
+            deps_.SetLastTrackerTicketSyncWarning("Sync completed with a caveat: " + fetchWarning,
+                                                  /*transient=*/false);
             LOG_WARN("TicketSyncService::ApplyIssueFetchPack soft warning: %s", fetchWarning.c_str());
         }
         deps_.RequestDeferredLiveTrackerBackendSuccessNotify();
@@ -90,7 +105,7 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
     } else if (!freshTickets.empty()) {
         consecutiveEmptyFullSyncs_ = 0;
     }
-    if (fullSyncCompleted && (!freshTickets.empty() || consecutiveEmptyFullSyncs_ >= kEmptyFullSyncWipeThreshold)) {
+    if (fullSyncCompleted) {
         std::unordered_set<std::string> keepIds;
         keepIds.reserve(freshTickets.size());
         for (const auto& t : freshTickets) {
@@ -99,10 +114,15 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
             }
         }
         std::vector<CachedTicket> existing = deps_.Cache()->GetAllTickets(backendKey);
-        for (const auto& row : existing) {
-            if (keepIds.find(row.id) == keepIds.end()) {
-                deps_.Cache()->DeleteTicket(backendKey, row.id);
-                ++deleted;
+        // Single source of truth for the wipe decision — the same helper the streaming path uses,
+        // so the empty-full-sync data-loss guard can never drift between the two apply paths.
+        if (!ShouldSkipMassDeletionOnEmptyFullSync(keepIds.size(), existing.size(), consecutiveEmptyFullSyncs_,
+                                                   kEmptyFullSyncWipeThreshold)) {
+            for (const auto& row : existing) {
+                if (keepIds.find(row.id) == keepIds.end()) {
+                    deps_.Cache()->DeleteTicket(backendKey, row.id);
+                    ++deleted;
+                }
             }
         }
     }
@@ -179,6 +199,7 @@ bool TicketSyncService::DiscardSupersededSessionIfNeeded() {
         // FetchError contract: every read/write through QueueMutex (worker joined above).
         std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
         activeStreamingSync_.FetchError.clear();
+        activeStreamingSync_.FetchErrorTransient = false;
         activeStreamingSync_.Warning.clear();
     }
     activeStreamingSync_.KeepIds.clear();
@@ -360,17 +381,21 @@ void TicketSyncService::FinalizeStreamingSessionIfDone() {
     // FetchError plus Warning are written by the worker thread under QueueMutex; acquire that
     // mutex while reading them. The full-sync-completed flag is atomic and needs no lock.
     std::string fetchError;
+    bool fetchErrorTransient = false;
     std::string fetchWarning;
     {
         std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
         fetchError = activeStreamingSync_.FetchError;
+        fetchErrorTransient = activeStreamingSync_.FetchErrorTransient;
         fetchWarning = activeStreamingSync_.Warning;
     }
 
     bool fullSyncCompleted = activeStreamingSync_.FullSyncCompleted;
 
-    if (!fetchError.empty() && IsTrackerTransportErrorText(fetchError)) {
-        deps_.SetLastTrackerTicketSyncWarning("Showing cached issues — live refresh did not complete: " + fetchError);
+    // Classification travels with the error from the worker-side seam (N12 slice 1).
+    if (!fetchError.empty() && fetchErrorTransient) {
+        deps_.SetLastTrackerTicketSyncWarning("Showing cached issues — live refresh did not complete: " + fetchError,
+                                              /*transient=*/true);
         LOG_WARN("TicketSyncService::TickStreamingApply transport-style fetch issue: %s", fetchError.c_str());
         deps_.SetLastTrackerConnectivityState(ITicketSyncDeps::ConnectivityState::TransportDown);
         const auto nowProbe = std::chrono::steady_clock::now();
@@ -383,7 +408,8 @@ void TicketSyncService::FinalizeStreamingSessionIfDone() {
         // Soft warnings: data is good, just partial — still notify success but surface
         // the caveat as a warning banner + toast.
         if (!fetchWarning.empty()) {
-            deps_.SetLastTrackerTicketSyncWarning("Sync completed with a caveat: " + fetchWarning);
+            deps_.SetLastTrackerTicketSyncWarning("Sync completed with a caveat: " + fetchWarning,
+                                                  /*transient=*/false);
             LOG_WARN("TicketSyncService::TickStreamingApply soft warning: %s", fetchWarning.c_str());
             deps_.NotifySyncStatus("Sync Warning", fetchWarning, ITicketSyncDeps::SyncNotifyLevel::Warning, 5000);
         }
@@ -403,14 +429,38 @@ void TicketSyncService::FinalizeStreamingSessionIfDone() {
     staleDeletedSoFar_ = 0;
     staleIdsToDelete_.clear();
 
+    // Track consecutive zero-keep full syncs (UI thread only), mirroring ApplyIssueFetchPack.
+    // A full sync that kept at least one ticket resets the streak; a partial fetch leaves it
+    // untouched. The streak feeds the empty-full-sync wipe guard below.
+    const std::size_t keptThisSession = activeStreamingSync_.KeepIds.size();
+    if (fullSyncCompleted && keptThisSession == 0) {
+        ++consecutiveEmptyFullSyncs_;
+    } else if (keptThisSession > 0) {
+        consecutiveEmptyFullSyncs_ = 0;
+    }
+
     if (fullSyncCompleted) {
         std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
-        staleIdsToDelete_ = std::move(activeStreamingSync_.BackgroundStaleIds);
+        // Empty-full-sync guard (finding DR4): a completed full sync that kept zero tickets marks
+        // every cached row stale, which would wipe the entire offline cache. Treat a zero-keep
+        // full sync as suspect and hold off the mass deletion until the empty result repeats
+        // kEmptyFullSyncWipeThreshold times, so a transient glitch cannot erase offline data.
+        const bool skipWipe =
+            ShouldSkipMassDeletionOnEmptyFullSync(keptThisSession, activeStreamingSync_.BackgroundStaleIds.size(),
+                                                  consecutiveEmptyFullSyncs_, kEmptyFullSyncWipeThreshold);
+        if (skipWipe) {
+            LOG_WARN("TicketSyncService::TickStreamingApply skipped mass stale deletion on suspect empty full sync "
+                     "(cached=%zu, consecutive_empty=%d).",
+                     activeStreamingSync_.BackgroundStaleIds.size(), consecutiveEmptyFullSyncs_);
+            activeStreamingSync_.BackgroundStaleIds.clear();
+        } else {
+            staleIdsToDelete_ = std::move(activeStreamingSync_.BackgroundStaleIds);
 
-        if (!staleIdsToDelete_.empty()) {
-            isDeletingStale_.store(true);
-            totalStaleToDelete_ = staleIdsToDelete_.size();
-            staleDeletedSoFar_ = 0;
+            if (!staleIdsToDelete_.empty()) {
+                isDeletingStale_.store(true);
+                totalStaleToDelete_ = staleIdsToDelete_.size();
+                staleDeletedSoFar_ = 0;
+            }
         }
     }
 
@@ -442,6 +492,7 @@ void TicketSyncService::ResetStaleDeletionState() {
         activeStreamingSync_.PendingBatches.clear();
         activeStreamingSync_.BackgroundStaleIds.clear();
         activeStreamingSync_.FetchError.clear();
+        activeStreamingSync_.FetchErrorTransient = false;
         activeStreamingSync_.Warning.clear();
     }
     staleIdsToDelete_.clear();
@@ -552,9 +603,6 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
     if (activeStreamingSync_.WorkerThread.joinable()) {
         activeStreamingSync_.WorkerThread.join();
     }
-    // Reset per-session empty-sync counter so stale state from a previous run
-    // doesn't carry over and trigger an unexpected wipe on the very first batch.
-    consecutiveEmptyFullSyncs_ = 0;
 
     deps_.NotifySyncStatus("Syncing", "Refreshing issues from Tracker...", ITicketSyncDeps::SyncNotifyLevel::Info,
                            2500);
@@ -575,6 +623,7 @@ void TicketSyncService::StartStreamingSync(const TrackerConfig& cfgCopy, const V
         // has not been spawned yet, so the lock is uncontended.
         std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
         activeStreamingSync_.FetchError.clear();
+        activeStreamingSync_.FetchErrorTransient = false;
         activeStreamingSync_.Warning.clear();
         activeStreamingSync_.PendingBatches.clear();
         activeStreamingSync_.BackgroundStaleIds.clear();
@@ -624,6 +673,11 @@ void TicketSyncService::RunStreamingWorkerBody(std::uint64_t reqId, const Tracke
             std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
             activeStreamingSync_.FullSyncCompleted = summary.FullSyncCompleted;
             activeStreamingSync_.FetchError = summary.FetchError;
+            // Worker-side classification seam (N12 slice 1): the ONE place the streamed fetch
+            // error's transport-ness is decided; every downstream consumer branches on the flag.
+            // Slice 2 moves this into the backends' summaries as structured TrackerError kinds.
+            activeStreamingSync_.FetchErrorTransient =
+                !summary.FetchError.empty() && IsTrackerTransportErrorText(summary.FetchError);
             activeStreamingSync_.Warning = summary.Warning;
             activeStreamingSync_.TotalFetchedCount = summary.FetchedCount;
             if (summary.FullSyncCompleted && deps_.Cache()) {
@@ -635,6 +689,9 @@ void TicketSyncService::RunStreamingWorkerBody(std::uint64_t reqId, const Tracke
         if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
             std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
             activeStreamingSync_.FetchError = std::string("Sync failed with exception: ") + ex.what();
+            // Behaviour parity with the pre-flag heuristic: an exception message can still be
+            // transport-shaped (e.g. a curl timeout what()).
+            activeStreamingSync_.FetchErrorTransient = IsTrackerTransportErrorText(activeStreamingSync_.FetchError);
             activeStreamingSync_.FullSyncCompleted = false;
         }
     } catch (...) {
@@ -642,6 +699,7 @@ void TicketSyncService::RunStreamingWorkerBody(std::uint64_t reqId, const Tracke
         if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
             std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
             activeStreamingSync_.FetchError = "Sync failed with unknown exception.";
+            activeStreamingSync_.FetchErrorTransient = false; // fixed text — never transport-shaped
             activeStreamingSync_.FullSyncCompleted = false;
         }
     }

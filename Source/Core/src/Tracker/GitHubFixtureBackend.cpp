@@ -1,6 +1,7 @@
 #include "GitHubFixtureBackend.h"
 
 #include "GitHubIssueSearchMapping.h"
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 
 #include <nlohmann/json.hpp>
@@ -22,6 +23,7 @@ bool ReadFileToString(const std::string& path, std::string& out) {
         return false;
     }
     std::ostringstream ss;
+    // SMATCHET_DEVIATION(rule=unbounded-file-slurp; reason=developer-authored local fixture file, small by construction; owner=security-audit; revisit=2026-12-31)
     ss << in.rdbuf();
     out = ss.str();
     return true;
@@ -45,7 +47,9 @@ GitHubFixtureBackend::GitHubFixtureBackend(const std::string& fixturePath, const
         LOG_ERROR("GitHubFixtureBackend: %s", loadError_.c_str());
         return;
     }
-    nlohmann::json parsed = nlohmann::json::parse(contents, nullptr, false);
+    // Bounded parse: the fixture path is env-var-selectable (SMATCHET_TEST_GITHUB_BACKEND_FIXTURE),
+    // so cap depth/nodes/bytes rather than trust wherever it points.
+    nlohmann::json parsed = smatchet::json_safe::ParseBoundedOrDiscarded(contents);
     if (parsed.is_discarded() || !parsed.is_object()) {
         loadError_ = std::string("Fixture JSON parse failed or root is not an object: ") + fixturePath_;
         LOG_ERROR("GitHubFixtureBackend: %s", loadError_.c_str());

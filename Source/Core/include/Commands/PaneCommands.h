@@ -15,7 +15,8 @@
 
 #include <string>
 
-class AppController;
+class IAppCommands;
+class IMainThreadPoster;
 struct UiDrawSession;
 struct TrackerConfig;
 
@@ -23,7 +24,7 @@ namespace smatchet {
 namespace cmd {
 
 /// Idempotent: subsequent calls skip registration (HasExact check).
-void RegisterPaneCommands(AppController& app, UiDrawSession& session);
+void RegisterPaneCommands(IAppCommands& app, IMainThreadPoster& poster, UiDrawSession& session);
 
 namespace detail {
 
@@ -44,13 +45,12 @@ struct PaneAddDecision {
 /// `sourceId` is the focused pane id; `acceptBackend` is true for pane.new (the only verb
 /// that takes backend/view args). `backendArg` empty = same-backend duplicate (unchanged
 /// behaviour). SQLite/ImGui-free → unit-testable.
-PaneAddDecision DecidePaneAddRequest(const std::string& sourceId, bool acceptBackend,
-                                     const std::string& backendArg, const std::string& viewArg,
-                                     const TrackerConfig& cfg);
+PaneAddDecision DecidePaneAddRequest(const std::string& sourceId, bool acceptBackend, const std::string& backendArg,
+                                     const std::string& viewArg, const TrackerConfig& cfg);
 
-}  // namespace detail
+} // namespace detail
 
-}  // namespace cmd
-}  // namespace smatchet
+} // namespace cmd
+} // namespace smatchet
 
-#endif  // SMATCHET_COMMANDS_PANE_COMMANDS_H
+#endif // SMATCHET_COMMANDS_PANE_COMMANDS_H

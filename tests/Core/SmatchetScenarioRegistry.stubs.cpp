@@ -33,6 +33,7 @@ std::unique_ptr<smatchet::cmd::IScenario> MakeThemeSwitchRoundtripScenario() { r
 std::unique_ptr<smatchet::cmd::IScenario> MakeAiChatHistoryRenderScenario() { return NullScenario(); }
 #endif
 std::unique_ptr<smatchet::cmd::IScenario> MakeIdleScenario() { return NullScenario(); }
+std::unique_ptr<smatchet::cmd::IScenario> MakeCommandContractSweepScenario() { return NullScenario(); }
 std::unique_ptr<smatchet::cmd::IScenario> MakeCellEditBurstScenario() { return NullScenario(); }
 std::unique_ptr<smatchet::cmd::IScenario> MakeAttachmentPreviewOpenScenario() { return NullScenario(); }
 std::unique_ptr<smatchet::cmd::IScenario> MakePreferencesSliderDragScenario() { return NullScenario(); }

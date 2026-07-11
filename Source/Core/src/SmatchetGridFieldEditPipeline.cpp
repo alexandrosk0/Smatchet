@@ -4,6 +4,7 @@
 #include "ConfigManager.h"
 #include "Logger.h"
 #include "MainThreadDispatcher.h"
+#include "SmatchetLocalization.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
 #include "StringUtil.h"
@@ -37,7 +38,11 @@ void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const Pen
                                       edit.OriginalRichValue, edit.OriginalValue, edit.HasOriginalValue);
         if (qid <= 0) {
             SmatchetToastManager::Instance().Push(
-                "Offline Error", qerr.empty() ? "Failed to queue offline field edit." : qerr, ToastType::Error);
+                SmatchetLocalization::T("toast.offline_error", "Offline Error"),
+                qerr.empty() ? std::string(SmatchetLocalization::T("toast.offline_queue_failed",
+                                                                   "Failed to queue offline field edit."))
+                             : qerr,
+                ToastType::Error);
             CellWriteFeedback feedback;
             feedback.State = CellWriteState::Error;
             feedback.Message = qerr;
@@ -45,7 +50,10 @@ void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const Pen
             d.cellFeedbackByKey[editKey] = feedback;
         } else if (!app.ApplyFieldEditResult(edit.IssueId, result.ApplyResult, applyError)) {
             SmatchetToastManager::Instance().Push(
-                "Apply Error", applyError.empty() ? "Failed to apply queued field edit." : applyError,
+                SmatchetLocalization::T("toast.apply_error", "Apply Error"),
+                applyError.empty() ? std::string(SmatchetLocalization::T("toast.apply_queued_failed",
+                                                                         "Failed to apply queued field edit."))
+                                   : applyError,
                 ToastType::Error);
             CellWriteFeedback feedback;
             feedback.State = CellWriteState::Error;
@@ -53,8 +61,11 @@ void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const Pen
             feedback.FramesRemaining = 0;
             d.cellFeedbackByKey[editKey] = feedback;
         } else {
-            SmatchetToastManager::Instance().Push("Queued Offline", "Field edit will sync when Tracker is reachable.",
-                                                  ToastType::Info);
+            SmatchetToastManager::Instance().Push(
+                SmatchetLocalization::T("toast.queued_offline", "Queued Offline"),
+                SmatchetLocalization::T("toast.field_edit_will_sync",
+                                        "Field edit will sync when Tracker is reachable."),
+                ToastType::Info);
             CellWriteFeedback feedback;
             feedback.State = CellWriteState::Success;
             feedback.Message = "Queued";
@@ -65,7 +76,10 @@ void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const Pen
         const bool applied = app.ApplyFieldEditResult(edit.IssueId, result.ApplyResult, applyError);
         if (!applied) {
             SmatchetToastManager::Instance().Push(
-                "Save Error", applyError.empty() ? "Failed to apply saved field update." : applyError,
+                SmatchetLocalization::T("toast.save_error", "Save Error"),
+                applyError.empty() ? std::string(SmatchetLocalization::T("toast.apply_saved_failed",
+                                                                         "Failed to apply saved field update."))
+                                   : applyError,
                 ToastType::Error);
             CellWriteFeedback feedback;
             feedback.State = CellWriteState::Error;
@@ -73,7 +87,10 @@ void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const Pen
             feedback.FramesRemaining = 0;
             d.cellFeedbackByKey[editKey] = feedback;
         } else {
-            SmatchetToastManager::Instance().Push("Success", "Field update saved to Tracker.", ToastType::Success);
+            SmatchetToastManager::Instance().Push(
+                SmatchetLocalization::T("toast.success", "Success"),
+                SmatchetLocalization::T("toast.field_update_saved", "Field update saved to Tracker."),
+                ToastType::Success);
             CellWriteFeedback feedback;
             feedback.State = CellWriteState::Success;
             feedback.Message = "Saved";
@@ -81,7 +98,9 @@ void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const Pen
             d.cellFeedbackByKey[editKey] = feedback;
         }
     } else {
-        d.gridEditError = result.Error.empty() ? std::string("Failed to save Tracker field update.") : result.Error;
+        d.gridEditError = result.Error.empty() ? std::string(SmatchetLocalization::T(
+                                                     "toast.save_field_failed", "Failed to save Tracker field update."))
+                                               : result.Error;
         d.gridEditSuccess.clear();
         CellWriteFeedback feedback;
         feedback.State = CellWriteState::Error;
@@ -136,7 +155,7 @@ void RunCommitWorker(AppController& app, UiDrawSession& d, PendingFieldEdit edit
 
     // Hand the result back to the UI thread. The dispatcher's bounded queue
     // and BeginShutdown-aware Post are safe even if the app is mid-teardown.
-    app.mainThreadDispatcher.PostToMainThread(
+    app.PostToMainThread(
         [&app, &d, edit, result]() mutable { ApplyCommitResultOnUiThread(app, d, edit, std::move(result)); });
 }
 

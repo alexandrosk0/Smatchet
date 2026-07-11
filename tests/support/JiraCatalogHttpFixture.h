@@ -4,7 +4,7 @@
 // Slice 0 WS2 of docs/plans/multi-grid-tabs.md — real catalog-BUILD fixture.
 // Closes the test.md P2 (2026-06-01): `JiraFakeTrackerFixture` injects a pre-built
 // `TrackerFieldCatalogResult` and bypasses the live `FetchFieldCatalog` assembly, so
-// the whole enrichment + classification pipeline (the PR #672 "components rendered
+// the whole enrichment + classification pipeline (the "components rendered
 // as text" bug class) was fixture-invisible. This fixture spins an in-process
 // `httplib::Server` on a loopback ephemeral port with scripted Jira REST JSON
 // bodies, so a real `JiraClient` driven at `http://127.0.0.1:<port>` exercises the
@@ -82,6 +82,16 @@ class JiraCatalogHttpFixture {
         statusRoutes_[RouteKey(method, path)] = status;
     }
 
+    /// Serve an exact status + raw body + content type for "<method> <path>" — for
+    /// response-classification tests that need non-JSON bodies (HTML error pages,
+    /// truncated/invalid JSON, empty 200s) or a non-200 status with a JSON detail body,
+    /// which ScriptJson/ScriptStatus cannot express. Wins over every other route kind.
+    void ScriptRaw(const std::string& path, int status, const std::string& body, const std::string& contentType,
+                   const std::string& method = "GET") {
+        std::lock_guard<std::mutex> lock(mutex_);
+        rawRoutes_[RouteKey(method, path)] = RawRoute{status, body, contentType};
+    }
+
     /// Number of requests whose path matched exactly, summed across all verbs.
     /// Counts every hit, scripted or not.
     int RequestCount(const std::string& path) const {
@@ -113,9 +123,16 @@ class JiraCatalogHttpFixture {
         std::string fixedBody;
         bool haveFixed = false;
         int forcedStatus = 0;
+        RawRoute raw;
+        bool haveRaw = false;
         {
             std::lock_guard<std::mutex> lock(mutex_);
             ++requestCounts_[req.path];
+            const std::map<std::string, RawRoute>::const_iterator rIt = rawRoutes_.find(key);
+            if (rIt != rawRoutes_.end()) {
+                raw = rIt->second;
+                haveRaw = true;
+            }
             const std::map<std::string, int>::const_iterator sIt = statusRoutes_.find(key);
             if (sIt != statusRoutes_.end()) {
                 forcedStatus = sIt->second;
@@ -129,6 +146,11 @@ class JiraCatalogHttpFixture {
                 fixedBody = fIt->second;
                 haveFixed = true;
             }
+        }
+        if (haveRaw) {
+            res.status = raw.Status;
+            res.set_content(raw.Body, raw.ContentType);
+            return;
         }
         if (forcedStatus != 0) {
             res.status = forcedStatus;
@@ -149,6 +171,12 @@ class JiraCatalogHttpFixture {
         res.set_content("{}", "application/json");
     }
 
+    struct RawRoute {
+        int Status = 200;
+        std::string Body;
+        std::string ContentType;
+    };
+
     httplib::Server server_;
     std::thread serverThread_;
     int port_ = 0;
@@ -157,6 +185,7 @@ class JiraCatalogHttpFixture {
     std::map<std::string, std::string> fixedRoutes_;
     std::map<std::string, JsonHandler> dynamicRoutes_;
     std::map<std::string, int> statusRoutes_;
+    std::map<std::string, RawRoute> rawRoutes_;
     std::map<std::string, int> requestCounts_;
 };
 

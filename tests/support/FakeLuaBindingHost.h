@@ -4,15 +4,16 @@
 // in `tests/support/` so any test TU under `tests/Lua/` that links
 // `AppController_LuaBindingsCore.cpp` can drive `smatchet::lua::InitLuaCore`
 // without touching ImGui / GLFW / cpr / SQLite -- the Class-C prerequisite that
-// PR #144 lifted (see `_plan-locks` § Phase-6-unblocker).
+// the Lua-core seam lifted (see `_plan-locks` § Phase-6-unblocker).
 //
 // Lifecycle: one fixture per `TEST_CASE`. The fake holds no static state, so
 // adjacent cases never poison each other. `LuaCommands()` returns a static
 // empty `CommandRegistry` -- tests that need a populated registry instantiate
 // their own and override the method in a per-case subclass.
 //
-// `AppForCommandContext()` returns `nullptr` per the `ILuaBindingHost.h`
-// contract for test fakes (command handlers exercised here ignore `ctx.App`).
+// The command-context facet accessors return null per the `ILuaBindingHost.h`
+// contract for test fakes (command handlers exercised here ignore the
+// context's app-facet fields).
 
 #pragma once
 
@@ -188,7 +189,8 @@ class FakeLuaBindingHost : public ILuaBindingHost {
 
     smatchet::cmd::CommandRegistry& LuaCommands() override { return Commands_; }
 
-    AppController* AppForCommandContext() override { return nullptr; }
+    IAppScenarioHost* ScenarioHostForCommandContext() override { return nullptr; }
+    IAppThreading* ThreadingForCommandContext() override { return nullptr; }
 
     // ----- Helpers tests may want -----
 

@@ -221,11 +221,21 @@ void DrawAuditFilters(UiDrawSession& d, const std::string& readError) {
                              sizeof(d.auditSearchBuf));
     ImGui::SameLine();
     ImGui::SetNextItemWidth(170.0f);
-    ImGui::Combo("Action", &d.auditActionFilter,
-                 "All\0Creates\0Updates/Transitions\0Comments\0Attachments\0Offline\0\0");
+    // Item arrays (not "\0"-packed literals) so each entry routes through the catalog — the
+    // wrapper Combo translates only the label.
+    const char* actionItems[] = {SmatchetLocalization::T("audit.all", "All"),
+                                 SmatchetLocalization::T("audit.creates", "Creates"),
+                                 SmatchetLocalization::T("audit.updates_transitions", "Updates/Transitions"),
+                                 SmatchetLocalization::T("comments.title", "Comments"),
+                                 SmatchetLocalization::T("audit.attachments", "Attachments"),
+                                 SmatchetLocalization::T("audit.offline", "Offline")};
+    ImGui::Combo("Action", &d.auditActionFilter, actionItems, IM_ARRAYSIZE(actionItems));
     ImGui::SameLine();
     ImGui::SetNextItemWidth(110.0f);
-    ImGui::Combo("Result", &d.auditResultFilter, "All\0Success\0Failure\0\0");
+    const char* resultItems[] = {SmatchetLocalization::T("audit.all", "All"),
+                                 SmatchetLocalization::T("audit.success", "Success"),
+                                 SmatchetLocalization::T("audit.failure", "Failure")};
+    ImGui::Combo("Result", &d.auditResultFilter, resultItems, IM_ARRAYSIZE(resultItems));
     ImGui::SameLine();
     if (ImGui::Checkbox("Newest first", &d.auditNewestFirst)) {
         d.auditPage = 0;

@@ -6,7 +6,7 @@
 // Header-only loader that:
 //   1. Reads a GitHub GraphQL-search-shaped JSON file from tests/fixtures/github/<scenario>.json.
 //   2. Maps the `nodes[]` array into CachedTicket vectors via the pure-logic
-//      `MapGraphQlNodesToTickets` helper (PR12 of github-tracker-backend.md).
+//      `MapGraphQlNodesToTickets` helper (from github-tracker-backend.md).
 //   3. Scripts a `FakeTrackerClient("GitHub")` instance with those tickets
 //      pre-loaded so doctest cases can drive the scenario surface without
 //      HTTP, without cpr, without a PAT.

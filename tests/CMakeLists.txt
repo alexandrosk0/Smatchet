@@ -66,6 +66,24 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerLabelsPure.cpp"
         Core/TrackerDateTimePure.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerDateTimePure.cpp"
+        # Gap map Tier 1 #3 — grid-cell render-model builders (untrusted tracker-value parsing).
+        # No threads; proves the pure TU compiles/links under TSan and runs its doctests on the
+        # Linux subset (TrackerFieldValueParser/Utils closure already linked below).
+        Core/TrackerGridFieldDisplayPure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerGridFieldDisplayPure.cpp"
+        # Gap map Tier 1 #5 — the JQL / Plane query-suggest engines behind their catalog-vector
+        # seams (keystroke-frequency untrusted-input parsers), + their shared-helper closure
+        # (TrackerQuerySuggestCommon + JqlEscape — cpr/ImGui-free). No threads.
+        Core/JqlSuggestEnginePure.test.cpp
+        Core/PlaneQuerySuggestEnginePure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlSuggestEnginePure.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneQuerySuggestEnginePure.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerQuerySuggestCommon.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlEscape.cpp"
+        # Gap map Tier 1 #6 — the merge-watch notify endpoint's request-validation core
+        # (SECURITY_AUDIT-flagged localhost listener). Pure decision surface; no httplib.
+        Core/MergeWatchNotifyPure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/MergeWatchNotifyPure.cpp"
         # linear-tracker-backend.md Slice 1 — pure GraphQL/parse helpers.
         Core/LinearClientHelpers.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearClientHelpers.cpp"
@@ -73,6 +91,8 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearIssueMappingPure.cpp"
         Core/LinearQueryFromJql.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearQueryFromJql.cpp"
+        Core/JiraErrorMessagePure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraErrorMessagePure.cpp"
         # multi-grid-tabs.md Slice 5a — pure hidden-pane LRU eviction decision
         # (header-only; no extra .cpp). No threads — proves the policy compiles +
         # links cleanly under -fsanitize=thread end-to-end on the runner.
@@ -118,6 +138,9 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/GridLiveContext.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/TicketSyncService.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpPure.cpp"
+        # RedactHttpBodyForLog (TrackerHttpPure.cpp, above) delegates to the cpr-free AI-side
+        # redactor — link its TU so the connectivity-banner scrub resolves in this target.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/AiErrorRedact.cpp"
         # --- EditMetaCacheService (AppController god-object decomposition Phase 1): per-issue +
         #     per-issue-type editmeta cache (editMetaMutex_) loaded from BOTH the UI thread and
         #     the background warm worker — a genuine cross-thread mutex, highest-value TSan
@@ -155,6 +178,11 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # (ConfigManager.cpp references ToolbarConfig::). All headless-Linux-clean
         # (wincrypt is _WIN32-guarded; whisper/lua feature guards have OFF branches).
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager.cpp"
+        # ConfigManager god-file split (god-file-splits plan): Save/Load/Secret bodies delegate
+        # across these companion TUs via config_detail (the spine holds the field tables).
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Save.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Load.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Secrets.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Views.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ToolbarConfig.cpp"
@@ -164,6 +192,10 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # with UiThreadAffinity::WarnIfOnUiThread. Both are cpr/ImGui/GL-free.
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/KeybindingsConfig.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/UiThreadAffinity.cpp"
+        # OfflineQueueService / FieldEditPipelineService now localize their cache-unavailable
+        # user messages (SmatchetLocalization::T). The localization TU is cpr/ImGui-free and
+        # its own closure (ConfigManager split + Logger + nlohmann) is already linked above.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/SmatchetLocalization.cpp"
         # TicketSyncService.test scripts its backend through the header-only
         # ScriptedTrackerBackendFactory, whose impl lives in JiraFakeTrackerFixture
         # (builds a header-only FakeTrackerClient — no real JiraClient, no cpr). The
@@ -199,6 +231,11 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/FieldEditAuditSource.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/TextMerge.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownConvert.cpp"
+        # MarkdownConvert god-file split (god-file-splits plan): the spine above
+        # delegates to md_detail:: engines defined in these companion TUs.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownToAdf.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownToHtml.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/AdfToMarkdown.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueCreatePipeline.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueCreatePipelineHelpers.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldPayload.cpp"
@@ -226,6 +263,13 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiModelSignature.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiEndpointPolicy.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiEndpointSanitize.cpp"
+        # AiAssistantController now resolves its per-turn AiClientConfig through the
+        # shared AiRequestBuilder seam (also consumed by the debug ai.* commands).
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/AiRequestBuilder.cpp"
+        # Gap map Tier 1 #8 — pre-network probe plan (no threads; Linux-runnable so the
+        # container sessions doing this work can validate locally).
+        Core/AiPrefsTestConnectionPure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/AiPrefsTestConnectionPure.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiChatTimestamp.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/SmatchetChatPersistWorker.cpp"
         "${CMAKE_SOURCE_DIR}/tests/support/FakeAiClientFactory.cpp"
@@ -287,6 +331,14 @@ add_executable(SmatchetTests
     # typo (key resolves to English fallback under fr-FR) can't regress.
     # SmatchetLocalization.cpp already linked below.
     Core/PrefsAssistantLocalization.test.cpp
+    # user-facing-text-i18n-sweep — pin a sample of the keys added for literals that
+    # previously bypassed the lookup (toasts, palette, toolbar editor, mobile shell).
+    Core/I18nSweepLocalization.test.cpp
+    # localization-format-guard — the printf conversion-specifier guard (extracted
+    # into the header-only smatchet::l10n unit) that stops a Locales/<lang>.json
+    # override from smuggling extra/%n specifiers into vsnprintf (SECURITY_AUDIT #1).
+    # Header-only closure — no extra .cpp link (the header pulls only std).
+    Core/LocalizationFormatGuard.test.cpp
     Core/ConfigSaveConcurrency.test.cpp
     Core/MainThreadDispatcherDrain.test.cpp
     Core/CacheEvictionPolicy.test.cpp
@@ -391,7 +443,8 @@ add_executable(SmatchetTests
     # UI classes — no ImGui, no AppController — so the rig needs no extra .cpp link.
     Core/PreferencesDateFormatIndex.test.cpp
     # dual-ui-mode batch — pure inline string/scale converters for the UI
-    # layout-mode + mobile-shell enums (SmatchetUiModeIds.h). Header-only +
+    # layout-mode + mobile-shell enums (SmatchetUiModeIds.h). Header + the already-linked
+    # SmatchetLocalization.cpp (mobileNavPageLabel localizes); otherwise
     # ImGui-free, so no extra .cpp link.
     Core/UiModeIds.test.cpp
     # Issue #979 — pure credential-trim helper applied by onPreferencesSaveAndSync
@@ -464,6 +517,28 @@ add_executable(SmatchetTests
     # test rig links just that one TU.
     Core/CppSyntaxLex.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/CppSyntaxLex.cpp"
+    # Deep-review 2026-07-07 batch 2 (DR3-DR31) regression tests. Production TUs they
+    # exercise (ConfigManager, TicketSyncService, LocalCacheManager, ScenarioRunner, the
+    # Plane/GitHub/Linear query pure TUs) are already linked elsewhere in this target;
+    # the rest assert against header-inline pure helpers, so no new source links are needed.
+    Core/ConfigCredentialLoad.test.cpp
+    Core/SyncEmptyFullSyncGuard.test.cpp
+    Core/OfflineReplayResolveClearsCapturedBase.test.cpp
+    Core/AppControllerFieldCatalogLock.test.cpp
+    Core/ScenarioRunnerReplaceActive.test.cpp
+    Core/ShutdownFutureDrain.test.cpp
+    Core/UpdateInstallerFilenameSanitize.test.cpp
+    Core/MainThreadDispatchShutdown.test.cpp
+    Core/TrackerPostTimeoutClassify.test.cpp
+    Core/Tracker2xxErrorGuard.test.cpp
+    Core/JqlQuoteAware.test.cpp
+    Core/PlanePagination.test.cpp
+    Core/CommandPaletteFilterReset.test.cpp
+    Core/IconNegativeCacheBackoff.test.cpp
+    Core/ResultExceptionSafety.test.cpp
+    Core/McpSpawnTokenRetention.test.cpp
+    Core/ViewsSaveMergeAndDelete.test.cpp
+    Core/FieldEditorInlineTruncateGuard.test.cpp
     Core/LocalCacheManager.test.cpp
     # multi-grid-tabs.md Slice 5 TSan pass — concurrent seed-read (GetAllTickets) +
     # write (SaveTicket) from two std::threads; also in SmatchetTsanTests for TSan.
@@ -543,6 +618,19 @@ add_executable(SmatchetTests
     # SSRF guard — Lua imgui.image http(s)-URL refusal allowlist. Header-only pure predicate.
     Core/LuaImagePathPolicyPure.test.cpp
     Core/TicketFieldEditorDurationPopupPure.test.cpp
+    # Time-tracking sort comparator lifted from TicketGridModel.cpp (TEST_COVERAGE_GAP_MAP.md
+    # Tier 1 #1) — dependency-light, so tests link it without the grid model's heavy deps.
+    Core/TicketGridDurationSortPure.test.cpp
+    # Grid-cell render-model builders lifted from TrackerGridFieldDisplay.cpp (gap map Tier 1
+    # #3) — the untrusted tracker-value parse/format layer, ImGui-free after the extraction.
+    Core/TrackerGridFieldDisplayPure.test.cpp
+    # Gap map Tier 1 #5 — the JQL / Plane query-suggest engines behind their catalog-vector
+    # seams (the whole per-keystroke tokenizer/mode/suggestion pipeline; shells forward from
+    # AppController). TrackerQuerySuggestCommon.cpp + JqlEscape.cpp already linked below.
+    Core/JqlSuggestEnginePure.test.cpp
+    Core/PlaneQuerySuggestEnginePure.test.cpp
+    # Gap map Tier 1 #6 — merge-watch notify endpoint request-validation core.
+    Core/MergeWatchNotifyPure.test.cpp
     Core/IsDescriptionLikeFieldId.test.cpp
     Core/TrackerFieldPayloadPure.test.cpp
     Core/TrackerFieldCatalogPure.test.cpp
@@ -637,6 +725,9 @@ add_executable(SmatchetTests
     # cpr-free (delegates body redaction to AiErrorRedact), linked in the CORE
     # source block below; this entry adds the doctest TU.
     Core/OllamaStreamError.test.cpp
+    # DR26 — Ollama /api/chat request-body shape: the system prompt must be a
+    # leading {role:"system"} message, not the ignored top-level `system` field.
+    Core/OllamaRequestBody.test.cpp
     Core/AiModelCatalog.test.cpp
     Core/AiModelSignature.test.cpp
     # Pure helpers extracted from AiAssistantController::RunRequest (monoliths
@@ -650,6 +741,9 @@ add_executable(SmatchetTests
     Core/AiAgentsMdCacheValidity.test.cpp
     Core/AiPrefsValidator.test.cpp
     Core/AiEndpointSanitize.test.cpp
+    # Gap map Tier 1 #8 — Test-connection pre-network half (credential-slot routing,
+    # default-URL fallback, key strip, sanitiser gate).
+    Core/AiPrefsTestConnectionPure.test.cpp
     # First-send outbound-context consent gate (security audit 2026-05-17 P2).
     # Header-only pure logic in Source/Core/include/AiOutboundConsent.h — the
     # consent predicate + modal-row builder; no extra .cpp linked (the ImGui
@@ -668,6 +762,12 @@ add_executable(SmatchetTests
     # command-input-hardening Phase 0 — pure opt-in numeric-range + max-length arg
     # bounds (Source/Core/include/Commands/ParamBoundsPure.h); header-only, no .cpp link.
     Core/ParamBoundsPure.test.cpp
+    # nightly-monkey-tester Layer 1a — the monkey's shared arg synthesizer
+    # (Source/Core/include/Commands/ParamValueSynthPure.h) + seeded fuzz generators
+    # (tests/monkey/CommandArgSynth.h): pins seed-replay determinism and that every probe
+    # genuinely fails the real ParamValueWithinBounds/required rule (pre-handler reject).
+    # Header-only, no .cpp link; needs tests/monkey on the include path (added below).
+    Core/CommandArgSynth.test.cpp
     # json-fwd-swap-by-value-carriers: pins the std::shared_ptr<nlohmann::json>
     # boxing of Command.h's Default/Details/Data members + the readers' null-ptr
     # guards (Success/ToWireJson/ToJson/BuildJsonSchema). Links Command.cpp, which
@@ -678,6 +778,17 @@ add_executable(SmatchetTests
     # rejections + the symlinked-subdir escape regression from the security-audit
     # MCP file-command confinement. No extra .cpp source.
     Core/PathConfinement.test.cpp
+    # Confine-safe --spawn outLog basename derivation (MakeConfineSafeSpawnOutLogBasename) —
+    # the trust boundary the spawn parent crosses before forwarding outLog to a confined child:
+    # strips every directory component + `..` to a leaf, falls back to outlog.txt, and adds a
+    # random "spawn-<entropy>-" prefix so concurrent spawns never collide. Has a real .cpp source
+    # (random draw), so the production TU is linked here, not header-only.
+    Core/SpawnOutLogBasename.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Scenarios/SpawnOutLogBasename.cpp"
+    # header-only; pins the screenshot-scenario confinement wrapper's fail-closed
+    # escape rejections (absolute / ".." / empty) + scenario-prefixed reject message
+    # (#1566 arbitrary-file-write class on the MCP/Lua-reachable screenshot scenarios).
+    Core/ScenarioScreenshotPath.test.cpp
     Core/DictationInsertionRouter.test.cpp
     Core/AiAssistantInputSeedDecision.test.cpp
     Core/AiAssistantSendButton.test.cpp
@@ -772,6 +883,11 @@ add_executable(SmatchetTests
     # ParseIso8601ToUnixSec (GitHubClientHelpers.cpp) — both already linked above.
     Core/JiraCommentMappingPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraCommentMappingPure.cpp"
+    # error-message-quality-pass — pure Jira error-body extractor (errorMessages[]/errors{}
+    # → joined message, bounded parse, never the raw body). Jira counterpart of
+    # ExtractLinearErrorMessage; used by every JiraIssueMutation failure path.
+    Core/JiraErrorMessagePure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraErrorMessagePure.cpp"
     # issue-comments PR-C — pure JSON array → TrackerIssueComment mapping, split
     # out of PlaneClient.cpp (which pulls cpr). PlaneCommentMappingPure.cpp depends
     # on JsonGetStringIfString (TrackerFieldValueParser.cpp) + ParseIso8601ToUnixSec
@@ -810,6 +926,12 @@ add_executable(SmatchetTests
     # pulls cpr). Same pure-seam shape as PlaneIssueMappingPure above.
     Core/PlaneFieldCatalogPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneFieldCatalogPure.cpp"
+    # BACKLOG_CODE_REVIEW.md §C4 — pure Plane custom-property (properties.<uuid>)
+    # serializer consumed by PlaneClient::BuildCreatePayload. Same pure-seam shape as
+    # PlaneFieldCatalogPure above; its only production dep (TrackerFieldPayloadPure.cpp)
+    # is already linked in this rig.
+    Core/PlaneCustomPropertyPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneCustomPropertyPure.cpp"
     Core/MarkdownLanguageDefinition.test.cpp
     # MarkdownLanguageDefinition.test.cpp exercises the LD static factories
     # declared in TextEditor.h and defined in the vendored ImGuiColorTextEdit
@@ -866,6 +988,9 @@ add_executable(SmatchetTests
     # CommandLineToArgvW backslash-run doubling (trailing-backslash + embedded-
     # quote injection fix). Header-only pure helper, no production .cpp to link.
     Core/P4vLaunchArgQuotePure.test.cpp
+    # Comments-modal generation-token stale-guard (monotonic Gen across opens +
+    # post-refetch supersession). Header-only pure helper, no production .cpp to link.
+    Core/SmatchetCommentsModalGenPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SubprocessCapturePure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SubprocessCapture.cpp"
     Plugins/Mcp/McpRequestParser.test.cpp
@@ -873,13 +998,20 @@ add_executable(SmatchetTests
     Plugins/Mcp/McpToolSchemas.test.cpp
     Plugins/Mcp/McpDispatch.test.cpp
     Plugins/Mcp/McpHostOrigin.test.cpp
+    Plugins/Mcp/McpRateLimit.test.cpp
     Plugins/LuaConsole/LuaConsoleSelection.test.cpp
+    Plugins/LuaConsole/LuaConsoleSelectionByPath.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Plugins/Mcp/McpJsonRpcPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/CallstackParser.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/P4AnnotateParse.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerLabelsPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerDateTimePure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/TicketFieldEditorLongTextPure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/TicketGridDurationSortPure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerGridFieldDisplayPure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlSuggestEnginePure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneQuerySuggestEnginePure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/MergeWatchNotifyPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldPayloadPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldCatalogPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlProjectScope.cpp"
@@ -897,11 +1029,20 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/CompactDateFormatPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/UiPerfMonitor.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownConvert.cpp"
+    # MarkdownConvert god-file split (god-file-splits plan): companion engine TUs the
+    # spine delegates to (md_detail::). Pure md4c/json/Logger — no ImGui, links in this rig.
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownToAdf.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownToHtml.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/AdfToMarkdown.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/BackendAuditTrail.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/FieldEditAuditSource.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Logger.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager.cpp"
+    # ConfigManager god-file split (god-file-splits plan): companion Save/Load/Secret TUs.
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Save.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Load.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Secrets.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Views.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ToolbarConfig.cpp"
@@ -941,6 +1082,9 @@ add_executable(SmatchetTests
     # mapping, retry-recovers / exhaustion-count / POST-predicate-stops semantics via
     # stateful requestFn lambdas (no socket). No extra production TU.
     Core/TrackerHttpRetry.test.cpp
+    # DR30 — tracker error paths route raw response bodies through RedactHttpBodyForLog
+    # before logging, so a 401/403 body reflecting Authorization / x-api-key can't leak.
+    Core/TrackerHttpRedact.test.cpp
     # Integration coverage of the live D3 wiring: drives TrackerGet/Post/PutLogged at a
     # scripted httplib loopback (JiraCatalogHttpFixture) and asserts retry counts prove
     # GET/PUT retry-on-5xx while POST is single-shot (Transport-only). Needs only
@@ -998,9 +1142,14 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AiClientFactory.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AiErrorRedact.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AiEndpointSanitize.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AiPrefsTestConnectionPure.cpp"
     # AiPrefsValidator.cpp now routes base-URL checks through EndpointPolicyForProvider
     # (security audit Item B); its TU lives here, so the doctest link needs it too.
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AiEndpointPolicy.cpp"
+    # Shared provider->AiClientConfig seam (key sanitizer + endpoint consent gate)
+    # consumed by the controller and the debug ai.* commands (audit B4/P4).
+    Core/AiRequestBuilder.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AiRequestBuilder.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/OpenAiClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AnthropicClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/OllamaClient.cpp"
@@ -1043,12 +1192,53 @@ add_executable(SmatchetTests
     # their deps (cpr, TrackerHttpUtils, TrackerFieldCatalogPure, TrackerFieldPayload,
     # OfflineQueue, BackendAuditTrail, ghc_filesystem) are already in the rig.
     Core/TrackerCatalogBuild.test.cpp
+    # BACKLOG_CODE_REVIEW.md §B2 — JiraClient::ProbeReachability HTTP-status→kind
+    # characterization, same JiraCatalogHttpFixture loopback + linked JiraClient TUs.
+    Core/JiraClientHttp.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraIssueSearch.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraIssueMutation.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraUserAndMeta.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraActivityFeed.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldCatalog.cpp"
+    # coverage-gap-tier2-backend-shell-fixtures.md Slice 1 — TEST_COVERAGE_GAP_MAP.md Tier 2
+    # fixture suites for the two flagged backend HTTP shells, driven at the same in-process
+    # httplib loopback as TrackerCatalogBuild.test.cpp. Instantiating PlaneClient needs the
+    # full vtable, so all five Plane implementation TUs link here (Jira-block precedent
+    # above); their pure/support deps (PlaneIssueMappingPure, PlaneFieldCatalogPure,
+    # PlaneCommentMappingPure, PlaneActivityFeedPure, PlaneProjectScope, ProjectResolver,
+    # IssueDraft, MarkdownConvert, TrackerHttp*, cpr) are all already in this rig.
+    # LinearIssueSearch.cpp is free functions — no LinearClient vtable — and its helper TUs
+    # (LinearClientHelpers / LinearIssueMappingPure / LinearQueryFromJql) are linked above.
+    Core/PlaneIssueSearchHttp.test.cpp
+    Core/LinearIssueSearchHttp.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneClient.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneIssueSearch.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneIssueMutation.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneFieldCatalog.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneActivityFeed.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearIssueSearch.cpp"
+    # Slice 2 (same plan) — the GitHub shells. GitHubIssueSearch.cpp is free functions;
+    # GitHubClientHttp.test.cpp instantiates GitHubClient, whose vtable spans
+    # GitHubClient.cpp + GitHubActivityFeed.cpp (both linked here). Their pure/support
+    # deps (GitHubClientHelpers, GitHubQueryFromJql, GitHubFetchPlan,
+    # GitHubIssueSearchMapping, GitHubCommentMappingPure, GitHubActivityFeedPure,
+    # GitHubCommitsParse, LabelEditDiffPure, BackendAuditTrail) are all already linked.
+    Core/GitHubIssueSearchHttp.test.cpp
+    Core/GitHubClientHttp.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubIssueSearch.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubClient.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubActivityFeed.cpp"
+    # Slice 3 (same plan) — the Plane/Linear WRITE shells (the audit's data-loss class).
+    # PlaneIssueMutation.cpp is already linked above (PlaneClient vtable); the LinearClient
+    # vtable spans LinearClient.cpp + LinearIssueMutation.cpp (both here). Their deps
+    # (LinearMutationPure, LinearClientHelpers, LinearIssueSearch, BackendAuditTrail,
+    # MarkdownConvert, PlaneCommentMappingPure) are all already linked. The cfg-less write
+    # paths load ConfigManager per request, so these suites run under TestEnvGuard.
+    Core/PlaneIssueMutationHttp.test.cpp
+    Core/LinearIssueMutationHttp.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearClient.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearIssueMutation.cpp"
     # build-quality-velocity-hardening #32 — flaky-test quarantine mechanism self-test.
     # Demonstrates SMATCHET_QUARANTINED_TEST_CASE / SMATCHET_QT_CHECK env-flip behaviour.
     # Header-only (QuarantineTestCase.h in tests/support/); no extra .cpp source.
@@ -1167,6 +1357,8 @@ if(SMATCHET_BUILD_AGENT_DEBUG_TESTS)
 endif()
 
 target_include_directories(SmatchetTests PRIVATE _helpers)
+# tests/monkey — CommandArgSynth.h, shared by the monkey driver + Core/CommandArgSynth.test.cpp.
+target_include_directories(SmatchetTests PRIVATE monkey)
 target_include_directories(SmatchetTests PRIVATE
     "${CMAKE_SOURCE_DIR}/Source/Plugins/LuaConsole")
 target_compile_definitions(SmatchetTests PRIVATE
@@ -1504,3 +1696,103 @@ add_test(NAME android_openssl_failfast_no_base
 set_tests_properties(android_openssl_failfast_no_base PROPERTIES
     PASS_REGULAR_EXPRESSION "PROBE_OK"
     ENVIRONMENT "SMATCHET_ANDROID_OPENSSL_BASE=")
+
+# ============================================================================
+# Tier-3 Commands invocation harness (commands-invocation-harness.md Slice 1).
+#
+# The 24 Builtin/BuiltinCommands_*.cpp TUs register against the AppController
+# god-object, so they can never join SmatchetTests (which compiles core TUs
+# directly — linking the full-core archive there would duplicate symbols).
+# This SEPARATE doctest target links the existing SmatchetCore_PosixCheck
+# STATIC archive (the whole CORE_SOURCES set minus the GL-host TU) plus the
+# same third-party set the app links, constructs a real headless AppController
+# (its ctor is an Impl back-reference + one GridLiveContext — no GL, no I/O),
+# registers ALL builtins, and drives CommandRegistry::Dispatch through the
+# pre-handler pipeline. Linux-only by construction (the archive exists only
+# under SMATCHET_BUILD_POSIX_CORE_CHECK=ON); the mobile-posix-core-check CI
+# lane builds + runs it with -DSMATCHET_BUILD_TESTS=ON.
+# ============================================================================
+if(UNIX AND SMATCHET_BUILD_POSIX_CORE_CHECK)
+    add_executable(SmatchetCommandsTests Commands/BuiltinCommandsDispatch.test.cpp)
+    target_include_directories(SmatchetCommandsTests PRIVATE
+        "${CMAKE_SOURCE_DIR}/Source/Core/include"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Tracker"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Sync"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Persistence"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Config"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Ui"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Diagnostics"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Privacy"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Imaging"
+    )
+    # Link order: the archive first, then the third parties its objects reference.
+    # SmatchetTextEdit is the OBJECT lib carrying ImGuiColorTextEdit's TextEditor
+    # (deliberately outside CORE_SOURCES — see the root CMakeLists per-world note).
+    target_link_libraries(SmatchetCommandsTests PRIVATE
+        doctest::doctest
+        nlohmann_json::nlohmann_json
+        SmatchetCore_PosixCheck
+        SmatchetTextEdit
+        ImGuiLib
+        md4c
+        cpr::cpr
+        SQLiteCpp
+        ghc_filesystem
+        httplib::httplib
+    )
+    # Keep this exe coherent with the (possibly sanitized) core archive: no-op unless
+    # SMATCHET_SANITIZER is set, but if the build dir IS configured for ASan (the monkey
+    # nightly does), the exe must link the runtime too or it fails at link time.
+    smatchet_apply_sanitizers(SmatchetCommandsTests)
+    add_test(NAME smatchet_commands_tests COMMAND SmatchetCommandsTests)
+
+    # ============================================================================
+    # Nightly command-registry MONKEY (docs/plans/nightly-monkey-tester.md).
+    # Same headless archive + link recipe as SmatchetCommandsTests, but a standalone
+    # int main() (no doctest) so it takes --seed/--steps for reproducible replay. It
+    # fires a long SEEDED sequence of randomized-but-guaranteed-pre-handler-reject
+    # dispatches at CommandRegistry::Dispatch (see tests/monkey/), catching crashes /
+    # UB / contract breaks the scripted tests never reach. Linux-only by construction.
+    # ============================================================================
+    # Layer 1b (handler mode) links the fake Jira backend fixture so the driver can boot a
+    # fully-initialized AppController with no network. JiraFakeTrackerFixture.cpp is the only
+    # tests/support .cpp needed (ScriptedTrackerBackendFactory.h / FakeTrackerClient.h are
+    # header-only; the Jira mapper it calls is already in SmatchetCore_PosixCheck).
+    add_executable(SmatchetMonkeyCli
+        monkey/monkey_command_registry.cpp
+        support/JiraFakeTrackerFixture.cpp)
+    target_include_directories(SmatchetMonkeyCli PRIVATE
+        "${CMAKE_SOURCE_DIR}/Source/Core/include"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Tracker"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Sync"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Persistence"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Config"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Ui"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Diagnostics"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Privacy"
+        "${CMAKE_SOURCE_DIR}/Source/Core/include/Imaging"
+        "${CMAKE_CURRENT_SOURCE_DIR}/monkey"   # CommandArgSynth.h
+        "${CMAKE_CURRENT_SOURCE_DIR}/support"  # JiraFakeTrackerFixture.h / ScriptedTrackerBackendFactory.h
+    )
+    target_link_libraries(SmatchetMonkeyCli PRIVATE
+        nlohmann_json::nlohmann_json
+        SmatchetCore_PosixCheck
+        SmatchetTextEdit
+        ImGuiLib
+        md4c
+        cpr::cpr
+        SQLiteCpp
+        ghc_filesystem
+        httplib::httplib
+    )
+    smatchet_apply_sanitizers(SmatchetMonkeyCli)
+    # Bounded, fixed-seed smoke so the driver never bit-rots and stays reproducible. The
+    # nightly runs the binary directly with a large --steps/--time-budget-ms budget.
+    add_test(NAME monkey_command_registry_smoke
+             COMMAND SmatchetMonkeyCli --mode=prehandler --seed=1 --steps=500)
+    # Layer 1b handler-mode smoke — absolute fixture path so it resolves under ctest's build
+    # working dir. Boots a fully-initialized headless AppController vs the fake Jira backend.
+    add_test(NAME monkey_command_handlers_smoke
+             COMMAND SmatchetMonkeyCli --mode=handlers --seed=1 --steps=300
+                     --fixture=${CMAKE_SOURCE_DIR}/tests/fixtures/jira_backend/basic-grid.json)
+endif()

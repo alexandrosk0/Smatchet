@@ -23,8 +23,10 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/callstack_tooltip_hover.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/help_marker_keyboard_focus.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/mcp_lua_fresh_state_race.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/automation_reload_hooks_race.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_panel_dock_swap.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_enter_send.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_input_paste_overflow.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/ai_prefs_autosave_flow.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_preferences_docking.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_preferences_enter_send.test.cpp"
@@ -49,6 +51,7 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/mobile_views_confirm_modal.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/keybindings_editor_rebind.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/command_palette_inline_typing.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/command_palette_deferred_dispatch.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/omnibar_search_apply.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/offline_conflict_modal_panes.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/whisper_ai_assistant_autosend.test.cpp"
@@ -56,6 +59,9 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/annotate_before_cl_cue.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/toolbar_append_cache_cue.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/attachment_thumbnail_loading_cue.test.cpp"
+    # nightly-monkey-tester Layer 2 — random-input UI monkey (opt-in via SMATCHET_UI_MONKEY=1;
+    # inert under `ui_test.run --all`). Compiled here so the Bucket-E build type-checks it.
+    "${CMAKE_CURRENT_SOURCE_DIR}/ui_monkey.test.cpp"
 )
 
 # Link the test source list into both Standalone (live runner) and the DX12

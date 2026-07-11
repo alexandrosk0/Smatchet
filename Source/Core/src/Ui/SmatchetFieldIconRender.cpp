@@ -108,20 +108,66 @@ std::string TryBundledPriorityPngPath(const std::string& slug) {
     return std::string();
 }
 
-/** Absolute URL from Jira `iconUrl`, or relative path joined with Jira site domain. */
+// Lowercased host (no scheme, no port, no path) from an absolute "scheme://host[:port]/..."
+// URL. Empty on a schemeless/malformed input. CPP_CODE_AUDIT.md #14 — same-origin comparison
+// only; not a general URL parser.
+std::string ExtractUrlHost(const std::string& url) {
+    const std::size_t schemeEnd = url.find("://");
+    if (schemeEnd == std::string::npos) {
+        return std::string();
+    }
+    const std::size_t hostStart = schemeEnd + 3;
+    std::size_t hostEnd = url.find_first_of("/?#", hostStart);
+    if (hostEnd == std::string::npos) {
+        hostEnd = url.size();
+    }
+    std::string hostPort = url.substr(hostStart, hostEnd - hostStart);
+    if (!hostPort.empty() && hostPort.front() == '[') {
+        // Bracketed IPv6 literal — keep the brackets, drop any trailing ":port".
+        const std::size_t close = hostPort.find(']');
+        if (close != std::string::npos) {
+            hostPort = hostPort.substr(0, close + 1);
+        }
+    } else {
+        const std::size_t colon = hostPort.rfind(':');
+        if (colon != std::string::npos) {
+            hostPort = hostPort.substr(0, colon);
+        }
+    }
+    return ToLowerAsciiCopy(std::move(hostPort));
+}
+
+// True when `absoluteUrl`'s host matches `jiraDomain`'s host. CPP_CODE_AUDIT.md #14: a
+// malicious/compromised tracker's priority `iconUrl` must not be able to drive
+// HttpGetBinary's GET at an arbitrary host (e.g. the cloud-metadata IP) — confine icon
+// fetches to the tracker's own configured origin.
+bool IconUrlHostAllowed(const std::string& absoluteUrl, const std::string& jiraDomain) {
+    const std::string urlHost = ExtractUrlHost(absoluteUrl);
+    if (urlHost.empty()) {
+        return false; // not a well-formed absolute URL — reject rather than guess
+    }
+    const std::string domainWithScheme =
+        jiraDomain.find("://") != std::string::npos ? jiraDomain : "https://" + jiraDomain;
+    const std::string domainHost = ExtractUrlHost(domainWithScheme);
+    return !domainHost.empty() && urlHost == domainHost;
+}
+
+/** Absolute URL from Jira `iconUrl`, or relative path joined with Jira site domain. Absolute
+ * references are confined to the tracker's own origin — see IconUrlHostAllowed. */
 std::string ResolveJiraIconUrlReference(const std::string& iconUrl, const std::string& jiraDomain) {
     const std::string t = TrimCopyAsciiWhitespace(iconUrl);
     if (t.empty()) {
         return std::string();
     }
     if (t.rfind("https://", 0) == 0 || t.rfind("http://", 0) == 0) {
-        return t;
+        return IconUrlHostAllowed(t, jiraDomain) ? t : std::string();
     }
     if (t.rfind("//", 0) == 0) {
-        return std::string("https:") + t;
+        const std::string absolute = std::string("https:") + t;
+        return IconUrlHostAllowed(absolute, jiraDomain) ? absolute : std::string();
     }
     if (!t.empty() && t[0] == '/') {
-        return JoinDomainAndPath(jiraDomain, t);
+        return JoinDomainAndPath(jiraDomain, t); // relative — already same-origin by construction
     }
     return std::string();
 }
@@ -231,6 +277,58 @@ void ClearIconUrlFetchInFlight(const std::string& url) {
     IconUrlFetchInFlightSet().erase(url);
 }
 
+// DR28 — URL-level negative fetch cache with time-based backoff. A worker whose HTTP GET fails
+// records the steady-clock time of failure here; LoadOrFetchUrlImage consults it before deferring
+// another (up to 3s) cpr GET so an unresolvable icon URL backs off instead of re-fetching (and the
+// grid cell re-parsing JSON + re-stat'ing disk) every single frame for the whole session. Keyed by
+// URL; capped so a tracker returning many distinct bad URLs cannot grow it without bound.
+constexpr auto kIconFetchNegativeBackoff = std::chrono::minutes(5);
+constexpr size_t kIconFetchNegativeCap = 256;
+
+std::mutex& IconUrlFetchNegativeMutex() {
+    static std::mutex m;
+    return m;
+}
+std::unordered_map<std::string, std::chrono::steady_clock::time_point>& IconUrlFetchNegativeMap() {
+    static std::unordered_map<std::string, std::chrono::steady_clock::time_point> m;
+    return m;
+}
+
+long long SteadyMillis(std::chrono::steady_clock::time_point tp) {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(tp.time_since_epoch()).count();
+}
+
+// True when `url` failed a fetch recently enough to still be inside the backoff window.
+bool IconUrlFetchInBackoff(const std::string& url) {
+    const auto now = std::chrono::steady_clock::now();
+    const long long backoffMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(kIconFetchNegativeBackoff).count();
+    std::lock_guard<std::mutex> lock(IconUrlFetchNegativeMutex());
+    const auto& m = IconUrlFetchNegativeMap();
+    const auto it = m.find(url);
+    const bool have = it != m.end();
+    const long long lastMs = have ? SteadyMillis(it->second) : 0;
+    return !SmatchetFieldIconRender::ShouldAttemptIconResolve(have, lastMs, SteadyMillis(now), backoffMs);
+}
+
+void RecordIconUrlFetchFailure(const std::string& url) {
+    if (url.empty()) {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> lock(IconUrlFetchNegativeMutex());
+    auto& m = IconUrlFetchNegativeMap();
+    if (m.size() >= kIconFetchNegativeCap) {
+        m.clear();
+    }
+    m[url] = now;
+}
+
+void ClearIconUrlFetchFailure(const std::string& url) {
+    std::lock_guard<std::mutex> lock(IconUrlFetchNegativeMutex());
+    IconUrlFetchNegativeMap().erase(url);
+}
+
 // In-flight file-read set. Mirrors the URL fetch set shape — the URL-disk-cache-hit branch and
 // the file-path branch both defer their ifstream off the UI thread; the worker's PostToMainThread
 // invokes GetOrLoadFromMemory on the bytes (GPU texture upload requires UI thread). Keyed by the
@@ -313,7 +411,7 @@ bool LoadOrFetchUrlImage(AppController& app, const std::string& url, SmatchetLoa
             if (ifs) {
                 bytes.assign((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
             }
-            app.mainThreadDispatcher.PostToMainThread([capturedUrlKey, bytes]() {
+            app.PostToMainThread([capturedUrlKey, bytes]() {
                 ClearIconFileReadInFlight(capturedUrlKey);
                 if (bytes.empty()) {
                     return;
@@ -329,6 +427,14 @@ bool LoadOrFetchUrlImage(AppController& app, const std::string& url, SmatchetLoa
     }
     // No cache, no disk → defer HTTP fetch to a worker thread (Pillar 2 — finding #1).
     // The grid-render path was blocking up to 3s per priority icon on first frame.
+    // DR28: if this URL failed to fetch recently, report a genuine (non-deferred) failure so the
+    // caller negative-memos the cell instead of re-issuing the 3s cpr GET every frame. Backoff
+    // expiry lets a transient outage recover on a later frame.
+    if (IconUrlFetchInBackoff(url)) {
+        outError = "Icon fetch in backoff after a prior failure.";
+        outDeferred = false;
+        return false;
+    }
     if (IconUrlFetchInFlight(url)) {
         outDeferred = true;
         return false;
@@ -353,11 +459,16 @@ bool LoadOrFetchUrlImage(AppController& app, const std::string& url, SmatchetLoa
         }
         // Post texture upload + in-flight-set release back to the UI thread. The image-texture
         // cache requires UI-thread invocation (GL / DX12 resource creation).
-        app.mainThreadDispatcher.PostToMainThread([capturedUrl, capturedUrlKey, bytes, fetchOk, fetchError]() {
+        app.PostToMainThread([capturedUrl, capturedUrlKey, bytes, fetchOk, fetchError]() {
             ClearIconUrlFetchInFlight(capturedUrl);
             if (!fetchOk || bytes.empty()) {
+                // DR28: memoise the failure so subsequent frames back off (see IconUrlFetchInBackoff)
+                // rather than re-fetching this URL every frame for the rest of the session.
+                (void)fetchError;
+                RecordIconUrlFetchFailure(capturedUrl);
                 return;
             }
+            ClearIconUrlFetchFailure(capturedUrl);
             SmatchetLoadedIconTexture loaded;
             std::string err;
             (void)SmatchetImageTextureCache::GetOrLoadFromMemory(capturedUrlKey, bytes.data(), bytes.size(), loaded,
@@ -404,7 +515,7 @@ bool LoadTextureForResolvedPath(AppController& app, const std::string& resolved,
         if (ifs) {
             bytes.assign((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
         }
-        app.mainThreadDispatcher.PostToMainThread([capturedCacheKey, bytes]() {
+        app.PostToMainThread([capturedCacheKey, bytes]() {
             ClearIconFileReadInFlight(capturedCacheKey);
             if (bytes.empty()) {
                 return;
@@ -577,6 +688,12 @@ bool DrawImagePathOrUrl(AppController& app, const std::string& pathOrUrl, float 
     if (!LoadTextureForResolvedPath(app, resolved, icon, err)) {
         return false;
     }
+    // CPP_CODE_AUDIT.md #22: a cache entry can report success with a null Texture
+    // (a failed/zero-dim decode). Guard once here so both the zero-size and
+    // explicit-size branches below agree on the return value for that failure.
+    if (icon.Texture == nullptr) {
+        return false;
+    }
     float drawW = width;
     float drawH = height;
     if (drawW <= 0.0f || drawH <= 0.0f) {
@@ -699,14 +816,21 @@ bool TryDrawFieldValueIcon(const AppController& app, const std::string& fieldId,
     {
         const auto& memo = PriorityRawValueToCacheKey();
         const auto it = memo.find(rawValue);
-        if (it != memo.end() && SmatchetImageTextureCache::TryGetCached(it->second.CacheKey, icon)) {
-            const float maxEdge = ImGui::GetFrameHeight();
-            const std::string& memoLabel = it->second.Label;
-            DrawLoadedIconWithLazyTooltip(icon, maxEdge, tooltipsEnabled, [&]() {
-                return field ? DisplayValueForTrackerDateField(fieldId, field, rawValue)
-                             : (memoLabel.empty() ? rawValue : memoLabel);
-            });
-            return true;
+        if (it != memo.end()) {
+            // DR28: a known-negative cell short-circuits — no re-parse, no re-fetch this frame.
+            if (it->second.Negative) {
+                return false;
+            }
+            if (SmatchetImageTextureCache::TryGetCached(it->second.CacheKey, icon)) {
+                const float maxEdge = ImGui::GetFrameHeight();
+                const std::string& memoLabel = it->second.Label;
+                DrawLoadedIconWithLazyTooltip(icon, maxEdge, tooltipsEnabled, [&]() {
+                    return field ? DisplayValueForTrackerDateField(fieldId, field, rawValue)
+                                 : (memoLabel.empty() ? rawValue : memoLabel);
+                });
+                return true;
+            }
+            // Texture evicted — fall through to the slow path, which re-loads and refreshes the memo.
         }
     }
 
@@ -714,6 +838,8 @@ bool TryDrawFieldValueIcon(const AppController& app, const std::string& fieldId,
     std::string label;
     std::string slug;
     if (!ParsePriorityJson(rawValue, iconUrl, label, slug)) {
+        // DR28: malformed / unparseable priority JSON — negative-memo so we stop re-parsing it.
+        RememberNegativePriorityResolution(rawValue, label);
         return false;
     }
 
@@ -722,6 +848,11 @@ bool TryDrawFieldValueIcon(const AppController& app, const std::string& fieldId,
     bool anyDeferred = false;
     if (!LoadPriorityIconWithFallbacks(const_cast<AppController&>(app), iconUrl, slug, icon, resolvedKey, err,
                                        anyDeferred)) {
+        // DR28: record a negative only when nothing is mid-download — a deferred candidate will hit
+        // the cache on a later frame, so negative-memoing it would suppress a load that is coming.
+        if (!anyDeferred) {
+            RememberNegativePriorityResolution(rawValue, label);
+        }
         return false;
     }
     RememberPriorityResolution(rawValue, resolvedKey, label);

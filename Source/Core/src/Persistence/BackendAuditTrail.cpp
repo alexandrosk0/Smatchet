@@ -1,6 +1,7 @@
 #include "BackendAuditTrail.h"
 
 #include "ConfigManager.h"
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "StringUtil.h"
 
@@ -54,6 +55,16 @@ std::string NowLocalIso() {
     return buf;
 }
 
+// BACKLOG_CODE_REVIEW.md §C6 resolution: the audit trail is a plaintext on-disk file that
+// outlives the session and travels in bug reports, so the blocklist deliberately trades diff
+// utility for not persisting user data. Three classes, each kept on purpose: credentials
+// (token/secret/password/apikey/authorization/security/github_pat) are never storable, no
+// exceptions. Identity/PII (accountid/email/assignee/reporter/creator/watchers/p4_user)
+// identifies humans — a diff of WHO changed is still visible via field_id + timestamps.
+// Free text (comment/description/summary/body/text) is arbitrary user prose that routinely
+// quotes the other two classes inline, so it inherits their treatment. Trimming any entry is
+// a privacy-stance product decision, not a bug fix — audit consumers that need value diffs
+// for non-PII fields (status/priority/labels/etc.) already get them.
 bool LooksSensitiveKey(const std::string& key) {
     const std::string k = ToLowerAsciiCopy(key);
     return k.find("token") != std::string::npos || k.find("secret") != std::string::npos ||
@@ -399,9 +410,10 @@ std::vector<nlohmann::json> ReadRecentEvents(std::size_t maxEvents, std::string*
             if (line.empty()) {
                 continue;
             }
-            try {
-                cache.Events.push_back(nlohmann::json::parse(line));
-            } catch (...) { // catch-all-ok: skip corrupt partial audit lines
+            std::string parseErr;
+            nlohmann::json parsed = smatchet::json_safe::ParseBounded(line, parseErr);
+            if (parseErr.empty()) { // skip corrupt partial audit lines
+                cache.Events.push_back(std::move(parsed));
             }
         }
         cache.Offset = file.eof() ? end : file.tellg();

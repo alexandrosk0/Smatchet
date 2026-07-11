@@ -90,7 +90,7 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
     void SetBackend(std::unique_ptr<ITrackerBackend> backend) override;
     ITrackerBackendFactory* BackendFactory() override;
     void SetCacheBackendKey(const std::string& key) override;
-    void SetLastTrackerTicketSyncWarning(const std::string& message) override;
+    void SetLastTrackerTicketSyncWarning(const std::string& message, bool transient) override;
     void SetLastTrackerConnectivityState(ITicketSyncDeps::ConnectivityState state) override;
     void SetNextTrackerConnectivityProbeAt(std::chrono::steady_clock::time_point at) override;
     void PushOfflineReplayTimersDuringTransportOutage(std::chrono::steady_clock::time_point now) override;

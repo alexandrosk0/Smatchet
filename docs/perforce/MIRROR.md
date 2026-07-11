@@ -24,6 +24,8 @@ A graph depot is the **only** mechanism that stores the mirror as real git objec
 
 ## 1. Server side (Windows `p4d`) — graph depot + repo spec + service user
 
+> **Scripted**: [`scripts/dev/p4-mirror-bootstrap.sh`](../../scripts/dev/p4-mirror-bootstrap.sh) codifies §§ 1–2 idempotently (verify-then-create the depot / repo spec / `gconn` user + grant, apt-install `git`/`git-lfs`, reachability pre-flight) and prints §§ 3–5's manual half as guided prompts. `--server-only` / `--host-only` split the two sides. Tests: [`tests/bats/p4_mirror_bootstrap.bats`](../../tests/bats/p4_mirror_bootstrap.bats). The sections below remain the reference for what the script does (and for hand-running any single step).
+
 Run from any `p4` client reaching `Mainbot:1666` (e.g. the dev box).
 
 ```bash

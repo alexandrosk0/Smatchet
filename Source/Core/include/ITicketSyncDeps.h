@@ -79,7 +79,11 @@ class ITicketSyncDeps {
     virtual void SetCacheBackendKey(const std::string& key) = 0;
 
     // ---- Connectivity + sync-warning banner -------------------------------------------
-    virtual void SetLastTrackerTicketSyncWarning(const std::string& message) = 0;
+    /// `transient` = the warning stems from a transport-shaped failure (offline / DNS / timeout /
+    /// 5xx-style), classified at the fetch seam that composed it (N12 slice 1). Consumers (the
+    /// connectivity monitor's degraded-probe-interval check) branch on the flag instead of
+    /// re-classifying the composed message text.
+    virtual void SetLastTrackerTicketSyncWarning(const std::string& message, bool transient) = 0;
     virtual void SetLastTrackerConnectivityState(ConnectivityState state) = 0;
     virtual void SetNextTrackerConnectivityProbeAt(std::chrono::steady_clock::time_point at) = 0;
     /// Forward to `OfflineQueueService::PushReplayTimersForward`. AppController routes this so

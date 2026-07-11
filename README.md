@@ -67,7 +67,7 @@ Smatchet's build system uses CMake and is designed to require **zero manual depe
 - Ninja build system
 - Git
 - One of:
-  - **MSVC** — Visual Studio 2022 (Community or Build Tools) installed. No manual Developer Command Prompt needed when using `scripts/dev/build_and_run.ps1` (it auto-bootstraps the VS environment via `vswhere`→`vcvars64`); a Developer Command Prompt is only required if you invoke raw `cmake --preset ninja-iter-msvc` yourself.
+  - **MSVC** — Visual Studio 2022 (Community or Build Tools) installed. The `*-msvc` presets need the MSVC toolchain (`cl.exe`) on `PATH`: run from a Visual Studio Developer Command Prompt/PowerShell, or activate the environment first (the bash flows use `scripts/dev/with-msvc-env.sh`).
   - **Clang/LLVM** — `winget install LLVM.LLVM` on Windows. Uses `clang-cl` for MSVC ABI compatibility.
 
 ### Supported Presets
@@ -96,12 +96,12 @@ cmake --preset ninja-iter-msvc
 cmake --build --preset ninja-iter-msvc
 ```
 
-**One-command build + run (no Developer Prompt needed)** — `build_and_run.ps1` auto-bootstraps the
-Visual Studio compiler environment (locates `vcvars64.bat` via `vswhere`) for `*-msvc` presets, so it
-works from a normal PowerShell:
+**One-command build + run** — `build_and_run.ps1` (under `scripts/dev/local/`) drives `cmake --preset`
++ `cmake --build` (and optionally runs/verifies) in one step. Run it from a VS Developer Command
+Prompt/PowerShell — like the raw presets, the `*-msvc` build needs `cl.exe` on `PATH`:
 
 ```powershell
-scripts/dev/build_and_run.ps1 -Preset ninja-iter-msvc
+scripts/dev/local/build_and_run.ps1 -Preset ninja-iter-msvc
 ```
 
 > **MSYS2 is not required and not supported for building Smatchet.** The `ninja-iter-msys2` /

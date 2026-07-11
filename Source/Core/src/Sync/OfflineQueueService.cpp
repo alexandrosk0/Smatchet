@@ -12,6 +12,7 @@
 #include "ISyncCache.h"
 #include "Json/BoundedJsonParse.h"
 #include "Logger.h"
+#include "SmatchetLocalization.h"
 #include "MarkdownConvert.h"
 #include "OfflineFieldConflictPolicy.h"
 #include "OfflineQueueReplayPolicy.h"
@@ -30,6 +31,29 @@
 #include <vector>
 
 namespace {
+
+// Minimal RAII "run this closure on scope exit" helper — fires on normal return AND on
+// exception unwind, unlike a bare tail statement. TickOfflineCreates uses it to guarantee
+// offlineReplayInFlight_ resets even if ReplayOneCreate throws mid-loop (a bare
+// cache->SaveTicket in IssueCreatePipeline::Run could do exactly this before that call
+// site was wrapped in try/catch — CPP_CODE_AUDIT.md #6). Without this, the
+// LaunchBackgroundTask firewall catches the exception (no crash) but the lambda tail that
+// resets the latch never runs, so offline replay goes silently dead until restart.
+class ScopeExit {
+  public:
+    explicit ScopeExit(std::function<void()> fn) : fn_(std::move(fn)) {}
+    ~ScopeExit() {
+        if (fn_) {
+            fn_();
+        }
+    }
+    ScopeExit(const ScopeExit&) = delete;
+    ScopeExit& operator=(const ScopeExit&) = delete;
+
+  private:
+    std::function<void()> fn_;
+};
+
 // Anonymous-namespace helpers (formerly in AppController_IssueCreateOffline.cpp). Used by the
 // Tick* replay loops below to format dead-letter audit lines.
 std::string SanitizeOfflineQueueDetail(std::string s) {
@@ -534,11 +558,14 @@ std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issue
         return 0;
     }
     if (!deps_.Cache()) {
-        outError = "Cache is not initialized.";
+        outError = SmatchetLocalization::T("offline.cache_unavailable",
+                                           "Local cache is unavailable, so this edit cannot be queued offline. "
+                                           "Restart Smatchet or check Settings -> Preferences -> Local data.");
         return 0;
     }
     if (issueKey.empty() || fieldId.empty() || fieldsPayloadJson.empty()) {
-        outError = "Invalid offline field edit enqueue parameters.";
+        outError = "This edit could not be queued offline (incomplete edit data). Retry the edit once Tracker is "
+                   "reachable.";
         return 0;
     }
     try {
@@ -554,7 +581,8 @@ std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issue
                                         nlohmann::json{{"pending_field_edit_id", id}, {"field_id", fieldId}});
         return id;
     } catch (const std::exception& ex) {
-        outError = ex.what();
+        outError = "Saving this edit to the offline queue failed (local database error). Retry the edit once "
+                   "Tracker is reachable.";
         LOG_ERROR("OfflineQueueService::QueueFieldEditOffline failed: %s", ex.what());
         BackendAuditTrail::AppendResult("offline_queue_field_edit", "ui", issueKey,
                                         BackendAuditTrail::MakeOperationId("offline-field-queue"), false, ex.what(),
@@ -837,6 +865,20 @@ void OfflineQueueService::TickOfflineFieldEdits() {
 
     IOfflineQueueDeps& depsRef = deps_;
     deps_.LaunchBackgroundTask([this, &depsRef, pending, cache, reader, mutations, capturedGeneration]() {
+        // Guarantees offlineFieldEditReplayInFlight_ resets on every exit path from this lambda —
+        // normal return OR an exception unwinding out of ReplayOneFieldEdit (RefreshLocalData
+        // rethrows SQLite errors; the clean-merge MarkdownToAdf path can also throw), mirroring
+        // the creates path. Without it a throw leaves the in-flight flag latched, every later tick
+        // short-circuits at the in-flight guard, and queued edits never replay until restart (DR5).
+        // Defaults to a conservative 30s retry delay; the normal-completion path overwrites it.
+        std::chrono::seconds nextDelay{30};
+        ScopeExit resetInFlight([this, &nextDelay]() {
+            const auto nextAt = std::chrono::steady_clock::now() + nextDelay;
+            std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
+            nextOfflineFieldEditReplayAt_ = nextAt;
+            offlineFieldEditReplayInFlight_ = false;
+        });
+
         FieldEditReplayTally tally;
         for (const auto& row : pending) {
             if (row.HasMergeConflict) {
@@ -869,12 +911,7 @@ void OfflineQueueService::TickOfflineFieldEdits() {
         } else if (tally.Failures > 0 && tally.Successes == 0) {
             delay = std::chrono::seconds(30);
         }
-        const auto nextAt = std::chrono::steady_clock::now() + delay;
-        {
-            std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
-            nextOfflineFieldEditReplayAt_ = nextAt;
-            offlineFieldEditReplayInFlight_ = false;
-        }
+        nextDelay = delay;
     });
 }
 
@@ -1397,11 +1434,33 @@ void OfflineQueueService::TickOfflineCreates() {
     // LATCHED strong mutation handle (debt 2026-06-07): captured into the background task so
     // a live backend swap / pane-context retirement mid-replay cannot dangle it.
     std::shared_ptr<ITrackerIssueMutations> mutations2 = deps_.MutationsShared();
+    if (!mutations2) {
+        // Mirror the null guard in TickOfflineFieldEdits: a latched backend with no mutations
+        // support must release the in-flight latch before bailing, otherwise ReplayOneCreate
+        // dereferences a null mutation handle and every later tick short-circuits (DR5).
+        std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
+        offlineReplayInFlight_ = false;
+        return;
+    }
     ISyncCache* cache = deps_.Cache();
 
     IOfflineQueueDeps& depsRef = deps_;
     deps_.LaunchBackgroundTask(
         [this, &depsRef, pending, mutations2, cache, catalogCopy, capturedBackendKey, capturedGeneration]() {
+            // Guarantees offlineReplayInFlight_ resets on every exit path from this lambda —
+            // normal return, an early return, OR an exception unwinding out of
+            // ReplayOneCreate (LaunchBackgroundTask's own top-level catch prevents a crash but
+            // does NOT run this lambda's tail) — see the ScopeExit doc comment / #6. Defaults
+            // to a conservative 30s retry delay; the normal-completion path below overwrites
+            // it with the tally-computed delay before the guard fires.
+            std::chrono::seconds nextDelay{30};
+            ScopeExit resetInFlight([this, &nextDelay]() {
+                const auto nextAt = std::chrono::steady_clock::now() + nextDelay;
+                std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
+                nextOfflineReplayAt_ = nextAt;
+                offlineReplayInFlight_ = false;
+            });
+
             CreateReplayTally tally;
             for (const auto& pc : pending) {
                 ReplayOneCreate(pc, cache, mutations2.get(), *catalogCopy, capturedBackendKey, depsRef, tally);
@@ -1430,11 +1489,6 @@ void OfflineQueueService::TickOfflineCreates() {
             } else if (tally.Failures > 0 && tally.Successes == 0) {
                 delay = std::chrono::seconds(30);
             }
-            const auto nextAt = std::chrono::steady_clock::now() + delay;
-            {
-                std::lock_guard<std::mutex> lock(offlineReplayScheduleMutex_);
-                nextOfflineReplayAt_ = nextAt;
-                offlineReplayInFlight_ = false;
-            }
+            nextDelay = delay;
         });
 }

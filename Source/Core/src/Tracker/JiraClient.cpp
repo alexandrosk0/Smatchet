@@ -1,7 +1,9 @@
 #include "JiraClient.h"
 
+#include "Json/BoundedJsonParse.h"
 #include "JqlProjectScope.h"
 #include "Logger.h"
+#include "TrackerHttpClient.h"
 #include "TrackerHttpUtils.h"
 
 #include <nlohmann/json.hpp>
@@ -9,7 +11,6 @@
 #include <chrono>
 #include <cstdint>
 #include <mutex>
-#include <sstream>
 #include <string>
 
 ITrackerIssueReader& JiraClient::Reader() { return *this; }
@@ -38,40 +39,11 @@ TrackerReachabilityProbeResult JiraClient::ProbeReachability(const TrackerConfig
     const cpr::Response resp =
         TrackerGetLogged("JiraClient", url, headers, kTrackerProbeConnectTimeoutMs, kTrackerProbeOverallTimeoutMs);
 
-    const long sc = resp.status_code;
-    if (sc == 200) {
-        out.Kind = TrackerReachabilityProbeKind::AuthenticatedReachable;
-        out.Diagnostic = "HTTP 200";
-        return out;
-    }
-
-    if (sc == 401 || sc == 403) {
-        out.Kind = TrackerReachabilityProbeKind::ReachableAuthOrConfigError;
-        std::ostringstream oss;
-        oss << "HTTP " << sc;
-        out.Diagnostic = oss.str();
-        return out;
-    }
-
-    if (sc >= 500 && sc < 600) {
-        out.Kind = TrackerReachabilityProbeKind::ServiceUnavailable;
-        std::ostringstream oss;
-        oss << "HTTP " << sc;
-        out.Diagnostic = oss.str();
-        return out;
-    }
-
-    if (sc > 0 && sc < 500) {
-        out.Kind = TrackerReachabilityProbeKind::ReachableAuthOrConfigError;
-        std::ostringstream oss;
-        oss << "HTTP " << sc;
-        out.Diagnostic = oss.str();
-        return out;
-    }
-
-    out.Kind = TrackerReachabilityProbeKind::TransportDown;
-    out.Diagnostic = resp.error.message.empty() ? std::string("Unknown network error") : resp.error.message;
-    return out;
+    // BACKLOG_CODE_REVIEW.md §B2 (item 15): route through the shared reachability-probe classifier
+    // (also used by PlaneClient) so the HTTP-status → probe-kind matrix lives in one place instead
+    // of a per-backend hand-rolled ladder. Behaviour-preserving for every common status — pinned by
+    // tests/Core/JiraClientHttp.test.cpp.
+    return ClassifyReachabilityProbe(resp);
 }
 
 namespace {
@@ -122,7 +94,9 @@ std::vector<RemoteProject> JiraClient::ListProjects() {
 
     std::vector<RemoteProject> projects;
     try {
-        const nlohmann::json j = nlohmann::json::parse(resp.text);
+        // Bounded parse — the try can't catch a depth-bomb's destructor-time SIGSEGV
+        // (audit: unbounded-recursion-DoS). Discarded on failure → !is_array() path below.
+        const nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
         if (!j.is_array()) {
             LOG_WARN("JiraClient::ListProjects: unexpected response shape (not an array).");
             return {};

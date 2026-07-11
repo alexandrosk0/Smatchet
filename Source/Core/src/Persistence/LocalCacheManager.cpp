@@ -1037,7 +1037,8 @@ void LocalCacheManager::ResolveFieldEditConflict(std::int64_t id, const std::str
     try {
         SQLite::Statement upd(
             db, "UPDATE pending_field_edits SET has_merge_conflict = 0, conflict_context_json = NULL, "
-                "original_rich_value = NULL, original_value = NULL, fields_payload_json = ? WHERE id = ?");
+                "original_rich_value = NULL, original_value = NULL, has_original_value = 0, "
+                "fields_payload_json = ? WHERE id = ?");
         upd.bind(1, resolvedPayloadJson);
         upd.bind(2, id);
         upd.exec();

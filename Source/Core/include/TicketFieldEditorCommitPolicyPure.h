@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+
 // Pure commit-vs-cancel policy for the inline cell text editor (RenderTextInlineEdit in
 // TicketFieldEditor.cpp), split out so both platform branches are unit-testable on the desktop
 // test build (no ImGui, no platform macro - caller passes the compile-time isMobile value).
@@ -34,6 +36,18 @@ inline bool ShouldCommitInlineFieldEdit(bool explicitSubmit, bool deactivated, b
         return false; // mobile: focus-loss must not commit (WS4 item 16)
     }
     return deactivated; // desktop: commit a real change on focus-loss (click-away)
+}
+
+// DR23 — true when the value loaded into the inline editor's fixed buffer was truncated on seed
+// (the stored value is at least the buffer's capacity, so its tail was dropped). The inline cell
+// editor rounds the stored value through a fixed char[N]; committing that truncated copy would
+// silently overwrite the tracker field, destroying the untruncated tail. The caller ANDs this into
+// the commit gate to refuse a truncated commit (the value is preserved intact) and surface a
+// warning, keeping the single-line hard cap. `bufferCapacity` is sizeof(buffer) — the truncation
+// happens when the stored value needs the full capacity (value size >= capacity, since one byte is
+// the NUL terminator). Pure — unit-testable without ImGui.
+inline bool InlineEditLoadedTruncated(std::size_t originalValueSize, std::size_t bufferCapacity) {
+    return bufferCapacity > 0 && originalValueSize >= bufferCapacity;
 }
 
 // True if the inline edit SESSION should end this frame (the caller commits via

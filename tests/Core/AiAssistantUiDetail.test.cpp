@@ -46,8 +46,22 @@ TEST_CASE("AiResolveProvider: maps cfg int to enum, clamps out-of-range to OpenA
     CHECK(AiResolveProvider(1) == AiProvider::Anthropic);
     CHECK(AiResolveProvider(2) == AiProvider::OllamaOpenAiCompat);
     CHECK(AiResolveProvider(3) == AiProvider::OllamaNative);
+    // DR19: DeepSeek (kind 4) is a real selectable provider — it must not fall
+    // through to OpenAi, or the per-turn model picker offers the wrong catalog.
+    CHECK(AiResolveProvider(4) == AiProvider::DeepSeek);
     CHECK(AiResolveProvider(99) == AiProvider::OpenAi);
     CHECK(AiResolveProvider(-1) == AiProvider::OpenAi);
+}
+
+TEST_CASE("AiProviderFromKind: single source of truth for kind->provider (DR19)") {
+    // AiResolveProvider and ai.validate-prefs both delegate here; keep this the
+    // one place a new provider must be added so the copies can't drift again.
+    CHECK(AiProviderFromKind(0) == AiProvider::OpenAi);
+    CHECK(AiProviderFromKind(1) == AiProvider::Anthropic);
+    CHECK(AiProviderFromKind(2) == AiProvider::OllamaOpenAiCompat);
+    CHECK(AiProviderFromKind(3) == AiProvider::OllamaNative);
+    CHECK(AiProviderFromKind(4) == AiProvider::DeepSeek);
+    CHECK(AiProviderFromKind(99) == AiProvider::OpenAi);
 }
 
 TEST_CASE("AiResolveModelCombo: empty catalog -> free-form input") {
@@ -94,4 +108,21 @@ TEST_CASE("AiToastAlpha: full before fade window, linear ramp inside, clamped") 
     CHECK(AiToastAlpha(0, 250) == doctest::Approx(0.0f));    // fully dismissed
     CHECK(AiToastAlpha(-10, 250) == doctest::Approx(0.0f));  // past dismissal clamps
     CHECK(AiToastAlpha(100, 0) == doctest::Approx(1.0f));    // zero fade window -> full
+}
+
+TEST_CASE("AiTruncatedPasteDroppedBytes: zero under cap, overflow above, degenerate guards") {
+    constexpr int kBufCap = 8 * 1024; // BufSize = capacity+1; usable text = 8191 bytes
+    // Comfortably under cap -> nothing dropped.
+    CHECK(AiTruncatedPasteDroppedBytes(100, kBufCap) == 0u);
+    // Exactly at the usable limit (cap-1) -> nothing dropped.
+    CHECK(AiTruncatedPasteDroppedBytes(kBufCap - 1, kBufCap) == 0u);
+    // One byte over the usable limit -> exactly 1 dropped.
+    CHECK(AiTruncatedPasteDroppedBytes(kBufCap, kBufCap) == 1u);
+    // 2 KB over -> that many bytes dropped.
+    CHECK(AiTruncatedPasteDroppedBytes(kBufCap - 1 + 2048, kBufCap) == 2048u);
+    // Degenerate inputs guard to zero.
+    CHECK(AiTruncatedPasteDroppedBytes(0, kBufCap) == 0u);
+    CHECK(AiTruncatedPasteDroppedBytes(-5, kBufCap) == 0u);
+    CHECK(AiTruncatedPasteDroppedBytes(100, 1) == 0u);
+    CHECK(AiTruncatedPasteDroppedBytes(100, 0) == 0u);
 }

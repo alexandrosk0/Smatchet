@@ -1,5 +1,7 @@
 #include "TrackerDateTimePure.h"
 
+#include "TicketFieldEditorCommitPolicyPure.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -114,7 +116,10 @@ std::string FormatFriendlyDate(const ParsedJiraDateTime& p) {
 bool ParseFriendlyDate(const std::string& s, int& outY, int& outM, int& outD) {
     int m = 0, d = 0, y = 0;
     if (std::sscanf(s.c_str(), "%d/%d/%d", &m, &d, &y) == 3) {
-        if (m >= 1 && m <= 12 && d >= 1 && d <= 31 && y >= 1900 && y <= 3000) {
+        // Validate the day against the actual length of that month/year (leap years
+        // included) rather than a blanket <= 31, so impossible dates like "2/31/2026"
+        // are rejected here instead of being formatted and submitted to the tracker.
+        if (m >= 1 && m <= 12 && y >= 1900 && y <= 3000 && d >= 1 && d <= DaysInMonth(y, m)) {
             outY = y;
             outM = m;
             outD = d;
@@ -137,6 +142,59 @@ std::string FormatFriendlyTime(const ParsedJiraDateTime& p) {
     char buf[16];
     std::snprintf(buf, sizeof(buf), "%02d:%02d %s", h, p.Minute, ampm);
     return std::string(buf);
+}
+
+void InitDatePickerWorking(const std::string& currentValue, bool isDateOnly, ParsedJiraDateTime& working, int& viewYear,
+                           int& viewMonth, bool& forceTextMode) {
+    ParsedJiraDateTime parsed;
+    if (TryParseJiraDateTime(currentValue, parsed)) {
+        working = parsed;
+        forceTextMode = false;
+        viewYear = parsed.Year;
+        viewMonth = parsed.Month;
+        ClampDayToMonth(working, viewYear, viewMonth);
+    } else if (currentValue.empty()) {
+        working = TodayUtcParsed(!isDateOnly);
+        forceTextMode = false;
+        viewYear = working.Year;
+        viewMonth = working.Month;
+    } else {
+        forceTextMode = true;
+    }
+}
+
+DateTimeCommitPlan PlanDateTimeCommit(bool applyPressed, bool clearPressed, bool isDateOnly,
+                                      ParsedJiraDateTime& working, const std::string& currentValue) {
+    DateTimeCommitPlan plan;
+    if (!applyPressed && !clearPressed) {
+        return plan;
+    }
+    std::string canon;
+    if (applyPressed) {
+        ClampDayToMonth(working, working.Year, working.Month);
+        canon = FormatJiraDateOrDateTimeForApi(isDateOnly, working);
+    }
+    const bool curBlank =
+        std::all_of(currentValue.begin(), currentValue.end(), [](unsigned char ch) { return std::isspace(ch) != 0; });
+    // Compare canon against the canonical form of currentValue, not its raw wire string:
+    // FormatJiraDateOrDateTimeForApi forces ".000" milliseconds and always emits seconds, so a
+    // re-Apply of an unchanged value whose Jira wire form differs only in ms/seconds/zone
+    // spelling (e.g. "...T10:00:00.123+0000") would otherwise read as changed and fire a stray
+    // no-op PUT. Both sides go through the same formatter, so equality means semantic identity.
+    // Unparseable currentValue falls back to the raw string (conservative — treats as changed).
+    std::string canonCurrent = currentValue;
+    ParsedJiraDateTime curParsed;
+    if (TryParseJiraDateTime(currentValue, curParsed)) {
+        canonCurrent = FormatJiraDateOrDateTimeForApi(isDateOnly, curParsed);
+    }
+    const bool valueChanged = clearPressed ? !curBlank : (canon != canonCurrent);
+    if (TicketFieldEditorCommitPolicyPure::ShouldCommitTouchPopupEdit(/*savePressed=*/true, valueChanged)) {
+        plan.Queue = true;
+        if (!clearPressed) {
+            plan.Values.push_back(canon);
+        }
+    }
+    return plan;
 }
 
 bool ParseFriendlyTime(const std::string& s, int& outH, int& outM) {

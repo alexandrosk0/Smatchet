@@ -1,6 +1,7 @@
 #include "SmatchetUI_Internal.h"
 
-#include "AppController.h"
+class AppController; // fan-in Phase 6: this TU only names AppController& in signatures / pass-throughs — fwd-decl
+                     // suffices
 #include "ConfigManager.h"
 #include "ConfigSaveWorker.h"
 #include "Logger.h"
@@ -269,7 +270,9 @@ void SmatchetUI_ApplyDeferredLayoutReset(UiDrawSession& d) {
     // saved by SmatchetUI.cpp's end-of-frame SaveIniSettingsToDisk when the counter hits 0.
     d.layoutForceDefaultsFrames = 8;
 
-    SmatchetToastManager::Instance().Push("Layout reset", "Default layout restored.", ToastType::Info, 3000);
+    SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.layout_reset", "Layout reset"),
+                                          SmatchetLocalization::T("toast.layout_restored", "Default layout restored."),
+                                          ToastType::Info, 3000);
     smatchet::ui_detail::PersistWindowOpenPreferences(d);
 }
 
@@ -299,6 +302,13 @@ void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app) {
         ConfigManager::Save(d.cfg);
         d.prefsDirty = false;
     }
+
+    // DR8: the app-update-check worker (StartAppUpdateCheckAsync) captures AppController& by
+    // reference. Its future was previously only joined by g_ui's static destructor, which runs
+    // after main() returns and after AppController is gone — a use-after-free if a check is still
+    // in flight at shutdown. Drain it here while AppController is still alive (teardown ordering).
+    DrainFutureJoinQuiet(d.appUpdateFuture);
+    d.appUpdateCheckInFlight = false;
 
     DrainFutureJoinQuiet(d.fieldCatalogFuture);
     d.fieldCatalogLoading = false;

@@ -330,7 +330,13 @@ TEST_CASE("AgentsMdLoader::LoadLayered — autoDiscoverProject=true re-enables w
     // to empty; the FindProjectAgentsMd-positive cases above prove walk-up
     // works once enabled.
     const std::string out = AgentsMdLoader::LoadLayered(std::string(), std::string(), /*autoDiscoverProject=*/true);
-    // We don't assert on `out` content because cwd depends on the test runner;
-    // the requirement here is that the path doesn't crash or deadlock.
-    CHECK((out.empty() || !out.empty()));
+    // We can't assert a fixed body — the walk-up target depends on the test
+    // runner's cwd. Instead pin determinism against the production symbol:
+    // LoadLayered is a pure function of its inputs + cwd (no caching, no time, no
+    // randomness), so a second call with identical arguments must return
+    // byte-identical output. That catches a walk-up regression that made results
+    // non-deterministic, rather than the old tautology that accepted any value.
+    const std::string outAgain =
+        AgentsMdLoader::LoadLayered(std::string(), std::string(), /*autoDiscoverProject=*/true);
+    CHECK(out == outAgain);
 }

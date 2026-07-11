@@ -877,12 +877,13 @@ void SmatchetUI::drawActiveProjectUnsavedStrip(ActiveProjectDrawCtx& ctx) {
                 d.pendingViewStateSave = false;
                 ConfigManager::Save(d.cfg);
                 ViewState.Save();
-                SmatchetToastManager::Instance().Push("View saved", updated.Name, ToastType::Success, 1500);
+                SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.view_saved", "View saved"),
+                                                      updated.Name, ToastType::Success, 1500);
             }
         }
         ImGui::SameLine();
         if (ImGui::Button("Save as new...")) {
-            ImGui::OpenPopup("Save view as new");
+            activeProjectState_.openSaveAsNewModal = true;
         }
         ImGui::SameLine();
         if (ImGui::Button("Discard")) {
@@ -909,7 +910,8 @@ void SmatchetUI::drawActiveProjectUnsavedStrip(ActiveProjectDrawCtx& ctx) {
             d.viewsHasOriginalSnapshot = false;
             d.pendingViewStateSave = false;
             ViewState.BumpRevision(); // force grid to redraw columns in the stored order
-            SmatchetToastManager::Instance().Push("Reverted layout", restoreSource->Name, ToastType::Info, 1500);
+            SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.reverted_layout", "Reverted layout"),
+                                                  restoreSource->Name, ToastType::Info, 1500);
         }
         ImGui::EndChild();
         ImGui::PopStyleColor();
@@ -929,6 +931,11 @@ void SmatchetUI::drawActiveProjectSaveAsNewModal(ActiveProjectDrawCtx& ctx) {
     UiDrawSession& d = ctx.d;
     ViewDefinition* activeViewForGrid = ctx.activeViewForGrid;
     char* s_newViewName = activeProjectState_.newViewNameBuf; // hoisted from `static char s_newViewName[128]`
+
+    if (activeProjectState_.openSaveAsNewModal) {
+        ImGui::OpenPopup("Save view as new");
+        activeProjectState_.openSaveAsNewModal = false;
+    }
 
     // Save-as-new modal: name input + Save / Cancel.
     if (ImGui::BeginPopupModal("Save view as new", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {

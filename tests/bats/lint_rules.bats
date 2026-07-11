@@ -278,10 +278,11 @@ setup() {
     fi
 }
 
-# ---------- bare-json-parse-untrusted (PR-5; WARN-first, curated ingress TUs) ----------
-# A bare nlohmann::json::parse( on an untrusted-ingress TU not routed via ParseBounded
-# stack-overflows the recursive parser before any try/catch (#1271/#1287). WARN-first;
-# --scan-bare-json emits the detected set for the bats harness.
+# ---------- bare-json-parse-untrusted (BLOCKING; ALL first-party C++, repo-wide) ----------
+# A bare nlohmann::json::parse( (or stream>>json slurp) not routed via ParseBounded crashes
+# uncatchably on a depth bomb (#1271/#1287). Repo-wide default-deny — the old curated-TU
+# allow-list lagged the code every time the class recurred (#1573/#1592/#1598); headers are
+# in scope too. --scan-bare-json emits the detected set for the bats harness.
 
 @test "--scan-bare-json fires on a bare json::parse in an ingress TU (McpPlugin)" {
     tmp="$(mktemp -d)"
@@ -308,7 +309,7 @@ setup() {
     rm -rf "$tmp"
 }
 
-@test "--scan-bare-json ignores a bare parse in a NON-ingress (non-curated) TU" {
+@test "--scan-bare-json fires on a bare parse in ANY first-party TU (repo-wide default-deny)" {
     tmp="$(mktemp -d)"
     mkdir -p "$tmp/Source/Core/src"
     printf 'void f(const std::string& s) {\n    auto j = nlohmann::json::parse(s);\n    (void)j;\n}\n' \
@@ -316,7 +317,58 @@ setup() {
     ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
     run bash "$LINT" --root "$tmp" --scan-bare-json
     [ "$status" -eq 0 ]
+    [[ "$output" == *"bare-json-parse-untrusted"* ]]
+    [[ "$output" == *"SomeUnrelatedThing.cpp"* ]]
+    rm -rf "$tmp"
+}
+
+@test "--scan-bare-json fires on a bare parse in a HEADER" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/include"
+    printf 'inline void f(const std::string& s) {\n    auto j = nlohmann::json::parse(s, nullptr, false);\n    (void)j;\n}\n' \
+        > "$tmp/Source/Core/include/SomeInlineHelper.h"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-bare-json
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"SomeInlineHelper.h"* ]]
+    rm -rf "$tmp"
+}
+
+@test "--scan-bare-json fires on the stream>>json slurp form" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    printf 'void f(std::ifstream& file) {\n    nlohmann::json j;\n    file >> j;\n    (void)j;\n}\n' \
+        > "$tmp/Source/Core/src/SlurpThing.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-bare-json
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"SlurpThing.cpp:3"* ]]
+    rm -rf "$tmp"
+}
+
+@test "--scan-bare-json ignores a >> into a non-json identifier" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    printf 'static nlohmann::json g_unrelated;\nvoid f(std::ifstream& file) {\n    int count = 0;\n    file >> count;\n    (void)count;\n}\n' \
+        > "$tmp/Source/Core/src/NotASlurp.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-bare-json
+    [ "$status" -eq 0 ]
     [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-bare-json still fires when a trailing quoted comment mentions json::parse" {
+    # Masking regression: the string-literal exemption must be evaluated on the comment-stripped
+    # view — a real bare parse followed by `// logs "json::parse"` must NOT be skipped.
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    printf 'void f(const std::string& s) {\n    auto j = nlohmann::json::parse(s); // logs "json::parse" on failure\n    (void)j;\n}\n' \
+        > "$tmp/Source/Core/src/MaskedParse.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-bare-json
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"MaskedParse.cpp:2"* ]]
     rm -rf "$tmp"
 }
 
@@ -332,12 +384,96 @@ setup() {
     rm -rf "$tmp"
 }
 
-@test "--scan-bare-json runs clean (rc 0) on the real first-party tree" {
-    # WARN-first calibration: the real tree carries a KNOWN advisory residual (the curated
-    # ingress TUs whose ParseBounded migration is incremental). The scan mode must run to
-    # completion with rc 0; the diff gate only WARNs (never blocks) on CHANGED ingress TUs.
+@test "--scan-bare-json is EMPTY on the real first-party tree (repo-wide clean invariant)" {
+    # The repo-wide default-deny gate only works because the tree is clean: every remaining
+    # bare parse was either routed through ParseBounded or carries an explicit
+    # SMATCHET_DEVIATION. A non-empty set here means a bare parse landed without either —
+    # fix it before it ships (this is the whole-tree backstop for the diff-scoped CI gate).
     run bash "$LINT" --scan-bare-json
     [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+# ---------- catch-all-swallow (BLOCKING; ALL first-party C++, absolute-0) ----------
+# An EMPTY catch (...) body silently swallows every exception — exception-handling-policy.md
+# hard rule 1 (review CRITICAL). The editor hook flags it per-edit; this is the CI gate.
+
+@test "--scan-catch-all fires on an empty catch (...) body" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    printf 'void f() {\n    try {\n        g();\n    } catch (...) {}\n}\n' \
+        > "$tmp/Source/Core/src/Swallower.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-catch-all
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"catch-all-swallow"* ]]
+    [[ "$output" == *"Swallower.cpp:4"* ]]
+    rm -rf "$tmp"
+}
+
+@test "--scan-catch-all ignores a commented / logged / catch-all-ok body and a deviation" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    printf 'void a() {\n    try { g(); } catch (...) {\n        // best-effort stringify; failure renders "?"\n    }\n}\nvoid b() {\n    try { g(); } catch (...) {\n        LOG_WARN("g failed");\n    }\n}\nvoid c() {\n    try { g(); } catch (...) {} // catch-all-ok: thread-exit path\n}\nvoid d() {\n    // SMATCHET_DEVIATION(rule=catch-all-swallow; reason=test; owner=x; revisit=2099-01-01)\n    try { g(); } catch (...) {}\n}\n' \
+        > "$tmp/Source/Core/src/Justified.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-catch-all
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-catch-all is EMPTY on the real first-party tree (absolute-0 invariant)" {
+    run bash "$LINT" --scan-catch-all
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+# ---------- unbounded-recursive-json-walker (WARN-first; the DW class) ----------
+
+@test "--scan-json-walkers fires on an unbounded self-recursive json walker" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    printf 'static void Walk(const nlohmann::json& n) {\n    for (const auto& c : n) {\n        Walk(c);\n    }\n}\n' \
+        > "$tmp/Source/Core/src/Walker.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-json-walkers
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"unbounded-recursive-json-walker"* ]]
+    [[ "$output" == *"Walker.cpp:1"* ]]
+    rm -rf "$tmp"
+}
+
+@test "--scan-json-walkers ignores a depth-bounded walker and a deviation" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    printf 'static void Walk(const nlohmann::json& n, int depth) {\n    if (depth > 256) {\n        return;\n    }\n    for (const auto& c : n) {\n        Walk(c, depth + 1);\n    }\n}\n' \
+        > "$tmp/Source/Core/src/Bounded.cpp"
+    printf '// SMATCHET_DEVIATION(rule=unbounded-recursive-json-walker; reason=test; owner=x; revisit=2099-01-01)\nstatic void Walk2(const nlohmann::json& n) {\n    for (const auto& c : n) {\n        Walk2(c);\n    }\n}\n' \
+        > "$tmp/Source/Core/src/Exempt.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-json-walkers
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+# ---------- unbounded-file-slurp (WARN-first) ----------
+
+@test "--scan-slurps fires on rdbuf()/istreambuf slurps, respects a deviation" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    printf 'void f(std::ifstream& in) {\n    std::stringstream ss;\n    ss << in.rdbuf();\n}\nvoid g(std::ifstream& in) {\n    std::string s((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());\n}\n' \
+        > "$tmp/Source/Core/src/Slurper.cpp"
+    printf 'void h(std::ifstream& in) {\n    std::stringstream ss;\n    // SMATCHET_DEVIATION(rule=unbounded-file-slurp; reason=test; owner=x; revisit=2099-01-01)\n    ss << in.rdbuf();\n}\n' \
+        > "$tmp/Source/Core/src/ExemptSlurp.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-slurps
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Slurper.cpp:3"* ]]
+    [[ "$output" == *"Slurper.cpp:6"* ]]
+    [[ "$output" != *"ExemptSlurp.cpp"* ]]
+    rm -rf "$tmp"
 }
 
 # ---------- ui-request-flag-off-thread (PR-5; strict-zone, absolute-0) ----------
@@ -408,6 +544,80 @@ setup() {
 
 @test "--scan-ui-reqflag is clean on the real first-party tree (handlers all marshal)" {
     run bash "$LINT" --scan-ui-reqflag
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+# ---------- no-ui-include-in-domain (include-direction; domain zones, absolute-0) ----------
+# A quote-form `#include "Ui/..."` in a domain subsystem (Tracker/Sync/Persistence/Config +
+# include mirrors + Plugins/Mcp) inverts the layer DAG; the header->header include-cycle gate
+# can't see a domain .cpp -> Ui/ edge. --scan-ui-include emits the detected set for bats.
+
+@test "--scan-ui-include fires on a Ui/ include in a Tracker TU" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src/Tracker"
+    printf '#include "TrackerLabelsPure.h"\n#include "Ui/TouchCellEditGesture.h"\n' \
+        > "$tmp/Source/Core/src/Tracker/TrackerBad.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-ui-include
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no-ui-include-in-domain"* ]]
+    [[ "$output" == *"TrackerBad.cpp:2"* ]]
+    rm -rf "$tmp"
+}
+
+@test "--scan-ui-include fires in a domain include/ mirror header too" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/include/Sync"
+    printf '#pragma once\n#include "Ui/SmatchetToast.h"\n' \
+        > "$tmp/Source/Core/include/Sync/SyncBad.h"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-ui-include
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"SyncBad.h:2"* ]]
+    rm -rf "$tmp"
+}
+
+@test "--scan-ui-include ignores Ui/-internal, Commands/, and root-leaf consumers (out of scope)" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src/Ui" "$tmp/Source/Core/src/Commands/Scenarios" "$tmp/Source/Core/src"
+    printf '#include "Ui/SmatchetUI.h"\n' > "$tmp/Source/Core/src/Ui/SomeUi.cpp"
+    printf '#include "Ui/SmatchetTextureFaultInjector.h"\n' \
+        > "$tmp/Source/Core/src/Commands/Scenarios/MyScenario.cpp"
+    printf '#include "Ui/SmatchetToast.h"\n' > "$tmp/Source/Core/src/RootLeaf.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-ui-include
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-ui-include ignores a comment mention and an angle-bracket include" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src/Tracker"
+    printf '// the gate lived at Ui/TouchCellEditGesture.h before the layer fix\n#include <string>\n#include "TrackerLabelsPure.h"\n' \
+        > "$tmp/Source/Core/src/Tracker/TrackerClean.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-ui-include
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-ui-include respects a SMATCHET_DEVIATION above the include" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src/Tracker"
+    printf '// SMATCHET_DEVIATION(rule=no-ui-include-in-domain; reason=test; owner=x; revisit=2099-01-01)\n#include "Ui/SmatchetToast.h"\n' \
+        > "$tmp/Source/Core/src/Tracker/TrackerDev.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-ui-include
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+
+@test "--scan-ui-include is clean on the real first-party tree (domain zones are Ui-free)" {
+    run bash "$LINT" --scan-ui-include
     [ "$status" -eq 0 ]
     [ -z "$output" ]
 }
@@ -528,8 +738,10 @@ setup() {
     printf '#pragma once\n// header line one\n' > "$tmp/Source/Core/include/X.h"
     ( cd "$tmp" && git init -q && git config user.email a@b.c && git config user.name t \
         && git add -A && git commit -qm base ) >/dev/null 2>&1
-    # Add a bare // (blank-run, auto-strippable) + prose + commented-out code (NOT auto-strippable).
-    printf '//\n// kept prose paragraph here\n// foo(bar);\n' >> "$tmp/Source/Core/include/X.h"
+    # Add a RUN of two bare // (auto-strippable) + prose + commented-out code (NOT
+    # auto-strippable). Two, not one: a LONE bare // flanked by textual comment lines
+    # is the allowed intra-block paragraph separator, which --fix deliberately keeps.
+    printf '//\n//\n// kept prose paragraph here\n// foo(bar);\n' >> "$tmp/Source/Core/include/X.h"
     run bash -c "cd '$tmp' && '$PY' '$AUDIT' --fix HEAD"
     [ "$status" -eq 0 ]
     # The bare // is gone; the prose + the code-like line (manual reword) stay; header intact.
@@ -628,4 +840,38 @@ setup() {
     SMATCHET_LINT_BASELINE_SET=/tmp/lr_base_all run bash "$LINT" --diff
     [ "$status" -eq 0 ]
     [[ "$output" == *"no first-party no-raw-new / deviation-overdue"* ]]
+}
+
+# ---------- lint-rules.d module loading (monolith split) ----------
+# The scanner sources its per-rule-family modules from lint-rules.d/ next to the
+# entry point. Loading must FAIL CLOSED: a missing module means a silently
+# partial rule set, which would pass dirty PRs as false-clean.
+
+@test "entry point fails closed (rc 2) when a lint-rules.d module is missing" {
+    tmp="$(mktemp -d)"
+    cp "$LINT" "$tmp/test-lint-rules.sh"
+    mkdir -p "$tmp/lint-rules.d"
+    # Copy all modules EXCEPT one rule family.
+    for m in "$REPO_ROOT/agents/scripts/project/lint-rules.d"/*.sh; do
+        case "$m" in *55-catch-all.sh) continue ;; esac
+        cp "$m" "$tmp/lint-rules.d/"
+    done
+    run bash "$tmp/test-lint-rules.sh" --root "$REPO_ROOT" --scan-catch-all
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"missing rule module"* ]]
+    rm -rf "$tmp"
+}
+
+@test "entry point loads modules from its own directory, not the --root target" {
+    # The --diff base scan re-invokes the CURRENT scanner against a base worktree
+    # that may predate the split (no lint-rules.d there) — modules must resolve
+    # relative to the script, so a scan of a bare tree still works.
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    printf 'void f() {\n    try {\n        g();\n    } catch (...) {}\n}\n' > "$tmp/Source/Core/src/Swallow.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-catch-all
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"catch-all-swallow"* ]]
+    rm -rf "$tmp"
 }

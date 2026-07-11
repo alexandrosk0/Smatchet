@@ -873,10 +873,9 @@ static bool RenderOneFrame(GLFWwindow* window, SmatchetUI& mainWindow, AppContro
     // GL renderer is the byte-stable bucket-C lane CI pins the goldens to; the DX12
     // BeginFrame clear keeps the theme bg.
     const bool clearOverride = g_ui.requestClearColorActive;
-    const ImVec4 clearColor = clearOverride
-                                  ? ImVec4(g_ui.requestClearColorR, g_ui.requestClearColorG, g_ui.requestClearColorB,
-                                           g_ui.requestClearColorA)
-                                  : bg;
+    const ImVec4 clearColor = clearOverride ? ImVec4(g_ui.requestClearColorR, g_ui.requestClearColorG,
+                                                     g_ui.requestClearColorB, g_ui.requestClearColorA)
+                                            : bg;
     g_ui.requestClearColorActive = false;
     ImDrawData* drawData = ImGui::GetDrawData();
     smatchet::ui::GuardImGuiDynamicTextures(drawData); // [P0 #1122] shared dynamic-texture guard
@@ -1016,7 +1015,8 @@ static void MaybeStartAutorunScenario(AppController& app, bool& started) {
         return;
     }
     smatchet::cmd::CommandContext autorunCtx;
-    autorunCtx.App = &app;
+    autorunCtx.ScenarioHost = &app;
+    autorunCtx.Threading = &app;
     const smatchet::cmd::CommandResult autorunRes =
         app.Scenarios().Start(autorunName, nlohmann::json::object(), autorunCtx);
     ::fprintf(stderr, "[autorun-scenario] start name=%s ok=%d\n", autorunName, autorunRes.Ok ? 1 : 0);

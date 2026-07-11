@@ -13,7 +13,8 @@
 
 #include "SmatchetPreferencesUi_detail.h"
 
-#include "AppController.h"
+// fan-in Phase 6 T3: this tab only reads the command registry — IAppCommands suffices.
+#include "Interfaces/IAppCommands.h"
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 #include "Config/KeybindingsConfig.h"
@@ -36,7 +37,7 @@ namespace {
 // id resolves, else the raw id (pseudo-bindings like "ui.command_palette" are not in
 // the registry). FindLocked's pointer is invalidated by a concurrent Register, so the
 // Summary is copied into the returned string immediately.
-std::string CommandLabel(AppController& app, const std::string& commandId) {
+std::string CommandLabel(IAppCommands& app, const std::string& commandId) {
     const smatchet::cmd::Command* c = app.Commands().FindLocked(commandId);
     if (c != nullptr && !c->Summary.empty()) {
         return c->Summary;
@@ -92,7 +93,7 @@ bool CommandHasRow(const std::vector<Keybinding>& binds, const std::string& comm
 // appended so the caller marks the table dirty. Mirrors the toolbar command picker
 // (InputTextWithHint filter + scrollable child + Selectable). The popup must be drawn
 // every frame (BeginPopup) for OpenPopup to keep it open.
-bool DrawAddCommandPopup(AppController& app, std::vector<Keybinding>& binds) {
+bool DrawAddCommandPopup(IAppCommands& app, std::vector<Keybinding>& binds) {
     // Snapshot the full command registry ONCE per popup-open, not every frame the popup is drawn:
     // App.Commands().All() copies the whole command vector, and BeginPopup returns true on every
     // frame while open. We detect the closed->open transition (prevOpen latch) and refresh the
@@ -168,7 +169,7 @@ bool DrawAddCommandPopup(AppController& app, std::vector<Keybinding>& binds) {
 
 } // namespace
 
-void DrawKeybindingsPreferencesTab(SmatchetUI& ui, AppController& app, UiDrawSession& d) {
+void DrawKeybindingsPreferencesTab(SmatchetUI& ui, IAppCommands& app, UiDrawSession& d) {
     // Persistent across frames (single Preferences window): the search filter and the command
     // key of the row currently capturing a combo (empty = none; at most one). Declared above
     // BeginTabItem so the inactive-tab early return can abandon an armed capture — otherwise the

@@ -1,7 +1,9 @@
 #include "PlaneClient.h"
 #include "PlaneClient_Internal.h"
 
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
+#include "PlaneIssueMappingPure.h"
 #include "StringUtil.h"
 #include "TrackerHttpClient.h"
 #include "TrackerHttpUtils.h"
@@ -86,49 +88,65 @@ bool ResolvePlaneProject(const std::string& planeApi, const TrackerConfig& cfg, 
                          const cpr::Header& headers, std::string& outId, std::string& outIdentifier,
                          std::string* outError) {
     const std::string projectsUrl = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/";
-    cpr::Parameters params;
-    params.Add({"per_page", "100"});
-    auto response = TrackerGetLogged("PlaneClient", projectsUrl, headers, params);
-    if (response.status_code != 200) {
-        const std::string err = "Plane API error " + std::to_string(response.status_code) + " resolving project '" +
-                                projectKey + "': " + response.text.substr(0, 300);
-        if (outError)
-            *outError = err;
-        return false;
-    }
-
-    const nlohmann::json j = nlohmann::json::parse(StripUtf8BomCopy(response.text), nullptr, false);
-    if (j.is_discarded()) {
-        const std::string err =
-            "Plane project list returned invalid JSON while resolving project '" + projectKey + "'.";
-        if (outError)
-            *outError = err;
-        return false;
-    }
-
-    const auto projects = (j.is_object() && j.contains("results")) ? j["results"] : j;
-    if (!projects.is_array()) {
-        const std::string err =
-            "Plane project list response has no results array while resolving project '" + projectKey + "'.";
-        if (outError)
-            *outError = err;
-        return false;
-    }
-
     std::string available;
-    for (const auto& p : projects) {
-        const std::string id = JsonFieldToString(p, "id");
-        const std::string identifier = JsonFieldToString(p, "identifier");
-        const std::string name = JsonFieldToString(p, "name");
-        if (id == projectKey || identifier == projectKey || name == projectKey) {
-            outId = id;
-            outIdentifier = identifier;
-            return true;
+    // SMATCHET_DEVIATION(rule=duplication; reason=DR25 Plane cursor-pagination loop is the uniform tracker idiom (mirrors the un-deviated PlaneActivityFeed/PlaneFieldCatalog loops); the per-page bodies (project match vs comments vs states) differ, so a shared callback helper across independent fetches is not worth the coupling; owner=deep-review; revisit=2026-10-01)
+    std::string cursor;
+    // Follow Plane's cursor pagination so a project on a later page still resolves (DR25).
+    // The page cap bounds a misbehaving cursor that never terminates.
+    for (int page = 0; page < 100; ++page) {
+        cpr::Parameters params;
+        params.Add({"per_page", "100"});
+        if (!cursor.empty()) {
+            params.Add({"cursor", cursor});
         }
-        if (available.size() < 220) {
-            if (!available.empty())
-                available += ", ";
-            available += identifier.empty() ? name : identifier;
+        auto response = TrackerGetLogged("PlaneClient", projectsUrl, headers, params);
+        if (response.status_code != 200) {
+            const std::string err = "Plane API error " + std::to_string(response.status_code) +
+                                    " resolving project '" + projectKey + "': " +
+                                    RedactHttpBodyForLog(response.text).substr(0, 300);
+            if (outError)
+                *outError = err;
+            return false;
+        }
+
+        // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
+        const nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(StripUtf8BomCopy(response.text));
+        if (j.is_discarded()) {
+            const std::string err =
+                "Plane project list returned invalid JSON while resolving project '" + projectKey + "'.";
+            if (outError)
+                *outError = err;
+            return false;
+        }
+
+        const auto projects = (j.is_object() && j.contains("results")) ? j["results"] : j;
+        if (!projects.is_array()) {
+            const std::string err =
+                "Plane project list response has no results array while resolving project '" + projectKey + "'.";
+            if (outError)
+                *outError = err;
+            return false;
+        }
+
+        for (const auto& p : projects) {
+            const std::string id = JsonFieldToString(p, "id");
+            const std::string identifier = JsonFieldToString(p, "identifier");
+            const std::string name = JsonFieldToString(p, "name");
+            if (id == projectKey || identifier == projectKey || name == projectKey) {
+                outId = id;
+                outIdentifier = identifier;
+                return true;
+            }
+            if (available.size() < 220) {
+                if (!available.empty())
+                    available += ", ";
+                available += identifier.empty() ? name : identifier;
+            }
+        }
+
+        cursor = smatchet::plane::NextPaginationCursor(j);
+        if (cursor.empty()) {
+            break;
         }
     }
 

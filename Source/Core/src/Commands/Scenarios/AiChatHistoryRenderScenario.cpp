@@ -19,13 +19,16 @@
 // neither registers nor compiles the scenario.
 
 #if defined(SMATCHET_WITH_AI)
+// clang-format off
+// SMATCHET_DEVIATION(rule=duplication; reason=file-top scaffold clone (AI gate + shared include block) across scenario TUs; owner=command-system; revisit=2026-12-31)
+// clang-format on
 
 #include "Commands/Scenarios/IScenario.h"
 
 #include "AiTypes.h"
-#include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "SmatchetUiSession.h"
+#include "SmatchetAiAssistantUi.h" // SmatchetClearAiRenderCaches — invalidate index-keyed render caches on history restore
 #include "UiPerfMonitor.h"
 
 #include <algorithm>
@@ -47,7 +50,7 @@ class AiChatHistoryRenderScenario : public IScenario {
   public:
     std::string Name() const override { return "ai-chat-history-render"; }
 
-    void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& /*outErr*/) override {
+    void OnStart(IAppScenarioHost& /*app*/, const nlohmann::json& args, std::string& /*outErr*/) override {
         frames_ = args.value("frames", 300);
         seedCount_ = args.value("seed", 50);
         pinRatio_ = args.value("pinRatio", 0.04f); // ~4% pinned by default → 2 of 50
@@ -107,7 +110,7 @@ class AiChatHistoryRenderScenario : public IScenario {
         }
     }
 
-    void OnFrame(AppController& /*app*/, int frameIndex) override {
+    void OnFrame(IAppScenarioHost& /*app*/, int frameIndex) override {
         // No per-frame mutation — the scenario's whole job is to let
         // DrawHistoryArea render the seeded set repeatedly so the perf monitor
         // accumulates representative timings. Past warmup, sample each scope's
@@ -131,9 +134,9 @@ class AiChatHistoryRenderScenario : public IScenario {
 
     bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
 
-    void OnCancel(AppController& /*app*/) override { Restore(); }
+    void OnCancel(IAppScenarioHost& /*app*/) override { Restore(); }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
         nlohmann::json rowsJson = nlohmann::json::array();
         // std::transform satisfies cppcheck `useStlAlgorithm` over the raw
@@ -205,6 +208,10 @@ class AiChatHistoryRenderScenario : public IScenario {
         g_ui.assistantHistoryHydrated = savedHydrated_;
         g_ui.assistantPanelOpen = savedPanelOpen_;
         g_ui.assistantScrollToMessageIndex = savedScrollIdx_;
+        // Invalidate the index-keyed render caches: the panel's body-hash cache only
+        // resets on a size change, so if the restored history length equals the seeded
+        // count the stale per-index hashes would be reused against the real bodies.
+        SmatchetClearAiRenderCaches();
     }
 
     int frames_ = 300;

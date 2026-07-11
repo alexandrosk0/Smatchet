@@ -1,4 +1,4 @@
-// PR-20 (backlog-pr-roadmap) — tracker-redirect-no-follow-regression-test.
+// tracker-redirect-no-follow-regression-test.
 //
 // SECURITY regression for MakeTrackerRedirectPolicy() (TrackerHttpUtils.cpp,
 // security H4 / E2). The tracker `Authorization` header is a caller-set RAW header,

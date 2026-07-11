@@ -30,7 +30,7 @@ Close the hole:
 |---|---|
 | **Recommended launcher** | `nsc <slug>` / `pwsh scripts/dev/worktree.ps1 new <slug>` provisions the new worktree **and**, on first run, the integration tree's `.claude/` — so using the standard launcher closes the hole automatically, no remembering required. |
 | **Working directly in the main clone** | Run `bash agents/scripts/core/setup-harness.sh claude-code` **once** before relying on the guard. |
-| **Check anytime** | `bash agents/scripts/core/check-harness-provisioned.sh` warns (exit 1) when the current tree's guard hook is missing and prints the fix; exit 0 when wired. |
+| **Check anytime** | `bash agents/scripts/core/check-harness-provisioned.sh` warns (exit 1) when the current tree's guard hook is missing and prints the fix; exit 0 when wired. `scripts/dev/doctor.sh` runs the same probe as a warn-only preflight check (`[WARN] harness`), so the standard doctor pass surfaces an unprovisioned tree without a hand-run probe. Note the repo-owned git hooks (`scripts/git-hooks/`, e.g. `pre-push`) are ALSO inert in a fresh clone — `core.hooksPath` is set by `setup-harness.sh`, so no git hook can self-report the hole. |
 
 Guard mechanics + recovery: [`process-rules.md`](../agent-rules/process-rules.md) § Concurrent interactive sessions.
 
@@ -95,6 +95,8 @@ Heavy `Source/Core/src/<ctx>/` subsystems carry a leaf `AGENTS.md` (scoped rules
 
 **`CONTEXT.md` / `README.md` are never auto-loaded** on any harness — they're read on demand (agent or semantic search). Only the leaf `AGENTS.md` participates in nearest-wins.
 
+**Regression net**: `agents/scripts/core/test-leaf-doc-discovery.sh` (static, auto-enrolled in `test-all.sh`) asserts a `@AGENTS.md` shim sits beside every leaf on a provisioned checkout (skips when unprovisioned, e.g. CI). Its `--live` mode (opt-in, spends tokens — never auto-run) spawns a headless `claude -p` session cd'd into `Source/Core/src/Tracker/` and asserts it cites the leaf `AGENTS.md` as the rule source for a Tracker invariant — end-to-end proof the shim mechanism reaches an agent. Codex (native nearest-`AGENTS.md`) and Cursor (`CONTEXT-MAP.md` pointer) have no headless probe yet — manual residue.
+
 Eager-load caveat: if a harness ever eager-loads *all* nested memory at session start (rather than lazily per touched dir), the per-subsystem token win inverts — every subsystem's rules load every session. Claude Code's nested `CLAUDE.md` is **lazy** (confirmed), so the shim is safe. A future eager-loading harness should stay pointer-only (`CONTEXT-MAP.md`) until it supports lazy nearest-wins.
 
 ## Optional: coverage tooling (`OpenCppCoverage`)
@@ -135,6 +137,17 @@ POSIX runners would fall back to `lcov` + `gcov` for the same purpose — that p
 **Upstream fix**: this is the Claude Code SDK's responsibility — the worktree-spawn machinery should default the base to `origin/develop` (or a configurable `claude.worktree.baseBranch`) rather than current local HEAD. Filed as external-blocker in `docs/self-improvement/categories/external-blockers.md`.
 
 **Not the same path as the agentic-handoff runner**: `ClaudeCodeLocalRunner` (the in-repo H3 deliverable for `agent/<proposalId>` worktrees) already bases on `origin/develop` correctly per `Source/Core/src/ClaudeCodeLocalRunner.cpp` + the `handoff.auto_fetch_before_worktree` config flag (default `true`). Only the Claude Code SDK's own session-spawn path (`claude/<id>` worktrees) is affected.
+
+## Hook-authoring checklist — promoting a gate-script into a per-call hook
+
+A `--strict` gate-script built for explicit pre-launch invocation flags EVERY instance; wired raw into an always-on `PreToolUse`/`PostToolUse` hook it blocks trivial calls. When promoting one (proven by the fleet-preflight `Workflow` hook, #1429):
+
+1. **Threshold-gate the BLOCK, not the raw exit code** — parse the scope out of the payload and block only above the documented threshold (e.g. ">2 agents"); the gate's own non-zero exit is necessary but not sufficient as a per-call block signal.
+2. **Fail-OPEN on plumbing** — missing dep (`jq`, python), unparseable payload, or wrong tool → exit 0 (allow). A guard that blocks every call when a dep is absent is worse than the gap it closes. Block (exit 2) only when the gate itself reports a real violation.
+3. **Test-assert on the hook's OWN output prefix** (e.g. `[my-hook] blocking launch`), never a generic phrase — a hook that echoes the wrapped tool's output makes `[[ "$output" != *"blocking launch"* ]]` false-fail when the wrapped gate emits the same words.
+4. **Keep project-prefixed env-name literals out of portable rule-docs** — reference the knobs generically there (`<PROJECT>_*`); the literal names live in the non-portable hook source's header (guard: `test-portable-purity`).
+
+Reference implementations: [`claude-code/hooks/lint-portable-purity.sh`](claude-code/hooks/lint-portable-purity.sh) (fail-open shape), the fleet-preflight `PreToolUse` hook + `tests/bats/pretool_workflow_fleet_preflight.bats` (threshold + own-prefix assertions).
 
 ## Adding a new harness
 

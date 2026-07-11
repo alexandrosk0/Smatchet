@@ -24,6 +24,7 @@
 #include "TicketSyncService.h"
 #include "Commands/Scenarios/IScenario.h"
 #include "SmatchetDefaults.h"
+#include "Ui/P4ClPreview.h"
 #include "Ui/SmatchetImGuiTextureGuardRuntime.h"
 #include "Ui/SmatchetTooltipWheelRouter.h"
 #include "SmatchetImGuiFonts.h"
@@ -461,15 +462,25 @@ bool InitAppAndPlugins(BootstrapContext& ctx, const TrackerConfig& cfg, const bo
 // the GLFW window. Shared by Initialize's three failure exits so the unwind
 // order stays identical on every path. Null-safe: a DX12 init that failed has
 // already reset ctx.dx12, so the swapchain branch is skipped.
-void TeardownPartialBoot(BootstrapContext& ctx, GLFWwindow* window, const bool useDx12) {
+//
+// CPP_CODE_AUDIT.md #29: `glfwBackendInitialized`/`rendererBackendInitialized`
+// default to true (the "everything succeeded, we're just unwinding a LATER
+// failure" case — e.g. ParseStandaloneCli failing after InitRendererBackend
+// already returned true). InitRendererBackend's own failure exit passes the
+// actual per-step outcome, since a Shutdown() call with no matching Init() is
+// a null-deref once IM_ASSERT is compiled out in release.
+void TeardownPartialBoot(BootstrapContext& ctx, GLFWwindow* window, const bool useDx12,
+                         const bool glfwBackendInitialized = true, const bool rendererBackendInitialized = true) {
     if (useDx12) {
         if (ctx.dx12) {
             ctx.dx12->Shutdown();
         }
-    } else {
+    } else if (rendererBackendInitialized) {
         ImGui_ImplOpenGL3_Shutdown();
     }
-    ImGui_ImplGlfw_Shutdown();
+    if (glfwBackendInitialized) {
+        ImGui_ImplGlfw_Shutdown();
+    }
     ImGui::DestroyContext();
     if (window != NULL) {
         glfwDestroyWindow(window);
@@ -481,12 +492,19 @@ void TeardownPartialBoot(BootstrapContext& ctx, GLFWwindow* window, const bool u
 // the chosen backend is live (DX12 swapchain ready, or GL3 device objects
 // created); on failure `err` is set and the partial DX12 state is rolled back —
 // the caller still owns the window/GLFW unwind via TeardownPartialBoot.
-bool InitRendererBackend(BootstrapContext& ctx, GLFWwindow* window, std::string& err) {
+// `outGlfwBackendInitialized`/`outRendererBackendInitialized` report exactly which
+// steps succeeded before the failure, so a caller unwinding via TeardownPartialBoot
+// only Shutdown()s backends that were actually Init()'d (CPP_CODE_AUDIT.md #29).
+bool InitRendererBackend(BootstrapContext& ctx, GLFWwindow* window, std::string& err, bool& outGlfwBackendInitialized,
+                         bool& outRendererBackendInitialized) {
+    outGlfwBackendInitialized = false;
+    outRendererBackendInitialized = false;
     if (ctx.renderer == StandaloneRenderer::Dx12) {
         if (!ImGui_ImplGlfw_InitForOther(window, true)) {
             err = "ImGui GLFW platform backend init failed (DX12 path)";
             return false;
         }
+        outGlfwBackendInitialized = true;
         glfwSetKeyCallback(window, KeypadEnterBridgeCallback);
         int fbW = 0;
         int fbH = 0;
@@ -511,11 +529,13 @@ bool InitRendererBackend(BootstrapContext& ctx, GLFWwindow* window, std::string&
         err = "ImGui GLFW platform backend init failed (OpenGL path)";
         return false;
     }
+    outGlfwBackendInitialized = true;
     glfwSetKeyCallback(window, KeypadEnterBridgeCallback);
     if (!ImGui_ImplOpenGL3_Init(ctx.glslVersion)) {
         err = "ImGui OpenGL3 renderer backend init failed";
         return false;
     }
+    outRendererBackendInitialized = true;
     if (!ImGui_ImplOpenGL3_CreateDeviceObjects()) {
         err = "ImGui OpenGL device objects failed";
         return false;
@@ -578,8 +598,10 @@ bool Initialize(BootstrapContext& ctx, int argc, char** argv, HeadlessCliMode /*
     ImGui::CreateContext();
     SetupImGuiContext();
 
-    if (!InitRendererBackend(ctx, window, err)) {
-        TeardownPartialBoot(ctx, window, useDx12);
+    bool glfwBackendInitialized = false;
+    bool rendererBackendInitialized = false;
+    if (!InitRendererBackend(ctx, window, err, glfwBackendInitialized, rendererBackendInitialized)) {
+        TeardownPartialBoot(ctx, window, useDx12, glfwBackendInitialized, rendererBackendInitialized);
         return false;
     }
 
@@ -694,6 +716,11 @@ void ShutdownApplication(BootstrapContext& ctx) {
         ctx.app->SetRuntimePluginHost(nullptr);
         ctx.pluginHost->OnStop();
     }
+
+    // CPP_CODE_AUDIT.md #30: bounded-timeout drain before the mainWindow/app/pluginHost
+    // reset below runs any remaining teardown — see P4ClPreview::DrainForShutdown's doc
+    // comment for why this can't just be left to the Meyers singleton's own destructor.
+    P4ClPreview::DrainForShutdown();
 
     ctx.mainWindow.reset();
     ctx.app.reset();

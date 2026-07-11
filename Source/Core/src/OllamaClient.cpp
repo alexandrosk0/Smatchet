@@ -23,6 +23,7 @@ std::string ResolveBaseUrl(const AiClientConfig& cfg) {
     return kDefaultBaseUrl;
 }
 
+// SMATCHET_DEVIATION(rule=duplication; reason=the AI provider clients (Ollama/OpenAi/Anthropic) share the file-top base-URL resolve + path-join helper shape by necessity — each adapts to a different wire schema and folding the helpers into one shared unit would couple otherwise-independent provider adapters (DRY Pillar 5 per ADR-0015); owner=ai-clients; revisit=2026-12-31)
 std::string JoinUrl(const std::string& base, const char* path) {
     if (base.empty())
         return std::string(path);
@@ -35,11 +36,6 @@ nlohmann::json BuildChatBody(const AiChatRequest& req) {
     nlohmann::json body;
     body["model"] = req.Model;
     body["stream"] = true;
-    // Ollama native /api/chat consumes `system` either via a leading {role:"system"}
-    // message or via a top-level `system` field. Emit top-level for symmetry with
-    // the Anthropic + OpenAI clients.
-    if (!req.SystemPrompt.empty())
-        body["system"] = req.SystemPrompt;
 
     // Ollama supports an `options` block for sampling parameters.
     if (req.Temperature >= 0.0f) {
@@ -54,7 +50,17 @@ nlohmann::json BuildChatBody(const AiChatRequest& req) {
         body["options"] = std::move(options);
     }
 
+    // SMATCHET_DEVIATION(rule=duplication; reason=the History->messages array-build loop (and the leading system message) is identical across the provider clients by necessity; the bodies otherwise differ (Ollama options.num_predict vs OpenAi max_tokens), and sharing just the loop would couple independent provider adapters (DRY Pillar 5 per ADR-0015); owner=ai-clients; revisit=2026-12-31)
     nlohmann::json messages = nlohmann::json::array();
+    // Ollama's /api/chat takes the system prompt as a leading {role:"system"} message.
+    // A top-level `system` field is an /api/generate parameter that /api/chat ignores,
+    // so emit it as a message to guarantee agents.md + context reach the model.
+    if (!req.SystemPrompt.empty()) {
+        nlohmann::json sys;
+        sys["role"] = "system";
+        sys["content"] = req.SystemPrompt;
+        messages.push_back(std::move(sys));
+    }
     for (const auto& h : req.History) {
         nlohmann::json m;
         m["role"] = h.Role;
@@ -94,6 +100,8 @@ void DispatchOllamaLine(const nlohmann::json& j, const IAiClient::DeltaCallback&
 
 } // namespace
 
+std::string OllamaBuildRequestBodyJson(const AiChatRequest& req) { return BuildChatBody(req).dump(); }
+
 std::string OllamaClient::GetProviderName() const { return "ollama"; }
 
 std::string OllamaClient::ProbeReachability(const AiClientConfig& cfg) {
@@ -127,10 +135,23 @@ void OllamaClient::SendStreaming(const AiClientConfig& cfg, const AiChatRequest&
     AiNdjsonParser parser;
     bool sawFinal = false;
     bool cancelObserved = false;
+    bool sawStreamError = false;
+    std::string streamErrorMessage;
 
     auto onLine = [&](const nlohmann::json& j) {
         if (cancelObserved || sawFinal)
             return;
+        // A mid-stream NDJSON `{"error": "..."}` line on an otherwise-200 stream is a
+        // real failure. Record it and mark the stream terminated (sawFinal) exactly as
+        // a normal terminal line does, leaving the shared post-response tail untouched.
+        // The trailing sawStreamError branch then reports it via onError instead of
+        // synthesizing a success `eof` that would commit truncated text (DR20).
+        if (j.is_object() && j.contains("error") && j["error"].is_string()) {
+            streamErrorMessage = smatchet::ai::pure::RedactProviderErrorBody(j["error"].get<std::string>());
+            sawStreamError = true;
+            sawFinal = true;
+            return;
+        }
         DispatchOllamaLine(j, onDelta, sawFinal);
     };
     auto onParseError = [](const std::string& rawLine) {
@@ -200,5 +221,15 @@ void OllamaClient::SendStreaming(const AiClientConfig& cfg, const AiChatRequest&
         d.IsFinal = true;
         d.FinishReason = "eof";
         onDelta(d);
+    }
+
+    if (sawStreamError) {
+        // Mid-stream provider `error` line on a 200 stream: transport/HTTP above saw
+        // a clean 200 and the eof above was suppressed by the sawFinal flag set at
+        // detection, so surface the failure here rather than as success (DR20).
+        AiStreamError err;
+        err.HttpStatus = r.status_code;
+        err.Message = streamErrorMessage.empty() ? std::string("provider stream error") : streamErrorMessage;
+        onError(err);
     }
 }

@@ -8,6 +8,7 @@
 
 #include "Commands/Command.h"
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -71,6 +72,20 @@ class CommandPaletteUi {
     /// The command being arg-prompted.
     Command argFormCmd_;
 
+    /// #1703 deferred-dispatch latch. dispatchSelected() / drawArgForm()'s "Run"
+    /// run INSIDE the palette's ImGui::Begin("##cmdpalette")/End() scope;
+    /// dispatching a command there corrupts the ImGui window stack when the
+    /// command touches it (a mid-frame Begin/End imbalance — Pillar-3 abort,
+    /// seed 424242). Instead they latch here and Draw() drains the latch at
+    /// top-of-frame, OUTSIDE the palette's Begin/End — mirroring the ViewState
+    /// top-of-Draw deferral latch mandated by Source/Core/src/Ui/AGENTS.md.
+    /// Args are a shared_ptr<json> (null = empty-object) to keep json_fwd-only
+    /// header hygiene (see Command.h).
+    bool hasPendingDispatch_ = false;
+    std::string pendingDispatchName_;
+    std::shared_ptr<nlohmann::json> pendingDispatchArgs_;
+    bool pendingDispatchDestructive_ = false;
+
     /// Filtered command list for the current frame.
     std::vector<Command> filtered_;
 
@@ -78,17 +93,22 @@ class CommandPaletteUi {
     void rebuildFiltered(AppController& app);
 
     /// Dispatch the currently-selected command (or show arg form for required params).
-    void dispatchSelected(AppController& app);
+    void dispatchSelected();
+
+    /// Drain the #1703 deferred-dispatch latch: run the latched command + Close().
+    /// Called at the top of Draw(), before the palette's Begin(), so any command
+    /// that touches the ImGui window stack runs at a clean nesting level.
+    void drainPendingDispatch(AppController& app);
 
     /// Render the required-args input form for argFormCmd_.
-    void drawArgForm(AppController& app);
+    void drawArgForm();
 
     /// Up/Down selection + Enter/Escape dispatch for the command list (split out of Draw for
     /// function-size compliance; runs inside the active palette Begin scope).
-    void handleListNavigation(AppController& app, const ImGuiIO& io);
+    void handleListNavigation(const ImGuiIO& io);
 
     /// Scrollable command-list child window (owns its own BeginChild/EndChild pair).
-    void drawCommandList(AppController& app, const ImGuiIO& io);
+    void drawCommandList(const ImGuiIO& io);
 };
 
 } // namespace cmd

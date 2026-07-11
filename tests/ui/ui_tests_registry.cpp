@@ -15,11 +15,14 @@ extern "C" void SmatchetRegisterCallstackTooltipHoverTests(ImGuiTestEngine* engi
 extern "C" void SmatchetRegisterHelpMarkerKeyboardFocusTests(ImGuiTestEngine* engine);
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
 extern "C" void SmatchetRegisterMcpLuaFreshStateRaceTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterAutomationReloadHooksRaceTests(ImGuiTestEngine* engine);
 #endif
 extern "C" void SmatchetRegisterSyncStallVisibleCueTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAnnotateBeforeClCueTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterToolbarAppendCacheCueTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAttachmentThumbnailLoadingCueTests(ImGuiTestEngine* engine);
+// nightly-monkey-tester Layer 2 — random-input UI monkey (self-gated on SMATCHET_UI_MONKEY=1).
+extern "C" void SmatchetRegisterUiMonkeyTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterDescriptionTooltipMarkdownRenderTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterSpawnWarmupDeterministicGateTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAnnotatePrefsPersistFlowTests(ImGuiTestEngine* engine);
@@ -36,11 +39,13 @@ extern "C" void SmatchetRegisterDurationInlineEditCommitTests(ImGuiTestEngine* e
 extern "C" void SmatchetRegisterMobileViewsConfirmModalTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterKeybindingsEditorRebindTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterCommandPaletteInlineTypingTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterCommandPaletteDeferredDispatchTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterOmnibarSearchApplyTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterOfflineConflictModalPanesTests(ImGuiTestEngine* engine);
 #if defined(SMATCHET_WITH_AI)
 extern "C" void SmatchetRegisterAiAssistantPanelDockSwapTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAiAssistantEnterSendTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterAiAssistantInputPasteOverflowTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAiPrefsAutosaveFlowTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAiAssistantPreferencesDockingTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAiAssistantPreferencesEnterSendTests(ImGuiTestEngine* engine);
@@ -62,11 +67,13 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterHelpMarkerKeyboardFocusTests(engine);
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     SmatchetRegisterMcpLuaFreshStateRaceTests(engine);
+    SmatchetRegisterAutomationReloadHooksRaceTests(engine);
 #endif
     SmatchetRegisterSyncStallVisibleCueTests(engine);
     SmatchetRegisterAnnotateBeforeClCueTests(engine);
     SmatchetRegisterToolbarAppendCacheCueTests(engine);
     SmatchetRegisterAttachmentThumbnailLoadingCueTests(engine);
+    SmatchetRegisterUiMonkeyTests(engine); // self-gated on SMATCHET_UI_MONKEY=1
     SmatchetRegisterDescriptionTooltipMarkdownRenderTests(engine);
     SmatchetRegisterSpawnWarmupDeterministicGateTests(engine);
     SmatchetRegisterAnnotatePrefsPersistFlowTests(engine);
@@ -83,11 +90,13 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterMobileViewsConfirmModalTests(engine);
     SmatchetRegisterKeybindingsEditorRebindTests(engine);
     SmatchetRegisterCommandPaletteInlineTypingTests(engine);
+    SmatchetRegisterCommandPaletteDeferredDispatchTests(engine);
     SmatchetRegisterOmnibarSearchApplyTests(engine);
     SmatchetRegisterOfflineConflictModalPanesTests(engine);
 #if defined(SMATCHET_WITH_AI)
     SmatchetRegisterAiAssistantPanelDockSwapTests(engine);
     SmatchetRegisterAiAssistantEnterSendTests(engine);
+    SmatchetRegisterAiAssistantInputPasteOverflowTests(engine);
     SmatchetRegisterAiPrefsAutosaveFlowTests(engine);
     SmatchetRegisterAiAssistantPreferencesDockingTests(engine);
     SmatchetRegisterAiAssistantPreferencesEnterSendTests(engine);

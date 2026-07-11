@@ -1,7 +1,11 @@
+// SMATCHET_DEVIATION(rule=duplication; reason=header-prelude/include-block clone with the sibling Plane tracker TUs
+// (PlaneIssueMutation), surfaced by DR25 touching that file; the Plane client TUs share the same include boilerplate by
+// design; owner=deep-review; revisit=2026-10-01)
 #include "PlaneClient.h"
 #include "PlaneClient_Internal.h"
 #include "PlaneFieldCatalogPure.h"
 
+#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "StringUtil.h"
 #include "TrackerHttpClient.h"
@@ -89,8 +93,9 @@ void AppendPagedResults(const std::string& listUrl, const cpr::Header& headers, 
             }
             return;
         }
-        const nlohmann::json j = nlohmann::json::parse(StripUtf8BomCopy(response.text), nullptr, false);
-        if (j.is_discarded()) {
+        std::string parseErr;
+        const nlohmann::json j = smatchet::json_safe::ParseBounded(StripUtf8BomCopy(response.text), parseErr);
+        if (!parseErr.empty()) {
             if (outWarn && outWarn->empty()) {
                 *outWarn = (resourceLabel != nullptr && resourceLabel[0] != '\0')
                                ? std::string(resourceLabel) + ": invalid JSON response"
@@ -319,13 +324,14 @@ void FetchPlaneCustomFields(const std::string& planeApi, const TrackerConfig& cf
             if (IsPlanePlanGatedCatalogStatus(static_cast<int>(pResp.status_code))) {
                 continue;
             }
-            warns.push_back(FormatPlaneCatalogResourceWarn("Custom field properties",
-                                                           static_cast<int>(pResp.status_code)) +
-                            " for type " + typeId.substr(0, 8));
+            warns.push_back(
+                FormatPlaneCatalogResourceWarn("Custom field properties", static_cast<int>(pResp.status_code)) +
+                " for type " + typeId.substr(0, 8));
             continue;
         }
-        const nlohmann::json pj = nlohmann::json::parse(StripUtf8BomCopy(pResp.text), nullptr, false);
-        if (pj.is_discarded()) {
+        std::string parseErr;
+        const nlohmann::json pj = smatchet::json_safe::ParseBounded(StripUtf8BomCopy(pResp.text), parseErr);
+        if (!parseErr.empty()) {
             warns.push_back("work-item-properties invalid JSON for type " + typeId.substr(0, 8));
             continue;
         }
@@ -499,9 +505,9 @@ PlaneClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string&
     // Plane v1 has no per-issue capability endpoint; report every built-in field the mutation
     // paths (`BuildCreatePayload`, `BuildUpdatePayload`, `AddIssueToSprint`) can serialize as
     // editable. Server still gets the final say — a rejected update surfaces through the same
-    // error path as any other mutation failure. Custom-property (UUID) editability is deferred
-    // until C4 lands `properties.<uuid>` serialization; reporting it editable here would only
-    // surface a UI affordance that the payload builder silently drops.
+    // error path as any other mutation failure. C4's `properties.<uuid>` serialization landed
+    // (BuildPlaneCustomProperties), but this seam has no catalog parameter to enumerate the
+    // custom UUIDs from, so customs stay unreported here until the seam grows one.
     for (const char* fieldId :
          {"summary", "description", "priority", "status", "assignee", "labels", "sprint", "type", "parent"}) {
         outFieldIdCanEdit[fieldId] = true;

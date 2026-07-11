@@ -49,22 +49,30 @@ inline float AiHistoryBodyHeight(float availY, float headerH, float inputH, floa
     return (std::max)(80.0f, remaining);
 }
 
+/// Bytes dropped when a paste / splice would push the chat-input text past the
+/// fixed InputText buffer cap. `requestedTextLen` is the would-be text length in
+/// bytes (excluding the NUL), `bufCapBytes` is the buffer's total capacity in
+/// bytes (capacity+1, i.e. ImGui's BufSize — includes the NUL slot). The usable
+/// text room is `bufCapBytes - 1`; anything beyond that is silently clamped by
+/// ImGui, so this returns the count the user lost (0 when nothing was dropped or
+/// inputs are degenerate). Pure so AiAssistantUiDetail.test.cpp can pin the
+/// boundary without an ImGui context — see the CallbackResize wiring in
+/// SmatchetAiAssistantUi.cpp::InputBufferResizeCallback.
+inline std::size_t AiTruncatedPasteDroppedBytes(int requestedTextLen, int bufCapBytes) {
+    if (requestedTextLen <= 0 || bufCapBytes <= 1) {
+        return 0;
+    }
+    const int usable = bufCapBytes - 1; // reserve the NUL terminator slot
+    if (requestedTextLen <= usable) {
+        return 0;
+    }
+    return static_cast<std::size_t>(requestedTextLen - usable);
+}
+
 /// Maps the persisted `cfg.AiProviderKind` int onto the AiProvider enum,
 /// clamping any out-of-range value to OpenAi (same policy as
 /// AiPrefsValidator::ClampProvider).
-inline AiProvider AiResolveProvider(int providerKind) {
-    switch (providerKind) {
-    case 1:
-        return AiProvider::Anthropic;
-    case 2:
-        return AiProvider::OllamaOpenAiCompat;
-    case 3:
-        return AiProvider::OllamaNative;
-    case 0:
-    default:
-        return AiProvider::OpenAi;
-    }
-}
+inline AiProvider AiResolveProvider(int providerKind) { return AiProviderFromKind(providerKind); }
 
 /// Result of resolving the per-turn model picker against the active provider's
 /// catalog. `useFreeformInput` is true when the catalog is empty OR the saved

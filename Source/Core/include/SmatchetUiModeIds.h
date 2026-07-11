@@ -2,6 +2,10 @@
 #include <cstdint>
 #include <string>
 
+// SmatchetLocalization.h is ImGui-free (string/vector only), so mobileNavPageLabel can
+// localize without breaking this header's no-ImGui contract.
+#include "SmatchetLocalization.h"
+
 // UI layout-mode identifiers + mobile-shell sub-state. Kept in a lightweight
 // header (no ImGui dependency, mirroring SmatchetThemeIds.h) so TrackerConfig and
 // other config-layer code can carry the values without pulling the full ImGui
@@ -48,8 +52,8 @@ inline EffectiveUiMode resolveAutoEffectiveUiMode(float logicalWidthPx, Effectiv
 // host "prefers desktop" hint (A6 / ChromeOS — see the seam below) overrides Auto; otherwise the width
 // hysteresis decides. Pure — the caller passes SmatchetHostPrefersDesktopUi() + the logical width (raw
 // io.DisplaySize.x / host density). Header-only + ImGui-free so the doctest rig exercises it directly.
-inline EffectiveUiMode resolveEffectiveUiMode(UiMode persisted, bool hostPrefersDesktop,
-                                              float logicalWidthPx, EffectiveUiMode prev) {
+inline EffectiveUiMode resolveEffectiveUiMode(UiMode persisted, bool hostPrefersDesktop, float logicalWidthPx,
+                                              EffectiveUiMode prev) {
     switch (persisted) {
     case UiMode::Desktop:
         return EffectiveUiMode::Desktop;
@@ -145,19 +149,19 @@ inline MobilePage mobilePageFromString(const std::string& s) {
 // a future custom-page id ever reaches here.
 inline std::string mobileNavPageLabel(const std::string& id) {
     if (id == "grid") {
-        return "Tickets";
+        return SmatchetLocalization::T("mobile.page.tickets", "Tickets");
     }
     if (id == "views") {
-        return "Views";
+        return SmatchetLocalization::T("mobile.page.views", "Views");
     }
     if (id == "log") {
-        return "Log";
+        return SmatchetLocalization::T("mobile.page.log", "Log");
     }
     if (id == "settings") {
-        return "Settings";
+        return SmatchetLocalization::T("mobile.page.settings", "Settings");
     }
     if (id == "ai") {
-        return "AI";
+        return SmatchetLocalization::T("mobile.page.ai", "AI");
     }
     return id;
 }

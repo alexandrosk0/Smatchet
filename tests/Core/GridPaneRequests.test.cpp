@@ -1,5 +1,5 @@
 // GridPaneRequests.test.cpp — bucket-A coverage of the pure pane-request core
-// (SmatchetGridPaneWindows_detail.cpp), added with the PR #962 review fixes:
+// (SmatchetGridPaneWindows_detail.cpp), covering the pane-request review fixes:
 //
 //   * HIGH-2 — closing the FOCUSED pane reassigns focus to the survivor AND
 //     reports FocusReassigned so the host replays it as a real focus switch

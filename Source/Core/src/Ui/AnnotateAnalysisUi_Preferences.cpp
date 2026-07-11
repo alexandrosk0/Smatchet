@@ -1,7 +1,7 @@
 #include "AnnotateAnalysisUi_Internal.h"
 
-#include "AppController.h"
 #include "ConfigManager.h"
+#include "Interfaces/IAppTicketMutations.h"
 #include "Logger.h"
 #include "SmatchetFieldRender.h"
 #include "TrackerFieldSchema.h"
@@ -30,11 +30,12 @@ template <size_t N> bool CommitTextField(const char (&buf)[N], std::string& cfgF
     return true;
 }
 
-void DrawJiraFieldCombo(const AppController& app, const AnnotateUiThemeColors& theme, const char* label,
-                        const char* tooltip, std::string& cfgField, const char* idSuffix, const char* reason) {
+void DrawJiraFieldCombo(const std::vector<TrackerField>& availableFields, const IAppTicketMutations& ticketMutations,
+                        const AnnotateUiThemeColors& theme, const char* label, const char* tooltip,
+                        std::string& cfgField, const char* idSuffix, const char* reason) {
     std::string preview = "(none)";
     if (!cfgField.empty()) {
-        const TrackerField* mf = app.FindFieldById(cfgField);
+        const TrackerField* mf = ticketMutations.FindFieldById(cfgField);
         preview = (mf && !mf->Name.empty()) ? (mf->Name + " (" + mf->Id + ")") : cfgField;
     }
     const std::string comboId = std::string(label) + "##" + idSuffix;
@@ -53,7 +54,7 @@ void DrawJiraFieldCombo(const AppController& app, const AnnotateUiThemeColors& t
         PersistAnnotateCfg(reason);
     }
     PopAnnotateLinkTextOnly();
-    for (const auto& f : app.GetAvailableFields()) {
+    for (const auto& f : availableFields) {
         const bool sel = (f.Id == cfgField);
         const std::string lbl = f.Name.empty() ? f.Id : (f.Name + " (" + f.Id + ")");
         const std::string lblWithId = lbl + "##" + idSuffix + "_" + f.Id;
@@ -107,7 +108,8 @@ void DrawAnnotateScalarAndTextFields() {
 
 // Jira-field source combos (callstack, before-changelist, last-occurrences date). Split out of
 // DrawAnnotatePersistedOptionsForm for function-size compliance.
-void DrawAnnotateJiraFieldCombos(const AppController& app, const AnnotateUiThemeColors& theme) {
+void DrawAnnotateJiraFieldCombos(const std::vector<TrackerField>& availableFields,
+                                 const IAppTicketMutations& ticketMutations, const AnnotateUiThemeColors& theme) {
     auto& cfg = State().annotateCfg;
 
     ImGui::Separator();
@@ -115,7 +117,7 @@ void DrawAnnotateJiraFieldCombos(const AppController& app, const AnnotateUiTheme
     ImGui::TextDisabled("When set, the callstack buffer is filled from this field for the selected issue when "
                         "Annotate is shown, when the selected issue changes, or when you open Annotate for an "
                         "issue from the grid.");
-    DrawJiraFieldCombo(app, theme, "Callstack source field",
+    DrawJiraFieldCombo(availableFields, ticketMutations, theme, "Callstack source field",
                        "Choose which Jira field supplies callstack text for the selected issue whenever Annotate "
                        "is shown or the selection changes (including opening Annotate from the grid).",
                        cfg.CallstackTrackerFieldId, "callstacksrc", "edit_callstackfield");
@@ -124,7 +126,7 @@ void DrawAnnotateJiraFieldCombos(const AppController& app, const AnnotateUiTheme
     ImGui::TextUnformatted("Before changelist (Jira)");
     ImGui::TextDisabled("When set, opening Annotate on an issue fills \"Before changelist\" from this field (digits "
                         "only). Autoselect matches a field named \"Last Found CL\".");
-    DrawJiraFieldCombo(app, theme, "Before-changelist field",
+    DrawJiraFieldCombo(availableFields, ticketMutations, theme, "Before-changelist field",
                        "Jira field whose value pre-fills Before changelist when Annotate opens on an issue.",
                        cfg.LastFoundClTrackerFieldId, "lastfoundcl", "edit_lastfoundcl");
 
@@ -132,7 +134,7 @@ void DrawAnnotateJiraFieldCombos(const AppController& app, const AnnotateUiTheme
     ImGui::TextDisabled("When set, opening Annotate on an issue pre-fills the \"or day\" date from this field (ISO "
                         "or parseable date). Otherwise the date stays empty. Autoselect matches \"Last "
                         "Occurrences\" or \"Last Occurances\".");
-    DrawJiraFieldCombo(app, theme, "Last-occurrences date field",
+    DrawJiraFieldCombo(availableFields, ticketMutations, theme, "Last-occurrences date field",
                        "Jira date field used to seed the Before-changelist day picker when Annotate opens.",
                        cfg.LastOccurrencesTrackerFieldId, "lastoccurrences", "edit_lastocc");
 }
@@ -225,9 +227,10 @@ void DrawAnnotateCacheAndColors() {
     }
 }
 
-void DrawAnnotatePersistedOptionsForm(const AppController& app, const AnnotateUiThemeColors& theme) {
+void DrawAnnotatePersistedOptionsForm(const std::vector<TrackerField>& availableFields,
+                                      const IAppTicketMutations& ticketMutations, const AnnotateUiThemeColors& theme) {
     DrawAnnotateScalarAndTextFields();
-    DrawAnnotateJiraFieldCombos(app, theme);
+    DrawAnnotateJiraFieldCombos(availableFields, ticketMutations, theme);
     DrawAnnotatePathRemaps();
     DrawAnnotateCacheAndColors();
 }

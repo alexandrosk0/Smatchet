@@ -52,7 +52,10 @@ class ConnectivityMonitorService {
     const std::string& LastTicketSyncWarning() const { return lastTicketSyncWarning_; }
 
     /// Clears the live ticket-sync warning banner (e.g. before kicking off a background fetch).
-    void ClearLastTicketSyncWarning() { lastTicketSyncWarning_.clear(); }
+    void ClearLastTicketSyncWarning() {
+        lastTicketSyncWarning_.clear();
+        lastTicketSyncWarningTransient_ = false;
+    }
 
     /// One consolidated banner for field-catalog error/warning, ticket-list cache warning, and an
     /// optional session note (e.g. Views dashboard users-fetch warning). Pure given the catalog /
@@ -78,7 +81,12 @@ class ConnectivityMonitorService {
 
     /// Setters re-pointed from the adapter's ITicketSyncDeps overrides — TicketSyncService writes
     /// connectivity state through these (N per-pane adapters → this one global service).
-    void SetLastTicketSyncWarning(const std::string& message) { lastTicketSyncWarning_ = message; }
+    /// `transient` travels with the message from the fetch seam that classified it (N12 slice 1)
+    /// so the degraded-probe-interval check never re-classifies the composed text.
+    void SetLastTicketSyncWarning(const std::string& message, bool transient) {
+        lastTicketSyncWarning_ = message;
+        lastTicketSyncWarningTransient_ = transient && !message.empty();
+    }
     void SetLastState(TrackerConnectivityState state) { lastState_ = state; }
     void SetNextProbeAt(std::chrono::steady_clock::time_point at) { nextProbeAt_ = at; }
 
@@ -123,4 +131,7 @@ class ConnectivityMonitorService {
     // un-repointed writer fail to compile. Second logical writer is TicketSyncService via the
     // adapter's re-pointed SetLastTicketSyncWarning; both run on the UI tick.
     std::string lastTicketSyncWarning_;
+    /// Whether lastTicketSyncWarning_ stems from a transport-shaped failure — set with the
+    /// message (same single-writer UI-tick discipline as the string; see the class comment).
+    bool lastTicketSyncWarningTransient_ = false;
 };

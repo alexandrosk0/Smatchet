@@ -43,12 +43,14 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-# Source merge-gates.sh ONLY for the single-source block allow-list constant, so
-# a non-required-but-meant-to-block RED check is classified identically to the
-# merge gate. Side-effect-free when sourced.
+# Source merge-gates.sh ONLY for the single-source blocking-scope constant, so
+# a non-required RED check is classified identically to the merge gate
+# (block-on-any-red). Side-effect-free when sourced. The fallback mirrors the
+# sourced value ("." = every name) — a stale curated-list fallback here once
+# made this diagnostic silently disagree with the poller when sourcing failed.
 # shellcheck source=agents/scripts/core/merge-gates.sh
 source "$REPO_ROOT/agents/scripts/core/merge-gates.sh" 2>/dev/null || true
-ALLOW_RE="${MERGE_GATES_BLOCK_ALLOWLIST_RE:-Coverage|Sanitizer|Perf PR-fast|Android security gate|Fuzz smoke}"
+ALLOW_RE="${MERGE_GATES_BLOCK_ALLOWLIST_RE:-.}"
 
 # GOTCHA (c): `gh api <path>` REST paths must be SLASH-RELATIVE (`repos/...`,
 # `user`), NOT absolute (`/repos/...`). A leading slash makes gh build

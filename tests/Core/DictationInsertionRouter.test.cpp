@@ -253,7 +253,7 @@ TEST_CASE("DictationInsertionRouter: g_dictationRouter global is usable") {
 }
 
 TEST_CASE("DictationInsertionRouter::Insert: unterminated buffer is repaired, no overread") {
-    // Regression gate for PR #246 — the BoundedStrlen fix. A registered
+    // Regression gate for the BoundedStrlen fix. A registered
     // buffer that lacks a NUL within its capacity must NOT trigger
     // std::strlen overread; instead the router force-terminates at
     // cap-1, clamps `existing` to that, then performs the splice (which
@@ -311,7 +311,7 @@ TEST_CASE("DictationInsertionRouter::Insert: normally-terminated buffer behaves 
 }
 
 // ----------------------------------------------------------------------------
-// Whisper PR #249 + #250 regression gates — the live `test/whisper-all-prs`
+// Whisper dictation-misroute regression gates — the live `test/whisper-all-prs`
 // dogfood log surfaced a misroute where the hotkey transcription landed in
 // the AI Assistant chat input despite the user expecting another field, and
 // the auto-send-on-punctuation fired and cleared the buffer. Root cause: the
@@ -499,7 +499,7 @@ TEST_CASE("DictationInsertionRouter::ConsumePendingReloadItemId: shadow ItemId i
 }
 
 TEST_CASE("DictationInsertionRouter::ConsumePendingReloadItemId: AI Assistant composite flow") {
-    // PR #249 (bf9ce67f) regression — composite check that mirrors what the
+    // Reload-splice regression — composite check that mirrors what the
     // production AI Assistant panel does on each frame the panel is open:
     //   1. RegisterAiAssistantInputText (panel-level mirror, ItemId=0).
     //   2. RegisterInputTextWithItemId (wrapper-level, real ItemId).
@@ -541,7 +541,7 @@ TEST_CASE("DictationInsertionRouter::ConsumePendingReloadItemId: AI Assistant co
 }
 
 TEST_CASE("DictationInsertionRouter::auto-send callback fires only when registered + triggered") {
-    // PR #249 (bf9ce67f) and PR #246 wiring — the auto-send callback the AI
+    // Auto-send + reload wiring — the auto-send callback the AI
     // Assistant panel registers must be a strict pass-through gate. We pin:
     //   - TriggerAiAssistantSend with no callback registered is a no-op.
     //   - SetAiAssistantSendCallback({}) clears the callback (scenarios use

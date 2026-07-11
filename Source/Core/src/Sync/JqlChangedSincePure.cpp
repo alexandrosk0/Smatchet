@@ -41,10 +41,31 @@ bool MatchesCi(const std::string& s, std::size_t at, const char* lit, std::size_
 // whitespace), or std::string::npos. JQL has no subqueries, so the rightmost
 // `order ... by` at column boundary is the sort clause. Requires a whitespace (or
 // start) boundary before `order` so a token like "reorder" never matches.
+//
+// CPP_CODE_AUDIT.md #33 (JQL "order by" matched inside quoted strings): the scan
+// tracks single/double-quoted string-literal spans (backslash-escape aware, JQL's
+// own escaping) and skips matching inside them — a view JQL like
+// `summary ~ "sort order by date" AND ...` must not have its quoted text mistaken
+// for the real ORDER BY clause. Mirrors the token-aware fix already shipped for
+// this exact class in GitHubQueryFromJql.cpp's StripOrderByClause.
 std::size_t FindTrailingOrderBy(const std::string& s) {
     std::size_t found = std::string::npos;
-    for (std::size_t i = 0; i + 5 <= s.size(); ++i) {
-        if (!MatchesCi(s, i, "order", 5)) {
+    char quoteChar = '\0';
+    for (std::size_t i = 0; i < s.size(); ++i) {
+        const char c = s[i];
+        if (quoteChar != '\0') {
+            if (c == '\\' && i + 1 < s.size()) {
+                ++i; // skip the escaped character — it can't close the quote
+            } else if (c == quoteChar) {
+                quoteChar = '\0';
+            }
+            continue;
+        }
+        if (c == '"' || c == '\'') {
+            quoteChar = c;
+            continue;
+        }
+        if (i + 5 > s.size() || !MatchesCi(s, i, "order", 5)) {
             continue;
         }
         if (i > 0 && !IsWs(s[i - 1])) {

@@ -1,0 +1,4 @@
+# Build output of generate.py — regenerate with `python3 tools/repo-health/generate.py`.
+# Git-ignored so the timestamped/computed HTML doesn't churn the tree; publish it
+# to the Artifact URL in facts.json instead. See README.md § Republish.
+dashboard.html

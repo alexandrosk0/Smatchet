@@ -178,7 +178,9 @@ TEST_SUITE("SubprocessCapturePure::IsSensitiveEnvName") {
         CHECK(SubprocessCapturePure::IsSensitiveEnvName("OPENAI_API_KEY"));
         CHECK(SubprocessCapturePure::IsSensitiveEnvName("MY_PASSWORD"));
         CHECK(SubprocessCapturePure::IsSensitiveEnvName("DB_PASSWD"));
-        CHECK(SubprocessCapturePure::IsSensitiveEnvName("JIRA_PAT")); // _PAT suffix
+        CHECK(SubprocessCapturePure::IsSensitiveEnvName("JIRA_PAT"));   // _PAT suffix
+        CHECK(SubprocessCapturePure::IsSensitiveEnvName("GITHUB_PAT")); // _PAT suffix (#1711)
+        CHECK(SubprocessCapturePure::IsSensitiveEnvName("gh_pat"));     // _PAT suffix, case-insensitive
         CHECK(SubprocessCapturePure::IsSensitiveEnvName("GITHUB_TOKEN"));
         CHECK(SubprocessCapturePure::IsSensitiveEnvName("SSH_PRIVATE_KEY"));
         CHECK(SubprocessCapturePure::IsSensitiveEnvName("HTTP_AUTHORIZATION"));
@@ -205,6 +207,14 @@ TEST_SUITE("SubprocessCapturePure::IsSensitiveEnvName") {
         CHECK_FALSE(SubprocessCapturePure::IsSensitiveEnvName("GIT_DIR"));
         CHECK_FALSE(SubprocessCapturePure::IsSensitiveEnvName("DISPLAY"));
         CHECK_FALSE(SubprocessCapturePure::IsSensitiveEnvName("XDG_RUNTIME_DIR"));
+        // #1711 — *_PATH vars must survive: the "_PAT" token used to substring-match
+        // "_PATH", scrubbing these from p4/git children so they failed to load shared
+        // libraries on Linux/macOS. "_PAT" is now a suffix match, so "..._PATH" is safe.
+        CHECK_FALSE(SubprocessCapturePure::IsSensitiveEnvName("LD_LIBRARY_PATH"));
+        CHECK_FALSE(SubprocessCapturePure::IsSensitiveEnvName("DYLD_LIBRARY_PATH"));
+        CHECK_FALSE(SubprocessCapturePure::IsSensitiveEnvName("GIT_EXEC_PATH"));
+        CHECK_FALSE(SubprocessCapturePure::IsSensitiveEnvName("PKG_CONFIG_PATH"));
+        CHECK_FALSE(SubprocessCapturePure::IsSensitiveEnvName("ld_library_path")); // case-insensitive
     }
 }
 

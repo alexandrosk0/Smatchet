@@ -10,6 +10,7 @@
 // AppController internals directly.
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -61,6 +62,16 @@ class TicketSyncService {
     /// SQLite file is replaced so the service doesn't try to delete tickets from a fresh DB.
     void ResetStaleDeletionState();
 
+    /// Decide whether a completed full-sync that kept zero tickets should be treated as suspect
+    /// and have its mass deletion skipped. A zero-keep full-sync cannot prove the cache is stale:
+    /// a 200-with-empty-body glitch or a transiently-broken query is indistinguishable from a
+    /// genuinely-emptied project. Returns true (skip the wipe) while there is something to lose
+    /// and the empty result has not yet repeated `emptyWipeThreshold` times, so offline-available
+    /// rows survive a transient blip while a truly-empty project still converges. Pure + static so
+    /// the streaming path and `ApplyIssueFetchPack` share one decision and it is unit-testable.
+    static bool ShouldSkipMassDeletionOnEmptyFullSync(std::size_t keepCount, std::size_t cachedRowCount,
+                                                      int consecutiveEmptyFullSyncs, int emptyWipeThreshold);
+
   private:
     /// Streaming-sync FSM state. Moved out of AppController in Phase 1C of the item 11
     /// extraction. Worker thread + UI thread coordinate via the atomics + `QueueMutex`.
@@ -75,6 +86,9 @@ class TicketSyncService {
         std::atomic<size_t> TotalFetchedCount{0};
         std::atomic<bool> FullSyncCompleted{false};
         std::string FetchError;
+        /// Transport-shaped FetchError — written with FetchError under QueueMutex at the same
+        /// worker-side classification seam (N12 slice 1); readers copy both under the lock.
+        bool FetchErrorTransient = false;
         std::string Warning;
 
         mutable std::mutex QueueMutex;

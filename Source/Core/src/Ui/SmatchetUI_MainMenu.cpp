@@ -8,7 +8,9 @@
 // consumers. Order matters: `imgui_internal.h` must be pulled BEFORE the
 // macro redefinition.
 
+// clang-format off
 // SMATCHET_DEVIATION(rule=duplication; reason=dup gate flags this TU's #include list as a clone of SmatchetUI.cpp's — sibling UI TUs sharing a common include set, both in this diff; directive overlap not copy-pasted logic; owner=ui; revisit=when the dup auditor scopes cross-file clones to logic blocks)
+// clang-format on
 #include "SmatchetUI.h"
 #include "AppController.h"
 #include "Commands/CommandPaletteUi.h"
@@ -100,7 +102,8 @@ static std::string MenuShortcutArgs(const MainMenuDrawCtx& ctx, const char* comm
 // rather than inline here. Source mirrors the recently-used-views menu dispatch below.
 static void DispatchMenuCommand(MainMenuDrawCtx& ctx, const char* commandId) {
     smatchet::cmd::CommandContext cmdCtx;
-    cmdCtx.App = &ctx.app;
+    cmdCtx.ScenarioHost = &ctx.app;
+    cmdCtx.Threading = &ctx.app;
     cmdCtx.Source = smatchet::cmd::CommandSource::Palette;
     const nlohmann::json emptyArgs = nlohmann::json::object();
     const smatchet::cmd::CommandResult r = ctx.app.Commands().Dispatch(commandId, emptyArgs, cmdCtx);
@@ -530,7 +533,8 @@ void SmatchetUI::drawMenuBarViewMenu(MainMenuDrawCtx& ctx) {
                 const std::string& cmdId = recent[static_cast<size_t>(ri)];
                 if (ImGui::MenuItem(cmdId.c_str())) {
                     smatchet::cmd::CommandContext cmdCtx;
-                    cmdCtx.App = &app;
+                    cmdCtx.ScenarioHost = &app;
+                    cmdCtx.Threading = &app;
                     cmdCtx.Source = smatchet::cmd::CommandSource::Palette;
                     const nlohmann::json emptyArgs = nlohmann::json::object();
                     smatchet::cmd::CommandResult r = app.Commands().Dispatch(cmdId, emptyArgs, cmdCtx);

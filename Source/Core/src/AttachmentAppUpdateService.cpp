@@ -5,11 +5,12 @@
 
 #include <algorithm>
 #include <array>
-// SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
+// SMATCHET_DEVIATION(rule=duplication; reason=include clone; owner=security-audit; revisit=2026-09-30)
 #include <atomic>
-// SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
+// SMATCHET_DEVIATION(rule=duplication; reason=include clone; owner=security-audit; revisit=2026-09-30)
 #include <cctype>
 #include <chrono>
+#include <climits>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -163,6 +164,16 @@ bool DownloadAttachmentToLocalFile(const std::string& url, const std::string& fi
         cpr::Get(cpr::Url{url}, headers, redirect, writeCb, cpr::ConnectTimeout{5000}, cpr::Timeout{120000});
     if (sizeExceeded) {
         outError = "Attachment exceeds max allowed size.";
+        return false;
+    }
+    // cpr followed redirects (Redirect(true,false)) but only the INITIAL url was allowlisted above.
+    // A tracker 30x to an internal host would otherwise be fetched and written to a local file
+    // (limited SSRF). Re-validate the effective url libcurl actually landed on before persisting
+    // anything, mirroring the post-redirect host recheck in Whisper/ModelDownloader.cpp.
+    const std::string finalHost = ExtractHostFromUrl(resp.url.str());
+    if (finalHost.empty() || !IsAllowedJiraAttachmentHost(finalHost, jiraDomain)) {
+        // Fail closed: an unparseable/empty effective host is as suspect as a non-allowlisted one.
+        outError = "Attachment redirected to a non-allowlisted host.";
         return false;
     }
     if (resp.error.code != cpr::ErrorCode::OK || resp.status_code < 200 || resp.status_code >= 300) {
@@ -326,7 +337,19 @@ SemanticVersion ParseSemanticVersion(const std::string& raw) {
             !std::all_of(token.begin(), token.end(), [](unsigned char c) { return std::isdigit(c) != 0; })) {
             return out;
         }
-        parts[static_cast<size_t>(i)] = std::atoi(token.c_str());
+        // CPP_CODE_AUDIT.md #17: std::atoi on an unbounded digit run is UB past INT_MAX
+        // (e.g. a GitHub release tag like "v99999999999.0.0"); std::stoll + range-check
+        // mirrors CallstackParser::ParseLineNumberInRange's guard for the same class of
+        // untrusted-digit-run input.
+        try {
+            const long long value = std::stoll(token);
+            if (value < 0 || value > static_cast<long long>(INT_MAX)) {
+                return out;
+            }
+            parts[static_cast<size_t>(i)] = static_cast<int>(value);
+        } catch (...) { // catch-all-ok: stoll on untrusted release-tag digits (e.g. > LLONG_MAX)
+            return out;
+        }
         if (dot == std::string::npos) {
             if (i != 2) {
                 return out;
@@ -387,7 +410,7 @@ void AttachmentAppUpdateService::ShowAttachmentCollection(const std::vector<Atta
 }
 
 void AttachmentAppUpdateService::OpenAttachment(const std::string& url, const std::string& filename,
-                                               const std::string& mimeType) {
+                                                const std::string& mimeType) {
     if (url.empty()) {
         return;
     }
@@ -426,7 +449,7 @@ void AttachmentAppUpdateService::OpenAttachment(const std::string& url, const st
 }
 
 void AttachmentAppUpdateService::OpenAttachmentInSystemViewer(const std::string& url, const std::string& filename,
-                                                             const std::string& mimeType) {
+                                                              const std::string& mimeType) {
     if (url.empty()) {
         return;
     }
@@ -460,7 +483,7 @@ void AttachmentAppUpdateService::OpenAttachmentInSystemViewer(const std::string&
 }
 
 bool AttachmentAppUpdateService::DownloadAttachmentForPreview(const std::string& url, const std::string& filename,
-                                                             const std::string& mimeType, std::string* outError) {
+                                                              const std::string& mimeType, std::string* outError) {
     auto fail = [outError](const std::string& errorMessage) {
         if (outError != nullptr) {
             *outError = errorMessage;
@@ -519,8 +542,33 @@ AppUpdateInfo AttachmentAppUpdateService::CheckForAppUpdate(bool includePrerelea
     const std::string url = "https://api.github.com/repos/" + repo + "/releases?per_page=10";
     cpr::Header headers{{"Accept", "application/vnd.github+json"},
                         {"User-Agent", "SmatchetUpdater/" + out.CurrentVersion}};
-    cpr::Response response =
-        cpr::Get(cpr::Url{url}, headers, cpr::Redirect{true, true}, cpr::ConnectTimeout{5000}, cpr::Timeout{15000});
+
+    // Bound the response body before it is buffered: a hostile / misconfigured endpoint could
+    // otherwise stream an unbounded body straight into memory (OOM) before ParseBounded ever
+    // runs. Abort the transfer once the cap is exceeded (mirrors the capped download at :155 and
+    // the Tracker attachment proxy in McpPlugin.cpp).
+    // SMATCHET_DEVIATION(rule=duplication; reason=capped cpr::WriteCallback body-writer is deliberately
+    // inlined per download site so each cap and error string stays local and tunable, per ADR-0015,
+    // rather than folded into a shared helper; owner=security-audit; revisit=2026-09-30)
+    constexpr size_t kMaxUpdateCheckBytes = 8u * 1024u * 1024u;
+    bool sizeExceeded = false;
+    std::string bodyAccum;
+    bodyAccum.reserve(64 * 1024);
+    cpr::WriteCallback writeCb{[&](std::string data, intptr_t) -> bool {
+        if (bodyAccum.size() + data.size() > kMaxUpdateCheckBytes) {
+            sizeExceeded = true;
+            return false;
+        }
+        bodyAccum.append(data);
+        return true;
+    }};
+
+    cpr::Response response = cpr::Get(cpr::Url{url}, headers, cpr::Redirect{true, true}, writeCb,
+                                      cpr::ConnectTimeout{5000}, cpr::Timeout{15000});
+    if (sizeExceeded) {
+        out.Error = "Update check failed: GitHub response exceeds the maximum allowed size.";
+        return out;
+    }
     if (response.error.code != cpr::ErrorCode::OK) {
         out.Error = "Update check failed: " + response.error.message;
         return out;
@@ -534,7 +582,7 @@ AppUpdateInfo AttachmentAppUpdateService::CheckForAppUpdate(bool includePrerelea
     // depth/node-bounded helper so a hostile / oversized body can't crash the process.
     // ParseBounded never throws; failure is a non-empty parseErr (stable, input-free).
     std::string parseErr;
-    nlohmann::json releases = smatchet::json_safe::ParseBounded(response.text, parseErr);
+    nlohmann::json releases = smatchet::json_safe::ParseBounded(bodyAccum, parseErr);
     if (!parseErr.empty()) {
         out.Error = std::string("Update check failed to parse GitHub response: ") + parseErr;
         return out;
@@ -600,8 +648,8 @@ AppUpdateInfo AttachmentAppUpdateService::CheckForAppUpdate(bool includePrerelea
 }
 
 bool AttachmentAppUpdateService::DownloadAndLaunchInstallerUpdate(const std::string& downloadUrl,
-                                                                 const std::string& assetName, std::string& outError,
-                                                                 std::shared_ptr<std::atomic<bool>> cancelFlag) const {
+                                                                  const std::string& assetName, std::string& outError,
+                                                                  std::shared_ptr<std::atomic<bool>> cancelFlag) const {
     outError.clear();
     if (downloadUrl.empty()) {
         outError = "Missing installer download URL.";
@@ -615,10 +663,11 @@ bool AttachmentAppUpdateService::DownloadAndLaunchInstallerUpdate(const std::str
         return false;
     }
 
-    std::string filename = assetName.empty() ? FileNameFromUrl(downloadUrl) : assetName;
-    if (filename.empty()) {
-        filename = "SmatchetUpdateSetup.exe";
-    }
+    const std::string rawFilename = assetName.empty() ? FileNameFromUrl(downloadUrl) : assetName;
+    // The asset name is attacker-influenced (GitHub release metadata) and is concatenated onto the
+    // temp dir below. Sanitize to a bare basename so a name like "..\\..\\...\\Startup\\x-windows-
+    // setup.exe" cannot escape %TEMP% and be ShellExecute-launched from an arbitrary location.
+    const std::string filename = smatchet::app_update::SanitizeInstallerFilename(rawFilename);
     const std::string localPath = std::string(tempPathBuf) + filename;
     std::ofstream ofs(localPath, std::ios::binary | std::ios::trunc);
     if (!ofs.is_open()) {
