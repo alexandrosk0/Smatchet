@@ -136,6 +136,47 @@ bool& GetHasCachedConfigRef();
 std::string& GetRuntimeAssetDirectoryRef();
 std::string& GetUserDataDirectoryRef();
 
+// -------- god-file-splits PR 2: cross-TU seam between the Save/Load/Secrets TUs ----------
+// SecretMigrationFlags is shared by ConfigManager_Secrets.cpp (LoadSecretFields) and
+// ConfigManager_Load.cpp (ConfigManager::Load). The four free functions are the table-driven
+// scalar pair (defined in ConfigManager.cpp, which owns the field tables) and the secret
+// persistence pair (defined in ConfigManager_Secrets.cpp). Bodies moved verbatim.
+// Flags raised when a secret is read from a legacy plaintext key (no `*_enc` present /
+// undecryptable). Load() re-Saves once when any flag is set so the next on-disk state holds
+// the DPAPI-protected form. Mirrors the prior local `migrateLegacyPlaintext*` bools verbatim.
+struct SecretMigrationFlags {
+    bool McpAuthToken = false;
+    bool AiApiKey = false;
+    bool AiAnthropicApiKey = false;
+    bool AiDeepSeekApiKey = false;
+#if defined(SMATCHET_WITH_WHISPER)
+    bool WhisperApiKey = false;
+#endif
+#if defined(__ANDROID__)
+    // Android fail-closed migration (audit H2 / CR #1357): set when ANY secret fell back to a legacy
+    // plaintext key — including token/plane/github/bugreport, which have no per-field flag. Forces a
+    // one-shot re-Save so the plaintext is re-sealed via Keystore, or dropped fail-closed if no
+    // provider is wired. The goal is to get pre-fix plaintext OFF disk on first load after upgrade.
+    bool LegacyPlaintext = false;
+#endif
+
+    bool Any() const {
+        bool any = McpAuthToken || AiApiKey || AiAnthropicApiKey || AiDeepSeekApiKey;
+#if defined(SMATCHET_WITH_WHISPER)
+        any = any || WhisperApiKey;
+#endif
+#if defined(__ANDROID__)
+        any = any || LegacyPlaintext;
+#endif
+        return any;
+    }
+};
+
+void SaveScalarFields(nlohmann::json& j, const TrackerConfig& config);
+void LoadScalarFields(const nlohmann::json& j, TrackerConfig& cfg);
+void SaveSecretsAndPurgeLegacy(nlohmann::json& j, const TrackerConfig& config);
+void LoadSecretFields(const nlohmann::json& j, TrackerConfig& cfg, SecretMigrationFlags& migrate);
+
 } // namespace config_detail
 } // namespace smatchet
 
