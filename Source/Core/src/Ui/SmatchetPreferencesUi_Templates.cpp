@@ -9,8 +9,6 @@
 
 #include "SmatchetPreferencesUi_detail.h"
 #include "SmatchetUI.h"
-class AppController; // fan-in Phase 6: this TU only names AppController& in signatures / pass-throughs — fwd-decl
-                     // suffices
 #include "Logger.h"
 #include "SmatchetHelpMarker.h"
 #include "SmatchetLocalization.h"
@@ -460,13 +458,14 @@ void DrawFieldsInputsSubTab(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags
 
 } // namespace
 
-void DrawTemplatePreferencesTabs(SmatchetUI& ui, AppController& app, UiDrawSession& d,
+void DrawTemplatePreferencesTabs(SmatchetUI& ui, const std::vector<TrackerField>& availableFields,
+                                 const IAppTicketMutations& ticketMutations, UiDrawSession& d,
                                  SmatchetPreferencesUiTemplateFlags& flags) {
     DrawGridSubTab(d);
     DrawFieldsInputsSubTab(d, flags);
     if (ImGui::BeginTabItem("Annotate")) {
         d.preferencesActiveTab = PreferencesActiveTab::Annotate;
-        ui.DrawAnnotatePreferencesTabForwarded(app);
+        ui.DrawAnnotatePreferencesTabForwarded(availableFields, ticketMutations);
         ImGui::EndTabItem();
     }
 }

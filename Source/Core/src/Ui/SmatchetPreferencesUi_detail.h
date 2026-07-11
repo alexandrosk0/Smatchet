@@ -4,14 +4,17 @@
 #include "StringUtil.h"
 
 #include <string>
+#include <vector>
 
 // Private header for SmatchetPreferencesUi split TUs. Not installed — included only
 // by SmatchetPreferencesUi.cpp and its companion _*.cpp files.
 
 class SmatchetUI;
 class AppController;
-class IAppCommands;  // fan-in Phase 6: keybindings tab takes the narrow registry facet
-class IAppThreading; // fan-in Phase 6 T4: whisper tab only launches workers + posts back
+class IAppCommands;        // fan-in Phase 6: keybindings tab takes the narrow registry facet
+class IAppThreading;       // fan-in Phase 6 T4: whisper tab only launches workers + posts back
+class IAppTicketMutations; // Scope A: templates tab forwards the field-lookup facet to Annotate prefs
+struct TrackerField;
 struct UiDrawSession;
 
 namespace SmatchetPreferencesUiDetail {
@@ -149,5 +152,6 @@ void DrawWhisperPreferencesTab(IAppThreading& app, UiDrawSession& d);
 
 void DrawLocalAndAppearancePreferencesTabs(SmatchetUI& ui, AppController& app, UiDrawSession& d);
 void DrawKeybindingsPreferencesTab(SmatchetUI& ui, IAppCommands& app, UiDrawSession& d);
-void DrawTemplatePreferencesTabs(SmatchetUI& ui, AppController& app, UiDrawSession& d,
+void DrawTemplatePreferencesTabs(SmatchetUI& ui, const std::vector<TrackerField>& availableFields,
+                                 const IAppTicketMutations& ticketMutations, UiDrawSession& d,
                                  SmatchetPreferencesUiTemplateFlags& flags);

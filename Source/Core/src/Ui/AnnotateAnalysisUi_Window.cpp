@@ -1139,9 +1139,9 @@ void AnnotateAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::
 void AnnotateAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std::string& selectedJiraIssueKey) {
     ensureSettingsBuffersLoaded();
 
-    MaybeAutoselectCallstackTrackerField(app);
-    MaybeAutoselectLastFoundClTrackerField(app);
-    MaybeAutoselectLastOccurrencesTrackerField(app);
+    MaybeAutoselectCallstackTrackerField(app.GetAvailableFields());
+    MaybeAutoselectLastFoundClTrackerField(app.GetAvailableFields());
+    MaybeAutoselectLastOccurrencesTrackerField(app.GetAvailableFields());
 
     const bool justOpened = !annotateOpenPrev_;
     annotateOpenPrev_ = true;

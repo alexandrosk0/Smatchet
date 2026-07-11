@@ -760,7 +760,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
 #endif
         DrawLocalAndAppearancePreferencesTabs(*this, app, d);
         DrawKeybindingsPreferencesTab(*this, app, d);
-        DrawTemplatePreferencesTabs(*this, app, d, preferencesState_.templateFlags);
+        DrawTemplatePreferencesTabs(*this, app.GetAvailableFields(), app, d, preferencesState_.templateFlags);
         ImGui::EndTabBar();
     }
 

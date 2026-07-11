@@ -1,6 +1,6 @@
 #include "AnnotateAnalysisUi_Internal.h"
 
-#include "AppController.h"
+#include "CachedTicketTypes.h"
 #include "ConfigManager.h"
 #include "Logger.h"
 #include "SmatchetHelpMarker.h"
@@ -81,28 +81,29 @@ void AnnotateAnalysisUi::ensureSettingsBuffersLoaded() {
     cfgLoaded_ = true;
 }
 
-void AnnotateAnalysisUi::DrawAnnotatePreferencesTab(const AppController& app) {
+void AnnotateAnalysisUi::DrawAnnotatePreferencesTab(const std::vector<TrackerField>& availableFields,
+                                                    const IAppTicketMutations& ticketMutations) {
     ensureSettingsBuffersLoaded();
-    MaybeAutoselectCallstackTrackerField(app);
-    MaybeAutoselectLastFoundClTrackerField(app);
-    MaybeAutoselectLastOccurrencesTrackerField(app);
+    MaybeAutoselectCallstackTrackerField(availableFields);
+    MaybeAutoselectLastFoundClTrackerField(availableFields);
+    MaybeAutoselectLastOccurrencesTrackerField(availableFields);
     ImGui::TextUnformatted("Annotate configuration (stored in smatchet_config.json).");
     ImGui::SameLine();
     SmatchetHelpMarker::RenderText("Perforce paths, ignore list, and Jira callstack source used by Annotate "
                                    "(stored in smatchet_config.json).");
     ImGui::Spacing();
     const AnnotateUiThemeColors& theme = State().annotateCfg.UiColors;
-    DrawAnnotatePersistedOptionsForm(app, theme);
+    DrawAnnotatePersistedOptionsForm(availableFields, ticketMutations, theme);
 }
 
-bool AnnotateRowHasNonEmptyCallstackField(const AppController& app, const CachedTicket& ticket) {
+bool AnnotateRowHasNonEmptyCallstackField(const std::vector<TrackerField>& availableFields,
+                                          const CachedTicket& ticket) {
     HydrateAnnotateCfgDiskOnce();
     std::string fid = State().annotateCfg.CallstackTrackerFieldId;
     if (fid.empty()) {
-        const auto& fields = app.GetAvailableFields();
-        const auto it = std::find_if(fields.begin(), fields.end(),
+        const auto it = std::find_if(availableFields.begin(), availableFields.end(),
                                      [](const TrackerField& f) { return ToLowerAsciiCopy(f.Name) == "callstack"; });
-        if (it == fields.end()) {
+        if (it == availableFields.end()) {
             return false;
         }
         fid = it->Id;
@@ -110,15 +111,15 @@ bool AnnotateRowHasNonEmptyCallstackField(const AppController& app, const Cached
     return !ticket.GetFieldValue(fid).empty();
 }
 
-void OpenAnnotateAnalysisForGridIssue(AppController& app, bool& showAnnotateAnalysis, SpreadsheetState& gridState,
-                                      const std::string& issueKey) {
+void OpenAnnotateAnalysisForGridIssue(const std::vector<TrackerField>& availableFields, bool& showAnnotateAnalysis,
+                                      SpreadsheetState& gridState, const std::string& issueKey) {
     if (issueKey.empty()) {
         return;
     }
     HydrateAnnotateCfgDiskOnce();
-    MaybeAutoselectCallstackTrackerField(app);
-    MaybeAutoselectLastFoundClTrackerField(app);
-    MaybeAutoselectLastOccurrencesTrackerField(app);
+    MaybeAutoselectCallstackTrackerField(availableFields);
+    MaybeAutoselectLastFoundClTrackerField(availableFields);
+    MaybeAutoselectLastOccurrencesTrackerField(availableFields);
     gridState.SetActiveIssue(issueKey);
     State().annotateStreamlinedFromGrid = true;
     State().annotatePendingAutoProcess = true;

@@ -92,8 +92,9 @@ class SmatchetUI {
 
     // Forwarding shims for split-TU helpers in SmatchetPreferencesUi_*.cpp.
     const ViewsStore& GetViewsStore() const { return ViewState.GetStore(); }
-    void DrawAnnotatePreferencesTabForwarded(const AppController& app) {
-        annotateAnalysisUi_.DrawAnnotatePreferencesTab(app);
+    void DrawAnnotatePreferencesTabForwarded(const std::vector<TrackerField>& availableFields,
+                                             const IAppTicketMutations& ticketMutations) {
+        annotateAnalysisUi_.DrawAnnotatePreferencesTab(availableFields, ticketMutations);
     }
 
     /// Mark the parsed keybinding dispatch cache stale so the next frame rebuilds it

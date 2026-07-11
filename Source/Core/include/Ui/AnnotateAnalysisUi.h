@@ -2,18 +2,23 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 class AppController;
+class IAppTicketMutations;
 struct CachedTicket;
 struct SpreadsheetState;
+struct TrackerField;
 
-/** True when the configured (or name-matched "callstack") tracker field has non-empty text on this row. */
-bool AnnotateRowHasNonEmptyCallstackField(const AppController& app, const CachedTicket& ticket);
+/** True when the configured (or name-matched "callstack") tracker field has non-empty text on this row.
+ *  availableFields is the app-owned field catalog (it outlives any frame; callers pass the catalog
+ *  getter's result). */
+bool AnnotateRowHasNonEmptyCallstackField(const std::vector<TrackerField>& availableFields, const CachedTicket& ticket);
 
 /** Select the issue, open Annotate Analysis, and hydrate callstack from the tracker field (same as Inspect → Source
- * Annotate). */
-void OpenAnnotateAnalysisForGridIssue(AppController& app, bool& showAnnotateAnalysis, SpreadsheetState& gridState,
-                                      const std::string& issueKey);
+ * Annotate). availableFields is the app-owned field catalog. */
+void OpenAnnotateAnalysisForGridIssue(const std::vector<TrackerField>& availableFields, bool& showAnnotateAnalysis,
+                                      SpreadsheetState& gridState, const std::string& issueKey);
 
 class AnnotateAnalysisUi {
   public:
@@ -34,8 +39,10 @@ class AnnotateAnalysisUi {
      *  Sets *wantClose = true when the user clicks Close. */
     void DrawContent(AppController& app, bool* wantClose, const std::string& selectedJiraIssueKey);
 
-    /** Persisted annotate options (same fields as former Annotate "Options…"); call from Preferences. */
-    void DrawAnnotatePreferencesTab(const AppController& app);
+    /** Persisted annotate options (same fields as former Annotate "Options…"); call from Preferences.
+     *  Takes the app-owned field catalog plus the mutations facet (field-id lookup for combo previews). */
+    void DrawAnnotatePreferencesTab(const std::vector<TrackerField>& availableFields,
+                                    const IAppTicketMutations& ticketMutations);
 
   private:
     void ensureSettingsBuffersLoaded();
