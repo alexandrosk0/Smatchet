@@ -14,7 +14,6 @@
 #include "ConfigManager.h"
 #include "LocalCacheManager.h" // direct: AppController.h fwd-decls LocalCacheManager (fan-in Phase 1); this TU calls Cache-> methods.
 #include "Logger.h"
-#include "TrackerHttpPure.h"
 
 #include <atomic>
 #include <memory>
@@ -90,7 +89,7 @@ void AppController::FetchAndCachePrefetchedTickets(const std::vector<std::string
 
     ViewsStore views = ConfigManager::LoadViewsOrBootstrap(cfg);
 
-    std::string err;
+    TrackerError err;
 
     std::vector<CachedTicket> tickets;
 
@@ -99,7 +98,7 @@ void AppController::FetchAndCachePrefetchedTickets(const std::vector<std::string
     if (ok) {
         tickets = std::move(fetchResult.value());
     } else {
-        err = fetchResult.error().Detail;
+        err = fetchResult.error();
     }
 
     {
@@ -114,13 +113,15 @@ void AppController::FetchAndCachePrefetchedTickets(const std::vector<std::string
 
     if (!ok) {
 
-        if (IsTrackerTransportErrorText(err)) {
+        // N12 item 13: the structured kind from FetchIssuesForKeys is authoritative — no
+        // re-classification of the flattened text.
+        if (err.IsRetryable()) {
 
-            LOG_INFO("AppController::PrefetchIssueTicketsForKeys skipped (transport): %s", err.c_str());
+            LOG_INFO("AppController::PrefetchIssueTicketsForKeys skipped (transport): %s", err.Detail.c_str());
 
         } else {
 
-            LOG_WARN("AppController::PrefetchIssueTicketsForKeys failed: %s", err.c_str());
+            LOG_WARN("AppController::PrefetchIssueTicketsForKeys failed: %s", err.Detail.c_str());
         }
 
         return;
