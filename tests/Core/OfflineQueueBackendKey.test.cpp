@@ -26,7 +26,7 @@
 #include <string>
 
 using smatchet_tests::FakeOfflineQueueDeps;
-using smatchet_tests::TestEnvGuard;
+using smatchet_tests::OfflineQueueTestEnvGuard;
 
 namespace {
 
@@ -52,7 +52,7 @@ void PrimeCreateHappy(FakeOfflineQueueDeps& deps) {
 
 TEST_CASE("queue backend_key replay matching: context A's tick replays only A-rows; B-rows stay queued" *
           doctest::test_suite("[high-risk]")) {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps; // CacheBackendKeyImpl defaults to "Jira" — this context is "A"
     PrimeCreateHappy(deps);
     deps.BackendImpl->EnqueueCreateIssueSuccess("PROJ-1");
@@ -86,7 +86,7 @@ TEST_CASE("queue backend_key replay matching: context A's tick replays only A-ro
 
 TEST_CASE("queue backend_key replay matching: field-edit tick is backend-scoped too" *
           doctest::test_suite("[high-risk]")) {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps; // context key "Jira"
     deps.BackendImpl->EnqueueUpdateIssueFieldsSuccess();
 
@@ -115,7 +115,7 @@ TEST_CASE("queue backend_key replay matching: field-edit tick is backend-scoped 
 TEST_CASE("dead-letter restore via the SERVICE preserves the original backend key when the focused key differs "
           "(CR-951-1) and re-queues restored creates as fresh creates" *
           doctest::test_suite("[high-risk]")) {
-    TestEnvGuard guard;
+    OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps; // focused-context key is "Jira" — every dead row below is NOT Jira
     OfflineQueueService svc(deps);
 

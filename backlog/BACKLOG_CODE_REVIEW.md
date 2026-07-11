@@ -1,5 +1,7 @@
 # Smatchet — Code Review Backlog (2026-05-16 full rewrite)
 
+> **Deprecated as a work queue (2026-07-06).** This is a closed historical ledger (last reconciled 2026-07-05) — do not file or hunt new work here. New agent-facing items go to the live self-improvement backlog ([`docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`](../docs/self-improvement/AGENT_SELF_IMPROVEMENT.md)); product bugs become GitHub Issues (ADR-0014).
+>
 > Scope: first-party C++ in `Source/Core/`, `Source/Plugins/`, `Source/Standalone/`.
 > Method: skeleton + targeted reads + symbol grep against develop tip `7597fd7+` (post PR #39).
 > Previous doc (2026-05-10..11) accumulated 62 numbered items, 87% of which landed. This rewrite drops all `✅ DONE` items and re-audits the remainder against current code.
@@ -37,14 +39,14 @@
 | A2 Logger file-sink wiring | ✅ RESOLVED (differently) | Wired at startup in `Source/Standalone/main.cpp` + `android_main.cpp` via `Logger::SetFileSinkPath` (env `SMATCHET_DEBUG_LOG` / default path), **not** from `ConfigManager`; no `LogFilePath` key. Functional complaint closed. |
 | A4 FlushFileSink on shutdown | ✅ RESOLVED (graceful) | `~AppController` now calls `Logger::Instance().FlushFileSink()` after `JoinBackgroundTasks()`, persisting the whole shutdown-sequence log trail before late teardown. The crash-handler half is intentionally **not** done — `SmatchetCrashHandler` is async-signal-safe and must not take the file-sink mutex mid-crash (it uses its own async-safe crash sink). |
 | B1 LuaAutomationHost extraction | 🟡 REFRAMED (won't-do-as-written) | Ownership migration abandoned for a different design: `LuaAutomationHost` is now a 17-LOC log-sink coordinator; sol2 moved to a pImpl (see N10); the binding TU split 3 ways; `friend class LuaAutomationHost` removed; new `ILuaBindingHost` interface. |
-| B2 TrackerHttpClient migration | 🟡 IN PROGRESS | Harness-first restart 2026-07-05: added a `JiraClient` HTTP-status characterization suite (`tests/Core/JiraClientHttp.test.cpp`, via the existing `JiraCatalogHttpFixture` loopback) + migrated **2B** (`JiraClient::ProbeReachability` → `ClassifyTrackerResponse`, mirroring the Plane Phase-2A pattern). 2C/2D settled 2026-07-05 (mutations stay single-attempt — retry owned by the offline-queue replay loop, guardrail comments added; `FetchIssueEditMeta` makes no HTTP call); 2E (Jira search reads — safe retry) is the remaining code work; `IsTrackerTransportErrorText` removal (N12) is the final consumer-side step. |
+| B2 TrackerHttpClient migration | ✅ OBJECTIVE MET (2026-07-05) | Uniform retry on transient failures is achieved — implemented at the `TrackerXxxLogged` helper layer, so every tracker HTTP path inherits it. 2B (`JiraClient::ProbeReachability`) migrated + shared `ClassifyReachabilityProbe`; 2C/2D mutations settled single-attempt (retry owned by the offline-queue replay loop); 2E (Jira search reads) verified already-retried via `TrackerGetLogged`. Repo sweep found one raw `cpr` verb (Jira multipart attachment upload) — now also applies `MakeTrackerSslOptions()` (Android CA-bundle parity, WS2/#1068). Only the consumer-side `IsTrackerTransportErrorText` retirement (N12) remains. Characterization guard: `tests/Core/JiraClientHttp.test.cpp`. |
 | B3 ITrackerClient split | ✅ RESOLVED (exceeded) | `ITrackerClient` gone; replaced by `ITrackerBackend` composing 6 role interfaces (`ITrackerIssueReader`/`Connectivity`/`FieldCatalog`/`IssueMutations`/`Collaboration`/`Activity`). "Unsupported default-impl" pattern removed. |
 | B4 Plane FetchIssuesForKeys | ✅ RESOLVED | Early-exit pagination in `Tracker/PlaneIssueSearch.cpp` stops once all keys matched. Server-side `sequence_id__in` filter is the remaining B4-v2 follow-up. |
 | B5 Markdown table-cell flatten | 🟡 IMPROVED | `MarkdownCellPlainInner` now joins cell blocks with `<br>` (GFM in-cell line break) and preserves list items instead of running paragraphs together / dropping lists. First ADF→Markdown table golden tests added. Deeper fidelity (code blocks, nested lists/tables in a cell) still deferred to RICH_TEXT_EDITING_V2. |
 | C1 Retry-after-400 dup | ✅ RESOLVED | Consolidated into `FieldEditPipelineService::ApplyFieldUpdateWithEditMetaRetry`; both submit paths route through it. |
-| C4 Plane customs dropped | ⏳ OPEN | `PlaneIssueMutation.cpp` `BuildCreatePayload` still ignores its `catalog` param; UUID custom props never emitted under `properties.<uuid>`. |
+| C4 Plane customs dropped | ✅ RESOLVED (2026-07-10) | `BuildCreatePayload` now emits custom catalog fields under `properties.<uuid>` via the pure, doctested `BuildPlaneCustomProperties`; an unrepresentable value surfaces as `InvalidRequest` instead of silent loss. Edit-meta reporting of customs stays a flagged follow-on (seam has no catalog param). |
 | C5 FileIo extraction | 🟡 PARTIAL | No `FileIo.{h,cpp}`. `AtomicWriteTextFile` promoted to a public `ConfigManager` static (shared by 4 callers); `ScopedFileLock` still confined to `ConfigManager_Internal.h`. |
-| C6 LooksSensitiveKey blocklist | ⏳ OPEN | Unchanged (a product call, no code change resolves it). |
+| C6 LooksSensitiveKey blocklist | ✅ RESOLVED (documented, 2026-07-10) | The doc-why-each-entry-stays branch of the product call taken: rationale comment above `LooksSensitiveKey` classifies the list (credentials / identity-PII / free-text-that-quotes-both) and states why trimming is a privacy-stance decision. No behaviour change; trimming stays available if diff utility is later preferred. |
 | N1 LuaBindings LOC | ✅ number stale | Now **1540** (not 2648) — the file shrank via the 3-way split, opposite the doc's "grew" narrative. |
 | N3 CommandRegistry::FindLocked | ✅ RESOLVED | New alias-aware `Contains()` (locks internally, mirrors `FindLocked(name) != nullptr`); both `McpPlugin.cpp` worker-thread callers migrated to it — no registry pointer escapes to an httplib thread anymore. Regression-tested (alias resolution pinned). |
 | N4 AppController.h size/friends | 🟡 MIXED | Now **1465 LOC** (+430); but friend-coupling largely resolved — three friends collapsed to one `GridContextDepsAdapter`; sol2 friend gone. No `TrackerActions` interface yet. |
@@ -53,10 +55,10 @@
 | N8 OfflineQueueService friend | ✅ RESOLVED | Decoupled via `GridContextDepsAdapter` (see `AppController.h` comment). |
 | N9 McpPlugin tools/list divergence | ✅ RESOLVED | Both REST + JSON-RPC paths registry-driven from `Commands().All()` + shared `BuildRunLuaToolEntry()`; can't diverge data-wise (cosmetic lambda dup remains). |
 | N10 sol/sol.hpp public | ✅ RESOLVED | `AppController.h` no longer includes `<sol/sol.hpp>` — sol2 storage moved to a pImpl; only forward decls remain. |
-| N12 IsTrackerTransportErrorText | ⏳ OPEN | Still defined + used across ~14 files, shadowing `ClassifyTrackerResponse` (blocked on B2). |
+| N12 IsTrackerTransportErrorText | 🟡 IN PROGRESS (slice 1 shipped 2026-07-10) | Sync/connectivity consumers de-classified: transport-ness now travels as `FetchErrorTransient` from the pack/streaming/probe composition seams; consumers branch on the flag (`docs/plans/active/retire-transport-error-text.md`). Slice 2 = structured `TrackerError` kinds at the backends + mutation/replay/UI consumers; slice 3 deletes the heuristic. |
 | N13 TryGetMcpStatusSnapshot | ⏳ OPEN (acceptable) | Still a gated virtual on `IPlugin`; no capability-tag system. As the doc itself said, acceptable today. |
 
-**Still genuinely open after this pass:** C4, C6, N12 (+ N13 acceptable, B2/B5/C5/N4 partial). A4 (graceful half) and N3 were closed 2026-07-05; B5 improved (multi-paragraph + list preservation) with fuller rich-cell fidelity deferred. Everything else on the A/B/C/N carry-over list is resolved. Items already ✅ in the doc (N2, C2, C7, N7, N11, N14) re-verified still true.
+**Still genuinely open after this pass:** N12 (+ N13 acceptable, B2/B5/C5/N4 partial). C4 (`properties.<uuid>` serialization) and C6 (blocklist rationale documented) closed 2026-07-10. A4 (graceful half) and N3 were closed 2026-07-05; B5 improved (multi-paragraph + list preservation) with fuller rich-cell fidelity deferred. Everything else on the A/B/C/N carry-over list is resolved. Items already ✅ in the doc (N2, C2, C7, N7, N11, N14) re-verified still true.
 
 ---
 
@@ -111,9 +113,9 @@ Phase 2A landed (PR #39) — helper + `PlaneClient::ProbeReachability`. ~30 hand
   - `FetchIssueEditMeta` makes **no HTTP call** (`PlaneFieldCatalog.cpp` returns a static built-in field map), so there is nothing to retry. Nothing to migrate here.
   - Net: 2C is resolved by decision, not by new retry code. The single-attempt boundary is now documented in-code so a future contributor doesn't "helpfully" add a second retry layer.
 - **2D** `JiraIssueMutation.cpp` mutation paths — same decision as 2C (mutations single-attempt; retry owned by the offline-queue replay loop). No code change; keeps Jira/Plane mutation semantics symmetric.
-- **2E** `JiraIssueSearch.cpp` paginated fetches — the remaining **actual** code-work item. Search is an idempotent read, so `TrackerHttpRequestWithRetry` with the default (Transport/RateLimited/ServerError) predicate is safe here. Deferred as its own PR.
+- **2E** `JiraIssueSearch.cpp` paginated fetches — ✅ **already retried 2026-07-05 (verified, no code change needed)**. The migration turned out to be implemented at the *helper* layer, not call-by-call: `TrackerGetLogged` (both overloads) already wraps `TrackerHttpRequestWithRetry` with the default idempotent predicate (Transport / 429 / 5xx), and every HTTP call in `JiraIssueSearch.cpp` (comment pages, JQL search pages, fetch-by-key, per-issue fallback, `myself` diagnose) routes through `TrackerGetLogged`. A repo-wide sweep for raw `cpr::Get/Post/Put/Patch` in `Source/Core/src/Tracker/` found **exactly one** verb that bypasses the helpers — the Jira multipart attachment upload (`JiraIssueMutation.cpp`), which can't use `TrackerPostLogged` (string-body only). That call already had the redirect guard + usage/log wiring; **2026-07-05 it also picked up `MakeTrackerSslOptions()`** (now exposed from `TrackerHttpUtils.h`) so it uses the same Android CA-bundle trust anchor (WS2 / Issue #1068) as every other tracker call instead of falling back to libcurl's default store. It stays single-attempt by design (non-idempotent POST).
 
-Once 2E lands (mutations are settled by the single-attempt decision above), the tracker clients return structured `TrackerError` everywhere and the consumer-side `IsTrackerTransportErrorText` string heuristic can be retired (**N12**).
+**Net for B2: the migration objective — uniform retry on transient failures across every tracker HTTP path — is met.** Idempotent reads (GET) retry Transport/429/5xx via `TrackerGetLogged`; idempotent writes (PUT/PATCH) retry via `TrackerPutLogged`/`TrackerPatchLogged`; non-idempotent writes (POST + the multipart attachment) are Transport-only or single-attempt by design; and mutations additionally get durable retry from the offline-queue replay loop (2C/2D). The only remaining B2-adjacent work is the consumer-side **N12** cleanup: with the tracker clients now returning structured `TrackerError` everywhere, the `IsTrackerTransportErrorText` string heuristic can be retired.
 
 ### B3. Split `ITrackerClient` into role interfaces (item 16) — ✅ RESOLVED (2026-07-05, exceeded)
 > `ITrackerClient` no longer exists; replaced by `ITrackerBackend` composing 6 role interfaces (`ITrackerIssueReader`/`Connectivity`/`FieldCatalog`/`IssueMutations`/`Collaboration`/`Activity`). The "unsupported default-impl" pattern is gone (optional roles return `nullptr` accessors).
@@ -140,9 +142,11 @@ Once 2E lands (mutations are settled by the single-attempt decision above), the 
 Rebuilds `openWrap` / `closeWrap` vectors per text node. Reuse a scratch buffer member. Done via `thread_local std::vector<const char*>` (capacity persists, mark markers are all string literals so no `std::string` heap churn).
 
 ### C3. `PlaneClient::FetchIssueEditMeta` hardcoded 7 fields (item 39) — 🟡 partial (branch `feat/plane-fetchissueeditmeta-broaden`)
-`PlaneFieldCatalog.cpp:492` (file split from `PlaneClient.cpp`). Broadened to 9 built-ins matching what `BuildCreatePayload` / `BuildUpdatePayload` / `AddIssueToSprint` actually serialize (`+ type, parent`). Real per-issue permissions query deferred — Plane v1 has no capability endpoint; custom-property editability blocked on C4 (`properties.<uuid>` serialization).
+`PlaneFieldCatalog.cpp:492` (file split from `PlaneClient.cpp`). Broadened to 9 built-ins matching what `BuildCreatePayload` / `BuildUpdatePayload` / `AddIssueToSprint` actually serialize (`+ type, parent`). Real per-issue permissions query deferred — Plane v1 has no capability endpoint. C4's `properties.<uuid>` serialization landed 2026-07-10; reporting customs editable here still needs the seam to grow a catalog parameter (flagged in `docs/plans/shipped/plane-custom-properties.md`).
 
-### C4. `PlaneClient::BuildCreatePayload` / `BuildUpdatePayload` drop customs (item 40)
+### C4. `PlaneClient::BuildCreatePayload` / `BuildUpdatePayload` drop customs (item 40) — ✅ RESOLVED (2026-07-10)
+> `BuildPlaneCustomProperties` (`Source/Core/src/Tracker/PlaneCustomPropertyPure.cpp`, pure + doctested) types every custom catalog field present in the draft per family and `BuildCreatePayload` emits the result under `properties.<uuid>`; an unrepresentable value aborts as `TrackerErrorInvalidRequest` instead of vanishing. See `docs/plans/shipped/plane-custom-properties.md`. Follow-ons flagged there: `FetchIssueEditMeta` still reports built-ins only, and the inline-`properties` create shape awaits a live-server smoke.
+
 `PlaneClient.cpp:1459-1501` handles 6 core IDs (`summary`/`description`/`priority`/`status`/`type`/`parent`/`assignee`). Any `TrackerField.Id` that's a UUID (custom property) is silently dropped. Iterate `catalog` for custom props and emit under `properties.<uuid>` or whichever shape Plane v1 accepts.
 
 ### C5. Extract `ScopedFileLock` + `AtomicWriteTextFile` (item 41) — 🟡 PARTIAL (2026-07-05)
@@ -150,7 +154,9 @@ Rebuilds `openWrap` / `closeWrap` vectors per text node. Reuse a scratch buffer 
 
 Both still defined in `Source/Core/src/ConfigManager.cpp` anonymous namespace (lines 179+, ~700+). `BackendAuditTrail` uses raw `ofstream`; export paths re-implement atomic-write. Promote to `Source/Core/{src,include}/FileIo.{h,cpp}` so all three share. Win32-only work.
 
-### C6. `BackendAuditTrail::LooksSensitiveKey` blocklist (item 43)
+### C6. `BackendAuditTrail::LooksSensitiveKey` blocklist (item 43) — ✅ RESOLVED (documented, 2026-07-10)
+> Took the "document why each entry stays" branch of the product call: a rationale comment above `LooksSensitiveKey` (`Source/Core/src/Persistence/BackendAuditTrail.cpp`) classifies the blocklist into credentials / identity-PII / free-text-that-quotes-both and records why the audit trail (plaintext, on-disk, travels in bug reports) keeps all three. Behaviour unchanged. If diff utility is ever preferred over the privacy stance, trimming is a deliberate follow-up decision, not a cleanup.
+
 Redacts `summary` / `assignee` / `body` / `text` etc. Likely too broad — audit dumps lose useful diffs. Product call: trim the list or document why each entry stays.
 
 ### C7. Manual `PushClipRect` per grid cell (item 54) — ✅ shipped (branch `feat/grid-pushcliprect-audit`)
@@ -239,7 +245,7 @@ PR #20 replaced `dynamic_cast<McpPlugin*>` with `virtual bool TryGetMcpStatusSna
 
 **Next (medium PRs):**
 5. **B3** — split `ITrackerClient` into role interfaces. Mechanical.
-6. **B2 Phase 2E** — migrate `JiraIssueSearch` paginated reads through `TrackerHttpClient` (idempotent → safe retry). 2B done; 2C/2D settled by the single-attempt decision (mutations retry via the offline-queue, not per-call).
+6. **B2** — ✅ objective met (uniform retry via the `TrackerXxxLogged` helper layer; 2B/2C/2D/2E all resolved). Only **N12** (retire `IsTrackerTransportErrorText`) remains as follow-on.
 7. **N4** — move service DTOs into their own headers; start chipping at `AppController.h` size.
 8. **N6** — split `BuiltinCommands.cpp` per category.
 

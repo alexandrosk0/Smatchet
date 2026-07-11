@@ -169,6 +169,26 @@ If step 1 prints `Doctor: RED`, fix the listed prerequisites before
 continuing — CMake errors on a missing compiler install are
 much harder to debug than the doctor's install hints.
 
+## Build-system layout
+
+The build is split into per-component `CMakeLists.txt` files with the root as
+orchestrator. The component files are pulled in via `include()` — deliberately
+**not** `add_subdirectory()` — so every target, variable, and source-file
+property lives in the root directory scope and artifact/object paths are
+identical to the former monolithic root file (see each component file's header
+comment before editing):
+
+| File | Owns |
+|---|---|
+| `CMakeLists.txt` (root) | `project()`, options, toolchain/global flags, all third-party FetchContent pins (json/cpr/SQLiteCpp/httplib/md4c/ghc/GLFW/Lua+sol2/whisper.cpp/ImGui + the `ImGuiLib*` wrapper libs), component orchestration, `tests/` hookup |
+| `Source/Core/CMakeLists.txt` | `CORE_SOURCES`, `SmatchetCoreInterface` + feature shims, core-impl configure helpers, `SmatchetCore_DX12`, `SmatchetCore_PosixCheck` |
+| `Source/Standalone/CMakeLists.txt` | `SmatchetStandalone` exe + its config tail (icon, Scripts link, PCH, LTO/IPO, sanitizers, bucket-E wiring) |
+| `Source/Mobile/CMakeLists.txt` | `SmatchetMobile` Android `.so` (ANDROID only) |
+| `Source/Plugins/Mcp/CMakeLists.txt` | `SmatchetPlugin_Mcp` |
+| `Source/Plugins/LuaConsole/CMakeLists.txt` | `SmatchetPlugin_LuaConsole` |
+| `Source/Plugins/Whisper/CMakeLists.txt` | Whisper plugin (a true `add_subdirectory`, predates the split) |
+| `Source/UnrealPlugins/CMakeLists.txt` | DX12 plugin variants, `SmatchetImGuiHost_DX12`, `SmatchetPackageUnrealLibs_DX12` packaging |
+
 ## Local Overrides
 
 If you need local-only presets, create `CMakeUserPresets.json` in your checkout.

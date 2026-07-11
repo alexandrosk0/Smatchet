@@ -92,8 +92,9 @@ class SmatchetUI {
 
     // Forwarding shims for split-TU helpers in SmatchetPreferencesUi_*.cpp.
     const ViewsStore& GetViewsStore() const { return ViewState.GetStore(); }
-    void DrawAnnotatePreferencesTabForwarded(const AppController& app) {
-        annotateAnalysisUi_.DrawAnnotatePreferencesTab(app);
+    void DrawAnnotatePreferencesTabForwarded(const std::vector<TrackerField>& availableFields,
+                                             const IAppTicketMutations& ticketMutations) {
+        annotateAnalysisUi_.DrawAnnotatePreferencesTab(availableFields, ticketMutations);
     }
 
     /// Mark the parsed keybinding dispatch cache stale so the next frame rebuilds it
@@ -519,6 +520,11 @@ class SmatchetUI {
     struct ActiveProjectWindowState {
         char newViewNameBuf[128] = {}; // was `static char s_newViewName[128]`
         // lastFilterBuf moved into GridPane (Slice 2) — the filter is per-pane state.
+        /// DR22 — the "Save as new..." button lives inside the ##UnsavedLayoutStrip child
+        /// window, so OpenPopup issued there resolves to a different id than the parent-scope
+        /// BeginPopupModal and the modal never appeared. This flag defers OpenPopup to the
+        /// same scope as BeginPopupModal.
+        bool openSaveAsNewModal = false;
     };
     ActiveProjectWindowState activeProjectState_;
     void drawAttachmentPreviewWindow(AppController& app, UiDrawSession& d);

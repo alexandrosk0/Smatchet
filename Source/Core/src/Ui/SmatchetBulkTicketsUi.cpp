@@ -305,20 +305,19 @@ void DrawBulkImportSourceToolbar(AppController& app, UiDrawSession& d) {
         app.LaunchBackgroundTask([&app, &d, capturedPath, cancel]() {
             std::string text, err;
             const bool ok = ReadEntireFile(capturedPath, text, err);
-            app.mainThreadDispatcher.PostToMainThread(
-                [&d, ok, text = std::move(text), err = std::move(err), cancel]() mutable {
-                    d.bulkImportLoadInFlight = false;
-                    if (cancel && cancel->load()) {
-                        return;
-                    }
-                    if (ok) {
-                        d.bulkImportTextBuf.assign(text.begin(), text.end());
-                        d.bulkImportTextBuf.push_back('\0');
-                        d.bulkImportError.clear();
-                    } else {
-                        d.bulkImportError = err;
-                    }
-                });
+            app.PostToMainThread([&d, ok, text = std::move(text), err = std::move(err), cancel]() mutable {
+                d.bulkImportLoadInFlight = false;
+                if (cancel && cancel->load()) {
+                    return;
+                }
+                if (ok) {
+                    d.bulkImportTextBuf.assign(text.begin(), text.end());
+                    d.bulkImportTextBuf.push_back('\0');
+                    d.bulkImportError.clear();
+                } else {
+                    d.bulkImportError = err;
+                }
+            });
         });
     }
     ImGui::SameLine();
@@ -723,7 +722,7 @@ void SmatchetUI::drawBulkExportWindow(AppController& app, UiDrawSession& d) {
         app.LaunchBackgroundTask([&app, &d, capturedPath, text = std::move(text), byteCount, cancel]() mutable {
             std::string err;
             const bool ok = WriteEntireFile(capturedPath, text, err);
-            app.mainThreadDispatcher.PostToMainThread([&d, ok, byteCount, err = std::move(err), cancel]() mutable {
+            app.PostToMainThread([&d, ok, byteCount, err = std::move(err), cancel]() mutable {
                 d.bulkExportSaveInFlight = false;
                 if (cancel && cancel->load()) {
                     return;

@@ -619,7 +619,7 @@ static void MaybeKickThumbnailDecode(AppController& app, AttachmentWindowEntry& 
         int w = 0;
         int h = 0;
         const bool decoded = DecodeImageFileToRgba32(localPath, rgba, w, h, err, kMaxThumbnailDimension);
-        app.mainThreadDispatcher.PostToMainThread([urlKey, rgba = std::move(rgba), w, h, err, decoded]() mutable {
+        app.PostToMainThread([urlKey, rgba = std::move(rgba), w, h, err, decoded]() mutable {
             smatchet::memtel::PendingThumbnailUploads().fetch_sub(1, std::memory_order_relaxed);
             AttachmentWindowEntry* target = nullptr;
             for (AttachmentWindowEntry& e : g_ui.attachmentWindowEntries) {

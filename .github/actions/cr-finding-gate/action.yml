@@ -85,6 +85,44 @@ runs:
           exit 0
         fi
 
+        # --- Self-improvement-only PR (auto-pass) ------------------------------
+        # A PR whose diff is ENTIRELY under docs/self-improvement/** is the
+        # backlog / postmortem ledger: markdown that is never compiled and is
+        # path-excluded by .coderabbit.yaml (`!docs/self-improvement/**`), so CR
+        # posts "Review skipped due to path filters" and NEVER produces a review
+        # node or a CodeRabbit StatusContext — wedging this required gate on
+        # PENDING forever (observed #1718). merge-gates.sh already exempts these
+        # client-side ($selfImpOnly; user ask 2026-06-20, plan
+        # self-improvement-pr-review-exemption); lift the SAME verdict to the
+        # server gate so the exemption survives a native / non-poller merge.
+        #
+        # Fail-safe to the normal CR path on ANY uncertainty (mirrors the
+        # merge-gates.sh guards): an empty file list or a gh error falls through
+        # — never auto-pass without proof EVERY path is under the exempt prefix.
+        # `--paginate` follows every page (the REST per_page is capped at 100, so
+        # a first-page-only fetch would be blind to a code file at position 101+);
+        # the line-based count sees the full diff.
+        #
+        # FAIL CLOSED on a gh error: `--paginate` that dies on a LATER page still
+        # emits the earlier pages, so `|| true` + a non-empty check would treat
+        # that partial list as complete and a code file on the unfetched page
+        # would be invisible — a >100-file code PR whose first page is all
+        # self-improvement could then auto-pass. Capture the exit code and require
+        # rc==0 before trusting the list (CodeRabbit #1724).
+        files_list=$(gh api --paginate "repos/${OWNER}/${REPO}/pulls/${PR}/files?per_page=100" \
+                       --jq '.[].filename' 2>/dev/null)
+        files_rc=$?
+        if [ "$files_rc" -eq 0 ] && [ -n "$files_list" ]; then
+          n_files=$(printf '%s\n' "$files_list" | grep -c . || true)
+          n_outside=$(printf '%s\n' "$files_list" | grep -cv '^docs/self-improvement/' || true)
+        else
+          n_files=0; n_outside=1   # gh error (partial/none) or empty — fail closed
+        fi
+        if [ "${n_files:-0}" -gt 0 ] && [ "${n_outside:-1}" -eq 0 ]; then
+          post success "self-improvement-only diff (${n_files} file(s) under docs/self-improvement/**) — CR review exempt"
+          exit 0
+        fi
+
         # --- Is CodeRabbit installed? (probe .coderabbit.yaml/.yml) ------------
         # Fall through to PASS when CR is not installed — same posture as
         # merge-gates.sh (a repo without CR must not be blocked by this gate).
@@ -174,6 +212,18 @@ runs:
           n_reviews="${n_reviews//[^0-9]/}"; n_reviews="${n_reviews:-0}"
 
           if [ "$n_reviews" -eq 0 ]; then
+            # A terminal "Review skipped … path filters" case (every changed file
+            # path-excluded by .coderabbit.yaml) is handled UP FRONT for the only
+            # exempt set we can verify head-accurately: the docs/self-improvement/**
+            # selfImpOnly file-list check above. A comment-body-based skip pass was
+            # tried here but dropped (CodeRabbit #1724): CR's skip summary comment
+            # carries no reliable head-commit anchor, so a stale skip comment from an
+            # earlier docs-only commit could pass a LATER code commit before CR
+            # re-reviewed it — a fail-open race. Any other path-excluded (non-self-
+            # improvement) PR falls through to the StatusContext disambiguation
+            # below, or the cr-out-of-band label, rather than trusting an unanchored
+            # comment.
+            #
             # No CR review node on this head. Disambiguate via CR's own
             # "CodeRabbit" StatusContext on the head commit:
             #   SUCCESS -> CR is done and skipped the review (trivial / workflow

@@ -66,7 +66,10 @@ bool ConnectivityMonitorService::IsConnectivityDegradedForProbeInterval(TrackerC
         nextProbeState == TrackerConnectivityState::ServiceUnavailable) {
         return true;
     }
-    if (!lastTicketSyncWarning_.empty() && IsTrackerTransportErrorText(lastTicketSyncWarning_)) {
+    // The flag travels with the warning from the seam that classified it (N12 slice 1) — the old
+    // substring sniff over the PREFIX-composed message only worked because the heuristic happens
+    // to be substring-based.
+    if (lastTicketSyncWarningTransient_) {
         return true;
     }
     const std::string& catalogErr = deps_.FocusedFieldCatalogError();
@@ -117,6 +120,7 @@ void ConnectivityMonitorService::ApplyTrackerConnectivityProbeResult(const std::
             diag.resize(kMaxDiagChars);
         }
         lastTicketSyncWarning_ = "Showing cached issues — lost connection to tracker: " + diag;
+        lastTicketSyncWarningTransient_ = true; // by construction: written only on TransportDown/ServiceUnavailable
         LOG_WARN("ConnectivityMonitor: Tracker probe reports connectivity loss: %s", diag.c_str());
     }
 
@@ -198,6 +202,7 @@ void ConnectivityMonitorService::applyLiveTrackerReachabilityAfterSuccessfulBack
     }
     lastState_ = TrackerConnectivityState::AuthenticatedReachable;
     lastTicketSyncWarning_.clear();
+    lastTicketSyncWarningTransient_ = false;
     // Clear the LIVE-focus catalog warning once: the adapter latches the focused catalog so the
     // check/clear/bump stay on the SAME context even if focus moves between deps calls (Pillar 3).
     if (!deps_.FocusedFieldCatalogWarning().empty()) {
@@ -363,6 +368,7 @@ bool ConnectivityMonitorService::ConsumeTrackerConnectivityRecovery() {
     }
     recoveryPending_ = false;
     lastTicketSyncWarning_.clear();
+    lastTicketSyncWarningTransient_ = false;
     deps_.ClearFocusedFieldCatalogWarning();
     const auto now = std::chrono::steady_clock::now();
     deps_.RestartReplayTimers(now);

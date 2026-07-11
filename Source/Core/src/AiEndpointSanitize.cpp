@@ -43,7 +43,16 @@ std::string ExtractHostPort(const std::string& url, std::size_t schemeEnd) {
     const auto hostEndIt = std::find_if(url.begin() + static_cast<std::ptrdiff_t>(hostStart), url.end(),
                                         [](char c) { return c == '/' || c == '?' || c == '#'; });
     const std::size_t hostEnd = static_cast<std::size_t>(hostEndIt - url.begin());
-    return url.substr(hostStart, hostEnd - hostStart);
+    std::string authority = url.substr(hostStart, hostEnd - hostStart);
+    // Strip userinfo ("user:pass@") — the real host is everything after the LAST
+    // '@'. Without this, "https://api.openai.com:x@evil.com" would validate the
+    // fake userinfo host "api.openai.com" (passing the provider host-pin) while
+    // curl actually connects to evil.com, and "https://a:b@169.254.169.254/"
+    // would bypass the metadata denylist by validating host "a".
+    const std::size_t at = authority.rfind('@');
+    if (at != std::string::npos)
+        authority.erase(0, at + 1);
+    return authority;
 }
 
 // Strip optional ":port" suffix from a "host[:port]" string. A bracketed IPv6
@@ -216,6 +225,95 @@ bool IsIpv6LinkLocalHextet(const std::string& host) {
     return hextetValue >= 0xfe80u && hextetValue <= 0xfebfu;
 }
 
+// Expand an IPv6 literal (with NO embedded dotted-v4 tail) into its 8 hextets,
+// honouring a single "::" zero-run. Returns false on malformed input, more than
+// one "::", or a dotted tail (that form is handled by the caller's v4 extractor).
+bool ExpandIpv6Hextets(const std::string& host, std::uint16_t out[8]) {
+    if (host.find('.') != std::string::npos)
+        return false;
+    const auto parseGroups = [](const std::string& s, std::uint16_t* dst, int cap, int& n) -> bool {
+        n = 0;
+        if (s.empty())
+            return true;
+        std::size_t start = 0;
+        while (true) {
+            const std::size_t colon = s.find(':', start);
+            const std::string g = s.substr(start, colon == std::string::npos ? std::string::npos : colon - start);
+            if (g.empty() || g.size() > 4 || n >= cap)
+                return false;
+            std::uint16_t v = 0;
+            for (char c : g) {
+                int d;
+                if (c >= '0' && c <= '9')
+                    d = c - '0';
+                else if (c >= 'a' && c <= 'f')
+                    d = c - 'a' + 10;
+                else
+                    return false;
+                v = static_cast<std::uint16_t>(v * 16 + d);
+            }
+            dst[n++] = v;
+            if (colon == std::string::npos)
+                break;
+            start = colon + 1;
+        }
+        return true;
+    };
+    const std::size_t dc = host.find("::");
+    std::uint16_t head[8], tail[8];
+    int nh = 0, nt = 0;
+    if (dc == std::string::npos) {
+        if (!parseGroups(host, head, 8, nh) || nh != 8)
+            return false;
+        for (int i = 0; i < 8; ++i)
+            out[i] = head[i];
+        return true;
+    }
+    if (host.find("::", dc + 1) != std::string::npos)
+        return false; // more than one "::"
+    if (!parseGroups(host.substr(0, dc), head, 8, nh))
+        return false;
+    if (!parseGroups(host.substr(dc + 2), tail, 8, nt))
+        return false;
+    if (nh + nt > 8)
+        return false;
+    for (int i = 0; i < 8; ++i)
+        out[i] = 0;
+    for (int i = 0; i < nh; ++i)
+        out[i] = head[i];
+    for (int i = 0; i < nt; ++i)
+        out[8 - nt + i] = tail[i];
+    return true;
+}
+
+// Decode the pure-hextet IPv4-mapped (::ffff:HHHH:HHHH) / IPv4-compatible
+// (::HHHH:HHHH) forms — which have NO dotted tail — and run the IPv4 denylist.
+// Sets `out` and returns true ONLY for a DENIED address, so the caller's pure-IPv6
+// handling stays untouched for loopback / public / non-mapped literals.
+bool TryClassifyMappedIpv6Hextets(const std::string& host, EndpointVerdict& out) {
+    std::uint16_t h[8];
+    if (!ExpandIpv6Hextets(host, h))
+        return false;
+    if (!(h[0] == 0 && h[1] == 0 && h[2] == 0 && h[3] == 0 && h[4] == 0 && (h[5] == 0 || h[5] == 0xffff)))
+        return false;
+    const unsigned char o[4] = {
+        static_cast<unsigned char>((h[6] >> 8) & 0xFF), static_cast<unsigned char>(h[6] & 0xFF),
+        static_cast<unsigned char>((h[7] >> 8) & 0xFF), static_cast<unsigned char>(h[7] & 0xFF)};
+    if (IsCloudMetadataLiteral(o)) {
+        out = EndpointVerdict::RejectedCloudMetadata;
+        return true;
+    }
+    if (IsLinkLocalLiteral(o)) {
+        out = EndpointVerdict::RejectedLinkLocal;
+        return true;
+    }
+    if (IsPrivateNetworkLiteral(o)) {
+        out = EndpointVerdict::RejectedPrivateNetwork;
+        return true;
+    }
+    return false;
+}
+
 // Classify a bare (bracket-stripped, lowercased) IPv6 literal against the same
 // denylist, mapping each match onto the existing IPv4 verdicts. Returns true and
 // sets `out` when the host is an IPv6 literal we recognise (incl. IPv4-mapped /
@@ -252,6 +350,14 @@ bool ClassifyIpv6Literal(const std::string& host, EndpointVerdict& out, bool& is
             return true;
         }
     }
+
+    // Pure-hextet IPv4-mapped and IPv4-compatible forms embed the v4 address in the
+    // last two hextets with no dotted tail, so the dotted extractor above misses the
+    // compressed mapped form of a metadata or private address. Only a denied mapped
+    // address short-circuits here, so a mapped public address still falls through to
+    // the host-pin like the dotted form does.
+    if (TryClassifyMappedIpv6Hextets(host, out))
+        return true;
 
     // Pure-IPv6 prefixes: loopback ::1, link-local fe80::/10, ULA fc00::/7.
     if (host == "::1") {

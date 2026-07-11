@@ -102,9 +102,9 @@
     "ci": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["required_checks", "path_filters"],
+      "description": "CI path filters only. The required-checks list lives solely in branch_protection.required_contexts (single source); project-config.sh derives CI_REQUIRED_CHECKS from it.",
+      "required": ["path_filters"],
       "properties": {
-        "required_checks": { "type": "array", "items": { "type": "string" } },
         "path_filters": {
           "type": "object",
           "additionalProperties": false,
@@ -203,7 +203,8 @@
         "_doc": { "type": "string" },
         "policy": { "type": "string" },
         "loop_mode": { "type": "string", "enum": ["in", "on"] },
-        "auto_merge": { "type": "string", "enum": ["on", "off"] }
+        "auto_merge": { "type": "string", "enum": ["on", "off"] },
+        "session_token_ceiling": { "type": "integer", "minimum": 0 }
       }
     }
   }

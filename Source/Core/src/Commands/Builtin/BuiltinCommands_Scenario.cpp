@@ -7,8 +7,13 @@
 #include "Commands/MainThreadDispatch.h"
 #include "Commands/Scenarios/IScenario.h"
 
-#include "AppController.h"
-#include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+// fan-in Phase 5: depend on the narrow IAppScenarios facet, not the full AppController.h
+// (ScenarioRunner's full definition comes from Commands/Scenarios/IScenario.h, included above).
+#include "Interfaces/IAppScenarios.h"
+// clang-format off
+// SMATCHET_DEVIATION(rule=duplication; reason=the shared per-category command-TU include + namespace-open boilerplate (Command.h / CommandRegistry.h / json.hpp / std headers) is grandfathered across the BuiltinCommands_*.cpp siblings; migrating this TU off AppController.h perturbed the block enough to re-hash the boilerplate clone vs BuiltinCommands_Users.cpp — not a real copy-paste; owner=orchestrator; revisit=when the builtin-command include boilerplate is factored into a shared prologue)
+// clang-format on
+#include <nlohmann/json.hpp> // this TU constructs nlohmann::json directly.
 
 #include <string>
 #include <utility>
@@ -22,7 +27,7 @@ using builtin_detail::PaginateString;
 using builtin_detail::PInt;
 using builtin_detail::PString;
 
-void RegisterScenarioCommands(CommandRegistry& reg, AppController& app) {
+void RegisterScenarioCommands(CommandRegistry& reg, IAppScenarios& app, IMainThreadPoster& poster) {
     // Register scenario factories on the runner owned by AppController.
     // The PriorityGridScrollScenario is the first built-in; others can be
     // added by appending more RegisterFactory calls here.
@@ -50,12 +55,12 @@ void RegisterScenarioCommands(CommandRegistry& reg, AppController& app) {
         // between frames.
         Command c =
             MakeCommand("scenario.run", "Run a named automation scenario (perf measurement, scroll driver, etc.).",
-                        [&app](const nlohmann::json& args, const CommandContext& ctx) {
+                        [&app, &poster](const nlohmann::json& args, const CommandContext& ctx) {
                             // Copy ctx into the closure so the UI-thread lambda has the dry-run /
                             // destructive flags (it cannot capture the const reference safely across
                             // a thread boundary — the original ctx may live on the worker stack).
                             CommandContext ctxCopy = ctx;
-                            return RunOnUiThreadAsCommandResult(app, [&app, args, ctxCopy]() {
+                            return RunOnUiThreadAsCommandResult(poster, [&app, args, ctxCopy]() {
                                 const std::string name = args.value("name", std::string());
                                 return app.Scenarios().Start(name, args, ctxCopy);
                             });
@@ -76,8 +81,8 @@ void RegisterScenarioCommands(CommandRegistry& reg, AppController& app) {
         // scenario.cancel resets ScenarioRunner::active_ while Tick() may be reading it.
         // Same race as scenario.run — must run on UI thread.
         Command c = MakeCommand("scenario.cancel", "Abort the active running scenario.",
-                                [&app](const nlohmann::json&, const CommandContext&) {
-                                    return RunOnUiThreadAsCommandResult(app, [&app]() {
+                                [&app, &poster](const nlohmann::json&, const CommandContext&) {
+                                    return RunOnUiThreadAsCommandResult(poster, [&app]() {
                                         const bool was = app.Scenarios().Active();
                                         app.Scenarios().Cancel();
                                         return CommandResult::Success({{"wasCancelled", was}});

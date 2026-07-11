@@ -109,8 +109,20 @@ int InputBufferResizeCallback(ImGuiInputTextCallbackData* data) {
         if (dropped > 0) {
             s_inputTruncatedDroppedBytes = dropped;
         }
+        // #1699 — clamp the reported capacity back to our real fixed cap. We do NOT
+        // resize Buf (it is the process-static s_inputCharBuf). Passing CallbackResize
+        // sets is_resizable inside ImGui, which DISABLES the insert-time capacity clamp
+        // and lets ImGui grow its internal edit state to hold the full over-cap paste.
+        // At apply time (InputTextEx, imgui_widgets.cpp) ImGui reads this callback's
+        // BufSize back as its working capacity, clamps the applied length to that
+        // capacity minus one, and ImStrncpy's that many bytes into Buf. If we left
+        // BufSize enlarged (needed+1), that copy would write the full over-cap paste
+        // into the fixed 8 KiB buffer — a static-buffer overflow. Resetting it to the
+        // real cap makes the applied length clamp to kInputBufCap-1 and the copy fit
+        // exactly; Buf and BufTextLen stay untouched.
+        data->BufSize = kInputBufCap;
     }
-    // Return 0: we did NOT resize. ImGui keeps the original buffer + clamps.
+    // Return 0: we did NOT resize Buf. ImGui copies at most kInputBufCap bytes.
     return 0;
 }
 
@@ -187,7 +199,7 @@ void HydrateFromConfigOnce(AppController& app, UiDrawSession& d) {
             std::vector<AiMessage> loaded;
             std::vector<std::int64_t> ids;
             appPtr->LoadAiChatMessages(cap, loaded, ids);
-            appPtr->mainThreadDispatcher.PostToMainThread([loaded = std::move(loaded), ids = std::move(ids)]() mutable {
+            appPtr->PostToMainThread([loaded = std::move(loaded), ids = std::move(ids)]() mutable {
                 g_ui.assistantHistory = std::move(loaded);
                 g_ui.assistantHistoryRowIds = std::move(ids);
                 g_ui.assistantHistoryHydrated = true;
@@ -195,7 +207,7 @@ void HydrateFromConfigOnce(AppController& app, UiDrawSession& d) {
         } catch (...) {
             // Graceful degradation — leave hydrated false so further dispatches no-op
             // until the next session retries. The LCM already logged the LOG_WARN.
-            appPtr->mainThreadDispatcher.PostToMainThread([]() { g_ui.assistantHistoryHydrated = true; });
+            appPtr->PostToMainThread([]() { g_ui.assistantHistoryHydrated = true; });
         }
     });
 }
@@ -238,13 +250,19 @@ std::size_t s_planCacheBytes = 0;
 //     show-on-hover alpha gate; the 1-frame lag avoids an ImGui hover-detection chicken-and-egg.
 std::unordered_map<std::uint64_t, float> s_messageHeightCache;
 std::unordered_map<std::size_t, bool> s_turnActiveLastFrame;
+// Index-keyed body-hash cache (0 = unset). Finalised history messages are immutable and the
+// vector only changes size (push_back / clear / hydrate), so caching the content hash per index
+// removes the O(body bytes) re-hash every frame for every culled off-screen turn. Reset on any
+// history-size change in DrawHistoryArea, mirroring the Y-cache.
+std::vector<std::uint64_t> s_messageHashCache;
 
 void PublishPlanCacheBytes() {
     smatchet::memtel::PlanCacheApproxBytes().store(s_planCacheBytes, std::memory_order_relaxed);
 }
 
-const MarkdownPreviewRender::PreviewPlan& GetOrBuildPlanForMessage(const std::string& content) {
-    const std::uint64_t key = MarkdownPreviewRender::HashContent(content);
+// `key` is the caller's already-computed HashContent(content) — RenderHistoryTurn owns the
+// per-index hash cache, so re-hashing here would pay the O(body bytes) cost twice per visible turn.
+const MarkdownPreviewRender::PreviewPlan& GetOrBuildPlanForMessage(const std::string& content, std::uint64_t key) {
     auto it = s_planCache.find(key);
     if (it != s_planCache.end() && it->second.contentLen == content.size()) {
         return *it->second.plan;
@@ -284,6 +302,7 @@ void ClearAiRenderCaches() {
     PublishPlanCacheBytes();
     s_messageHeightCache.clear();
     s_turnActiveLastFrame.clear();
+    s_messageHashCache.clear();
 }
 
 // True (and updates the stored basis) when the layout basis for cached message heights has
@@ -545,12 +564,22 @@ void RenderTurnActionRow(AiHistoryDrawCtx& ctx, int messageIndex, AiMessage* msg
 // Off-screen culling for a finalised (cacheable) history turn with a known height. Computes the
 // body hash into outBodyKey, then — when the turn is fully off-screen — emits a Dummy of the
 // realised height and returns true (caller should early-return). Returns false otherwise.
-bool TryCullHistoryTurn(const std::string& body, bool cacheable, float actionRowSlotH, std::uint64_t& outBodyKey) {
+bool TryCullHistoryTurn(const std::string& body, bool cacheable, float actionRowSlotH, std::uint64_t* hashSlot,
+                        std::uint64_t& outBodyKey) {
     outBodyKey = 0;
     if (!cacheable) {
         return false;
     }
-    outBodyKey = MarkdownPreviewRender::HashContent(body);
+    // `hashSlot` (nullable) is this turn's s_messageHashCache entry; 0 means unset. A hit skips
+    // re-hashing the whole body — the dominant remaining per-frame cost for culled turns.
+    if (hashSlot != nullptr && *hashSlot != 0u) {
+        outBodyKey = *hashSlot;
+    } else {
+        outBodyKey = MarkdownPreviewRender::HashContent(body);
+        if (hashSlot != nullptr) {
+            *hashSlot = outBodyKey;
+        }
+    }
     const auto hit = s_messageHeightCache.find(outBodyKey);
     if (hit != s_messageHeightCache.end() && hit->second > 0.0f) {
         const float labelH = ImGui::GetTextLineHeightWithSpacing();
@@ -606,7 +635,11 @@ void RenderHistoryTurn(AiHistoryDrawCtx& ctx, int messageIndex, const char* role
     // fully so the height cache populates on first sight.
     std::uint64_t bodyKey = 0;
     const float actionRowSlotH = ImGui::GetFrameHeightWithSpacing() * 0.9f;
-    if (TryCullHistoryTurn(body, cacheable, actionRowSlotH, bodyKey)) {
+    std::uint64_t* hashSlot =
+        (cacheable && messageIndex >= 0 && static_cast<std::size_t>(messageIndex) < s_messageHashCache.size())
+            ? &s_messageHashCache[static_cast<std::size_t>(messageIndex)]
+            : nullptr;
+    if (TryCullHistoryTurn(body, cacheable, actionRowSlotH, hashSlot, bodyKey)) {
         return;
     }
 
@@ -627,7 +660,7 @@ void RenderHistoryTurn(AiHistoryDrawCtx& ctx, int messageIndex, const char* role
                                     labelFont, labelWidth, nullptr);
     SelectableText::EndBlock(ctx.selCtx);
     if (cacheable) {
-        const MarkdownPreviewRender::PreviewPlan& plan = GetOrBuildPlanForMessage(body);
+        const MarkdownPreviewRender::PreviewPlan& plan = GetOrBuildPlanForMessage(body, bodyKey);
         MarkdownPreviewRender::RenderPlan(plan, ctx.renderOpts);
     } else {
         MarkdownPreviewRender::Render(body, ctx.renderOpts);
@@ -740,6 +773,9 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
         // exactly one AI chat panel exists in the app at a time.
         static std::vector<float> s_messageYCache;
         ApplyScrollToPinnedLatch(d, s_messageYCache);
+        if (s_messageHashCache.size() != d.assistantHistory.size()) {
+            s_messageHashCache.assign(d.assistantHistory.size(), 0u);
+        }
 
         auto& selCtx = SelectableText::Begin("##AiAssistantHistorySel");
 
@@ -1129,7 +1165,7 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     // buffer actually differs — the panel redraws every frame, so an unconditional assign()
     // copies (and can reallocate) the std::string each frame even when nothing was typed. The
     // std::string vs const char* compare is allocation-free and skips the write in the steady
-    // state (same per-frame-alloc guard as the omnibar mirror, PR #1600).
+    // state (same per-frame-alloc guard as the omnibar mirror).
     if (d.assistantInputBuf != s_inputCharBuf.data()) {
         d.assistantInputBuf.assign(s_inputCharBuf.data());
     }
@@ -1431,6 +1467,11 @@ void ApplyAssistantDocking(UiDrawSession& d, bool& needsReDock) {
 }
 
 } // namespace
+
+// Externally-linked wrapper over the TU-internal ClearAiRenderCaches() (anonymous
+// namespace) so callers that swap `assistantHistory` wholesale — e.g. a scenario
+// restoring saved history — can invalidate the index-keyed render caches.
+void SmatchetClearAiRenderCaches() { ClearAiRenderCaches(); }
 
 void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const ViewDefinition* activeView,
                                   bool embedded) {

@@ -80,10 +80,37 @@ TEST_CASE("SanitizeAiEndpointUrl rejects alternate IPv4 encodings of the metadat
     CHECK(SanitizeAiEndpointUrl("http://0xA9.0xFE.0xA9.0xFE", out) == EndpointVerdict::RejectedCloudMetadata);
     // short form: 169.254.43518 packs the last two octets like inet_aton
     CHECK(SanitizeAiEndpointUrl("http://169.254.43518", out) == EndpointVerdict::RejectedCloudMetadata);
-    // IPv4-mapped IPv6
+    // IPv4-mapped IPv6 (dotted tail)
     CHECK(SanitizeAiEndpointUrl("http://[::ffff:169.254.169.254]/latest", out) ==
           EndpointVerdict::RejectedCloudMetadata);
-    // IPv4-mapped via hex-grouped form is uncommon; the dotted-tail form is the canonical one.
+    // DR2: pure-hextet IPv4-mapped (::ffff:a9fe:a9fe) and IPv4-compatible (::a9fe:a9fe)
+    // forms have NO dotted tail — they must still decode to 169.254.169.254 and be denied.
+    CHECK(SanitizeAiEndpointUrl("http://[::ffff:a9fe:a9fe]/latest", out) == EndpointVerdict::RejectedCloudMetadata);
+    CHECK(SanitizeAiEndpointUrl("http://[::a9fe:a9fe]", out) == EndpointVerdict::RejectedCloudMetadata);
+    // hex-grouped private / link-local mapped forms too
+    CHECK(SanitizeAiEndpointUrl("http://[::ffff:0a00:0005]", out) == EndpointVerdict::RejectedPrivateNetwork); // 10.0.0.5
+    CHECK(SanitizeAiEndpointUrl("http://[::ffff:a9fe:0101]", out) == EndpointVerdict::RejectedLinkLocal);      // 169.254.1.1
+}
+
+TEST_CASE("SanitizeAiEndpointUrl strips URL userinfo before host validation (SSRF)" *
+          doctest::test_suite("[security]")) {
+    using smatchet::ai::pure::EndpointPolicy;
+    using smatchet::ai::pure::SanitizeAiEndpointUrl;
+    std::string out;
+    // DR2: "user:pass@realhost" — the host is everything after the LAST '@', not the
+    // userinfo. A metadata IP hidden behind fake userinfo must still be denied.
+    CHECK(SanitizeAiEndpointUrl("http://api.openai.com:x@169.254.169.254/latest", out) ==
+          EndpointVerdict::RejectedCloudMetadata);
+    CHECK(SanitizeAiEndpointUrl("http://a:b@10.0.0.5", out) == EndpointVerdict::RejectedPrivateNetwork);
+    // Against a pinned provider, userinfo spoofing the canonical host must not pass the
+    // host-pin when the real host differs.
+    EndpointPolicy p;
+    p.CanonicalHost = "api.openai.com";
+    p.AllowCustomHost = false;
+    CHECK(SanitizeAiEndpointUrl("https://api.openai.com:x@evil.example.com/v1", p, out) ==
+          EndpointVerdict::RejectedNonProviderHost);
+    // A legitimate userinfo on the real canonical host still resolves to that host.
+    CHECK(SanitizeAiEndpointUrl("https://user@api.openai.com/v1", p, out) == EndpointVerdict::Allowed);
 }
 
 TEST_CASE("SanitizeAiEndpointUrl rejects link-local + private + IPv6 ranges (SSRF)" *

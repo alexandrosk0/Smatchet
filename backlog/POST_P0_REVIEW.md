@@ -1,5 +1,7 @@
 # Post-fix code review — issues introduced by PRs #6 / #7 / #8
 
+> **Deprecated as a work queue (2026-07-06).** Closed historical ledger (all items resolved as of 2026-07-05) — do not file new work here. New agent-facing items go to the live self-improvement backlog ([`docs/self-improvement/AGENT_SELF_IMPROVEMENT.md`](../docs/self-improvement/AGENT_SELF_IMPROVEMENT.md)); product bugs become GitHub Issues (ADR-0014).
+>
 > Companion to [`BACKLOG_CODE_REVIEW.md`](BACKLOG_CODE_REVIEW.md). This document tracks issues found by reviewing the **new code** added by the P0 sweep and follow-up — things the fixes themselves introduced or missed. Nothing here duplicates the 61 numbered items in `BACKLOG_CODE_REVIEW.md` §7.
 >
 > Method: three parallel reviewer agents (one per PR) inspected the substantive new code with full access to the original review, with explicit instructions to look for *new* hazards only. Each finding has file:line citations.

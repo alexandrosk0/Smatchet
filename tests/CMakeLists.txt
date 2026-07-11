@@ -178,6 +178,11 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # (ConfigManager.cpp references ToolbarConfig::). All headless-Linux-clean
         # (wincrypt is _WIN32-guarded; whisper/lua feature guards have OFF branches).
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager.cpp"
+        # ConfigManager god-file split (god-file-splits plan): Save/Load/Secret bodies delegate
+        # across these companion TUs via config_detail (the spine holds the field tables).
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Save.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Load.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Secrets.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Views.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ToolbarConfig.cpp"
@@ -226,6 +231,11 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/FieldEditAuditSource.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/TextMerge.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownConvert.cpp"
+        # MarkdownConvert god-file split (god-file-splits plan): the spine above
+        # delegates to md_detail:: engines defined in these companion TUs.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownToAdf.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownToHtml.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/AdfToMarkdown.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueCreatePipeline.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueCreatePipelineHelpers.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldPayload.cpp"
@@ -253,6 +263,9 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiModelSignature.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiEndpointPolicy.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiEndpointSanitize.cpp"
+        # AiAssistantController now resolves its per-turn AiClientConfig through the
+        # shared AiRequestBuilder seam (also consumed by the debug ai.* commands).
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/AiRequestBuilder.cpp"
         # Gap map Tier 1 #8 — pre-network probe plan (no threads; Linux-runnable so the
         # container sessions doing this work can validate locally).
         Core/AiPrefsTestConnectionPure.test.cpp
@@ -321,6 +334,11 @@ add_executable(SmatchetTests
     # user-facing-text-i18n-sweep — pin a sample of the keys added for literals that
     # previously bypassed the lookup (toasts, palette, toolbar editor, mobile shell).
     Core/I18nSweepLocalization.test.cpp
+    # localization-format-guard — the printf conversion-specifier guard (extracted
+    # into the header-only smatchet::l10n unit) that stops a Locales/<lang>.json
+    # override from smuggling extra/%n specifiers into vsnprintf (SECURITY_AUDIT #1).
+    # Header-only closure — no extra .cpp link (the header pulls only std).
+    Core/LocalizationFormatGuard.test.cpp
     Core/ConfigSaveConcurrency.test.cpp
     Core/MainThreadDispatcherDrain.test.cpp
     Core/CacheEvictionPolicy.test.cpp
@@ -499,6 +517,28 @@ add_executable(SmatchetTests
     # test rig links just that one TU.
     Core/CppSyntaxLex.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/CppSyntaxLex.cpp"
+    # Deep-review 2026-07-07 batch 2 (DR3-DR31) regression tests. Production TUs they
+    # exercise (ConfigManager, TicketSyncService, LocalCacheManager, ScenarioRunner, the
+    # Plane/GitHub/Linear query pure TUs) are already linked elsewhere in this target;
+    # the rest assert against header-inline pure helpers, so no new source links are needed.
+    Core/ConfigCredentialLoad.test.cpp
+    Core/SyncEmptyFullSyncGuard.test.cpp
+    Core/OfflineReplayResolveClearsCapturedBase.test.cpp
+    Core/AppControllerFieldCatalogLock.test.cpp
+    Core/ScenarioRunnerReplaceActive.test.cpp
+    Core/ShutdownFutureDrain.test.cpp
+    Core/UpdateInstallerFilenameSanitize.test.cpp
+    Core/MainThreadDispatchShutdown.test.cpp
+    Core/TrackerPostTimeoutClassify.test.cpp
+    Core/Tracker2xxErrorGuard.test.cpp
+    Core/JqlQuoteAware.test.cpp
+    Core/PlanePagination.test.cpp
+    Core/CommandPaletteFilterReset.test.cpp
+    Core/IconNegativeCacheBackoff.test.cpp
+    Core/ResultExceptionSafety.test.cpp
+    Core/McpSpawnTokenRetention.test.cpp
+    Core/ViewsSaveMergeAndDelete.test.cpp
+    Core/FieldEditorInlineTruncateGuard.test.cpp
     Core/LocalCacheManager.test.cpp
     # multi-grid-tabs.md Slice 5 TSan pass — concurrent seed-read (GetAllTickets) +
     # write (SaveTicket) from two std::threads; also in SmatchetTsanTests for TSan.
@@ -685,6 +725,9 @@ add_executable(SmatchetTests
     # cpr-free (delegates body redaction to AiErrorRedact), linked in the CORE
     # source block below; this entry adds the doctest TU.
     Core/OllamaStreamError.test.cpp
+    # DR26 — Ollama /api/chat request-body shape: the system prompt must be a
+    # leading {role:"system"} message, not the ignored top-level `system` field.
+    Core/OllamaRequestBody.test.cpp
     Core/AiModelCatalog.test.cpp
     Core/AiModelSignature.test.cpp
     # Pure helpers extracted from AiAssistantController::RunRequest (monoliths
@@ -883,6 +926,12 @@ add_executable(SmatchetTests
     # pulls cpr). Same pure-seam shape as PlaneIssueMappingPure above.
     Core/PlaneFieldCatalogPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneFieldCatalogPure.cpp"
+    # BACKLOG_CODE_REVIEW.md §C4 — pure Plane custom-property (properties.<uuid>)
+    # serializer consumed by PlaneClient::BuildCreatePayload. Same pure-seam shape as
+    # PlaneFieldCatalogPure above; its only production dep (TrackerFieldPayloadPure.cpp)
+    # is already linked in this rig.
+    Core/PlaneCustomPropertyPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneCustomPropertyPure.cpp"
     Core/MarkdownLanguageDefinition.test.cpp
     # MarkdownLanguageDefinition.test.cpp exercises the LD static factories
     # declared in TextEditor.h and defined in the vendored ImGuiColorTextEdit
@@ -939,6 +988,9 @@ add_executable(SmatchetTests
     # CommandLineToArgvW backslash-run doubling (trailing-backslash + embedded-
     # quote injection fix). Header-only pure helper, no production .cpp to link.
     Core/P4vLaunchArgQuotePure.test.cpp
+    # Comments-modal generation-token stale-guard (monotonic Gen across opens +
+    # post-refetch supersession). Header-only pure helper, no production .cpp to link.
+    Core/SmatchetCommentsModalGenPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SubprocessCapturePure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SubprocessCapture.cpp"
     Plugins/Mcp/McpRequestParser.test.cpp
@@ -946,7 +998,9 @@ add_executable(SmatchetTests
     Plugins/Mcp/McpToolSchemas.test.cpp
     Plugins/Mcp/McpDispatch.test.cpp
     Plugins/Mcp/McpHostOrigin.test.cpp
+    Plugins/Mcp/McpRateLimit.test.cpp
     Plugins/LuaConsole/LuaConsoleSelection.test.cpp
+    Plugins/LuaConsole/LuaConsoleSelectionByPath.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Plugins/Mcp/McpJsonRpcPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/CallstackParser.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/P4AnnotateParse.cpp"
@@ -975,11 +1029,20 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/CompactDateFormatPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/UiPerfMonitor.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownConvert.cpp"
+    # MarkdownConvert god-file split (god-file-splits plan): companion engine TUs the
+    # spine delegates to (md_detail::). Pure md4c/json/Logger — no ImGui, links in this rig.
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownToAdf.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownToHtml.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/AdfToMarkdown.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/BackendAuditTrail.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/FieldEditAuditSource.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Logger.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager.cpp"
+    # ConfigManager god-file split (god-file-splits plan): companion Save/Load/Secret TUs.
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Save.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Load.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Secrets.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Views.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ToolbarConfig.cpp"
@@ -1019,6 +1082,9 @@ add_executable(SmatchetTests
     # mapping, retry-recovers / exhaustion-count / POST-predicate-stops semantics via
     # stateful requestFn lambdas (no socket). No extra production TU.
     Core/TrackerHttpRetry.test.cpp
+    # DR30 — tracker error paths route raw response bodies through RedactHttpBodyForLog
+    # before logging, so a 401/403 body reflecting Authorization / x-api-key can't leak.
+    Core/TrackerHttpRedact.test.cpp
     # Integration coverage of the live D3 wiring: drives TrackerGet/Post/PutLogged at a
     # scripted httplib loopback (JiraCatalogHttpFixture) and asserts retry counts prove
     # GET/PUT retry-on-5xx while POST is single-shot (Transport-only). Needs only
@@ -1080,6 +1146,10 @@ add_executable(SmatchetTests
     # AiPrefsValidator.cpp now routes base-URL checks through EndpointPolicyForProvider
     # (security audit Item B); its TU lives here, so the doctest link needs it too.
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AiEndpointPolicy.cpp"
+    # Shared provider->AiClientConfig seam (key sanitizer + endpoint consent gate)
+    # consumed by the controller and the debug ai.* commands (audit B4/P4).
+    Core/AiRequestBuilder.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/AiRequestBuilder.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/OpenAiClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AnthropicClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/OllamaClient.cpp"
@@ -1677,7 +1747,7 @@ if(UNIX AND SMATCHET_BUILD_POSIX_CORE_CHECK)
     add_test(NAME smatchet_commands_tests COMMAND SmatchetCommandsTests)
 
     # ============================================================================
-    # Nightly command-registry MONKEY (docs/plans/active/nightly-monkey-tester.md).
+    # Nightly command-registry MONKEY (docs/plans/nightly-monkey-tester.md).
     # Same headless archive + link recipe as SmatchetCommandsTests, but a standalone
     # int main() (no doctest) so it takes --seed/--steps for reproducible replay. It
     # fires a long SEEDED sequence of randomized-but-guaranteed-pre-handler-reject

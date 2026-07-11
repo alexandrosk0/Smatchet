@@ -1,7 +1,7 @@
 #ifndef SMATCHET_TESTS_OFFLINE_QUEUE_TEST_ENV_H
 #define SMATCHET_TESTS_OFFLINE_QUEUE_TEST_ENV_H
 
-// OfflineQueueTestEnv — shared per-test environment guard for TUs that drive
+// OfflineQueueTestEnvGuard — shared per-test environment guard for TUs that drive
 // OfflineQueueService (extracted verbatim from OfflineQueueServiceRuntime.test.cpp for
 // multi-grid Slice 1c so the backend-key replay tests reuse it instead of cloning). Each
 // instance:
@@ -29,9 +29,9 @@
 
 namespace smatchet_tests {
 
-class TestEnvGuard {
+class OfflineQueueTestEnvGuard {
   public:
-    TestEnvGuard() {
+    OfflineQueueTestEnvGuard() {
         const char* envTmp = nullptr;
 #if defined(_WIN32)
         envTmp = std::getenv("TEMP");
@@ -67,15 +67,15 @@ class TestEnvGuard {
         f.close();
         ConfigManager::InvalidateCache();
     }
-    ~TestEnvGuard() {
+    ~OfflineQueueTestEnvGuard() {
         std::remove(BackendAuditTrail::GetAuditFilePath().c_str());
         std::remove((dirWithSep_ + "smatchet_config.json").c_str());
         ConfigManager::SetUserDataDirectory("");
         ConfigManager::InvalidateCache();
         std::remove(dir_.c_str());
     }
-    TestEnvGuard(const TestEnvGuard&) = delete;
-    TestEnvGuard& operator=(const TestEnvGuard&) = delete;
+    OfflineQueueTestEnvGuard(const OfflineQueueTestEnvGuard&) = delete;
+    OfflineQueueTestEnvGuard& operator=(const OfflineQueueTestEnvGuard&) = delete;
 
   private:
     std::string dir_;

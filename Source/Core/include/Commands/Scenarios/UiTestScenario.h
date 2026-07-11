@@ -38,11 +38,11 @@ class UiTestScenario : public IScenario {
 
     std::string Name() const override { return "ui-test"; }
 
-    void OnStart(AppController& app, const nlohmann::json& args, std::string& outErr) override;
-    void OnFrame(AppController& app, int frameIndex) override;
+    void OnStart(IAppScenarioHost& app, const nlohmann::json& args, std::string& outErr) override;
+    void OnFrame(IAppScenarioHost& app, int frameIndex) override;
     bool IsDone(int frameIndex) const override;
-    nlohmann::json OnFinish(AppController& app) override;
-    void OnCancel(AppController& app) override;
+    nlohmann::json OnFinish(IAppScenarioHost& app) override;
+    void OnCancel(IAppScenarioHost& app) override;
 
   private:
 #if defined(SMATCHET_BUILD_UI_TESTS)

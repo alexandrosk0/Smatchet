@@ -15,7 +15,6 @@
 
 #include "Commands/Scenarios/IScenario.h"
 
-#include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "CodeColorView.h"
 #include "Commands/Scenarios/ScenarioCaptureSizing.h"
@@ -39,33 +38,6 @@ namespace smatchet {
 namespace cmd {
 
 namespace {
-
-std::string StringArg(const nlohmann::json& args, const char* key, const std::string& fallback) {
-    if (!args.contains(key))
-        return fallback;
-    const auto& v = args[key];
-    if (v.is_string())
-        return v.get<std::string>();
-    if (v.is_number())
-        return std::to_string(v.get<long long>());
-    return fallback;
-}
-
-int IntArg(const nlohmann::json& args, const char* key, int fallback) {
-    if (!args.contains(key))
-        return fallback;
-    const auto& v = args[key];
-    if (v.is_number())
-        return v.get<int>();
-    if (v.is_string()) {
-        try {
-            return std::stoi(v.get<std::string>());
-        } catch (...) {
-            return fallback;
-        }
-    }
-    return fallback;
-}
 
 // One labelled code sample per language tier. Kept short + ASCII so the
 // captured glyphs are font-stable across machines (the L∞ ≤ 4 tolerance
@@ -97,28 +69,15 @@ class CodeSyntaxColoringScenario : public IScenario {
   public:
     std::string Name() const override { return "code-syntax-coloring"; }
 
-    void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& outErr) override {
-        warmupFrames_ = IntArg(args, "warmupFrames", 8);
-        if (warmupFrames_ < 1) {
-            warmupFrames_ = 1;
-        }
-        captureSize_ = ParseScenarioCaptureSize(args);
-        screenshotPath_ = StringArg(args, "screenshotPath", std::string());
-        if (screenshotPath_.empty()) {
-            outErr = "code-syntax-coloring: screenshotPath is required";
+    void OnStart(IAppScenarioHost& /*app*/, const nlohmann::json& args, std::string& outErr) override {
+        // Shared prologue: warmup/captureSize parse + screenshotPath require/confine
+        // (#1566 class) — a reject returns before any session state mutates.
+        if (!ConfigureScreenshotScenario("code-syntax-coloring", args, 8, 1, warmupFrames_, captureSize_,
+                                         screenshotPath_, outErr))
             return;
-        }
-        // Confine the caller-supplied path under <userData>/screenshots/ — MCP/Lua-reachable
-        // scenario, so an unconfined path is an arbitrary-file-write primitive (#1566 class).
-        if (!ConfineScenarioScreenshotPathInPlace("code-syntax-coloring", screenshotPath_, outErr))
-            return;
-
-        g_ui.requestWindowWidth = captureSize_.Width;
-        g_ui.requestWindowHeight = captureSize_.Height;
-        g_ui.requestWindowResize = true;
     }
 
-    void OnFrame(AppController& /*app*/, int /*frameIndex*/) override {
+    void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override {
         // Draw a fully-opaque window covering the framebuffer so the capture is
         // dominated by the coloured code, not the dock chrome behind it. Fixed
         // pos + size (ImGuiCond_Always) keep the layout deterministic.
@@ -154,7 +113,7 @@ class CodeSyntaxColoringScenario : public IScenario {
 
     bool IsDone(int frameIndex) const override { return frameIndex >= warmupFrames_; }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         // Trigger the screenshot after the warm-up frames have rendered +
         // the colour cache is warm. Source/Standalone/main.cpp's post-swap
         // handler consumes the request and writes the PNG.

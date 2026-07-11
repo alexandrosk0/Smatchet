@@ -15,13 +15,14 @@ name: Agentic self-tests
 # assertion failures in the deterministic agentic suite red this lane. The
 # denylist + its reasons live in scripts/dev/test-all.sh (CI_SKIP_RE).
 #
-# Follow-ups (tracked, not yet gated here): the merge-watcher / pr-status-watch
-# bats suites (registry/state-machine + live gh seams), the lint-rules-bats
-# comment_audit `--fix HEAD` case, and the Mesa-bound bucket-lane smoke — un-skip
-# these as each is hardened to run headless. This check is not yet a
-# branch-protection REQUIRED context (that needs project.config.json +
-# setup-branch-protection.sh); until then the merge-gates poller still blocks on
-# it being red per AGENTS.md ("never merge past ANY red check").
+# Follow-ups (tracked, not yet gated here): the guard-head-drift / guard-plan-lock /
+# session-registry bats suites (one runner-checkout-sensitive assertion each) — un-skip
+# these as each is hardened to run headless. The merge-watcher, pr-status-watch,
+# lint-rules and bucket-lane-smoke suites have been hardened and now gate here. Since PR #1619 (block-on-any-red)
+# this check IS a branch-protection REQUIRED context ("Agentic self-tests (bats)"
+# in project.config.json § branch_protection.required_contexts, applied via
+# setup-branch-protection.sh); the merge-gates poller additionally blocks on any
+# red per AGENTS.md ("never merge past ANY red check").
 
 on:
   push:

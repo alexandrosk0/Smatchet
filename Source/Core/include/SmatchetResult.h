@@ -38,7 +38,13 @@ template <typename T> class Optional {
     }
 
     // Copy-and-swap assignment — handles copy and move via the by-value parameter.
-    Optional& operator=(Optional other) noexcept {
+    // noexcept is CONDITIONAL: swap() placement-new-move-constructs T in the
+    // engaged/disengaged branches, so an unconditional noexcept would std::terminate
+    // if T's move throws (DR31). Advertise noexcept only when T's move cannot throw,
+    // matching the common (nothrow) case; a throwing-move T propagates normally.
+    Optional& operator=(Optional other)
+        noexcept(std::is_nothrow_move_constructible<T>::value &&
+                 std::is_nothrow_move_assignable<T>::value) {
         swap(other);
         return *this;
     }
@@ -119,7 +125,10 @@ template <typename T, typename E = std::string> class Result {
         return r;
     }
 
-    Result(const Result& other) : ok_(other.ok_) {
+    Result(const Result& other) : ok_(other.ok_), valueless_(true) {
+        if (other.valueless_) {
+            return; // source's storage is empty (a throwing move-assign left it so) — stay valueless
+        }
         if (ok_) {
             // placement-new into in-object storage (copying T may itself allocate, e.g. vector/json)
             ::new (static_cast<void*>(&storage_)) T(*other.ValuePtr());
@@ -127,9 +136,13 @@ template <typename T, typename E = std::string> class Result {
             // placement-new into in-object storage (copying E may itself allocate)
             ::new (static_cast<void*>(&storage_)) E(*other.ErrorPtr());
         }
+        valueless_ = false; // storage now holds a live member — dtor may destroy it
     }
 
-    Result(Result&& other) : ok_(other.ok_) {
+    Result(Result&& other) : ok_(other.ok_), valueless_(true) {
+        if (other.valueless_) {
+            return; // source's storage is empty (a throwing move-assign left it so) — stay valueless
+        }
         if (ok_) {
             // placement-new into in-object storage — no heap allocation
             ::new (static_cast<void*>(&storage_)) T(std::move(*other.ValuePtr()));
@@ -137,6 +150,7 @@ template <typename T, typename E = std::string> class Result {
             // placement-new into in-object storage — no heap allocation
             ::new (static_cast<void*>(&storage_)) E(std::move(*other.ErrorPtr()));
         }
+        valueless_ = false; // storage now holds a live member — dtor may destroy it
     }
 
     Result& operator=(const Result& other) {
@@ -151,78 +165,102 @@ template <typename T, typename E = std::string> class Result {
                       "Result copy-assignment commits via a noexcept move; T and E must be "
                       "nothrow-move-constructible (vector/string/json/TrackerError all are).");
         if (this != &other) {
+            if (other.valueless_) {
+                Destroy(); // propagate the source's empty state instead of reading dead storage
+                ok_ = other.ok_;
+                valueless_ = true;
+                return *this;
+            }
             if (other.ok_) {
                 T tmp(*other.ValuePtr()); // may throw — *this still intact (strong guarantee)
                 Destroy();
+                valueless_ = true; // storage empty until the noexcept commit lands
                 ::new (static_cast<void*>(&storage_)) T(std::move(tmp)); // noexcept commit
                 ok_ = true;
+                valueless_ = false;
             } else {
                 E tmp(*other.ErrorPtr()); // may throw — *this still intact
                 Destroy();
+                valueless_ = true; // storage empty until the noexcept commit lands
                 ::new (static_cast<void*>(&storage_)) E(std::move(tmp)); // noexcept commit
                 ok_ = false;
+                valueless_ = false;
             }
         }
         return *this;
     }
 
+    // Move-assignment (DR31). A move can throw for payloads whose move is not
+    // noexcept, so ordering matters: Destroy() first, then mark the storage
+    // valueless_ BEFORE the placement-new that may throw. If it throws, the
+    // storage stays empty, ok_ is left stale but unread, and ~Result / Destroy()
+    // skip the unconstructed storage instead of double-destroying it. On success
+    // ok_ is committed and valueless_ cleared. For nothrow-move payloads (the
+    // common case: vector/string/json/TrackerError) this window never triggers.
     Result& operator=(Result&& other) {
         if (this != &other) {
             Destroy();
-            ok_ = other.ok_;
-            if (ok_) {
+            valueless_ = true;
+            if (other.valueless_) {
+                ok_ = other.ok_; // source empty — leave *this valueless too, no dereference
+                return *this;
+            }
+            if (other.ok_) {
                 // placement-new into in-object storage — no heap allocation
                 ::new (static_cast<void*>(&storage_)) T(std::move(*other.ValuePtr()));
             } else {
                 // placement-new into in-object storage — no heap allocation
                 ::new (static_cast<void*>(&storage_)) E(std::move(*other.ErrorPtr()));
             }
+            ok_ = other.ok_;
+            valueless_ = false;
         }
         return *this;
     }
 
     ~Result() { Destroy(); }
 
-    bool has_value() const noexcept { return ok_; }
-    explicit operator bool() const noexcept { return ok_; }
+    // valueless_ (a throwing move-assign left storage empty, DR31) reports as no-value.
+    bool has_value() const noexcept { return ok_ && !valueless_; }
+    explicit operator bool() const noexcept { return ok_ && !valueless_; }
 
     T& value() & {
-        assert(ok_ && "Result::value() on an error-state Result");
-        if (!ok_) {
+        assert(has_value() && "Result::value() on an error-state Result");
+        if (!has_value()) {
             throw std::logic_error("Result::value() called on an error-state Result");
         }
         return *ValuePtr();
     }
 
     const T& value() const& {
-        assert(ok_ && "Result::value() on an error-state Result");
-        if (!ok_) {
+        assert(has_value() && "Result::value() on an error-state Result");
+        if (!has_value()) {
             throw std::logic_error("Result::value() called on an error-state Result");
         }
         return *ValuePtr();
     }
 
     E& error() & {
-        assert(!ok_ && "Result::error() on an ok-state Result");
-        if (ok_) {
+        assert(!ok_ && !valueless_ && "Result::error() on an ok-state Result");
+        if (ok_ || valueless_) {
             throw std::logic_error("Result::error() called on an ok-state Result");
         }
         return *ErrorPtr();
     }
 
     const E& error() const& {
-        assert(!ok_ && "Result::error() on an ok-state Result");
-        if (ok_) {
+        assert(!ok_ && !valueless_ && "Result::error() on an ok-state Result");
+        if (ok_ || valueless_) {
             throw std::logic_error("Result::error() called on an ok-state Result");
         }
         return *ErrorPtr();
     }
 
     // Returns the ok-value, or fallback when in the error state. Never throws.
-    T value_or(T fallback) const { return ok_ ? *ValuePtr() : std::move(fallback); }
+    T value_or(T fallback) const { return has_value() ? *ValuePtr() : std::move(fallback); }
 
   private:
-    Result() noexcept : ok_(false) {}
+    Result() noexcept : ok_(false), valueless_(true) {}
 
     T* ValuePtr() noexcept { return reinterpret_cast<T*>(&storage_); }
     const T* ValuePtr() const noexcept { return reinterpret_cast<const T*>(&storage_); }
@@ -233,15 +271,20 @@ template <typename T, typename E = std::string> class Result {
         // placement-new into in-object storage — no heap allocation
         ::new (static_cast<void*>(&storage_)) T(std::move(value));
         ok_ = true;
+        valueless_ = false;
     }
 
     void ConstructError(E error) {
         // placement-new into in-object storage — no heap allocation
         ::new (static_cast<void*>(&storage_)) E(std::move(error));
         ok_ = false;
+        valueless_ = false;
     }
 
     void Destroy() noexcept {
+        if (valueless_) {
+            return; // storage holds no live member (post-throw window) — nothing to destroy
+        }
         if (ok_) {
             ValuePtr()->~T();
         } else {
@@ -251,4 +294,7 @@ template <typename T, typename E = std::string> class Result {
 
     typename std::aligned_union<0, T, E>::type storage_;
     bool ok_;
+    // True while storage_ holds no live member: pre-construction and after a
+    // throwing move/commit. Guards Destroy() against destroying raw storage.
+    bool valueless_;
 };

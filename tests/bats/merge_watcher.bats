@@ -94,6 +94,17 @@ setup() {
     XDG_STATE_HOME="$SMATCHET_TEST_TMP"
     export LOCALAPPDATA XDG_STATE_HOME SMATCHET_TEST_TMP
     export PYTHONIOENCODING=utf-8
+
+    # WATCH_ROOT = where watcher_root() actually lands per-OS: the LOCALAPPDATA
+    # branch fires only under native Windows Python (os.name == "nt"); POSIX
+    # uses $XDG_STATE_HOME/smatchet (lowercase). Tests asserting on registry /
+    # state files MUST use this, not a hardcoded $LOCALAPPDATA/Smatchet path —
+    # that conflation made 4 tests false-fail on Linux (headless CI lane).
+    case "$OSTYPE" in
+        msys*|cygwin*|win*) WATCH_ROOT="$LOCALAPPDATA/Smatchet/merge-watch" ;;
+        *) WATCH_ROOT="$XDG_STATE_HOME/smatchet/merge-watch" ;;
+    esac
+    export WATCH_ROOT
 }
 
 teardown() {
@@ -372,12 +383,12 @@ PY
     run watch_cli register 999
     [ "$status" -eq 0 ]
     # Synthesize a state file so we can verify it gets cleared.
-    mkdir -p "$LOCALAPPDATA/Smatchet/merge-watch/state"
-    echo '{"pr":999,"last_state":"BLOCKED"}' > "$LOCALAPPDATA/Smatchet/merge-watch/state/999.json"
-    [ -f "$LOCALAPPDATA/Smatchet/merge-watch/state/999.json" ]
+    mkdir -p "$WATCH_ROOT/state"
+    echo '{"pr":999,"last_state":"BLOCKED"}' > "$WATCH_ROOT/state/999.json"
+    [ -f "$WATCH_ROOT/state/999.json" ]
     run watch_cli unregister 999
     [ "$status" -eq 0 ]
-    [ ! -f "$LOCALAPPDATA/Smatchet/merge-watch/state/999.json" ]
+    [ ! -f "$WATCH_ROOT/state/999.json" ]
 }
 
 # ---------- status table ----------
@@ -410,8 +421,8 @@ PY
 @test "status surfaces a written state file" {
     run watch_cli register 999
     [ "$status" -eq 0 ]
-    mkdir -p "$LOCALAPPDATA/Smatchet/merge-watch/state"
-    cat > "$LOCALAPPDATA/Smatchet/merge-watch/state/999.json" <<JSON
+    mkdir -p "$WATCH_ROOT/state"
+    cat > "$WATCH_ROOT/state/999.json" <<JSON
 {"pr":999,"last_state":"GATES_PASSED","last_poll_unix":1779000000,"last_status_line":"Poll 1/1 ..."}
 JSON
     run watch_cli status 999
@@ -424,11 +435,11 @@ JSON
 @test "registry file is valid JSON list with required keys" {
     run watch_cli register 999
     [ "$status" -eq 0 ]
-    [ -f "$LOCALAPPDATA/Smatchet/merge-watch/active.json" ]
+    [ -f "$WATCH_ROOT/active.json" ]
     # Verify it's a list with the expected keys.
     run python -c "
 import json, sys
-d = json.load(open(r'$LOCALAPPDATA/Smatchet/merge-watch/active.json'))
+d = json.load(open(r'$WATCH_ROOT/active.json'))
 assert isinstance(d, list), 'registry not a list'
 assert len(d) == 1, f'expected 1 entry, got {len(d)}'
 e = d[0]
@@ -442,8 +453,8 @@ print('valid')
 }
 
 @test "registry survives malformed JSON detection" {
-    mkdir -p "$LOCALAPPDATA/Smatchet/merge-watch"
-    echo "not json at all" > "$LOCALAPPDATA/Smatchet/merge-watch/active.json"
+    mkdir -p "$WATCH_ROOT"
+    echo "not json at all" > "$WATCH_ROOT/active.json"
     run watch_cli status
     [ "$status" -eq 2 ]
     [[ "$output" == *"malformed JSON"* ]]
@@ -681,6 +692,7 @@ mw.process_registered_pr = fake_proc
 mw.read_registry = lambda: [{'pr': 901, 'clone_path': 'x'}, {'pr': 902, 'clone_path': 'x'}]
 mw.write_pid_file = lambda: None
 mw.clear_pid_file = lambda: None
+mw.maybe_self_resync = lambda *_a, **_k: {}  # unit isolation: daemon_loop's startup resync must not run real git fetch/drift
 def stop(_):
     raise mw.StopSignal()
 mw.time.sleep = stop
@@ -713,6 +725,7 @@ mw.process_registered_pr = fake_proc
 mw.read_registry = lambda: [{'pr': 901, 'clone_path': 'x'}, {'pr': 902, 'clone_path': 'x'}]
 mw.write_pid_file = lambda: None
 mw.clear_pid_file = lambda: None
+mw.maybe_self_resync = lambda *_a, **_k: {}  # unit isolation: daemon_loop's startup resync must not run real git fetch/drift
 def stop(_):
     raise mw.StopSignal()
 mw.time.sleep = stop
@@ -743,6 +756,7 @@ def bad_registry():
 mw.read_registry = bad_registry
 mw.write_pid_file = lambda: None
 mw.clear_pid_file = lambda: None
+mw.maybe_self_resync = lambda *_a, **_k: {}  # unit isolation: daemon_loop's startup resync must not run real git fetch/drift
 def stop(_):
     raise mw.StopSignal()
 mw.time.sleep = stop
@@ -773,6 +787,7 @@ def signal_mid_read():
 mw.read_registry = signal_mid_read
 mw.write_pid_file = lambda: None
 mw.clear_pid_file = lambda: None
+mw.maybe_self_resync = lambda *_a, **_k: {}  # unit isolation: daemon_loop's startup resync must not run real git fetch/drift
 def stop(_):
     raise mw.StopSignal()
 mw.time.sleep = stop
@@ -1331,7 +1346,24 @@ m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec
 # Stub _gh_owner_repo + _gh_json so the function never reaches gh.
 m._gh_owner_repo = lambda _p: ('alexandrosk0', 'Smatchet')
 m._gh_json = lambda args, **kw: {'headRefOid': 'deadbeefcafebabe1234567890abcdef12345678'}
-entry = {'pr': 999, 'clone_path': r'$(pwd)',
+# The claude-on-PATH / clean-clone / zero-live-sessions gates run BEFORE the
+# dedup check; stub all three (as the budget test below does) so the dedup
+# branch is reached regardless of host PATH, tree state, or live sessions.
+import shutil, subprocess
+shutil.which = lambda _n: '/fake/bin/claude'
+class _CleanGit:
+    returncode = 0
+    stdout = ''
+    stderr = ''
+subprocess.run = lambda *a, **kw: _CleanGit()
+m._count_live_sessions = lambda _p: 0
+# The dedup key is read from the REGISTRY entry (via the atomic reserve), NOT
+# from the passed-in entry dict — seed it on the SAME head _gh_json returns,
+# keyed on the clone_path register stored ($CLONE_PATH, not pwd: from a linked
+# worktree pwd misses the entry and the not-in-registry fallback masks the test).
+clone = r'$CLONE_PATH'
+m._bump_auto_act_state(999, clone, 'deadbeefcafebabe1234567890abcdef12345678', 1)
+entry = {'pr': 999, 'clone_path': clone,
          'auto_act_for_head_sha': 'deadbeefcafebabe1234567890abcdef12345678'}
 state = {'last_state': 'TRIAGE_BUDGET_EXHAUSTED',
          'last_status_line': 'Poll 1/1 CodeRabbit: COMMENTED (3 actionable - block)'}

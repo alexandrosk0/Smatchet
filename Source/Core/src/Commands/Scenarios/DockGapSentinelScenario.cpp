@@ -11,14 +11,8 @@
 // few warm-up frames inside the scenario eliminate that flake without
 // putting the warm-up policy in the bash script.
 
-// Scenario file-top scaffold — the shared include block + g_ui extern shim +
-// anon-namespace IntArg/StringArg arg parsers that every screenshot scenario carries.
-// dup_audit matches it against the sibling screenshot scenarios as a copy-paste run;
-// it is idiomatic per-scenario boilerplate, not shared logic to extract.
-// SMATCHET_DEVIATION(rule=duplication; reason=file-top scaffold clone; owner=command-system; revisit=2026-12-31)
 #include "Commands/Scenarios/IScenario.h"
 
-#include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "Commands/Scenarios/ScenarioCaptureSizing.h"
 #include "Commands/Scenarios/ScenarioScreenshotPath.h"
@@ -31,6 +25,11 @@
 // any SMATCHET_WITH_LUA_AUTOMATION guard; the header-side `extern` in
 // SmatchetUiSession.h is gated, so scenarios that need the singleton must
 // re-declare it here (same shim BuiltinCommands_Debug.cpp uses).
+// File-top scaffold (includes + this shim + namespace/class/OnStart head) is
+// idiomatic per-scenario boilerplate that dup_audit's normalization matches
+// across sibling scenarios; the extractable parts (arg parsers + OnStart
+// prologue) now live in ScenarioArgs.h / ConfigureScreenshotScenario.
+// SMATCHET_DEVIATION(rule=duplication; reason=file-top scaffold clone; owner=command-system; revisit=2026-12-31)
 extern UiDrawSession g_ui;
 
 namespace smatchet {
@@ -38,73 +37,24 @@ namespace cmd {
 
 namespace {
 
-// CLI args land as JSON strings (Source/Standalone/CliCommandRunner.cpp § ParseArgs
-// stores --key=value as `string`). Scenarios must coerce defensively or risk
-// nlohmann::json::type_error.302 when args.value<int>(...) hits a string.
-int IntArg(const nlohmann::json& args, const char* key, int fallback) {
-    if (!args.contains(key))
-        return fallback;
-    const auto& v = args[key];
-    if (v.is_number())
-        return v.get<int>();
-    if (v.is_string()) {
-        try {
-            return std::stoi(v.get<std::string>());
-        } catch (...) {
-            return fallback;
-        }
-    }
-    return fallback;
-}
-std::string StringArg(const nlohmann::json& args, const char* key, const std::string& fallback) {
-    if (!args.contains(key))
-        return fallback;
-    const auto& v = args[key];
-    if (v.is_string())
-        return v.get<std::string>();
-    if (v.is_number())
-        return std::to_string(v.get<long long>());
-    return fallback;
-}
-
-// Scenario OnStart-prologue scaffold — the warmupFrames/captureSize/screenshotPath
-// parse + required-empty check plus the identical anon-namespace StringArg tail,
-// shared across screenshot scenarios. dup_audit matches it as a copy-paste run; the
-// shared confine chokepoint (ConfineScenarioScreenshotPathInPlace) already de-dups the
-// confine logic — a shared prologue helper for the parse tail is the remaining de-dup,
-// tracked in the duplication backlog.
-// SMATCHET_DEVIATION(rule=duplication; reason=prologue scaffold clone; owner=command-system; revisit=2026-12-31)
 class DockGapSentinelScenario : public IScenario {
   public:
     std::string Name() const override { return "dock-gap-sentinel"; }
 
-    void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& outErr) override {
-        warmupFrames_ = IntArg(args, "warmupFrames", 8);
-        if (warmupFrames_ < 1) {
-            warmupFrames_ = 1;
-        }
-        captureSize_ = ParseScenarioCaptureSize(args);
-        screenshotPath_ = StringArg(args, "screenshotPath", std::string());
-        if (screenshotPath_.empty()) {
-            outErr = "dock-gap-sentinel: screenshotPath is required";
+    void OnStart(IAppScenarioHost& /*app*/, const nlohmann::json& args, std::string& outErr) override {
+        // Shared prologue: warmup/captureSize parse + screenshotPath require/confine
+        // (the confine kills the #1566 arbitrary-file-write class for this
+        // MCP/Lua-reachable scenario) + window-resize request. A reject returns
+        // before any session state mutates.
+        if (!ConfigureScreenshotScenario("dock-gap-sentinel", args, 8, 1, warmupFrames_, captureSize_, screenshotPath_,
+                                         outErr))
             return;
-        }
-        // Confine the caller-supplied path under <userData>/screenshots/ — this scenario is
-        // MCP/Lua-reachable, so an unconfined path is an arbitrary-file-write primitive (the
-        // #1566 class). Absolute/'..'/escaping paths are rejected; --spawn callers are fulfilled
-        // by the trusted parent (CliCommandRunner) which swaps in a confine-safe basename.
-        if (!ConfineScenarioScreenshotPathInPlace("dock-gap-sentinel", screenshotPath_, outErr))
-            return;
-
-        g_ui.requestWindowWidth = captureSize_.Width;
-        g_ui.requestWindowHeight = captureSize_.Height;
-        g_ui.requestWindowResize = true;
 
         // Arm the pink (magenta) clear-color override on the first frame too.
         ArmPinkClear();
     }
 
-    void OnFrame(AppController& /*app*/, int /*frameIndex*/) override {
+    void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override {
         // The dock is already in its steady-state layout by the time
         // SmatchetUI::Draw runs; warm-up frames give the docking builder time to
         // settle from a cold-spawn state. Re-arm the transient pink clear-color
@@ -117,7 +67,7 @@ class DockGapSentinelScenario : public IScenario {
 
     bool IsDone(int frameIndex) const override { return frameIndex >= warmupFrames_; }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         // Trigger the screenshot AFTER the warm-up frames have rendered.
         // Source/Standalone/main.cpp's post-swap handler will consume the
         // request and write the PPM. On DX12 the request flag has no

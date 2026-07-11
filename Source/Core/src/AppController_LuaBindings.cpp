@@ -494,12 +494,30 @@ void LuaUiRegisterGlobalActionGlue(sol::this_state L, const std::string& name, c
 // `AddAiContext` / `ClearAiContext` / `PromptAi` shipped Phase B. Those stubs
 // no-op when `SMATCHET_WITH_AI=0`, so the glues need no extra gating here.
 //
-// **Threading expectation**: Lua scripts driving `ai.*` are expected to run on
-// the UI thread (the main `lua` state). The background automation worker reuses
-// `__smatchet_app_ui` on its per-iteration `bgState` — calling `ai.*` from a
-// worker script will race-mutate `aiAssistant_->luaContext_`. That is a Phase B
-// design choice (no MainThreadDispatcher hop) inherited here, not introduced by
-// Phase E. SmatchetHooks.lua only calls `ai.*` from UI-event paths today.
+// **UI-thread-only by construction, not by a runtime guard** (Issue #1678 /
+// agent-audit finding B5 — investigated and closed as a confirmed-safe
+// invariant, now hardened + tested rather than left implicit). The Lua global
+// `ai` is bound HERE, inside `InitLuaUi` — never inside `InitLuaCore`. Every
+// off-UI-thread Lua state (the background automation worker's per-job
+// `bgState` built by `AutomationWorkerLoop`, and the MCP `run_lua` /
+// registered-tool fresh states from `ExecuteLuaSnippetForMcp` /
+// `ExecuteLuaMcpTool`) is built via `PrepareFreshLuaState`, which calls
+// `InitLuaCore` ONLY (see that function's comment for why `InitLuaUi` is
+// intentionally skipped there — no ImGui surface off the UI thread). So a
+// worker/MCP script referencing the global `ai` sees `nil` and errors out
+// ("attempt to index a nil value") before ever reaching these glues —
+// `ResolveApp` / `AiAssistantController::Submit` etc. are never invoked off
+// the UI thread. Same isolation pattern `tests/ui/mcp_lua_fresh_state_race.
+// test.cpp` proved for the MCP run_lua path; the table-absence half of that
+// contract is locked in by `tests/Lua/LuaBindings.test.cpp`
+// ("ai.* table is absent without InitLuaUi (off-UI-thread contract)") so a
+// future refactor that moves `ai` registration into `InitLuaCore` fails a
+// test instead of silently reopening this race. If that ever becomes
+// necessary, `ai.*` would need an explicit hop through
+// `MainThreadDispatcher::PostToMainThread` — see the `RunOnUiThreadAsCommandResult`
+// precedent used by `Commands/AppViewCommands.cpp` / `Commands/PaneCommands.cpp`
+// / `Commands/Builtin/BuiltinCommands_Debug.cpp` — or `luaL_error`-ing stubs on
+// non-UI states.
 
 // Build an `AiContextBlock` from a Lua table { name=string, body=string,
 // kind=("active_ticket"|"multi_selected_tickets"|"visible_grid_rows"|
@@ -747,7 +765,11 @@ bool AppController::Impl::SubmitFieldEdit(const std::string& issueId, const Trac
     return app_.SubmitFieldEdit(issueId, field, rawValues, outError);
 }
 smatchet::cmd::CommandRegistry& AppController::Impl::LuaCommands() { return app_.Commands(); }
-AppController* AppController::Impl::AppForCommandContext() { return &app_; }
+// Facet accessors for the invoke glue's command context. The upcasts happen
+// here, where the concrete app type is complete; the glue TU sees only the
+// forward-declared facets.
+IAppScenarioHost* AppController::Impl::ScenarioHostForCommandContext() { return &app_; }
+IAppThreading* AppController::Impl::ThreadingForCommandContext() { return &app_; }
 
 std::tuple<sol::object, std::string> AppController::Impl::LuaGetTicketBind(sol::state_view sv,
                                                                            const std::string& issueId) {
@@ -758,7 +780,10 @@ std::tuple<sol::object, std::string> AppController::Impl::LuaGetTicketBind(sol::
     CachedTicket ticket;
     // CacheBackendKeyCopy is mutex-guarded — this bind runs on the Lua automation / MCP
     // worker thread while the UI thread may re-stamp the key on a tracker swap (Slice 1b).
-    if (app_.Cache->TryGetTicket(app_.focusedContext().CacheBackendKeyCopy(), issueId, ticket)) {
+    // DR6: null-check Cache before dereferencing. RecreateLocalCacheDatabase resets Cache on
+    // the UI thread while this worker runs, so the pointer can be null here; a missing ticket
+    // (nil return) is the correct graceful degradation rather than a crash (Pillar 3).
+    if (app_.Cache && app_.Cache->TryGetTicket(app_.focusedContext().CacheBackendKeyCopy(), issueId, ticket)) {
         return {sol::make_object(sv, ticket), ""};
     }
     return {sol::make_object(sv, sol::nil), "Ticket not found in local cache"};

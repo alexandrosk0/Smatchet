@@ -125,6 +125,28 @@ TEST_CASE("IssueDraftHelpers::FromCachedTicket skips create-suppressed and speci
     CHECK(d.ProjectKey == "PROJ"); // derived from ticket.id "PROJ-7"
 }
 
+TEST_CASE("IssueDraftHelpers::FromCachedTicket derives project key per backend id shape") {
+    std::vector<TrackerField> catalog;
+    std::vector<std::string> inherit; // empty -> default inherit (takes project from row)
+
+    SUBCASE("Jira/Linear/Plane KEY-NUM splits on first dash") {
+        IssueDraft d = IssueDraftHelpers::FromCachedTicket(MakeTicket("PROJ-7"), catalog, "F", "1", "Bug", inherit);
+        CHECK(d.ProjectKey == "PROJ");
+    }
+    SUBCASE("DR18: GitHub owner/repo#N keeps the dash-containing repo name") {
+        // Splitting on the first '-' would corrupt this to "acme/react"; the create
+        // POST would then target the wrong repository. Project key must be owner/repo.
+        IssueDraft d =
+            IssueDraftHelpers::FromCachedTicket(MakeTicket("acme/react-native#12"), catalog, "F", "1", "Bug", inherit);
+        CHECK(d.ProjectKey == "acme/react-native");
+    }
+    SUBCASE("GitHub commit row owner/repo@sha") {
+        IssueDraft d =
+            IssueDraftHelpers::FromCachedTicket(MakeTicket("acme/web-app@abc123"), catalog, "F", "1", "Bug", inherit);
+        CHECK(d.ProjectKey == "acme/web-app");
+    }
+}
+
 TEST_CASE("IssueDraftHelpers::FromCachedTicket uses fallbacks when ticket is empty") {
     CachedTicket empty;
     std::vector<TrackerField> catalog;

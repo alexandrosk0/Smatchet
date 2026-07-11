@@ -5,14 +5,13 @@
 #if defined(SMATCHET_WITH_AI)
 
 #include "AiClientFactory.h"
+#include "Commands/IAppThreading.h"
 #include "AiEndpointPolicy.h"
 #include "AiEndpointSanitize.h"
-#include "AppController.h"
 #include "ConfigManager.h"
 #include "IAiClient.h"
 #include "Logger.h"
 #include "SmatchetLocalization.h"
-#include "MainThreadDispatcher.h"
 #include "SmatchetUiSession.h"
 
 #include <algorithm>
@@ -121,7 +120,7 @@ void PublishProbeResult(const std::string& errMsg, AiProvider provider, const st
 
 namespace AiPrefsTestConnection {
 
-void TriggerProbe(UiDrawSession& d, AppController& app, AiProvider provider) {
+void TriggerProbe(UiDrawSession& d, IAppThreading& app, AiProvider provider) {
     LOG_INFO("AiPrefsTestConnection::TriggerProbe start providerKind=%d", static_cast<int>(provider));
     TrackerConfig probeCfg = d.cfg; // snapshot by value
     d.assistantPrefsTestInFlight = true;
@@ -139,12 +138,11 @@ void TriggerProbe(UiDrawSession& d, AppController& app, AiProvider provider) {
     const std::string modelId = plan.ModelId;
     const std::string defaultedBaseUrl = plan.DefaultedBaseUrl;
 
-    MainThreadDispatcher& dispatcher = app.mainThreadDispatcher;
     // Joined background-task pool, not a raw detached thread — the no-detach lint forbids that.
-    // Joined at shutdown, so the &dispatcher capture stays valid for the task's whole life.
-    app.LaunchBackgroundTask([provider, clientCfg, cancel, defaultedBaseUrl, modelId, &dispatcher]() {
+    // Joined at shutdown, so the &app capture stays valid for the task's whole life.
+    app.LaunchBackgroundTask([provider, clientCfg, cancel, defaultedBaseUrl, modelId, &app]() {
         const std::string errMsg = RunProbe(provider, clientCfg, modelId, cancel);
-        dispatcher.PostToMainThread([errMsg, cancel, provider, defaultedBaseUrl]() {
+        app.PostToMainThread([errMsg, cancel, provider, defaultedBaseUrl]() {
             PublishProbeResult(errMsg, provider, defaultedBaseUrl, cancel);
         });
     });

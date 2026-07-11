@@ -38,3 +38,42 @@ setup() {
     [[ "$output" == *"2-line wrapped LOG_ERROR"* ]]
     [[ "$output" == *"3-line wrapped LOG_ERROR"* ]]
 }
+
+# ---------- coverage-delta-gate.sh: TEST_CHANGES recognition ----------
+# The gate cds to its own ../.. — copying it into a fixture repo makes that the
+# fixture root, so the whole diff pipeline runs hermetically against fixture git.
+
+# make_fixture_repo — a base commit with one real prod TU, on branch main.
+make_fixture_repo() {
+    FIXREPO="$(mktemp -d)"
+    git -C "$FIXREPO" init -q -b main
+    git -C "$FIXREPO" config user.email t@t && git -C "$FIXREPO" config user.name t
+    mkdir -p "$FIXREPO/scripts/dev" "$FIXREPO/Source/Core/src"
+    cp "$DELTA_GATE" "$FIXREPO/scripts/dev/"
+    printf 'int foo() { return 1; }\n' > "$FIXREPO/Source/Core/src/a.cpp"
+    git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm base
+    git -C "$FIXREPO" checkout -qb head
+    printf 'int foo() { return 2; }\nint bar() { return 3; }\n' > "$FIXREPO/Source/Core/src/a.cpp"
+}
+
+@test "coverage-delta-gate.sh: NEW test dir's *.test.cpp earns gate credit (tests/monkey)" {
+    make_fixture_repo
+    mkdir -p "$FIXREPO/tests/monkey"
+    printf 'int t() { return 0; }\n' > "$FIXREPO/tests/monkey/m.test.cpp"
+    git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm head
+    run env SMATCHET_COVERAGE_GATE_BASE=main bash "$FIXREPO/scripts/dev/coverage-delta-gate.sh"
+    rm -rf "$FIXREPO"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"production + test files both changed"* ]]
+}
+
+@test "coverage-delta-gate.sh: tests/support *.test.cpp earns NO credit (dismissable helper)" {
+    make_fixture_repo
+    mkdir -p "$FIXREPO/tests/support"
+    printf 'int t() { return 0; }\n' > "$FIXREPO/tests/support/h.test.cpp"
+    git -C "$FIXREPO" add -A && git -C "$FIXREPO" commit -qm head
+    run env SMATCHET_COVERAGE_GATE_BASE=main bash "$FIXREPO/scripts/dev/coverage-delta-gate.sh"
+    rm -rf "$FIXREPO"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"FAIL"* ]]
+}

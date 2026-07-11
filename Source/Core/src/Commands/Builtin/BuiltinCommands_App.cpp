@@ -5,8 +5,10 @@
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 
-#include "AppController.h"
-#include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+// fan-in Phase 5: depend on the narrow IAppMeta facet, not the full AppController.h.
+#include "Interfaces/IAppMeta.h"
+#include "Types/AppUpdateTypes.h" // AppUpdateInfo, named directly by the app.check_updates handler
+#include <nlohmann/json.hpp> // this TU constructs nlohmann::json directly.
 #include "ConfigManager.h"
 
 #include <string>
@@ -17,7 +19,7 @@ namespace cmd {
 
 using builtin_detail::MakeCommand;
 
-void RegisterAppCommands(CommandRegistry& reg, AppController& app) {
+void RegisterAppCommands(CommandRegistry& reg, IAppMeta& app) {
     {
         Command c = MakeCommand("app.version", "Application version + build metadata.",
                                 [&app](const nlohmann::json&, const CommandContext&) {

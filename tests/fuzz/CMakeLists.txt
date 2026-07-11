@@ -97,6 +97,11 @@ smatchet_add_fuzz_target(fuzz_markdown_adf
     SOURCES
         fuzz_markdown_adf.cpp
         "${_fuzz_core}/src/Ui/MarkdownConvert.cpp"
+        # MarkdownConvert god-file split (god-file-splits plan): the ADF entry point in
+        # the spine delegates to md_detail:: engines defined in these companion TUs.
+        "${_fuzz_core}/src/Ui/MarkdownToAdf.cpp"
+        "${_fuzz_core}/src/Ui/MarkdownToHtml.cpp"
+        "${_fuzz_core}/src/Ui/AdfToMarkdown.cpp"
         ${_fuzz_logger_srcs}
     INCLUDES
         "${_fuzz_core}/include"
@@ -236,3 +241,16 @@ smatchet_add_fuzz_target(fuzz_ai_endpoint_sanitize
     INCLUDES
         "${_fuzz_core}/include"
     CORPUS ai_endpoint_sanitize)
+
+# smatchet::l10n::ConversionSpecifiers / FormatSpecifiersMatch — the printf
+# conversion-specifier guard that gates an attacker-influenceable Locales/<lang>.json
+# override before it reaches vsnprintf in SmatchetLocalization::Format (format-string
+# / arbitrary-write boundary, SECURITY_AUDIT.md #1). Closure: header-only
+# (SmatchetLocalizationFormatGuard.h + std) — no SmatchetLocalization.cpp
+# (ConfigManager/Logger) needed. Raw-string entry point.
+smatchet_add_fuzz_target(fuzz_locale_format_guard
+    SOURCES
+        fuzz_locale_format_guard.cpp
+    INCLUDES
+        "${_fuzz_core}/include"
+    CORPUS locale_format_guard)

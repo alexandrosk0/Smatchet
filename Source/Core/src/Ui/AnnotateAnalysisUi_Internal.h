@@ -34,6 +34,9 @@
 #include <vector>
 
 class AppController;
+class IAppTicketData;
+class IAppTicketMutations;
+struct TrackerField;
 
 // File-scope types — used by AnnotateAnalysisUi::AnnotateState defined below.
 // Not in an anon namespace so AnnotateState (a nested type) can name them.
@@ -107,6 +110,11 @@ struct AnnotateAnalysisUi::AnnotateState {
     std::string profileErr;
     std::vector<std::string> profileGroups;
     bool openProfileModal = false;
+    /// DR22 — the assign / quick-comment modal is opened from row cells and the Entry-tab
+    /// row menu, both of which live inside a child window. OpenPopup issued there resolves
+    /// to a different id than BeginPopupModal at the parent scope, so the modal never
+    /// appeared. This flag defers the OpenPopup to the same scope as BeginPopupModal.
+    bool openAssignModal = false;
     /// Pillar 2 — finding #5: profile + assign-modal HTTP runs on a worker. These gates
     /// suppress duplicate dispatches while a fetch is in flight, and the modal renders a
     /// "Loading..." status until the post-back populates the fields.
@@ -182,12 +190,12 @@ void HydrateAnnotateCfgDiskOnce();
 /// Mirrors ScheduleConfigSaveDetached; use instead of ConfigManager::SaveAnnotateAnalysis
 /// from any UI-callback save site.
 void ScheduleAnnotateConfigSaveDetached(const AnnotateAnalysisConfig& cfg);
-void MaybeAutoselectCallstackTrackerField(const AppController& app);
-void MaybeAutoselectLastFoundClTrackerField(const AppController& app);
-void MaybeAutoselectLastOccurrencesTrackerField(const AppController& app);
+void MaybeAutoselectCallstackTrackerField(const std::vector<TrackerField>& availableFields);
+void MaybeAutoselectLastFoundClTrackerField(const std::vector<TrackerField>& availableFields);
+void MaybeAutoselectLastOccurrencesTrackerField(const std::vector<TrackerField>& availableFields);
 void ApplyShowRawCallstack(bool show);
-void TryFillBeforeChangelistAndDateFromJira(const AppController& app, const std::string& issueKey);
-void TryFillCallstackFromJira(const AppController& app, const std::string& issueKey);
+void TryFillBeforeChangelistAndDateFromJira(const IAppTicketData& ticketData, const std::string& issueKey);
+void TryFillCallstackFromJira(const IAppTicketData& ticketData, const std::string& issueKey);
 std::vector<std::string> SplitIgnoreKeywords(const std::string& multi);
 
 // --- Worker / detail-poll helpers (AnnotateAnalysisUi_Worker.cpp) ---
@@ -224,7 +232,8 @@ std::string BuildAnnotateQuickCommentTemplate(const std::string& issueKey, const
                                               const AnnotateRow& row, const std::vector<CommentTemplate>& templates);
 
 // --- Preferences-form helper (AnnotateAnalysisUi_Preferences.cpp) ---
-void DrawAnnotatePersistedOptionsForm(const AppController& app, const AnnotateUiThemeColors& theme);
+void DrawAnnotatePersistedOptionsForm(const std::vector<TrackerField>& availableFields,
+                                      const IAppTicketMutations& ticketMutations, const AnnotateUiThemeColors& theme);
 
 // --- DrawContent section helpers (AnnotateAnalysisUi_Window.cpp) ---
 // Per-frame context threaded through the section helpers that DrawContent

@@ -23,6 +23,8 @@
 #define NOMINMAX
 #endif
 #include <winsock2.h>
+#include <bcrypt.h> // BCryptGenRandom — spawn-token CSPRNG (backlog 2026-06-28)
+#pragma comment(lib, "bcrypt")
 #endif
 
 #include <httplib.h>
@@ -45,6 +47,10 @@
 #include <unistd.h>
 #if defined(__APPLE__)
 #include <mach-o/dyld.h> // _NSGetExecutablePath (CPP_CODE_AUDIT.md #33g — was only transitively included)
+#endif
+#if defined(__linux__)
+#include <cerrno>
+#include <sys/random.h> // getrandom — spawn-token CSPRNG (backlog 2026-06-28)
 #endif
 #endif
 
@@ -478,18 +484,59 @@ void EmitErrorToStderr(const nlohmann::json& envelope) {
 } // CLI stdout — product output, not logging
 
 #if defined(SMATCHET_WITH_MCP)
-/// `draws * 8` lowercase hex chars from std::random_device. random_device is
-/// non-deterministic on every supported host and each draw yields 32 bits, so the
-/// result carries `draws * 32` bits of entropy. Shared by the spawn-log filename
-/// suffix and the per-spawn MCP auth token so the two don't duplicate the
-/// random-device / hex-formatting pattern (DRY — no second copy vs origin/develop).
+/// Fill `buf` with `n` bytes from the explicit OS CSPRNG — BCryptGenRandom
+/// (Windows CNG), arc4random_buf (macOS/BSD), getrandom (Linux). Returns false only when the
+/// platform call failed or no platform branch applies; the caller then falls back
+/// to std::random_device, which the C++ standard does not guarantee to be
+/// crypto-secure or even non-deterministic (backlog 2026-06-28 — the shipped hosts
+/// all take an explicit branch, so the fallback never runs there).
+bool FillOsCsprng(unsigned char* buf, size_t n) {
+#if defined(_WIN32)
+    const NTSTATUS status = BCryptGenRandom(nullptr, buf, static_cast<ULONG>(n), BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+    return BCRYPT_SUCCESS(status);
+#elif defined(__APPLE__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+    arc4random_buf(buf, n);
+    return true;
+#elif defined(__linux__)
+    size_t off = 0;
+    while (off < n) {
+        const ssize_t got = getrandom(buf + off, n - off, 0);
+        if (got < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return false;
+        }
+        off += static_cast<size_t>(got);
+    }
+    return true;
+#else
+    (void)buf;
+    (void)n;
+    return false;
+#endif
+}
+
+/// `draws * 8` lowercase hex chars (`draws * 32` bits) from the OS CSPRNG, with a
+/// std::random_device fallback only if the platform call fails — never weaker than
+/// the previous random_device-only draw. Shared by the spawn-log filename suffix
+/// and the per-spawn MCP auth token so the two don't duplicate the RNG /
+/// hex-formatting pattern (DRY — single chokepoint).
 std::string RandomHexToken(int draws) {
-    std::random_device rd;
+    const size_t byteCount = static_cast<size_t>(draws) * 4u;
+    std::vector<unsigned char> bytes(byteCount, 0);
+    if (!FillOsCsprng(bytes.data(), byteCount)) {
+        std::random_device rd;
+        for (size_t i = 0; i < byteCount; i += 4) {
+            const unsigned int v = static_cast<unsigned int>(rd());
+            std::memcpy(&bytes[i], &v, 4);
+        }
+    }
     std::string out;
-    out.reserve(static_cast<size_t>(draws) * 8);
-    char buf[9];
-    for (int i = 0; i < draws; ++i) {
-        std::snprintf(buf, sizeof(buf), "%08x", static_cast<unsigned int>(rd()));
+    out.reserve(byteCount * 2);
+    char buf[3];
+    for (size_t i = 0; i < byteCount; ++i) {
+        std::snprintf(buf, sizeof(buf), "%02x", static_cast<unsigned int>(bytes[i]));
         out += buf;
     }
     return out;
@@ -546,8 +593,8 @@ bool LaunchEphemeralInstance(const std::string& exePath, int port, std::string* 
     const std::string logPath = ComputeSpawnLogPath(port);
     if (outLogPath)
         *outLogPath = logPath;
-    // main.cpp parses `--mcp-port <port>` as two separate argv entries (space-separated),
-    // NOT `--mcp-port=<port>` — using the equals form would silently fall through.
+        // main.cpp parses `--mcp-port <port>` as two separate argv entries (space-separated),
+        // NOT `--mcp-port=<port>` — using the equals form would silently fall through.
 #if defined(_WIN32)
     // CommandLineToArgvW handles quoted whitespace; pass space-separated tokens.
     std::string cmdLine = "\"" + exePath + "\" --ephemeral --mcp-port " + portStr;
@@ -1457,7 +1504,8 @@ int RunCmdInProcessImpl(int argc, char** argv) {
         }
 
         smatchet::cmd::CommandContext ctx;
-        ctx.App = boot.app.get();
+        ctx.ScenarioHost = boot.app.get();
+        ctx.Threading = boot.app.get();
         ctx.Source = smatchet::cmd::CommandSource::Cli;
         ctx.ConfirmedDestructive = pa.yes;
         ctx.DryRun = pa.dryRun;
@@ -1653,6 +1701,16 @@ int RunCmdAttachDispatch(const ParsedArgs& pa, const std::string& host, int port
     httplib::Client cli(host, port);
     cli.set_connection_timeout(2, 0);
     cli.set_read_timeout(readTimeoutSec, 0);
+    // Present the configured MCP token on the direct attach path (finding DR12b), mirroring how
+    // the --spawn path sets X-Smatchet-Token. Without it, a server guarding loopback with an
+    // operator token 401s this request (res is set, so the !res --spawn fallback never engages).
+    {
+        std::string hdrName;
+        std::string hdrValue;
+        if (McpAttachAuthHeader(ConfigManager::Load().McpAuthToken, hdrName, hdrValue)) {
+            cli.set_default_headers({{hdrName, hdrValue}});
+        }
+    }
 
     auto res = cli.Post("/mcp/tools/call", body.dump(), "application/json");
     if (!res) {

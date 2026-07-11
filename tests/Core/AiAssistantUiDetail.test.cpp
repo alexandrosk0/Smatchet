@@ -46,8 +46,22 @@ TEST_CASE("AiResolveProvider: maps cfg int to enum, clamps out-of-range to OpenA
     CHECK(AiResolveProvider(1) == AiProvider::Anthropic);
     CHECK(AiResolveProvider(2) == AiProvider::OllamaOpenAiCompat);
     CHECK(AiResolveProvider(3) == AiProvider::OllamaNative);
+    // DR19: DeepSeek (kind 4) is a real selectable provider — it must not fall
+    // through to OpenAi, or the per-turn model picker offers the wrong catalog.
+    CHECK(AiResolveProvider(4) == AiProvider::DeepSeek);
     CHECK(AiResolveProvider(99) == AiProvider::OpenAi);
     CHECK(AiResolveProvider(-1) == AiProvider::OpenAi);
+}
+
+TEST_CASE("AiProviderFromKind: single source of truth for kind->provider (DR19)") {
+    // AiResolveProvider and ai.validate-prefs both delegate here; keep this the
+    // one place a new provider must be added so the copies can't drift again.
+    CHECK(AiProviderFromKind(0) == AiProvider::OpenAi);
+    CHECK(AiProviderFromKind(1) == AiProvider::Anthropic);
+    CHECK(AiProviderFromKind(2) == AiProvider::OllamaOpenAiCompat);
+    CHECK(AiProviderFromKind(3) == AiProvider::OllamaNative);
+    CHECK(AiProviderFromKind(4) == AiProvider::DeepSeek);
+    CHECK(AiProviderFromKind(99) == AiProvider::OpenAi);
 }
 
 TEST_CASE("AiResolveModelCombo: empty catalog -> free-form input") {

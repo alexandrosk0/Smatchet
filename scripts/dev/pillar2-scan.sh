@@ -131,8 +131,12 @@ for arg in "$@"; do
         # foo(p) */ // commented out`) does NOT match `//*` (needs second
         # `/`) nor `\**` (needs literal `*` at column 0).
         stripped="${line_text#"${line_text%%[![:space:]]*}"}"
+        # Skip only genuine comment lines: // line comment, /* block open, `* text`
+        # block continuation, or a bare `*/` close. The old `\**` matched ANY line
+        # starting with '*', so a pointer-deref sink like `*out = popen(...)` was
+        # silently skipped — a false negative that let sync I/O through the gate.
         case "$stripped" in
-            //*|/\**|\**) continue ;;
+            //*|/\**|'* '*|'*/') continue ;;
         esac
 
         # Check the 3 preceding lines for the BOTH-OK pattern.

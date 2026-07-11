@@ -215,3 +215,12 @@ setup() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"agents/scripts/core/lib/"* ]]
 }
+
+@test "default target set covers agents/scripts/project/lint-rules.d (sourced rule modules)" {
+    # test-lint-rules.sh sources its per-rule-family modules from lint-rules.d/;
+    # a regression reverting to the flat maxdepth-1 set would silently drop the
+    # strict-zone rule scanners from the required Shell-lint gate.
+    run bash "$LINT" --list-targets
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"agents/scripts/project/lint-rules.d/"* ]]
+}

@@ -15,6 +15,27 @@ enum class AiProvider : int {
     DeepSeek = 4,
 };
 
+// Canonical mapping from the persisted cfg.AiProviderKind int onto the enum,
+// clamping any out-of-range value to OpenAi. Single source of truth so a new
+// provider cannot be added to the enum while a consumer's local switch silently
+// drifts — the DR19 regression, where DeepSeek (kind 4) was missed in two
+// disconnected copies. Consumers (AiResolveProvider, ai.validate-prefs) delegate.
+inline AiProvider AiProviderFromKind(int kind) {
+    switch (kind) {
+    case 1:
+        return AiProvider::Anthropic;
+    case 2:
+        return AiProvider::OllamaOpenAiCompat;
+    case 3:
+        return AiProvider::OllamaNative;
+    case 4:
+        return AiProvider::DeepSeek;
+    case 0:
+    default:
+        return AiProvider::OpenAi;
+    }
+}
+
 struct AiMessage {
     std::string Role;
     std::string Content;

@@ -14,7 +14,9 @@
 
 #include "AiClientFactory.h"
 #include "AiTypes.h"
-#include "AppController.h"
+// clang-format off
+// SMATCHET_DEVIATION(rule=duplication; reason=the shared scenario-TU include + namespace-open boilerplate is grandfathered across the Scenarios/*.cpp siblings; dropping the vestigial AppController.h include (fan-in Phase 6 T1a) re-hashed the boilerplate clone window vs a sibling scenario — not a real copy-paste; owner=orchestrator; revisit=when the scenario prologue is factored into a shared header)
+// clang-format on
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "IAiClient.h"
 #include "UiPerfMonitor.h"
@@ -89,9 +91,24 @@ std::unique_ptr<IAiClient> StubTransportDownFactory(AiProvider /*provider*/) {
 
 class AiAssistantStreamingTransportDownScenario : public IScenario {
   public:
+    // SMATCHET_DEVIATION(rule=duplication; reason=DR7 joining destructor + stub-factory boilerplate is intentionally
+    // identical teardown (signal cancel, join worker, clear AiClientFactory override) across the streaming scenario
+    // stubs so no scenario can leak a joinable thread on replace; owner=deep-review; revisit=2026-10-01) DR7 joining
+    // destructor. If this scenario is destroyed while its worker is still joinable (e.g. the runner replaces the active
+    // scenario), signal the cancel token, join the thread, and clear the factory override here so ~std::thread never
+    // runs on a joinable thread (std::terminate) and the stub-backed AiClientFactory override never dangles into freed
+    // state.
+    ~AiAssistantStreamingTransportDownScenario() override {
+        if (cancel_) {
+            cancel_->store(true, std::memory_order_release);
+        }
+        JoinWorker();
+        ClearOverride();
+    }
+
     std::string Name() const override { return "ai-assistant-streaming-transport-down-within-5s"; }
 
-    void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& outErr) override {
+    void OnStart(IAppScenarioHost& /*app*/, const nlohmann::json& args, std::string& outErr) override {
         frames_ = (std::max)(1, args.value("frames", 120));
         g_partialDeltas = (std::max)(1, args.value("partialDeltas", 3));
         g_perDeltaSleepMs = (std::max)(1, args.value("perDeltaSleepMs", 10));
@@ -132,13 +149,13 @@ class AiAssistantStreamingTransportDownScenario : public IScenario {
         UiPerfMonitor::Instance().Reset();
     }
 
-    void OnFrame(AppController& /*app*/, int /*frameIndex*/) override {
+    void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override {
         // Idle.
     }
 
     bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
 
-    void OnCancel(AppController& /*app*/) override {
+    void OnCancel(IAppScenarioHost& /*app*/) override {
         if (cancel_) {
             cancel_->store(true, std::memory_order_release);
         }
@@ -146,7 +163,7 @@ class AiAssistantStreamingTransportDownScenario : public IScenario {
         ClearOverride();
     }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         JoinWorker();
         ClearOverride();
 

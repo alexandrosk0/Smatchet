@@ -40,7 +40,7 @@ UiMode NextUiMode(UiMode m) {
 
 } // namespace
 
-void RegisterUiModeCommand(CommandRegistry& reg, AppController& app) {
+void RegisterUiModeCommand(CommandRegistry& reg, IMainThreadPoster& app) {
     if (reg.HasExact("ui.mode"))
         return;
 

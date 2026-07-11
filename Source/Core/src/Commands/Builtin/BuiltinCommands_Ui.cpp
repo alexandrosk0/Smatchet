@@ -12,8 +12,9 @@
 #include "Commands/CommandRegistry.h"
 #include "Commands/MainThreadDispatch.h"
 
-#include "AppController.h"
-#include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+// fan-in Phase 6: every app use in this TU is the IMainThreadPoster upcast for the UI-thread
+// hop, so it takes the narrow poster ref and drops AppController.h entirely.
+#include <nlohmann/json.hpp> // this TU constructs nlohmann::json directly.
 #include "ConfigManager.h"
 #include "SmatchetUiSession.h"
 
@@ -38,8 +39,8 @@ namespace {
 // nudges the current value. Clamped to the legible range via the single
 // SmatchetDefaults::kFontSize*Pt source of truth (shared with config load +
 // the menu enable-gates).
-CommandResult AdjustFontSize(AppController& app, int delta, bool reset) {
-    return RunOnUiThreadAsCommandResult(app, [delta, reset]() {
+CommandResult AdjustFontSize(IMainThreadPoster& poster, int delta, bool reset) {
+    return RunOnUiThreadAsCommandResult(poster, [delta, reset]() {
         int pt = reset ? SmatchetDefaults::kFontSizeDefaultPt : g_ui.cfg.FontSizePt + delta;
         if (pt < SmatchetDefaults::kFontSizeMinPt) {
             pt = SmatchetDefaults::kFontSizeMinPt;
@@ -57,15 +58,15 @@ CommandResult AdjustFontSize(AppController& app, int delta, bool reset) {
 
 } // namespace
 
-void RegisterUiInteractionCommands(CommandRegistry& reg, AppController& app) {
+void RegisterUiInteractionCommands(CommandRegistry& reg, IMainThreadPoster& poster) {
     if (reg.HasExact("ui.zoom.in")) {
         return;
     }
 
     {
         Command c = MakeCommand("ui.zoom.in", "Increase the UI font size by one point (max 32).",
-                                [&app](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
-                                    return AdjustFontSize(app, +1, /*reset=*/false);
+                                [&poster](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
+                                    return AdjustFontSize(poster, +1, /*reset=*/false);
                                 });
         c.Destructive = false;
         c.Idempotent = false; // clamps at 32, but each call nudges until then
@@ -74,8 +75,8 @@ void RegisterUiInteractionCommands(CommandRegistry& reg, AppController& app) {
     }
     {
         Command c = MakeCommand("ui.zoom.out", "Decrease the UI font size by one point (min 8).",
-                                [&app](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
-                                    return AdjustFontSize(app, -1, /*reset=*/false);
+                                [&poster](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
+                                    return AdjustFontSize(poster, -1, /*reset=*/false);
                                 });
         c.Destructive = false;
         c.Idempotent = false;
@@ -84,8 +85,8 @@ void RegisterUiInteractionCommands(CommandRegistry& reg, AppController& app) {
     }
     {
         Command c = MakeCommand("ui.zoom.reset", "Reset the UI font size to the default (16).",
-                                [&app](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
-                                    return AdjustFontSize(app, 0, /*reset=*/true);
+                                [&poster](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
+                                    return AdjustFontSize(poster, 0, /*reset=*/true);
                                 });
         c.Destructive = false;
         c.Idempotent = true; // always lands on the default
@@ -95,8 +96,8 @@ void RegisterUiInteractionCommands(CommandRegistry& reg, AppController& app) {
     {
         Command c =
             MakeCommand("ui.open_view", "Open the command palette pre-filtered to the view.toggle.* panel commands.",
-                        [&app](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
-                            return RunOnUiThreadAsCommandResult(app, []() {
+                        [&poster](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
+                            return RunOnUiThreadAsCommandResult(poster, []() {
                                 g_ui.requestCommandPaletteOpen = true;
                                 g_ui.requestCommandPaletteFilter = "view.toggle.";
                                 return CommandResult::Success({{"opened", true}});
@@ -109,8 +110,8 @@ void RegisterUiInteractionCommands(CommandRegistry& reg, AppController& app) {
     }
     {
         Command c = MakeCommand("grid.clear_selection", "Clear the focused grid pane's rectangular selection.",
-                                [&app](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
-                                    return RunOnUiThreadAsCommandResult(app, []() {
+                                [&poster](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
+                                    return RunOnUiThreadAsCommandResult(poster, []() {
                                         g_ui.focusedPane().gridState.RectSel.ClearAll();
                                         return CommandResult::Success({{"cleared", true}});
                                     });

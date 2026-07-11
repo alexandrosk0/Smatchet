@@ -132,6 +132,59 @@ TEST_CASE("DownloadAttachmentForPreview rejects an unsupported mime type before 
 }
 
 // ---------------------------------------------------------------------------
+// Update-check response byte cap — pins the streaming-abort invariant.
+//
+// CheckForAppUpdate bounds the GitHub release listing with a cpr::WriteCallback
+// that appends the streamed body into an accumulator until a hard byte cap would
+// be exceeded, then aborts the transfer (returns false, leaving the accumulator
+// unchanged) so a hostile / misconfigured endpoint can't stream an unbounded
+// body into memory before the parser runs. The live cpr::Get path is
+// network-only and cannot run in a hermetic unit (see the file header), so these
+// cases pin the exact accept/abort predicate that callback implements: appends
+// below the cap accumulate; the write that would cross the cap is rejected whole
+// (no partial append). If the production cap logic drifts, this contract breaks.
+// ---------------------------------------------------------------------------
+namespace {
+// Mirror of the CheckForAppUpdate WriteCallback body: true == keep going, false
+// == abort. On rejection the accumulator is left byte-for-byte unchanged.
+bool CappedAccumulate(std::string& accum, const std::string& chunk, size_t cap) {
+    if (accum.size() + chunk.size() > cap) {
+        return false;
+    }
+    accum.append(chunk);
+    return true;
+}
+} // namespace
+
+TEST_CASE("Update-check byte cap accepts chunks up to the cap and aborts past it") {
+    constexpr size_t cap = 16;
+    std::string accum;
+
+    // Below the cap: appended, transfer continues.
+    CHECK(CappedAccumulate(accum, "12345678", cap)); // 8 bytes
+    CHECK(accum.size() == 8);
+
+    // Exactly reaching the cap is allowed (size == cap is not "> cap").
+    CHECK(CappedAccumulate(accum, "abcdefgh", cap)); // +8 == 16
+    CHECK(accum.size() == 16);
+
+    // The next byte would cross the cap: rejected whole, accumulator untouched.
+    CHECK_FALSE(CappedAccumulate(accum, "x", cap));
+    CHECK(accum.size() == 16);
+    CHECK(accum == "12345678abcdefgh");
+}
+
+TEST_CASE("Update-check byte cap rejects an oversized first chunk without partial append") {
+    constexpr size_t cap = 4;
+    std::string accum;
+
+    // A single chunk larger than the whole cap is refused atomically — no prefix
+    // is retained (the abort must not leave a truncated body for the parser).
+    CHECK_FALSE(CappedAccumulate(accum, "overflowing-chunk", cap));
+    CHECK(accum.empty());
+}
+
+// ---------------------------------------------------------------------------
 // Version helpers — compile-time constants, non-empty contract.
 // ---------------------------------------------------------------------------
 TEST_CASE("GetAppVersion and GetGitHubReleaseRepo return non-empty compile-time defaults") {

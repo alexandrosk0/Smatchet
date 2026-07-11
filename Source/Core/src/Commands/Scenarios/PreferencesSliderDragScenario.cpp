@@ -15,7 +15,6 @@
 
 #include "Commands/Scenarios/IScenario.h"
 
-#include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "SmatchetUiSession.h"
 #include "UiPerfMonitor.h"
@@ -37,12 +36,12 @@ class PreferencesSliderDragScenario : public IScenario {
   public:
     std::string Name() const override { return "preferences-slider-drag"; }
 
-    void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& /*outErr*/) override {
+    void OnStart(IAppScenarioHost& /*app*/, const nlohmann::json& args, std::string& /*outErr*/) override {
         frames_ = (std::max)(1, args.value("frames", 600));
         UiPerfMonitor::Instance().Reset();
     }
 
-    void OnFrame(AppController& /*app*/, int /*frameIndex*/) override {
+    void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override {
         // Simulate a user dragging a slider — 31 sites in SmatchetPreferencesUi
         // call MarkPrefsDirty(d) on every mutation, so one call per frame is
         // the worst case the coalesce has to absorb.
@@ -51,7 +50,7 @@ class PreferencesSliderDragScenario : public IScenario {
 
     bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
 
         // Find the prefs-debounced save row (if present) and total it across

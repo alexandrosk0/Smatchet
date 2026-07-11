@@ -166,13 +166,23 @@ bool IsSensitiveEnvName(const std::string& name) {
         }
         upper.push_back(c);
     }
-    static const char* const kTokens[] = {"TOKEN",  "SECRET",     "PASSWORD", "PASSWD", "APIKEY",     "API_KEY",
-                                           "KEY",    "CREDENTIAL", "_PAT",     "AUTH",   "SESSION",    "COOKIE",
-                                           "PRIVATE", "PASSPHRASE"};
+    static const char* const kTokens[] = {"TOKEN", "SECRET",     "PASSWORD", "PASSWD", "APIKEY",  "API_KEY",   "KEY",
+                                          "AUTH",  "CREDENTIAL", "SESSION",  "COOKIE", "PRIVATE", "PASSPHRASE"};
     for (size_t i = 0; i < sizeof(kTokens) / sizeof(kTokens[0]); ++i) {
         if (upper.find(kTokens[i]) != std::string::npos) {
             return true;
         }
+    }
+    // "_PAT" (Personal-Access-Token vars: *_PAT) is a SUFFIX token, matched as
+    // ends-with — NOT a substring — so it does not false-match *_PATH vars
+    // (LD_LIBRARY_PATH / DYLD_LIBRARY_PATH / GIT_EXEC_PATH / PKG_CONFIG_PATH ...),
+    // which must survive the scrub so p4/git children keep loading shared libs on
+    // Linux/macOS (#1711). "..._PATH" ends with "PATH", not "_PAT", so it is not
+    // flagged; "GITHUB_PAT" ends with "_PAT" and is.
+    static const char kPatSuffix[] = "_PAT";
+    const size_t patLen = sizeof(kPatSuffix) - 1;
+    if (upper.size() >= patLen && upper.compare(upper.size() - patLen, patLen, kPatSuffix) == 0) {
+        return true;
     }
     return false;
 }

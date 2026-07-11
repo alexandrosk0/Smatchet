@@ -407,7 +407,7 @@ void DrawCallstackRowUserCell(AnnotateDrawCtx& ctx, const AnnotateRow& row, bool
     }
     if (ImGui::IsMouseClicked(1) && ImGui::IsItemHovered()) {
         PrepareAssignModal(app, row, pending ? std::string() : row.Annotate.User);
-        ImGui::OpenPopup("annotate_assign");
+        State().openAssignModal = true;
     }
 }
 
@@ -720,7 +720,7 @@ void DrawEntryLineCopyMenu(const EntryLineCtx& lc, const P4AnnotatedLine& ln) {
                 br.Annotate.Approximate = false;
                 PrepareAssignModal(lc.App, br, ln.User);
                 ImGui::CloseCurrentPopup();
-                ImGui::OpenPopup("annotate_assign");
+                State().openAssignModal = true;
             }
         }
         ImGui::EndPopup();
@@ -818,7 +818,7 @@ void DrawAssignIssueAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool commitI
             app.LaunchBackgroundTask([&app, capturedIssueKey, capturedAccountId, fieldCopy]() {
                 std::string err;
                 const bool ok = app.SubmitFieldEdit(capturedIssueKey, fieldCopy, {capturedAccountId}, err);
-                app.mainThreadDispatcher.PostToMainThread([ok, err, capturedIssueKey]() {
+                app.PostToMainThread([ok, err, capturedIssueKey]() {
                     if (!HasLiveStateInstance()) {
                         return;
                     }
@@ -855,7 +855,7 @@ void DrawAssignContextCommentAction(AnnotateDrawCtx& ctx, bool readOnlyMode, boo
                 capturedIssueKey, capturedRow.Annotate.User, capturedRow.Parsed.Function, capturedRow.PathForP4,
                 capturedRow.Parsed.LineNumber, capturedRow.Annotate.Changelist, capturedRow.Annotate.Date,
                 capturedRow.Annotate.Approximate, capturedRow.Annotate.LineSnippet, err);
-            app.mainThreadDispatcher.PostToMainThread([ok, err, capturedIssueKey]() {
+            app.PostToMainThread([ok, err, capturedIssueKey]() {
                 if (!HasLiveStateInstance()) {
                     return;
                 }
@@ -901,7 +901,7 @@ void DrawAssignQuickCommentTemplates(AnnotateDrawCtx& ctx, const TrackerConfig& 
                 app.LaunchBackgroundTask([&app, capturedIssueKey, capturedTitle, commentBody]() {
                     std::string err;
                     const bool ok = app.AddIssueCommentPlain(capturedIssueKey, commentBody, err);
-                    app.mainThreadDispatcher.PostToMainThread([ok, err, capturedTitle]() {
+                    app.PostToMainThread([ok, err, capturedTitle]() {
                         if (!HasLiveStateInstance()) {
                             return;
                         }
@@ -958,7 +958,7 @@ void DrawAssignAndContextAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool co
                         capturedRow.Annotate.Approximate, capturedRow.Annotate.LineSnippet, err);
                 }
                 const bool ok = assigned && commented;
-                app.mainThreadDispatcher.PostToMainThread([ok, err, capturedIssueKey]() {
+                app.PostToMainThread([ok, err, capturedIssueKey]() {
                     if (!HasLiveStateInstance()) {
                         return;
                     }
@@ -1014,6 +1014,10 @@ void DrawAssignModalBody(AnnotateDrawCtx& ctx, const TrackerConfig& cfg, bool re
 void DrawAnnotateAssignModal(AnnotateDrawCtx& ctx) {
     AppController& app = ctx.App;
     const AnnotateUiThemeColors& theme = ctx.Theme;
+    if (State().openAssignModal) {
+        ImGui::OpenPopup("annotate_assign");
+        State().openAssignModal = false;
+    }
     if (!ImGui::BeginPopupModal("annotate_assign", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         return;
     }
@@ -1135,9 +1139,9 @@ void AnnotateAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::
 void AnnotateAnalysisUi::DrawContent(AppController& app, bool* wantClose, const std::string& selectedJiraIssueKey) {
     ensureSettingsBuffersLoaded();
 
-    MaybeAutoselectCallstackTrackerField(app);
-    MaybeAutoselectLastFoundClTrackerField(app);
-    MaybeAutoselectLastOccurrencesTrackerField(app);
+    MaybeAutoselectCallstackTrackerField(app.GetAvailableFields());
+    MaybeAutoselectLastFoundClTrackerField(app.GetAvailableFields());
+    MaybeAutoselectLastOccurrencesTrackerField(app.GetAvailableFields());
 
     const bool justOpened = !annotateOpenPrev_;
     annotateOpenPrev_ = true;

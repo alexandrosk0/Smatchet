@@ -240,11 +240,12 @@ PlaneIssuePageFetch FetchPlaneIssuePage(const std::string& planeApi, const std::
             std::string detailParseErr;
             const nlohmann::json ej = smatchet::json_safe::ParseBounded(tb, detailParseErr);
             if (detailParseErr.empty() && ej.is_object() && ej.contains("detail")) {
-                apiDetail = JsonFieldToString(ej, "detail");
+                apiDetail = RedactHttpBodyForLog(JsonFieldToString(ej, "detail"));
             }
         }
         std::string err = "Plane API error " + std::to_string(response.status_code) +
-                          " fetching issues (URL: " + urlHint + "): " + response.text.substr(0, 300);
+                          " fetching issues (URL: " + urlHint +
+                          "): " + RedactHttpBodyForLog(response.text).substr(0, 300);
         if (!apiDetail.empty()) {
             err += " [detail: " + apiDetail + "]";
         }
@@ -633,48 +634,59 @@ std::vector<RemoteProject> PlaneClient::ListProjects() {
     }
 
     const std::string url = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/";
-    cpr::Parameters params;
-    params.Add({"per_page", "100"});
-
-    const cpr::Response resp = TrackerGetLogged("PlaneClient", url, headers, params);
-    if (resp.status_code != 200) {
-        LOG_WARN("PlaneClient::ListProjects: HTTP %ld on %s", resp.status_code, url.c_str());
-        return {};
-    }
 
     std::vector<RemoteProject> projects;
-    try {
-        std::string parseErr;
-        const nlohmann::json j = smatchet::json_safe::ParseBounded(StripUtf8BomCopy(resp.text), parseErr);
-        if (!parseErr.empty()) {
-            LOG_WARN("PlaneClient::ListProjects: invalid JSON in response: %s", parseErr.c_str());
+    std::string cursor;
+    // Follow Plane's cursor pagination so projects beyond the first page are listed (DR25).
+    // The page cap bounds a cursor that never signals end-of-list.
+    for (int page = 0; page < 100; ++page) {
+        cpr::Parameters params;
+        params.Add({"per_page", "100"});
+        if (!cursor.empty()) {
+            params.Add({"cursor", cursor});
+        }
+        const cpr::Response resp = TrackerGetLogged("PlaneClient", url, headers, params);
+        if (resp.status_code != 200) {
+            LOG_WARN("PlaneClient::ListProjects: HTTP %ld on %s", resp.status_code, url.c_str());
             return {};
         }
-        const auto& arr = (j.is_object() && j.contains("results")) ? j["results"] : j;
-        if (!arr.is_array()) {
-            LOG_WARN("PlaneClient::ListProjects: response has no results array.");
+        try {
+            std::string parseErr;
+            const nlohmann::json j = smatchet::json_safe::ParseBounded(StripUtf8BomCopy(resp.text), parseErr);
+            if (!parseErr.empty()) {
+                LOG_WARN("PlaneClient::ListProjects: invalid JSON in response: %s", parseErr.c_str());
+                return {};
+            }
+            const auto& arr = (j.is_object() && j.contains("results")) ? j["results"] : j;
+            if (!arr.is_array()) {
+                LOG_WARN("PlaneClient::ListProjects: response has no results array.");
+                return {};
+            }
+            projects.reserve(projects.size() + arr.size());
+            for (const auto& p : arr) {
+                if (!p.is_object()) {
+                    continue;
+                }
+                RemoteProject rp;
+                rp.id = JsonFieldToString(p, "id");
+                rp.key = JsonFieldToString(p, "identifier"); // may be empty
+                rp.displayName = JsonFieldToString(p, "name");
+                if (rp.id.empty()) {
+                    continue;
+                }
+                projects.push_back(std::move(rp));
+            }
+            cursor = smatchet::plane::NextPaginationCursor(j);
+        } catch (const std::exception& ex) {
+            LOG_WARN("PlaneClient::ListProjects: parse error: %s", ex.what());
+            return {};
+        } catch (...) {
+            LOG_WARN("PlaneClient::ListProjects: parse error (unknown)");
             return {};
         }
-        projects.reserve(arr.size());
-        for (const auto& p : arr) {
-            if (!p.is_object()) {
-                continue;
-            }
-            RemoteProject rp;
-            rp.id = JsonFieldToString(p, "id");
-            rp.key = JsonFieldToString(p, "identifier"); // may be empty
-            rp.displayName = JsonFieldToString(p, "name");
-            if (rp.id.empty()) {
-                continue;
-            }
-            projects.push_back(std::move(rp));
+        if (cursor.empty()) {
+            break;
         }
-    } catch (const std::exception& ex) {
-        LOG_WARN("PlaneClient::ListProjects: parse error: %s", ex.what());
-        return {};
-    } catch (...) {
-        LOG_WARN("PlaneClient::ListProjects: parse error (unknown)");
-        return {};
     }
 
     {

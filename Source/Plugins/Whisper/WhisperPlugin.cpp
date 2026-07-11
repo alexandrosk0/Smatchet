@@ -333,11 +333,11 @@ smatchet::cmd::Command BuildDownloadModelCommand() {
         if (destDir.empty()) {
             return CommandResult::Failure(ErrorCode::HandlerError, "platform shared user-data directory unavailable");
         }
-        if (ctx.App == nullptr) {
+        if (ctx.Threading == nullptr) {
             return CommandResult::Failure(ErrorCode::HandlerError, "AppController unavailable");
         }
         std::string err;
-        if (!PluginOwnedDownloader().Start(*ctx.App, modelId, destDir, err)) {
+        if (!PluginOwnedDownloader().Start(*ctx.Threading, modelId, destDir, err)) {
             return CommandResult::Failure(ErrorCode::HandlerError, err);
         }
         nlohmann::json out;
@@ -894,7 +894,7 @@ void RunHotkeyRelease_Mock_Worker(WhisperPlugin::PhaseEState* state) {
         std::this_thread::sleep_for(mock.delay);
         localState->transcribeInFlight.store(false, std::memory_order_release);
         const std::string text = mock.text;
-        app->mainThreadDispatcher.PostToMainThread([text]() {
+        app->PostToMainThread([text]() {
             ImGuiContext* gctx = ::ImGui::GetCurrentContext();
             const unsigned int activeId = gctx != nullptr ? static_cast<unsigned int>(gctx->ActiveId) : 0u;
             g_dictationRouter.InsertIntoFocusedInputText(text, activeId);
@@ -991,7 +991,7 @@ void RunHotkeyRelease_Worker(WhisperPlugin::PhaseEState* state) {
         // re-read on the UI thread (cheap; ConfigManager has an in-memory
         // cache) to pick up any Preferences toggle that landed between the
         // hotkey press and the transcription completing.
-        app->mainThreadDispatcher.PostToMainThread([text]() {
+        app->PostToMainThread([text]() {
             ImGuiContext* gctx = ::ImGui::GetCurrentContext();
             const unsigned int activeId = gctx != nullptr ? static_cast<unsigned int>(gctx->ActiveId) : 0u;
             g_dictationRouter.InsertIntoFocusedInputText(text, activeId);

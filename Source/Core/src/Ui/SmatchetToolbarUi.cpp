@@ -30,6 +30,34 @@
 
 namespace {
 
+// DR23 — std::string-backed InputText so an editor field (LuaCode / ArgsJson / CommandId / Tooltip)
+// is never rounded through a fixed char buffer that silently truncates on the first keystroke.
+// Mirrors misc/cpp/imgui_stdlib.h: the buffer IS the std::string's storage and CallbackResize grows
+// it as the user types past capacity. The mutable pointer is taken via a c_str cast, matching
+// imgui_stdlib, so it stays valid under the project's C++14 build where the non-const data overload
+// is unavailable.
+int InputTextStdStringResize(ImGuiInputTextCallbackData* data) {
+    if (data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
+        auto* str = static_cast<std::string*>(data->UserData);
+        str->resize(static_cast<size_t>(data->BufTextLen));
+        data->Buf = const_cast<char*>(str->c_str());
+    }
+    return 0;
+}
+
+bool InputTextStdString(const char* label, std::string& str, ImGuiInputTextFlags flags = 0) {
+    flags |= ImGuiInputTextFlags_CallbackResize;
+    return ImGui::InputText(label, const_cast<char*>(str.c_str()), str.capacity() + 1, flags, InputTextStdStringResize,
+                            &str);
+}
+
+bool InputTextMultilineStdString(const char* label, std::string& str, const ImVec2& size,
+                                 ImGuiInputTextFlags flags = 0) {
+    flags |= ImGuiInputTextFlags_CallbackResize;
+    return ImGui::InputTextMultiline(label, const_cast<char*>(str.c_str()), str.capacity() + 1, size, flags,
+                                     InputTextStdStringResize, &str);
+}
+
 bool IsUiPseudoCommand(const std::string& id) {
     return id == "ui.command_palette" || id == "ui.settings" || id == "ui.toolbar_customize";
 }
@@ -108,7 +136,8 @@ void SmatchetToolbarUi::DispatchButton(AppController& app, TrackerConfig& cfg, c
         }
     }
     smatchet::cmd::CommandContext ctx;
-    ctx.App = &app;
+    ctx.ScenarioHost = &app;
+    ctx.Threading = &app;
     ctx.Source = smatchet::cmd::CommandSource::Internal;
     const smatchet::cmd::CommandResult r = app.Commands().Dispatch(b.CommandId, args, ctx);
     if (!r.Ok) {
@@ -151,7 +180,7 @@ void SmatchetToolbarUi::RefreshTrackerAppendCache(AppController& app) {
         if (it != disk.Backends.end()) {
             append = it->second.ToolbarAppend;
         }
-        app.mainThreadDispatcher.PostToMainThread([this, key, append]() {
+        app.PostToMainThread([this, key, append]() {
             // Apply only if this load is still the current one — a newer backend switch (or a forced
             // reload that re-kicked under a different key) supersedes an older in-flight result.
             if (trackerAppendLoadInFlightKey_ != key) {
@@ -589,21 +618,13 @@ void SmatchetToolbarUi::DrawEditorFieldEditor(EditorCtx& ctx) {
                 ImGui::TextUnformatted(g.c_str());
             }
 
-            char tipBuf[128];
-            std::snprintf(tipBuf, sizeof(tipBuf), "%s", b.Tooltip.c_str());
-            if (ImGui::InputText(SmatchetLocalization::T("toolbar.editor.tooltip", "Tooltip"), tipBuf,
-                                 sizeof(tipBuf))) {
-                b.Tooltip = tipBuf;
-            }
+            // DR23: std::string-backed — no truncation of a long tooltip.
+            InputTextStdString(SmatchetLocalization::T("toolbar.editor.tooltip", "Tooltip"), b.Tooltip);
         }
 
         if (b.Kind == ToolbarButtonKind::Command) {
-            char cmdBuf[128];
-            std::snprintf(cmdBuf, sizeof(cmdBuf), "%s", b.CommandId.c_str());
-            if (ImGui::InputText(SmatchetLocalization::T("toolbar.editor.command_id", "Command id"), cmdBuf,
-                                 sizeof(cmdBuf))) {
-                b.CommandId = cmdBuf;
-            }
+            // DR23: std::string-backed — no truncation of a long command id.
+            InputTextStdString(SmatchetLocalization::T("toolbar.editor.command_id", "Command id"), b.CommandId);
             ImGui::TextDisabled("%s", SmatchetLocalization::T("toolbar.editor.pick_command", "Pick a command:"));
             ImGui::SetNextItemWidth(-1.0f);
             ImGui::InputTextWithHint("##cmdsearch",
@@ -621,19 +642,12 @@ void SmatchetToolbarUi::DrawEditorFieldEditor(EditorCtx& ctx) {
             }
             ImGui::EndChild();
 
-            char argBuf[256];
-            std::snprintf(argBuf, sizeof(argBuf), "%s", b.ArgsJson.c_str());
-            if (ImGui::InputText(SmatchetLocalization::T("toolbar.editor.args_json", "Args (JSON)"), argBuf,
-                                 sizeof(argBuf))) {
-                b.ArgsJson = argBuf;
-            }
+            // DR23: std::string-backed — no truncation of a long args-JSON payload.
+            InputTextStdString(SmatchetLocalization::T("toolbar.editor.args_json", "Args (JSON)"), b.ArgsJson);
         } else if (b.Kind == ToolbarButtonKind::Lua) {
-            char luaBuf[2048];
-            std::snprintf(luaBuf, sizeof(luaBuf), "%s", b.LuaCode.c_str());
-            if (ImGui::InputTextMultiline(SmatchetLocalization::T("toolbar.editor.lua_code", "Lua code"), luaBuf,
-                                          sizeof(luaBuf), ImVec2(-1.0f, 120.0f))) {
-                b.LuaCode = luaBuf;
-            }
+            // DR23: std::string-backed — no truncation of a >2 KB Lua script.
+            InputTextMultilineStdString(SmatchetLocalization::T("toolbar.editor.lua_code", "Lua code"), b.LuaCode,
+                                        ImVec2(-1.0f, 120.0f));
         } else {
             ImGui::TextDisabled("%s",
                                 SmatchetLocalization::T("toolbar.editor.separator_hint", "Separator (no settings)."));
@@ -670,7 +684,7 @@ void SmatchetToolbarUi::DrawEditorFooter(AppController& app, EditorCtx& ctx, Tra
                 PersistentViewsFile disk = ConfigManager::LoadPersistentViewsFromDisk();
                 disk.Backends[trackerKey].ToolbarAppend = trackerAppend;
                 ConfigManager::SavePersistentViewsToDisk(disk);
-                app.mainThreadDispatcher.PostToMainThread([this]() { trackerAppendCacheLoaded_ = false; });
+                app.PostToMainThread([this]() { trackerAppendCacheLoaded_ = false; });
             });
         } else {
             cfg.Toolbar = editBuf_;

@@ -37,6 +37,37 @@ note() { echo "[setup-harness] $*"; }
 ok()   { PASS=$((PASS + 1)); echo "  PASS  $1"; }
 nope() { FAIL=$((FAIL + 1)); FAILURES+=("$1"); echo "  FAIL  $1"; }
 
+# --- Hermetic-adapter guard (order-independence for test-all.sh) --------------
+# setup-harness.sh has no root override — it regenerates the REAL .claude/ adapter
+# (agents/hooks/skills/settings). This test invokes it against the live tree, so
+# left unrestored it FRESHENS .claude/ and MASKS the staleness that
+# test-adapter-drift / test-agent-contract exist to catch: if this test runs
+# earlier in test-all.sh, a genuine stale-adapter drift is silently re-linked away
+# (reproduced: drift → this test → drift now passes). Snapshot the adapter
+# artifacts this test perturbs and restore them byte-for-byte on exit, so the
+# shared mirror is exactly as we found it regardless of suite order.
+_HARNESS_SNAP="$(mktemp -d)"
+_HARNESS_SNAP_PATHS=(.claude/agents .claude/hooks .claude/skills .claude/settings.json)
+for _hp in "${_HARNESS_SNAP_PATHS[@]}"; do
+    if [ -e "$_hp" ]; then
+        mkdir -p "$_HARNESS_SNAP/$(dirname "$_hp")"
+        cp -a "$_hp" "$_HARNESS_SNAP/$_hp" 2>/dev/null || true
+    fi
+done
+# shellcheck disable=SC2329  # invoked indirectly via the EXIT trap below
+_restore_harness_snapshot() {
+    local _hp
+    for _hp in "${_HARNESS_SNAP_PATHS[@]}"; do
+        rm -rf "$_hp" 2>/dev/null || true
+        if [ -e "$_HARNESS_SNAP/$_hp" ]; then
+            mkdir -p "$(dirname "$_hp")"
+            cp -a "$_HARNESS_SNAP/$_hp" "$_hp" 2>/dev/null || true
+        fi
+    done
+    rm -rf "$_HARNESS_SNAP"
+}
+trap _restore_harness_snapshot EXIT
+
 # Resolve an agent's canonical .md across the post-reorg layout (agents/core/
 # + agents/project/, falling back to the legacy flat path). The agentic reorg
 # (PRs #542-549) split agents into core/ + project/; this test follows.

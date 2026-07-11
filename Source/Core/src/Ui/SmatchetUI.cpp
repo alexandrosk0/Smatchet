@@ -8,6 +8,7 @@
 #include "SmatchetStatusBarUi.h"
 #include "Commands/CommandPaletteUi.h"
 #include "Commands/CommandRegistry.h"
+#include "Commands/PaletteOpenLatch.h"
 #include "Commands/Scenarios/IScenario.h"
 #include "Commands/PaneCommands.h"
 #include "Commands/ViewCommands.h"
@@ -222,7 +223,7 @@ static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
             app.LaunchBackgroundTask([&app, downloadUrl, assetName, cancelFlag]() {
                 std::string err;
                 const bool ok = app.DownloadAndLaunchInstallerUpdate(downloadUrl, assetName, err, cancelFlag);
-                app.mainThreadDispatcher.PostToMainThread([ok, err]() {
+                app.PostToMainThread([ok, err]() {
                     g_ui.installerDownloadInFlight = false;
                     g_ui.installerDownloadCancel.reset();
                     if (ok) {
@@ -574,11 +575,12 @@ void SmatchetUI::drawPreWindowOverlays(AppController& app, UiDrawSession& d) {
         // before its Draw runs this frame. Consume-once: the scenario sets the
         // flag, we drain it here. Subsequent frames render the steady palette
         // state, which is what the screenshot diff golden captures.
-        if (g_ui.requestCommandPaletteOpen) {
-            g_ui.requestCommandPaletteOpen = false;
+        const smatchet::cmd::PaletteOpenDecision paletteOpen =
+            smatchet::cmd::ConsumePaletteOpenLatch(g_ui.requestCommandPaletteOpen, g_ui.requestCommandPaletteFilter);
+        if (paletteOpen.Open) {
             commandPalette_.Open();
-            if (!g_ui.requestCommandPaletteFilter.empty()) {
-                commandPalette_.SetFilterText(g_ui.requestCommandPaletteFilter.c_str());
+            if (!paletteOpen.Filter.empty()) {
+                commandPalette_.SetFilterText(paletteOpen.Filter.c_str());
             }
         }
         // Borrow the live keybinding table so palette rows surface their bound combo.
@@ -590,7 +592,7 @@ void SmatchetUI::drawPreWindowOverlays(AppController& app, UiDrawSession& d) {
     // binding, default hotkey Ctrl+Shift+B, dispatched up in dispatchKeybindings.
     // This block only renders the modal once showBugReport latches, and is drawn
     // unconditionally so it still works while the active backend is unreachable.
-    SmatchetBugReportUi_Draw(app, g_ui);
+    SmatchetBugReportUi_Draw(app, app, g_ui);
 
     // Scenario tick: drive the active scenario one frame and propagate scroll state
     // into the session so SmatchetActiveProjectGridUi can honor it.
@@ -640,7 +642,7 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
     smatchet::cmd::RegisterViewCommands(app, ViewState);
     // Register pane.* commands (multi-grid Slice 4) — same idempotent guard; the grid-pane
     // state lives on the UiDrawSession singleton, so pass the live session in.
-    smatchet::cmd::RegisterPaneCommands(app, d);
+    smatchet::cmd::RegisterPaneCommands(app, app, d);
     {
         SMATCHET_UI_PERF_SCOPE("TickTrackerConnectivityMonitor");
         app.TickTrackerConnectivityMonitor(g_ui.cfg);
@@ -862,7 +864,8 @@ void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
             }
         }
         smatchet::cmd::CommandContext ctx;
-        ctx.App = &app;
+        ctx.ScenarioHost = &app;
+        ctx.Threading = &app;
         ctx.Source = smatchet::cmd::CommandSource::Internal;
         const smatchet::cmd::CommandResult r = app.Commands().Dispatch(pk.commandId, args, ctx);
         if (!r.Ok) {

@@ -4,9 +4,10 @@
 # Bats tests for agents/scripts/core/postmortem-owed.sh — the gate-escape
 # detector. Covers the three signal-cleanup fixes (backlog tooling.md):
 #   1. postmortem-owed-overreports-nonblocking-and-cancelled-twins (P1) — the
-#      curated rollup: latest-run-per-context dedupe + terminal-failure +
+#      curated rollup: latest-run-per-context dedupe + terminal-verdict +
 #      blocking-scope, so CANCELLED twins / advisory lanes / in-progress checks
-#      no longer over-report.
+#      no longer over-report. A CANCELLED that IS the latest run for a blocking
+#      context (no later SUCCESS) owes (perf-pr-fast cancelled-escape, #1566).
 #   2. postmortem-owed-moot-override-false-positive (P2) — a non-load-bearing
 #      override (its gate passed anyway) owes no postmortem.
 #   3. postmortem-owed-direct-push-blindspot (P2) — trigger 4 catches PR-less
@@ -96,7 +97,8 @@ exit 99
 STUB
     chmod +x "$STUB_BIN_DIR/gh"
 
-    # --- stub git (only intercept `git log`; pass everything else through) ---
+    # --- stub git (intercept `git log` + the origin/develop ledger `show`;
+    #     pass everything else through) ---
     cat > "$STUB_BIN_DIR/git" <<'STUB'
 #!/usr/bin/env bash
 if [ "${1:-}" = "log" ]; then
@@ -105,6 +107,13 @@ if [ "${1:-}" = "log" ]; then
         *--no-merges*) cat "$PM_DATA/gitlog_directpush.txt" 2>/dev/null || true; exit 0 ;;
     esac
     exit 0
+fi
+if [ "${1:-}" = "show" ]; then
+    case "${2:-}" in
+        origin/develop:*)
+            if [ -f "$PM_DATA/develop_ledger.md" ]; then cat "$PM_DATA/develop_ledger.md"; exit 0; fi
+            exit 128 ;;
+    esac
 fi
 exec "$REAL_GIT" "$@"
 STUB
@@ -151,14 +160,24 @@ JSON
     [[ "$output" != *"PR #2002"* ]]
 }
 
-@test "latest-run CANCELLED (no SUCCESS twin) owes nothing (cancel is a supersede)" {
+@test "latest-run CANCELLED (no SUCCESS twin) on a required context owes a postmortem" {
     prlist <<'JSON'
 [{"number":2003,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"a3"},"labels":[],
   "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-06-10T09:00:00Z"}]}]
 JSON
     run_detector
     [ "$status" -eq 0 ]
-    [[ "$output" != *"PR #2003"* ]]
+    [[ "$output" == *"postmortem owed: PR #2003 — red-check: Windows + MSVC"* ]]
+}
+
+@test "latest-run CANCELLED on an allow-list non-required check owes a postmortem (#1566 shape)" {
+    prlist <<'JSON'
+[{"number":2013,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"a13"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Fuzz smoke (windows-2022)","status":"COMPLETED","conclusion":"CANCELLED","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"postmortem owed: PR #2013 — red-check: Fuzz smoke (windows-2022)"* ]]
 }
 
 @test "advisory non-allowlist red owes nothing" {
@@ -208,6 +227,19 @@ JSON
 JSON
     run_detector
     [[ "$output" != *"PR #2006"* ]]
+}
+
+@test "slash-joined combined-PR ledger heading dedups a trailing PR (#784)" {
+    # One RCA covering several PRs written `PR #906/#907/#908` — the middle/trailing
+    # PRs are preceded by `/`, not a comma/space. has_entry must dedup them; they
+    # used to re-flag every SessionStart (the `/`-less separator class, #784).
+    echo "## RCA for PR #906/#907/#908 — Windows + MSVC red" > "$POSTMORTEM_LEDGER"
+    prlist <<'JSON'
+[{"number":907,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"b9"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"PR #907"* ]]
 }
 
 # --- sourced-scope proof (de-dup of the blocking-scope constant) -------------
@@ -497,4 +529,47 @@ JSON
     run_detector
     [[ "$output" != *"PR #7003"* ]]
     [[ "$output" == *"no gate escapes owed"* ]]
+}
+
+# ============================================================================
+# Ledger pinned to origin/develop (tooling 2026-06-19 — phantom owes /
+# false suppression). POSTMORTEM_LEDGER unset → has_entry reads the ref the
+# merge scans trust, not the cwd working-tree file.
+# ============================================================================
+
+@test "entry on origin/develop dedupes even when the working tree lacks it (no phantom owe)" {
+    unset POSTMORTEM_LEDGER
+    # origin/develop ledger (git-show stub) HAS the postmortem for #8001.
+    echo "## 2026-06-19 · PR #8001 — gate escape RCA" > "$PM_DATA/develop_ledger.md"
+    prlist <<'JSON'
+[{"number":8001,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"f1"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"PR #8001"* ]]
+}
+
+@test "entry only in the working tree does NOT suppress an owed postmortem (false-negative guard)" {
+    unset POSTMORTEM_LEDGER
+    # Fixture repo whose WORKING-TREE ledger carries the entry while the
+    # origin/develop ledger (git-show stub) is empty — the pre-fix code read
+    # the working file and silently suppressed the owe.
+    : > "$PM_DATA/develop_ledger.md"
+    FIX_REPO="$PM_DATA/repo"
+    mkdir -p "$FIX_REPO/agents/scripts/core" "$FIX_REPO/docs/self-improvement"
+    cp "$REPO_ROOT/agents/scripts/core/postmortem-owed.sh" \
+       "$REPO_ROOT/agents/scripts/core/merge-gates.sh" "$FIX_REPO/agents/scripts/core/"
+    if [ -f "$REPO_ROOT/agents/scripts/core/merge-gates-prompt.sh" ]; then
+        cp "$REPO_ROOT/agents/scripts/core/merge-gates-prompt.sh" "$FIX_REPO/agents/scripts/core/"
+    fi
+    echo "## 2026-06-19 · PR #8002 — local-only RCA draft" \
+        > "$FIX_REPO/docs/self-improvement/postmortems.md"
+    prlist <<'JSON'
+[{"number":8002,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"f2"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run bash "$FIX_REPO/agents/scripts/core/postmortem-owed.sh" --list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"postmortem owed: PR #8002"* ]]
 }

@@ -20,7 +20,7 @@
 
 #include <string>
 
-class AppController;
+class IAppThreading; // narrow AppController threading facet — see Commands/IAppThreading.h
 struct TrackerConfig;
 
 namespace smatchet {
@@ -38,7 +38,7 @@ namespace banner {
 /// MUST be called between the main menu bar and the dock space — the
 /// banner uses ImGui::SetNextWindowPos to pin itself to the top of the
 /// viewport's work-area so the menu bar stays clickable above it.
-bool Render(AppController& app, TrackerConfig& cfg);
+bool Render(IAppThreading& app, TrackerConfig& cfg);
 
 /// Returns a reference to the banner-owned ModelDownloader. Same instance
 /// used by Preferences for the "Download" button so a fetch started from

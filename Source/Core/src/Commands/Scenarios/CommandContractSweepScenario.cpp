@@ -14,8 +14,8 @@
 
 #include "Commands/Scenarios/IScenario.h"
 
-// SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=IScenario passes AppController& and Commands() has no narrower interface yet; owner=command-system; revisit=2026-12-31)
-#include "AppController.h"
+#include "Interfaces/IAppScenarioHost.h"
+
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 #include "Commands/ParamValueSynthPure.h" // SynthValidValue / FirstRequiredParam / SynthValidRequiredArgs / FirstScalarParam
@@ -38,9 +38,9 @@ class CommandContractSweepScenario : public IScenario {
   public:
     std::string Name() const override { return "command-contract-sweep"; }
 
-    void OnStart(AppController& /*app*/, const nlohmann::json& /*args*/, std::string& /*outErr*/) override {}
+    void OnStart(IAppScenarioHost& /*app*/, const nlohmann::json& /*args*/, std::string& /*outErr*/) override {}
 
-    void OnFrame(AppController& app, int frameIndex) override {
+    void OnFrame(IAppScenarioHost& app, int frameIndex) override {
         if (frameIndex > 0) {
             return;
         }
@@ -49,7 +49,7 @@ class CommandContractSweepScenario : public IScenario {
 
     bool IsDone(int frameIndex) const override { return frameIndex >= 1; }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override { return summary_; }
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override { return summary_; }
 
   private:
     void AddViolation(const std::string& command, const std::string& probe, const std::string& expected,
@@ -64,11 +64,11 @@ class CommandContractSweepScenario : public IScenario {
         violations_.push_back(std::move(v));
     }
 
-    void RunSweep(AppController& app) {
+    void RunSweep(IAppScenarioHost& app) {
         CommandRegistry& reg = app.Commands();
 
         CommandContext automationCtx;
-        automationCtx.App = &app;
+        automationCtx.ScenarioHost = &app;
         automationCtx.Source = CommandSource::Mcp; // automation posture: audit-logged, no confirm bypass
 
         int checked = 0;

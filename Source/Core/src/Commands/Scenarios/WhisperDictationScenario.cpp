@@ -23,8 +23,8 @@
 
 #include "Commands/Scenarios/IScenario.h"
 
-#include "AppController.h"
-#include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+#include "Interfaces/IAppScenarioHost.h"
+#include <nlohmann/json.hpp> // the scenario headers expose only json_fwd; this TU uses nlohmann::json directly.
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 #include "DictationInsertionRouter.h"
@@ -64,7 +64,7 @@ class WhisperDictationScenario : public IScenario {
   public:
     std::string Name() const override { return "whisper-dictation-roundtrip"; }
 
-    void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& /*outErr*/) override {
+    void OnStart(IAppScenarioHost& /*app*/, const nlohmann::json& args, std::string& /*outErr*/) override {
         expectedText_ = args.value("text", std::string(kDefaultMockText));
         delayMs_ = (std::max)(0, args.value("delayMs", 50));
         frameLimit_ = (std::max)(60, args.value("frames", 300));
@@ -95,10 +95,13 @@ class WhisperDictationScenario : public IScenario {
         state_ = State::Initial;
     }
 
-    void OnFrame(AppController& app, int frameIndex) override {
+    void OnFrame(IAppScenarioHost& app, int frameIndex) override {
         if (state_ == State::Initial && frameIndex >= pressFrame_) {
+            // clang-format off
+            // SMATCHET_DEVIATION(rule=duplication; reason=the simulate-press/simulate-release dispatch shell is a deliberate grandfathered twin of WhisperAiAssistantAutosendScenario's press/release frames — same command pair driven at different assert points, dispatched straight through the scenario-host facet the hook receives — not a real copy-paste; owner=orchestrator; revisit=when the two whisper scenarios share a dispatch helper)
+            // clang-format on
             CommandContext ctx;
-            ctx.App = &app;
+            ctx.ScenarioHost = &app;
             ctx.Source = CommandSource::Internal;
             const CommandResult pressRes =
                 app.Commands().Dispatch("whisper.simulate-press", nlohmann::json::object(), ctx);
@@ -112,8 +115,11 @@ class WhisperDictationScenario : public IScenario {
             return;
         }
         if (state_ == State::WaitingForReleaseFrame && frameIndex >= releaseFrame_) {
+            // clang-format off
+            // SMATCHET_DEVIATION(rule=duplication; reason=the simulate-press/simulate-release dispatch shell is a deliberate grandfathered twin of WhisperAiAssistantAutosendScenario's press/release frames — same command pair driven at different assert points, dispatched straight through the scenario-host facet the hook receives — not a real copy-paste; owner=orchestrator; revisit=when the two whisper scenarios share a dispatch helper)
+            // clang-format on
             CommandContext ctx;
-            ctx.App = &app;
+            ctx.ScenarioHost = &app;
             ctx.Source = CommandSource::Internal;
             const CommandResult releaseRes =
                 app.Commands().Dispatch("whisper.simulate-release", nlohmann::json::object(), ctx);
@@ -144,9 +150,9 @@ class WhisperDictationScenario : public IScenario {
 
     bool IsDone(int frameIndex) const override { return state_ == State::Asserted || frameIndex >= frameLimit_; }
 
-    void OnCancel(AppController& /*app*/) override { Teardown(); }
+    void OnCancel(IAppScenarioHost& /*app*/) override { Teardown(); }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         Teardown();
         nlohmann::json out;
         out["scenario"] = Name();

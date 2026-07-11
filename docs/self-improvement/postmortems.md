@@ -39,7 +39,7 @@ Blameless — **over-broad allow-list pruning**. The broad `Bucket-` token was d
 PRIMARY (prevention) — add the literal `Bucket-E Jira fixture-backend (Mesa GL, hard)` job name to `MERGE_GATES_BLOCK_ALLOWLIST_RE` (`merge-gates.sh:163`), beside the already-blocking `Bucket launch-smoke (Mesa GL)`. This lane is deterministic + boot-capable (unlike the genuinely-advisory `Bucket-E UI tests` / `Bucket-C screenshot diff` lanes kept advisory by #1218's `bucket-out-of-band` remedy), so blocking it does NOT re-introduce the stochastic-flake jam the 2026-06-15 removal protected against. **Sequencing precondition: land only AFTER the #1579 product fix makes the lane green** — adding it while red blocks every PR. COMPANION (test) — a `merge_gates.bats` case asserting the deterministic fixture-backend lane IS allow-listed while the flaky bucket-C/E render lanes are NOT, so a future blanket `Bucket-` edit can't silently re-advisory it.
 
 ### Filed as
-[`docs/self-improvement/categories/infra/2026-06-28-bucket-e-fixture-lane-advisory-by-prefix.md`](categories/infra/2026-06-28-bucket-e-fixture-lane-advisory-by-prefix.md)
+`bucket-e-fixture-lane-advisory-by-prefix` — archived to [`categories/applied.md`](categories/applied.md) (superseded by the all-gates-blocking flip: `MERGE_GATES_BLOCK_ALLOWLIST_RE="."` blocks every non-advisory check, retiring the curated allow-list)
 
 ## 2026-06-27 · PR #1566 (escape) · PR #1571, #1572, #1574 (collateral) · CANCELLED `Perf PR-fast` (meant-to-block, not GH-required) merged via a human native-merge
 
@@ -53,7 +53,7 @@ Blameless — two compounding gate holes, one at prevention and one at detection
 PRIMARY (prevention) — promote `Perf PR-fast (windows-2022)` to a `branch_protection.required_contexts` entry on develop so native merges (human + auto) cannot bypass it; **precondition** (must land first or it wedges every non-perf PR): the check is gated by the `Detect perf-relevant changes` path filter, so it must emit a terminal neutral/success status on non-perf diffs before it can be required (the conditional-skip-wedge trap flagged in postmortem-owed.sh lines 314-318). COMPANION (detection, no precondition) — refine `postmortem-owed.sh` trigger-1 so a meant-to-block context whose collapsed latest-run conclusion is CANCELLED *with no later SUCCESS run for the same context* counts as an escape (the existing group_by-name/max-startedAt dedup already drops the concurrency twin, so this stays false-positive-safe). PR A (#1574) is the immediate unblock (env override + PathConfinement-safe harness capture); PR B carries the secure-by-default product fix.
 
 ### Filed as
-[`docs/self-improvement/categories/infra/2026-06-27-perf-pr-fast-not-required-cancelled-escape.md`](categories/infra/2026-06-27-perf-pr-fast-not-required-cancelled-escape.md)
+This entry (the intended standalone backlog file `categories/infra/2026-06-27-perf-pr-fast-not-required-cancelled-escape.md` was never created — the RCA lives here; de-linked so the delta-gated `test-markdown-links` stops tripping on the dangling reference).
 
 ## 2026-06-20 · PR #1438 · red `Intent section` (block-allowlisted) merged — PR opened out-of-band via the GitHub API with no `## Intent` section
 
@@ -2025,3 +2025,53 @@ already gated.
 ### Filed as
 This entry (resolves the owe for #1237; the #1232/#1227/#1220/#1198 owes share this single
 root cause and gate) + the `$blocking`-pending fix in this PR.
+
+## 2026-07-10 · PR #1698 · red-check: test-orphan-bats (required "Doc anchors") ran POST-merge
+
+### What escaped
+`feat(test): mutation-smoke gate (Slice F)` (#1698) added `tests/bats/mutation_smoke.bats`
+with **no `test-*.sh` wrapper**. `scripts/dev/test-all.sh` discovers suites by the
+`test-*.sh` glob and never runs a bare `.bats`, so the suite was both dead weight CI never
+executed AND flagged by `test-orphan-bats.sh` — the gate that exists precisely to catch an
+un-wrapped `.bats`. That gate lives inside the **required** `Doc anchors + agent contract`
+check. #1698 merged at `08:48:56Z`; its `Doc anchors` check-runs did not *start* until
+`08:49:56Z` (failure) / `08:50:41Z` (success) — the required check ran entirely **after** the
+merge. So the orphan landed on `develop` un-caught, `Doc anchors` has been RED on the develop
+tip since, and under **block-on-any-red** that red was inherited onto every open PR's own
+head (it blocked #1704 / the #1666 fix, which is how it surfaced).
+
+### Root cause
+Two independent safety nets both failed to fire *before* the merge:
+1. **Local pre-ship** — `scripts/dev/pre-ship.sh` runs `test-docs.sh`, which DOES invoke
+   `test-orphan-bats.sh` (line ~60). Had the author run pre-ship after adding the `.bats`, it
+   would have flagged locally. Evidently not run (or run before the file was added).
+2. **Required CI** — same class as the #1237 family (merged-before-terminal): the merge fired
+   ~60 s *before* the required `Doc anchors` check even started, so CI could not block it. The
+   squash was committed by GitHub (committer `GitHub`, author the repo owner) with no override
+   label. The precise merge-path cause (native auto-merge racing an un-started required
+   context, a required-contexts reconfiguration around the merge instant, or a manual merge)
+   is **not fully determinable** from the available APIs (branch-protection has no history
+   endpoint) — flagged honestly rather than guessed. What IS certain from the timestamps: the
+   required check had not run at merge time.
+
+The detecting gate worked; the miss was purely *timing* — a required check that runs post-merge
+provides zero pre-merge protection, and a single un-wrapped `.bats` then converts into a
+develop-wide, every-PR block.
+
+### Preventing gate
+Instance fixed in **#1705** (`agents/scripts/core/test-mutation-smoke.sh` — the missing
+wrapper; `test-orphan-bats` now PASSES, 63/63 suites wrapped, suite runs 9/9 green).
+Class prevention proposed (not yet landed): a lightweight **develop-tip health assertion** —
+a SessionStart / periodic check (e.g. extend `agents/scripts/core/postmortem-owed.sh`'s sweep,
+or a new `develop-tip-required-green.sh`) that queries the develop tip's *required* check
+conclusions and raises a loud, attributable nudge the moment any required context (here
+`Doc anchors + agent contract`) is RED — converting "silent red develop silently blocks every
+PR" into an immediate signal tied to the PR that introduced it, instead of the next author
+discovering it by inheritance. This is the durable complement to #1705: the wrapper stops
+*this* orphan; the tip-health assert stops the *class* of "required check goes red on develop
+and nobody notices until it blocks the next PR" (of which the #1237-family merge-before-terminal
+race is one upstream cause).
+
+### Filed as
+This entry + the #1705 wrapper (instance) + a follow-up backlog item for the develop-tip
+health assertion (class).

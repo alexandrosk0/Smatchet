@@ -10,10 +10,9 @@
 #if defined(SMATCHET_WITH_WHISPER)
 
 #include "SmatchetPreferencesUi_detail.h"
-#include "AppController.h"
+#include "Commands/IAppThreading.h"
 #include "HotkeyParse.h"
 #include "Logger.h"
-#include "MainThreadDispatcher.h"
 #include "ModelCatalog.h"
 #include "ModelDownloader.h"
 #include "SmatchetHelpMarker.h"
@@ -108,7 +107,21 @@ void DrawWhisperEnableAndMode(UiDrawSession& d) {
     }
 }
 
-void DrawWhisperModelPicker(AppController& app, UiDrawSession& d) {
+// Persist the Recommended default the combo displays when no model is
+// configured, so the presence check + Download button act on the model the
+// user sees.
+void SeedDefaultWhisperModel(UiDrawSession& d, const std::vector<smatchet::whisper::catalog::Entry>& catalog) {
+    // Deliberate: seeds directly into the live d.cfg (not a working copy) and marks
+    // dirty, so opening the Whisper tab with an empty model triggers a debounced
+    // persist with no explicit user action. This differs from the Assistant tab's
+    // working-copy pattern by design — the picker must show and use a concrete model.
+    if (d.cfg.WhisperModel.empty() && catalog.size() > 1) {
+        d.cfg.WhisperModel = catalog[1].Id;
+        MarkPrefsDirty(d);
+    }
+}
+
+void DrawWhisperModelPicker(IAppThreading& app, UiDrawSession& d) {
     // Model picker + download button.
     const std::string sharedDir = ConfigManager::GetPlatformSharedUserDataDirectory();
     std::string modelDir;
@@ -120,6 +133,7 @@ void DrawWhisperModelPicker(AppController& app, UiDrawSession& d) {
         modelDir += "whisper";
     }
     const auto& catalog = smatchet::whisper::catalog::All();
+    SeedDefaultWhisperModel(d, catalog);
     int selIdx = 1; // default Recommended
     const auto selectedModelIt =
         std::find_if(catalog.begin(), catalog.end(),
@@ -238,7 +252,7 @@ void CommitCapturedHotkey(UiDrawSession& d, WhisperPrefsTabState& state, unsigne
     // Reject combos with no modifier — a bare key is a global hotkey landmine.
     if (hk.mods == 0) {
         state.hotkeyError = SmatchetLocalization::T("whisper.preferences.hotkeyErrorModifiersOnly",
-                                                    "Hotkey must include a non-modifier key");
+                                                    "Hotkey must include a modifier key (Ctrl, Alt, Shift, or Win)");
         state.capturing = false;
         return;
     }
@@ -335,11 +349,11 @@ void DrawWhisperApiKey(UiDrawSession& d, WhisperPrefsTabState& state) {
     }
 }
 
-void DrawWhisperTestConnection(AppController& app, UiDrawSession& d, WhisperPrefsTabState& state) {
+void DrawWhisperTestConnection(IAppThreading& app, UiDrawSession& d, WhisperPrefsTabState& state) {
     // Phase F — Test connection button. Dispatches a tiny worker that hits
     // OpenAI's /v1/models with the resolved key (via WhisperApiKeyResolve::Resolve
     // fallback rule) and reports success/failure inline. Mirrors the AI Assistant
-    // tab's pattern (LaunchBackgroundTask + MainThreadDispatcher post-back); the
+    // tab's pattern (LaunchBackgroundTask + PostToMainThread post-back); the
     // status string lives in tab state so the result survives the user navigating
     // other tabs while the probe runs.
     const bool inFlight = state.testInFlight.load(std::memory_order_acquire);
@@ -361,14 +375,13 @@ void DrawWhisperTestConnection(AppController& app, UiDrawSession& d, WhisperPref
             state.testInFlight.store(true, std::memory_order_release);
             state.testResult = "Testing...";
             state.testResultType = 0;
-            MainThreadDispatcher& dispatcher = app.mainThreadDispatcher;
             WhisperPrefsTabState* st = &state;
             // Worker — minimal GET to /v1/models. cpr is already linked; reuse
             // WhisperApiClient's transport idioms (5 s connect, 15 s total) so a
             // hung DNS doesn't freeze the result for a minute. Joined
             // background-task pool, not a raw detached thread — the no-detach lint
-            // forbids that. Joined at shutdown so &dispatcher stays valid.
-            app.LaunchBackgroundTask([resolvedKey, &dispatcher, st]() {
+            // forbids that. Joined at shutdown so &app stays valid.
+            app.LaunchBackgroundTask([resolvedKey, &app, st]() {
                 std::string okMsg;
                 std::string errMsg;
                 try {
@@ -398,7 +411,7 @@ void DrawWhisperTestConnection(AppController& app, UiDrawSession& d, WhisperPref
                         SmatchetLocalization::T("prefs.whisper.test_internal_error",
                                                 "the request could not be completed — check the API key and try again");
                 }
-                dispatcher.PostToMainThread([okMsg, errMsg, st]() {
+                app.PostToMainThread([okMsg, errMsg, st]() {
                     st->testInFlight.store(false, std::memory_order_release);
                     if (errMsg.empty()) {
                         st->testResult = std::string(SmatchetLocalization::T(
@@ -433,12 +446,12 @@ void DrawWhisperTestConnection(AppController& app, UiDrawSession& d, WhisperPref
 // Background worker for the mic capture-smoke test: capture 3 s via WindowsAudioCapture, measure
 // peak amplitude, and post a classified result string back to the UI thread. Extracted from the
 // LaunchBackgroundTask lambda in DrawWhisperTestMicrophone (over-100-line decomposition); identical.
-void RunMicCaptureTestWorker(AppController& app, WhisperPrefsTabState* st) {
+void RunMicCaptureTestWorker(IAppThreading& app, WhisperPrefsTabState* st) {
     smatchet::whisper::WindowsAudioCapture cap;
     std::string startErr;
     if (!cap.Start(startErr)) {
         const std::string err = startErr.empty() ? std::string("capture start failed") : startErr;
-        app.mainThreadDispatcher.PostToMainThread([err, st]() {
+        app.PostToMainThread([err, st]() {
             st->micTestInFlight.store(false, std::memory_order_release);
             st->micTestResult = std::string("Failed: ") + err;
             st->micTestResultType = 2;
@@ -458,7 +471,7 @@ void RunMicCaptureTestWorker(AppController& app, WhisperPrefsTabState* st) {
     }
     const float peakNorm = static_cast<float>(peakAbs) / 32768.0f;
     const std::size_t samples = pcm.size();
-    app.mainThreadDispatcher.PostToMainThread([samples, peakAbs, peakNorm, st]() {
+    app.PostToMainThread([samples, peakAbs, peakNorm, st]() {
         st->micTestInFlight.store(false, std::memory_order_release);
         char buf[256];
         if (samples == 0) {
@@ -489,7 +502,7 @@ void RunMicCaptureTestWorker(AppController& app, WhisperPrefsTabState* st) {
     });
 }
 
-void DrawWhisperTestMicrophone(AppController& app, WhisperPrefsTabState& state) {
+void DrawWhisperTestMicrophone(IAppThreading& app, WhisperPrefsTabState& state) {
     // --- Test microphone end-to-end (capture-only). Captures 3 s of audio via
     // WindowsAudioCapture, reports total samples + peak amplitude inline so the
     // user can confirm the mic + format path is producing real samples BEFORE
@@ -553,7 +566,7 @@ struct WhisperE2ERoute {
 // self-contained). Pick effective route per the user's spec:
 //   - cloud: require key
 //   - local: require model file present
-//   - auto:  prefer cloud when key present, fall back to local
+//   - auto:  prefer local when present, fall back to cloud (per the mode label)
 WhisperE2ERoute ResolveE2ERoute(const TrackerConfig& cfgSnap) {
     WhisperE2ERoute route;
     const std::string requestedMode = cfgSnap.WhisperMode.empty() ? std::string("auto") : cfgSnap.WhisperMode;
@@ -583,10 +596,10 @@ WhisperE2ERoute ResolveE2ERoute(const TrackerConfig& cfgSnap) {
             route.effectiveMode = "local";
         }
     } else { // auto
-        if (!route.resolvedKey.empty()) {
-            route.effectiveMode = "cloud";
-        } else if (localPresent) {
+        if (localPresent) {
             route.effectiveMode = "local";
+        } else if (!route.resolvedKey.empty()) {
+            route.effectiveMode = "cloud";
         } else {
             route.fastFail = "Auto mode needs either an API key (for cloud) or a "
                              "downloaded local model. Neither was found.";
@@ -625,14 +638,14 @@ bool RunE2ETranscription(const WhisperE2ERoute& route, const TrackerConfig& cfgS
 // capture 4 s, run the full transcription pipeline, and post per-phase + final classified status back
 // to the UI thread. Extracted from the LaunchBackgroundTask lambda in DrawWhisperTestE2E
 // (over-100-line decomposition); behaviour-identical.
-void RunE2ETestWorker(AppController& app, const TrackerConfig& cfgSnap, WhisperPrefsTabState* st) {
+void RunE2ETestWorker(IAppThreading& app, const TrackerConfig& cfgSnap, WhisperPrefsTabState* st) {
     // --- Resolve route BEFORE spending 4 s capturing, so cloud-only with
     // no key / local-only with no model fail fast.
     const WhisperE2ERoute route = ResolveE2ERoute(cfgSnap);
     const std::string effectiveMode = route.effectiveMode;
     if (!route.fastFail.empty()) {
         const std::string fastFail = route.fastFail;
-        app.mainThreadDispatcher.PostToMainThread([fastFail, st]() {
+        app.PostToMainThread([fastFail, st]() {
             st->e2eInFlight.store(false, std::memory_order_release);
             st->e2eResult = std::string("Failed: ") + fastFail;
             st->e2eResultType = 2;
@@ -645,7 +658,7 @@ void RunE2ETestWorker(AppController& app, const TrackerConfig& cfgSnap, WhisperP
     // medium.en can take 5+ seconds, and the "button disabled, nothing
     // visible" silence was confusing.
     const std::string modeForUi = effectiveMode;
-    app.mainThreadDispatcher.PostToMainThread([modeForUi, st]() {
+    app.PostToMainThread([modeForUi, st]() {
         st->e2eResult = std::string("[1/3] Capturing 4 s (route=") + modeForUi + ") — speak now...";
         st->e2eResultType = 0;
     });
@@ -653,7 +666,7 @@ void RunE2ETestWorker(AppController& app, const TrackerConfig& cfgSnap, WhisperP
     std::string err;
     if (!cap.Start(err)) {
         const std::string e = err.empty() ? std::string("capture start failed") : err;
-        app.mainThreadDispatcher.PostToMainThread([e, st]() {
+        app.PostToMainThread([e, st]() {
             st->e2eInFlight.store(false, std::memory_order_release);
             st->e2eResult = std::string("Failed (capture): ") + e;
             st->e2eResultType = 2;
@@ -664,12 +677,12 @@ void RunE2ETestWorker(AppController& app, const TrackerConfig& cfgSnap, WhisperP
     cap.Stop();
     std::vector<std::int16_t> pcm;
     cap.DrainCapturedPcm(pcm);
-    app.mainThreadDispatcher.PostToMainThread([modeForUi, st]() {
+    app.PostToMainThread([modeForUi, st]() {
         st->e2eResult = std::string("[2/3] Captured; transcribing via ") + modeForUi + "...";
         st->e2eResultType = 0;
     });
     if (pcm.empty()) {
-        app.mainThreadDispatcher.PostToMainThread([st]() {
+        app.PostToMainThread([st]() {
             st->e2eInFlight.store(false, std::memory_order_release);
             st->e2eResult = "Failed: 0 PCM samples (mic / consent / format issue — "
                             "click Test microphone for narrower diagnosis)";
@@ -684,7 +697,7 @@ void RunE2ETestWorker(AppController& app, const TrackerConfig& cfgSnap, WhisperP
     const bool ok = RunE2ETranscription(route, cfgSnap, pcm, text, txErr);
 
     const std::string mode = effectiveMode;
-    app.mainThreadDispatcher.PostToMainThread([ok, txErr, text, samples, mode, st]() {
+    app.PostToMainThread([ok, txErr, text, samples, mode, st]() {
         st->e2eInFlight.store(false, std::memory_order_release);
         char buf[1024];
         if (!ok) {
@@ -708,7 +721,7 @@ void RunE2ETestWorker(AppController& app, const TrackerConfig& cfgSnap, WhisperP
     });
 }
 
-void DrawWhisperTestE2E(AppController& app, UiDrawSession& d, WhisperPrefsTabState& state) {
+void DrawWhisperTestE2E(IAppThreading& app, UiDrawSession& d, WhisperPrefsTabState& state) {
     // --- Test transcription end-to-end. Captures 4 s, runs the full
     // transcription pipeline — silence trim, mode router, cloud or local — and
     // surfaces the resulting text inline. The first end-to-end "does this
@@ -747,7 +760,9 @@ void DrawWhisperTestE2E(AppController& app, UiDrawSession& d, WhisperPrefsTabSta
         ImGui::EndDisabled();
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("(records 4 s + uploads to whisper for end-to-end check)");
+    ImGui::TextDisabled("%s", SmatchetLocalization::T("whisper.preferences.testE2E.hint",
+                                                      "(records 4 s; the cloud route uploads audio to OpenAI, "
+                                                      "the local route stays on-device)"));
     if (!state.e2eResult.empty()) {
         ImVec4 col(0.85f, 0.85f, 0.85f, 1.0f);
         if (state.e2eResultType == 1)
@@ -855,7 +870,7 @@ void DrawWhisperPrivacyAndRerun(UiDrawSession& d) {
 
 } // namespace
 
-void DrawWhisperPreferencesTab(AppController& app, UiDrawSession& d) {
+void DrawWhisperPreferencesTab(IAppThreading& app, UiDrawSession& d) {
     // Whisper dictation Preferences tab — Phase C. Hotkey rebind UI lands in
     // Phase E, read-only display here. Master toggle persists through
     // MarkPrefsDirty (debounced save). Download / cancel buttons share the

@@ -40,7 +40,7 @@ struct McpToolDefinition;
 #include "GridLiveContext.h"
 #include "ITrackerBackend.h"
 #include "MainThreadDispatcher.h"
-#include "Commands/IMainThreadPoster.h"
+#include "Commands/IAppThreading.h"
 #include "SmatchetMergeWatchNotifyServer.h"
 #include "IssueDraft.h"
 #include "IssueCreatePipeline.h"
@@ -106,6 +106,21 @@ class AiAssistantController;
 #include "Types/AttachmentTypes.h"
 #include "Types/HostCallbacks.h"
 
+// Fan-in Phase 5 (docs/plans/appcontroller-fan-in-phase5-facets.md): narrow interface
+// facets AppController implements so includer-clusters can depend on them instead of the
+// full class. Rank-0 leaf headers (Interfaces/); see each header for its facet scope.
+#include "Interfaces/IAppOfflineQueue.h"
+#include "Interfaces/IAppMeta.h"
+#include "Interfaces/IAppAttachments.h"
+#include "Interfaces/IAppScenarios.h"
+#include "Interfaces/IAppUsers.h"
+#include "Interfaces/IAppDebug.h"
+#include "Interfaces/IAppAutomation.h"
+#include "Interfaces/IAppTicketData.h"
+#include "Interfaces/IAppTicketMutations.h"
+#include "Interfaces/IAppCommands.h"
+#include "Interfaces/IAppScenarioHost.h"
+
 class ITrackerBackendFactory;
 class LocalCacheManager; // fan-in Phase 1: fwd-decl (was a direct heavy include); `std::unique_ptr<LocalCacheManager>
                          // Cache` member is fine with the incomplete type since ~AppController is out-of-line. Defining
@@ -132,7 +147,18 @@ class ScenarioRunner;
 }
 } // namespace smatchet
 
-class AppController : public IMainThreadPoster {
+class AppController : public IAppThreading,
+                      public IAppOfflineQueue,
+                      public IAppMeta,
+                      public IAppAttachments,
+                      public IAppScenarios,
+                      public IAppUsers,
+                      public IAppDebug,
+                      public IAppAutomation,
+                      public IAppTicketData,
+                      public IAppTicketMutations,
+                      public IAppCommands,
+                      public IAppScenarioHost {
     /// `GridContextDepsAdapter` implements `IOfflineQueueDeps` + `ITicketSyncDeps` against
     /// this AppController + one `GridLiveContext` and forwards every method either to the
     /// per-context state (`Backend`, `ActiveTickets*`) or to AppController-shared state
@@ -247,13 +273,13 @@ class AppController : public IMainThreadPoster {
     /// Lifetime: created in `Initialize`; the same instance feeds the CLI, the
     /// MCP plugin's tools/list + tools/call, the Lua `commands.invoke` binding,
     /// and the in-app Ctrl+Shift+P palette.
-    smatchet::cmd::CommandRegistry& Commands();
-    const smatchet::cmd::CommandRegistry& Commands() const;
+    smatchet::cmd::CommandRegistry& Commands() override;
+    const smatchet::cmd::CommandRegistry& Commands() const override;
 
     /// Scenario runner — feeds from scenario.run / scenario.cancel / scenario.list.
     /// Tick is driven per-frame by SmatchetUI::Draw.
-    smatchet::cmd::ScenarioRunner& Scenarios();
-    const smatchet::cmd::ScenarioRunner& Scenarios() const;
+    smatchet::cmd::ScenarioRunner& Scenarios() override;
+    const smatchet::cmd::ScenarioRunner& Scenarios() const override;
 
     /** Path passed to `Initialize` (may be relative to the process working directory). */
     const std::string& GetLocalCacheDbPath() const { return localCacheDbPath_; }
@@ -306,7 +332,7 @@ class AppController : public IMainThreadPoster {
     std::unique_ptr<SmatchetMergeWatchNotifyServer> mergeWatchNotifyServer_;
 
     /** Call from plugins in OnEarlyInit only (before Initialize completes InitLua). */
-    void AddAutomationLogSink(std::function<void(const std::string&)> sink);
+    void AddAutomationLogSink(std::function<void(const std::string&)> sink) override;
     /** Drop all sinks. Call before destroying plugins to avoid dangling `[this]` captures. */
     void ClearAutomationLogSinks();
 
@@ -315,12 +341,12 @@ class AppController : public IMainThreadPoster {
     /// is responsible for presentation. Safe to call from any thread (the background
     /// automation worker may invoke it); sinks themselves are expected to be UI-thread-safe
     /// (e.g. via mainThreadDispatcher). Call from OnEarlyInit only.
-    void AddAutomationErrorSink(std::function<void(const std::string&)> sink);
+    void AddAutomationErrorSink(std::function<void(const std::string&)> sink) override;
 
     /// Atomically reads and clears the "open Scripting window" request that the background
     /// automation worker sets on a Lua error. UI-thread: call once per frame in OnDraw.
     /// Returns true if the plugin should bring the Scripting window to the foreground.
-    bool ConsumeScriptingWindowRequest();
+    bool ConsumeScriptingWindowRequest() override;
 
     /**
      * Optional host callback for launching URLs.
@@ -338,7 +364,7 @@ class AppController : public IMainThreadPoster {
     void SetCloseEmbeddedUiHandler(std::function<void()> handler);
     void CloseEmbeddedUi();
     void SetRequestAppQuitHandler(std::function<void()> handler);
-    void RequestAppQuit() const;
+    void RequestAppQuit() const override;
 
     /** Standalone / embedded host: set so Preferences can start or stop MCP without app restart. */
     void SetRuntimePluginHost(PluginHost* host);
@@ -347,11 +373,11 @@ class AppController : public IMainThreadPoster {
 #if defined(SMATCHET_WITH_MCP)
     /** Bounded ring buffer of MCP-related actions (thread-safe). */
     void AppendMcpActivity(const std::string& line);
-    std::vector<std::string> CopyMcpActivityLog() const;
+    std::vector<std::string> CopyMcpActivityLog() const override;
     /** MCP HTTP server: any routed request after auth gate (worker threads). */
     void NotifyMcpClientHttpActivity();
     /** @return false if no client request has been recorded yet this process. */
-    bool TryGetMcpLastClientHttpActivity(std::chrono::steady_clock::time_point* out) const;
+    bool TryGetMcpLastClientHttpActivity(std::chrono::steady_clock::time_point* out) const override;
     /** Increments once per MCP HTTP request after the auth pre-hook (distinct from activity-log lines). */
     std::uint64_t GetMcpHttpTrafficEpoch() const;
 #endif
@@ -411,14 +437,14 @@ class AppController : public IMainThreadPoster {
      * - Otherwise, for image mime types: downloads and offers in-app preview handler.
      * - If no host/in-app handler path is available: falls back to OpenUrl(url).
      */
-    void OpenAttachment(const std::string& url, const std::string& filename, const std::string& mimeType);
+    void OpenAttachment(const std::string& url, const std::string& filename, const std::string& mimeType) override;
     /** Download to temp then open local file in OS default app (matches Unreal attachment viewer). */
     void OpenAttachmentInSystemViewer(const std::string& url, const std::string& filename, const std::string& mimeType);
     bool DownloadAttachmentForPreview(const std::string& url, const std::string& filename, const std::string& mimeType,
-                                      std::string* outError = nullptr);
-    std::string GetAppVersion() const;
-    std::string GetGitHubReleaseRepo() const;
-    AppUpdateInfo CheckForAppUpdate(bool includePrerelease = false) const;
+                                      std::string* outError) override; // default (=nullptr) lives on IAppAttachments
+    std::string GetAppVersion() const override;
+    std::string GetGitHubReleaseRepo() const override;
+    AppUpdateInfo CheckForAppUpdate(bool includePrerelease) const override; // default (=false) lives on IAppMeta
     /// Downloads + launches the installer. Blocking — callers must dispatch this on a worker
     /// thread via `LaunchBackgroundTask`. The optional `cancelFlag` is polled inside the cpr
     /// write callback; when set to `true` the download aborts cleanly and the partial file is
@@ -445,27 +471,32 @@ class AppController : public IMainThreadPoster {
     // processAll=true runs the script across every loaded ticket (ignores selectedIds).
     // With an empty selectedIds and processAll=false the job refuses to run (Issue #824):
     // no silent mass-modify, no silent no-op.
+    // processAll default is intentionally mirrored on BOTH IAppAutomation::RunAutoScript and
+    // this override: LuaConsolePlugin.cpp calls through a concrete AppController& with the
+    // 2-arg form (static binding needs the default here), while automation.* calls through the
+    // facet (needs it there). Keep the two in sync if the default ever changes.
     void RunAutoScript(const std::string& scriptPath, const std::vector<std::string>& selectedIds,
-                       bool processAll = false);
-    void RunFlatScriptAsync(const std::string& scriptPath);
+                       bool processAll = false) override;
+    void RunFlatScriptAsync(const std::string& scriptPath) override;
 
     std::string GetAutomationScriptContent();
     bool SaveAutomationScriptContent(const std::string& content, std::string& outError);
 
     /** Run a Lua file once (e.g. SmatchetHooks.lua) to register UI hooks; errors go to automation log sinks. */
-    void RunLuaSetupScript(const std::string& scriptPath);
+    void RunLuaSetupScript(const std::string& scriptPath) override;
 
     /** Present with or without Lua build; no-op / empty when `SMATCHET_WITH_LUA_AUTOMATION` is off. */
     std::vector<std::string> GetLuaTicketActionNames() const;
     void ExecuteLuaTicketAction(const std::string& name, const std::string& issueId);
-    std::vector<std::string> GetLuaGlobalActionNames() const;
+    std::vector<std::string> GetLuaGlobalActionNames() const override;
     void ExecuteLuaGlobalAction(const std::string& name);
     /**
      * Run a one-off Lua chunk from the automation UI (same globals as hooks: smatchet, ui, tracker, …).
      * On failure sets @p outError; on success clears @p outError and may set @p outResultSummary from the
      * first return value (short string / JSON, truncated when long).
      */
-    bool ExecuteLuaConsoleSnippet(const std::string& code, std::string& outError, std::string& outResultSummary);
+    bool ExecuteLuaConsoleSnippet(const std::string& code, std::string& outError,
+                                  std::string& outResultSummary) override;
     /** Lua `register_field_icon_map`; returns false when Lua automation is disabled. */
     bool TryGetFieldIconMapTarget(const std::string& fieldId, const TrackerField* field, const std::string& rawValue,
                                   std::string& outPathOrUrl) const;
@@ -539,21 +570,22 @@ class AppController : public IMainThreadPoster {
     /// lookup succeeds. Returns false on missing-fn / not-callable / Lua-disabled; populates
     /// `outError`. No-op stub in the no-Lua build.
     bool ScenarioRegisterLuaCachedProvider(const std::string& fieldId, const std::string& luaFnName,
-                                           const std::vector<std::string>& extraScripts, std::string& outError);
+                                           const std::vector<std::string>& extraScripts,
+                                           std::string& outError) override;
     /// Convenience overload — equivalent to passing an empty `extraScripts`.
     bool ScenarioRegisterLuaCachedProvider(const std::string& fieldId, const std::string& luaFnName,
-                                           std::string& outError);
+                                           std::string& outError) override;
     /// Inverse of `ScenarioRegisterLuaCachedProvider`. Restores the user-side provider that
     /// was displaced at register time (if any), or erases the entry if no prior existed. Also
     /// drops every cache entry for that field so the restored provider re-records cleanly.
     /// No-op if not registered via the scenario surface, or in the no-Lua build.
-    void ScenarioUnregisterLuaCachedProvider(const std::string& fieldId);
+    void ScenarioUnregisterLuaCachedProvider(const std::string& fieldId) override;
 
     /// Scenario hook: clear every `luaFieldCache_` entry so subsequent cells re-record. Used
     /// by fuzz scenarios that need to exercise the recorder path each frame (otherwise the
     /// cache hit-rate becomes 100% after first paint and only the initial visible cells are
     /// fuzzed). No-op stub in the no-Lua build.
-    void ScenarioInvalidateLuaFieldCache();
+    void ScenarioInvalidateLuaFieldCache() override;
 
     // LuaUiInvalidateFieldCacheBind(sol::optional<std::string>, sol::optional<std::string>) moved
     // onto AppController::Impl (#19c) — its sol::optional signature can't be declared here.
@@ -595,7 +627,7 @@ class AppController : public IMainThreadPoster {
 
     std::vector<CachedTicket> GetActiveTickets() const;
     /** Cheap read: shared_ptr to last published ticket list (thread-safe with MCP / workers). */
-    std::shared_ptr<const std::vector<CachedTicket>> GetActiveTicketsSnapshot() const;
+    std::shared_ptr<const std::vector<CachedTicket>> GetActiveTicketsSnapshot() const override;
     std::uint64_t GetActiveTicketsRevision() const { return focusedContext().ActiveTicketsRevision.load(); }
     /// De-inlined as of item 11 Phase 1C: the streaming-sync state lives on TicketSyncService.
     /// Defined in AppController.cpp where TicketSyncService.h is included; delegates to
@@ -742,28 +774,31 @@ class AppController : public IMainThreadPoster {
      * hydration — so a bulk-import `.clear()` or app shutdown drains promptly.
      * Defaulted so non-bulk callers (Lua) need not supply one.
      */
-    std::future<IssueCreateResult> CreateIssueAsync(const IssueDraft& draft,
-                                                    smatchet::ui::CancelToken cancel = smatchet::ui::CancelToken());
+    // CancelToken default mirrored on IAppTicketMutations::CreateIssueAsync (kept here too:
+    // concrete-typed callers — AppController_LuaBindings, SmatchetNewIssueDraftUi — use the
+    // 1-arg form, which static-binds this declaration's default).
+    std::future<IssueCreateResult>
+    CreateIssueAsync(const IssueDraft& draft, smatchet::ui::CancelToken cancel = smatchet::ui::CancelToken()) override;
 
     /**
      * Persist `draft` to SQLite and return the queued row id. Useful when the
      * user wants to stage creates before going online, or when a create fails
      * due to connectivity errors. Replayed by `TickOfflineCreates`.
      */
-    std::int64_t QueueCreateOffline(const IssueDraft& draft);
+    std::int64_t QueueCreateOffline(const IssueDraft& draft) override;
 
     /**
      * Replay any queued offline creates. No-op when the queue is empty or the
      * backend is unreachable. Intended to be polled from the main tick.
      */
-    void TickOfflineCreates();
+    void TickOfflineCreates() override;
 
     /** Current depth of the offline create queue (SQLite row count). */
-    size_t GetPendingCreateCount() const;
+    size_t GetPendingCreateCount() const override;
     /** Active offline create rows (`pending_creates`), oldest first. */
-    std::vector<PendingCreate> GetPendingCreates() const;
+    std::vector<PendingCreate> GetPendingCreates() const override;
     size_t GetDeadPendingCreateCount() const;
-    std::vector<DeadPendingCreate> GetDeadPendingCreates() const;
+    std::vector<DeadPendingCreate> GetDeadPendingCreates() const override;
 
     using DeadLetterRestoreSummary = ::DeadLetterRestoreSummary; // moved to Sync/OfflineQueueTypes.h
     /** Move selected dead-letter rows back to the active offline queue (attempts reset to 0). */
@@ -773,7 +808,7 @@ class AppController : public IMainThreadPoster {
 
     using DeadLetterDeleteSummary = ::DeadLetterDeleteSummary; // moved to Sync/OfflineQueueTypes.h
     /** Permanently remove dead-letter rows by `pending_creates_dead.dead_id`. */
-    DeadLetterDeleteSummary DeleteDeadPendingCreates(const std::vector<std::int64_t>& deadIds);
+    DeadLetterDeleteSummary DeleteDeadPendingCreates(const std::vector<std::int64_t>& deadIds) override;
 
     using PendingQueueDeleteSummary = ::PendingQueueDeleteSummary; // moved to Sync/OfflineQueueTypes.h
     /** Permanently remove active offline-queue rows by `pending_creates.id`. */
@@ -792,10 +827,10 @@ class AppController : public IMainThreadPoster {
                                        const std::string& originalValue = std::string(), bool hasOriginalValue = false);
 
     /** Replay queued offline field edits (rate-limited; called from UI tick). */
-    void TickOfflineFieldEdits();
+    void TickOfflineFieldEdits() override;
 
-    std::vector<PendingFieldEditRecord> GetPendingFieldEdits() const;
-    std::vector<DeadPendingFieldEdit> GetDeadPendingFieldEdits() const;
+    std::vector<PendingFieldEditRecord> GetPendingFieldEdits() const override;
+    std::vector<DeadPendingFieldEdit> GetDeadPendingFieldEdits() const override;
     /// Replace the queued payload with a user-resolved version and clear the conflict flag.
     /// The edit will be retried on the next TickOfflineFieldEdits pass. `kind` (text|scalar|
     /// unverified, per ADR-0016) selects how the resolution is applied: `text` reconverts
@@ -810,7 +845,7 @@ class AppController : public IMainThreadPoster {
     PendingFieldEditDeleteSummary DeletePendingFieldEdits(const std::vector<std::int64_t>& ids);
 
     using DeadFieldEditDeleteSummary = ::DeadFieldEditDeleteSummary; // moved to Sync/OfflineQueueTypes.h
-    DeadFieldEditDeleteSummary DeleteDeadPendingFieldEdits(const std::vector<std::int64_t>& deadIds);
+    DeadFieldEditDeleteSummary DeleteDeadPendingFieldEdits(const std::vector<std::int64_t>& deadIds) override;
 
     using DeadFieldEditRestoreSummary = ::DeadFieldEditRestoreSummary; // moved to Sync/OfflineQueueTypes.h
     /** Move selected dead-letter field-edit rows back to the active queue (attempts reset to
@@ -825,7 +860,7 @@ class AppController : public IMainThreadPoster {
     void PrefetchIssueTicketsForKeys(const std::vector<std::string>& issueKeys, bool includeAlreadyActive = false);
     bool IsBulkImportPrefetchInFlight(const std::string& issueKey) const;
 
-    const TrackerField* FindFieldById(const std::string& fieldId) const;
+    const TrackerField* FindFieldById(const std::string& fieldId) const override;
 
     /** Component options valid for one Jira project key (e.g. "PROJ"), warmed async for cross-project
      *  grid views. Returns a by-value copy taken under availableFieldsMutex_; empty when the project
@@ -870,7 +905,10 @@ class AppController : public IMainThreadPoster {
     // ApplyFieldUpdateWithEditMetaRetry + SubmitSprint/TimetrackingFieldEditNetworkOnly had no
     // external callers and are now service-private (not re-exposed here).
     bool SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
-                         const std::vector<std::string>& rawValues, std::string& outError);
+                         const std::vector<std::string>& rawValues, std::string& outError) override;
+    // clang-format off
+    // SMATCHET_DEVIATION(rule=duplication; reason=these field-edit delegator declarations are BY DESIGN a verbatim signature mirror of FieldEditPipelineService's SubmitFieldEdit/SubmitFieldEditNetworkOnly (the god-object decomposition Phase 2 forwarders — "Signature preserved verbatim" on both sides); the pre-existing structural clone only crossed the delta-scanner threshold because adding `override` to SubmitFieldEdit (fan-in Phase 5) re-hashed the token window; owner=orchestrator; revisit=if the delegators are ever removed or the service signatures diverge)
+    // clang-format on
     bool SubmitFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
                                     const std::vector<std::string>& rawValues,
                                     const std::string& originalEstimateSnapshot,
@@ -911,17 +949,19 @@ class AppController : public IMainThreadPoster {
     void WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker);
 
     bool FetchIssueWatchers(const std::string& issueKey, std::vector<TrackerUser>& outWatchers,
-                            std::string& outError) const;
+                            std::string& outError) const override;
 
     bool AddIssueWatcher(const std::string& issueKey, std::string& outError);
 
+    // defaults for outVoteCount / outHasVoted / outVotersInResponse live on IAppUsers::FetchIssueVotes
     bool FetchIssueVotes(const std::string& issueKey, std::vector<TrackerUser>& outVoters, std::string& outError,
-                         int* outVoteCount = nullptr, bool* outHasVoted = nullptr,
-                         bool* outVotersInResponse = nullptr) const;
+                         int* outVoteCount, bool* outHasVoted, bool* outVotersInResponse) const override;
 
-    bool SearchUsersByQuery(const std::string& query, std::vector<TrackerUser>& outUsers, std::string& outError) const;
+    bool SearchUsersByQuery(const std::string& query, std::vector<TrackerUser>& outUsers,
+                            std::string& outError) const override;
 
-    bool AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText, std::string& outError);
+    bool AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText,
+                              std::string& outError) override;
 
     /// issue-comments PR-A — off-UI read wrapper around
     /// `ITrackerCollaboration::FetchIssueComments`. Latches the focused backend,
@@ -939,7 +979,7 @@ class AppController : public IMainThreadPoster {
 
     bool SubmitWorklog(const std::string& issueId, const std::string& timeSpent, const std::string& timeRemaining,
                        const std::string& adjustEstimate, const std::string& workDescription,
-                       const std::string& startedDate, std::string& outError);
+                       const std::string& startedDate, std::string& outError) override;
 
     bool AddIssueCommentAnnotateContext(const std::string& issueKey, const std::string& p4User,
                                         const std::string& functionName, const std::string& filePath, int lineNumber,
@@ -1108,7 +1148,7 @@ class AppController : public IMainThreadPoster {
     /// default context's gets the default's field catalog copied in (one-time, pane-show —
     /// duplicate/same-backend panes render dropdowns immediately instead of raw values).
     /// Returns the context (never null after return).
-    GridLiveContext* EnsurePaneContextLive(const std::string& paneId, const std::string& backendKey);
+    GridLiveContext* EnsurePaneContextLive(const std::string& paneId, const std::string& backendKey) override;
     /// UI thread. One-shot per context generation: kick the pane's FIRST sync against its
     /// own (config, views) pair. The smatchet_views.json bucket load runs on a worker
     /// (Pillar 2 — no disk I/O on the UI thread), then hops back via mainThreadDispatcher
@@ -1335,14 +1375,14 @@ class AppController : public IMainThreadPoster {
     // prior surface.
 
   public:
-    /// Spawn `task` on a tracked background thread. Threads are joined either
-    /// when the producer completes or in `JoinBackgroundTasks` before
-    /// destruction — never detached. Post results back to the UI thread via
-    /// `mainThreadDispatcher.PostToMainThread` inside `task`.
+    /// IAppThreading — spawn `task` on a tracked background thread. Threads are
+    /// joined either when the producer completes or in `JoinBackgroundTasks`
+    /// before destruction — never detached. Post results back to the UI thread
+    /// via `PostToMainThread` inside `task`.
     /// Public so non-member callers (grid field-edit pipeline, etc.) can
     /// dispatch HTTP / SQLite work off the UI thread without re-implementing
     /// thread-bookkeeping.
-    void LaunchBackgroundTask(std::function<void()> task);
+    void LaunchBackgroundTask(std::function<void()> task) override;
 
     /// True once shutdown has begun. Public so `EditMetaCacheService` (via the deps adapter) can
     /// poll it from its warm worker to bail out of long loops (god-object decomposition Phase 1).

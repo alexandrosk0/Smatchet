@@ -106,13 +106,14 @@ static void DrawAnnotateFromCallstackMenuIfAny(AppController* app, UiDrawSession
     if (!app || !ui || !row || issueKey.empty()) {
         return;
     }
-    if (!AnnotateRowHasNonEmptyCallstackField(*app, *row)) {
+    if (!AnnotateRowHasNonEmptyCallstackField(app->GetAvailableFields(), *row)) {
         return;
     }
     ImGui::Separator();
     if (ImGui::MenuItem("Annotate...")) {
         // pane(): the pane whose window hosts this right-click popup (Slice 2).
-        OpenAnnotateAnalysisForGridIssue(*app, ui->showAnnotateAnalysis, ui->pane().gridState, issueKey);
+        OpenAnnotateAnalysisForGridIssue(app->GetAvailableFields(), ui->showAnnotateAnalysis, ui->pane().gridState,
+                                         issueKey);
     }
 }
 
@@ -250,7 +251,7 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
                         app->LaunchBackgroundTask([appPtr, capturedIssueKey, commentBody]() {
                             std::string err;
                             const bool ok = appPtr->AddIssueCommentPlain(capturedIssueKey, commentBody, err);
-                            appPtr->mainThreadDispatcher.PostToMainThread([ok, err, capturedIssueKey]() {
+                            appPtr->PostToMainThread([ok, err, capturedIssueKey]() {
                                 if (ok) {
                                     SmatchetToastManager::Instance().Push(
                                         SmatchetLocalization::T("toast.comment_posted", "Comment Posted"),

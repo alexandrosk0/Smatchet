@@ -19,14 +19,17 @@
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 
-#include "AppController.h"
-#include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+// fan-in Phase 5: this TU never touches the AppController (its registrar takes an unused
+// AppController& satisfied by the fwd-decl in BuiltinCommands_Internal.h), so AppController.h
+// is dropped — one includer off the fan-in count with no facet needed.
+#include <nlohmann/json.hpp> // this TU constructs nlohmann::json directly.
 #include "Logger.h"
 
 #if defined(SMATCHET_WITH_AI)
 #include "AiClientFactory.h"
 #include "AiModelCatalog.h"
 #include "AiPrefsValidator.h"
+#include "AiRequestBuilder.h"
 #include "AiTypes.h"
 #include "ConfigManager.h"
 #include "IAiClient.h"
@@ -57,6 +60,8 @@ namespace {
 
 bool ResolveProvider(const std::string& key, AiProvider& out) { return AiClientFactory::ProviderFromString(key, out); }
 
+// Pre-existing mapper; token-run re-bounded by the BuildClientConfigForProvider deletion, not a new copy-paste.
+// SMATCHET_DEVIATION(rule=duplication; reason=unrelated enum-name mappers; owner=orchestrator; revisit=2026-10-01)
 const char* AiProviderDisplayName(AiProvider p) {
     switch (p) {
     case AiProvider::OpenAi:
@@ -71,34 +76,6 @@ const char* AiProviderDisplayName(AiProvider p) {
         return "deepseek";
     }
     return "unknown";
-}
-
-AiClientConfig BuildClientConfigForProvider(const TrackerConfig& cfg, AiProvider provider) {
-    AiClientConfig out;
-    switch (provider) {
-    case AiProvider::Anthropic:
-        out.ApiKey = cfg.AiAnthropicApiKey;
-        out.BaseUrl = cfg.AiBaseUrl;
-        break;
-    case AiProvider::OllamaNative:
-        out.ApiKey.clear();
-        out.BaseUrl = cfg.AiOllamaBaseUrl;
-        break;
-    case AiProvider::OllamaOpenAiCompat:
-        out.ApiKey = cfg.AiApiKey;
-        out.BaseUrl = cfg.AiBaseUrl.empty() ? cfg.AiOllamaBaseUrl : cfg.AiBaseUrl;
-        break;
-    case AiProvider::DeepSeek:
-        out.ApiKey = cfg.AiDeepSeekApiKey;
-        out.BaseUrl = cfg.AiDeepSeekBaseUrl.empty() ? std::string("https://api.deepseek.com") : cfg.AiDeepSeekBaseUrl;
-        break;
-    case AiProvider::OpenAi:
-    default:
-        out.ApiKey = cfg.AiApiKey;
-        out.BaseUrl = cfg.AiBaseUrl;
-        break;
-    }
-    return out;
 }
 
 std::string ResolveModelId(const TrackerConfig& cfg, AiProvider provider) {
@@ -281,7 +258,7 @@ void RegisterDumpRequestCommand(CommandRegistry& reg) {
                 const std::string systemPrompt = args.value("system", std::string());
 
                 const TrackerConfig cfg = ConfigManager::Load();
-                const AiClientConfig clientCfg = BuildClientConfigForProvider(cfg, provider);
+                const AiClientConfig clientCfg = smatchet::ai::BuildClientConfig(cfg, provider);
                 const std::string model = args.value("model", ResolveModelId(cfg, provider));
 
                 nlohmann::json body;
@@ -355,7 +332,7 @@ void RegisterProbeCommand(CommandRegistry& reg) {
                                                       "'");
                 }
                 const TrackerConfig cfg = ConfigManager::Load();
-                AiClientConfig clientCfg = BuildClientConfigForProvider(cfg, provider);
+                AiClientConfig clientCfg = smatchet::ai::BuildClientConfig(cfg, provider);
                 // Tight probe timeouts: don't hold the CLI on a half-open host.
                 clientCfg.ConnectTimeoutMs = 5000;
                 clientCfg.TotalTimeoutMs = 10000;
@@ -475,7 +452,7 @@ CommandResult RunSendOnce(const nlohmann::json& args) {
     }
 
     const TrackerConfig cfg = ConfigManager::Load();
-    AiClientConfig clientCfg = BuildClientConfigForProvider(cfg, provider);
+    AiClientConfig clientCfg = smatchet::ai::BuildClientConfig(cfg, provider);
     clientCfg.ConnectTimeoutMs = 5000;
     clientCfg.TotalTimeoutMs = (timeoutMs > 0) ? timeoutMs : 30000;
 
@@ -550,24 +527,9 @@ void RegisterValidatePrefsCommand(CommandRegistry& reg) {
                 out["ok"] = v.IsOk();
                 out["errors"] = std::move(errs);
                 out["warnings"] = std::move(warns);
-                AiProvider effective;
-                switch (cfg.AiProviderKind) {
-                case 0:
-                    effective = AiProvider::OpenAi;
-                    break;
-                case 1:
-                    effective = AiProvider::Anthropic;
-                    break;
-                case 2:
-                    effective = AiProvider::OllamaOpenAiCompat;
-                    break;
-                case 3:
-                    effective = AiProvider::OllamaNative;
-                    break;
-                default:
-                    effective = AiProvider::OpenAi;
-                    break;
-                }
+                // Single source of truth (AiTypes.h) — do not re-implement the
+                // kind->enum switch here; that duplication is what let DR19 drift.
+                const AiProvider effective = AiProviderFromKind(cfg.AiProviderKind);
                 out["active_provider"] = AiProviderDisplayName(effective);
                 return CommandResult::Success(std::move(out));
             });

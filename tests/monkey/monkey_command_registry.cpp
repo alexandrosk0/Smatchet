@@ -1,5 +1,5 @@
 // monkey_command_registry — the nightly "code monkey" for Smatchet's command registry.
-// See docs/plans/active/nightly-monkey-tester.md.
+// See docs/plans/nightly-monkey-tester.md.
 //
 // Two modes:
 //
@@ -74,16 +74,14 @@ struct Options {
     long long steps = 2000;
     long long timeBudgetMs = 0; // 0 = no wall-clock cap; bound by --steps only
     std::string mode = "prehandler";
-    std::string category;                                        // empty = every category
+    std::string category;                                                // empty = every category
     std::string fixture = "tests/fixtures/jira_backend/basic-grid.json"; // handler-mode fake backend
     bool verbose = false;
 };
 
 // Self-referential / process-affecting commands. In prehandler mode their handlers can
 // never run (every probe rejects first); listing them keeps intent clear.
-bool IsDenied(const std::string& name) {
-    return name == "app.quit" || name == "ui_test.run" || name == "scenario.run";
-}
+bool IsDenied(const std::string& name) { return name == "app.quit" || name == "ui_test.run" || name == "scenario.run"; }
 
 // Layer 1b ALLOW-LIST: read-only commands whose handlers touch NO g_ui/ImGui frame state
 // and never hop to the UI thread (verified by reading their bodies in
@@ -91,20 +89,26 @@ bool IsDenied(const std::string& name) {
 // reading handlers — never auto-expanded. Everything else is skipped-by-default.
 bool IsHandlerAllowListed(const std::string& name) {
     return name == "commands.list" || name == "commands.help" || name == "commands.search" ||
-           name == "commands.recents" || name == "config.get" || name == "config.path" ||
-           name == "perf.snapshot" || name == "perf.frame_count" || name == "debug.thread_dump";
+           name == "commands.recents" || name == "config.get" || name == "config.path" || name == "perf.snapshot" ||
+           name == "perf.frame_count" || name == "debug.thread_dump";
 }
 
 const char* SourceName(CommandSource s) { return smatchet::cmd::CommandSourceString(s); }
 
 CommandSource PickSource(std::mt19937_64& rng) {
     switch (smatchet::monkey::PickIndex(rng, 6)) {
-    case 0: return CommandSource::Cli;
-    case 1: return CommandSource::Palette;
-    case 2: return CommandSource::Mcp;
-    case 3: return CommandSource::Lua;
-    case 4: return CommandSource::Unreal;
-    default: return CommandSource::Internal;
+    case 0:
+        return CommandSource::Cli;
+    case 1:
+        return CommandSource::Palette;
+    case 2:
+        return CommandSource::Mcp;
+    case 3:
+        return CommandSource::Lua;
+    case 4:
+        return CommandSource::Unreal;
+    default:
+        return CommandSource::Internal;
     }
 }
 
@@ -121,19 +125,23 @@ nlohmann::json BuildValidArgs(const Command& c, std::mt19937_64& rng) {
 }
 
 bool ParseLL(const char* s, long long& out) {
-    if (s == nullptr || *s == '\0') return false;
+    if (s == nullptr || *s == '\0')
+        return false;
     char* end = nullptr;
     const long long v = std::strtoll(s, &end, 10);
-    if (end == nullptr || *end != '\0') return false;
+    if (end == nullptr || *end != '\0')
+        return false;
     out = v;
     return true;
 }
 
 bool ParseU64(const char* s, std::uint64_t& out) {
-    if (s == nullptr || *s == '\0') return false;
+    if (s == nullptr || *s == '\0')
+        return false;
     char* end = nullptr;
     const unsigned long long v = std::strtoull(s, &end, 10);
-    if (end == nullptr || *end != '\0') return false;
+    if (end == nullptr || *end != '\0')
+        return false;
     out = static_cast<std::uint64_t>(v);
     return true;
 }
@@ -153,13 +161,12 @@ std::string TempDbPath() {
 }
 
 void PrintUsage() {
-    std::printf(
-        "usage: SmatchetMonkeyCli [--seed=<u64>] [--steps=<n>] [--time-budget-ms=<n>]\n"
-        "                         [--mode=prehandler|handlers] [--category=<cat>]\n"
-        "                         [--fixture=<jira-fixture.json>] [--verbose]\n"
-        "  prehandler (default): fuzz the pre-handler dispatch pipeline (Layer 1a).\n"
-        "  handlers: run an allow-list of read-only handlers vs a fake Jira backend (1b).\n"
-        "  A fixed --seed+--steps replays a byte-identical sequence.\n");
+    std::printf("usage: SmatchetMonkeyCli [--seed=<u64>] [--steps=<n>] [--time-budget-ms=<n>]\n"
+                "                         [--mode=prehandler|handlers] [--category=<cat>]\n"
+                "                         [--fixture=<jira-fixture.json>] [--verbose]\n"
+                "  prehandler (default): fuzz the pre-handler dispatch pipeline (Layer 1a).\n"
+                "  handlers: run an allow-list of read-only handlers vs a fake Jira backend (1b).\n"
+                "  A fixed --seed+--steps replays a byte-identical sequence.\n");
 }
 
 // Well-formed-envelope oracle shared by both modes: a non-Ok result must carry a valid
@@ -191,8 +198,10 @@ int RunPrehandler(const Options& opts, std::uint64_t seed) {
     std::vector<Command> pool;
     pool.reserve(all.size());
     for (const Command& c : all) {
-        if (IsDenied(c.Name)) continue;
-        if (!opts.category.empty() && c.Category != opts.category) continue;
+        if (IsDenied(c.Name))
+            continue;
+        if (!opts.category.empty() && c.Category != opts.category)
+            continue;
         pool.push_back(c);
     }
     std::printf("monkey: %zu commands registered, %zu in pool (mode=prehandler, category=%s)\n", all.size(),
@@ -205,10 +214,10 @@ int RunPrehandler(const Options& opts, std::uint64_t seed) {
 
     for (long long step = 0; step < opts.steps; ++step) {
         if (opts.timeBudgetMs > 0) {
-            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                     std::chrono::steady_clock::now() - start)
-                                     .count();
-            if (elapsed >= opts.timeBudgetMs) break;
+            const auto elapsed =
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+            if (elapsed >= opts.timeBudgetMs)
+                break;
         }
         ++stepsRun;
 
@@ -228,11 +237,12 @@ int RunPrehandler(const Options& opts, std::uint64_t seed) {
 
         const smatchet::monkey::FuzzInput in =
             smatchet::monkey::BuildProbe(chosen != nullptr ? *chosen : kNoCmd, kind, rng);
-        const std::string name = in.overrideName.empty() ? (chosen != nullptr ? chosen->Name : in.overrideName)
-                                                          : in.overrideName;
+        const std::string name =
+            in.overrideName.empty() ? (chosen != nullptr ? chosen->Name : in.overrideName) : in.overrideName;
 
         CommandContext ctx;
-        ctx.App = &app;
+        ctx.ScenarioHost = &app;
+        ctx.Threading = &app;
         ctx.Source = PickSource(rng);
         ctx.ConfirmedDestructive = smatchet::monkey::PickBool(rng);
         ctx.DryRun = smatchet::monkey::PickBool(rng);
@@ -251,8 +261,8 @@ int RunPrehandler(const Options& opts, std::uint64_t seed) {
                          "monkey VIOLATION (exception): seed=%llu step=%lld cmd='%s' probe=%s src=%s\n"
                          "  args=%s\n  what()=%s\n  reproduce: SmatchetMonkeyCli --seed=%llu --steps=%lld\n",
                          static_cast<unsigned long long>(seed), step, name.c_str(), ProbeKindName(kind),
-                         SourceName(ctx.Source), argsDump.c_str(), e.what(),
-                         static_cast<unsigned long long>(seed), opts.steps);
+                         SourceName(ctx.Source), argsDump.c_str(), e.what(), static_cast<unsigned long long>(seed),
+                         opts.steps);
             return 2;
         } catch (...) {
             std::fprintf(stderr, "monkey VIOLATION (non-std exception): seed=%llu step=%lld cmd='%s' probe=%s\n",
@@ -270,8 +280,8 @@ int RunPrehandler(const Options& opts, std::uint64_t seed) {
                          "  seed=%llu step=%lld cmd='%s' probe=%s src=%s dryRun=%d confirmed=%d\n  args=%s\n"
                          "  reproduce: SmatchetMonkeyCli --seed=%llu --steps=%lld\n",
                          static_cast<unsigned long long>(seed), step, name.c_str(), ProbeKindName(kind),
-                         SourceName(ctx.Source), ctx.DryRun ? 1 : 0, ctx.ConfirmedDestructive ? 1 : 0,
-                         argsDump.c_str(), static_cast<unsigned long long>(seed), opts.steps);
+                         SourceName(ctx.Source), ctx.DryRun ? 1 : 0, ctx.ConfirmedDestructive ? 1 : 0, argsDump.c_str(),
+                         static_cast<unsigned long long>(seed), opts.steps);
             return 3;
         }
         if (!ErrorEnvelopeWellFormed(r)) {
@@ -345,10 +355,10 @@ int RunHandlers(const Options& opts, std::uint64_t seed) {
 
     for (long long step = 0; step < opts.steps; ++step) {
         if (opts.timeBudgetMs > 0) {
-            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                     std::chrono::steady_clock::now() - start)
-                                     .count();
-            if (elapsed >= opts.timeBudgetMs) break;
+            const auto elapsed =
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+            if (elapsed >= opts.timeBudgetMs)
+                break;
         }
         ++stepsRun;
 
@@ -356,7 +366,8 @@ int RunHandlers(const Options& opts, std::uint64_t seed) {
         const nlohmann::json args = BuildValidArgs(c, rng);
 
         CommandContext ctx;
-        ctx.App = &app;
+        ctx.ScenarioHost = &app;
+        ctx.Threading = &app;
         ctx.Source = PickSource(rng);
         ctx.DryRun = smatchet::monkey::PickBool(rng);
         ctx.TimeoutMs = static_cast<int>(smatchet::monkey::PickIntInRange(rng, 0, 5000));
@@ -368,11 +379,12 @@ int RunHandlers(const Options& opts, std::uint64_t seed) {
             r = app.Commands().Dispatch(c.Name, args, ctx);
         } catch (const std::exception& e) {
             const std::string argsDump = args.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-            std::fprintf(stderr,
-                         "monkey VIOLATION (handler exception): seed=%llu step=%lld cmd='%s' src=%s\n"
-                         "  args=%s\n  what()=%s\n  reproduce: SmatchetMonkeyCli --mode=handlers --seed=%llu --steps=%lld\n",
-                         static_cast<unsigned long long>(seed), step, c.Name.c_str(), SourceName(ctx.Source),
-                         argsDump.c_str(), e.what(), static_cast<unsigned long long>(seed), opts.steps);
+            std::fprintf(
+                stderr,
+                "monkey VIOLATION (handler exception): seed=%llu step=%lld cmd='%s' src=%s\n"
+                "  args=%s\n  what()=%s\n  reproduce: SmatchetMonkeyCli --mode=handlers --seed=%llu --steps=%lld\n",
+                static_cast<unsigned long long>(seed), step, c.Name.c_str(), SourceName(ctx.Source), argsDump.c_str(),
+                e.what(), static_cast<unsigned long long>(seed), opts.steps);
             return 2;
         } catch (...) {
             std::fprintf(stderr, "monkey VIOLATION (handler non-std exception): seed=%llu step=%lld cmd='%s'\n",
@@ -391,10 +403,11 @@ int RunHandlers(const Options& opts, std::uint64_t seed) {
         // Ok OR a clean error are both acceptable (some getters legitimately error on odd args).
         if (!ErrorEnvelopeWellFormed(r)) {
             const std::string argsDump = args.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
-            std::fprintf(stderr,
-                         "monkey VIOLATION (malformed handler result): seed=%llu step=%lld cmd='%s' code=%s\n  args=%s\n",
-                         static_cast<unsigned long long>(seed), step, c.Name.c_str(), ErrorCodeString(r.Error.Code),
-                         argsDump.c_str());
+            std::fprintf(
+                stderr,
+                "monkey VIOLATION (malformed handler result): seed=%llu step=%lld cmd='%s' code=%s\n  args=%s\n",
+                static_cast<unsigned long long>(seed), step, c.Name.c_str(), ErrorCodeString(r.Error.Code),
+                argsDump.c_str());
             return 4;
         }
         if (r.Ok) {
@@ -432,12 +445,21 @@ int main(int argc, char** argv) {
             PrintUsage();
             return 0;
         } else if ((v = MatchOpt(a, "--seed")) != nullptr) {
-            if (!ParseU64(v, opts.seed)) { std::fprintf(stderr, "monkey: bad --seed '%s'\n", v); return 64; }
+            if (!ParseU64(v, opts.seed)) {
+                std::fprintf(stderr, "monkey: bad --seed '%s'\n", v);
+                return 64;
+            }
             opts.seedProvided = true;
         } else if ((v = MatchOpt(a, "--steps")) != nullptr) {
-            if (!ParseLL(v, opts.steps) || opts.steps < 0) { std::fprintf(stderr, "monkey: bad --steps '%s'\n", v); return 64; }
+            if (!ParseLL(v, opts.steps) || opts.steps < 0) {
+                std::fprintf(stderr, "monkey: bad --steps '%s'\n", v);
+                return 64;
+            }
         } else if ((v = MatchOpt(a, "--time-budget-ms")) != nullptr) {
-            if (!ParseLL(v, opts.timeBudgetMs) || opts.timeBudgetMs < 0) { std::fprintf(stderr, "monkey: bad --time-budget-ms '%s'\n", v); return 64; }
+            if (!ParseLL(v, opts.timeBudgetMs) || opts.timeBudgetMs < 0) {
+                std::fprintf(stderr, "monkey: bad --time-budget-ms '%s'\n", v);
+                return 64;
+            }
         } else if ((v = MatchOpt(a, "--mode")) != nullptr) {
             opts.mode = v;
         } else if ((v = MatchOpt(a, "--category")) != nullptr) {

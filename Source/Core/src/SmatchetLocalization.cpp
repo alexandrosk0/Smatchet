@@ -2,6 +2,7 @@
 
 #include "ConfigManager.h"
 #include "Logger.h"
+#include "SmatchetLocalizationFormatGuard.h"
 
 #include <nlohmann/json.hpp>
 
@@ -911,8 +912,8 @@ const TranslationEntry kEntries[] = {
     {"whisper.preferences.hotkeyRebindButton", "Click to rebind", u8"Cliquez pour redéfinir"},
     {"whisper.preferences.hotkeyCapturing", "Press a key combo... (Esc to cancel)",
      u8"Appuyez sur une combinaison... (Échap pour annuler)"},
-    {"whisper.preferences.hotkeyErrorModifiersOnly", "Hotkey must include a non-modifier key",
-     u8"La combinaison doit inclure une touche autre que modificateur"},
+    {"whisper.preferences.hotkeyErrorModifiersOnly", "Hotkey must include a modifier key (Ctrl, Alt, Shift, or Win)",
+     u8"La combinaison doit inclure une touche modificatrice (Ctrl, Alt, Maj ou Win)"},
     {"whisper.preferences.hotkeyErrorReserved", "That combo is reserved by the operating system",
      u8"Cette combinaison est réservée par le système d'exploitation"},
     {"whisper.preferences.hotkeyErrorParse", "Could not parse the captured key combo",
@@ -952,6 +953,9 @@ const TranslationEntry kEntries[] = {
     {"whisper.preferences.rerunSetup.button", "Re-run setup banner", u8"Relancer la bannière de configuration"},
     {"whisper.preferences.rerunSetup.tooltip", "Forces WhisperSetupCompleted=false; banner appears next launch",
      u8"Force WhisperSetupCompleted=false ; la bannière réapparaît au prochain lancement"},
+    {"whisper.preferences.testE2E.hint",
+     "(records 4 s; the cloud route uploads audio to OpenAI, the local route stays on-device)",
+     u8"(enregistre 4 s ; la voie cloud envoie l'audio à OpenAI, la voie locale reste sur l'appareil)"},
 
     // user-facing-text-i18n-sweep — literals that previously bypassed the lookup
     // (raw ImGui calls, toast titles/messages, combo item arrays).
@@ -1383,44 +1387,10 @@ const char* LabelFromSource(const char* label) { return BuildLabelFromSource(lab
 
 const char* WindowTitleFromSource(const char* title) { return BuildLabelFromSource(title, true); }
 
-// Extract the ordered list of printf conversion-specifier tokens from a format
-// string (each token is the run from '%' through its conversion char; `%%` is a
-// literal and produces no token). Used to compare a translated override against
-// the trusted English literal before either is handed to vsnprintf.
-static std::vector<std::string> ConversionSpecifiers(const char* fmt) {
-    std::vector<std::string> specs;
-    if (fmt == nullptr) {
-        return specs;
-    }
-    for (const char* p = fmt; *p != '\0'; ++p) {
-        if (*p != '%') {
-            continue;
-        }
-        const char* start = p++;
-        if (*p == '%') { // "%%" — literal percent, not a conversion
-            continue;
-        }
-        // flags, width/precision (incl. '*'), length modifiers — consume up to the
-        // conversion char (the first alphabetic that terminates the specifier).
-        while (*p != '\0' && std::strchr("-+ #0123456789.*hljztLqI", *p) != nullptr) {
-            ++p;
-        }
-        if (*p == '\0') { // truncated specifier — treat the whole tail as one token
-            specs.emplace_back(start);
-            break;
-        }
-        specs.emplace_back(start, static_cast<std::size_t>(p - start) + 1); // include conversion char
-    }
-    return specs;
-}
-
-// True iff `translated` carries exactly the same conversion-specifier sequence as
-// the trusted `englishLiteral`. A mismatch means the override added/changed/removed
-// a specifier, so feeding it to vsnprintf would consume varargs that were never
-// supplied (or a `%n` write) — Pillar 3 / arbitrary-write guard.
-static bool FormatSpecifiersMatch(const char* translated, const char* englishLiteral) {
-    return ConversionSpecifiers(translated) == ConversionSpecifiers(englishLiteral);
-}
+// The conversion-specifier guard (ConversionSpecifiers / FormatSpecifiersMatch) lives
+// in the header-only smatchet::l10n unit (SmatchetLocalizationFormatGuard.h) so it can
+// be unit- and fuzz-tested in isolation; SECURITY_AUDIT.md #1 / CPP_CODE_AUDIT.md #7.
+using smatchet::l10n::FormatSpecifiersMatch;
 
 const char* TranslateSourceAsFormat(const char* englishSource) {
     if (!englishSource) {

@@ -5,8 +5,14 @@
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 
-#include "AppController.h"
-#include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+// fan-in Phase 5: depend on the narrow IAppOfflineQueue facet, not the full AppController.h
+// (drops this TU off the AppController.h fan-in count). CachedTicketTypes.h provides the
+// pending/dead record element types iterated below; Sync/OfflineQueueTypes.h completes the
+// delete-summary return types (`.Deleted`) the facet forward-declares.
+#include "Interfaces/IAppOfflineQueue.h"
+#include "CachedTicketTypes.h"
+#include "Sync/OfflineQueueTypes.h"
+#include <nlohmann/json.hpp> // this TU constructs nlohmann::json directly.
 
 #include <algorithm>
 #include <cstdint>
@@ -22,7 +28,7 @@ using builtin_detail::MakeCommand;
 using builtin_detail::PaginateJsonArray;
 using builtin_detail::PInt;
 
-void RegisterOfflineCommands(CommandRegistry& reg, AppController& app) {
+void RegisterOfflineCommands(CommandRegistry& reg, IAppOfflineQueue& app) {
     {
         Command c = MakeCommand("offline.list_pending", "List pending (queued) offline creates and field edits.",
                                 [&app](const nlohmann::json& args, const CommandContext&) {

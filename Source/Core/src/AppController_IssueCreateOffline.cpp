@@ -68,24 +68,40 @@ IssueDraft AppController::BuildDraftFromLastTicket(const TrackerConfig& cfg) con
     const std::string resolvedProject = smatchet::ResolveProjectForDraft(
         focusedContext().Backend ? &focusedContext().Backend->Connectivity() : nullptr, cfg.JqlQuery, lastTicket.id,
         /*legacyFallback*/ std::string());
-    return IssueDraftHelpers::FromCachedTicket(lastTicket, fieldCatalog().AvailableFields, resolvedProject,
+    // DR6: SetFieldCatalog mutates AvailableFields on a background worker; copy under the
+    // guard (latched once) rather than passing the live vector by reference into a call that
+    // outlives the read — an unguarded read risks a torn / reallocated-out-from-under UAF.
+    const GridContextFieldCatalog& cat = fieldCatalog();
+    std::vector<TrackerField> availableFieldsCopy;
+    {
+        std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+        availableFieldsCopy = cat.AvailableFields;
+    }
+    return IssueDraftHelpers::FromCachedTicket(lastTicket, availableFieldsCopy, resolvedProject,
                                                cfg.DefaultIssueTypeId, cfg.DefaultIssueTypeName, inheritIds);
 }
 
 RequiredFieldSet AppController::GetRequiredFieldSet(const std::string& projectKey, const std::string& issueTypeId,
                                                     const std::string& issueTypeName) const {
     RequiredFieldSet result;
-    for (const auto& entry : fieldCatalog().AvailableIssueTypeMeta) {
-        const bool projectMatch = entry.ProjectKey.empty() || projectKey.empty() || entry.ProjectKey == projectKey;
-        if (!projectMatch) {
-            continue;
-        }
-        const bool idMatch = !issueTypeId.empty() && entry.IssueTypeId == issueTypeId;
-        const bool nameMatch = !issueTypeName.empty() && entry.IssueTypeName == issueTypeName;
-        if (idMatch || nameMatch) {
-            result.FieldIds = entry.RequiredFieldIds;
-            result.IsSubtask = entry.IsSubtask;
-            break;
+    // DR6: guard the scan of AvailableIssueTypeMeta — SetFieldCatalog reassigns it on a
+    // background worker. The loop body only reads entry fields and never re-locks the guard,
+    // so holding it across the whole scan is deadlock-free.
+    const GridContextFieldCatalog& cat = fieldCatalog();
+    {
+        std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+        for (const auto& entry : cat.AvailableIssueTypeMeta) {
+            const bool projectMatch = entry.ProjectKey.empty() || projectKey.empty() || entry.ProjectKey == projectKey;
+            if (!projectMatch) {
+                continue;
+            }
+            const bool idMatch = !issueTypeId.empty() && entry.IssueTypeId == issueTypeId;
+            const bool nameMatch = !issueTypeName.empty() && entry.IssueTypeName == issueTypeName;
+            if (idMatch || nameMatch) {
+                result.FieldIds = entry.RequiredFieldIds;
+                result.IsSubtask = entry.IsSubtask;
+                break;
+            }
         }
     }
     const auto cfg = ConfigManager::Load();
@@ -98,7 +114,15 @@ RequiredFieldSet AppController::GetRequiredFieldSet(const std::string& projectKe
 std::future<IssueCreateResult> AppController::CreateIssueAsync(const IssueDraft& draft,
                                                                smatchet::ui::CancelToken cancel) {
     // Snapshot state the worker needs up front so we don't race with UI edits.
-    auto catalogCopy = std::make_shared<std::vector<TrackerField>>(fieldCatalog().AvailableFields);
+    // DR6: copy AvailableFields under its guard — SetFieldCatalog reassigns the vector on a
+    // background worker, so an unguarded copy-construct can read a half-reassigned / reallocated
+    // source.
+    const GridContextFieldCatalog& cat = fieldCatalog();
+    std::shared_ptr<std::vector<TrackerField>> catalogCopy;
+    {
+        std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+        catalogCopy = std::make_shared<std::vector<TrackerField>>(cat.AvailableFields);
+    }
     const RequiredFieldSet required = GetRequiredFieldSet(draft.ProjectKey, draft.IssueTypeId, draft.IssueTypeName);
     std::shared_ptr<std::promise<IssueCreateResult>> promise = std::make_shared<std::promise<IssueCreateResult>>();
     std::future<IssueCreateResult> future = promise->get_future();

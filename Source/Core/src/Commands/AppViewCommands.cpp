@@ -41,8 +41,7 @@ bool ResolveTarget(const std::string& action, bool current) {
 }
 
 // Side-bar / bottom-panel visibility — persisted cfg slots (was: handlePanelVisibilityShortcuts).
-CommandResult SetPanel(AppController& app, ViewSlot slot, bool TrackerConfig::* cfgFlag,
-                       const std::string& action) {
+CommandResult SetPanel(IMainThreadPoster& app, ViewSlot slot, bool TrackerConfig::*cfgFlag, const std::string& action) {
     return RunOnUiThreadAsCommandResult(app, [slot, cfgFlag, action]() {
         const bool target = ResolveTarget(action, g_ui.cfg.*cfgFlag);
         SetViewVisible(g_ui.cfg, slot, target);
@@ -53,8 +52,8 @@ CommandResult SetPanel(AppController& app, ViewSlot slot, bool TrackerConfig::* 
     });
 }
 
-void RegisterPanel(CommandRegistry& reg, AppController& app, const char* name, const char* label,
-                   ViewSlot slot, bool TrackerConfig::* cfgFlag) {
+void RegisterPanel(CommandRegistry& reg, IMainThreadPoster& app, const char* name, const char* label, ViewSlot slot,
+                   bool TrackerConfig::*cfgFlag) {
     Command c;
     c.Name = name;
     c.Category = "view";
@@ -70,7 +69,7 @@ void RegisterPanel(CommandRegistry& reg, AppController& app, const char* name, c
 
 } // namespace
 
-void RegisterAppViewCommands(CommandRegistry& reg, AppController& app) {
+void RegisterAppViewCommands(CommandRegistry& reg, IMainThreadPoster& app) {
     if (reg.HasExact("view.sidebar.primary")) {
         return;
     }
@@ -79,8 +78,7 @@ void RegisterAppViewCommands(CommandRegistry& reg, AppController& app) {
                   &TrackerConfig::ShowPrimarySideBar);
     RegisterPanel(reg, app, "view.sidebar.secondary", "secondary side bar", ViewSlot::SecondarySideBar,
                   &TrackerConfig::ShowSecondarySideBar);
-    RegisterPanel(reg, app, "view.panel.bottom", "bottom panel", ViewSlot::BottomPanel,
-                  &TrackerConfig::ShowPanel);
+    RegisterPanel(reg, app, "view.panel.bottom", "bottom panel", ViewSlot::BottomPanel, &TrackerConfig::ShowPanel);
 
 #if defined(SMATCHET_WITH_AI)
     {

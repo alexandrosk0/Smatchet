@@ -119,6 +119,19 @@ inline TrackerError TrackerErrorFromHttpStatus(int status, std::string detail) {
     return TrackerErrorUnknown(std::move(detail), status);
 }
 
+/// Retry decision for a non-idempotent POST (finding DR16 — the hole left by BACKLOG B2).
+/// A POST may only be re-sent when the request provably never reached the server: a pre-send
+/// transport failure such as a DNS-resolution error or a refused connection. A post-send
+/// operation timeout is different — the server may already have committed the create/comment and
+/// only the response was lost, so re-sending would double-create / double-comment. cpr reports
+/// both a connect-phase and a read-phase timeout as OPERATION_TIMEDOUT with status 0, and both
+/// land in TrackerErrorKind::Transport; the two cannot be told apart after the fact, so any
+/// operation timeout is treated as potentially post-send and left single-attempt. Genuine
+/// pre-send transport failures (not an operation timeout) still retry as before.
+inline bool TrackerShouldRetryPost(TrackerErrorKind kind, bool operationTimeout) noexcept {
+    return kind == TrackerErrorKind::Transport && !operationTimeout;
+}
+
 /// Convert a kind to a stable short string for logging. Not user-facing.
 inline const char* ToString(TrackerErrorKind k) noexcept {
     switch (k) {

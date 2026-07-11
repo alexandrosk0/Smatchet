@@ -1,7 +1,8 @@
 #!/bin/bash
 # plan-doc-table-probe: scan a plan-doc's § File-level changes table; for
 # every symbol / CMake variable named in recognised columns, run git grep
-# (symbols) or CMakeLists.txt grep (variables); report hits / misses.
+# (symbols) or a grep over the tracked CMake files (variables); report
+# hits / misses.
 #
 # Exit 0 if every named row resolves; exit 1 if any miss.
 # Exit 2 on argument / file errors.
@@ -12,7 +13,7 @@
 #
 # Recognised column headers (case-insensitive):
 #   Symbol | Function | Caller | Definer    -> treated as symbol; git grep -nF
-#   CMake variable | CMake target | Variable -> treated as CMake var; grep ... CMakeLists.txt
+#   CMake variable | CMake target | Variable -> treated as CMake var; grep over tracked *CMakeLists.txt + cmake/*.cmake
 #
 # Section delimiter: starts at the first heading matching
 #   ^#+\s+File-level\s+(changes|edits|writes)
@@ -159,7 +160,13 @@ while IFS=$'\t' read -r kind value; do
             fi
             ;;
         VAR)
-            if hits=$(grep -nE "(set|file\s*\(\s*GLOB).*${value}" CMakeLists.txt tests/CMakeLists.txt 2>/dev/null); then
+            # The build is split into per-component CMakeLists.txt files (root
+            # as orchestrator), so a CMake variable/target may be set()/GLOB'd
+            # outside the root — probe every tracked CMakeLists.txt plus the
+            # cmake/*.cmake modules. `xargs -r` skips the grep entirely when
+            # git ls-files matches nothing (grep would otherwise hang on stdin).
+            if hits=$(git ls-files -z -- '*CMakeLists.txt' 'cmake/*.cmake' 2>/dev/null \
+                          | xargs -0 -r grep -nE "(set|file\s*\(\s*GLOB).*${value}" 2>/dev/null); then
                 count=$(printf '%s\n' "$hits" | wc -l | tr -d ' ')
                 # `|| true`: see SYMBOL branch above — head -1 SIGPIPEs printf
                 # (141), which set -euo pipefail would otherwise treat as fatal.

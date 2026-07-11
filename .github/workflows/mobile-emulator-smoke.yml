@@ -208,7 +208,7 @@ jobs:
 
       - name: Create AVD + snapshot (cache miss)
         if: steps.avd-cache.outputs.cache-hit != 'true'
-        uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: ${{ env.EMULATOR_API }}
           arch: x86_64
@@ -219,7 +219,7 @@ jobs:
           script: echo "AVD primed"
 
       - name: Boot emulator + install APK + assert first-frame marker
-        uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         env:
           SMATCHET_APK_PATH: ${{ env.SMATCHET_APK_PATH }}
         with:

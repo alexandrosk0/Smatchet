@@ -13,6 +13,12 @@ struct ScenarioCaptureSize {
 
 ScenarioCaptureSize ParseScenarioCaptureSize(const nlohmann::json& args);
 
+// Stage a g_ui window-resize request to the capture size (consumed by the
+// standalone frame loop on the next frame). Out-of-line so this header stays
+// free of the SmatchetUiSession include; shared by the screenshot scenarios
+// via ConfigureScreenshotScenario.
+void RequestScenarioCaptureWindowResize(const ScenarioCaptureSize& size);
+
 } // namespace cmd
 } // namespace smatchet
 

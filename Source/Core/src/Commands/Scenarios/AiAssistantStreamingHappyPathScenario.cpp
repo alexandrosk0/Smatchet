@@ -23,7 +23,6 @@
 
 #include "AiClientFactory.h"
 #include "AiTypes.h"
-#include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "IAiClient.h"
 #include "Logger.h"
@@ -113,9 +112,22 @@ std::unique_ptr<IAiClient> StubFactory(AiProvider /*provider*/) {
 
 class AiAssistantStreamingHappyPathScenario : public IScenario {
   public:
+    // DR7 joining destructor. If this scenario is ever destroyed while its
+    // worker is still joinable (e.g. the runner replaces the active scenario),
+    // signal the cancel token, join the thread, and clear the factory override
+    // here so ~std::thread never runs on a joinable thread (std::terminate) and
+    // the stub-backed AiClientFactory override never dangles into freed state.
+    ~AiAssistantStreamingHappyPathScenario() override {
+        if (cancel_) {
+            cancel_->store(true, std::memory_order_release);
+        }
+        JoinWorker();
+        ClearOverride();
+    }
+
     std::string Name() const override { return "ai-assistant-streaming-happy-path"; }
 
-    void OnStart(AppController& /*app*/, const nlohmann::json& args, std::string& outErr) override {
+    void OnStart(IAppScenarioHost& /*app*/, const nlohmann::json& args, std::string& outErr) override {
         frames_ = (std::max)(1, args.value("frames", 60));
         {
             std::lock_guard<std::mutex> lk(g_stubMutex);
@@ -165,13 +177,13 @@ class AiAssistantStreamingHappyPathScenario : public IScenario {
         UiPerfMonitor::Instance().Reset();
     }
 
-    void OnFrame(AppController& /*app*/, int /*frameIndex*/) override {
+    void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override {
         // Idle — the worker drives the stream; the UI keeps rendering.
     }
 
     bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
 
-    void OnCancel(AppController& /*app*/) override {
+    void OnCancel(IAppScenarioHost& /*app*/) override {
         if (cancel_) {
             cancel_->store(true, std::memory_order_release);
         }
@@ -179,7 +191,7 @@ class AiAssistantStreamingHappyPathScenario : public IScenario {
         ClearOverride();
     }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         JoinWorker();
         ClearOverride();
 

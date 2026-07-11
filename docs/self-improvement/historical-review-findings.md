@@ -11,6 +11,74 @@
 > auto-fixed. User-visible product defects should be elevated to GitHub Issues
 > (ADR-0014); the rest is tech-debt. Newest batch on top.
 
+## Remediation pass (2026-07-10) — the 7 open findings, all fixed
+
+All 7 findings the reconcile pass (below) re-verified STILL OPEN are now fixed on
+develop, each with non-vacuous test coverage (reverting the fix fails the new
+test/selftest):
+
+- **#1116 + #789** — `pre-ship.sh` now resolves a WORKING python (execution-probed,
+  not bare `command -v`) and **fails closed** on strict-zone detection when none is
+  found; comment-audit / md-lint route through the resolver. New `--selftest` case
+  locks the fail-closed-on-no-python path. → **PR #1733**.
+- **#329 + #80 + #77** — the three `test-*.sh` gate wrappers: the perf-marker leak
+  gate scans REGENERATED content (not the stale committed doc); theme-syntax gains a
+  zero-assertion guard; views-reorder gains a zero-test guard and drops the dead
+  `extract()`. Each locked by a new `--selftest` (`test-gate-selftests` now enrolls
+  64 scripts). → **PR #1734** (a CodeRabbit finding — a regen failure passing green —
+  fixed in the same PR).
+- **#784 + #807** — `postmortem-owed.sh` dedup now splits slash-joined PR trailers
+  (new bats case, 35 tests); README build-script path corrected to
+  `scripts/dev/local/build_and_run.ps1` and the false auto-vcvars claim replaced with
+  the accurate `cl.exe`-on-PATH requirement. → **PR #1736**.
+
+The historical-review **open list is now empty** (Batches 1–12 below retain the ~25
+MEDIUM + ~60 LOW advisory doc-drift residue — "verify on demand", non-actioned).
+
+## Reconcile / re-verification pass (2026-07-10)
+
+Ran `historical-review-ledger-reconcile.sh --reconcile` (0/11 flagged by the
+coarse probes) **then manually re-verified every one of the 11 STILL-OPEN
+findings from the 2026-06-20 pass against `origin/develop` by reading the cited
+code at HEAD** — because the automated probes are conservative (they never
+flagged the 4 below, yet all 4 are genuinely resolved). **Of 11: 4 now DONE, 7
+still open.**
+
+**Newly resolved since 2026-06-20 (drop from the open list):**
+- **#1138 / #1158 / #1049** (the 3 user-visible defects elevated to GitHub
+  Issues) — **Issues #1457 / #1458 / #1459 are all CLOSED (COMPLETED)**. The
+  `gridContexts_` map race, the `pane.new` un-credentialed duplicate-spawn, and
+  the annotate day→CL re-fire UI freeze are fixed on develop.
+- **#919** (HIGH) `merge_watcher.bats` — **DONE**. The broken `case "$2 $3"`
+  bash-stub `handle_pass` tests were rewritten to Python monkeypatch
+  (`squash_merge_pr` → `ENQUEUED_SENTINEL`); the enqueue + immediate-merge
+  queue-safety paths now genuinely run (was Windows-unresolvable/skipped).
+
+**STILL OPEN (NOT DONE) — re-verified alive at develop 2026-07-10** (all HIGH,
+internal gate/test/doc debt; no product defect → backlog, not Issues):
+_(⚠ ALL 7 now FIXED — see the "Remediation pass (2026-07-10)" section above; PRs
+#1733 / #1734 / #1736. Retained here for the audit trail.)_
+- **#1116** `scripts/dev/pre-ship.sh:~292` — strict-zone detection uses bare
+  `command -v python3` (not the `resolve_python` resolver in
+  `agents/scripts/project/lint-rules.d/00-common.sh`) and swallows failure via
+  `|| true`, so the Windows `python3` App-Execution-Alias stub (exit-49) leaves
+  `$review_strict_zones` empty → a strict-zone diff N/A-passes the review gate.
+- **#789** `scripts/dev/pre-ship.sh:~227,~239` — `comment_audit.py` + `md_lint.py`
+  still invoked via bare `python3`, ignoring the repo python resolver.
+- **#329** `test-perf-marker-inventory.sh:~30` — leak gate greps the committed
+  `docs/perf/MARKER_INVENTORY.md`; the `--check` regen output is echoed but never
+  compared, so un-regenerated drift is invisible.
+- **#80** `test-theme-syntax-colors.sh:~57` — fails only on `FAILED > 0`; a run
+  with zero total assertions (vanished suite) exits 0 (green).
+- **#77** `test-ui-views-columns-reorder.sh:~63` — no zero-test guard (PASSED=0,
+  FAILED=0 passes) **and** a dead `extract()` helper (:~27) never invoked.
+- **#784** `agents/scripts/core/postmortem-owed.sh:~221` — `has_entry` dedup regex
+  `[,[:space:]]#$1([^0-9]|$)` splits commas/space but not `/` → slash-joined PR
+  trailers (`#906/#907/#908`) re-flag every SessionStart.
+- **#807** `README.md:~70,~104` — references `scripts/dev/build_and_run.ps1` (the
+  script now lives at `scripts/dev/local/build_and_run.ps1`) + overstates
+  auto-vcvars bootstrap (`with-msvc.ps1` not invoked by the main path).
+
 ## Verification pass (2026-06-20)
 
 Fresh **live-tree re-verification** of every CRITICAL + HIGH finding (plus the
@@ -35,6 +103,8 @@ defects were elevated to GitHub Issues per ADR-0014.
   context captured by pointer), #524 (full-body actionable-count parse).
 
 **STILL OPEN (NOT DONE) — re-verified alive at develop 2026-06-20:**
+_(⚠ SUPERSEDED by the 2026-07-10 reconcile pass above: #1138/#1158/#1049 and
+#919 are now DONE; the live open list is the 7 findings in that newer section.)_
 
 _Product / user-visible → filed as GitHub Issues (ADR-0014):_
 - **#1138** (HIGH) `AppController_CatalogAndFieldEdit.cpp:2052` — `gridContexts_`
@@ -112,8 +182,26 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
 - ⏭ **#908** (CMake dead sol2 re-run-cleanup group) — left as-is: editing the
   sol2 patch chain is higher-risk than the harmless dead comment; deferred.
 
-## Sweep status & remaining work (as of 2026-06-16)
+## Sweep status & remaining work (as of 2026-07-10)
 
+- **Post-#1174 frontier re-establishment (2026-07-10): SWEEP COMPLETE #1–#1695.**
+  Work-list = all **494** merged-to-develop PRs in **(#1174, #1695]** (authoritative
+  GitHub merged list, cross-validated against the develop squash log; 4 PRs needed
+  manual sha resolution — #1439/#1577 edited squash subjects, #1593/#1597 true merge
+  commits) minus Batch 12's 17 → **477 swept this session** as Batches 13–16
+  (#1695–#1175, contiguous, newest first) + the **#1593 per-constituent special**
+  (all below). Aggregate: **473 reviewed + #1593 — 56 with findings, 389 clean,
+  31 fully superseded, 0 errored, 0 died; 1 CRITICAL, 4 HIGH, 21 MEDIUM, 38 LOW;
+  ~16.1M tokens, ~2.7h wall.** The 5 user-visible findings → GitHub Issues
+  **#1699** (B13 CRITICAL, AI-input overflow), **#1706** (B14, prefs stale
+  buffers), **#1711/#1712/#1713** (B16: env-scrub `_PATH`, p4vc trailing-`\`,
+  comments Gen token). Dominant recurring class across all four batches: the
+  **zero-test fail-open driver** (`passed=0&&failed=0`→exit-0) — 12+ new sites.
+  With the #1–#1174 baseline, **every merged PR #1→#1695 is survivor-reviewed.**
+  **Batch 17 (same session) extended the frontier to #1737** — 36 PRs
+  (#1696–#1737, incl. #1700 itself), 4 findings (1 MEDIUM fail-open + 3 LOW),
+  0 user-visible. **The next sweep resumes from #1738** (same recipe;
+  sha-resolved variant recipe in the Batch 13 header for gh-less environments).
 - **Swept:** **#1–#1174** (batches 1–11) — **the entire merged-PR history reviewed.**
   **SWEEP COMPLETE** — Batch 11 (#116–#1, 113 PRs, the final tail incl. the early
   base-`main` PRs #1–#5) added 2026-06-13;
@@ -175,6 +263,142 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   User-visible ones → GitHub Issues per ADR-0014 when actioned.)_
 
 <!-- Batches appended at the top. -->
+
+## Batch 17 — #1737–#1696 (36-PR sweep, 2026-07-10)
+
+Coverage: **36 reviewed — 4 with findings, 32 clean, 0 fully superseded, 0 errored, 0 died.** Net: **0 CRITICAL, 0 HIGH, 1 MEDIUM, 3 LOW.** Same-day incremental on top of the Batches 13–16 frontier: everything merged after #1695 up to develop @ `2877512f` — **the frontier is now #1–#1737 contiguous; the next sweep resumes from #1738.** Survivor-filtered against origin/develop (0 superseded — the PRs are hours old, so essentially every introduced line is alive; includes the sweep's own #1700). (Same sha-resolved workflow + reviewer model as Batches 13–16; 36/36 returned, 0 died; ~13 min, ~1.3M tokens.) **All 4 findings are `userVisible:false` → NO GitHub Issues; backlog only per ADR-0014.** The MEDIUM is another fail-open gate variant — cross-filed onto the REOPENED `fail-open-meta-gate-authoring-check` in [`categories/tooling.md`](categories/tooling.md) as sub-shape (I): a mutation gate whose scored set can silently drain to zero.
+
+### MEDIUM
+- **#1698 (e87c5b78) · `scripts/dev/mutation-smoke.sh:219`** — fail-open: scoring counts only `expect=killed` guards; FILE-MISSING/SPEC-ERROR/BUILD_FAIL outcomes silently `continue` without gating. If ALL guard mutants land in those buckets (full corpus rot after a production refactor, or a systemic build break), `scored=0` and the gate exits 0 — a green run that verified zero assertion strength, contradicting the plan's "fails loud, never silently skips-as-pass" claim. Muted today by continue-on-error, but Phase 4 graduates it to blocking. Fix: under `--gate`, exit 1 when `scored==0` (and/or fold the error buckets into a non-zero exit).
+
+### LOW (3)
+- **#1732 (2877512f) · `Source/Core/src/Ui/AdfToMarkdown.cpp:505`** — `EmitAdfCodeBlock` materializes the ENTIRE accumulated output (`const std::string current = s.out.str()`) on every code block just to inspect `current.back()` — O(blocks × total-output) quadratic conversion cost. Fix: track a `lastCh` on `AdfWalkState` (or peek the streambuf) instead of copying the growing buffer.
+- **#1728 (2204ce60) · `docs/plans/active/god-file-splits.md:24`** — sibling-plan cross-refs use `../<slug>.md` (also :92/:133/:152/:153), which resolves to `docs/plans/` — but all three targets live in `docs/plans/active/`; every link is broken. Fix: same-directory `<slug>.md` targets.
+- **#1722 (dc1b693b) · `docs/plans/shipped/appcontroller-fan-in-phase6-dissolution.md:5`** — cites `docs/plans/appcontroller-fan-in-phase5-facets.md`; the Phase 5 plan lives at `docs/plans/shipped/…` (INDEX.md links the shipped/ copy). Fix: add `shipped/`.
+
+**Clean (32, surviving lines reviewed, no findings):** #1737, #1736, #1735, #1734, #1733, #1731, #1730, #1729, #1727, #1726, #1725, #1724, #1723, #1721, #1720, #1719, #1718, #1717, #1716, #1715, #1714, #1710, #1709, #1708, #1707, #1705, #1704, #1702, #1701, #1700, #1697, #1696.
+
+## Batch 16 — #1304–#1175 + the #1593 special (117-PR sweep, 2026-07-10) — FRONTIER COMPLETE
+
+Coverage: **116 reviewed — 14 with findings, 96 clean, 6 fully superseded, 0 errored, 0 died** — plus the **#1593 true-merge special** (below). Net: **0 CRITICAL, 1 HIGH, 9 MEDIUM, 7 LOW.** Final installment of the post-#1174 frontier re-establishment: with Batches 13–16 + Batch 12 + the #1593 special, **every merged PR #1–#1695 is now survivor-reviewed — SWEEP COMPLETE, no gaps.** Survivor-filtered against origin/develop, so every finding is current. (Same sha-resolved workflow + reviewer model as Batches 13–15; 116/116 returned, 0 died; ~44 min, ~3.87M tokens.) **Three findings are `userVisible:true` → GitHub Issues per ADR-0014: the HIGH #1233 → Issue #1711, #1222 → Issue #1712, #1217 → Issue #1713; the other 14 are internal CI/gates/docs → backlog only.** Recurring themes: the zero-test fail-open driver cluster AGAIN (#1181 ×2, #1175, plus the in-workflow #1281 0/0-envelope variant — same class as Batch 15's five), a coverage detect self-gate that fails open on git error (#1206), and two exception-safety/generation-token state bugs in product code (#1221, #1217).
+
+**#1593 special (true merge commit `368e1841`, 9 constituent commits):** reviewed separately — blame attributes its survivors to the 9 branch commits, not the merge sha, so the survivor extractor ran per-constituent. **Clean** — 8 of 9 commits had survivors (~1,167 lines across the CPP_CODE_AUDIT remediation: overflow-checked parsing, SSRF hardening, ParseBounded, per-turn AI cancel tokens, RAII latch resets, editor truncation guards, coverage-delta SIGPIPE fix); `f92255f0` fully superseded; no findings.
+
+### HIGH
+- **#1233 (8775fc35) · `Source/Core/src/SubprocessCapturePure.cpp:170`** — **user-visible**: `IsSensitiveEnvName` substring-matches the `"_PAT"` token, which also matches every `*_PATH` name — `LD_LIBRARY_PATH`/`DYLD_LIBRARY_PATH`/`GIT_EXEC_PATH`/`PKG_CONFIG_PATH` are scrubbed from children. `P4Annotate.cpp` sets `scrubSensitiveEnv=true`, so a p4/git child on Linux/macOS can fail to load shared libs — contradicting the documented PATH-family survival guarantee. Tests cover only `PATH`/`GIT_DIR`, so the regression is uncovered. Fix: suffix-match `_PAT` (endsWith), add `CHECK_FALSE` cases for `LD_LIBRARY_PATH`/`GIT_EXEC_PATH`. → **Issue #1711**.
+
+### MEDIUM (9)
+- **#1281 (b3f31f18) · `.github/workflows/build-and-test.yml:1139`** — the childlog-extraction `sed 's/.*child stdout\/stderr[^A-Za-z]*//'` also consumes the leading `/` of the absolute POSIX temp path, leaving a relative path that never exists → the per-test ImGui failure reasons are NEVER captured on the Linux bucket-E lane (the :613 twin works only because Windows paths start with a drive letter). Fix: exclude `/` from the consumed class.
+- **#1281 (b3f31f18) · `.github/workflows/build-and-test.yml:1177`** — a well-formed envelope with `passed=0 failed=0` stays `status=ok`, breaks the retry loop, and the lane passes green with zero tests executed under `--all`. Fix: treat `passed==0` as `status=broken`.
+- **#1223 (facbc2ca) · `docs/agent-rules/build.md:68`** — doc-vs-code drift on a gated preset literal: claims `ninja-msvc-asan` "does not enable tests" (+ manual `-DSMATCHET_BUILD_TESTS=ON` step), but CMakePresets.json:136 bakes `SMATCHET_BUILD_TESTS: ON` into the preset. Fix: rewrite to the preset's actual default.
+- **#1222 (6b6ea431) · `Source/Core/src/Ui/P4vLaunch.cpp:183`** — **user-visible**: the custom-command injection guard rejects embedded quotes in `{file}`/`{cl}` but not a TRAILING BACKSLASH — a value ending `\` escapes the template's closing wrap quote, un-terminating the argument and shifting the p4vc boundary (the exact sibling vector this PR fixed in the helper). Fix: reject/sanitize trailing `\` on the raw-template path. → **Issue #1712**.
+- **#1221 (85d7e785) · `Source/Core/src/AppController_LuaBindings.cpp:602`** — `EndLuaAiPromptTurn()` (clears `aiPromptInFlight_`) is happy-path-only; an exception from `LuaTableToAiContextBlock`/`AddAiContext`/`PromptAi` unwinds past it, the flag stays set, and every later `ai.prompt` is rejected as re-entrant — permanent feature lockout after one error. Fix: RAII scope guard (or try/catch + release + rethrow).
+- **#1217 (3c10e1d1) · `Source/Core/src/Ui/SmatchetCommentsModalUi.cpp:196`** — **user-visible**: `OpenCommentsModal` resets the state struct (Gen→0) then `++Gen`, so the documented monotonic stale-post-back generation token is always 1 — inert. A slow open-fetch landing after a post-triggered re-fetch of the same issue overwrites fresher results, momentarily dropping a just-posted comment. Fix: keep the counter out of the reset (static monotonic counter). → **Issue #1713**.
+- **#1206 (f8e746d1) · `.github/workflows/coverage.yml:96`** — the detect self-gate computes `changed` via `git diff … || true`; any git failure yields empty `changed` → `run=false` → the REQUIRED coverage context fake-greens, contradicting the block's own "must NEVER fake-green" comment. Fix: on fetch/diff failure default `run=true`.
+- **#1181 (5ba0c5af) · `scripts/dev/test-ui-annotate-before-cl-cue.sh:60`** — zero-test fail-open (the Batch-15 driver cluster again): `passed=0/failed=0` exits 0 green. Fix: `PASSED>=1` floor.
+- **#1181 (5ba0c5af) · `scripts/dev/test-ui-toolbar-append-cache-cue.sh:60`** — same fail-open in the sibling driver. Fix: same floor.
+
+### LOW (7)
+- **#1261 (e6445a27) · `Source/Core/src/Ui/SmatchetOmnibarUi.cpp:120`** — comment claims the per-frame `ClassifyOmnibarInput` is "pure, allocation-free", but it constructs owning `std::string`s each call (`TrimCopyAsciiWhitespace`, `ToLowerAsciiCopy`) — per-frame copies while the omnibar is visible (bounded/SSO). Fix: fix the wording, or cache the classification on buffer change.
+- **#1217 (3c10e1d1) · `Source/Core/src/AppController_CatalogAndFieldEdit.cpp:853`** — backend-agnostic `FetchIssueComments` returns "Jira backend is not initialized." for any backend (GitHub/Plane); every sibling uses the generic "Tracker backend…". Fix: use the generic string.
+- **#1202 (f14e5766) · `docs/guides/testing-surface.md:175`** — § 5.1 backlog line-pins drifted (verified: :175 → debt.md:65 now an unrelated race entry; :181 → applied.md:265 now a postmortem). Fix: re-anchor to headings, not line numbers.
+- **#1198 (2ae42828) · `tests/ui/reset_layout_docking.test.cpp:76`** — raw `new` inside a `unique_ptr` ctor; house rule is `make_unique`. Test-only, no leak. Fix: `std::make_unique`.
+- **#1186 (14c9c58e) · `tests/Core/UserInfoActivityCancelUaf.test.cpp:197`** — the "cancel signalled before worker starts" TEST_CASE never pre-cancels (its own comment concedes it can't); its assertions pass regardless — false confidence for the named behavior. Fix: drive the guard directly or rename to what it actually exercises.
+- **#1183 (67098d12) · `docs/plans/shipped/mobile-ci-smoke-gate.md:103`** — implementation log says "8-frame state machine"/single-frame gap; shipped code is 10-frame with the 2-frame honesty-fix gap. Fix: update the log line.
+- **#1175 (61bdf630) · `agents/scripts/core/test-pr-status-watch-bats.sh:48`** — the wrapper's own zero-run fail-open: zero `ok`/`not ok` lines with rc 0 → "Passed: 0 Failed: 0", exit 0. Fix: explicit 0/0 guard.
+
+**Clean (96, surviving lines reviewed, no findings):** #1304, #1302, #1301, #1300, #1299, #1295, #1294, #1293, #1292, #1288, #1280, #1279, #1278, #1277, #1276, #1275, #1274, #1273, #1272, #1271, #1270, #1269, #1268, #1266, #1265, #1264, #1263, #1260, #1259, #1258, #1257, #1256, #1255, #1253, #1252, #1251, #1250, #1248, #1247, #1246, #1245, #1244, #1243, #1242, #1241, #1240, #1239, #1238, #1237, #1235, #1234, #1232, #1231, #1230, #1229, #1228, #1227, #1226, #1225, #1220, #1219, #1218, #1216, #1215, #1214, #1213, #1212, #1211, #1210, #1209, #1208, #1207, #1205, #1204, #1203, #1201, #1200, #1199, #1197, #1196, #1195, #1194, #1193, #1192, #1191, #1190, #1189, #1188, #1187, #1185, #1184, #1182, #1180, #1179, #1178, #1177.
+
+**Fully superseded (6, no review surface):** #1303, #1267, #1262, #1249, #1224, #1176 — every introduced line was changed/removed by a later PR; excluded by construction.
+
+## Batch 15 — #1435–#1305 (120-PR sweep, 2026-07-10)
+
+Coverage: **120 reviewed — 15 with findings, 90 clean, 15 fully superseded, 0 errored, 0 died.** Net: **0 CRITICAL, 2 HIGH, 6 MEDIUM, 9 LOW.** Third installment of the post-#1174 frontier re-establishment (contiguous #1435→#1305; frontier now **#1305–#1695** on top of the #1–#1174 baseline). Survivor-filtered against origin/develop, so every finding is current. (Same sha-resolved workflow + reviewer model as Batches 13–14; 120/120 returned, 0 died; ~31 min, ~3.55M tokens.) **All 17 findings are `userVisible:false` (internal CI/gates/hooks/docs) → NO GitHub Issues this pass; backlog only per ADR-0014.** Dominant theme, emphatically: the **zero-test fail-open UI-test-driver cluster** — BOTH HIGHs and 3 MEDIUMs are the same `passed=0&&failed=0`→exit-0 shape across five per-feature `test-ui-*.sh` drivers (#1384, #1364, #1405, #1383, #1372), the exact class Batches 10–11 flagged in older drivers — the template keeps being copied. Plus a new sub-shape: `set -e`+`pipefail` aborting a step before its own graceful-degradation branch (#1424 ×2). Cross-filed onto the OPEN P2 `fail-open-meta-gate-authoring-check` in [`categories/tooling.md`](categories/tooling.md).
+
+### HIGH (2)
+- **#1384 (d0c80161) · `scripts/dev/test-ui-attachment-thumbnail-loading-cue.sh:62`** — fail-open zero-test gate: after the `SMATCHET_BUILD_UI_TESTS=OFF` and `"?"` guards, the driver exits 0 whenever `FAILED=="0"` — including `passed=0/failed=0` when the `ThumbnailLoadingCue` filter matches nothing (registry entry dropped/renamed). The gate cannot catch regression of its own registration. Fix: fail on `PASSED=0 && FAILED=0` before the exit-0 path.
+- **#1364 (addedce1) · `scripts/dev/test-ui-callstack-tooltip-hover.sh:82`** — same class: `passed=0 failed=0` passes the `"?"` check at :77, fails the `FAILED!="0"` check at :83, prints `Passed: 0 Failed: 0`, exits 0 — a green gate that ran no assertions. Fix: zero-run guard before the FAILED check.
+
+### MEDIUM (6)
+- **#1424 (0d2744d8) · `.github/workflows/build-and-test.yml:653`** — `result=$(bash scripts/dev/perf-run.sh … | tail -1)` runs under `bash -e` + the step's `set -uo pipefail`; a non-zero perf-run.sh fails the assignment and `set -e` aborts the step BEFORE the graceful `[ -f "$result" ]` handling and the explicitly-anticipated "first-run plumbing" warning at :661-663 — a tolerated first-run hiccup becomes a hard-red ARM64 job. Fix: `|| true` the assignment (or `set +e` bracket) so control reaches the intended `::warning::` path.
+- **#1405 (b29620bb) · `scripts/dev/test-ui-omnibar-search-apply.sh:86`** — zero-test fail-open: only `"?"` and `FAILED!=0` are rejected; an "Omnibar" filter matching zero tests exits 0 green. Fix: zero-run floor (or assert `PASSED` == expected 3).
+- **#1383 (0772f822) · `scripts/dev/test-ui-command-palette-inline-typing.sh:58`** — same class for the "CommandPalette" filter. Fix: zero-run guard before the `FAILED!=0` check.
+- **#1372 (4a06fb20) · `scripts/dev/test-ui-ai-assistant-model-change.sh:69`** — same class for `--name=AssistantModelChange`. Fix: zero-run guard.
+- **#1388 (9346fcf1) · `docs/harness/claude-code/hooks/guard-shared-tree.sh:96`** — the detection `gitopts` matches `-c` values with `-c[[:space:]]+[^[:space:]]+`, truncating at the first space inside a quoted value — `git -c user.name="a b" reset --hard` on the shared tree skips the :97 detection grep and the guard fails OPEN (early exit 0). The sibling `guard-head-drift.sh:99` was deliberately made quote-aware for exactly this. Fix: mirror it — `-c[[:space:]]+("[^"]*"|[^[:space:]]+)`.
+- **#1348 (9c5a8608) · `agents/scripts/core/merge-watcher-stuck-nudge.sh:83`** — the default `--list` output prints a literal em-dash, contradicting the PR's own ASCII-only deviation note; on a cp1252 Windows console the inline python raises `UnicodeEncodeError`, and being the last command under `set -euo pipefail` the script exits non-zero — violating its "Exit 0 always / degrade silent" contract exactly when a PR is actually stuck. Fix: ASCII ` -- ` like the `--nudge` branch.
+
+### LOW (9)
+- **#1424 (0d2744d8) · `.github/workflows/build-and-test.yml:613`** — same errexit sub-shape as the MEDIUM: `childlog="$(… | grep -a 'child stdout/stderr' | …)"` under `set -e`+pipefail; a no-match grep aborts the step before the graceful "no spawned-child log path found" branch — a booted-fine run (rc=0) goes spuriously red. Fix: `|| true` the assignment.
+- **#1420 (d0418faa) · `agents/scripts/core/test-shell-lint.sh:308`** — `check_pipefail_head` only recognizes plain/`local`/`export` assignment prefixes; `readonly`/`declare`/`typeset x=$(…|head)` under pipefail is silently not flagged — a miss of the exact class the rule guards. Fix: extend the alternation.
+- **#1417 (51facafc) · `agents/scripts/core/workflow-watchdog.sh:121`** — amplification floor uses `-lt 100`, so an explicit `--amplification-pct 100` fires cascade on a healthy fleet where runs == expected. Dormant (non-default). Fix: `-le 100` or `-gt` comparison, or document.
+- **#1412 (9438a896) · `docs/adr/0022-intent-gate-promotion.md:3`** — stale line-pin: cites `merge-gates.md:83` for the merge-queue deadlock class; that text is now at :102. Fix: re-pin or cite the section by name.
+- **#1395 (8ffe3035) · `.github/workflows/perf-full.yml:113`** — comment cites a `security.md "Mesa archive integrity"` entry that exists nowhere in the repo (duplicated in `perf-pr-fast.yml:228`). Fix: add the entry or repoint both copies.
+- **#1388 (9346fcf1) · `docs/harness/claude-code/hooks/guard-shared-tree.sh:97`** — the stash-pop detection branch lacks the `${gitopts}` segment its own :129 enumeration includes, so `git -C <path> stash pop` is never detected — fail-open for that form. Fix: insert `${gitopts}`.
+- **#1381 (0abb10cb) · `docs/self-improvement/categories/security.md:69`** — stale line-pin: "blocking synchronous tracker call at `JiraIssueMutation.cpp:206`" now points at a closing brace; the calls are at ~:188/:216. Fix: re-pin or use function names.
+- **#1352 (af3e6e24) · `tests/Core/LocalCacheManagerCorruption.test.cpp:5`** — header comment describes the abandoned v1 design (pre-open probe via a `QuarantineIfCorrupt` that exists nowhere; grep: 0 matches); shipped design is catch-in-ctor-body + `RebuildFreshAfterCorruption`/`QuarantinePath`. Fix: reword to the shipped mechanism.
+- **#1340 (8458aa1d) · `docs/self-improvement/categories/security.md:77`** — stale line-pin: `CommandRegistry.cpp:302-307` for `IsAutomationSource`/`RequiresExplicitConfirm`; now :332/:337. Fix: re-pin.
+
+**Clean (90, surviving lines reviewed, no findings):** #1435, #1433, #1432, #1430, #1429, #1428, #1427, #1426, #1425, #1423, #1422, #1421, #1416, #1415, #1414, #1413, #1411, #1410, #1409, #1408, #1407, #1406, #1404, #1403, #1401, #1400, #1398, #1397, #1396, #1394, #1393, #1391, #1389, #1387, #1386, #1385, #1382, #1380, #1376, #1375, #1374, #1373, #1371, #1370, #1367, #1366, #1365, #1363, #1361, #1360, #1359, #1358, #1357, #1356, #1355, #1354, #1353, #1350, #1349, #1347, #1346, #1345, #1344, #1343, #1342, #1341, #1339, #1338, #1337, #1336, #1335, #1334, #1333, #1331, #1330, #1329, #1328, #1327, #1326, #1325, #1324, #1323, #1322, #1321, #1320, #1319, #1315, #1314, #1313, #1305.
+
+**Fully superseded (15, no review surface):** #1434, #1431, #1419, #1418, #1402, #1399, #1392, #1390, #1379, #1378, #1377, #1369, #1368, #1362, #1332 — every introduced line was changed/removed by a later PR; excluded by construction.
+
+## Batch 14 — #1559–#1436 (120-PR sweep, 2026-07-10)
+
+Coverage: **120 reviewed — 13 with findings, 104 clean, 3 fully superseded, 0 errored, 0 died.** Net: **0 CRITICAL, 0 HIGH, 5 MEDIUM, 11 LOW.** Second installment of the post-#1174 frontier re-establishment (contiguous #1559→#1436; frontier now **#1436–#1695** on top of the #1–#1174 baseline). Survivor-filtered against origin/develop, so every finding is current. (Same sha-resolved workflow + reviewer model as Batch 13; 120/120 returned, 0 died; ~47 min, ~4.36M tokens.) **One MEDIUM (#1554) is `userVisible:true` → GitHub Issue #1706 (ADR-0014); the other 15 findings are internal tooling/gates/docs → backlog only.** Dominant theme yet again: the **fail-open / no-op gate cluster** — 4 of 5 MEDIUMs are gates that can't catch (or can be talked out of) the regression they exist for (#1525 unanchored `cr-disposition` attestation, #1511 self-contradictory staleness predicate, #1505 unanchored broken-lane suppression, plus the #1523/#1522/#1520 LOW variants). Cross-filed onto the OPEN P2 `fail-open-meta-gate-authoring-check` in [`categories/tooling.md`](categories/tooling.md).
+
+### MEDIUM (5)
+- **#1554 (55eddeb7) · `Source/Core/src/Ui/SmatchetPreferencesUi.cpp:161`** — **user-visible**: window-close reset clears `assistantPrefsWorkingSeeded` (working copy correctly re-seeds from cfg on reopen) but never resets the function-static buffer seed flags nor requests `assistantPrefsForceBufferReseed`. Close-without-Save then reopen → InputText fields still show the DROPPED edit text (present in neither working copy nor cfg, no dirty `*`); re-editing flows the stale text back into the working copy. Fix: in `resetPreferencesWindowState` also set `d.assistantPrefsForceBufferReseed = true`. → **Issue #1706**.
+- **#1525 (7df25fa3) · `agents/scripts/core/merge-gates.sh:542`** — the mandatory `cr-disposition:` attestation for a `cr-out-of-band` override is an unanchored, case-insensitive substring test over the whole PR body; a body that merely QUOTES the mechanism (pasted template/docs containing `cr-disposition:<reason>`) satisfies it, so the override bypasses the CR gate with no genuine recorded reason — the exact fail-open PR-3 closed. Fix: anchor per-line (`(?m)^\s*[-*]?\s*cr-disposition:\s*…`) and reject the literal `<reason>` placeholder.
+- **#1511 (9c98b7ae) · `agents/scripts/project/test-plan-staleness.sh:63`** — the staleness gate is a near-no-op: `is_stale` needs `cited_prs` non-empty AND all post-ship sections still stubs, but `cited_prs` is read ONLY from § Implementation log, which the stub predicate requires to be empty — the two conditions are mutually near-exclusive, so the "shipped but never written up" drift it was built for can never fire. Fix: source cited PRs from a section that persists (or drop Impl-log from the stub set so a populated log + stub Deviations/Verification flags).
+- **#1505 (a8bb69c7) · `agents/scripts/core/postmortem-owed.sh:202`** — `is_broken_lane` matches a configured broken-lane token against red check-names with an unanchored `grep -qiF`; a broad token ("Coverage") also suppresses a genuinely-red sibling ("Coverage-Integration"), laundering a real gate escape into a no-postmortem WARN. Dormant (registry starts empty) but fail-open once configured. Fix: anchored whole-name equality.
+- **#1466 (ff1f18e6) · `docs/mobile/CHROMEBOOK_PORT_INVESTIGATION.md:203`** — broken path cross-ref: cites `Source/Core/include/Ui/SmatchetUiModeIds.h`; the header lives at `Source/Core/include/SmatchetUiModeIds.h` (no `Ui/`). Fix: drop the segment.
+
+### LOW (11)
+- **#1556 (572a952d) · `scripts/git-hooks/pre-push:221`** — header promises FAIL-OPEN on infra/tool uncertainty, but sections (D)#2 doc-checks and (D)#4 shell-lint treat ANY non-zero exit as a violation (fail-CLOSED) — an internal infra error wedges an unrelated push. Fix: split real-violation rc from infra rc as (D)#1 already does.
+- **#1523 (281d16dc) · `scripts/dev/perf-baseline.sh:187`** — orphan-baseline gate fails open: if the (very specific) `Name() const override` regex matches nothing, `registered` is empty and the check exit-0s with a WARN; unparseable baseline JSON is likewise silently skipped. Fix: fail-closed on empty `registered` and on parse failure.
+- **#1522 (81de3e07) · `agents/scripts/core/test-shell-lint.sh:330`** — NUL-byte guard uses GNU-only `grep -qaP '\x00'` with stderr swallowed; on BSD grep (macOS is a documented dev platform) the rule silently no-ops. Fix: `tr -d '\000' | cmp -s` probe, or gate on PCRE support; at minimum stop swallowing stderr.
+- **#1520 (e807690c) · `agents/scripts/core/test-bats-ascii-names.sh:74`** — same class: `grep -P` failure hidden by `2>/dev/null` → zero matches → green PASS having scanned nothing. Fix: probe `-P` support up front and return 2, or check grep's exit status.
+- **#1507 (f50b28be) · `scripts/dev/agent-eval-calibrate.py:301`** — `emit_markdown` re-parses formatted violation strings with `split(" / ")`, mis-parsing the committed label `"cr-dpapi-secret-loss / strong run"`; the per-row verdict prints "ok" for an over-threshold pair (BLOCK banner + exit code stay correct — misleading report only). Fix: return structured (label, dimension) violations instead of re-parsing.
+- **#1506 (f5cd3234) · `agents/scripts/core/test-lint-hook-split.sh:229`** — with `nullglob`, an empty `QUEUE_REAL` array makes `cat "${QUEUE_REAL[@]}"` read stdin — potential hang on the failure path when stdin isn't redirected. Fix: guard on array non-emptiness or add `</dev/null`.
+- **#1469 (d849b142) · `Source/Core/src/FieldEditPipelineService.cpp:125`** — when `backend->Mutations()` is null, `TryBuildFieldEditPayloadForNetwork` returns false with `outError` never set — callers (e.g. `TryPrepareOfflineFieldEdit`) surface an empty error string. Fix: set a "backend does not support issue mutations" error before the return.
+- **#1466 (ff1f18e6) · `docs/mobile/CHROMEBOOK_PORT_INVESTIGATION.md:68`** — stale line-pin: `android:allowBackup="false"` cited at manifest line 7; the A8 touchscreen block shifted it to :19. Fix: re-pin or drop the number.
+- **#1463 (f2100d44) · `.github/workflows/lock-cleanup.yml:13`** — comment cites `docs/plans/plan-lock-enforcement.md`, archived to `docs/plans/shipped/` by this very PR (line 12 already uses the shipped/ prefix for the sibling doc). Fix: add `shipped/`.
+- **#1463 (f2100d44) · `agents/scripts/core/lock-table-cache.sh:31`** — same stale ref to the pre-archival plan path. Fix: add `shipped/`.
+- **#1463 (f2100d44) · `docs/harness/claude-code/hooks/guard-plan-lock.sh:28`** — same stale ref. Fix: add `shipped/`.
+
+**Clean (104, surviving lines reviewed, no findings):** #1559, #1558, #1557, #1555, #1553, #1552, #1551, #1550, #1549, #1548, #1547, #1546, #1545, #1544, #1543, #1542, #1541, #1540, #1539, #1538, #1537, #1536, #1535, #1534, #1533, #1532, #1531, #1530, #1529, #1528, #1527, #1526, #1524, #1521, #1519, #1518, #1517, #1516, #1515, #1514, #1513, #1512, #1510, #1509, #1508, #1504, #1503, #1502, #1501, #1500, #1499, #1498, #1497, #1496, #1495, #1494, #1493, #1492, #1491, #1490, #1489, #1488, #1487, #1486, #1485, #1484, #1483, #1482, #1481, #1480, #1478, #1477, #1476, #1475, #1474, #1473, #1472, #1471, #1470, #1468, #1467, #1465, #1464, #1462, #1461, #1460, #1456, #1455, #1454, #1453, #1452, #1451, #1450, #1446, #1445, #1444, #1443, #1442, #1441, #1440, #1439, #1438, #1437, #1436.
+
+**Fully superseded (3, no review surface):** #1449, #1448, #1447 — every introduced line was changed/removed by a later PR; excluded by construction.
+
+## Batch 13 — #1695–#1560 (120-PR sweep, 2026-07-10)
+
+Coverage: **120 reviewed — 14 with findings, 99 clean, 7 fully superseded, 0 errored, 0 died.** Net: **1 CRITICAL, 1 HIGH, 1 MEDIUM, 11 LOW.** First installment of the post-#1174 frontier re-establishment (work-list = all 494 merged-to-develop PRs in (#1174, #1695] minus Batch 12's 17; this batch took the newest 120, contiguous #1695→#1560). Survivor-filtered against origin/develop (@ `b69e82f1`), so every finding is current — already-fixed/reverted code excluded by construction. (Reviewer model `code-review` opus/high via a sha-resolved variant of the persisted `historical-review-sweep` workflow — this remote session has no `gh` CLI, so each PR's squash commit was pre-resolved from the develop log and cross-validated against GitHub's merged-PR list, which also caught 4 PRs with edited/non-standard squash subjects the `(#N)`-suffix scrape misses: #1439/#1577/#1593/#1597. Concurrency 2 = the runtime cap min(16, cores−2) on this 4-core box, under the Opus ≤6 guardrail; 120/120 agents returned, 0 died; ~41 min, ~4.35M tokens.) **The CRITICAL (#1601) is `userVisible:true` → GitHub Issue #1699 (ADR-0014); the other 13 findings are internal tooling/docs → backlog only.** Recurring themes: the fail-open gate cluster once more (the HIGH is an unanchored CI denylist token; the MEDIUM is assertion-masking `rm -rf` tails in bats meta-tests), plus the usual stale-line-pin / moved-doc drift tail.
+
+### CRITICAL
+- **#1601 (b938ceb5) · `Source/Core/src/Ui/SmatchetAiAssistantUi.cpp:113`** — static-buffer overflow on a >8191-byte paste into the AI chat input. `InputBufferResizeCallback` records the dropped-byte count then returns 0 without resizing `Buf` OR resetting `data->BufSize`. But adding `ImGuiInputTextFlags_CallbackResize` (:1147) sets `is_resizable=true` in ImGui, which DISABLES the insert-time capacity clamp in `STB_TEXTEDIT_INSERTCHARS` (the pre-PR behavior the comment relies on) and lets ImGui grow its internal edit buffer to hold the full over-cap paste. At apply time ImGui calls the callback with `BufSize` enlarged to `needed+1`, then does `buf_size = callback_data.BufSize` (still enlarged) and `ImStrncpy(buf, apply_new_text, min(len+1, buf_size))` — copying the full paste into the fixed 8192-byte process-static `s_inputCharBuf`. The comment "ImGui then clamps the insert exactly as before" is false: that clamp only existed because the flag was absent. Memory corruption in exactly the scenario the truncation toast exists to report. Fix: in the `CallbackResize` branch also set `data->BufSize = kInputBufCap` (leave `Buf`/`BufTextLen`); verify against the vendored imgui `InputTextEx` apply-path; add an ASan bucket-E paste regression. → **Issue #1699**.
+
+### HIGH
+- **#1692 (681ad70b) · `scripts/dev/test-all.sh:99`** — fail-open CI denylist: `CI_SKIP_RE` uses unanchored substring tokens matched against the full script path (`[[ "$script" =~ $CI_SKIP_RE ]]` at :155). The token `test-plan-index` matches not only the intended `test-plan-index.sh` but also the distinct headless-safe Bucket-A suite `test-plan-index-robustness-bats.sh`, silently denylisting it in CI (`Passed: 0 Failed: 0 Skipped: 1`) — any failure in that suite is masked. Fix: anchor each token to a full basename (`test-plan-index\.sh`, or `(^|/)…\.sh` boundaries) and audit the other tokens for the same over-match.
+
+### MEDIUM
+- **#1605 (24fb4e71) · `tests/bats/lint_rules.bats:411`** — assertion-masking cleanup tails: the new `--scan-*` bats tests end with `rm -rf "$tmp"` AFTER their content assertions; bats doesn't run bodies under `set -e`, so the always-zero `rm -rf` becomes the test's exit status and masks a failing `[[ "$output" == … ]]` above it. A regression in the gate's `--root` scan path false-PASSes these meta-tests. Recurs at :322/:334/:346/:372/:423/:444/:458/:476. Fix: make the assertion the last command and use bats' auto-cleaned `$BATS_TEST_TMPDIR` (the `dup_audit.bats` house style), or move cleanup to `teardown()`.
+
+### LOW (11)
+- **#1680 (1878db71) · `agents/scripts/core/cost-ceiling-check.py:68`** — `int(row.get("input_tokens",0) or 0)` raises `ValueError` on a non-numeric token value; not caught by the surrounding `except OSError`, so one malformed row crashes the whole sum instead of degrading. Masked by the nudge wrapper's `|| true`, but `--blocking`/direct invocation tracebacks. Fix: wrap the two `int()` accumulations in `try/except (ValueError, TypeError): continue`, matching the existing skip-and-continue idiom.
+- **#1674 (4ac9b7aa) · `docs/plans/shipped/appcontroller-fan-in-phase5-facets.md:5`** — status line cites the predecessor plan at `docs/plans/appcontroller-fan-in.md`; it now lives at `docs/plans/shipped/appcontroller-fan-in.md`. Fix: update the path.
+- **#1654 (911d1b25) · `AGENTIC_INFRA_AUDIT.md:6`** — surviving audit-doc links still use the flat `docs/plans/<name>.md` layout from before the `active/`/`shipped/` reorg (lines 6, 7, 46, 120, 130, 131) — all 404. Fix: repoint to `active/agentic-infra-audit-campaign-2026-06.md`, `shipped/ai-control-policy.md`, `active/subagent-eval-agentic-coverage.md`, `shipped/mutation-testing-pilot.md`, `active/testing-surface-roadmap.md`.
+- **#1640 (ff6c05d7) · `Source/Core/src/Tracker/TrackerHttpClient.cpp:39`** — the `TrackerErrorKind::None` branch hard-codes the diagnostic to `"HTTP 200"`, but the classifier maps any 2xx to `AuthenticatedReachable`; a 201/204 probe reports a misleading string. Fix: `out.Diagnostic = "HTTP " + std::to_string(classified.Status());` like the other branches.
+- **#1623 (7f7807d5) · `.github/workflows/build-and-test.yml:1460`** — comment says "the 5-min step cap is the backstop" but the step cap two lines below is `timeout-minutes: 6` (inner bound is `timeout 300`). Fix: reword to 6-min (or align the cap to 5).
+- **#1615 (f56694df) · `docs/guides/error-surface-inventory.md:19`** — attributes `RedactHttpBodyForLog` to `TrackerHttpUtils.cpp`, but this same PR moved it to `TrackerHttpPure.cpp` (:209); only `RedactUrlForLog` remains. Fix: update the attribution.
+- **#1614 (03acf256) · `Source/Core/src/Ui/SmatchetIconPickerUi.cpp:27`** — comment claims "OpenPopup is not wrapped" to justify the `###` stable-ID, but this same PR added a wrapping `OpenPopup(const char*)` overload and the file's `#define ImGui SmatchetLocalizedImGui` alias routes :29 through it — the premise is false (behavior survives only because `###` hashes just the suffix). Fix: rewrite the comment to describe the actual wrapper + `###` contract.
+- **#1594 (839f55a9) · `TEST_COVERAGE_GAP_MAP.md:10`** — stale line-pin: cites `tests/CMakeLists.txt:272` for the "each test TU lists the production sources it exercises" contract; at HEAD that comment is at :306. Fix: re-pin or de-pin to the filename (the quoted text is unique).
+- **#1588 (41bc9cda) · `scripts/dev/osv-scan.py:171`** — the OSV scan only queries commit-pinned components (`scannable = [c for c in comps if c["commit"]]`); non-commit deps in the SBOM (lua 5.3.6 — known historical CVEs — and fontawesome) are silently excluded, so under the now-blocking `--fail-on HIGH` gate a HIGH Lua CVE never trips the check. Fix: also query OSV by version/ecosystem (or PURL) for non-commit deps, or at minimum emit a `::warning` per unscanned dep.
+- **#1575 (fc8b9945) · `docs/self-improvement/postmortems.md:56`** — the "Filed as" cross-ref points at `categories/infra/2026-06-27-perf-pr-fast-not-required-cancelled-escape.md`, which does not exist anywhere in the repo (the infra dir holds only the 2026-07-05 texture-guard doc). Fix: create the referenced doc or repoint the link.
+- **#1567 (aeb3bd52) · `docs/plans/active/tsan-imgui-linked-target.md:15`** — stale line-pin: cites `SmatchetUI.cpp:66` for the `UiDrawSession g_ui;` definition; at develop it is :71. Fix: re-pin or use a symbol reference.
+
+**Clean (99, surviving lines reviewed, no findings):** #1695, #1694, #1691, #1690, #1689, #1688, #1687, #1686, #1685, #1684, #1683, #1682, #1681, #1679, #1677, #1676, #1675, #1673, #1670, #1668, #1665, #1663, #1661, #1660, #1659, #1658, #1657, #1656, #1655, #1653, #1651, #1650, #1649, #1648, #1647, #1646, #1645, #1644, #1643, #1642, #1641, #1639, #1638, #1637, #1636, #1633, #1632, #1631, #1630, #1629, #1628, #1627, #1626, #1625, #1624, #1622, #1620, #1619, #1618, #1617, #1616, #1613, #1612, #1611, #1609, #1608, #1607, #1606, #1604, #1603, #1602, #1600, #1599, #1598, #1597, #1592, #1587, #1586, #1584, #1582, #1581, #1580, #1578, #1577, #1576, #1574, #1573, #1572, #1571, #1570, #1569, #1568, #1566, #1565, #1564, #1563, #1562, #1561, #1560.
+
+**Fully superseded (7, no review surface):** #1671, #1669, #1667, #1664, #1662, #1635, #1634 — every introduced line was changed/removed by a later PR; excluded by construction.
 
 ## Batch 12 — post-#1174 incremental (17-PR session sweep, 2026-06-16)
 

@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "description": "Per-scenario regression thresholds used by scripts/dev/perf-compare.py. See docs/plans/shipped/pillar-1-2-perf-review-system.md § D2 for rationale. mean_abs_ceiling_ms (Pillar 1 absolute mean budget on avgPerCallMs, target 6.94 = 1000/144) ships null/DISABLED until the perf-gate-revival step-5 calibration pass — set it (plus perScenario overrides for legitimately-heavy scopes like SmatchetUI::Draw) only after observing real ci-windows-latest runs. mean_min_abs_delta_ms is the noise floor for the relative lastTotalMs gate: a relative regression only fires when the absolute delta also exceeds it — calibrated 2026-06-07 from the first armed CI run, where ai_chat.history.render_turn flagged +12.0% on 0.023 -> 0.026 ms (3 µs of single-frame sampling noise); 0.05 ms = 0.7% of the 6.94 ms frame budget.",
+  "description": "Per-scenario regression thresholds used by scripts/dev/perf-compare.py. See docs/plans/shipped/pillar-1-2-perf-review-system.md § D2 for rationale. mean_abs_ceiling_ms (Pillar 1 absolute mean budget on avgPerCallMs, target 6.94 = 1000/144) ARMED 2026-07-06 by the perf-gate step-5 calibration pass (docs/plans/shipped/perf-gate-step5-calibration.md): the observed ci-windows-latest distribution (docs/perf/calibration-observations.md, 6 green Perf PR-fast runs) had zero scopes above ~0.72 ms avgPerCallMs — 9.6x under budget — so it arms at the raw 6.94 with an EMPTY perScenario map (no legitimately-heavy scope exists). Baselines were recaptured (#1659) so rows carry p99Ms first. mean_min_abs_delta_ms is the noise floor for the relative lastTotalMs gate: a relative regression only fires when the absolute delta also exceeds it — calibrated 2026-06-07 from the first armed CI run, where ai_chat.history.render_turn flagged +12.0% on 0.023 -> 0.026 ms (3 µs of single-frame sampling noise); 0.05 ms = 0.7% of the 6.94 ms frame budget.",
   "default": {
     "mean_delta_pct": 10.0,
     "p99_abs_ceiling_ms": 10.0,
     "max_abs_ceiling_ms": 50.0,
     "min_baseline_calls": 10,
-    "mean_abs_ceiling_ms": null,
+    "mean_abs_ceiling_ms": 6.94,
     "mean_min_abs_delta_ms": 0.05
   },
   "perScenario": {

@@ -2,7 +2,7 @@
 
 #include "SmatchetAutocompleteUi_detail.h"
 
-#include "AppController.h"
+#include "Interfaces/IAppUsers.h"
 #include "JqlSuggestEngine.h"
 #include "PlaneQuerySuggestEngine.h"
 #include "SmatchetUiSession.h"
@@ -13,7 +13,9 @@
 #define ImGui SmatchetLocalizedImGui
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <future>
 #include <unordered_set>
@@ -68,11 +70,12 @@ static std::string InsertTokenForUserAccountId(const std::string& accountId) {
 }
 
 static void RunSuggestBuild(TrackerQuerySuggestKind kind, const char* buf, int bufLen, int cursor, int selStart,
-                            int selEnd, const AppController& app, QuerySuggestBuild& out, QuerySuggestMeta* meta) {
+                            int selEnd, const std::vector<TrackerField>& fields, const std::vector<TrackerUser>& users,
+                            QuerySuggestBuild& out, QuerySuggestMeta* meta) {
     if (kind == TrackerQuerySuggestKind::JiraJql) {
-        BuildJqlSuggestions(buf, bufLen, cursor, selStart, selEnd, app, out, meta);
+        BuildJqlSuggestions(buf, bufLen, cursor, selStart, selEnd, fields, users, out, meta);
     } else {
-        BuildPlaneQuerySuggestions(buf, bufLen, cursor, selStart, selEnd, app, out, meta);
+        BuildPlaneQuerySuggestions(buf, bufLen, cursor, selStart, selEnd, fields, out, meta);
     }
 }
 
@@ -141,9 +144,9 @@ void TrackerQueryAcp_FlushPendingReplace(JqlEditorState& /*st*/) {}
 // merges async user results, then resolves the new selection. Split out of the input callback.
 static void HandleAcpHistoryEvent(ImGuiInputTextCallbackData* data, TrackerQueryAcpCallbackUserData* ud,
                                   JqlEditorState* st) {
-    if (ud != nullptr && ud->app != nullptr && ud->suggestBuild != nullptr) {
+    if (ud != nullptr && ud->fields != nullptr && ud->users != nullptr && ud->suggestBuild != nullptr) {
         RunSuggestBuild(ud->kind, data->Buf, data->BufTextLen, data->CursorPos, data->SelectionStart,
-                        data->SelectionEnd, *ud->app, *ud->suggestBuild, ud->meta);
+                        data->SelectionEnd, *ud->fields, *ud->users, *ud->suggestBuild, ud->meta);
         if (st != nullptr) {
             MergeAsyncUserSuggestionsIntoBuild(*st, *ud->suggestBuild);
             st->jqlAcpLastCursor = data->CursorPos;
@@ -192,7 +195,7 @@ static void HandleAcpAlwaysEvent(ImGuiInputTextCallbackData* data, TrackerQueryA
     }
 
     RunSuggestBuild(ud->kind, data->Buf, data->BufTextLen, data->CursorPos, data->SelectionStart, data->SelectionEnd,
-                    *ud->app, *ud->suggestBuild, ud->meta);
+                    *ud->fields, *ud->users, *ud->suggestBuild, ud->meta);
     if (st != nullptr) {
         MergeAsyncUserSuggestionsIntoBuild(*st, *ud->suggestBuild);
     }
@@ -245,7 +248,7 @@ int TrackerQueryAcp_InputTextCallback(ImGuiInputTextCallbackData* data) {
         st->jqlAcpLastSelectionEnd = data->SelectionEnd;
     }
 
-    if (ud != nullptr && ud->app != nullptr && ud->suggestBuild != nullptr &&
+    if (ud != nullptr && ud->fields != nullptr && ud->users != nullptr && ud->suggestBuild != nullptr &&
         data->EventFlag == ImGuiInputTextFlags_CallbackAlways) {
         HandleAcpAlwaysEvent(data, ud, st);
     }
@@ -318,7 +321,7 @@ void TrackerQueryAcp_DrawPopup(UiDrawSession& d, JqlEditorState& st, const ImVec
     ImGui::PopStyleVar();
 }
 
-void TrackerQueryAcp_TickDebouncedUserSearch(const AppController& app, UiDrawSession& d, JqlEditorState& st,
+void TrackerQueryAcp_TickDebouncedUserSearch(const IAppUsers& userSearch, UiDrawSession& d, JqlEditorState& st,
                                              const QuerySuggestMeta& meta, const QuerySuggestBuild& syncBuild) {
     (void)syncBuild;
     if (d.cfg.TrackerType == "Plane" || !meta.UserValueToken) {
@@ -405,15 +408,16 @@ void TrackerQueryAcp_TickDebouncedUserSearch(const AppController& app, UiDrawSes
     }
 
     // Dispatch to worker thread via std::async — Jira/Plane user search HTTP must not block
-    // the UI thread (Pillar 2 — finding #3). `AppController&` outlives any UI frame so the
-    // ref capture is safe; the future is consumed on the UI thread above.
+    // the UI thread (Pillar 2 — finding #3). The captured facet ref aliases the app object,
+    // which outlives any UI frame, so the ref capture is safe; the future is consumed on the
+    // UI thread above.
     const std::string capturedQ = q;
     const uint64_t inFlightId = st.jqlAcpUserSearchArmedId;
     st.jqlAcpUserSearchInFlightId = inFlightId;
     st.jqlAcpUserSearchFireAt = 0.0;
-    st.jqlAcpUserSearchFuture = std::async(std::launch::async, [&app, capturedQ]() {
+    st.jqlAcpUserSearchFuture = std::async(std::launch::async, [&userSearch, capturedQ]() {
         JqlEditorState::JqlUserSearchResult r;
-        r.Ok = app.SearchUsersByQuery(capturedQ, r.Users, r.Error);
+        r.Ok = userSearch.SearchUsersByQuery(capturedQ, r.Users, r.Error);
         return r;
     });
 }

@@ -136,3 +136,30 @@ TEST_SUITE("P4vLaunch::QuoteWinArgWidePure") {
         CHECK(QuoteWinArgWidePure(L"") == L"\"\"");
     }
 }
+
+TEST_SUITE("P4vLaunch::P4vCustomCommandFieldRejected") {
+    using P4vLaunch::P4vCustomCommandFieldRejected;
+
+    TEST_CASE("safe field values pass") {
+        CHECK_FALSE(P4vCustomCommandFieldRejected("//depot/foo.cpp"));
+        CHECK_FALSE(P4vCustomCommandFieldRejected("C:\\src\\foo.cpp")); // interior backslashes are fine
+        CHECK_FALSE(P4vCustomCommandFieldRejected("12345"));
+        CHECK_FALSE(P4vCustomCommandFieldRejected(""));      // empty ends with no backslash
+        CHECK_FALSE(P4vCustomCommandFieldRejected("a b c")); // spaces are the template author's concern, not injection
+    }
+
+    TEST_CASE("an embedded double-quote is rejected (wrap-quote closure / arg injection)") {
+        CHECK(P4vCustomCommandFieldRejected("foo\"bar"));
+        CHECK(P4vCustomCommandFieldRejected("\"")); // lone quote
+        CHECK(P4vCustomCommandFieldRejected("//depot/a\" -flag b"));
+    }
+
+    TEST_CASE("a TRAILING backslash is rejected (#1712 — escapes the template's closing wrap quote)") {
+        // A "..."-wrapped placeholder + a value ending in '\' -> `"foo\"` un-terminates the arg.
+        CHECK(P4vCustomCommandFieldRejected("C:\\path\\"));
+        CHECK(P4vCustomCommandFieldRejected("foo\\"));
+        CHECK(P4vCustomCommandFieldRejected("\\")); // lone backslash
+        // An INTERIOR backslash (not trailing) must NOT be rejected (no over-blocking).
+        CHECK_FALSE(P4vCustomCommandFieldRejected("C:\\path\\file.cpp"));
+    }
+}

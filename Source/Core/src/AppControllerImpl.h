@@ -121,7 +121,8 @@ struct AppController::Impl {
     void LuaMcpRegisterToolBind(sol::table toolDef, sol::function callback) override;
     std::vector<smatchet::lua::McpToolDefinition> GetLuaMcpTools() const override;
     smatchet::cmd::CommandRegistry& LuaCommands() override;
-    AppController* AppForCommandContext() override;
+    IAppScenarioHost* ScenarioHostForCommandContext() override;
+    IAppThreading* ThreadingForCommandContext() override;
 
     /// Parse a Lua `mcp.register_tool` definition table into the name / description /
     /// parametersSchema fields of `out` (does NOT set `callback`).

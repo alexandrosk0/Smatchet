@@ -191,6 +191,13 @@ class FSmatchetImGuiPluginModule : public IModuleInterface {
 
         ViewExtension.Reset();
 
+        // OnBackBufferReadyToPresent has been unhooked above, but RHI lambdas it already enqueued
+        // (see EnqueueLambda in OnBackBufferReadyToPresent) capture this/Host/RenderBackend and may
+        // still be in flight on the RHI thread. Flush the rendering commands here so every queued
+        // lambda has run before we tear down the render backend and destroy the native host below —
+        // otherwise those lambdas dereference freed module members and a destroyed host.
+        FlushRenderingCommands();
+
         if (RenderBackend) {
             RenderBackend->Shutdown();
             RenderBackend.Reset();

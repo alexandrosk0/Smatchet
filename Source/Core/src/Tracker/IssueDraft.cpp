@@ -124,9 +124,21 @@ IssueDraft FromCachedTicket(const CachedTicket& ticket, const std::vector<Tracke
         const bool useRowParent = inheritDefaults || inheritedFieldIds.count("parent") > 0;
 
         if (useRowProject) {
-            const size_t dashPos = ticket.id.find('-');
-            if (dashPos != std::string::npos && dashPos > 0) {
-                draft.ProjectKey = ticket.id.substr(0, dashPos);
+            // GitHub ids are "owner/repo#N" (or "owner/repo@sha" for commit rows); the
+            // project key is owner/repo, which itself may contain '-' (e.g.
+            // "acme/react-native#12"), so split on the '#'/'@' separator, NOT the first
+            // '-'. Jira/Linear/Plane ids are "KEY-NUM" whose key has no '-', so those
+            // fall back to the first '-'.
+            const size_t ghSep = ticket.id.find_first_of("#@");
+            if (ghSep != std::string::npos) {
+                if (ghSep > 0) {
+                    draft.ProjectKey = ticket.id.substr(0, ghSep);
+                }
+            } else {
+                const size_t dashPos = ticket.id.find('-');
+                if (dashPos != std::string::npos && dashPos > 0) {
+                    draft.ProjectKey = ticket.id.substr(0, dashPos);
+                }
             }
         }
         if (useRowIssueType) {

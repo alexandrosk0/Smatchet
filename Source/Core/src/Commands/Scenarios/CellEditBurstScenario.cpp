@@ -11,8 +11,8 @@
 
 #include "Commands/Scenarios/IScenario.h"
 
-#include "AppController.h"
-#include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+#include "Interfaces/IAppScenarioHost.h"
+#include <nlohmann/json.hpp> // the scenario headers expose only json_fwd; this TU uses nlohmann::json directly.
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 #include "UiPerfMonitor.h"
@@ -29,7 +29,7 @@ class CellEditBurstScenario : public IScenario {
   public:
     std::string Name() const override { return "cell-edit-burst"; }
 
-    void OnStart(AppController& app, const nlohmann::json& args, std::string& outErr) override {
+    void OnStart(IAppScenarioHost& app, const nlohmann::json& args, std::string& outErr) override {
         const int count = (std::max)(1, args.value("count", 200));
         const std::string fieldId = args.value("field", std::string("summary"));
         const std::string issueIdArg = args.value("issue", std::string());
@@ -65,7 +65,7 @@ class CellEditBurstScenario : public IScenario {
         dispatchArgs["value"] = newValue;
 
         CommandContext ctx;
-        ctx.App = &app;
+        ctx.ScenarioHost = &app;
         ctx.Source = CommandSource::Internal;
 
         const CommandResult res = app.Commands().Dispatch("debug.grid.edit-burst", dispatchArgs, ctx);
@@ -76,7 +76,7 @@ class CellEditBurstScenario : public IScenario {
         result_ = res.Data ? *res.Data : nlohmann::json{};
     }
 
-    void OnFrame(AppController& /*app*/, int /*frameIndex*/) override {}
+    void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override {}
 
     // Exclude the first `warmup_` frames from the snapshot p99 population: the
     // runner Reset()s the perf monitor once after this many frames, dropping the
@@ -89,7 +89,7 @@ class CellEditBurstScenario : public IScenario {
     // frame after the last steady frame is drawn.
     bool IsDone(int frameIndex) const override { return frameIndex >= warmup_ + steady_; }
 
-    nlohmann::json OnFinish(AppController& /*app*/) override {
+    nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         nlohmann::json out = result_;
         out["scenario"] = "cell-edit-burst";
         // Perf-rows emit so `scripts/dev/perf-baseline.sh init cell-edit-burst`

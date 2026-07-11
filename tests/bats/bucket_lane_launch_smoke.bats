@@ -51,6 +51,9 @@ write_stub_exe() {
         printf '#!/usr/bin/env bash\necho "{}"\nexit 0\n' > "$exe"
     else
         # Emits a valid envelope AND writes the captured PNG the driver polls for.
+        # The PNG must be a REAL decodable image (1x1 black), not placeholder
+        # bytes: the dock-gap-sentinel pink-pixel scan stb_image-loads the
+        # capture even in --bootstrap mode.
         cat > "$exe" <<'STUB'
 #!/usr/bin/env bash
 # Find --screenshotPath=<file> and write a tiny PNG there so the driver's
@@ -59,7 +62,9 @@ out=""
 for a in "$@"; do
     case "$a" in --screenshotPath=*) out="${a#--screenshotPath=}" ;; esac
 done
-[ -n "$out" ] && printf 'PNGSTUB' > "$out"
+[ -n "$out" ] && base64 -d > "$out" <<'PNG'
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC
+PNG
 echo '{"data":{"captureRequested":true}}'
 exit 0
 STUB

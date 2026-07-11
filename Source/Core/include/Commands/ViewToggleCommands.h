@@ -7,16 +7,16 @@
 // apply. Registered from RegisterBuiltinCommands so a single entry point still
 // owns the cross-cutting catalogue. Idempotent on repeat calls.
 
-class AppController;
+class IMainThreadPoster;
 
 namespace smatchet {
 namespace cmd {
 
 class CommandRegistry;
 
-void RegisterViewToggleCommands(CommandRegistry& registry, AppController& app);
+void RegisterViewToggleCommands(CommandRegistry& registry, IMainThreadPoster& app);
 
-}  // namespace cmd
-}  // namespace smatchet
+} // namespace cmd
+} // namespace smatchet
 
-#endif  // SMATCHET_COMMANDS_VIEW_TOGGLE_COMMANDS_H
+#endif // SMATCHET_COMMANDS_VIEW_TOGGLE_COMMANDS_H
