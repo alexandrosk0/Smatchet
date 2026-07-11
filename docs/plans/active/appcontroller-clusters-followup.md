@@ -127,5 +127,5 @@ whole-tree grep before the cut.
   `AppController.cpp` 1297 → 1237 LOC.
 - Slice 4 — PR #1749 (`a2ae5033`) · host-integration cluster → `AppController_HostIntegration.cpp`;
   `AppController.cpp` 1237 → 1023 LOC.
-- Slice 5 — PR #TBD · ticket-prefetch cluster → `AppController_TicketPrefetch.cpp`;
+- Slice 5 — PR #1754 · ticket-prefetch cluster → `AppController_TicketPrefetch.cpp`;
   `AppController.cpp` 1023 → 890 LOC.
