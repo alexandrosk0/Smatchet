@@ -2,7 +2,7 @@
 
 > **Slug**: `appcontroller-clusters-followup` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — slice 1 (MCP client-activity) shipped (PR #1660); slice 2 (Lua-script-file handling) shipped (PR #1742, squash `1461bee3`); slice 3 (AI-context) shipped (PR #1743, squash `2c580c79`); slice 4 (host-integration) shipped (PR #1749, squash `a2ae5033`); slice 5 (ticket-prefetch) in flight.
+> **Status**: `active` — slice 1 (MCP client-activity) shipped (PR #1660); slice 2 (Lua-script-file handling) shipped (PR #1742, squash `1461bee3`); slice 3 (AI-context) shipped (PR #1743, squash `2c580c79`); slice 4 (host-integration) shipped (PR #1749, squash `a2ae5033`); slice 5 (ticket-prefetch) shipped (PR #1754, squash `b6a33c47`; follow-up leak fix PR #1757, squash `9ed93d33`); slice 6 (field-icon path resolver) in flight (PR #1763).
 
 <!-- index-summary: Continuation of the shipped appcontroller-service-extraction plan — behavior-preserving extraction of the remaining cohesive AppController.cpp clusters (flagged there as § Out of scope) into focused companion TUs, toward the ≤ ~800 LOC target. -->
 
@@ -80,7 +80,7 @@ whole-tree grep before the cut.
   block, the field-icon path resolver plus its two file-local helpers, and the
   local-cache database block with its db-file removal helper.
 
-- **Slice 5 — ticket-prefetch cluster (this PR).** Extract the contiguous former-line
+- **Slice 5 — ticket-prefetch cluster (SHIPPED, PR #1754, squash `b6a33c47`; follow-up in-flight-key leak fix PR #1757, squash `9ed93d33`).** Extract the contiguous former-line
   417–548 span — `PrefetchIssueTicketsForKeys` / `FetchAndCachePrefetchedTickets` /
   `IsBulkImportPrefetchInFlight` — into `AppController_TicketPrefetch.cpp`. Cohesion: the
   bulk-import prefetch subsystem dedupes requested keys against the in-flight set, launches
@@ -101,6 +101,28 @@ whole-tree grep before the cut.
   candidate clusters after this slice: the local-cache database block with its db-file
   removal helper (~140 LOC), and the field-icon path resolver plus its two file-local
   helpers (~78 LOC).
+
+- **Slice 6 — field-icon path resolver (PR #1763).** Extract `ResolveFieldIconAssetPath`
+  plus its two file-local helpers (`FieldIconHasCaseInsensitivePrefix` /
+  `FieldIconPathIsAllowed`, the latter calling the former) into
+  `AppController_FieldIconPath.cpp`. Helper census: whole-tree grep confirms both helpers
+  are used exclusively by this resolver (zero callers outside `AppController.cpp`; inside
+  it only the resolver and each other), so they move with it in a fresh anonymous
+  namespace. Split-block note: the spec's second anon-namespace block was NOT
+  helper-exclusive — it also declared `std::mutex g_TrackerIssueFetchMutex;`, which
+  `FetchIssuesForActiveView` still locks, so the mutex STAYS behind in its own anon
+  namespace (it belongs to the future local-cache/fetch slice) and only the two helpers
+  moved. Census: the resolver never dereferences the pImpl (slice-2-style extraction — no
+  `AppControllerImpl.h`, no `LuaAutomationHost.h`); no platform gating in either part.
+  Member state (`luaScriptsDirectory_`, `kFieldIconAssetPathCacheCap`, the mutable memo
+  `fieldIconAssetPathCache_`) stays in the class — the moved code references it through
+  `this`. Curated includes: `AppController.h` (with the fan-in deviation block),
+  `ConfigManager.h` (`ConfigManager::GetRuntimeAssetDirectory`), `StringUtil.h`
+  (`TrimCopyAsciiWhitespace`), `ghc/filesystem.hpp`, `<string>`, `<system_error>` (no
+  `Logger.h` — the bodies log nothing). `AppController.cpp` 893 → 742 LOC. No CMake/test
+  edit. This crosses the plan's ≤ ~800 LOC target (742 < 800). The last obvious remaining
+  cluster is the local-cache database block plus its `RemoveLocalCacheDbFiles` helper
+  (~140 LOC, still in the first anon namespace).
 
 ## Verification
 
@@ -127,5 +149,10 @@ whole-tree grep before the cut.
   `AppController.cpp` 1297 → 1237 LOC.
 - Slice 4 — PR #1749 (`a2ae5033`) · host-integration cluster → `AppController_HostIntegration.cpp`;
   `AppController.cpp` 1237 → 1023 LOC.
-- Slice 5 — PR #1754 · ticket-prefetch cluster → `AppController_TicketPrefetch.cpp`;
-  `AppController.cpp` 1023 → 890 LOC.
+- Slice 5 — PR #1754 (`b6a33c47`) · ticket-prefetch cluster → `AppController_TicketPrefetch.cpp`;
+  `AppController.cpp` 1023 → 890 LOC. Follow-up leak fix PR #1757 (`9ed93d33`) — clear
+  in-flight prefetch keys on all exit paths of `FetchAndCachePrefetchedTickets`.
+- Slice 6 — PR #1763 · field-icon path resolver + its two file-local helpers →
+  `AppController_FieldIconPath.cpp`; `AppController.cpp` 893 → 742 LOC. `g_TrackerIssueFetchMutex`
+  (co-resident in the same source anon block but locked by the staying `FetchIssuesForActiveView`)
+  kept behind in its own anon namespace. Crosses the ≤ ~800 LOC target.
