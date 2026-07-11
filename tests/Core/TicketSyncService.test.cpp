@@ -264,6 +264,32 @@ TEST_CASE("TicketSyncService::SyncWithBackend end-to-end populates cache + activ
     svc.CancelAndJoinActiveStreamingSync();
 }
 
+TEST_CASE("TicketSyncService streamed seam prefers the backend's structured kind over the text sniff" *
+          doctest::test_suite("[high-risk]")) {
+    // N12 item 12: the fake scripts a fetch failure whose TEXT the heuristic would NOT call
+    // transport ("backend rejected the streamed query") but whose structured kind is Transport.
+    // The worker-side seam must classify transient from summary.Error — flipping connectivity
+    // to TransportDown — proving the structured kind is authoritative when a backend sets it.
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    fake->SetFetchIssuesError(TrackerErrorTransport("backend rejected the streamed query"));
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+
+    const bool drained = SpinUntil(svc, [&]() {
+        return !svc.IsActive() && deps.LastConnectivityState == ITicketSyncDeps::ConnectivityState::TransportDown;
+    });
+    REQUIRE(drained);
+    CHECK(deps.LastTrackerTicketSyncWarningTransient);
+    CHECK(deps.LastTrackerTicketSyncWarning.find("backend rejected the streamed query") != std::string::npos);
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
 TEST_CASE("TicketSyncService::SyncWithBackend routes user-facing toasts through NotifySyncStatus (UI-free)") {
     // sync-imgui-coupling decouple (debt 2026-06-07): TicketSyncService no longer pokes the
     // ImGui SmatchetToastManager directly — every user-facing toast now flows through

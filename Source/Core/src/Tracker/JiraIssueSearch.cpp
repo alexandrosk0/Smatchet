@@ -281,9 +281,10 @@ std::vector<std::string> DedupeIssueKeys(const std::vector<std::string>& issueKe
 
 } // namespace
 
+// SMATCHET_DEVIATION(rule=duplication; reason=backend API symmetry; owner=tracker; revisit=2026-12-31)
 std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* configOverride,
                                                   const ViewsStore* viewsOverride, std::string* outFetchError,
-                                                  std::string* outWarning) {
+                                                  std::string* outWarning, TrackerError* outFetchErrorStructured) {
     std::vector<CachedTicket> results;
     auto onBatch = [&](std::vector<CachedTicket>&& batch) {
         results.insert(results.end(), std::make_move_iterator(batch.begin()), std::make_move_iterator(batch.end()));
@@ -295,6 +296,9 @@ std::vector<CachedTicket> JiraClient::FetchIssues(bool* outFullSyncCompleted, co
     }
     if (outFetchError) {
         *outFetchError = summary.FetchError;
+    }
+    if (outFetchErrorStructured) {
+        *outFetchErrorStructured = summary.Error;
     }
     if (outWarning) {
         *outWarning = summary.Warning;
@@ -320,6 +324,7 @@ TrackerIssueFetchSummary JiraClient::FetchIssuesStreamed(const BatchCallback& on
     if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
         LOG_WARN("JiraClient: missing API token or domain; skipping FetchIssues.");
         summary.FetchError = "Missing Tracker domain or API token.";
+        summary.Error = TrackerErrorInvalidRequest(summary.FetchError);
         return summary;
     }
 
@@ -375,6 +380,11 @@ TrackerIssueFetchSummary JiraClient::FetchIssuesStreamed(const BatchCallback& on
         const std::string lastResponseBody = response.text;
         if (response.status_code != 200) {
             summary.FetchError = LogAndBuildPageFetchError(page, response);
+            // 2xx-other would map to Ok() in FromHttpStatus (FIX-1 precedent) — wrap Unknown.
+            summary.Error =
+                (response.status_code >= 200 && response.status_code < 300)
+                    ? TrackerErrorUnknown(summary.FetchError, static_cast<int>(response.status_code))
+                    : TrackerErrorFromHttpStatus(static_cast<int>(response.status_code), summary.FetchError);
             break;
         }
 
@@ -383,6 +393,8 @@ TrackerIssueFetchSummary JiraClient::FetchIssuesStreamed(const BatchCallback& on
                                                               fetchIssueComments, onBatch, shouldCancel, summary);
         if (outcome.HadFetchError) {
             summary.FetchError = std::move(outcome.FetchError);
+            // Every ProcessJiraSearchPage error producer is body-shape/parse class.
+            summary.Error = TrackerErrorParse(summary.FetchError);
         }
         if (outcome.Stop) {
             syncEndedCleanly = outcome.EndedCleanly;

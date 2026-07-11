@@ -49,6 +49,7 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
                                                 const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted,
                                                 std::string* outFetchError, std::string* outWarning);
 
+// SMATCHET_DEVIATION(rule=duplication; reason=backend API symmetry; owner=tracker; revisit=2026-12-31)
 /// Latency fix — same as `FetchIssuesViaRestApi` but emits each page's
 /// mapped tickets via `onPage` as soon as the page mapping completes (before
 /// the next page's HTTP roundtrip). Used by `GitHubClient::FetchIssuesStreamed`
@@ -63,11 +64,15 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
 /// Return value: same accumulated vector as the legacy overload (for callers
 /// like single-shot tests that still want the all-at-once snapshot). The
 /// streaming callers ignore the return value and consume the per-page batches.
+/// `outFetchErrorStructured` (optional) receives the classified twin of `outFetchError`
+/// (retire-transport-error-text item 12), filled at the same composition sites.
+// SMATCHET_DEVIATION(rule=duplication; reason=backend API symmetry; owner=tracker; revisit=2026-12-31)
 std::vector<CachedTicket>
 FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat, const std::string& owner,
                       const std::string& repo, const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted,
                       std::string* outFetchError, std::string* outWarning,
-                      const std::function<void(const std::vector<CachedTicket>& page, bool isLast)>& onPage);
+                      const std::function<void(const std::vector<CachedTicket>& page, bool isLast)>& onPage,
+                      TrackerError* outFetchErrorStructured = nullptr);
 
 /// Single-issue lookup loop used by GitHubClient::FetchIssuesForKeys.
 /// For each key in `issueKeys` (canonical `owner/repo#N` shape), issues a

@@ -46,20 +46,24 @@ cpr::Header BuildLinearHeaders(const std::string& apiKey);
 /// `onPage` fires `isLast == true` exactly once for any non-empty fetch (zero
 /// pages → no callback invocations); a terminal empty page is emitted on a
 /// fatal/zero-source path so the stream always closes.
+// SMATCHET_DEVIATION(rule=duplication; reason=backend API symmetry; owner=tracker; revisit=2026-12-31)
 std::vector<CachedTicket>
 FetchIssuesViaGraphQl(const std::string& apiUrl, const std::string& apiKey, const std::string& teamId,
                       const std::string& teamKey, const std::string& viewQuery, bool* outFullSyncCompleted,
                       std::string* outFetchError, std::string* outWarning,
-                      const std::function<void(const std::vector<CachedTicket>& page, bool isLast)>& onPage);
+                      /* `outFetchErrorStructured` (below, optional): classified twin of outFetchError
+                         (retire-transport-error-text item 12), filled at the same fatal branch. */
+                      const std::function<void(const std::vector<CachedTicket>& page, bool isLast)>& onPage,
+                      TrackerError* outFetchErrorStructured = nullptr);
 
 /// Slice 2 — per-key lookup used by LinearClient::FetchIssuesForKeys. Parses each
 /// `TEAM-123` key into {teamKey, number}, builds a single `issues` query with an
 /// `or:[{team,number}, ...]` filter, and maps the result. Stops at the first
 /// failure and returns Err carrying the diagnostic; Ok carries the full list on
 /// success (mirrors GitHub's FetchIssuesForKeysViaRestApi).
-Result<std::vector<CachedTicket>, TrackerError>
-FetchIssuesForKeysViaGraphQl(const std::string& apiUrl, const std::string& apiKey,
-                             const std::vector<std::string>& issueKeys);
+Result<std::vector<CachedTicket>, TrackerError> FetchIssuesForKeysViaGraphQl(const std::string& apiUrl,
+                                                                             const std::string& apiKey,
+                                                                             const std::vector<std::string>& issueKeys);
 
 } // namespace linear
 } // namespace smatchet

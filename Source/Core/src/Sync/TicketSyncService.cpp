@@ -673,11 +673,12 @@ void TicketSyncService::RunStreamingWorkerBody(std::uint64_t reqId, const Tracke
             std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
             activeStreamingSync_.FullSyncCompleted = summary.FullSyncCompleted;
             activeStreamingSync_.FetchError = summary.FetchError;
-            // Worker-side classification seam (N12 slice 1): the ONE place the streamed fetch
-            // error's transport-ness is decided; every downstream consumer branches on the flag.
-            // Slice 2 moves this into the backends' summaries as structured TrackerError kinds.
+            // Worker-side classification seam (N12): prefer the kind the backend classified at
+            // its own error site (summary.Error, item 12); fall back to the text sniff only for
+            // a legacy unclassified path.
             activeStreamingSync_.FetchErrorTransient =
-                !summary.FetchError.empty() && IsTrackerTransportErrorText(summary.FetchError);
+                !summary.FetchError.empty() &&
+                (!summary.Error.IsOk() ? summary.Error.IsRetryable() : IsTrackerTransportErrorText(summary.FetchError));
             activeStreamingSync_.Warning = summary.Warning;
             activeStreamingSync_.TotalFetchedCount = summary.FetchedCount;
             if (summary.FullSyncCompleted && deps_.Cache()) {
