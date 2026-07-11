@@ -94,15 +94,25 @@ void AppController::FetchAndCachePrefetchedTickets(const std::vector<std::string
         }
     } inFlightClearGuard{this, toFetch};
 
-    // Latch a strong handle via atomic_load: this worker reads Backend off the UI thread,
-    // which would race a live SetBackend swap on a plain .get(). The shared_ptr also keeps
-    // the backend alive for the FetchIssuesForKeys call (ADR 0012).
-    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&focusedContext().Backend);
+    // Latch the focused context ONCE, up front: focusedContext() is re-pointed when the user
+    // switches panes, so reading it again after the blocking FetchIssuesForKeys() below could
+    // pair this pane's fetched tickets with a *different* pane's cache key (cross-pane data
+    // corruption). Bind the context here and read both the backend handle and the cache key from
+    // it before the fetch. The atomic_load latches a strong Backend handle: this worker reads
+    // Backend off the UI thread, which would race a live SetBackend swap on a plain .get(), and
+    // the shared_ptr also keeps the backend alive for the FetchIssuesForKeys call (ADR 0012).
+    GridLiveContext& ctx = focusedContext();
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&ctx.Backend);
 
     if (!backend) {
 
         return;
     }
+
+    // Capture the cache key from the SAME latched context, by value, so it survives the fetch
+    // without holding `ctx` across it — the old context may be retired (ADR-0012 graveyard) on a
+    // focus switch, which would dangle a held reference. `ctx` is not touched again after this.
+    const std::string cacheBackendKey = ctx.CacheBackendKeyCopy();
 
     TrackerConfig cfg = ConfigManager::Load();
 
@@ -153,10 +163,6 @@ void AppController::FetchAndCachePrefetchedTickets(const std::vector<std::string
 
         return;
     }
-
-    // Mutex-guarded copy — this runs on a background worker while the UI thread may swap
-    // the tracker (and re-stamp the key) concurrently (multi-grid Slice 1b).
-    const std::string cacheBackendKey = focusedContext().CacheBackendKeyCopy();
 
     for (const auto& t : tickets) {
 
