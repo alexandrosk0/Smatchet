@@ -40,6 +40,10 @@ add_executable(SmatchetLuaTests
     # are added below.
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AppController_LuaBindingsCore.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager.cpp"
+    # ConfigManager god-file split (god-file-splits plan): companion Save/Load/Secret TUs.
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Save.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Load.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Secrets.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Views.cpp"
     # close-gate-gaps Slice 1a: ConfigManager_PathUtils/Views now call into UiThreadAffinity.

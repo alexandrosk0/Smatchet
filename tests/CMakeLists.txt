@@ -178,6 +178,11 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # (ConfigManager.cpp references ToolbarConfig::). All headless-Linux-clean
         # (wincrypt is _WIN32-guarded; whisper/lua feature guards have OFF branches).
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager.cpp"
+        # ConfigManager god-file split (god-file-splits plan): Save/Load/Secret bodies delegate
+        # across these companion TUs via config_detail (the spine holds the field tables).
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Save.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Load.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Secrets.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Views.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ToolbarConfig.cpp"
@@ -1034,6 +1039,10 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/FieldEditAuditSource.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Logger.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager.cpp"
+    # ConfigManager god-file split (god-file-splits plan): companion Save/Load/Secret TUs.
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Save.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Load.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Secrets.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Views.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ToolbarConfig.cpp"
