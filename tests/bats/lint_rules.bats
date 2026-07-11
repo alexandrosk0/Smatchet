@@ -19,6 +19,15 @@ setup() {
     export FIX="$REPO_ROOT/tests/fixtures/lint_rules"
 }
 
+teardown() {
+    # Clean the per-test scratch dir OUTSIDE the @test body: a trailing `rm -rf "$tmp"`
+    # inside a test is its LAST command, so bats scores the test by rm's (always-0) exit
+    # and masks a failing assertion above it (fail-open shape G). teardown runs after
+    # each test regardless of outcome and its exit code does not affect the verdict.
+    [ -n "${tmp:-}" ] && rm -rf "$tmp"
+    return 0
+}
+
 # ---------- per-rule detection (--scan-file) ----------
 
 @test "no-printf-stderr fires on unexempted std::printf" {
@@ -87,7 +96,6 @@ setup() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"no-glfw-in-core-headers"* ]]
     [[ "$output" == *"Tracker/Bad.h"* ]]
-    rm -rf "$tmp"
 }
 
 @test "--scan-glfw ignores GLFW in a .cpp and in Source/Standalone" {
@@ -101,7 +109,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-glfw
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-glfw is clean on the real first-party tree" {
@@ -130,7 +137,6 @@ setup() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"cmake-local-gate-ci-scope"* ]]
     [[ "$output" == *"CMakeLists.txt"* ]]
-    rm -rf "$tmp"
 }
 
 @test "--scan-cmake-ci ignores a CI-scoped (NOT DEFINED ENV{CI}) local-knob guard" {
@@ -141,7 +147,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-cmake-ci
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-cmake-ci ignores a FATAL_ERROR with no local-knob in its window" {
@@ -152,7 +157,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-cmake-ci
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-cmake-ci respects an in-window SMATCHET_DEVIATION" {
@@ -163,7 +167,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-cmake-ci
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-cmake-ci is clean on the real tree (the toolset guard is CI-scoped)" {
@@ -191,7 +194,6 @@ setup() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"unused-symbol-under-config-guard"* ]]
     [[ "$output" == *"AppController.cpp:1"* ]]
-    rm -rf "$tmp"
 }
 
 @test "--scan-unused-cfg is clean on the #945 fixed shape (def ALSO inside the guard)" {
@@ -204,7 +206,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-unused-cfg
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-unused-cfg ignores an out-of-line member def (Type::method is never -Wunused-function)" {
@@ -219,7 +220,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-unused-cfg
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-unused-cfg ignores a def with an unguarded reference (legit asymmetry)" {
@@ -231,7 +231,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-unused-cfg
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-unused-cfg respects an in-window SMATCHET_DEVIATION" {
@@ -243,7 +242,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-unused-cfg
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-unused-cfg ignores a call in the #else of a #if !defined(SMATCHET_WITH_*) (negative-guard discriminator)" {
@@ -259,7 +257,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-unused-cfg
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-unused-cfg runs clean (rc 0) on the real first-party tree" {
@@ -294,7 +291,6 @@ setup() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"bare-json-parse-untrusted"* ]]
     [[ "$output" == *"McpPlugin.cpp"* ]]
-    rm -rf "$tmp"
 }
 
 @test "--scan-bare-json ignores a ParseBounded-routed ingress parse" {
@@ -306,7 +302,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-bare-json
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-bare-json fires on a bare parse in ANY first-party TU (repo-wide default-deny)" {
@@ -319,7 +314,6 @@ setup() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"bare-json-parse-untrusted"* ]]
     [[ "$output" == *"SomeUnrelatedThing.cpp"* ]]
-    rm -rf "$tmp"
 }
 
 @test "--scan-bare-json fires on a bare parse in a HEADER" {
@@ -331,7 +325,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-bare-json
     [ "$status" -eq 0 ]
     [[ "$output" == *"SomeInlineHelper.h"* ]]
-    rm -rf "$tmp"
 }
 
 @test "--scan-bare-json fires on the stream>>json slurp form" {
@@ -343,7 +336,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-bare-json
     [ "$status" -eq 0 ]
     [[ "$output" == *"SlurpThing.cpp:3"* ]]
-    rm -rf "$tmp"
 }
 
 @test "--scan-bare-json ignores a >> into a non-json identifier" {
@@ -355,7 +347,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-bare-json
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-bare-json still fires when a trailing quoted comment mentions json::parse" {
@@ -369,7 +360,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-bare-json
     [ "$status" -eq 0 ]
     [[ "$output" == *"MaskedParse.cpp:2"* ]]
-    rm -rf "$tmp"
 }
 
 @test "--scan-bare-json respects an in-window SMATCHET_DEVIATION" {
@@ -381,7 +371,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-bare-json
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-bare-json is EMPTY on the real first-party tree (repo-wide clean invariant)" {
@@ -408,7 +397,6 @@ setup() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"catch-all-swallow"* ]]
     [[ "$output" == *"Swallower.cpp:4"* ]]
-    rm -rf "$tmp"
 }
 
 @test "--scan-catch-all ignores a commented / logged / catch-all-ok body and a deviation" {
@@ -420,7 +408,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-catch-all
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-catch-all is EMPTY on the real first-party tree (absolute-0 invariant)" {
@@ -441,7 +428,6 @@ setup() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"unbounded-recursive-json-walker"* ]]
     [[ "$output" == *"Walker.cpp:1"* ]]
-    rm -rf "$tmp"
 }
 
 @test "--scan-json-walkers ignores a depth-bounded walker and a deviation" {
@@ -455,7 +441,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-json-walkers
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 # ---------- unbounded-file-slurp (WARN-first) ----------
@@ -473,7 +458,6 @@ setup() {
     [[ "$output" == *"Slurper.cpp:3"* ]]
     [[ "$output" == *"Slurper.cpp:6"* ]]
     [[ "$output" != *"ExemptSlurp.cpp"* ]]
-    rm -rf "$tmp"
 }
 
 # ---------- ui-request-flag-off-thread (PR-5; strict-zone, absolute-0) ----------
@@ -491,7 +475,6 @@ setup() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"ui-request-flag-off-thread"* ]]
     [[ "$output" == *"BuiltinCommands_Bad.cpp"* ]]
-    rm -rf "$tmp"
 }
 
 @test "--scan-ui-reqflag ignores a write inside a RunOnUiThread closure" {
@@ -503,7 +486,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-ui-reqflag
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-ui-reqflag exempts Scenarios (run on the UI thread by contract)" {
@@ -515,7 +497,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-ui-reqflag
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-ui-reqflag ignores a read/compare of a request flag (not an assignment)" {
@@ -527,7 +508,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-ui-reqflag
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-ui-reqflag respects an in-window SMATCHET_DEVIATION" {
@@ -539,7 +519,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-ui-reqflag
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-ui-reqflag is clean on the real first-party tree (handlers all marshal)" {
@@ -563,7 +542,6 @@ setup() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"no-ui-include-in-domain"* ]]
     [[ "$output" == *"TrackerBad.cpp:2"* ]]
-    rm -rf "$tmp"
 }
 
 @test "--scan-ui-include fires in a domain include/ mirror header too" {
@@ -575,7 +553,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-ui-include
     [ "$status" -eq 0 ]
     [[ "$output" == *"SyncBad.h:2"* ]]
-    rm -rf "$tmp"
 }
 
 @test "--scan-ui-include ignores Ui/-internal, Commands/, and root-leaf consumers (out of scope)" {
@@ -589,7 +566,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-ui-include
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-ui-include ignores a comment mention and an angle-bracket include" {
@@ -601,7 +577,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-ui-include
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-ui-include respects a SMATCHET_DEVIATION above the include" {
@@ -613,7 +588,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-ui-include
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-ui-include is clean on the real first-party tree (domain zones are Ui-free)" {
@@ -638,7 +612,6 @@ setup() {
     [[ "$output" == *"Thing.cpp"* ]]
     # all four shapes detected
     [ "$(printf '%s\n' "$output" | grep -c 'pr-numbered-temporal-comments')" -eq 4 ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-pr-comments ignores product-domain PR usage (no number)" {
@@ -650,7 +623,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-pr-comments
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-pr-comments ignores GitHub Issue / ADR refs and non-comment code lines" {
@@ -662,7 +634,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-pr-comments
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-pr-comments respects an in-window SMATCHET_DEVIATION" {
@@ -674,7 +645,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-pr-comments
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-pr-comments is clean on the real first-party tree (post-sweep)" {
@@ -750,7 +720,6 @@ setup() {
     grep -q 'kept prose paragraph' "$tmp/Source/Core/include/X.h"
     grep -q 'foo(bar);' "$tmp/Source/Core/include/X.h"
     grep -q 'header line one' "$tmp/Source/Core/include/X.h"
-    rm -rf "$tmp"
 }
 
 # ---------- catalog: format + determinism ----------
@@ -801,7 +770,6 @@ setup() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"no-raw-new"* ]]
     [[ "$output" == *"Ui/Widget.cpp"* ]]
-    rm -rf "$tmp"
 }
 
 @test "--scan-wide ignores ThirdParty and non-first-party (tests) raw new" {
@@ -813,7 +781,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-wide
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-wide respects an exemption marker on the raw new" {
@@ -824,7 +791,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-wide
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 
 @test "--scan-wide is clean on the real first-party tree" {
@@ -859,7 +825,6 @@ setup() {
     run bash "$tmp/test-lint-rules.sh" --root "$REPO_ROOT" --scan-catch-all
     [ "$status" -eq 2 ]
     [[ "$output" == *"missing rule module"* ]]
-    rm -rf "$tmp"
 }
 
 @test "entry point loads modules from its own directory, not the --root target" {
@@ -873,7 +838,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-catch-all
     [ "$status" -eq 0 ]
     [[ "$output" == *"catch-all-swallow"* ]]
-    rm -rf "$tmp"
 }
 
 # ---------- tu-line-ceiling (advisory god-file regrowth guard) ----------
@@ -887,7 +851,6 @@ setup() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"tu-line-ceiling"* ]]
     [[ "$output" == *"BigTu.cpp:1300"* ]]
-    rm -rf "$tmp"
 }
 @test "--scan-tu-ceiling ignores an under-ceiling .cpp and an over-ceiling header" {
     tmp="$(mktemp -d)"
@@ -898,7 +861,6 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-tu-ceiling
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
 @test "--scan-tu-ceiling respects an in-file SMATCHET_DEVIATION(rule=tu-line-ceiling)" {
     tmp="$(mktemp -d)"
@@ -908,5 +870,4 @@ setup() {
     run bash "$LINT" --root "$tmp" --scan-tu-ceiling
     [ "$status" -eq 0 ]
     [ -z "$output" ]
-    rm -rf "$tmp"
 }
