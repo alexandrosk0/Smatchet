@@ -57,6 +57,13 @@ if [ "$PASSED" = "?" ] || [ "$FAILED" = "?" ]; then
 fi
 
 echo "Passed: $PASSED  Failed: $FAILED"
+# Zero-run floor (fail-open shape Z): a run that produces ZERO results leaves
+# PASSED=FAILED=0 and would exit green - a vanished/unparsed suite passing.
+if [ "$PASSED" -eq 0 ] && [ "$FAILED" -eq 0 ]; then
+    echo "$(basename "$0" .sh): FAIL - the test run produced ZERO results (vanished / unparsed)." >&2
+    echo "Passed: 0  Failed: 1"
+    exit 1
+fi
 if [ "$FAILED" != "0" ]; then
     exit 1
 fi
