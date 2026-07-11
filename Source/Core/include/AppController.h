@@ -713,7 +713,8 @@ class AppController : public IAppThreading,
     /// SetFieldCatalog helper — handle the non-empty-error branch (transport-error
     /// snapshot restore vs hard catalog clear) and publish the matching warning/error
     /// state. `catalogPlane` mirrors the caller's tracker-kind classification.
-    void HandleFieldCatalogError(const std::string& error, const std::string& catalogCacheKey, bool catalogPlane);
+    void HandleFieldCatalogError(const std::string& error, bool errorTransient, const std::string& catalogCacheKey,
+                                 bool catalogPlane);
     /// Pin the project key the next SetFieldCatalog() snapshot saves under. The grid's scoped
     /// catalog fetch resolves a project from the active-view JQL but applies the result through
     /// SetFieldCatalog() (not RefreshFieldCatalog()), so without this hint the scoped result would

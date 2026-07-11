@@ -546,6 +546,7 @@ bool FieldEditPipelineService::ApplyFieldUpdateWithEditMetaRetry(const std::stri
                                                                  FieldEditResult& outResult) {
     TrackerError updateErr = mutations.UpdateIssueFields(issueId, fieldsPayload);
     outResult.Error = updateErr.Detail;
+    outResult.ErrorTransient = updateErr.IsRetryable();
     bool updateOk = updateErr.IsOk();
     bool didRetryAfter400 = false;
     if (!updateOk && ErrorTextContainsHttpStatus(outResult.Error, 400)) {
@@ -554,6 +555,7 @@ bool FieldEditPipelineService::ApplyFieldUpdateWithEditMetaRetry(const std::stri
         if (!editMeta_.CanEditFieldForIssue(issueId, field.Id, &field, issueTypeKeyOpt)) {
             outResult.Error =
                 "Field cannot be edited for this issue (Jira edit metadata refreshed after validation failure).";
+            outResult.ErrorTransient = false;
             LOG_WARN("FieldEditPipelineService::SubmitFieldEditNetworkOnly blocked after editmeta refresh issue=%s "
                      "field=%s",
                      issueId.c_str(), field.Id.c_str());
@@ -561,6 +563,7 @@ bool FieldEditPipelineService::ApplyFieldUpdateWithEditMetaRetry(const std::stri
         }
         updateErr = mutations.UpdateIssueFields(issueId, fieldsPayload);
         outResult.Error = updateErr.Detail;
+        outResult.ErrorTransient = updateErr.IsRetryable();
         updateOk = updateErr.IsOk();
     }
     if (!updateOk) {
@@ -593,6 +596,7 @@ bool FieldEditPipelineService::SubmitSprintFieldEditNetworkOnly(const std::strin
     const TrackerError sprintErr = mutations.AddIssueToSprint(issueId, sprintId);
     if (!sprintErr.IsOk()) {
         outResult.Error = sprintErr.Detail;
+        outResult.ErrorTransient = sprintErr.IsRetryable();
         return false;
     }
     std::string displayValue = sprintId;
@@ -642,6 +646,7 @@ bool FieldEditPipelineService::SubmitTimetrackingFieldEditNetworkOnly(
     const TrackerError updateErr = mutations.UpdateIssueFields(issueId, fieldsPayload);
     if (!updateErr.IsOk()) {
         outResult.Error = updateErr.Detail;
+        outResult.ErrorTransient = updateErr.IsRetryable();
         return false;
     }
     outResult.Ok = true;

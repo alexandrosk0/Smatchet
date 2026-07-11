@@ -220,6 +220,40 @@ TEST_CASE("FieldEditPipelineService::SubmitFieldEdit timetracking branch writes 
 //     NetworkOnly fails on a transport error → false; FieldEditSupportsOfflineQueue == true for a
 //     queueable field; TryPrepareOfflineFieldEdit → true with a non-empty payload JSON.
 // ---------------------------------------------------------------------------
+TEST_CASE("FieldEditPipelineService::SubmitFieldEditNetworkOnly classifies ErrorTransient from the "
+          "mutation's TrackerError kind" *
+          doctest::test_suite("[high-risk]")) {
+    // N12 item 13b: the offline-queue fallback in the grid pipeline branches on
+    // FieldEditResult::ErrorTransient, filled where the service flattens the mutation's
+    // TrackerError — not by sniffing the flattened text.
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    rig.fieldDeps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1"));
+    rig.editMetaDeps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}});
+    const TrackerField field = MakeTextField("summary");
+
+    SUBCASE("a retryable kind (5xx) marks the result transient even with bland text") {
+        rig.fieldDeps.Fake()->EnqueueUpdateIssueFieldsError(TrackerErrorServer("backend said no"));
+        FieldEditResult r;
+        CHECK_FALSE(rig.svc.SubmitFieldEditNetworkOnly("ABC-1", field, {"v"}, "", "", "", r));
+        CHECK(r.ErrorTransient);
+        CHECK(r.Error == "backend said no");
+    }
+    SUBCASE("a non-retryable kind stays non-transient even with transport-shaped text") {
+        rig.fieldDeps.Fake()->EnqueueUpdateIssueFieldsError(
+            TrackerErrorInvalidRequest("Connection timeout while validating payload"));
+        FieldEditResult r;
+        CHECK_FALSE(rig.svc.SubmitFieldEditNetworkOnly("ABC-1", field, {"v"}, "", "", "", r));
+        CHECK_FALSE(r.ErrorTransient);
+    }
+    SUBCASE("local validation failures default to non-transient") {
+        FieldEditResult r;
+        CHECK_FALSE(rig.svc.SubmitFieldEditNetworkOnly("", field, {"v"}, "", "", "", r));
+        CHECK_FALSE(r.ErrorTransient);
+    }
+}
+
+// ---------------------------------------------------------------------------
 TEST_CASE("FieldEditPipelineService offline-fallback prepare contract for a queueable field") {
     OfflineQueueTestEnvGuard env;
     Rig rig;

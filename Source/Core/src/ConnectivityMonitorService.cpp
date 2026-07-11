@@ -13,12 +13,9 @@
 #include "Config/ConfigManager.h" // TrackerConfig (by-value probe capture)
 #include "ITrackerBackend.h"
 #include "ITrackerConnectivity.h"
-#include "TrackerHttpPure.h" // IsTrackerTransportErrorText (cpr-free). This TU links into the
-                             // headless TSan subset (SmatchetTsanTests), where cpr is gated OFF
-                             // (app-only — see SMATCHET_BUILD_APP in the root CMakeLists).
-                             // Including TrackerHttpUtils.h dragged <cpr/cpr.h> into that target,
-                             // so a cold FetchContent cache (no cpr-src) failed the build. The
-                             // Pure header declares the only HTTP symbol this TU uses.
+#include "TrackerHttpPure.h" // RedactHttpBodyForLog (cpr-free). This TU links into the headless
+                             // TSan subset (SmatchetTsanTests) where cpr is gated OFF (app-only),
+                             // so TrackerHttpUtils.h would drag <cpr/cpr.h> into that target.
 #include "Logger.h"
 
 namespace {
@@ -72,8 +69,8 @@ bool ConnectivityMonitorService::IsConnectivityDegradedForProbeInterval(TrackerC
     if (lastTicketSyncWarningTransient_) {
         return true;
     }
-    const std::string& catalogErr = deps_.FocusedFieldCatalogError();
-    if (!catalogErr.empty() && IsTrackerTransportErrorText(catalogErr)) {
+    // N12 item 13b: the catalog error's transport-ness travels from the flatten seam.
+    if (!deps_.FocusedFieldCatalogError().empty() && deps_.FocusedFieldCatalogErrorTransient()) {
         return true;
     }
     return false;

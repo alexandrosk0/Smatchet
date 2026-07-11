@@ -40,6 +40,9 @@ namespace smatchet_tests {
 struct ScriptedReply {
     bool Ok = true;
     std::string Error;
+    /// Structured kind for the failure (N12 item 13b). Kind None keeps the fake's historical
+    /// InvalidRequest wrap so untouched suites see identical behaviour.
+    TrackerError StructuredError;
     /// For BuildXPayload / FetchFieldCatalog / etc — the JSON payload returned.
     nlohmann::json Payload = nlohmann::json::object();
     /// For CreateIssue — the issue key to return on success (empty when Ok=false).
@@ -165,6 +168,9 @@ class FakeTrackerClient : public ITrackerBackend,
         updateIssueFieldsCalls_.push_back(std::move(call));
         const ScriptedReply reply = NextOrDefault(updateIssueFieldsQueue_, defaultUpdateIssueFields_);
         if (!reply.Ok) {
+            if (!reply.StructuredError.IsOk()) {
+                return reply.StructuredError;
+            }
             return TrackerErrorInvalidRequest(reply.Error);
         }
         return TrackerError::Ok();
@@ -362,6 +368,15 @@ class FakeTrackerClient : public ITrackerBackend,
         r.Ok = true;
         updateIssueFieldsQueue_.push_back(std::move(r));
     }
+    /// Script a failure with a realistic kind (N12 item 13b) — e.g. TrackerErrorServer(...).
+    void EnqueueUpdateIssueFieldsError(TrackerError error) {
+        ScriptedReply r;
+        r.Ok = false;
+        r.Error = error.Detail;
+        r.StructuredError = std::move(error);
+        updateIssueFieldsQueue_.push_back(std::move(r));
+    }
+
     void EnqueueUpdateIssueFieldsFailure(const std::string& error) {
         ScriptedReply r;
         r.Ok = false;
@@ -584,22 +599,26 @@ class FakeTrackerClient : public ITrackerBackend,
 
     // CreateIssue
     std::deque<ScriptedReply> createIssueQueue_;
-    ScriptedReply defaultCreateIssue_{true, "", nlohmann::json::object(), "FAKE-1"};
+    ScriptedReply defaultCreateIssue_ = [] {
+        ScriptedReply r;
+        r.IssueKey = "FAKE-1";
+        return r;
+    }();
     std::vector<CreateIssueCall> createIssueCalls_;
 
     // UpdateIssueFields
     std::deque<ScriptedReply> updateIssueFieldsQueue_;
-    ScriptedReply defaultUpdateIssueFields_{true, "", nlohmann::json::object(), ""};
+    ScriptedReply defaultUpdateIssueFields_;
     std::vector<UpdateIssueFieldsCall> updateIssueFieldsCalls_;
 
     // UpdateField
     std::deque<ScriptedReply> updateFieldQueue_;
-    ScriptedReply defaultUpdateField_{true, "", nlohmann::json::object(), ""};
+    ScriptedReply defaultUpdateField_;
     std::vector<UpdateFieldCall> updateFieldCalls_;
 
     // AddIssueToSprint
     std::deque<ScriptedReply> addIssueToSprintQueue_;
-    ScriptedReply defaultAddIssueToSprint_{true, "", nlohmann::json::object(), ""};
+    ScriptedReply defaultAddIssueToSprint_;
     std::vector<AddIssueToSprintCall> addIssueToSprintCalls_;
 
     // AttachFiles

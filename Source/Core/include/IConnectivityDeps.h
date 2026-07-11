@@ -51,6 +51,9 @@ class IConnectivityDeps {
     /// banner formatter stays cheap and callers may bind a reference. Forward to the focused
     /// context's catalog UNLOCKED (UI-thread-only contract); do not take availableFieldsMutex_.
     virtual const std::string& FocusedFieldCatalogError() const = 0;
+    /// Whether FocusedFieldCatalogError is transport-shaped — classified at the catalog fetch's
+    /// flatten seam (N12 item 13b); the degraded-probe-interval check branches on this.
+    virtual bool FocusedFieldCatalogErrorTransient() const = 0;
     virtual const std::string& FocusedFieldCatalogWarning() const = 0;
 
     /// Clear the LIVE-focus catalog warning and bump its revision. Paired so a recovery / live

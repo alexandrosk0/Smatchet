@@ -261,6 +261,10 @@ const std::string& GridContextDepsAdapter::FocusedFieldCatalogError() const {
     return app_.fieldCatalog().LastTrackerFieldCatalogError;
 }
 
+bool GridContextDepsAdapter::FocusedFieldCatalogErrorTransient() const {
+    return app_.fieldCatalog().LastTrackerFieldCatalogErrorTransient;
+}
+
 const std::string& GridContextDepsAdapter::FocusedFieldCatalogWarning() const {
     return app_.fieldCatalog().LastTrackerFieldCatalogWarning;
 }

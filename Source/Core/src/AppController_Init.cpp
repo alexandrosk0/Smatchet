@@ -632,6 +632,7 @@ void AppController::ApplyStartupFieldCatalogSnapshot(std::vector<TrackerField> s
     cat.AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
     cat.fieldCatalogEverLoaded_ = true;
     cat.LastTrackerFieldCatalogError.clear();
+    cat.LastTrackerFieldCatalogErrorTransient = false;
 
     if (activeTrackerType == "Plane") {
         cat.LastTrackerFieldCatalogWarning =

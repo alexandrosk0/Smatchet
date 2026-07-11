@@ -41,6 +41,9 @@ struct GridContextFieldCatalog {
     /// Last-fetched user catalog (see AppController::GetAvailableUsers for semantics).
     std::vector<TrackerUser> AvailableUsers;
     std::string LastTrackerFieldCatalogError;
+    /// Transport-shaped LastTrackerFieldCatalogError (N12 item 13b) — classified where the
+    /// catalog fetch's TrackerError is flattened; set/cleared with the string.
+    bool LastTrackerFieldCatalogErrorTransient = false;
     std::string LastTrackerFieldCatalogWarning;
     bool fieldCatalogEverLoaded_ = false;
     /// Project key for the most-recent in-flight catalog fetch (see SetCurrentCatalogProject).

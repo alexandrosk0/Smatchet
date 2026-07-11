@@ -82,7 +82,9 @@ bool QueueNewIssueDraftOffline(AppController& app, UiDrawSession& d, const std::
     return true;
 }
 
-bool IsLikelyOfflineCreateError(const std::string& error) { return IsTrackerTransportErrorText(error); }
+// N12 item 13b: the create pipeline classifies transport-ness into IssueCreateResult — the
+// offline-queue fallback branches on that flag, never on the flattened text.
+bool IsLikelyOfflineCreateError(const IssueCreateResult& r) { return r.ErrorTransient; }
 
 /** Shared submit path used by both the Create button and the Enter-on-Summary shortcut.
  *  Mirrors the legacy inline body so behaviour stays identical regardless of which
@@ -170,7 +172,7 @@ void PollNewIssueCreateResult(AppController& app, UiDrawSession& d) {
             d.gridEditSuccess = "Created " + r.IssueKey + ".";
         } else {
             d.newIssueMissingFieldIds = r.MissingFieldIds;
-            if (IsLikelyOfflineCreateError(r.Error)) {
+            if (IsLikelyOfflineCreateError(r)) {
                 d.newIssueQueueFallbackVisible = false;
                 d.newIssueQueueFallbackError.clear();
                 if (!QueueNewIssueDraftOffline(app, d, "Offline detected; queued offline.")) {
