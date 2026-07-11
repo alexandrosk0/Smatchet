@@ -108,7 +108,10 @@ setup() {
 }
 
 teardown() {
-    rm -rf "${SMATCHET_TEST_TMP:-}"
+    # Clean per-test scratch OUTSIDE the @test body — a trailing `rm -rf` inside a test
+    # is its last command and masks a failing assertion above it (fail-open shape G).
+    rm -rf "${SMATCHET_TEST_TMP:-}" "${STUB_BIN:-}" "${GTMP:-}"
+    return 0
 }
 
 # ---------- helper ----------
@@ -530,7 +533,6 @@ print('merge_action:', extras.get('merge_action'))
 "
     [ "$status" -eq 0 ]
     [[ "$output" == *"merge_action: merge_failed"* ]] || [[ "$output" == *"merge_action: skipped"* ]]
-    rm -rf "$STUB_BIN"
 }
 
 @test "handle_pass enqueues on a merge queue (state OPEN after --auto) -> merge_action: enqueued" {
@@ -1258,7 +1260,6 @@ print('OK timeout-on-stale')
     [ "$status" -eq 1 ]
     [[ "$output" == *"REFUSING"* ]]
     [[ "$output" == *"UNCOMMITTED"* ]]
-    rm -rf "$GTMP"
 }
 
 @test "ledger_has_uncommitted_rows fail-closes (dirty=True) on a non-git path" {
