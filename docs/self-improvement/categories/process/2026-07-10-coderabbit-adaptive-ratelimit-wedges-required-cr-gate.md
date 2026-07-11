@@ -83,6 +83,13 @@ playbook follow-ups.
   gate context string is `CR findings (0 actionable)` with description
   "awaiting CodeRabbit review on current head".
 - Concrete next action: see § Proposal (1)–(3).
-- Triggered-follow-up: when=pr-count:base=develop;since=2026-07-10;n=25; action=re-check whether the required CR gate ever degraded gracefully under a throttle, or whether another campaign wedged again; baseline=#1702 blocked ~2h on CR rate-limit despite green CI + Bugbot clear; fired=never
+- Triggered-follow-up: when=pr-count:base=develop;since=2026-07-10;n=25; action=re-check whether the required CR gate ever degraded gracefully under a throttle, or whether another campaign wedged again; baseline=#1702 blocked ~2h on CR rate-limit despite green CI + Bugbot clear; fired=2026-07-11
+- Follow-up observation (2026-07-11): no recurrence. The backlog-takeover session merged five PRs
+  (#1726, #1700, #1728, #1730, #1738) while CodeRabbit was continuously rate-limited (its
+  "review limit reached" comment present on every PR, windows 15–58 min); the
+  `CR findings (0 actionable)` check reached SUCCESS on each head within the normal CI window and
+  every merge proceeded without an admin-merge or `cr-out-of-band` label. The remaining unsafe
+  case (rate-limit wedging a code PR past its window) did not reproduce; proposals (1)/(2) stay
+  open as playbook follow-ups.
 - Status: open
-- Last-reviewed: 2026-07-10
+- Last-reviewed: 2026-07-11

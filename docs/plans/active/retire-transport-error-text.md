@@ -28,10 +28,13 @@ Three slices, ordered by blast radius. **Slice 1 (this PR)** — *classification
 10. `tests/Core/ConnectivityMonitorService.test.cpp` — setter call sites carry the flag.
 11. `backlog/BACKLOG_CODE_REVIEW.md` — N12 row/section note slice 1 + link here.
 
-### Slice 2 (next)
+### Slice 2 (next) — PRECONDITION discovered 2026-07-11: kind-reliability audit first
 
+**`TrackerError.Kind` is not yet authoritative at the producers.** Evidence: `FakeTrackerClient::FetchIssuesForKeys` returns `TrackerErrorInvalidRequest(<any text>)` — the replay tests' "timeout is transient" case passes ONLY because the code sniffs the TEXT; with `.IsRetryable()` it would classify non-transient. Production has the same class: `PlaneClient::UpdateIssueFields` wraps `ResolvePlaneProject` failures as `TrackerErrorUnknown` with an explicit `TODO(#21b later slice): re-thread status when a consumer reads .Kind`. Swapping consumers to `.Kind`/`.IsRetryable()` before auditing every `TrackerError` construction site across the four backends would silently flip replay/banner classification wherever a kind is wrong.
+
+11a. **Kind-reliability audit** — sweep every `TrackerError{…}` / `TrackerError…(...)` construction in `Source/Core/src/Tracker/` (+ the test fakes) and make each carry the correct kind (finish #21b's status re-threading); pin with per-backend fixture cases (transport / 429 / 5xx / 404 / 4xx). Only then:
 12. `ITrackerIssueReader.h` fetch summary + the four backends' streamed fetch error composition → structured kind; `AppController.cpp` pack composer consumes it.
-13. Catalog-error path (`FocusedFieldCatalogError`) + `OfflineQueueService` replay classification (`.cpp:980/1226`) + field-edit `ApplyResult` + the two UI consumers + `AppController.cpp:547` / `AppController_CatalogAndFieldEdit.cpp:339` + `LinearClient.cpp:184`.
+13. Catalog-error path (`FocusedFieldCatalogError`) + `OfflineQueueService` replay classification (`.cpp:980/1226` — `FetchIssuesForKeys`' `TrackerError` and `UpdateIssueFields`' `updateErr` are already in scope at both callers, so this is mechanical once 11a lands) + field-edit `ApplyResult` + the two UI consumers + `AppController.cpp` prefetch (`FetchAndCachePrefetchedTickets` — `fetchResult.error()` in scope) / `AppController_CatalogAndFieldEdit.cpp` (`SetFieldCatalog` needs the kind plumbed through its string seam) + `LinearClient.cpp` probe (careful: its text sniff currently also matches GraphQL error text on a 200 — parity needs a deliberate decision).
 
 ### Slice 3 (last)
 
