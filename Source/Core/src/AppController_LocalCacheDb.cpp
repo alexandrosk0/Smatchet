@@ -1,6 +1,6 @@
 // AppController_LocalCacheDb.cpp — local-cache database block extracted from
 // AppController.cpp (behavior-preserving TU split, plan
-// docs/plans/active/appcontroller-clusters-followup.md). The method DECLARATIONS stay in
+// docs/plans/appcontroller-clusters-followup.md). The method DECLARATIONS stay in
 // AppController.h; only the definitions and the file-local RemoveLocalCacheDbFiles helper
 // moved, so linkage and behavior are identical. The helper is used exclusively by
 // RecreateLocalCacheDatabase, so it moves with the cluster in a fresh anonymous namespace.

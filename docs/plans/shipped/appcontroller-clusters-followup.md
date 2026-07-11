@@ -2,7 +2,7 @@
 
 > **Slug**: `appcontroller-clusters-followup` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — slice 1 (MCP client-activity) shipped (PR #1660); slice 2 (Lua-script-file handling) shipped (PR #1742, squash `1461bee3`); slice 3 (AI-context) shipped (PR #1743, squash `2c580c79`); slice 4 (host-integration) shipped (PR #1749, squash `a2ae5033`); slice 5 (ticket-prefetch) shipped (PR #1754, squash `b6a33c47`; follow-up leak fix PR #1757, squash `9ed93d33`); slice 6 (field-icon path resolver) shipped (PR #1763, squash `718205df`); slice 7 (local-cache DB block) in flight. Slice 7 is expected to be the LAST cohesive cluster — after it, `AppController.cpp` has no further obviously-cohesive extractable cluster and the plan is ready to move to `shipped`.
+> **Status**: `shipped` — all 7 slices landed. slice 1 (MCP client-activity) shipped (PR #1660); slice 2 (Lua-script-file handling) shipped (PR #1742, squash `1461bee3`); slice 3 (AI-context) shipped (PR #1743, squash `2c580c79`); slice 4 (host-integration) shipped (PR #1749, squash `a2ae5033`); slice 5 (ticket-prefetch) shipped (PR #1754, squash `b6a33c47`; follow-up leak fix PR #1757, squash `9ed93d33`); slice 6 (field-icon path resolver) shipped (PR #1763, squash `718205df`); slice 7 (local-cache DB block) shipped (PR #1765, squash `776d1b83`). Slice 7 was the LAST cohesive cluster — `AppController.cpp` is now 571 LOC (2862 → 571 across this plan and the shipped `appcontroller-service-extraction` predecessor), so the ≤ ~800 LOC target is exceeded and the plan is complete. The two § Out of scope successors remain as separate future plans: the `AppController.h` split and the `GridContextDepsAdapter` friend-drop.
 
 <!-- index-summary: Continuation of the shipped appcontroller-service-extraction plan — behavior-preserving extraction of the remaining cohesive AppController.cpp clusters (flagged there as § Out of scope) into focused companion TUs, toward the ≤ ~800 LOC target. -->
 
@@ -124,7 +124,7 @@ whole-tree grep before the cut.
   cluster is the local-cache database block plus its `RemoveLocalCacheDbFiles` helper
   (~140 LOC, still in the first anon namespace).
 
-- **Slice 7 — local-cache database block (in flight).** Extract the file-local
+- **Slice 7 — local-cache database block (SHIPPED, PR #1765, squash `776d1b83`).** Extract the file-local
   `RemoveLocalCacheDbFiles` helper (the whole first anonymous-namespace block) plus the three
   contiguous methods `GetResolvedLocalCacheDbPath` / `RecreateLocalCacheDatabase` /
   `EnsureLocalCacheForUiTest` into `AppController_LocalCacheDb.cpp`. Helper census: whole-tree
@@ -150,7 +150,15 @@ whole-tree grep before the cut.
   (`std::exception`), `<memory>` (`std::make_unique`), `<string>`, `<system_error>`
   (`std::error_code`). `AppController.cpp` 742 → 571 LOC. No CMake/test edit. This is the LAST
   cohesive extractable cluster — after slice 7, `AppController.cpp` has no further
-  obviously-cohesive block to peel off and the plan is ready to move to `shipped`.
+  obviously-cohesive block to peel off and the plan moves to `shipped`.
+  **Fix-forward (squash `776d1b83` includes it):** the initial `impl_->` census was too narrow —
+  it looked only for pImpl access and missed that `RecreateLocalCacheDatabase` dereferences two
+  *non-pImpl* member `unique_ptr`s whose pointees `AppController.h` only forward-declares:
+  `GridLiveContext::ticketSync_` (`CancelAndJoinActiveStreamingSync` / `ResetStaleDeletionState`)
+  and `offlineQueue_` (`legacyPendingStartupBanner_.clear()`). MSVC failed with C2027 "use of
+  undefined type"; the fix added `#include "TicketSyncService.h"` and `#include
+  "OfflineQueueService.h"` (completeness for the member-`unique_ptr` derefs — the same class of
+  fix as slice 3's `LuaAutomationHost.h`). CI-caught and one line of includes; no body change.
 
 ## Verification
 
@@ -184,10 +192,15 @@ whole-tree grep before the cut.
   `AppController_FieldIconPath.cpp`; `AppController.cpp` 893 → 742 LOC. `g_TrackerIssueFetchMutex`
   (co-resident in the same source anon block but locked by the staying `FetchIssuesForActiveView`)
   kept behind in its own anon namespace. Crosses the ≤ ~800 LOC target.
-- Slice 7 — PR #1765 · local-cache database block (`RemoveLocalCacheDbFiles` helper +
+- Slice 7 — PR #1765 (`776d1b83`) · local-cache database block (`RemoveLocalCacheDbFiles` helper +
   `GetResolvedLocalCacheDbPath` / `RecreateLocalCacheDatabase` / `EnsureLocalCacheForUiTest`) →
   `AppController_LocalCacheDb.cpp`; `AppController.cpp` 742 → 571 LOC. Helper `RemoveLocalCacheDbFiles`
   cluster-private (2 grep hits, both moved). No `impl_->` in the moved bodies (slice-2-style — no
   `AppControllerImpl.h` / `LuaAutomationHost.h`); no build gating. `g_TrackerIssueFetchMutex`
-  (second anon block) and `LoadAiChatMessages` left in place. LAST cohesive cluster — plan ready to
-  move to `shipped` after this slice.
+  (second anon block) and `LoadAiChatMessages` left in place. **Fix-forward** included in the squash:
+  the `impl_->`-only census missed that `RecreateLocalCacheDatabase` derefs two non-pImpl member
+  `unique_ptr`s with forward-declared pointees — `GridLiveContext::ticketSync_` and `offlineQueue_` —
+  so MSVC failed C2027; added `#include "TicketSyncService.h"` + `#include "OfflineQueueService.h"`
+  for member-`unique_ptr` completeness (same class as slice 3's `LuaAutomationHost.h`). LAST cohesive
+  cluster — `AppController.cpp` now 571 LOC (2862 → 571 across this plan + the predecessor); plan
+  moved to `shipped`.
