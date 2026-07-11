@@ -19,6 +19,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <tuple>
 
 // ---------------------------------------------------------------------------
 // Compile-time constants
@@ -127,3 +128,38 @@ std::string AsciiLowerCopy(std::string s);
 std::string TruncateForTrace(const std::string& s, std::size_t maxLen = 480);
 // JsonToLua / LuaToJson now live in Json/LuaJsonConvert.h (included above).
 sol::environment CreateSandboxEnvironment(sol::state& lua);
+
+// smatchet_lua_init_detail — Lua binding glue entry points and the host resolver.
+// The god-file-split moved these definitions out of AppController_LuaBindings.cpp into
+// the per-domain registrar TUs (_Ui.cpp / _Ai.cpp); they are declared here so
+// AppController::Impl::InitLuaUi (which stays in the spine) can register them into the
+// sol state by address, and so the AI/UI glues can reach the shared ResolveApp.
+// LuaTableToAiContextBlock stays file-local to _Ai.cpp (single-TU use) and is NOT here.
+namespace smatchet_lua_init_detail {
+AppController::Impl* ResolveApp(sol::this_state L);
+void ImGuiSameLineGlue(sol::this_state L);
+void ImGuiSeparatorGlue(sol::this_state L);
+void ImGuiProgressBarGlue(sol::this_state L, float fraction, float width, float height);
+std::tuple<float, float> ImGuiGetContentRegionAvailGlue(sol::this_state L);
+bool ImGuiButtonGlue(sol::this_state L, const std::string& label);
+void LuaRegisterFieldDisplayCachedGlue(sol::this_state L, const std::string& fieldId, sol::function fn);
+void LuaUnregisterFieldDisplayCachedGlue(sol::this_state L, const std::string& fieldId);
+void LuaRegisterFieldDisplayCachedByNameGlue(sol::this_state L, const std::string& displayName, sol::function fn);
+void LuaUnregisterFieldDisplayCachedByNameGlue(sol::this_state L, const std::string& displayName);
+void LuaUiInvalidateWindowGlue(sol::this_state L, const std::string& name);
+void LuaUiInvalidateFieldCacheGlue(sol::this_state L, sol::optional<std::string> ticketId,
+                                   sol::optional<std::string> fieldId);
+void LuaUiUnregisterWindowGlue(sol::this_state L, const std::string& name);
+void LuaRegisterFieldIconMapGlue(sol::this_state L, const std::string& fieldKey, sol::table map,
+                                 sol::optional<bool> byName);
+void LuaUnregisterFieldIconMapGlue(sol::this_state L, const std::string& fieldKey, sol::optional<bool> byName);
+void LuaImGuiTextGlue(sol::this_state L, const std::string& s);
+void LuaImGuiTextUnformattedGlue(sol::this_state L, const std::string& s);
+bool LuaImGuiImageGlue(sol::this_state L, const std::string& path, float w, float h);
+void LuaUiRegisterWindowGlue(sol::this_state L, const std::string& name, sol::function drawFn);
+void LuaUiRegisterTicketActionGlue(sol::this_state L, const std::string& name, const std::string& cb);
+void LuaUiRegisterGlobalActionGlue(sol::this_state L, const std::string& name, const std::string& cb);
+void LuaAiAddContextGlue(sol::this_state L, sol::table blockTbl);
+void LuaAiClearContextGlue(sol::this_state L);
+void LuaAiPromptGlue(sol::this_state L, const std::string& prompt, sol::optional<sol::table> extraBlocks);
+} // namespace smatchet_lua_init_detail
