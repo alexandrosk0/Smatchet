@@ -27,18 +27,20 @@
 
 | Severity | Count | State |
 |----------|-------|-------|
-| **P0** — data-loss / security / crash | 17 | 16 ✅ · 1 🟡 (DR6) |
+| **P0** — data-loss / security / crash | 17 | 17 ✅ |
 | **P1** — significant correctness | 13 | 12 ✅ · 1 🟡 (DR29) |
 | **P2** — polish / consistency | 3 | 3 ✅ |
 
-All findings are now addressed: batch 1 (DR1/DR2/DR14/DR18/DR19/DR26/DR30/DR32/DR33) landed via
-PR #1676; batch 2 (the remaining 24) landed in a follow-up PR from parallel fix agents. Two are
-🟡 PARTIAL — **DR6** (the AvailableFields lock discipline + Cache null-guard + all-context streaming
-join landed; the long-lived Lua/MCP worker raw-`Cache` race and the `SaveFieldCatalogSnapshot`
-snapshot-under-lock refinement need a TSan/runtime pass) and **DR29** (the ODR rename + three vacuous
-guards are fixed; the remaining self-referential guards target ImGui/AppController-coupled symbols not
-linkable in the focused test rig, or would surface a distinct latent bug — each flagged inline for
-follow-up rather than force-changed).
+Findings landed across three PRs: batch 1 (DR1/DR2/DR14/DR18/DR19/DR26/DR30/DR32/DR33) via
+PR #1676; batch 2 (the remaining 24) from parallel fix agents; batch 3 closed the **DR6** residual
+(the long-lived Lua/MCP worker `Cache` race — fixed by giving `Cache` the ADR-0012 `shared_ptr` +
+`atomic_load`/`atomic_store` treatment, same as `Backend`) and one more **DR29** guard (the
+`ai_prefs` self-referential flag). One finding remains 🟡 PARTIAL — **DR29**: the ODR rename plus
+four vacuous guards are fixed; the remaining self-referential guards re-implement ImGui/AppController-
+coupled production logic not linkable in the focused test rig (fixing them means extracting production
+helpers per-symbol — a separate refactor), or would surface a distinct pre-existing latent bug. The
+DR6 `SaveFieldCatalogSnapshot` snapshot-under-lock note was a writer-vs-writer polish item, not the
+UAF, and is folded into DR6-DONE (the reader-vs-writer race that was the finding is closed).
 
 **Cross-references into resolved companion items:** DR15 (POST_P0 #16), DR16 (BACKLOG B2),
 DR17 (BACKLOG A1) — each is a hole the prior fix left open. DR30 overlaps BACKLOG **N12**
@@ -111,7 +113,7 @@ the entire SQLite ticket cache and empties `ActiveTickets` — wiping offline-av
 - **Fix:** add the `ScopeExit` latch reset; null-check `MutationsShared()` in `TickOfflineCreates`;
   reset `has_original_value=0` alongside `original_value` in `ResolveFieldEditConflict`.
 
-### DR6. AppController Cache-reset UAF + unlocked field-catalog access — 🟡 PARTIAL (batch 2)
+### DR6. AppController Cache-reset UAF + unlocked field-catalog access — ✅ DONE (batch 3)
 Cluster of threading/lifetime races (worker threads reach these off the UI thread via MCP/automation):
 - `Source/Core/src/AppController.cpp:1286`: `RecreateLocalCacheDatabase` resets `Cache` while
   non-focused panes' streaming-sync `std::thread`s (spawned outside `backgroundWorkers_`), the Lua
@@ -328,7 +330,7 @@ result and the deferred path skips `RememberNegativePriorityResolution`, so an u
 re-fetches (3 s cpr each) and re-parses JSON + fs::exists every frame for the whole session.
 - **Fix:** memoise negative results (with the `Negative` flag honoured in the lookup) and back off failed fetches.
 
-### DR29. Test suite has vacuous / self-referential regression guards + ODR violation — 🟡 PARTIAL (batch 2)
+### DR29. Test suite has vacuous / self-referential regression guards + ODR violation — 🟡 PARTIAL (batch 3)
 Several "regression" tests assert against a local re-implementation of the production logic, so the real
 code can regress green: `tests/Core/UserInfoActivityCancelUaf.test.cpp:140,197`, `tests/Lua/LuaTimeout.test.cpp:28`,
 `tests/Core/BulkImportAbandonNonBlocking.test.cpp:59`, `tests/Core/MarkdownLanguageDefinition.test.cpp:85`,
