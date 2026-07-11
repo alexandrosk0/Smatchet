@@ -273,7 +273,7 @@ Coverage: **36 reviewed — 4 with findings, 32 clean, 0 fully superseded, 0 err
 
 ### LOW (3)
 - **#1732 (2877512f) · `Source/Core/src/Ui/AdfToMarkdown.cpp:505`** — `EmitAdfCodeBlock` materializes the ENTIRE accumulated output (`const std::string current = s.out.str()`) on every code block just to inspect `current.back()` — O(blocks × total-output) quadratic conversion cost. Fix: track a `lastCh` on `AdfWalkState` (or peek the streambuf) instead of copying the growing buffer.
-- **#1728 (2204ce60) · `docs/plans/active/god-file-splits.md:24`** — sibling-plan cross-refs use `../<slug>.md` (also :92/:133/:152/:153), which resolves to `docs/plans/` — but all three targets live in `docs/plans/active/`; every link is broken. Fix: same-directory `<slug>.md` targets.
+- **#1728 (2204ce60) · `docs/plans/shipped/god-file-splits.md:24`** (was `active/` at the time of the finding; archived to `shipped/` on campaign completion) — sibling-plan cross-refs use `../<slug>.md` (also :92/:133/:152/:153), which resolves to `docs/plans/` — but all three targets lived in `docs/plans/active/`; every link is broken. Fix: same-directory `<slug>.md` targets.
 - **#1722 (dc1b693b) · `docs/plans/shipped/appcontroller-fan-in-phase6-dissolution.md:5`** — cites `docs/plans/appcontroller-fan-in-phase5-facets.md`; the Phase 5 plan lives at `docs/plans/shipped/…` (INDEX.md links the shipped/ copy). Fix: add `shipped/`.
 
 **Clean (32, surviving lines reviewed, no findings):** #1737, #1736, #1735, #1734, #1733, #1731, #1730, #1729, #1727, #1726, #1725, #1724, #1723, #1721, #1720, #1719, #1718, #1717, #1716, #1715, #1714, #1710, #1709, #1708, #1707, #1705, #1704, #1702, #1701, #1700, #1697, #1696.
