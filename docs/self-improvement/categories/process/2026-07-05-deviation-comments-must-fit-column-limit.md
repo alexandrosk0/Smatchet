@@ -2,6 +2,7 @@
 
 - **Date**: 2026-07-05 · **Priority**: P2 · **Category**: process
 - **Session**: user-facing-text session (PRs #1614/#1615)
+- **Status**: applied (2026-07-11 — took the entry's *alternative*: `comment_audit.py` now recognizes wrapped `// SMATCHET_DEVIATION( … )` blocks via `_deviation_continuation_lines` (paren-balanced span) and exempts the continuation lines from every comment-noise rule, so a clang-format-wrapped long `reason=` no longer loops the gate. A hard "must fit ColumnLimit" gate was rejected — long reasons genuinely exceed 120 cols on one line, e.g. AppController.h:910 at 608 chars. `--selftest` +3 cases; CI-enforced via `lint_rules.bats`.)
 
 ## Friction
 
