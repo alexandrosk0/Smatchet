@@ -3,7 +3,7 @@
 - **Category:** infra
 - **Priority:** P2
 - **Date:** 2026-07-10
-- **Status:** open
+- **Status:** applied (2026-07-11 — `agents/scripts/core/develop-tip-required-green.sh` SessionStart nudge; flags a required check that ran on the develop tip and is terminal-non-success. Deliberately does NOT flag absent required checks — most are PR-only and never run on a develop push, which would false-fire every session; that self-disabled-gate case stays with postmortem-owed.sh's absence-present allow-list. Injectable data layer + `--selftest`; wired into `settings.json.tmpl`.)
 - **Postmortem:** [`postmortems.md`](../../postmortems.md) § 2026-07-10 · PR #1698
 
 ## What happened
