@@ -119,6 +119,7 @@ echo "Passed: $PASSED  Failed: $FAILED"
 # PASSED=FAILED=0 and would exit green - a vanished/unparsed suite passing.
 if [ "$PASSED" -eq 0 ] && [ "$FAILED" -eq 0 ]; then
     echo "$(basename "$0" .sh): FAIL - the test run produced ZERO results (vanished / unparsed)." >&2
+    cat_outlog_on_failure
     echo "Passed: 0  Failed: 1"
     exit 1
 fi
