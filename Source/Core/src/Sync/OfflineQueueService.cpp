@@ -955,10 +955,11 @@ OfflineQueueService::EvaluateFieldEditConflict(const PendingFieldEditRecord& row
 
     // Single server re-fetch shared by both kinds. Decision (c): a based edit never dies
     // silently — a transient failure retries (until the cap, then asks); a permanent failure
-    // (4xx, classified via IsTrackerTransportErrorText==false) asks immediately.
+    // (4xx, TrackerError::IsRetryable()==false) asks immediately.
     std::vector<CachedTicket> freshTickets;
     std::string fetchErr;
     bool fetchOk = false;
+    bool fetchErrTransient = false;
     try {
         const TrackerConfig cfgForFetch = ConfigManager::Load();
         const ViewsStore viewsForFetch = ConfigManager::LoadViewsOrBootstrap(cfgForFetch);
@@ -969,21 +970,25 @@ OfflineQueueService::EvaluateFieldEditConflict(const PendingFieldEditRecord& row
             freshTickets = std::move(fetchResult.value());
         } else {
             fetchErr = fetchResult.error().Detail;
+            // N12 item 13: the backend's structured kind decides retryability — no text sniff.
+            fetchErrTransient = fetchResult.error().IsRetryable();
         }
     } catch (const std::exception& ex) {
         fetchOk = false;
         fetchErr = ex.what();
+        fetchErrTransient = false; // a thrown re-fetch is a bug shape, not a transport signal
         LOG_WARN("TickOfflineFieldEdits: conflict re-fetch threw issue=%s field=%s err=%s", row.IssueKey.c_str(),
                  row.FieldId.c_str(), ex.what());
     } catch (...) {
         fetchOk = false;
         fetchErr = "unknown exception";
+        fetchErrTransient = false;
         LOG_WARN("TickOfflineFieldEdits: conflict re-fetch threw (unknown) issue=%s field=%s", row.IssueKey.c_str(),
                  row.FieldId.c_str());
     }
 
     if (!fetchOk || freshTickets.empty()) {
-        const bool transient = fetchOk ? true : IsTrackerTransportErrorText(fetchErr);
+        const bool transient = fetchOk ? true : fetchErrTransient;
         if (transient && !OfflineQueueReplayPolicy::ShouldArchive(row.Attempts + 1)) {
             // Transient + below cap: retry next tick (caller bumps attempts). Never a silent replay.
             LOG_INFO("TickOfflineFieldEdits: re-fetch unavailable (transient) issue=%s field=%s — retry next tick",
@@ -1211,7 +1216,7 @@ void OfflineQueueService::ReplayOneFieldEdit(const PendingFieldEditRecord& row, 
 
     const TrackerError updateErr = mutations->UpdateIssueFields(row.IssueKey, fieldsPayload);
     if (!updateErr.IsOk()) {
-        HandleFieldEditUpdateFailure(row, cache, updateErr.Detail, tally);
+        HandleFieldEditUpdateFailure(row, cache, updateErr, tally);
         return;
     }
 
@@ -1228,8 +1233,11 @@ void OfflineQueueService::ReplayOneFieldEdit(const PendingFieldEditRecord& row, 
 }
 
 void OfflineQueueService::HandleFieldEditUpdateFailure(const PendingFieldEditRecord& row, ISyncCache* cache,
-                                                       const std::string& err, FieldEditReplayTally& tally) {
-    if (IsTrackerTransportErrorText(err)) {
+                                                       const TrackerError& updateErr, FieldEditReplayTally& tally) {
+    // N12 item 13: the mutation path returns a structured TrackerError — its kind decides
+    // retryability directly; the Detail text is only for messages/audit.
+    const std::string& err = updateErr.Detail;
+    if (updateErr.IsRetryable()) {
         const int nextAttempts = row.Attempts + 1;
         if (OfflineQueueReplayPolicy::ShouldArchive(nextAttempts)) {
             const std::string terminal =

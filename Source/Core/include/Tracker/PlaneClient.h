@@ -43,8 +43,8 @@ class PlaneClient : public ITrackerBackend,
     std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted = nullptr,
                                           const TrackerConfig* configOverride = nullptr,
                                           const ViewsStore* viewsOverride = nullptr,
-                                          std::string* outFetchError = nullptr,
-                                          std::string* outWarning = nullptr) override;
+                                          std::string* outFetchError = nullptr, std::string* outWarning = nullptr,
+                                          TrackerError* outFetchErrorStructured = nullptr) override;
 
     TrackerIssueFetchSummary FetchIssuesStreamed(const BatchCallback& onBatch, const CancelCallback& shouldCancel,
                                                  const TrackerConfig* configOverride = nullptr,

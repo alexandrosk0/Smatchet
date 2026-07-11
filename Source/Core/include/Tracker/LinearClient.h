@@ -39,7 +39,7 @@ class LinearClient : public ITrackerBackend,
     ITrackerFieldCatalog* FieldCatalog() override;
     ITrackerIssueMutations* Mutations() override;
     ITrackerCollaboration* Collaboration() override; // comment posting (slice 3)
-    ITrackerActivity* Activity() override;            // nullptr — activity feed out of MVP scope
+    ITrackerActivity* Activity() override;           // nullptr — activity feed out of MVP scope
     LinearClient(const std::string& baseUrl, const std::string& apiKey);
     ~LinearClient() override = default;
 
@@ -52,7 +52,8 @@ class LinearClient : public ITrackerBackend,
     // === ITrackerIssueReader ===
     std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* configOverride,
                                           const ViewsStore* viewsOverride, std::string* outFetchError,
-                                          std::string* outWarning) override;
+                                          std::string* outWarning,
+                                          TrackerError* outFetchErrorStructured = nullptr) override;
     TrackerIssueFetchSummary FetchIssuesStreamed(const BatchCallback& onBatch, const CancelCallback& shouldCancel,
                                                  const TrackerConfig* configOverride = nullptr,
                                                  const ViewsStore* viewsOverride = nullptr) override;

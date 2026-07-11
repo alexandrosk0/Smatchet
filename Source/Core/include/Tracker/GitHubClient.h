@@ -49,7 +49,8 @@ class GitHubClient : public ITrackerBackend,
     TrackerReachabilityProbeResult ProbeReachability(const TrackerConfig& cfg) override;
     std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* configOverride,
                                           const ViewsStore* viewsOverride, std::string* outFetchError,
-                                          std::string* outWarning) override;
+                                          std::string* outWarning,
+                                          TrackerError* outFetchErrorStructured = nullptr) override;
     /// Latency fix — overrides the default single-batch
     /// `ITrackerIssueReader::FetchIssuesStreamed` so each GraphQL page is forwarded
     /// to `onBatch` as soon as it returns from GitHub. Without this override the

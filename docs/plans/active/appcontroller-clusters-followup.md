@@ -2,7 +2,7 @@
 
 > **Slug**: `appcontroller-clusters-followup` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — slice 1 (MCP client-activity) shipped (PR #1660); slice 2 (Lua-script-file handling) shipped (PR #1742, squash `1461bee3`); slice 3 (AI-context) in flight.
+> **Status**: `active` — slice 1 (MCP client-activity) shipped (PR #1660); slice 2 (Lua-script-file handling) shipped (PR #1742, squash `1461bee3`); slice 3 (AI-context) shipped (PR #1743, squash `2c580c79`); slice 4 (host-integration) shipped (PR #1749, squash `a2ae5033`); slice 5 (ticket-prefetch) in flight.
 
 <!-- index-summary: Continuation of the shipped appcontroller-service-extraction plan — behavior-preserving extraction of the remaining cohesive AppController.cpp clusters (flagged there as § Out of scope) into focused companion TUs, toward the ≤ ~800 LOC target. -->
 
@@ -52,7 +52,7 @@ whole-tree grep before the cut.
   (not Lua-gated — matches the pre-move layout and the `AppController_LuaStubs.cpp` note).
   `AppController.cpp` 1442 → 1294 LOC. No CMake/test edit.
 
-- **Slice 3 — AI-context cluster (this PR).** Extract `AddAiContext` / `ClearAiContext` /
+- **Slice 3 — AI-context cluster (SHIPPED, PR #1743, squash `2c580c79`).** Extract `AddAiContext` / `ClearAiContext` /
   `GetAiContext` / `PromptAi` into `AppController_AiContext.cpp`. The four are contiguous
   and always-on (unconditional signatures; each body internally guards its
   `impl_->aiAssistant_` delegation with `SMATCHET_WITH_AI` and no-ops otherwise —
@@ -62,6 +62,45 @@ whole-tree grep before the cut.
   `aiAssistant_`, `GetGlobalAiAssistantUiState()`, and `LOG_WARN`), so nothing else
   moves. Unlike slice 2 this TU dereferences the pImpl, so it includes
   `AppControllerImpl.h`. `AppController.cpp` 1297 → 1237 LOC. No CMake/test edit.
+
+- **Slice 4 — host-integration cluster (SHIPPED, PR #1749, squash `a2ae5033`).** Extract the contiguous former-line
+  693–865 span — the host-callback setters an embedding shell registers plus the actions
+  that invoke them (embedded-UI close, app-quit request, URL open, automation sink
+  registration, scripting-window request consume, attachment handler setters, and the
+  file-open-dialog request) — into `AppController_HostIntegration.cpp`. Platform gating:
+  the URL-open body carries the pre-existing `_WIN32` / `__APPLE__` / else branches
+  (system shell-open vs no-shell launcher), reproduced byte-identically along with the
+  platform include block; no winsock preamble (the TU pulls no cpr/curl header). Helper
+  census: the file-local no-shell launch helper is used only by the URL-open fallback,
+  so it moves with the cluster; everything else the bodies touch is header-provided
+  (host-callback members, log truncation). The automation sink delegators dereference
+  the pImpl, so the TU includes `AppControllerImpl.h` and completes the Lua automation
+  host unconditionally (the slice-3 lesson). `AppController.cpp` 1237 → 1023 LOC. No
+  CMake/test edit. Remaining candidate clusters (not designed here): the ticket-prefetch
+  block, the field-icon path resolver plus its two file-local helpers, and the
+  local-cache database block with its db-file removal helper.
+
+- **Slice 5 — ticket-prefetch cluster (this PR).** Extract the contiguous former-line
+  417–548 span — `PrefetchIssueTicketsForKeys` / `FetchAndCachePrefetchedTickets` /
+  `IsBulkImportPrefetchInFlight` — into `AppController_TicketPrefetch.cpp`. Cohesion: the
+  bulk-import prefetch subsystem dedupes requested keys against the in-flight set, launches
+  a background worker, fetches and caches the tickets off the UI thread, then clears the
+  in-flight set. Census: the bodies never dereference the pImpl (slice-2-style extraction —
+  no `AppControllerImpl.h`, no `LuaAutomationHost.h`); reference none of the anon-namespace
+  helpers (`RemoveLocalCacheDbFiles`, `g_TrackerIssueFetchMutex`,
+  `FieldIconHasCaseInsensitivePrefix`, `FieldIconPathIsAllowed` all stay); no platform
+  gating in the span. In-flight state (`bulkImportPrefetchKeysMutex_` /
+  `bulkImportPrefetchKeysInFlight_`) stays in the class — the moved code only references it.
+  Curated includes: `AppController.h` (with the deviation block — it transitively completes
+  `ITrackerBackend`, `ITrackerIssueReader`, `TrackerConfig`/`ViewsStore`, `CachedTicket`,
+  `GridLiveContext`), `LocalCacheManager.h` (the fetch-and-cache body calls `Cache->`),
+  `TrackerHttpPure.h` (cpr-free `IsTrackerTransportErrorText`, not the curl-heavy
+  `TrackerHttpUtils.h`), `ConfigManager.h`, `Logger.h`, plus `<atomic>` (the worker latches
+  `Backend` via `std::atomic_load`), `<memory>`, `<mutex>`, `<string>`, `<unordered_set>`,
+  `<utility>`, `<vector>`. `AppController.cpp` 1023 → 890 LOC. No CMake/test edit. Remaining
+  candidate clusters after this slice: the local-cache database block with its db-file
+  removal helper (~140 LOC), and the field-icon path resolver plus its two file-local
+  helpers (~78 LOC).
 
 ## Verification
 
@@ -84,5 +123,9 @@ whole-tree grep before the cut.
   `AppController.cpp` 1519 → 1427 LOC.
 - Slice 2 — PR #1742 (`1461bee3`) · Lua-script-file handling → `AppController_LuaScriptFiles.cpp`;
   `AppController.cpp` 1442 → 1294 LOC.
-- Slice 3 — PR #1743 · AI-context cluster → `AppController_AiContext.cpp`;
+- Slice 3 — PR #1743 (`2c580c79`) · AI-context cluster → `AppController_AiContext.cpp`;
   `AppController.cpp` 1297 → 1237 LOC.
+- Slice 4 — PR #1749 (`a2ae5033`) · host-integration cluster → `AppController_HostIntegration.cpp`;
+  `AppController.cpp` 1237 → 1023 LOC.
+- Slice 5 — PR #1754 · ticket-prefetch cluster → `AppController_TicketPrefetch.cpp`;
+  `AppController.cpp` 1023 → 890 LOC.

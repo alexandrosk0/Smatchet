@@ -231,9 +231,8 @@ std::vector<RemoteProject> LinearClient::ListProjects() {
         LOG_WARN("LinearClient::ListProjects: no API key configured");
         return out;
     }
-    const std::string body =
-        smatchet::linear::BuildGraphQLBody("query { teams(first: 100) { nodes { id key name } } }",
-                                           nlohmann::json::object());
+    const std::string body = smatchet::linear::BuildGraphQLBody("query { teams(first: 100) { nodes { id key name } } }",
+                                                                nlohmann::json::object());
     const cpr::Response resp = TrackerPostLogged("LinearClient", auth.ApiUrl, BuildLinearHeaders(auth.ApiKey), body);
     LogRateLimitHeaders(resp.header);
 
@@ -242,11 +241,11 @@ std::vector<RemoteProject> LinearClient::ListProjects() {
     std::string errorMessage;
     if (resp.status_code != 200 || parsed.is_discarded() ||
         smatchet::linear::LinearResponseHasErrors(parsed, errorMessage)) {
-        LOG_ERROR("LinearClient::ListProjects: HTTP %ld — %s", resp.status_code,
-                  errorMessage.empty()
-                      ? smatchet::linear::ExtractLinearErrorMessage(static_cast<int>(resp.status_code), resp.text)
-                            .c_str()
-                      : errorMessage.c_str());
+        LOG_ERROR(
+            "LinearClient::ListProjects: HTTP %ld — %s", resp.status_code,
+            errorMessage.empty()
+                ? smatchet::linear::ExtractLinearErrorMessage(static_cast<int>(resp.status_code), resp.text).c_str()
+                : errorMessage.c_str());
         return out;
     }
     if (!parsed.is_object() || !parsed.contains("data") || !parsed["data"].is_object() ||
@@ -274,7 +273,7 @@ std::vector<RemoteProject> LinearClient::ListProjects() {
 
 std::vector<CachedTicket> LinearClient::FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* configOverride,
                                                     const ViewsStore* viewsOverride, std::string* outFetchError,
-                                                    std::string* outWarning) {
+                                                    std::string* outWarning, TrackerError* outFetchErrorStructured) {
     // Thin shim — resolve config + active-view query, then delegate to the
     // standalone GraphQL fetcher (mirrors GitHubClient::FetchIssues). Called on a
     // worker thread by TicketSyncService (never the UI thread, Pillar 2).
@@ -284,11 +283,16 @@ std::vector<CachedTicket> LinearClient::FetchIssues(bool* outFullSyncCompleted, 
         if (outFetchError) {
             *outFetchError = kApiKeyMissingError;
         }
+        if (outFetchErrorStructured) {
+            // Same classification the key-less FetchIssuesForKeys path already uses.
+            *outFetchErrorStructured = TrackerErrorAuth(kApiKeyMissingError);
+        }
         return {};
     }
     const std::string viewQuery = ActiveViewQueryFromStore(viewsOverride, cfg);
     return smatchet::linear::FetchIssuesViaGraphQl(auth.ApiUrl, auth.ApiKey, cfg.LinearTeamId, cfg.LinearTeamKey,
-                                                   viewQuery, outFullSyncCompleted, outFetchError, outWarning, nullptr);
+                                                   viewQuery, outFullSyncCompleted, outFetchError, outWarning, nullptr,
+                                                   outFetchErrorStructured);
 }
 
 TrackerIssueFetchSummary LinearClient::FetchIssuesStreamed(const BatchCallback& onBatch,
@@ -302,10 +306,12 @@ TrackerIssueFetchSummary LinearClient::FetchIssuesStreamed(const BatchCallback& 
     const smatchet::linear::LinearRequestAuth auth = ResolveAuth(&cfg); // issue #979 — live-cfg credentials
     if (auth.ApiKey.empty()) {
         summary.FetchError = kApiKeyMissingError;
+        summary.Error = TrackerErrorAuth(kApiKeyMissingError);
         return summary;
     }
 
     std::string fetchError;
+    TrackerError fetchErrorStructured;
     std::string fetchWarning;
     bool fullSyncCompleted = false;
     std::size_t pageCount = 0;
@@ -333,11 +339,13 @@ TrackerIssueFetchSummary LinearClient::FetchIssuesStreamed(const BatchCallback& 
 
     const std::string viewQuery = ActiveViewQueryFromStore(viewsOverride, cfg);
     smatchet::linear::FetchIssuesViaGraphQl(auth.ApiUrl, auth.ApiKey, cfg.LinearTeamId, cfg.LinearTeamKey, viewQuery,
-                                            &fullSyncCompleted, &fetchError, &fetchWarning, onPage);
+                                            &fullSyncCompleted, &fetchError, &fetchWarning, onPage,
+                                            &fetchErrorStructured);
 
     summary.FetchedCount = totalEmitted;
     summary.FullSyncCompleted = fullSyncCompleted;
     summary.FetchError = fetchError;
+    summary.Error = fetchErrorStructured;
     summary.Warning = fetchWarning;
     LOG_INFO("LinearClient::FetchIssuesStreamed: done pages=%zu total=%zu fullSync=%d err='%s'", pageCount,
              totalEmitted, fullSyncCompleted ? 1 : 0, fetchError.c_str());
@@ -444,9 +452,8 @@ std::string ResolveCatalogTeamId(const std::string& apiUrl, const std::string& a
     if (wantKey.empty()) {
         return "";
     }
-    const std::string body =
-        smatchet::linear::BuildGraphQLBody("query { teams(first: 100) { nodes { id key name } } }",
-                                           nlohmann::json::object());
+    const std::string body = smatchet::linear::BuildGraphQLBody("query { teams(first: 100) { nodes { id key name } } }",
+                                                                nlohmann::json::object());
     const cpr::Response resp = TrackerPostLogged("LinearClient", apiUrl, BuildLinearHeaders(apiKey), body);
     // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
     nlohmann::json parsed = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
@@ -555,7 +562,7 @@ LinearClient::FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& /*
         // Catalog fetch failed (no team / transport) — fall back to the static
         // field ids the mapper always writes so the grid still has a positive map.
         const char* const kStaticEditable[] = {"summary", "description", "status", "assignee",
-                                                "labels",  "priority",    "project"};
+                                               "labels",  "priority",    "project"};
         for (const char* id : kStaticEditable) {
             outFieldIdCanEdit[id] = true;
         }

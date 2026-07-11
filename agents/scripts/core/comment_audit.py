@@ -90,6 +90,38 @@ _WORD_RE = re.compile(r"[A-Za-z]{2,}")
 # mid-sentence. Demote such a line to prose when no code terminator is present.
 _BARE_CALL_RE = re.compile(r"[A-Za-z_]\w*\s*\([^)]*\)")
 
+# A `// SMATCHET_DEVIATION( ... )` whose long `reason=` is wrapped across several `//`
+# lines: the marker line is PROTECT-listed (contains the token), but its continuation
+# lines carry only rationale prose and do NOT contain the token, so they trip
+# comment-commented-out-code / decorative / blank-run. clang-format wrapping a long
+# single-line deviation (pre-ship whole-file-formats) turns a clean commit into a
+# fix -> format -> re-fail loop. This makes the continuations first-class deviation body.
+_DEVIATION_OPEN_RE = re.compile(r"SMATCHET_DEVIATION\s*\(")
+
+
+def _deviation_continuation_lines(lines):
+    """1-based line numbers that are CONTINUATION lines of a wrapped
+    `// SMATCHET_DEVIATION( ... )` comment — the `//`/`*` lines INSIDE the paren
+    span, AFTER the opening marker line (which is protected separately). Paren-
+    balanced: a single-line deviation (parens close on the marker line) yields no
+    continuations; internal balanced parens in the reason text don't close early."""
+    cont = set()
+    depth = 0
+    in_block = False
+    for i, raw in enumerate(lines):
+        if not in_block:
+            if _DEVIATION_OPEN_RE.search(raw):
+                depth = raw.count("(") - raw.count(")")
+                in_block = depth > 0   # marker line itself is not a continuation
+            continue
+        stripped = raw.lstrip()
+        if stripped.startswith("//") or stripped.startswith("*"):
+            cont.add(i + 1)
+        depth += raw.count("(") - raw.count(")")
+        if depth <= 0:
+            in_block = False
+    return cont
+
 
 def _comment_body(raw_line):
     """The text of a // comment after the leading slashes, stripped."""
@@ -343,6 +375,18 @@ def _scan_added_noise(ref):
         except OSError:
             return False
 
+    dev_cont_cache = {}
+
+    def in_deviation_continuation(path, line_no):
+        # A continuation line of a wrapped `// SMATCHET_DEVIATION( ... )` block is the
+        # deviation's own reason-prose — never real noise, regardless of the noise rule.
+        if path not in dev_cont_cache:
+            try:
+                dev_cont_cache[path] = _deviation_continuation_lines(_file_lines(path))
+            except OSError:
+                dev_cont_cache[path] = set()
+        return line_no in dev_cont_cache[path]
+
     def suppressed(path, line_no, rule_id):
         # Escape hatch: a `// SMATCHET_DEVIATION(rule=<rule_id>; ...)` on the line ABOVE the
         # flagged line suppresses it (the existing forward-only deviation grammar; no new syntax).
@@ -377,6 +421,7 @@ def _scan_added_noise(ref):
                 if kinds and kinds[0] == "full_comment":
                     b = classify_comment(body.strip(), body)
                     if b in rule_for and not suppressed(cur_file, cur_line, rule_for[b]) \
+                            and not in_deviation_continuation(cur_file, cur_line) \
                             and not (b == "cut-blank" and allowed_separator(cur_file, cur_line)):
                         hits.append((cur_file, cur_line, b, rule_for[b], body))
             cur_line += 1
@@ -544,11 +589,33 @@ def run_selftest():
                   % (expected, got, line_no, lines))
             fails += 1
 
+    # Wrapped-SMATCHET_DEVIATION continuation detection: the marker line is protected
+    # elsewhere; a long reason= wrapped across // lines yields continuation line numbers
+    # that must be exempt (else clang-format wrapping loops the comment-noise gate).
+    dev_cases = [
+        # (lines, expected-continuation-line-numbers)
+        (["    // SMATCHET_DEVIATION(rule=duplication; reason=a long rationale that",
+          "    // clang-format wrapped (mirroring the sibling) so it reads as prose",
+          "    // and closes here; owner=orch; revisit=never)",
+          "    int realCode = 0;"], {2, 3}),
+        # Single-line deviation: parens close on the marker line -> no continuations.
+        (["    // SMATCHET_DEVIATION(rule=duplication; reason=single line, closes now)",
+          "    foo();"], set()),
+        # No deviation at all -> empty.
+        (["    // ordinary comment", "    bar();"], set()),
+    ]
+    for lines, expected in dev_cases:
+        got = _deviation_continuation_lines(lines)
+        if got != expected:
+            print("FAIL: _deviation_continuation_lines expected %r got %r for %r"
+                  % (expected, got, lines))
+            fails += 1
+
     if fails:
         print("comment_audit --selftest: FAIL (%d)" % fails)
         return 1
-    print("comment_audit --selftest: PASS (%d flag + %d prose fixtures + strip-helper + %d separator)"
-          % (len(flag), len(prose), len(sep_ok)))
+    print("comment_audit --selftest: PASS (%d flag + %d prose fixtures + strip-helper + %d separator + %d deviation-wrap)"
+          % (len(flag), len(prose), len(sep_ok), len(dev_cases)))
     return 0
 
 

@@ -530,8 +530,8 @@ TEST_CASE("AttachFilesToIssue: per-file failures are an Ok payload (L3), hard fa
 // bool(..., vector<CachedTicket>& out, std::string& outError) to Result<vector<CachedTicket>,
 // TrackerError> (Ok = the fetched tickets). These cases pin the migrated shape via the fake's
 // unchanged SetFetchIssuesForKeysResult scripting API (the callers — AppController prefetch +
-// OfflineQueueService conflict re-fetch — translate the Result back to their bool/string surfaces,
-// preserving the .Detail text their IsTrackerTransportErrorText checks read).
+// OfflineQueueService conflict re-fetch — branch on the Result's structured kind since N12 item 13,
+// with .Detail preserved verbatim for messages/audit).
 TEST_CASE("FetchIssuesForKeys returns Ok tickets on success and a detail-carrying Err on failure") {
     FakeTrackerClient client;
     ViewsStore views;

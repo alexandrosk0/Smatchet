@@ -172,6 +172,12 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         set_source_files_properties(
             "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/AppController_LuaBindings.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/AppController_LuaBindingsCore.cpp"
+            # god-file-splits: the sol2-heavy registrar TUs carved out of AppController_LuaBindings.cpp
+            # expand the same template surface, so give them the identical -mcmodel=large + no-PCH
+            # treatment under BFD ld to avoid the R_X86_64_32S relocation-overflow at link.
+            "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/AppController_LuaBindings_Ui.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/AppController_LuaBindings_Ai.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Source/Core/src/AppController_LuaBindings_Tickets.cpp"
             PROPERTIES
                 COMPILE_OPTIONS "-mcmodel=large"
                 SKIP_PRECOMPILE_HEADERS ON)

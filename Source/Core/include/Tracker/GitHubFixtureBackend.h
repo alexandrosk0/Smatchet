@@ -55,6 +55,7 @@ class GitHubFixtureBackend : public ITrackerBackend,
     GitHubFixtureBackend(const std::string& fixturePath, const std::string& ownerHint, const std::string& repoHint,
                          bool includePullRequests);
 
+    // SMATCHET_DEVIATION(rule=duplication; reason=backend API symmetry; owner=tracker; revisit=2026-12-31)
     std::string GetTrackerType() const override { return "GitHub"; }
 
     TrackerReachabilityProbeResult ProbeReachability(const TrackerConfig& cfg) override;
@@ -62,8 +63,8 @@ class GitHubFixtureBackend : public ITrackerBackend,
     std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted = nullptr,
                                           const TrackerConfig* configOverride = nullptr,
                                           const ViewsStore* viewsOverride = nullptr,
-                                          std::string* outFetchError = nullptr,
-                                          std::string* outWarning = nullptr) override;
+                                          std::string* outFetchError = nullptr, std::string* outWarning = nullptr,
+                                          TrackerError* outFetchErrorStructured = nullptr) override;
 
     Result<std::vector<CachedTicket>, TrackerError> FetchIssuesForKeys(const TrackerConfig& cfg,
                                                                        const std::vector<std::string>& issueKeys,
