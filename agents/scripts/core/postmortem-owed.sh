@@ -199,7 +199,7 @@ is_broken_lane() {
         while IFS= read -r lane; do
             lane="${lane%$'\r'}"   # strip a trailing CR (git-bash jq output on Windows)
             [ -z "$lane" ] && continue
-            if printf '%s' "$name" | grep -qiF "$lane"; then matched=1; break; fi
+            if printf '%s' "$name" | grep -qiF "$lane"; then matched=1; break; fi  # fail-open-ok: broken-lane tokens are config-controlled name fragments — substring membership is intended (POSTMORTEM_BROKEN_LANES)
         done <<EOF
 $BROKEN_LANES_RAW
 EOF
@@ -213,7 +213,7 @@ has_entry() {
     [ -f "$LEDGER" ] || return 1
     # Match either a "PR #N" reference or a "commit <sha>" reference, so the
     # commit-only revert/direct-push paths (which pass a sha) dedupe too.
-    grep -qE "PR #$1([^0-9]|$)|commit $1([^0-9A-Fa-f]|$)" "$LEDGER" && return 0
+    grep -qE "PR #$1([^0-9]|$)|commit $1([^0-9A-Fa-f]|$)" "$LEDGER" && return 0  # fail-open-ok: a no-match is NOT a clean signal — it falls through to the combined-PR heading probe below
     # Combined-PR postmortem: one blameless RCA can cover several PRs in a single
     # heading written `PR #A, #B, #C` OR slash-joined `PR #A/#B/#C` — only the first
     # carries the literal `PR #` prefix; the rest are bare `, #N` / `/#N`. Match #N
