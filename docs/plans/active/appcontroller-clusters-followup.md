@@ -2,7 +2,7 @@
 
 > **Slug**: `appcontroller-clusters-followup` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — slice 1 (MCP client-activity) shipped (PR #1660); slice 2 (Lua-script-file handling) shipped (PR #1742, squash `1461bee3`); slice 3 (AI-context) shipped (PR #1743, squash `2c580c79`); slice 4 (host-integration) shipped (PR #1749, squash `a2ae5033`); slice 5 (ticket-prefetch) shipped (PR #1754, squash `b6a33c47`; follow-up leak fix PR #1757, squash `9ed93d33`); slice 6 (field-icon path resolver) in flight.
+> **Status**: `active` — slice 1 (MCP client-activity) shipped (PR #1660); slice 2 (Lua-script-file handling) shipped (PR #1742, squash `1461bee3`); slice 3 (AI-context) shipped (PR #1743, squash `2c580c79`); slice 4 (host-integration) shipped (PR #1749, squash `a2ae5033`); slice 5 (ticket-prefetch) shipped (PR #1754, squash `b6a33c47`; follow-up leak fix PR #1757, squash `9ed93d33`); slice 6 (field-icon path resolver) in flight (PR #1763).
 
 <!-- index-summary: Continuation of the shipped appcontroller-service-extraction plan — behavior-preserving extraction of the remaining cohesive AppController.cpp clusters (flagged there as § Out of scope) into focused companion TUs, toward the ≤ ~800 LOC target. -->
 
@@ -102,7 +102,7 @@ whole-tree grep before the cut.
   removal helper (~140 LOC), and the field-icon path resolver plus its two file-local
   helpers (~78 LOC).
 
-- **Slice 6 — field-icon path resolver (this PR).** Extract `ResolveFieldIconAssetPath`
+- **Slice 6 — field-icon path resolver (PR #1763).** Extract `ResolveFieldIconAssetPath`
   plus its two file-local helpers (`FieldIconHasCaseInsensitivePrefix` /
   `FieldIconPathIsAllowed`, the latter calling the former) into
   `AppController_FieldIconPath.cpp`. Helper census: whole-tree grep confirms both helpers
@@ -152,7 +152,7 @@ whole-tree grep before the cut.
 - Slice 5 — PR #1754 (`b6a33c47`) · ticket-prefetch cluster → `AppController_TicketPrefetch.cpp`;
   `AppController.cpp` 1023 → 890 LOC. Follow-up leak fix PR #1757 (`9ed93d33`) — clear
   in-flight prefetch keys on all exit paths of `FetchAndCachePrefetchedTickets`.
-- Slice 6 — this PR · field-icon path resolver + its two file-local helpers →
+- Slice 6 — PR #1763 · field-icon path resolver + its two file-local helpers →
   `AppController_FieldIconPath.cpp`; `AppController.cpp` 893 → 742 LOC. `g_TrackerIssueFetchMutex`
   (co-resident in the same source anon block but locked by the staying `FetchIssuesForActiveView`)
   kept behind in its own anon namespace. Crosses the ≤ ~800 LOC target.
