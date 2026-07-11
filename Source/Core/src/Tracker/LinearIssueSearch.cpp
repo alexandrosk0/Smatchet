@@ -229,7 +229,8 @@ std::vector<CachedTicket>
 FetchIssuesViaGraphQl(const std::string& apiUrl, const std::string& apiKey, const std::string& teamId,
                       const std::string& teamKey, const std::string& viewQuery, bool* outFullSyncCompleted,
                       std::string* outFetchError, std::string* outWarning,
-                      const std::function<void(const std::vector<CachedTicket>& page, bool isLast)>& onPage) {
+                      const std::function<void(const std::vector<CachedTicket>& page, bool isLast)>& onPage,
+                      TrackerError* outFetchErrorStructured) {
     if (outFullSyncCompleted) {
         *outFullSyncCompleted = false;
     }
@@ -267,6 +268,18 @@ FetchIssuesViaGraphQl(const std::string& apiUrl, const std::string& apiKey, cons
             if (outFetchError) {
                 *outFetchError = parse.Error;
             }
+            if (outFetchErrorStructured) {
+                // Status is in scope here: a non-200 classifies by status (2xx-other → Unknown,
+                // FIX-1 precedent); a fatal on HTTP 200 is body-shape/parse class.
+                if (resp.status_code == 200) {
+                    *outFetchErrorStructured = TrackerErrorParse(parse.Error);
+                } else if (resp.status_code >= 200 && resp.status_code < 300) {
+                    *outFetchErrorStructured = TrackerErrorUnknown(parse.Error, static_cast<int>(resp.status_code));
+                } else {
+                    *outFetchErrorStructured =
+                        TrackerErrorFromHttpStatus(static_cast<int>(resp.status_code), parse.Error);
+                }
+            }
             LOG_ERROR("LinearIssueSearch::FetchIssuesViaGraphQl: page %d failed (HTTP %ld): %s", page, resp.status_code,
                       parse.Error.c_str());
             emitTerminalIfNeeded();
@@ -289,7 +302,8 @@ FetchIssuesViaGraphQl(const std::string& apiUrl, const std::string& apiKey, cons
         } else if (parse.EndCursor.empty()) {
             AppendOutWarning(outWarning,
                              "Linear GraphQL pageInfo.endCursor missing while hasNextPage=true; stopped early.");
-            LOG_WARN("LinearIssueSearch::FetchIssuesViaGraphQl: empty endCursor with hasNextPage=true on page %d", page);
+            LOG_WARN("LinearIssueSearch::FetchIssuesViaGraphQl: empty endCursor with hasNextPage=true on page %d",
+                     page);
             isLastPage = true;
             stopLoop = true;
         }

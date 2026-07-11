@@ -209,6 +209,9 @@ FetchPlaneStatePairs(const std::string& planeApi, const std::string& workspaceSl
 struct PlaneIssuePageFetch {
     bool Ok = false;
     std::string Error;
+    // Structured twin of Error, classified where the response (and its status) is in scope
+    // (retire-transport-error-text item 12).
+    TrackerError Classified;
     nlohmann::json Body;
 };
 
@@ -254,6 +257,10 @@ PlaneIssuePageFetch FetchPlaneIssuePage(const std::string& planeApi, const std::
                    "scopes.";
         }
         out.Error = err;
+        // 2xx-other would map to Ok() in FromHttpStatus (FIX-1 precedent) — wrap Unknown.
+        out.Classified = (response.status_code >= 200 && response.status_code < 300)
+                             ? TrackerErrorUnknown(out.Error, static_cast<int>(response.status_code))
+                             : TrackerErrorFromHttpStatus(static_cast<int>(response.status_code), out.Error);
         return out;
     }
 
@@ -262,6 +269,7 @@ PlaneIssuePageFetch FetchPlaneIssuePage(const std::string& planeApi, const std::
 
     if (bodyForJson.empty()) {
         out.Error = "Plane returned empty response body (HTTP 200) when fetching issues.";
+        out.Classified = TrackerErrorParse(out.Error);
         return out;
     }
     if (looksHtml) {
@@ -269,6 +277,7 @@ PlaneIssuePageFetch FetchPlaneIssuePage(const std::string& planeApi, const std::
         out.Error = "Plane returned HTML instead of JSON (HTTP 200). Request URL: " + urlHint +
                     ". For Plane Cloud set base URL to https://api.plane.so (origin only, no /workspace path). "
                     "Self-hosted: use the API origin your reverse proxy serves for /api/v1/.";
+        out.Classified = TrackerErrorParse(out.Error);
         return out;
     }
 
@@ -277,6 +286,7 @@ PlaneIssuePageFetch FetchPlaneIssuePage(const std::string& planeApi, const std::
     if (!parseErr.empty()) {
         out.Error = "Plane returned invalid JSON when fetching issues (HTTP 200). Verify Plane URL, workspace slug, "
                     "project UUID, and API key.";
+        out.Classified = TrackerErrorParse(out.Error);
         return out;
     }
 
@@ -292,6 +302,7 @@ PlaneIssuePageFetch FetchPlaneIssuePage(const std::string& planeApi, const std::
         }
         out.Error =
             "Plane list response has no results array (wrong endpoint or API version). Top-level keys: " + keyList;
+        out.Classified = TrackerErrorParse(out.Error);
         return out;
     }
 
@@ -365,6 +376,7 @@ RunPlanePageLoop(const std::string& planeApi, const std::string& workspaceSlug, 
         if (!page.Ok) {
             LOG_ERROR("PlaneClient::FetchIssuesStreamed %s", page.Error.c_str());
             summary.FetchError = page.Error;
+            summary.Error = page.Classified;
             result.HardFailed = true;
             return result;
         }
@@ -409,7 +421,7 @@ RunPlanePageLoop(const std::string& planeApi, const std::string& workspaceSlug, 
 
 std::vector<CachedTicket> PlaneClient::FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* configOverride,
                                                    const ViewsStore* viewsOverride, std::string* outFetchError,
-                                                   std::string* outWarning) {
+                                                   std::string* outWarning, TrackerError* outFetchErrorStructured) {
     std::vector<CachedTicket> results;
     auto onBatch = [&](std::vector<CachedTicket>&& batch) {
         results.insert(results.end(), std::make_move_iterator(batch.begin()), std::make_move_iterator(batch.end()));
@@ -421,6 +433,9 @@ std::vector<CachedTicket> PlaneClient::FetchIssues(bool* outFullSyncCompleted, c
     }
     if (outFetchError) {
         *outFetchError = summary.FetchError;
+    }
+    if (outFetchErrorStructured) {
+        *outFetchErrorStructured = summary.Error;
     }
     if (outWarning) {
         *outWarning = summary.Warning;
@@ -441,6 +456,9 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(const BatchCallback& o
     const std::string projectKey = smatchet::ResolvePlaneOperationProject(this, activeViewJql, cfg.JqlQuery);
 
     summary.FetchError = ValidatePlaneFetchConfig(cfg, projectKey);
+    if (!summary.FetchError.empty()) {
+        summary.Error = TrackerErrorInvalidRequest(summary.FetchError);
+    }
     if (!summary.FetchError.empty()) {
         return summary;
     }
@@ -593,9 +611,11 @@ PlaneClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std:
 
     TrackerIssueFetchSummary summary = FetchIssuesStreamed(onBatch, shouldCancel, &cfg, nullptr);
     if (!summary.FetchError.empty()) {
-        // FetchIssuesStreamed surfaces only a string (no HTTP status); wrap Unknown with the Detail
-        // preserved verbatim (the caller's IsTrackerTransportErrorText reads the text). TODO(#21b
-        // later slice): thread a TrackerError through the streamed-fetch summary for .Kind.
+        // The summary now carries the kind classified at the page-fetch site (item 12); fall back
+        // to Unknown only for a legacy path that did not classify.
+        if (!summary.Error.IsOk()) {
+            return FetchResult::Err(summary.Error);
+        }
         return FetchResult::Err(TrackerErrorUnknown(summary.FetchError));
     }
     return FetchResult::Ok(std::move(outTickets));

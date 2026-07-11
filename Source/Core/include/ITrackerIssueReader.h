@@ -18,6 +18,11 @@ struct TrackerIssueFetchSummary {
     bool FullSyncCompleted = false;
     // Hard failure: sync did not complete usefully. Drives the failure banner / error toast.
     std::string FetchError;
+    // Structured twin of FetchError (retire-transport-error-text item 12): the kind classified
+    // at the backend's own composition site, where the HTTP status is in scope. Kind == None
+    // means the backend did not classify (legacy path) — consumers fall back to the text
+    // heuristic. When set, Error.Detail mirrors FetchError.
+    TrackerError Error;
     // Soft warning: sync did produce useful data but with a caveat (e.g. pagination cap reached).
     // Distinct from FetchError so the UI can show "Sync Warning" without suppressing the success
     // notification and without flipping connectivity state to TransportDown.
@@ -28,11 +33,15 @@ class ITrackerIssueReader {
   public:
     virtual ~ITrackerIssueReader() = default;
 
-    virtual std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted = nullptr,
-                                                  const TrackerConfig* configOverride = nullptr,
-                                                  const ViewsStore* viewsOverride = nullptr,
-                                                  std::string* outFetchError = nullptr,
-                                                  std::string* outWarning = nullptr) = 0;
+    /// `outFetchErrorStructured` (optional) receives the classified twin of `outFetchError`
+    /// (retire-transport-error-text item 12). The string param stays so existing call sites
+    /// keep working; backends fill both from the same composition site. Kind == None when the
+    /// fetch succeeded (or a backend path hasn't classified yet — consumers must fall back to
+    /// the text heuristic in that case).
+    virtual std::vector<CachedTicket>
+    FetchIssues(bool* outFullSyncCompleted = nullptr, const TrackerConfig* configOverride = nullptr,
+                const ViewsStore* viewsOverride = nullptr, std::string* outFetchError = nullptr,
+                std::string* outWarning = nullptr, TrackerError* outFetchErrorStructured = nullptr) = 0;
 
     using BatchCallback = std::function<void(std::vector<CachedTicket>&&)>;
     using CancelCallback = std::function<bool()>;
@@ -43,11 +52,14 @@ class ITrackerIssueReader {
                                                          const ViewsStore* viewsOverride = nullptr) {
         TrackerIssueFetchSummary summary;
         std::string fetchError;
+        TrackerError fetchErrorStructured;
         bool fullSyncCompleted = false;
-        std::vector<CachedTicket> tickets = FetchIssues(&fullSyncCompleted, configOverride, viewsOverride, &fetchError);
+        std::vector<CachedTicket> tickets =
+            FetchIssues(&fullSyncCompleted, configOverride, viewsOverride, &fetchError, nullptr, &fetchErrorStructured);
         summary.FetchedCount = tickets.size();
         summary.FullSyncCompleted = fullSyncCompleted;
         summary.FetchError = fetchError;
+        summary.Error = fetchErrorStructured;
         if (!tickets.empty() && onBatch && (!shouldCancel || !shouldCancel())) {
             onBatch(std::move(tickets));
         }
@@ -67,8 +79,7 @@ class ITrackerIssueReader {
     /// and returns the FULL view (correct but heavy) — concrete backends override with a
     /// native "updated >= -Nm" / "since=" query restricted to `salientFields`.
     virtual Result<std::vector<CachedTicket>, TrackerError>
-    FetchIssuesChangedSince(const TrackerConfig& cfg, const ViewsStore& views,
-                            std::chrono::seconds /*window*/,
+    FetchIssuesChangedSince(const TrackerConfig& cfg, const ViewsStore& views, std::chrono::seconds /*window*/,
                             const std::vector<std::string>& /*salientFields*/) {
         bool full = false;
         std::string err;
@@ -89,8 +100,8 @@ class ITrackerIssueReader {
     /// Just the issue keys currently in the view, for the membership reconcile. The default
     /// does a full fetch and projects the keys — concrete backends override with a keys-only
     /// (`fields=*none`) request.
-    virtual Result<std::vector<std::string>, TrackerError>
-    FetchIssueKeysForView(const TrackerConfig& cfg, const ViewsStore& views) {
+    virtual Result<std::vector<std::string>, TrackerError> FetchIssueKeysForView(const TrackerConfig& cfg,
+                                                                                 const ViewsStore& views) {
         bool full = false;
         std::string err;
         std::string warn;
@@ -117,8 +128,7 @@ class ITrackerIssueReader {
     /// `true` (assume it still exists → "left view", never destructively delete a cache row
     /// on a backend that cannot probe). Concrete backends override with a `GET /issue/{key}`
     /// returning false on 404.
-    virtual Result<bool, TrackerError> ProbeIssueExists(const TrackerConfig& /*cfg*/,
-                                                        const std::string& /*issueKey*/) {
+    virtual Result<bool, TrackerError> ProbeIssueExists(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/) {
         return Result<bool, TrackerError>::Ok(true);
     }
 

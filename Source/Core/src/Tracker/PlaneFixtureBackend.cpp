@@ -109,11 +109,17 @@ TrackerReachabilityProbeResult PlaneFixtureBackend::ProbeReachability(const Trac
 std::vector<CachedTicket> PlaneFixtureBackend::FetchIssues(bool* outFullSyncCompleted,
                                                            const TrackerConfig* /*configOverride*/,
                                                            const ViewsStore* /*viewsOverride*/,
-                                                           std::string* outFetchError, std::string* outWarning) {
+                                                           std::string* outFetchError, std::string* outWarning,
+                                                           TrackerError* outFetchErrorStructured) {
     if (outFullSyncCompleted)
         *outFullSyncCompleted = loadError_.empty();
     if (outFetchError)
         *outFetchError = loadError_;
+
+    if (outFetchErrorStructured) {
+        // Same classification this fixture's FetchIssuesForKeys applies to loadError_.
+        *outFetchErrorStructured = loadError_.empty() ? TrackerError::Ok() : TrackerErrorInvalidRequest(loadError_);
+    }
     if (outWarning)
         outWarning->clear();
     return tickets_;

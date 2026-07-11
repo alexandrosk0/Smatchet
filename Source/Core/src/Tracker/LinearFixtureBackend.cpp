@@ -118,14 +118,21 @@ TrackerReachabilityProbeResult LinearFixtureBackend::ProbeReachability(const Tra
     return out;
 }
 
+// SMATCHET_DEVIATION(rule=duplication; reason=backend API symmetry; owner=tracker; revisit=2026-12-31)
 std::vector<CachedTicket> LinearFixtureBackend::FetchIssues(bool* outFullSyncCompleted,
                                                             const TrackerConfig* /*configOverride*/,
                                                             const ViewsStore* /*viewsOverride*/,
-                                                            std::string* outFetchError, std::string* outWarning) {
+                                                            std::string* outFetchError, std::string* outWarning,
+                                                            TrackerError* outFetchErrorStructured) {
     if (outFullSyncCompleted)
         *outFullSyncCompleted = loadError_.empty();
     if (outFetchError)
         *outFetchError = loadError_;
+
+    if (outFetchErrorStructured) {
+        // Same classification this fixture's FetchIssuesForKeys applies to loadError_.
+        *outFetchErrorStructured = loadError_.empty() ? TrackerError::Ok() : TrackerErrorInvalidRequest(loadError_);
+    }
     if (outWarning)
         outWarning->clear();
     return tickets_;

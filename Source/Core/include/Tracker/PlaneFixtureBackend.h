@@ -56,8 +56,8 @@ class PlaneFixtureBackend : public ITrackerBackend,
     std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted = nullptr,
                                           const TrackerConfig* configOverride = nullptr,
                                           const ViewsStore* viewsOverride = nullptr,
-                                          std::string* outFetchError = nullptr,
-                                          std::string* outWarning = nullptr) override;
+                                          std::string* outFetchError = nullptr, std::string* outWarning = nullptr,
+                                          TrackerError* outFetchErrorStructured = nullptr) override;
 
     Result<std::vector<CachedTicket>, TrackerError> FetchIssuesForKeys(const TrackerConfig& cfg,
                                                                        const std::vector<std::string>& issueKeys,

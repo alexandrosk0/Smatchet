@@ -236,7 +236,8 @@ bool RunGraphQlIssueSearch(const std::string& endpoint, const cpr::Header& heade
                            const std::string& owner, const std::string& repo, bool includePullRequests,
                            bool isFinalSource, std::vector<CachedTicket>& accum,
                            const std::function<void(const std::vector<CachedTicket>&, bool)>& emitPage,
-                           std::string* outFetchError, std::string* outWarning, bool* outFatal) {
+                           std::string* outFetchError, std::string* outWarning, bool* outFatal,
+                           TrackerError* outFetchErrorStructured) {
     if (outFatal) {
         *outFatal = false;
     }
@@ -253,6 +254,14 @@ bool RunGraphQlIssueSearch(const std::string& endpoint, const cpr::Header& heade
                 *outFetchError =
                     std::string("GitHub fetch error (HTTP ") + std::to_string(resp.status_code) + "): " + msg;
             }
+            if (outFetchErrorStructured) {
+                // 2xx-other would map to Ok() in FromHttpStatus (FIX-1 precedent) — wrap Unknown.
+                const std::string detail =
+                    std::string("GitHub fetch error (HTTP ") + std::to_string(resp.status_code) + "): " + msg;
+                *outFetchErrorStructured = (resp.status_code >= 200 && resp.status_code < 300)
+                                               ? TrackerErrorUnknown(detail, static_cast<int>(resp.status_code))
+                                               : TrackerErrorFromHttpStatus(static_cast<int>(resp.status_code), detail);
+            }
             LOG_ERROR("GitHubIssueSearch::RunGraphQlIssueSearch GraphQL HTTP %ld on page %d: %s", resp.status_code,
                       page, msg.c_str());
             if (outFatal) {
@@ -265,6 +274,9 @@ bool RunGraphQlIssueSearch(const std::string& endpoint, const cpr::Header& heade
         if (parse.Fatal) {
             if (outFetchError) {
                 *outFetchError = parse.Error;
+            }
+            if (outFetchErrorStructured) {
+                *outFetchErrorStructured = TrackerErrorParse(parse.Error);
             }
             LOG_ERROR("GitHubIssueSearch::RunGraphQlIssueSearch parse failure on page %d: %s", page,
                       parse.Error.c_str());
@@ -377,7 +389,7 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
                                                 const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted,
                                                 std::string* outFetchError, std::string* outWarning) {
     return FetchIssuesViaRestApi(baseUrl, pat, owner, repo, jqlQueryOrEmpty, outFullSyncCompleted, outFetchError,
-                                 outWarning, nullptr);
+                                 outWarning, nullptr, nullptr);
 }
 
 namespace {
@@ -460,12 +472,15 @@ void WarnIfIsQualifierMappedZeroRows(const std::string& jqlQueryOrEmpty, const s
 }
 
 } // namespace
+// SMATCHET_DEVIATION(rule=duplication; reason=backend API symmetry; owner=tracker; revisit=2026-12-31)
 
+// SMATCHET_DEVIATION(rule=function-too-long,duplication; reason=N12 fills; owner=tracker; revisit=2026-12-31)
 std::vector<CachedTicket>
 FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat, const std::string& owner,
                       const std::string& repo, const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted,
                       std::string* outFetchError, std::string* outWarning,
-                      const std::function<void(const std::vector<CachedTicket>& page, bool isLast)>& onPage) {
+                      const std::function<void(const std::vector<CachedTicket>& page, bool isLast)>& onPage,
+                      TrackerError* outFetchErrorStructured) {
     if (outFullSyncCompleted) {
         *outFullSyncCompleted = false;
     }
@@ -474,11 +489,18 @@ FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat, const 
         if (outFetchError) {
             *outFetchError = kPatMissingError;
         }
+        if (outFetchErrorStructured) {
+            *outFetchErrorStructured = TrackerErrorInvalidRequest(kPatMissingError);
+        }
         return {};
     }
 
     const GitHubFetchSetup setup = BuildGitHubFetchSetup(owner, repo, jqlQueryOrEmpty, outFetchError, outWarning);
     if (setup.fatal) {
+        // Setup failures are config/JQL-translation class; classify from the composed text.
+        if (outFetchErrorStructured && outFetchError) {
+            *outFetchErrorStructured = TrackerErrorInvalidRequest(*outFetchError);
+        }
         return {};
     }
     const std::string& graphQlQuery = setup.graphQlQuery;
@@ -540,9 +562,9 @@ FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat, const 
 
     if (willRunIssues) {
         bool fatal = false;
-        issuesFullSync =
-            RunGraphQlIssueSearch(endpoint, headers, graphQlQuery, owner, repo, setup.includePullRequests,
-                                  /*isFinalSource=*/!willRunCommits, results, emit, outFetchError, outWarning, &fatal);
+        issuesFullSync = RunGraphQlIssueSearch(endpoint, headers, graphQlQuery, owner, repo, setup.includePullRequests,
+                                               /*isFinalSource=*/!willRunCommits, results, emit, outFetchError,
+                                               outWarning, &fatal, outFetchErrorStructured);
         if (fatal) {
             emitTerminalIfNeeded();
             if (outFullSyncCompleted) {

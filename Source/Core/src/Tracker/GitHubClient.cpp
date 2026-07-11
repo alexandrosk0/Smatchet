@@ -193,7 +193,7 @@ TrackerReachabilityProbeResult GitHubClient::ProbeReachability(const TrackerConf
 
 std::vector<CachedTicket> GitHubClient::FetchIssues(bool* outFullSyncCompleted, const TrackerConfig* configOverride,
                                                     const ViewsStore* /*viewsOverride*/, std::string* outFetchError,
-                                                    std::string* outWarning) {
+                                                    std::string* outWarning, TrackerError* outFetchErrorStructured) {
     // Delegate to the standalone fetcher (mirrors JiraIssueSearch /
     // PlaneIssueSearch convention; the per-class FetchIssues is just a thin
     // shim that resolves config + forwards). Called from
@@ -202,7 +202,8 @@ std::vector<CachedTicket> GitHubClient::FetchIssues(bool* outFullSyncCompleted, 
     const TrackerConfig cfg = configOverride ? *configOverride : ConfigManager::Load();
     const smatchet::github::GitHubRequestAuth auth = ResolveAuth(&cfg); // issue #979 — live-cfg credentials
     return smatchet::github::FetchIssuesViaRestApi(auth.BaseUrl, auth.Pat, cfg.GitHubOwner, cfg.GitHubRepo,
-                                                   cfg.JqlQuery, outFullSyncCompleted, outFetchError, outWarning);
+                                                   cfg.JqlQuery, outFullSyncCompleted, outFetchError, outWarning,
+                                                   nullptr, outFetchErrorStructured);
 }
 
 TrackerIssueFetchSummary GitHubClient::FetchIssuesStreamed(const BatchCallback& onBatch,
@@ -215,6 +216,7 @@ TrackerIssueFetchSummary GitHubClient::FetchIssuesStreamed(const BatchCallback& 
     TrackerIssueFetchSummary summary;
     const TrackerConfig cfg = configOverride ? *configOverride : ConfigManager::Load();
 
+    // SMATCHET_DEVIATION(rule=duplication; reason=backend API symmetry; owner=tracker; revisit=2026-12-31)
     std::string fetchError;
     std::string fetchWarning;
     bool fullSyncCompleted = false;
@@ -243,12 +245,16 @@ TrackerIssueFetchSummary GitHubClient::FetchIssuesStreamed(const BatchCallback& 
     };
 
     const smatchet::github::GitHubRequestAuth auth = ResolveAuth(&cfg); // issue #979 — live-cfg credentials
+    TrackerError fetchErrorStructured;
+    // SMATCHET_DEVIATION(rule=duplication; reason=backend API symmetry; owner=tracker; revisit=2026-12-31)
     smatchet::github::FetchIssuesViaRestApi(auth.BaseUrl, auth.Pat, cfg.GitHubOwner, cfg.GitHubRepo, cfg.JqlQuery,
-                                            &fullSyncCompleted, &fetchError, &fetchWarning, onPage);
+                                            &fullSyncCompleted, &fetchError, &fetchWarning, onPage,
+                                            &fetchErrorStructured);
 
     summary.FetchedCount = totalEmitted;
     summary.FullSyncCompleted = fullSyncCompleted;
     summary.FetchError = fetchError;
+    summary.Error = fetchErrorStructured;
     summary.Warning = fetchWarning;
     LOG_INFO("GitHubClient::FetchIssuesStreamed: done pages=%zu total=%zu fullSync=%d err='%s'", pageCount,
              totalEmitted, fullSyncCompleted ? 1 : 0, fetchError.c_str());
@@ -381,8 +387,7 @@ GitHubClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string
     return Result<std::unordered_map<std::string, bool>, TrackerError>::Ok(std::move(outFieldIdCanEdit));
 }
 
-Result<std::vector<TrackerIssueComment>, TrackerError>
-GitHubClient::FetchIssueComments(const std::string& issueKey) {
+Result<std::vector<TrackerIssueComment>, TrackerError> GitHubClient::FetchIssueComments(const std::string& issueKey) {
     using CommentsResult = Result<std::vector<TrackerIssueComment>, TrackerError>;
     // No cfg parameter on this interface — resolve from the settled on-disk config
     // (issue #979; same per-request pattern UpdateField / CreateIssue use).

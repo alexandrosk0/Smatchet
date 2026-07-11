@@ -849,11 +849,14 @@ TrackerIssueFetchPack AppController::FetchIssuesForActiveView(const TrackerConfi
 
     std::lock_guard<std::mutex> lock(g_TrackerIssueFetchMutex);
 
+    TrackerError fetchErrorStructured;
     pack.Tickets = backend->Reader().FetchIssues(&pack.FullSyncCompleted, configOverride, viewsOverride,
-                                                 &pack.FetchError, &pack.Warning);
-    // Classify at the composition seam (N12 slice 1): downstream consumers branch on the flag.
-    // Slice 2 replaces this text sniff with structured TrackerError classification per backend.
-    pack.FetchErrorTransient = !pack.FetchError.empty() && IsTrackerTransportErrorText(pack.FetchError);
+                                                 &pack.FetchError, &pack.Warning, &fetchErrorStructured);
+    // Classify at the composition seam (N12): prefer the kind the backend classified at its own
+    // error site (item 12); fall back to the text sniff only for a legacy unclassified path.
+    pack.FetchErrorTransient =
+        !pack.FetchError.empty() && (!fetchErrorStructured.IsOk() ? fetchErrorStructured.IsRetryable()
+                                                                  : IsTrackerTransportErrorText(pack.FetchError));
 
     return pack;
 }

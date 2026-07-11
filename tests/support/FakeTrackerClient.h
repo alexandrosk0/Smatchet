@@ -50,6 +50,9 @@ struct ScriptedFetchResult {
     std::vector<CachedTicket> Tickets;
     bool FullSyncCompleted = true;
     std::string FetchError;
+    // Structured twin — script realistic kinds so structured-classification consumers are
+    // testable (retire-transport-error-text item 12). Kind None = unclassified legacy path.
+    TrackerError FetchErrorStructured;
     std::string Warning;
 };
 
@@ -111,8 +114,8 @@ class FakeTrackerClient : public ITrackerBackend,
     std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted = nullptr,
                                           const TrackerConfig* /*configOverride*/ = nullptr,
                                           const ViewsStore* /*viewsOverride*/ = nullptr,
-                                          std::string* outFetchError = nullptr,
-                                          std::string* outWarning = nullptr) override {
+                                          std::string* outFetchError = nullptr, std::string* outWarning = nullptr,
+                                          TrackerError* outFetchErrorStructured = nullptr) override {
         ++fetchIssuesCalls_;
         if (!fetchQueue_.empty()) {
             ScriptedFetchResult r = std::move(fetchQueue_.front());
@@ -121,6 +124,8 @@ class FakeTrackerClient : public ITrackerBackend,
                 *outFullSyncCompleted = r.FullSyncCompleted;
             if (outFetchError)
                 *outFetchError = r.FetchError;
+            if (outFetchErrorStructured)
+                *outFetchErrorStructured = r.FetchErrorStructured;
             if (outWarning)
                 *outWarning = r.Warning;
             return std::move(r.Tickets);
@@ -129,6 +134,8 @@ class FakeTrackerClient : public ITrackerBackend,
             *outFullSyncCompleted = fetchFullSyncCompleted_;
         if (outFetchError)
             *outFetchError = fetchError_;
+        if (outFetchErrorStructured)
+            *outFetchErrorStructured = fetchErrorStructured_;
         if (outWarning)
             *outWarning = fetchWarning_;
         return fetchTickets_;
@@ -140,6 +147,11 @@ class FakeTrackerClient : public ITrackerBackend,
         ++fetchIssuesForKeysCalls_;
         fetchIssuesForKeysLastKeys_ = issueKeys;
         if (!fetchIssuesForKeysOk_) {
+            // A scripted structured error wins; the legacy string setter keeps its historical
+            // InvalidRequest shape so untouched suites see identical behaviour.
+            if (!fetchIssuesForKeysStructuredError_.IsOk()) {
+                return Result<std::vector<CachedTicket>, TrackerError>::Err(fetchIssuesForKeysStructuredError_);
+            }
             return Result<std::vector<CachedTicket>, TrackerError>::Err(
                 TrackerErrorInvalidRequest(fetchIssuesForKeysError_));
         }
@@ -421,7 +433,16 @@ class FakeTrackerClient : public ITrackerBackend,
         fetchTickets_ = std::move(tickets);
         fetchFullSyncCompleted_ = fullSyncCompleted;
         fetchError_ = fetchError;
+        fetchErrorStructured_ = TrackerError::Ok();
         fetchWarning_ = warning;
+    }
+
+    /// Script the static-fallback fetch failure with a realistic kind
+    /// (retire-transport-error-text item 12); Detail doubles as the string error.
+    void SetFetchIssuesError(TrackerError error) {
+        fetchError_ = error.Detail;
+        fetchErrorStructured_ = std::move(error);
+        fetchFullSyncCompleted_ = false;
     }
 
     // Enqueue a sequenced fetch result consumed FIFO; once the queue is drained FetchIssues
@@ -456,6 +477,14 @@ class FakeTrackerClient : public ITrackerBackend,
         fetchIssuesForKeysOk_ = ok;
         fetchIssuesForKeysTickets_ = std::move(tickets);
         fetchIssuesForKeysError_ = error;
+        fetchIssuesForKeysStructuredError_ = TrackerError::Ok();
+    }
+    /// Script the failure with a realistic kind (retire-transport-error-text item 12) — e.g.
+    /// TrackerErrorTransport("timeout") — so structured-classification consumers are testable.
+    void SetFetchIssuesForKeysError(TrackerError error) {
+        fetchIssuesForKeysOk_ = false;
+        fetchIssuesForKeysError_ = error.Detail;
+        fetchIssuesForKeysStructuredError_ = std::move(error);
     }
     const std::vector<std::string>& FetchIssuesForKeysLastKeys() const { return fetchIssuesForKeysLastKeys_; }
 
@@ -548,6 +577,8 @@ class FakeTrackerClient : public ITrackerBackend,
     bool fetchIssuesForKeysOk_ = true;
     std::vector<CachedTicket> fetchIssuesForKeysTickets_;
     std::string fetchIssuesForKeysError_;
+    TrackerError fetchIssuesForKeysStructuredError_;
+    TrackerError fetchErrorStructured_;
     std::vector<std::string> fetchIssuesForKeysLastKeys_;
     std::size_t fetchIssuesForKeysCalls_ = 0;
 
