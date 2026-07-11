@@ -47,7 +47,7 @@ echo "Passed: ${PASSED}  Failed: ${FAILED}"
 # Zero-run floor (fail-open shape Z): a bats suite that parses to ZERO tests
 # (vanished file / TAP parse error) leaves PASSED=FAILED=0 and would exit green.
 if [ "$PASSED" -eq 0 ] && [ "$FAILED" -eq 0 ]; then
-    echo "$(basename "$0" .sh): FAIL â the bats suite ran ZERO tests (vanished / unparsed)." >&2
+    echo "$(basename "$0" .sh): FAIL - the bats suite ran ZERO tests (vanished / unparsed)." >&2
     echo "Passed: 0  Failed: 1"
     exit 1
 fi
