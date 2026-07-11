@@ -47,6 +47,7 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
         std::unique_ptr<ITrackerBackendFactory>(new FakeTrackerBackendFactory())};
 
     std::string LastTrackerTicketSyncWarning;
+    bool LastTrackerTicketSyncWarningTransient = false;
     ConnectivityState LastConnectivityState = ConnectivityState::Unknown;
     std::chrono::steady_clock::time_point NextProbeAt{};
     std::chrono::steady_clock::time_point LastPushOutageAt{};
@@ -94,8 +95,9 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
     std::string CacheBackendKey() const override { return CacheBackendKeyImpl; }
     void SetCacheBackendKey(const std::string& key) override { CacheBackendKeyImpl = key; }
 
-    void SetLastTrackerTicketSyncWarning(const std::string& message) override {
+    void SetLastTrackerTicketSyncWarning(const std::string& message, bool transient) override {
         LastTrackerTicketSyncWarning = message;
+        LastTrackerTicketSyncWarningTransient = transient;
     }
     void SetLastTrackerConnectivityState(ConnectivityState state) override { LastConnectivityState = state; }
     void SetNextTrackerConnectivityProbeAt(std::chrono::steady_clock::time_point at) override { NextProbeAt = at; }

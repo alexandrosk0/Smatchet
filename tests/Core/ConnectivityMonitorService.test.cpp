@@ -100,7 +100,7 @@ TEST_CASE("ConnectivityMonitorService::GetBannerForUi both warnings -> combined 
     FakeConnectivityDeps deps;
     deps.CatalogWarningImpl = "Offline: using cached tracker field catalog. Last fetch failed: boom";
     ConnectivityMonitorService svc(deps);
-    svc.SetLastTicketSyncWarning("Showing cached issues — lost connection to tracker: boom");
+    svc.SetLastTicketSyncWarning("Showing cached issues — lost connection to tracker: boom", /*transient=*/true);
     const auto banner = svc.GetBannerForUi(nullptr);
     CHECK(banner.Kind == TrackerConnectivityBannerForUi::Level::Warning);
     CHECK(banner.Message.find("issue list and field catalog") != std::string::npos);
@@ -172,7 +172,8 @@ TEST_CASE("ConnectivityMonitorService two-writer reconciliation: sync warning th
     ConnectivityMonitorService svc(deps);
 
     // Writer 1 (TicketSyncService analogue, via the re-pointed setter): a sync caveat.
-    svc.SetLastTicketSyncWarning("Showing cached issues — live refresh did not complete: timeout");
+    svc.SetLastTicketSyncWarning("Showing cached issues — live refresh did not complete: timeout",
+                                 /*transient=*/true);
     {
         const auto banner = svc.GetBannerForUi(nullptr);
         CHECK(banner.Kind == TrackerConnectivityBannerForUi::Level::Warning);
