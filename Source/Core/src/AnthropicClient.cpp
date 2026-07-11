@@ -2,6 +2,7 @@
 
 #include "AiErrorRedact.h"
 #include "AiSseParser.h"
+#include "AiWireIntrospect.h"
 #include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "NetworkUsageTracker.h"
@@ -150,6 +151,19 @@ void DispatchAnthropicEvent(const AiSseParser::Event& ev, const IAiClient::Delta
 
 } // namespace
 
+// Single-source wire introspection (AiWireIntrospect.h) — see OpenAiClient.cpp.
+// SMATCHET_DEVIATION(rule=duplication; reason=each provider client's thin wire-introspection wrapper
+// (BuildChatBodyJson + ResolveChatUrl) must live in its OWN TU to delegate to that client's
+// anonymous-namespace BuildChatBody/ResolveBaseUrl/JoinUrl; folding the three into one shared unit
+// would couple otherwise-independent provider adapters — the cross-subsystem-coupling anti-pattern
+// the DRY pillar itself forbids (ADR-0015); owner=ai-clients; revisit=2026-12-31)
+namespace smatchet {
+namespace ai {
+nlohmann::json AnthropicBuildChatBodyJson(const AiChatRequest& req) { return BuildChatBody(req); }
+std::string AnthropicResolveChatUrl(const AiClientConfig& cfg) { return JoinUrl(ResolveBaseUrl(cfg), "/v1/messages"); }
+} // namespace ai
+} // namespace smatchet
+
 std::string AnthropicClient::GetProviderName() const { return "anthropic"; }
 
 std::string AnthropicClient::ProbeReachability(const AiClientConfig& cfg) {
@@ -213,7 +227,12 @@ void AnthropicClient::SendStreaming(const AiClientConfig& cfg, const AiChatReque
         DispatchAnthropicEvent(ev, onDelta, sawFinal, pendingFinishReason);
     };
 
-    // SMATCHET_DEVIATION(rule=duplication; reason=the Anthropic + OpenAi SSE streaming skeletons (WriteCallback cancel-poll + cpr::Post + post-response cancel/transport/HTTP/eof dispatch) are a long-standing near-verbatim pair by necessity — both speak the same SSE wire shape while the token-delta decoders differ; the DR20 mid-stream-error fix edits inside that shared skeleton, re-bounding the pre-existing clone. Folding the skeleton into one helper would couple two independent provider adapters (DRY Pillar 5 per ADR-0015); owner=deep-review; revisit=2026-10-01)
+    // SMATCHET_DEVIATION(rule=duplication; reason=the Anthropic + OpenAi SSE streaming skeletons (WriteCallback
+    // cancel-poll + cpr::Post + post-response cancel/transport/HTTP/eof dispatch) are a long-standing near-verbatim
+    // pair by necessity — both speak the same SSE wire shape while the token-delta decoders differ; the DR20
+    // mid-stream-error fix edits inside that shared skeleton, re-bounding the pre-existing clone. Folding the skeleton
+    // into one helper would couple two independent provider adapters (DRY Pillar 5 per ADR-0015); owner=deep-review;
+    // revisit=2026-10-01)
     cpr::WriteCallback wcb{[&](const std::string& chunk, intptr_t) -> bool {
                                if (cancel && cancel->load(std::memory_order_acquire)) {
                                    cancelObserved = true;
