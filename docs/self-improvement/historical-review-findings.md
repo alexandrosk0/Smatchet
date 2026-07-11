@@ -11,6 +11,30 @@
 > auto-fixed. User-visible product defects should be elevated to GitHub Issues
 > (ADR-0014); the rest is tech-debt. Newest batch on top.
 
+## Remediation pass (2026-07-10) — the 7 open findings, all fixed
+
+All 7 findings the reconcile pass (below) re-verified STILL OPEN are now fixed on
+develop, each with non-vacuous test coverage (reverting the fix fails the new
+test/selftest):
+
+- **#1116 + #789** — `pre-ship.sh` now resolves a WORKING python (execution-probed,
+  not bare `command -v`) and **fails closed** on strict-zone detection when none is
+  found; comment-audit / md-lint route through the resolver. New `--selftest` case
+  locks the fail-closed-on-no-python path. → **PR #1733**.
+- **#329 + #80 + #77** — the three `test-*.sh` gate wrappers: the perf-marker leak
+  gate scans REGENERATED content (not the stale committed doc); theme-syntax gains a
+  zero-assertion guard; views-reorder gains a zero-test guard and drops the dead
+  `extract()`. Each locked by a new `--selftest` (`test-gate-selftests` now enrolls
+  64 scripts). → **PR #1734** (a CodeRabbit finding — a regen failure passing green —
+  fixed in the same PR).
+- **#784 + #807** — `postmortem-owed.sh` dedup now splits slash-joined PR trailers
+  (new bats case, 35 tests); README build-script path corrected to
+  `scripts/dev/local/build_and_run.ps1` and the false auto-vcvars claim replaced with
+  the accurate `cl.exe`-on-PATH requirement. → **PR #1736**.
+
+The historical-review **open list is now empty** (Batches 1–12 below retain the ~25
+MEDIUM + ~60 LOW advisory doc-drift residue — "verify on demand", non-actioned).
+
 ## Reconcile / re-verification pass (2026-07-10)
 
 Ran `historical-review-ledger-reconcile.sh --reconcile` (0/11 flagged by the
@@ -32,6 +56,8 @@ still open.**
 
 **STILL OPEN (NOT DONE) — re-verified alive at develop 2026-07-10** (all HIGH,
 internal gate/test/doc debt; no product defect → backlog, not Issues):
+_(⚠ ALL 7 now FIXED — see the "Remediation pass (2026-07-10)" section above; PRs
+#1733 / #1734 / #1736. Retained here for the audit trail.)_
 - **#1116** `scripts/dev/pre-ship.sh:~292` — strict-zone detection uses bare
   `command -v python3` (not the `resolve_python` resolver in
   `agents/scripts/project/lint-rules.d/00-common.sh`) and swallows failure via
