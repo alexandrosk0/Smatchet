@@ -84,5 +84,5 @@ whole-tree grep before the cut.
   `AppController.cpp` 1519 → 1427 LOC.
 - Slice 2 — PR #1742 (`1461bee3`) · Lua-script-file handling → `AppController_LuaScriptFiles.cpp`;
   `AppController.cpp` 1442 → 1294 LOC.
-- Slice 3 — PR #TBD · AI-context cluster → `AppController_AiContext.cpp`;
+- Slice 3 — PR #1743 · AI-context cluster → `AppController_AiContext.cpp`;
   `AppController.cpp` 1297 → 1237 LOC.
