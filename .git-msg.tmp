@@ -1,0 +1,18 @@
+docs(process): note the at-quote commit template is PowerShell-only; Bash uses -F (process/P3)
+
+Applies the bash-tool-commit-heredoc backlog entry's cheap proposal. The commit
+guidance is a PowerShell single-quoted here-string, but the ship-loop commits
+through the Bash tool (worktree commits need a literal -C path). In git-bash that
+here-string is not a here-string — the subject silently becomes a bare at-sign,
+caught only on a %s readback (an amend round-trip).
+
+- process-rules.md: added a note after the worktree literal-path commit rule that
+  from Bash the body is passed via -F - heredoc or -F tempfile; the PowerShell
+  here-string template is PowerShell-only.
+- Marked the backlog entry Status: applied (archival to applied.md follows in the
+  post-#1782 straggler round, to avoid an applied.md conflict).
+
+Pure-docs; agent-size + is-pure-docs gates clean.
+
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01TNgW5jRozuNxHwz9W8C2CZ

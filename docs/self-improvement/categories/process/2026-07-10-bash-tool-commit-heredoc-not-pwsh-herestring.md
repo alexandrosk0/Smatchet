@@ -2,6 +2,7 @@
 
 - **Date**: 2026-07-10 · **Priority**: P3 · **Category**: process
 - **Session**: issue-fixing thread (#1713, PR #1726)
+- **Status**: applied (2026-07-11 — took the entry's cheap proposal: added a `docs/agent-rules/process-rules.md` note (after the worktree `git -C <literal>` commit rule) that the `@'…'@` here-string is PowerShell-only and the Bash ship-loop path commits via `-F -` heredoc / `-F <tempfile>`)
 
 ## Friction
 
