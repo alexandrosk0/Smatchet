@@ -162,6 +162,58 @@ TEST_CASE("TicketSyncService::ApplyIssueFetchPack partial empty pack is a no-op 
     CHECK(deps.PendingLuaWindowBumpImpl == true);
 }
 
+// The exact partial-error combo the empty-fetch guard must survive without touching the cache:
+// a non-empty FetchError + FullSyncCompleted=false + empty Tickets (backlog test/2026-05-17).
+// Distinct from the clean partial-empty case above: because FetchError is non-empty the success
+// branch is skipped, so NO deferred success-notify fires (==0, not ==1) — that's the coverage gap.
+TEST_CASE(
+    "TicketSyncService::ApplyIssueFetchPack transient error + empty partial fetch preserves cache, no success-notify") {
+    FakeTicketSyncDeps deps;
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("ABC-1"));
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("ABC-2"));
+    TicketSyncService svc(deps);
+
+    TrackerIssueFetchPack pack;
+    pack.Tickets.clear();           // empty fresh set
+    pack.FullSyncCompleted = false; // partial — must never delete unmentioned rows
+    pack.FetchError = "connection reset by peer";
+    pack.FetchErrorTransient = true; // transport-style: routes to the TransportDown path
+    svc.ApplyIssueFetchPack(pack);
+
+    std::vector<std::string> ids = deps.CacheImpl->GetAllTicketIds("Jira");
+    std::sort(ids.begin(), ids.end());
+    REQUIRE(ids.size() == 2); // cache fully preserved — no prune on a partial error
+    CHECK(ids[0] == "ABC-1");
+    CHECK(ids[1] == "ABC-2");
+    CHECK(deps.DeferredLiveNotifyCalls == 0); // error path: NOT a success
+    CHECK(deps.LastConnectivityState == ITicketSyncDeps::ConnectivityState::TransportDown);
+    CHECK(deps.LastTrackerTicketSyncWarningTransient == true);
+    CHECK_FALSE(deps.LastTrackerTicketSyncWarning.empty());
+}
+
+TEST_CASE("TicketSyncService::ApplyIssueFetchPack non-transient error + empty partial fetch preserves cache, no "
+          "transport-down") {
+    FakeTicketSyncDeps deps;
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("ABC-1"));
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("ABC-2"));
+    TicketSyncService svc(deps);
+
+    TrackerIssueFetchPack pack;
+    pack.Tickets.clear();
+    pack.FullSyncCompleted = false;
+    pack.FetchError = "HTTP 500 from backend";
+    pack.FetchErrorTransient = false; // non-transport error: neither success nor TransportDown
+    svc.ApplyIssueFetchPack(pack);
+
+    std::vector<std::string> ids = deps.CacheImpl->GetAllTicketIds("Jira");
+    std::sort(ids.begin(), ids.end());
+    REQUIRE(ids.size() == 2); // cache preserved
+    CHECK(ids[0] == "ABC-1");
+    CHECK(ids[1] == "ABC-2");
+    CHECK(deps.DeferredLiveNotifyCalls == 0);                                               // still not a success
+    CHECK(deps.LastConnectivityState != ITicketSyncDeps::ConnectivityState::TransportDown); // not routed transport-down
+}
+
 TEST_CASE("TicketSyncService::ApplyIssueFetchPack replaces existing row's field snapshot in-place") {
     FakeTicketSyncDeps deps;
     CachedTicket initial = MakeTicket("ABC-1", "old summary");
