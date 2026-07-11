@@ -76,6 +76,25 @@ void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& 
 }
 
 void AppController::FetchAndCachePrefetchedTickets(const std::vector<std::string>& toFetch) {
+    // Safety net for the in-flight keys that PrefetchIssueTicketsForKeys inserted: a key left in
+    // the set blocks every future prefetch for it until restart, so it must be cleared on every
+    // exit. The success path clears the keys inline below and disarms this guard; the guard exists
+    // only to cover the early-return and exception paths that would otherwise leak.
+    struct InFlightClearGuard {
+        AppController* self;
+        const std::vector<std::string>& keys;
+        bool armed = true;
+        ~InFlightClearGuard() {
+            if (!armed) {
+                return;
+            }
+            std::lock_guard<std::mutex> lock(self->bulkImportPrefetchKeysMutex_);
+            for (const auto& k : keys) {
+                self->bulkImportPrefetchKeysInFlight_.erase(k);
+            }
+        }
+    } inFlightClearGuard{this, toFetch};
+
     // Latch a strong handle via atomic_load: this worker reads Backend off the UI thread,
     // which would race a live SetBackend swap on a plain .get(). The shared_ptr also keeps
     // the backend alive for the FetchIssuesForKeys call (ADR 0012).
@@ -111,6 +130,7 @@ void AppController::FetchAndCachePrefetchedTickets(const std::vector<std::string
             bulkImportPrefetchKeysInFlight_.erase(k);
         }
     }
+    inFlightClearGuard.armed = false;
 
     if (!ok) {
 
