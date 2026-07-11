@@ -119,8 +119,8 @@
 - 2026-05-17 · code-review · [test] · P2 — `tests/Core/TicketSyncService.test.cpp:118-140` coverage gaps on empty-fetch guard
   Details: No test for the partial/error path (non-empty `FetchError` + `FullSyncCompleted=false` + empty `freshTickets`); no test asserting the guard is bypassed on legitimate non-empty diff.
   Concrete next action: add two cases covering the partial-error path and the bypass-on-non-empty-diff path. Surfaced by retrospective code-review sweep on PR #139.
-  Status: partially applied (2026-06-20 trap-sweep — shipped: TicketSyncService.test.cpp rewritten to 20-case suite (PR #1120) covering the non-empty-diff guard-bypass case; remaining: the non-empty FetchError + empty freshTickets exact combo absent)
-  Last-reviewed: 2026-06-20
+  Status: applied (2026-07-11 — the remaining exact combo landed: two cases for non-empty FetchError + FullSyncCompleted=false + empty Tickets (transient + non-transient), each asserting the cache is fully preserved and — the coverage gap — DeferredLiveNotifyCalls==0 (error path is NOT a success, vs ==1 for the clean-empty sibling); transient also asserts TransportDown + transient warning. Non-vacuous: forcing the success-branch open fails the non-transient case.)
+  Last-reviewed: 2026-07-11
 
 - 2026-05-17 · code-review · [test] · P3 — `Source/Plugins/Mcp/McpJsonRpcPure.cpp` anon-namespace helpers not exposed for Phase 5 dispatch tests
   Details: `BasenameForDisplay`, `TrimAsciiWhitespace`, `ToLowerAscii`, `AppendAllowlistedArgKvs` live in an anonymous namespace.
