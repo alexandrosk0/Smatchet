@@ -49,6 +49,7 @@ class IOfflineQueueDeps;
 class ISyncCache;
 class ITrackerIssueReader;
 class ITrackerIssueMutations;
+struct TrackerError; // by-const-ref only (HandleFieldEditUpdateFailure); full def in Tracker/TrackerError.h
 namespace TextMerge {
 struct MergeResult;
 }
@@ -244,8 +245,8 @@ class OfflineQueueService {
 
     /// Handle a failed `UpdateIssueFields` for a replayed field edit: transport errors bump the
     /// attempt count (archiving at the cap), non-transport errors archive as `replay_rejected`.
-    void HandleFieldEditUpdateFailure(const PendingFieldEditRecord& row, ISyncCache* cache, const std::string& err,
-                                      FieldEditReplayTally& tally);
+    void HandleFieldEditUpdateFailure(const PendingFieldEditRecord& row, ISyncCache* cache,
+                                      const TrackerError& updateErr, FieldEditReplayTally& tally);
 
     // --- TickOfflineCreates replay helpers ------------------------------------------------
     // TickOfflineCreates dispatches a background task whose body is a thin loop over a per-row

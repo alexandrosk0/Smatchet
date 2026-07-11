@@ -545,7 +545,8 @@ TEST_CASE("OfflineQueueServiceRuntime: permanent re-fetch failure with base → 
           doctest::test_suite("[high-risk]")) {
     OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
-    // 404 is permanent (IsTrackerTransportErrorText==false).
+    // 404 is permanent — the fake's string setter keeps its historical InvalidRequest kind,
+    // which IsRetryable() classifies non-retryable (N12 item 13).
     deps.BackendImpl->SetFetchIssuesForKeysResult(false, {}, "HTTP 404: not found");
 
     OfflineQueueService svc(deps);
@@ -566,6 +567,32 @@ TEST_CASE("OfflineQueueServiceRuntime: permanent re-fetch failure with base → 
     CHECK(deps.BackendImpl->UpdateIssueFieldsCallCount() == 0u);
 }
 
+TEST_CASE("OfflineQueueServiceRuntime: replay classifies by the structured kind, not the error text" *
+          doctest::test_suite("[high-risk]")) {
+    // N12 item 13 regression witness: a re-fetch failure whose TEXT looks like a timeout but
+    // whose structured kind is InvalidRequest must take the PERMANENT branch (unverified
+    // conflict immediately, no retry) — proving replay no longer sniffs the string.
+    OfflineQueueTestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    deps.BackendImpl->SetFetchIssuesForKeysResult(false, {}, "Operation timed out after 30000 ms");
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    const std::string payload = nlohmann::json{{"status", "Done"}}.dump();
+    const auto id = svc.QueueFieldEditOffline("PROJ-54", "status", payload, err, std::string(), "In Progress", true);
+    REQUIRE(err.empty());
+    REQUIRE(id > 0);
+
+    svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    svc.TickOfflineFieldEdits();
+
+    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+    const auto row = svc.GetPendingFieldEdits().front();
+    CHECK(row.HasMergeConflict);
+    CHECK(row.ConflictContextJson.find("\"kind\":\"unverified\"") != std::string::npos);
+    CHECK(deps.BackendImpl->UpdateIssueFieldsCallCount() == 0u);
+}
+
 // ---------------------------------------------------------------------------
 // ADR-0016 decision (c) — transient re-fetch failure retries (bumps attempts), then routes to
 // unverified at the attempt cap. Never silently dead-lettered.
@@ -574,8 +601,9 @@ TEST_CASE("OfflineQueueServiceRuntime: transient re-fetch failure retries then u
           doctest::test_suite("[high-risk]")) {
     OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
-    // Timeout is transient (IsTrackerTransportErrorText==true).
-    deps.BackendImpl->SetFetchIssuesForKeysResult(false, {}, "Operation timed out after 30000 ms");
+    // Timeout is transient — scripted with the structured Transport kind the real backends now
+    // classify at their own error sites (N12 item 13; the text is no longer sniffed).
+    deps.BackendImpl->SetFetchIssuesForKeysError(TrackerErrorTransport("Operation timed out after 30000 ms"));
 
     OfflineQueueService svc(deps);
     std::string err;
