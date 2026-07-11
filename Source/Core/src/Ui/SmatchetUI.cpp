@@ -292,6 +292,7 @@ StartFieldCatalogFetchAsync(AppController& app, const TrackerConfig& fetchCfg, c
         result.Ok = static_cast<bool>(catalogResult);
         if (!result.Ok) {
             result.Error = catalogResult.error().Detail;
+            result.ErrorTransient = catalogResult.error().IsRetryable();
             return result;
         }
         catalog = std::move(catalogResult.value());
@@ -1262,8 +1263,9 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
                 d.fieldCatalogFetchStarted = false;
                 d.triggerCatalogRefetch = true;
             } else {
-                app.SetFieldCatalog(
-                    {}, {}, result.Error.empty() ? std::string("Failed to fetch field catalog.") : result.Error);
+                app.SetFieldCatalog({}, {},
+                                    result.Error.empty() ? std::string("Failed to fetch field catalog.") : result.Error,
+                                    result.ErrorTransient);
                 app.SetAvailableUsers({});
                 d.fieldCatalogWarning.clear();
             }
