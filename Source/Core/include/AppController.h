@@ -1015,7 +1015,12 @@ class AppController : public IAppThreading,
                                std::vector<TrackerUser>& outMembers, std::string& outError);
 
   private:
-    std::unique_ptr<LocalCacheManager> Cache;
+    // DR6: shared_ptr (not unique_ptr) so off-UI-thread workers (Lua automation / MCP pool,
+    // off-thread offline-queue create) can atomic_load a snapshot and hold the cache alive
+    // across their whole use while the UI thread swaps it in RecreateLocalCacheDatabase. Writes
+    // are UI-thread-only via std::atomic_store; off-thread reads via std::atomic_load. Mirrors
+    // the ADR-0012 Backend atomic-swap pattern (GridLiveContext::Backend).
+    std::shared_ptr<LocalCacheManager> Cache;
     std::unique_ptr<ITrackerBackendFactory>
         backendFactory_; ///< Lazy-initialized in `Initialize` if not pre-set via `SetBackendFactory`.
     // `Backend` moved into GridLiveContext (multi-grid Slice 1, ADR-0018) — access via

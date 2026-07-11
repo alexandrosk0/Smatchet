@@ -59,6 +59,7 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
 
     // ---- IOfflineQueueDeps ------------------------------------------------------------
     ISyncCache* Cache() override;
+    std::shared_ptr<ISyncCache> CacheShared() override;
     /// Latched role handles (aliasing shared_ptr onto the atomic_load'ed backend) — replay
     /// workers capture these so a live backend swap / Slice-3 context retirement can never
     /// dangle the subobject pointers (debt 2026-06-07).

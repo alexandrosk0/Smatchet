@@ -1073,7 +1073,8 @@ bool AppController::RecreateLocalCacheDatabase(std::string& outError) {
     //
     // DR6: quiesce EVERY live pane's streaming-sync worker, not just the focused one. Each
     // non-focused GridLiveContext runs its own TicketSyncService std::thread that dereferences
-    // Cache; those must be joined before Cache.reset() below or they race the freed cache.
+    // Cache via the sync-worker path; those must be joined before the atomic_store swap below or
+    // they race the freed cache. The DR6 atomic snapshot covers the Lua / offline-queue readers.
     // gridContexts_ is a UI-thread-owned map and RecreateLocalCacheDatabase runs on the UI
     // thread, so iterating it here is free of concurrent structural mutation. Per context the
     // cancel-and-join is idempotent (a second call finds no active thread).
@@ -1091,12 +1092,16 @@ bool AppController::RecreateLocalCacheDatabase(std::string& outError) {
         focusedContext().ticketSync_->ResetStaleDeletionState();
     }
 
-    Cache.reset();
+    // DR6: swap the cache via atomic_store so an off-thread worker that snapshotted the old
+    // cache with atomic_load keeps it alive for the duration of its use instead of racing this
+    // teardown. Mirrors the ADR-0012 Backend atomic-swap pattern (GridLiveContext::Backend).
+    std::atomic_store(&Cache, std::shared_ptr<LocalCacheManager>());
 
     std::string removeErr;
     if (!RemoveLocalCacheDbFiles(localCacheDbPath_, removeErr)) {
         try {
-            Cache = std::make_unique<LocalCacheManager>(localCacheDbPath_);
+            auto fresh = std::make_shared<LocalCacheManager>(localCacheDbPath_);
+            std::atomic_store(&Cache, fresh);
         } catch (const std::exception& ex) {
             outError = removeErr + " Failed to reopen database: " + ex.what();
             return false;
@@ -1106,7 +1111,8 @@ bool AppController::RecreateLocalCacheDatabase(std::string& outError) {
     }
 
     try {
-        Cache = std::make_unique<LocalCacheManager>(localCacheDbPath_);
+        auto fresh = std::make_shared<LocalCacheManager>(localCacheDbPath_);
+        std::atomic_store(&Cache, fresh);
     } catch (const std::exception& ex) {
         outError = std::string("Failed to open new database: ") + ex.what();
         return false;
@@ -1142,7 +1148,9 @@ bool AppController::EnsureLocalCacheForUiTest() {
     // writes never touch the developer profile or any file.
     if (!Cache) {
         try {
-            Cache = std::make_unique<LocalCacheManager>(":memory:");
+            // DR6: publish via atomic_store to stay consistent with the off-thread snapshot
+            // readers (mirrors the ADR-0012 Backend atomic-swap pattern).
+            std::atomic_store(&Cache, std::make_shared<LocalCacheManager>(":memory:"));
             LOG_INFO("EnsureLocalCacheForUiTest: opened throwaway in-memory LocalCacheManager");
         } catch (const std::exception& ex) {
             LOG_ERROR("EnsureLocalCacheForUiTest: failed to open in-memory cache: %s", ex.what());

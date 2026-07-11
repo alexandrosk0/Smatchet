@@ -382,7 +382,13 @@ std::int64_t OfflineQueueService::QueueCreateOffline(const IssueDraft& draft) {
         LOG_WARN("OfflineQueueService::QueueCreateOffline blocked by read-only mode.");
         return 0;
     }
-    if (!deps_.Cache()) {
+    // DR6: this method runs on an off-UI thread (Lua automation / MCP worker), so take ONE
+    // atomic_load snapshot of the cache and use it for the whole enqueue — the UI thread may swap
+    // the cache in RecreateLocalCacheDatabase between the null-check and the EnqueuePendingCreate
+    // below. Holding the shared_ptr keeps it alive across that gap. Mirrors the ADR-0012 Backend
+    // atomic-swap latched-handle pattern.
+    std::shared_ptr<ISyncCache> cache = deps_.CacheShared();
+    if (!cache) {
         LOG_WARN("OfflineQueueService::QueueCreateOffline skipped: cache not initialized.");
         return 0;
     }
@@ -394,7 +400,7 @@ std::int64_t OfflineQueueService::QueueCreateOffline(const IssueDraft& draft) {
     try {
         // Stamp the enqueuing context's backend namespace (multi-grid Slice 1c) — replay
         // strictly matches this key, so a create queued under Jira never replays against Plane.
-        const std::int64_t id = deps_.Cache()->EnqueuePendingCreate(deps_.CacheBackendKey(), payload);
+        const std::int64_t id = cache->EnqueuePendingCreate(deps_.CacheBackendKey(), payload);
         LOG_INFO("OfflineQueueService: queued offline create id=%lld", static_cast<long long>(id));
         BackendAuditTrail::AppendResult("offline_queue_create", "ui", std::string(), std::to_string(id), true,
                                         std::string(),

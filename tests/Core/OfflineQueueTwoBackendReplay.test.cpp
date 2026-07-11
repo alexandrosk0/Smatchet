@@ -52,6 +52,12 @@ class SharedCacheDeps : public FakeOfflineQueueDeps {
   public:
     SharedCacheDeps(ISyncCache* shared, std::string key) : shared_(shared) { CacheBackendKeyImpl = std::move(key); }
     ISyncCache* Cache() override { return shared_; }
+    // DR6: match the overridden Cache() — a non-owning aliasing shared_ptr over the SAME
+    // externally-owned shared cache. Without this, the base CacheShared() would hand back the
+    // orphaned per-fixture fake cache, not shared_.
+    std::shared_ptr<ISyncCache> CacheShared() override {
+        return std::shared_ptr<ISyncCache>(std::shared_ptr<void>(), shared_);
+    }
 
   private:
     ISyncCache* shared_;

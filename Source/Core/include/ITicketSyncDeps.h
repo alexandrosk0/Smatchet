@@ -60,6 +60,10 @@ class ITicketSyncDeps {
 
     // ---- Cache + backend handles ------------------------------------------------------
     virtual ISyncCache* Cache() = 0;
+    /// DR6 latched cache snapshot — strong handle over the same cache Cache() returns, so an
+    /// off-thread caller holds it alive across its use while the UI thread swaps the cache in
+    /// RecreateLocalCacheDatabase. Mirrors the ADR-0012 Backend atomic-swap pattern. May be null.
+    virtual std::shared_ptr<ISyncCache> CacheShared() = 0;
     virtual ITrackerIssueReader* Backend() = 0;
     /// Narrow connectivity view of the same backend — used for tracker-type detection during
     /// backend-swap logic. Returns null when no backend is active.

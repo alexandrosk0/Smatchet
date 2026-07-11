@@ -86,6 +86,11 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
     std::string CacheBackendKeyImpl{"Jira"};
 
     ISyncCache* Cache() override { return CacheImpl.get(); }
+    /// DR6: CacheImpl is a unique_ptr owned by the fixture for its whole lifetime, so hand back a
+    /// non-owning aliasing shared_ptr (no-op deleter) over the same cache — safe for tests.
+    std::shared_ptr<ISyncCache> CacheShared() override {
+        return std::shared_ptr<ISyncCache>(std::shared_ptr<void>(), CacheImpl.get());
+    }
     ITrackerIssueReader* Backend() override { return BackendImpl ? &BackendImpl->Reader() : nullptr; }
     ITrackerConnectivity* BackendConnectivity() override {
         return BackendImpl ? &BackendImpl->Connectivity() : nullptr;

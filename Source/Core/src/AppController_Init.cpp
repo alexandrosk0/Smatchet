@@ -234,7 +234,9 @@ void AppController::InitConfig(const std::string& dbPath, const std::string& bac
 
     localCacheDbPath_ = dbPath;
 
-    Cache = std::make_unique<LocalCacheManager>(dbPath);
+    // DR6: publish the initial cache via atomic_store — off-thread workers snapshot with
+    // atomic_load, mirroring the ADR-0012 Backend atomic-swap discipline.
+    std::atomic_store(&Cache, std::make_shared<LocalCacheManager>(dbPath));
 
     // Multi-grid Slice 1b (ADR-0018 decision 4): seed the default context's cache namespace
     // from the Initialize parameter so nothing observes an empty key during this phase.

@@ -71,6 +71,11 @@ class FakeOfflineQueueDeps : public IOfflineQueueDeps {
     std::uint64_t BackendGenerationImpl = 0;
 
     ISyncCache* Cache() override { return CacheImpl.get(); }
+    /// DR6: CacheImpl is a unique_ptr owned by the fixture for its whole lifetime, so hand back a
+    /// non-owning aliasing shared_ptr (no-op deleter) over the same cache — safe for tests.
+    std::shared_ptr<ISyncCache> CacheShared() override {
+        return std::shared_ptr<ISyncCache>(std::shared_ptr<void>(), CacheImpl.get());
+    }
     /// Latched strong role handles (debt 2026-06-07): swap-during-replay tests reset
     /// `BackendImpl` mid-replay — the handle a worker captured must keep the old fake alive.
     std::shared_ptr<ITrackerIssueReader> ReaderShared() const override { return BackendImpl; }

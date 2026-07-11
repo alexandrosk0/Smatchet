@@ -783,7 +783,11 @@ std::tuple<sol::object, std::string> AppController::Impl::LuaGetTicketBind(sol::
     // DR6: null-check Cache before dereferencing. RecreateLocalCacheDatabase resets Cache on
     // the UI thread while this worker runs, so the pointer can be null here; a missing ticket
     // (nil return) is the correct graceful degradation rather than a crash (Pillar 3).
-    if (app_.Cache && app_.Cache->TryGetTicket(app_.focusedContext().CacheBackendKeyCopy(), issueId, ticket)) {
+    // DR6: snapshot Cache with atomic_load and hold the shared_ptr for the whole deref, so a
+    // concurrent UI-thread RecreateLocalCacheDatabase swap can't free the cache under us.
+    // Mirrors the ADR-0012 Backend atomic_load reader pattern.
+    auto cacheSnap = std::atomic_load(&app_.Cache);
+    if (cacheSnap && cacheSnap->TryGetTicket(app_.focusedContext().CacheBackendKeyCopy(), issueId, ticket)) {
         return {sol::make_object(sv, ticket), ""};
     }
     return {sol::make_object(sv, sol::nil), "Ticket not found in local cache"};
@@ -850,7 +854,12 @@ std::tuple<sol::object, std::string> AppController::Impl::LuaCreateIssueBind(sol
     sol::table result = sv.create_table();
 
     if (offline) {
-        if (!app_.Cache) {
+        // DR6: snapshot Cache with atomic_load — this bind runs on the Lua automation / MCP
+        // worker thread and RecreateLocalCacheDatabase may swap the cache concurrently on the UI
+        // thread. Mirrors the ADR-0012 Backend atomic_load reader pattern. QueueCreateOffline
+        // itself takes its own snapshot via deps_.CacheShared() for the enqueue path.
+        auto cacheSnap = std::atomic_load(&app_.Cache);
+        if (!cacheSnap) {
             return {sol::make_object(sv, sol::nil),
                     std::string("Local cache not initialized (cannot queue offline create)")};
         }
