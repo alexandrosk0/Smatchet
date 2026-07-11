@@ -185,7 +185,8 @@ std::string BulkImportFormatFailure(AppController& app, const IssueCreateResult&
                                                   "the Tracker rejected this row without details — check required "
                                                   "fields and retry"))
             : r.Error;
-    if (IsTrackerTransportErrorText(msg)) {
+    // N12 item 13b: the pipeline classified the backend error into ErrorTransient.
+    if (r.ErrorTransient) {
         msg = "Network/unreachable: " + msg + " — retry when Jira is reachable.";
     }
     if (!r.MissingFieldIds.empty()) {

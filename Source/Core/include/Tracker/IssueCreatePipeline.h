@@ -23,6 +23,11 @@ struct IssueCreateResult {
     bool Ok = false;
     std::string IssueKey;                                                // populated on success
     std::string Error;                                                   // single-line summary
+    /// Transport-shaped Error (retryable per TrackerError::IsRetryable), classified where the
+    /// pipeline flattens the backend's TrackerError (N12 item 13b). Validation/payload-build
+    /// failures keep the default false — never offline-queueable. Deliberately NOT set for the
+    /// "created, key unknown" shape (the create succeeded server-side; queueing would duplicate).
+    bool ErrorTransient = false;
     std::vector<std::string> MissingFieldIds;                            // populated when validation failed
     std::vector<std::pair<std::string, std::string>> AttachmentFailures; // path -> reason
     /** On create: new row. On update: merged ticket written to SQLite when cache is non-null. */

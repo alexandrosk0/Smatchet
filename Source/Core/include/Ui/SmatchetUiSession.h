@@ -132,6 +132,10 @@ struct FieldCatalogFetchResult {
     std::vector<TrackerIssueTypeCreateMeta> IssueTypeMeta;
     std::vector<TrackerUser> Users;
     std::string Error;
+    /// Transport-shaped failure per the fetch TrackerError's IsRetryable() — drives the
+    /// snapshot-restore vs hard-clear branch in HandleFieldCatalogError. Stays false for the
+    /// backend-missing / unsupported / exception paths (config- and bug-class).
+    bool ErrorTransient = false;
     std::string Warning;
 };
 

@@ -134,8 +134,9 @@ void RunCommitWorker(AppController& app, UiDrawSession& d, PendingFieldEdit edit
         result.Error.clear();
     } else {
         result.Error = result.ApplyResult.Error;
-        if (IsTrackerTransportErrorText(result.ApplyResult.Error) &&
-            AppController::FieldEditSupportsOfflineQueue(edit.Field)) {
+        // N12 item 13b: the pipeline classified the mutation's TrackerError into ErrorTransient —
+        // the offline-queue fallback no longer sniffs the flattened text.
+        if (result.ApplyResult.ErrorTransient && AppController::FieldEditSupportsOfflineQueue(edit.Field)) {
             AppController::FieldEditResult prepared;
             std::string payloadJson;
             std::string prepErr;

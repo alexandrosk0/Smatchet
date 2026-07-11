@@ -707,13 +707,15 @@ class AppController : public IAppThreading,
     /** @return true if a deferred notify was applied this call (live tracker request succeeded). */
     bool ConsumeDeferredLiveTrackerBackendSuccessNotifyIfAny();
     void SetFieldCatalog(std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
-                         const std::string& error);
+                         const std::string& error, bool errorTransient = false);
     void SetFieldCatalog(std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
-                         std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error);
+                         std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error,
+                         bool errorTransient = false);
     /// SetFieldCatalog helper — handle the non-empty-error branch (transport-error
     /// snapshot restore vs hard catalog clear) and publish the matching warning/error
     /// state. `catalogPlane` mirrors the caller's tracker-kind classification.
-    void HandleFieldCatalogError(const std::string& error, const std::string& catalogCacheKey, bool catalogPlane);
+    void HandleFieldCatalogError(const std::string& error, bool errorTransient, const std::string& catalogCacheKey,
+                                 bool catalogPlane);
     /// Pin the project key the next SetFieldCatalog() snapshot saves under. The grid's scoped
     /// catalog fetch resolves a project from the active-view JQL but applies the result through
     /// SetFieldCatalog() (not RefreshFieldCatalog()), so without this hint the scoped result would

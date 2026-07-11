@@ -35,6 +35,7 @@ class FakeConnectivityDeps : public IConnectivityDeps {
     /// Live-focus catalog error/warning the FSM reads (banner formatter + degraded-interval) and
     /// clears (recovery / live-success path). Plain members tests set/inspect directly.
     std::string CatalogErrorImpl;
+    bool CatalogErrorTransientImpl = false;
     std::string CatalogWarningImpl;
 
     /// Recorded side effects.
@@ -53,6 +54,7 @@ class FakeConnectivityDeps : public IConnectivityDeps {
     bool IsShuttingDown() const override { return ShuttingDownImpl; }
 
     const std::string& FocusedFieldCatalogError() const override { return CatalogErrorImpl; }
+    bool FocusedFieldCatalogErrorTransient() const override { return CatalogErrorTransientImpl; }
     const std::string& FocusedFieldCatalogWarning() const override { return CatalogWarningImpl; }
 
     void ClearFocusedFieldCatalogWarning() override {

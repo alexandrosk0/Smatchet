@@ -145,6 +145,7 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
     // the UI-thread-only single-kick-time-latch discipline (no availableFieldsMutex_).
     std::shared_ptr<ITrackerBackend> FocusedBackendShared() const override;
     const std::string& FocusedFieldCatalogError() const override;
+    bool FocusedFieldCatalogErrorTransient() const override;
     const std::string& FocusedFieldCatalogWarning() const override;
     void ClearFocusedFieldCatalogWarning() override;
     void BumpFocusedFieldCatalogRevision() override;

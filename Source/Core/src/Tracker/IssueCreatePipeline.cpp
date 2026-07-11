@@ -280,6 +280,7 @@ IssueCreateResult RunUpdateExisting(ITrackerIssueMutations& client, ISyncCache* 
         const TrackerError updateErr = client.UpdateIssueFields(issueKey, fields);
         if (!updateErr.IsOk()) {
             result.Error = updateErr.Detail.empty() ? "Update failed." : updateErr.Detail;
+            result.ErrorTransient = updateErr.IsRetryable(); // N12 item 13b — kind, not text
             LOG_ERROR("IssueCreatePipeline: UpdateIssue failed: %s", result.Error.c_str());
             return result;
         }
@@ -355,6 +356,9 @@ IssueCreateResult Run(ITrackerIssueMutations& client, ISyncCache* cache, const s
     if (issueKey.empty()) {
         const std::string createErr = createResult ? std::string() : createResult.error().Detail;
         result.Error = createErr.empty() ? "Create failed." : createErr;
+        // "Created, key unknown" (Ok(empty)) stays non-transient: the issue exists server-side,
+        // so an offline-queue retry would duplicate it (N12 item 13b).
+        result.ErrorTransient = createResult ? false : createResult.error().IsRetryable();
         LOG_ERROR("IssueCreatePipeline: CreateIssue failed: %s", result.Error.c_str());
         return result;
     }

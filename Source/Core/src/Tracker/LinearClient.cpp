@@ -179,9 +179,12 @@ TrackerReachabilityProbeResult LinearClient::ProbeReachability(const TrackerConf
         return out;
     }
 
-    // A transport-shaped failure (HTTP 0 / timeout / DNS) → offline banner.
+    // A transport-shaped failure (HTTP 0 / timeout / DNS) → offline banner. N12 item 13b: the
+    // cpr-level signal (status <= 0, or a curl error message) is the transport authority — the
+    // old text sniff could misread a GraphQL error BODY mentioning "timeout" (HTTP 200) as an
+    // outage and flip the offline banner on a reachable server.
     const std::string transportMsg = resp.error.message.empty() ? errorMessage : resp.error.message;
-    if (sc <= 0 || IsTrackerTransportErrorText(transportMsg)) {
+    if (sc <= 0 || !resp.error.message.empty()) {
         out.Kind = TrackerReachabilityProbeKind::TransportDown;
         out.Diagnostic = transportMsg.empty() ? std::string("Unknown network error") : transportMsg;
         return out;

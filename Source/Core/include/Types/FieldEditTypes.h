@@ -15,6 +15,10 @@
 struct FieldEditResult {
     bool Ok = false;
     std::string Error;
+    /// Transport-shaped Error (retryable per TrackerError::IsRetryable), classified where the
+    /// pipeline flattens the mutation's TrackerError (N12 item 13b). Local-validation errors
+    /// keep the default false — they are never offline-queueable.
+    bool ErrorTransient = false;
     std::unordered_map<std::string, std::string> UpdatedDisplayValues;
 };
 
