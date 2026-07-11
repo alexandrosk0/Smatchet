@@ -59,8 +59,15 @@ bash "$SCRIPT_DIR/perf-marker-inventory.sh" --check 2>&1 || true
 FRESH="$(mktemp -t marker-inventory-fresh-XXXXXX.md)"
 # shellcheck disable=SC2064
 trap "rm -f '$FRESH'" EXIT
-MARKER_INVENTORY_OUT="$FRESH" SMATCHET_MARKER_REPO_ROOT="$REPO_ROOT" \
-    bash "$SCRIPT_DIR/perf-marker-inventory.sh" >/dev/null 2>&1
+if ! MARKER_INVENTORY_OUT="$FRESH" SMATCHET_MARKER_REPO_ROOT="$REPO_ROOT" \
+    bash "$SCRIPT_DIR/perf-marker-inventory.sh" >/dev/null 2>&1; then
+    # Under `set -uo pipefail` (no -e) a regen failure would leave $FRESH empty, the
+    # leak grep would find nothing, and the gate would exit 0 green — the exact
+    # "vanished suite passes" hole this file closes. Fail loudly instead (CR #1734).
+    echo "FAIL: perf-marker-inventory.sh regeneration failed — cannot verify the perf_temp leak gate." >&2
+    echo "Passed: 0  Failed: 1"
+    exit 1
+fi
 
 # A leaked marker lands as `| `<path>:<line>` | `perf_temp:...` |` — match that shape.
 if grep -qE '^\| `[^`]+` \| `perf_temp:' "$FRESH" 2>/dev/null; then
