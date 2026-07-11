@@ -3,8 +3,12 @@
 #include "QuerySuggestTypes.h"
 #include "imgui.h"
 
+#include <vector>
+
 struct ImGuiInputTextCallbackData;
-class AppController;
+class IAppUsers;
+struct TrackerField;
+struct TrackerUser;
 struct UiDrawSession;
 struct JqlEditorState;
 
@@ -14,10 +18,13 @@ enum class TrackerQuerySuggestKind {
     PlaneFilter,
 };
 
+/** fields / users point at the app-owned catalogs (callers holding the full app object pass the
+ *  catalog getters' results; the referenced storage outlives any frame). */
 struct TrackerQueryAcpCallbackUserData {
     UiDrawSession* session = nullptr;
     JqlEditorState* editor = nullptr;
-    AppController* app = nullptr;
+    const std::vector<TrackerField>* fields = nullptr;
+    const std::vector<TrackerUser>* users = nullptr;
     QuerySuggestBuild* suggestBuild = nullptr;
     QuerySuggestMeta* meta = nullptr;
     TrackerQuerySuggestKind kind = TrackerQuerySuggestKind::JiraJql;
@@ -40,6 +47,7 @@ void TrackerQueryAcp_DrawPopup(UiDrawSession& d, JqlEditorState& st, const ImVec
                                const ImVec2& fieldRectSize, const QuerySuggestBuild& syncBuild,
                                const std::vector<QuerySuggestion>& mergedItems);
 
-/** Debounced Jira user search on main thread; mutates st.jqlAcpAsyncUserItems / errors. */
-void TrackerQueryAcp_TickDebouncedUserSearch(const AppController& app, UiDrawSession& d, JqlEditorState& st,
+/** Debounced Jira user search on main thread; mutates st.jqlAcpAsyncUserItems / errors.
+ *  userSearch is the narrow user-query facet of the app object. */
+void TrackerQueryAcp_TickDebouncedUserSearch(const IAppUsers& userSearch, UiDrawSession& d, JqlEditorState& st,
                                              const QuerySuggestMeta& meta, const QuerySuggestBuild& syncBuild);
