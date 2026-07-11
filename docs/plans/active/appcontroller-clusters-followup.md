@@ -74,5 +74,5 @@ whole-tree grep before the cut.
 
 - Slice 1 — PR #1660 (`17ea3235`) · MCP client-activity → `AppController_McpActivity.cpp`;
   `AppController.cpp` 1519 → 1427 LOC.
-- Slice 2 — PR #TBD · Lua-script-file handling → `AppController_LuaScriptFiles.cpp`;
+- Slice 2 — PR #1742 · Lua-script-file handling → `AppController_LuaScriptFiles.cpp`;
   `AppController.cpp` 1442 → 1294 LOC.
