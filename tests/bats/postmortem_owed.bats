@@ -229,6 +229,19 @@ JSON
     [[ "$output" != *"PR #2006"* ]]
 }
 
+@test "slash-joined combined-PR ledger heading dedups a trailing PR (#784)" {
+    # One RCA covering several PRs written `PR #906/#907/#908` — the middle/trailing
+    # PRs are preceded by `/`, not a comma/space. has_entry must dedup them; they
+    # used to re-flag every SessionStart (the `/`-less separator class, #784).
+    echo "## RCA for PR #906/#907/#908 — Windows + MSVC red" > "$POSTMORTEM_LEDGER"
+    prlist <<'JSON'
+[{"number":907,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"b9"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"PR #907"* ]]
+}
+
 # --- sourced-scope proof (de-dup of the blocking-scope constant) -------------
 # The blocking-scope regex is SOURCED from merge-gates.sh's
 # MERGE_GATES_BLOCK_ALLOWLIST_RE rather than hand-copied (#1258 drift guard).
