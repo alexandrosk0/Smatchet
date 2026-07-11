@@ -76,21 +76,26 @@
 # Fail-CLOSED: a missing tool / unreadable file / zero scripts found is an infra
 # error (exit 2), never a silent pass.
 #
-# WARN-FIRST / calibration (mirrors the `duplication` + `unused-symbol-under-config-guard`
-# precedent): the real-tree `--check` is ADVISORY — it prints every detected shape to stderr
-# but ALWAYS exits 0, because the static text proxy cannot distinguish a genuinely-dangerous
-# fail-open shape from a benign idiom (a `grep -q X && continue` filter, a flat-dir `for f in
-# dir/*`) without execution. The shapes graduate to a blocking `--check` once the FP rate is
-# calibrated low. The authoritative, BLOCKING half is the `--selftest` synthetic driver, which
-# proves the detection logic fires on a planted bad snippet of each shape and clears on the
-# escape marker (asserts-failure) — that is the load-bearing regression guard.
+# GRADUATED → BLOCKING (2026-07-11; mirrors the `duplication` graduation, ADR-0015): after the
+# fail-open-remediation campaign drove the live tree to ZERO un-escaped shapes across all of
+# B/C/D/E/F/G/H/I/Z, the default (no-arg) mode flipped from advisory `--check` to blocking
+# `--check-strict`, so the `test-all.sh --ci` glob-run now FAILS on any NEW un-escaped shape
+# (delta enforced by keeping the tree clean, not a merge-base diff — a new site is an exact
+# signal). The explicit `--check` mode is RETAINED as an advisory listing for calibration /
+# triage: the static text proxy still cannot distinguish every genuinely-dangerous shape from
+# a benign idiom (a `grep -q X && continue` filter, a flat-dir `for f in dir/*`), so a false
+# positive is escaped with `# fail-open-ok: <reason>` on/above the flagged line rather than
+# reverting the whole gate. The `--selftest` synthetic driver remains the load-bearing
+# regression guard — it proves detection fires on a planted bad snippet of each shape and
+# clears on the escape marker (asserts-failure).
 #
 # Modes:
-#   (no args) | --check   scan the real tree; WARN (advisory) listing each shape; ALWAYS exit 0.
-#   --check-strict        same scan but BLOCKING (exit 1 on any un-escaped shape) — for a future
-#                         calibrated graduation / a curated subtree; not wired into CI yet.
-#   --selftest            dogfood: synth one bad snippet per shape -> assert FLAGGED; add the
-#                         escape marker -> assert CLEARED. Asserts a failure case (BLOCKING).
+#   (no args) | --check-strict   scan the real tree; BLOCKING (exit 1 on any un-escaped shape).
+#                                DEFAULT since the 2026-07-11 graduation; wired into test-all.sh --ci.
+#   --check                      advisory listing: WARN each shape to stderr but ALWAYS exit 0
+#                                (calibration / triage of a suspected false positive).
+#   --selftest                   dogfood: synth one bad snippet per shape -> assert FLAGGED; add the
+#                                escape marker -> assert CLEARED. Asserts a failure case (BLOCKING).
 #
 # Exit: 0 advisory --check (always) / clean --check-strict · 1 --check-strict shape / selftest
 #       regression · 2 infra error.
@@ -529,7 +534,7 @@ run_selftest() {
     return "$rc"
 }
 
-case "${1:---check}" in
+case "${1:---check-strict}" in
     --check)        run_check "$ROOT" 0 ;;
     --check-strict) run_check "$ROOT" 1 ;;
     --selftest)     run_selftest ;;
