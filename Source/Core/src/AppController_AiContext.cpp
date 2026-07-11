@@ -13,6 +13,10 @@
 #include "AppController.h"
 // clang-format on
 #include "AppControllerImpl.h"
+// The pImpl inline constructor instantiates the destructor of every unguarded owned member in
+// each including TU, so the Lua automation host must be complete here even though this TU never
+// touches it. Mirrors the other companion TUs that include the impl header.
+#include "LuaAutomationHost.h"
 
 #include "Logger.h"
 
