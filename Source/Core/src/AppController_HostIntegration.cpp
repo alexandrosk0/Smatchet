@@ -42,6 +42,9 @@ namespace {
 
 #if defined(__APPLE__) || defined(__linux__)
 
+// clang-format off
+// SMATCHET_DEVIATION(rule=duplication; reason=deliberate file-local twin of the no-shell launcher in AttachmentAppUpdateService.cpp — each TU keeps its own copy so neither grows a header dependency on the other for a ten-line fork-exec wrapper; relocating the AppController copy out of AppController.cpp re-hashed the grandfathered pair, not a new copy-paste; owner=orchestrator; revisit=when a shared process-spawn utility header exists)
+// clang-format on
 bool LaunchCommandNoShell(const char* exe, const std::string& arg) {
 
     if (!exe || arg.empty()) {
