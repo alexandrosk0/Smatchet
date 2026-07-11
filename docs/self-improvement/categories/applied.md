@@ -9,6 +9,145 @@
 
 <!-- Latest first. Append on archival. -->
 
+<!-- reconcile round 2 (2026-07-11): entries below were fixed on develop but never marked applied; verified against the tree and archived. -->
+
+# `daemon_loop` bats tests don't stub `maybe_self_resync`, so they run real git/network and flake in the required selftests lane
+
+- 2026-07-10 · orchestrator (self-improvement campaign ship session) · [test] · P1 — `test-merge-watcher-bats.sh` test 30 fails ~1-in-5 runs because `daemon_loop` calls `maybe_self_resync(0)` at startup and the test never stubs it, so a "unit" test exercises real `git fetch` + drift detection
+
+## Friction
+
+`tests/bats/merge_watcher.bats:679` ("daemon_loop per-PR backstop: a transient
+exception in one PR is logged + the loop continues") drives `mw.daemon_loop(0)`
+with `process_registered_pr`, `read_registry`, `write_pid_file`,
+`clear_pid_file`, and `time.sleep` all monkeypatched — but **not**
+`maybe_self_resync`. `daemon_loop` (verified `agents/scripts/core/merge-watcher.py:3171`)
+unconditionally calls `maybe_self_resync(0)` *before* the poll loop as a startup
+gate-freshness check, and that function runs a real bounded `git fetch` + drift
+detection against the live checkout (and "may re-exec on POSIX"). So the test's
+outcome depends on network latency and the working tree's drift state at run
+time — it passed 5/6 local runs and failed the 6th on exactly this test, and it
+reddened the required `Agentic self-tests (bats)` lane on an unrelated docs-only
+PR (#1718). The sibling `daemon_loop` tests at :709 and :739 have the same latent
+gap.
+
+The failure surfaces as a wrong `seen:`/missing-WARN assertion, which reads like a
+logic regression but is pure test-isolation leakage — a false red that costs a
+diagnosis round and blocks merge on a flake.
+
+## Proposal
+
+Stub `mw.maybe_self_resync = lambda *_a, **_k: {}` (a no-op returning an empty
+dict, matching its contract of `.get('resync_action')` / `.get('resync_needs_*')`)
+in the four `daemon_loop` tests (:679, :709, :739, :771) alongside the existing
+`write_pid_file`/`time.sleep` stubs, so `daemon_loop` never touches git/network in
+a unit test. Optionally add a module-level guard so `daemon_loop`'s startup resync
+is skippable via an env knob the tests already set. Est ~15 min. Deterministic
+after — the assertions are otherwise fully specified by the faked registry.
+
+**Update (2026-07-10): fixed in this PR (#1718).** Added the
+`mw.maybe_self_resync` no-op stub to all four `daemon_loop` tests; the suite went
+8/8 green locally (was ~1-in-5 red on test 30). Archive to `applied.md` on the
+next self-improvement sweep.
+
+## Format
+
+- Details: see § Friction. Verified: `merge-watcher.py:3171` `daemon_loop` calls
+  `maybe_self_resync(0)` unconditionally; the test at `merge_watcher.bats:679`
+  stubs five symbols but not `maybe_self_resync`; observed 1/6 local failure on
+  test 30 and the CI red on #1718 head `9101c9c7`.
+- Concrete next action: see § Proposal.
+- Status: open
+- Last-reviewed: 2026-07-10
+
+  Status: applied (2026-07-11 reconcile — verified fixed on develop: all four `daemon_loop` tests in tests/bats/merge_watcher.bats (:679/:710/:741/:774) now stub `mw.maybe_self_resync = lambda *_a, **_k: {}`, so the startup resync never touches real git/network.)
+
+---
+
+# Perf gate is required but its mean-budget teeth are still unarmed (step-5 calibration owed)
+
+- **Category:** test
+- **Priority:** P2
+- **Date:** 2026-07-05
+- **Status:** RESOLVED 2026-07-06 — mean budget armed (`mean_abs_ceiling_ms = 6.94`); plan shipped: [`docs/plans/shipped/perf-gate-step5-calibration.md`](../../plans/shipped/perf-gate-step5-calibration.md)
+
+## What I hit
+
+Auditing "is the perf gate mandatory / healthy" after the all-gates-blocking flip, I confirmed `Perf PR-fast (windows-2022)` **is** a required branch-protection context **and** blocks via the poller's `MERGE_GATES_BLOCK_ALLOWLIST_RE="."` — so a perf red genuinely blocks merge. Good. But two teeth are still retracted, and neither is obvious from the green checkmark:
+
+1. **Mean budget disabled.** `regression-policy.json → default.mean_abs_ceiling_ms = null`. The Pillar-1 steady-state budget (6.94 ms / 144 Hz) is **not** enforced — a scope could sit at 8 ms `avgPerCallMs` and pass. This is a *documented, deliberate* deferral ("perf-gate-revival step-5 calibration"), not a bug — but it has sat null since 2026-06-07 with no follow-up plan, so it reads as done when it isn't.
+
+2. **Relative-regression coverage is thin because baselines are shallow.** Every committed `ci-windows-latest` baseline has per-scope `calls = 1–2` (only ONE scope across all six scenarios clears `min_baseline_calls = 10`). The relative 10%-delta gate skips every below-floor row *by design* (single-frame % swings are noise) — correct, but it means the relative gate is effectively a no-op for ~99% of scopes today. The absolute p99 (≤10 ms) + max (≤50 ms) ceilings *do* fire on every row (CR-949-1), so the gate isn't toothless — but steady-state drift below those ceilings is uncaught.
+
+Secondary: the committed baselines predate the `p99Ms` emitter (`GetLastFrameRows(includeP99=true)` shipped after capture), so baseline rows carry no `p99Ms` — the p99 ceiling works off the *fresh* run's absolute value only, and every p99 baseline-delta reads "(new)".
+
+## Why it matters
+
+"Gate, don't trust": a green `Perf PR-fast` currently certifies *no p99/max blowup*, not *within the 6.94 ms steady-state budget*. That gap is invisible to anyone reading the check status, and the calibration that closes it has no owning plan.
+
+## Fix
+
+Tracked in the plan doc (arm `mean_abs_ceiling_ms` + per-scenario overrides from observed CI runs; recapture baselines so p99 + call depth are real; decide whether to deepen scenario frame counts). Tightening a live gate's numbers is a human-judgment call — the plan gates it behind observed-run evidence + user sign-off, never an autonomous flip.
+
+## Self-improvement
+
+Empty.
+
+  Status: applied (2026-07-11 reconcile — verified fixed on develop: docs/perf/regression-policy.json `mean_abs_ceiling_ms` is ARMED at 6.94 (perf-gate step-5 calibration pass, 2026-07-06) with an empty perScenario map; baselines recaptured #1659.)
+
+---
+
+# `test-orphan-bats` runs only in the full suite / CI, not the pre-ship fast path — an unwrapped `.bats` reddens develop a merge later
+
+- 2026-07-10 · orchestrator (self-improvement campaign ship session) · [tooling] · P2 — a new bats suite shipped without its `test-*.sh` wrapper; the orphan-bats gate caught it only in CI, on the *next* PR, masking which change introduced the red
+
+## Friction
+
+The mutation-smoke gate slice (#1698) added `tests/bats/mutation_smoke.bats`
+without a `test-*.sh` wrapper naming its path. `test-orphan-bats.sh` (which
+enforces that every bats suite has a runner, so an added suite can't silently
+never-run) **is** auto-enrolled in `scripts/dev/test-all.sh` — verified:
+`test-all.sh:113` globs `agents/scripts/core/test-*.sh` and orphan-bats lives
+there — but `scripts/dev/pre-ship.sh`, the fast pre-push gate, does **not** run
+it (verified: `grep -c orphan scripts/dev/pre-ship.sh` → 0).
+
+So the orphan escaped the local pre-push loop and surfaced only as a red
+`Agentic self-tests (bats)` lane on the **next** PR's CI (#1702), one merge after
+the change that caused it — the red pointed at an innocent PR and cost a
+diagnosis round to trace back to #1698. A trap: the mirror script
+`scripts/dev/test-mutation-smoke.sh` *looks* like it covers the suite but it
+validates the harness/corpus, not the bats file, so it does not satisfy the
+wrapper requirement.
+
+## Proposal
+
+1. Add a fast `bash agents/scripts/core/test-orphan-bats.sh` call to
+   `scripts/dev/pre-ship.sh` (the check is near-instant — no build, just a glob +
+   grep over wrappers) so an unwrapped suite is caught before push, not a merge
+   later on an unrelated PR's CI.
+2. Playbook one-liner: **adding a `tests/bats/*.bats` requires its
+   `test-<name>-bats.sh` wrapper (naming the suite by `tests/bats/<name>.bats`
+   path) in the SAME PR** — a harness/corpus mirror script does not count.
+
+Est ~15 min total. This session fixed the instance by adding
+`scripts/dev/test-mutation-smoke-bats.sh` (#1702), but the pre-ship gap remains
+and will bite the next suite added without a wrapper.
+
+**Update (2026-07-10): implemented.** Added a
+`bash agents/scripts/core/test-orphan-bats.sh` stage to `scripts/dev/pre-ship.sh`
+(next to the test-list consistency check), so a wrapper-less bats suite is caught
+before push. Archive to `applied.md` on the next sweep.
+
+## Format
+
+- Details: see § Friction. Verified against the committed tree at develop head.
+- Concrete next action: see § Proposal (1)–(2) — done.
+- Status: open
+- Last-reviewed: 2026-07-10
+
+  Status: applied (2026-07-11 reconcile — verified fixed on develop: scripts/dev/pre-ship.sh:316 runs `bash agents/scripts/core/test-orphan-bats.sh` in the fast pre-push path.)
+
+
 <!-- reconcile 2026-07-11: entries below were `Status: applied` in categories/<cat>/ but never moved here; archived in one batch (PR reconcile). -->
 
 - 2026-06-19 · orchestrator · [process] · P2 — block-allowlisted `Intent section` gate is bypassed by every non-poller merge path (bare `gh pr merge --auto`, direct REST); promote the 2026-06-11 "use the poller" advice into an enforced non-admin merge wrapper
