@@ -216,7 +216,7 @@ echo "----------------------------------------------------------------"
 echo "mutation-smoke: killed=$killed survived=$survived build_fail=$buildfail  (equivalents: $equiv_checked checked, $equiv_bad mis-ruled)"
 if [ "$scored" -eq 0 ]; then
     echo "mutation-smoke: no scorable (non-equivalent) mutants ran — nothing to gate."
-    [ "$equiv_bad" -gt 0 ] && exit 1 || exit 0
+    [ "$equiv_bad" -gt 0 ] && exit 1 || exit 0  # fail-open-ok: advisory mutation pilot — zero scorable mutants is not yet a hard gate (roadmap slice F)
 fi
 rate=$(( killed * 100 / scored ))
 echo "mutation-smoke: adjusted kill rate = ${rate}% (floor ${FLOOR}%)"
