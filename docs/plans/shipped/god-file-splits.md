@@ -2,7 +2,7 @@
 
 > **Slug**: `god-file-splits` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — no slice in flight yet.
+> **Status**: `shipped` — all five splits merged (#1732, #1741, #1745, #1756, #1759) + the tu-line-ceiling lint.
 
 <!-- index-summary: Mechanical, behavior-preserving partition of the five largest TUs (MarkdownConvert, ConfigManager, CliCommandRunner, AppController_LuaBindings, SmatchetActiveProjectGridUi) into cohesive companion TUs, plus an advisory tu-line-ceiling lint so the class doesn't regrow. -->
 
@@ -155,18 +155,24 @@ along an arbitrary boundary, so its ~8% headroom is accepted).
 - Promoting `tu-line-ceiling` advisory → blocking — revisit after it proves quiet for a few weeks.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+- `#1732` · PR 1 — MarkdownConvert.cpp (2,047) → MarkdownToAdf / MarkdownToHtml / AdfToMarkdown + MarkdownConvert_Internal.h; spine keeps the public API.
+- `#1741` · PR 2 — ConfigManager.cpp (1,640) → _Save / _Load / _Secrets; extended ConfigManager_Internal.h with the SecretMigrationFlags + scalar/secret seam.
+- `#1745` · PR 3 — CliCommandRunner.cpp (1,871) → CliArgs / CliSpawn / CliDispatch / CliHelpAndAttach + CliCommandRunner_Internal.h; spine keeps the non-MCP in-process runner + public entries.
+- `#1756` · PR 4 — AppController_LuaBindings.cpp (1,565) → _Ui / _Ai / _Tickets; extended the existing AppController_LuaBindings_detail.h with the smatchet_lua_init_detail glue seam (ResolveApp promoted to external linkage).
+- `#1759` · PR 5 — SmatchetActiveProjectGridUi.cpp (1,741) → window (kept filename) / _Table / _Cells + SmatchetActiveProjectGridUi_Internal.h (ActiveProjectDrawCtx, forward-decl-only).
+- (this PR) · lint slice — `lint-rules.d/90-tu-line-ceiling.sh` advisory ceiling + test-lint-rules.sh wiring + selftest + `tests/bats/lint_rules.bats` cases; plan archived.
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+- **PR 3 `EmitEnvelope`/`EmitErrorToStderr` placement** — kept in `CliArgs.cpp` (both-config TU), not `CliDispatch.cpp` as the § Files table suggested: the MCP-off spine calls them, so a MCP-only TU would break the light-build link. `GetExePath` kept in the spine for the same transitive-`<windows.h>` reason.
+- **PR 4 seam reuse** — extended the pre-existing `AppController_LuaBindings_detail.h` (already shared with `_Draw.cpp`) instead of adding a new `_Internal.h`; the plan's "helpers → _Internal.h" (SanitizeLogText/TruncateForTrace/LuaTruthy/AsciiLowerCopy) was already largely satisfied by that header. Kept the whole automation/MCP runtime in the spine (unassigned by the plan) → spine ~710 (over the ~350 target, well under the 1,200 ceiling).
+- **PR 5 no rename** — kept `SmatchetActiveProjectGridUi.cpp` as the window partition rather than renaming to `*GridWindow.cpp`, to avoid a spurious rename/fan-in-ratchet interaction and reduce churn; the `_Internal.h` keeps the `...GridUi_Internal.h` name.
+- **Fan-in handling** — PR 4 companions include `AppControllerImpl.h` (transitive `AppController.h`) to keep the direct-includer ratchet flat; PR 5 Table/Cells carry a scoped `app-controller-fan-in` deviation (matching the AnnotateAnalysisUi_Modals/_Window precedent).
+- **Lint slice split out** — the tu-line-ceiling lint + this archival ride a dedicated follow-up PR rather than PR 5, to isolate the shared-infra change from the verified source split.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*(Delete this `## Archive` block as part of step 2 — once moved to `shipped/`, the file is reference material and the checklist has served its purpose.)*
+- All five split PRs: full CI matrix green (Windows MSVC full/light/ARM64, POSIX-core, Android NDK/APK/emulator, Bucket-C/E UI, ASAN/UBSan, Coverage, Perf PR-fast, dup/comment-noise/fan-in/CR-finding gates). CI was the sole correctness gate (no local Core configure in the authoring container). Behavior-preserving moves carried the `tests-out-of-band` label for the Core coverage gate. `passed`.
+- Local per-slice suite: byte-exact function-coverage (each definition present once), line-accounting (no dropped/duplicated body lines), stack-based preprocessor-nesting balance, header↔definition consistency, `dup_audit.py --diff`, `test-lint-rules.sh --diff origin/develop`. `passed`.
+- tu-line-ceiling lint: `--selftest` green (over/under-ceiling + header-out-of-scope + deviation-escape), `tests/bats/lint_rules.bats` tu-ceiling cases green, `--scan-tu-ceiling` enumerates the 13 grandfathered pre-ceiling TUs (delta-gated so they stay quiet until touched). `passed`.

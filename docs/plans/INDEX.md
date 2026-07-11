@@ -188,6 +188,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`nightly-monkey-tester`](shipped/nightly-monkey-tester.md) | 2026-07-06 | Plan — Nightly "code monkey" tester |
 | [`perf-gate-step5-calibration`](shipped/perf-gate-step5-calibration.md) | 2026-07-06 | Perf gate — step-5 calibration (arm the mean budget + deepen coverage) |
 | [`appcontroller-fan-in-phase6-dissolution`](shipped/appcontroller-fan-in-phase6-dissolution.md) | 2026-07-10 | Phase 6 of the AppController fan-in reduction — a full audit of all 111 AppController.h includers classified every file into tiers; five shipped slices (free include-drops, poster registrars, the UiSession.h nested-type hoist, and the IAppCommands / IAppThreading / IAppScenarioHost facets) brought fan-in from 111 to 77, the documented terminal set. |
+| [`god-file-splits`](shipped/god-file-splits.md) | 2026-07-11 | Mechanical, behavior-preserving partition of the five largest TUs (MarkdownConvert, ConfigManager, CliCommandRunner, AppController_LuaBindings, SmatchetActiveProjectGridUi) into cohesive companion TUs, plus an advisory tu-line-ceiling lint so the class doesn't regrow. |
 | [`plane-custom-properties`](shipped/plane-custom-properties.md) | 2026-07-11 | Plan — Plane custom (UUID) properties: serialize instead of silently dropping (C4) |
 <!-- END auto-plan-index -->
 

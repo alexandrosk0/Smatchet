@@ -84,6 +84,7 @@ Full per-outcome semantics + halt-prompt return-code table + env knobs + REST co
 | `agent-too-long` (`agent_size_audit.py`) | agent prompts / `AGENTS.md` | **250** / **150** lines |
 | `duplication` (`dup_audit.py`) | all first-party C++ | copy-paste clone, delta-gated vs origin/develop; **blocking** (graduated from WARN-first 2026-06-21, ADR-0015); `SMATCHET_DEVIATION(rule=duplication)` on/above either occurrence exempts |
 | `interface-doc` (WARN) | `ITracker*.h`/`Tracker/*Client.h` ↔ `Tracker/AGENTS.md` | advisory: a doc-pinned `Type::method` changed in the header without a doc touch (symbol-pinned, not coarse — noise-spike-rejected) |
+| `tu-line-ceiling` (WARN) | changed first-party `Source/**/*.cpp` (headers + ThirdParty out of scope) | advisory (god-file-splits regression guard): a touched translation unit over **1,200** lines — consider a cohesive companion-TU partition (the ceiling every god-file-splits TU landed under). Delta-scoped so the grandfathered pre-ceiling whales stay quiet until touched; `SMATCHET_DEVIATION(rule=tu-line-ceiling; …)` anywhere in the file escapes |
 | `narrowing-conversions` | strict zone (Windows post-merge job) | clang-tidy |
 
 **Strict zones** (any violation fails): `Source/Core/src/Tracker/`, `Source/Core/src/Sync/`, `Source/Core/src/Persistence/`, `Source/Core/src/Config/`, `Source/Core/src/Commands/`, `Source/Plugins/Mcp/` (+ matching `Source/Core/include/`). **Light** (ungated): `Source/Core/src/Ui/`, `Source/Standalone/`. **Exempt**: `ThirdParty/`, `build/`.

@@ -91,7 +91,8 @@ for _mod in "$LINT_RULES_D"/00-common.sh "$LINT_RULES_D"/10-line-rules.sh \
             "$LINT_RULES_D"/55-catch-all.sh "$LINT_RULES_D"/60-json-walker.sh \
             "$LINT_RULES_D"/65-file-slurp.sh "$LINT_RULES_D"/70-ui-request-flag.sh \
             "$LINT_RULES_D"/75-pr-comments.sh "$LINT_RULES_D"/80-interface-doc.sh \
-            "$LINT_RULES_D"/85-ui-include-direction.sh; do
+            "$LINT_RULES_D"/85-ui-include-direction.sh \
+            "$LINT_RULES_D"/90-tu-line-ceiling.sh; do
     if [ ! -f "$_mod" ]; then
         echo "test-lint-rules: ERROR: missing rule module $_mod" >&2
         exit 2
@@ -131,9 +132,10 @@ case "${1:-}" in
     --scan-ui-reqflag) MODE=scanuireqflag ;;
     --scan-ui-include) MODE=scanuiinclude ;;
     --scan-pr-comments) MODE=scanprcomments ;;
+    --scan-tu-ceiling) MODE=scantuceiling ;;
     --selftest)    MODE=selftest ;;
     "")            MODE=diff ;;
-    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--agentsize-baseline|--dup-baseline|--include-cycle-baseline|--scan-file[=]<f>|--full|--scan-wide|--scan-glfw|--scan-cmake-ci|--scan-unused-cfg|--scan-bare-json|--scan-catch-all|--scan-json-walkers|--scan-slurps|--scan-ui-reqflag|--scan-ui-include|--scan-pr-comments|--selftest]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--agentsize-baseline|--dup-baseline|--include-cycle-baseline|--scan-file[=]<f>|--full|--scan-wide|--scan-glfw|--scan-cmake-ci|--scan-unused-cfg|--scan-bare-json|--scan-catch-all|--scan-json-walkers|--scan-slurps|--scan-ui-reqflag|--scan-ui-include|--scan-pr-comments|--scan-tu-ceiling|--selftest]" >&2; exit 2 ;;
 esac
 
 case "$MODE" in
@@ -396,6 +398,32 @@ case "$MODE" in
     if [ -n "$(scan_pr_comment_file "$_prc_tmp")" ]; then
         echo "SELFTEST FAIL: pr-numbered-temporal-comments fired despite an in-window SMATCHET_DEVIATION" >&2; miss=1; fi
     rm -f "$_prc_tmp" 2>/dev/null || true
+    # --- tu-line-ceiling — assert the rule is documented + fires on an over-ceiling .cpp, and stays
+    # quiet for an under-ceiling .cpp, an over-ceiling header (headers out of scope), and a
+    # deviation-suppressed over-ceiling .cpp. ---
+    for r in "${TU_LINE_CEILING_RULES[@]}"; do
+        if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: tu-line-ceiling rule '$r' missing from AGENTS.md" >&2; miss=1; fi
+    done
+    _tuc_tmp="$(mktemp --suffix=.cpp 2>/dev/null || echo "${TMPDIR:-/tmp}/tuc_selftest.$$.cpp")"
+    case "$_tuc_tmp" in *.cpp) ;; *) mv -f "$_tuc_tmp" "$_tuc_tmp.cpp" 2>/dev/null && _tuc_tmp="$_tuc_tmp.cpp" ;; esac
+    # Positive: an over-ceiling (> 1,200-line) .cpp must fire.
+    awk 'BEGIN{for(i=0;i<1300;i++)print "int x;"}' > "$_tuc_tmp"
+    if [ -z "$(scan_tu_line_ceiling_file "$_tuc_tmp")" ]; then
+        echo "SELFTEST FAIL: tu-line-ceiling did not fire on a > 1,200-line .cpp" >&2; miss=1; fi
+    # Negative: an under-ceiling .cpp must NOT fire.
+    awk 'BEGIN{for(i=0;i<50;i++)print "int x;"}' > "$_tuc_tmp"
+    if [ -n "$(scan_tu_line_ceiling_file "$_tuc_tmp")" ]; then
+        echo "SELFTEST FAIL: tu-line-ceiling fired on an under-ceiling .cpp" >&2; miss=1; fi
+    # Negative: a deviation anywhere in an over-ceiling .cpp must escape.
+    { printf '// SMATCHET_DEVIATION(rule=tu-line-ceiling; reason=test; owner=x; revisit=2099-01-01)\n'; awk 'BEGIN{for(i=0;i<1300;i++)print "int x;"}'; } > "$_tuc_tmp"
+    if [ -n "$(scan_tu_line_ceiling_file "$_tuc_tmp")" ]; then
+        echo "SELFTEST FAIL: tu-line-ceiling fired despite an in-file SMATCHET_DEVIATION" >&2; miss=1; fi
+    # Negative: an over-ceiling HEADER is out of scope (.cpp only).
+    _tuc_hdr="${_tuc_tmp%.cpp}.h"
+    awk 'BEGIN{for(i=0;i<1300;i++)print "int x;"}' > "$_tuc_hdr"
+    if [ -n "$(scan_tu_line_ceiling_file "$_tuc_hdr")" ]; then
+        echo "SELFTEST FAIL: tu-line-ceiling fired on an over-ceiling header (.cpp-only rule)" >&2; miss=1; fi
+    rm -f "$_tuc_tmp" "$_tuc_hdr" 2>/dev/null || true
     # --- interface-doc WARN (Gap B / Slice 2) — assert the rule WARNs on real drift, stays quiet
     # otherwise, and is documented. This exercises a FAILURE case (the pinned symbol changed without
     # a doc touch), satisfying both Slice 2's selftest contract and Slice 3's "assert-a-failure" rule.
@@ -495,6 +523,12 @@ case "$MODE" in
     # pr-numbered-temporal-comments set over first-party C++ (.cpp/.h/.hpp) — whole-tree campaign
     # sweep (debug + bats harness). `--root <dir>` (handled above) points this at an arbitrary tree.
     compute_pr_comment_violations
+    ;;
+
+  scantuceiling)
+    # tu-line-ceiling set over first-party C++ TUs — whole-tree diagnostic sweep (debug + bats
+    # harness). Advisory rule; the blocking path is delta-scoped in the --diff mode below.
+    compute_tu_line_ceiling_violations
     ;;
 
   catalog)
@@ -933,6 +967,33 @@ case "$MODE" in
             echo "  Rephrase the comment to state what the code does / why, without the dev-PR number (keep GitHub Issue / ADR refs)."
             echo "  If a specific historical PR genuinely must be cited (e.g. an audit trail): add"
             echo "  // SMATCHET_DEVIATION(rule=pr-numbered-temporal-comments; reason=...; owner=...; revisit=...) above the comment."
+        } >&2
+    fi
+
+    # --- tu-line-ceiling (CHANGED first-party .cpp TU; WARN-first) ---
+    # A touched translation unit over 1,200 lines gets an advisory nudge to consider a cohesive
+    # partition (the ceiling the god-file-splits campaign left every split TU under). ADVISORY
+    # (never touches $rc), diff-scoped to the CHANGED .cpp so the grandfathered whales that predate
+    # the ceiling stay quiet until someone actually touches one. A
+    # SMATCHET_DEVIATION(rule=tu-line-ceiling; ...) anywhere in the file suppresses. Whole-tree sweep
+    # via --scan-tu-ceiling.
+    tuc_mb="$(git merge-base "$BASE" HEAD 2>/dev/null || echo "$BASE")"
+    tuc_changed="$(git diff --name-only --diff-filter=d "$tuc_mb" 2>/dev/null \
+        | grep -E '\.cpp$' | grep -vE '(^|/)ThirdParty/' || true)"
+    tuc_out=""
+    if [ -n "$tuc_changed" ]; then
+        while IFS= read -r tuc_f; do
+            [ -n "$tuc_f" ] || continue
+            tuc_out="$tuc_out$(scan_tu_line_ceiling_file "$tuc_f")"$'\n'
+        done <<< "$tuc_changed"
+        tuc_out="$(printf '%s' "$tuc_out" | grep -E . || true)"
+    fi
+    if [ -n "$tuc_out" ]; then
+        {
+            echo "[tu-line-ceiling] WARN: a changed translation unit exceeds the 1,200-line advisory ceiling — consider a cohesive companion-TU partition (see docs/plans/shipped/god-file-splits.md). Advisory; not blocking:"
+            printf '%s\n' "$tuc_out" | sed 's/^/  /'
+            echo "  Split the TU into cohesive companion units, or — if it is a single irreducible engine — add"
+            echo "  // SMATCHET_DEVIATION(rule=tu-line-ceiling; reason=...; owner=...; revisit=...) anywhere in the file."
         } >&2
     fi
 

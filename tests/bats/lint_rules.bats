@@ -875,3 +875,38 @@ setup() {
     [[ "$output" == *"catch-all-swallow"* ]]
     rm -rf "$tmp"
 }
+
+# ---------- tu-line-ceiling (advisory god-file regrowth guard) ----------
+
+@test "--scan-tu-ceiling fires on an over-ceiling (> 1200-line) .cpp" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src/Ui"
+    awk 'BEGIN{for(i=0;i<1300;i++)print "int x;"}' > "$tmp/Source/Core/src/Ui/BigTu.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-tu-ceiling
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"tu-line-ceiling"* ]]
+    [[ "$output" == *"BigTu.cpp:1300"* ]]
+    rm -rf "$tmp"
+}
+@test "--scan-tu-ceiling ignores an under-ceiling .cpp and an over-ceiling header" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    awk 'BEGIN{for(i=0;i<800;i++)print "int x;"}' > "$tmp/Source/Core/src/SmallTu.cpp"
+    awk 'BEGIN{for(i=0;i<1300;i++)print "int x;"}' > "$tmp/Source/Core/src/BigHeader.h"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-tu-ceiling
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
+@test "--scan-tu-ceiling respects an in-file SMATCHET_DEVIATION(rule=tu-line-ceiling)" {
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/Source/Core/src"
+    { printf '// SMATCHET_DEVIATION(rule=tu-line-ceiling; reason=irreducible engine; owner=x; revisit=2099-01-01)\n'; awk 'BEGIN{for(i=0;i<1300;i++)print "int x;"}'; } > "$tmp/Source/Core/src/BigButExempt.cpp"
+    ( cd "$tmp" && git init -q && git add -A ) >/dev/null 2>&1
+    run bash "$LINT" --root "$tmp" --scan-tu-ceiling
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    rm -rf "$tmp"
+}
