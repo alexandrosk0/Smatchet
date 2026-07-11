@@ -26,6 +26,10 @@ struct TrackerIssueFetchPack {
     std::vector<CachedTicket> Tickets;
     bool FullSyncCompleted = false;
     std::string FetchError;
+    /// Transport-shaped FetchError (offline / DNS / timeout / 5xx-style) — classified ONCE where
+    /// the pack is composed; consumers branch on this flag, never re-classify the text
+    /// (retire-transport-error-text slice 1, backlog N12).
+    bool FetchErrorTransient = false;
     /// Soft caveat (e.g. pagination cap). See TrackerIssueFetchSummary::Warning.
     std::string Warning;
 };

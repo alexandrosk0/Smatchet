@@ -1406,6 +1406,9 @@ TrackerIssueFetchPack AppController::FetchIssuesForActiveView(const TrackerConfi
 
     pack.Tickets = backend->Reader().FetchIssues(&pack.FullSyncCompleted, configOverride, viewsOverride,
                                                  &pack.FetchError, &pack.Warning);
+    // Classify at the composition seam (N12 slice 1): downstream consumers branch on the flag.
+    // Slice 2 replaces this text sniff with structured TrackerError classification per backend.
+    pack.FetchErrorTransient = !pack.FetchError.empty() && IsTrackerTransportErrorText(pack.FetchError);
 
     return pack;
 }

@@ -116,9 +116,9 @@ void GridContextDepsAdapter::SetCacheBackendKey(const std::string& key) { ctx_.S
 // Every per-pane adapter forwards its connectivity writes into that one instance (N writers, one
 // service). The service is constructed eagerly in Initialize before the first tick, so these
 // runtime overrides always have a live target.
-void GridContextDepsAdapter::SetLastTrackerTicketSyncWarning(const std::string& message) {
+void GridContextDepsAdapter::SetLastTrackerTicketSyncWarning(const std::string& message, bool transient) {
     if (app_.connectivity_) {
-        app_.connectivity_->SetLastTicketSyncWarning(message);
+        app_.connectivity_->SetLastTicketSyncWarning(message, transient);
     }
 }
 

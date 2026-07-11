@@ -86,6 +86,9 @@ class TicketSyncService {
         std::atomic<size_t> TotalFetchedCount{0};
         std::atomic<bool> FullSyncCompleted{false};
         std::string FetchError;
+        /// Transport-shaped FetchError — written with FetchError under QueueMutex at the same
+        /// worker-side classification seam (N12 slice 1); readers copy both under the lock.
+        bool FetchErrorTransient = false;
         std::string Warning;
 
         mutable std::mutex QueueMutex;
