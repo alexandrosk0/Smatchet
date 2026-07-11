@@ -1,6 +1,6 @@
 // AppController_HostIntegration.cpp — host-integration cluster extracted from
 // AppController.cpp (behavior-preserving TU split, plan
-// docs/plans/active/appcontroller-clusters-followup.md). Method DECLARATIONS stay in
+// docs/plans/appcontroller-clusters-followup.md). Method DECLARATIONS stay in
 // AppController.h; only the definitions moved, so linkage and behavior are identical.
 // The cluster is the surface an embedding shell registers (the host-callback setters)
 // plus the actions that invoke it: closing the embedded UI, requesting app quit,
