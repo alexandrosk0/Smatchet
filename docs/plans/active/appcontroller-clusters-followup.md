@@ -2,7 +2,7 @@
 
 > **Slug**: `appcontroller-clusters-followup` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — slice 1 (MCP client-activity) shipped (PR #1660); slice 2 (Lua-script-file handling) shipped (PR #1742, squash `1461bee3`); slice 3 (AI-context) shipped (PR #1743, squash `2c580c79`); slice 4 (host-integration) shipped (PR #1749, squash `a2ae5033`); slice 5 (ticket-prefetch) shipped (PR #1754, squash `b6a33c47`; follow-up leak fix PR #1757, squash `9ed93d33`); slice 6 (field-icon path resolver) in flight (PR #1763).
+> **Status**: `active` — slice 1 (MCP client-activity) shipped (PR #1660); slice 2 (Lua-script-file handling) shipped (PR #1742, squash `1461bee3`); slice 3 (AI-context) shipped (PR #1743, squash `2c580c79`); slice 4 (host-integration) shipped (PR #1749, squash `a2ae5033`); slice 5 (ticket-prefetch) shipped (PR #1754, squash `b6a33c47`; follow-up leak fix PR #1757, squash `9ed93d33`); slice 6 (field-icon path resolver) shipped (PR #1763, squash `718205df`); slice 7 (local-cache DB block) in flight. Slice 7 is expected to be the LAST cohesive cluster — after it, `AppController.cpp` has no further obviously-cohesive extractable cluster and the plan is ready to move to `shipped`.
 
 <!-- index-summary: Continuation of the shipped appcontroller-service-extraction plan — behavior-preserving extraction of the remaining cohesive AppController.cpp clusters (flagged there as § Out of scope) into focused companion TUs, toward the ≤ ~800 LOC target. -->
 
@@ -102,7 +102,7 @@ whole-tree grep before the cut.
   removal helper (~140 LOC), and the field-icon path resolver plus its two file-local
   helpers (~78 LOC).
 
-- **Slice 6 — field-icon path resolver (PR #1763).** Extract `ResolveFieldIconAssetPath`
+- **Slice 6 — field-icon path resolver (SHIPPED, PR #1763, squash `718205df`).** Extract `ResolveFieldIconAssetPath`
   plus its two file-local helpers (`FieldIconHasCaseInsensitivePrefix` /
   `FieldIconPathIsAllowed`, the latter calling the former) into
   `AppController_FieldIconPath.cpp`. Helper census: whole-tree grep confirms both helpers
@@ -123,6 +123,34 @@ whole-tree grep before the cut.
   edit. This crosses the plan's ≤ ~800 LOC target (742 < 800). The last obvious remaining
   cluster is the local-cache database block plus its `RemoveLocalCacheDbFiles` helper
   (~140 LOC, still in the first anon namespace).
+
+- **Slice 7 — local-cache database block (in flight).** Extract the file-local
+  `RemoveLocalCacheDbFiles` helper (the whole first anonymous-namespace block) plus the three
+  contiguous methods `GetResolvedLocalCacheDbPath` / `RecreateLocalCacheDatabase` /
+  `EnsureLocalCacheForUiTest` into `AppController_LocalCacheDb.cpp`. Helper census: whole-tree
+  grep confirms `RemoveLocalCacheDbFiles` has exactly one caller — `RecreateLocalCacheDatabase`
+  (definition + one call site, both formerly in `AppController.cpp`) — so it moves with the
+  cluster in a fresh anonymous namespace. The first anon block held ONLY that helper (verified);
+  the SECOND anon block (`g_TrackerIssueFetchMutex`, locked by the staying
+  `FetchIssuesForActiveView`, left behind by slice 6) STAYS untouched. `LoadAiChatMessages` sits
+  just above `GetResolvedLocalCacheDbPath` and STAYS. pImpl census: none of the three methods
+  dereferences `impl_->` (slice-2-style extraction — no `AppControllerImpl.h`, no
+  `LuaAutomationHost.h`); they touch only class members and free functions. Gating census: none
+  of the three carries a `#if`/`#else` build guard — all compile unconditionally
+  (`EnsureLocalCacheForUiTest` opens a `:memory:` cache but is guarded at runtime by the bucket-E
+  opt-in env var, not a build flag), reproduced byte-identically. External callers
+  (`AppController_Init.cpp`, `AppController_LuaBindings_Tickets.cpp`, `UiTestScenario.cpp`,
+  `BuiltinCommands_Sync.cpp`, `SmatchetPreferencesUi_Local.cpp`) call the public declarations in
+  `AppController.h` — unaffected by the TU split (none `#include`s the `.cpp`). Curated includes:
+  `AppController.h` (with the fan-in deviation block — transitively completes `TrackerConfig`,
+  `GridLiveContext`/`CacheBackendKeyCopy`, `offlineQueue_`), `ConfigManager.h`
+  (`ConfigManager::Load`/`Save`/`InvalidateCache`, `TrackerConfig`), `LocalCacheManager.h`
+  (constructs `LocalCacheManager`, calls `Cache->` methods), `Logger.h` (`LOG_*`),
+  `ghc/filesystem.hpp` (`fs::path` in the helper + path resolver), plus `<exception>`
+  (`std::exception`), `<memory>` (`std::make_unique`), `<string>`, `<system_error>`
+  (`std::error_code`). `AppController.cpp` 742 → 571 LOC. No CMake/test edit. This is the LAST
+  cohesive extractable cluster — after slice 7, `AppController.cpp` has no further
+  obviously-cohesive block to peel off and the plan is ready to move to `shipped`.
 
 ## Verification
 
@@ -152,7 +180,14 @@ whole-tree grep before the cut.
 - Slice 5 — PR #1754 (`b6a33c47`) · ticket-prefetch cluster → `AppController_TicketPrefetch.cpp`;
   `AppController.cpp` 1023 → 890 LOC. Follow-up leak fix PR #1757 (`9ed93d33`) — clear
   in-flight prefetch keys on all exit paths of `FetchAndCachePrefetchedTickets`.
-- Slice 6 — PR #1763 · field-icon path resolver + its two file-local helpers →
+- Slice 6 — PR #1763 (`718205df`) · field-icon path resolver + its two file-local helpers →
   `AppController_FieldIconPath.cpp`; `AppController.cpp` 893 → 742 LOC. `g_TrackerIssueFetchMutex`
   (co-resident in the same source anon block but locked by the staying `FetchIssuesForActiveView`)
   kept behind in its own anon namespace. Crosses the ≤ ~800 LOC target.
+- Slice 7 — PR #1765 · local-cache database block (`RemoveLocalCacheDbFiles` helper +
+  `GetResolvedLocalCacheDbPath` / `RecreateLocalCacheDatabase` / `EnsureLocalCacheForUiTest`) →
+  `AppController_LocalCacheDb.cpp`; `AppController.cpp` 742 → 571 LOC. Helper `RemoveLocalCacheDbFiles`
+  cluster-private (2 grep hits, both moved). No `impl_->` in the moved bodies (slice-2-style — no
+  `AppControllerImpl.h` / `LuaAutomationHost.h`); no build gating. `g_TrackerIssueFetchMutex`
+  (second anon block) and `LoadAiChatMessages` left in place. LAST cohesive cluster — plan ready to
+  move to `shipped` after this slice.
