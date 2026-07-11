@@ -610,7 +610,7 @@ jobs:
           # The DX12 init line ("DX12 renderer initialised (adapter: ..., WARP
           # software)") goes to the spawned child's log, not the parent CLI stdout;
           # the parent announces its path as "[spawn] child stdout/stderr -> <path>".
-          childlog="$(printf '%s\n' "$out" | grep -a 'child stdout/stderr' | tail -1 | sed 's/.*child stdout\/stderr[^A-Za-z]*//')"
+          childlog="$(printf '%s\n' "$out" | grep -a 'child stdout/stderr' | tail -1 | sed 's/.*child stdout\/stderr[^A-Za-z]*//' || true)"
           if [ -n "$childlog" ] && [ -f "$childlog" ]; then
             echo "===== DX12 spawned-child log ====="; cat "$childlog"; echo "===== end DX12 child log ====="
             grep -aiE 'DX12 renderer initialised|WARP software' "$childlog" \
@@ -650,7 +650,7 @@ jobs:
           scens=$(python -c "import json;print(' '.join(json.load(open('scripts/dev/perf-pr-fast-set.json'))['scenarios']))")
           for scen in $scens; do
             echo "::group::perf $scen (ARM64/WARP)"
-            result=$(bash scripts/dev/perf-run.sh "$scen" 2>&1 | tail -1)
+            result=$(bash scripts/dev/perf-run.sh "$scen" 2>&1 | tail -1 || true)
             if [ -f "$result" ]; then
               python scripts/dev/perf-baseline-bootstrap.py "$result" \
                 "docs/perf/baselines/${scen}.${host}.json" "$scen" \
@@ -1136,7 +1136,7 @@ jobs:
           # prefix and take the tail of the line.
           capture_childlog() {
             local out_text="$1" childlog
-            childlog="$(printf '%s\n' "$out_text" | grep -a 'child stdout/stderr' | tail -1 | sed 's/.*child stdout\/stderr[^A-Za-z]*//')"
+            childlog="$(printf '%s\n' "$out_text" | grep -a 'child stdout/stderr' | tail -1 | sed 's/.*child stdout\/stderr[^A-Za-z]*//' || true)"
             if [ -n "$childlog" ] && [ -f "$childlog" ]; then
               cp "$childlog" "${{ github.workspace }}/build/tmp/bucket-e-childlog/spawn-child.log"
               echo "===== bucket-E spawned-child log (per-test ImGui Test Engine failure reasons) ====="
@@ -1997,7 +1997,7 @@ jobs:
           set -uo pipefail
           out="$(SMATCHET_LINT_NARROWING=1 bash agents/scripts/project/test-lint-rules.sh --catalog)"
           printf '%s\n' "$out"
-          n="$(printf '%s\n' "$out" | grep -oE 'narrowing-conversions \([0-9]+ entries\)' | grep -oE '[0-9]+' | head -1)"
+          n="$(printf '%s\n' "$out" | grep -oE 'narrowing-conversions \([0-9]+ entries\)' | grep -oE '[0-9]+' | head -1 || true)"
           if [ "${n:-1}" != "0" ]; then
             echo "::error::first-party strict-zone narrowing-conversions found (${n:-unknown}) — fix the cast (static_cast<std::ptrdiff_t> / std::next); do not grandfather:"
             printf '%s\n' "$out" | sed -n '/narrowing-conversions (/,/^## /p'

@@ -100,7 +100,7 @@ jobs:
           rc=$?
           printf '%s\n' "$out" | tee ../../ui-monkey.log
           # Surface the spawned child log (per-test detail / the logged seed / any crash).
-          childlog="$(printf '%s\n' "$out" | grep -a 'child stdout/stderr' | tail -1 | sed 's/.*child stdout\/stderr[^A-Za-z]*//')"
+          childlog="$(printf '%s\n' "$out" | grep -a 'child stdout/stderr' | tail -1 | sed 's/.*child stdout\/stderr[^A-Za-z]*//' || true)"
           if [ -n "${childlog:-}" ] && [ -f "$childlog" ]; then
             echo "===== ui-monkey spawned-child log ====="; cat "$childlog" | tee -a ../../ui-monkey.log
           fi

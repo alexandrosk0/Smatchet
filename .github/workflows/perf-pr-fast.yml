@@ -282,7 +282,7 @@ jobs:
             # first armed run false-flagged SmatchetUI::Draw p99 17.354 ms on a
             # diff with no render-path change. Gate on the median of 3 measured
             # runs; a plumbing failure of ANY run still counts as run_failure.
-            warmup=$(bash scripts/dev/perf-run.sh "$scen" 2>&1 | tail -1)
+            warmup=$(bash scripts/dev/perf-run.sh "$scen" 2>&1 | tail -1 || true)
             if [ ! -f "$warmup" ]; then
               echo "FAIL: warmup scenario.run did not produce $warmup" >&2
               run_failure_count=$((run_failure_count + 1))
@@ -294,7 +294,7 @@ jobs:
             runs=()
             run_broke=0
             for i in 1 2 3; do
-              r=$(bash scripts/dev/perf-run.sh "$scen" 2>&1 | tail -1)
+              r=$(bash scripts/dev/perf-run.sh "$scen" 2>&1 | tail -1 || true)
               if [ ! -f "$r" ]; then
                 # Scenario-run plumbing failure (build broken, exe missing,
                 # JSON not produced). Track SEPARATELY from regression_count
@@ -312,7 +312,7 @@ jobs:
               echo "::endgroup::"
               continue
             fi
-            result=$(python scripts/dev/perf-median.py "${runs[@]}" | tail -1)
+            result=$(python scripts/dev/perf-median.py "${runs[@]}" | tail -1 || true)
             if [ ! -f "$result" ]; then
               echo "FAIL: perf-median did not select a usable snapshot for $scen" >&2
               run_failure_count=$((run_failure_count + 1))
@@ -357,7 +357,7 @@ jobs:
                 echo "::warning::$scen exceeded policy on the first median — taking a confirm sample (3 more runs)."
                 confirm_runs=()
                 for i in 1 2 3; do
-                  r=$(bash scripts/dev/perf-run.sh "$scen" 2>&1 | tail -1)
+                  r=$(bash scripts/dev/perf-run.sh "$scen" 2>&1 | tail -1 || true)
                   if [ ! -f "$r" ]; then
                     echo "FAIL: confirm scenario.run #$i did not produce $r" >&2
                     run_failure_count=$((run_failure_count + 1))
@@ -368,7 +368,7 @@ jobs:
                   confirm_runs+=("$r")
                 done
                 if [ "$confirm_plumbing" = "0" ]; then
-                  confirm_result=$(python scripts/dev/perf-median.py "${confirm_runs[@]}" | tail -1)
+                  confirm_result=$(python scripts/dev/perf-median.py "${confirm_runs[@]}" | tail -1 || true)
                   if [ -f "$confirm_result" ]; then
                     python scripts/dev/perf-compare.py "$baseline" "$confirm_result" > /dev/null 2>&1
                     rc2=$?
