@@ -139,3 +139,4 @@ Source/Core/src/**/CLAUDE.md
 
 # pre-ship.sh code-review gate marker (local, HEAD/diff-pinned ack)
 .review-ack
+.git-msg.tmp
