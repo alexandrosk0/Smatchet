@@ -44,9 +44,9 @@
 | B4 Plane FetchIssuesForKeys | ✅ RESOLVED | Early-exit pagination in `Tracker/PlaneIssueSearch.cpp` stops once all keys matched. Server-side `sequence_id__in` filter is the remaining B4-v2 follow-up. |
 | B5 Markdown table-cell flatten | 🟡 IMPROVED | `MarkdownCellPlainInner` now joins cell blocks with `<br>` (GFM in-cell line break) and preserves list items instead of running paragraphs together / dropping lists. First ADF→Markdown table golden tests added. Deeper fidelity (code blocks, nested lists/tables in a cell) still deferred to RICH_TEXT_EDITING_V2. |
 | C1 Retry-after-400 dup | ✅ RESOLVED | Consolidated into `FieldEditPipelineService::ApplyFieldUpdateWithEditMetaRetry`; both submit paths route through it. |
-| C4 Plane customs dropped | ⏳ OPEN | `PlaneIssueMutation.cpp` `BuildCreatePayload` still ignores its `catalog` param; UUID custom props never emitted under `properties.<uuid>`. |
+| C4 Plane customs dropped | ✅ RESOLVED (2026-07-10) | `BuildCreatePayload` now emits custom catalog fields under `properties.<uuid>` via the pure, doctested `BuildPlaneCustomProperties`; an unrepresentable value surfaces as `InvalidRequest` instead of silent loss. Edit-meta reporting of customs stays a flagged follow-on (seam has no catalog param). |
 | C5 FileIo extraction | 🟡 PARTIAL | No `FileIo.{h,cpp}`. `AtomicWriteTextFile` promoted to a public `ConfigManager` static (shared by 4 callers); `ScopedFileLock` still confined to `ConfigManager_Internal.h`. |
-| C6 LooksSensitiveKey blocklist | ⏳ OPEN | Unchanged (a product call, no code change resolves it). |
+| C6 LooksSensitiveKey blocklist | ✅ RESOLVED (documented, 2026-07-10) | The doc-why-each-entry-stays branch of the product call taken: rationale comment above `LooksSensitiveKey` classifies the list (credentials / identity-PII / free-text-that-quotes-both) and states why trimming is a privacy-stance decision. No behaviour change; trimming stays available if diff utility is later preferred. |
 | N1 LuaBindings LOC | ✅ number stale | Now **1540** (not 2648) — the file shrank via the 3-way split, opposite the doc's "grew" narrative. |
 | N3 CommandRegistry::FindLocked | ✅ RESOLVED | New alias-aware `Contains()` (locks internally, mirrors `FindLocked(name) != nullptr`); both `McpPlugin.cpp` worker-thread callers migrated to it — no registry pointer escapes to an httplib thread anymore. Regression-tested (alias resolution pinned). |
 | N4 AppController.h size/friends | 🟡 MIXED | Now **1465 LOC** (+430); but friend-coupling largely resolved — three friends collapsed to one `GridContextDepsAdapter`; sol2 friend gone. No `TrackerActions` interface yet. |
@@ -58,7 +58,7 @@
 | N12 IsTrackerTransportErrorText | ⏳ OPEN (unblocked 2026-07-05) | Still defined + used across ~14 files, shadowing `ClassifyTrackerResponse`. B2's uniform-retry objective is now met, so this consumer-side heuristic can be retired — next actionable B2 follow-on. |
 | N13 TryGetMcpStatusSnapshot | ⏳ OPEN (acceptable) | Still a gated virtual on `IPlugin`; no capability-tag system. As the doc itself said, acceptable today. |
 
-**Still genuinely open after this pass:** C4, C6, N12 (+ N13 acceptable, B2/B5/C5/N4 partial). A4 (graceful half) and N3 were closed 2026-07-05; B5 improved (multi-paragraph + list preservation) with fuller rich-cell fidelity deferred. Everything else on the A/B/C/N carry-over list is resolved. Items already ✅ in the doc (N2, C2, C7, N7, N11, N14) re-verified still true.
+**Still genuinely open after this pass:** N12 (+ N13 acceptable, B2/B5/C5/N4 partial). C4 (`properties.<uuid>` serialization) and C6 (blocklist rationale documented) closed 2026-07-10. A4 (graceful half) and N3 were closed 2026-07-05; B5 improved (multi-paragraph + list preservation) with fuller rich-cell fidelity deferred. Everything else on the A/B/C/N carry-over list is resolved. Items already ✅ in the doc (N2, C2, C7, N7, N11, N14) re-verified still true.
 
 ---
 
@@ -142,9 +142,11 @@ Phase 2A landed (PR #39) — helper + `PlaneClient::ProbeReachability`. ~30 hand
 Rebuilds `openWrap` / `closeWrap` vectors per text node. Reuse a scratch buffer member. Done via `thread_local std::vector<const char*>` (capacity persists, mark markers are all string literals so no `std::string` heap churn).
 
 ### C3. `PlaneClient::FetchIssueEditMeta` hardcoded 7 fields (item 39) — 🟡 partial (branch `feat/plane-fetchissueeditmeta-broaden`)
-`PlaneFieldCatalog.cpp:492` (file split from `PlaneClient.cpp`). Broadened to 9 built-ins matching what `BuildCreatePayload` / `BuildUpdatePayload` / `AddIssueToSprint` actually serialize (`+ type, parent`). Real per-issue permissions query deferred — Plane v1 has no capability endpoint; custom-property editability blocked on C4 (`properties.<uuid>` serialization).
+`PlaneFieldCatalog.cpp:492` (file split from `PlaneClient.cpp`). Broadened to 9 built-ins matching what `BuildCreatePayload` / `BuildUpdatePayload` / `AddIssueToSprint` actually serialize (`+ type, parent`). Real per-issue permissions query deferred — Plane v1 has no capability endpoint. C4's `properties.<uuid>` serialization landed 2026-07-10; reporting customs editable here still needs the seam to grow a catalog parameter (flagged in `docs/plans/shipped/plane-custom-properties.md`).
 
-### C4. `PlaneClient::BuildCreatePayload` / `BuildUpdatePayload` drop customs (item 40)
+### C4. `PlaneClient::BuildCreatePayload` / `BuildUpdatePayload` drop customs (item 40) — ✅ RESOLVED (2026-07-10)
+> `BuildPlaneCustomProperties` (`Source/Core/src/Tracker/PlaneCustomPropertyPure.cpp`, pure + doctested) types every custom catalog field present in the draft per family and `BuildCreatePayload` emits the result under `properties.<uuid>`; an unrepresentable value aborts as `TrackerErrorInvalidRequest` instead of vanishing. See `docs/plans/shipped/plane-custom-properties.md`. Follow-ons flagged there: `FetchIssueEditMeta` still reports built-ins only, and the inline-`properties` create shape awaits a live-server smoke.
+
 `PlaneClient.cpp:1459-1501` handles 6 core IDs (`summary`/`description`/`priority`/`status`/`type`/`parent`/`assignee`). Any `TrackerField.Id` that's a UUID (custom property) is silently dropped. Iterate `catalog` for custom props and emit under `properties.<uuid>` or whichever shape Plane v1 accepts.
 
 ### C5. Extract `ScopedFileLock` + `AtomicWriteTextFile` (item 41) — 🟡 PARTIAL (2026-07-05)
@@ -152,7 +154,9 @@ Rebuilds `openWrap` / `closeWrap` vectors per text node. Reuse a scratch buffer 
 
 Both still defined in `Source/Core/src/ConfigManager.cpp` anonymous namespace (lines 179+, ~700+). `BackendAuditTrail` uses raw `ofstream`; export paths re-implement atomic-write. Promote to `Source/Core/{src,include}/FileIo.{h,cpp}` so all three share. Win32-only work.
 
-### C6. `BackendAuditTrail::LooksSensitiveKey` blocklist (item 43)
+### C6. `BackendAuditTrail::LooksSensitiveKey` blocklist (item 43) — ✅ RESOLVED (documented, 2026-07-10)
+> Took the "document why each entry stays" branch of the product call: a rationale comment above `LooksSensitiveKey` (`Source/Core/src/Persistence/BackendAuditTrail.cpp`) classifies the blocklist into credentials / identity-PII / free-text-that-quotes-both and records why the audit trail (plaintext, on-disk, travels in bug reports) keeps all three. Behaviour unchanged. If diff utility is ever preferred over the privacy stance, trimming is a deliberate follow-up decision, not a cleanup.
+
 Redacts `summary` / `assignee` / `body` / `text` etc. Likely too broad — audit dumps lose useful diffs. Product call: trim the list or document why each entry stays.
 
 ### C7. Manual `PushClipRect` per grid cell (item 54) — ✅ shipped (branch `feat/grid-pushcliprect-audit`)

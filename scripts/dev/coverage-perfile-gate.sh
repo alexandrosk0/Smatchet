@@ -62,6 +62,16 @@ HIGH_RISK_UNITS=(
     "AiErrorRedact"           # provider-error-body credential redaction (Bearer/Basic/api-key/sk-/ghp_)
     "JqlEscape"               # JQL string-literal escape (injection break-out guard)
     "TrackerHttpPure"         # cleartext-base upgrade + transport-error classification + loopback policy
+    # 2026-07-10 ratchet — TEST_COVERAGE_GAP_MAP.md Tier-1 pure units, rates measured
+    # under their shipping suites with llvm-cov on Linux (same tests the rig runs):
+    "TicketGridDurationSortPure"   # untrusted tracker duration-string parser (audit-#3 loop class) — 97%
+    "PlaneQuerySuggestEnginePure"  # per-keystroke omnibox parse vs server-sourced catalog — 98%
+    "TrackerGridFieldDisplayPure"  # untrusted tracker JSON -> render models via ParseBounded — 95%
+    "MergeWatchNotifyPure"         # network-facing notify-endpoint request validation — 100%
+    "AiPrefsTestConnectionPure"    # credential-slot routing + endpoint-sanitizer gate — 100% (AI-gated: absent => fail-open)
+    "PlaneCustomPropertyPure"      # custom-property serialization from grid strings (C4) — 97%
+    # NOT ratcheted: JqlSuggestEnginePure measured 82% under its suite — needs a test
+    # top-up to clear the floor before it can join.
 )
 
 DEFAULT_FLOOR=90
