@@ -43,10 +43,8 @@ using smatchet::config_detail::SecretMigrationFlags;
 
 namespace {
 
+#if defined(SMATCHET_WITH_WHISPER)
 // Whisper non-secret fields + the WhisperMaxClipSec clamp. (WhisperApiKey loads in LoadSecretFields.)
-// clang-format off
-// SMATCHET_DEVIATION(rule=unused-symbol-under-config-guard; reason=verbatim move of grandfathered ConfigManager code — LoadWhisperFields is defined unguarded but its sole call in ConfigManager::Load is #if defined(SMATCHET_WITH_WHISPER); the def + guarded call stay in this one TU (as in the original ConfigManager.cpp), so the feature-OFF unused-function behavior is unchanged by the split; owner=orchestrator; revisit=when the whisper load path is feature-gated at the definition)
-// clang-format on
 void LoadWhisperFields(const nlohmann::json& j, TrackerConfig& cfg) {
     cfg.WhisperEnabled = j.value("whisper_enabled", cfg.WhisperEnabled);
     cfg.WhisperSetupCompleted = j.value("whisper_setup_completed", cfg.WhisperSetupCompleted);

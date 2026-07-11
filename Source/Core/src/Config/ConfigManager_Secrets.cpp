@@ -226,6 +226,7 @@ void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
     j["whisper_api_key"] = config.WhisperApiKey;
 #endif
 }
+#endif
 
 } // namespace
 
