@@ -2,7 +2,7 @@
 
 > **Slug**: `appcontroller-clusters-followup` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — slice 1 (MCP client-activity) shipped (PR #1660); slice 2 (Lua-script-file handling) shipped (PR #1742, squash `1461bee3`); slice 3 (AI-context) shipped (PR #1743, squash `2c580c79`); slice 4 (host-integration) shipped (PR #1749, squash `a2ae5033`); slice 5 (ticket-prefetch) shipped (PR #1754, squash `b6a33c47`; follow-up leak fix PR #1757, squash `9ed93d33`); slice 6 (field-icon path resolver) shipped (PR #1763, squash `718205df`); slice 7 (local-cache DB block) in flight. Slice 7 is expected to be the LAST cohesive cluster — after it, `AppController.cpp` has no further obviously-cohesive extractable cluster and the plan is ready to move to `shipped`.
+> **Status**: `shipped` — slice 1 (MCP client-activity) shipped (PR #1660); slice 2 (Lua-script-file handling) shipped (PR #1742, squash `1461bee3`); slice 3 (AI-context) shipped (PR #1743, squash `2c580c79`); slice 4 (host-integration) shipped (PR #1749, squash `a2ae5033`); slice 5 (ticket-prefetch) shipped (PR #1754, squash `b6a33c47`; follow-up leak fix PR #1757, squash `9ed93d33`); slice 6 (field-icon path resolver) shipped (PR #1763, squash `718205df`); slice 7 (local-cache DB block) shipped (PR #1765, squash `776d1b83`; rebased onto develop's #1751 DR6 atomic-swap — the moved bodies carry the `std::atomic_store(&Cache, …)` teardown, not the pre-#1751 `Cache.reset()`/`make_unique` forms). Slice 7 was the LAST cohesive cluster — `AppController.cpp` (2862 → 571 LOC across the two plans) has no further obviously-cohesive extractable cluster, so the plan is now `shipped`.
 
 <!-- index-summary: Continuation of the shipped appcontroller-service-extraction plan — behavior-preserving extraction of the remaining cohesive AppController.cpp clusters (flagged there as § Out of scope) into focused companion TUs, toward the ≤ ~800 LOC target. -->
 
@@ -124,7 +124,7 @@ whole-tree grep before the cut.
   cluster is the local-cache database block plus its `RemoveLocalCacheDbFiles` helper
   (~140 LOC, still in the first anon namespace).
 
-- **Slice 7 — local-cache database block (in flight).** Extract the file-local
+- **Slice 7 — local-cache database block (SHIPPED, PR #1765, squash `776d1b83`).** Extract the file-local
   `RemoveLocalCacheDbFiles` helper (the whole first anonymous-namespace block) plus the three
   contiguous methods `GetResolvedLocalCacheDbPath` / `RecreateLocalCacheDatabase` /
   `EnsureLocalCacheForUiTest` into `AppController_LocalCacheDb.cpp`. Helper census: whole-tree
