@@ -10,8 +10,8 @@
 # system under test.
 #
 # Exit codes:
-#   0 — every bats test passed
-#   1 — at least one bats test failed
+#   0 — every bats test passed (and at least one ran)
+#   1 — at least one bats test failed, zero tests ran, or the suite is missing
 #   2 — bats binary missing (BUILD.md § Dev-script CLI tools)
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 2
@@ -36,4 +36,12 @@ PASSED=$(printf '%s\n' "$OUT" | grep -cE '^ok [0-9]+' || true)
 FAILED=$(printf '%s\n' "$OUT" | grep -cE '^not ok [0-9]+' || true)
 echo "Passed: ${PASSED}  Failed: ${FAILED}"
 if [ "$FAILED" -gt 0 ] || [ "$RC" -ne 0 ]; then exit 1; fi
+# Zero-run guard: a renamed/emptied suite must FAIL, not green-light a run in
+# which nothing executed (the passed=0&&failed=0 fail-open class the
+# historical-review ledger keeps re-finding in sibling wrappers, e.g. the
+# Batch 16 #1175 finding on test-pr-status-watch-bats.sh).
+if [ "$PASSED" -eq 0 ]; then
+    echo "test-mutation-smoke-bats: FAIL — 0 bats tests ran from $BATS_FILE (suite renamed/empty?)" >&2
+    exit 1
+fi
 exit 0
