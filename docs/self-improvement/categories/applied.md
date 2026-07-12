@@ -3219,3 +3219,90 @@ before push. Archive to `applied.md` on the next sweep.
 - 2026-05-12 · command-system · [process] — when a PR plan names a specific line/symbol, do a 30-second sanity grep before editing
   Resolution: 45c14c9 — agents/project/command-system.md § Workflow step 3 + agents/project/tracker-backend.md § Workflow step 1.
 
+# Develop tip can go RED on a required check and silently block every PR until an author trips over it
+
+- **Category:** infra
+- **Priority:** P2
+- **Date:** 2026-07-10
+- **Status:** applied (2026-07-11 — `agents/scripts/core/develop-tip-required-green.sh` SessionStart nudge; flags a required check that ran on the develop tip and is terminal-non-success. Deliberately does NOT flag absent required checks — most are PR-only and never run on a develop push, which would false-fire every session; that self-disabled-gate case stays with postmortem-owed.sh's absence-present allow-list. Injectable data layer + `--selftest`; wired into `settings.json.tmpl`.)
+- **Postmortem:** [`postmortems.md`](../postmortems.md) § 2026-07-10 · PR #1698
+
+## What happened
+
+PR #1698 added `tests/bats/mutation_smoke.bats` with no `test-*.sh` wrapper. Its **required** `Doc anchors + agent contract` check ran ~60 s *after* the merge (merged 08:48:56Z, check started 08:49:56Z), so the `test-orphan-bats` failure landed on `develop` un-caught. Under **block-on-any-red**, that red develop tip was then inherited onto every open PR's own head — it silently blocked the whole repo until the #1666 fix (#1704) tripped over it and I root-caused it. Fixed the instance in #1705 (the missing wrapper).
+
+## The gap
+
+There's no cheap, standing signal that the **develop tip itself** has a RED required check. The failure is discovered only when the *next* author opens a PR and inherits the red — attributing the block to the wrong PR and costing a root-cause dig each time. Both detecting gates (`test-orphan-bats` in local pre-ship `test-docs.sh` AND the required CI check) exist and work; the miss was purely merge-*timing*, and nothing surfaces the resulting red-develop state proactively.
+
+## Proposed fix
+
+A lightweight **develop-tip required-green assertion**: query the develop tip's *required* status-check conclusions (`gh api repos/…/commits/<develop-tip>/check-runs`, filter to `required_status_checks.contexts`) and raise a loud, attributable nudge the moment any is RED — naming the check + the commit/PR that turned it red. Two viable homes:
+- extend `agents/scripts/core/postmortem-owed.sh`'s SessionStart sweep (it already inspects merged state), or
+- a new `agents/scripts/core/develop-tip-required-green.sh` run at SessionStart.
+
+Converts "silent red develop blocks every PR" into an immediate signal tied to the introducing PR. Durable complement to #1705 (which fixed the specific orphan): the wrapper stops *this* orphan; the tip-health assert stops the *class* — a required check going red on develop and nobody noticing until it blocks the next author (the #1237-family merge-before-terminal race is one upstream cause).
+
+## Self-improvement
+
+Empty.
+
+# Deviation comments must fit ColumnLimit or pre-ship loops forever
+
+- **Date**: 2026-07-05 · **Priority**: P2 · **Category**: process
+- **Session**: user-facing-text session (PRs #1614/#1615)
+- **Status**: applied (2026-07-11 — took the entry's *alternative*: `comment_audit.py` now recognizes wrapped `// SMATCHET_DEVIATION( … )` blocks via `_deviation_continuation_lines` (paren-balanced span) and exempts the continuation lines from every comment-noise rule, so a clang-format-wrapped long `reason=` no longer loops the gate. A hard "must fit ColumnLimit" gate was rejected — long reasons genuinely exceed 120 cols on one line, e.g. AppController.h:910 at 608 chars. `--selftest` +3 cases; CI-enforced via `lint_rules.bats`.)
+
+## Friction
+
+`scripts/dev/pre-ship.sh` whole-file-formats every changed C++ file before the
+delta lint gate. Several pre-existing single-line
+`SMATCHET_DEVIATION(rule=duplication; …)` comments in
+`JiraIssueMutation.cpp` / `JiraIssueSearch.cpp` were ~240 chars — over the
+120-col `ColumnLimit` — so clang-format re-wrapped them into multi-line
+comments whose continuation lines trip `comment-commented-out-code`. Any PR
+touching those files hit a fix → format → re-fail loop (three iterations this
+session) until the comments were compacted to ≤ 120 cols including indent.
+
+## Proposal
+
+Add a check (or extend `agent_size_audit.py`/the deviation-grammar validator)
+that a `SMATCHET_DEVIATION` comment line fits ColumnLimit at its indent, so the
+unstable form can't be committed. Alternatively teach the comment-noise rule to
+ignore continuation lines that belong to a wrapped `SMATCHET_DEVIATION` block.
+This session fixed the five instances in the two Jira TUs (compact
+`reason=pre-existing clone`), but other over-long deviation lines likely
+remain elsewhere and will bite the next PR that touches their file.
+
+# Committing via the Bash tool needs a heredoc, not the PowerShell here-string template
+
+- **Date**: 2026-07-10 · **Priority**: P3 · **Category**: process
+- **Session**: issue-fixing thread (#1713, PR #1726)
+- **Status**: applied (2026-07-11 — took the entry's cheap proposal: added a `docs/agent-rules/process-rules.md` note (after the worktree `git -C <literal>` commit rule) that the `@'…'@` here-string is PowerShell-only and the Bash ship-loop path commits via `-F -` heredoc / `-F <tempfile>`)
+
+## Friction
+
+The environment's commit-message guidance is written for the PowerShell tool
+(`git commit -m @'…'@` single-quoted here-string, with the mandatory
+`Co-Authored-By:` / `Claude-Session:` footer). On this repo the ship-loop
+commits through the **Bash** tool instead — `git -C <literal-abs-path> commit`
+is the standard form for worktrees, because the integration tree rejects
+`$VAR`/`$(pwd)` in the commit path. In git-bash, `@'…'@` is not a here-string:
+`@'` parses as a literal `@` followed by a single-quoted block, so the message
+became `@\n<real subject>\n…` and the commit subject was a bare `@`. Caught it
+on the `git log -1 --format=%s` readback and had to `--amend -F <file>`, costing
+an extra amend round-trip.
+
+## Proposal
+
+When committing from the **Bash** tool, never paste the PowerShell `@'…'@`
+template verbatim. Use one of:
+- `git commit -F <file>` after writing the message to a temp file (most robust
+  for multi-line bodies + the footer), or
+- a bash heredoc: `git commit -F - <<'EOF' … EOF`.
+
+Reserve `-m @'…'@` for the PowerShell tool only. Consider adding a one-line note
+to the ship-loop commit step in `docs/agent-rules/process-rules.md` (or the
+worktree commit recipe) that the `@'…'@` form is PowerShell-only and the Bash
+path uses `-F`. Cheap, prevents a silent malformed-subject commit that only the
+`%s` readback catches.
