@@ -7,7 +7,9 @@
 //     modal: Cancel is a no-op, Clear wipes assistantHistory + assistantHistoryRowIds.
 //   - CopyMessage_WritesContentToClipboard — the per-turn Copy button writes the message content to
 //     the ImGui clipboard (turn seeded Pinned so its action row stays interactive without a hover).
-// Remaining (follow-up): pin-bookmark, history-persist, keyboard-nav.
+//   - PinBookmark_ActionRowTogglesPinnedState — the per-turn Pin/Unpin action-row button flips
+//     AiMessage::Pinned (the flag that drives the pinned-bookmark strip) both ways.
+// Remaining (follow-up): history-persist, keyboard-nav.
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
 
@@ -212,11 +214,67 @@ void RegisterCopyMessageToClipboard(ImGuiTestEngine* engine) {
     };
 }
 
+// Pin bookmark: the per-turn Pin/Unpin action-row button toggles AiMessage::Pinned — the flag that
+// surfaces (and removes) a message in the pinned-bookmark strip above the history. Seed the turn
+// Pinned so its action row is interactive without a hover; unpin then re-pin, asserting the state
+// flips both ways. The button id is stable ("##AiPin0"); only the label prefix flips with state.
+void RegisterPinBookmarkToggle(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "AiChat", "PinBookmark_ActionRowTogglesPinnedState");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        const AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("SKIP: app not booted");
+            return;
+        }
+        const bool origOpen = g_ui.assistantPanelOpen;
+        const bool origWhisperSetup = g_ui.cfg.WhisperSetupCompleted;
+
+        // Single Pinned turn: on-screen (never culled) with an interactive action row.
+        SeedHistory(/*turnCount=*/1, /*pinFirst=*/true);
+        const bool panelLive = OpenAssistantPanel(ctx);
+        IM_CHECK_NO_RET(panelLive);
+        if (panelLive && !g_ui.assistantHistory.empty()) {
+            ctx->SetRef("Smatchet Assistant");
+            const bool fa = SmatchetAreFaIconsLoaded();
+            IM_CHECK_NO_RET(g_ui.assistantHistory[0].Pinned); // precondition: seeded Pinned
+
+            // UNPIN: the turn starts Pinned, so the button shows the "unpin" affordance.
+            const std::string unpinRef = std::string("**/") + (fa ? ICON_FA_THUMBTACK_SLASH : "Unpin") + "##AiPin0";
+            ctx->ItemClick(unpinRef.c_str());
+            const bool unpinned =
+                YieldUntil(ctx, [] { return !g_ui.assistantHistory.empty() && !g_ui.assistantHistory[0].Pinned; });
+            if (!unpinned) {
+                ctx->LogError("Unpin: clicking the action-row pin button did not clear AiMessage::Pinned");
+                IM_CHECK(false);
+            }
+
+            // RE-PIN: the button now shows the "pin" affordance; the just-clicked row stays active
+            // (wasActive from the prior click) so its action row is still interactive.
+            const std::string pinRef = std::string("**/") + (fa ? ICON_FA_THUMBTACK : "Pin") + "##AiPin0";
+            ctx->ItemClick(pinRef.c_str());
+            const bool repinned =
+                YieldUntil(ctx, [] { return !g_ui.assistantHistory.empty() && g_ui.assistantHistory[0].Pinned; });
+            if (!repinned) {
+                ctx->LogError("Re-pin: clicking the action-row pin button did not set AiMessage::Pinned");
+                IM_CHECK(false);
+            }
+        }
+
+        // Teardown.
+        g_ui.assistantHistory.clear();
+        g_ui.assistantHistoryRowIds.clear();
+        g_ui.assistantPanelOpen = origOpen;
+        g_ui.cfg.WhisperSetupCompleted = origWhisperSetup;
+        ctx->Yield();
+    };
+}
+
 } // namespace
 
 extern "C" void SmatchetRegisterAiChatPanelTests(ImGuiTestEngine* engine) {
     RegisterClearConversationConfirm(engine);
     RegisterCopyMessageToClipboard(engine);
+    RegisterPinBookmarkToggle(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS
