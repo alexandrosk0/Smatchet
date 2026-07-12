@@ -115,8 +115,14 @@ def _deviation_continuation_lines(lines):
                 in_block = depth > 0   # marker line itself is not a continuation
             continue
         stripped = raw.lstrip()
-        if stripped.startswith("//") or stripped.startswith("*"):
-            cont.add(i + 1)
+        if not (stripped.startswith("//") or stripped.startswith("*")):
+            # A non-comment line ends the continuation span regardless of paren balance. A wrapped
+            # SMATCHET_DEVIATION is contiguous //|* lines; without this bound an unbalanced '(' in
+            # free-form reason= prose left depth > 0 forever, so in_block never reset and EVERY later
+            # //|* line in the file was silently exempted from the comment-noise gate (#1760).
+            in_block = False
+            continue
+        cont.add(i + 1)
         depth += raw.count("(") - raw.count(")")
         if depth <= 0:
             in_block = False
@@ -603,6 +609,13 @@ def run_selftest():
           "    foo();"], set()),
         # No deviation at all -> empty.
         (["    // ordinary comment", "    bar();"], set()),
+        # #1760 fail-open: an unbalanced '(' in the reason prose must NOT leak the exemption past
+        # the deviation's own comment lines. The block ends at the first non-comment line, so the
+        # later commented-out code stays flaggable (only line 2, the deviation's own wrap, is exempt).
+        (["    // SMATCHET_DEVIATION(rule=x; reason=see helper foo(bar for the gory",
+          "    // details; owner=orch; revisit=never",
+          "    int realCode = 0;",
+          "    // int deadCode = 1;  // commented-out code that must stay flaggable"], {2}),
     ]
     for lines, expected in dev_cases:
         got = _deviation_continuation_lines(lines)
