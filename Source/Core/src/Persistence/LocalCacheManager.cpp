@@ -2,6 +2,7 @@
 
 #include "IssueDraft.h"
 #include "Logger.h"
+#include "Persistence/SqliteOpenRecoveryPure.h"
 
 #include <ghc/filesystem.hpp>
 #include <sqlite3.h> // SQLITE_NOTADB / SQLITE_CORRUPT result codes (corrupt-file classification)
@@ -163,8 +164,7 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
     try {
         InitSchema();
     } catch (const SQLite::Exception& ex) {
-        const int code = ex.getErrorCode();
-        if (code != SQLITE_NOTADB && code != SQLITE_CORRUPT) {
+        if (!IsRebuildableCorruptCode(ex.getErrorCode())) {
             throw;
         }
         RebuildFreshAfterCorruption(ex);
@@ -173,8 +173,7 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
 }
 
 void LocalCacheManager::RebuildFreshAfterCorruption(const SQLite::Exception& ex) {
-    const std::string suffix =
-        ".corrupt-" + std::to_string(static_cast<long long>(std::time(nullptr)));
+    const std::string suffix = MakeCorruptQuarantineSuffix(static_cast<long long>(std::time(nullptr)));
     LOG_ERROR("LocalCacheManager: cache file '%s' is corrupt (%s); quarantining to '%s' and "
               "rebuilding a fresh cache",
               dbPath_.c_str(), ex.what(), (dbPath_ + suffix).c_str());
