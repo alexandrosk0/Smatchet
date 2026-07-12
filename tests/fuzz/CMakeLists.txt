@@ -254,3 +254,30 @@ smatchet_add_fuzz_target(fuzz_locale_format_guard
     INCLUDES
         "${_fuzz_core}/include"
     CORPUS locale_format_guard)
+
+# --- hand-rolled-parser fuzz gap (CPP_CODE_AUDIT.md #3/#17/#19) --------------
+
+# TicketGridDurationSortPure::ParseDurationToSecondsForSort — the UI-thread sort comparator's
+# time-tracking duration parser over tracker-supplied (untrusted) cell values. A non-unit char
+# after a number used to stall the cursor forever (permanent UI freeze, #3) and a huge magnitude
+# used to overflow long long (#19); both fixed, this keeps them fixed. Closure: the pure .cpp only
+# (<cctype>/<limits>/<string>, no Logger/ImGui).
+smatchet_add_fuzz_target(fuzz_duration_parse
+    SOURCES
+        fuzz_duration_parse.cpp
+        "${_fuzz_core}/src/TicketGridDurationSortPure.cpp"
+    INCLUDES
+        "${_fuzz_core}/include"
+    CORPUS duration_parse)
+
+# smatchet::version::ParseSemanticVersion — parses a GitHub release tag straight from an
+# update-check HTTP response (untrusted ingress). std::atoi on a digit run past INT_MAX is UB
+# (#17); each segment is all-digit-gated then range-checked via std::stoll. Closure: the pure
+# .cpp only (extracted from AttachmentAppUpdateService so no cpr/Logger is dragged in).
+smatchet_add_fuzz_target(fuzz_semver_parse
+    SOURCES
+        fuzz_semver_parse.cpp
+        "${_fuzz_core}/src/SemanticVersionPure.cpp"
+    INCLUDES
+        "${_fuzz_core}/include"
+    CORPUS semver_parse)
