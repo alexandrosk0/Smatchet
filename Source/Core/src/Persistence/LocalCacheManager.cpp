@@ -164,7 +164,7 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
     try {
         InitSchema();
     } catch (const SQLite::Exception& ex) {
-        if (!IsRebuildableCorruptCode(ex.getErrorCode())) {
+        if (!smatchet::IsRebuildableCorruptCode(ex.getErrorCode())) {
             throw;
         }
         RebuildFreshAfterCorruption(ex);
@@ -173,7 +173,7 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
 }
 
 void LocalCacheManager::RebuildFreshAfterCorruption(const SQLite::Exception& ex) {
-    const std::string suffix = MakeCorruptQuarantineSuffix(static_cast<long long>(std::time(nullptr)));
+    const std::string suffix = smatchet::MakeCorruptQuarantineSuffix(static_cast<long long>(std::time(nullptr)));
     LOG_ERROR("LocalCacheManager: cache file '%s' is corrupt (%s); quarantining to '%s' and "
               "rebuilding a fresh cache",
               dbPath_.c_str(), ex.what(), (dbPath_ + suffix).c_str());
