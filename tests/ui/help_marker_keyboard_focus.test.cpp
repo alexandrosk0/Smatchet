@@ -48,6 +48,10 @@ struct HelpMarkerFocusState {
     ImGuiID markerId = 0;
     ImGuiID navIdThisFrame = 0;
     bool useRealMarker = true; // true: production RenderText; false: pre-fix replica.
+    // When true, GuiFunc wraps the real marker in ImGui::BeginDisabled()/EndDisabled() so the
+    // hover variant can prove the AllowWhenDisabled contract (tooltip stays reachable inside a
+    // disabled group — e.g. the Assistant custom-endpoint block).
+    bool renderInDisabledBlock = false;
 };
 
 HelpMarkerFocusState g_state;
@@ -77,11 +81,18 @@ void DrawHelpMarkerWindow(HelpMarkerFocusState& s) {
         ImGui::Button("Anchor##hmkf");
 
         if (s.useRealMarker) {
-            // The exact #1128 surface — the shared marker all ~38 sites call.
+            // The exact #1128 surface — the shared marker all ~38 sites call. Optionally inside a
+            // BeginDisabled() block so the hover variant exercises the AllowWhenDisabled contract.
+            if (s.renderInDisabledBlock) {
+                ImGui::BeginDisabled();
+            }
             SmatchetHelpMarker::RenderText(kHelpBody);
             // The marker's nav item is the InvisibleButton with id PushID(fullText)
             // + "##helpmarker"; GetItemID() after the call is that button.
             s.markerId = ImGui::GetItemID();
+            if (s.renderInDisabledBlock) {
+                ImGui::EndDisabled();
+            }
         } else {
             DrawPreFixReplica(kHelpBody);
             s.markerId = ImGui::GetItemID();
@@ -111,84 +122,122 @@ void FocusMarkerViaKeyboard(ImGuiTestContext* ctx, ImGuiID markerId) {
     ctx->Yield();
 }
 
+// Common per-variant TestFunc preamble: clear the frame-scoped probes, point the engine at the
+// test window, and give GuiFunc two frames to draw + populate s->markerId. Each variant sets its
+// own useRealMarker / renderInDisabledBlock before calling this.
+void ResetHelpMarkerStateAndSettle(ImGuiTestContext* ctx, HelpMarkerFocusState* s) {
+    s->tooltipSubmittedThisFrame = false;
+    s->markerId = 0;
+    s->navIdThisFrame = 0;
+    ctx->SetRef("SmatchetTest::HelpMarkerKeyboardFocus");
+    ctx->Yield();
+    ctx->Yield();
+}
+
+void HelpMarkerGuiFunc(ImGuiTestContext* ctx) {
+    DrawHelpMarkerWindow(*static_cast<HelpMarkerFocusState*>(ctx->Test->UserData));
+}
+
+// Variant 1 — production RenderText, keyboard focus surfaces the tooltip (#1128).
+void RegisterKeyboardFocusRealMarkerTest(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "HelpMarker", "KeyboardFocus_RealMarker_ShowsTooltip");
+    t->UserData = &g_state;
+    t->GuiFunc = HelpMarkerGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        auto* s = static_cast<HelpMarkerFocusState*>(ctx->Test->UserData);
+        s->useRealMarker = true;
+        s->renderInDisabledBlock = false;
+        ResetHelpMarkerStateAndSettle(ctx, s);
+
+        // s->markerId is populated by GuiFunc once the window has drawn.
+        FocusMarkerViaKeyboard(ctx, s->markerId);
+
+        // The marker must be a real nav item (non-zero id) and keyboard nav must have landed on it.
+        if (s->markerId == 0) {
+            ctx->LogError("marker has no item id — RenderText emitted no nav-participating item");
+            IM_CHECK(false);
+        }
+        if (s->navIdThisFrame != s->markerId) {
+            ctx->LogError("keyboard nav did not focus the marker: NavId=0x%08X markerId=0x%08X — "
+                          "InvisibleButton + ImGuiButtonFlags_EnableNav missing?",
+                          s->navIdThisFrame, s->markerId);
+            IM_CHECK(false);
+        }
+        // The #1128 assertion: a tooltip is submitted while the marker is keyboard-focused.
+        if (!s->tooltipSubmittedThisFrame) {
+            ctx->LogError("no tooltip submitted on keyboard focus — IsItemFocused() guard missing");
+            IM_CHECK(false);
+        }
+    };
+}
+
+// Variant 2 — pre-fix replica self-check. Drives the OLD shape (TextUnformatted + hover-only) and
+// asserts keyboard focus surfaces NO tooltip; a failure here would mean variant 1 could pass for
+// the wrong reason.
+void RegisterPreFixReplicaTest(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "HelpMarker", "KeyboardFocus_PreFixReplica_NoTooltip_RegressionShape");
+    t->UserData = &g_state;
+    t->GuiFunc = HelpMarkerGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        auto* s = static_cast<HelpMarkerFocusState*>(ctx->Test->UserData);
+        s->useRealMarker = false;
+        s->renderInDisabledBlock = false;
+        ResetHelpMarkerStateAndSettle(ctx, s);
+
+        // The pre-fix replica is a TextUnformatted glyph (non-nav id); passing it to NavMoveTo proves
+        // nav cannot land focus on it, so no focus-tooltip fires.
+        FocusMarkerViaKeyboard(ctx, s->markerId);
+        if (s->tooltipSubmittedThisFrame) {
+            ctx->LogError("self-check failure: pre-fix replica surfaced a tooltip on keyboard focus — "
+                          "methodology cannot distinguish the regression (TextUnformatted should be unreachable)");
+            IM_CHECK(false);
+        }
+    };
+}
+
+// Variant 3 — production RenderText inside BeginDisabled(): a MOUSE hover still surfaces the tooltip
+// (the AllowWhenDisabled contract — help stays reachable in a disabled group, e.g. the Assistant
+// custom-endpoint block). Closes half-(a) of the ui-help-marker-tooltips backlog.
+void RegisterHoverInsideDisabledBlockTest(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "HelpMarker", "Hover_InsideDisabledBlock_ShowsTooltip");
+    t->UserData = &g_state;
+    t->GuiFunc = HelpMarkerGuiFunc;
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        auto* s = static_cast<HelpMarkerFocusState*>(ctx->Test->UserData);
+        s->useRealMarker = true;
+        s->renderInDisabledBlock = true;
+        ResetHelpMarkerStateAndSettle(ctx, s);
+
+        if (s->markerId == 0) {
+            ctx->LogError("marker has no item id inside BeginDisabled — RenderText emitted no item");
+            IM_CHECK(false);
+        }
+        // Hover the marker; AllowWhenDisabled must let the tooltip fire even though the item is
+        // inside a disabled block. The production guard uses ImGuiHoveredFlags_DelayShort, whose
+        // timer only advances with real simulation time — Yield() alone is skipped in the engine's
+        // Fast mode, so use SleepNoSkip to accumulate past the ~0.15s delay.
+        ctx->MouseMove(s->markerId);
+        ctx->SleepNoSkip(0.30f, 1.0f / 60.0f);
+        bool submitted = false;
+        for (int i = 0; i < 10 && !submitted; ++i) {
+            ctx->Yield();
+            submitted = s->tooltipSubmittedThisFrame;
+        }
+        if (!submitted) {
+            ctx->LogError("no tooltip on hover inside BeginDisabled — AllowWhenDisabled hover flag missing");
+            IM_CHECK(false);
+        }
+
+        // Restore so the shared g_state doesn't leak the disabled render into the other variants.
+        s->renderInDisabledBlock = false;
+        ctx->Yield();
+    };
+}
+
 void RegisterTests(ImGuiTestEngine* engine) {
-    // Variant 1 — production RenderText, keyboard focus surfaces the tooltip.
-    {
-        ImGuiTest* t = IM_REGISTER_TEST(engine, "HelpMarker", "KeyboardFocus_RealMarker_ShowsTooltip");
-        t->UserData = &g_state;
-        t->GuiFunc = [](ImGuiTestContext* ctx) {
-            auto* s = static_cast<HelpMarkerFocusState*>(ctx->Test->UserData);
-            DrawHelpMarkerWindow(*s);
-        };
-        t->TestFunc = [](ImGuiTestContext* ctx) {
-            auto* s = static_cast<HelpMarkerFocusState*>(ctx->Test->UserData);
-            s->useRealMarker = true;
-            s->tooltipSubmittedThisFrame = false;
-            s->markerId = 0;
-            s->navIdThisFrame = 0;
-            ctx->SetRef("SmatchetTest::HelpMarkerKeyboardFocus");
-            ctx->Yield();
-            ctx->Yield();
-
-            // s->markerId is populated by GuiFunc once the window has drawn.
-            FocusMarkerViaKeyboard(ctx, s->markerId);
-
-            // The marker must be a real nav item (non-zero id) and keyboard nav
-            // must have landed on it.
-            if (s->markerId == 0) {
-                ctx->LogError("marker has no item id — RenderText emitted no nav-participating item");
-                IM_CHECK(false);
-            }
-            if (s->navIdThisFrame != s->markerId) {
-                ctx->LogError("keyboard nav did not focus the marker: NavId=0x%08X markerId=0x%08X — "
-                              "InvisibleButton + ImGuiButtonFlags_EnableNav missing?",
-                              s->navIdThisFrame, s->markerId);
-                IM_CHECK(false);
-            }
-            // The #1128 assertion: a tooltip is submitted while the marker is
-            // keyboard-focused (no mouse hover involved).
-            if (!s->tooltipSubmittedThisFrame) {
-                ctx->LogError("no tooltip submitted on keyboard focus — IsItemFocused() guard missing");
-                IM_CHECK(false);
-            }
-        };
-    }
-
-    // Variant 2 — pre-fix replica self-check. Drives the OLD shape
-    // (TextUnformatted + hover-only) and asserts keyboard focus surfaces NO
-    // tooltip. If this fails (a tooltip appears) the methodology is bogus —
-    // it would mean the positive variant could pass for the wrong reason.
-    {
-        ImGuiTest* t = IM_REGISTER_TEST(engine, "HelpMarker", "KeyboardFocus_PreFixReplica_NoTooltip_RegressionShape");
-        t->UserData = &g_state;
-        t->GuiFunc = [](ImGuiTestContext* ctx) {
-            auto* s = static_cast<HelpMarkerFocusState*>(ctx->Test->UserData);
-            DrawHelpMarkerWindow(*s);
-        };
-        t->TestFunc = [](ImGuiTestContext* ctx) {
-            auto* s = static_cast<HelpMarkerFocusState*>(ctx->Test->UserData);
-            s->useRealMarker = false;
-            s->tooltipSubmittedThisFrame = false;
-            s->markerId = 0;
-            s->navIdThisFrame = 0;
-            ctx->SetRef("SmatchetTest::HelpMarkerKeyboardFocus");
-            ctx->Yield();
-            ctx->Yield();
-
-            // The pre-fix replica is a TextUnformatted glyph: GetItemID() returns
-            // a non-nav id. We deliberately pass it to NavMoveTo to prove nav
-            // cannot land focus on it (and thus no focus-tooltip fires).
-            FocusMarkerViaKeyboard(ctx, s->markerId);
-
-            // Pre-fix shape: the TextUnformatted glyph is not a nav item, so
-            // keyboard nav cannot focus it and no tooltip should fire on focus.
-            if (s->tooltipSubmittedThisFrame) {
-                ctx->LogError("self-check failure: pre-fix replica surfaced a tooltip on keyboard focus — "
-                              "methodology cannot distinguish the regression (TextUnformatted should be unreachable)");
-                IM_CHECK(false);
-            }
-        };
-    }
+    RegisterKeyboardFocusRealMarkerTest(engine);
+    RegisterPreFixReplicaTest(engine);
+    RegisterHoverInsideDisabledBlockTest(engine);
 }
 
 } // namespace
