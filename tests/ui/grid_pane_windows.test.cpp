@@ -61,6 +61,45 @@ bool FixtureEnvSet() {
     return set;
 }
 
+// Primary grid-pane window title (the app's active-project window).
+const char* kPrimary = "Smatchet - Active Project";
+
+// Shared boot preamble for the multi-grid tests: fixture gate + backend sync + primary pane
+// live/focused + panes-loaded check. Returns the booted app, or nullptr after a logged skip/check
+// (the caller returns on nullptr).
+AppController* BootSyncPrimaryLive(ImGuiTestContext* ctx) {
+    if (!FixtureEnvSet()) {
+        ctx->LogInfo("SKIP: SMATCHET_TEST_JIRA_BACKEND_FIXTURE not set — fixture backend absent");
+        return nullptr;
+    }
+    AppController* app = SmatchetActiveUiTestAppController();
+    if (app == nullptr) {
+        ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+        return nullptr;
+    }
+    // Suppress the first-run Whisper setup banner (##WhisperSetupBanner), which otherwise floats over
+    // the grid header row and swallows the "+##PaneAdd" click on a clean profile. Makes the panes
+    // tests self-contained instead of relying on the driver pre-seeding whisper_setup_completed.
+    g_ui.cfg.WhisperSetupCompleted = true;
+    app->SyncWithBackend();
+    const bool syncDone = YieldUntil(ctx, [&] { return !app->IsStreamingSyncActive(); });
+    IM_CHECK_NO_RET(syncDone);
+    IM_CHECK_NO_RET(!app->GetActiveTickets().empty());
+
+    ctx->SetRef(kPrimary);
+    const bool primaryLive = YieldUntil(ctx, [&] {
+        g_ui.requestActiveProjectFocus = true;
+        return WindowIsLive(kPrimary);
+    });
+    IM_CHECK_NO_RET(primaryLive);
+    if (!primaryLive) {
+        return nullptr;
+    }
+    IM_CHECK_NO_RET(g_ui.gridPanesLoaded);
+    IM_CHECK_NO_RET(g_ui.gridPanes.size() == 1); // IM_CHECK_EQ_NO_RET returns void — invalid in this helper
+    return app;
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -69,39 +108,14 @@ bool FixtureEnvSet() {
 static void RegisterGridPaneNewSplitFocusClose(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "GridPanes", "PaneNewSplitFocusClose");
     t->TestFunc = [](ImGuiTestContext* ctx) {
-        if (!FixtureEnvSet()) {
-            ctx->LogInfo("SKIP: SMATCHET_TEST_JIRA_BACKEND_FIXTURE not set — fixture backend absent");
-            return;
-        }
-        AppController* app = SmatchetActiveUiTestAppController();
+        AppController* app = BootSyncPrimaryLive(ctx);
         if (app == nullptr) {
-            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
             return;
         }
 
-        app->SyncWithBackend();
-        const bool syncDone = YieldUntil(ctx, [&] { return !app->IsStreamingSyncActive(); });
-        IM_CHECK_NO_RET(syncDone);
-        IM_CHECK_NO_RET(!app->GetActiveTickets().empty());
-
-        // Primary pane window live + focused (same recipe as funcsize_grid_render).
-        const char* kPrimary = "Smatchet - Active Project";
-        ctx->SetRef(kPrimary);
-        const bool primaryLive = YieldUntil(ctx, [&] {
-            g_ui.requestActiveProjectFocus = true;
-            return WindowIsLive(kPrimary);
-        });
-        IM_CHECK_NO_RET(primaryLive);
-        if (!primaryLive) {
-            return;
-        }
-        IM_CHECK_NO_RET(g_ui.gridPanesLoaded);
-        IM_CHECK_EQ_NO_RET(static_cast<int>(g_ui.gridPanes.size()), 1);
-
-        // 1. NEW — click the "+" pane button (submitted right after the window Begin).
-        // NOTE: the driver pre-seeds whisper_setup_completed=true — on a fresh
-        // profile the ##WhisperSetupBanner floats over this header row and
-        // swallows the click.
+        // 1. NEW — click the "+" pane button (submitted right after the window Begin). The
+        // ##WhisperSetupBanner that would otherwise float over this header row is suppressed in
+        // BootSyncPrimaryLive (cfg.WhisperSetupCompleted), so the click lands on any profile.
         ctx->ItemClick("+##PaneAdd");
         const bool paneAdded = YieldUntil(ctx, [&] { return g_ui.gridPanes.size() == 2; });
         IM_CHECK_NO_RET(paneAdded);
@@ -192,8 +206,70 @@ static void RegisterGridPaneNewSplitFocusClose(ImGuiTestEngine* engine) {
     };
 }
 
+// ---------------------------------------------------------------------------
+// GridPanes / NonFocusedVisiblePaneReceivesTickets (multi-grid Slice 3)
+//
+// Behaviour (1): a non-focused but VISIBLE pane goes live and receives its own ticket rows
+// (EnsurePaneLiveSyncStarted one-shot kick + TickAllContexts streaming apply). Open a 2nd pane,
+// refocus the primary so pane 2 is non-focused-but-visible, and assert pane 2's OWN ticketsSnapshot
+// fills from its live context — a regression that stopped a visible pane syncing would be silent.
+// ---------------------------------------------------------------------------
+static void RegisterNonFocusedVisiblePaneSyncs(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "GridPanes", "NonFocusedVisiblePaneReceivesTickets");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = BootSyncPrimaryLive(ctx);
+        if (app == nullptr) {
+            return;
+        }
+        ctx->SetRef(kPrimary);
+
+        // Open a second pane via the production "+" button.
+        ctx->ItemClick("+##PaneAdd");
+        const bool paneAdded = YieldUntil(ctx, [&] { return g_ui.gridPanes.size() == 2; });
+        IM_CHECK_NO_RET(paneAdded);
+        if (!paneAdded) {
+            return;
+        }
+        const bool nameReady = YieldUntil(ctx, [&] { return !g_ui.gridPanes[1].cachedWindowName.empty(); });
+        IM_CHECK_NO_RET(nameReady);
+        if (!nameReady) {
+            return;
+        }
+        const std::string paneTwoName = g_ui.gridPanes[1].cachedWindowName;
+        const std::string paneTwoId = g_ui.gridPanes[1].id;
+
+        // Pane 2 takes focus on open; refocus the PRIMARY so pane 2 is non-focused BUT still visible
+        // (both windows Active). Its context must stay live and keep receiving ticket updates.
+        ctx->WindowFocus((std::string("//") + kPrimary).c_str());
+        const bool nonFocusedVisible =
+            YieldUntil(ctx, [&] { return g_ui.focusedPaneId != paneTwoId && WindowIsLive(paneTwoName.c_str()); });
+        IM_CHECK_NO_RET(nonFocusedVisible);
+
+        // The non-focused visible pane's OWN snapshot fills from its live context (the fixture's rows
+        // delivered to pane 2's context via the Slice-3 per-context sync, not the focused pane's).
+        const bool paneTwoGotRows = YieldUntil(ctx, [&] {
+            const auto& rows = g_ui.gridPanes[1].ticketsSnapshot;
+            return rows != nullptr && !rows->empty();
+        });
+        if (!paneTwoGotRows) {
+            ctx->LogError("non-focused visible pane 2 never received ticket rows — Slice-3 per-context "
+                          "live sync (EnsurePaneLiveSyncStarted / TickAllContexts) did not run for it");
+            IM_CHECK(false);
+        }
+
+        // Teardown: close pane 2 to restore the min-1 invariant.
+        for (auto& p : g_ui.gridPanes) {
+            if (p.id == paneTwoId) {
+                p.open = false;
+            }
+        }
+        YieldUntil(ctx, [&] { return g_ui.gridPanes.size() == 1; });
+    };
+}
+
 extern "C" void SmatchetRegisterGridPaneWindowsTests(ImGuiTestEngine* engine) {
     RegisterGridPaneNewSplitFocusClose(engine);
+    RegisterNonFocusedVisiblePaneSyncs(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS
