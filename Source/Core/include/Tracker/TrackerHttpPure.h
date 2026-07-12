@@ -62,8 +62,8 @@ bool ShouldUpgradeCleartextBase(const std::string& rawBase);
 
 } // namespace TrackerHttpPure
 
-// IsTrackerTransportErrorText was deleted in N12 slice 3: transport-ness now travels as the
-// structured TrackerError kind classified at each backend's own error site (IsRetryable()),
-// never re-derived from flattened error text.
+// Transport classification travels as the structured TrackerError kind assigned at each backend's
+// own error site; callers use IsRetryable() rather than re-deriving transport-ness from flattened
+// error text. There is deliberately no text-based transport classifier here.
 
 #endif

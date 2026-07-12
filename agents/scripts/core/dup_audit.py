@@ -387,16 +387,21 @@ def new_clones_vs(base, head_streams, base_streams):
     exercise the blocking decision without git."""
     head_clones = find_clones(head_streams, allow_intra=False)
     base_hashes = {c.content_hash for c in find_clones(base_streams, allow_intra=False)}
-    # A file is unchanged (for clone purposes) when its normalized token stream is byte-identical at
-    # base and head — a pure-comment edit does not count as changed. Winnowing/clustering is
-    # corpus-sensitive: adding tokens in an UNRELATED file can shift the maximal-clone boundary
-    # selected for a pre-existing clone between two UNCHANGED files, surfacing a "new" content_hash
-    # for content that already exists verbatim at base (observed: a Tracker-file diff un-grandfathered
-    # a CodeColorView.cpp<->CppSyntaxLex.cpp syntax-highlight clone). A clone whose EVERY occurrence
-    # is in an unchanged file cannot be duplication this diff introduced — you cannot duplicate code
-    # INTO a file without changing it — so grandfather it regardless of the drifted boundary hash.
+    # A file is unchanged (for clone purposes) when its NORMALIZED TOKEN stream is identical at base
+    # and head — a comment/whitespace-only edit shifts line numbers but not tokens, so it must NOT
+    # count as changed (streams are (norm_tokens, lines) pairs; compare [0] only, not the tuple).
+    # Winnowing/clustering is corpus-sensitive: adding tokens in an UNRELATED file can shift the
+    # maximal-clone boundary selected for a pre-existing clone between two UNCHANGED files, surfacing
+    # a "new" content_hash for content that already exists verbatim at base (observed: a Tracker-file
+    # diff un-grandfathered a CodeColorView.cpp<->CppSyntaxLex.cpp syntax-highlight clone). A clone
+    # whose EVERY occurrence is in an unchanged file cannot be duplication this diff introduced — you
+    # cannot duplicate code INTO a file without changing it — so grandfather it regardless of drift.
+    def _norm_tokens(streams, f):
+        s = streams.get(f)
+        return s[0] if s is not None else None
+
     changed_files = {f for f in set(head_streams) | set(base_streams)
-                     if head_streams.get(f) != base_streams.get(f)}
+                     if _norm_tokens(head_streams, f) != _norm_tokens(base_streams, f)}
     new = []
     for c in head_clones:
         if c.content_hash in base_hashes:
@@ -537,10 +542,12 @@ def run_selftest():
     # Boundary-drift grandfathering: winnowing is corpus-sensitive, so adding tokens in an unrelated
     # CHANGED file can shift the maximal-clone boundary selected for a clone between two UNCHANGED
     # files, giving it a base-absent content_hash for content that already exists verbatim at base.
-    # A clone whose EVERY occurrence is in a file unchanged vs base must stay grandfathered. Stub
-    # find_clones so BASE reports hash H1 and HEAD reports a drifted H2 for the same unchanged pair.
-    drift_head = {"U1.cpp": ["k"], "U2.cpp": ["k"], "CHANGED.cpp": ["z"]}
-    drift_base = {"U1.cpp": ["k"], "U2.cpp": ["k"]}
+    # A clone whose EVERY occurrence is in a file unchanged vs base must stay grandfathered. The two
+    # unchanged files carry (norm_tokens, lines) with IDENTICAL norm but DIFFERENT lines at base vs
+    # head — this pins the norm-only comparison: a full-tuple `!=` would mark them "changed" (line
+    # drift) and re-flag the clone. Stub find_clones so BASE reports H1 and HEAD a drifted H2.
+    drift_head = {"U1.cpp": (["k", "k"], [1, 2]), "U2.cpp": (["k", "k"], [1, 2]), "CHANGED.cpp": (["z"], [1])}
+    drift_base = {"U1.cpp": (["k", "k"], [5, 6]), "U2.cpp": (["k", "k"], [5, 6])}
     saved_find = globals()["find_clones"]
 
     def _drift_stub(streams_arg, allow_intra=False):
@@ -555,8 +562,8 @@ def run_selftest():
     finally:
         globals()["find_clones"] = saved_find
     if drifted_new:
-        print("SELFTEST FAIL: boundary-drift clone in files unchanged vs base was not grandfathered",
-              file=sys.stderr)
+        print("SELFTEST FAIL: boundary-drift clone in files unchanged (by norm tokens) vs base was "
+              "not grandfathered", file=sys.stderr)
         miss = 1
     if miss:
         return 1

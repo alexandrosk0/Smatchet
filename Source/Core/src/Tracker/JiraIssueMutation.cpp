@@ -41,6 +41,18 @@ std::string WithRedactedBody(const std::string& userError, const std::string& bo
     return userError + " | body: " + RedactHttpBodyForLog(body);
 }
 
+// Classify a mutation-endpoint status that reached a failure branch. A 2xx-other (201/204/206)
+// still lands here for endpoints whose only success codes are 200/204; guard before
+// TrackerErrorFromHttpStatus, which would map any 2xx to Ok() and drop the detail. Keeping the
+// guard in one place holds retry semantics identical across the mutation failure branches.
+TrackerError ClassifyRejectedHttpStatus(long statusCode, const std::string& detail) {
+    const int status = static_cast<int>(statusCode);
+    if (status >= 200 && status < 300) {
+        return TrackerErrorUnknown(detail, status);
+    }
+    return TrackerErrorFromHttpStatus(status, detail);
+}
+
 } // namespace
 
 namespace {
@@ -145,10 +157,7 @@ bool JiraClient::UpdateIssueFieldsViaTransition(const std::string& issueId, cons
         LOG_ERROR("JiraClient: %s", detail.c_str());
         AppendTransitionFailure(issueId, auditOp, detail, targetStatusId, targetStatusName);
         if (outClassified) {
-            // 2xx-other reaches this failure branch — guard before FromHttpStatus (FIX-1 precedent).
-            *outClassified = (transitionsResp.status_code >= 200 && transitionsResp.status_code < 300)
-                                 ? TrackerErrorUnknown(outError, transitionsResp.status_code)
-                                 : TrackerErrorFromHttpStatus(transitionsResp.status_code, outError);
+            *outClassified = ClassifyRejectedHttpStatus(transitionsResp.status_code, outError);
         }
         return false;
     }
@@ -211,10 +220,7 @@ bool JiraClient::UpdateIssueFieldsViaTransition(const std::string& issueId, cons
         LOG_ERROR("JiraClient: %s issue=%s", detail.c_str(), issueId.c_str());
         AppendTransitionFailure(issueId, auditOp, detail, targetStatusId, targetStatusName);
         if (outClassified) {
-            // 2xx-other reaches this failure branch — guard before FromHttpStatus (FIX-1 precedent).
-            *outClassified = (transitionResp.status_code >= 200 && transitionResp.status_code < 300)
-                                 ? TrackerErrorUnknown(outError, transitionResp.status_code)
-                                 : TrackerErrorFromHttpStatus(transitionResp.status_code, outError);
+            *outClassified = ClassifyRejectedHttpStatus(transitionResp.status_code, outError);
         }
         return false;
     }
@@ -249,10 +255,7 @@ bool JiraClient::UpdateIssueFieldsViaPut(const std::string& issueId, const nlohm
             "issue_update_fields", "jira_client", issueId, auditOp, false, detail,
             nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fieldsAudited)}});
         if (outClassified) {
-            // 2xx-other reaches this failure branch — guard before FromHttpStatus (FIX-1 precedent).
-            *outClassified = (response.status_code >= 200 && response.status_code < 300)
-                                 ? TrackerErrorUnknown(outError, response.status_code)
-                                 : TrackerErrorFromHttpStatus(response.status_code, outError);
+            *outClassified = ClassifyRejectedHttpStatus(response.status_code, outError);
         }
         return false;
     }
@@ -793,10 +796,7 @@ bool JiraClient::AddIssueToSprint(const TrackerConfig& cfg, const std::string& i
         BackendAuditTrail::AppendResult("issue_add_to_sprint", "jira_client", issueKey, auditOp, false, detail,
                                         nlohmann::json{{"sprint_id", sprintId}});
         if (outClassified) {
-            // 2xx-other reaches this failure branch — guard before FromHttpStatus (FIX-1 precedent).
-            *outClassified = (response.status_code >= 200 && response.status_code < 300)
-                                 ? TrackerErrorUnknown(outError, response.status_code)
-                                 : TrackerErrorFromHttpStatus(response.status_code, outError);
+            *outClassified = ClassifyRejectedHttpStatus(response.status_code, outError);
         }
         return false;
     }

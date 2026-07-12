@@ -28,9 +28,9 @@ FetchContent_MakeAvailable(doctest)
 # ISyncCache seam) is now IN scope. Two prior blockers were cleared: (1) the ImGui
 # coupling (TicketSyncService → SmatchetToastManager::Push → SmatchetToast.h →
 # <imgui.h>) was decoupled in #1318; (2) the residual cpr coupling — TicketSyncService
-# classified transport errors via IsTrackerTransportErrorText declared in
-# TrackerHttpUtils.h, which #includes <cpr/cpr.h> at the header level — was cleared by
-# moving that pure function to TrackerHttpPure.h/.cpp (cpr-free) and swapping the
+# classified transport errors via a text heuristic declared in TrackerHttpUtils.h, which
+# #includes <cpr/cpr.h> at the header level — was cleared by moving classification to the
+# structured TrackerError kind (cpr-free) and swapping the
 # include. A BFS include-taint scan of the full post-swap compile closure confirmed it
 # reaches zero cpr/imgui/GLFW/glad/OpenGL headers. Tests construct via header-only
 # fakes (FakeTicketSyncDeps / FakeTrackerClient / FakeSyncCache) — no SQLite, no HTTP
@@ -129,9 +129,9 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         #     seam. GridLiveContext owns the live TicketSyncService (atomic Backend slot,
         #     latched strong handles surviving live swaps); TicketSyncService drives the
         #     sync state machine. Both carry real cross-thread state — the highest-value
-        #     TSan surface. cpr-free closure: TicketSyncService now classifies transport
-        #     errors via TrackerHttpPure.h (IsTrackerTransportErrorText moved there), so
-        #     no TU here pulls <cpr/cpr.h>. Tests construct via header-only fakes
+        #     TSan surface. cpr-free closure: TicketSyncService classifies transport errors
+        #     by the structured TrackerError kind (cpr-free), so no TU here pulls
+        #     <cpr/cpr.h>. Tests construct via header-only fakes
         #     (FakeTicketSyncDeps / FakeTrackerClient / FakeSyncCache) — no SQLite, no HTTP.
         Core/GridLiveContext.test.cpp
         Core/TicketSyncService.test.cpp
@@ -656,7 +656,7 @@ add_executable(SmatchetTests
     # probe -> state mapping, a probe-down -> recovery sequence, two-writer banner reconciliation,
     # and the deferred-success / refetch one-shot latches. Drives a header-only FakeConnectivityDeps
     # + FakeTrackerClient — no AppController/ImGui/cpr/SQLite. Production TU added to the prod-src
-    # block below; IsTrackerTransportErrorText (TrackerHttpPure.cpp) already linked in this target.
+    # block below; RedactHttpBodyForLog (TrackerHttpPure.cpp, cpr-free) already linked in this target.
     Core/ConnectivityMonitorService.test.cpp
     # AttachmentAppUpdateService (AppController god-object decomposition Phase 4) — the attachment-open
     # dispatch + app-version helpers. Covers the deterministic pre-download decision logic: collection-
@@ -1061,7 +1061,7 @@ add_executable(SmatchetTests
     # Core/FieldEditPipelineService.test.cpp drives it via header-only fakes.
     "${CMAKE_SOURCE_DIR}/Source/Core/src/FieldEditPipelineService.cpp"
     # ConnectivityMonitorService (AppController god-object decomposition Phase 3). Pulls
-    # ConfigManager + ITrackerConnectivity (header-only) + IsTrackerTransportErrorText
+    # ConfigManager + ITrackerConnectivity (header-only) + RedactHttpBodyForLog / ResolveSslConfig
     # (TrackerHttpPure.cpp / TrackerHttpUtils.cpp, both already linked into this target). cpr/ImGui/
     # SQLite-free; Core/ConnectivityMonitorService.test.cpp drives it via header-only fakes.
     "${CMAKE_SOURCE_DIR}/Source/Core/src/ConnectivityMonitorService.cpp"

@@ -62,5 +62,5 @@ cpr::Response TrackerPatchLogged(const char* clientName, const std::string& url,
 void LogTrackerHttpResult(const char* clientName, const char* method, const std::string& url,
                           const cpr::Response& response);
 
-// IsTrackerTransportErrorText (formerly declared via TrackerHttpPure.h) was deleted in N12
-// slice 3 — transport-ness travels as the structured TrackerError kind.
+// Transport classification travels as the structured TrackerError kind; there is deliberately no
+// text-based transport classifier declared here.
