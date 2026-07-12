@@ -38,8 +38,8 @@
 
 #include "AppController.h"
 #include "Commands/Scenarios/UiTestScenario.h" // SmatchetActiveUiTestAppController
-#include "GridPane.h"                           // GridPane, CachedTicket, gridFilterBuf, gridState
-#include "SmatchetUiSession.h"                  // UiDrawSession, focusedPane(), omniJqlEditor, cfg
+#include "GridPane.h"                          // GridPane, CachedTicket, gridFilterBuf, gridState
+#include "SmatchetUiSession.h"                 // UiDrawSession, focusedPane(), omniJqlEditor, cfg
 
 #include "imgui.h"
 #include "imgui_internal.h" // ImGuiWindow, FindWindowByName
@@ -187,8 +187,7 @@ void RegisterTitleSearchFillsGridFilter(ImGuiTestEngine* engine) {
         IM_CHECK_STR_EQ(g_ui.omniJqlEditor.buf, kQuery); // typed text reached the live omnibar buffer
 
         ctx->KeyPress(ImGuiKey_Enter);
-        const bool filled =
-            YieldUntil(ctx, [&] { return std::string(g_ui.focusedPane().gridFilterBuf) == kQuery; });
+        const bool filled = YieldUntil(ctx, [&] { return std::string(g_ui.focusedPane().gridFilterBuf) == kQuery; });
         IM_CHECK(filled); // TitleSearch Enter routed the words into the focused pane's grid filter
     };
 }
@@ -217,7 +216,7 @@ void RegisterJqlReplacesViewQuery(ImGuiTestEngine* engine) {
         // applyQueryToPaneView (Ok path) mirrors the query into BOTH cfg.JqlQuery and the
         // dashboard editor buffer — assert both so the apply can't pass on a partial write.
         const bool appliedToCfg = YieldUntil(ctx, [&] { return g_ui.cfg.JqlQuery == kQuery; });
-        IM_CHECK(appliedToCfg); // Jql Enter replaced the focused view's query
+        IM_CHECK(appliedToCfg);                          // Jql Enter replaced the focused view's query
         IM_CHECK_STR_EQ(g_ui.viewJqlEditor.buf, kQuery); // shared-core lock-step with the dashboard editor
     };
 }
@@ -249,14 +248,59 @@ void RegisterTicketKeyJumpsToLoadedRow(ImGuiTestEngine* engine) {
     };
 }
 
+// Case 4/4 — focus-on-open consumer. The omnibar sets jqlAcpWantsJqlInputFocus on its
+// ImGui::IsWindowAppearing() edge so the first keystroke lands in the JQL input. IsWindowAppearing
+// fires once at app start (the bar is drawn unconditionally) and cannot be re-triggered from a test,
+// so this drives the load-bearing CONSUMER half: with the input NOT the active item, setting the
+// same flag must route the next synthetic keystroke into the omnibar buffer — proving
+// DrawJqlQueryEditorEmbedded's SetKeyboardFocusHere consumed the flag and granted keyboard focus.
+void RegisterOmnibarInputFocusOnFlag(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "Omnibar", "InputFocus_WantsFocusFlag_FirstKeystrokeLands");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = PrepareOmnibar(ctx);
+        if (app == nullptr) {
+            return; // skip (fixture absent) or a logged check already failed
+        }
+        ctx->SetRef(kOmnibarWindow);
+        // Clear the buffer and move focus OFF the input via the production clear button, so the JQL
+        // input is not the active item when we set the focus-want flag.
+        ctx->ItemClick("x##ClearQueryEmbedded");
+        ctx->Yield();
+        ctx->Yield();
+
+        // Reproduce the open-edge focus grab: set the exact flag IsWindowAppearing sets. The next
+        // DrawJqlQueryEditorEmbedded consumes it via SetKeyboardFocusHere, focusing the input.
+        g_ui.omniJqlEditor.jqlAcpWantsJqlInputFocus = true;
+        ctx->Yield();
+        ctx->Yield();
+
+        // Type WITHOUT an explicit ItemInput/click — only the focus grant can route the keystroke
+        // into the input. If it lands in the buffer, the input received keyboard focus from the flag.
+        ctx->KeyChars("z");
+        ctx->Yield();
+        ctx->Yield();
+        const std::string buf(g_ui.omniJqlEditor.buf);
+        if (buf.find('z') == std::string::npos) {
+            ctx->LogError("first keystroke did not land in the omnibar input — jqlAcpWantsJqlInputFocus "
+                          "did not grant keyboard focus (SetKeyboardFocusHere consumer missing?)");
+            IM_CHECK(false);
+        }
+
+        // Teardown: clear the buffer so a sibling variant starts clean.
+        ctx->ItemClick("x##ClearQueryEmbedded");
+        ctx->Yield();
+    };
+}
+
 } // namespace
 
 // Registration entry point — called once from SmatchetRegisterAllUiTests (ui_tests_registry.cpp)
-// to enroll the three omnibar apply-path tests into the engine.
+// to enroll the omnibar apply-path + focus tests into the engine.
 extern "C" void SmatchetRegisterOmnibarSearchApplyTests(ImGuiTestEngine* engine) {
     RegisterTitleSearchFillsGridFilter(engine);
     RegisterJqlReplacesViewQuery(engine);
     RegisterTicketKeyJumpsToLoadedRow(engine);
+    RegisterOmnibarInputFocusOnFlag(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS
