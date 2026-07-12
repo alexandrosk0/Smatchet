@@ -11,6 +11,7 @@
 #include "AppController.h"
 // clang-format on
 
+#include "ConfigManager.h" // ConfigManager::AtomicWriteTextFile — hardened temp-then-rename writer
 #include "Logger.h"
 
 #include <ghc/filesystem.hpp>
@@ -158,16 +159,17 @@ bool AppController::SaveAutomationScriptContent(const std::string& content, std:
         return false;
     }
 
-    std::ofstream ofs(path, std::ios::trunc);
+    // Atomic write via temp-then-rename so an I/O error mid-write cannot destroy the existing
+    // Automation.lua. The previous std::ofstream(trunc) truncated the file up front, wrote with no
+    // flush, and returned true without a stream-state check — a disk-full/quota/device error after
+    // open silently lost the script while the caller was told the save succeeded (#1742). Reuses
+    // ConfigManager's hardened writer (POSIX O_NOFOLLOW fd / Windows MoveFileEx, parent-dir fsync).
+    if (!ConfigManager::AtomicWriteTextFile(path, content)) {
 
-    if (!ofs.is_open()) {
-
-        outError = "Could not open file for writing: " + path;
+        outError = "Could not write file: " + path;
 
         return false;
     }
-
-    ofs << content;
 
     return true;
 }

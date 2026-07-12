@@ -119,6 +119,19 @@ inline TrackerError TrackerErrorFromHttpStatus(int status, std::string detail) {
     return TrackerErrorUnknown(std::move(detail), status);
 }
 
+/// Classify an HTTP status that reached a FAILURE branch (the caller's success check rejected the
+/// response). A 2xx-other (201/204/206) still lands here for endpoints whose only success code is
+/// 200/204; guard it before TrackerErrorFromHttpStatus, which would map any 2xx to Ok() and drop the
+/// failure detail (a false Ok on a return-false path). Keeping the guard in one place holds retry
+/// semantics identical across tracker clients (Jira mutation branches + Plane project resolve — #1785).
+inline TrackerError ClassifyRejectedHttpStatus(long statusCode, const std::string& detail) {
+    const int status = static_cast<int>(statusCode);
+    if (status >= 200 && status < 300) {
+        return TrackerErrorUnknown(detail, status);
+    }
+    return TrackerErrorFromHttpStatus(status, detail);
+}
+
 /// Retry decision for a non-idempotent POST (finding DR16 — the hole left by BACKLOG B2).
 /// A POST may only be re-sent when the request provably never reached the server: a pre-send
 /// transport failure such as a DNS-resolution error or a refused connection. A post-send

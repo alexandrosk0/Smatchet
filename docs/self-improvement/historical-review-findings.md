@@ -271,6 +271,17 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
 
 Coverage: **55 reviewed — 8 with findings, 45 clean, 2 fully superseded, 0 errored, 0 died.** Net: **0 CRITICAL, 0 HIGH, 5 MEDIUM, 3 LOW.** Incremental on top of the Batch 17 frontier: everything merged after #1737 up to develop @ `1f4b2da4` (includes the fail-open remediation campaign PRs #1768–#1776 and this session's own #1738–#1740). **The frontier is now #1–#1795 contiguous; the next sweep resumes from #1796.** Survivor-filtered against origin/develop. (Same sha-resolved workflow + reviewer model as Batches 13–17; 55/55 returned, 0 died; ~17 min, ~1.76M tokens.) **One MEDIUM (#1742) is `userVisible:true` (data-loss) → GitHub Issue #1797 (ADR-0014); the other 7 findings are internal → backlog only.** Two notable linkages: #1756 is a **live recurrence of Batch 16's #1221** (the Lua ai.prompt in-flight-slot exception-leak — the god-file split relocated the code to `AppController_LuaBindings_Ai.cpp` and #1221's fix was never applied); #1774's `test-all.sh` `CI_SKIP_RE` finding is the anchoring weakness first flagged as Batch 13's #1692, now escape-marked but still latent.
 
+> **Remediation (2026-07-12) — the 3 product-code findings, fixed:** **#1742** (data-loss) →
+> `SaveAutomationScriptContent` now routes through `ConfigManager::AtomicWriteTextFile` (temp+rename;
+> the trunc-then-unchecked-write can no longer destroy `Automation.lua` on an I/O error) — closes
+> **Issue #1797**. **#1756** (Lua lockout) → `LuaAiPromptGlue` releases the in-flight slot via an RAII
+> guard on every exit path, not just the happy path (the relocated #1221). **#1785** (false-Ok) →
+> `ClassifyRejectedHttpStatus` promoted to the shared `Tracker/TrackerError.h`; the Jira mutation
+> branches + Plane project-resolve now share one 2xx-guard (new doctest in `Tracker2xxErrorGuard.test.cpp`).
+> Verified: unit tests 50 cases / 165 assertions green; strict-zone lint + dup + include-cycle clean.
+> The 5 remaining findings (#1789 vacuous test, #1774 / #1760 / #1752 gate fail-opens, #1795 doc) are
+> follow-up PRs.
+
 ### MEDIUM (5)
 - **#1742 (1461bee3) · `Source/Core/src/AppController_LuaScriptFiles.cpp:170`** — **user-visible data-loss**: `SaveAutomationScriptContent` opens with `std::ios::trunc` (destroying `Automation.lua` up front), writes `ofs << content`, then `return true` with no stream-state check or flush. An I/O error (disk full/quota/device) after open silently loses the script while the caller is told the save succeeded. Fix: `ofs.flush(); if (!ofs.good()) { outError=…; return false; }` — ideally write-temp + atomic-rename. → **Issue #1797**.
 - **#1756 (cc9bbad0) · `Source/Core/src/AppController_LuaBindings_Ai.cpp:143`** — `LuaAiPromptGlue` claims the in-flight slot (`TryBeginLuaAiPromptTurn`) and releases it (`EndLuaAiPromptTurn`, :167) only on the success path; an exception from `AddAiContext`/`PromptAi`/the context loop unwinds through the sol2 boundary and skips the release, so `aiPromptInFlight_` stays true forever and every later `ai.prompt` is permanently rejected as re-entrant. **Same defect as #1221 (Batch 16), relocated by the god-file split and still unfixed.** Fix: RAII scope-exit guard around the slot.
