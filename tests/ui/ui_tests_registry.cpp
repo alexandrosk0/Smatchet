@@ -46,7 +46,7 @@ extern "C" void SmatchetRegisterOmnibarSearchApplyTests(ImGuiTestEngine* engine)
 extern "C" void SmatchetRegisterOfflineConflictModalPanesTests(ImGuiTestEngine* engine);
 #if defined(SMATCHET_WITH_AI)
 extern "C" void SmatchetRegisterAiAssistantPanelDockSwapTests(ImGuiTestEngine* engine);
-extern "C" void SmatchetRegisterAiChatClearConfirmTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterAiChatPanelTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAiAssistantEnterSendTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAiAssistantInputPasteOverflowTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAiPrefsAutosaveFlowTests(ImGuiTestEngine* engine);
@@ -100,7 +100,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterOfflineConflictModalPanesTests(engine);
 #if defined(SMATCHET_WITH_AI)
     SmatchetRegisterAiAssistantPanelDockSwapTests(engine);
-    SmatchetRegisterAiChatClearConfirmTests(engine);
+    SmatchetRegisterAiChatPanelTests(engine);
     SmatchetRegisterAiAssistantEnterSendTests(engine);
     SmatchetRegisterAiAssistantInputPasteOverflowTests(engine);
     SmatchetRegisterAiPrefsAutosaveFlowTests(engine);
