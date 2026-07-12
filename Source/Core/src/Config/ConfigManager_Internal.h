@@ -77,6 +77,20 @@ class ScopedFileLock {
 std::string ProtectSecretForConfig(const std::string& plainText);
 std::string UnprotectSecretFromConfig(const std::string& protectedBase64);
 
+// Persist-decision for one config secret, given its plaintext value and the ProtectSecretForConfig
+// result (empty == encrypt FAILED, or there was nothing to protect). Pure so the Windows doctest rig
+// covers it directly with no DPAPI stub. Fixes GitHub Issue #1770: a failed DPAPI encrypt must fall
+// back to the plaintext key rather than drop the only copy of the credential. StorePlaintext is that
+// fallback (non-empty value + empty ciphertext); ClearBoth is the no-secret case.
+enum class SecretPersistAction { StoreCiphertext, StorePlaintext, ClearBoth };
+SecretPersistAction DecideSecretPersist(const std::string& value, const std::string& encrypted);
+
+// Applies DecideSecretPersist to a config json object for one secret: StoreCiphertext writes encKey +
+// erases plainKey; StorePlaintext writes plainKey (the fallback) + erases encKey; ClearBoth erases
+// both. The single source of truth the Win32 WriteSecretFields arm routes every secret through.
+void ApplySecretPersist(nlohmann::json& j, const char* plainKey, const char* encKey, const std::string& value,
+                        const std::string& encrypted);
+
 // Pure seam for Android Keystore-backed secret-at-rest (audit H2). Routes a config secret through an
 // optionally-installed host provider (the Keystore JNI bridge the mobile host wires at boot). All
 // three arms are covered by the Windows doctest rig (ConfigSecretFilePerms.test.cpp):
