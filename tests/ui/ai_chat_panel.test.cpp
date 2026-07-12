@@ -122,6 +122,8 @@ void RegisterClearConversationConfirm(ImGuiTestEngine* engine) {
         const bool panelLive = SeedAndOpenPanel(ctx, /*pinFirst=*/false);
         IM_CHECK_NO_RET(panelLive);
         if (!panelLive) {
+            g_ui.assistantHistory.clear();
+            g_ui.assistantHistoryRowIds.clear();
             g_ui.assistantPanelOpen = origOpen;
             g_ui.cfg.WhisperSetupCompleted = origWhisperSetup;
             return;
@@ -154,7 +156,10 @@ void RegisterClearConversationConfirm(ImGuiTestEngine* engine) {
             IM_CHECK_NO_RET(g_ui.assistantHistoryRowIds.empty());
         }
 
-        // Teardown: restore the mutated g_ui flags (history stays empty — a clean end state).
+        // Teardown: clear history unconditionally (the success path already emptied it, but a failed
+        // Clear would otherwise leak the 2 seeded turns into g_ui) + restore the mutated flags.
+        g_ui.assistantHistory.clear();
+        g_ui.assistantHistoryRowIds.clear();
         g_ui.assistantPanelOpen = origOpen;
         g_ui.cfg.WhisperSetupCompleted = origWhisperSetup;
         ctx->Yield();
