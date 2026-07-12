@@ -167,31 +167,8 @@ nlohmann::json MakeErrorEnvelope(const std::string& command, const std::string& 
     return env;
 }
 
-int ExitCodeForErrorCode(const std::string& code) {
-    if (code == "ok")
-        return kExitOk;
-    if (code == "unknown-command")
-        return kExitUnknownCommand;
-    if (code == "missing-required-arg")
-        return kExitValidation;
-    if (code == "validation-error")
-        return kExitValidation;
-    if (code == "handler-error")
-        return kExitHandler;
-    if (code == "backend-error")
-        return kExitHandler;
-    if (code == "not-found")
-        return kExitHandler;
-    if (code == "confirm-required")
-        return kExitConfirmRequired;
-    if (code == "not-connected")
-        return kExitNotConnected;
-    if (code == "dry-run-unsupported")
-        return 9;
-    if (code == "timeout")
-        return 8;
-    return kExitHandler;
-}
+// ExitCodeForErrorCode moved to CliExitCodes.cpp (its own TU) so the exit-code contract is
+// unit-tested without linking this heavy TU into the doctest rig — see Issue #1747.
 
 /// Poll until the file at outPath exists and is non-empty, or timeoutMs elapses.
 bool WaitForFile(const std::string& outPath, int timeoutMs) {

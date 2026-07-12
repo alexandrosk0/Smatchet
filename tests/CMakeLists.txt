@@ -755,6 +755,7 @@ add_executable(SmatchetTests
     # .cpp source — the glue calls the helper, the helper is the testable unit.
     Core/AiLuaPromptRateLimit.test.cpp
     Core/CliArgCoercion.test.cpp
+    Core/CliExitCodes.test.cpp
     # Source-aware destructive guard (security audit 2026-06-13 #2/#3). Pure
     # trust predicate RequiresExplicitConfirm + IsAutomationSource live inline in
     # Source/Core/include/Commands/Command.h — no extra .cpp linked (the registry
@@ -1164,6 +1165,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AiModelSignature.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/AiPrefsValidator.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Standalone/CliArgCoercion.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Standalone/CliExitCodes.cpp"
     # Natural-order key/issuekey sort — exercises CompareIssueKeyNatural
     # (inline in StringUtil.h) which CompareFieldValuesForSort dispatches to.
     Core/TicketGridModelKeySort.test.cpp

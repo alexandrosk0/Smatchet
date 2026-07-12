@@ -98,7 +98,13 @@ bool TryAppendLiveCatalogToHelp(std::FILE* out, const std::string& host, int por
             return false;
         if (!envelope.value("ok", false))
             return false;
-        const auto items = envelope["data"]["items"];
+        // Guard the const indexing (Issue #1747): on a const nlohmann::json, operator[] with an
+        // absent key — or on a non-object — is undefined behaviour, so confirm `data` is an object
+        // before reading into it. A malformed envelope simply yields no listing.
+        if (!envelope.is_object() || !envelope.contains("data") || !envelope["data"].is_object())
+            return false;
+        const nlohmann::json& data = envelope["data"];
+        const auto items = data.contains("items") ? data["items"] : nlohmann::json();
         if (!items.is_array() || items.empty())
             return false;
 
@@ -106,7 +112,7 @@ bool TryAppendLiveCatalogToHelp(std::FILE* out, const std::string& host, int por
         std::string lastCategory;
         std::fprintf(out, // CLI stdout — product output, not logging
                      "\nAvailable commands (%d total — fetched from running instance):\n",
-                     envelope["data"].value("total", static_cast<int>(items.size())));
+                     data.value("total", static_cast<int>(items.size())));
         for (const auto& item : items) {
             const std::string category = item.value("category", "?");
             const std::string name = item.value("name", "?");
@@ -202,11 +208,17 @@ bool RunCmdAttachResolveHostPort(int argc, char** argv, ParsedArgs& outPa, std::
 #pragma warning(pop)
 #endif
         if (f) {
+            // instance.json is a tiny PID/port record; cap the read for defence-in-depth (Issue
+            // #1747) so a swapped-in oversized file can't balloon memory before the parse.
+            constexpr size_t kMaxInstanceJsonBytes = 64 * 1024;
             std::string json;
             char buf[512];
             size_t n;
-            while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0)
+            while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) {
                 json.append(buf, n);
+                if (json.size() > kMaxInstanceJsonBytes)
+                    break; // oversized — stop reading; the truncated parse below will reject it
+            }
             std::fclose(f);
             nlohmann::json j;
             if (SafeParseJson(json, j) && j.is_object())
