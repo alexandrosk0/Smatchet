@@ -248,7 +248,7 @@ void RegisterTicketKeyJumpsToLoadedRow(ImGuiTestEngine* engine) {
     };
 }
 
-// Case 4/4 — focus-on-open consumer (#1600). The omnibar sets jqlAcpWantsJqlInputFocus on its
+// Case 4/4 — focus-on-open consumer. The omnibar sets jqlAcpWantsJqlInputFocus on its
 // ImGui::IsWindowAppearing() edge so the first keystroke lands in the JQL input. IsWindowAppearing
 // fires once at app start (the bar is drawn unconditionally) and cannot be re-triggered from a test,
 // so this drives the load-bearing CONSUMER half: with the input NOT the active item, setting the
@@ -268,7 +268,7 @@ void RegisterOmnibarInputFocusOnFlag(ImGuiTestEngine* engine) {
         ctx->Yield();
         ctx->Yield();
 
-        // Reproduce the #1600 open-edge grab: set the exact flag IsWindowAppearing sets. The next
+        // Reproduce the open-edge focus grab: set the exact flag IsWindowAppearing sets. The next
         // DrawJqlQueryEditorEmbedded consumes it via SetKeyboardFocusHere, focusing the input.
         g_ui.omniJqlEditor.jqlAcpWantsJqlInputFocus = true;
         ctx->Yield();
