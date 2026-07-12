@@ -681,6 +681,7 @@ add_executable(SmatchetTests
     # audit H2 — pure POSIX secret-at-rest loose-permission decision (IsLooseConfigFileMode,
     # defined in ConfigManager_PathUtils.cpp which is already linked below). No extra .cpp.
     Core/ConfigSecretFilePerms.test.cpp
+    Core/ConfigSecretPersist.test.cpp
     # audit H2 follow-up — AtomicWriteTextFile POSIX hardening (O_NOFOLLOW + fchmod 0600), the
     # filesystem-bound write path (public static in ConfigManager_PathUtils.cpp, already linked
     # below). POSIX assertions run on the Linux ctest jobs; the round-trip runs everywhere. No extra .cpp.

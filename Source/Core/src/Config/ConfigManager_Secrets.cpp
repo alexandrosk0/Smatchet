@@ -37,6 +37,9 @@ using smatchet::config_detail::SanitizeConfigStringValue;
 using smatchet::config_detail::ProtectSecretForConfig;
 using smatchet::config_detail::UnprotectSecretFieldFromConfig;
 #endif
+#if defined(_WIN32)
+using smatchet::config_detail::ApplySecretPersist;
+#endif
 
 namespace {
 
@@ -73,46 +76,24 @@ void PurgeLegacyAgenticKeys(nlohmann::json& j) {
 // secret/erase contract is unchanged. See each arm's inline notes.
 #if defined(_WIN32)
 void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
-    // API token — same DPAPI + plaintext-fallback pattern as the secrets below. Only erase the
-    // plaintext `token` when DPAPI protection succeeded (or there was nothing to protect); if
-    // protection failed keep the plaintext so the user does not lose the only copy.
-    const std::string tokenEnc = ProtectSecretForConfig(config.ApiToken);
-    if (config.ApiToken.empty() || !tokenEnc.empty()) {
-        j.erase("token");
-    }
-    j["token_enc"] = tokenEnc;
-    // Plane API key — same DPAPI + plaintext-fallback pattern as the API token above.
-    const std::string planeApiKeyEnc = ProtectSecretForConfig(config.PlaneApiKey);
-    if (config.PlaneApiKey.empty() || !planeApiKeyEnc.empty()) {
-        j.erase("plane_api_key");
-    }
-    j["plane_api_key_enc"] = planeApiKeyEnc;
-    // GitHub PAT — same plaintext-fallback pattern as McpAuthToken / AiApiKey / WhisperApiKey
-    // below. Only erase the plaintext `github_pat` when DPAPI protection succeeded; otherwise
-    // keep the plaintext so the user doesn't lose the only copy.
-    const std::string githubPatEnc = ProtectSecretForConfig(config.GitHubPat);
-    if (config.GitHubPat.empty() || !githubPatEnc.empty()) {
-        j.erase("github_pat");
-    }
-    j["github_pat_enc"] = githubPatEnc;
-    // Linear API key — same DPAPI + plaintext-fallback pattern as GitHubPat above.
-    const std::string linearApiKeyEnc = ProtectSecretForConfig(config.LinearApiKey);
-    if (config.LinearApiKey.empty() || !linearApiKeyEnc.empty()) {
-        j.erase("linear_api_key");
-    }
-    j["linear_api_key_enc"] = linearApiKeyEnc;
-    // Bug-report PAT — persisted ONLY when the user opted in (BugReportPersistPat)
-    // secret, so DPAPI-encrypted with a plaintext fallback if protection fails.
-    // When opt-out, both keys are erased so no token is ever written to config.
+    // Every secret DPAPI-encrypts, then routes through ApplySecretPersist (Issue #1770): store the
+    // ciphertext on success, keep the plaintext fallback if protection FAILS (never drop the only
+    // copy of the credential), or clear both keys when there is no secret. This mirrors the Android
+    // arm's sealSecret lambda below — one contract, applied uniformly to every field.
+    auto writeSecret = [&j](const char* plainKey, const char* encKey, const std::string& value) {
+        ApplySecretPersist(j, plainKey, encKey, value, ProtectSecretForConfig(value));
+    };
+    writeSecret("token", "token_enc", config.ApiToken);
+    writeSecret("plane_api_key", "plane_api_key_enc", config.PlaneApiKey);
+    writeSecret("github_pat", "github_pat_enc", config.GitHubPat);
+    writeSecret("linear_api_key", "linear_api_key_enc", config.LinearApiKey);
+    // Bug-report PAT — persisted ONLY when the user opted in (BugReportPersistPat). When opt-out,
+    // both keys are erased so no token is ever written to config; when opt-in, the same
+    // encrypt-or-plaintext-fallback contract as the fields above.
     j.erase("bugreport_github_pat");
     j.erase("bugreport_github_pat_enc");
     if (config.BugReportPersistPat && !config.BugReportGitHubPat.empty()) {
-        const std::string bugPatEnc = ProtectSecretForConfig(config.BugReportGitHubPat);
-        if (!bugPatEnc.empty()) {
-            j["bugreport_github_pat_enc"] = bugPatEnc;
-        } else {
-            j["bugreport_github_pat"] = config.BugReportGitHubPat; // DPAPI failed — keep plaintext fallback
-        }
+        writeSecret("bugreport_github_pat", "bugreport_github_pat_enc", config.BugReportGitHubPat);
     }
     // Defense-in-depth (security backlog 2026-05-17): strip CR/LF/NUL from the header-bound secrets
     // (MCP auth token, AI API keys) before DPAPI-encrypting them, so the value can never carry
@@ -120,39 +101,13 @@ void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
     // config.set / Lua direct-write paths cannot reach these fields (absent from the config.set
     // allowlist ConfigSetKeyTable, not funneled through Save) — any future allowlist addition of a
     // header-bound field must also route through this sanitize.
-    const std::string mcpAuthTokenSanitized = SanitizeConfigStringValue(config.McpAuthToken);
-    const std::string mcpAuthTokenEnc = ProtectSecretForConfig(mcpAuthTokenSanitized);
-    // New field migration: keep the legacy plaintext fallback if DPAPI fails instead of dropping the only copy.
-    if (mcpAuthTokenSanitized.empty() || !mcpAuthTokenEnc.empty()) {
-        j.erase("mcp_auth_token");
-    }
-    j["mcp_auth_token_enc"] = mcpAuthTokenEnc;
-    // Smatchet Assistant API keys — same DPAPI + legacy-plaintext fallback pattern as McpAuthToken.
-    const std::string aiApiKeySanitized = SanitizeConfigStringValue(config.AiApiKey);
-    const std::string aiApiKeyEnc = ProtectSecretForConfig(aiApiKeySanitized);
-    if (aiApiKeySanitized.empty() || !aiApiKeyEnc.empty()) {
-        j.erase("ai_api_key");
-    }
-    j["ai_api_key_enc"] = aiApiKeyEnc;
-    const std::string aiAnthropicSanitized = SanitizeConfigStringValue(config.AiAnthropicApiKey);
-    const std::string aiAnthropicEnc = ProtectSecretForConfig(aiAnthropicSanitized);
-    if (aiAnthropicSanitized.empty() || !aiAnthropicEnc.empty()) {
-        j.erase("ai_anthropic_api_key");
-    }
-    j["ai_anthropic_api_key_enc"] = aiAnthropicEnc;
-    const std::string aiDeepSeekSanitized = SanitizeConfigStringValue(config.AiDeepSeekApiKey);
-    const std::string aiDeepSeekEnc = ProtectSecretForConfig(aiDeepSeekSanitized);
-    if (aiDeepSeekSanitized.empty() || !aiDeepSeekEnc.empty()) {
-        j.erase("ai_deepseek_api_key");
-    }
-    j["ai_deepseek_api_key_enc"] = aiDeepSeekEnc;
+    writeSecret("mcp_auth_token", "mcp_auth_token_enc", SanitizeConfigStringValue(config.McpAuthToken));
+    writeSecret("ai_api_key", "ai_api_key_enc", SanitizeConfigStringValue(config.AiApiKey));
+    writeSecret("ai_anthropic_api_key", "ai_anthropic_api_key_enc",
+                SanitizeConfigStringValue(config.AiAnthropicApiKey));
+    writeSecret("ai_deepseek_api_key", "ai_deepseek_api_key_enc", SanitizeConfigStringValue(config.AiDeepSeekApiKey));
 #if defined(SMATCHET_WITH_WHISPER)
-    // WhisperApiKey — same DPAPI + legacy-plaintext fallback shape as AiApiKey.
-    const std::string whisperApiKeyEnc = ProtectSecretForConfig(config.WhisperApiKey);
-    if (config.WhisperApiKey.empty() || !whisperApiKeyEnc.empty()) {
-        j.erase("whisper_api_key");
-    }
-    j["whisper_api_key_enc"] = whisperApiKeyEnc;
+    writeSecret("whisper_api_key", "whisper_api_key_enc", config.WhisperApiKey);
 #endif
 }
 #elif defined(__ANDROID__)
@@ -232,6 +187,37 @@ void WriteSecretFields(nlohmann::json& j, const TrackerConfig& config) {
 
 namespace smatchet {
 namespace config_detail {
+
+// Persist-decision for one config secret. `encrypted` is the ProtectSecretForConfig result — empty
+// means the DPAPI encrypt FAILED (or `value` was empty, i.e. nothing to protect). Issue #1770: a
+// non-empty secret whose encrypt failed must fall back to the plaintext key rather than be dropped.
+SecretPersistAction DecideSecretPersist(const std::string& value, const std::string& encrypted) {
+    if (!encrypted.empty()) {
+        return SecretPersistAction::StoreCiphertext;
+    }
+    if (value.empty()) {
+        return SecretPersistAction::ClearBoth;
+    }
+    return SecretPersistAction::StorePlaintext; // encrypt failed on a real secret — keep plaintext
+}
+
+void ApplySecretPersist(nlohmann::json& j, const char* plainKey, const char* encKey, const std::string& value,
+                        const std::string& encrypted) {
+    switch (DecideSecretPersist(value, encrypted)) {
+    case SecretPersistAction::StoreCiphertext:
+        j[encKey] = encrypted; // ciphertext replaces any prior plaintext copy
+        j.erase(plainKey);
+        break;
+    case SecretPersistAction::StorePlaintext:
+        j[plainKey] = value; // DPAPI failed — persist the current plaintext, not an empty ciphertext
+        j.erase(encKey);
+        break;
+    case SecretPersistAction::ClearBoth:
+        j.erase(encKey);
+        j.erase(plainKey);
+        break;
+    }
+}
 
 // Purges legacy keys carried over from LoadMergedConfigJson() and writes the secret fields
 // (DPAPI-encrypted on Win32 with a plaintext fallback when protection fails; plaintext on other
