@@ -17,7 +17,6 @@
 #include "OfflineFieldConflictPolicy.h"
 #include "OfflineQueueReplayPolicy.h"
 #include "TextMerge.h"
-#include "TrackerHttpPure.h"
 #include "Views.h"
 
 #include <algorithm>

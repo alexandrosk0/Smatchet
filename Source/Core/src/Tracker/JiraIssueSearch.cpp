@@ -463,7 +463,7 @@ JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::
             LOG_WARN("JiraClient::FetchIssuesForKeys: %s", outError.c_str());
             // Guard the `!= 200` branch before FromHttpStatus: a 2xx-other (201/204) would map to
             // Ok() and yield an Err(Kind::None) with empty Detail (FIX-1 / Slice-2). Detail is
-            // preserved verbatim for the caller's IsTrackerTransportErrorText text check.
+            // preserved verbatim for the caller's user-facing error surfaces.
             if (response.status_code >= 200 && response.status_code < 300) {
                 return FetchResult::Err(TrackerErrorUnknown(outError, response.status_code));
             }

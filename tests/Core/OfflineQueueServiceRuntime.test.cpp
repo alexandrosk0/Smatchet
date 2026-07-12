@@ -6,10 +6,9 @@
 // ConfigManager user-data dir into a private temp dir, and writes a minimal config file
 // with `read_only_mode=false` (ConfigManager defaults that to true when no config exists).
 //
-// `OfflineQueueService.cpp` calls `IsTrackerTransportErrorText`, now defined in the cpr-free
-// `TrackerHttpPure.cpp` (#1339 moved it off cpr so Sync + the TSan threading subset link it
-// without dragging cpr — backlog C12 closed). Both the full test target and the TSan subset
-// link that TU, so the production definition resolves directly — no test-side mirror needed.
+// `OfflineQueueService.cpp` classifies replay failures by the structured `TrackerError` kind
+// (N12 13a — the `IsTrackerTransportErrorText` text sniff is deleted in slice 3). Both the full
+// test target and the TSan subset link the cpr-free `TrackerHttpPure.cpp` for `RedactHttpBodyForLog`.
 
 #include "../support/FakeOfflineQueueDeps.h"
 #include "../support/FakeTrackerClient.h"
@@ -20,7 +19,6 @@
 #include "IssueDraft.h"
 #include "OfflineQueueReplayPolicy.h"
 #include "OfflineQueueService.h"
-#include "TrackerHttpPure.h"
 
 #include <doctest/doctest.h>
 
@@ -165,7 +163,7 @@ TEST_CASE("OfflineQueueServiceRuntime: create → drain 200 OK deletes row" * do
 // Case 2 — Enqueue create-issue → drain 4xx → row stays in queue (4xx alone does NOT
 // dead-letter; only the cap does for the create path). [high-risk]
 // The case description in the plan says "4xx archives". After implementation review of
-// `TickOfflineCreates`, the create path never branches on `IsTrackerTransportErrorText` —
+// `TickOfflineCreates`, the create path never branches on transport-ness —
 // only `ShouldArchive(nextAttempts)` decides archive-vs-retry. So a 4xx with attempts < cap
 // keeps the row, increments attempts, populates LastError. Documented as a plan deviation
 // in `docs/plans/active/applied/test-suite-expansion.md`.
@@ -342,8 +340,8 @@ TEST_CASE("OfflineQueueServiceRuntime: field-edit → drain 200 OK deletes row")
 
 // ---------------------------------------------------------------------------
 // Case 8 — Enqueue field-edit → drain 4xx (hard rejection) → row archives to dead-letter.
-// Unlike the create path, `TickOfflineFieldEdits` does branch on
-// `IsTrackerTransportErrorText`: non-transport errors archive immediately as `replay_rejected`.
+// Unlike the create path, `TickOfflineFieldEdits` does branch on transport-ness (the mutation
+// TrackerError's IsRetryable(), N12 13a): non-transient errors archive immediately as `replay_rejected`.
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: field-edit → drain 4xx archives to dead-letter") {
     OfflineQueueTestEnvGuard guard;

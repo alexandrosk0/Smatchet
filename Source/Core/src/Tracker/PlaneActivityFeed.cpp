@@ -126,10 +126,12 @@ PlaneClient::FetchUserActivity(const TrackerConfig& cfg, const std::string& acco
     std::string projectId;
     std::string projectIdentifier;
     std::string resolveError;
+    TrackerError resolveClassified;
     if (!smatchet::plane_detail::ResolvePlaneProject(planeApi, cfg, projectKey, headers, projectId, projectIdentifier,
-                                                     &resolveError)) {
+                                                     &resolveError, &resolveClassified)) {
         LOG_ERROR("PlaneClient: activity project resolve failed: %s", resolveError.c_str());
-        return FeedResult::Err(TrackerErrorUnknown(resolveError));
+        // Classified at the resolve failure site (N12 slice 3).
+        return FeedResult::Err(resolveClassified.IsOk() ? TrackerErrorUnknown(resolveError) : resolveClassified);
     }
 
     const std::string listBase =
@@ -158,7 +160,10 @@ PlaneClient::FetchUserActivity(const TrackerConfig& cfg, const std::string& acco
             return FeedResult::Err(TrackerErrorFromHttpStatus(resp.status_code, outError));
         }
         std::string parseErr;
-        // SMATCHET_DEVIATION(rule=duplication; reason=ParseBounded + parseErr-check + is_object guard is the shared bounded-ingress shape surfaced across independent tracker clients by the security sweep; de-duping into a shared helper would couple unrelated Jira/Plane subsystems and is DRY-CRITICAL to avoid; owner=security-audit; revisit=2026-09-30)
+        // SMATCHET_DEVIATION(rule=duplication; reason=ParseBounded + parseErr-check + is_object guard is the shared
+        // bounded-ingress shape surfaced across independent tracker clients by the security sweep; de-duping into a
+        // shared helper would couple unrelated Jira/Plane subsystems and is DRY-CRITICAL to avoid;
+        // owner=security-audit; revisit=2026-09-30)
         nlohmann::json listPayload = smatchet::json_safe::ParseBounded(resp.text, parseErr);
         if (!parseErr.empty()) {
             outError = std::string("activity discovery parse error: ") + parseErr;

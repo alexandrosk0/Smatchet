@@ -86,10 +86,13 @@ std::string JsonFieldToString(const nlohmann::json& obj, const char* key) {
 
 bool ResolvePlaneProject(const std::string& planeApi, const TrackerConfig& cfg, const std::string& projectKey,
                          const cpr::Header& headers, std::string& outId, std::string& outIdentifier,
-                         std::string* outError) {
+                         std::string* outError, TrackerError* outClassified) {
     const std::string projectsUrl = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/";
     std::string available;
-    // SMATCHET_DEVIATION(rule=duplication; reason=DR25 Plane cursor-pagination loop is the uniform tracker idiom (mirrors the un-deviated PlaneActivityFeed/PlaneFieldCatalog loops); the per-page bodies (project match vs comments vs states) differ, so a shared callback helper across independent fetches is not worth the coupling; owner=deep-review; revisit=2026-10-01)
+    // SMATCHET_DEVIATION(rule=duplication; reason=DR25 Plane cursor-pagination loop is the uniform tracker idiom
+    // (mirrors the un-deviated PlaneActivityFeed/PlaneFieldCatalog loops); the per-page bodies (project match vs
+    // comments vs states) differ, so a shared callback helper across independent fetches is not worth the coupling;
+    // owner=deep-review; revisit=2026-10-01)
     std::string cursor;
     // Follow Plane's cursor pagination so a project on a later page still resolves (DR25).
     // The page cap bounds a misbehaving cursor that never terminates.
@@ -101,11 +104,12 @@ bool ResolvePlaneProject(const std::string& planeApi, const TrackerConfig& cfg, 
         }
         auto response = TrackerGetLogged("PlaneClient", projectsUrl, headers, params);
         if (response.status_code != 200) {
-            const std::string err = "Plane API error " + std::to_string(response.status_code) +
-                                    " resolving project '" + projectKey + "': " +
-                                    RedactHttpBodyForLog(response.text).substr(0, 300);
+            const std::string err = "Plane API error " + std::to_string(response.status_code) + " resolving project '" +
+                                    projectKey + "': " + RedactHttpBodyForLog(response.text).substr(0, 300);
             if (outError)
                 *outError = err;
+            if (outClassified)
+                *outClassified = TrackerErrorFromHttpStatus(static_cast<int>(response.status_code), err);
             return false;
         }
 
@@ -116,6 +120,8 @@ bool ResolvePlaneProject(const std::string& planeApi, const TrackerConfig& cfg, 
                 "Plane project list returned invalid JSON while resolving project '" + projectKey + "'.";
             if (outError)
                 *outError = err;
+            if (outClassified)
+                *outClassified = TrackerErrorParse(err);
             return false;
         }
 
@@ -125,6 +131,8 @@ bool ResolvePlaneProject(const std::string& planeApi, const TrackerConfig& cfg, 
                 "Plane project list response has no results array while resolving project '" + projectKey + "'.";
             if (outError)
                 *outError = err;
+            if (outClassified)
+                *outClassified = TrackerErrorParse(err);
             return false;
         }
 
@@ -154,6 +162,8 @@ bool ResolvePlaneProject(const std::string& planeApi, const TrackerConfig& cfg, 
                             "'. Available project identifiers/names: " + available;
     if (outError)
         *outError = err;
+    if (outClassified)
+        *outClassified = TrackerErrorNotFound(err, 0); // lookup miss, not an HTTP 404
     return false;
 }
 

@@ -7,7 +7,6 @@
 #include "LinearQueryFromJql.h"
 #include "Logger.h"
 #include "TrackerFieldSchema.h"
-#include "TrackerHttpPure.h"
 #include "TrackerHttpUtils.h"
 
 #include <cpr/cpr.h>

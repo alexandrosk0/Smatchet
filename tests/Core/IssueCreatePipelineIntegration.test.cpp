@@ -421,7 +421,7 @@ TEST_CASE("BuildCreatePayload returns Ok json on success and InvalidRequest Err 
 // success returns an Ok TrackerError (empty Detail); a scripted failure returns a non-Ok
 // TrackerError whose Detail is the verbatim scripted message — the contract the AppController
 // wrappers + OfflineQueueService + IssueCreatePipeline translate back to their string surfaces
-// (where ErrorTextContainsHttpStatus / IsTrackerTransportErrorText parse it verbatim).
+// (where ErrorTextContainsHttpStatus parses it verbatim).
 TEST_CASE("UpdateIssueFields returns Ok TrackerError on success and a detail-carrying Err on failure") {
     FakeTrackerClient client;
 

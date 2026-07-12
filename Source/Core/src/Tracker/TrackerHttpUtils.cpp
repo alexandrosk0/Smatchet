@@ -243,7 +243,8 @@ cpr::Response TrackerPostLogged(const char* clientName, const std::string& url, 
             LogTrackerHttpResult(clientName, "POST", url, response);
             return ClassifyTrackerResponse(response);
         },
-        kTrackerHttpDefaultMaxAttempts, cancelled, [&lastErrorCode](const TrackerError& e) {
+        kTrackerHttpDefaultMaxAttempts, cancelled,
+        [&lastErrorCode](const TrackerError& e) {
             return TrackerShouldRetryPost(e.Kind, lastErrorCode == cpr::ErrorCode::OPERATION_TIMEDOUT);
         });
     return std::move(result.Response);
@@ -267,8 +268,8 @@ cpr::Response TrackerPutLogged(const char* clientName, const std::string& url, c
     return std::move(result.Response);
 }
 
-// IsTrackerTransportErrorText moved to TrackerHttpPure.cpp (pure, cpr-free) so the Sync layer
-// and the TSan threading subset can classify transport errors without pulling in cpr.
+// IsTrackerTransportErrorText (formerly here, then TrackerHttpPure.cpp) was deleted in N12
+// slice 3 — transport-ness travels as the structured TrackerError kind.
 
 cpr::Response TrackerPatchLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                  const std::string& body, const std::function<bool()>& cancelled) {

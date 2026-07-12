@@ -387,10 +387,22 @@ def new_clones_vs(base, head_streams, base_streams):
     exercise the blocking decision without git."""
     head_clones = find_clones(head_streams, allow_intra=False)
     base_hashes = {c.content_hash for c in find_clones(base_streams, allow_intra=False)}
+    # A file is unchanged (for clone purposes) when its normalized token stream is byte-identical at
+    # base and head — a pure-comment edit does not count as changed. Winnowing/clustering is
+    # corpus-sensitive: adding tokens in an UNRELATED file can shift the maximal-clone boundary
+    # selected for a pre-existing clone between two UNCHANGED files, surfacing a "new" content_hash
+    # for content that already exists verbatim at base (observed: a Tracker-file diff un-grandfathered
+    # a CodeColorView.cpp<->CppSyntaxLex.cpp syntax-highlight clone). A clone whose EVERY occurrence
+    # is in an unchanged file cannot be duplication this diff introduced — you cannot duplicate code
+    # INTO a file without changing it — so grandfather it regardless of the drifted boundary hash.
+    changed_files = {f for f in set(head_streams) | set(base_streams)
+                     if head_streams.get(f) != base_streams.get(f)}
     new = []
     for c in head_clones:
         if c.content_hash in base_hashes:
             continue  # grandfathered: this normalized block was already duplicated at base
+        if all(p not in changed_files for p, _s, _e in c.locations):
+            continue  # boundary-drift artifact: every occurrence is in a file unchanged vs base
         if any(_suppressed(p, s, e) for p, s, e in c.locations):
             continue
         new.append(c)
@@ -521,6 +533,30 @@ def run_selftest():
     # A clone already present at base is grandfathered -> NOT new -> gate stays green (exit 0).
     if new_clones_vs("BASE", streams, streams):
         print("SELFTEST FAIL: grandfathered (base-present) clone flagged as NEW", file=sys.stderr)
+        miss = 1
+    # Boundary-drift grandfathering: winnowing is corpus-sensitive, so adding tokens in an unrelated
+    # CHANGED file can shift the maximal-clone boundary selected for a clone between two UNCHANGED
+    # files, giving it a base-absent content_hash for content that already exists verbatim at base.
+    # A clone whose EVERY occurrence is in a file unchanged vs base must stay grandfathered. Stub
+    # find_clones so BASE reports hash H1 and HEAD reports a drifted H2 for the same unchanged pair.
+    drift_head = {"U1.cpp": ["k"], "U2.cpp": ["k"], "CHANGED.cpp": ["z"]}
+    drift_base = {"U1.cpp": ["k"], "U2.cpp": ["k"]}
+    saved_find = globals()["find_clones"]
+
+    def _drift_stub(streams_arg, allow_intra=False):
+        drifted = "CHANGED.cpp" in streams_arg
+        h = "H2drift" if drifted else "H1base"
+        ntok = 74 if drifted else 71
+        return [Clone(h, ntok, [("U1.cpp", 1, 5), ("U2.cpp", 1, 5)])]
+
+    globals()["find_clones"] = _drift_stub
+    try:
+        drifted_new = new_clones_vs("BASE", drift_head, drift_base)
+    finally:
+        globals()["find_clones"] = saved_find
+    if drifted_new:
+        print("SELFTEST FAIL: boundary-drift clone in files unchanged vs base was not grandfathered",
+              file=sys.stderr)
         miss = 1
     if miss:
         return 1

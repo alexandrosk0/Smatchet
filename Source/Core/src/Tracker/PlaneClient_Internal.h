@@ -5,6 +5,7 @@
 // Not for inclusion outside Source/Core/src/ — public surface stays in PlaneClient.h.
 
 #include "ConfigManager.h"
+#include "TrackerError.h"
 
 #include <nlohmann/json.hpp>
 #include <cpr/cpr.h>
@@ -29,10 +30,12 @@ std::string NormalizePlaneApiBase(std::string base);
 std::string JsonFieldToString(const nlohmann::json& obj, const char* key);
 
 /// Resolve a project key/identifier/name to its UUID + identifier via the Plane workspace projects endpoint.
-/// Returns true on success and writes `outId` / `outIdentifier`. On failure writes `*outError` (if non-null).
+/// Returns true on success and writes `outId` / `outIdentifier`. On failure writes `*outError` (if non-null)
+/// and `*outClassified` (if non-null) — the structured TrackerError kind classified at the failure site
+/// (HTTP status / parse / not-found), so callers keep retryability instead of collapsing to Unknown.
 bool ResolvePlaneProject(const std::string& planeApi, const TrackerConfig& cfg, const std::string& projectKey,
                          const cpr::Header& headers, std::string& outId, std::string& outIdentifier,
-                         std::string* outError);
+                         std::string* outError, TrackerError* outClassified = nullptr);
 
 } // namespace plane_detail
 } // namespace smatchet

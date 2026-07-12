@@ -486,8 +486,11 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(const BatchCallback& o
     }
 
     std::string resolveError;
-    if (!ResolvePlaneProject(planeApi, cfg, projectKey, headers, tempProjectId, tempProjectIdentifier, &resolveError)) {
+    TrackerError resolveClassified;
+    if (!ResolvePlaneProject(planeApi, cfg, projectKey, headers, tempProjectId, tempProjectIdentifier, &resolveError,
+                             &resolveClassified)) {
         summary.FetchError = resolveError;
+        summary.Error = resolveClassified; // classified at the resolve failure site (N12 slice 3)
         return summary;
     }
 
@@ -530,12 +533,18 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(const BatchCallback& o
     } catch (const nlohmann::json::exception& jex) {
         LOG_ERROR("PlaneClient::FetchIssuesStreamed outer json error: %s", jex.what());
         summary.FetchError = std::string("Plane sync failed (JSON): ") + jex.what();
+        summary.Error = TrackerErrorParse(summary.FetchError);
     } catch (const std::exception& ex) {
         LOG_ERROR("PlaneClient::FetchIssuesStreamed outer error: %s", ex.what());
         summary.FetchError = std::string("Plane sync failed: ") + ex.what();
+        // Deliberately non-retryable (13a precedent): transport failures surface as classified
+        // page-HTTP statuses, never as throws — a thrown path is a bug shape, and the
+        // non-transient branch is the safe ask-the-user path.
+        summary.Error = TrackerErrorUnknown(summary.FetchError);
     } catch (...) {
         LOG_ERROR("PlaneClient::FetchIssuesStreamed outer error: unknown exception");
         summary.FetchError = "Plane sync failed: unknown exception";
+        summary.Error = TrackerErrorUnknown(summary.FetchError);
     }
 
     {

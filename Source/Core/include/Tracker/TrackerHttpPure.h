@@ -62,16 +62,8 @@ bool ShouldUpgradeCleartextBase(const std::string& rawBase);
 
 } // namespace TrackerHttpPure
 
-/**
- * True when `error` looks like a connectivity/transport failure (HTTP 0, timeouts, DNS, etc.).
- * False for missing auth/domain, typical HTTP 4xx validation/auth responses, and unknown strings
- * (conservative: callers should not treat unknown errors as offline/transport).
- *
- * Pure string classification (no cpr) — lives here, not in TrackerHttpUtils.h, so cpr-free
- * consumers (Sync's TicketSyncService, the TSan threading subset) can classify a transport
- * error without dragging <cpr/cpr.h> into their compile closure. Global free function (matches
- * the existing call sites); the namespaced TLS-trust seam above is unrelated.
- */
-bool IsTrackerTransportErrorText(const std::string& error);
+// IsTrackerTransportErrorText was deleted in N12 slice 3: transport-ness now travels as the
+// structured TrackerError kind classified at each backend's own error site (IsRetryable()),
+// never re-derived from flattened error text.
 
 #endif

@@ -117,65 +117,6 @@ TEST_CASE("ShouldUpgradeCleartextBase: cleartext http to public host must upgrad
     }
 }
 
-// IsTrackerTransportErrorText is the pure connectivity classifier (no cpr) that the offline-create
-// path + OfflineQueueService read to decide "is this failure transport, or a real client error?".
-// It lives in TrackerHttpPure (moved out of TrackerHttpUtils so cpr-free consumers — Sync, the TSan
-// threading subset — classify without dragging in <cpr/cpr.h>). Global free function — no namespace
-// qualifier. These pin both keyword families, the hard-wins precedence, and the conservative default.
-
-TEST_CASE("IsTrackerTransportErrorText: transport/connectivity failures classify true") {
-    SUBCASE("HTTP 0 + 5xx server-side") {
-        CHECK(IsTrackerTransportErrorText("HTTP 0: empty reply"));
-        CHECK(IsTrackerTransportErrorText("HTTP 500 internal server error"));
-        CHECK(IsTrackerTransportErrorText("HTTP 502 bad gateway"));
-        CHECK(IsTrackerTransportErrorText("HTTP 503 service unavailable"));
-        CHECK(IsTrackerTransportErrorText("HTTP 504 gateway timeout"));
-    }
-    SUBCASE("timeouts / DNS / connect failures") {
-        CHECK(IsTrackerTransportErrorText("operation timed out after 30000 ms"));
-        CHECK(IsTrackerTransportErrorText("Could not resolve host: acme.atlassian.net"));
-        CHECK(IsTrackerTransportErrorText("Failed to connect to corp-jira port 443"));
-        CHECK(IsTrackerTransportErrorText("Connection refused"));
-        CHECK(IsTrackerTransportErrorText("Connection reset by peer"));
-        CHECK(IsTrackerTransportErrorText("Network is unreachable"));
-    }
-    SUBCASE("TLS / SSL connectivity") {
-        CHECK(IsTrackerTransportErrorText("SSL connect error"));
-        CHECK(IsTrackerTransportErrorText("certificate verify failed"));
-        CHECK(IsTrackerTransportErrorText("schannel: failed to receive handshake"));
-    }
-    SUBCASE("case-insensitive (input is lowercased before matching)") {
-        CHECK(IsTrackerTransportErrorText("TIMEOUT"));
-        CHECK(IsTrackerTransportErrorText("Connection Refused"));
-    }
-}
-
-TEST_CASE("IsTrackerTransportErrorText: client/config/auth failures classify false") {
-    SUBCASE("missing config / auth") {
-        CHECK_FALSE(IsTrackerTransportErrorText("Missing tracker domain"));
-        CHECK_FALSE(IsTrackerTransportErrorText("Missing API token"));
-        CHECK_FALSE(IsTrackerTransportErrorText("Tracker backend is not initialized"));
-        CHECK_FALSE(IsTrackerTransportErrorText("Plane is not configured"));
-        CHECK_FALSE(IsTrackerTransportErrorText("Plane API key is missing"));
-    }
-    SUBCASE("HTTP 4xx validation/auth responses are not transport") {
-        CHECK_FALSE(IsTrackerTransportErrorText("HTTP 400 bad request"));
-        CHECK_FALSE(IsTrackerTransportErrorText("HTTP 401 invalid credentials"));
-        CHECK_FALSE(IsTrackerTransportErrorText("HTTP 403 forbidden"));
-        CHECK_FALSE(IsTrackerTransportErrorText("HTTP 404 not found"));
-        CHECK_FALSE(IsTrackerTransportErrorText("HTTP 409 conflict"));
-        CHECK_FALSE(IsTrackerTransportErrorText("HTTP 422 unprocessable entity"));
-    }
-}
-
-TEST_CASE("IsTrackerTransportErrorText: edge cases") {
-    SUBCASE("empty string is not transport") { CHECK_FALSE(IsTrackerTransportErrorText("")); }
-    SUBCASE("unknown text is conservatively not transport") {
-        CHECK_FALSE(IsTrackerTransportErrorText("something completely unexpected happened"));
-    }
-    SUBCASE("hard tokens win over transport tokens (checked first)") {
-        // Contains "http 400" (hard) AND "connection" (transport) — hard is scanned first, so the
-        // string classifies as a client error (false), not transport. Pins the documented precedence.
-        CHECK_FALSE(IsTrackerTransportErrorText("HTTP 400: bad connection parameters in request"));
-    }
-}
+// The IsTrackerTransportErrorText doctest block was deleted with the function in N12 slice 3 —
+// transport-ness travels as the structured TrackerError kind classified at each backend's error
+// site (kind mapping pinned by tests/Core/Tracker2xxErrorGuard.test.cpp).

@@ -1195,6 +1195,10 @@ add_executable(SmatchetTests
     # BACKLOG_CODE_REVIEW.md §B2 — JiraClient::ProbeReachability HTTP-status→kind
     # characterization, same JiraCatalogHttpFixture loopback + linked JiraClient TUs.
     Core/JiraClientHttp.test.cpp
+    # N12 slice 3 — UpdateIssueFields / AddIssueToSprint failure-status→kind classification
+    # (the IsRetryable() contract the field-edit offline-queue chain branches on). Same
+    # loopback fixture + Jira TUs; cfg-less paths run under TestEnvGuard.
+    Core/JiraIssueMutationHttp.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraIssueSearch.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraIssueMutation.cpp"
