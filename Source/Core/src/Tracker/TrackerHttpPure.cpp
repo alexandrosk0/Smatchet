@@ -1,7 +1,6 @@
 #include "TrackerHttpPure.h"
 
 #include "AiErrorRedact.h"
-#include "StringUtil.h"
 
 #include <algorithm>
 #include <cctype>
@@ -126,85 +125,7 @@ bool ShouldUpgradeCleartextBase(const std::string& rawBase) {
 
 } // namespace TrackerHttpPure
 
-// Global free function (declared in TrackerHttpPure.h). Pure string classification, no cpr —
-// kept out of TrackerHttpUtils.cpp so cpr-free consumers (Sync, the TSan threading subset) link
-// it without dragging in cpr. Behaviour preserved byte-for-byte from the original location.
-bool IsTrackerTransportErrorText(const std::string& error) {
-    if (error.empty()) {
-        return false;
-    }
-    const std::string s = ToLowerAsciiCopy(error);
-
-    // Client/config/auth/validation — never treat as transport.
-    static const char* kHard[] = {
-        "missing tracker domain",
-        "missing tracker",
-        "api token",
-        "tracker backend is not initialized",
-        "http 400",
-        "http 401",
-        "http 402",
-        "http 403",
-        "http 404",
-        "http 405",
-        "http 406",
-        "http 409",
-        "http 410",
-        "http 422",
-        "invalid credentials",
-        "bad request",
-        "unprocessable",
-        // Plane config errors
-        "plane is not configured",
-        "plane api key is missing",
-    };
-    for (const char* h : kHard) {
-        if (s.find(h) != std::string::npos) {
-            return false;
-        }
-    }
-
-    static const char* kTransport[] = {
-        "http 0",
-        "http 500",
-        "http 502",
-        "http 503",
-        "http 504",
-        "timeout",
-        "timed out",
-        "operation timed out",
-        "could not resolve host",
-        "couldn't resolve host",
-        "name or service not known",
-        "failed to connect",
-        "connection refused",
-        "connection reset",
-        "connection aborted",
-        "network is unreachable",
-        "host unreachable",
-        "ssl connect error",
-        "couldn't connect to server",
-        "eof occurred",
-        "offline",
-        "network error",
-        "resolve host",
-        "resolve proxy",
-        "connection closed",
-        "stream error",
-        "certificate verify failed",
-        "ssl peer certificate",
-        "schannel",
-        // Broad connectivity hints (aligned with legacy offline-create detection).
-        "network",
-        "connection",
-    };
-    for (const char* t : kTransport) {
-        if (s.find(t) != std::string::npos) {
-            return true;
-        }
-    }
-    return false;
-}
+// IsTrackerTransportErrorText was deleted here in N12 slice 3 — see TrackerHttpPure.h.
 
 std::string RedactHttpBodyForLog(const std::string& body) {
     // Strip reflected tokens (Bearer / api_key / Authorization / sk- / ghp_ …) via the

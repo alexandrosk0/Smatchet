@@ -41,6 +41,18 @@ std::string WithRedactedBody(const std::string& userError, const std::string& bo
     return userError + " | body: " + RedactHttpBodyForLog(body);
 }
 
+// Classify a mutation-endpoint status that reached a failure branch. A 2xx-other (201/204/206)
+// still lands here for endpoints whose only success codes are 200/204; guard before
+// TrackerErrorFromHttpStatus, which would map any 2xx to Ok() and drop the detail. Keeping the
+// guard in one place holds retry semantics identical across the mutation failure branches.
+TrackerError ClassifyRejectedHttpStatus(long statusCode, const std::string& detail) {
+    const int status = static_cast<int>(statusCode);
+    if (status >= 200 && status < 300) {
+        return TrackerErrorUnknown(detail, status);
+    }
+    return TrackerErrorFromHttpStatus(status, detail);
+}
+
 } // namespace
 
 namespace {
@@ -120,7 +132,7 @@ void AppendTransitionFailure(const std::string& issueId, const std::string& audi
 bool JiraClient::UpdateIssueFieldsViaTransition(const std::string& issueId, const nlohmann::json& statusValue,
                                                 const std::string& base, const cpr::Header& headers,
                                                 const std::string& auditOp, std::string& outError,
-                                                const std::function<bool()>& cancelled) {
+                                                const std::function<bool()>& cancelled, TrackerError* outClassified) {
     std::string targetStatusId;
     std::string targetStatusName;
     ParseTargetStatus(statusValue, targetStatusId, targetStatusName);
@@ -129,6 +141,8 @@ bool JiraClient::UpdateIssueFieldsViaTransition(const std::string& issueId, cons
         outError = "Missing target status for transition.";
         LOG_WARN("JiraClient: %s issue=%s", outError.c_str(), issueId.c_str());
         AppendTransitionFailure(issueId, auditOp, outError, targetStatusId, targetStatusName);
+        if (outClassified)
+            *outClassified = TrackerErrorInvalidRequest(outError);
         return false;
     }
 
@@ -142,6 +156,9 @@ bool JiraClient::UpdateIssueFieldsViaTransition(const std::string& issueId, cons
         const std::string detail = WithRedactedBody(outError, transitionsResp.text);
         LOG_ERROR("JiraClient: %s", detail.c_str());
         AppendTransitionFailure(issueId, auditOp, detail, targetStatusId, targetStatusName);
+        if (outClassified) {
+            *outClassified = ClassifyRejectedHttpStatus(transitionsResp.status_code, outError);
+        }
         return false;
     }
 
@@ -156,6 +173,8 @@ bool JiraClient::UpdateIssueFieldsViaTransition(const std::string& issueId, cons
             LOG_ERROR("JiraClient: transitions parse failed: %s", redactedParseErr.c_str());
             AppendTransitionFailure(issueId, auditOp, outError + " | parse: " + redactedParseErr, targetStatusId,
                                     targetStatusName);
+            if (outClassified)
+                *outClassified = TrackerErrorParse(outError);
             return false;
         }
         if (!transitionsJson.contains("transitions") || !transitionsJson["transitions"].is_array()) {
@@ -163,6 +182,8 @@ bool JiraClient::UpdateIssueFieldsViaTransition(const std::string& issueId, cons
             LOG_ERROR("JiraClient: %s issue=%s body=%s", outError.c_str(), issueId.c_str(),
                       RedactHttpBodyForLog(transitionsResp.text).c_str());
             AppendTransitionFailure(issueId, auditOp, outError, targetStatusId, targetStatusName);
+            if (outClassified)
+                *outClassified = TrackerErrorParse(outError);
             return false;
         }
         transitionId = FindTransitionIdInArray(transitionsJson["transitions"], targetStatusId, targetStatusName);
@@ -172,6 +193,8 @@ bool JiraClient::UpdateIssueFieldsViaTransition(const std::string& issueId, cons
         LOG_ERROR("JiraClient: transitions parse failed: %s", redactedWhat.c_str());
         AppendTransitionFailure(issueId, auditOp, outError + " | parse: " + redactedWhat, targetStatusId,
                                 targetStatusName);
+        if (outClassified)
+            *outClassified = TrackerErrorParse(outError);
         return false;
     }
 
@@ -180,6 +203,8 @@ bool JiraClient::UpdateIssueFieldsViaTransition(const std::string& issueId, cons
         LOG_WARN("JiraClient: %s issue=%s targetStatusId=%s targetStatusName=%s", outError.c_str(), issueId.c_str(),
                  targetStatusId.c_str(), targetStatusName.c_str());
         AppendTransitionFailure(issueId, auditOp, outError, targetStatusId, targetStatusName);
+        if (outClassified)
+            *outClassified = TrackerErrorInvalidRequest(outError);
         return false;
     }
 
@@ -194,6 +219,9 @@ bool JiraClient::UpdateIssueFieldsViaTransition(const std::string& issueId, cons
         const std::string detail = WithRedactedBody(outError, transitionResp.text);
         LOG_ERROR("JiraClient: %s issue=%s", detail.c_str(), issueId.c_str());
         AppendTransitionFailure(issueId, auditOp, detail, targetStatusId, targetStatusName);
+        if (outClassified) {
+            *outClassified = ClassifyRejectedHttpStatus(transitionResp.status_code, outError);
+        }
         return false;
     }
 
@@ -208,7 +236,7 @@ bool JiraClient::UpdateIssueFieldsViaTransition(const std::string& issueId, cons
 bool JiraClient::UpdateIssueFieldsViaPut(const std::string& issueId, const nlohmann::json& fieldsAudited,
                                          const std::string& base, const cpr::Header& headers,
                                          const std::string& auditOp, std::string& outError,
-                                         const std::function<bool()>& cancelled) {
+                                         const std::function<bool()>& cancelled, TrackerError* outClassified) {
     nlohmann::json body = nlohmann::json::object();
     body["fields"] = fieldsAudited;
     const std::string updateUrl = base + "/rest/api/3/issue/" + UrlEncode(issueId);
@@ -226,6 +254,9 @@ bool JiraClient::UpdateIssueFieldsViaPut(const std::string& issueId, const nlohm
         BackendAuditTrail::AppendResult(
             "issue_update_fields", "jira_client", issueId, auditOp, false, detail,
             nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fieldsAudited)}});
+        if (outClassified) {
+            *outClassified = ClassifyRejectedHttpStatus(response.status_code, outError);
+        }
         return false;
     }
 
@@ -305,15 +336,17 @@ TrackerError JiraClient::UpdateIssueFields(const std::string& issueId, const nlo
 
     // Jira requires status updates via transitions endpoint, not field PUT. The private Via* helpers
     // keep their string-out signatures (out of the ITrackerIssueMutations virtual scope — plan
-    // landmine L2); wrap their string error as Unknown — HTTP-status re-threading is a later slice
-    // (#21b) when an IsRetryable() consumer arrives. Detail is preserved verbatim so the caller's
-    // status-text parsing (ErrorTextContainsHttpStatus / IsTrackerTransportErrorText) is unaffected.
-    const bool ok =
-        auditIsTransition
-            ? UpdateIssueFieldsViaTransition(issueId, fields["status"], base, headers, auditOp, outError, cancelled)
-            : UpdateIssueFieldsViaPut(issueId, fieldsAudited, base, headers, auditOp, outError, cancelled);
+    // landmine L2) and classify the failure at their own error sites into `classified` (N12
+    // slice 3) — the field-edit chain's IsRetryable() consumers (13a/13b) branch on that kind, so
+    // a transport failure stays offline-queueable. Detail is preserved verbatim so the caller's
+    // status-text parsing (ErrorTextContainsHttpStatus) is unaffected.
+    TrackerError classified;
+    const bool ok = auditIsTransition ? UpdateIssueFieldsViaTransition(issueId, fields["status"], base, headers,
+                                                                       auditOp, outError, cancelled, &classified)
+                                      : UpdateIssueFieldsViaPut(issueId, fieldsAudited, base, headers, auditOp,
+                                                                outError, cancelled, &classified);
     if (!ok) {
-        return TrackerErrorUnknown(outError); // TODO(#21b later slice): re-thread HTTP status from Via* helpers
+        return classified.IsOk() ? TrackerErrorUnknown(outError) : classified;
     }
     return TrackerError::Ok();
 }
@@ -705,16 +738,19 @@ JiraClient::AttachFilesToIssue(const std::string& issueKey, const std::vector<st
 
 TrackerError JiraClient::AddIssueToSprint(const std::string& issueKey, const std::string& sprintId) {
     const TrackerConfig cfg = ConfigManager::Load();
-    // The cfg-overload stays bool + outError (non-virtual, out of interface scope — plan landmine L2).
+    // The cfg-overload stays bool + outError (non-virtual, out of interface scope — plan landmine L2)
+    // and classifies at its own failure sites (N12 slice 3) — the field-edit chain's IsRetryable()
+    // consumers branch on the kind.
     std::string outError;
-    if (!AddIssueToSprint(cfg, issueKey, sprintId, outError)) {
-        return TrackerErrorUnknown(outError); // TODO(#21b later slice): re-thread HTTP status from cfg-overload
+    TrackerError classified;
+    if (!AddIssueToSprint(cfg, issueKey, sprintId, outError, &classified)) {
+        return classified.IsOk() ? TrackerErrorUnknown(outError) : classified;
     }
     return TrackerError::Ok();
 }
 
 bool JiraClient::AddIssueToSprint(const TrackerConfig& cfg, const std::string& issueKey, const std::string& sprintId,
-                                  std::string& outError) {
+                                  std::string& outError, TrackerError* outClassified) {
     outError.clear();
     const std::string auditOp = BackendAuditTrail::MakeOperationId("sprint");
     BackendAuditTrail::AppendBegin("issue_add_to_sprint", "jira_client", issueKey, auditOp,
@@ -722,18 +758,24 @@ bool JiraClient::AddIssueToSprint(const TrackerConfig& cfg, const std::string& i
     if (!EnsureTrackerAuthConfig(cfg, outError)) {
         BackendAuditTrail::AppendResult("issue_add_to_sprint", "jira_client", issueKey, auditOp, false, outError,
                                         nlohmann::json{{"sprint_id", sprintId}});
+        if (outClassified)
+            *outClassified = TrackerErrorAuth(outError);
         return false;
     }
     if (issueKey.empty()) {
         outError = "Issue key is empty.";
         BackendAuditTrail::AppendResult("issue_add_to_sprint", "jira_client", issueKey, auditOp, false, outError,
                                         nlohmann::json{{"sprint_id", sprintId}});
+        if (outClassified)
+            *outClassified = TrackerErrorInvalidRequest(outError);
         return false;
     }
     if (sprintId.empty()) {
         outError = "Sprint id is empty.";
         BackendAuditTrail::AppendResult("issue_add_to_sprint", "jira_client", issueKey, auditOp, false, outError,
                                         nlohmann::json{{"sprint_id", sprintId}});
+        if (outClassified)
+            *outClassified = TrackerErrorInvalidRequest(outError);
         return false;
     }
 
@@ -753,6 +795,9 @@ bool JiraClient::AddIssueToSprint(const TrackerConfig& cfg, const std::string& i
         LOG_ERROR("JiraClient: %s issue=%s sprint=%s", detail.c_str(), issueKey.c_str(), sprintId.c_str());
         BackendAuditTrail::AppendResult("issue_add_to_sprint", "jira_client", issueKey, auditOp, false, detail,
                                         nlohmann::json{{"sprint_id", sprintId}});
+        if (outClassified) {
+            *outClassified = ClassifyRejectedHttpStatus(response.status_code, outError);
+        }
         return false;
     }
     BackendAuditTrail::AppendResult("issue_add_to_sprint", "jira_client", issueKey, auditOp, true, std::string(),

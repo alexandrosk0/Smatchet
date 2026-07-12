@@ -78,16 +78,17 @@ TrackerError PlaneClient::UpdateIssueFields(const std::string& issueId, const nl
     std::string targetUuid;
     {
         std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
+        TrackerError resolveClassified;
         if (planeProjectId_.empty()) {
             // First-call HTTP under the lock is acceptable: it runs at most once per process
             // lifetime; the steady-state PATCH path below is the hot one that needed the fix.
-            ResolvePlaneProject(planeApi, cfg, projectKey, headers, planeProjectId_, planeProjectIdentifier_,
-                                &outError);
+            ResolvePlaneProject(planeApi, cfg, projectKey, headers, planeProjectId_, planeProjectIdentifier_, &outError,
+                                &resolveClassified);
         }
         if (planeProjectId_.empty()) {
-            // ResolvePlaneProject failure: its inner HTTP status is not surfaced here; wrap as Unknown
-            // (Detail preserved verbatim). TODO(#21b later slice): re-thread status when a consumer reads .Kind.
-            return TrackerErrorUnknown(outError);
+            // Classified at the resolve failure site (N12 slice 3) — a transport failure stays
+            // retryable so the offline-queue replay path keeps working.
+            return resolveClassified.IsOk() ? TrackerErrorUnknown(outError) : resolveClassified;
         }
         resolvedProjectId = planeProjectId_;
 
@@ -315,14 +316,15 @@ Result<std::string, TrackerError> PlaneClient::CreateIssue(const nlohmann::json&
             headers.insert({kv.first, kv.second});
         }
         workspaceSlug = cfg.PlaneWorkspaceSlug;
+        TrackerError resolveClassified;
         if (planeProjectId_.empty()) {
-            ResolvePlaneProject(planeApi, cfg, projectKey, headers, planeProjectId_, planeProjectIdentifier_,
-                                &outError);
+            ResolvePlaneProject(planeApi, cfg, projectKey, headers, planeProjectId_, planeProjectIdentifier_, &outError,
+                                &resolveClassified);
         }
         if (planeProjectId_.empty()) {
-            // ResolvePlaneProject failure: inner HTTP status not surfaced here; wrap Unknown (Detail
-            // verbatim). TODO(#21b later slice): re-thread status when a consumer reads .Kind.
-            return Result<std::string, TrackerError>::Err(TrackerErrorUnknown(outError));
+            // Classified at the resolve failure site (N12 slice 3) so a transport failure stays retryable.
+            return Result<std::string, TrackerError>::Err(resolveClassified.IsOk() ? TrackerErrorUnknown(outError)
+                                                                                   : resolveClassified);
         }
         resolvedProjectId = planeProjectId_;
         projectIdentifier = planeProjectIdentifier_;
@@ -496,12 +498,14 @@ TrackerError ResolvePlaneCommentsUrl(PlaneClient& client, const TrackerConfig& c
     std::string resolveError;
     {
         std::lock_guard<std::recursive_mutex> lock(cacheMutex);
+        TrackerError resolveClassified;
         if (cachedProjectId.empty()) {
             ResolvePlaneProject(planeApi, cfg, projectKey, headers, cachedProjectId, cachedProjectIdentifier,
-                                &resolveError);
+                                &resolveError, &resolveClassified);
         }
         if (cachedProjectId.empty()) {
-            return TrackerErrorUnknown(resolveError);
+            // Classified at the resolve failure site (N12 slice 3).
+            return resolveClassified.IsOk() ? TrackerErrorUnknown(resolveError) : resolveClassified;
         }
         resolvedProjectId = cachedProjectId;
 

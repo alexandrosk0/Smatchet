@@ -7,7 +7,6 @@
 #include "ISyncCache.h"
 #include "Logger.h"
 #include "StringUtil.h"
-#include "TrackerHttpPure.h"
 #include "Views.h"
 
 #include <algorithm>
@@ -673,12 +672,11 @@ void TicketSyncService::RunStreamingWorkerBody(std::uint64_t reqId, const Tracke
             std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
             activeStreamingSync_.FullSyncCompleted = summary.FullSyncCompleted;
             activeStreamingSync_.FetchError = summary.FetchError;
-            // Worker-side classification seam (N12): prefer the kind the backend classified at
-            // its own error site (summary.Error, item 12); fall back to the text sniff only for
-            // a legacy unclassified path.
-            activeStreamingSync_.FetchErrorTransient =
-                !summary.FetchError.empty() &&
-                (!summary.Error.IsOk() ? summary.Error.IsRetryable() : IsTrackerTransportErrorText(summary.FetchError));
+            // Worker-side classification seam (N12): the kind the backend classified at its own
+            // error site (summary.Error, item 12). Every backend fills it whenever FetchError is
+            // set (Plane's resolve/exception paths closed in slice 3); an unclassified error is a
+            // bug shape and lands on the safe non-transient branch.
+            activeStreamingSync_.FetchErrorTransient = !summary.FetchError.empty() && summary.Error.IsRetryable();
             activeStreamingSync_.Warning = summary.Warning;
             activeStreamingSync_.TotalFetchedCount = summary.FetchedCount;
             if (summary.FullSyncCompleted && deps_.Cache()) {
@@ -690,9 +688,10 @@ void TicketSyncService::RunStreamingWorkerBody(std::uint64_t reqId, const Tracke
         if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
             std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
             activeStreamingSync_.FetchError = std::string("Sync failed with exception: ") + ex.what();
-            // Behaviour parity with the pre-flag heuristic: an exception message can still be
-            // transport-shaped (e.g. a curl timeout what()).
-            activeStreamingSync_.FetchErrorTransient = IsTrackerTransportErrorText(activeStreamingSync_.FetchError);
+            // Deliberately non-transient (13a precedent): transport failures surface as classified
+            // statuses from the backends, never as throws — a thrown worker is a bug shape, and
+            // the non-transient branch is the safe ask-the-user path.
+            activeStreamingSync_.FetchErrorTransient = false;
             activeStreamingSync_.FullSyncCompleted = false;
         }
     } catch (...) {

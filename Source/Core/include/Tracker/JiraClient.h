@@ -178,9 +178,11 @@ class JiraClient : public ITrackerBackend,
     /** Raise the cancel flag for any in-flight FetchUserActivity run. */
     void ClearUserActivity() override;
 
-    /** Move/add an issue to a sprint via Jira Agile API. */
+    /** Move/add an issue to a sprint via Jira Agile API. `outClassified` (if non-null) receives the
+     *  TrackerError kind classified at the failure site — auth / invalid-request / guarded
+     *  HTTP-status — so IsRetryable() consumers keep transport-ness. */
     bool AddIssueToSprint(const TrackerConfig& cfg, const std::string& issueKey, const std::string& sprintId,
-                          std::string& outError);
+                          std::string& outError, TrackerError* outClassified = nullptr);
 
     std::string ExtractProjectFromQuery(const std::string& query) const override;
 
@@ -212,12 +214,17 @@ class JiraClient : public ITrackerBackend,
     std::shared_ptr<std::atomic<bool>> mutationCancel_;
 
     // UpdateIssueFields sub-paths — split to keep the public orchestrator within size caps.
+    // `outClassified` (if non-null) receives the TrackerError kind classified at each failure site:
+    // guarded HTTP-status for the HTTP branches, Parse for unreadable responses, InvalidRequest for
+    // local validation — so IsRetryable() consumers keep transport-ness.
     bool UpdateIssueFieldsViaTransition(const std::string& issueId, const nlohmann::json& statusValue,
                                         const std::string& base, const cpr::Header& headers, const std::string& auditOp,
-                                        std::string& outError, const std::function<bool()>& cancelled);
+                                        std::string& outError, const std::function<bool()>& cancelled,
+                                        TrackerError* outClassified = nullptr);
     bool UpdateIssueFieldsViaPut(const std::string& issueId, const nlohmann::json& fieldsAudited,
                                  const std::string& base, const cpr::Header& headers, const std::string& auditOp,
-                                 std::string& outError, const std::function<bool()>& cancelled);
+                                 std::string& outError, const std::function<bool()>& cancelled,
+                                 TrackerError* outClassified = nullptr);
 };
 
 #endif

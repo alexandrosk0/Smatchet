@@ -530,11 +530,11 @@ TrackerIssueFetchPack AppController::FetchIssuesForActiveView(const TrackerConfi
     TrackerError fetchErrorStructured;
     pack.Tickets = backend->Reader().FetchIssues(&pack.FullSyncCompleted, configOverride, viewsOverride,
                                                  &pack.FetchError, &pack.Warning, &fetchErrorStructured);
-    // Classify at the composition seam (N12): prefer the kind the backend classified at its own
-    // error site (item 12); fall back to the text sniff only for a legacy unclassified path.
-    pack.FetchErrorTransient =
-        !pack.FetchError.empty() && (!fetchErrorStructured.IsOk() ? fetchErrorStructured.IsRetryable()
-                                                                  : IsTrackerTransportErrorText(pack.FetchError));
+    // Classify at the composition seam (N12): the kind the backend classified at its own error
+    // site (item 12). Every backend fills it whenever FetchError is set (Plane's
+    // resolve/exception paths closed in slice 3); an unclassified error is a bug shape and lands
+    // on the safe non-transient branch.
+    pack.FetchErrorTransient = !pack.FetchError.empty() && fetchErrorStructured.IsRetryable();
 
     return pack;
 }

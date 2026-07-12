@@ -2,7 +2,7 @@
 
 > **Slug**: `retire-transport-error-text`
 >
-> **Status**: `active`
+> **Status**: `shipped`
 
 ## Context
 
@@ -88,6 +88,8 @@ Slice 1: +1 bool on two structs and one service member, one virtual signature ch
 
 ## Implementation log
 
+- Slice 3 (fifth PR, final): the heuristic is deleted. Closed Plane's last unclassified paths: `ResolvePlaneProject` gained an optional `TrackerError* outClassified` filled at its four failure sites (HTTP status via the guarded `TrackerErrorFromHttpStatus`, invalid-JSON / no-results-array → Parse, lookup-miss → NotFound(status 0)); all six call sites (streamed search, mutation ×3, field catalog, activity feed) pass the kind through instead of wrapping Unknown; `FetchIssuesStreamed`'s outer catches classify Parse / Unknown (deliberately non-retryable, 13a precedent — transport surfaces as classified statuses, never throws). The 13a/13b consumer swap also exposed the Jira mutation gap the old `TODO(#21b)` markers deferred: `UpdateIssueFieldsViaTransition` / `UpdateIssueFieldsViaPut` / `AddIssueToSprint` now classify at their own failure sites (guarded HTTP status / Parse / InvalidRequest / Auth) instead of collapsing to Unknown — without this, a Jira transport failure during a field edit would have stopped reaching the offline queue (`IsRetryable()` false); pinned by the new `tests/Core/JiraIssueMutationHttp.test.cpp` (400 → InvalidRequest non-retryable, 503 → ServerError retryable, local validation → InvalidRequest). The two seam fallbacks then dropped the sniff (`AppController.cpp` pack composer, `TicketSyncService.cpp` worker copy — `summary.Error.IsRetryable()` only; the worker exception path is deliberately non-transient, 13a precedent). `IsTrackerTransportErrorText` deleted from `TrackerHttpPure.{h,cpp}` + its doctest block; orphaned includes removed (TicketSyncService, OfflineQueueService, LinearClient, replay test); every reference remaining in the tree is a tombstone comment.
+
 - Slice 2 / item 13b (fourth PR): the string-seam consumers swapped to structured classification. Field-edit chain: `FieldEditResult` += `ErrorTransient` (filled from the mutation `TrackerError`'s `IsRetryable()` at all four `FieldEditPipelineService` fill sites; the editmeta-refresh local message is non-transient), consumed by `SmatchetGridFieldEditPipeline`'s offline-queue fallback; pinned by a `[high-risk]` 3-subcase test scripting kinds through the fake's new `EnqueueUpdateIssueFieldsError(TrackerError)`. Create chain: `IssueCreateResult` += `ErrorTransient` (both network sites in `IssueCreatePipeline`; the created-key-unknown outcome is deliberately NON-transient — the create succeeded server-side, queueing a retry would duplicate the issue), consumed by `SmatchetBulkTicketsUi` + `SmatchetNewIssueDraftUi`. Catalog chain: `errorTransient` travels `RefreshFieldCatalog` flatten seam (`catalogResult.error().IsRetryable()`) → `SetFieldCatalog`/`HandleFieldCatalogError` → `GridLiveContext.LastTrackerFieldCatalogErrorTransient` (the composed no-cache store is transport-by-construction) → `IConnectivityDeps::FocusedFieldCatalogErrorTransient()` → `ConnectivityMonitorService`'s catalog half. `LinearClient::ProbeReachability` now checks `!resp.error.message.empty()` instead of sniffing the body text — a deliberate semantic fix (a GraphQL error body mentioning "timeout" on HTTP 200 no longer misreads as an outage). Remaining for slice 3: the two seam fallbacks (`AppController.cpp` pack composer, `TicketSyncService.cpp` worker copy + exception path) blocked on Plane's unclassified resolve/exception paths, then delete the heuristic.
 
 - Slice 2 / item 13a (third PR): the consumers holding a `TrackerError` swapped to structured classification — `AppController_TicketPrefetch` (log-level routing via `IsRetryable()`), `OfflineQueueService` conflict re-fetch (retry-vs-ask decided by the `FetchIssuesForKeys` Result's kind; a THROWN re-fetch now classifies non-transient — a deliberate change: exceptions are bug shapes, and the non-transient branch is the safe ask-the-user path) and `HandleFieldEditUpdateFailure` (signature takes the mutation's `TrackerError`; transport-cap vs replay-rejected decided by `IsRetryable()`). The replay suite's transient case now scripts `TrackerErrorTransport` via the fake's kind scripting. Remaining for 13b: the string-seam consumers (field-edit `ApplyResult`, the two UIs, the catalog-error path + `ConnectivityMonitorService`'s catalog half, `LinearClient::ProbeReachability`).
@@ -97,11 +99,15 @@ Slice 1: +1 bool on two structs and one service member, one virtual signature ch
 
 ## Deviations from plan
 
-- None yet.
+- Slice 2 split into three PRs (item 12, 13a, 13b) instead of one — the kind-reliability precondition (§ Slice 2 header) made item 12 the critical path and the consumer swaps land safely only after it.
+- Slice 3 grew the Jira mutation re-threading (`Via*` helpers, `AddIssueToSprint`) that item 11a's audit had scoped to the fetch path only — the 13b consumer swap made the mutation kinds load-bearing (field-edit offline-queue fallback), so deferring them further would have shipped a Jira replay regression.
+- Three deliberate behaviour changes, each documented in-code: thrown paths classify non-transient (13a precedent; previously the text sniff could read a timeout-shaped `what()` as transport); `LinearClient::ProbeReachability` keys on `resp.error.message` instead of body text (a GraphQL error body mentioning "timeout" on HTTP 200 no longer misreads as an outage); the created-key-unknown create outcome is non-transient (queueing a retry would duplicate the issue).
 
 ## Verification (actual)
 
-- (populate per slice; slice 1: `ninja-tsan-linux` ctest run recorded in the PR body test plan.)
+- Slices 1/12/13a/13b: `ninja-tsan-linux` suite green per PR (#1738 / #1755 / #1758 / #1762), incl. the flag-authority, kind-vs-text witness, and ErrorTransient classification cases.
+- Slice 3: `ninja-tsan-linux` 226 cases / 2148 assertions green; TSan case list byte-identical to develop tip (the deleted doctest block was not in the TSan subset). `git grep IsTrackerTransportErrorText` → tombstone comments only. New `JiraIssueMutationHttp.test.cpp` kind cases run in the full CI rig (cpr chain unbuildable locally).
+- Doc validation: `scripts/dev/test-docs.sh` green per PR.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
-Archive when slice 3 ships: flip § Status to `shipped`, populate the sections above, `git mv` to `docs/plans/shipped/`.
+Archived with slice 3 (status flipped to `shipped`, moved to `docs/plans/shipped/`).

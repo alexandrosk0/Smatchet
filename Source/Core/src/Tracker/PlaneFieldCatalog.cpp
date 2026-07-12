@@ -422,11 +422,13 @@ Result<TrackerFieldCatalogResult, TrackerError> PlaneClient::FetchFieldCatalog(c
 
     std::string resolvedProjectId;
     std::string resolvedProjectIdentifier;
+    TrackerError resolveClassified;
     if (!ResolvePlaneProject(planeApi, cfg, projectKey, headers, resolvedProjectId, resolvedProjectIdentifier,
-                             &outError)) {
-        // TODO(#21b later slice): re-thread status from inner helper instead of collapsing to Unknown — IsRetryable()
-        // consumers land in a later slice.
-        return Result<TrackerFieldCatalogResult, TrackerError>::Err(TrackerErrorUnknown(std::move(outError)));
+                             &outError, &resolveClassified)) {
+        // Classified at the resolve failure site (N12 slice 3) — the catalog chain's
+        // ErrorTransient consumers (13b) read IsRetryable() off this kind.
+        return Result<TrackerFieldCatalogResult, TrackerError>::Err(
+            resolveClassified.IsOk() ? TrackerErrorUnknown(std::move(outError)) : resolveClassified);
     }
     const std::string planeProjectId = resolvedProjectId;
 
