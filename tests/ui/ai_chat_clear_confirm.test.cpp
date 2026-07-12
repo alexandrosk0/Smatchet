@@ -77,6 +77,7 @@ void RegisterClearConversationConfirm(ImGuiTestEngine* engine) {
             return;
         }
         const bool origOpen = g_ui.assistantPanelOpen;
+        const bool origWhisperSetup = g_ui.cfg.WhisperSetupCompleted;
         // Suppress the first-run ##WhisperSetupBanner, which otherwise floats over the panel header
         // and swallows the clear-button click on a clean profile.
         g_ui.cfg.WhisperSetupCompleted = true;
@@ -99,8 +100,9 @@ void RegisterClearConversationConfirm(ImGuiTestEngine* engine) {
         if (modalOpenForCancel) {
             ctx->SetRef("##ConfirmClearChat");
             ctx->ItemClick("Cancel");
-            ctx->Yield();
-            ctx->Yield();
+            // Confirm the modal actually closed before re-opening, so the next OpenClearConfirm can't
+            // click through a stale popup.
+            YieldUntil(ctx, [] { return !WindowIsLive("##ConfirmClearChat"); });
             IM_CHECK_NO_RET(g_ui.assistantHistory.size() == 2); // cancel is a no-op
         }
 
@@ -119,8 +121,9 @@ void RegisterClearConversationConfirm(ImGuiTestEngine* engine) {
             IM_CHECK_NO_RET(g_ui.assistantHistoryRowIds.empty());
         }
 
-        // Teardown: restore the panel-open flag (history stays empty — a clean end state).
+        // Teardown: restore the mutated g_ui flags (history stays empty — a clean end state).
         g_ui.assistantPanelOpen = origOpen;
+        g_ui.cfg.WhisperSetupCompleted = origWhisperSetup;
         ctx->Yield();
     };
 }
