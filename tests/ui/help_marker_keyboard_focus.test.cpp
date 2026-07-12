@@ -48,6 +48,10 @@ struct HelpMarkerFocusState {
     ImGuiID markerId = 0;
     ImGuiID navIdThisFrame = 0;
     bool useRealMarker = true; // true: production RenderText; false: pre-fix replica.
+    // When true, GuiFunc wraps the real marker in ImGui::BeginDisabled()/EndDisabled() so the
+    // hover variant can prove the AllowWhenDisabled contract (tooltip stays reachable inside a
+    // disabled group — e.g. the Assistant custom-endpoint block).
+    bool renderInDisabledBlock = false;
 };
 
 HelpMarkerFocusState g_state;
@@ -77,11 +81,18 @@ void DrawHelpMarkerWindow(HelpMarkerFocusState& s) {
         ImGui::Button("Anchor##hmkf");
 
         if (s.useRealMarker) {
-            // The exact #1128 surface — the shared marker all ~38 sites call.
+            // The exact #1128 surface — the shared marker all ~38 sites call. Optionally inside a
+            // BeginDisabled() block so the hover variant exercises the AllowWhenDisabled contract.
+            if (s.renderInDisabledBlock) {
+                ImGui::BeginDisabled();
+            }
             SmatchetHelpMarker::RenderText(kHelpBody);
             // The marker's nav item is the InvisibleButton with id PushID(fullText)
             // + "##helpmarker"; GetItemID() after the call is that button.
             s.markerId = ImGui::GetItemID();
+            if (s.renderInDisabledBlock) {
+                ImGui::EndDisabled();
+            }
         } else {
             DrawPreFixReplica(kHelpBody);
             s.markerId = ImGui::GetItemID();
@@ -123,6 +134,7 @@ void RegisterTests(ImGuiTestEngine* engine) {
         t->TestFunc = [](ImGuiTestContext* ctx) {
             auto* s = static_cast<HelpMarkerFocusState*>(ctx->Test->UserData);
             s->useRealMarker = true;
+            s->renderInDisabledBlock = false;
             s->tooltipSubmittedThisFrame = false;
             s->markerId = 0;
             s->navIdThisFrame = 0;
@@ -168,6 +180,7 @@ void RegisterTests(ImGuiTestEngine* engine) {
         t->TestFunc = [](ImGuiTestContext* ctx) {
             auto* s = static_cast<HelpMarkerFocusState*>(ctx->Test->UserData);
             s->useRealMarker = false;
+            s->renderInDisabledBlock = false;
             s->tooltipSubmittedThisFrame = false;
             s->markerId = 0;
             s->navIdThisFrame = 0;
@@ -187,6 +200,53 @@ void RegisterTests(ImGuiTestEngine* engine) {
                               "methodology cannot distinguish the regression (TextUnformatted should be unreachable)");
                 IM_CHECK(false);
             }
+        };
+    }
+
+    // Variant 3 — production RenderText inside BeginDisabled(): a MOUSE hover still surfaces the
+    // tooltip (the AllowWhenDisabled contract — help stays reachable in a disabled group, e.g. the
+    // Assistant custom-endpoint block). Closes half-(a) of the ui-help-marker-tooltips backlog.
+    {
+        ImGuiTest* t = IM_REGISTER_TEST(engine, "HelpMarker", "Hover_InsideDisabledBlock_ShowsTooltip");
+        t->UserData = &g_state;
+        t->GuiFunc = [](ImGuiTestContext* ctx) {
+            auto* s = static_cast<HelpMarkerFocusState*>(ctx->Test->UserData);
+            DrawHelpMarkerWindow(*s);
+        };
+        t->TestFunc = [](ImGuiTestContext* ctx) {
+            auto* s = static_cast<HelpMarkerFocusState*>(ctx->Test->UserData);
+            s->useRealMarker = true;
+            s->renderInDisabledBlock = true;
+            s->tooltipSubmittedThisFrame = false;
+            s->markerId = 0;
+            s->navIdThisFrame = 0;
+            ctx->SetRef("SmatchetTest::HelpMarkerKeyboardFocus");
+            ctx->Yield();
+            ctx->Yield();
+
+            if (s->markerId == 0) {
+                ctx->LogError("marker has no item id inside BeginDisabled — RenderText emitted no item");
+                IM_CHECK(false);
+            }
+            // Hover the marker; AllowWhenDisabled must let the tooltip fire even though the item is
+            // inside a disabled block. The production guard uses ImGuiHoveredFlags_DelayShort, whose
+            // timer only advances with real simulation time — Yield() alone is skipped in the
+            // engine's Fast mode, so use SleepNoSkip to accumulate past the ~0.15s delay.
+            ctx->MouseMove(s->markerId);
+            ctx->SleepNoSkip(0.30f, 1.0f / 60.0f);
+            bool submitted = false;
+            for (int i = 0; i < 10 && !submitted; ++i) {
+                ctx->Yield();
+                submitted = s->tooltipSubmittedThisFrame;
+            }
+            if (!submitted) {
+                ctx->LogError("no tooltip on hover inside BeginDisabled — AllowWhenDisabled hover flag missing");
+                IM_CHECK(false);
+            }
+
+            // Restore so the shared g_state doesn't leak the disabled render into the other variants.
+            s->renderInDisabledBlock = false;
+            ctx->Yield();
         };
     }
 }
