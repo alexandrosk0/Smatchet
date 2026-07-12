@@ -21,7 +21,7 @@ ceiling (most land at or below ~700 LOC) and the lint warns before any first-par
 past it.
 
 **Hard environment constraint** (same as
-[`docs/plans/appcontroller-clusters-followup.md`](../appcontroller-clusters-followup.md)):
+[`docs/plans/shipped/appcontroller-clusters-followup.md`](appcontroller-clusters-followup.md)):
 `posix-core-check` cannot configure in the authoring container (session egress policy blocks the
 `cpr`/`curl` FetchContent tarball), so **CI (Windows+MSVC dual-target build + ctest + UI lanes) is
 the sole correctness gate** for every slice.
@@ -89,7 +89,7 @@ Numbered per slice; line refs are against `develop` @ `bdf8c14e`.
 - `AppController_<Area>.cpp` companion-TU convention (`Source/Core/src/AppController_Init.cpp`, `AppController_PaneContexts.cpp` via PR #1653) — naming + byte-identical-move mechanics.
 - Per-component `file(GLOB …)` source lists (`Source/Core/CMakeLists.txt:30`, `Source/Standalone/CMakeLists.txt:36` post PR #1710) — new TUs join the build with zero CMake edits.
 - `lint-rules.d/85-ui-include-direction.sh` + `test-lint-rules.sh` dispatch + `tests/bats/lint_rules.bats` (PR #1708) — the scaffold the `tu-line-ceiling` lint copies.
-- Whole-tree grep-before-cut discipline from [`docs/plans/appcontroller-clusters-followup.md`](../appcontroller-clusters-followup.md) § Approach — anon-namespace helpers move only when used exclusively by the moved cluster.
+- Whole-tree grep-before-cut discipline from [`docs/plans/shipped/appcontroller-clusters-followup.md`](appcontroller-clusters-followup.md) § Approach — anon-namespace helpers move only when used exclusively by the moved cluster.
 
 ## Extraction sizing (when this plan EXTRACTS or SPLITS code/docs)
 
@@ -130,7 +130,7 @@ along an arbitrary boundary, so its ~8% headroom is accepted).
 - **Anon-namespace state split across TUs** — a mutable file-static shared by functions that land in different TUs would silently duplicate. Mitigation: per-slice audit of every anon-namespace variable; any shared mutable state moves behind the internal header as an `extern`/function-local instead.
 - **Lua-bindings churn against fan-in Phase 6** — accepted (sequenced): PR 4 waits until the fan-in campaign's Phase 6 slices are merged.
 - **Grid UI has no direct doctests** — accepted: UI-smoke + monkey lanes + PR-fast grid scenario are the net, same bar as every other `SmatchetUI` partition.
-- **Non-goal: any behavior, signature, or header change** — including the `AppController.h` pImpl split (that is [`docs/plans/build-quality-velocity-hardening.md`](../build-quality-velocity-hardening.md) finding #19).
+- **Non-goal: any behavior, signature, or header change** — including the `AppController.h` pImpl split (that is [`docs/plans/active/build-quality-velocity-hardening.md`](../active/build-quality-velocity-hardening.md) finding #19).
 - **Non-goal: relocating `MarkdownConvert` out of `Ui/`** — it is UI-owned today; only the TU is partitioned.
 - **Non-goal: `*Pure.cpp` seam extraction** (e.g. `RebuildGridSortAndFilterProjection`) — bridges to review item 5; flagged in § Out of scope.
 
@@ -149,8 +149,8 @@ along an arbitrary boundary, so its ~8% headroom is accepted).
 
 **Deferral residue-sweep (keep this note)** — per `AGENTS.md` § Process rules § Scope-reduction edits: before finalising, grep `**/CONTEXT*.md`, `docs/adr/`, `agents/*.md`, and `docs/self-improvement/categories/` for stray references to anything deferred here, and revise or delete them.
 
-- `*Pure.cpp` extraction of `RebuildGridSortAndFilterProjection` + doctest — follow-up under the testing-surface roadmap ([`docs/plans/testing-surface-roadmap.md`](../testing-surface-roadmap.md)).
-- `AppController.h` interface split / pImpl — owned by [`docs/plans/build-quality-velocity-hardening.md`](../build-quality-velocity-hardening.md) #19.
+- `*Pure.cpp` extraction of `RebuildGridSortAndFilterProjection` + doctest — follow-up under the testing-surface roadmap ([`docs/plans/active/testing-surface-roadmap.md`](../active/testing-surface-roadmap.md)).
+- `AppController.h` interface split / pImpl — owned by [`docs/plans/active/build-quality-velocity-hardening.md`](../active/build-quality-velocity-hardening.md) #19.
 - Splitting any file not in the review's top-five list (next candidates surface via the new lint's WARNs).
 - Promoting `tu-line-ceiling` advisory → blocking — revisit after it proves quiet for a few weeks.
 

@@ -206,6 +206,18 @@ TEST_CASE("AdfToMarkdown: codeBlock with language fence") {
     CHECK(Adf2Md(AdfDoc(json::array({code}))) == "```cpp\nint x = 1;\n```");
 }
 
+TEST_CASE("AdfToMarkdown: codeBlock multi-node, already newline-terminated adds no extra newline") {
+    // Guards the last-char tracking in EmitAdfCodeBlock (the O(1)-per-block replacement for the old
+    // whole-buffer copy): multiple text nodes, the final one already ending in '\n' — the closing
+    // fence must NOT add a second newline, and the per-node last char must be tracked (not just the
+    // first node).
+    json code;
+    code["type"] = "codeBlock";
+    code["attrs"]["language"] = "py";
+    code["content"] = json::array({AdfText("a = 1\n"), AdfText("b = 2\n")});
+    CHECK(Adf2Md(AdfDoc(json::array({code}))) == "```py\na = 1\nb = 2\n```");
+}
+
 TEST_CASE("AdfToMarkdown: blockquote prefixes paragraph") {
     json bq;
     bq["type"] = "blockquote";
