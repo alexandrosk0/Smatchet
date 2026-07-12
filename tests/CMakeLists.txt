@@ -621,6 +621,9 @@ add_executable(SmatchetTests
     # Time-tracking sort comparator lifted from TicketGridModel.cpp (TEST_COVERAGE_GAP_MAP.md
     # Tier 1 #1) — dependency-light, so tests link it without the grid model's heavy deps.
     Core/TicketGridDurationSortPure.test.cpp
+    # Update-check release-tag parser lifted from AttachmentAppUpdateService.cpp (CPP_CODE_AUDIT.md
+    # #17) — cpr-free pure seam so it links + fuzzes without the update service's HTTP deps.
+    Core/SemanticVersionPure.test.cpp
     # Grid-cell render-model builders lifted from TrackerGridFieldDisplay.cpp (gap map Tier 1
     # #3) — the untrusted tracker-value parse/format layer, ImGui-free after the extraction.
     Core/TrackerGridFieldDisplayPure.test.cpp
