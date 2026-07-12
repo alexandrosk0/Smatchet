@@ -98,6 +98,16 @@ TEST_CASE("IsLoopbackHost: loopback literals accepted, public hosts rejected") {
         CHECK_FALSE(IsLoopbackHost("localhost.evil.com"));
         CHECK_FALSE(IsLoopbackHost(""));
     }
+    SUBCASE("userinfo is stripped before the host is classified") {
+        // HostFromBase drops a user[:pass]@ prefix, so a loopback host behind credentials still
+        // classifies as loopback and a public host behind credentials still does not.
+        CHECK(IsLoopbackHost("http://user:pass@localhost:8080/jira"));
+        CHECK(IsLoopbackHost("http://admin@127.0.0.1"));
+        CHECK_FALSE(IsLoopbackHost("http://user:pass@corp-jira.example.com"));
+    }
+    SUBCASE("malformed bracketed IPv6 without a closing bracket is not loopback") {
+        CHECK_FALSE(IsLoopbackHost("[::1")); // no ']' — brackets left intact, no literal match.
+    }
 }
 
 TEST_CASE("ShouldUpgradeCleartextBase: cleartext http to public host must upgrade") {
@@ -114,6 +124,10 @@ TEST_CASE("ShouldUpgradeCleartextBase: cleartext http to public host must upgrad
         CHECK_FALSE(ShouldUpgradeCleartextBase("http://localhost:8080"));
         CHECK_FALSE(ShouldUpgradeCleartextBase("http://127.0.0.1:9999/jira"));
         CHECK_FALSE(ShouldUpgradeCleartextBase("http://[::1]:8080"));
+    }
+    SUBCASE("surrounding whitespace is trimmed before the scheme check") {
+        CHECK(ShouldUpgradeCleartextBase("  http://corp-jira.example.com  "));
+        CHECK_FALSE(ShouldUpgradeCleartextBase("\t https://corp-jira.example.com \n"));
     }
 }
 
