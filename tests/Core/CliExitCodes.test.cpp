@@ -36,6 +36,7 @@ TEST_CASE("ExitCodeForErrorCode maps every known code to its exit constant") {
     CHECK(ExitCodeForErrorCode("not-connected") == kExitNotConnected);
     CHECK(ExitCodeForErrorCode("transport") == kExitTransport);
     CHECK(ExitCodeForErrorCode("timeout") == kExitTimeout);
+    CHECK(ExitCodeForErrorCode("dry-run-unsupported") == 9); // no kExit* constant yet (see the mapper)
 }
 
 TEST_CASE("ExitCodeForErrorCode falls back to kExitHandler for unknown / empty codes") {
