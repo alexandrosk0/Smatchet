@@ -38,7 +38,7 @@ void SaveLoopbackJiraConfig(const JiraCatalogHttpFixture& fx) {
 } // namespace
 
 TEST_CASE("JiraClient::UpdateIssueFields classifies the PUT failure status into the TrackerError kind") {
-    TestEnvGuard guard;
+    smatchet_tests::TestEnvGuard guard;
     JiraCatalogHttpFixture fx;
     SaveLoopbackJiraConfig(fx);
     JiraClient client;
@@ -61,7 +61,7 @@ TEST_CASE("JiraClient::UpdateIssueFields classifies the PUT failure status into 
 }
 
 TEST_CASE("JiraClient::AddIssueToSprint classifies the POST failure status into the TrackerError kind") {
-    TestEnvGuard guard;
+    smatchet_tests::TestEnvGuard guard;
     JiraCatalogHttpFixture fx;
     SaveLoopbackJiraConfig(fx);
     JiraClient client;
