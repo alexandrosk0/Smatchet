@@ -200,8 +200,11 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   With the #1–#1174 baseline, **every merged PR #1→#1695 is survivor-reviewed.**
   **Batch 17 (same session) extended the frontier to #1737** — 36 PRs
   (#1696–#1737, incl. #1700 itself), 4 findings (1 MEDIUM fail-open + 3 LOW),
-  0 user-visible. **The next sweep resumes from #1738** (same recipe;
-  sha-resolved variant recipe in the Batch 13 header for gh-less environments).
+  0 user-visible. **Batch 18 (2026-07-11) extended the frontier to #1795** —
+  55 PRs (#1738–#1795), 8 findings (5 MEDIUM incl. 1 user-visible data-loss →
+  Issue #1797, + 3 LOW), 45 clean, 2 superseded. **The next sweep resumes from
+  #1796** (same recipe; sha-resolved variant recipe in the Batch 13 header for
+  gh-less environments).
 - **Swept:** **#1–#1174** (batches 1–11) — **the entire merged-PR history reviewed.**
   **SWEEP COMPLETE** — Batch 11 (#116–#1, 113 PRs, the final tail incl. the early
   base-`main` PRs #1–#5) added 2026-06-13;
@@ -263,6 +266,26 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   User-visible ones → GitHub Issues per ADR-0014 when actioned.)_
 
 <!-- Batches appended at the top. -->
+
+## Batch 18 — #1795–#1738 (55-PR sweep, 2026-07-11)
+
+Coverage: **55 reviewed — 8 with findings, 45 clean, 2 fully superseded, 0 errored, 0 died.** Net: **0 CRITICAL, 0 HIGH, 5 MEDIUM, 3 LOW.** Incremental on top of the Batch 17 frontier: everything merged after #1737 up to develop @ `1f4b2da4` (includes the fail-open remediation campaign PRs #1768–#1776 and this session's own #1738–#1740). **The frontier is now #1–#1795 contiguous; the next sweep resumes from #1796.** Survivor-filtered against origin/develop. (Same sha-resolved workflow + reviewer model as Batches 13–17; 55/55 returned, 0 died; ~17 min, ~1.76M tokens.) **One MEDIUM (#1742) is `userVisible:true` (data-loss) → GitHub Issue #1797 (ADR-0014); the other 7 findings are internal → backlog only.** Two notable linkages: #1756 is a **live recurrence of Batch 16's #1221** (the Lua ai.prompt in-flight-slot exception-leak — the god-file split relocated the code to `AppController_LuaBindings_Ai.cpp` and #1221's fix was never applied); #1774's `test-all.sh` `CI_SKIP_RE` finding is the anchoring weakness first flagged as Batch 13's #1692, now escape-marked but still latent.
+
+### MEDIUM (5)
+- **#1742 (1461bee3) · `Source/Core/src/AppController_LuaScriptFiles.cpp:170`** — **user-visible data-loss**: `SaveAutomationScriptContent` opens with `std::ios::trunc` (destroying `Automation.lua` up front), writes `ofs << content`, then `return true` with no stream-state check or flush. An I/O error (disk full/quota/device) after open silently loses the script while the caller is told the save succeeded. Fix: `ofs.flush(); if (!ofs.good()) { outError=…; return false; }` — ideally write-temp + atomic-rename. → **Issue #1797**.
+- **#1756 (cc9bbad0) · `Source/Core/src/AppController_LuaBindings_Ai.cpp:143`** — `LuaAiPromptGlue` claims the in-flight slot (`TryBeginLuaAiPromptTurn`) and releases it (`EndLuaAiPromptTurn`, :167) only on the success path; an exception from `AddAiContext`/`PromptAi`/the context loop unwinds through the sol2 boundary and skips the release, so `aiPromptInFlight_` stays true forever and every later `ai.prompt` is permanently rejected as re-entrant. **Same defect as #1221 (Batch 16), relocated by the god-file split and still unfixed.** Fix: RAII scope-exit guard around the slot.
+- **#1789 (e7fdb36c) · `tests/ui/mobile_view_quick_switcher.test.cpp:160`** — `TabTap_CleanSwitchDoesNotPrompt` asserts only the negative (`!viewsShowDiscardConfirm`) and never confirms the tap actually switched the active view, so a silently-dropped/no-op tap passes vacuously (the bucket-E-vacuous-green class). Fix: capture the active-view id before the tap and `IM_CHECK` it changed afterward, alongside the no-modal check.
+- **#1774 (2fbb3922) · `scripts/dev/test-all.sh:155`** — `CI_SKIP_RE` matched unanchored (`[[ $script =~ $CI_SKIP_RE ]]`), so a future suite whose basename embeds a denylist token (`test-docs`, `test-doctor`) is silently skipped in CI while the gate passes (fail-open, shape F). No live collision today; escape-marked as reviewed by #1774 but the anchoring weakness (first flagged Batch 13 #1692) remains. Fix: anchor each token to a full basename (`^(…)$`).
+- **#1760 (f1ef7437) · `agents/scripts/core/comment_audit.py:121`** — `_deviation_continuation_lines` closes a wrapped-deviation block only when paren depth `<= 0`; free-form `reason=` prose with an unbalanced `(` leaves depth `> 0` forever, so `in_block` never resets and every subsequent `//`/`*` line in the file is exempted from the comment-noise gate — a fail-open that silently exempts real commented-out code. Fix: bound the span (stop at the first non-comment line, or cap continuation lines) rather than relying on paren balance.
+
+### LOW (3)
+- **#1795 (1f4b2da4) · `docs/self-improvement/categories/test.md:46`** — coverage-reconcile claim states `DrawJqlQueryEditorEmbedded` (#767) is covered by "omnibar_search_apply.test.cpp + views_field_selection.test.cpp"; the latter has no JQL reference at all (it covers the Views-editor field-selection reseed). Fix: drop `views_field_selection.test.cpp` from the JQL mapping (conclusion still holds via the single real test).
+- **#1785 (9c7956b8) · `Source/Core/src/Tracker/PlaneClient.cpp:112`** — `ResolvePlaneProject`'s non-200 branch classifies via raw `TrackerErrorFromHttpStatus` without the 2xx guard this same PR added elsewhere, so a 201/204/206 maps to `Ok()` on a return-false path. Benign today (every caller re-wraps and `Ok().IsRetryable()` is false). Fix: route through the guarded `ClassifyRejectedHttpStatus` for consistency.
+- **#1752 (09d9248c) · `agents/scripts/core/develop-tip-required-green.sh:114`** — the detector relies on "newest last wins" but `gh api …/check-runs --paginate` doesn't guarantee chronological row order for re-run checks; a newest-first response keys off a stale run and can miss a terminal-red or emit a stale red. Non-blocking (advisory nudge). Fix: sort rows by `started_at`/`completed_at` (or select max-per-name explicitly) instead of depending on API order.
+
+**Clean (45, surviving lines reviewed, no findings):** #1794, #1793, #1792, #1791, #1790, #1788, #1787, #1786, #1784, #1783, #1782, #1781, #1780, #1779, #1778, #1776, #1775, #1773, #1772, #1771, #1769, #1768, #1767, #1766, #1765, #1764, #1763, #1762, #1761, #1759, #1758, #1757, #1755, #1754, #1751, #1749, #1748, #1746, #1745, #1744, #1743, #1741, #1740, #1739, #1738.
+
+**Fully superseded (2, no review surface):** #1753, #1750 — every introduced line was changed/removed by a later PR; excluded by construction.
 
 ## Batch 17 — #1737–#1696 (36-PR sweep, 2026-07-10)
 
