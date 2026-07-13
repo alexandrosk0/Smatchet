@@ -174,13 +174,16 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`appcontroller-god-object-decomposition`](shipped/appcontroller-god-object-decomposition.md) | 2026-06-19 | Plan — AppController god-object decomposition |
 | [`plan-lock-enforcement`](shipped/plan-lock-enforcement.md) | 2026-06-19 | Plan — Force plan-lock filing before file edits (force-on-contention, 3-layer) |
 | [`perf-interactive-grid-stress`](shipped/perf-interactive-grid-stress.md) | 2026-06-20 | Plan — interactive-grid-stress (active 8-pane mixed-backend perf probe) |
+| [`self-improvement-pr-review-exemption`](shipped/self-improvement-pr-review-exemption.md) | 2026-06-20 | Plan — Exempt pure self-improvement doc PRs from CR / Bugbot review + heavy tests |
 | [`cpp-security-hardening`](shipped/cpp-security-hardening.md) | 2026-06-27 | Plan — C++ security hardening (audit remediation) |
+| [`spawn-mcp-auth`](shipped/spawn-mcp-auth.md) | 2026-06-27 | Plan — spawn MCP auth handshake unblock + product fix |
 | [`cpp-code-audit-remediation`](shipped/cpp-code-audit-remediation.md) | 2026-07-02 | Plan — C++ code audit remediation (CPP_CODE_AUDIT.md) |
 | [`all-gates-blocking`](shipped/all-gates-blocking.md) | 2026-07-05 | All gates blocking — flip every CI test gate to merge-blocking + fix the reds |
 | [`commands-invocation-harness`](shipped/commands-invocation-harness.md) | 2026-07-05 | Plan — Tier-3 Commands invocation harness: table-driven builtin-command dispatch tests |
 | [`coverage-gap-tier1-pure-extractions`](shipped/coverage-gap-tier1-pure-extractions.md) | 2026-07-05 | Plan — Coverage-gap Tier 1: pure extractions for the audit-fixed sort + long-text paths |
 | [`coverage-gap-tier2-backend-shell-fixtures`](shipped/coverage-gap-tier2-backend-shell-fixtures.md) | 2026-07-05 | Plan — Coverage-gap Tier 2: backend-shell fixture tests (Plane + Linear issue search) |
 | [`coverage-gap-tier3-command-contract`](shipped/coverage-gap-tier3-command-contract.md) | 2026-07-05 | Plan — Coverage-gap Tier 3: registry-wide command error-envelope contract sweep |
+| [`error-message-quality-pass`](shipped/error-message-quality-pass.md) | 2026-07-05 | Plan — error-message quality pass |
 | [`mutation-testing-pilot`](shipped/mutation-testing-pilot.md) | 2026-07-05 | Plan — Mutation-testing pilot (assertion-strength probe) |
 | [`user-facing-text-i18n-sweep`](shipped/user-facing-text-i18n-sweep.md) | 2026-07-05 | Plan — user-facing text i18n completeness sweep |
 | [`appcontroller-clusters-followup`](shipped/appcontroller-clusters-followup.md) | 2026-07-06 | Continuation of the shipped appcontroller-service-extraction plan — behavior-preserving extraction of the remaining cohesive AppController.cpp clusters (flagged there as § Out of scope) into focused companion TUs, toward the ≤ ~800 LOC target. |
