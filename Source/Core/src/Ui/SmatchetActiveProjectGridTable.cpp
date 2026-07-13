@@ -309,6 +309,153 @@ extern "C" void SmatchetUiTestRouteActiveProjectGridWheelForCurrentTable(UiDrawS
 }
 #endif
 
+namespace {
+
+// ---- Grid body states (UX critique H1/H4) -------------------------------------------
+// The primary workspace used to render a bare empty table whether a sync was in flight,
+// the query matched nothing, or the backend was down — indistinguishable to the user.
+// These helpers give each situation an explicit face. The welcome/loading/error states
+// REPLACE the table (no rows are possible there — the error state also forces read-only,
+// so the inline new-issue row is moot); the zero-results state draws as a strip ABOVE the
+// table so the headers and the inline "+ new issue" row stay usable.
+
+// Begin a horizontally-centered fixed-width child for a state block. Pair with EndChild.
+bool BeginCenteredGridStateBlock(const char* id, float blockW) {
+    const float avail = ImGui::GetContentRegionAvail().x;
+    if (avail > blockW) {
+        ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - blockW) * 0.5f);
+    }
+    // Vertical inset so the block sits in the upper third of the body, not glued to the top.
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + (std::max)(0.0f, ImGui::GetContentRegionAvail().y * 0.18f));
+    return ImGui::BeginChild(id, ImVec2((std::min)(blockW, avail), 0.0f), false, ImGuiWindowFlags_NoScrollbar);
+}
+
+// H4 — first-run orientation: the tracker gate locks the app until a backend probe
+// succeeds, but the locked state had no face. One line of what Smatchet is, the backend
+// choices with token deep-links, and the path forward (Preferences > Tracker).
+void DrawGridWelcomeState(ActiveProjectDrawCtx& ctx) {
+    UiDrawSession& d = ctx.d;
+    if (!BeginCenteredGridStateBlock("##GridWelcomeState", 560.0f)) {
+        ImGui::EndChild();
+        return;
+    }
+    ImGui::TextUnformatted(SmatchetLocalization::T("grid.welcome.title", "Welcome to Smatchet"));
+    ImGui::Spacing();
+    ImGui::TextWrapped(
+        "%s", SmatchetLocalization::T("grid.welcome.blurb",
+                                      "Smatchet is a fast desktop grid for your issue tracker. Connect a backend and "
+                                      "your issues appear here."));
+    ImGui::Spacing();
+    ImGui::TextWrapped("%s", SmatchetLocalization::T("grid.welcome.step",
+                                                     "To get started, pick a backend in Preferences > Tracker and "
+                                                     "paste its API credentials:"));
+    ImGui::Spacing();
+    struct BackendHint {
+        const char* line;
+        const char* linkLabel;
+        const char* url;
+    };
+    const BackendHint kHints[] = {
+        {"Jira — site URL, account email, and an API token", "Get a Jira API token",
+         "https://id.atlassian.com/manage-profile/security/api-tokens"},
+        {"GitHub — a personal access token with repo scope", "Get a GitHub token",
+         "https://github.com/settings/tokens"},
+        {"Plane — workspace URL and a personal API token", "Plane API docs",
+         "https://docs.plane.so/api-reference/introduction"},
+        {"Linear — a personal API key", "Get a Linear API key", "https://linear.app/settings/api"},
+    };
+    for (int i = 0; i < static_cast<int>(sizeof(kHints) / sizeof(kHints[0])); ++i) {
+        ImGui::Bullet();
+        ImGui::SameLine();
+        ImGui::TextWrapped("%s", SmatchetLocalization::TranslateSource(kHints[i].line));
+        ImGui::SameLine();
+        ImGui::PushID(i);
+        if (ImGui::SmallButton(SmatchetLocalization::TranslateSource(kHints[i].linkLabel))) {
+            ctx.app.OpenUrl(kHints[i].url);
+        }
+        ImGui::PopID();
+    }
+    ImGui::Spacing();
+    if (ImGui::Button(SmatchetLocalization::T("grid.welcome.open_prefs", "Open Preferences"))) {
+        d.showPreferences = true;
+        d.requestPreferencesFocus = true;
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", SmatchetLocalization::T("grid.welcome.gate_note",
+                                                      "The rest of the app unlocks once a connection succeeds."));
+    ImGui::EndChild();
+}
+
+// H1 (loading) — a sync or catalog fetch is in flight and no rows are cached yet.
+void DrawGridLoadingState() {
+    if (!BeginCenteredGridStateBlock("##GridLoadingState", 320.0f)) {
+        ImGui::EndChild();
+        return;
+    }
+    const int dots = static_cast<int>(::ImGui::GetTime() * 2.0) % 4;
+    char label[48];
+    std::snprintf(label, sizeof(label), "%s%.*s", SmatchetLocalization::T("grid.state.loading", "Loading issues"), dots,
+                  "...");
+    ImGui::TextUnformatted(label);
+    ImGui::TextDisabled(
+        "%s", SmatchetLocalization::T("grid.state.loading.detail", "Fetching this view's issues from the backend."));
+    ImGui::EndChild();
+}
+
+// H1 (error) — the backend errored and nothing is cached: surface the connectivity
+// reason (same text as the status bar / banner) plus an explicit Retry.
+void DrawGridErrorState(ActiveProjectDrawCtx& ctx) {
+    UiDrawSession& d = ctx.d;
+    if (!BeginCenteredGridStateBlock("##GridErrorState", 480.0f)) {
+        ImGui::EndChild();
+        return;
+    }
+    ImGui::TextColored(SmatchetTheme::Colors::StatusBlocked, "%s",
+                       SmatchetLocalization::T("grid.state.error", "Couldn't load issues"));
+    ImGui::Spacing();
+    if (!ctx.trackerBanner.Message.empty()) {
+        ImGui::TextWrapped("%s", ctx.trackerBanner.Message.c_str());
+    }
+    ImGui::Spacing();
+    if (ImGui::Button(SmatchetLocalization::T("grid.state.error.retry", "Retry"))) {
+        d.triggerCatalogRefetch = true;
+        d.connectivityRecoveryTicketResyncPending = true;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(SmatchetLocalization::T("grid.state.error.open_prefs", "Open Preferences"))) {
+        d.showPreferences = true;
+        d.requestPreferencesFocus = true;
+    }
+    ImGui::EndChild();
+}
+
+// H1 (zero results) — connected and loaded, but nothing to show: either the view's query
+// matched nothing (`viewIsEmpty`), or the quick filter hides every loaded row. Drawn as a
+// one-line strip ABOVE the table (headers + inline new-issue row stay usable below). The
+// cause is passed explicitly — a stale filter buffer carried over from a prior view must
+// not relabel a genuinely-empty view as a filter miss (Clear filter would be a no-op).
+void DrawGridZeroResultsStrip(ActiveProjectDrawCtx& ctx, bool viewIsEmpty) {
+    UiDrawSession& d = ctx.d;
+    GridPane& pane = ctx.pane;
+    const bool filterActive = !viewIsEmpty && pane.gridFilterBuf[0] != '\0';
+    ImGui::AlignTextToFramePadding();
+    if (filterActive) {
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("grid.state.filter_no_match", "No issues match the filter."));
+        ImGui::SameLine();
+        if (ImGui::SmallButton(SmatchetLocalization::T("grid.state.clear_filter", "Clear filter"))) {
+            pane.gridFilterBuf[0] = '\0';
+        }
+    } else {
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("grid.state.no_results", "No issues match this view."));
+        ImGui::SameLine();
+        if (ImGui::SmallButton(SmatchetLocalization::T("grid.state.edit_view", "Edit view..."))) {
+            d.showViewsDashboard = true;
+            d.requestViewsDashboardFocus = true;
+        }
+    }
+}
+
+} // namespace
 
 // The TicketGrid BeginTable block: the five grid section helpers plus the post-layout inside-table
 // click detection. Split out of drawActiveProjectWindow under the function-size cap; behaviour-
@@ -325,6 +472,38 @@ void SmatchetUI::drawActiveProjectTable(ActiveProjectDrawCtx& ctx) {
     ImGui::Separator();
 
     (void)smatchet::ui::RouteWheelToScrollableTooltip();
+
+    // Explicit grid body states (UX critique H1/H4): never render a bare empty table.
+    // Welcome / loading / error REPLACE the table; zero-results draws a strip above it.
+    // The replacing states skip drawActiveProjectGridRows — the frame-by-frame pruner of
+    // stale filteredIndices (indices into a previous, larger snapshot) and the dependent
+    // rect selection — so prune here too, or chrome reading them (menu Copy enablement,
+    // Ctrl+C in the rect-sel key handler) sees ghosts of the previous snapshot's rows.
+    if (!d.cfg.BackendHasBeenReachable) {
+        ctx.pane.filteredIndices.clear();
+        ctx.pane.gridState.RectSel.ClearAll();
+        DrawGridWelcomeState(ctx);
+        return;
+    }
+    if (ctx.tickets.empty()) {
+        const bool syncLoading = d.initialTicketSyncLoading || d.fieldCatalogLoading ||
+                                 d.connectivityRecoveryTicketFetchLoading || !d.initialTicketSyncStarted;
+        if (syncLoading || ctx.trackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error) {
+            ctx.pane.filteredIndices.clear();
+            ctx.pane.gridState.RectSel.ClearAll();
+            if (syncLoading) {
+                DrawGridLoadingState();
+            } else {
+                DrawGridErrorState(ctx);
+            }
+            return;
+        }
+        DrawGridZeroResultsStrip(ctx, /*viewIsEmpty=*/true);
+    } else if (ctx.pane.filteredIndices.empty() && ctx.pane.gridFilterBuf[0] != '\0') {
+        // Loaded rows exist but the quick filter hides them all (filteredIndices lags one
+        // frame behind the projection rebuild inside the table — fine for a hint strip).
+        DrawGridZeroResultsStrip(ctx, /*viewIsEmpty=*/false);
+    }
 
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 1.0f));
     if (!columns.empty() && ImGui::BeginTable("TicketGrid", static_cast<int>(columns.size()), tableFlags)) {

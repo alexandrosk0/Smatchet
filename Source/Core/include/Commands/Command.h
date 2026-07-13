@@ -169,6 +169,9 @@ struct Command {
     std::string Name;        ///< dotted, e.g. "tickets.search_active"
     std::string Category;    ///< first dotted segment, e.g. "tickets"
     std::string Summary;     ///< one-line, verb-first
+    std::string Title;       ///< optional short display label for UI surfaces (menus, palette
+                             ///< rows) — e.g. "Views Dashboard". Raw command names must never
+                             ///< reach a widget; when empty, callers derive a label from Name.
     std::string Description; ///< multi-line; must include returns shape + examples
     std::vector<ParamSpec> Params;
 

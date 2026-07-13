@@ -877,7 +877,8 @@ void DrawWhisperPreferencesTab(IAppThreading& app, UiDrawSession& d) {
     // banner-owned ModelDownloader so a fetch started from the banner continues
     // to show progress on this tab.
     static WhisperPrefsTabState s_state;
-    if (ImGui::BeginTabItem(SmatchetLocalization::T("whisper.preferences.tabTitle", "Whisper"))) {
+    if (ImGui::BeginTabItem(SmatchetLocalization::T("whisper.preferences.tabTitle", "Whisper"), nullptr,
+                            SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Whisper"))) {
         d.preferencesActiveTab = PreferencesActiveTab::Whisper;
         ImGui::TextUnformatted("Push-to-talk dictation: hold the hotkey, speak, release.");
         ImGui::SameLine();

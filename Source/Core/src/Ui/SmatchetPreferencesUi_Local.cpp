@@ -252,7 +252,7 @@ void DrawLocalDataStorageSection(AppController& app) {
 // the begin returned true). Split out of DrawLocalAndAppearancePreferencesTabs during the
 // function-size decomposition; behaviour-identical.
 void DrawLocalDataTab(SmatchetUI& ui, AppController& app, UiDrawSession& d) {
-    if (ImGui::BeginTabItem("Local data")) {
+    if (ImGui::BeginTabItem("Local data", nullptr, SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Local data"))) {
         d.preferencesActiveTab = PreferencesActiveTab::LocalData;
         DrawLocalDataRecreateDbSection(ui, app, d);
         DrawLocalDataStorageSection(app);
@@ -593,7 +593,7 @@ void DrawAppearanceMobileSection(UiDrawSession& d) {
 // the begin returned true). Split out of DrawLocalAndAppearancePreferencesTabs during the
 // function-size decomposition; behaviour-identical.
 void DrawAppearanceTab(AppController& app, UiDrawSession& d) {
-    if (ImGui::BeginTabItem("Appearance")) {
+    if (ImGui::BeginTabItem("Appearance", nullptr, SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Appearance"))) {
         d.preferencesActiveTab = PreferencesActiveTab::Appearance;
         DrawAppearanceTypographySection(d);
         DrawAppearanceGridTextSection(d);

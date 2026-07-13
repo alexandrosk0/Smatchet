@@ -20,6 +20,9 @@
 
 class AppController; // Forward declaration
 struct UiDrawSession;
+/// Opaque re-declaration of the SmatchetUiSession.h enum (layout-reset confirm flow) so
+/// the member signatures below can take it without pulling the full session header here.
+enum class PendingLayoutResetAction;
 struct CachedTicket;
 struct GridPane;                       // Source/Core/include/GridPane.h — per-pane dockable grid unit (ADR-0018)
 struct TrackerConnectivityBannerForUi; // AppController.h — host-resolved once per frame
@@ -225,6 +228,13 @@ class SmatchetUI {
     // nested BeginMenu/EndMenu pairs, matching the pre-decomposition order verbatim.
     void drawAppearanceThemeDensityFont(MainMenuDrawCtx& ctx);
     void drawAppearancePanelPosition(MainMenuDrawCtx& ctx);
+    // Guard rail for layout-destroying appearance changes (Panel Position / side-bar swap,
+    // which currently apply via a full layout reset): the menu item latches the request,
+    // the confirm modal (drawn after EndMainMenuBar) applies or discards it. A persisted
+    // "Don't ask again" (cfg.SkipLayoutResetConfirm) short-circuits straight to apply.
+    void requestLayoutResetAction(UiDrawSession& d, PendingLayoutResetAction action);
+    void applyPendingLayoutResetAction(UiDrawSession& d);
+    void drawLayoutResetConfirmModal(UiDrawSession& d);
 
     // Section helpers for SmatchetUI::Draw (function-size-compliance, monoliths campaign).
     // No positional-ImGui scope pair is split across a helper boundary; each helper either

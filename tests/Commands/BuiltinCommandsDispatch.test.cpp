@@ -76,15 +76,13 @@ TEST_CASE("builtins — registration inventory invariants over every command tab
         CAPTURE(c.Name);
         CHECK_FALSE(c.Name.empty());
         CHECK_FALSE(c.Category.empty());
-        // Category contract: for dotted names the category is the first dotted segment
-        // (the palette/MCP/CLI grouping rule). One legacy dotless name exists —
-        // `notifications`, categorised as `view` — pinned below so a second dotless
-        // command can't slip in unnoticed.
+        // Category contract: every registered name is dotted and the category is the
+        // first dotted segment (the palette/MCP/CLI grouping rule). The last dotless
+        // name (`notifications`) was renamed to `view.toggle.notifications`; the bare
+        // form lives on only as an alias, so a dotless CANONICAL name is a regression.
+        CHECK(c.Name.find('.') != std::string::npos);
         if (c.Name.find('.') != std::string::npos) {
             CHECK(c.Name.rfind(c.Category + ".", 0) == 0);
-        } else {
-            CHECK(c.Name == "notifications");
-            CHECK(c.Category == "view");
         }
         CHECK_FALSE(c.Summary.empty());
         CHECK(names.insert(c.Name).second); // All() itself must not carry duplicates

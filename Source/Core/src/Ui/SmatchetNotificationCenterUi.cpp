@@ -46,6 +46,9 @@ void SmatchetDrawNotificationCenterWindow(UiDrawSession& d) {
     }
 
     SmatchetToastManager& mgr = SmatchetToastManager::Instance();
+    // Viewing the center clears the status-bar unread-error badge — this history IS the
+    // error trail the badge points at.
+    mgr.MarkHistorySeen();
     const std::vector<ToastHistoryEntry>& history = mgr.History();
 
     bool clearRequested = false;

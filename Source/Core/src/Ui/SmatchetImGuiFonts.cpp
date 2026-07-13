@@ -583,6 +583,16 @@ void SmatchetRequestFontReload(const std::string& fontName, float fontSizePixels
     g_FontReloadRequested.store(true);
 }
 
+bool SmatchetIsFontAvailable(const std::string& fontName) {
+#if defined(_WIN32)
+    const char* path = GetFontFilePath(fontName);
+    return FileExistsUtf8(path);
+#else
+    (void)fontName;
+    return false;
+#endif
+}
+
 bool SmatchetCheckAndApplyFontReload() {
     if (!g_FontReloadRequested.load()) {
         return false;

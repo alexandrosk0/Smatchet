@@ -173,5 +173,6 @@ KeybindingsConfig KeybindingsConfig::Defaults() {
     c.Bindings.push_back(MakeBinding("Ctrl+Shift+U", "view.toggle.log", "{\"action\":\"show\"}"));
     c.Bindings.push_back(MakeBinding("Ctrl+Shift+M", "view.toggle.backend_audit", "{\"action\":\"show\"}"));
     c.Bindings.push_back(MakeBinding("Ctrl+Shift+N", "view.toggle.source_annotate", "{\"action\":\"toggle\"}"));
+    c.Bindings.push_back(MakeBinding("Ctrl+Shift+Y", "view.toggle.notifications", "{\"action\":\"show\"}"));
     return c;
 }

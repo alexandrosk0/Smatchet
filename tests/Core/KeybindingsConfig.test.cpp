@@ -50,6 +50,9 @@ const ExpectedBinding kExpectedDefaults[] = {
     {"Ctrl+Shift+U", "view.toggle.log", "{\"action\":\"show\"}"},
     {"Ctrl+Shift+M", "view.toggle.backend_audit", "{\"action\":\"show\"}"},
     {"Ctrl+Shift+N", "view.toggle.source_annotate", "{\"action\":\"toggle\"}"},
+    // Notifications reveal — added with the notifications → view.toggle.notifications
+    // rename (UX critique M8); seeded into existing configs via migrated_menu_shortcuts_v2.
+    {"Ctrl+Shift+Y", "view.toggle.notifications", "{\"action\":\"show\"}"},
 };
 
 } // namespace

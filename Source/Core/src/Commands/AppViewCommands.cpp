@@ -52,12 +52,21 @@ CommandResult SetPanel(IMainThreadPoster& app, ViewSlot slot, bool TrackerConfig
     });
 }
 
-void RegisterPanel(CommandRegistry& reg, IMainThreadPoster& app, const char* name, const char* label, ViewSlot slot,
-                   bool TrackerConfig::*cfgFlag) {
+void RegisterPanel(CommandRegistry& reg, IMainThreadPoster& app, const char* name, const char* label, const char* title,
+                   const char* alias, ViewSlot slot, bool TrackerConfig::*cfgFlag) {
+    // clang-format off
+    // SMATCHET_DEVIATION(rule=duplication; reason=RegisterPanel and ViewToggleCommands.cpp's RegisterToggle share the Command boilerplate (Name/Category/Summary/Title/alias) by construction — the two registrars bind different handler shapes (cfg-slot panel vs session-flag window) and merging them would couple the AppView and ViewToggle command families; owner=commands; revisit=when a shared command-builder helper lands)
+    // clang-format on
     Command c;
     c.Name = name;
     c.Category = "view";
     c.Summary = std::string("Toggle ") + label + " visibility.";
+    // Short display label + a view.toggle.* alias so the Recently Used Views LRU (which
+    // only admits view.toggle.* ids) can record and re-dispatch these chrome toggles.
+    c.Title = title;
+    if (alias != nullptr) {
+        c.Aliases.push_back(alias);
+    }
     c.Destructive = false;
     c.Idempotent = false; // default action toggles
     c.AsyncSafe = true;
@@ -74,11 +83,12 @@ void RegisterAppViewCommands(CommandRegistry& reg, IMainThreadPoster& app) {
         return;
     }
 
-    RegisterPanel(reg, app, "view.sidebar.primary", "primary side bar", ViewSlot::PrimarySideBar,
-                  &TrackerConfig::ShowPrimarySideBar);
-    RegisterPanel(reg, app, "view.sidebar.secondary", "secondary side bar", ViewSlot::SecondarySideBar,
-                  &TrackerConfig::ShowSecondarySideBar);
-    RegisterPanel(reg, app, "view.panel.bottom", "bottom panel", ViewSlot::BottomPanel, &TrackerConfig::ShowPanel);
+    RegisterPanel(reg, app, "view.sidebar.primary", "primary side bar", "Primary Side Bar",
+                  "view.toggle.primary_side_bar", ViewSlot::PrimarySideBar, &TrackerConfig::ShowPrimarySideBar);
+    RegisterPanel(reg, app, "view.sidebar.secondary", "secondary side bar", "Secondary Side Bar",
+                  "view.toggle.secondary_side_bar", ViewSlot::SecondarySideBar, &TrackerConfig::ShowSecondarySideBar);
+    RegisterPanel(reg, app, "view.panel.bottom", "bottom panel", "Panel", "view.toggle.panel", ViewSlot::BottomPanel,
+                  &TrackerConfig::ShowPanel);
 
 #if defined(SMATCHET_WITH_AI)
     {
@@ -87,6 +97,9 @@ void RegisterAppViewCommands(CommandRegistry& reg, IMainThreadPoster& app) {
         c.Name = "view.assistant";
         c.Category = "view";
         c.Summary = "Reveal and focus the Smatchet Assistant side panel.";
+        c.Title = "Assistant";
+        // view.toggle.* alias so the Recently Used Views LRU can record/re-dispatch it.
+        c.Aliases.push_back("view.toggle.assistant");
         c.Destructive = false;
         c.Idempotent = true;
         c.AsyncSafe = true;
