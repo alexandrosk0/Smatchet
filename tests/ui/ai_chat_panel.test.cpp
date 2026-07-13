@@ -9,7 +9,10 @@
 //     the ImGui clipboard (turn seeded Pinned so its action row stays interactive without a hover).
 //   - PinBookmark_ActionRowTogglesPinnedState — the per-turn Pin/Unpin action-row button flips
 //     AiMessage::Pinned (the flag that drives the pinned-bookmark strip) both ways.
-// Remaining (follow-up): history-persist, keyboard-nav.
+//   - KeyboardEnter_SubmitsThroughConsentGate — typing a prompt + bare Enter submits (EnterReturnsTrue);
+//     the first-send outbound-consent gate intercepts it offline (assistantConsentRows / modal). The
+//     panel is floated + enlarged (OpenAssistantPanelWithInput) so the bottom input row is reachable.
+// Remaining (follow-up): history-persist (SQLite round-trip; reuses OpenAssistantPanelWithInput).
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
 
@@ -98,6 +101,22 @@ bool OpenAssistantPanel(ImGuiTestContext* ctx) {
 bool SeedAndOpenPanel(ImGuiTestContext* ctx, bool pinFirst) {
     SeedHistory(/*turnCount=*/2, pinFirst);
     return OpenAssistantPanel(ctx);
+}
+
+// Open the panel and make its bottom message input reachable. In the headless dockspace the panel
+// docks into a short sidebar that clips the ##AiAssistantInput row off the fold (it never reaches
+// the item table). Undock it to a floating window, then WindowResize it tall enough for header +
+// history + input — WindowResize is a no-op on a DOCKED window, so the undock must come first.
+// Returns true once the input item is reachable. Used by the send/keyboard scenarios.
+bool OpenAssistantPanelWithInput(ImGuiTestContext* ctx) {
+    if (!OpenAssistantPanel(ctx)) {
+        return false;
+    }
+    ctx->UndockWindow("Smatchet Assistant");
+    ctx->WindowResize("Smatchet Assistant", ImVec2(520.0f, 700.0f));
+    ctx->Yield();
+    ctx->SetRef("Smatchet Assistant");
+    return YieldUntil(ctx, [&] { return ctx->ItemExists("**/##AiAssistantInput"); }, 60);
 }
 
 // Click the header clear button, mirroring its production label (FA trash glyph when the icon font
@@ -269,12 +288,79 @@ void RegisterPinBookmarkToggle(ImGuiTestEngine* engine) {
     };
 }
 
+// Keyboard nav: the multiline input is wired ImGuiInputTextFlags_EnterReturnsTrue, so a bare Enter
+// submits. Typing text + Enter runs the send path (DispatchAiSend); on a fresh profile the first
+// send is intercepted by the outbound-consent gate, which populates assistantConsentRows + opens the
+// ##AiOutboundConsent modal and returns WITHOUT any network — a deterministic offline observable
+// that "Enter submitted". The panel is floated + enlarged first (OpenAssistantPanelWithInput) so the
+// bottom input row isn't clipped off the docked sidebar.
+void RegisterKeyboardEnterSubmits(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "AiChat", "KeyboardEnter_SubmitsThroughConsentGate");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        const AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("SKIP: app not booted");
+            return;
+        }
+        if (!app->HasAiAssistantController()) {
+            ctx->LogInfo("SKIP: no AI assistant controller (SMATCHET_WITH_AI off) — send path inert");
+            return;
+        }
+        const bool origOpen = g_ui.assistantPanelOpen;
+        const bool origWhisperSetup = g_ui.cfg.WhisperSetupCompleted;
+        const bool origConsentShown = g_ui.cfg.AssistantOutboundConsentShown;
+
+        // Force the first-send consent gate so the Enter dispatch is intercepted offline (no POST).
+        g_ui.cfg.AssistantOutboundConsentShown = false;
+        g_ui.assistantConsentRows.clear();
+        g_ui.assistantInFlight = false;
+        SeedHistory(/*turnCount=*/1, /*pinFirst=*/false);
+        const bool inputReachable = OpenAssistantPanelWithInput(ctx);
+        IM_CHECK_NO_RET(inputReachable);
+        if (inputReachable) {
+            // Focus the multiline input + type a prompt; the buffer mirrors into assistantInputBuf.
+            ctx->ItemInput("**/##AiAssistantInput");
+            ctx->KeyChars("smatchet keyboard send");
+            const bool typed = YieldUntil(ctx, [] { return !g_ui.assistantInputBuf.empty(); }, 90);
+            IM_CHECK_NO_RET(typed);
+            if (typed) {
+                // Bare Enter submits; with a controller + non-empty input, send is NOT disabled, so
+                // DispatchAiSend runs and the first-send consent gate fires (offline).
+                ctx->KeyPress(ImGuiKey_Enter);
+                const bool submitted = YieldUntil(
+                    ctx, [] { return !g_ui.assistantConsentRows.empty() || WindowIsLive("##AiOutboundConsent"); }, 90);
+                if (!submitted) {
+                    ctx->LogError("Bare Enter did not submit — neither the outbound-consent rows nor "
+                                  "the ##AiOutboundConsent modal appeared; the keyboard send path is broken");
+                    IM_CHECK(false);
+                }
+            }
+        }
+
+        // Teardown: dismiss the consent modal via Escape (never hangs on a missing button) + restore
+        // the mutated flags. This is the last AiChat case, so a leftover input buffer can't reach a
+        // sibling. assistantInputBuf is re-mirrored from the file-static widget buffer each frame.
+        if (WindowIsLive("##AiOutboundConsent")) {
+            ctx->KeyPress(ImGuiKey_Escape);
+            YieldUntil(ctx, [] { return !WindowIsLive("##AiOutboundConsent"); }, 60);
+        }
+        g_ui.assistantConsentRows.clear();
+        g_ui.assistantHistory.clear();
+        g_ui.assistantHistoryRowIds.clear();
+        g_ui.assistantPanelOpen = origOpen;
+        g_ui.cfg.WhisperSetupCompleted = origWhisperSetup;
+        g_ui.cfg.AssistantOutboundConsentShown = origConsentShown;
+        ctx->Yield();
+    };
+}
+
 } // namespace
 
 extern "C" void SmatchetRegisterAiChatPanelTests(ImGuiTestEngine* engine) {
     RegisterClearConversationConfirm(engine);
     RegisterCopyMessageToClipboard(engine);
     RegisterPinBookmarkToggle(engine);
+    RegisterKeyboardEnterSubmits(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS
