@@ -9,7 +9,7 @@
 #
 # Usage: assert-code-unchanged.sh [base-ref]      (default: origin/develop)
 # Exit:  0 = only comments/whitespace changed; 1 = code residue differs; 2 = setup error.
-set -uo pipefail
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB="$SCRIPT_DIR/comment_lib.py"
@@ -61,7 +61,7 @@ for f in "${FILES[@]}"; do
     if [ "$base_res" != "$head_res" ]; then
         fail=1
         echo "CODE-RESIDUE CHANGED (non-comment edit): $f" >&2
-        diff <(printf '%s' "$base_res") <(printf '%s' "$head_res") | head -20 >&2
+        diff <(printf '%s' "$base_res") <(printf '%s' "$head_res") | head -20 >&2 || true  # diff exits 1 on the known-differing residue (and head can SIGPIPE) — keep accumulating fail across files
         echo "---" >&2
     fi
 done

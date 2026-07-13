@@ -20,7 +20,7 @@
 #
 # Never blocks the user; any failure exits 0 silently.
 
-set -u
+set -euo pipefail
 
 THRESHOLD_COUNT="${SMATCHET_MEMORY_DRAIN_COUNT:-5}"
 THRESHOLD_DAYS="${SMATCHET_MEMORY_DRAIN_DAYS:-7}"
@@ -44,11 +44,11 @@ fi
 [ -n "$MEM_DIR" ] && [ -d "$MEM_DIR" ] || exit 0
 
 # Live items = top-level *.md except the MEMORY.md index itself.
-COUNT="$(find "$MEM_DIR" -maxdepth 1 -type f -name '*.md' ! -name 'MEMORY.md' 2>/dev/null | wc -l | tr -d ' ')"
+COUNT="$(find "$MEM_DIR" -maxdepth 1 -type f -name '*.md' ! -name 'MEMORY.md' 2>/dev/null | wc -l | tr -d ' ' || echo 0)"  # find can exit non-zero (unreadable entry) under pipefail — numeric case below re-guards
 case "$COUNT" in ''|*[!0-9]*) exit 0 ;; esac
 [ "$COUNT" -gt 0 ] || exit 0
 
-STALE="$(find "$MEM_DIR" -maxdepth 1 -type f -name '*.md' ! -name 'MEMORY.md' -mtime +"$THRESHOLD_DAYS" 2>/dev/null | wc -l | tr -d ' ')"
+STALE="$(find "$MEM_DIR" -maxdepth 1 -type f -name '*.md' ! -name 'MEMORY.md' -mtime +"$THRESHOLD_DAYS" 2>/dev/null | wc -l | tr -d ' ' || echo 0)"  # find can exit non-zero under pipefail — numeric case below re-guards
 case "$STALE" in ''|*[!0-9]*) STALE=0 ;; esac
 
 if [ "$COUNT" -ge "$THRESHOLD_COUNT" ] || [ "$STALE" -gt 0 ]; then

@@ -22,7 +22,7 @@
 #   bash agents/scripts/core/tail-agent.sh ade88dbd
 #   bash agents/scripts/core/tail-agent.sh --diff --interval 5
 
-set -uo pipefail
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
@@ -59,12 +59,12 @@ resolve_worktree() {
         # Prefix match — return newest match.
         find "$WORKTREES_DIR" -maxdepth 1 -mindepth 1 -type d -name "agent-${id}*" \
             -printf '%T@ %p\n' 2>/dev/null \
-            | sort -rn | head -1 | awk '{$1=""; sub(/^ /, ""); print}'
+            | sort -rn | head -1 | awk '{$1=""; sub(/^ /, ""); print}' || true  # head can SIGPIPE the upstream find/sort under pipefail
     else
         # No id — most recent.
         find "$WORKTREES_DIR" -maxdepth 1 -mindepth 1 -type d -name 'agent-*' \
             -printf '%T@ %p\n' 2>/dev/null \
-            | sort -rn | head -1 | awk '{$1=""; sub(/^ /, ""); print}'
+            | sort -rn | head -1 | awk '{$1=""; sub(/^ /, ""); print}' || true  # head can SIGPIPE the upstream find/sort under pipefail
     fi
 }
 
@@ -94,16 +94,16 @@ snapshot_worktree() {
 
     # Working tree status.
     local status_lines
-    status_lines="$(git status --porcelain 2>/dev/null | wc -l)"
+    status_lines="$(git status --porcelain 2>/dev/null | wc -l || echo 0)"
     echo "  $status_lines uncommitted file changes"
     if [ "$status_lines" -gt 0 ]; then
-        git status --short 2>/dev/null | sed 's/^/    /' | head -20
+        git status --short 2>/dev/null | sed 's/^/    /' | head -20 || true  # head SIGPIPE under pipefail
     fi
 
     # Recent commits on this branch (above develop).
     if [ "$commits_ahead" != "0" ] && [ "$commits_ahead" -gt 0 ]; then
         echo "  recent commits:"
-        git log --oneline "origin/develop"..HEAD 2>/dev/null | sed 's/^/    /' | head -5
+        git log --oneline "origin/develop"..HEAD 2>/dev/null | sed 's/^/    /' | head -5 || true  # head SIGPIPE under pipefail
     fi
 
     if [ "$show_diff" -eq 1 ]; then
@@ -117,7 +117,7 @@ snapshot_worktree() {
             ! -path './.git/*' \
             ! -path './build/*' \
             ! -path './.fetchcontent-src/*' \
-            2>/dev/null | sed 's/^/    /' | head -15
+            2>/dev/null | sed 's/^/    /' | head -15 || true  # head SIGPIPE under pipefail
     fi
     echo
 }

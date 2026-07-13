@@ -20,7 +20,7 @@
 #
 # Auto-enrolled by scripts/dev/test-all.sh.
 
-set -u
+set -uo pipefail
 
 PROJ_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../../.." && pwd)}"
 export CLAUDE_PROJECT_DIR="$PROJ_DIR"

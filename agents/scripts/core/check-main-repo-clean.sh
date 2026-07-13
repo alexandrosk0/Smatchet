@@ -23,7 +23,7 @@
 # Authoritative spec: docs/self-improvement/categories/process.md
 # (2026-05-19 orchestrator P2 — option b).
 
-set -uo pipefail
+set -euo pipefail
 
 # Resolve main repo via the worktree's common dir (`.git` file in worktrees
 # points at the canonical `.git/worktrees/<id>` dir inside the main repo).

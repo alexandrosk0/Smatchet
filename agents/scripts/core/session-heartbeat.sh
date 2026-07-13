@@ -12,7 +12,7 @@
 #
 # exit 0 always.
 
-set -u
+set -euo pipefail
 
 PROJ="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 

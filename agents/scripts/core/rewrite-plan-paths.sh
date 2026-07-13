@@ -15,7 +15,7 @@
 #
 # Idempotent-ish: a path already pointing at docs/plans/* is left alone (the
 # regexes only match the OLD docs/design / docs/backlog prefixes).
-set -uo pipefail
+set -euo pipefail
 
 # command -v alone is insufficient on Windows: the python3 Store-alias stub passes it
 # but exits 49 when run. Probe each candidate; take the first that actually executes.

@@ -18,7 +18,7 @@
 # Usage:  sync-settings-hooks.sh <template.json> <deployed.json>
 # Exit 0 always (advisory; jq absent / jq error -> WARN + leave file unchanged).
 
-set -uo pipefail
+set -euo pipefail
 
 tmpl="${1:-}"
 dst="${2:-}"

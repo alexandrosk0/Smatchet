@@ -18,7 +18,7 @@
 #
 # Silent on success; never blocks the user.
 
-set -u
+set -euo pipefail
 
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 SCRATCHPAD="$PROJECT_DIR/.session-context.md"
@@ -44,7 +44,7 @@ TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 # Archive prior scratchpad when it has at least one `## ` heading
 # (which only SubagentStop appends produce — banner has no such line).
 if [ -f "$SCRATCHPAD" ] && grep -qE '^## ' "$SCRATCHPAD" 2>/dev/null; then
-    mkdir -p "$ARCHIVE_DIR"
+    mkdir -p "$ARCHIVE_DIR" 2>/dev/null || true  # never block SessionStart on a read-only/full FS
     # Extract prior session id from the banner's `_Session: <id> ·` line.
     PRIOR_SID="$(sed -n 's/^_Session:[[:space:]]*\([^[:space:]·]*\).*/\1/p' \
         "$SCRATCHPAD" | head -n 1)"
@@ -57,7 +57,7 @@ if [ -f "$SCRATCHPAD" ] && grep -qE '^## ' "$SCRATCHPAD" 2>/dev/null; then
     mv -f "$SCRATCHPAD" "$ARCHIVE_PATH" 2>/dev/null || true
 fi
 
-cat > "$SCRATCHPAD" <<EOF
+cat > "$SCRATCHPAD" <<EOF || true
 # Session context
 
 _Session: ${SESSION_ID} · started: ${TS}_
@@ -121,7 +121,7 @@ if [ "${SMATCHET_AGENT_VCS:-}" = "p4" ]; then
     if P4_INFO="$(p4 info 2>/dev/null)"; then
         P4_CLIENT="$(printf '%s\n' "$P4_INFO" | sed -n 's/^Client name:[[:space:]]*//p' | head -n 1)"
         P4_PORT="$(printf '%s\n' "$P4_INFO" | sed -n 's/^Server address:[[:space:]]*//p' | head -n 1)"
-        cat >> "$SCRATCHPAD" <<P4EOF
+        cat >> "$SCRATCHPAD" <<P4EOF || true
 
 ## === p4-mode ACTIVE ===
 
@@ -137,7 +137,7 @@ numbers or gh URLs.
 
 P4EOF
     else
-        cat >> "$SCRATCHPAD" <<P4EOF
+        cat >> "$SCRATCHPAD" <<P4EOF || true
 
 ## === p4-mode REQUESTED but UNREACHABLE ===
 
@@ -164,7 +164,7 @@ _gov() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["governa
 _loop_mode="${SMATCHET_LOOP_MODE:-$(_gov loop_mode in)}"
 _auto_merge="${SMATCHET_AUTOMERGE:-$(_gov auto_merge off)}"
 if [ "$_loop_mode" = "on" ]; then
-    cat >> "$SCRATCHPAD" <<LOOPEOF
+    cat >> "$SCRATCHPAD" <<LOOPEOF || true
 
 ## === loop-mode: on ===
 
@@ -175,7 +175,7 @@ cost-unbounded — escalate). See \`AI_POLICY.md\` § Two loop modes.
 
 LOOPEOF
 else
-    cat >> "$SCRATCHPAD" <<LOOPEOF
+    cat >> "$SCRATCHPAD" <<LOOPEOF || true
 
 ## === loop-mode: in ===
 
@@ -188,7 +188,7 @@ LOOPEOF
 fi
 
 if [ "$_auto_merge" = "on" ]; then
-    cat >> "$SCRATCHPAD" <<'LOOPEOF'
+    cat >> "$SCRATCHPAD" <<'LOOPEOF' || true
 
 ## === auto-merge: on ===
 
