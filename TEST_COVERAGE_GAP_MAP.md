@@ -44,6 +44,8 @@ Snapshot 2026-07-05, with the 2026-07-13 deltas noted per row:
 | Shells whose extracted core IS tested (`*Pure`/`*Helpers`/`*Mapping`/`*_detail`/`*Parse` siblings) | 4 | 2.5K | HTTP orchestration now fixture-tested (Tier 2 closed) |
 | Test infrastructure (`Commands/Scenarios/*`, `*FixtureBackend`, fault injector) | 30 | 5.3K | Not a gap — this *is* the harness (33 scenario TUs as of 07-13) |
 
+> Reconciliation: the leading counts are the frozen **2026-07-05 partition** (40 + 24 + 62 + 4 + 30 = **160**, that date's untested headline). The per-row Verdict prose carries the deltas since; the **live** headline (152 untested) reflects the TUs moved into test targets between 07-05 and 07-13 (Tier-2 shells, `GitHubCommits`, 11 command handlers incl. Meta/Config, 2 UI `_detail`). The rows are intentionally a snapshot and are not re-summed per pass — the headline table at the top is the current source of truth.
+
 The codebase has a healthy, consistently-applied pattern: extract pure logic into a `*Pure.cpp` / `*_detail.cpp` sibling and doctest it, leaving a thin I/O shell (e.g. `PlaneActivityFeed.cpp` shell vs tested `PlaneActivityFeedPure.cpp`). The gap list below is, to first order, **the units where that extraction hasn't happened yet**.
 
 ## Tier 1 — high-risk uncovered logic (do these first)

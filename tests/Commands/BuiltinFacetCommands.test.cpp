@@ -738,12 +738,28 @@ TEST_CASE("commands.* — registry introspection over the real registered catalo
         CHECK(found);
     }
     {
-        // recents is empty until something is dispatched-and-recorded; the command still
-        // returns a well-formed empty envelope.
+        // Successful dispatches DO get recorded (Dispatch → RecordDispatch), so on this
+        // registry recents already holds the earlier list/search calls, newest-first.
         const CommandResult r = reg.Dispatch("commands.recents", {}, ctx);
         REQUIRE(r.Ok);
-        CHECK(r.Data->contains("items"));
+        REQUIRE(r.Data->contains("items"));
+        const auto& items = (*r.Data)["items"];
+        REQUIRE(items.size() >= 2);
+        CHECK(items[0] == "commands.search"); // most recent successful dispatch first
+        CHECK(items[1] == "commands.list");
     }
+}
+
+TEST_CASE("commands.recents — fresh registry with no dispatches yields an empty list") {
+    // A default-constructed registry loads nothing from disk (LoadRecents runs only under
+    // AppController), so recents is a well-formed EMPTY envelope until a command dispatches.
+    CommandRegistry reg;
+    smatchet::cmd::RegisterMetaCommands(reg);
+    const CommandResult r = reg.Dispatch("commands.recents", {}, AutomationCtx());
+    REQUIRE(r.Ok);
+    REQUIRE(r.Data->contains("items"));
+    CHECK((*r.Data)["items"].empty());
+    CHECK((*r.Data)["total"] == 0);
 }
 
 TEST_CASE("config.* — allowlist gate, dry-run preview, and persisted round-trip") {
@@ -780,6 +796,12 @@ TEST_CASE("config.* — allowlist gate, dry-run preview, and persisted round-tri
         const CommandResult g = reg.Dispatch("config.get", {{"key", "mcpPort"}}, ctx);
         REQUIRE(g.Ok);
         CHECK((*g.Data)["mcpPort"] == 8123);
+    }
+    {
+        // config.reload triggers a disk re-read (cache flush); it reports success.
+        const CommandResult r = reg.Dispatch("config.reload", {}, ctx);
+        REQUIRE(r.Ok);
+        CHECK((*r.Data)["triggered"] == true);
     }
     {
         // tickets.monitor status is a read-only projection of the two monitor prefs.
