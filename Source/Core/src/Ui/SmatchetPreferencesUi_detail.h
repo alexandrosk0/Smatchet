@@ -150,6 +150,10 @@ void DrawAssistantPreferencesTab(AppController& app, UiDrawSession& d);
 void DrawWhisperPreferencesTab(IAppThreading& app, UiDrawSession& d);
 #endif
 
+/// "Unreal" tab — quick-create engine-context prefill toggles. Surfaced only when
+/// embedded in Unreal (call site is #ifdef'd); the TU compiles in both targets.
+void DrawQuickCreatePreferencesTab(UiDrawSession& d);
+
 void DrawLocalAndAppearancePreferencesTabs(SmatchetUI& ui, AppController& app, UiDrawSession& d);
 void DrawKeybindingsPreferencesTab(SmatchetUI& ui, IAppCommands& app, UiDrawSession& d);
 void DrawTemplatePreferencesTabs(SmatchetUI& ui, const std::vector<TrackerField>& availableFields,

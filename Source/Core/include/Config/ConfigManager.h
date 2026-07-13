@@ -256,6 +256,25 @@ struct TrackerConfig {
     // build. from_json replaces (not merges) the binding table, so without this an
     // upgrading user never receives the new defaults. Persisted so the seed fires once.
     bool MigratedMenuShortcutsV1 = false;
+    // One-shot migration flag: seeds the quick-create issue popup binding
+    // ("issue.quick_create.open", Ctrl+Shift+T) into a config saved by an older build.
+    // Same replace-not-merge rationale as MigratedMenuShortcutsV1; a user who later
+    // removes the binding keeps it removed.
+    bool MigratedQuickCreateHotkeyV1 = false;
+
+    // --- Quick-create issue popup: engine-context prefill toggles ---
+    // Which host-engine snapshot fields (pushed by the Unreal plugin) are folded into the
+    // quick-create description prefill. Each maps to a Preferences checkbox; missing snapshot
+    // fields are skipped regardless. docs/plans/quick-create-issue-unreal-context.md.
+    bool QuickCreateCtxEngineVersion = true;
+    bool QuickCreateCtxProject = true;
+    bool QuickCreateCtxPlatform = true;
+    bool QuickCreateCtxLevel = true;
+    bool QuickCreateCtxPieState = true;
+    bool QuickCreateCtxSelectedActors = true;
+    bool QuickCreateCtxLogTail = true;
+    // Last-N Output Log lines embedded in the prefill; clamped to [1, 300] on load.
+    int QuickCreateCtxLogLines = 50;
 
     // Custom suggestions and templates saved in smatchet_config.json
     std::vector<std::string> DurationSuggestions = {"15m", "30m", "1h", "2h", "4h", "8h", "1d", "2d", "1w"};

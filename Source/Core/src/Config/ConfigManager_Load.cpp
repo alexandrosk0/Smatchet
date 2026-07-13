@@ -106,6 +106,14 @@ void LoadEnumAndClampedFields(const nlohmann::json& j, TrackerConfig& cfg) {
     if (cfg.TicketChangeMonitorIntervalSec > 3600) {
         cfg.TicketChangeMonitorIntervalSec = 3600;
     }
+    // Quick-create engine-context log tail — zero/negative would silently drop the log
+    // section; past 300 lines the description prefill stops being a summary.
+    if (cfg.QuickCreateCtxLogLines < 1) {
+        cfg.QuickCreateCtxLogLines = 1;
+    }
+    if (cfg.QuickCreateCtxLogLines > 300) {
+        cfg.QuickCreateCtxLogLines = 300;
+    }
     // Unknown / hand-edited layout values degrade to the fresh-install default.
     if (cfg.VcsFeedLayout != "unified" && cfg.VcsFeedLayout != "separate") {
         cfg.VcsFeedLayout = "unified";
@@ -282,6 +290,23 @@ void MigrateMenuShortcutKeybindingsV1(const nlohmann::json& j, TrackerConfig& cf
     cfg.MigratedMenuShortcutsV1 = true;
 }
 
+// One-shot migration: seed the quick-create issue binding ("issue.quick_create.open",
+// Ctrl+Shift+T) into a config saved before the popup existed. Same replace-not-merge
+// rationale as MigrateMenuShortcutKeybindingsV1; the guard on FindBindingIndex keeps a
+// user's own binding (or a deliberate later removal) authoritative after the seed.
+void MigrateQuickCreateKeybindingV1(const nlohmann::json& j, TrackerConfig& cfg) {
+    cfg.MigratedQuickCreateHotkeyV1 = j.value("migrated_quick_create_hotkey_v1", false);
+    if (cfg.MigratedQuickCreateHotkeyV1) {
+        return;
+    }
+    if (cfg.Keybindings.FindBindingIndex("issue.quick_create.open", "{}") < 0) {
+        cfg.Keybindings.SetBindingHotkey("issue.quick_create.open", "{}", "Ctrl+Shift+T");
+        LOG_INFO("ConfigManager: seeded the quick-create issue keybinding into an existing config "
+                 "(migrated_quick_create_hotkey_v1)");
+    }
+    cfg.MigratedQuickCreateHotkeyV1 = true;
+}
+
 // List + nested-object fields: mcp_export_fields, comment-template arrays, duration/worklog
 // suggestion lists, the three inherit-id lists, and the one-shot issuetype-inject migration.
 void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
@@ -384,6 +409,7 @@ void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
 
     MigrateBugReportHotkeyToKeybindings(j, cfg);
     MigrateMenuShortcutKeybindingsV1(j, cfg);
+    MigrateQuickCreateKeybindingV1(j, cfg);
 }
 
 // Route SMATCHET_TRACKER_TOKEN / SMATCHET_TRACKER_BASE_URL to the active backend's

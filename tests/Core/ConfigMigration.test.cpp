@@ -453,3 +453,56 @@ TEST_CASE("ConfigMigration menu shortcuts: both views_dashboard arg variants see
     CHECK(second.Keybindings.Bindings.size() == firstCount); // no duplicate seed on reload
     CHECK(CountCommand(second.Keybindings, "view.toggle.views_dashboard") == 2);
 }
+
+// --- Quick-create issue keybinding — one-shot seed migration (migrated_quick_create_hotkey_v1) ---
+//
+// Same replace-not-merge failure class as the menu-shortcut seed above: a config saved before the
+// quick-create popup existed carries a keybindings block without issue.quick_create.open, so the
+// Ctrl+Shift+T default would never arrive without the one-shot seed.
+
+TEST_CASE("ConfigMigration quick-create: seeds Ctrl+Shift+T into a pre-existing config") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre = R"json({"tracker_type":"Jira","keybindings":{"bindings":[
+        {"command_id":"view.sidebar.primary","hotkey":"Ctrl+B","args_json":"{\"action\":\"toggle\"}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedQuickCreateHotkeyV1 == true);
+    const int idx = cfg.Keybindings.FindBindingIndex("issue.quick_create.open", "{}");
+    REQUIRE(idx >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(idx)].Hotkey == "Ctrl+Shift+T");
+    // Pre-existing bindings survive (append-only).
+    CHECK(cfg.Keybindings.FindBindingIndex("view.sidebar.primary", "{\"action\":\"toggle\"}") >= 0);
+}
+
+TEST_CASE("ConfigMigration quick-create: respects a user rebind (no duplicate, key kept)") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre = R"json({"tracker_type":"Jira","keybindings":{"bindings":[
+        {"command_id":"issue.quick_create.open","hotkey":"Ctrl+Shift+Q","args_json":"{}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedQuickCreateHotkeyV1 == true);
+    CHECK(CountCommand(cfg.Keybindings, "issue.quick_create.open") == 1);
+    const int idx = cfg.Keybindings.FindBindingIndex("issue.quick_create.open", "{}");
+    REQUIRE(idx >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(idx)].Hotkey == "Ctrl+Shift+Q");
+}
+
+TEST_CASE("ConfigMigration quick-create: flag set on disk skips the seed (cleared stays cleared)") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre =
+        R"json({"tracker_type":"Jira","migrated_quick_create_hotkey_v1":true,"keybindings":{"bindings":[
+        {"command_id":"view.sidebar.primary","hotkey":"Ctrl+B","args_json":"{\"action\":\"toggle\"}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedQuickCreateHotkeyV1 == true);
+    CHECK(cfg.Keybindings.FindBindingIndex("issue.quick_create.open", "{}") < 0); // not resurrected
+}

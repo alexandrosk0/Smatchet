@@ -67,6 +67,40 @@ void RegisterPanel(CommandRegistry& reg, IMainThreadPoster& app, const char* nam
     reg.Register(std::move(c));
 }
 
+// Quick-create issue popup opener (quick-create-issue-unreal-context plan). Optional
+// args prefill the popup; the open-frame seed consumes then clears them.
+void RegisterQuickCreateOpen(CommandRegistry& reg, IMainThreadPoster& app) {
+    Command c;
+    c.Name = "issue.quick_create.open";
+    c.Category = "issue";
+    c.Summary = "Open the quick-create issue popup (engine-context-prefilled description).";
+    c.Destructive = false;
+    c.Idempotent = true;
+    c.AsyncSafe = true;
+    c.Handler = [&app](const nlohmann::json& args, const CommandContext& /*ctx*/) {
+        std::string summary;
+        std::string description;
+        std::string project;
+        std::string issueType;
+        if (args.is_object()) {
+            summary = args.value("summary", std::string());
+            description = args.value("description", std::string());
+            project = args.value("project", std::string());
+            issueType = args.value("issuetype", std::string());
+        }
+        return RunOnUiThreadAsCommandResult(app, [summary, description, project, issueType]() {
+            g_ui.showQuickCreateIssue = true;
+            g_ui.quickCreateOpenLatch = true;
+            g_ui.quickCreateArgSummary = summary;
+            g_ui.quickCreateArgDescription = description;
+            g_ui.quickCreateArgProject = project;
+            g_ui.quickCreateArgIssueType = issueType;
+            return CommandResult::Success(nlohmann::json::object());
+        });
+    };
+    reg.Register(std::move(c));
+}
+
 } // namespace
 
 void RegisterAppViewCommands(CommandRegistry& reg, IMainThreadPoster& app) {
@@ -159,6 +193,8 @@ void RegisterAppViewCommands(CommandRegistry& reg, IMainThreadPoster& app) {
         };
         reg.Register(std::move(c));
     }
+
+    RegisterQuickCreateOpen(reg, app);
 }
 
 } // namespace cmd

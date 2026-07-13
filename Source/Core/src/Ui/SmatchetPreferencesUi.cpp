@@ -761,6 +761,11 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
         DrawLocalAndAppearancePreferencesTabs(*this, app, d);
         DrawKeybindingsPreferencesTab(*this, app, d);
         DrawTemplatePreferencesTabs(*this, app.GetAvailableFields(), app, d, preferencesState_.templateFlags);
+#if defined(SMATCHET_EMBEDDED_IN_UNREAL)
+        // Engine-context prefill toggles for the quick-create popup — only meaningful
+        // where a host engine pushes context snapshots (the Unreal-embedded build).
+        DrawQuickCreatePreferencesTab(d);
+#endif
         ImGui::EndTabBar();
     }
 
@@ -784,6 +789,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
     case PreferencesActiveTab::Whisper:
     case PreferencesActiveTab::Templates:
     case PreferencesActiveTab::Keybindings:
+    case PreferencesActiveTab::QuickCreate:
         footerKey = "prefs.footer.autosave.short";
         footerFallback = "Settings on this tab save automatically when changed.";
         break;

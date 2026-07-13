@@ -162,6 +162,7 @@ void ConfigManager::Save(const TrackerConfig& config) {
     j["keybindings"] = config.Keybindings;
     j["migrated_bugreport_hotkey_v1"] = config.MigratedBugReportHotkeyV1;
     j["migrated_menu_shortcuts_v1"] = config.MigratedMenuShortcutsV1;
+    j["migrated_quick_create_hotkey_v1"] = config.MigratedQuickCreateHotkeyV1;
     j["annotate_comment_templates"] = config.AnnotateCommentTemplates;
     j["duration_suggestions"] = config.DurationSuggestions;
     j["worklog_comment_templates"] = config.WorkLogCommentTemplates;

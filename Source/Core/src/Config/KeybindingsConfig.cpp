@@ -80,8 +80,10 @@ std::string BoundHotkeyDisplayForArgs(const std::vector<Keybinding>& bindings, c
     // Semantic (order-independent) args comparison via nlohmann ==. Parse with the
     // non-throwing overload + is_discarded() — this is the strict Config zone where
     // an empty catch is a CRITICAL finding, so no try/catch around json::parse.
+    // clang-format off
     // SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; reason=keybinding args are app-serialised local config bytes loaded via the bounded config reader, not external ingress; owner=security-audit; revisit=2026-12-31)
     nlohmann::json want = nlohmann::json::parse(argsJson.empty() ? "{}" : argsJson, nullptr, false);
+    // clang-format on
     if (want.is_discarded()) {
         want = nlohmann::json::object();
     }
@@ -89,8 +91,10 @@ std::string BoundHotkeyDisplayForArgs(const std::vector<Keybinding>& bindings, c
         if (b.CommandId != commandId || !b.Enabled || b.Hotkey.empty()) {
             continue;
         }
+        // clang-format off
         // SMATCHET_DEVIATION(rule=bare-json-parse-untrusted; reason=keybinding args are app-serialised local config bytes loaded via the bounded config reader, not external ingress; owner=security-audit; revisit=2026-12-31)
         nlohmann::json have = nlohmann::json::parse(b.ArgsJson.empty() ? "{}" : b.ArgsJson, nullptr, false);
+        // clang-format on
         if (have.is_discarded()) {
             have = nlohmann::json::object();
         }
@@ -173,5 +177,8 @@ KeybindingsConfig KeybindingsConfig::Defaults() {
     c.Bindings.push_back(MakeBinding("Ctrl+Shift+U", "view.toggle.log", "{\"action\":\"show\"}"));
     c.Bindings.push_back(MakeBinding("Ctrl+Shift+M", "view.toggle.backend_audit", "{\"action\":\"show\"}"));
     c.Bindings.push_back(MakeBinding("Ctrl+Shift+N", "view.toggle.source_annotate", "{\"action\":\"toggle\"}"));
+    // Quick-create issue popup (docs/plans/quick-create-issue-unreal-context.md). Ctrl+Shift+J is
+    // NOT used here on purpose — the Unreal host reserves it for the overlay visibility toggle.
+    c.Bindings.push_back(MakeBinding("Ctrl+Shift+T", "issue.quick_create.open", "{}"));
     return c;
 }

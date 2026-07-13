@@ -479,8 +479,17 @@ TrackerConfig MakeNonDefaultConfig() {
     c.UpdateIncludePrerelease = true;
     c.UpdateSkipVersion = "9.9.9";
     c.UpdateGithubRepo = "rt-owner/rt-fork";
-    c.TicketChangeMonitorEnabled = false; // default true — flip to prove the round-trip
+    c.TicketChangeMonitorEnabled = false;   // default true — flip to prove the round-trip
     c.TicketChangeMonitorIntervalSec = 300; // inside the [30, 3600] clamp band
+    // Quick-create context toggles default true — flip a spread to prove the round-trip.
+    c.QuickCreateCtxEngineVersion = false;
+    c.QuickCreateCtxProject = false;
+    c.QuickCreateCtxPlatform = false;
+    c.QuickCreateCtxLevel = false;
+    c.QuickCreateCtxPieState = false;
+    c.QuickCreateCtxSelectedActors = false;
+    c.QuickCreateCtxLogTail = false;
+    c.QuickCreateCtxLogLines = 120; // inside the [1, 300] clamp band
     return c;
 }
 
@@ -585,6 +594,13 @@ TEST_CASE("ConfigManager Save/Load per-field round-trip preserves every persiste
     CHECK(out.UpdateCheckEnabled == in.UpdateCheckEnabled);
     CHECK(out.UpdateIncludePrerelease == in.UpdateIncludePrerelease);
     CHECK(out.TicketChangeMonitorEnabled == in.TicketChangeMonitorEnabled);
+    CHECK(out.QuickCreateCtxEngineVersion == in.QuickCreateCtxEngineVersion);
+    CHECK(out.QuickCreateCtxProject == in.QuickCreateCtxProject);
+    CHECK(out.QuickCreateCtxPlatform == in.QuickCreateCtxPlatform);
+    CHECK(out.QuickCreateCtxLevel == in.QuickCreateCtxLevel);
+    CHECK(out.QuickCreateCtxPieState == in.QuickCreateCtxPieState);
+    CHECK(out.QuickCreateCtxSelectedActors == in.QuickCreateCtxSelectedActors);
+    CHECK(out.QuickCreateCtxLogTail == in.QuickCreateCtxLogTail);
 
     // Ints.
     CHECK(out.GridEndWheelSwallowsBeforeHorizontal == in.GridEndWheelSwallowsBeforeHorizontal);
@@ -601,6 +617,7 @@ TEST_CASE("ConfigManager Save/Load per-field round-trip preserves every persiste
     CHECK(out.LayoutSchemaVersion == in.LayoutSchemaVersion);
     CHECK(out.FontSizePt == in.FontSizePt);
     CHECK(out.TicketChangeMonitorIntervalSec == in.TicketChangeMonitorIntervalSec);
+    CHECK(out.QuickCreateCtxLogLines == in.QuickCreateCtxLogLines);
 
     // Floats.
     CHECK(out.McpServerInfoPanelHeightPx == doctest::Approx(in.McpServerInfoPanelHeightPx));
@@ -692,4 +709,24 @@ TEST_CASE("ConfigManager secret round-trips and is stored encrypted-at-rest on W
     // Non-Win32 has no DPAPI: plaintext fallback is expected (documented behavior).
     CHECK(raw.find(secret) != std::string::npos);
 #endif
+}
+
+TEST_CASE("ConfigManager Load clamps quick_create_ctx_log_lines to [1, 300]") {
+    smatchet_tests::TestEnvGuard env;
+
+    SUBCASE("below the floor") {
+        TrackerConfig in;
+        in.QuickCreateCtxLogLines = -5;
+        ConfigManager::Save(in);
+        ConfigManager::InvalidateCache();
+        CHECK(ConfigManager::Load().QuickCreateCtxLogLines == 1);
+    }
+
+    SUBCASE("above the ceiling") {
+        TrackerConfig in;
+        in.QuickCreateCtxLogLines = 100000;
+        ConfigManager::Save(in);
+        ConfigManager::InvalidateCache();
+        CHECK(ConfigManager::Load().QuickCreateCtxLogLines == 300);
+    }
 }

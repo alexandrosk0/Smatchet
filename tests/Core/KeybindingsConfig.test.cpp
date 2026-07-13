@@ -50,6 +50,9 @@ const ExpectedBinding kExpectedDefaults[] = {
     {"Ctrl+Shift+U", "view.toggle.log", "{\"action\":\"show\"}"},
     {"Ctrl+Shift+M", "view.toggle.backend_audit", "{\"action\":\"show\"}"},
     {"Ctrl+Shift+N", "view.toggle.source_annotate", "{\"action\":\"toggle\"}"},
+    // Quick-create issue popup (quick-create-issue-unreal-context plan). Ctrl+Shift+J is
+    // reserved by the Unreal host for the overlay visibility toggle — never seed it here.
+    {"Ctrl+Shift+T", "issue.quick_create.open", "{}"},
 };
 
 } // namespace

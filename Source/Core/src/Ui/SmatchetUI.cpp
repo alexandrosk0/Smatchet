@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 // SMATCHET_DEVIATION(rule=duplication; reason=include-block clone, audit #12; owner=cpp-audit; revisit=2026-09-30)
 #include "SmatchetViewVisibility.h"
+// SMATCHET_DEVIATION(rule=duplication; reason=include-block clone, audit #12; owner=cpp-audit; revisit=2026-09-30)
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetStatusBarUi.h"
 #include "Commands/CommandPaletteUi.h"
@@ -30,6 +31,7 @@
 #include "SmatchetPlanDocViewerUi.h"
 #include "SmatchetViewsDashboardUi_detail.h"
 #include "SmatchetBugReportUi.h"
+#include "SmatchetQuickCreateIssueUi.h"
 #include "ImGuiHotkey.h"
 #include "SmatchetUiSession.h"
 #include "Win32PickFiles.h"
@@ -595,6 +597,11 @@ void SmatchetUI::drawPreWindowOverlays(AppController& app, UiDrawSession& d) {
     // This block only renders the modal once showBugReport latches, and is drawn
     // unconditionally so it still works while the active backend is unreachable.
     SmatchetBugReportUi_Draw(app, app, g_ui);
+
+    // Quick-create issue popup — opener is the rebindable issue.quick_create.open
+    // binding (default Ctrl+Shift+T). Drawn unconditionally so its in-flight create
+    // future is polled (and toasted) even after the window closes.
+    SmatchetQuickCreateIssueUi_Draw(app, g_ui);
 
     // Scenario tick: drive the active scenario one frame and propagate scroll state
     // into the session so SmatchetActiveProjectGridUi can honor it.
