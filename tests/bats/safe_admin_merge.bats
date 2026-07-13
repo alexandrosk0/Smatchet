@@ -312,7 +312,11 @@ JSON
     # match a substring that still exists in the source-of-truth to stay honest.
     run grep -c 'Coverage|Sanitizer' "$SCRIPT"
     [ "$output" -eq 0 ]
-    # And merge-gates.sh must export the shared constant the script reads.
-    run grep -c 'MERGE_GATES_BLOCK_ALLOWLIST_RE=' "$REPO_ROOT/agents/scripts/core/merge-gates.sh"
-    [ "$output" -ge 1 ]
+    # And the merge-gates source-of-truth must export the shared constant the
+    # script reads. It lives in merge-gates.d/00-common.sh (fail-closed-sourced by
+    # merge-gates.sh), so search the whole merge-gates.d family, not just the top
+    # dispatcher.
+    run bash -c "grep -rl 'MERGE_GATES_BLOCK_ALLOWLIST_RE=' '$REPO_ROOT/agents/scripts/core/merge-gates.sh' '$REPO_ROOT/agents/scripts/core/merge-gates.d'"
+    [ "$status" -eq 0 ]
+    [ -n "$output" ]
 }
