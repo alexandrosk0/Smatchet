@@ -475,19 +475,27 @@ void SmatchetUI::drawActiveProjectTable(ActiveProjectDrawCtx& ctx) {
 
     // Explicit grid body states (UX critique H1/H4): never render a bare empty table.
     // Welcome / loading / error REPLACE the table; zero-results draws a strip above it.
+    // The replacing states skip drawActiveProjectGridRows — the frame-by-frame pruner of
+    // stale filteredIndices (indices into a previous, larger snapshot) and the dependent
+    // rect selection — so prune here too, or chrome reading them (menu Copy enablement,
+    // Ctrl+C in the rect-sel key handler) sees ghosts of the previous snapshot's rows.
     if (!d.cfg.BackendHasBeenReachable) {
+        ctx.pane.filteredIndices.clear();
+        ctx.pane.gridState.RectSel.ClearAll();
         DrawGridWelcomeState(ctx);
         return;
     }
     if (ctx.tickets.empty()) {
         const bool syncLoading = d.initialTicketSyncLoading || d.fieldCatalogLoading ||
                                  d.connectivityRecoveryTicketFetchLoading || !d.initialTicketSyncStarted;
-        if (syncLoading) {
-            DrawGridLoadingState();
-            return;
-        }
-        if (ctx.trackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error) {
-            DrawGridErrorState(ctx);
+        if (syncLoading || ctx.trackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error) {
+            ctx.pane.filteredIndices.clear();
+            ctx.pane.gridState.RectSel.ClearAll();
+            if (syncLoading) {
+                DrawGridLoadingState();
+            } else {
+                DrawGridErrorState(ctx);
+            }
             return;
         }
         DrawGridZeroResultsStrip(ctx, /*viewIsEmpty=*/true);
