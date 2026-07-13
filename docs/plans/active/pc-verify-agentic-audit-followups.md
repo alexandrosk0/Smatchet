@@ -2,7 +2,7 @@
 
 > **Slug**: `pc-verify-agentic-audit-followups` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — driving the dev-machine verification that PR #1812 could not run in its Linux-container session.
+> **Status**: `active` — narrowed to **Task B** only. Tasks A and C were satisfied by CI when PR #1812 merged (2026-07-13): the bucket-E lanes compiled+ran the C6 test green, and the gate suite (bucket-E, ctest/Coverage, dual-target MSVC, `agent_size.bats`, doc-validation) went green on the merge. The one genuine dev-machine item left is Task B (the `merge-gates.sh` split, which needs `bats`). See § Verification (actual).
 
 ## Context
 
@@ -79,13 +79,16 @@ Per `AGENTS.md` § Verification automation. Run from a Windows dev machine (or a
 - **A `--selftest` mode for `merge-gates.sh`** — worth adding *with* Task B's split (the lint scanner got one), but not required by this plan; note it in the C2 entry if Task B lands.
 
 ## Implementation log
-*(populated post-ship — bullet per shipped commit: `<sha> · <one-line summary>`)*
+- `b105507` (PR #1812, 2026-07-13) · A1 gate fix + C6 test shipped and merged; C6 CI-verified on the bucket-E lane, closing Task A ahead of any dev-machine run.
 
 ## Deviations from plan
-*(populated post-ship)*
+- **Task A did not need a dev machine after all.** The plan assumed the bucket-E C6 test could only be verified on a `windows-dev` tier, but the repo's CI *has* bucket-E Mesa-GL lanes (Windows runners); the merge exercised `McpLiveHttp/Authorize_RealSocket` there and it passed. The dev-machine steps under § Verification Task A remain valid as a *local* re-run recipe but are no longer the only path — CI is authoritative.
+- **The plan itself proved finding C3 the hard way.** Because the authoring Linux container couldn't build the bucket-E rig, CI caught two MSVC `/W4 /WX` warnings it was blind to (`C2446` on `res != nullptr`; `C4456` on the `IM_CHECK`-macro `res` shadow), each a fix + CI round-trip — recorded in the C6 backlog entry as concrete C3 evidence.
 
 ## Verification (actual)
-*(populated post-ship — what was actually run on the dev machine + result)*
+- **Task A (C6) — DONE, CI-verified.** `Bucket-E UI tests (Mesa headless GL)` green on PR #1812 (commits `1547763`, `e79190f`); all six assertions pass over a real `httplib` socket. Post-merge re-check on `develop`: the TU carries the `httpRes` / `res.error()` fixes, is registered + enrolled, and the driver `bash -n`-parses.
+- **Task C (gate sweep) — DONE.** Runnable-locally subset green on merged `develop` (agent-size `--selftest`, `AGENTS.md` no longer self-suppresses, delta gate exit 0, doc-anchors, agent-contract 27/0, markdown-links); the non-container subset (bucket-E, ctest/Coverage, dual-target MSVC, `agent_size.bats`) green on the merge CI.
+- **Task B (merge-gates split) — OPEN, deferred.** Not attempted (needs `bats`, unrunnable in a Linux container); remains tracked in the C2 backlog entry `tooling/2026-07-06-test-lint-rules-monolith-split.md`. This is the sole reason the plan stays `active`.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 1. flip the § Status header to `shipped`,
