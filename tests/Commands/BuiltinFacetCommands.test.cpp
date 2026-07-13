@@ -642,8 +642,18 @@ TEST_CASE("automation.* — id extraction shapes, empty-script guard, inline rel
         CHECK(autom.LastIds == std::vector<std::string>{"A-1", "7"});
     }
     {
-        // Convenience shape: comma/space-separated id string.
+        // A bare (non-JSON) string for the Json-typed `ids` param is rejected by the
+        // registry's coercion (ParseBounded of the string's CONTENT) before the handler runs.
         const nlohmann::json args = {{"script", "Auto.lua"}, {"ids", "B-1, B-2"}};
+        const CommandResult r = reg.Dispatch("automation.run-script", args, ctx);
+        REQUIRE_FALSE(r.Ok);
+        CHECK(r.Error.Code == ErrorCode::ValidationError);
+    }
+    {
+        // The handler's comma/space-separated convenience shape is reachable with JSON-string
+        // quoting (the CLI --ids '"B-1, B-2"' form): coercion yields a json string, which
+        // ExtractIdsArray splits.
+        const nlohmann::json args = {{"script", "Auto.lua"}, {"ids", "\"B-1, B-2\""}};
         const CommandResult r = reg.Dispatch("automation.run-script", args, ctx);
         REQUIRE(r.Ok);
         CHECK(autom.LastIds == std::vector<std::string>{"B-1", "B-2"});
