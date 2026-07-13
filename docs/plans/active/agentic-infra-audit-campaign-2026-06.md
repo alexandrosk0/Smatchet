@@ -59,7 +59,7 @@ A read-only re-verification of all 67 confirmed findings against `develop` @ `a1
 
 **Highest-value still-OPEN:**
 - `core-scripts-python-02` (P1) — sanitizer auto-act still selects an **ASAN preset for a TSAN failure** (`merge-watcher.py:2659-2662`; neither branch is `ninja-tsan-linux`). Cheapest real correctness fix in the set.
-- The three remaining P0s: `merge-pipeline-01` (override-label race — no labeled-event timestamping), `merge-pipeline-02` (admin-merge ledger gap — [ADR-0017](docs/adr/0017-merge-time-snapshot-ledger.md) confirms the admin path is still "remaining writer to wire"), `bats-coverage-01` (5 bare `python3` probes in `markdown_links.bats`).
+- The three remaining P0s: `merge-pipeline-01` (override-label race — no labeled-event timestamping), `merge-pipeline-02` (admin-merge ledger gap — [ADR-0017](../../adr/0017-merge-time-snapshot-ledger.md) confirms the admin path is still "remaining writer to wire"), `bats-coverage-01` (5 bare `python3` probes in `markdown_links.bats`).
 - merge-watcher NONE-state (`core-scripts-python-01` seed + `-04` parse), CR-thread pagination (`core-scripts-python-05` — query now requests `hasNextPage` but the reader ignores it), `postmortem-owed` blocking mode (`merge-pipeline-03`), and the false `merge-watcher.py` Phase-1 docstring (`merge-pipeline-05`).
 
 **Corrections to the 2026-06 synthesis (found stale on re-read):**
