@@ -15,9 +15,9 @@ Granularity caveat: "TU is compiled into a test target" does not mean "TU is wel
 
 | Metric | Value (2026-07-13) | (was 2026-07-05) |
 |---|---|---|
-| Core TUs compiled into ≥1 test target | **177 / 331 (53%)** | 144 / 304 (47%) |
-| Core src LOC compiled into ≥1 test target | **~50.7K / 103.2K (49%)** | ~42.7K / 100.8K (42%) |
-| Untested TUs | **154** | 160 |
+| Core TUs compiled into ≥1 test target | **179 / 331 (54%)** | 144 / 304 (47%) |
+| Core src LOC compiled into ≥1 test target | **~51.3K / 103.2K (50%)** | ~42.7K / 100.8K (42%) |
+| Untested TUs | **152** | 160 |
 | Stale CMake test references (phantom TUs) | 0 | 0 |
 
 > The untested-TU backlog finally moved below 160: between 2026-07-05 and 2026-07-13 the Tier-2 backend HTTP shells joined the rig (loopback-fixture suites, `coverage-gap-tier2-backend-shell-fixtures.md`), and the 2026-07-13 pass added `Vcs/GitHubCommits.cpp` (the last Tier-2 shell), 9 facet-based `Commands/Builtin` handler TUs + `CommandRegistry.cpp`/`FuzzyMatch.cpp` into `SmatchetTests`, and two new tested UI `_detail` extractions (`SmatchetFieldIconRender_detail`, `AnnotateAnalysisUi_Modals_detail`). The Tier-1 parent shells (`TrackerGridFieldDisplay.cpp`, `TrackerDateTimeFieldEditor.cpp`, `JqlSuggestEngine.cpp`, `SmatchetMergeWatchNotifyServer.cpp`, `AiPrefsTestConnection.cpp`, …) remain untested by design — the pure logic was extracted out of them.
@@ -32,14 +32,14 @@ The three coverage gates are all denominator-blind to unlinked code:
 
 Additionally, the bucket-C/E scenario lanes (the intended coverage story for the UI draw layer and the 30 `Commands/Scenarios/*` TUs) were **dropped from the blocking check set on 2026-06-15** because the Mesa-GL CI runner couldn't boot the exe (`AGENTS.md` § Merge gates). *Resolved 2026-07-05:* the lanes boot and pass again, and **PR #1619 (`05f1f2f`, "block-on-any-red") retired the curated meant-to-block allow-list entirely** — `agents/scripts/core/merge-gates.sh` now sets `MERGE_GATES_BLOCK_ALLOWLIST_RE="."`, so every red/pending CI check (including the bucket-C/E launch-smoke + lane-integrity teeth) gates the merge. The 28.5K LOC of UI draw code and the pending V-series manual smokes have an automated gate again. (Only the stochastic golden-diff / per-test Mesa *steps* remain step-level advisory by design.)
 
-## Where the 154 untested TUs are (by category)
+## Where the 152 untested TUs are (by category)
 
 Snapshot 2026-07-05, with the 2026-07-13 deltas noted per row:
 
 | Category | TUs (07-05) | LOC | Verdict |
 |---|---|---|---|
 | Real logic gaps (non-UI, non-infra) | 40 | 17.9K | Was **the actionable gap** — the Tier-2 backend shells in it are now tested (see Tier 2) |
-| Command registration + handlers (`Commands/`, strict zone) | 24 | 4.6K | Consolidated to 19 handler TUs; **9 now compiled into `SmatchetTests`** (2026-07-13) + registry Dispatch — see Tier 3 for the residue |
+| Command registration + handlers (`Commands/`, strict zone) | 24 | 4.6K | Consolidated to 19 handler TUs; **11 now compiled into `SmatchetTests`** (2026-07-13) + registry Dispatch — see Tier 3 for the 8-TU residue |
 | UI draw layer (`Ui/`, ImGui immediate-mode) | 62 | 28.5K | Still 63 TUs / ~28.7K (parents stay untested by design); 12 tested `_detail`/pure UI TUs now exist, +2 this pass |
 | Shells whose extracted core IS tested (`*Pure`/`*Helpers`/`*Mapping`/`*_detail`/`*Parse` siblings) | 4 | 2.5K | HTTP orchestration now fixture-tested (Tier 2 closed) |
 | Test infrastructure (`Commands/Scenarios/*`, `*FixtureBackend`, fault injector) | 30 | 5.3K | Not a gap — this *is* the harness (33 scenario TUs as of 07-13) |
@@ -78,9 +78,9 @@ Ranked by (audit findings × ingress exposure × LOC). Every file below has **ze
 
 1. *2026-07-05, PR #1618:* `Commands/Scenarios/CommandContractSweepScenario.cpp` registers every builtin against the fixture backend and asserts the error-envelope contract (scenario lane).
 2. *Post-07-05:* the Linux-only `SmatchetCommandsTests` target (+ `SmatchetMonkeyCli` seeded fuzzer) links the `SmatchetCore_PosixCheck` full-core archive, constructs a real headless `AppController`, registers ALL builtins, and drives `CommandRegistry::Dispatch` through the pre-handler pipeline (runs in the mobile-posix-core-check CI lane).
-3. *2026-07-13 pass:* the 9 facet-based handler TUs (`_Helpers`, `_App`, `_Tickets`, `_TicketMutations`, `_Sync`, `_Users`, `_Offline`, `_Attach`, `_Automation`) plus `CommandRegistry.cpp`/`FuzzyMatch.cpp` are now compiled **directly into `SmatchetTests`** with fake `IApp*` facets (`tests/Commands/BuiltinFacetCommands.test.cpp`), driving the handler BODIES through real Dispatch — confirm gate, validation, aliases — and putting them in the OpenCppCoverage denominator.
+3. *2026-07-13 pass:* the 9 facet-based handler TUs (`_Helpers`, `_App`, `_Tickets`, `_TicketMutations`, `_Sync`, `_Users`, `_Offline`, `_Attach`, `_Automation`) plus `CommandRegistry.cpp`/`FuzzyMatch.cpp` are now compiled **directly into `SmatchetTests`** with fake `IApp*` facets (`tests/Commands/BuiltinFacetCommands.test.cpp`), driving the handler BODIES through real Dispatch — confirm gate, validation, aliases — and putting them in the OpenCppCoverage denominator. *Follow-up 2026-07-13:* `_Meta` (`commands.*`) and `_Config` (`config.*` + `tickets.monitor`) joined too — both had an **unused** `AppController&` param, dropped in the same change (registry-introspection + `ConfigManager` singleton respectively), so they now take no app object and are both harness-tested and off the AppController fan-in. **11 handler TUs** now in the direct denominator.
 
-Residue: the 10 handler TUs coupled to `AppController&` or the UI session (`_Ai`, `_Config`, `_Fields`, `_Meta`, `_Perf`, `_BugReport`, `_Debug`, `_Scenario`, `_UiTest`, `_Ui`) plus the `BuiltinCommands.cpp` dispatcher stay out of `SmatchetTests` — they are covered by layers 1–2 only. Migrating them follows the fan-in Phase-5 facet track: each TU that moves off `AppController&` onto a narrow facet becomes harness-eligible for free.
+Residue: **8** handler TUs remain out — the `AppController&`-coupled `_Perf`/`_Fields`/`_Ai` and the UI-session `_Debug`/`_Ui`/`_BugReport`/`_Scenario`/`_UiTest`, plus the `BuiltinCommands.cpp` dispatcher — covered by layers 1–2 only. Migrating them follows the fan-in Phase-5 facet track: each TU that moves off `AppController&` onto a narrow facet (or, like Meta/Config, sheds an unused one) becomes harness-eligible. `_Fields` is the next clean target (5 `app.*` calls → a small `IAppFields` facet).
 
 ## Tier 4 — AppController family (~7.2K LOC)
 
@@ -103,7 +103,7 @@ Excluded from ctest coverage by explicit policy (`coverage.sh` excludes `Source*
 1. ~~**Pair with the audit remediation** — findings #1 (long-text truncation) and #3 (duration-sort loop) land in Tier-1 TUs; fix + Pure-extraction + regression test in the same PR each.~~ **Done 2026-07-05** — both fixed (PR #1593) and pinned behind pure seams (`TicketFieldEditorLongTextPure`, `TicketGridDurationSortPure`, PR #1604).
 2. ~~**`TrackerGridFieldDisplay` + `TrackerDateTimeFieldEditor` extraction tests** (Tier 1 #3–#4) — the two big untested untrusted-input formatters/parsers (2 PRs).~~ **Done 2026-07-05** — landed as part of the Tier-1 campaign (rows #3–#4: `TrackerGridFieldDisplayPure`, `TrackerDateTimePure`).
 3. ~~**Backend-shell fixture tests ahead of each B2 batch** (Tier 2) — sequence with the existing backlog plan rather than as standalone work.~~ **Done 2026-07-13** — all nine shells fixture-tested (the last, `Vcs/GitHubCommits.cpp`, in the 2026-07-13 pass); B2 itself closed 2026-07-11.
-4. ~~**One command-invocation harness PR** (Tier 3).~~ **Done** in three layers (scenario sweep #1618; Linux `SmatchetCommandsTests` dispatch harness; 2026-07-13 facet-handler suite in `SmatchetTests`). Residual: the 10 AppController/UI-session-coupled handler TUs (see Tier 3).
+4. ~~**One command-invocation harness PR** (Tier 3).~~ **Done** in three layers (scenario sweep #1618; Linux `SmatchetCommandsTests` dispatch harness; 2026-07-13 facet-handler suite in `SmatchetTests`, now 11 handler TUs incl. Meta/Config). Residual: the 8 remaining AppController/UI-session-coupled handler TUs (see Tier 3); `_Fields` is the next clean facet extraction.
 5. ~~**Bucket-C/E lane restoration** (Tier 5) — infra work, biggest single unlock.~~ **Done 2026-07-05** — lanes boot and gate merges again (PR #1619 block-on-any-red). Residual: continued `_detail` extraction to move UI draw logic into the ctest denominator.
 6. ~~Opportunistic: add each newly-tested trust-boundary unit to the `coverage-perfile-gate.sh` `HIGH_RISK_UNITS` ratchet so it can't rot back.~~ **Done 2026-07-10/13** — the gate pins 11 units; the six Tier-1 pure units joined 2026-07-10, `JqlSuggestEnginePure` joined 2026-07-13 with its test top-up (82% → 99%) in the same change, per the gate's contract ("add a unit only with a test that brings it to ≥90% in the SAME change").
 

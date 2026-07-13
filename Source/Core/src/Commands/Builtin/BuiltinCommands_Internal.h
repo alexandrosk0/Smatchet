@@ -64,9 +64,12 @@ ParamSpec PString(std::string name, std::string desc, bool required = false);
 // Each bucket TU defines one of these; the thin dispatcher in
 // BuiltinCommands.cpp calls them in order.
 
-void RegisterMetaCommands(CommandRegistry& reg, AppController& app);
+// commands.* / config.* need no app facet — commands.* introspects the registry, config.*
+// goes through the ConfigManager singleton. Taking no app object makes both harness-testable
+// against a bare CommandRegistry and keeps them off the AppController fan-in.
+void RegisterMetaCommands(CommandRegistry& reg);
 void RegisterAppCommands(CommandRegistry& reg, IAppMeta& app);
-void RegisterConfigCommands(CommandRegistry& reg, AppController& app);
+void RegisterConfigCommands(CommandRegistry& reg);
 void RegisterPerfCommands(CommandRegistry& reg, AppController& app);
 void RegisterTicketsCommands(CommandRegistry& reg, IAppTicketData& app);
 void RegisterTicketMutationCommands(CommandRegistry& reg, IAppTicketMutations& app);

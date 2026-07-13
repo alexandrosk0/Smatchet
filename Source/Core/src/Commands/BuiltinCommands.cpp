@@ -47,9 +47,9 @@ void RegisterBuiltinCommands(CommandRegistry& reg, AppController& app) {
     // first-seen wins behave identically. Same-category blocks that were
     // scattered in the original are merged into a single bucket TU; within
     // each bucket the original within-category order is preserved.
-    RegisterMetaCommands(reg, app);
+    RegisterMetaCommands(reg);
     RegisterAppCommands(reg, app);
-    RegisterConfigCommands(reg, app);
+    RegisterConfigCommands(reg);
     RegisterPerfCommands(reg, app);
     RegisterTicketsCommands(reg, app);
     RegisterDebugCommands(reg, app, app);
