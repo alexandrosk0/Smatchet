@@ -68,6 +68,14 @@ std::string ExtractUrlHost(const std::string& url) {
         hostEnd = url.size();
     }
     std::string hostPort = url.substr(hostStart, hostEnd - hostStart);
+    // Strip userinfo (everything through the last '@') BEFORE the port handling below —
+    // otherwise "https://jira.example.com:443@evil.com/p.png" is truncated at the
+    // userinfo's ':' to the tracker's own host and the fetch escapes to evil.com
+    // (SSRF bypass of the audit-#14 confinement; found in PR #1813 review).
+    const std::size_t atSign = hostPort.rfind('@');
+    if (atSign != std::string::npos) {
+        hostPort = hostPort.substr(atSign + 1);
+    }
     if (!hostPort.empty() && hostPort.front() == '[') {
         // Bracketed IPv6 literal — keep the brackets, drop any trailing ":port".
         const std::size_t close = hostPort.find(']');

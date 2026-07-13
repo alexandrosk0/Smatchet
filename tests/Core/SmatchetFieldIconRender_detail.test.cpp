@@ -28,11 +28,15 @@ TEST_CASE("slug normalisation — separators, case, unknown labels") {
     CHECK_FALSE(SlugIsKnown("urgent"));
 }
 
-TEST_CASE("ExtractUrlHost — host isolation incl. ports, IPv6, and malformed inputs") {
+TEST_CASE("ExtractUrlHost — host isolation incl. ports, IPv6, userinfo, and malformed inputs") {
     CHECK(ExtractUrlHost("https://J.Example.com/x/y?z") == "j.example.com");
     CHECK(ExtractUrlHost("http://host:8443/path") == "host");
     CHECK(ExtractUrlHost("https://[2001:db8::1]:8443/x") == "[2001:db8::1]");
     CHECK(ExtractUrlHost("https://host#frag") == "host");
+    // Userinfo is stripped so a "host:port@real-host" shape reports the REAL connect host.
+    CHECK(ExtractUrlHost("https://jira.example.com:443@evil.com/p.png") == "evil.com");
+    CHECK(ExtractUrlHost("https://user:pw@host/p") == "host");
+    CHECK(ExtractUrlHost("https://user@[2001:db8::1]:443/p") == "[2001:db8::1]");
     CHECK(ExtractUrlHost("no-scheme.example.com/x").empty());
     CHECK(ExtractUrlHost("").empty());
 }
@@ -45,6 +49,12 @@ TEST_CASE("IconUrlHostAllowed — audit #14: only the tracker's own origin passe
     CHECK_FALSE(IconUrlHostAllowed("http://169.254.169.254/latest/meta-data/", domain));
     CHECK_FALSE(IconUrlHostAllowed("https://evil.example.net/p.png", domain));
     CHECK_FALSE(IconUrlHostAllowed("https://jira.example.com.evil.net/p.png", domain));
+    // Userinfo bypass (PR #1813 review): "own-host:port@evil" must compare the REAL host.
+    CHECK_FALSE(IconUrlHostAllowed("https://jira.example.com:443@evil.com/p.png", domain));
+    CHECK_FALSE(IconUrlHostAllowed("https://jira.example.com@evil.com/p.png", domain));
+    // Ports are deliberately ignored on BOTH sides — same host on a non-standard port stays
+    // in-origin (host-only comparison; the config domain may itself carry a port).
+    CHECK(IconUrlHostAllowed("https://jira.example.com:8080/p.png", domain));
     // Schemeless config domain gets the https:// default before comparison.
     CHECK(IconUrlHostAllowed("https://jira.example.com/p.png", "jira.example.com"));
     CHECK_FALSE(IconUrlHostAllowed("not-a-url", domain));

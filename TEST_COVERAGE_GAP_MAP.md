@@ -86,7 +86,7 @@ Residue: the 10 handler TUs coupled to `AppController&` or the UI session (`_Ai`
 
 `AppController.cpp` (2835), `AppController_LuaBindings.cpp` (1528), `_LuaBindings_Draw.cpp` (1294), `_CatalogAndFieldEdit.cpp` (1124) + small satellites. Don't try to unit-test the monolith — the backlog already has the right plan: keep extracting friend-coupled services behind interfaces (**B1**, **N4**, **N8**; `TicketSyncService`/`OfflineQueueService`/`FieldEditPipelineService`/`AppController_LuaBindingsCore` are extracted *and tested*, proving the loop works). Each extraction PR should carry its golden tests per the B1 note ("testless extraction = lottery").
 
-## Tier 5 — UI draw layer (62 TUs, 28.5K LOC)
+## Tier 5 — UI draw layer (63 TUs, ~28.7K LOC as of 2026-07-13)
 
 Excluded from ctest coverage by explicit policy (`coverage.sh` excludes `Source*Core*src*Ui`; coverage-threshold-graduation Slice 1). The sanctioned mechanisms are (a) the `_detail.cpp` extraction pattern — 10 tested `_detail`/pure UI TUs already exist (`SmatchetGridHeaderUi_detail`, `SmatchetAutocompleteUi_detail`, `AnnotateAnalysisUi_Window_detail`, …) — and (b) the bucket-C/E scenario lanes, **blocking again as of 2026-07-05** (PR #1619 block-on-any-red; the Mesa-GL boot failure is resolved). Two consequences:
 

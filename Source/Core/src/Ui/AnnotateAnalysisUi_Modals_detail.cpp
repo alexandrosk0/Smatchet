@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <sstream>
+#include <utility>
 
 namespace AnnotateUiPure {
 
@@ -76,13 +77,13 @@ std::string BuildQuickCommentText(const std::string& issueKey, const std::string
         }
     }
 
-    text = ReplaceStringPlaceholder(text, "{key}", issueKey);
-    text = ReplaceStringPlaceholder(text, "{issueKey}", issueKey);
-    text = ReplaceStringPlaceholder(text, "{path}", row.Path);
-    text = ReplaceStringPlaceholder(text, "{line}", std::to_string(row.Line));
-    text = ReplaceStringPlaceholder(text, "{cl}", row.Changelist);
-    text = ReplaceStringPlaceholder(text, "{function}", row.Function);
-    text = ReplaceStringPlaceholder(text, "{user}", row.User);
+    text = ReplaceStringPlaceholder(std::move(text), "{key}", issueKey);
+    text = ReplaceStringPlaceholder(std::move(text), "{issueKey}", issueKey);
+    text = ReplaceStringPlaceholder(std::move(text), "{path}", row.Path);
+    text = ReplaceStringPlaceholder(std::move(text), "{line}", std::to_string(row.Line));
+    text = ReplaceStringPlaceholder(std::move(text), "{cl}", row.Changelist);
+    text = ReplaceStringPlaceholder(std::move(text), "{function}", row.Function);
+    text = ReplaceStringPlaceholder(std::move(text), "{user}", row.User);
 
     return text;
 }

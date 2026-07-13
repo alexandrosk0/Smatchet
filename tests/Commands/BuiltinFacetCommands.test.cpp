@@ -428,6 +428,7 @@ TEST_CASE("sync.* — trigger plumbing, destructive gate on sync.full, status ma
         CHECK((*r.Data)["syncWarning"] == "stale view");
         sync.State = TrackerConnectivityState::TransportDown;
         const CommandResult r2 = reg.Dispatch("sync.tracker_status", {}, AutomationCtx());
+        REQUIRE(r2.Ok);
         CHECK((*r2.Data)["state"] == "transport-down");
     }
     {
