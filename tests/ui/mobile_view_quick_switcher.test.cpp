@@ -150,13 +150,23 @@ void RegisterTabTapCleanSwitch(ImGuiTestEngine* engine) {
             return;
         }
 
-        // A CLEAN switch: not dirty -> tapping the non-active tab resolves without raising the
-        // shell-level discard-confirm modal (the band consumed the tap + ran the clean path).
+        // A CLEAN switch: not dirty -> tapping the non-active tab ACTIVATES it (viewsActivateView ->
+        // LoadBuffersFromView copies the now-active view's Name into d.viewNameBuf) WITHOUT raising
+        // the shell-level discard-confirm modal. Assert BOTH: the active view actually changed — a
+        // silently-dropped / no-op tap would leave viewNameBuf on "New View" and pass the old
+        // modal-only check vacuously (#1789) — AND no modal.
         g_ui.viewsDirty = false;
         g_ui.viewsShowDiscardConfirm = false;
+        const std::string beforeName(g_ui.viewNameBuf);      // "New View" — the just-created active view
+        IM_CHECK_NO_RET(beforeName != "Default Plane View"); // precondition: we start on the other view
         ctx->ItemClick("**/Default Plane View");
-        ctx->Yield();
-        ctx->Yield();
+        const bool switched = YieldUntil(ctx, [] { return std::string(g_ui.viewNameBuf) == "Default Plane View"; });
+        if (!switched) {
+            ctx->LogError("Clean tab-tap did not switch the active view — viewNameBuf stayed '%s' (the "
+                          "tap was silently dropped or the band's clean-switch path no longer activates)",
+                          g_ui.viewNameBuf);
+            IM_CHECK(false);
+        }
         IM_CHECK_NO_RET(!g_ui.viewsShowDiscardConfirm);
     };
 }
