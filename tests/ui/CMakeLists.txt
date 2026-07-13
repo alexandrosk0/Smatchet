@@ -23,6 +23,7 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/callstack_tooltip_hover.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/help_marker_keyboard_focus.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/mcp_lua_fresh_state_race.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/mcp_live_http_auth.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/automation_reload_hooks_race.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_panel_dock_swap.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/ai_assistant_enter_send.test.cpp"

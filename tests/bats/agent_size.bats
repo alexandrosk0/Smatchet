@@ -157,6 +157,20 @@ _mk_repo() {
     [ -z "$output" ]
 }
 
+@test "--diff STILL FAILS when the deviation token appears only in backtick prose (not a marker)" {
+    # Regression guard: AGENTS.md documents the escape hatch in prose; a bare-substring
+    # suppression match let that prose exempt AGENTS.md from its own cap (found 2026-07-13).
+    repo="$BATS_TEST_TMPDIR/prose"
+    _mk_repo "$repo" 50
+    git -C "$repo" add -A && git -C "$repo" commit -qm base
+    _mk_repo "$repo" 300 '`SMATCHET_DEVIATION(rule=agent-too-long; ...)` anywhere in the file escapes'
+    cd "$repo"
+    run "$PY" "$AUD" --diff HEAD
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"agent-too-long"* ]]
+    [[ "$output" == *"agents/core/Big.md"* ]]
+}
+
 @test "--diff does NOT block a NEW over-400 skill (sink WARNs, exit 0)" {
     repo="$BATS_TEST_TMPDIR/sink"
     git init -q "$repo"
