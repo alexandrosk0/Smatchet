@@ -94,7 +94,7 @@ snapshot_worktree() {
 
     # Working tree status.
     local status_lines
-    status_lines="$(git status --porcelain 2>/dev/null | wc -l || echo 0)"
+    status_lines="$(git status --porcelain 2>/dev/null | wc -l || true)"  # git can fail in a degraded worktree; wc still emits a count, so || true (NOT || echo 0, which would double the output and break the -gt test)
     echo "  $status_lines uncommitted file changes"
     if [ "$status_lines" -gt 0 ]; then
         git status --short 2>/dev/null | sed 's/^/    /' | head -20 || true  # head SIGPIPE under pipefail

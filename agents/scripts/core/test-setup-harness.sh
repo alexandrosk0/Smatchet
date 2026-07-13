@@ -266,8 +266,8 @@ if [[ -f ".codex/config.toml" && -f ".codex/hooks.json" ]]; then
 else
     nope ".codex config or hooks missing after codex setup"
 fi
-CANONICAL_AGENT_COUNT=$(( $(find agents/core -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ' || echo 0) + $(find agents/project -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ' || echo 0) ))
-CODEX_AGENT_COUNT=$(find .codex/agents -maxdepth 1 -name '*.toml' 2>/dev/null | wc -l | tr -d ' ' || echo 0)
+CANONICAL_AGENT_COUNT=$(( $(find agents/core -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ' || true) + $(find agents/project -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ' || true) ))
+CODEX_AGENT_COUNT=$(find .codex/agents -maxdepth 1 -name '*.toml' 2>/dev/null | wc -l | tr -d ' ' || true)
 if [[ "$CODEX_AGENT_COUNT" -eq "$CANONICAL_AGENT_COUNT" ]]; then
     ok ".codex/agents count matches canonical agent count"
 else
