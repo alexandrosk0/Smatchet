@@ -13,6 +13,7 @@
 #include <vector>
 
 using smatchet::plane::BuildPlaneAuthHeaders;
+using smatchet::plane::BuildPlaneSequenceIdInFilter;
 using smatchet::plane::ExtractKeyFromPlaneQuery;
 using smatchet::plane::MapPlaneWorkItemJsonToCachedTicket;
 using smatchet::plane::MapPlaneWorkItemsArrayToCachedTickets;
@@ -503,4 +504,41 @@ TEST_CASE("MapPlaneWorkItemsArrayToCachedTickets — hostile entries skipped, va
     REQUIRE(tickets.size() == 1);
     CHECK(tickets[0].id == "SMT-9");
     CHECK(keyToId.count("SMT-9") == 1);
+}
+
+// §B4-v2 — BuildPlaneSequenceIdInFilter: keys → comma-joined sequence_id CSV.
+TEST_CASE("BuildPlaneSequenceIdInFilter: happy path maps visual keys to sequence ids") {
+    CHECK(BuildPlaneSequenceIdInFilter({"SMT-1", "SMT-23", "SMT-456"}) == "1,23,456");
+}
+
+TEST_CASE("BuildPlaneSequenceIdInFilter: mixed project identifiers keep their own sequence ids") {
+    // Only the numeric suffix matters; different identifiers with distinct sequences all contribute.
+    CHECK(BuildPlaneSequenceIdInFilter({"ABC-7", "XYZ-8"}) == "7,8");
+}
+
+TEST_CASE("BuildPlaneSequenceIdInFilter: empty input yields empty filter") {
+    CHECK(BuildPlaneSequenceIdInFilter({}).empty());
+}
+
+TEST_CASE("BuildPlaneSequenceIdInFilter: de-duplicates repeated sequence ids, first-seen order") {
+    CHECK(BuildPlaneSequenceIdInFilter({"SMT-5", "SMT-5", "SMT-9", "SMT-5"}) == "5,9");
+}
+
+TEST_CASE("BuildPlaneSequenceIdInFilter: any unparseable key abandons the whole filter") {
+    // A bare UUID (no '-<digits>' suffix) → empty, so the caller falls back to the full sweep
+    // and never server-excludes an issue it still needs.
+    CHECK(BuildPlaneSequenceIdInFilter({"SMT-1", "550e8400-e29b-41d4-a716-446655440000"}).empty());
+    // Non-digit suffix (a UUID-tail after the last dash) → empty.
+    CHECK(BuildPlaneSequenceIdInFilter({"SMT-abc"}).empty());
+    // A dash with nothing after it → empty.
+    CHECK(BuildPlaneSequenceIdInFilter({"SMT-"}).empty());
+    // No dash at all → empty.
+    CHECK(BuildPlaneSequenceIdInFilter({"SMT123"}).empty());
+    // Trailing whitespace is not a digit → empty (keys are exact tokens, never trimmed here).
+    CHECK(BuildPlaneSequenceIdInFilter({"SMT-12 "}).empty());
+}
+
+TEST_CASE("BuildPlaneSequenceIdInFilter: identifiers with internal dashes use the last segment") {
+    // rfind('-') isolates the trailing sequence even when the project identifier contains a dash.
+    CHECK(BuildPlaneSequenceIdInFilter({"MY-PROJ-42"}) == "42");
 }
