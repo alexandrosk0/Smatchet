@@ -59,6 +59,7 @@
 #define NOMINMAX
 #endif
 #endif
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <exception>
@@ -797,6 +798,22 @@ void SmatchetUI::drawChromeAndModeToggles(AppController& app, UiDrawSession& d) 
     }
 }
 
+#if defined(SMATCHET_BUILD_UI_TESTS)
+// Test seam: a bucket-E test that programmatically rebinds a hotkey needs to trigger the
+// dispatch-cache rebuild (MarkKeybindingsDirty), which no other accessor reaches on the live
+// SmatchetUI. The shim sets a process-global REQUEST FLAG rather than caching a SmatchetUI* — the
+// live instance consumes it at the top of its next dispatchKeybindings and marks itself dirty, so
+// there is no cached instance pointer to dangle if the UI object is torn down between calls. This is
+// the rebind→dirty→rebuild→fire seam that was the keybindings-editor residue; compiled out entirely
+// in ship builds (zero cost).
+namespace {
+std::atomic<bool> g_uiTestKeybindingsDirtyRequest{false};
+} // namespace
+extern "C" void SmatchetUiTestMarkKeybindingsDirty() {
+    g_uiTestKeybindingsDirtyRequest.store(true, std::memory_order_release);
+}
+#endif
+
 // Rebuilds keybindingCache_ from cfg.Keybindings: parses each enabled binding's hotkey
 // string once, drops disabled / unparseable entries, and keeps ArgsJson as text (parsed
 // lazily at dispatch — only when a hotkey actually fires). Cleared + rebuilt whenever
@@ -834,6 +851,14 @@ void SmatchetUI::rebuildKeybindingCache(UiDrawSession& d) {
 // BackendHasBeenReachable and drive the palette open/close directly (the palette is a UI
 // widget, not a registry command). Runs on the UI thread, before any sub-window draws.
 void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
+#if defined(SMATCHET_BUILD_UI_TESTS)
+    // Consume a pending rebuild request from the keybindings rebind test seam (flag, not a cached
+    // instance pointer — nothing to dangle). Runs before the dirty-check so the rebuild lands this
+    // same frame.
+    if (g_uiTestKeybindingsDirtyRequest.exchange(false, std::memory_order_acq_rel)) {
+        MarkKeybindingsDirty();
+    }
+#endif
     if (keybindingCacheDirty_) {
         rebuildKeybindingCache(d);
     }

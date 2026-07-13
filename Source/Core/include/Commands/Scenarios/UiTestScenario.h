@@ -91,6 +91,14 @@ extern "C" ImGuiTestEngine* SmatchetActiveUiTestEngine();
 // OnFinish / OnCancel / dtor. UI thread only.
 class AppController;
 AppController* SmatchetActiveUiTestAppController();
+
+// Requests that the live SmatchetUI mark its keybinding dispatch cache dirty (rebuild from
+// cfg.Keybindings on the next dispatchKeybindings). A bucket-E test uses this after programmatically
+// rebinding a hotkey so the NEW combo enters the dispatch cache — no other accessor reaches the live
+// SmatchetUI. Defined in Ui/SmatchetUI.cpp: sets a process-global flag the live instance consumes at
+// the top of its next dispatchKeybindings (no cached SmatchetUI pointer, so nothing dangles if the
+// UI object is torn down between calls). No-op before the first dispatchKeybindings frame.
+extern "C" void SmatchetUiTestMarkKeybindingsDirty();
 #endif
 
 #endif // SMATCHET_COMMANDS_SCENARIOS_UITESTSCENARIO_H

@@ -2,7 +2,8 @@
 // for the rebindable keyboard-shortcut feature's visible UX (per
 // docs/plans/shipped/keyboard-shortcuts-rebindable.md).
 //
-// Two real-UI assertions, each driven against the LIVE app (no replica window):
+// Cases A–D drive the LIVE app; E–F host the capture widgets in a floating replica window (the
+// SmatchetTest::… pattern) to reach the editor interior the docked Preferences window clips:
 //
 //   A. EditorTabRendersWithLiveConflict — seed a deliberate collision into the
 //      live keybinding table (app.dock_debug.toggle rebound onto Ctrl+B, which
@@ -25,19 +26,37 @@
 //      registry Dispatch("app.dock_debug.toggle") → the observable UI flag. This
 //      is the plan's "assert the combo fires the command" line.
 //
-// WHY NO CLICK-TO-REBIND-THEN-FIRE IN ONE TEST: SmatchetUI::MarkKeybindingsDirty
-// (the trigger that rebuilds the dispatch cache after an edit) is public, but no
-// accessor exposes the live SmatchetUI instance to a bucket-E test
-// (UiTestScenario.h surfaces only the AppController + the test engine), and the
-// editor's mutating widgets (the per-row capture control, the "Reset all to defaults"
-// button below a 320px scroll-table) sit in the docked Preferences window's
-// clipped content region — which this repo's bucket-E suite has documented as
-// unreliable for ItemClick (see funcsize_preferences_tabs.test.cpp). The
-// rebind→MarkKeybindingsDirty→rebuildKeybindingCache→new-combo-fires integration
-// seam is therefore the residue tracked in docs/self-improvement/categories/
-// tooling.md; its constituent logic — SetBindingHotkey upsert, FindKeybinding-
-// Conflict, the ParseImGuiHotkey/StringifyImGuiHotkey round-trip, and MatchHotkey
-// — is covered by bucket-A (tests/Core/KeybindingsConfig.test.cpp +
+//   D. RebindThenNewComboDispatches — the rebind→dispatch integration seam that
+//      used to be the documented residue. Programmatically rebinds
+//      app.dock_debug.toggle onto a fresh Ctrl+Alt+Shift+K, forces the dispatch-
+//      cache rebuild via the new SmatchetUiTestMarkKeybindingsDirty() seam (the
+//      editor's own ui.MarkKeybindingsDirty() trigger, exposed to bucket-E), then
+//      presses the NEW combo and asserts g_ui.showDockDebug flips — proving the
+//      full SetBindingHotkey upsert → dirty → rebuildKeybindingCache → MatchHotkey
+//      on the new combo → registry Dispatch loop, not just the default combos.
+//
+//   E. CaptureWidgetClickThenKeyCommits — hosts the shared DrawHotkeyRebindControl
+//      (used by both the per-row editor + the quick-bind popup) in a floating replica
+//      window, clicks its "Click to rebind" button to arm capture, presses a combo,
+//      and asserts it commits (the captured string carries the pressed key + capture
+//      ends). The click→arm→press→commit interior directly.
+//
+//   F. QuickBindPopupCaptureThenSetBinds — hosts the real QuickBindPopup in a replica
+//      window, Opens it on an unbound command, captures a combo through its embedded
+//      capture control, clicks "Set", and asserts the binding lands in the config —
+//      the quick-bind modal's capture→Set interior end-to-end.
+//
+// WHY A/D USE A CODE SEAM AND E/F USE A REPLICA WINDOW: the editor's mutating controls
+// (per-row capture control, the quick-bind popup body, "Reset all to defaults" below a
+// 320px scroll-table) sit in the docked Preferences window's clipped content region,
+// unreliable for ItemClick in this repo's headless suite (see funcsize_preferences_
+// tabs.test.cpp). D drives the cache-rebuild integration through the same
+// MarkKeybindingsDirty() the editor calls, exposed via SmatchetUiTestMarkKeybindingsDirty()
+// (Ui/SmatchetUI.cpp, SMATCHET_BUILD_UI_TESTS only). E/F re-host the capture widgets at
+// full height in a SmatchetTest::… window (option (b)), so the click-through capture path
+// is exercised without the docked clipping. The constituent pure logic (SetBindingHotkey
+// upsert, FindKeybindingConflict, the ParseImGuiHotkey/StringifyImGuiHotkey round-trip,
+// MatchHotkey) also has bucket-A coverage (tests/Core/KeybindingsConfig.test.cpp +
 // tests/Core/ImGuiHotkey.test.cpp).
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
@@ -213,12 +232,168 @@ void RegisterZoomComboAdjustsFontSize(ImGuiTestEngine* engine) {
     };
 }
 
+// --- Test D: rebind to a fresh combo, rebuild the cache, the NEW combo fires ---
+// The rebind→MarkKeybindingsDirty→rebuildKeybindingCache→new-combo-dispatches integration seam —
+// previously the documented residue: no accessor reached the live SmatchetUI to mark the dispatch
+// cache dirty after a programmatic edit, so a test could only fire the DEFAULT combos (Tests B/C).
+// SmatchetUiTestMarkKeybindingsDirty() (Ui/SmatchetUI.cpp, ui-tests only) is that seam. This closes
+// the loop end-to-end: SetBindingHotkey upsert → dirty → rebuild → MatchHotkey on the NEW combo →
+// registry Dispatch → observable flip.
+void RegisterRebindThenNewComboFires(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "Keybindings", "RebindThenNewComboDispatches");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+            return;
+        }
+
+        const KeybindingsConfig original = g_ui.cfg.Keybindings;
+        const char* kNewCombo = "Ctrl+Alt+Shift+K";
+
+        // Sanity: the fresh combo is unused by any other command, so a dispatch on it is
+        // unambiguously our rebind (not a pre-existing owner firing).
+        const std::string preConflict = smatchet::ui::FindKeybindingConflict(g_ui.cfg.Keybindings.Bindings, kNewCombo,
+                                                                             "app.dock_debug.toggle", "{}");
+        IM_CHECK_NO_RET(preConflict.empty());
+
+        // Rebind app.dock_debug.toggle onto the fresh combo, then force the dispatch-cache rebuild
+        // through the test seam (the editor would call this via ui.MarkKeybindingsDirty()).
+        g_ui.cfg.Keybindings.SetBindingHotkey("app.dock_debug.toggle", "{}", kNewCombo);
+        SmatchetUiTestMarkKeybindingsDirty();
+        ctx->Yield(); // dispatchKeybindings sees dirty next frame → rebuilds with the new combo
+        ctx->Yield();
+
+        // Press the NEW combo: it must now flip showDockDebug. If the dirty→rebuild seam were
+        // broken, the stale cache would still hold the default Ctrl+Alt+D and this press would no-op.
+        const bool before = g_ui.showDockDebug;
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiMod_Alt | ImGuiMod_Shift | ImGuiKey_K);
+        const bool flipped = YieldUntil(ctx, [&] { return g_ui.showDockDebug != before; });
+        if (!flipped) {
+            ctx->LogError("Rebound combo did not dispatch — the rebind→MarkKeybindingsDirty→rebuild-"
+                          "cache seam failed to route the new combo to app.dock_debug.toggle");
+            IM_CHECK(false);
+        }
+
+        // Restore: bindings back to defaults + rebuild so siblings (B: Ctrl+Alt+D, C: Ctrl+=) see
+        // the original cache; leave the dev-overlay flag as found.
+        g_ui.showDockDebug = before;
+        g_ui.cfg.Keybindings = original;
+        SmatchetUiTestMarkKeybindingsDirty();
+        ctx->Yield();
+        ctx->Yield();
+    };
+}
+
+// --- Test E: the capture widget's click→press→commit interior (replica window) ---
+// DrawHotkeyRebindControl is the shared per-row / quick-bind capture control. Its click-to-arm →
+// press-a-combo → commit path sits in the docked Preferences window's clipped content region under
+// the real editor (unreliable for ItemClick — see the header, option (b)). Hosting it in a floating
+// full-height replica window (the repo's SmatchetTest::… pattern) drives that interior directly.
+struct CaptureWidgetState {
+    std::string display;
+    bool capturing = false;
+    std::string out;
+    bool committed = false;
+};
+CaptureWidgetState g_captureState;
+
+void RegisterCaptureWidgetClickCaptureCommit(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "Keybindings", "CaptureWidgetClickThenKeyCommits");
+    t->GuiFunc = [](ImGuiTestContext*) {
+        ImGui::SetNextWindowSize(ImVec2(420.0f, 140.0f), ImGuiCond_Appearing);
+        if (ImGui::Begin("SmatchetTest::HotkeyCaptureWidget")) {
+            if (smatchet::ui::DrawHotkeyRebindControl("captureTest", g_captureState.display, g_captureState.capturing,
+                                                      g_captureState.out)) {
+                g_captureState.committed = true;
+            }
+        }
+        ImGui::End();
+    };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        g_captureState = CaptureWidgetState{};
+        ctx->SetRef("SmatchetTest::HotkeyCaptureWidget");
+        // Arm capture: click the "Click to rebind" button (id "…##rebindcaptureTest").
+        ctx->ItemClick("**/Click to rebind##rebindcaptureTest");
+        const bool armed = YieldUntil(ctx, [] { return g_captureState.capturing; }, 60);
+        IM_CHECK_NO_RET(armed);
+        if (armed) {
+            // Press a fresh combo; CaptureImGuiHotkeyThisFrame stringifies it and commits.
+            ctx->KeyPress(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_J);
+            const bool committed = YieldUntil(ctx, [] { return g_captureState.committed; }, 60);
+            IM_CHECK_NO_RET(committed);
+            IM_CHECK_NO_RET(!g_captureState.capturing);                         // capture ends on commit
+            IM_CHECK_NO_RET(g_captureState.out.find('J') != std::string::npos); // captured our key
+        }
+    };
+}
+
+// --- Test F: the QuickBindPopup capture→Set writes the binding (replica window) ---
+// The right-click "Set shortcut…" quick-bind modal (QuickBindPopup) hosts the same capture control
+// plus Set/Clear; its interior was the other half of the residual. Host the real popup at full
+// height, Open it on an unbound command, capture a combo, click Set, and assert the binding landed.
+smatchet::ui::QuickBindPopup g_qbPopup;
+bool g_qbChanged = false;
+
+void RegisterQuickBindCaptureThenSet(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "Keybindings", "QuickBindPopupCaptureThenSetBinds");
+    t->GuiFunc = [](ImGuiTestContext*) {
+        ImGui::SetNextWindowSize(ImVec2(460.0f, 220.0f), ImGuiCond_Appearing);
+        if (ImGui::Begin("SmatchetTest::QuickBindHost")) {
+            if (g_qbPopup.Draw(g_ui.cfg)) {
+                g_qbChanged = true;
+            }
+        }
+        ImGui::End();
+    };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        const KeybindingsConfig original = g_ui.cfg.Keybindings;
+        g_qbChanged = false;
+        // Open on a command with NO current binding so the combo is unambiguous.
+        const char* kCmd = "app.dock_debug.toggle";
+        g_ui.cfg.Keybindings.RemoveBinding(kCmd, "{}");
+        g_qbPopup.Open(kCmd, "Dock Debug", "{}");
+
+        const char* kPopup = "Set shortcut###QuickBindPopup";
+        const bool popupLive = YieldUntil(ctx, [&] { return WindowIsLive(kPopup); }, 90);
+        IM_CHECK_NO_RET(popupLive);
+        if (popupLive) {
+            ctx->SetRef(kPopup);
+            ctx->ItemClick("**/Click to rebind##rebindquickbind");
+            ctx->Yield();
+            ctx->KeyPress(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_J);
+            ctx->Yield();
+            ctx->Yield();
+            // Set applies the captured draft to the config + closes the popup.
+            ctx->ItemClick("**/Set");
+            const bool bound = YieldUntil(
+                ctx, [&] { return g_qbChanged && g_ui.cfg.Keybindings.FindBindingIndex(kCmd, "{}") >= 0; }, 90);
+            if (!bound) {
+                ctx->LogError("QuickBind Set did not write the captured combo to the binding table — "
+                              "the popup capture→Set interior regressed");
+                IM_CHECK(false);
+            }
+        }
+
+        // Restore: dismiss any lingering popup + put the bindings back.
+        if (WindowIsLive(kPopup)) {
+            ctx->KeyPress(ImGuiKey_Escape);
+            ctx->Yield();
+        }
+        g_ui.cfg.Keybindings = original;
+        ctx->Yield();
+    };
+}
+
 } // namespace
 
 extern "C" void SmatchetRegisterKeybindingsEditorRebindTests(ImGuiTestEngine* engine) {
     RegisterEditorTabRendersWithLiveConflict(engine);
     RegisterDefaultComboDispatchesToCommand(engine);
     RegisterZoomComboAdjustsFontSize(engine);
+    RegisterRebindThenNewComboFires(engine);
+    RegisterCaptureWidgetClickCaptureCommit(engine);
+    RegisterQuickBindCaptureThenSet(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS
