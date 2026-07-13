@@ -1,5 +1,6 @@
 #include "GitHubMutationPure.h"
 
+#include "GitHubIssueSearchMapping.h" // kPullRequestSummaryPrefix — shared with the read-path mapper
 #include "StringUtil.h"
 #include "TrackerFieldPayloadPure.h"
 
@@ -93,9 +94,9 @@ Result<GitHubIssueUpdatePlan, std::string> BuildGitHubIssueUpdatePlan(const nloh
             // GitHubIssueSearchMapping, and an edit of that cell round-trips it — so
             // strip exactly one leading occurrence, otherwise every pull-request
             // title edit compounds another prefix.
-            const char* const kPrPrefix = "[PR] ";
-            if (title.compare(0, 5, kPrPrefix) == 0) {
-                title.erase(0, 5);
+            const std::string prefix = kPullRequestSummaryPrefix;
+            if (title.compare(0, prefix.size(), prefix) == 0) {
+                title.erase(0, prefix.size());
             }
             if (TrimCopy(title).empty()) {
                 return PlanResult::Err("GitHub issues require a non-empty title (summary)");

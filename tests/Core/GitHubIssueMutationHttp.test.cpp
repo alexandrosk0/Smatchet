@@ -107,6 +107,13 @@ TEST_CASE("GitHub UpdateField labels — pre-fetch + diff issues one batch POST 
         CHECK(fx.RequestCount(kLabelsPath + "/stale") == 1);
         CHECK(fx.RequestCount(kIssuePath) == 1); // the pre-fetch GET; no PATCH for a labels-only edit
     }
+    SUBCASE("a stale label already removed server-side (DELETE 404) still converges") {
+        fx.ScriptJson(kIssuePath, IssueWithLabels({"bug", "stale"}));
+        fx.ScriptStatus(kLabelsPath + "/stale", 404, "DELETE");
+        const TrackerError err = client.UpdateField("o/r#7", FieldWithId("labels"), {"bug"});
+        CHECK(err.IsOk());
+        CHECK(fx.RequestCount(kLabelsPath + "/stale") == 1);
+    }
     SUBCASE("a no-op edit (current == intended) makes zero write calls") {
         fx.ScriptJson(kIssuePath, IssueWithLabels({"bug", "p0"}));
         const TrackerError err = client.UpdateField("o/r#7", FieldWithId("labels"), {"p0, bug"});

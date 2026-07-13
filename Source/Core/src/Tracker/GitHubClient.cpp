@@ -523,6 +523,11 @@ namespace {
 bool ResolveGitHubMilestoneNumber(const std::string& baseUrl, const cpr::Header& headers,
                                   const smatchet::github::ParsedIssueKey& key, const std::string& title,
                                   std::int64_t& outNumber, TrackerError& outError) {
+    // SMATCHET_DEVIATION(rule=duplication; reason=the paginated GET scaffold (page/per_page URL → TrackerGetLogged →
+    // status guard → bounded parse → short-page break) is deliberately uniform with FetchIssueComments above; a shared
+    // PaginatedGitHubFetch helper would need a Result-type-generic per-page callback spanning the two call shapes
+    // (accumulate-and-map vs find-first-and-stop) for two call sites in one TU — same trade recorded at the
+    // FetchIssueComments guard idiom; owner=tracker-backend; revisit=2026-10-01)
     constexpr int kPerPage = 100;
     constexpr int kMaxPages = 10; // 1000 milestones is well past any real repo
     for (int page = 1; page <= kMaxPages; ++page) {
@@ -697,8 +702,8 @@ TrackerError GitHubClient::UpdateField(const std::string& issueId, const Tracker
         return TrackerErrorInvalidRequest(kCommitReadOnlyError);
     }
     // Set-replace single-field edit: catalog-id-keyed payload → the shared PATCH +
-    // label-reconcile path (mirrors JiraClient / LinearClient routing).
-    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated UpdateField→BuildFieldPayload→UpdateIssueFields routing symmetry across independent backend clients (Jira/Linear share the shape); owner=tracker-backend; revisit=2026-12-31)
+    // label-reconcile path. Interface-mandated routing shape shared with Jira/Linear.
+    // SMATCHET_DEVIATION(rule=duplication; reason=UpdateField routing symmetry; owner=tracker; revisit=2026-12-31)
     auto payloadResult = BuildFieldPayload(field, values);
     if (!payloadResult) {
         return payloadResult.error();
@@ -720,11 +725,14 @@ Result<nlohmann::json, TrackerError> GitHubClient::BuildFieldPayload(const Track
                 set.push_back(token);
             }
         }
-        return Result<nlohmann::json, TrackerError>::Ok(nlohmann::json::object({{field.Id, std::move(set)}}));
+        nlohmann::json outPayload = nlohmann::json::object();
+        outPayload[field.Id] = std::move(set);
+        return Result<nlohmann::json, TrackerError>::Ok(std::move(outPayload));
     }
     if (field.Id == "summary" || field.Id == "description" || field.Id == "status" || field.Id == "milestone") {
-        return Result<nlohmann::json, TrackerError>::Ok(
-            nlohmann::json::object({{field.Id, values.empty() ? std::string() : values.front()}}));
+        nlohmann::json outPayload = nlohmann::json::object();
+        outPayload[field.Id] = values.empty() ? std::string() : values.front();
+        return Result<nlohmann::json, TrackerError>::Ok(std::move(outPayload));
     }
     return Result<nlohmann::json, TrackerError>::Err(
         TrackerErrorInvalidRequest(std::string("GitHub field '") + field.Id + "' is not editable"));
