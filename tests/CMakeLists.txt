@@ -866,6 +866,11 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LabelEditDiffPure.cpp"
     Core/GitHubClientHelpers.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubClientHelpers.cpp"
+    # github-tracker-backend.md PR7 — pure write-path plan builder (fields→PATCH body,
+    # milestone title lookup, label-name extraction). TrackerFieldPayloadPure.cpp
+    # (SplitCommaSeparatedTrimmed) + StringUtil are already linked in this rig.
+    Core/GitHubMutationPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubMutationPure.cpp"
     # linear-tracker-backend.md Slice 1 — pure GraphQL/parse helpers.
     Core/LinearClientHelpers.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearClientHelpers.cpp"
@@ -1275,6 +1280,11 @@ add_executable(SmatchetTests
     # GitHubCommitsParse, LabelEditDiffPure, BackendAuditTrail) are all already linked.
     Core/GitHubIssueSearchHttp.test.cpp
     Core/GitHubClientHttp.test.cpp
+    # github-tracker-backend.md PR7 — the GitHub WRITE shell (UpdateIssueFields /
+    # UpdateField PATCH + label reconcile). cfg-less paths run under TestEnvGuard
+    # with the loopback config saved (JiraIssueMutationHttp precedent); the pure
+    # plan builder (GitHubMutationPure.cpp) is linked above.
+    Core/GitHubIssueMutationHttp.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubIssueSearch.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubActivityFeed.cpp"

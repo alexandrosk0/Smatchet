@@ -40,12 +40,13 @@ class JiraCatalogHttpFixture {
     typedef std::function<nlohmann::json(const httplib::Request&)> JsonHandler;
 
     JiraCatalogHttpFixture() {
-        // All four verbs route through Dispatch; routes are keyed on "<METHOD> <path>" so a POST to
+        // All five verbs route through Dispatch; routes are keyed on "<METHOD> <path>" so a POST to
         // a comment endpoint can be scripted to 5xx while a GET to the same-ish path serves JSON.
         server_.Get(".*", [this](const httplib::Request& req, httplib::Response& res) { Dispatch(req, res); });
         server_.Post(".*", [this](const httplib::Request& req, httplib::Response& res) { Dispatch(req, res); });
         server_.Put(".*", [this](const httplib::Request& req, httplib::Response& res) { Dispatch(req, res); });
         server_.Patch(".*", [this](const httplib::Request& req, httplib::Response& res) { Dispatch(req, res); });
+        server_.Delete(".*", [this](const httplib::Request& req, httplib::Response& res) { Dispatch(req, res); });
         port_ = server_.bind_to_any_port("127.0.0.1");
         serverThread_ = std::thread([this]() { server_.listen_after_bind(); });
         server_.wait_until_ready();
