@@ -49,3 +49,19 @@ TEST_CASE("DR20 — genuine non-2xx still classifies normally (guard must not sh
     CHECK(TrackerErrorFromHttpStatus(500, "x").Kind == TrackerErrorKind::ServerError);
     CHECK(TrackerErrorFromHttpStatus(0, "x").Kind == TrackerErrorKind::Transport);
 }
+
+TEST_CASE("#1785 — ClassifyRejectedHttpStatus guards 2xx-other on a rejected path (shared Jira+Plane)") {
+    // A 2xx-other that reached a FAILURE branch must classify as a non-OK Unknown carrying the
+    // detail — NOT Ok() (which a raw TrackerErrorFromHttpStatus would return on a return-false path).
+    for (int status : {200, 201, 204, 206, 299}) {
+        const TrackerError e = ClassifyRejectedHttpStatus(status, "rejected body");
+        CHECK_FALSE(e.IsOk());
+        CHECK(e.Kind == TrackerErrorKind::Unknown);
+        CHECK(e.Detail == "rejected body");
+        CHECK(e.HttpStatus == status);
+    }
+    // Genuine non-2xx keeps its normal classification (the guard must not shadow real errors).
+    CHECK(ClassifyRejectedHttpStatus(404, "x").Kind == TrackerErrorKind::NotFound);
+    CHECK(ClassifyRejectedHttpStatus(500, "x").Kind == TrackerErrorKind::ServerError);
+    CHECK(ClassifyRejectedHttpStatus(0, "x").Kind == TrackerErrorKind::Transport);
+}

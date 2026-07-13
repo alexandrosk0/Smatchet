@@ -109,7 +109,10 @@ bool ResolvePlaneProject(const std::string& planeApi, const TrackerConfig& cfg, 
             if (outError)
                 *outError = err;
             if (outClassified)
-                *outClassified = TrackerErrorFromHttpStatus(static_cast<int>(response.status_code), err);
+                // Guard 2xx-other on this failure branch (only 200 is success here): a raw
+                // TrackerErrorFromHttpStatus would map a 201/204/206 to Ok() on a return-false path
+                // (#1785). Shared with the Jira mutation branches.
+                *outClassified = ClassifyRejectedHttpStatus(response.status_code, err);
             return false;
         }
 

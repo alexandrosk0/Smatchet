@@ -144,6 +144,15 @@ void LuaAiPromptGlue(sol::this_state L, const std::string& prompt, sol::optional
         luaL_error(L, "%s", gateError.c_str());
         return;
     }
+    // Release the in-flight slot on EVERY exit path. AddAiContext / LuaTableToAiContextBlock /
+    // PromptAi can throw a C++ exception that unwinds across the sol2 boundary; the old explicit
+    // release ran only on the happy path, so a throw left aiPromptInFlight_ stuck true and every
+    // later ai.prompt was permanently rejected as re-entrant (#1756 — the #1221 defect relocated
+    // here by the god-file split). RAII guard = release runs on normal return AND on unwind.
+    struct PromptSlotReleaseGuard {
+        AppController::Impl* impl;
+        ~PromptSlotReleaseGuard() { impl->EndLuaAiPromptTurn(); }
+    } promptSlotGuard{app};
     // Optional extra context blocks: appended to the controller's context vector
     // before Submit, matching the panel's "Send-with-context" path. Each element
     // is treated as an `AiContextBlock` table.
@@ -159,12 +168,10 @@ void LuaAiPromptGlue(sol::this_state L, const std::string& prompt, sol::optional
         }
     }
     app->app_.PromptAi(prompt);
-    // Submit() hands the turn to the AI worker thread; the synchronous glue work
-    // is done, so release the in-flight slot. The 5 s spacing rule (stamped at
-    // TryBegin) now guards the next call. Re-entrancy is still blocked for the
-    // duration of THIS call (a context-builder that re-entered ai.prompt would
-    // hit the in-flight reject above).
-    app->EndLuaAiPromptTurn();
+    // Submit() hands the turn to the AI worker thread; the synchronous glue work is done. The slot
+    // is released by promptSlotGuard's destructor as this scope exits (the 5 s spacing rule stamped
+    // at TryBegin then guards the next call). Re-entrancy stayed blocked for the duration of THIS
+    // call (a context-builder that re-entered ai.prompt would have hit the in-flight reject above).
 }
 
 } // namespace smatchet_lua_init_detail
@@ -220,4 +227,3 @@ void AppController::Impl::EndLuaAiPromptTurn() {
     std::lock_guard<std::mutex> lk(aiPromptGateMutex_);
     aiPromptInFlight_ = false;
 }
-

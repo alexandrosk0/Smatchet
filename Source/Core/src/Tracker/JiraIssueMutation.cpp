@@ -41,17 +41,8 @@ std::string WithRedactedBody(const std::string& userError, const std::string& bo
     return userError + " | body: " + RedactHttpBodyForLog(body);
 }
 
-// Classify a mutation-endpoint status that reached a failure branch. A 2xx-other (201/204/206)
-// still lands here for endpoints whose only success codes are 200/204; guard before
-// TrackerErrorFromHttpStatus, which would map any 2xx to Ok() and drop the detail. Keeping the
-// guard in one place holds retry semantics identical across the mutation failure branches.
-TrackerError ClassifyRejectedHttpStatus(long statusCode, const std::string& detail) {
-    const int status = static_cast<int>(statusCode);
-    if (status >= 200 && status < 300) {
-        return TrackerErrorUnknown(detail, status);
-    }
-    return TrackerErrorFromHttpStatus(status, detail);
-}
+// ClassifyRejectedHttpStatus moved to the shared Tracker/TrackerError.h (used by PlaneClient too —
+// #1785); the unqualified calls below now resolve to that inline free function.
 
 } // namespace
 
