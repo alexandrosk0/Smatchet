@@ -1,7 +1,7 @@
 // GitHubMutationPure doctest — pins the fields→PATCH-plan translation, the milestone
-// title→number lookup, and the label-name extraction the GitHub write path (PR7 of
-// docs/plans/shipped/github-tracker-backend.md) is built on. Hermetic: no cpr, no
-// config, no filesystem.
+// title→number lookup, and the label-name extraction the GitHub write path (the
+// UpdateIssueFields slice of docs/plans/shipped/github-tracker-backend.md) is built
+// on. Hermetic: no cpr, no config, no filesystem.
 
 #include "GitHubMutationPure.h"
 

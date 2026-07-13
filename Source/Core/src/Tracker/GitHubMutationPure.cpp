@@ -89,9 +89,10 @@ Result<GitHubIssueUpdatePlan, std::string> BuildGitHubIssueUpdatePlan(const nloh
             if (!ExtractScalarString(value, title)) {
                 return ErrNotAString(id);
             }
-            // The grid displays PR titles with a "[PR] " prefix (GitHubIssueSearchMapping);
-            // an edit of that cell round-trips the prefix, so strip exactly one leading
-            // occurrence — otherwise every PR title edit compounds another "[PR] ".
+            // The grid shows pull-request titles behind a display prefix added by
+            // GitHubIssueSearchMapping, and an edit of that cell round-trips it — so
+            // strip exactly one leading occurrence, otherwise every pull-request
+            // title edit compounds another prefix.
             const char* const kPrPrefix = "[PR] ";
             if (title.compare(0, 5, kPrPrefix) == 0) {
                 title.erase(0, 5);

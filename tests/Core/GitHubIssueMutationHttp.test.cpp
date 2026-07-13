@@ -1,4 +1,4 @@
-// github-tracker-backend.md PR7 — fixture coverage for the GitHub WRITE shell:
+// github-tracker-backend.md UpdateIssueFields slice — fixture coverage for the GitHub WRITE shell:
 // UpdateIssueFields / UpdateField (PATCH + the label set-replace reconcile) driven at
 // the in-process httplib loopback over real cpr HTTP, plus the BuildFieldPayload
 // catalog-id keying. The cfg-less mutation paths load ConfigManager::Load() per

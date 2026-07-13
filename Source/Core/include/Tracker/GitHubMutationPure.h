@@ -2,7 +2,8 @@
 #define SMATCHET_GITHUB_MUTATION_PURE_H
 
 // Pure (cpr-free) request-builders + response-parsers for the GitHub issue write
-// surface (PR7 of docs/plans/shipped/github-tracker-backend.md), split out of the
+// surface (the UpdateIssueFields slice of docs/plans/shipped/github-tracker-backend.md
+// § Remaining), split out of the
 // cpr-bound GitHubClient.cpp exactly like LinearMutationPure / PlaneCustomPropertyPure
 // split their wire logic. Keeping the fields→PATCH-body translation, the milestone
 // lookup, and the label-set extraction in their own TU lets the doctest rig pin the
