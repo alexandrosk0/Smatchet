@@ -1,6 +1,13 @@
 # Windows Signing
 
-Smatchet's release script can sign the standalone payload and the generated Inno Setup installer.
+Smatchet's release script signs the standalone payload and the generated Inno Setup installer.
+
+**Signing is mandatory for published releases**: `release_github.ps1 -Publish` refuses to run
+without `-Sign` unless you explicitly pass `-AllowUnsignedPublish`. Two things depend on it:
+unsigned binaries trigger Windows SmartScreen warnings for every user, and the in-app
+auto-updater verifies the downloaded installer's Authenticode signature before launching it —
+an unsigned published installer is downloaded and then **rejected** by updating clients.
+Local bundles built without `-Publish` may stay unsigned (e.g. CI installer smoke jobs).
 
 What gets signed:
 
@@ -75,3 +82,9 @@ You can also override settings directly on the command line:
 - The release script requires exactly one certificate selector: `-SigningCertificatePath`, `-SigningCertificateThumbprint`, or `-SigningCertificateSubject`.
 - ZIP files are not Authenticode-signed; the signed binaries live inside the portable ZIP and installer.
 - For production distribution, use a real OV/EV code-signing certificate. A self-signed certificate is fine only for local pipeline validation.
+- The in-app updater (`AttachmentAppUpdateService::DownloadAndLaunchInstallerUpdate`) runs
+  `WinVerifyTrust` on the downloaded installer and refuses to launch it unless the signature
+  chains to a trusted root. When validating the update pipeline with a self-signed certificate,
+  either import your test root into the machine's trusted-root store, or set
+  `SMATCHET_UPDATE_ALLOW_UNSIGNED=1` in the updating client's environment (forgives everything
+  except a bad digest — a tampered file is never launched).

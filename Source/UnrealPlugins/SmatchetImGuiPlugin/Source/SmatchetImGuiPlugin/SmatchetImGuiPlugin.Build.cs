@@ -94,6 +94,10 @@ public class SmatchetImGuiPlugin : ModuleRules
             PublicSystemLibraries.Add("crypt32.lib");
             PublicSystemLibraries.Add("cryptnet.lib");
 
+            // The auto-updater verifies the downloaded installer's Authenticode signature via
+            // WinVerifyTrust (AttachmentAppUpdateService.cpp).
+            PublicSystemLibraries.Add("wintrust.lib");
+
             // Attachment preview decodes JPEG/PNG/GIF/WebP via WIC (CoCreateInstance + IWICImagingFactory).
             // Without these the Unreal plugin fails to resolve CLSID_WICImagingFactory / CoCreateInstance
             // and the attachment preview falls back to the "metadata only" path — which is exactly the

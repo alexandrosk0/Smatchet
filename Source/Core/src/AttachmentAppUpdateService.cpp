@@ -35,6 +35,8 @@
 #if defined(_WIN32)
 #include <windows.h>
 #include <shellapi.h>
+#include <wintrust.h> // WinVerifyTrust / WINTRUST_DATA — requires windows.h first
+#include <softpub.h>  // WINTRUST_ACTION_GENERIC_VERIFY_V2 — requires wintrust.h first
 #elif defined(__APPLE__) || defined(__linux__)
 #include <unistd.h>
 #endif
@@ -218,46 +220,36 @@ bool DownloadAttachmentToLocalFile(const std::string& url, const std::string& fi
     return true;
 }
 
-std::string GetTempDir() {
+std::string ReadEnvString(const char* name) {
 #if defined(_WIN32) && defined(_MSC_VER)
     // MSVC: getenv is deprecated (C4996); _dupenv_s is not linked the same way on MinGW.
-    auto readEnv = [](const char* name) -> std::string {
-        char* buf = nullptr;
-        size_t sz = 0;
-        if (_dupenv_s(&buf, &sz, name) != 0) {
-            if (buf) {
-                std::free(buf);
-            }
-            return {};
+    char* buf = nullptr;
+    size_t sz = 0;
+    if (_dupenv_s(&buf, &sz, name) != 0 || !buf) {
+        if (buf) {
+            std::free(buf);
         }
-        if (!buf || buf[0] == '\0') {
-            if (buf) {
-                std::free(buf);
-            }
-            return {};
-        }
-        std::string out(buf);
-        std::free(buf);
-        return out;
-    };
-    std::string t = readEnv("TEMP");
-    if (!t.empty()) {
-        return t;
+        return {};
     }
-    t = readEnv("TMP");
-    if (!t.empty()) {
-        return t;
-    }
-    return ".";
+    std::string out(buf);
+    std::free(buf);
+    return out;
 #else
-    const char* env = std::getenv("TEMP");
-    if (env && *env)
-        return std::string(env);
-    env = std::getenv("TMP");
-    if (env && *env)
-        return std::string(env);
-    return ".";
+    const char* env = std::getenv(name);
+    return env ? std::string(env) : std::string();
 #endif
+}
+
+std::string GetTempDir() {
+    std::string t = ReadEnvString("TEMP");
+    if (!t.empty()) {
+        return t;
+    }
+    t = ReadEnvString("TMP");
+    if (!t.empty()) {
+        return t;
+    }
+    return ".";
 }
 
 std::string SanitizeFilename(const std::string& name) {
@@ -326,6 +318,48 @@ std::string FileNameFromUrl(const std::string& url) {
     }
     return url.substr(slash + 1);
 }
+
+#if defined(_WIN32)
+// Verify the downloaded installer's Authenticode signature chain (no UI, no online revocation
+// fetch — the machine may be mid-update on a flaky network; a revoked-but-cached cert still
+// fails). Returns the raw WinVerifyTrust status; kInstallerTrustOk (0) means the signature is
+// valid and chains to a trusted root. The -A path is converted via CP_ACP to match the GetTempPathA
+// + ShellExecuteA path handling around it.
+long VerifyInstallerAuthenticodeStatus(const std::string& filePath) {
+    const int wideLen = MultiByteToWideChar(CP_ACP, 0, filePath.c_str(), -1, nullptr, 0);
+    if (wideLen <= 0) {
+        // An unconvertible path can't be verified — fail closed with E_INVALIDARG.
+        return static_cast<long>(0x80070057UL);
+    }
+    std::wstring widePath(static_cast<size_t>(wideLen), L'\0');
+    MultiByteToWideChar(CP_ACP, 0, filePath.c_str(), -1, &widePath[0], wideLen);
+
+    WINTRUST_FILE_INFO fileInfo = {};
+    fileInfo.cbStruct = sizeof(fileInfo);
+    fileInfo.pcwszFilePath = widePath.c_str();
+
+    WINTRUST_DATA trustData = {};
+    trustData.cbStruct = sizeof(trustData);
+    trustData.dwUIChoice = WTD_UI_NONE;
+    trustData.fdwRevocationChecks = WTD_REVOKE_NONE;
+    trustData.dwUnionChoice = WTD_CHOICE_FILE;
+    trustData.pFile = &fileInfo;
+    trustData.dwStateAction = WTD_STATEACTION_VERIFY;
+    trustData.dwProvFlags = WTD_CACHE_ONLY_URL_RETRIEVAL;
+
+    GUID policy = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+    const LONG status = WinVerifyTrust(nullptr, &policy, &trustData);
+    trustData.dwStateAction = WTD_STATEACTION_CLOSE;
+    WinVerifyTrust(nullptr, &policy, &trustData);
+    return static_cast<long>(status);
+}
+
+bool IsUpdateUnsignedOverrideSet() {
+    const std::string value =
+        ToLowerAsciiCopy(TrimCopyAsciiWhitespace(ReadEnvString("SMATCHET_UPDATE_ALLOW_UNSIGNED")));
+    return value == "1" || value == "true" || value == "yes";
+}
+#endif
 } // namespace
 
 AttachmentAppUpdateService::AttachmentAppUpdateService(IAttachmentAppUpdateDeps& deps) : deps_(deps) {}
@@ -639,6 +673,26 @@ bool AttachmentAppUpdateService::DownloadAndLaunchInstallerUpdate(const std::str
             outError += " HTTP " + std::to_string(resp.status_code);
         }
         return false;
+    }
+
+    // GitHub HTTPS authenticates the transport, not the artifact: a compromised release asset (or
+    // tampered bytes anywhere upstream) would otherwise run with full user rights. Fail closed on
+    // any Authenticode outcome other than a signature chaining to a trusted root; the env override
+    // (release-pipeline validation with self-signed certs) forgives everything except a bad digest.
+    const long trustStatus = VerifyInstallerAuthenticodeStatus(localPath);
+    const bool allowUnsignedOverride = IsUpdateUnsignedOverrideSet();
+    std::string trustError;
+    if (!smatchet::app_update::ShouldLaunchDownloadedInstaller(trustStatus, allowUnsignedOverride, trustError)) {
+        std::remove(localPath.c_str());
+        LOG_ERROR("DownloadAndLaunchInstallerUpdate: refusing unverified installer status=0x%08lx asset=%s",
+                  static_cast<unsigned long>(trustStatus), TruncateForLog(filename, 200).c_str());
+        outError = trustError;
+        return false;
+    }
+    if (trustStatus != smatchet::app_update::kInstallerTrustOk) {
+        LOG_WARN("DownloadAndLaunchInstallerUpdate: SMATCHET_UPDATE_ALLOW_UNSIGNED override active — launching "
+                 "installer that failed Authenticode verification (status=0x%08lx).",
+                 static_cast<unsigned long>(trustStatus));
     }
 
     const HINSTANCE openResult = ShellExecuteA(nullptr, "open", localPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);

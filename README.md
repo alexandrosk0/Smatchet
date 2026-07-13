@@ -4,6 +4,27 @@
 
 Smatchet is a high-performance, engine-agnostic productivity tool and issue-tracking client. It provides a unified interface for project management, Perforce source control analysis, and AI assistance — all built using C++14 and Dear ImGui. Smatchet supports **multiple tracker backends** (Jira, Plane.so, and GitHub Issues) through a clean, backend-agnostic architecture (`ITrackerBackend`), and can run as a standalone desktop application or embedded directly into Unreal Engine.
 
+## Download & Install
+
+Prebuilt binaries are published on the [GitHub Releases page](https://github.com/alexandrosk0/Smatchet/releases). Each release carries these assets (`<tag>` is the version, e.g. `v0.6.7`):
+
+| Asset | What it is |
+|---|---|
+| `Smatchet-<tag>-windows-setup.exe` | **Recommended.** Windows installer — per-user install (no admin rights needed) into `%LOCALAPPDATA%\Programs\Smatchet`, with uninstall support and in-app update checks. |
+| `Smatchet-<tag>-windows-portable.zip` | Portable build — unzip anywhere and run `Smatchet.exe`. No installation, no registry changes. |
+| `Smatchet-<tag>-windows-light-portable.zip` | Portable "Light" build with automation-facing features (CLI command surface, MCP server, Lua) disabled. |
+| `Smatchet-<tag>-unreal-plugin.zip` | The Unreal Engine editor plugin — see the [plugin install guide](scripts/publish/INSTALL_UNREAL_PLUGIN.md). |
+| `Smatchet-<tag>-source.zip` | Source archive of the tagged revision. |
+
+**Quickstart:** install (or unzip) and launch, then open **Settings → Preferences → Tracker** to pick your backend (Jira, Plane.so, or GitHub Issues) and enter its URL and API credentials. Your data stays local: issues and field catalogs are cached in a local SQLite database, and on Windows API tokens are stored DPAPI-encrypted in your user profile.
+
+### Platform support
+
+- **Windows 10/11 x64** is the supported, shipped platform for the standalone app (installer + portable ZIP). Windows-on-ARM builds are supported by the release tooling (`-Arch arm64`) but not routinely published.
+- **Unreal Engine plugin**: Windows editor (DX12).
+- **Linux / macOS**: not shipped. The engine-agnostic core compiles under Linux clang as a portability gate, but there is currently no supported desktop build or packaging for either platform. (Note: on non-Windows builds there is no OS-backed secret store — API tokens would be stored in a plain-text config file.)
+- **Android**: an experimental mobile core is built and tested in CI but is not part of any release.
+
 ## Features
 
 - **Multi-Backend Tracker Support**: Seamlessly switch between **Jira** (Atlassian Cloud), **Plane.so**, and **GitHub Issues** from the Preferences panel. Each backend is a concrete implementation of the backend-agnostic `ITrackerBackend` interface (`JiraClient`, `PlaneClient`, `GitHubClient`); views, field catalogs, and issue data are kept separate per backend.
