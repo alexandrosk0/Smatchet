@@ -24,7 +24,7 @@
 # Exit: 0 if at least one channel succeeded; non-zero if all failed.
 # ----------------------------------------------------------------------------
 
-set -o pipefail
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PR=""
