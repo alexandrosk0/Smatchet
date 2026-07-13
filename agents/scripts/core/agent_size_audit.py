@@ -29,9 +29,12 @@ whales (debug-detective, git-janitor, test-author, AGENTS.md) live in the base s
 never fire; a file fires only when it is brand-new over its cap or has just crossed it. A
 grandfathered 733-line agent shrinking to 300 stays grandfathered (still over 250, but it was
 over at base too) — so the whales can be slimmed without the gate fighting it; only REGROWTH
-past the snapshot, or a NEW over-cap file, fails. A line anywhere in the file reading
-`SMATCHET_DEVIATION(rule=agent-too-long; ...)` suppresses it (file-unit gate, so the marker is
-file-scoped, not line-adjacent like the C++ rules).
+past the snapshot, or a NEW over-cap file, fails. An HTML-comment line anywhere in the file
+reading `<!-- SMATCHET_DEVIATION(rule=agent-too-long; ...) -->` suppresses it (file-unit gate,
+so the marker is file-scoped, not line-adjacent like the C++ rules). The `<!--` requirement is
+load-bearing: everything this gate scopes is markdown, and AGENTS.md *documents* the escape
+token in backtick prose — a bare-substring match let that prose exempt AGENTS.md from its own
+cap (found 2026-07-13: the file crossed 150 lines in #1764 with no gate fire).
 
 Modes mirror function_size_audit.py:
 
@@ -241,21 +244,32 @@ def _merge_base_or_ref(ref):
     return ref
 
 
+def _deviation_suppresses(text):
+    """True if `text` carries a real file-scoped marker: an HTML-comment line with
+    `SMATCHET_DEVIATION(... rule=...agent-too-long...)`. Everything this gate scopes is markdown,
+    so a real marker is `<!-- SMATCHET_DEVIATION(...) -->`; the token in prose or a backtick code
+    span (AGENTS.md documents the escape hatch) must NOT suppress — a bare-substring match here
+    let AGENTS.md's own prose exempt it from its own cap."""
+    for line in text.split("\n"):
+        if "SMATCHET_DEVIATION" not in line:
+            continue
+        line = re.sub(r"`[^`]*`", "", line)  # backtick code spans are documentation, not markers
+        if "<!--" not in line.split("SMATCHET_DEVIATION", 1)[0]:
+            continue  # prose mention, not a marker
+        m = re.search(r"rule=([A-Za-z0-9_,-]+)", line)
+        if m and RULE in [r.strip() for r in m.group(1).split(",")]:
+            return True
+    return False
+
+
 def _suppressed(path):
-    """True if any line in the file carries `SMATCHET_DEVIATION(... rule=...agent-too-long...)`.
-    File-unit gate, so the marker is file-scoped (typically an HTML comment near the top)."""
+    """File wrapper over `_deviation_suppresses` (file-unit gate, marker is file-scoped)."""
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as fh:
             text = fh.read()
     except OSError:
         return False
-    for line in text.split("\n"):
-        if "SMATCHET_DEVIATION" not in line:
-            continue
-        m = re.search(r"rule=([A-Za-z0-9_,-]+)", line)
-        if m and RULE in [r.strip() for r in m.group(1).split(",")]:
-            return True
-    return False
+    return _deviation_suppresses(text)
 
 
 def run_diff(ref):
@@ -415,6 +429,20 @@ def run_selftest():
             print("SELFTEST FAIL: classify(%r) should be out of scope (not a prompt)" % path,
                   file=sys.stderr)
             miss = 1
+    # (d) deviation-marker semantics: only a real HTML-comment marker suppresses; the token in
+    # backtick prose (AGENTS.md documents the escape hatch) must not — the prose match silently
+    # exempted AGENTS.md from its own cap.
+    if _deviation_suppresses("`SMATCHET_DEVIATION(rule=agent-too-long; …)` anywhere escapes"):
+        print("SELFTEST FAIL: backtick-prose deviation token must NOT suppress", file=sys.stderr)
+        miss = 1
+    if _deviation_suppresses("an HTML-comment marker `<!-- SMATCHET_DEVIATION(rule=agent-too-long;"
+                             " …) -->` escapes"):
+        print("SELFTEST FAIL: backticked full-form example must NOT suppress", file=sys.stderr)
+        miss = 1
+    if not _deviation_suppresses(
+            "<!-- SMATCHET_DEVIATION(rule=agent-too-long; reason=t; owner=t; revisit=never) -->"):
+        print("SELFTEST FAIL: HTML-comment deviation marker must suppress", file=sys.stderr)
+        miss = 1
     if miss:
         return 1
     print("selftest: agent-size budgets in sync with project.config.json + AGENTS.md")

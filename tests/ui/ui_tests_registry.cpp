@@ -17,6 +17,9 @@ extern "C" void SmatchetRegisterHelpMarkerKeyboardFocusTests(ImGuiTestEngine* en
 extern "C" void SmatchetRegisterMcpLuaFreshStateRaceTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAutomationReloadHooksRaceTests(ImGuiTestEngine* engine);
 #endif
+#if defined(SMATCHET_WITH_MCP)
+extern "C" void SmatchetRegisterMcpLiveHttpAuthTests(ImGuiTestEngine* engine);
+#endif
 extern "C" void SmatchetRegisterSyncStallVisibleCueTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAnnotateBeforeClCueTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterToolbarAppendCacheCueTests(ImGuiTestEngine* engine);
@@ -71,6 +74,9 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     SmatchetRegisterMcpLuaFreshStateRaceTests(engine);
     SmatchetRegisterAutomationReloadHooksRaceTests(engine);
+#endif
+#if defined(SMATCHET_WITH_MCP)
+    SmatchetRegisterMcpLiveHttpAuthTests(engine);
 #endif
     SmatchetRegisterSyncStallVisibleCueTests(engine);
     SmatchetRegisterAnnotateBeforeClCueTests(engine);
