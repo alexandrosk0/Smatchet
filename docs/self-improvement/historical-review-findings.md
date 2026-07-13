@@ -324,6 +324,19 @@ Coverage: **55 reviewed — 8 with findings, 45 clean, 2 fully superseded, 0 err
 
 **Fully superseded (2, no review surface):** #1753, #1750 — every introduced line was changed/removed by a later PR; excluded by construction.
 
+> **Remediation (2026-07-12) — the 4 gate/test/doc findings, fixed:** **#1774** → `test-all.sh`'s
+> CI-lane denylist now matches the EXACT basename (`^name$`) instead of an unanchored substring, so a
+> future `test-docs-foo.sh` isn't silently skipped by the `test-docs` token (and the pure-logic
+> `test-plan-index-robustness-bats.sh`, collateral of the old prefix, now runs — verified 6/6 local +
+> self-validated by this PR's `test-all --ci` lane); `fail-open-ok` marker dropped. **#1760** →
+> `comment_audit.py`'s `_deviation_continuation_lines` ends the wrapped-deviation span at the first
+> non-comment line, so an unbalanced `(` in reason prose no longer leaks the noise-gate exemption onto
+> every later comment (new `--selftest` deviation-wrap case). **#1752** → `develop-tip-required-green.sh`
+> sorts check-runs by `started_at` so the detector's "newest last" holds regardless of `--paginate`
+> order. **#1795** → `test.md` drops the bogus `views_field_selection.test.cpp` co-citation from the
+> `DrawJqlQueryEditorEmbedded` JQL mapping (0 JQL refs; `omnibar_search_apply.test.cpp` is the real
+> cover). Remaining Batch-18 finding: **#1789** (vacuous bucket-E test) — own follow-up PR.
+
 ## Batch 17 — #1737–#1696 (36-PR sweep, 2026-07-10)
 
 Coverage: **36 reviewed — 4 with findings, 32 clean, 0 fully superseded, 0 errored, 0 died.** Net: **0 CRITICAL, 0 HIGH, 1 MEDIUM, 3 LOW.** Same-day incremental on top of the Batches 13–16 frontier: everything merged after #1695 up to develop @ `2877512f` — **the frontier is now #1–#1737 contiguous; the next sweep resumes from #1738.** Survivor-filtered against origin/develop (0 superseded — the PRs are hours old, so essentially every introduced line is alive; includes the sweep's own #1700). (Same sha-resolved workflow + reviewer model as Batches 13–16; 36/36 returned, 0 died; ~13 min, ~1.3M tokens.) **All 4 findings are `userVisible:false` → NO GitHub Issues; backlog only per ADR-0014.** The MEDIUM is another fail-open gate variant — cross-filed onto the REOPENED `fail-open-meta-gate-authoring-check` in [`categories/tooling.md`](categories/tooling.md) as sub-shape (I): a mutation gate whose scored set can silently drain to zero.

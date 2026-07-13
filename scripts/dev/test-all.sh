@@ -151,8 +151,14 @@ for script in "${TESTS[@]}"; do
         continue
     fi
     # CI-lane denylist: a suite needing a service unavailable on the headless
-    # runner (Perforce, live gh) or tracked as failing pending a fix.
-    if [ "$TESTALL_CI" -eq 1 ] && [[ "$script" =~ $CI_SKIP_RE ]]; then  # fail-open-ok: CI_SKIP_RE matches the denylisted suite family by prefix (reviewed; anchoring deferred pending a per-suite CI-need audit)
+    # runner (Perforce, live gh) or tracked as failing pending a fix. Matched on the
+    # EXACT basename (^name$) — the old unanchored substring match silently skipped any
+    # future suite whose name merely embeds a denylist token (test-docs-foo.sh vs the
+    # denylisted test-docs.sh; test-plan-index-robustness-bats.sh vs test-plan-index.sh — a
+    # pure-logic bats that was wrongly skipped and now runs). Fail-open closed (#1774).
+    script_base="${script##*/}"
+    script_base="${script_base%.sh}"
+    if [ "$TESTALL_CI" -eq 1 ] && [[ "$script_base" =~ ^$CI_SKIP_RE$ ]]; then
         echo
         echo "##################################################"
         echo "# $script"

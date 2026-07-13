@@ -110,9 +110,12 @@ gather_and_nudge() {
         required_lines="$(gh api "repos/$owner_repo/branches/develop/protection/required_status_checks" \
             --jq '.contexts[]?' 2>/dev/null || true)"
         [ -n "$required_lines" ] || return 0   # no branch protection / no perms -> silent
-        # Latest run per check-name on the tip (newest last so the detector's last-wins holds).
+        # Latest run per check-name on the tip. --paginate does NOT guarantee chronological row
+        # order (a re-run can arrive newest-first), so sort ascending by started_at/completed_at to
+        # make "newest last" actually hold before the detector's last-wins keys off it — otherwise a
+        # stale run could shadow a terminal-red or emit a stale red (#1752).
         runs_lines="$(gh api "repos/$owner_repo/commits/$tip/check-runs" --paginate \
-            --jq '.check_runs[] | [.name, .status, (.conclusion // "")] | @tsv' 2>/dev/null || true)"
+            --jq '[.check_runs[]] | sort_by(.started_at // .completed_at // "") | .[] | [.name, .status, (.conclusion // "")] | @tsv' 2>/dev/null || true)"
         pr_hint="$(gh api "repos/$owner_repo/commits/$tip/pulls" --jq '.[0].number // empty' 2>/dev/null || true)"
     fi
 
