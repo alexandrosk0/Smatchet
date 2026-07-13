@@ -469,18 +469,56 @@ int32 FSmatchetImGuiInputProcessor::ToImGuiKey(const FKeyEvent& InKeyEvent) cons
     if (Key == EKeys::Escape)
         return ImGuiKey_Escape;
 
-    if (Key == EKeys::A)
-        return ImGuiKey_A;
-    if (Key == EKeys::C)
-        return ImGuiKey_C;
-    if (Key == EKeys::V)
-        return ImGuiKey_V;
-    if (Key == EKeys::X)
-        return ImGuiKey_X;
-    if (Key == EKeys::Y)
-        return ImGuiKey_Y;
-    if (Key == EKeys::Z)
-        return ImGuiKey_Z;
+    // Full letter/digit/F-key/punctuation coverage so every chord the core's rebindable
+    // keybinding table can express (ImGuiHotkey.cpp KeyFromToken) is reachable from the
+    // Unreal overlay — before this, only clipboard/undo letters arrived and e.g. the
+    // quick-create Ctrl+Shift+T default was dead inside the editor. ImGuiKey_A..Z,
+    // _0.._9, and _F1.._F12 are contiguous ranges in imgui, so table + offset is safe.
+    static const FKey Letters[] = {EKeys::A, EKeys::B, EKeys::C, EKeys::D, EKeys::E, EKeys::F, EKeys::G,
+                                   EKeys::H, EKeys::I, EKeys::J, EKeys::K, EKeys::L, EKeys::M, EKeys::N,
+                                   EKeys::O, EKeys::P, EKeys::Q, EKeys::R, EKeys::S, EKeys::T, EKeys::U,
+                                   EKeys::V, EKeys::W, EKeys::X, EKeys::Y, EKeys::Z};
+    for (int32 i = 0; i < 26; ++i) {
+        if (Key == Letters[i])
+            return ImGuiKey_A + i;
+    }
+
+    static const FKey Digits[] = {EKeys::Zero, EKeys::One, EKeys::Two,   EKeys::Three, EKeys::Four,
+                                  EKeys::Five, EKeys::Six, EKeys::Seven, EKeys::Eight, EKeys::Nine};
+    for (int32 i = 0; i < 10; ++i) {
+        if (Key == Digits[i])
+            return ImGuiKey_0 + i;
+    }
+
+    static const FKey FunctionKeys[] = {EKeys::F1, EKeys::F2, EKeys::F3, EKeys::F4,  EKeys::F5,  EKeys::F6,
+                                        EKeys::F7, EKeys::F8, EKeys::F9, EKeys::F10, EKeys::F11, EKeys::F12};
+    for (int32 i = 0; i < 12; ++i) {
+        if (Key == FunctionKeys[i])
+            return ImGuiKey_F1 + i;
+    }
+
+    if (Key == EKeys::Equals)
+        return ImGuiKey_Equal;
+    if (Key == EKeys::Hyphen)
+        return ImGuiKey_Minus;
+    if (Key == EKeys::Comma)
+        return ImGuiKey_Comma;
+    if (Key == EKeys::Period)
+        return ImGuiKey_Period;
+    if (Key == EKeys::Slash)
+        return ImGuiKey_Slash;
+    if (Key == EKeys::Semicolon)
+        return ImGuiKey_Semicolon;
+    if (Key == EKeys::Apostrophe)
+        return ImGuiKey_Apostrophe;
+    if (Key == EKeys::Tilde)
+        return ImGuiKey_GraveAccent;
+    if (Key == EKeys::LeftBracket)
+        return ImGuiKey_LeftBracket;
+    if (Key == EKeys::RightBracket)
+        return ImGuiKey_RightBracket;
+    if (Key == EKeys::Backslash)
+        return ImGuiKey_Backslash;
 
     return -1;
 }
@@ -495,8 +533,7 @@ bool FSmatchetImGuiInputProcessor::HasTextInputBlockingModifier(const FKeyEvent&
     const bool asyncCtrl = false;
     const bool asyncAlt = false;
 #endif
-    return InKeyEvent.IsControlDown() || InKeyEvent.IsAltDown() || InKeyEvent.IsCommandDown() || asyncCtrl ||
-           asyncAlt;
+    return InKeyEvent.IsControlDown() || InKeyEvent.IsAltDown() || InKeyEvent.IsCommandDown() || asyncCtrl || asyncAlt;
 }
 
 void FSmatchetImGuiInputProcessor::ComputeModifierState(const FInputEvent& InputEvent, bool& OutCtrl, bool& OutShift,
