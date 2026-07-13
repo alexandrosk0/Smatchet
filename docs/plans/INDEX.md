@@ -195,6 +195,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`god-file-splits`](shipped/god-file-splits.md) | 2026-07-11 | Mechanical, behavior-preserving partition of the five largest TUs (MarkdownConvert, ConfigManager, CliCommandRunner, AppController_LuaBindings, SmatchetActiveProjectGridUi) into cohesive companion TUs, plus an advisory tu-line-ceiling lint so the class doesn't regrow. |
 | [`plane-custom-properties`](shipped/plane-custom-properties.md) | 2026-07-11 | Plan — Plane custom (UUID) properties: serialize instead of silently dropping (C4) |
 | [`retire-transport-error-text`](shipped/retire-transport-error-text.md) | 2026-07-11 | Plan — Retire the IsTrackerTransportErrorText string heuristic (N12) |
+| [`pc-verify-agentic-audit-followups`](shipped/pc-verify-agentic-audit-followups.md) | 2026-07-13 | Plan — PC-side verification & completion of the agentic-audit-review follow-ups |
 <!-- END auto-plan-index -->
 
 ### Notes
