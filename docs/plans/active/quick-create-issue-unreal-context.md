@@ -160,13 +160,38 @@ N/A — this plan extracts/splits nothing; it adds new TUs and small edits.
   existing `MarkdownToAdf` conversion applies downstream.
 
 ## Implementation log
-*(populated post-ship)*
+
+- `5b3a62a` · feat(quick-create): Ctrl+Shift+T issue popup with engine-context prefill (core) — command,
+  keybinding + seed migration, popup UI, config toggles, hostctx seam, markdown formatter, embedded-only
+  "Unreal" Preferences tab, en/fr strings, tests.
+- `0a28a95` · feat(unreal): push engine context snapshot to core + full hotkey coverage — C ABI
+  `SmatchetHost_SetHostContextJson` (both header copies), GLog ring-buffer tail, 1 Hz game-thread
+  snapshot ticker, `ToImGuiKey` widening, conditional UnrealEd dep.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- `RegisterAppViewCommands` was decomposed (new file-static `RegisterQuickCreateOpen`) — the inline
+  registration pushed the function past the 120-line cap.
+- The pre-existing include-block duplication marker in `SmatchetUI.cpp` was re-anchored (the new
+  include shifted the clone window past the old marker line).
+- Quick-create submit reuses `IssueDraftHelpers::MissingRequiredFields` client-side before the async
+  create (mirrors the grid draft flow) instead of relying purely on the server error, in addition to
+  the planned server-error surface + full-flow hint.
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- Linux (this environment): `posix-core-check` configure + build green — all 493 core TUs including the
+  4 new ones (curl FetchContent tarball is proxy-blocked here; overridden with
+  `-DFETCHCONTENT_SOURCE_DIR_CURL=<git clone of curl-7_80_0>`, same pinned version).
+- Lint gates (`test-lint-rules.sh --diff origin/develop`): all green (advisory tu-line-ceiling WARNs on
+  pre-existing whales only).
+- Doc validation (`scripts/dev/test-docs.sh`): 16/16 green.
+- Targeted doctest run (new/changed test TUs — EngineContextFormat, KeybindingsConfig, ConfigMigration,
+  ConfigManager, I18nSweepLocalization — linked against the built core archive): 58/58 cases,
+  624 assertions, green.
+- Not run here (no Windows/UE): dual-target `SmatchetStandalone`+`SmatchetCore_DX12` build, plugin
+  repackage, in-editor manual checklist (overlay → Ctrl+Shift+T popup, prefill contents, PIE/selection/
+  log tail, Jira create). Runs on Windows CI + a Windows dev box per § Verification.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 1. *flip the § Status header to `shipped`,*
