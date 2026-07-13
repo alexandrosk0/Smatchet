@@ -311,6 +311,9 @@ Pure helpers are net-new; no code reuse from the agentic surface.
 - Dropdown shows three options; GitHub config inputs render with correct tooltips; switching tracker kind clears the grid (in-memory `ActiveTickets`). Stub error surfaces as designed.
 - PR4/PR5 dual-target build: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — passed clean. Both `Smatchet.exe` and `libSmatchetCore_DX12.a` linked.
 - PR4/PR5 ctest: `ctest --test-dir build/ninja-test-msvc --output-on-failure` — 2/2 pass (`smatchet_tests` 1.99 s, `smatchet_lua_tests` 0.04 s). `SmatchetTests --test-case="*Translate*"` reports 19 / 19 PR5 translator cases pass; `--test-case="*GitHub*"` reports 26 / 26 GitHub-related cases pass overall (PR2 helpers + PR5 translator).
+- PR7 lint gates: `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop` — all pass (one `SMATCHET_DEVIATION(rule=duplication)` for the interface-mandated `UpdateField` routing symmetry). `bash scripts/dev/pillar2-scan.sh` on the touched TUs — clean.
+- PR7 portability gate: `cmake --build --preset posix-core-check --target SmatchetCore_PosixCheck -- -k 0` — green (the new `GitHubMutationPure.cpp` + reworked `GitHubClient.cpp` compile under host Linux clang).
+- PR7 doctests (Linux clang full-feature rig, `SMATCHET_WITH_AI=ON`): the 11 new cases (`GitHubMutationPure` + `GitHubIssueMutationHttp` + `GitHub BuildFieldPayload`) pass 109 / 109 assertions; `--test-case="*GitHub*"` reports 169 / 169 cases (811 assertions) pass. Full rig: 2453 / 2454 — the one failure is the pre-existing `SubprocessCapturePure` UTF-16 `wchar_t` assumption that only holds on Windows (4-byte `wchar_t` on Linux; not a CI lane, unrelated to this diff). Windows `ninja-test-msvc` ctest runs in PR CI.
 
 ## Remaining for GitHub issues to work
 
